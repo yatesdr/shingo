@@ -1,4 +1,4 @@
-# ShinGo Core Features — Phases 1 & 2
+# ShinGo Features — Phases 1 & 2
 
 Quick reference for the 8 features added in this release. Each section covers routes, data flow, and debugging tips.
 

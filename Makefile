@@ -1,4 +1,4 @@
-# ShinGo Core Makefile
+# ShinGo Makefile
 # Build for multiple platforms
 
 BINARY_NAME=shingocore
@@ -78,7 +78,7 @@ vet:
 
 # Show help
 help:
-	@echo "ShinGo Core Build Targets:"
+	@echo "ShinGo Build Targets:"
 	@echo "  make build     - Build for current platform"
 	@echo "  make run       - Run the application"
 	@echo "  make all       - Build for all platforms"

@@ -17,7 +17,7 @@ func newSessionStore(secret string) *sessions.CookieStore {
 	}
 	s := sessions.NewCookieStore([]byte(secret))
 	s.Options.HttpOnly = true
-	s.Options.Secure = false // ShinGo Core runs on plain HTTP (factory LAN)
+	s.Options.Secure = false // ShinGo runs on plain HTTP (factory LAN)
 	s.Options.SameSite = http.SameSiteLaxMode
 	return s
 }

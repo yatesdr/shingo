@@ -32,7 +32,7 @@
 ## [v0.0.1] - 2026-02-17
 
 ### Added
-- Initial release: ShinGo Core central dispatch server.
+- Initial release: ShinGo central dispatch server.
 - Dual-database support (SQLite for dev, PostgreSQL for prod).
 - SEER RDS Core HTTP client with order status poller.
 - MQTT/Kafka messaging with typed envelope protocol.
