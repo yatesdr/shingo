@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"warpath/store"
+	"shingocore/store"
 )
 
 // Manager provides write-through node state management: SQL first, then Redis.

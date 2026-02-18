@@ -295,14 +295,14 @@ function checkBinOccupancy() {
         document.getElementById('bin-modal-content').innerHTML = '<span class="text-muted">No bins found</span>';
         return;
       }
-      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin ID</th><th>Node</th><th>RDS Filled</th><th>In WarPath</th><th>Status</th></tr></thead><tbody>';
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin ID</th><th>Node</th><th>RDS Filled</th><th>In ShinGo</th><th>Status</th></tr></thead><tbody>';
       items.forEach(function(item) {
         var cls = '';
         var status = 'OK';
         if (item.discrepancy === 'rds_only') { cls = ' style="background:#fff3cd"'; status = 'RDS Only'; }
-        else if (item.discrepancy === 'warpath_only') { cls = ' style="background:#f8d7da"'; status = 'WarPath Only'; }
+        else if (item.discrepancy === 'shingo_only') { cls = ' style="background:#f8d7da"'; status = 'ShinGo Only'; }
         var filled = item.rds_filled === null ? '-' : (item.rds_filled ? 'Yes' : 'No');
-        html += '<tr' + cls + '><td>' + esc(item.bin_id) + '</td><td>' + esc(item.node_name || '-') + '</td><td>' + filled + '</td><td>' + (item.in_warpath ? 'Yes' : 'No') + '</td><td>' + status + '</td></tr>';
+        html += '<tr' + cls + '><td>' + esc(item.bin_id) + '</td><td>' + esc(item.node_name || '-') + '</td><td>' + filled + '</td><td>' + (item.in_shingo ? 'Yes' : 'No') + '</td><td>' + status + '</td></tr>';
       });
       html += '</tbody></table>';
       document.getElementById('bin-modal-content').innerHTML = html;

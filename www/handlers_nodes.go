@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"warpath/engine"
-	"warpath/store"
+	"shingocore/engine"
+	"shingocore/store"
 )
 
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +228,7 @@ func (h *Handlers) apiBinOccupancy(w http.ResponseWriter, r *http.Request) {
 		BinID       string `json:"bin_id"`
 		NodeName    string `json:"node_name"`
 		RDSFilled   *bool  `json:"rds_filled"`
-		InWarPath   bool   `json:"in_warpath"`
+		InShinGo   bool   `json:"in_shingo"`
 		Discrepancy string `json:"discrepancy"`
 	}
 
@@ -239,16 +239,16 @@ func (h *Handlers) apiBinOccupancy(w http.ResponseWriter, r *http.Request) {
 		e := entry{
 			BinID:     b.ID,
 			RDSFilled: &b.Filled,
-			InWarPath: nodeRDS[b.ID] != "",
+			InShinGo: nodeRDS[b.ID] != "",
 			NodeName:  nodeRDS[b.ID],
 		}
-		if !e.InWarPath {
+		if !e.InShinGo {
 			e.Discrepancy = "rds_only"
 		}
 		results = append(results, e)
 	}
 
-	// Nodes in WarPath but not in RDS
+	// Nodes in ShinGo but not in RDS
 	for _, n := range nodes {
 		if n.RDSLocation == "" {
 			continue
@@ -257,8 +257,8 @@ func (h *Handlers) apiBinOccupancy(w http.ResponseWriter, r *http.Request) {
 			results = append(results, entry{
 				BinID:       n.RDSLocation,
 				NodeName:    n.Name,
-				InWarPath:   true,
-				Discrepancy: "warpath_only",
+				InShinGo:   true,
+				Discrepancy: "shingo_only",
 			})
 		}
 	}

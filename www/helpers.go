@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"warpath/rds"
+	"shingocore/rds"
 )
 
 func templateFuncs() template.FuncMap {

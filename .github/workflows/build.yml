@@ -55,31 +55,31 @@ jobs:
           if [[ "$VERSION" != v* ]]; then
             VERSION="dev-${GITHUB_SHA::8}"
           fi
-          BINARY_NAME=warpath
+          BINARY_NAME=shingocore
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME=warpath.exe
+            BINARY_NAME=shingocore.exe
           fi
           go build -ldflags "-s -w -X main.Version=${VERSION}" \
-            -o ${BINARY_NAME} ./cmd/warpath
+            -o ${BINARY_NAME} ./cmd/shingocore
           chmod +x ${BINARY_NAME} 2>/dev/null || true
 
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
         run: |
-          BINARY_NAME=warpath
-          tar -czvf warpath-${{ matrix.suffix }}.tar.gz ${BINARY_NAME}
+          BINARY_NAME=shingocore
+          tar -czvf shingocore-${{ matrix.suffix }}.tar.gz ${BINARY_NAME}
 
       - name: Package (zip)
         if: matrix.archive == 'zip'
         run: |
-          BINARY_NAME=warpath.exe
-          zip warpath-${{ matrix.suffix }}.zip ${BINARY_NAME}
+          BINARY_NAME=shingocore.exe
+          zip shingocore-${{ matrix.suffix }}.zip ${BINARY_NAME}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: warpath-${{ matrix.suffix }}
-          path: warpath-${{ matrix.suffix }}.${{ matrix.archive }}
+          name: shingocore-${{ matrix.suffix }}
+          path: shingocore-${{ matrix.suffix }}.${{ matrix.archive }}
 
   release:
     name: Release

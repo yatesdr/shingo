@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS materials (
 
 CREATE TABLE IF NOT EXISTS orders (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    wardrop_uuid    TEXT NOT NULL,
+    edge_uuid    TEXT NOT NULL,
     client_id       TEXT NOT NULL DEFAULT '',
     factory_id      TEXT NOT NULL DEFAULT '',
     order_type      TEXT NOT NULL DEFAULT 'retrieve',
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS orders (
     payload_type_id INTEGER REFERENCES payload_types(id),
     payload_id      INTEGER REFERENCES payloads(id)
 );
-CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(wardrop_uuid);
+CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_rds ON orders(rds_order_id);
 

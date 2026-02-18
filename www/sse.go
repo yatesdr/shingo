@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"warpath/engine"
+	"shingocore/engine"
 )
 
 type SSEEvent struct {

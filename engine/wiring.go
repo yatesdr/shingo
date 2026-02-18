@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"time"
 
-	"warpath/dispatch"
-	"warpath/messaging"
-	"warpath/rds"
-	"warpath/store"
+	"shingocore/dispatch"
+	"shingocore/messaging"
+	"shingocore/rds"
+	"shingocore/store"
 )
 
 func (e *Engine) wireEventHandlers() {
@@ -24,7 +24,7 @@ func (e *Engine) wireEventHandlers() {
 		e.logFn("engine: tracking RDS order %s for order %d", ev.RDSOrderID, ev.OrderID)
 	}, EventOrderDispatched)
 
-	// When RDS reports a status change, update our order and notify WarDrop
+	// When RDS reports a status change, update our order and notify ShinGo Edge
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderStatusChangedEvent)
 		e.handleRDSStatusChange(ev)
@@ -89,9 +89,9 @@ func (e *Engine) handleRDSStatusChange(ev OrderStatusChangedEvent) {
 	if ev.RobotID != "" && order.RobotID == "" {
 		e.db.UpdateOrderRDS(order.ID, order.RDSOrderID, ev.NewStatus, ev.RobotID)
 
-		// Send waybill to WarDrop
+		// Send waybill to ShinGo Edge
 		reply := messaging.NewEnvelope("waybill", order.ClientID, e.cfg.FactoryID, messaging.WaybillReply{
-			OrderUUID: order.WardropUUID,
+			OrderUUID: order.EdgeUUID,
 			WaybillID: order.RDSOrderID,
 			RobotID:   ev.RobotID,
 		})
@@ -108,9 +108,9 @@ func (e *Engine) handleRDSStatusChange(ev OrderStatusChangedEvent) {
 	e.db.UpdateOrderStatus(order.ID, newStatus, fmt.Sprintf("RDS: %s -> %s", ev.OldStatus, ev.NewStatus))
 	e.db.UpdateOrderRDS(order.ID, order.RDSOrderID, ev.NewStatus, ev.RobotID)
 
-	// Send status update to WarDrop
+	// Send status update to ShinGo Edge
 	reply := messaging.NewEnvelope("update", order.ClientID, e.cfg.FactoryID, messaging.UpdateReply{
-		OrderUUID: order.WardropUUID,
+		OrderUUID: order.EdgeUUID,
 		Status:    newStatus,
 		Detail:    fmt.Sprintf("RDS state: %s", ev.NewStatus),
 	})
@@ -126,7 +126,7 @@ func (e *Engine) handleRDSStatusChange(ev OrderStatusChangedEvent) {
 		e.db.UpdateOrderStatus(order.ID, dispatch.StatusFailed, "RDS order failed")
 		e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
 			OrderID:     order.ID,
-			WardropUUID: order.WardropUUID,
+			EdgeUUID: order.EdgeUUID,
 			ClientID:    order.ClientID,
 			ErrorCode:   "rds_failed",
 			Detail:      "RDS order failed",
@@ -139,9 +139,9 @@ func (e *Engine) handleRDSStatusChange(ev OrderStatusChangedEvent) {
 func (e *Engine) handleOrderDelivered(order *store.Order) {
 	e.db.UpdateOrderStatus(order.ID, dispatch.StatusDelivered, "payload delivered")
 
-	// Send delivered notification to WarDrop
+	// Send delivered notification to ShinGo Edge
 	reply := messaging.NewEnvelope("delivered", order.ClientID, e.cfg.FactoryID, messaging.DeliveredReply{
-		OrderUUID:   order.WardropUUID,
+		OrderUUID:   order.EdgeUUID,
 		DeliveredAt: time.Now().Format(time.RFC3339),
 	})
 	data, _ := reply.Encode()
@@ -149,7 +149,7 @@ func (e *Engine) handleOrderDelivered(order *store.Order) {
 	e.db.EnqueueOutbox(topic, data, "delivered", order.ClientID)
 }
 
-// handleOrderCompleted moves payloads from source to dest after WarDrop confirms physical receipt.
+// handleOrderCompleted moves payloads from source to dest after ShinGo Edge confirms physical receipt.
 func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	order, err := e.db.GetOrder(ev.OrderID)
 	if err != nil {

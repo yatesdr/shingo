@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>WarPath{{if .Page}} - {{.Page}}{{end}}</title>
+  <title>ShinGo Core{{if .Page}} - {{.Page}}{{end}}</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
 <body>
   <nav>
     <div class="container" style="display:flex;align-items:center;gap:1.5rem;">
-      <a href="/" class="brand">WarPath</a>
+      <a href="/" class="brand">ShinGo Core</a>
       <a href="/"{{if eq .Page "dashboard"}} class="active"{{end}}>Dashboard</a>
       <a href="/nodes"{{if eq .Page "nodes"}} class="active"{{end}}>Nodes</a>
       <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>

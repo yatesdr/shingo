@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"warpath/store"
+	"shingocore/store"
 )
 
 func (h *Handlers) handlePayloadTypes(w http.ResponseWriter, r *http.Request) {

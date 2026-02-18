@@ -653,7 +653,7 @@ var FIELD_TIPS = {
     '<br><br>For join orders, RDS uses <code>Load</code> for pickup and <code>Unload</code> for delivery automatically.',
   goodsId: 'Optional. A tracking ID for the cargo being moved. If omitted, RDS auto-generates one.' +
     '<br><br>Use this to track specific material through the system. The same goods ID appears in container bindings and order query responses.' +
-    '<br><br>Example: a pallet barcode, a batch number, or a WarPath inventory ID.',
+    '<br><br>Example: a pallet barcode, a batch number, or a ShinGo inventory ID.',
   operation: 'The robot mechanism action to execute at the map point. Available operations depend on the robot model and its hardware configuration.' +
     '<br><br>Known values:<br><code>JackLoad</code> &ndash; raise the jack to pick up a pallet/rack<br><code>JackUnload</code> &ndash; lower the jack to set down<br><br>Check your robot\'s "Fixed Path Navigation with Operation" config for the full list of supported operations.',
   opArgs: 'Optional JSON object passed to the operation as parameters.' +
@@ -665,7 +665,7 @@ var FIELD_TIPS = {
     '<br><br>Example: <code>{"x": 1.0, "y": 0.0, "coordinate": "robot"}</code>' +
     '<br><br>The script reads these as named parameters. Structure depends on what the script expects.',
   orderId: 'A unique identifier for this order. Can be any string, no length limit. Must not duplicate an existing active order ID.' +
-    '<br><br>Tip: use a meaningful prefix like <code>wp-</code> for WarPath-generated orders to distinguish from manual test orders.',
+    '<br><br>Tip: use a meaningful prefix like <code>sg-</code> for ShinGo-generated orders to distinguish from manual test orders.',
   vehicle: 'Optional. Force-assign this order to a specific robot by name (e.g. <code>AMB-01</code>).' +
     '<br><br>If omitted, RDS dispatches to the best available robot automatically. Use <code>GET /robotsStatus</code> to see available robot names.',
   group: 'Optional. Restrict dispatch to robots in a specific group. Groups are configured in the RDS scene.' +

@@ -1,6 +1,6 @@
 //go:build deps
 
-package warpath
+package shingocore
 
 // Force module dependencies for packages used across the project.
 import (

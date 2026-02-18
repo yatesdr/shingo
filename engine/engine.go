@@ -4,12 +4,12 @@ import (
 	"log"
 	"time"
 
-	"warpath/config"
-	"warpath/dispatch"
-	"warpath/messaging"
-	"warpath/nodestate"
-	"warpath/rds"
-	"warpath/store"
+	"shingocore/config"
+	"shingocore/dispatch"
+	"shingocore/messaging"
+	"shingocore/nodestate"
+	"shingocore/rds"
+	"shingocore/store"
 )
 
 type LogFunc func(format string, args ...any)

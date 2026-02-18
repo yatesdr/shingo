@@ -191,7 +191,7 @@ func TestDecodeEnvelope_InvalidPayload(t *testing.T) {
 }
 
 func TestNewEnvelope(t *testing.T) {
-	payload := AckReply{OrderUUID: "uuid-5", WarpathOrderID: 42, SourceNode: "STORAGE-A1"}
+	payload := AckReply{OrderUUID: "uuid-5", ShingoOrderID: 42, SourceNode: "STORAGE-A1"}
 	env := NewEnvelope("ack", "line-1", "plant-alpha", payload)
 
 	if env.MsgType != "ack" {
@@ -214,8 +214,8 @@ func TestNewEnvelope(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload type = %T, want AckReply", env.Payload)
 	}
-	if ack.WarpathOrderID != 42 {
-		t.Errorf("warpath_order_id = %d, want 42", ack.WarpathOrderID)
+	if ack.ShingoOrderID != 42 {
+		t.Errorf("shingocore_order_id = %d, want 42", ack.ShingoOrderID)
 	}
 }
 
@@ -288,9 +288,9 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 }
 
 func TestDispatchTopic(t *testing.T) {
-	topic := DispatchTopic("warpath/dispatch", "line-1")
-	if topic != "warpath/dispatch/line-1" {
-		t.Errorf("topic = %q, want %q", topic, "warpath/dispatch/line-1")
+	topic := DispatchTopic("shingocore/dispatch", "line-1")
+	if topic != "shingocore/dispatch/line-1" {
+		t.Errorf("topic = %q, want %q", topic, "shingocore/dispatch/line-1")
 	}
 }
 

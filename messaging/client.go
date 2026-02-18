@@ -10,7 +10,7 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/segmentio/kafka-go"
 
-	"warpath/config"
+	"shingocore/config"
 )
 
 type MessageHandler func(topic string, payload []byte)

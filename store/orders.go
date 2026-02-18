@@ -8,7 +8,7 @@ import (
 
 type Order struct {
 	ID            int64
-	WardropUUID   string
+	EdgeUUID   string
 	ClientID      string
 	FactoryID     string
 	OrderType     string
@@ -41,7 +41,7 @@ type OrderHistory struct {
 	CreatedAt time.Time
 }
 
-const orderSelectCols = `id, wardrop_uuid, client_id, factory_id, order_type, status, material_id, material_code, quantity, source_node_id, dest_node_id, pickup_node, delivery_node, rds_order_id, rds_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, payload_type_id, payload_id`
+const orderSelectCols = `id, edge_uuid, client_id, factory_id, order_type, status, material_id, material_code, quantity, source_node_id, dest_node_id, pickup_node, delivery_node, rds_order_id, rds_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, payload_type_id, payload_id`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
@@ -49,7 +49,7 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var createdAt, updatedAt string
 	var completedAt sql.NullString
 
-	err := row.Scan(&o.ID, &o.WardropUUID, &o.ClientID, &o.FactoryID, &o.OrderType, &o.Status,
+	err := row.Scan(&o.ID, &o.EdgeUUID, &o.ClientID, &o.FactoryID, &o.OrderType, &o.Status,
 		&materialID, &o.MaterialCode, &o.Quantity, &sourceNodeID, &destNodeID,
 		&o.PickupNode, &o.DeliveryNode, &o.RDSOrderID, &o.RDSState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &createdAt, &updatedAt, &completedAt,
@@ -111,8 +111,8 @@ func (db *DB) CreateOrder(o *Order) error {
 		pID = *o.PayloadID
 	}
 
-	result, err := db.Exec(db.Q(`INSERT INTO orders (wardrop_uuid, client_id, factory_id, order_type, status, material_id, material_code, quantity, source_node_id, dest_node_id, pickup_node, delivery_node, priority, payload_desc, payload_type_id, payload_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
-		o.WardropUUID, o.ClientID, o.FactoryID, o.OrderType, o.Status,
+	result, err := db.Exec(db.Q(`INSERT INTO orders (edge_uuid, client_id, factory_id, order_type, status, material_id, material_code, quantity, source_node_id, dest_node_id, pickup_node, delivery_node, priority, payload_desc, payload_type_id, payload_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		o.EdgeUUID, o.ClientID, o.FactoryID, o.OrderType, o.Status,
 		matID, o.MaterialCode, o.Quantity, srcID, dstID,
 		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc, ptID, pID)
 	if err != nil {
@@ -164,7 +164,7 @@ func (db *DB) GetOrder(id int64) (*Order, error) {
 }
 
 func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE wardrop_uuid=? ORDER BY id DESC LIMIT 1`, orderSelectCols)), uuid)
+	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE edge_uuid=? ORDER BY id DESC LIMIT 1`, orderSelectCols)), uuid)
 	return scanOrder(row)
 }
 

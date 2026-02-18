@@ -1,5 +1,5 @@
 # Build artifacts
-/warpath
+/shingocore
 /build/
 
 # Database
@@ -9,7 +9,7 @@
 *.db-shm
 
 # Config (may contain secrets/passwords)
-warpath.yaml
+shingocore.yaml
 
 # API reference docs
 /seer-docs/

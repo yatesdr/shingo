@@ -2,7 +2,7 @@ package messaging
 
 import "time"
 
-// Envelope is the typed message wrapper for all WarDrop <-> WarPath messages.
+// Envelope is the typed message wrapper for all ShinGo Edge <-> ShinGo Core messages.
 type Envelope struct {
 	MsgType   string    `json:"msg_type"`
 	MsgID     string    `json:"msg_id"`
@@ -12,7 +12,7 @@ type Envelope struct {
 	Payload   any       `json:"payload"`
 }
 
-// --- Inbound payloads (WarDrop -> WarPath) ---
+// --- Inbound payloads (ShinGo Edge -> ShinGo Core) ---
 
 type OrderRequest struct {
 	OrderUUID       string  `json:"order_uuid"`
@@ -42,11 +42,11 @@ type RedirectRequest struct {
 	NewDeliveryNode string `json:"new_delivery_node"`
 }
 
-// --- Outbound payloads (WarPath -> WarDrop) ---
+// --- Outbound payloads (ShinGo Core -> ShinGo Edge) ---
 
 type AckReply struct {
 	OrderUUID     string `json:"order_uuid"`
-	WarpathOrderID int64 `json:"warpath_order_id"`
+	ShingoOrderID int64 `json:"shingocore_order_id"`
 	SourceNode    string `json:"source_node"`
 }
 

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"warpath/config"
+	"shingocore/config"
 )
 
 // testDB creates a temporary SQLite database for testing.
@@ -235,7 +235,7 @@ func TestInventoryClaimUnclaim(t *testing.T) {
 	db.CreateMaterial(mat)
 
 	// Create an order to claim against
-	order := &Order{WardropUUID: "uuid-1", OrderType: "retrieve", Status: "pending", MaterialCode: "PART-A"}
+	order := &Order{EdgeUUID: "uuid-1", OrderType: "retrieve", Status: "pending", MaterialCode: "PART-A"}
 	db.CreateOrder(order)
 
 	invID, _ := db.AddInventory(node.ID, mat.ID, 1.0, false, nil, "")
@@ -289,7 +289,7 @@ func TestFindSourceFIFO(t *testing.T) {
 	}
 
 	// Claim the partial, now should find the full at S1
-	order := &Order{WardropUUID: "uuid-1", OrderType: "retrieve", Status: "pending", MaterialCode: "PART-A"}
+	order := &Order{EdgeUUID: "uuid-1", OrderType: "retrieve", Status: "pending", MaterialCode: "PART-A"}
 	db.CreateOrder(order)
 	db.ClaimInventory(source.ID, order.ID)
 
@@ -385,7 +385,7 @@ func TestOrderCRUD(t *testing.T) {
 
 	matID := int64(0)
 	o := &Order{
-		WardropUUID:  "uuid-1",
+		EdgeUUID:  "uuid-1",
 		ClientID:     "line-1",
 		FactoryID:    "plant-alpha",
 		OrderType:    "retrieve",
@@ -407,8 +407,8 @@ func TestOrderCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.WardropUUID != "uuid-1" {
-		t.Errorf("WardropUUID = %q, want %q", got.WardropUUID, "uuid-1")
+	if got.EdgeUUID != "uuid-1" {
+		t.Errorf("EdgeUUID = %q, want %q", got.EdgeUUID, "uuid-1")
 	}
 	if got.Status != "pending" {
 		t.Errorf("Status = %q, want %q", got.Status, "pending")
@@ -472,9 +472,9 @@ func TestOrderCRUD(t *testing.T) {
 func TestListOrders(t *testing.T) {
 	db := testDB(t)
 
-	db.CreateOrder(&Order{WardropUUID: "u1", Status: "pending"})
-	db.CreateOrder(&Order{WardropUUID: "u2", Status: "completed"})
-	db.CreateOrder(&Order{WardropUUID: "u3", Status: "pending"})
+	db.CreateOrder(&Order{EdgeUUID: "u1", Status: "pending"})
+	db.CreateOrder(&Order{EdgeUUID: "u2", Status: "completed"})
+	db.CreateOrder(&Order{EdgeUUID: "u3", Status: "pending"})
 
 	// All
 	all, _ := db.ListOrders("", 10)
@@ -498,9 +498,9 @@ func TestListOrders(t *testing.T) {
 func TestListDispatchedRDSOrderIDs(t *testing.T) {
 	db := testDB(t)
 
-	o1 := &Order{WardropUUID: "u1", Status: "dispatched"}
-	o2 := &Order{WardropUUID: "u2", Status: "in_transit"}
-	o3 := &Order{WardropUUID: "u3", Status: "completed"}
+	o1 := &Order{EdgeUUID: "u1", Status: "dispatched"}
+	o2 := &Order{EdgeUUID: "u2", Status: "in_transit"}
+	o3 := &Order{EdgeUUID: "u3", Status: "completed"}
 	db.CreateOrder(o1)
 	db.CreateOrder(o2)
 	db.CreateOrder(o3)

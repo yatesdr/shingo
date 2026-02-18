@@ -18,18 +18,18 @@ func NewRedisStore(client *redis.Client) *RedisStore {
 }
 
 func inventoryKey(nodeID int64) string {
-	return fmt.Sprintf("warpath:node:%d:inventory", nodeID)
+	return fmt.Sprintf("shingocore:node:%d:inventory", nodeID)
 }
 
 func metaKey(nodeID int64) string {
-	return fmt.Sprintf("warpath:node:%d:meta", nodeID)
+	return fmt.Sprintf("shingocore:node:%d:meta", nodeID)
 }
 
 func countKey(nodeID int64) string {
-	return fmt.Sprintf("warpath:node:%d:count", nodeID)
+	return fmt.Sprintf("shingocore:node:%d:count", nodeID)
 }
 
-const allNodesKey = "warpath:nodes"
+const allNodesKey = "shingocore:nodes"
 
 func (r *RedisStore) SetNodePayloads(ctx context.Context, nodeID int64, items []PayloadItem) error {
 	data, err := json.Marshal(items)

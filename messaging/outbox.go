@@ -4,7 +4,7 @@ import (
 	"log"
 	"time"
 
-	"warpath/store"
+	"shingocore/store"
 )
 
 // OutboxDrainer periodically sends pending outbox messages.

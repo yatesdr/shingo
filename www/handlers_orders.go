@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"warpath/rds"
+	"shingocore/rds"
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {

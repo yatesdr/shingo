@@ -11,7 +11,7 @@ type PollerEmitter interface {
 	EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string)
 }
 
-// OrderIDResolver maps RDS order IDs back to WarPath order IDs.
+// OrderIDResolver maps RDS order IDs back to ShinGo Core order IDs.
 type OrderIDResolver interface {
 	ResolveRDSOrderID(rdsOrderID string) (int64, error)
 }

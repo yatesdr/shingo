@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"warpath/engine"
-	"warpath/store"
+	"shingocore/engine"
+	"shingocore/store"
 )
 
 func (h *Handlers) handleCorrections(w http.ResponseWriter, r *http.Request) {

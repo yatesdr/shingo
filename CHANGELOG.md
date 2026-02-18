@@ -3,7 +3,7 @@
 ## [v0.0.3] - 2026-02-18
 
 ### Breaking Changes
-- Wire protocol: `material_code` renamed to `payload_type_code` in `order_request` messages. WarDrop clients must update in lockstep.
+- Wire protocol: `material_code` renamed to `payload_type_code` in `order_request` messages. ShinGo Edge clients must update in lockstep.
 - SSE event `inventory-update` renamed to `payload-update`.
 - API endpoint `/api/nodes/inventory` now returns payload objects instead of inventory items.
 
@@ -32,7 +32,7 @@
 ## [v0.0.1] - 2026-02-17
 
 ### Added
-- Initial release: WarPath central dispatch server.
+- Initial release: ShinGo Core central dispatch server.
 - Dual-database support (SQLite for dev, PostgreSQL for prod).
 - SEER RDS Core HTTP client with order status poller.
 - MQTT/Kafka messaging with typed envelope protocol.

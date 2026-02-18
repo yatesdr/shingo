@@ -13,24 +13,24 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"warpath/config"
-	"warpath/engine"
-	"warpath/messaging"
-	"warpath/nodestate"
-	"warpath/rds"
-	"warpath/store"
-	"warpath/www"
+	"shingocore/config"
+	"shingocore/engine"
+	"shingocore/messaging"
+	"shingocore/nodestate"
+	"shingocore/rds"
+	"shingocore/store"
+	"shingocore/www"
 )
 
 var Version = "dev"
 
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
-	configPath := flag.String("config", "warpath.yaml", "path to config file")
+	configPath := flag.String("config", "shingocore.yaml", "path to config file")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("warpath", Version)
+		fmt.Println("shingocore", Version)
 		return
 	}
 
@@ -45,7 +45,7 @@ func main() {
 		log.Fatalf("open database: %v", err)
 	}
 	defer db.Close()
-	log.Printf("warpath: database open (%s)", cfg.Database.Driver)
+	log.Printf("shingocore: database open (%s)", cfg.Database.Driver)
 
 	// Redis
 	redisClient := redis.NewClient(&redis.Options{
@@ -55,9 +55,9 @@ func main() {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Printf("warpath: redis not available (%v), running without cache", err)
+		log.Printf("shingocore: redis not available (%v), running without cache", err)
 	} else {
-		log.Printf("warpath: redis connected (%s)", cfg.Redis.Address)
+		log.Printf("shingocore: redis connected (%s)", cfg.Redis.Address)
 	}
 	cancel()
 	defer redisClient.Close()
@@ -70,17 +70,17 @@ func main() {
 	// RDS client
 	rdsClient := rds.NewClient(cfg.RDS.BaseURL, cfg.RDS.Timeout)
 	if ping, err := rdsClient.Ping(); err == nil {
-		log.Printf("warpath: RDS Core connected (%s %s)", ping.Product, ping.Version)
+		log.Printf("shingocore: RDS Core connected (%s %s)", ping.Product, ping.Version)
 	} else {
-		log.Printf("warpath: RDS Core not available (%v)", err)
+		log.Printf("shingocore: RDS Core not available (%v)", err)
 	}
 
 	// Messaging client
 	msgClient := messaging.NewClient(&cfg.Messaging)
 	if err := msgClient.Connect(); err != nil {
-		log.Printf("warpath: messaging connect failed (%v)", err)
+		log.Printf("shingocore: messaging connect failed (%v)", err)
 	} else {
-		log.Printf("warpath: messaging connected (%s)", cfg.Messaging.Backend)
+		log.Printf("shingocore: messaging connected (%s)", cfg.Messaging.Backend)
 	}
 	defer msgClient.Close()
 
@@ -96,13 +96,13 @@ func main() {
 	eng.Start()
 	defer eng.Stop()
 
-	// Messaging consumer (inbound from WarDrop)
+	// Messaging consumer (inbound from ShinGo Edge)
 	consumer := messaging.NewConsumer(msgClient, cfg.Messaging.OrdersTopic, eng.Dispatcher())
 	if err := consumer.Start(); err != nil {
-		log.Printf("warpath: consumer start failed: %v", err)
+		log.Printf("shingocore: consumer start failed: %v", err)
 	}
 
-	// Outbox drainer (outbound to WarDrop)
+	// Outbox drainer (outbound to ShinGo Edge)
 	drainer := messaging.NewOutboxDrainer(db, msgClient, cfg.Messaging.OutboxDrainInterval)
 	drainer.Start()
 	defer drainer.Stop()
@@ -117,25 +117,25 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("warpath: web server listening on %s", addr)
+		log.Printf("shingocore: web server listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("web server: %v", err)
 		}
 	}()
 
-	log.Printf("warpath: ready")
+	log.Printf("shingocore: ready")
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	log.Printf("warpath: shutting down...")
+	log.Printf("shingocore: shutting down...")
 	stopWeb()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	srv.Shutdown(shutdownCtx)
 
-	log.Printf("warpath: stopped")
+	log.Printf("shingocore: stopped")
 }

@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"warpath/config"
-	"warpath/messaging"
-	"warpath/rds"
-	"warpath/store"
+	"shingocore/config"
+	"shingocore/messaging"
+	"shingocore/rds"
+	"shingocore/store"
 )
 
 // --- Mock emitter ---
@@ -97,7 +97,7 @@ func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNod
 func newTestDispatcher(t *testing.T, db *store.DB, rdsClient *rds.Client) (*Dispatcher, *mockEmitter) {
 	t.Helper()
 	emitter := &mockEmitter{}
-	d := NewDispatcher(db, rdsClient, emitter, "plant-alpha", "warpath/dispatch")
+	d := NewDispatcher(db, rdsClient, emitter, "plant-alpha", "shingocore/dispatch")
 	return d, emitter
 }
 
@@ -258,7 +258,7 @@ func TestHandleOrderRequest_UnknownPayloadType(t *testing.T) {
 func TestHandleOrderCancel(t *testing.T) {
 	db := testDB(t)
 
-	order := &store.Order{WardropUUID: "uuid-cancel", ClientID: "line-1", Status: StatusPending}
+	order := &store.Order{EdgeUUID: "uuid-cancel", ClientID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, rds.NewClient("http://localhost:1", 1))
@@ -286,7 +286,7 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db := testDB(t)
 	storageNode, _, pt := setupTestData(t, db)
 
-	order := &store.Order{WardropUUID: "uuid-unclaim", ClientID: "line-1", Status: StatusDispatched}
+	order := &store.Order{EdgeUUID: "uuid-unclaim", ClientID: "line-1", Status: StatusDispatched}
 	db.CreateOrder(order)
 
 	p := &store.Payload{PayloadTypeID: pt.ID, NodeID: &storageNode.ID, Status: "available"}
@@ -308,7 +308,7 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 func TestHandleDeliveryReceipt(t *testing.T) {
 	db := testDB(t)
 
-	order := &store.Order{WardropUUID: "uuid-receipt", ClientID: "line-1", Status: StatusDelivered}
+	order := &store.Order{EdgeUUID: "uuid-receipt", ClientID: "line-1", Status: StatusDelivered}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, rds.NewClient("http://localhost:1", 1))

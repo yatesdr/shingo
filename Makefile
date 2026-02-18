@@ -1,7 +1,7 @@
-# WarPath Makefile
+# ShinGo Core Makefile
 # Build for multiple platforms
 
-BINARY_NAME=warpath
+BINARY_NAME=shingocore
 VERSION?=0.1.0
 BUILD_DIR=build
 
@@ -15,11 +15,11 @@ all: clean linux windows macos
 
 # Build for current platform
 build:
-	go build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/warpath
+	go build $(LDFLAGS) -o $(BINARY_NAME) ./cmd/shingocore
 
 # Run the application
 run:
-	go run ./cmd/warpath
+	go run ./cmd/shingocore
 
 # Run tests
 test:
@@ -30,29 +30,29 @@ linux: linux-amd64 linux-arm64
 
 linux-amd64:
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/warpath
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/shingocore
 
 linux-arm64:
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/warpath
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/shingocore
 
 # Windows builds
 windows: windows-amd64
 
 windows-amd64:
 	@mkdir -p $(BUILD_DIR)
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/warpath
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/shingocore
 
 # macOS builds
 macos: macos-amd64 macos-arm64
 
 macos-amd64:
 	@mkdir -p $(BUILD_DIR)
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/warpath
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/shingocore
 
 macos-arm64:
 	@mkdir -p $(BUILD_DIR)
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/warpath
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/shingocore
 
 # Clean build artifacts
 clean:
@@ -61,7 +61,7 @@ clean:
 
 # Install to GOPATH/bin
 install:
-	go install $(LDFLAGS) ./cmd/warpath
+	go install $(LDFLAGS) ./cmd/shingocore
 
 # Update dependencies
 deps:
@@ -78,7 +78,7 @@ vet:
 
 # Show help
 help:
-	@echo "WarPath Build Targets:"
+	@echo "ShinGo Core Build Targets:"
 	@echo "  make build     - Build for current platform"
 	@echo "  make run       - Run the application"
 	@echo "  make all       - Build for all platforms"

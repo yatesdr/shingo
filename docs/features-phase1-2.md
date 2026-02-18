@@ -1,4 +1,4 @@
-# WarPath Features — Phases 1 & 2
+# ShinGo Core Features — Phases 1 & 2
 
 Quick reference for the 8 features added in this release. Each section covers routes, data flow, and debugging tips.
 
@@ -90,20 +90,20 @@ Quick reference for the 8 features added in this release. Each section covers ro
 
 **Route:** `GET /api/bins/status` (public JSON)
 
-**Flow:** Fetches `/binDetails` from RDS + all WarPath nodes → builds side-by-side comparison → flags discrepancies.
+**Flow:** Fetches `/binDetails` from RDS + all ShinGo nodes → builds side-by-side comparison → flags discrepancies.
 
 **Response format:**
 ```json
 [
-  {"bin_id": "BIN-01", "node_name": "BIN-01", "rds_filled": true, "in_warpath": true, "discrepancy": ""},
-  {"bin_id": "BIN-99", "node_name": "", "rds_filled": false, "in_warpath": false, "discrepancy": "rds_only"},
-  {"bin_id": "OLD-BIN", "node_name": "OLD-BIN", "rds_filled": null, "in_warpath": true, "discrepancy": "warpath_only"}
+  {"bin_id": "BIN-01", "node_name": "BIN-01", "rds_filled": true, "in_shingo": true, "discrepancy": ""},
+  {"bin_id": "BIN-99", "node_name": "", "rds_filled": false, "in_shingo": false, "discrepancy": "rds_only"},
+  {"bin_id": "OLD-BIN", "node_name": "OLD-BIN", "rds_filled": null, "in_shingo": true, "discrepancy": "shingo_only"}
 ]
 ```
 
-**Discrepancy values:** `""` (matched), `"rds_only"` (bin in RDS but no WarPath node), `"warpath_only"` (WarPath node with `rds_location` not found in RDS)
+**Discrepancy values:** `""` (matched), `"rds_only"` (bin in RDS but no ShinGo node), `"shingo_only"` (ShinGo node with `rds_location` not found in RDS)
 
-**UI:** "Check RDS Bins" button on the nodes page opens a modal with color-coded table (yellow = RDS only, red = WarPath only).
+**UI:** "Check RDS Bins" button on the nodes page opens a modal with color-coded table (yellow = RDS only, red = ShinGo only).
 
 **Files:** `www/handlers_nodes.go:apiBinOccupancy`, `www/templates/nodes.html` (bin modal + JS at bottom)
 
@@ -146,7 +146,7 @@ Quick reference for the 8 features added in this release. Each section covers ro
 
 **Route:** `POST /nodes/sync-scene` (auth required)
 
-**Flow:** Calls `rds.GetScene()` → builds a map of `point → area.Name` from `scene.Areas[].Points[]` → for each WarPath node that has `rds_location` set but `zone` empty, sets `zone` to the matching area name.
+**Flow:** Calls `rds.GetScene()` → builds a map of `point → area.Name` from `scene.Areas[].Points[]` → for each ShinGo node that has `rds_location` set but `zone` empty, sets `zone` to the matching area name.
 
 **RDS type fix:** `Scene.Areas` changed from `[]any` to `[]Area` where `Area{Name string, Points []string}`.
 

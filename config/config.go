@@ -80,12 +80,12 @@ func Defaults() *Config {
 		FactoryID: "plant-alpha",
 		Database: DatabaseConfig{
 			Driver: "sqlite",
-			SQLite: SQLiteConfig{Path: "warpath.db"},
+			SQLite: SQLiteConfig{Path: "shingocore.db"},
 			Postgres: PostgresConfig{
 				Host:     "localhost",
 				Port:     5432,
-				Database: "warpath",
-				User:     "warpath",
+				Database: "shingocore",
+				User:     "shingocore",
 				Password: "",
 				SSLMode:  "disable",
 			},
@@ -110,13 +110,13 @@ func Defaults() *Config {
 			MQTT: MQTTConfig{
 				Broker:   "localhost",
 				Port:     1883,
-				ClientID: "warpath",
+				ClientID: "shingocore",
 			},
 			Kafka: KafkaConfig{
 				Brokers: []string{},
 			},
-			OrdersTopic:         "warpath/orders",
-			DispatchTopicPrefix: "warpath/dispatch",
+			OrdersTopic:         "shingocore/orders",
+			DispatchTopicPrefix: "shingocore/dispatch",
 			OutboxDrainInterval: 5 * time.Second,
 		},
 	}

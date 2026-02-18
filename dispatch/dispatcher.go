@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"warpath/messaging"
-	"warpath/rds"
-	"warpath/store"
+	"shingocore/messaging"
+	"shingocore/rds"
+	"shingocore/store"
 )
 
 type Dispatcher struct {
@@ -29,11 +29,11 @@ func NewDispatcher(db *store.DB, rdsClient *rds.Client, emitter Emitter, factory
 	}
 }
 
-// HandleOrderRequest processes a new order from WarDrop.
+// HandleOrderRequest processes a new order from ShinGo Edge.
 func (d *Dispatcher) HandleOrderRequest(env *messaging.Envelope, req messaging.OrderRequest) {
 	// Create order record
 	order := &store.Order{
-		WardropUUID:  req.OrderUUID,
+		EdgeUUID:  req.OrderUUID,
 		ClientID:     env.ClientID,
 		FactoryID:    env.FactoryID,
 		OrderType:    req.OrderType,
@@ -72,7 +72,7 @@ func (d *Dispatcher) HandleOrderRequest(env *messaging.Envelope, req messaging.O
 	}
 	d.db.UpdateOrderStatus(order.ID, StatusPending, "order received")
 
-	d.emitter.EmitOrderReceived(order.ID, order.WardropUUID, env.ClientID, req.OrderType, req.PayloadTypeCode, req.DeliveryNode)
+	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, env.ClientID, req.OrderType, req.PayloadTypeCode, req.DeliveryNode)
 
 	switch req.OrderType {
 	case OrderTypeRetrieve:
@@ -210,11 +210,11 @@ func (d *Dispatcher) handleStore(order *store.Order, clientID string) {
 }
 
 func (d *Dispatcher) dispatchToRDS(order *store.Order, clientID string, sourceNode, destNode *store.Node) {
-	rdsOrderID := fmt.Sprintf("wp-%d-%s", order.ID, uuid.New().String()[:8])
+	rdsOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
 
 	req := &rds.SetJoinOrderRequest{
 		ID:         rdsOrderID,
-		ExternalID: order.WardropUUID,
+		ExternalID: order.EdgeUUID,
 		FromLoc:    sourceNode.RDSLocation,
 		ToLoc:      destNode.RDSLocation,
 		Priority:   order.Priority,
@@ -231,11 +231,11 @@ func (d *Dispatcher) dispatchToRDS(order *store.Order, clientID string, sourceNo
 
 	d.emitter.EmitOrderDispatched(order.ID, rdsOrderID, sourceNode.Name, destNode.Name)
 
-	// Send ack to WarDrop
-	d.sendAck(clientID, order.WardropUUID, order.ID, sourceNode.Name)
+	// Send ack to ShinGo Edge
+	d.sendAck(clientID, order.EdgeUUID, order.ID, sourceNode.Name)
 }
 
-// HandleOrderCancel processes a cancellation request from WarDrop.
+// HandleOrderCancel processes a cancellation request from ShinGo Edge.
 func (d *Dispatcher) HandleOrderCancel(env *messaging.Envelope, req messaging.OrderCancel) {
 	order, err := d.db.GetOrderByUUID(req.OrderUUID)
 	if err != nil {
@@ -258,7 +258,7 @@ func (d *Dispatcher) HandleOrderCancel(env *messaging.Envelope, req messaging.Or
 
 	d.db.UpdateOrderStatus(order.ID, StatusCancelled, req.Reason)
 
-	d.emitter.EmitOrderCancelled(order.ID, order.WardropUUID, env.ClientID, req.Reason)
+	d.emitter.EmitOrderCancelled(order.ID, order.EdgeUUID, env.ClientID, req.Reason)
 
 	// Send cancelled reply
 	reply := messaging.NewEnvelope("cancelled", env.ClientID, d.factoryID, messaging.CancelledReply{
@@ -270,7 +270,7 @@ func (d *Dispatcher) HandleOrderCancel(env *messaging.Envelope, req messaging.Or
 	d.db.EnqueueOutbox(topic, data, "cancelled", env.ClientID)
 }
 
-// HandleDeliveryReceipt processes a delivery confirmation from WarDrop.
+// HandleDeliveryReceipt processes a delivery confirmation from ShinGo Edge.
 func (d *Dispatcher) HandleDeliveryReceipt(env *messaging.Envelope, req messaging.DeliveryReceipt) {
 	order, err := d.db.GetOrderByUUID(req.OrderUUID)
 	if err != nil {
@@ -282,10 +282,10 @@ func (d *Dispatcher) HandleDeliveryReceipt(env *messaging.Envelope, req messagin
 
 	// Transition confirmed -> completed
 	d.db.CompleteOrder(order.ID)
-	d.emitter.EmitOrderCompleted(order.ID, order.WardropUUID, env.ClientID)
+	d.emitter.EmitOrderCompleted(order.ID, order.EdgeUUID, env.ClientID)
 }
 
-// HandleRedirectRequest processes a redirect request from WarDrop.
+// HandleRedirectRequest processes a redirect request from ShinGo Edge.
 func (d *Dispatcher) HandleRedirectRequest(env *messaging.Envelope, req messaging.RedirectRequest) {
 	order, err := d.db.GetOrderByUUID(req.OrderUUID)
 	if err != nil {
@@ -332,8 +332,8 @@ func (d *Dispatcher) HandleRedirectRequest(env *messaging.Envelope, req messagin
 func (d *Dispatcher) failOrder(order *store.Order, clientID, errorCode, detail string) {
 	d.db.UpdateOrderStatus(order.ID, StatusFailed, detail)
 	d.unclaimOrderPayloads(order.ID)
-	d.emitter.EmitOrderFailed(order.ID, order.WardropUUID, clientID, errorCode, detail)
-	d.sendError(clientID, order.WardropUUID, errorCode, detail)
+	d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, clientID, errorCode, detail)
+	d.sendError(clientID, order.EdgeUUID, errorCode, detail)
 }
 
 func (d *Dispatcher) unclaimOrderPayloads(orderID int64) {
@@ -354,10 +354,10 @@ func (d *Dispatcher) unclaimOrderPayloads(orderID int64) {
 	}
 }
 
-func (d *Dispatcher) sendAck(clientID, orderUUID string, warpathOrderID int64, sourceNode string) {
+func (d *Dispatcher) sendAck(clientID, orderUUID string, shingoOrderID int64, sourceNode string) {
 	reply := messaging.NewEnvelope("ack", clientID, d.factoryID, messaging.AckReply{
 		OrderUUID:      orderUUID,
-		WarpathOrderID: warpathOrderID,
+		ShingoOrderID: shingoOrderID,
 		SourceNode:     sourceNode,
 	})
 	data, _ := reply.Encode()

@@ -20,7 +20,7 @@ const (
 
 type OrderReceivedEvent struct {
 	OrderID         int64
-	WardropUUID     string
+	EdgeUUID     string
 	ClientID        string
 	OrderType       string
 	PayloadTypeCode string
@@ -45,13 +45,13 @@ type OrderStatusChangedEvent struct {
 
 type OrderCompletedEvent struct {
 	OrderID     int64
-	WardropUUID string
+	EdgeUUID string
 	ClientID    string
 }
 
 type OrderFailedEvent struct {
 	OrderID     int64
-	WardropUUID string
+	EdgeUUID string
 	ClientID    string
 	ErrorCode   string
 	Detail      string
@@ -59,7 +59,7 @@ type OrderFailedEvent struct {
 
 type OrderCancelledEvent struct {
 	OrderID     int64
-	WardropUUID string
+	EdgeUUID string
 	ClientID    string
 	Reason      string
 }

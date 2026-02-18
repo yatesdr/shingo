@@ -6,18 +6,18 @@ import (
 	"github.com/gorilla/sessions"
 	"golang.org/x/crypto/bcrypt"
 
-	"warpath/store"
+	"shingocore/store"
 )
 
-const sessionName = "warpath-session"
+const sessionName = "shingocore-session"
 
 func newSessionStore(secret string) *sessions.CookieStore {
 	if secret == "" {
-		secret = "warpath-default-secret-change-me"
+		secret = "shingocore-default-secret-change-me"
 	}
 	s := sessions.NewCookieStore([]byte(secret))
 	s.Options.HttpOnly = true
-	s.Options.Secure = false // WarPath runs on plain HTTP (factory LAN)
+	s.Options.Secure = false // ShinGo Core runs on plain HTTP (factory LAN)
 	s.Options.SameSite = http.SameSiteLaxMode
 	return s
 }

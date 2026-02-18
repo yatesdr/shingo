@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"warpath/rds"
+	"shingocore/rds"
 )
 
 func (h *Handlers) handleRobots(w http.ResponseWriter, r *http.Request) {
