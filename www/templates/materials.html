@@ -1,0 +1,64 @@
+{{define "content"}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Materials</h1>
+  </div>
+
+  <div class="card mb-2">
+    <h3>Add Material</h3>
+    <form method="POST" action="/materials/create">
+      <div class="grid grid-3">
+        <div class="form-group">
+          <label>Code</label>
+          <input type="text" name="code" required placeholder="e.g. PART-A">
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" name="description" placeholder="Steel bracket assembly">
+        </div>
+        <div class="form-group">
+          <label>Unit</label>
+          <input type="text" name="unit" value="ea" placeholder="ea, kg, pcs">
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Create Material</button>
+    </form>
+  </div>
+
+  <div class="card">
+    {{if .Materials}}
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Code</th>
+          <th>Description</th>
+          <th>Unit</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Materials}}
+        <tr>
+          <td>{{.ID}}</td>
+          <td><strong>{{.Code}}</strong></td>
+          <td>{{.Description}}</td>
+          <td>{{.Unit}}</td>
+          <td>{{formatTime .CreatedAt}}</td>
+          <td>
+            <form method="POST" action="/materials/delete" style="display:inline" onsubmit="return confirm('Delete this material?')">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="text-muted">No materials defined yet.</p>
+    {{end}}
+  </div>
+</div>
+{{end}}

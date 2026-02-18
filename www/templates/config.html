@@ -1,0 +1,132 @@
+{{define "content"}}
+<div>
+  <h1 class="mb-2">Configuration</h1>
+
+  {{if .Saved}}
+  <div class="alert alert-ok mb-2">Settings saved ({{.Saved}}).</div>
+  {{end}}
+
+  <!-- General -->
+  <div class="accordion mb-1">
+    <button class="accordion-toggle" onclick="toggleAccordion(this)">General</button>
+    <div class="accordion-body">
+      <form method="POST" action="/config/save">
+        <input type="hidden" name="section" value="general">
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label>Factory ID</label>
+            <input type="text" name="factory_id" value="{{.Config.FactoryID}}">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- RDS -->
+  <div class="accordion mb-1">
+    <button class="accordion-toggle" onclick="toggleAccordion(this)">SEER RDS</button>
+    <div class="accordion-body">
+      <form method="POST" action="/config/save">
+        <input type="hidden" name="section" value="rds">
+        <div class="grid grid-3">
+          <div class="form-group">
+            <label>Base URL</label>
+            <input type="text" name="rds_base_url" value="{{.Config.RDS.BaseURL}}" placeholder="http://192.168.1.100:8088">
+          </div>
+          <div class="form-group">
+            <label>Poll Interval</label>
+            <input type="text" name="rds_poll_interval" value="{{.Config.RDS.PollInterval}}" placeholder="5s">
+          </div>
+          <div class="form-group">
+            <label>Timeout</label>
+            <input type="text" name="rds_timeout" value="{{.Config.RDS.Timeout}}" placeholder="10s">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Messaging -->
+  <div class="accordion mb-1">
+    <button class="accordion-toggle" onclick="toggleAccordion(this)">Messaging</button>
+    <div class="accordion-body">
+      <form method="POST" action="/config/save">
+        <input type="hidden" name="section" value="messaging">
+        <div class="form-group">
+          <label>Backend</label>
+          <select name="msg_backend">
+            <option value="mqtt"{{if eq .Config.Messaging.Backend "mqtt"}} selected{{end}}>MQTT</option>
+            <option value="kafka"{{if eq .Config.Messaging.Backend "kafka"}} selected{{end}}>Kafka</option>
+          </select>
+        </div>
+        <h4 class="mb-1" style="margin-top:0.75rem;">MQTT</h4>
+        <div class="grid grid-3">
+          <div class="form-group">
+            <label>Broker</label>
+            <input type="text" name="mqtt_broker" value="{{.Config.Messaging.MQTT.Broker}}">
+          </div>
+          <div class="form-group">
+            <label>Port</label>
+            <input type="number" name="mqtt_port" value="{{.Config.Messaging.MQTT.Port}}">
+          </div>
+          <div class="form-group">
+            <label>Client ID</label>
+            <input type="text" name="mqtt_client_id" value="{{.Config.Messaging.MQTT.ClientID}}">
+          </div>
+        </div>
+        <h4 class="mb-1" style="margin-top:0.75rem;">Kafka</h4>
+        <div class="form-group">
+          <label>Brokers (comma-separated)</label>
+          <input type="text" name="kafka_brokers" value="{{range $i, $b := .Config.Messaging.Kafka.Brokers}}{{if $i}}, {{end}}{{$b}}{{end}}" placeholder="broker1:9092, broker2:9092">
+        </div>
+        <h4 class="mb-1" style="margin-top:0.75rem;">Topics</h4>
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label>Orders Topic</label>
+            <input type="text" name="orders_topic" value="{{.Config.Messaging.OrdersTopic}}">
+          </div>
+          <div class="form-group">
+            <label>Dispatch Topic Prefix</label>
+            <input type="text" name="dispatch_topic_prefix" value="{{.Config.Messaging.DispatchTopicPrefix}}">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Redis -->
+  <div class="accordion mb-1">
+    <button class="accordion-toggle" onclick="toggleAccordion(this)">Redis</button>
+    <div class="accordion-body">
+      <form method="POST" action="/config/save">
+        <input type="hidden" name="section" value="redis">
+        <div class="grid grid-3">
+          <div class="form-group">
+            <label>Address</label>
+            <input type="text" name="redis_address" value="{{.Config.Redis.Address}}" placeholder="localhost:6379">
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" name="redis_password" value="{{.Config.Redis.Password}}">
+          </div>
+          <div class="form-group">
+            <label>DB</label>
+            <input type="number" name="redis_db" value="{{.Config.Redis.DB}}">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Save</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleAccordion(btn) {
+  var item = btn.parentElement;
+  item.classList.toggle('open');
+}
+</script>
+{{end}}

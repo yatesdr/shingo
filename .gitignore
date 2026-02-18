@@ -1,0 +1,30 @@
+# Build artifacts
+/warpath
+/build/
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Config (may contain secrets/passwords)
+warpath.yaml
+
+# API reference docs
+/seer-docs/
+
+# Environment
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

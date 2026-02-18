@@ -1,0 +1,48 @@
+{{define "content"}}
+<div data-sse="nodestate">
+  <h1 class="mb-2">Node State</h1>
+
+  {{if .Nodes}}
+  <div class="grid grid-2">
+    {{range .Nodes}}
+    {{$state := index $.States .ID}}
+    <div class="card">
+      <div class="flex flex-between mb-1">
+        <h3>{{.Name}}</h3>
+        <span class="text-muted">{{.NodeType}} | {{.Zone}}</span>
+      </div>
+      <div class="mb-1 text-muted" style="font-size:0.85rem">
+        RDS: {{.RDSLocation}} | Capacity: {{if $state}}{{$state.ItemCount}}{{else}}0{{end}}/{{.Capacity}}
+        {{if .Enabled}}<span class="health health-ok"></span>{{else}}<span class="health health-fail"></span>{{end}}
+      </div>
+      {{if $state}}
+        {{if $state.Items}}
+        <table>
+          <thead><tr><th>Material</th><th>Qty</th><th>Partial</th><th>Since</th></tr></thead>
+          <tbody>
+            {{range $state.Items}}
+            <tr>
+              <td>{{.MaterialCode}}</td>
+              <td>{{.Quantity}}</td>
+              <td>{{if .IsPartial}}Yes{{else}}-{{end}}</td>
+              <td>{{formatTime .DeliveredAt}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <p class="text-muted">Empty</p>
+        {{end}}
+      {{else}}
+      <p class="text-muted">No state data</p>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="card">
+    <p class="text-muted">No nodes configured. <a href="/nodes">Add nodes</a> first.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}

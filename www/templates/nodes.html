@@ -1,0 +1,262 @@
+{{define "content"}}
+<div data-sse="nodes">
+  <div class="flex flex-between mb-2">
+    <h1>Nodes</h1>
+    {{if .Authenticated}}<button class="btn btn-primary" onclick="openNodeModal(null)">+ Add Node</button>{{end}}
+  </div>
+
+  <div class="filter-bar">
+    <input type="text" id="node-search" placeholder="Filter by name or RDS..." oninput="filterNodes()">
+    <select id="node-type-filter" onchange="filterNodes()">
+      <option value="">All Types</option>
+      <option value="storage">Storage</option>
+      <option value="line_side">Line Side</option>
+      <option value="staging">Staging</option>
+      <option value="charging">Charging</option>
+    </select>
+    <select id="node-zone-filter" onchange="filterNodes()">
+      <option value="">All Zones</option>
+      {{range .Zones}}<option value="{{.}}">{{.}}</option>{{end}}
+    </select>
+    <span class="text-muted" style="font-size:0.8rem" id="node-count">{{len .Nodes}} nodes</span>
+  </div>
+
+  {{if .Nodes}}
+  <div class="tile-grid" id="tile-grid">
+    {{range .Nodes}}
+    {{$count := index $.Counts .ID}}
+    <div class="node-tile{{if not .Enabled}} tile-disabled{{end}}"
+         style="{{nodeColor $count .Capacity}}"
+         data-id="{{.ID}}"
+         data-name="{{.Name}}"
+         data-rds="{{.RDSLocation}}"
+         data-type="{{.NodeType}}"
+         data-zone="{{.Zone}}"
+         data-cap="{{.Capacity}}"
+         data-enabled="{{.Enabled}}"
+         data-count="{{$count}}"
+         onclick="openNodeModal(this)"
+         title="{{.Name}} ({{$count}}/{{.Capacity}})">
+      <span class="tile-rds">{{if .RDSLocation}}{{.RDSLocation}}{{else}}{{.Name}}{{end}}</span>
+      {{if not .Enabled}}<span class="tile-off">OFF</span>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="card">
+    <p class="text-muted">No nodes configured.{{if .Authenticated}} Click "+ Add Node" to create one.{{else}} <a href="/login">Login</a> to add nodes.{{end}}</p>
+  </div>
+  {{end}}
+</div>
+
+<!-- Node Detail Modal -->
+<div id="node-modal" class="modal-overlay" onclick="if(event.target===this)closeNodeModal()">
+  <div class="modal">
+    <div class="modal-header flex flex-between">
+      <h2 id="modal-title">Node</h2>
+      <button class="modal-close" onclick="closeNodeModal()">&times;</button>
+    </div>
+
+    <!-- Inventory section -->
+    <div id="modal-inventory" style="display:none" class="mb-2">
+      <div class="flex flex-between mb-1">
+        <strong style="font-size:0.85rem">Inventory</strong>
+        <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> / <span id="inv-cap">0</span></span>
+      </div>
+      <div id="inv-list"></div>
+    </div>
+
+    {{if .Authenticated}}
+    <form id="node-form" method="POST">
+      <input type="hidden" name="id" id="nf-id">
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" name="name" id="nf-name" required>
+        </div>
+        <div class="form-group">
+          <label>RDS Location</label>
+          <input type="text" name="rds_location" id="nf-rds">
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select name="node_type" id="nf-type">
+            <option value="storage">Storage</option>
+            <option value="line_side">Line Side</option>
+            <option value="staging">Staging</option>
+            <option value="charging">Charging</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Zone</label>
+          <input type="text" name="zone" id="nf-zone">
+        </div>
+        <div class="form-group">
+          <label>Capacity</label>
+          <input type="number" name="capacity" id="nf-cap" value="10">
+        </div>
+        <div class="form-group">
+          <label>&nbsp;</label>
+          <label><input type="checkbox" name="enabled" id="nf-enabled" checked> Enabled</label>
+        </div>
+      </div>
+      <div class="flex flex-between">
+        <div>
+          <button type="submit" class="btn btn-primary" id="modal-submit">Create Node</button>
+          <button type="button" class="btn" onclick="closeNodeModal()" style="margin-left:0.5rem">Cancel</button>
+        </div>
+        <div id="modal-delete" style="display:none">
+          <button type="button" class="btn btn-danger btn-sm" onclick="deleteNode()">Delete</button>
+        </div>
+      </div>
+    </form>
+    <form id="delete-form" method="POST" action="/nodes/delete" style="display:none">
+      <input type="hidden" name="id" id="df-id">
+    </form>
+    {{else}}
+    <!-- Read-only detail for unauthenticated users -->
+    <div id="node-detail-ro">
+      <div class="grid grid-2" style="font-size:0.85rem">
+        <div><strong>Name:</strong> <span id="ro-name"></span></div>
+        <div><strong>RDS:</strong> <span id="ro-rds"></span></div>
+        <div><strong>Type:</strong> <span id="ro-type"></span></div>
+        <div><strong>Zone:</strong> <span id="ro-zone"></span></div>
+        <div><strong>Capacity:</strong> <span id="ro-cap"></span></div>
+        <div><strong>Enabled:</strong> <span id="ro-enabled"></span></div>
+      </div>
+    </div>
+    {{end}}
+  </div>
+</div>
+
+<script>
+var isAuth = {{if .Authenticated}}true{{else}}false{{end}};
+
+function filterNodes() {
+  var q = document.getElementById('node-search').value.toLowerCase();
+  var t = document.getElementById('node-type-filter').value;
+  var z = document.getElementById('node-zone-filter').value;
+  var tiles = document.querySelectorAll('.node-tile');
+  var shown = 0;
+  tiles.forEach(function(tile) {
+    var matchName = !q || tile.dataset.name.toLowerCase().indexOf(q) >= 0 || tile.dataset.rds.toLowerCase().indexOf(q) >= 0;
+    var matchType = !t || tile.dataset.type === t;
+    var matchZone = !z || tile.dataset.zone === z;
+    var vis = matchName && matchType && matchZone;
+    tile.style.display = vis ? '' : 'none';
+    if (vis) shown++;
+  });
+  document.getElementById('node-count').textContent = shown + ' nodes';
+}
+
+function openNodeModal(el) {
+  var m = document.getElementById('node-modal');
+  var inv = document.getElementById('modal-inventory');
+
+  if (el && el.dataset) {
+    var id = el.dataset.id;
+    var name = el.dataset.name;
+    var rds = el.dataset.rds;
+    var type = el.dataset.type;
+    var zone = el.dataset.zone;
+    var cap = el.dataset.cap;
+    var enabled = el.dataset.enabled === 'true';
+    var count = el.dataset.count;
+
+    document.getElementById('modal-title').textContent = rds || name;
+    inv.style.display = '';
+    document.getElementById('inv-count').textContent = count;
+    document.getElementById('inv-cap').textContent = cap;
+    loadInventory(id);
+
+    if (isAuth) {
+      var f = document.getElementById('node-form');
+      f.action = '/nodes/update';
+      document.getElementById('nf-id').value = id;
+      document.getElementById('nf-name').value = name;
+      document.getElementById('nf-rds').value = rds;
+      document.getElementById('nf-type').value = type;
+      document.getElementById('nf-zone').value = zone;
+      document.getElementById('nf-cap').value = cap;
+      document.getElementById('nf-enabled').checked = enabled;
+      document.getElementById('modal-submit').textContent = 'Save Changes';
+      document.getElementById('modal-delete').style.display = '';
+      document.getElementById('df-id').value = id;
+    } else {
+      document.getElementById('ro-name').textContent = name;
+      document.getElementById('ro-rds').textContent = rds;
+      document.getElementById('ro-type').textContent = type;
+      document.getElementById('ro-zone').textContent = zone;
+      document.getElementById('ro-cap').textContent = cap;
+      document.getElementById('ro-enabled').textContent = enabled ? 'Yes' : 'No';
+    }
+  } else {
+    // Create mode (auth only)
+    document.getElementById('modal-title').textContent = 'Add Node';
+    inv.style.display = 'none';
+    document.getElementById('inv-list').innerHTML = '';
+    var f = document.getElementById('node-form');
+    f.action = '/nodes/create';
+    f.reset();
+    document.getElementById('nf-id').value = '';
+    document.getElementById('nf-enabled').checked = true;
+    document.getElementById('nf-cap').value = '10';
+    document.getElementById('modal-submit').textContent = 'Create Node';
+    document.getElementById('modal-delete').style.display = 'none';
+  }
+  m.classList.add('active');
+}
+
+function closeNodeModal() {
+  document.getElementById('node-modal').classList.remove('active');
+}
+
+function deleteNode() {
+  if (confirm('Delete this node?')) {
+    document.getElementById('delete-form').submit();
+  }
+}
+
+function loadInventory(nodeID) {
+  var list = document.getElementById('inv-list');
+  list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
+  fetch('/api/nodes/inventory?id=' + nodeID)
+    .then(function(r) { return r.json(); })
+    .then(function(items) {
+      if (!items || items.length === 0) {
+        list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Empty</span>';
+        return;
+      }
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>Material</th><th>Qty</th><th>Partial</th><th>Age</th></tr></thead><tbody>';
+      items.forEach(function(item) {
+        var age = timeAgo(item.DeliveredAt);
+        html += '<tr><td>' + esc(item.MaterialCode) + '</td><td>' + item.Quantity + '</td><td>' + (item.IsPartial ? 'Yes' : '-') + '</td><td>' + age + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      list.innerHTML = html;
+    })
+    .catch(function() {
+      list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Error loading</span>';
+    });
+}
+
+function timeAgo(ts) {
+  if (!ts) return '-';
+  var d = Date.now() - new Date(ts).getTime();
+  if (d < 60000) return 'just now';
+  if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
+  if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
+  return Math.floor(d / 86400000) + 'd ago';
+}
+
+function esc(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeNodeModal();
+});
+</script>
+{{end}}

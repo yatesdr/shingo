@@ -1,0 +1,142 @@
+{{define "content"}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Robots</h1>
+    <span class="text-muted" style="font-size:0.85rem" id="robot-count">{{len .Robots}} robots</span>
+  </div>
+
+  <div class="filter-bar">
+    <input type="text" id="robot-search" placeholder="Filter by name..." oninput="filterRobots()">
+    <select id="robot-state-filter" onchange="filterRobots()">
+      <option value="">All States</option>
+      <option value="ready">Ready</option>
+      <option value="busy">Busy</option>
+      <option value="paused">Paused</option>
+      <option value="error">Error</option>
+      <option value="offline">Offline</option>
+    </select>
+  </div>
+
+  {{if .Robots}}
+  <div class="robot-grid" id="robot-grid"
+       hx-get="/robots" hx-trigger="every 5s" hx-select="#robot-grid" hx-target="#robot-grid" hx-swap="outerHTML">
+    {{range .Robots}}
+    {{$state := robotState .}}
+    <div class="robot-tile robot-{{$state}}"
+         data-name="{{.VehicleID}}"
+         data-state="{{$state}}"
+         data-ip="{{.BasicInfo.IP}}"
+         data-model="{{.BasicInfo.Model}}"
+         data-map="{{.BasicInfo.CurrentMap}}"
+         data-group="{{.BasicInfo.CurrentGroup}}"
+         data-battery="{{pct .RbkReport.BatteryLevel}}"
+         data-charging="{{.RbkReport.Charging}}"
+         data-station="{{.RbkReport.CurrentStation}}"
+         data-last-station="{{.RbkReport.LastStation}}"
+         data-dispatchable="{{.Dispatchable}}"
+         data-connected="{{if eq .ConnectionStatus 1}}true{{else}}false{{end}}"
+         data-blocked="{{.RbkReport.Blocked}}"
+         data-emergency="{{.RbkReport.Emergency}}"
+         data-processing="{{.ProcBusiness}}"
+         data-error="{{.IsError}}"
+         data-x="{{f1 .RbkReport.X}}"
+         data-y="{{f1 .RbkReport.Y}}"
+         data-angle="{{f1 .RbkReport.Angle}}"
+         onclick="openRobotModal(this)">
+      <div class="robot-name">
+        {{.VehicleID}}
+        {{if .RbkReport.Charging}}<span class="robot-charging" title="Charging">&#9889;</span>{{end}}
+      </div>
+      <div class="robot-battery" title="Battery: {{pct .RbkReport.BatteryLevel}}%">
+        <div class="robot-battery-fill" style="width:{{pct .RbkReport.BatteryLevel}}%"></div>
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="card">
+    <p class="text-muted">No robots found. Check that RDS is reachable.</p>
+  </div>
+  {{end}}
+</div>
+
+<!-- Robot Detail Modal -->
+<div id="robot-modal" class="modal-overlay" onclick="if(event.target===this)closeRobotModal()">
+  <div class="modal">
+    <div class="modal-header flex flex-between">
+      <h2 id="rm-title">Robot</h2>
+      <button class="modal-close" onclick="closeRobotModal()">&times;</button>
+    </div>
+    <div class="grid grid-2" style="font-size:0.85rem;row-gap:0.4rem">
+      <div><strong>State:</strong> <span id="rm-state" class="badge"></span></div>
+      <div><strong>IP:</strong> <span id="rm-ip"></span></div>
+      <div><strong>Model:</strong> <span id="rm-model"></span></div>
+      <div><strong>Map:</strong> <span id="rm-map"></span></div>
+      <div><strong>Group:</strong> <span id="rm-group"></span></div>
+      <div><strong>Battery:</strong> <span id="rm-battery"></span></div>
+      <div><strong>Charging:</strong> <span id="rm-charging"></span></div>
+      <div><strong>Station:</strong> <span id="rm-station"></span></div>
+      <div><strong>Last Station:</strong> <span id="rm-last-station"></span></div>
+      <div><strong>Dispatchable:</strong> <span id="rm-dispatchable"></span></div>
+      <div><strong>Connected:</strong> <span id="rm-connected"></span></div>
+      <div><strong>Blocked:</strong> <span id="rm-blocked"></span></div>
+      <div><strong>Emergency:</strong> <span id="rm-emergency"></span></div>
+      <div><strong>Processing:</strong> <span id="rm-processing"></span></div>
+      <div><strong>Error:</strong> <span id="rm-error"></span></div>
+      <div><strong>Position:</strong> <span id="rm-position"></span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function filterRobots() {
+  var q = document.getElementById('robot-search').value.toLowerCase();
+  var s = document.getElementById('robot-state-filter').value;
+  var tiles = document.querySelectorAll('.robot-tile');
+  var shown = 0;
+  tiles.forEach(function(tile) {
+    var matchName = !q || tile.dataset.name.toLowerCase().indexOf(q) >= 0;
+    var matchState = !s || tile.dataset.state === s;
+    var vis = matchName && matchState;
+    tile.style.display = vis ? '' : 'none';
+    if (vis) shown++;
+  });
+  document.getElementById('robot-count').textContent = shown + ' robots';
+}
+
+function openRobotModal(el) {
+  var d = el.dataset;
+  document.getElementById('rm-title').textContent = d.name;
+
+  var stateEl = document.getElementById('rm-state');
+  stateEl.textContent = d.state;
+  stateEl.className = 'badge badge-robot-' + d.state;
+
+  document.getElementById('rm-ip').textContent = d.ip || '-';
+  document.getElementById('rm-model').textContent = d.model || '-';
+  document.getElementById('rm-map').textContent = d.map || '-';
+  document.getElementById('rm-group').textContent = d.group || '-';
+  document.getElementById('rm-battery').textContent = d.battery + '%';
+  document.getElementById('rm-charging').textContent = d.charging === 'true' ? 'Yes' : 'No';
+  document.getElementById('rm-station').textContent = d.station || '-';
+  document.getElementById('rm-last-station').textContent = d.lastStation || '-';
+  document.getElementById('rm-dispatchable').textContent = d.dispatchable === 'true' ? 'Yes' : 'No';
+  document.getElementById('rm-connected').textContent = d.connected === 'true' ? 'Yes' : 'No';
+  document.getElementById('rm-blocked').textContent = d.blocked === 'true' ? 'Yes' : 'No';
+  document.getElementById('rm-emergency').textContent = d.emergency === 'true' ? 'Yes' : 'No';
+  document.getElementById('rm-processing').textContent = d.processing === 'true' ? 'Yes' : 'No';
+  document.getElementById('rm-error').textContent = d.error === 'true' ? 'Yes' : 'No';
+  document.getElementById('rm-position').textContent = d.x + ', ' + d.y + ' (' + d.angle + '\u00B0)';
+
+  document.getElementById('robot-modal').classList.add('active');
+}
+
+function closeRobotModal() {
+  document.getElementById('robot-modal').classList.remove('active');
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeRobotModal();
+});
+</script>
+{{end}}

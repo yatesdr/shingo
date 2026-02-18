@@ -1,0 +1,92 @@
+{{define "content"}}
+<h1 class="mb-2">Inventory Corrections</h1>
+
+<div class="card mb-2">
+  <h3>New Correction</h3>
+  <form method="POST" action="/corrections/create">
+    <div class="grid grid-3">
+      <div class="form-group">
+        <label>Type</label>
+        <select name="correction_type" id="corr-type">
+          <option value="add">Add Inventory</option>
+          <option value="remove">Remove Inventory</option>
+          <option value="adjust">Adjust Quantity</option>
+          <option value="move">Move Inventory</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Node</label>
+        <select name="node_id">
+          {{range .Nodes}}
+          <option value="{{.ID}}">{{.Name}} ({{.NodeType}})</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Material</label>
+        <select name="material_id">
+          {{range .Materials}}
+          <option value="{{.ID}}">{{.Code}} - {{.Description}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" name="quantity" step="0.01" value="1">
+      </div>
+      <div class="form-group">
+        <label>Inventory ID (for remove/adjust/move)</label>
+        <input type="number" name="inventory_id">
+      </div>
+      <div class="form-group">
+        <label>Dest Node (for move)</label>
+        <select name="to_node_id">
+          <option value="">--</option>
+          {{range .Nodes}}
+          <option value="{{.ID}}">{{.Name}}</option>
+          {{end}}
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Reason</label>
+      <textarea name="reason" required placeholder="Explain why this correction is needed"></textarea>
+    </div>
+    <button type="submit" class="btn btn-primary">Apply Correction</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Recent Corrections</h3>
+  {{if .Corrections}}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Type</th>
+        <th>Node</th>
+        <th>Qty</th>
+        <th>Reason</th>
+        <th>Actor</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Corrections}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.CorrectionType}}</td>
+        <td>{{.NodeID}}</td>
+        <td>{{.Quantity}}</td>
+        <td>{{.Reason}}</td>
+        <td>{{.Actor}}</td>
+        <td>{{formatTime .CreatedAt}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="text-muted">No corrections recorded.</p>
+  {{end}}
+</div>
+{{end}}

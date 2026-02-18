@@ -1,0 +1,66 @@
+{{define "content"}}
+<div data-sse="dashboard">
+  <h1 class="mb-2">Dashboard</h1>
+
+  <div class="grid grid-4 mb-3">
+    <div class="card stat">
+      <div class="value">{{.TotalOrders}}</div>
+      <div class="label">Active Orders</div>
+    </div>
+    <div class="card stat">
+      <div class="value">{{.TotalNodes}}</div>
+      <div class="label">Total Nodes</div>
+    </div>
+    <div class="card stat">
+      <div class="value">
+        <span id="rds-status" class="health {{if .RDSOK}}health-ok{{else}}health-fail{{end}}"></span>
+        {{if .RDSOK}}OK{{else}}Down{{end}}
+      </div>
+      <div class="label">RDS Core</div>
+    </div>
+    <div class="card stat">
+      <div class="value">
+        <span id="msg-status" class="health {{if .MessagingOK}}health-ok{{else}}health-fail{{end}}"></span>
+        {{if .MessagingOK}}OK{{else}}Down{{end}}
+      </div>
+      <div class="label">Messaging</div>
+    </div>
+  </div>
+
+  {{if .ActiveOrders}}
+  <div class="card">
+    <h3>Active Orders</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Client</th>
+          <th>Type</th>
+          <th>Material</th>
+          <th>Status</th>
+          <th>Robot</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .ActiveOrders}}
+        <tr>
+          <td><a href="/orders/detail?id={{.ID}}">{{.ID}}</a></td>
+          <td>{{.ClientID}}</td>
+          <td>{{.OrderType}}</td>
+          <td>{{.MaterialCode}}</td>
+          <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+          <td>{{.RobotID}}</td>
+          <td>{{formatTime .CreatedAt}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="card">
+    <p class="text-muted">No active orders.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}

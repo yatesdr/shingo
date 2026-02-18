@@ -1,0 +1,97 @@
+{{define "content"}}
+<div data-sse="orders">
+  {{if .Order}}
+  {{/* Order detail view */}}
+  <div class="flex flex-between mb-2">
+    <h1>Order #{{.Order.ID}}</h1>
+    <a href="/orders">Back to list</a>
+  </div>
+
+  <div class="grid grid-2 mb-2">
+    <div class="card">
+      <h3>Details</h3>
+      <table>
+        <tr><td><strong>UUID</strong></td><td>{{.Order.WardropUUID}}</td></tr>
+        <tr><td><strong>Client</strong></td><td>{{.Order.ClientID}}</td></tr>
+        <tr><td><strong>Type</strong></td><td>{{.Order.OrderType}}</td></tr>
+        <tr><td><strong>Material</strong></td><td>{{.Order.MaterialCode}}</td></tr>
+        <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
+        <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
+        <tr><td><strong>RDS Order</strong></td><td>{{.Order.RDSOrderID}}</td></tr>
+        <tr><td><strong>Robot</strong></td><td>{{.Order.RobotID}}</td></tr>
+        <tr><td><strong>Priority</strong></td><td>{{.Order.Priority}}</td></tr>
+        <tr><td><strong>Created</strong></td><td>{{formatTime .Order.CreatedAt}}</td></tr>
+        <tr><td><strong>Updated</strong></td><td>{{formatTime .Order.UpdatedAt}}</td></tr>
+        <tr><td><strong>Completed</strong></td><td>{{formatTimePtr .Order.CompletedAt}}</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Timeline</h3>
+      {{if .History}}
+      <div class="timeline">
+        {{range .History}}
+        <div class="timeline-item">
+          <div><span class="badge badge-{{.Status}}">{{.Status}}</span></div>
+          <div>{{.Detail}}</div>
+          <div class="time">{{formatTime .CreatedAt}}</div>
+        </div>
+        {{end}}
+      </div>
+      {{else}}
+      <p class="text-muted">No history</p>
+      {{end}}
+    </div>
+  </div>
+
+  {{else}}
+  {{/* Order list view */}}
+  <div class="flex flex-between mb-2">
+    <h1>Orders</h1>
+    <div class="flex gap-1">
+      <a href="/orders" class="btn btn-sm {{if not .FilterStatus}}btn-primary{{end}}">All</a>
+      <a href="/orders?status=pending" class="btn btn-sm {{if eq .FilterStatus "pending"}}btn-primary{{end}}">Pending</a>
+      <a href="/orders?status=dispatched" class="btn btn-sm {{if eq .FilterStatus "dispatched"}}btn-primary{{end}}">Dispatched</a>
+      <a href="/orders?status=in_transit" class="btn btn-sm {{if eq .FilterStatus "in_transit"}}btn-primary{{end}}">In Transit</a>
+      <a href="/orders?status=completed" class="btn btn-sm {{if eq .FilterStatus "completed"}}btn-primary{{end}}">Completed</a>
+      <a href="/orders?status=failed" class="btn btn-sm {{if eq .FilterStatus "failed"}}btn-primary{{end}}">Failed</a>
+    </div>
+  </div>
+
+  <div class="card">
+    {{if .Orders}}
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>UUID</th>
+          <th>Client</th>
+          <th>Type</th>
+          <th>Material</th>
+          <th>Status</th>
+          <th>Robot</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Orders}}
+        <tr>
+          <td><a href="/orders/detail?id={{.ID}}">{{.ID}}</a></td>
+          <td style="font-family:monospace;font-size:0.8rem">{{.WardropUUID}}</td>
+          <td>{{.ClientID}}</td>
+          <td>{{.OrderType}}</td>
+          <td>{{.MaterialCode}}</td>
+          <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+          <td>{{.RobotID}}</td>
+          <td>{{formatTime .CreatedAt}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="text-muted">No orders found.</p>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}

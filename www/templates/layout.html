@@ -1,0 +1,36 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WarPath{{if .Page}} - {{.Page}}{{end}}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+  <nav>
+    <div class="container" style="display:flex;align-items:center;gap:1.5rem;">
+      <a href="/" class="brand">WarPath</a>
+      <a href="/"{{if eq .Page "dashboard"}} class="active"{{end}}>Dashboard</a>
+      <a href="/nodes"{{if eq .Page "nodes"}} class="active"{{end}}>Nodes</a>
+      <a href="/orders"{{if eq .Page "orders"}} class="active"{{end}}>Orders</a>
+      <a href="/robots"{{if eq .Page "robots"}} class="active"{{end}}>Robots</a>
+      {{if .Authenticated}}
+      <a href="/materials"{{if eq .Page "materials"}} class="active"{{end}}>Materials</a>
+      <a href="/corrections"{{if eq .Page "corrections"}} class="active"{{end}}>Corrections</a>
+      <a href="/diagnostics"{{if eq .Page "diagnostics"}} class="active"{{end}}>Diagnostics</a>
+      <a href="/rds"{{if eq .Page "rds"}} class="active"{{end}}>RDS Explorer</a>
+      <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>Config</a>
+      <div style="margin-left:auto"><a href="/logout">Logout</a></div>
+      {{else}}
+      <div style="margin-left:auto"><a href="/login">Login</a></div>
+      {{end}}
+    </div>
+  </nav>
+  <main class="container" style="padding-top:1.5rem;padding-bottom:2rem;">
+    {{block "content" .}}{{end}}
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
+{{end}}
