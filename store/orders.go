@@ -7,28 +7,30 @@ import (
 )
 
 type Order struct {
-	ID           int64
-	WardropUUID  string
-	ClientID     string
-	FactoryID    string
-	OrderType    string
-	Status       string
-	MaterialID   *int64
-	MaterialCode string
-	Quantity     float64
-	SourceNodeID *int64
-	DestNodeID   *int64
-	PickupNode   string
-	DeliveryNode string
-	RDSOrderID   string
-	RDSState     string
-	RobotID      string
-	Priority     int
-	PayloadDesc  string
-	ErrorDetail  string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	CompletedAt  *time.Time
+	ID            int64
+	WardropUUID   string
+	ClientID      string
+	FactoryID     string
+	OrderType     string
+	Status        string
+	MaterialID    *int64
+	MaterialCode  string
+	Quantity      float64
+	SourceNodeID  *int64
+	DestNodeID    *int64
+	PickupNode    string
+	DeliveryNode  string
+	RDSOrderID    string
+	RDSState      string
+	RobotID       string
+	Priority      int
+	PayloadDesc   string
+	ErrorDetail   string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	CompletedAt   *time.Time
+	PayloadTypeID *int64
+	PayloadID     *int64
 }
 
 type OrderHistory struct {
@@ -39,18 +41,19 @@ type OrderHistory struct {
 	CreatedAt time.Time
 }
 
-const orderSelectCols = `id, wardrop_uuid, client_id, factory_id, order_type, status, material_id, material_code, quantity, source_node_id, dest_node_id, pickup_node, delivery_node, rds_order_id, rds_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at`
+const orderSelectCols = `id, wardrop_uuid, client_id, factory_id, order_type, status, material_id, material_code, quantity, source_node_id, dest_node_id, pickup_node, delivery_node, rds_order_id, rds_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, payload_type_id, payload_id`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
-	var materialID, sourceNodeID, destNodeID sql.NullInt64
+	var materialID, sourceNodeID, destNodeID, payloadTypeID, payloadID sql.NullInt64
 	var createdAt, updatedAt string
 	var completedAt sql.NullString
 
 	err := row.Scan(&o.ID, &o.WardropUUID, &o.ClientID, &o.FactoryID, &o.OrderType, &o.Status,
 		&materialID, &o.MaterialCode, &o.Quantity, &sourceNodeID, &destNodeID,
 		&o.PickupNode, &o.DeliveryNode, &o.RDSOrderID, &o.RDSState, &o.RobotID,
-		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &createdAt, &updatedAt, &completedAt)
+		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &createdAt, &updatedAt, &completedAt,
+		&payloadTypeID, &payloadID)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +65,12 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	}
 	if destNodeID.Valid {
 		o.DestNodeID = &destNodeID.Int64
+	}
+	if payloadTypeID.Valid {
+		o.PayloadTypeID = &payloadTypeID.Int64
+	}
+	if payloadID.Valid {
+		o.PayloadID = &payloadID.Int64
 	}
 	o.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 	o.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
@@ -85,7 +94,7 @@ func scanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 func (db *DB) CreateOrder(o *Order) error {
-	var matID, srcID, dstID any
+	var matID, srcID, dstID, ptID, pID any
 	if o.MaterialID != nil {
 		matID = *o.MaterialID
 	}
@@ -95,11 +104,17 @@ func (db *DB) CreateOrder(o *Order) error {
 	if o.DestNodeID != nil {
 		dstID = *o.DestNodeID
 	}
+	if o.PayloadTypeID != nil {
+		ptID = *o.PayloadTypeID
+	}
+	if o.PayloadID != nil {
+		pID = *o.PayloadID
+	}
 
-	result, err := db.Exec(db.Q(`INSERT INTO orders (wardrop_uuid, client_id, factory_id, order_type, status, material_id, material_code, quantity, source_node_id, dest_node_id, pickup_node, delivery_node, priority, payload_desc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+	result, err := db.Exec(db.Q(`INSERT INTO orders (wardrop_uuid, client_id, factory_id, order_type, status, material_id, material_code, quantity, source_node_id, dest_node_id, pickup_node, delivery_node, priority, payload_desc, payload_type_id, payload_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		o.WardropUUID, o.ClientID, o.FactoryID, o.OrderType, o.Status,
 		matID, o.MaterialCode, o.Quantity, srcID, dstID,
-		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc)
+		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc, ptID, pID)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -199,6 +214,12 @@ func (db *DB) ListOrderHistory(orderID int64) ([]*OrderHistory, error) {
 		history = append(history, &h)
 	}
 	return history, rows.Err()
+}
+
+func (db *DB) UpdateOrderPriority(id int64, priority int) error {
+	_, err := db.Exec(db.Q(`UPDATE orders SET priority=?, updated_at=datetime('now','localtime') WHERE id=?`),
+		priority, id)
+	return err
 }
 
 // ListDispatchedRDSOrderIDs returns RDS order IDs for all non-terminal orders.

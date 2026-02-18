@@ -39,10 +39,11 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 		"templates/corrections.html",
 		"templates/diagnostics.html",
 		"templates/login.html",
-		"templates/materials.html",
 		"templates/config.html",
 		"templates/rds_explorer.html",
 		"templates/robots.html",
+		"templates/payload_types.html",
+		"templates/payloads.html",
 	}
 	tmpls := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
@@ -86,12 +87,17 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 	// API routes (no auth required for read)
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/nodes", h.apiListNodes)
-		r.Get("/nodes/inventory", h.apiNodeInventory)
+		r.Get("/nodes/inventory", h.apiNodePayloads)
 		r.Get("/orders", h.apiListOrders)
 		r.Get("/orders/detail", h.apiGetOrder)
 		r.Get("/nodestate", h.apiNodeState)
 		r.Get("/robots", h.apiRobotsStatus)
 		r.Get("/health", h.apiHealthCheck)
+		r.Get("/payload-types", h.apiListPayloadTypes)
+		r.Get("/payloads", h.apiListPayloads)
+		r.Get("/payloads/detail", h.apiGetPayload)
+		r.Get("/payloads/manifest", h.apiListManifest)
+		r.Get("/bins/status", h.apiBinOccupancy)
 	})
 
 	// Protected routes
@@ -100,10 +106,19 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 		r.Post("/nodes/create", h.handleNodeCreate)
 		r.Post("/nodes/update", h.handleNodeUpdate)
 		r.Post("/nodes/delete", h.handleNodeDelete)
-		r.Get("/materials", h.handleMaterials)
-		r.Post("/materials/create", h.handleMaterialCreate)
-		r.Post("/materials/update", h.handleMaterialUpdate)
-		r.Post("/materials/delete", h.handleMaterialDelete)
+		r.Post("/nodes/sync-rds", h.handleNodeSyncRDS)
+		r.Post("/nodes/sync-scene", h.handleSceneSync)
+		r.Get("/payload-types", h.handlePayloadTypes)
+		r.Post("/payload-types/create", h.handlePayloadTypeCreate)
+		r.Post("/payload-types/update", h.handlePayloadTypeUpdate)
+		r.Post("/payload-types/delete", h.handlePayloadTypeDelete)
+		r.Get("/payloads", h.handlePayloads)
+		r.Post("/payloads/create", h.handlePayloadCreate)
+		r.Post("/payloads/update", h.handlePayloadUpdate)
+		r.Post("/payloads/delete", h.handlePayloadDelete)
+		r.Post("/api/payloads/manifest/create", h.apiCreateManifestItem)
+		r.Post("/api/payloads/manifest/update", h.apiUpdateManifestItem)
+		r.Post("/api/payloads/manifest/delete", h.apiDeleteManifestItem)
 		r.Get("/corrections", h.handleCorrections)
 		r.Post("/corrections/create", h.handleCorrectionCreate)
 		r.Get("/diagnostics", h.handleDiagnostics)
@@ -111,6 +126,11 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 		r.Post("/config/save", h.handleConfigSave)
 		r.Get("/rds", h.handleRDSExplorer)
 		r.Post("/api/rds/proxy", h.apiRDSProxy)
+		r.Post("/api/robots/dispatchable", h.apiRobotSetDispatchable)
+		r.Post("/api/robots/redo-failed", h.apiRobotRedoFailed)
+		r.Post("/api/robots/manual-finish", h.apiRobotManualFinish)
+		r.Post("/api/orders/terminate", h.apiTerminateOrder)
+		r.Post("/api/orders/priority", h.apiSetOrderPriority)
 	})
 
 	stopFn := func() {

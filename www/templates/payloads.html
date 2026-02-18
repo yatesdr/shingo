@@ -1,0 +1,269 @@
+{{define "content"}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Payloads</h1>
+  </div>
+
+  {{if .Authenticated}}
+  <div class="card mb-2">
+    <h3>Create Payload</h3>
+    <form method="POST" action="/payloads/create">
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Payload Type</label>
+          <select name="payload_type_id" required>
+            <option value="">-- Select Type --</option>
+            {{range .PayloadTypes}}
+            <option value="{{.ID}}">{{.Name}} ({{.FormFactor}})</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Node (optional)</label>
+          <select name="node_id">
+            <option value="">-- No Node --</option>
+            {{range .Nodes}}
+            <option value="{{.ID}}">{{.Name}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Status</label>
+          <select name="status">
+            <option value="empty">Empty</option>
+            <option value="available">Available</option>
+            <option value="hold">Hold</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <input type="text" name="notes" placeholder="Optional notes">
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Create Payload</button>
+    </form>
+  </div>
+  {{end}}
+
+  <div class="card">
+    {{if .Payloads}}
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Form Factor</th>
+          <th>Node</th>
+          <th>Status</th>
+          <th>Notes</th>
+          <th>Created</th>
+          {{if .Authenticated}}<th>Actions</th>{{end}}
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Payloads}}
+        <tr data-id="{{.ID}}" style="cursor:pointer" onclick="openPayloadModal({{.ID}})">
+          <td>{{.ID}}</td>
+          <td><strong>{{.PayloadTypeName}}</strong></td>
+          <td>{{.FormFactor}}</td>
+          <td>{{if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+          <td><span class="badge {{payloadStatusColor .Status}}">{{.Status}}</span></td>
+          <td>{{.Notes}}</td>
+          <td>{{formatTime .CreatedAt}}</td>
+          {{if $.Authenticated}}
+          <td onclick="event.stopPropagation()">
+            <button class="btn btn-sm" onclick="editPayload(this)"
+              data-id="{{.ID}}"
+              data-type="{{.PayloadTypeID}}"
+              data-node="{{deref .NodeID}}"
+              data-status="{{.Status}}"
+              data-notes="{{.Notes}}">Edit</button>
+            <form method="POST" action="/payloads/delete" style="display:inline" onsubmit="return confirm('Delete payload #{{.ID}}?')">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+            </form>
+          </td>
+          {{end}}
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="text-muted">No payloads created yet.{{if not .Authenticated}} <a href="/login">Login</a> to create payloads.{{end}}</p>
+    {{end}}
+  </div>
+</div>
+
+<!-- Payload Detail Modal (shows manifest) -->
+<div id="payload-modal" class="modal-overlay" onclick="if(event.target===this)closePayloadModal()">
+  <div class="modal">
+    <div class="modal-header flex flex-between">
+      <h2 id="pm-title">Payload</h2>
+      <button class="modal-close" onclick="closePayloadModal()">&times;</button>
+    </div>
+    <div id="pm-manifest">
+      <strong style="font-size:0.85rem">Manifest Items</strong>
+      <div id="pm-manifest-list" style="margin-top:0.5rem">
+        <span class="text-muted" style="font-size:0.8rem">Loading...</span>
+      </div>
+      {{if .Authenticated}}
+      <div style="margin-top:0.75rem;border-top:1px solid #e9ecef;padding-top:0.75rem">
+        <strong style="font-size:0.8rem">Add Item</strong>
+        <div class="grid grid-2" style="font-size:0.8rem;gap:0.3rem;margin-top:0.3rem">
+          <input type="text" id="mi-part" placeholder="Part Number" style="font-size:0.8rem;padding:0.25rem">
+          <input type="number" id="mi-qty" placeholder="Qty" step="0.01" style="font-size:0.8rem;padding:0.25rem">
+          <input type="text" id="mi-date" placeholder="Prod Date (YYYY-MM-DD)" style="font-size:0.8rem;padding:0.25rem">
+          <input type="text" id="mi-lot" placeholder="Lot Code" style="font-size:0.8rem;padding:0.25rem">
+        </div>
+        <input type="text" id="mi-notes" placeholder="Notes" style="font-size:0.8rem;padding:0.25rem;width:100%;margin-top:0.3rem">
+        <button class="btn btn-sm btn-primary" onclick="addManifestItem()" style="margin-top:0.3rem">Add Item</button>
+      </div>
+      {{end}}
+    </div>
+  </div>
+</div>
+
+{{if .Authenticated}}
+<!-- Edit Modal -->
+<div id="payload-edit-modal" class="modal-overlay" onclick="if(event.target===this)closePayloadEditModal()">
+  <div class="modal">
+    <div class="modal-header flex flex-between">
+      <h2>Edit Payload</h2>
+      <button class="modal-close" onclick="closePayloadEditModal()">&times;</button>
+    </div>
+    <form method="POST" action="/payloads/update">
+      <input type="hidden" name="id" id="pe-id">
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Payload Type</label>
+          <select name="payload_type_id" id="pe-type" required>
+            {{range .PayloadTypes}}
+            <option value="{{.ID}}">{{.Name}} ({{.FormFactor}})</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Node</label>
+          <select name="node_id" id="pe-node">
+            <option value="">-- No Node --</option>
+            {{range .Nodes}}
+            <option value="{{.ID}}">{{.Name}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Status</label>
+          <select name="status" id="pe-status">
+            <option value="empty">Empty</option>
+            <option value="available">Available</option>
+            <option value="in_transit">In Transit</option>
+            <option value="at_line">At Line</option>
+            <option value="hold">Hold</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <input type="text" name="notes" id="pe-notes">
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Save Changes</button>
+      <button type="button" class="btn" onclick="closePayloadEditModal()" style="margin-left:0.5rem">Cancel</button>
+    </form>
+  </div>
+</div>
+{{end}}
+
+<script>
+var currentPayloadID = 0;
+var isAuth = {{if .Authenticated}}true{{else}}false{{end}};
+
+function openPayloadModal(id) {
+  currentPayloadID = id;
+  document.getElementById('pm-title').textContent = 'Payload #' + id;
+  document.getElementById('pm-manifest-list').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
+  document.getElementById('payload-modal').classList.add('active');
+  loadManifest(id);
+}
+
+function closePayloadModal() {
+  document.getElementById('payload-modal').classList.remove('active');
+}
+
+function loadManifest(payloadID) {
+  var list = document.getElementById('pm-manifest-list');
+  fetch('/api/payloads/manifest?id=' + payloadID)
+    .then(function(r) { return r.json(); })
+    .then(function(items) {
+      if (!items || items.length === 0) {
+        list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">No manifest items</span>';
+        return;
+      }
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>Part Number</th><th>Qty</th><th>Prod Date</th><th>Lot Code</th><th>Notes</th>';
+      if (isAuth) html += '<th></th>';
+      html += '</tr></thead><tbody>';
+      items.forEach(function(item) {
+        html += '<tr><td>' + esc(item.PartNumber) + '</td><td>' + item.Quantity + '</td><td>' + (item.ProductionDate || '-') + '</td><td>' + (item.LotCode || '-') + '</td><td>' + esc(item.Notes) + '</td>';
+        if (isAuth) html += '<td><button class="btn btn-danger btn-sm" onclick="deleteManifestItem(' + item.ID + ')" style="font-size:0.7rem;padding:0.1rem 0.3rem">X</button></td>';
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+      list.innerHTML = html;
+    })
+    .catch(function() {
+      list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Error loading manifest</span>';
+    });
+}
+
+function addManifestItem() {
+  var body = {
+    payload_id: currentPayloadID,
+    part_number: document.getElementById('mi-part').value,
+    quantity: parseFloat(document.getElementById('mi-qty').value) || 0,
+    production_date: document.getElementById('mi-date').value,
+    lot_code: document.getElementById('mi-lot').value,
+    notes: document.getElementById('mi-notes').value
+  };
+  fetch('/api/payloads/manifest/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(function(r) { return r.json(); })
+    .then(function() {
+      document.getElementById('mi-part').value = '';
+      document.getElementById('mi-qty').value = '';
+      document.getElementById('mi-date').value = '';
+      document.getElementById('mi-lot').value = '';
+      document.getElementById('mi-notes').value = '';
+      loadManifest(currentPayloadID);
+    });
+}
+
+function deleteManifestItem(id) {
+  if (!confirm('Delete this manifest item?')) return;
+  fetch('/api/payloads/manifest/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})})
+    .then(function() { loadManifest(currentPayloadID); });
+}
+
+function editPayload(btn) {
+  var d = btn.dataset;
+  document.getElementById('pe-id').value = d.id;
+  document.getElementById('pe-type').value = d.type;
+  document.getElementById('pe-node').value = d.node || '';
+  document.getElementById('pe-status').value = d.status;
+  document.getElementById('pe-notes').value = d.notes;
+  document.getElementById('payload-edit-modal').classList.add('active');
+}
+
+function closePayloadEditModal() {
+  document.getElementById('payload-edit-modal').classList.remove('active');
+}
+
+function esc(s) {
+  if (!s) return '';
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') { closePayloadModal(); closePayloadEditModal(); }
+});
+</script>
+{{end}}

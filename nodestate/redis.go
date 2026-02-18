@@ -31,7 +31,7 @@ func countKey(nodeID int64) string {
 
 const allNodesKey = "warpath:nodes"
 
-func (r *RedisStore) SetNodeInventory(ctx context.Context, nodeID int64, items []InventoryItem) error {
+func (r *RedisStore) SetNodePayloads(ctx context.Context, nodeID int64, items []PayloadItem) error {
 	data, err := json.Marshal(items)
 	if err != nil {
 		return err
@@ -39,7 +39,7 @@ func (r *RedisStore) SetNodeInventory(ctx context.Context, nodeID int64, items [
 	return r.client.Set(ctx, inventoryKey(nodeID), data, 0).Err()
 }
 
-func (r *RedisStore) GetNodeInventory(ctx context.Context, nodeID int64) ([]InventoryItem, error) {
+func (r *RedisStore) GetNodePayloads(ctx context.Context, nodeID int64) ([]PayloadItem, error) {
 	data, err := r.client.Get(ctx, inventoryKey(nodeID)).Bytes()
 	if err == redis.Nil {
 		return nil, nil
@@ -47,7 +47,7 @@ func (r *RedisStore) GetNodeInventory(ctx context.Context, nodeID int64) ([]Inve
 	if err != nil {
 		return nil, err
 	}
-	var items []InventoryItem
+	var items []PayloadItem
 	return items, json.Unmarshal(data, &items)
 }
 

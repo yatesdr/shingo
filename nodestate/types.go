@@ -9,19 +9,19 @@ type NodeState struct {
 	Zone      string
 	Capacity  int
 	Enabled   bool
-	Items     []InventoryItem
+	Items     []PayloadItem
 	ItemCount int
 }
 
-type InventoryItem struct {
-	ID           int64     `json:"id"`
-	MaterialID   int64     `json:"material_id"`
-	MaterialCode string    `json:"material_code"`
-	Quantity     float64   `json:"quantity"`
-	IsPartial    bool      `json:"is_partial"`
-	DeliveredAt  time.Time `json:"delivered_at"`
-	Notes        string    `json:"notes,omitempty"`
-	ClaimedBy    *int64    `json:"claimed_by,omitempty"`
+type PayloadItem struct {
+	ID              int64      `json:"id"`
+	PayloadTypeID   int64      `json:"payload_type_id"`
+	PayloadTypeName string     `json:"payload_type_name"`
+	FormFactor      string     `json:"form_factor"`
+	Status          string     `json:"status"`
+	DeliveredAt     time.Time  `json:"delivered_at"`
+	Notes           string     `json:"notes,omitempty"`
+	ClaimedBy       *int64     `json:"claimed_by,omitempty"`
 }
 
 type NodeMeta struct {

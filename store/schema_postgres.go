@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS orders (
     error_detail    TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at    TIMESTAMPTZ
+    completed_at    TIMESTAMPTZ,
+    payload_type_id BIGINT REFERENCES payload_types(id),
+    payload_id      BIGINT REFERENCES payloads(id)
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(wardrop_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
@@ -100,15 +102,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
 
 CREATE TABLE IF NOT EXISTS corrections (
-    id              BIGSERIAL PRIMARY KEY,
-    correction_type TEXT NOT NULL,
-    node_id         BIGINT NOT NULL REFERENCES nodes(id),
-    material_id     BIGINT REFERENCES materials(id),
-    inventory_id    BIGINT REFERENCES node_inventory(id),
-    quantity        DOUBLE PRECISION NOT NULL DEFAULT 0,
-    reason          TEXT NOT NULL,
-    actor           TEXT NOT NULL DEFAULT 'system',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id               BIGSERIAL PRIMARY KEY,
+    correction_type  TEXT NOT NULL,
+    node_id          BIGINT NOT NULL REFERENCES nodes(id),
+    material_id      BIGINT REFERENCES materials(id),
+    inventory_id     BIGINT REFERENCES node_inventory(id),
+    payload_id       BIGINT REFERENCES payloads(id),
+    manifest_item_id BIGINT REFERENCES manifest_items(id),
+    cat_id           TEXT NOT NULL DEFAULT '',
+    description      TEXT NOT NULL DEFAULT '',
+    quantity         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    reason           TEXT NOT NULL,
+    actor            TEXT NOT NULL DEFAULT 'system',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS admin_users (
@@ -117,4 +123,41 @@ CREATE TABLE IF NOT EXISTS admin_users (
     password_hash TEXT NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS payload_types (
+    id                    BIGSERIAL PRIMARY KEY,
+    name                  TEXT NOT NULL UNIQUE,
+    description           TEXT NOT NULL DEFAULT '',
+    form_factor           TEXT NOT NULL DEFAULT 'other',
+    default_manifest_json JSONB NOT NULL DEFAULT '{}',
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS payloads (
+    id              BIGSERIAL PRIMARY KEY,
+    payload_type_id BIGINT NOT NULL REFERENCES payload_types(id),
+    node_id         BIGINT REFERENCES nodes(id),
+    status          TEXT NOT NULL DEFAULT 'empty',
+    claimed_by      BIGINT REFERENCES orders(id),
+    delivered_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    notes           TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_payloads_type ON payloads(payload_type_id);
+CREATE INDEX IF NOT EXISTS idx_payloads_node ON payloads(node_id);
+CREATE INDEX IF NOT EXISTS idx_payloads_status ON payloads(status);
+
+CREATE TABLE IF NOT EXISTS manifest_items (
+    id              BIGSERIAL PRIMARY KEY,
+    payload_id      BIGINT NOT NULL REFERENCES payloads(id) ON DELETE CASCADE,
+    part_number     TEXT NOT NULL DEFAULT '',
+    quantity        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    production_date TEXT,
+    lot_code        TEXT,
+    notes           TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_manifest_payload ON manifest_items(payload_id);
 `

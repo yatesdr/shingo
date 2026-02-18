@@ -55,19 +55,19 @@ func (h *Handlers) apiNodeState(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, states)
 }
 
-func (h *Handlers) apiNodeInventory(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiNodePayloads(w http.ResponseWriter, r *http.Request) {
 	idStr := r.URL.Query().Get("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	items, err := h.engine.DB().ListNodeInventory(id)
+	payloads, err := h.engine.DB().ListPayloadsByNode(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, items)
+	h.jsonOK(w, payloads)
 }
 
 func (h *Handlers) apiRobotsStatus(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +77,15 @@ func (h *Handlers) apiRobotsStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonOK(w, robots)
+}
+
+func (h *Handlers) apiListPayloadTypes(w http.ResponseWriter, r *http.Request) {
+	types, err := h.engine.DB().ListPayloadTypes()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, types)
 }
 
 func (h *Handlers) apiHealthCheck(w http.ResponseWriter, r *http.Request) {

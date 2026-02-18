@@ -132,9 +132,9 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 	}, engine.EventOrderCancelled)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		ev := evt.Payload.(engine.InventoryChangedEvent)
-		h.Broadcast("inventory-update", fmt.Sprintf(`{"node_id":%d,"action":"%s"}`, ev.NodeID, ev.Action))
-	}, engine.EventInventoryChanged)
+		ev := evt.Payload.(engine.PayloadChangedEvent)
+		h.Broadcast("payload-update", fmt.Sprintf(`{"node_id":%d,"action":"%s","payload_id":%d}`, ev.NodeID, ev.Action, ev.PayloadID))
+	}, engine.EventPayloadChanged)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		ev := evt.Payload.(engine.CorrectionAppliedEvent)

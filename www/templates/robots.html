@@ -85,10 +85,25 @@
       <div><strong>Error:</strong> <span id="rm-error"></span></div>
       <div><strong>Position:</strong> <span id="rm-position"></span></div>
     </div>
+    {{if .Authenticated}}
+    <hr style="margin:0.75rem 0">
+    <div style="font-size:0.85rem">
+      <strong>Controls</strong>
+      <div id="rm-status-msg" style="font-size:0.8rem;margin:0.25rem 0;min-height:1.2em" class="text-muted"></div>
+      <div class="flex gap-1" style="flex-wrap:wrap;margin-top:0.5rem">
+        <button class="btn btn-sm" id="rm-btn-pause" onclick="robotDispatch('undispatchable_unignore')">Pause Dispatch</button>
+        <button class="btn btn-sm btn-primary" id="rm-btn-resume" onclick="robotDispatch('dispatchable')">Resume Dispatch</button>
+        <button class="btn btn-sm" onclick="robotRedoFailed()">Retry Failed</button>
+        <button class="btn btn-sm btn-danger" onclick="robotManualFinish()">Manual Finish</button>
+      </div>
+    </div>
+    {{end}}
   </div>
 </div>
 
 <script>
+var currentRobotVehicle = '';
+
 function filterRobots() {
   var q = document.getElementById('robot-search').value.toLowerCase();
   var s = document.getElementById('robot-state-filter').value;
@@ -106,6 +121,7 @@ function filterRobots() {
 
 function openRobotModal(el) {
   var d = el.dataset;
+  currentRobotVehicle = d.name;
   document.getElementById('rm-title').textContent = d.name;
 
   var stateEl = document.getElementById('rm-state');
@@ -133,6 +149,32 @@ function openRobotModal(el) {
 
 function closeRobotModal() {
   document.getElementById('robot-modal').classList.remove('active');
+}
+
+function robotControlPost(url, body) {
+  var msg = document.getElementById('rm-status-msg');
+  if (msg) msg.textContent = 'Sending...';
+  fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(function(r) { return r.json().then(function(d) { return {ok:r.ok, data:d}; }); })
+    .then(function(r) {
+      if (msg) msg.textContent = r.ok ? 'OK' : (r.data.error || 'Error');
+    })
+    .catch(function(e) {
+      if (msg) msg.textContent = 'Network error';
+    });
+}
+
+function robotDispatch(type) {
+  robotControlPost('/api/robots/dispatchable', {vehicle_id: currentRobotVehicle, type: type});
+}
+
+function robotRedoFailed() {
+  robotControlPost('/api/robots/redo-failed', {vehicle_id: currentRobotVehicle});
+}
+
+function robotManualFinish() {
+  if (!confirm('Manually finish current task for ' + currentRobotVehicle + '?')) return;
+  robotControlPost('/api/robots/manual-finish', {vehicle_id: currentRobotVehicle});
 }
 
 document.addEventListener('keydown', function(e) {

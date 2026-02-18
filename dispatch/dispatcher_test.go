@@ -22,8 +22,8 @@ type mockEmitter struct {
 }
 
 type emitReceived struct {
-	orderID      int64
-	materialCode string
+	orderID         int64
+	payloadTypeCode string
 }
 type emitDispatched struct {
 	orderID    int64
@@ -41,8 +41,8 @@ type emitCompleted struct {
 	orderID int64
 }
 
-func (m *mockEmitter) EmitOrderReceived(orderID int64, _, _, _, materialCode, _ string) {
-	m.received = append(m.received, emitReceived{orderID, materialCode})
+func (m *mockEmitter) EmitOrderReceived(orderID int64, _, _, _, payloadTypeCode, _ string) {
+	m.received = append(m.received, emitReceived{orderID, payloadTypeCode})
 }
 func (m *mockEmitter) EmitOrderDispatched(orderID int64, rdsOrderID, _, _ string) {
 	m.dispatched = append(m.dispatched, emitDispatched{orderID, rdsOrderID})
@@ -77,7 +77,7 @@ func testDB(t *testing.T) *store.DB {
 	return db
 }
 
-func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNode *store.Node, mat *store.Material) {
+func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNode *store.Node, pt *store.PayloadType) {
 	t.Helper()
 	storageNode = &store.Node{Name: "STORAGE-A1", RDSLocation: "Loc-01", NodeType: "storage", Zone: "A", Capacity: 10, Enabled: true}
 	if err := db.CreateNode(storageNode); err != nil {
@@ -87,14 +87,13 @@ func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNod
 	if err := db.CreateNode(lineNode); err != nil {
 		t.Fatalf("create line node: %v", err)
 	}
-	mat = &store.Material{Code: "PART-A", Description: "Steel bracket", Unit: "ea"}
-	if err := db.CreateMaterial(mat); err != nil {
-		t.Fatalf("create material: %v", err)
+	pt = &store.PayloadType{Name: "PART-A", Description: "Steel bracket tote", FormFactor: "tote", DefaultManifestJSON: "{}"}
+	if err := db.CreatePayloadType(pt); err != nil {
+		t.Fatalf("create payload type: %v", err)
 	}
 	return
 }
 
-// mockRDSServer is a minimal fake that always succeeds
 func newTestDispatcher(t *testing.T, db *store.DB, rdsClient *rds.Client) (*Dispatcher, *mockEmitter) {
 	t.Helper()
 	emitter := &mockEmitter{}
@@ -113,11 +112,11 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 
 	env := &messaging.Envelope{ClientID: "line-1", FactoryID: "plant-alpha"}
 	req := messaging.OrderRequest{
-		OrderUUID:    "uuid-1",
-		OrderType:    OrderTypeRetrieve,
-		MaterialCode: "PART-A",
-		DeliveryNode: lineNode.Name,
-		Quantity:     1.0,
+		OrderUUID:       "uuid-1",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "PART-A",
+		DeliveryNode:    lineNode.Name,
+		Quantity:        1.0,
 	}
 
 	d.HandleOrderRequest(env, req)
@@ -127,7 +126,7 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
 
-	// Should fail because no inventory exists
+	// Should fail because no available payloads exist
 	if len(emitter.failed) != 1 {
 		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
 	}
@@ -144,11 +143,11 @@ func TestHandleOrderRequest_Retrieve_InvalidDeliveryNode(t *testing.T) {
 
 	env := &messaging.Envelope{ClientID: "line-1", FactoryID: "plant-alpha"}
 	req := messaging.OrderRequest{
-		OrderUUID:    "uuid-2",
-		OrderType:    OrderTypeRetrieve,
-		MaterialCode: "PART-A",
-		DeliveryNode: "NONEXISTENT",
-		Quantity:     1.0,
+		OrderUUID:       "uuid-2",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "PART-A",
+		DeliveryNode:    "NONEXISTENT",
+		Quantity:        1.0,
 	}
 
 	d.HandleOrderRequest(env, req)
@@ -167,12 +166,12 @@ func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
 
 	env := &messaging.Envelope{ClientID: "line-1", FactoryID: "plant-alpha"}
 	req := messaging.OrderRequest{
-		OrderUUID:    "uuid-3",
-		OrderType:    OrderTypeMove,
-		MaterialCode: "PART-A",
-		DeliveryNode: lineNode.Name,
-		PickupNode:   "",
-		Quantity:     1.0,
+		OrderUUID:       "uuid-3",
+		OrderType:       OrderTypeMove,
+		PayloadTypeCode: "PART-A",
+		DeliveryNode:    lineNode.Name,
+		PickupNode:      "",
+		Quantity:        1.0,
 	}
 
 	d.HandleOrderRequest(env, req)
@@ -185,7 +184,7 @@ func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
 	}
 }
 
-func TestHandleOrderRequest_Move_NoInventoryAtPickup(t *testing.T) {
+func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 
@@ -193,22 +192,22 @@ func TestHandleOrderRequest_Move_NoInventoryAtPickup(t *testing.T) {
 
 	env := &messaging.Envelope{ClientID: "line-1", FactoryID: "plant-alpha"}
 	req := messaging.OrderRequest{
-		OrderUUID:    "uuid-4",
-		OrderType:    OrderTypeMove,
-		MaterialCode: "PART-A",
-		DeliveryNode: lineNode.Name,
-		PickupNode:   storageNode.Name,
-		Quantity:     1.0,
+		OrderUUID:       "uuid-4",
+		OrderType:       OrderTypeMove,
+		PayloadTypeCode: "PART-A",
+		DeliveryNode:    lineNode.Name,
+		PickupNode:      storageNode.Name,
+		Quantity:        1.0,
 	}
 
 	d.HandleOrderRequest(env, req)
 
-	// Should fail because no inventory at pickup
+	// Should fail because no payloads at pickup
 	if len(emitter.failed) != 1 {
 		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
 	}
-	if emitter.failed[0].errorCode != "no_inventory" {
-		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "no_inventory")
+	if emitter.failed[0].errorCode != "no_payload" {
+		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "no_payload")
 	}
 }
 
@@ -220,10 +219,10 @@ func TestHandleOrderRequest_UnknownType(t *testing.T) {
 
 	env := &messaging.Envelope{ClientID: "line-1", FactoryID: "plant-alpha"}
 	req := messaging.OrderRequest{
-		OrderUUID:    "uuid-5",
-		OrderType:    "bogus",
-		MaterialCode: "PART-A",
-		DeliveryNode: lineNode.Name,
+		OrderUUID:       "uuid-5",
+		OrderType:       "bogus",
+		PayloadTypeCode: "PART-A",
+		DeliveryNode:    lineNode.Name,
 	}
 
 	d.HandleOrderRequest(env, req)
@@ -236,10 +235,30 @@ func TestHandleOrderRequest_UnknownType(t *testing.T) {
 	}
 }
 
+func TestHandleOrderRequest_UnknownPayloadType(t *testing.T) {
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+
+	d, _ := newTestDispatcher(t, db, rds.NewClient("http://localhost:1", 1))
+
+	env := &messaging.Envelope{ClientID: "line-1", FactoryID: "plant-alpha"}
+	req := messaging.OrderRequest{
+		OrderUUID:       "uuid-pt",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "NONEXISTENT",
+		DeliveryNode:    lineNode.Name,
+	}
+
+	d.HandleOrderRequest(env, req)
+
+	// Should fail before creating order — no received or failed events from emitter
+	// but an error reply should be enqueued in the outbox
+}
+
 func TestHandleOrderCancel(t *testing.T) {
 	db := testDB(t)
 
-	order := &store.Order{WardropUUID: "uuid-cancel", ClientID: "line-1", Status: StatusPending, MaterialCode: "PART-A"}
+	order := &store.Order{WardropUUID: "uuid-cancel", ClientID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, rds.NewClient("http://localhost:1", 1))
@@ -263,25 +282,26 @@ func TestHandleOrderCancel(t *testing.T) {
 	}
 }
 
-func TestHandleOrderCancel_UnclaimsInventory(t *testing.T) {
+func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db := testDB(t)
-	storageNode, _, mat := setupTestData(t, db)
+	storageNode, _, pt := setupTestData(t, db)
 
-	order := &store.Order{WardropUUID: "uuid-unclaim", ClientID: "line-1", Status: StatusDispatched, MaterialCode: "PART-A"}
+	order := &store.Order{WardropUUID: "uuid-unclaim", ClientID: "line-1", Status: StatusDispatched}
 	db.CreateOrder(order)
 
-	invID, _ := db.AddInventory(storageNode.ID, mat.ID, 5.0, false, nil, "")
-	db.ClaimInventory(invID, order.ID)
+	p := &store.Payload{PayloadTypeID: pt.ID, NodeID: &storageNode.ID, Status: "available"}
+	db.CreatePayload(p)
+	db.ClaimPayload(p.ID, order.ID)
 
 	d, _ := newTestDispatcher(t, db, rds.NewClient("http://localhost:1", 1))
 
 	env := &messaging.Envelope{ClientID: "line-1", FactoryID: "plant-alpha"}
 	d.HandleOrderCancel(env, messaging.OrderCancel{OrderUUID: "uuid-unclaim", Reason: "test"})
 
-	// Verify inventory unclaimed
-	item, _ := db.GetInventoryItem(invID)
-	if item.ClaimedBy != nil {
-		t.Errorf("ClaimedBy = %v, want nil", item.ClaimedBy)
+	// Verify payload unclaimed
+	got, _ := db.GetPayload(p.ID)
+	if got.ClaimedBy != nil {
+		t.Errorf("ClaimedBy = %v, want nil", got.ClaimedBy)
 	}
 }
 
@@ -309,29 +329,28 @@ func TestHandleDeliveryReceipt(t *testing.T) {
 	}
 }
 
-func TestFIFOSourceSelection_PartialPriority(t *testing.T) {
+func TestFIFOPayloadSourceSelection(t *testing.T) {
 	db := testDB(t)
-	storageNode, _, mat := setupTestData(t, db)
+	storageNode, _, pt := setupTestData(t, db)
 
 	// Create another storage node
 	s2 := &store.Node{Name: "STORAGE-B1", RDSLocation: "Loc-02", NodeType: "storage", Capacity: 10, Enabled: true}
 	db.CreateNode(s2)
 
-	// Older full pallet at storageNode
-	db.AddInventory(storageNode.ID, mat.ID, 10.0, false, nil, "")
-	// Newer partial pallet at s2
-	db.AddInventory(s2.ID, mat.ID, 3.0, true, nil, "")
+	// Older available payload at storageNode
+	p1 := &store.Payload{PayloadTypeID: pt.ID, NodeID: &storageNode.ID, Status: "available"}
+	db.CreatePayload(p1)
+	// Newer available payload at s2
+	p2 := &store.Payload{PayloadTypeID: pt.ID, NodeID: &s2.ID, Status: "available"}
+	db.CreatePayload(p2)
 
-	// FIFO with partial priority should select partial first
-	source, err := db.FindSourceFIFO("PART-A")
+	// FIFO should select oldest (p1) first
+	source, err := db.FindSourcePayloadFIFO("PART-A")
 	if err != nil {
-		t.Fatalf("FindSourceFIFO: %v", err)
+		t.Fatalf("FindSourcePayloadFIFO: %v", err)
 	}
-	if source.NodeID != s2.ID {
-		t.Errorf("source node = %d, want %d (partial priority)", source.NodeID, s2.ID)
-	}
-	if !source.IsPartial {
-		t.Error("source should be partial")
+	if source.ID != p1.ID {
+		t.Errorf("source payload = %d, want %d (FIFO order)", source.ID, p1.ID)
 	}
 }
 

@@ -18,13 +18,13 @@
       {{if $state}}
         {{if $state.Items}}
         <table>
-          <thead><tr><th>Material</th><th>Qty</th><th>Partial</th><th>Since</th></tr></thead>
+          <thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Since</th></tr></thead>
           <tbody>
             {{range $state.Items}}
             <tr>
-              <td>{{.MaterialCode}}</td>
-              <td>{{.Quantity}}</td>
-              <td>{{if .IsPartial}}Yes{{else}}-{{end}}</td>
+              <td>#{{.ID}}</td>
+              <td>{{.PayloadTypeName}}</td>
+              <td>{{.Status}}</td>
               <td>{{formatTime .DeliveredAt}}</td>
             </tr>
             {{end}}

@@ -16,7 +16,7 @@ func TestDecodeEnvelope_OrderRequest(t *testing.T) {
 		"payload": {
 			"order_uuid": "uuid-1",
 			"order_type": "retrieve",
-			"material_code": "PART-A",
+			"payload_type_code": "PART-A",
 			"quantity": 2.0,
 			"delivery_node": "LINE1-IN",
 			"pickup_node": "",
@@ -53,8 +53,8 @@ func TestDecodeEnvelope_OrderRequest(t *testing.T) {
 	if req.OrderType != "retrieve" {
 		t.Errorf("order_type = %q, want %q", req.OrderType, "retrieve")
 	}
-	if req.MaterialCode != "PART-A" {
-		t.Errorf("material_code = %q, want %q", req.MaterialCode, "PART-A")
+	if req.PayloadTypeCode != "PART-A" {
+		t.Errorf("payload_type_code = %q, want %q", req.PayloadTypeCode, "PART-A")
 	}
 	if req.Quantity != 2.0 {
 		t.Errorf("quantity = %f, want 2.0", req.Quantity)
@@ -250,12 +250,12 @@ func TestEnvelopeEncode(t *testing.T) {
 
 func TestEnvelopeRoundTrip(t *testing.T) {
 	original := NewEnvelope("order_request", "line-3", "factory-1", OrderRequest{
-		OrderUUID:    "uuid-rt",
-		OrderType:    "store",
-		MaterialCode: "PART-B",
-		Quantity:     1.5,
-		DeliveryNode: "LINE3-IN",
-		Priority:     3,
+		OrderUUID:       "uuid-rt",
+		OrderType:       "store",
+		PayloadTypeCode: "PART-B",
+		Quantity:        1.5,
+		DeliveryNode:    "LINE3-IN",
+		Priority:        3,
 	})
 
 	data, err := original.Encode()
@@ -279,8 +279,8 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload type = %T, want OrderRequest", decoded.Payload)
 	}
-	if req.MaterialCode != "PART-B" {
-		t.Errorf("material_code = %q, want %q", req.MaterialCode, "PART-B")
+	if req.PayloadTypeCode != "PART-B" {
+		t.Errorf("payload_type_code = %q, want %q", req.PayloadTypeCode, "PART-B")
 	}
 	if req.Quantity != 1.5 {
 		t.Errorf("quantity = %f, want 1.5", req.Quantity)

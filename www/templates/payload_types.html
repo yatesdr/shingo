@@ -1,0 +1,131 @@
+{{define "content"}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Payload Types</h1>
+  </div>
+
+  <div class="card mb-2">
+    <h3>Add Payload Type</h3>
+    <form method="POST" action="/payload-types/create">
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" name="name" required placeholder="e.g. Standard Tote">
+        </div>
+        <div class="form-group">
+          <label>Form Factor</label>
+          <select name="form_factor">
+            <option value="tote">Tote</option>
+            <option value="shelf">Shelf</option>
+            <option value="kd_container">KD Container</option>
+            <option value="other" selected>Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" name="description" placeholder="Optional description">
+        </div>
+        <div class="form-group">
+          <label>Default Manifest (JSON)</label>
+          <textarea name="default_manifest_json" rows="2" placeholder="{}">{}</textarea>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Create Payload Type</button>
+    </form>
+  </div>
+
+  <div class="card">
+    {{if .PayloadTypes}}
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Form Factor</th>
+          <th>Description</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .PayloadTypes}}
+        <tr>
+          <td>{{.ID}}</td>
+          <td><strong>{{.Name}}</strong></td>
+          <td>{{.FormFactor}}</td>
+          <td>{{.Description}}</td>
+          <td>{{formatTime .CreatedAt}}</td>
+          <td>
+            <button class="btn btn-sm" onclick="editPayloadType({{.ID}}, '{{.Name}}', '{{.Description}}', '{{.FormFactor}}', this)" data-manifest="{{.DefaultManifestJSON}}">Edit</button>
+            <form method="POST" action="/payload-types/delete" style="display:inline" onsubmit="return confirm('Delete this payload type?')">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="text-muted">No payload types defined yet.</p>
+    {{end}}
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div id="pt-modal" class="modal-overlay" onclick="if(event.target===this)closePTModal()">
+  <div class="modal">
+    <div class="modal-header flex flex-between">
+      <h2>Edit Payload Type</h2>
+      <button class="modal-close" onclick="closePTModal()">&times;</button>
+    </div>
+    <form method="POST" action="/payload-types/update">
+      <input type="hidden" name="id" id="pt-edit-id">
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" name="name" id="pt-edit-name" required>
+        </div>
+        <div class="form-group">
+          <label>Form Factor</label>
+          <select name="form_factor" id="pt-edit-ff">
+            <option value="tote">Tote</option>
+            <option value="shelf">Shelf</option>
+            <option value="kd_container">KD Container</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" name="description" id="pt-edit-desc">
+        </div>
+        <div class="form-group">
+          <label>Default Manifest (JSON)</label>
+          <textarea name="default_manifest_json" id="pt-edit-manifest" rows="2"></textarea>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary">Save Changes</button>
+      <button type="button" class="btn" onclick="closePTModal()" style="margin-left:0.5rem">Cancel</button>
+    </form>
+  </div>
+</div>
+
+<script>
+function editPayloadType(id, name, desc, ff, btn) {
+  document.getElementById('pt-edit-id').value = id;
+  document.getElementById('pt-edit-name').value = name;
+  document.getElementById('pt-edit-desc').value = desc;
+  document.getElementById('pt-edit-ff').value = ff;
+  document.getElementById('pt-edit-manifest').value = btn.dataset.manifest || '{}';
+  document.getElementById('pt-modal').classList.add('active');
+}
+
+function closePTModal() {
+  document.getElementById('pt-modal').classList.remove('active');
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closePTModal();
+});
+</script>
+{{end}}

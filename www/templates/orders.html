@@ -14,7 +14,7 @@
         <tr><td><strong>UUID</strong></td><td>{{.Order.WardropUUID}}</td></tr>
         <tr><td><strong>Client</strong></td><td>{{.Order.ClientID}}</td></tr>
         <tr><td><strong>Type</strong></td><td>{{.Order.OrderType}}</td></tr>
-        <tr><td><strong>Material</strong></td><td>{{.Order.MaterialCode}}</td></tr>
+        <tr><td><strong>Payload Type</strong></td><td>{{if .Order.PayloadTypeID}}PT#{{deref .Order.PayloadTypeID}}{{else}}{{.Order.MaterialCode}}{{end}}</td></tr>
         <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
         <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
         <tr><td><strong>RDS Order</strong></td><td>{{.Order.RDSOrderID}}</td></tr>
@@ -44,6 +44,21 @@
     </div>
   </div>
 
+  {{if .Authenticated}}
+  <div class="card mb-2">
+    <h3>Controls</h3>
+    <div id="order-status-msg" style="font-size:0.85rem;margin-bottom:0.5rem;min-height:1.2em" class="text-muted"></div>
+    <div class="flex gap-1" style="align-items:center;flex-wrap:wrap">
+      {{if and (ne .Order.Status "completed") (ne .Order.Status "cancelled") (ne .Order.Status "failed")}}
+      <button class="btn btn-danger btn-sm" onclick="terminateOrder({{.Order.ID}})">Terminate Order</button>
+      {{end}}
+      <label style="font-size:0.85rem;margin-left:1rem">Priority:</label>
+      <input type="number" id="order-priority" value="{{.Order.Priority}}" style="width:5rem">
+      <button class="btn btn-sm" onclick="setOrderPriority({{.Order.ID}})">Set Priority</button>
+    </div>
+  </div>
+  {{end}}
+
   {{else}}
   {{/* Order list view */}}
   <div class="flex flex-between mb-2">
@@ -67,7 +82,7 @@
           <th>UUID</th>
           <th>Client</th>
           <th>Type</th>
-          <th>Material</th>
+          <th>Payload Type</th>
           <th>Status</th>
           <th>Robot</th>
           <th>Created</th>
@@ -80,7 +95,7 @@
           <td style="font-family:monospace;font-size:0.8rem">{{.WardropUUID}}</td>
           <td>{{.ClientID}}</td>
           <td>{{.OrderType}}</td>
-          <td>{{.MaterialCode}}</td>
+          <td>{{if .PayloadTypeID}}PT#{{deref .PayloadTypeID}}{{else}}{{.MaterialCode}}{{end}}</td>
           <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
           <td>{{.RobotID}}</td>
           <td>{{formatTime .CreatedAt}}</td>
@@ -94,4 +109,31 @@
   </div>
   {{end}}
 </div>
+
+<script>
+function orderControlPost(url, body) {
+  var msg = document.getElementById('order-status-msg');
+  if (msg) msg.textContent = 'Sending...';
+  fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    .then(function(r) { return r.json().then(function(d) { return {ok:r.ok, data:d}; }); })
+    .then(function(r) {
+      if (msg) msg.textContent = r.ok ? 'OK - reloading...' : (r.data.error || 'Error');
+      if (r.ok) setTimeout(function() { location.reload(); }, 800);
+    })
+    .catch(function(e) {
+      if (msg) msg.textContent = 'Network error';
+    });
+}
+
+function terminateOrder(id) {
+  if (!confirm('Terminate order #' + id + '? This cannot be undone.')) return;
+  orderControlPost('/api/orders/terminate', {order_id: id});
+}
+
+function setOrderPriority(id) {
+  var p = parseInt(document.getElementById('order-priority').value, 10);
+  if (isNaN(p)) return;
+  orderControlPost('/api/orders/priority', {order_id: id, priority: p});
+}
+</script>
 {{end}}

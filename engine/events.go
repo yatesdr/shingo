@@ -7,7 +7,7 @@ const (
 	EventOrderCompleted
 	EventOrderFailed
 	EventOrderCancelled
-	EventInventoryChanged
+	EventPayloadChanged
 	EventNodeUpdated
 	EventCorrectionApplied
 	EventRDSConnected
@@ -19,12 +19,12 @@ const (
 // --- Event payloads ---
 
 type OrderReceivedEvent struct {
-	OrderID      int64
-	WardropUUID  string
-	ClientID     string
-	OrderType    string
-	MaterialCode string
-	DeliveryNode string
+	OrderID         int64
+	WardropUUID     string
+	ClientID        string
+	OrderType       string
+	PayloadTypeCode string
+	DeliveryNode    string
 }
 
 type OrderDispatchedEvent struct {
@@ -64,12 +64,14 @@ type OrderCancelledEvent struct {
 	Reason      string
 }
 
-type InventoryChangedEvent struct {
-	NodeID       int64
-	NodeName     string
-	Action       string // "added", "removed", "moved", "adjusted"
-	MaterialCode string
-	Quantity     float64
+type PayloadChangedEvent struct {
+	NodeID          int64
+	NodeName        string
+	Action          string // "added", "removed", "moved", "claimed", "unclaimed"
+	PayloadID       int64
+	PayloadTypeCode string
+	FromNodeID      int64
+	ToNodeID        int64
 }
 
 type NodeUpdatedEvent struct {

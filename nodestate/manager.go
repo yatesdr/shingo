@@ -17,55 +17,47 @@ func NewManager(db *store.DB, redis *RedisStore) *Manager {
 	return &Manager{db: db, redis: redis}
 }
 
-// AddInventory adds an inventory item to a node in SQL and updates Redis.
-func (m *Manager) AddInventory(nodeID, materialID int64, quantity float64, isPartial bool, sourceOrderID *int64, notes string) (int64, error) {
-	id, err := m.db.AddInventory(nodeID, materialID, quantity, isPartial, sourceOrderID, notes)
-	if err != nil {
-		return 0, err
-	}
-	m.refreshNodeRedis(nodeID)
-	return id, nil
-}
-
-// RemoveInventory removes an inventory item from SQL and updates Redis.
-func (m *Manager) RemoveInventory(inventoryID int64) error {
-	item, err := m.db.GetInventoryItem(inventoryID)
-	if err != nil {
+// AddPayload creates a payload in SQL and refreshes Redis for its node.
+func (m *Manager) AddPayload(p *store.Payload) error {
+	if err := m.db.CreatePayload(p); err != nil {
 		return err
 	}
-	nodeID := item.NodeID
-	if err := m.db.RemoveInventory(inventoryID); err != nil {
-		return err
+	if p.NodeID != nil {
+		m.refreshNodeRedis(*p.NodeID)
 	}
-	m.refreshNodeRedis(nodeID)
 	return nil
 }
 
-// MoveInventory moves an inventory item between nodes in SQL and updates Redis for both.
-func (m *Manager) MoveInventory(inventoryID, toNodeID int64) error {
-	item, err := m.db.GetInventoryItem(inventoryID)
+// RemovePayload deletes a payload from SQL and refreshes Redis.
+func (m *Manager) RemovePayload(payloadID int64) error {
+	p, err := m.db.GetPayload(payloadID)
 	if err != nil {
 		return err
 	}
-	fromNodeID := item.NodeID
-	if err := m.db.MoveInventory(inventoryID, toNodeID); err != nil {
+	if err := m.db.DeletePayload(payloadID); err != nil {
 		return err
 	}
-	m.refreshNodeRedis(fromNodeID)
+	if p.NodeID != nil {
+		m.refreshNodeRedis(*p.NodeID)
+	}
+	return nil
+}
+
+// MovePayload moves a payload between nodes in SQL, unclaims it, and refreshes Redis for both.
+func (m *Manager) MovePayload(payloadID, toNodeID int64) error {
+	p, err := m.db.GetPayload(payloadID)
+	if err != nil {
+		return err
+	}
+	fromNodeID := p.NodeID
+	if err := m.db.MovePayload(payloadID, toNodeID); err != nil {
+		return err
+	}
+	m.db.UnclaimPayload(payloadID)
+	if fromNodeID != nil {
+		m.refreshNodeRedis(*fromNodeID)
+	}
 	m.refreshNodeRedis(toNodeID)
-	return nil
-}
-
-// AdjustQuantity updates the quantity of an inventory item.
-func (m *Manager) AdjustQuantity(inventoryID int64, newQty float64) error {
-	item, err := m.db.GetInventoryItem(inventoryID)
-	if err != nil {
-		return err
-	}
-	if err := m.db.UpdateInventoryQuantity(inventoryID, newQty); err != nil {
-		return err
-	}
-	m.refreshNodeRedis(item.NodeID)
 	return nil
 }
 
@@ -75,7 +67,7 @@ func (m *Manager) GetNodeState(nodeID int64) (*NodeState, error) {
 
 	meta, err := m.redis.GetNodeMeta(ctx, nodeID)
 	if err == nil && meta != nil {
-		items, _ := m.redis.GetNodeInventory(ctx, nodeID)
+		items, _ := m.redis.GetNodePayloads(ctx, nodeID)
 		count, _ := m.redis.GetCount(ctx, nodeID)
 		return &NodeState{
 			NodeID:    meta.NodeID,
@@ -174,27 +166,27 @@ func (m *Manager) RefreshNodeMeta(nodeID int64) {
 
 func (m *Manager) refreshNodeRedis(nodeID int64) {
 	ctx := context.Background()
-	dbItems, err := m.db.ListNodeInventory(nodeID)
+	dbPayloads, err := m.db.ListPayloadsByNode(nodeID)
 	if err != nil {
 		log.Printf("nodestate: refresh redis for node %d: %v", nodeID, err)
 		return
 	}
 
-	items := make([]InventoryItem, len(dbItems))
-	for i, di := range dbItems {
-		items[i] = InventoryItem{
-			ID:           di.ID,
-			MaterialID:   di.MaterialID,
-			MaterialCode: di.MaterialCode,
-			Quantity:     di.Quantity,
-			IsPartial:    di.IsPartial,
-			DeliveredAt:  di.DeliveredAt,
-			Notes:        di.Notes,
-			ClaimedBy:    di.ClaimedBy,
+	items := make([]PayloadItem, len(dbPayloads))
+	for i, p := range dbPayloads {
+		items[i] = PayloadItem{
+			ID:              p.ID,
+			PayloadTypeID:   p.PayloadTypeID,
+			PayloadTypeName: p.PayloadTypeName,
+			FormFactor:      p.FormFactor,
+			Status:          p.Status,
+			DeliveredAt:     p.DeliveredAt,
+			Notes:           p.Notes,
+			ClaimedBy:       p.ClaimedBy,
 		}
 	}
 
-	m.redis.SetNodeInventory(ctx, nodeID, items)
+	m.redis.SetNodePayloads(ctx, nodeID, items)
 	m.redis.SetCount(ctx, nodeID, len(items))
 }
 
@@ -203,22 +195,22 @@ func (m *Manager) getNodeStateFromSQL(nodeID int64) (*NodeState, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbItems, err := m.db.ListNodeInventory(nodeID)
+	dbPayloads, err := m.db.ListPayloadsByNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
 
-	items := make([]InventoryItem, len(dbItems))
-	for i, di := range dbItems {
-		items[i] = InventoryItem{
-			ID:           di.ID,
-			MaterialID:   di.MaterialID,
-			MaterialCode: di.MaterialCode,
-			Quantity:     di.Quantity,
-			IsPartial:    di.IsPartial,
-			DeliveredAt:  di.DeliveredAt,
-			Notes:        di.Notes,
-			ClaimedBy:    di.ClaimedBy,
+	items := make([]PayloadItem, len(dbPayloads))
+	for i, p := range dbPayloads {
+		items[i] = PayloadItem{
+			ID:              p.ID,
+			PayloadTypeID:   p.PayloadTypeID,
+			PayloadTypeName: p.PayloadTypeName,
+			FormFactor:      p.FormFactor,
+			Status:          p.Status,
+			DeliveredAt:     p.DeliveredAt,
+			Notes:           p.Notes,
+			ClaimedBy:       p.ClaimedBy,
 		}
 	}
 

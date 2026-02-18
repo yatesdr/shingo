@@ -1,6 +1,7 @@
 package www
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
@@ -106,6 +107,76 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
 }
 
+func (h *Handlers) handleNodeSyncRDS(w http.ResponseWriter, r *http.Request) {
+	bins, err := h.engine.RDSClient().GetBinDetails()
+	if err != nil {
+		log.Printf("node sync: RDS error: %v", err)
+		http.Redirect(w, r, "/nodes", http.StatusSeeOther)
+		return
+	}
+
+	created := 0
+	for _, bin := range bins {
+		// Check if node already exists by RDS location or name
+		if _, err := h.engine.DB().GetNodeByRDSLocation(bin.ID); err == nil {
+			continue
+		}
+		if _, err := h.engine.DB().GetNodeByName(bin.ID); err == nil {
+			continue
+		}
+		node := &store.Node{
+			Name:        bin.ID,
+			RDSLocation: bin.ID,
+			NodeType:    "storage",
+			Capacity:    1,
+			Enabled:     true,
+		}
+		if err := h.engine.DB().CreateNode(node); err != nil {
+			continue
+		}
+		h.engine.NodeState().RefreshNodeMeta(node.ID)
+		h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+			NodeID: node.ID, NodeName: node.Name, Action: "created",
+		}})
+		created++
+	}
+
+	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
+}
+
+func (h *Handlers) handleSceneSync(w http.ResponseWriter, r *http.Request) {
+	scene, err := h.engine.RDSClient().GetScene()
+	if err != nil {
+		log.Printf("scene sync: RDS error: %v", err)
+		http.Redirect(w, r, "/nodes", http.StatusSeeOther)
+		return
+	}
+
+	// Build point-to-area map
+	pointArea := make(map[string]string)
+	for _, area := range scene.Areas {
+		for _, pt := range area.Points {
+			pointArea[pt] = area.Name
+		}
+	}
+
+	nodes, _ := h.engine.DB().ListNodes()
+	for _, node := range nodes {
+		if node.RDSLocation == "" || node.Zone != "" {
+			continue
+		}
+		if zone, ok := pointArea[node.RDSLocation]; ok {
+			node.Zone = zone
+			h.engine.DB().UpdateNode(node)
+			h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+				NodeID: node.ID, NodeName: node.Name, Action: "updated",
+			}})
+		}
+	}
+
+	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
+}
+
 func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.FormValue("id"), 10, 64)
 	if err != nil {
@@ -129,4 +200,68 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 	}})
 
 	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
+}
+
+func (h *Handlers) apiBinOccupancy(w http.ResponseWriter, r *http.Request) {
+	bins, err := h.engine.RDSClient().GetBinDetails()
+	if err != nil {
+		h.jsonError(w, "RDS error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	nodes, _ := h.engine.DB().ListNodes()
+
+	// Build lookup maps
+	binMap := make(map[string]bool, len(bins))
+	for _, b := range bins {
+		binMap[b.ID] = b.Filled
+	}
+
+	nodeRDS := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		if n.RDSLocation != "" {
+			nodeRDS[n.RDSLocation] = n.Name
+		}
+	}
+
+	type entry struct {
+		BinID       string `json:"bin_id"`
+		NodeName    string `json:"node_name"`
+		RDSFilled   *bool  `json:"rds_filled"`
+		InWarPath   bool   `json:"in_warpath"`
+		Discrepancy string `json:"discrepancy"`
+	}
+
+	var results []entry
+
+	// Bins in RDS
+	for _, b := range bins {
+		e := entry{
+			BinID:     b.ID,
+			RDSFilled: &b.Filled,
+			InWarPath: nodeRDS[b.ID] != "",
+			NodeName:  nodeRDS[b.ID],
+		}
+		if !e.InWarPath {
+			e.Discrepancy = "rds_only"
+		}
+		results = append(results, e)
+	}
+
+	// Nodes in WarPath but not in RDS
+	for _, n := range nodes {
+		if n.RDSLocation == "" {
+			continue
+		}
+		if _, ok := binMap[n.RDSLocation]; !ok {
+			results = append(results, entry{
+				BinID:       n.RDSLocation,
+				NodeName:    n.Name,
+				InWarPath:   true,
+				Discrepancy: "warpath_only",
+			})
+		}
+	}
+
+	h.jsonOK(w, results)
 }

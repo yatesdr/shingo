@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS orders (
     error_detail    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    completed_at    TEXT
+    completed_at    TEXT,
+    payload_type_id INTEGER REFERENCES payload_types(id),
+    payload_id      INTEGER REFERENCES payloads(id)
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(wardrop_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
@@ -100,15 +102,19 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
 
 CREATE TABLE IF NOT EXISTS corrections (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    correction_type TEXT NOT NULL,
-    node_id         INTEGER NOT NULL REFERENCES nodes(id),
-    material_id     INTEGER REFERENCES materials(id),
-    inventory_id    INTEGER REFERENCES node_inventory(id),
-    quantity        REAL NOT NULL DEFAULT 0,
-    reason          TEXT NOT NULL,
-    actor           TEXT NOT NULL DEFAULT 'system',
-    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    correction_type  TEXT NOT NULL,
+    node_id          INTEGER NOT NULL REFERENCES nodes(id),
+    material_id      INTEGER REFERENCES materials(id),
+    inventory_id     INTEGER REFERENCES node_inventory(id),
+    payload_id       INTEGER REFERENCES payloads(id),
+    manifest_item_id INTEGER REFERENCES manifest_items(id),
+    cat_id           TEXT NOT NULL DEFAULT '',
+    description      TEXT NOT NULL DEFAULT '',
+    quantity         REAL NOT NULL DEFAULT 0,
+    reason           TEXT NOT NULL,
+    actor            TEXT NOT NULL DEFAULT 'system',
+    created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 
 CREATE TABLE IF NOT EXISTS admin_users (
@@ -117,4 +123,41 @@ CREATE TABLE IF NOT EXISTS admin_users (
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS payload_types (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                  TEXT NOT NULL UNIQUE,
+    description           TEXT NOT NULL DEFAULT '',
+    form_factor           TEXT NOT NULL DEFAULT 'other',
+    default_manifest_json TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS payloads (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    payload_type_id INTEGER NOT NULL REFERENCES payload_types(id),
+    node_id         INTEGER REFERENCES nodes(id),
+    status          TEXT NOT NULL DEFAULT 'empty',
+    claimed_by      INTEGER REFERENCES orders(id),
+    delivered_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    notes           TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_payloads_type ON payloads(payload_type_id);
+CREATE INDEX IF NOT EXISTS idx_payloads_node ON payloads(node_id);
+CREATE INDEX IF NOT EXISTS idx_payloads_status ON payloads(status);
+
+CREATE TABLE IF NOT EXISTS manifest_items (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    payload_id      INTEGER NOT NULL REFERENCES payloads(id) ON DELETE CASCADE,
+    part_number     TEXT NOT NULL DEFAULT '',
+    quantity        REAL NOT NULL DEFAULT 0,
+    production_date TEXT,
+    lot_code        TEXT,
+    notes           TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_manifest_payload ON manifest_items(payload_id);
 `

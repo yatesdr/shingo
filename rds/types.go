@@ -236,8 +236,13 @@ type SceneResponse struct {
 	Data *Scene `json:"data,omitempty"`
 }
 
+type Area struct {
+	Name   string   `json:"name"`
+	Points []string `json:"points,omitempty"`
+}
+
 type Scene struct {
-	Areas       []any         `json:"areas"`
+	Areas       []Area        `json:"areas"`
 	BlockGroups []any         `json:"blockGroup"`
 	Doors       []any         `json:"doors"`
 	Labels      []any         `json:"labels"`

@@ -55,15 +55,15 @@ func (e *Engine) wireEventHandlers() {
 	// When an order is received, audit it
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderReceivedEvent)
-		e.logFn("engine: order %d received from %s: %s %s -> %s", ev.OrderID, ev.ClientID, ev.OrderType, ev.MaterialCode, ev.DeliveryNode)
-		e.db.AppendAudit("order", ev.OrderID, "received", "", fmt.Sprintf("%s %s from %s", ev.OrderType, ev.MaterialCode, ev.ClientID), "system")
+		e.logFn("engine: order %d received from %s: %s %s -> %s", ev.OrderID, ev.ClientID, ev.OrderType, ev.PayloadTypeCode, ev.DeliveryNode)
+		e.db.AppendAudit("order", ev.OrderID, "received", "", fmt.Sprintf("%s %s from %s", ev.OrderType, ev.PayloadTypeCode, ev.ClientID), "system")
 	}, EventOrderReceived)
 
-	// Inventory changes: audit
+	// Payload changes: audit
 	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(InventoryChangedEvent)
-		e.db.AppendAudit("inventory", ev.NodeID, ev.Action, "", fmt.Sprintf("%s qty=%.1f", ev.MaterialCode, ev.Quantity), "system")
-	}, EventInventoryChanged)
+		ev := evt.Payload.(PayloadChangedEvent)
+		e.db.AppendAudit("payload", ev.PayloadID, ev.Action, "", fmt.Sprintf("type=%s node=%d", ev.PayloadTypeCode, ev.NodeID), "system")
+	}, EventPayloadChanged)
 
 	// Node updates: audit
 	e.Events.SubscribeTypes(func(evt Event) {
@@ -137,7 +137,7 @@ func (e *Engine) handleRDSStatusChange(ev OrderStatusChangedEvent) {
 }
 
 func (e *Engine) handleOrderDelivered(order *store.Order) {
-	e.db.UpdateOrderStatus(order.ID, dispatch.StatusDelivered, "material delivered")
+	e.db.UpdateOrderStatus(order.ID, dispatch.StatusDelivered, "payload delivered")
 
 	// Send delivered notification to WarDrop
 	reply := messaging.NewEnvelope("delivered", order.ClientID, e.cfg.FactoryID, messaging.DeliveredReply{
@@ -149,7 +149,7 @@ func (e *Engine) handleOrderDelivered(order *store.Order) {
 	e.db.EnqueueOutbox(topic, data, "delivered", order.ClientID)
 }
 
-// handleOrderCompleted updates inventory after WarDrop confirms physical receipt.
+// handleOrderCompleted moves payloads from source to dest after WarDrop confirms physical receipt.
 func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	order, err := e.db.GetOrder(ev.OrderID)
 	if err != nil {
@@ -161,44 +161,16 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 
-	materialID := int64(0)
-	if order.MaterialID != nil {
-		materialID = *order.MaterialID
-	}
-
-	// Find and remove claimed inventory from source
-	foundClaimed := false
-	items, _ := e.db.ListNodeInventory(*order.SourceNodeID)
-	for _, item := range items {
-		if item.ClaimedBy != nil && *item.ClaimedBy == order.ID {
-			foundClaimed = true
-			e.db.RemoveInventory(item.ID)
-			e.nodeState.AddInventory(*order.DestNodeID, item.MaterialID, item.Quantity, item.IsPartial, &order.ID, "")
-
-			e.Events.Emit(Event{Type: EventInventoryChanged, Payload: InventoryChangedEvent{
-				NodeID:       *order.SourceNodeID,
-				Action:       "removed",
-				MaterialCode: order.MaterialCode,
-				Quantity:     item.Quantity,
-			}})
-			e.Events.Emit(Event{Type: EventInventoryChanged, Payload: InventoryChangedEvent{
-				NodeID:       *order.DestNodeID,
-				Action:       "added",
-				MaterialCode: order.MaterialCode,
-				Quantity:     item.Quantity,
-			}})
-			break
-		}
-	}
-
-	// If no claimed inventory was found (e.g. move/store without prior claim), add at dest
-	if !foundClaimed && materialID > 0 {
-		e.nodeState.AddInventory(*order.DestNodeID, materialID, order.Quantity, false, &order.ID, "")
-		e.Events.Emit(Event{Type: EventInventoryChanged, Payload: InventoryChangedEvent{
-			NodeID:       *order.DestNodeID,
-			Action:       "added",
-			MaterialCode: order.MaterialCode,
-			Quantity:     order.Quantity,
+	payloads, _ := e.db.ListPayloadsByClaimedOrder(order.ID)
+	for _, p := range payloads {
+		e.nodeState.MovePayload(p.ID, *order.DestNodeID)
+		e.Events.Emit(Event{Type: EventPayloadChanged, Payload: PayloadChangedEvent{
+			Action:          "moved",
+			PayloadID:       p.ID,
+			PayloadTypeCode: p.PayloadTypeName,
+			FromNodeID:      *order.SourceNodeID,
+			ToNodeID:        *order.DestNodeID,
+			NodeID:          *order.DestNodeID,
 		}})
 	}
 }

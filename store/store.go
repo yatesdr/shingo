@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"warpath/config"
 
@@ -60,9 +61,10 @@ func openPostgres(cfg *config.PostgresConfig) (*DB, error) {
 func (db *DB) Dialect() Dialect { return db.dialect }
 func (db *DB) Driver() string   { return db.driver }
 
-// Q rewrites ? placeholders for PostgreSQL, passes through for SQLite.
+// Q rewrites ? placeholders and datetime literals for PostgreSQL, passes through for SQLite.
 func (db *DB) Q(query string) string {
 	if db.driver == "postgres" {
+		query = strings.ReplaceAll(query, "datetime('now','localtime')", "NOW()")
 		return Rebind(query)
 	}
 	return query

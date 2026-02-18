@@ -36,7 +36,7 @@
           <th>ID</th>
           <th>Client</th>
           <th>Type</th>
-          <th>Material</th>
+          <th>Payload Type</th>
           <th>Status</th>
           <th>Robot</th>
           <th>Created</th>
@@ -48,7 +48,7 @@
           <td><a href="/orders/detail?id={{.ID}}">{{.ID}}</a></td>
           <td>{{.ClientID}}</td>
           <td>{{.OrderType}}</td>
-          <td>{{.MaterialCode}}</td>
+          <td>{{if .PayloadTypeID}}PT#{{deref .PayloadTypeID}}{{else}}{{.MaterialCode}}{{end}}</td>
           <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
           <td>{{.RobotID}}</td>
           <td>{{formatTime .CreatedAt}}</td>

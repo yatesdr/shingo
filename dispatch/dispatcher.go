@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"database/sql"
 	"fmt"
 	"log"
 
@@ -39,7 +38,6 @@ func (d *Dispatcher) HandleOrderRequest(env *messaging.Envelope, req messaging.O
 		FactoryID:    env.FactoryID,
 		OrderType:    req.OrderType,
 		Status:       StatusPending,
-		MaterialCode: req.MaterialCode,
 		Quantity:     req.Quantity,
 		PickupNode:   req.PickupNode,
 		DeliveryNode: req.DeliveryNode,
@@ -47,16 +45,14 @@ func (d *Dispatcher) HandleOrderRequest(env *messaging.Envelope, req messaging.O
 		PayloadDesc:  req.PayloadDesc,
 	}
 
-	// Resolve material
-	mat, err := d.db.GetMaterialByCode(req.MaterialCode)
-	if err != nil && err != sql.ErrNoRows {
-		log.Printf("dispatch: material lookup error: %v", err)
-		d.sendError(env.ClientID, req.OrderUUID, "material_error", err.Error())
+	// Resolve payload type
+	pt, err := d.db.GetPayloadTypeByName(req.PayloadTypeCode)
+	if err != nil {
+		log.Printf("dispatch: payload type %q not found: %v", req.PayloadTypeCode, err)
+		d.sendError(env.ClientID, req.OrderUUID, "payload_type_error", fmt.Sprintf("payload type %q not found", req.PayloadTypeCode))
 		return
 	}
-	if mat != nil {
-		order.MaterialID = &mat.ID
-	}
+	order.PayloadTypeID = &pt.ID
 
 	// Resolve destination node
 	if req.DeliveryNode != "" {
@@ -76,13 +72,13 @@ func (d *Dispatcher) HandleOrderRequest(env *messaging.Envelope, req messaging.O
 	}
 	d.db.UpdateOrderStatus(order.ID, StatusPending, "order received")
 
-	d.emitter.EmitOrderReceived(order.ID, order.WardropUUID, env.ClientID, req.OrderType, req.MaterialCode, req.DeliveryNode)
+	d.emitter.EmitOrderReceived(order.ID, order.WardropUUID, env.ClientID, req.OrderType, req.PayloadTypeCode, req.DeliveryNode)
 
 	switch req.OrderType {
 	case OrderTypeRetrieve:
-		d.handleRetrieve(order, env.ClientID)
+		d.handleRetrieve(order, env.ClientID, req.PayloadTypeCode)
 	case OrderTypeMove:
-		d.handleMove(order, env.ClientID)
+		d.handleMove(order, env.ClientID, req.PayloadTypeCode)
 	case OrderTypeStore:
 		d.handleStore(order, env.ClientID)
 	default:
@@ -91,27 +87,27 @@ func (d *Dispatcher) HandleOrderRequest(env *messaging.Envelope, req messaging.O
 	}
 }
 
-func (d *Dispatcher) handleRetrieve(order *store.Order, clientID string) {
+func (d *Dispatcher) handleRetrieve(order *store.Order, clientID, payloadTypeCode string) {
 	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding source")
 
-	// FIFO source selection with partial priority
-	source, err := d.db.FindSourceFIFO(order.MaterialCode)
+	// FIFO source selection for payloads
+	source, err := d.db.FindSourcePayloadFIFO(payloadTypeCode)
 	if err != nil {
-		d.failOrder(order, clientID, "no_source", fmt.Sprintf("no source found for material %s", order.MaterialCode))
+		d.failOrder(order, clientID, "no_source", fmt.Sprintf("no source payload found for type %s", payloadTypeCode))
 		return
 	}
 
-	// Claim the inventory to prevent double-dispatch
-	if err := d.db.ClaimInventory(source.ID, order.ID); err != nil {
+	// Claim the payload to prevent double-dispatch
+	if err := d.db.ClaimPayload(source.ID, order.ID); err != nil {
 		d.failOrder(order, clientID, "claim_failed", err.Error())
 		return
 	}
 
-	order.SourceNodeID = &source.NodeID
-	d.db.UpdateOrderSourceNode(order.ID, source.NodeID)
+	order.SourceNodeID = source.NodeID
+	d.db.UpdateOrderSourceNode(order.ID, *source.NodeID)
 
 	// Get node details for RDS locations
-	sourceNode, err := d.db.GetNode(source.NodeID)
+	sourceNode, err := d.db.GetNode(*source.NodeID)
 	if err != nil {
 		d.failOrder(order, clientID, "node_error", err.Error())
 		return
@@ -126,7 +122,7 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, clientID string) {
 	d.dispatchToRDS(order, clientID, sourceNode, destNode)
 }
 
-func (d *Dispatcher) handleMove(order *store.Order, clientID string) {
+func (d *Dispatcher) handleMove(order *store.Order, clientID, payloadTypeCode string) {
 	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "validating move")
 
 	if order.PickupNode == "" {
@@ -140,18 +136,20 @@ func (d *Dispatcher) handleMove(order *store.Order, clientID string) {
 		return
 	}
 
-	// Validate inventory exists at pickup node for the requested material
-	if order.MaterialCode != "" {
-		items, _ := d.db.ListNodeInventory(pickupNode.ID)
+	// Validate unclaimed payload of requested type exists at pickup node
+	if payloadTypeCode != "" {
+		payloads, _ := d.db.ListPayloadsByNode(pickupNode.ID)
 		found := false
-		for _, item := range items {
-			if item.MaterialCode == order.MaterialCode && item.ClaimedBy == nil {
+		for _, p := range payloads {
+			if p.PayloadTypeName == payloadTypeCode && p.ClaimedBy == nil {
 				found = true
-				break
+				if err := d.db.ClaimPayload(p.ID, order.ID); err == nil {
+					break
+				}
 			}
 		}
 		if !found {
-			d.failOrder(order, clientID, "no_inventory", fmt.Sprintf("no unclaimed %s inventory at %s", order.MaterialCode, order.PickupNode))
+			d.failOrder(order, clientID, "no_payload", fmt.Sprintf("no unclaimed %s payload at %s", payloadTypeCode, order.PickupNode))
 			return
 		}
 	}
@@ -171,12 +169,12 @@ func (d *Dispatcher) handleMove(order *store.Order, clientID string) {
 func (d *Dispatcher) handleStore(order *store.Order, clientID string) {
 	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding storage destination")
 
-	var materialID int64
-	if order.MaterialID != nil {
-		materialID = *order.MaterialID
+	var payloadTypeID int64
+	if order.PayloadTypeID != nil {
+		payloadTypeID = *order.PayloadTypeID
 	}
 
-	destNode, err := d.db.FindStorageDestination(materialID)
+	destNode, err := d.db.FindStorageDestinationForPayload(payloadTypeID)
 	if err != nil {
 		d.failOrder(order, clientID, "no_storage", "no available storage node found")
 		return
@@ -256,7 +254,7 @@ func (d *Dispatcher) HandleOrderCancel(env *messaging.Envelope, req messaging.Or
 	}
 
 	// Unclaim inventory if applicable
-	d.unclaimOrderInventory(order.ID)
+	d.unclaimOrderPayloads(order.ID)
 
 	d.db.UpdateOrderStatus(order.ID, StatusCancelled, req.Reason)
 
@@ -333,14 +331,14 @@ func (d *Dispatcher) HandleRedirectRequest(env *messaging.Envelope, req messagin
 
 func (d *Dispatcher) failOrder(order *store.Order, clientID, errorCode, detail string) {
 	d.db.UpdateOrderStatus(order.ID, StatusFailed, detail)
-	d.unclaimOrderInventory(order.ID)
+	d.unclaimOrderPayloads(order.ID)
 	d.emitter.EmitOrderFailed(order.ID, order.WardropUUID, clientID, errorCode, detail)
 	d.sendError(clientID, order.WardropUUID, errorCode, detail)
 }
 
-func (d *Dispatcher) unclaimOrderInventory(orderID int64) {
+func (d *Dispatcher) unclaimOrderPayloads(orderID int64) {
 	// Collect IDs first, then unclaim — avoids holding rows cursor during Exec (SQLite deadlock)
-	rows, err := d.db.Query(d.db.Q(`SELECT id FROM node_inventory WHERE claimed_by=?`), orderID)
+	rows, err := d.db.Query(d.db.Q(`SELECT id FROM payloads WHERE claimed_by=?`), orderID)
 	if err != nil {
 		return
 	}
@@ -352,7 +350,7 @@ func (d *Dispatcher) unclaimOrderInventory(orderID int64) {
 	}
 	rows.Close()
 	for _, id := range ids {
-		d.db.UnclaimInventory(id)
+		d.db.UnclaimPayload(id)
 	}
 }
 

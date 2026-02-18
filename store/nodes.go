@@ -84,6 +84,11 @@ func (db *DB) GetNodeByName(name string) (*Node, error) {
 	return scanNode(row)
 }
 
+func (db *DB) GetNodeByRDSLocation(rdsLoc string) (*Node, error) {
+	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM nodes WHERE rds_location=?`, nodeSelectCols)), rdsLoc)
+	return scanNode(row)
+}
+
 func (db *DB) ListNodes() ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM nodes ORDER BY name`, nodeSelectCols))
 	if err != nil {

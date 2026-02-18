@@ -1,8 +1,11 @@
 package www
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"warpath/rds"
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
@@ -48,4 +51,66 @@ func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
 		"Authenticated": h.isAuthenticated(r),
 	}
 	h.render(w, "orders.html", data)
+}
+
+func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderID int64 `json:"order_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	order, err := h.engine.DB().GetOrder(req.OrderID)
+	if err != nil {
+		h.jsonError(w, "order not found", http.StatusNotFound)
+		return
+	}
+
+	// Terminate RDS order if it has an RDS order ID
+	if order.RDSOrderID != "" {
+		_ = h.engine.RDSClient().TerminateOrder(&rds.TerminateRequest{
+			ID: order.RDSOrderID,
+		})
+	}
+
+	actor := h.getUsername(r)
+	detail := "cancelled by " + actor
+	if err := h.engine.DB().UpdateOrderStatus(order.ID, "cancelled", detail); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderID  int64 `json:"order_id"`
+		Priority int   `json:"priority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	order, err := h.engine.DB().GetOrder(req.OrderID)
+	if err != nil {
+		h.jsonError(w, "order not found", http.StatusNotFound)
+		return
+	}
+
+	// Update RDS priority if order has an RDS ID
+	if order.RDSOrderID != "" {
+		if err := h.engine.RDSClient().SetPriority(order.RDSOrderID, req.Priority); err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := h.engine.DB().UpdateOrderPriority(order.ID, req.Priority); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, map[string]string{"status": "ok"})
 }

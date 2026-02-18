@@ -1,5 +1,5 @@
 {{define "content"}}
-<h1 class="mb-2">Inventory Corrections</h1>
+<h1 class="mb-2">Payload Corrections</h1>
 
 <div class="card mb-2">
   <h3>New Correction</h3>
@@ -8,10 +8,9 @@
       <div class="form-group">
         <label>Type</label>
         <select name="correction_type" id="corr-type">
-          <option value="add">Add Inventory</option>
-          <option value="remove">Remove Inventory</option>
-          <option value="adjust">Adjust Quantity</option>
-          <option value="move">Move Inventory</option>
+          <option value="add_item">Add Manifest Item</option>
+          <option value="remove_item">Remove Manifest Item</option>
+          <option value="adjust_qty">Adjust Quantity</option>
         </select>
       </div>
       <div class="form-group">
@@ -23,31 +22,32 @@
         </select>
       </div>
       <div class="form-group">
-        <label>Material</label>
-        <select name="material_id">
-          {{range .Materials}}
-          <option value="{{.ID}}">{{.Code}} - {{.Description}}</option>
+        <label>Payload</label>
+        <select name="payload_id" id="corr-payload" onchange="loadPayloadManifest()">
+          <option value="">-- Select --</option>
+          {{range .Payloads}}
+          <option value="{{.ID}}">#{{.ID}} {{.PayloadTypeName}} @ {{.NodeName}}</option>
           {{end}}
         </select>
+      </div>
+      <div class="form-group">
+        <label>Cat ID / Part Number</label>
+        <input type="text" name="cat_id" placeholder="e.g. PART-123">
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" name="description" placeholder="Item description">
       </div>
       <div class="form-group">
         <label>Quantity</label>
         <input type="number" name="quantity" step="0.01" value="1">
       </div>
       <div class="form-group">
-        <label>Inventory ID (for remove/adjust/move)</label>
-        <input type="number" name="inventory_id">
-      </div>
-      <div class="form-group">
-        <label>Dest Node (for move)</label>
-        <select name="to_node_id">
-          <option value="">--</option>
-          {{range .Nodes}}
-          <option value="{{.ID}}">{{.Name}}</option>
-          {{end}}
-        </select>
+        <label>Manifest Item ID (for remove/adjust)</label>
+        <input type="number" name="manifest_item_id" id="corr-mi-id">
       </div>
     </div>
+    <div id="manifest-preview" class="mb-1" style="font-size:0.8rem"></div>
     <div class="form-group">
       <label>Reason</label>
       <textarea name="reason" required placeholder="Explain why this correction is needed"></textarea>
@@ -65,6 +65,8 @@
         <th>ID</th>
         <th>Type</th>
         <th>Node</th>
+        <th>Payload</th>
+        <th>Cat ID</th>
         <th>Qty</th>
         <th>Reason</th>
         <th>Actor</th>
@@ -77,6 +79,8 @@
         <td>{{.ID}}</td>
         <td>{{.CorrectionType}}</td>
         <td>{{.NodeID}}</td>
+        <td>{{if .PayloadID}}{{deref .PayloadID}}{{else}}-{{end}}</td>
+        <td>{{.CatID}}</td>
         <td>{{.Quantity}}</td>
         <td>{{.Reason}}</td>
         <td>{{.Actor}}</td>
@@ -89,4 +93,27 @@
   <p class="text-muted">No corrections recorded.</p>
   {{end}}
 </div>
+
+<script>
+function loadPayloadManifest() {
+  var pid = document.getElementById('corr-payload').value;
+  var preview = document.getElementById('manifest-preview');
+  if (!pid) { preview.innerHTML = ''; return; }
+  fetch('/api/payloads/manifest?id=' + pid)
+    .then(function(r) { return r.json(); })
+    .then(function(items) {
+      if (!items || items.length === 0) {
+        preview.innerHTML = '<span class="text-muted">No manifest items</span>';
+        return;
+      }
+      var html = '<strong>Current Manifest:</strong><table style="font-size:0.8rem"><thead><tr><th>ID</th><th>Part#</th><th>Qty</th><th>Notes</th></tr></thead><tbody>';
+      items.forEach(function(m) {
+        html += '<tr><td>' + m.ID + '</td><td>' + m.PartNumber + '</td><td>' + m.Quantity + '</td><td>' + (m.Notes||'') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      preview.innerHTML = html;
+    })
+    .catch(function() { preview.innerHTML = '<span class="text-muted">Error loading manifest</span>'; });
+}
+</script>
 {{end}}

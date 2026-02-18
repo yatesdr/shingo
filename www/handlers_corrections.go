@@ -12,13 +12,13 @@ import (
 func (h *Handlers) handleCorrections(w http.ResponseWriter, r *http.Request) {
 	corrections, _ := h.engine.DB().ListCorrections(100)
 	nodes, _ := h.engine.DB().ListNodes()
-	materials, _ := h.engine.DB().ListMaterials()
+	payloads, _ := h.engine.DB().ListPayloads()
 
 	data := map[string]any{
 		"Page":          "corrections",
 		"Corrections":   corrections,
 		"Nodes":         nodes,
-		"Materials":     materials,
+		"Payloads":      payloads,
 		"Authenticated": h.isAuthenticated(r),
 	}
 	h.render(w, "corrections.html", data)
@@ -32,7 +32,9 @@ func (h *Handlers) handleCorrectionCreate(w http.ResponseWriter, r *http.Request
 
 	corrType := r.FormValue("correction_type")
 	nodeID, _ := strconv.ParseInt(r.FormValue("node_id"), 10, 64)
-	materialID, _ := strconv.ParseInt(r.FormValue("material_id"), 10, 64)
+	payloadID, _ := strconv.ParseInt(r.FormValue("payload_id"), 10, 64)
+	catID := r.FormValue("cat_id")
+	description := r.FormValue("description")
 	quantity, _ := strconv.ParseFloat(r.FormValue("quantity"), 64)
 	reason := r.FormValue("reason")
 	actor := h.getUsername(r)
@@ -43,42 +45,42 @@ func (h *Handlers) handleCorrectionCreate(w http.ResponseWriter, r *http.Request
 	corr := &store.Correction{
 		CorrectionType: corrType,
 		NodeID:         nodeID,
-		MaterialID:     &materialID,
-		Quantity:        quantity,
+		PayloadID:      &payloadID,
+		CatID:          catID,
+		Description:    description,
+		Quantity:       quantity,
 		Reason:         reason,
 		Actor:          actor,
 	}
 
 	switch corrType {
-	case "add":
-		invID, err := h.engine.NodeState().AddInventory(nodeID, materialID, quantity, false, nil, fmt.Sprintf("correction: %s", reason))
-		if err != nil {
+	case "add_item":
+		m := &store.ManifestItem{
+			PayloadID:  payloadID,
+			PartNumber: catID,
+			Quantity:   quantity,
+			Notes:      fmt.Sprintf("correction: %s", reason),
+		}
+		if err := h.engine.DB().CreateManifestItem(m); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		corr.InventoryID = &invID
-	case "remove":
-		invID, _ := strconv.ParseInt(r.FormValue("inventory_id"), 10, 64)
-		if err := h.engine.NodeState().RemoveInventory(invID); err != nil {
+		corr.ManifestItemID = &m.ID
+	case "remove_item":
+		miID, _ := strconv.ParseInt(r.FormValue("manifest_item_id"), 10, 64)
+		if err := h.engine.DB().DeleteManifestItem(miID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		corr.InventoryID = &invID
-	case "adjust":
-		invID, _ := strconv.ParseInt(r.FormValue("inventory_id"), 10, 64)
-		if err := h.engine.NodeState().AdjustQuantity(invID, quantity); err != nil {
+		corr.ManifestItemID = &miID
+	case "adjust_qty":
+		miID, _ := strconv.ParseInt(r.FormValue("manifest_item_id"), 10, 64)
+		m := &store.ManifestItem{ID: miID, Quantity: quantity, PartNumber: catID}
+		if err := h.engine.DB().UpdateManifestItem(m); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		corr.InventoryID = &invID
-	case "move":
-		invID, _ := strconv.ParseInt(r.FormValue("inventory_id"), 10, 64)
-		toNodeID, _ := strconv.ParseInt(r.FormValue("to_node_id"), 10, 64)
-		if err := h.engine.NodeState().MoveInventory(invID, toNodeID); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		corr.InventoryID = &invID
+		corr.ManifestItemID = &miID
 	}
 
 	h.engine.DB().CreateCorrection(corr)
@@ -91,10 +93,10 @@ func (h *Handlers) handleCorrectionCreate(w http.ResponseWriter, r *http.Request
 		Actor:          actor,
 	}})
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventInventoryChanged, Payload: engine.InventoryChangedEvent{
-		NodeID:   nodeID,
-		Action:   corrType,
-		Quantity: quantity,
+	h.engine.Events.Emit(engine.Event{Type: engine.EventPayloadChanged, Payload: engine.PayloadChangedEvent{
+		NodeID:    nodeID,
+		Action:    corrType,
+		PayloadID: payloadID,
 	}})
 
 	http.Redirect(w, r, "/corrections", http.StatusSeeOther)

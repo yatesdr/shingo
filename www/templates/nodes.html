@@ -2,7 +2,18 @@
 <div data-sse="nodes">
   <div class="flex flex-between mb-2">
     <h1>Nodes</h1>
-    {{if .Authenticated}}<button class="btn btn-primary" onclick="openNodeModal(null)">+ Add Node</button>{{end}}
+    {{if .Authenticated}}
+    <div class="flex gap-1">
+      <button class="btn btn-primary" onclick="openNodeModal(null)">+ Add Node</button>
+      <form method="POST" action="/nodes/sync-rds" style="display:inline" onsubmit="return confirm('Sync nodes from RDS bin list?')">
+        <button type="submit" class="btn">Sync from RDS</button>
+      </form>
+      <form method="POST" action="/nodes/sync-scene" style="display:inline" onsubmit="return confirm('Sync zone names from RDS scene areas?')">
+        <button type="submit" class="btn">Sync Zones</button>
+      </form>
+      <button class="btn" onclick="checkBinOccupancy()">Check RDS Bins</button>
+    </div>
+    {{end}}
   </div>
 
   <div class="filter-bar">
@@ -57,10 +68,10 @@
       <button class="modal-close" onclick="closeNodeModal()">&times;</button>
     </div>
 
-    <!-- Inventory section -->
+    <!-- Payloads section -->
     <div id="modal-inventory" style="display:none" class="mb-2">
       <div class="flex flex-between mb-1">
-        <strong style="font-size:0.85rem">Inventory</strong>
+        <strong style="font-size:0.85rem">Payloads</strong>
         <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> / <span id="inv-cap">0</span></span>
       </div>
       <div id="inv-list"></div>
@@ -227,10 +238,10 @@ function loadInventory(nodeID) {
         list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Empty</span>';
         return;
       }
-      var html = '<table style="font-size:0.8rem"><thead><tr><th>Material</th><th>Qty</th><th>Partial</th><th>Age</th></tr></thead><tbody>';
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Age</th></tr></thead><tbody>';
       items.forEach(function(item) {
         var age = timeAgo(item.DeliveredAt);
-        html += '<tr><td>' + esc(item.MaterialCode) + '</td><td>' + item.Quantity + '</td><td>' + (item.IsPartial ? 'Yes' : '-') + '</td><td>' + age + '</td></tr>';
+        html += '<tr><td>#' + item.ID + '</td><td>' + esc(item.PayloadTypeName) + '</td><td>' + esc(item.Status) + '</td><td>' + age + '</td></tr>';
       });
       html += '</tbody></table>';
       list.innerHTML = html;
@@ -256,7 +267,53 @@ function esc(s) {
 }
 
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') closeNodeModal();
+  if (e.key === 'Escape') { closeNodeModal(); closeBinModal(); }
 });
+</script>
+
+<!-- Bin Occupancy Modal -->
+<div id="bin-modal" class="modal-overlay" onclick="if(event.target===this)closeBinModal()">
+  <div class="modal" style="max-width:700px">
+    <div class="modal-header flex flex-between">
+      <h2>RDS Bin Occupancy</h2>
+      <button class="modal-close" onclick="closeBinModal()">&times;</button>
+    </div>
+    <div id="bin-modal-content">
+      <span class="text-muted">Loading...</span>
+    </div>
+  </div>
+</div>
+
+<script>
+function checkBinOccupancy() {
+  document.getElementById('bin-modal').classList.add('active');
+  document.getElementById('bin-modal-content').innerHTML = '<span class="text-muted">Loading...</span>';
+  fetch('/api/bins/status')
+    .then(function(r) { return r.json(); })
+    .then(function(items) {
+      if (!items || items.length === 0) {
+        document.getElementById('bin-modal-content').innerHTML = '<span class="text-muted">No bins found</span>';
+        return;
+      }
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin ID</th><th>Node</th><th>RDS Filled</th><th>In WarPath</th><th>Status</th></tr></thead><tbody>';
+      items.forEach(function(item) {
+        var cls = '';
+        var status = 'OK';
+        if (item.discrepancy === 'rds_only') { cls = ' style="background:#fff3cd"'; status = 'RDS Only'; }
+        else if (item.discrepancy === 'warpath_only') { cls = ' style="background:#f8d7da"'; status = 'WarPath Only'; }
+        var filled = item.rds_filled === null ? '-' : (item.rds_filled ? 'Yes' : 'No');
+        html += '<tr' + cls + '><td>' + esc(item.bin_id) + '</td><td>' + esc(item.node_name || '-') + '</td><td>' + filled + '</td><td>' + (item.in_warpath ? 'Yes' : 'No') + '</td><td>' + status + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('bin-modal-content').innerHTML = html;
+    })
+    .catch(function() {
+      document.getElementById('bin-modal-content').innerHTML = '<span class="text-muted">Error loading bin status</span>';
+    });
+}
+
+function closeBinModal() {
+  document.getElementById('bin-modal').classList.remove('active');
+}
 </script>
 {{end}}

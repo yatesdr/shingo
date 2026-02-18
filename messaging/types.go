@@ -15,15 +15,15 @@ type Envelope struct {
 // --- Inbound payloads (WarDrop -> WarPath) ---
 
 type OrderRequest struct {
-	OrderUUID     string  `json:"order_uuid"`
-	OrderType     string  `json:"order_type"` // retrieve, move, store
-	MaterialCode  string  `json:"material_code"`
-	Quantity      float64 `json:"quantity"`
-	DeliveryNode  string  `json:"delivery_node"`
-	PickupNode    string  `json:"pickup_node"`
-	Priority      int     `json:"priority"`
-	RetrieveEmpty bool    `json:"retrieve_empty"`
-	PayloadDesc   string  `json:"payload_desc"`
+	OrderUUID       string  `json:"order_uuid"`
+	OrderType       string  `json:"order_type"` // retrieve, move, store
+	PayloadTypeCode string  `json:"payload_type_code"`
+	Quantity        float64 `json:"quantity"`
+	DeliveryNode    string  `json:"delivery_node"`
+	PickupNode      string  `json:"pickup_node"`
+	Priority        int     `json:"priority"`
+	RetrieveEmpty   bool    `json:"retrieve_empty"`
+	PayloadDesc     string  `json:"payload_desc"`
 }
 
 type OrderCancel struct {

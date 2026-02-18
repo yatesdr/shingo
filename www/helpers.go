@@ -115,6 +115,22 @@ func templateFuncs() template.FuncMap {
 		"f1": func(f float64) string {
 			return fmt.Sprintf("%.1f", f)
 		},
+		"payloadStatusColor": func(status string) string {
+			switch status {
+			case "available":
+				return "badge-available"
+			case "in_transit":
+				return "badge-in_transit"
+			case "at_line":
+				return "badge-at_line"
+			case "empty":
+				return "badge-empty"
+			case "hold":
+				return "badge-hold"
+			default:
+				return ""
+			}
+		},
 		"nodeColor": func(count, capacity int) string {
 			if capacity <= 0 || count <= 0 {
 				return "background:#e9ecef;color:#495057;"
