@@ -3,6 +3,7 @@ package engine
 import (
 	"log"
 	"sync"
+	"time"
 
 	"shingoedge/changeover"
 	"shingoedge/config"
@@ -28,6 +29,10 @@ type Engine struct {
 	changeoverMu   sync.RWMutex
 	changeoverMgrs map[int64]*changeover.Machine
 	coEmit         *changeoverEmitter
+
+	coreNodes   map[string]bool
+	coreNodesMu sync.RWMutex
+	nodeSyncFn  func()
 
 	Events   *EventBus
 	stopChan chan struct{}
@@ -170,4 +175,43 @@ func (e *Engine) ChangeoverMachines() map[int64]*changeover.Machine {
 		cp[k] = v
 	}
 	return cp
+}
+
+// SetCoreNodes updates the core node set and emits EventCoreNodesUpdated.
+func (e *Engine) SetCoreNodes(names []string) {
+	e.coreNodesMu.Lock()
+	e.coreNodes = make(map[string]bool, len(names))
+	for _, n := range names {
+		e.coreNodes[n] = true
+	}
+	e.coreNodesMu.Unlock()
+
+	e.Events.Emit(Event{
+		Type:      EventCoreNodesUpdated,
+		Timestamp: time.Now(),
+		Payload:   CoreNodesUpdatedEvent{Nodes: names},
+	})
+}
+
+// CoreNodes returns a copy of the core node set.
+func (e *Engine) CoreNodes() map[string]bool {
+	e.coreNodesMu.RLock()
+	defer e.coreNodesMu.RUnlock()
+	cp := make(map[string]bool, len(e.coreNodes))
+	for k, v := range e.coreNodes {
+		cp[k] = v
+	}
+	return cp
+}
+
+// SetNodeSyncFunc sets the function to call when a node sync is requested.
+func (e *Engine) SetNodeSyncFunc(fn func()) {
+	e.nodeSyncFn = fn
+}
+
+// RequestNodeSync triggers a node list request to core.
+func (e *Engine) RequestNodeSync() {
+	if e.nodeSyncFn != nil {
+		e.nodeSyncFn()
+	}
 }

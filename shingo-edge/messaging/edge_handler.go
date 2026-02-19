@@ -14,12 +14,13 @@ import (
 type EdgeHandler struct {
 	protocol.NoOpHandler
 
-	orderMgr *orders.Manager
+	orderMgr    *orders.Manager
+	onCoreNodes func([]string)
 }
 
 // NewEdgeHandler creates a handler for inbound core messages.
-func NewEdgeHandler(orderMgr *orders.Manager) *EdgeHandler {
-	return &EdgeHandler{orderMgr: orderMgr}
+func NewEdgeHandler(orderMgr *orders.Manager, onCoreNodes func([]string)) *EdgeHandler {
+	return &EdgeHandler{orderMgr: orderMgr, onCoreNodes: onCoreNodes}
 }
 
 func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
@@ -38,6 +39,20 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
+	case protocol.SubjectNodeListResponse:
+		var resp protocol.NodeListResponse
+		if err := json.Unmarshal(p.Body, &resp); err != nil {
+			log.Printf("edge_handler: decode node list response: %v", err)
+			return
+		}
+		log.Printf("edge_handler: received node list (%d nodes)", len(resp.Nodes))
+		if h.onCoreNodes != nil {
+			names := make([]string, len(resp.Nodes))
+			for i, n := range resp.Nodes {
+				names[i] = n.Name
+			}
+			h.onCoreNodes(names)
+		}
 	default:
 		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)
 	}

@@ -34,6 +34,9 @@ const (
 	// WarLink events
 	EventWarLinkConnected
 	EventWarLinkDisconnected
+
+	// Core node sync events
+	EventCoreNodesUpdated
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -164,4 +167,9 @@ type PLCHealthRecoverEvent struct {
 type WarLinkEvent struct {
 	Connected bool   `json:"connected"`
 	Error     string `json:"error,omitempty"`
+}
+
+// CoreNodesUpdatedEvent is emitted when the core node list is received.
+type CoreNodesUpdatedEvent struct {
+	Nodes []string `json:"nodes"`
 }

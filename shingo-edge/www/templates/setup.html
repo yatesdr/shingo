@@ -270,10 +270,17 @@
             <div class="modal-header">Add Location Node <button class="btn btn-sm" onclick="ShingoEdge.hideModal('node-add')">&times;</button></div>
             <div class="card-body" id="node-add-form">
                 <input type="hidden" name="line_id">
-                <div class="form-group"><label>Node ID</label><input type="text" name="node_id" class="form-input" placeholder="e.g. LSL-3A"></div>
+                <div class="form-group"><label>Node ID</label>
+                    <div class="tag-picker">
+                        <input type="text" name="node_id" class="form-input tag-picker-input" autocomplete="off" placeholder="e.g. LSL-3A" onfocus="openNodePicker(this)" oninput="filterNodePicker(this)">
+                        <div class="tag-picker-dropdown" style="display:none"></div>
+                    </div>
+                </div>
                 <div class="form-group"><label>Description</label><input type="text" name="description" class="form-input"></div>
             </div>
             <div class="modal-footer">
+                <button class="btn btn-sm" onclick="syncCoreNodes()" title="Refresh node list from core">Sync Nodes</button>
+                <span style="flex:1"></span>
                 <button class="btn" onclick="ShingoEdge.hideModal('node-add')">Cancel</button>
                 <button class="btn btn-primary" onclick="addNode()">Add</button>
             </div>
@@ -289,7 +296,12 @@
             <div class="card-body" id="node-edit-form">
                 <input type="hidden" name="id">
                 <input type="hidden" name="line_id">
-                <div class="form-group"><label>Node ID</label><input type="text" name="node_id" class="form-input"></div>
+                <div class="form-group"><label>Node ID</label>
+                    <div class="tag-picker">
+                        <input type="text" name="node_id" class="form-input tag-picker-input" autocomplete="off" onfocus="openNodePicker(this)" oninput="filterNodePicker(this)">
+                        <div class="tag-picker-dropdown" style="display:none"></div>
+                    </div>
+                </div>
                 <div class="form-group"><label>Description</label><input type="text" name="description" class="form-input"></div>
             </div>
             <div class="modal-footer">
@@ -947,6 +959,28 @@ async function resetPayload(id, productionUnits) {
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
+// --- Core Nodes ---
+var _coreNodeSet = {};
+
+async function fetchCoreNodes() {
+    try {
+        var names = await ShingoEdge.api.get('/api/core-nodes');
+        _coreNodeSet = {};
+        for (var i = 0; i < (names || []).length; i++) {
+            _coreNodeSet[names[i]] = true;
+        }
+    } catch (e) { /* ignore */ }
+}
+
+async function syncCoreNodes() {
+    try {
+        await ShingoEdge.api.post('/api/core-nodes/sync', {});
+        ShingoEdge.toast('Syncing nodes...', 'success');
+        // Invalidate cached node list so picker re-fetches
+        _coreNodeList = null;
+    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+}
+
 // --- Location Nodes (nested under processes) ---
 async function loadLineNodes(lineID) {
     var container = document.getElementById('node-list-' + lineID);
@@ -962,8 +996,11 @@ async function loadLineNodes(lineID) {
             '<div style="display:flex;gap:0.4rem;flex-wrap:wrap">';
         for (var i = 0; i < nodes.length; i++) {
             var n = nodes[i];
+            var confirmed = _coreNodeSet[n.node_id];
+            var chipClass = confirmed ? 'style-chip style-chip-active' : 'style-chip style-chip-inactive';
             var tip = n.description ? ShingoEdge.escapeHtml(n.description) : '';
-            html += '<span class="style-chip style-chip-inactive" onclick="openEditNode(' + n.id + ',' + n.line_id + ')" title="' + tip + '" style="cursor:pointer">' + ShingoEdge.escapeHtml(n.node_id) + '</span>';
+            if (!confirmed) tip = (tip ? tip + ' — ' : '') + 'Unconfirmed (not in core)';
+            html += '<span class="' + chipClass + '" onclick="openEditNode(' + n.id + ',' + n.line_id + ')" title="' + tip + '" style="cursor:pointer">' + ShingoEdge.escapeHtml(n.node_id) + '</span>';
         }
         html += '</div></div>';
         container.innerHTML = html;
@@ -972,7 +1009,8 @@ async function loadLineNodes(lineID) {
     }
 }
 
-function refreshAllLineNodes() {
+async function refreshAllLineNodes() {
+    await fetchCoreNodes();
     var cards = document.querySelectorAll('[data-line-id]');
     for (var i = 0; i < cards.length; i++) {
         loadLineNodes(parseInt(cards[i].getAttribute('data-line-id')));
@@ -1051,6 +1089,58 @@ async function deleteNodeFromModal() {
         ShingoEdge.hideModal('node-edit');
         loadLineNodes(lineID);
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+}
+
+// --- Node Picker (core nodes dropdown) ---
+var _coreNodeList = null;
+
+function loadCoreNodeList(cb) {
+    if (_coreNodeList !== null) { cb(_coreNodeList); return; }
+    ShingoEdge.api.get('/api/core-nodes').then(function(names) {
+        _coreNodeList = (names || []).sort();
+        cb(_coreNodeList);
+    }).catch(function() { cb([]); });
+}
+
+function openNodePicker(input) {
+    loadCoreNodeList(function(nodes) {
+        renderNodeDropdown(input, nodes, input.value);
+    });
+}
+
+function filterNodePicker(input) {
+    var nodes = _coreNodeList || [];
+    renderNodeDropdown(input, nodes, input.value);
+}
+
+function renderNodeDropdown(input, nodes, filter) {
+    var dropdown = input.parentElement.querySelector('.tag-picker-dropdown');
+    if (!dropdown) return;
+    var lc = (filter || '').toLowerCase();
+    var filtered = nodes.filter(function(n) { return !lc || n.toLowerCase().indexOf(lc) !== -1; });
+    if (filtered.length === 0) {
+        dropdown.innerHTML = '<div class="tag-picker-empty">No matching nodes</div>';
+    } else {
+        var html = '';
+        var limit = Math.min(filtered.length, 100);
+        for (var i = 0; i < limit; i++) {
+            html += '<div class="tag-picker-item" onmousedown="selectNodePickerItem(this, \'' + ShingoEdge.escapeHtml(filtered[i]).replace(/'/g, "\\'") + '\')">';
+            html += '<span class="tag-picker-name">' + ShingoEdge.escapeHtml(filtered[i]) + '</span>';
+            html += '</div>';
+        }
+        if (filtered.length > limit) {
+            html += '<div class="tag-picker-empty">' + (filtered.length - limit) + ' more...</div>';
+        }
+        dropdown.innerHTML = html;
+    }
+    dropdown.style.display = '';
+}
+
+function selectNodePickerItem(el, nodeName) {
+    var picker = el.closest('.tag-picker');
+    var input = picker.querySelector('.tag-picker-input');
+    input.value = nodeName;
+    picker.querySelector('.tag-picker-dropdown').style.display = 'none';
 }
 
 // --- Messaging (Kafka) ---
@@ -1175,6 +1265,20 @@ ShingoEdge.createSSE('/events', {
             var hdot = document.getElementById('plc-health-' + data.plcName);
             if (hdot) { hdot.className = 'plc-health-dot plc-health-online'; }
         }
+    },
+    onCoreNodes: function(data) {
+        _coreNodeSet = {};
+        var nodes = data.nodes || [];
+        for (var i = 0; i < nodes.length; i++) {
+            _coreNodeSet[nodes[i]] = true;
+        }
+        _coreNodeList = nodes.slice().sort();
+        // Refresh node chips without re-fetching core nodes
+        var cards = document.querySelectorAll('[data-line-id]');
+        for (var i = 0; i < cards.length; i++) {
+            loadLineNodes(parseInt(cards[i].getAttribute('data-line-id')));
+        }
+        ShingoEdge.toast('Node list updated (' + nodes.length + ' nodes)', 'success');
     },
     onWarlinkStatus: function(data) {
         var badge = document.getElementById('warlink-status');

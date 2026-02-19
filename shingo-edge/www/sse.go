@@ -187,6 +187,9 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		case engine.EventWarLinkConnected, engine.EventWarLinkDisconnected:
 			p := evt.Payload.(engine.WarLinkEvent)
 			sseEvt = SSEEvent{Type: "warlink-status", Data: p}
+		case engine.EventCoreNodesUpdated:
+			p := evt.Payload.(engine.CoreNodesUpdatedEvent)
+			sseEvt = SSEEvent{Type: "core-nodes", Data: p}
 		default:
 			return
 		}

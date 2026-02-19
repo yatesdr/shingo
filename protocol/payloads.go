@@ -130,6 +130,22 @@ type OrderCancelled struct {
 	Reason    string `json:"reason"`
 }
 
+// --- Node list data schemas ---
+
+// NodeListRequest is sent by edge to request the core's node list.
+type NodeListRequest struct{}
+
+// NodeInfo describes a single node in the core's node list.
+type NodeInfo struct {
+	Name     string `json:"name"`
+	NodeType string `json:"node_type"`
+}
+
+// NodeListResponse carries the core's authoritative node list.
+type NodeListResponse struct {
+	Nodes []NodeInfo `json:"nodes"`
+}
+
 // --- Production data schemas ---
 
 // ProductionReportEntry is a single cat_id production count.

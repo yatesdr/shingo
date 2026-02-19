@@ -75,7 +75,9 @@ func main() {
 
 		// Protocol ingestor (inbound from ShinGo Core)
 		stationID := cfg.StationID()
-		edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
+		edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(names []string) {
+			eng.SetCoreNodes(names)
+		})
 		ingestor := protocol.NewIngestor(edgeHandler, func(hdr *protocol.RawHeader) bool {
 			return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
 		})
@@ -91,6 +93,9 @@ func main() {
 		hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic)
 		hb.Start()
 		defer hb.Stop()
+
+		// Wire node sync so edge UI can trigger a re-request
+		eng.SetNodeSyncFunc(hb.RequestNodeSync)
 
 		// Production reporter (accumulates deltas, sends periodic reports to core)
 		reporter := messaging.NewProductionReporter(msgClient, db, stationID, cfg.Messaging.OrdersTopic)

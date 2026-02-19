@@ -36,10 +36,11 @@ func NewHeartbeater(client *Client, stationID, version string, lineIDs []string,
 	}
 }
 
-// Start sends an initial registration and begins the heartbeat loop.
+// Start sends an initial registration, requests the core node list, and begins the heartbeat loop.
 func (h *Heartbeater) Start() {
 	h.startTime = time.Now()
 	h.sendRegister()
+	h.sendNodeListRequest()
 	go h.loop()
 }
 
@@ -70,6 +71,29 @@ func (h *Heartbeater) sendRegister() {
 	} else {
 		log.Printf("heartbeater: sent edge.register (station=%s)", h.stationID)
 	}
+}
+
+func (h *Heartbeater) sendNodeListRequest() {
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectNodeListRequest,
+		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
+		protocol.Address{Role: protocol.RoleCore},
+		&protocol.NodeListRequest{},
+	)
+	if err != nil {
+		log.Printf("heartbeater: build node list request: %v", err)
+		return
+	}
+	if err := h.client.PublishEnvelope(h.topic, env); err != nil {
+		log.Printf("heartbeater: send node list request: %v", err)
+	} else {
+		log.Printf("heartbeater: sent node.list_request (station=%s)", h.stationID)
+	}
+}
+
+// RequestNodeSync sends a node list request to core on demand.
+func (h *Heartbeater) RequestNodeSync() {
+	h.sendNodeListRequest()
 }
 
 func (h *Heartbeater) sendHeartbeat() {

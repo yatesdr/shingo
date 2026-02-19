@@ -1058,6 +1058,22 @@ func (h *Handlers) apiDeleteLocationNode(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// --- Core Nodes ---
+
+func (h *Handlers) apiGetCoreNodes(w http.ResponseWriter, r *http.Request) {
+	nodes := h.engine.CoreNodes()
+	names := make([]string, 0, len(nodes))
+	for name := range nodes {
+		names = append(names, name)
+	}
+	writeJSON(w, names)
+}
+
+func (h *Handlers) apiSyncCoreNodes(w http.ResponseWriter, r *http.Request) {
+	h.engine.RequestNodeSync()
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
 // --- Production Lines Admin ---
 
 func (h *Handlers) apiListLines(w http.ResponseWriter, r *http.Request) {

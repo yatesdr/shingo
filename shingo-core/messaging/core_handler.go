@@ -66,6 +66,8 @@ func (h *CoreHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		h.handleEdgeHeartbeat(env, &hb)
+	case protocol.SubjectNodeListRequest:
+		h.handleNodeListRequest(env)
 	case protocol.SubjectProductionReport:
 		var rpt protocol.ProductionReport
 		if err := json.Unmarshal(p.Body, &rpt); err != nil {
@@ -124,6 +126,34 @@ func (h *CoreHandler) handleEdgeHeartbeat(env *protocol.Envelope, p *protocol.Ed
 
 	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
 		log.Printf("core_handler: publish heartbeat ack: %v", err)
+	}
+}
+
+func (h *CoreHandler) handleNodeListRequest(env *protocol.Envelope) {
+	nodes, err := h.db.ListNodes()
+	if err != nil {
+		log.Printf("core_handler: list nodes for %s: %v", env.Src.Station, err)
+		return
+	}
+	infos := make([]protocol.NodeInfo, len(nodes))
+	for i, n := range nodes {
+		infos[i] = protocol.NodeInfo{Name: n.Name, NodeType: n.NodeType}
+	}
+	reply, err := protocol.NewDataReply(
+		protocol.SubjectNodeListResponse,
+		protocol.Address{Role: protocol.RoleCore, Station: h.stationID},
+		protocol.Address{Role: protocol.RoleEdge, Station: env.Src.Station},
+		env.ID,
+		&protocol.NodeListResponse{Nodes: infos},
+	)
+	if err != nil {
+		log.Printf("core_handler: build node list reply: %v", err)
+		return
+	}
+	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
+		log.Printf("core_handler: publish node list reply: %v", err)
+	} else {
+		log.Printf("core_handler: sent node list (%d nodes) to %s", len(infos), env.Src.Station)
 	}
 }
 

@@ -29,6 +29,9 @@ const (
 	SubjectEdgeHeartbeatAck = "edge.heartbeat_ack"
 
 	SubjectProductionReport = "production.report"
+
+	SubjectNodeListRequest  = "node.list_request"
+	SubjectNodeListResponse = "node.list_response"
 )
 
 // Roles for Address.Role.

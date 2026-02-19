@@ -193,6 +193,10 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 			r.Put("/location-nodes/{id}", h.apiUpdateLocationNode)
 			r.Delete("/location-nodes/{id}", h.apiDeleteLocationNode)
 
+			// Core nodes
+			r.Get("/core-nodes", h.apiGetCoreNodes)
+			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
+
 			// Config
 			r.Put("/config/messaging", h.apiUpdateMessaging)
 			r.Put("/config/station-id", h.apiUpdateStationID)
