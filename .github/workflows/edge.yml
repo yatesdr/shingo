@@ -9,6 +9,7 @@ on:
     paths:
       - 'shingo-edge/**'
       - 'protocol/**'
+  workflow_call:
 
 jobs:
   build:

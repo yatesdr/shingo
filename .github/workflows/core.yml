@@ -9,6 +9,7 @@ on:
     paths:
       - 'shingo-core/**'
       - 'protocol/**'
+  workflow_call:
 
 jobs:
   build:
