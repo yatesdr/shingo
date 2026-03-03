@@ -2,6 +2,7 @@ package rds
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -67,16 +68,8 @@ func TestGetOrderDetails(t *testing.T) {
 		if r.URL.Path != "/orderDetails/order-123" {
 			t.Errorf("path = %q, want /orderDetails/order-123", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(OrderDetailsResponse{
-			Response: Response{Code: 0},
-			Data: &OrderDetail{
-				ID:      "order-123",
-				State:   StateRunning,
-				Vehicle: "AMB-01",
-				FromLoc: "Loc-A",
-				ToLoc:   "Loc-B",
-			},
-		})
+		// Seer RDS returns order fields at the top level, not nested under "data".
+		w.Write([]byte(`{"code":0,"msg":"ok","id":"order-123","state":"RUNNING","vehicle":"AMB-01","fromLoc":"Loc-A","toLoc":"Loc-B"}`))
 	})
 	defer srv.Close()
 
@@ -97,9 +90,7 @@ func TestGetOrderDetails(t *testing.T) {
 
 func TestGetOrderDetails_NotFound(t *testing.T) {
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(OrderDetailsResponse{
-			Response: Response{Code: 1, Msg: "not found"},
-		})
+		w.Write([]byte(`{"code":1,"msg":"not found"}`))
 	})
 	defer srv.Close()
 
@@ -334,18 +325,11 @@ func TestPollerDetectsStateTransition(t *testing.T) {
 	callCount := 0
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		state := StateCreated
+		state := "CREATED"
 		if callCount > 1 {
-			state = StateRunning
+			state = "RUNNING"
 		}
-		json.NewEncoder(w).Encode(OrderDetailsResponse{
-			Response: Response{Code: 0},
-			Data: &OrderDetail{
-				ID:      "rds-1",
-				State:   state,
-				Vehicle: "AMB-01",
-			},
-		})
+		fmt.Fprintf(w, `{"code":0,"msg":"ok","id":"rds-1","state":"%s","vehicle":"AMB-01"}`, state)
 	})
 	defer srv.Close()
 
@@ -382,10 +366,7 @@ func TestPollerDetectsStateTransition(t *testing.T) {
 
 func TestPollerRemovesTerminal(t *testing.T) {
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(OrderDetailsResponse{
-			Response: Response{Code: 0},
-			Data:     &OrderDetail{ID: "rds-2", State: StateFinished},
-		})
+		w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-2","state":"FINISHED"}`))
 	})
 	defer srv.Close()
 

@@ -38,11 +38,11 @@ func (c *Client) GetOrderDetails(id string) (*OrderDetail, error) {
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
 	}
-	if resp.Data == nil {
-		c.dbg("!! orderDetails/%s returned code=0 but data=null", id)
+	if resp.Detail.ID == "" {
+		c.dbg("!! orderDetails/%s returned code=0 but no order ID in response", id)
 		return nil, fmt.Errorf("order %s: empty response data", id)
 	}
-	return resp.Data, nil
+	return &resp.Detail, nil
 }
 
 // ListOrders retrieves a paged list of orders.
@@ -85,11 +85,11 @@ func (c *Client) GetOrderByExternalID(externalID string) (*OrderDetail, error) {
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
 	}
-	if resp.Data == nil {
-		c.dbg("!! orderDetailsByExternalId/%s returned code=0 but data=null", externalID)
+	if resp.Detail.ID == "" {
+		c.dbg("!! orderDetailsByExternalId/%s returned code=0 but no order ID in response", externalID)
 		return nil, fmt.Errorf("order by externalId %s: empty response data", externalID)
 	}
-	return resp.Data, nil
+	return &resp.Detail, nil
 }
 
 // GetOrderByBlockID retrieves the parent order containing a specific block.
@@ -101,11 +101,11 @@ func (c *Client) GetOrderByBlockID(blockID string) (*OrderDetail, error) {
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
 	}
-	if resp.Data == nil {
-		c.dbg("!! orderDetailsByBlockId/%s returned code=0 but data=null", blockID)
+	if resp.Detail.ID == "" {
+		c.dbg("!! orderDetailsByBlockId/%s returned code=0 but no order ID in response", blockID)
 		return nil, fmt.Errorf("order by blockId %s: empty response data", blockID)
 	}
-	return resp.Data, nil
+	return &resp.Detail, nil
 }
 
 // SetLabel sets a dispatch-filtering label on an order.
@@ -128,19 +128,16 @@ func (c *Client) AddBlocks(id string, blocks []Block, complete bool) error {
 
 // GetBlockDetails retrieves details for a specific block by its ID.
 func (c *Client) GetBlockDetails(blockID string) (*BlockDetail, error) {
-	var resp struct {
-		Response
-		Data *BlockDetail `json:"data,omitempty"`
-	}
+	var resp BlockDetailsResponse
 	if err := c.get(fmt.Sprintf("/blockDetailsById/%s", blockID), &resp); err != nil {
 		return nil, err
 	}
 	if err := checkResponse(&resp.Response); err != nil {
 		return nil, err
 	}
-	if resp.Data == nil {
-		c.dbg("!! blockDetailsById/%s returned code=0 but data=null", blockID)
+	if resp.Detail.BlockID == "" {
+		c.dbg("!! blockDetailsById/%s returned code=0 but no blockId in response", blockID)
 		return nil, fmt.Errorf("block %s: empty response data", blockID)
 	}
-	return resp.Data, nil
+	return &resp.Detail, nil
 }

@@ -85,9 +85,19 @@ type SetPriorityRequest struct {
 
 // --- Order responses ---
 
+// OrderDetailsResponse handles the Seer RDS response for order detail endpoints.
+// RDS returns order fields at the top level (not nested under "data"), so we
+// unmarshal the entire JSON into both the Response base and the OrderDetail.
 type OrderDetailsResponse struct {
 	Response
-	Data *OrderDetail `json:"data,omitempty"`
+	Detail OrderDetail
+}
+
+func (r *OrderDetailsResponse) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, &r.Response); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &r.Detail)
 }
 
 type OrderDetail struct {
@@ -113,6 +123,19 @@ type OrderDetail struct {
 	LoadState     OrderState   `json:"loadState,omitempty"`
 	UnloadOrderID string       `json:"unloadOrderId,omitempty"`
 	UnloadState   OrderState   `json:"unloadState,omitempty"`
+}
+
+// BlockDetailsResponse handles the Seer RDS response for block detail endpoints.
+type BlockDetailsResponse struct {
+	Response
+	Detail BlockDetail
+}
+
+func (r *BlockDetailsResponse) UnmarshalJSON(data []byte) error {
+	if err := json.Unmarshal(data, &r.Response); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, &r.Detail)
 }
 
 type BlockDetail struct {
