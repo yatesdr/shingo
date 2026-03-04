@@ -59,15 +59,17 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		PayloadDesc:  p.PayloadDesc,
 	}
 
-	// Resolve payload type
-	pt, err := d.db.GetPayloadTypeByName(p.PayloadTypeCode)
-	if err != nil {
-		log.Printf("dispatch: payload type %q not found: %v", p.PayloadTypeCode, err)
-		d.dbg("error: payload type %q not found: %v", p.PayloadTypeCode, err)
-		d.sendError(env, p.OrderUUID, "payload_type_error", fmt.Sprintf("payload type %q not found", p.PayloadTypeCode))
-		return
+	// Resolve payload type (optional — manual orders may not specify one)
+	if p.PayloadTypeCode != "" {
+		pt, err := d.db.GetPayloadTypeByName(p.PayloadTypeCode)
+		if err != nil {
+			log.Printf("dispatch: payload type %q not found: %v", p.PayloadTypeCode, err)
+			d.dbg("error: payload type %q not found: %v", p.PayloadTypeCode, err)
+			d.sendError(env, p.OrderUUID, "payload_type_error", fmt.Sprintf("payload type %q not found", p.PayloadTypeCode))
+			return
+		}
+		order.PayloadTypeID = &pt.ID
 	}
-	order.PayloadTypeID = &pt.ID
 
 	// Validate destination node exists
 	if p.DeliveryNode != "" {
