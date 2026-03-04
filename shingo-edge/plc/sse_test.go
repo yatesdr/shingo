@@ -20,7 +20,8 @@ type mockEmitter struct {
 }
 
 func (e *mockEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value int64)      {}
-func (e *mockEmitter) EmitCounterDelta(rpID, lineID, jobStyleID, delta, newCount int64)       {}
+func (e *mockEmitter) EmitCounterDelta(rpID, lineID, jobStyleID, delta, newCount int64, anomaly string) {
+}
 func (e *mockEmitter) EmitCounterAnomaly(snapID, rpID int64, plc, tag string, old, new int64, atype string) {
 }
 
@@ -47,6 +48,8 @@ func (e *mockEmitter) EmitPLCHealthRecover(plcName string) {
 	e.events = append(e.events, "plc_health_recover:"+plcName)
 	e.mu.Unlock()
 }
+
+func (e *mockEmitter) EmitCounterReadError(rpID int64, plcName, tagName, errMsg string) {}
 
 func (e *mockEmitter) EmitWarLinkConnected() {
 	e.mu.Lock()
