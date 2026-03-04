@@ -1067,3 +1067,19 @@ textarea.form-input {
 }
 .broker-status-ok { color: var(--success); }
 .broker-status-err { color: var(--danger); }
+
+/* Debug log viewer */
+.debug-log-wrap {
+  max-height: 600px;
+  overflow-y: auto;
+}
+.debug-log-table {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.8rem;
+}
+.debug-log-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}

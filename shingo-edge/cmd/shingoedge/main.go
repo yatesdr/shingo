@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"shingoedge/config"
+	"shingoedge/debuglog"
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingo/protocol"
@@ -20,14 +22,52 @@ import (
 )
 
 func main() {
+	// Strip --log-debug / -log-debug from os.Args before flag.Parse,
+	// so bare --log-debug (no value) and --log-debug=FILTER both work.
+	var fileFilter []string // nil = no file; []string{} = all; populated = specific
+	debugFlag := false
+	var filteredArgs []string
+	for _, arg := range os.Args[1:] {
+		switch {
+		case arg == "--log-debug" || arg == "-log-debug":
+			debugFlag = true
+			fileFilter = []string{} // all subsystems
+		case strings.HasPrefix(arg, "--log-debug=") || strings.HasPrefix(arg, "-log-debug="):
+			debugFlag = true
+			val := arg[strings.Index(arg, "=")+1:]
+			if val == "" {
+				fileFilter = []string{}
+			} else {
+				fileFilter = strings.Split(val, ",")
+			}
+		default:
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+	os.Args = append(os.Args[:1], filteredArgs...)
+
 	configPath := flag.String("config", "shingoedge.yaml", "path to config file")
-	debug := flag.Bool("debug", false, "enable debug logging")
 	port := flag.Int("port", 0, "HTTP port (overrides config)")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: shingoedge [flags]\n\nFlags:\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(flag.CommandLine.Output(), "  --log-debug[=FILTER]\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "        Enable debug log file. FILTER is optional comma-separated subsystems:\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "        engine, plc, orders, changeover, kafka, edge_handler,\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "        heartbeat, outbox, reporter, protocol\n")
+	}
 	flag.Parse()
 
-	if *debug {
+	if debugFlag {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
 	}
+
+	// Create debug logger (ring buffer always active; file only with --log-debug)
+	dbg, err := debuglog.New(1000, fileFilter)
+	if err != nil {
+		log.Fatalf("debug log: %v", err)
+	}
+	defer dbg.Close()
 
 	// Load config
 	cfg, err := config.Load(*configPath)
@@ -48,11 +88,11 @@ func main() {
 
 	// Create and start engine
 	eng := engine.New(engine.Config{
-		AppConfig:  cfg,
-		ConfigPath: *configPath,
-		DB:         db,
-		LogFunc:    log.Printf,
-		Debug:      *debug,
+		AppConfig:   cfg,
+		ConfigPath:  *configPath,
+		DB:          db,
+		LogFunc:     log.Printf,
+		DebugLogger: dbg,
 	})
 	eng.Start()
 	defer eng.Stop()
@@ -64,6 +104,7 @@ func main() {
 
 	// Set up messaging
 	msgClient := messaging.NewClient(&cfg.Messaging)
+	msgClient.DebugLog = dbg.Func("kafka")
 	defer msgClient.Close()
 	if err := msgClient.Connect(); err != nil {
 		log.Printf("messaging connect: %v (will retry via outbox)", err)
@@ -78,6 +119,7 @@ func main() {
 
 		// Start outbox drainer
 		drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
+		drainer.DebugLog = dbg.Func("outbox")
 		drainer.Start()
 		defer drainer.Stop()
 
@@ -86,9 +128,11 @@ func main() {
 		edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(names []string) {
 			eng.SetCoreNodes(names)
 		})
+		edgeHandler.DebugLog = dbg.Func("edge_handler")
 		ingestor := protocol.NewIngestor(edgeHandler, func(hdr *protocol.RawHeader) bool {
 			return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
 		})
+		ingestor.DebugLog = dbg.Func("protocol")
 		if err := msgClient.Subscribe(cfg.Messaging.DispatchTopic, func(data []byte) {
 			ingestor.HandleRaw(data)
 		}); err != nil {
@@ -101,6 +145,7 @@ func main() {
 		hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
 			return db.CountActiveOrders()
 		})
+		hb.DebugLog = dbg.Func("heartbeat")
 		hb.Start()
 		defer hb.Stop()
 
@@ -109,6 +154,7 @@ func main() {
 
 		// Production reporter (accumulates deltas, enqueues periodic reports via outbox)
 		reporter := messaging.NewProductionReporter(db, stationID)
+		reporter.DebugLog = dbg.Func("reporter")
 		eng.Events.SubscribeTypes(func(evt engine.Event) {
 			if delta, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
 				reporter.RecordDelta(delta.JobStyleID, delta.Delta)
@@ -119,7 +165,7 @@ func main() {
 	}
 
 	// Set up HTTP server
-	router, stopWeb := www.NewRouter(eng)
+	router, stopWeb := www.NewRouter(eng, dbg)
 	defer stopWeb()
 
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)

@@ -19,6 +19,14 @@ type Machine struct {
 	toJobStyle   string
 	state        string
 	active       bool
+
+	DebugLog func(string, ...any)
+}
+
+func (m *Machine) debug(format string, args ...any) {
+	if fn := m.DebugLog; fn != nil {
+		fn(format, args...)
+	}
 }
 
 // NewMachine creates a changeover state machine for a specific production line.
@@ -48,6 +56,7 @@ func (m *Machine) Restore() {
 	m.state = entry.State
 	m.active = true
 	m.mu.Unlock()
+	m.debug("restore: line=%d state=%s %s->%s", m.lineID, entry.State, entry.FromJobStyle, entry.ToJobStyle)
 	log.Printf("changeover: restored in-progress changeover for line %d (state=%s, %s→%s)", m.lineID, entry.State, entry.FromJobStyle, entry.ToJobStyle)
 }
 
@@ -96,6 +105,7 @@ func (m *Machine) Start(fromJobStyle, toJobStyle, operator string) error {
 	m.state = StateStopping
 	m.active = true
 
+	m.debug("start: line=%d %s->%s", m.lineID, fromJobStyle, toJobStyle)
 	m.logTransition(StateRunning, StateStopping, "changeover initiated", operator)
 	m.emitter.EmitChangeoverStarted(m.lineID, fromJobStyle, toJobStyle)
 	m.emitter.EmitChangeoverStateChanged(m.lineID, fromJobStyle, toJobStyle, StateRunning, StateStopping)
@@ -119,6 +129,7 @@ func (m *Machine) Advance(operator string) error {
 
 	oldState := m.state
 	m.state = next
+	m.debug("advance: line=%d %s->%s", m.lineID, oldState, next)
 
 	m.logTransition(oldState, next, "", operator)
 	m.emitter.EmitChangeoverStateChanged(m.lineID, m.fromJobStyle, m.toJobStyle, oldState, next)
@@ -143,6 +154,7 @@ func (m *Machine) Cancel(operator string) error {
 
 	oldState := m.state
 	from, to := m.fromJobStyle, m.toJobStyle
+	m.debug("cancel: line=%d from_state=%s", m.lineID, oldState)
 	m.state = StateRunning
 	m.active = false
 	m.fromJobStyle = ""

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"strconv"
 	"sync"
@@ -21,6 +22,7 @@ type Client struct {
 	cfg      *config.MessagingConfig
 	kafka    *kafkaState
 	handlers map[string]MessageHandler
+	stopChan chan struct{}
 	DebugLog func(string, ...any)
 }
 
@@ -33,6 +35,7 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 	return &Client{
 		cfg:      cfg,
 		handlers: make(map[string]MessageHandler),
+		stopChan: make(chan struct{}),
 	}
 }
 
@@ -152,18 +155,64 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 	})
 	c.kafka.readers[topic] = reader
 	c.dbg("subscribe: topic=%s group=%s", topic, c.cfg.Kafka.GroupID)
-	go func() {
-		for {
-			msg, err := reader.ReadMessage(context.Background())
-			if err != nil {
-				c.dbg("subscribe exit: topic=%s error=%v", topic, err)
-				return
-			}
-			c.dbg("received: topic=%s size=%d", msg.Topic, len(msg.Value))
-			handler(msg.Topic, msg.Value)
-		}
-	}()
+	go c.readLoop(topic, reader, handler)
 	return nil
+}
+
+// readLoop reads messages from Kafka, reconnecting on errors with
+// exponential backoff (500ms base, capped at 5s, with ±20% jitter).
+func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHandler) {
+	const (
+		baseBackoff = 500 * time.Millisecond
+		maxBackoff  = 5 * time.Second
+	)
+	backoff := baseBackoff
+
+	for {
+		msg, err := reader.ReadMessage(context.Background())
+		if err != nil {
+			select {
+			case <-c.stopChan:
+				return
+			default:
+			}
+
+			jittered := time.Duration(float64(backoff) * (0.8 + 0.4*rand.Float64()))
+			log.Printf("kafka read error: topic=%s: %v, reconnecting in %v", topic, err, jittered.Round(time.Millisecond))
+			c.dbg("read error: topic=%s error=%v backoff=%v", topic, err, jittered.Round(time.Millisecond))
+
+			timer := time.NewTimer(jittered)
+			select {
+			case <-c.stopChan:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+
+			// Recreate the reader
+			c.mu.Lock()
+			reader.Close()
+			reader = kafka.NewReader(kafka.ReaderConfig{
+				Brokers: c.cfg.Kafka.Brokers,
+				Topic:   topic,
+				GroupID: c.cfg.Kafka.GroupID,
+			})
+			if c.kafka != nil {
+				c.kafka.readers[topic] = reader
+			}
+			c.mu.Unlock()
+
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		backoff = baseBackoff
+		c.dbg("received: topic=%s size=%d", msg.Topic, len(msg.Value))
+		handler(msg.Topic, msg.Value)
+	}
 }
 
 // PublishEnvelope encodes and publishes a protocol envelope to the given topic.
@@ -188,6 +237,7 @@ func (c *Client) Reconfigure(cfg *config.MessagingConfig) error {
 	c.Close()
 	c.mu.Lock()
 	c.cfg = cfg
+	c.stopChan = make(chan struct{})
 	// Snapshot handlers before releasing lock
 	handlers := make(map[string]MessageHandler, len(c.handlers))
 	for k, v := range c.handlers {
@@ -209,6 +259,12 @@ func (c *Client) Reconfigure(cfg *config.MessagingConfig) error {
 }
 
 func (c *Client) Close() {
+	select {
+	case <-c.stopChan:
+	default:
+		close(c.stopChan)
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

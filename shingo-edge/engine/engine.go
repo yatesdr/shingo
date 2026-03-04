@@ -8,6 +8,7 @@ import (
 
 	"shingoedge/changeover"
 	"shingoedge/config"
+	"shingoedge/debuglog"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/store"
@@ -20,11 +21,12 @@ type LogFunc func(format string, args ...interface{})
 
 // Engine centralizes all business logic and orchestrates subsystems.
 type Engine struct {
-	cfg        *config.Config
-	configPath string
-	db         *store.DB
-	logFn      LogFunc
-	debugFn    LogFunc
+	cfg         *config.Config
+	configPath  string
+	db          *store.DB
+	logFn       LogFunc
+	debugFn     LogFunc
+	debugLogger *debuglog.Logger
 
 	plcMgr   *plc.Manager
 	orderMgr *orders.Manager
@@ -47,11 +49,11 @@ type Engine struct {
 
 // Config holds the parameters needed to create an Engine.
 type Config struct {
-	AppConfig  *config.Config
-	ConfigPath string
-	DB         *store.DB
-	LogFunc    LogFunc
-	Debug      bool
+	AppConfig   *config.Config
+	ConfigPath  string
+	DB          *store.DB
+	LogFunc     LogFunc
+	DebugLogger *debuglog.Logger
 }
 
 // New creates a new Engine. Call Start() to initialize and wire subsystems.
@@ -61,8 +63,8 @@ func New(c Config) *Engine {
 		logFn = func(string, ...interface{}) {}
 	}
 	debugFn := LogFunc(func(string, ...interface{}) {})
-	if c.Debug {
-		debugFn = logFn
+	if c.DebugLogger != nil {
+		debugFn = c.DebugLogger.Func("engine")
 	}
 	return &Engine{
 		cfg:            c.AppConfig,
@@ -70,6 +72,7 @@ func New(c Config) *Engine {
 		db:             c.DB,
 		logFn:          logFn,
 		debugFn:        debugFn,
+		debugLogger:    c.DebugLogger,
 		Events:         NewEventBus(),
 		stopChan:       make(chan struct{}),
 		changeoverMgrs: make(map[int64]*changeover.Machine),
@@ -86,6 +89,12 @@ func (e *Engine) Start() {
 	// Create managers
 	e.plcMgr = plc.NewManager(e.db, e.cfg, plcEmit)
 	e.orderMgr = orders.NewManager(e.db, orderEmit, e.cfg.StationID())
+
+	// Wire debug logging to subsystems
+	if e.debugLogger != nil {
+		e.plcMgr.DebugLog = e.debugLogger.Func("plc")
+		e.orderMgr.DebugLog = e.debugLogger.Func("orders")
+	}
 	e.hourlyTracker = NewHourlyTracker(e.db, e.cfg.Timezone)
 
 	// Initialize changeover machines for all production lines
@@ -95,6 +104,9 @@ func (e *Engine) Start() {
 	}
 	for _, line := range lines {
 		m := changeover.NewMachine(e.db, e.coEmit, line.ID, line.Name)
+		if e.debugLogger != nil {
+			m.DebugLog = e.debugLogger.Func("changeover")
+		}
 		m.Restore()
 		e.changeoverMgrs[line.ID] = m
 	}
@@ -172,6 +184,9 @@ func (e *Engine) ChangeoverMachine(lineID int64) *changeover.Machine {
 		return m
 	}
 	m = changeover.NewMachine(e.db, e.coEmit, line.ID, line.Name)
+	if e.debugLogger != nil {
+		m.DebugLog = e.debugLogger.Func("changeover")
+	}
 	m.Restore()
 	e.changeoverMgrs[lineID] = m
 	return m

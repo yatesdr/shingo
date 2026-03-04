@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"shingoedge/debuglog"
 	"shingoedge/engine"
 
 	"github.com/go-chi/chi/v5"
@@ -23,14 +24,16 @@ type Handlers struct {
 	sessions *sessionStore
 	tmpl     *template.Template
 	eventHub *EventHub
+	debugLog *debuglog.Logger
 }
 
 // NewRouter creates the chi router and returns it along with a stop function.
-func NewRouter(eng *engine.Engine) (http.Handler, func()) {
+func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) {
 	h := &Handlers{
 		engine:   eng,
 		sessions: newSessionStore(eng.AppConfig().Web.SessionSecret),
 		eventHub: NewEventHub(),
+		debugLog: dbg,
 	}
 
 	funcMap := template.FuncMap{
@@ -85,6 +88,11 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 	h.eventHub.Start()
 	h.eventHub.SetupEngineListeners(eng)
 
+	// Wire debug log entries to SSE broadcast
+	dbg.SetOnEntry(func(e debuglog.Entry) {
+		h.eventHub.Broadcast(SSEEvent{Type: "debug-log", Data: e})
+	})
+
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Compress(5))
@@ -125,6 +133,7 @@ func NewRouter(eng *engine.Engine) (http.Handler, func()) {
 		r.Use(h.adminMiddleware)
 		r.Get("/setup", h.handleSetup)
 		r.Get("/manual-message", h.handleManualMessage)
+		r.Get("/diagnostics", h.handleDiagnostics)
 	})
 
 	// API endpoints (mixed: some public for shop floor, some admin-only)

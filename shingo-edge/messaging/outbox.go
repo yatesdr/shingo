@@ -16,6 +16,14 @@ type OutboxDrainer struct {
 	cfg      *config.MessagingConfig
 	stopChan chan struct{}
 	wg       sync.WaitGroup
+
+	DebugLog func(string, ...any)
+}
+
+func (d *OutboxDrainer) debug(format string, args ...any) {
+	if fn := d.DebugLog; fn != nil {
+		fn(format, args...)
+	}
 }
 
 // NewOutboxDrainer creates a new outbox drainer.
@@ -68,6 +76,7 @@ func (d *OutboxDrainer) drainLoop() {
 					log.Printf("purge old outbox: %v", err)
 				} else if n > 0 {
 					log.Printf("purged %d old outbox messages", n)
+					d.debug("purged %d old outbox messages", n)
 				}
 			}
 		}
@@ -85,6 +94,10 @@ func (d *OutboxDrainer) drain() {
 		return
 	}
 
+	if len(msgs) > 0 {
+		d.debug("drain cycle: %d pending messages", len(msgs))
+	}
+
 	for _, msg := range msgs {
 		topic := d.cfg.OrdersTopic
 		if err := d.client.Publish(topic, msg.Payload); err != nil {
@@ -98,6 +111,8 @@ func (d *OutboxDrainer) drain() {
 		}
 		if err := d.db.AckOutbox(msg.ID); err != nil {
 			log.Printf("ack outbox msg %d: %v", msg.ID, err)
+		} else {
+			d.debug("published outbox msg %d type=%s", msg.ID, msg.MsgType)
 		}
 	}
 }

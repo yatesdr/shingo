@@ -16,6 +16,8 @@ type EdgeHandler struct {
 
 	orderMgr    *orders.Manager
 	onCoreNodes func([]string)
+
+	DebugLog func(string, ...any)
 }
 
 // NewEdgeHandler creates a handler for inbound core messages.
@@ -23,7 +25,14 @@ func NewEdgeHandler(orderMgr *orders.Manager, onCoreNodes func([]string)) *EdgeH
 	return &EdgeHandler{orderMgr: orderMgr, onCoreNodes: onCoreNodes}
 }
 
+func (h *EdgeHandler) debug(format string, args ...any) {
+	if fn := h.DebugLog; fn != nil {
+		fn(format, args...)
+	}
+}
+
 func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
+	h.debug("data subject=%s from=%s", p.Subject, env.Src.Station)
 	switch p.Subject {
 	case protocol.SubjectEdgeRegistered:
 		var reg protocol.EdgeRegistered
@@ -73,6 +82,7 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 }
 
 func (h *EdgeHandler) HandleOrderAck(env *protocol.Envelope, p *protocol.OrderAck) {
+	h.debug("order_ack uuid=%s shingo_id=%d", p.OrderUUID, p.ShingoOrderID)
 	log.Printf("edge_handler: order ack: uuid=%s shingo_id=%d", p.OrderUUID, p.ShingoOrderID)
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, "ack", "", "", p.SourceNode); err != nil {
 		log.Printf("edge_handler: handle ack for %s: %v", p.OrderUUID, err)
@@ -80,6 +90,7 @@ func (h *EdgeHandler) HandleOrderAck(env *protocol.Envelope, p *protocol.OrderAc
 }
 
 func (h *EdgeHandler) HandleOrderWaybill(env *protocol.Envelope, p *protocol.OrderWaybill) {
+	h.debug("order_waybill uuid=%s waybill=%s", p.OrderUUID, p.WaybillID)
 	log.Printf("edge_handler: order waybill: uuid=%s waybill=%s", p.OrderUUID, p.WaybillID)
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, "waybill", p.WaybillID, p.ETA, ""); err != nil {
 		log.Printf("edge_handler: handle waybill for %s: %v", p.OrderUUID, err)
@@ -87,6 +98,7 @@ func (h *EdgeHandler) HandleOrderWaybill(env *protocol.Envelope, p *protocol.Ord
 }
 
 func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.OrderUpdate) {
+	h.debug("order_update uuid=%s status=%s", p.OrderUUID, p.Status)
 	log.Printf("edge_handler: order update: uuid=%s status=%s", p.OrderUUID, p.Status)
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, "update", "", p.ETA, p.Detail); err != nil {
 		log.Printf("edge_handler: handle update for %s: %v", p.OrderUUID, err)
@@ -94,6 +106,7 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 }
 
 func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.OrderDelivered) {
+	h.debug("order_delivered uuid=%s at=%s", p.OrderUUID, p.DeliveredAt)
 	log.Printf("edge_handler: order delivered: uuid=%s at=%s", p.OrderUUID, p.DeliveredAt)
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, "delivered", "", "", p.DeliveredAt.Format(time.RFC3339)); err != nil {
 		log.Printf("edge_handler: handle delivered for %s: %v", p.OrderUUID, err)
@@ -101,6 +114,7 @@ func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.O
 }
 
 func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.OrderError) {
+	h.debug("order_error uuid=%s code=%s", p.OrderUUID, p.ErrorCode)
 	log.Printf("edge_handler: order error: uuid=%s code=%s detail=%s", p.OrderUUID, p.ErrorCode, p.Detail)
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, "error", "", "", p.Detail); err != nil {
 		log.Printf("edge_handler: handle error for %s: %v", p.OrderUUID, err)
@@ -108,6 +122,7 @@ func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.Order
 }
 
 func (h *EdgeHandler) HandleOrderCancelled(env *protocol.Envelope, p *protocol.OrderCancelled) {
+	h.debug("order_cancelled uuid=%s reason=%s", p.OrderUUID, p.Reason)
 	log.Printf("edge_handler: order cancelled: uuid=%s reason=%s", p.OrderUUID, p.Reason)
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, "cancelled", "", "", p.Reason); err != nil {
 		log.Printf("edge_handler: handle cancelled for %s: %v", p.OrderUUID, err)

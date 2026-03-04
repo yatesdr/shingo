@@ -20,6 +20,8 @@ type Client struct {
 	kafkaW   *kafkago.Writer
 	kafkaR   *kafkago.Reader
 	stopChan chan struct{}
+
+	DebugLog func(string, ...any)
 }
 
 // NewClient creates a messaging client based on config.
@@ -27,6 +29,12 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 	return &Client{
 		cfg:      cfg,
 		stopChan: make(chan struct{}),
+	}
+}
+
+func (c *Client) debug(format string, args ...any) {
+	if fn := c.DebugLog; fn != nil {
+		fn(format, args...)
 	}
 }
 
@@ -44,6 +52,7 @@ func (c *Client) Connect() error {
 		Balancer:     &kafkago.LeastBytes{},
 		RequiredAcks: kafkago.RequireOne,
 	}
+	c.debug("connected to brokers %v", c.cfg.Kafka.Brokers)
 	return nil
 }
 
@@ -69,6 +78,7 @@ func (c *Client) Reconnect() error {
 	}
 
 	log.Printf("kafka writer reconnected to %v", c.cfg.Kafka.Brokers)
+	c.debug("reconnected to brokers %v", c.cfg.Kafka.Brokers)
 	return nil
 }
 
@@ -80,6 +90,7 @@ func (c *Client) Publish(topic string, payload []byte) error {
 	if c.kafkaW == nil {
 		return fmt.Errorf("kafka writer not initialized")
 	}
+	c.debug("publish topic=%s len=%d", topic, len(payload))
 	return c.kafkaW.WriteMessages(context.Background(), kafkago.Message{
 		Topic: topic,
 		Value: payload,
@@ -110,6 +121,7 @@ func (c *Client) Subscribe(topic string, handler func(payload []byte)) error {
 		Topic:   topic,
 		GroupID: c.cfg.Kafka.GroupID,
 	})
+	c.debug("subscribed to topic=%s group=%s", topic, c.cfg.Kafka.GroupID)
 	go c.readLoop(topic, handler)
 	return nil
 }
@@ -164,6 +176,7 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 				GroupID: c.cfg.Kafka.GroupID,
 			})
 			c.mu.Unlock()
+			c.debug("reader reconnected for topic=%s", topic)
 
 			// Increase backoff for next failure
 			backoff *= 2
@@ -175,6 +188,7 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 
 		// Reset backoff on successful read
 		backoff = baseBackoff
+		c.debug("recv topic=%s len=%d", topic, len(msg.Value))
 		handler(msg.Value)
 	}
 }

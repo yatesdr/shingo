@@ -16,6 +16,8 @@ type Manager struct {
 	db        *store.DB
 	emitter   EventEmitter
 	stationID string
+
+	DebugLog func(string, ...any)
 }
 
 // NewManager creates an order manager.
@@ -24,6 +26,12 @@ func NewManager(db *store.DB, emitter EventEmitter, stationID string) *Manager {
 		db:        db,
 		emitter:   emitter,
 		stationID: stationID,
+	}
+}
+
+func (m *Manager) debug(format string, args ...any) {
+	if fn := m.DebugLog; fn != nil {
+		fn(format, args...)
 	}
 }
 
@@ -89,6 +97,7 @@ func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quan
 		log.Printf("auto-submit retrieve order %s: %v", orderUUID, err)
 	}
 
+	m.debug("create: type=%s id=%d uuid=%s delivery=%s", TypeRetrieve, orderID, orderUUID, deliveryNode)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve)
 
 	return m.db.GetOrder(orderID)
@@ -105,6 +114,7 @@ func (m *Manager) CreateStoreOrder(payloadID *int64, quantity float64, pickupNod
 		return nil, fmt.Errorf("create store order: %w", err)
 	}
 
+	m.debug("create: type=%s id=%d uuid=%s pickup=%s", TypeStore, orderID, orderUUID, pickupNode)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeStore)
 	return m.db.GetOrder(orderID)
 }
@@ -149,6 +159,7 @@ func (m *Manager) CreateMoveOrder(payloadID *int64, quantity float64, pickupNode
 		log.Printf("auto-submit move order %s: %v", orderUUID, err)
 	}
 
+	m.debug("create: type=%s id=%d uuid=%s pickup=%s delivery=%s", TypeMove, orderID, orderUUID, pickupNode, deliveryNode)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove)
 	return m.db.GetOrder(orderID)
 }
@@ -170,6 +181,7 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus, detail string) error
 	}
 
 	oldStatus := order.Status
+	m.debug("transition: id=%d uuid=%s %s->%s", orderID, order.UUID, oldStatus, newStatus)
 	if err := m.db.UpdateOrderStatus(orderID, newStatus); err != nil {
 		return fmt.Errorf("update order status: %w", err)
 	}
@@ -197,6 +209,7 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus, detail string) error
 
 // AbortOrder cancels a non-terminal order and enqueues a cancel message.
 func (m *Manager) AbortOrder(orderID int64) error {
+	m.debug("abort: id=%d", orderID)
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -224,6 +237,7 @@ func (m *Manager) AbortOrder(orderID int64) error {
 
 // RedirectOrder changes the delivery node of a non-terminal order and enqueues a redirect message.
 func (m *Manager) RedirectOrder(orderID int64, newDeliveryNode string) (*store.Order, error) {
+	m.debug("redirect: id=%d new_delivery=%s", orderID, newDeliveryNode)
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return nil, fmt.Errorf("get order: %w", err)
@@ -316,6 +330,7 @@ func (m *Manager) ConfirmDelivery(orderID int64, finalCount float64) error {
 
 // HandleDispatchReply processes an inbound reply from central dispatch.
 func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, statusDetail string) error {
+	m.debug("dispatch reply: uuid=%s type=%s", orderUUID, replyType)
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
