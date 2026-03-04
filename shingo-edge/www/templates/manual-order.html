@@ -2,6 +2,7 @@
 
 <div class="page-header">
     <h1>Manual Order</h1>
+    <button class="btn btn-secondary" onclick="syncNodes()" id="sync-nodes-btn" title="Re-fetch node list from core">Sync Nodes</button>
 </div>
 
 <div class="card" style="max-width:600px;margin:0 auto">
@@ -78,6 +79,7 @@
         merged.forEach(function(n) {
             var opt = document.createElement('option');
             opt.value = n.id;
+            opt.dataset.source = n.source;
             var label = n.id;
             if (n.desc) label += ' \u2014 ' + n.desc;
             if (n.source === 'local') label += ' (local)';
@@ -129,8 +131,40 @@ async function createOrder() {
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
+async function syncNodes() {
+    var btn = document.getElementById('sync-nodes-btn');
+    btn.disabled = true;
+    btn.textContent = 'Syncing...';
+    try {
+        await ShingoEdge.api.post('/api/core-nodes/sync');
+        ShingoEdge.toast('Node sync requested', 'success');
+    } catch (e) { ShingoEdge.toast('Sync failed: ' + e, 'error'); }
+    setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Nodes'; }, 2000);
+}
+
 ShingoEdge.createSSE('/events', {
-    onCounterAnomaly: function() { location.reload(); }
+    onCounterAnomaly: function() { location.reload(); },
+    onCoreNodes: function(data) {
+        var nodes = data.nodes || [];
+        ['mo-pickup', 'mo-delivery'].forEach(function(selID) {
+            var sel = document.getElementById(selID);
+            var cur = sel.value;
+            // Remove core-sourced options, keep local-only
+            Array.from(sel.options).forEach(function(o) {
+                if (o.dataset.source === 'core') o.remove();
+            });
+            // Re-add core nodes at the top (after blank first option if any)
+            var ref = sel.options[1] || null;
+            nodes.sort().forEach(function(n) {
+                var opt = document.createElement('option');
+                opt.value = n;
+                opt.textContent = n;
+                opt.dataset.source = 'core';
+                sel.insertBefore(opt, ref);
+            });
+            sel.value = cur;
+        });
+    }
 });
 </script>
 

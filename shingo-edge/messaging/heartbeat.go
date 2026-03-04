@@ -148,12 +148,17 @@ func (h *Heartbeater) sendHeartbeat() {
 func (h *Heartbeater) loop() {
 	ticker := time.NewTicker(h.interval)
 	defer ticker.Stop()
+	tick := 0
 	for {
 		select {
 		case <-h.stopCh:
 			return
 		case <-ticker.C:
 			h.sendHeartbeat()
+			tick++
+			if tick%5 == 0 { // re-request node list every ~5 min
+				h.sendNodeListRequest()
+			}
 		}
 	}
 }
