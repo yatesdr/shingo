@@ -1,3 +1,44 @@
+// Theme toggle (3-state: light -> dark -> system)
+function getStoredTheme() {
+  return localStorage.getItem('theme');
+}
+function getEffectiveTheme() {
+  var stored = getStoredTheme();
+  if (stored === 'light' || stored === 'dark') return stored;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function applyTheme() {
+  var effective = getEffectiveTheme();
+  document.documentElement.dataset.theme = effective;
+  var btn = document.querySelector('.theme-toggle');
+  if (!btn) return;
+  var stored = getStoredTheme();
+  if (stored === 'dark') {
+    btn.textContent = '\u263D'; // moon
+  } else if (stored === 'light') {
+    btn.textContent = '\u2600'; // sun
+  } else {
+    btn.textContent = '\u25D0'; // half-circle (system)
+  }
+}
+function toggleTheme() {
+  var stored = getStoredTheme();
+  if (stored === 'light') {
+    localStorage.setItem('theme', 'dark');
+  } else if (stored === 'dark') {
+    localStorage.removeItem('theme');
+  } else {
+    localStorage.setItem('theme', 'light');
+  }
+  applyTheme();
+}
+document.addEventListener('DOMContentLoaded', function() {
+  applyTheme();
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+    if (!getStoredTheme()) applyTheme();
+  });
+});
+
 // SSE connection for live updates
 (function() {
   let es;

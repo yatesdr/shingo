@@ -4,7 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shingo{{if .Page}} - {{.Page}}{{end}}</title>
+  <meta name="color-scheme" content="light dark">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script>
+  (function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
+  </script>
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
@@ -23,9 +27,15 @@
       <a href="/fleet-explorer"{{if eq .Page "fleet-explorer"}} class="active"{{end}}>Fleet Explorer</a>
       <a href="/diagnostics"{{if eq .Page "logs"}} class="active"{{end}}>Logs</a>
       <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>Config</a>
-      <div style="margin-left:auto"><a href="/logout">Logout</a></div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:0.75rem;">
+        <a href="/logout">Logout</a>
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"></button>
+      </div>
       {{else}}
-      <div style="margin-left:auto"><a href="/login">Login</a></div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:0.75rem;">
+        <a href="/login">Login</a>
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"></button>
+      </div>
       {{end}}
     </div>
   </nav>
