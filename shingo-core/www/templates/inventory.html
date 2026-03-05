@@ -1,0 +1,249 @@
+{{define "content"}}
+<div data-sse="inventory">
+  <div class="flex flex-between mb-2">
+    <h1>Fleet Inventory</h1>
+  </div>
+
+  {{if .Authenticated}}
+  <div class="accordion mb-2" id="bulk-accordion">
+    <button class="accordion-toggle" onclick="document.getElementById('bulk-accordion').classList.toggle('open')">
+      Bulk Register Instances
+    </button>
+    <div class="accordion-body">
+      <div class="card">
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label>Payload Style <span class="tooltip-trigger" title="The type of cart/container to register">?</span></label>
+            <select id="bulk-style">
+              {{range .PayloadStyles}}
+              <option value="{{.ID}}">{{.Name}}{{if .Code}} ({{.Code}}){{end}}</option>
+              {{end}}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Count <span class="tooltip-trigger" title="Number of instances to create (1-100)">?</span></label>
+            <input type="number" id="bulk-count" value="1" min="1" max="100">
+          </div>
+          <div class="form-group">
+            <label>Tag Prefix <span class="tooltip-trigger" title="QR tag prefix. E.g. 'SHG:' generates SHG:0001, SHG:0002, etc. Leave blank for untagged.">?</span></label>
+            <input type="text" id="bulk-prefix" placeholder="e.g. SHG:">
+          </div>
+          <div class="form-group">
+            <label>Initial Status</label>
+            <select id="bulk-status">
+              <option value="empty">Empty</option>
+              <option value="available">Available</option>
+              <option value="loaded">Loaded</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="bulkRegister()">Register</button>
+        <span id="bulk-result" class="ml-1" style="font-size:0.85rem"></span>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+  <div class="filter-bar mb-1">
+    <input type="text" id="inv-search" placeholder="Filter by tag, style, or location..." oninput="filterInstances()">
+    <select id="inv-style-filter" onchange="filterInstances()">
+      <option value="">All Styles</option>
+      {{range .PayloadStyles}}
+      <option value="{{.Name}}">{{.Name}}</option>
+      {{end}}
+    </select>
+    <select id="inv-status-filter" onchange="filterInstances()">
+      <option value="">All Statuses</option>
+      <option value="empty">Empty</option>
+      <option value="available">Available</option>
+      <option value="loaded">Loaded</option>
+      <option value="in_transit">In Transit</option>
+      <option value="flagged">Flagged</option>
+      <option value="maintenance">Maintenance</option>
+      <option value="retired">Retired</option>
+    </select>
+    <span class="text-muted" style="font-size:0.8rem" id="inv-count">{{len .Instances}} instances</span>
+  </div>
+
+  {{if .Instances}}
+  <table id="inv-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Tag <span class="tooltip-trigger" title="QR code tag ID — optional, blank means untagged">?</span></th>
+        <th>Style</th>
+        <th>Location</th>
+        <th>Status</th>
+        <th>UOP <span class="tooltip-trigger" title="Units of Production remaining">?</span></th>
+        <th>Loaded</th>
+        {{if .Authenticated}}<th>Actions</th>{{end}}
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Instances}}
+      <tr data-tag="{{.TagID}}" data-style="{{.StyleName}}" data-status="{{.Status}}" data-node="{{.NodeName}}">
+        <td>#{{.ID}}</td>
+        <td>{{if .TagID}}{{.TagID}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+        <td>{{.StyleName}}</td>
+        <td>{{if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">unassigned</span>{{end}}</td>
+        <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+        <td>{{.UOPRemaining}}</td>
+        <td>{{formatTimePtr .LoadedAt}}</td>
+        {{if $.Authenticated}}
+        <td>
+          <button class="btn btn-sm" onclick="showInstanceDetail({{.ID}})" title="Details">Detail</button>
+          {{if eq .Status "available"}}
+          <button class="btn btn-sm" onclick="instanceAction({{.ID}}, 'flag', 'Flagged by operator')" title="Flag for inspection">Flag</button>
+          {{end}}
+          {{if eq .Status "flagged"}}
+          <button class="btn btn-sm" onclick="instanceAction({{.ID}}, 'activate', 'Cleared after inspection')" title="Return to service">Activate</button>
+          <button class="btn btn-sm" onclick="instanceAction({{.ID}}, 'maintenance', 'Sent for maintenance')" title="Send to maintenance">Maint</button>
+          {{end}}
+          {{if eq .Status "maintenance"}}
+          <button class="btn btn-sm" onclick="instanceAction({{.ID}}, 'activate', 'Returned from maintenance')" title="Return to service">Activate</button>
+          <button class="btn btn-sm btn-danger" onclick="instanceAction({{.ID}}, 'retire', 'End of life')" title="Retire permanently">Retire</button>
+          {{end}}
+        </td>
+        {{end}}
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="card">
+    <p class="text-muted">No payload instances registered.{{if .Authenticated}} Use "Bulk Register" above to create instances.{{end}}</p>
+  </div>
+  {{end}}
+</div>
+
+<!-- Instance Detail Modal -->
+<div id="instance-modal" class="modal-overlay" onclick="if(event.target===this)closeInstanceModal()">
+  <div class="modal">
+    <div class="modal-header flex flex-between">
+      <h2>Instance #<span id="im-id"></span></h2>
+      <button class="modal-close" onclick="closeInstanceModal()">&times;</button>
+    </div>
+    <div id="im-info" class="mb-2" style="font-size:0.85rem">
+      <div class="grid grid-2">
+        <div><strong>Tag:</strong> <span id="im-tag">-</span></div>
+        <div><strong>Style:</strong> <span id="im-style">-</span></div>
+        <div><strong>Location:</strong> <span id="im-node">-</span></div>
+        <div><strong>Status:</strong> <span id="im-status">-</span></div>
+        <div><strong>UOP Remaining:</strong> <span id="im-uop">-</span></div>
+        <div><strong>Notes:</strong> <span id="im-notes">-</span></div>
+      </div>
+    </div>
+    <div class="mb-2">
+      <strong style="font-size:0.85rem">Event History</strong>
+      <div id="im-events" style="font-size:0.8rem; margin-top:0.3rem">
+        <span class="text-muted">Loading...</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function filterInstances() {
+  var q = document.getElementById('inv-search').value.toLowerCase();
+  var style = document.getElementById('inv-style-filter').value;
+  var status = document.getElementById('inv-status-filter').value;
+  var rows = document.querySelectorAll('#inv-table tbody tr');
+  var shown = 0;
+  rows.forEach(function(row) {
+    var d = row.dataset;
+    var matchQ = !q || (d.tag && d.tag.toLowerCase().indexOf(q) >= 0) || (d.style && d.style.toLowerCase().indexOf(q) >= 0) || (d.node && d.node.toLowerCase().indexOf(q) >= 0);
+    var matchStyle = !style || d.style === style;
+    var matchStatus = !status || d.status === status;
+    var vis = matchQ && matchStyle && matchStatus;
+    row.style.display = vis ? '' : 'none';
+    if (vis) shown++;
+  });
+  document.getElementById('inv-count').textContent = shown + ' instances';
+}
+
+function instanceAction(id, action, reason) {
+  if (!confirm(action.charAt(0).toUpperCase() + action.slice(1) + ' instance #' + id + '?')) return;
+  fetch('/api/instances/action', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: id, action: action, reason: reason})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { alert(data.error); return; }
+    location.reload();
+  })
+  .catch(function(e) { alert('Error: ' + e); });
+}
+
+function bulkRegister() {
+  var styleID = parseInt(document.getElementById('bulk-style').value);
+  var count = parseInt(document.getElementById('bulk-count').value);
+  var prefix = document.getElementById('bulk-prefix').value;
+  var status = document.getElementById('bulk-status').value;
+  var result = document.getElementById('bulk-result');
+  result.textContent = 'Registering...';
+  fetch('/api/instances/bulk-register', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({style_id: styleID, count: count, tag_prefix: prefix, status: status})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + data.error + '</span>'; return; }
+    result.innerHTML = '<span style="color:var(--success)">Created ' + data.created + ' instances</span>';
+    setTimeout(function() { location.reload(); }, 1000);
+  })
+  .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
+}
+
+function showInstanceDetail(id) {
+  document.getElementById('im-id').textContent = id;
+  document.getElementById('instance-modal').classList.add('active');
+  document.getElementById('im-events').innerHTML = '<span class="text-muted">Loading...</span>';
+
+  fetch('/api/instances/events?id=' + id)
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+      var events = resp || [];
+      if (!events || events.length === 0) {
+        document.getElementById('im-events').innerHTML = '<span class="text-muted">No events recorded</span>';
+        return;
+      }
+      var html = '<table><thead><tr><th>Event</th><th>Detail</th><th>Actor</th><th>When</th></tr></thead><tbody>';
+      events.forEach(function(e) {
+        html += '<tr><td>' + esc(e.event_type) + '</td><td>' + esc(e.detail) + '</td><td>' + esc(e.actor) + '</td><td>' + timeAgo(e.created_at) + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      document.getElementById('im-events').innerHTML = html;
+    })
+    .catch(function() {
+      document.getElementById('im-events').innerHTML = '<span class="text-muted">Error loading events</span>';
+    });
+}
+
+function closeInstanceModal() {
+  document.getElementById('instance-modal').classList.remove('active');
+}
+
+function timeAgo(ts) {
+  if (!ts) return '-';
+  var d = Date.now() - new Date(ts).getTime();
+  if (d < 60000) return 'just now';
+  if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
+  if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
+  return Math.floor(d / 86400000) + 'd ago';
+}
+
+function esc(s) {
+  if (!s) return '';
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeInstanceModal();
+});
+</script>
+{{end}}

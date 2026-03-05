@@ -2,13 +2,30 @@ package engine
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/store"
 )
+
+// sendToEdge builds a protocol envelope and enqueues it for dispatch to an edge station.
+func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error {
+	coreAddr := protocol.Address{Role: protocol.RoleCore, Station: e.cfg.Messaging.StationID}
+	edgeAddr := protocol.Address{Role: protocol.RoleEdge, Station: stationID}
+	env, err := protocol.NewEnvelope(msgType, coreAddr, edgeAddr, payload)
+	if err != nil {
+		return fmt.Errorf("build %s: %w", msgType, err)
+	}
+	data, err := env.Encode()
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", msgType, err)
+	}
+	if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, msgType, stationID); err != nil {
+		e.dbg("EnqueueOutbox %s error (silently dropped): %v", msgType, err)
+	}
+	return nil
+}
 
 func (e *Engine) wireEventHandlers() {
 	// When an order is dispatched, track it in the tracker
@@ -34,11 +51,16 @@ func (e *Engine) wireEventHandlers() {
 		e.handleVendorStatusChange(ev)
 	}, EventOrderStatusChanged)
 
-	// When an order fails, log it
+	// When an order fails, log it and handle compound orders
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderFailedEvent)
 		e.logFn("engine: order %d failed: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
 		e.db.AppendAudit("order", ev.OrderID, "failed", "", ev.Detail, "system")
+
+		// If child of a compound order, handle parent failure
+		if order, err := e.db.GetOrder(ev.OrderID); err == nil && order.ParentOrderID != nil && e.dispatcher != nil {
+			e.dispatcher.HandleChildOrderFailure(*order.ParentOrderID, ev.OrderID)
+		}
 	}, EventOrderFailed)
 
 	// When an order is completed, update inventory and audit
@@ -59,14 +81,14 @@ func (e *Engine) wireEventHandlers() {
 	// When an order is received, audit it
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderReceivedEvent)
-		e.logFn("engine: order %d received from %s: %s %s -> %s", ev.OrderID, ev.StationID, ev.OrderType, ev.PayloadTypeCode, ev.DeliveryNode)
-		e.db.AppendAudit("order", ev.OrderID, "received", "", fmt.Sprintf("%s %s from %s", ev.OrderType, ev.PayloadTypeCode, ev.StationID), "system")
+		e.logFn("engine: order %d received from %s: %s %s -> %s", ev.OrderID, ev.StationID, ev.OrderType, ev.StyleCode, ev.DeliveryNode)
+		e.db.AppendAudit("order", ev.OrderID, "received", "", fmt.Sprintf("%s %s from %s", ev.OrderType, ev.StyleCode, ev.StationID), "system")
 	}, EventOrderReceived)
 
 	// Payload changes: audit
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(PayloadChangedEvent)
-		e.db.AppendAudit("payload", ev.PayloadID, ev.Action, "", fmt.Sprintf("type=%s node=%d", ev.PayloadTypeCode, ev.NodeID), "system")
+		e.db.AppendAudit("payload", ev.InstanceID, ev.Action, "", fmt.Sprintf("style=%s node=%d", ev.StyleCode, ev.NodeID), "system")
 	}, EventPayloadChanged)
 
 	// Node updates: audit
@@ -89,30 +111,16 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		return
 	}
 
-	coreAddr := protocol.Address{Role: protocol.RoleCore, Station: e.cfg.Messaging.StationID}
-	edgeAddr := protocol.Address{Role: protocol.RoleEdge, Station: order.StationID}
-
 	// Update robot ID if we got one
 	if ev.RobotID != "" && order.RobotID == "" {
 		e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, ev.RobotID)
 
-		// Send waybill to ShinGo Edge
-		reply, err := protocol.NewEnvelope(protocol.TypeOrderWaybill, coreAddr, edgeAddr, &protocol.OrderWaybill{
+		if err := e.sendToEdge(protocol.TypeOrderWaybill, order.StationID, &protocol.OrderWaybill{
 			OrderUUID: order.EdgeUUID,
 			WaybillID: order.VendorOrderID,
 			RobotID:   ev.RobotID,
-		})
-		if err != nil {
-			log.Printf("engine: build waybill reply: %v", err)
-		} else {
-			data, err := reply.Encode()
-			if err != nil {
-				log.Printf("engine: encode waybill reply: %v", err)
-			} else {
-				if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.waybill", order.StationID); err != nil {
-					e.dbg("EnqueueOutbox waybill error (silently dropped): %v", err)
-				}
-			}
+		}); err != nil {
+			e.logFn("engine: waybill: %v", err)
 		}
 	}
 
@@ -125,22 +133,12 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, ev.RobotID)
 
 	// Send status update to ShinGo Edge
-	reply, err := protocol.NewEnvelope(protocol.TypeOrderUpdate, coreAddr, edgeAddr, &protocol.OrderUpdate{
+	if err := e.sendToEdge(protocol.TypeOrderUpdate, order.StationID, &protocol.OrderUpdate{
 		OrderUUID: order.EdgeUUID,
 		Status:    newStatus,
 		Detail:    fmt.Sprintf("fleet state: %s", ev.NewStatus),
-	})
-	if err != nil {
-		log.Printf("engine: build update reply: %v", err)
-	} else {
-		data, err := reply.Encode()
-		if err != nil {
-			log.Printf("engine: encode update reply: %v", err)
-		} else {
-			if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.update", order.StationID); err != nil {
-				e.dbg("EnqueueOutbox update error (silently dropped): %v", err)
-			}
-		}
+	}); err != nil {
+		e.logFn("engine: status update: %v", err)
 	}
 
 	// Handle terminal states
@@ -166,24 +164,11 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 func (e *Engine) handleOrderDelivered(order *store.Order) {
 	e.db.UpdateOrderStatus(order.ID, dispatch.StatusDelivered, "payload delivered")
 
-	// Send delivered notification to ShinGo Edge
-	coreAddr := protocol.Address{Role: protocol.RoleCore, Station: e.cfg.Messaging.StationID}
-	edgeAddr := protocol.Address{Role: protocol.RoleEdge, Station: order.StationID}
-	reply, err := protocol.NewEnvelope(protocol.TypeOrderDelivered, coreAddr, edgeAddr, &protocol.OrderDelivered{
+	if err := e.sendToEdge(protocol.TypeOrderDelivered, order.StationID, &protocol.OrderDelivered{
 		OrderUUID:   order.EdgeUUID,
 		DeliveredAt: time.Now().UTC(),
-	})
-	if err != nil {
-		log.Printf("engine: build delivered reply: %v", err)
-		return
-	}
-	data, err := reply.Encode()
-	if err != nil {
-		log.Printf("engine: encode delivered reply: %v", err)
-		return
-	}
-	if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, "order.delivered", order.StationID); err != nil {
-		e.dbg("EnqueueOutbox delivered error (silently dropped): %v", err)
+	}); err != nil {
+		e.logFn("engine: delivered notification: %v", err)
 	}
 }
 
@@ -193,6 +178,11 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	if err != nil {
 		e.logFn("engine: get order %d for completion: %v", ev.OrderID, err)
 		return
+	}
+
+	// If this is a child of a compound order, advance the parent
+	if order.ParentOrderID != nil && e.dispatcher != nil {
+		e.dispatcher.HandleChildOrderComplete(order)
 	}
 
 	if order.PickupNode == "" || order.DeliveryNode == "" {
@@ -211,16 +201,16 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		sourceNodeID = sourceNode.ID
 	}
 
-	payloads, _ := e.db.ListPayloadsByClaimedOrder(order.ID)
-	for _, p := range payloads {
-		e.nodeState.MovePayload(p.ID, destNode.ID)
+	instances, _ := e.db.ListInstancesByClaimedOrder(order.ID)
+	for _, p := range instances {
+		e.nodeState.MoveInstance(p.ID, destNode.ID)
 		e.Events.Emit(Event{Type: EventPayloadChanged, Payload: PayloadChangedEvent{
-			Action:          "moved",
-			PayloadID:       p.ID,
-			PayloadTypeCode: p.PayloadTypeName,
-			FromNodeID:      sourceNodeID,
-			ToNodeID:        destNode.ID,
-			NodeID:          destNode.ID,
+			Action:     "moved",
+			InstanceID: p.ID,
+			StyleCode:  p.StyleName,
+			FromNodeID: sourceNodeID,
+			ToNodeID:   destNode.ID,
+			NodeID:     destNode.ID,
 		}})
 	}
 }

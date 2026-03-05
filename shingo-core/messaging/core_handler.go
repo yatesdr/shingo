@@ -47,6 +47,37 @@ func (h *CoreHandler) dbg(format string, args ...any) {
 	}
 }
 
+// coreAddr returns the core-side protocol address.
+func (h *CoreHandler) coreAddr() protocol.Address {
+	return protocol.Address{Role: protocol.RoleCore, Station: h.stationID}
+}
+
+// replyData builds and publishes a data reply envelope to the requesting edge station.
+func (h *CoreHandler) replyData(env *protocol.Envelope, subject string, payload any) {
+	dst := protocol.Address{Role: protocol.RoleEdge, Station: env.Src.Station}
+	reply, err := protocol.NewDataReply(subject, h.coreAddr(), dst, env.ID, payload)
+	if err != nil {
+		log.Printf("core_handler: build reply %s: %v", subject, err)
+		return
+	}
+	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
+		log.Printf("core_handler: publish reply %s: %v", subject, err)
+	}
+}
+
+// sendData builds and publishes a data envelope (not a reply) to a specific station.
+func (h *CoreHandler) sendData(subject, stationID string, payload any) {
+	dst := protocol.Address{Role: protocol.RoleEdge, Station: stationID}
+	env, err := protocol.NewDataEnvelope(subject, h.coreAddr(), dst, payload)
+	if err != nil {
+		log.Printf("core_handler: build %s for %s: %v", subject, stationID, err)
+		return
+	}
+	if err := h.client.PublishEnvelope(h.dispatchTopic, env); err != nil {
+		log.Printf("core_handler: publish %s for %s: %v", subject, stationID, err)
+	}
+}
+
 // Start begins the stale-edge detection goroutine.
 func (h *CoreHandler) Start() {
 	go h.staleEdgeLoop()
@@ -83,6 +114,15 @@ func (h *CoreHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		h.handleProductionReport(env, &rpt)
+	case protocol.SubjectTagVerifyRequest:
+		var req protocol.TagVerifyRequest
+		if err := json.Unmarshal(p.Body, &req); err != nil {
+			log.Printf("core_handler: decode tag verify request body: %v", err)
+			return
+		}
+		h.handleTagVerifyRequest(env, &req)
+	case protocol.SubjectCatalogStylesRequest:
+		h.handleCatalogStylesRequest(env)
 	default:
 		log.Printf("core_handler: unhandled data subject: %s", p.Subject)
 	}
@@ -97,24 +137,9 @@ func (h *CoreHandler) handleEdgeRegister(env *protocol.Envelope, p *protocol.Edg
 		return
 	}
 
-	reply, err := protocol.NewDataReply(
-		protocol.SubjectEdgeRegistered,
-		protocol.Address{Role: protocol.RoleCore, Station: h.stationID},
-		protocol.Address{Role: protocol.RoleEdge, Station: p.StationID},
-		env.ID,
-		&protocol.EdgeRegistered{StationID: p.StationID, Message: "registered"},
-	)
-	if err != nil {
-		log.Printf("core_handler: build registered reply: %v", err)
-		return
-	}
-
-	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
-		log.Printf("core_handler: publish registered reply: %v", err)
-		h.dbg("reply publish failed: subject=edge.registered error=%v", err)
-	} else {
-		h.dbg("reply published: subject=edge.registered station=%s", p.StationID)
-	}
+	h.replyData(env, protocol.SubjectEdgeRegistered,
+		&protocol.EdgeRegistered{StationID: p.StationID, Message: "registered"})
+	h.dbg("reply published: subject=edge.registered station=%s", p.StationID)
 }
 
 func (h *CoreHandler) handleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
@@ -123,49 +148,27 @@ func (h *CoreHandler) handleEdgeHeartbeat(env *protocol.Envelope, p *protocol.Ed
 		return
 	}
 
-	reply, err := protocol.NewDataReply(
-		protocol.SubjectEdgeHeartbeatAck,
-		protocol.Address{Role: protocol.RoleCore, Station: h.stationID},
-		protocol.Address{Role: protocol.RoleEdge, Station: p.StationID},
-		env.ID,
-		&protocol.EdgeHeartbeatAck{StationID: p.StationID, ServerTS: time.Now().UTC()},
-	)
-	if err != nil {
-		log.Printf("core_handler: build heartbeat ack: %v", err)
-		return
-	}
-
-	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
-		log.Printf("core_handler: publish heartbeat ack: %v", err)
-	}
+	h.replyData(env, protocol.SubjectEdgeHeartbeatAck,
+		&protocol.EdgeHeartbeatAck{StationID: p.StationID, ServerTS: time.Now().UTC()})
 }
 
 func (h *CoreHandler) handleNodeListRequest(env *protocol.Envelope) {
-	nodes, err := h.db.ListNodes()
+	stationID := env.Src.Station
+	// Try station-scoped node list first; fall back to all nodes if none assigned
+	nodes, err := h.db.ListNodesForStation(stationID)
+	if err != nil || len(nodes) == 0 {
+		nodes, err = h.db.ListNodes()
+	}
 	if err != nil {
-		log.Printf("core_handler: list nodes for %s: %v", env.Src.Station, err)
+		log.Printf("core_handler: list nodes for %s: %v", stationID, err)
 		return
 	}
 	infos := make([]protocol.NodeInfo, len(nodes))
 	for i, n := range nodes {
 		infos[i] = protocol.NodeInfo{Name: n.Name, NodeType: n.NodeType}
 	}
-	reply, err := protocol.NewDataReply(
-		protocol.SubjectNodeListResponse,
-		protocol.Address{Role: protocol.RoleCore, Station: h.stationID},
-		protocol.Address{Role: protocol.RoleEdge, Station: env.Src.Station},
-		env.ID,
-		&protocol.NodeListResponse{Nodes: infos},
-	)
-	if err != nil {
-		log.Printf("core_handler: build node list reply: %v", err)
-		return
-	}
-	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
-		log.Printf("core_handler: publish node list reply: %v", err)
-	} else {
-		log.Printf("core_handler: sent node list (%d nodes) to %s", len(infos), env.Src.Station)
-	}
+	h.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{Nodes: infos})
+	log.Printf("core_handler: sent node list (%d nodes) to %s", len(infos), env.Src.Station)
 }
 
 // Order message handlers delegate to the dispatcher.
@@ -217,21 +220,8 @@ func (h *CoreHandler) handleProductionReport(env *protocol.Envelope, rpt *protoc
 		accepted++
 	}
 
-	// Send acknowledgment back to edge
-	reply, err := protocol.NewDataReply(
-		protocol.SubjectProductionReportAck,
-		protocol.Address{Role: protocol.RoleCore, Station: h.stationID},
-		protocol.Address{Role: protocol.RoleEdge, Station: rpt.StationID},
-		env.ID,
-		&protocol.ProductionReportAck{StationID: rpt.StationID, Accepted: accepted},
-	)
-	if err != nil {
-		log.Printf("core_handler: build production report ack: %v", err)
-		return
-	}
-	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
-		log.Printf("core_handler: publish production report ack: %v", err)
-	}
+	h.replyData(env, protocol.SubjectProductionReportAck,
+		&protocol.ProductionReportAck{StationID: rpt.StationID, Accepted: accepted})
 }
 
 func (h *CoreHandler) staleEdgeLoop() {
@@ -258,18 +248,46 @@ func (h *CoreHandler) staleEdgeLoop() {
 	}
 }
 
-func (h *CoreHandler) sendStaleNotification(stationID string) {
-	env, err := protocol.NewDataEnvelope(
-		protocol.SubjectEdgeStale,
-		protocol.Address{Role: protocol.RoleCore, Station: h.stationID},
-		protocol.Address{Role: protocol.RoleEdge, Station: stationID},
-		&protocol.EdgeStale{StationID: stationID, Message: "heartbeat timeout — marked stale by core"},
-	)
+func (h *CoreHandler) handleTagVerifyRequest(env *protocol.Envelope, req *protocol.TagVerifyRequest) {
+	log.Printf("core_handler: tag verify from %s: uuid=%s tag=%s", env.Src.Station, req.OrderUUID, req.TagID)
+
+	result := h.db.VerifyTag(req.OrderUUID, req.TagID, req.Location)
+	if !result.Match {
+		log.Printf("core_handler: tag mismatch for order %s: expected=%s (proceeding best-effort)", req.OrderUUID, result.Expected)
+	}
+
+	h.sendTagVerifyResponse(env, &protocol.TagVerifyResponse{
+		OrderUUID: req.OrderUUID,
+		Match:     result.Match,
+		Expected:  result.Expected,
+		Detail:    result.Detail,
+	})
+}
+
+func (h *CoreHandler) sendTagVerifyResponse(env *protocol.Envelope, resp *protocol.TagVerifyResponse) {
+	h.replyData(env, protocol.SubjectTagVerifyResponse, resp)
+}
+
+func (h *CoreHandler) handleCatalogStylesRequest(env *protocol.Envelope) {
+	log.Printf("core_handler: catalog styles request from %s", env.Src.Station)
+	styles, err := h.db.ListPayloadStyles()
 	if err != nil {
-		log.Printf("core_handler: build stale notification for %s: %v", stationID, err)
+		log.Printf("core_handler: list styles for catalog: %v", err)
 		return
 	}
-	if err := h.client.PublishEnvelope(h.dispatchTopic, env); err != nil {
-		log.Printf("core_handler: publish stale notification for %s: %v", stationID, err)
+	infos := make([]protocol.CatalogStyleInfo, len(styles))
+	for i, s := range styles {
+		infos[i] = protocol.CatalogStyleInfo{
+			ID: s.ID, Name: s.Name, Code: s.Code,
+			FormFactor: s.FormFactor, Description: s.Description,
+			UOPCapacity: s.UOPCapacity,
+		}
 	}
+	h.replyData(env, protocol.SubjectCatalogStylesResponse, &protocol.CatalogStylesResponse{Styles: infos})
+	log.Printf("core_handler: sent style catalog (%d styles) to %s", len(infos), env.Src.Station)
+}
+
+func (h *CoreHandler) sendStaleNotification(stationID string) {
+	h.sendData(protocol.SubjectEdgeStale, stationID,
+		&protocol.EdgeStale{StationID: stationID, Message: "heartbeat timeout — marked stale by core"})
 }

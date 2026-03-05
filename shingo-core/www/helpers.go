@@ -1,13 +1,56 @@
 package www
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"shingocore/fleet"
 )
+
+func (h *Handlers) jsonOK(w http.ResponseWriter, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(data)
+}
+
+func (h *Handlers) jsonSuccess(w http.ResponseWriter) {
+	h.jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) jsonError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// parseIDParam extracts an int64 ID from query param or form value.
+// Returns 0, false on error (writes JSON 400 response).
+func (h *Handlers) parseIDParam(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {
+	s := r.URL.Query().Get(key)
+	if s == "" {
+		s = r.FormValue(key)
+	}
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		h.jsonError(w, "invalid "+key, http.StatusBadRequest)
+		return 0, false
+	}
+	return id, true
+}
+
+// parseJSON decodes the request body as JSON into dst.
+// Returns false on error (writes JSON 400 response).
+func (h *Handlers) parseJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		h.jsonError(w, "invalid request", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
 
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
@@ -67,20 +110,6 @@ func templateFuncs() template.FuncMap {
 				return "bg-gray-100 text-gray-800"
 			default:
 				return "bg-gray-100 text-gray-800"
-			}
-		},
-		"nodeTypeIcon": func(nodeType string) string {
-			switch nodeType {
-			case "storage":
-				return "archive"
-			case "line_side":
-				return "inbox"
-			case "staging":
-				return "layers"
-			case "charging":
-				return "battery-charging"
-			default:
-				return "map-pin"
 			}
 		},
 		"upper": strings.ToUpper,

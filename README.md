@@ -1,6 +1,6 @@
 # Shingo
 
-Material tracking and automated transport system for manufacturing plants. Manages the flow of payloads (bins, containers, raw materials) between warehouse storage and production line stations using autonomous mobile robots. Shingo comes from the Japanese word 信号 — meaning "instruction" or "signal", which aptly defines what the shingo ecosystem is intended to do. It sits between the AMR fleet manager and your process to communicate material needs and ensure production runs steady.
+Material tracking and automated transport system for manufacturing plants. Manages payload flow (bins, containers, raw materials) between warehouse storage and production line stations using autonomous mobile robots. Named from the Japanese 信号 ("signal" / "instruction"). Shingo bridges the AMR fleet manager and production processes, coordinating material requests and delivery.
 
 ## Modules
 

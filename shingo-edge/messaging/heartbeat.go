@@ -54,6 +54,7 @@ func (h *Heartbeater) Start() {
 	h.startTime = time.Now()
 	h.sendRegister()
 	h.sendNodeListRequest()
+	h.sendCatalogRequest()
 	go h.loop()
 }
 
@@ -130,6 +131,30 @@ func (h *Heartbeater) RequestNodeSync() {
 	h.sendNodeListRequest()
 }
 
+// RequestCatalogSync sends a style catalog request to core on demand.
+func (h *Heartbeater) RequestCatalogSync() {
+	h.sendCatalogRequest()
+}
+
+func (h *Heartbeater) sendCatalogRequest() {
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectCatalogStylesRequest,
+		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
+		protocol.Address{Role: protocol.RoleCore},
+		&protocol.CatalogStylesRequest{},
+	)
+	if err != nil {
+		log.Printf("heartbeater: build catalog request: %v", err)
+		return
+	}
+	if err := h.publishWithRetry(env, "catalog request"); err != nil {
+		log.Printf("heartbeater: send catalog request failed after retries: %v", err)
+	} else {
+		log.Printf("heartbeater: sent catalog.styles_request (station=%s)", h.stationID)
+		h.debug("catalog_request sent station=%s", h.stationID)
+	}
+}
+
 func (h *Heartbeater) sendHeartbeat() {
 	uptime := int64(time.Since(h.startTime).Seconds())
 	var activeOrders int
@@ -168,8 +193,9 @@ func (h *Heartbeater) loop() {
 		case <-ticker.C:
 			h.sendHeartbeat()
 			tick++
-			if tick%5 == 0 { // re-request node list every ~5 min
+			if tick%5 == 0 { // re-request node list and style catalog every ~5 min
 				h.sendNodeListRequest()
+				h.sendCatalogRequest()
 			}
 		}
 	}

@@ -6,43 +6,46 @@ import (
 	"time"
 )
 
-type Payload struct {
-	ID            int64     `json:"id"`
-	PayloadTypeID int64     `json:"payload_type_id"`
-	NodeID        *int64    `json:"node_id,omitempty"`
-	Status        string    `json:"status"`
-	ClaimedBy     *int64    `json:"claimed_by,omitempty"`
-	DeliveredAt   time.Time `json:"delivered_at"`
-	Notes         string    `json:"notes"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+type PayloadInstance struct {
+	ID            int64      `json:"id"`
+	StyleID       int64      `json:"style_id"`
+	NodeID        *int64     `json:"node_id,omitempty"`
+	TagID         string     `json:"tag_id"`
+	Status        string     `json:"status"`
+	UOPRemaining  int        `json:"uop_remaining"`
+	ClaimedBy     *int64     `json:"claimed_by,omitempty"`
+	LoadedAt      *time.Time `json:"loaded_at,omitempty"`
+	DeliveredAt   time.Time  `json:"delivered_at"`
+	Notes         string     `json:"notes"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 	// Joined fields
-	PayloadTypeName string `json:"payload_type_name"`
-	FormFactor      string `json:"form_factor"`
-	NodeName        string `json:"node_name"`
+	StyleName  string `json:"style_name"`
+	FormFactor string `json:"form_factor"`
+	NodeName   string `json:"node_name"`
 }
 
-const payloadSelectCols = `p.id, p.payload_type_id, p.node_id, p.status, p.claimed_by, p.delivered_at, p.notes, p.created_at, p.updated_at`
-
-const payloadJoinQuery = `SELECT p.id, p.payload_type_id, p.node_id, p.status, p.claimed_by, p.delivered_at, p.notes, p.created_at, p.updated_at,
-	pt.name, pt.form_factor, COALESCE(n.name, '')
-	FROM payloads p
-	JOIN payload_types pt ON pt.id = p.payload_type_id
+const instanceJoinQuery = `SELECT p.id, p.style_id, p.node_id, p.tag_id, p.status, p.uop_remaining, p.claimed_by, p.loaded_at, p.delivered_at, p.notes, p.created_at, p.updated_at,
+	ps.name, ps.form_factor, COALESCE(n.name, '')
+	FROM payload_instances p
+	JOIN payload_styles ps ON ps.id = p.style_id
 	LEFT JOIN nodes n ON n.id = p.node_id`
 
-func scanPayload(row interface{ Scan(...any) error }, withJoins bool) (*Payload, error) {
-	var p Payload
+func scanInstance(row interface{ Scan(...any) error }, withJoins bool) (*PayloadInstance, error) {
+	var p PayloadInstance
 	var nodeID, claimedBy sql.NullInt64
-	var deliveredAt, createdAt, updatedAt any
+	var loadedAt, deliveredAt, createdAt, updatedAt any
 
 	if withJoins {
-		err := row.Scan(&p.ID, &p.PayloadTypeID, &nodeID, &p.Status, &claimedBy, &deliveredAt, &p.Notes, &createdAt, &updatedAt,
-			&p.PayloadTypeName, &p.FormFactor, &p.NodeName)
+		err := row.Scan(&p.ID, &p.StyleID, &nodeID, &p.TagID, &p.Status, &p.UOPRemaining, &claimedBy,
+			&loadedAt, &deliveredAt, &p.Notes, &createdAt, &updatedAt,
+			&p.StyleName, &p.FormFactor, &p.NodeName)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		err := row.Scan(&p.ID, &p.PayloadTypeID, &nodeID, &p.Status, &claimedBy, &deliveredAt, &p.Notes, &createdAt, &updatedAt)
+		err := row.Scan(&p.ID, &p.StyleID, &nodeID, &p.TagID, &p.Status, &p.UOPRemaining, &claimedBy,
+			&loadedAt, &deliveredAt, &p.Notes, &createdAt, &updatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -54,142 +57,164 @@ func scanPayload(row interface{ Scan(...any) error }, withJoins bool) (*Payload,
 	if claimedBy.Valid {
 		p.ClaimedBy = &claimedBy.Int64
 	}
+	p.LoadedAt = parseTimePtr(loadedAt)
 	p.DeliveredAt = parseTime(deliveredAt)
 	p.CreatedAt = parseTime(createdAt)
 	p.UpdatedAt = parseTime(updatedAt)
 	return &p, nil
 }
 
-func scanPayloads(rows *sql.Rows, withJoins bool) ([]*Payload, error) {
-	var payloads []*Payload
+func scanInstances(rows *sql.Rows, withJoins bool) ([]*PayloadInstance, error) {
+	var instances []*PayloadInstance
 	for rows.Next() {
-		p, err := scanPayload(rows, withJoins)
+		p, err := scanInstance(rows, withJoins)
 		if err != nil {
 			return nil, err
 		}
-		payloads = append(payloads, p)
+		instances = append(instances, p)
 	}
-	return payloads, rows.Err()
+	return instances, rows.Err()
 }
 
-func (db *DB) CreatePayload(p *Payload) error {
-	var nodeID any
-	if p.NodeID != nil {
-		nodeID = *p.NodeID
-	}
-	result, err := db.Exec(db.Q(`INSERT INTO payloads (payload_type_id, node_id, status, notes) VALUES (?, ?, ?, ?)`),
-		p.PayloadTypeID, nodeID, p.Status, p.Notes)
+func (db *DB) CreateInstance(p *PayloadInstance) error {
+	result, err := db.Exec(db.Q(`INSERT INTO payload_instances (style_id, node_id, tag_id, status, uop_remaining, notes) VALUES (?, ?, ?, ?, ?, ?)`),
+		p.StyleID, nullableInt64(p.NodeID), p.TagID, p.Status, p.UOPRemaining, p.Notes)
 	if err != nil {
-		return fmt.Errorf("create payload: %w", err)
+		return fmt.Errorf("create instance: %w", err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
-		return fmt.Errorf("create payload last id: %w", err)
+		return fmt.Errorf("create instance last id: %w", err)
 	}
 	p.ID = id
+	db.logInstanceEvent(id, InstanceEventCreated, fmt.Sprintf("style_id=%d status=%s", p.StyleID, p.Status))
 	return nil
 }
 
-func (db *DB) UpdatePayload(p *Payload) error {
-	var nodeID any
-	if p.NodeID != nil {
-		nodeID = *p.NodeID
-	}
-	_, err := db.Exec(db.Q(`UPDATE payloads SET payload_type_id=?, node_id=?, status=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?`),
-		p.PayloadTypeID, nodeID, p.Status, p.Notes, p.ID)
+func (db *DB) UpdateInstance(p *PayloadInstance) error {
+	_, err := db.Exec(db.Q(`UPDATE payload_instances SET style_id=?, node_id=?, tag_id=?, status=?, uop_remaining=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?`),
+		p.StyleID, nullableInt64(p.NodeID), p.TagID, p.Status, p.UOPRemaining, p.Notes, p.ID)
 	return err
 }
 
-func (db *DB) DeletePayload(id int64) error {
-	_, err := db.Exec(db.Q(`DELETE FROM payloads WHERE id=?`), id)
+func (db *DB) DeleteInstance(id int64) error {
+	_, err := db.Exec(db.Q(`DELETE FROM payload_instances WHERE id=?`), id)
 	return err
 }
 
-func (db *DB) GetPayload(id int64) (*Payload, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`%s WHERE p.id=?`, payloadJoinQuery)), id)
-	return scanPayload(row, true)
+func (db *DB) GetInstance(id int64) (*PayloadInstance, error) {
+	row := db.QueryRow(db.Q(fmt.Sprintf(`%s WHERE p.id=?`, instanceJoinQuery)), id)
+	return scanInstance(row, true)
 }
 
-func (db *DB) ListPayloads() ([]*Payload, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s ORDER BY p.id DESC`, payloadJoinQuery)))
+func (db *DB) GetInstanceByTag(tagID string) (*PayloadInstance, error) {
+	row := db.QueryRow(db.Q(fmt.Sprintf(`%s WHERE p.tag_id=?`, instanceJoinQuery)), tagID)
+	return scanInstance(row, true)
+}
+
+func (db *DB) ListInstances() ([]*PayloadInstance, error) {
+	rows, err := db.Query(db.Q(fmt.Sprintf(`%s ORDER BY p.id DESC`, instanceJoinQuery)))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPayloads(rows, true)
+	return scanInstances(rows, true)
 }
 
-func (db *DB) ListPayloadsByStatus(status string) ([]*Payload, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE p.status=? ORDER BY p.id DESC`, payloadJoinQuery)), status)
+func (db *DB) ListInstancesByStatus(status string) ([]*PayloadInstance, error) {
+	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE p.status=? ORDER BY p.id DESC`, instanceJoinQuery)), status)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPayloads(rows, true)
+	return scanInstances(rows, true)
 }
 
-func (db *DB) ListPayloadsByNode(nodeID int64) ([]*Payload, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE p.node_id=? ORDER BY p.id DESC`, payloadJoinQuery)), nodeID)
+func (db *DB) ListInstancesByNode(nodeID int64) ([]*PayloadInstance, error) {
+	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE p.node_id=? ORDER BY p.id DESC`, instanceJoinQuery)), nodeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPayloads(rows, true)
+	return scanInstances(rows, true)
 }
 
-func (db *DB) CountPayloadsByNode(nodeID int64) (int, error) {
+func (db *DB) CountInstancesByNode(nodeID int64) (int, error) {
 	var count int
-	err := db.QueryRow(db.Q(`SELECT COUNT(*) FROM payloads WHERE node_id=?`), nodeID).Scan(&count)
+	err := db.QueryRow(db.Q(`SELECT COUNT(*) FROM payload_instances WHERE node_id=?`), nodeID).Scan(&count)
 	return count, err
 }
 
-// ClaimPayload marks a payload as claimed by an order to prevent double-dispatch.
-func (db *DB) ClaimPayload(payloadID, orderID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE payloads SET claimed_by=?, updated_at=datetime('now','localtime') WHERE id=?`), orderID, payloadID)
+// ClaimInstance marks an instance as claimed by an order to prevent double-dispatch.
+func (db *DB) ClaimInstance(instanceID, orderID int64) error {
+	_, err := db.Exec(db.Q(`UPDATE payload_instances SET claimed_by=?, updated_at=datetime('now','localtime') WHERE id=?`), orderID, instanceID)
+	if err == nil {
+		db.logInstanceEvent(instanceID, InstanceEventClaimed, fmt.Sprintf("order_id=%d", orderID))
+	}
 	return err
 }
 
-// UnclaimPayload releases a payload from an order claim.
-func (db *DB) UnclaimPayload(payloadID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE payloads SET claimed_by=NULL, updated_at=datetime('now','localtime') WHERE id=?`), payloadID)
+// UnclaimInstance releases an instance from an order claim.
+func (db *DB) UnclaimInstance(instanceID int64) error {
+	_, err := db.Exec(db.Q(`UPDATE payload_instances SET claimed_by=NULL, updated_at=datetime('now','localtime') WHERE id=?`), instanceID)
+	if err == nil {
+		db.logInstanceEvent(instanceID, InstanceEventUnclaimed, "")
+	}
 	return err
 }
 
-// MovePayload moves a payload to a new node, updating delivered_at.
-func (db *DB) MovePayload(payloadID, toNodeID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE payloads SET node_id=?, delivered_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?`), toNodeID, payloadID)
+// MoveInstance moves an instance to a new node, updating delivered_at.
+func (db *DB) MoveInstance(instanceID, toNodeID int64) error {
+	_, err := db.Exec(db.Q(`UPDATE payload_instances SET node_id=?, delivered_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?`), toNodeID, instanceID)
+	if err == nil {
+		db.logInstanceEvent(instanceID, InstanceEventMoved, fmt.Sprintf("to_node_id=%d", toNodeID))
+	}
 	return err
 }
 
-// FindSourcePayloadFIFO finds the best unclaimed payload at an enabled storage node using FIFO.
-func (db *DB) FindSourcePayloadFIFO(payloadTypeCode string) (*Payload, error) {
+// UnclaimOrderInstances releases all instances claimed by a specific order.
+func (db *DB) UnclaimOrderInstances(orderID int64) {
+	instances, err := db.ListInstancesByClaimedOrder(orderID)
+	if err != nil {
+		return
+	}
+	for _, p := range instances {
+		db.UnclaimInstance(p.ID)
+	}
+}
+
+// FindSourceInstanceFIFO finds the best unclaimed instance at an enabled storage node using FIFO.
+func (db *DB) FindSourceInstanceFIFO(styleCode string) (*PayloadInstance, error) {
 	row := db.QueryRow(db.Q(fmt.Sprintf(`%s
-		WHERE pt.name = ?
+		LEFT JOIN node_types ntype ON ntype.id = n.node_type_id
+		WHERE ps.name = ?
 		  AND n.node_type = 'storage'
 		  AND n.enabled = 1
+		  AND COALESCE(ntype.is_synthetic, 0) = 0
 		  AND p.claimed_by IS NULL
 		  AND p.status = 'available'
 		ORDER BY p.delivered_at ASC
-		LIMIT 1`, payloadJoinQuery)), payloadTypeCode)
-	return scanPayload(row, true)
+		LIMIT 1`, instanceJoinQuery)), styleCode)
+	return scanInstance(row, true)
 }
 
-// FindStorageDestinationForPayload finds the best storage node for a payload type.
-// Prefers nodes that already have this payload type (consolidation), then emptiest.
-func (db *DB) FindStorageDestinationForPayload(payloadTypeID int64) (*Node, error) {
-	// Try consolidation: storage nodes that already have this payload type with capacity remaining.
+// FindStorageDestinationForInstance finds the best storage node for an instance style.
+func (db *DB) FindStorageDestinationForInstance(styleID int64) (*Node, error) {
+	// Try consolidation: storage nodes that already have this style with capacity remaining.
 	row := db.QueryRow(db.Q(fmt.Sprintf(`
-		SELECT %s FROM nodes WHERE id = (
-			SELECT n.id
-			FROM nodes n
-			JOIN payloads match ON match.node_id = n.id AND match.payload_type_id = ?
-			LEFT JOIN payloads total ON total.node_id = n.id
-			WHERE n.node_type = 'storage' AND n.enabled = 1 AND n.capacity > 0
-			GROUP BY n.id, n.capacity
-			HAVING COUNT(DISTINCT total.id) < n.capacity
+		SELECT %s %s WHERE n.id = (
+			SELECT sn.id
+			FROM nodes sn
+			LEFT JOIN node_types snt ON snt.id = sn.node_type_id
+			JOIN payload_instances match ON match.node_id = sn.id AND match.style_id = ?
+			LEFT JOIN payload_instances total ON total.node_id = sn.id
+			WHERE sn.node_type = 'storage' AND sn.enabled = 1 AND sn.capacity > 0
+			  AND COALESCE(snt.is_synthetic, 0) = 0
+			GROUP BY sn.id, sn.capacity
+			HAVING COUNT(DISTINCT total.id) < sn.capacity
 			ORDER BY COUNT(DISTINCT match.id) DESC
 			LIMIT 1
-		)`, nodeSelectCols)), payloadTypeID)
+		)`, nodeSelectCols, nodeFromClause)), styleID)
 	n, err := scanNode(row)
 	if err == nil {
 		return n, nil
@@ -197,25 +222,27 @@ func (db *DB) FindStorageDestinationForPayload(payloadTypeID int64) (*Node, erro
 
 	// Fall back to emptiest storage node with capacity
 	row = db.QueryRow(db.Q(fmt.Sprintf(`
-		SELECT %s FROM nodes WHERE id = (
-			SELECT n.id
-			FROM nodes n
-			LEFT JOIN payloads p ON p.node_id = n.id
-			WHERE n.node_type = 'storage' AND n.enabled = 1 AND n.capacity > 0
-			GROUP BY n.id, n.capacity
-			HAVING COUNT(p.id) < n.capacity
-			ORDER BY COUNT(p.id) ASC
+		SELECT %s %s WHERE n.id = (
+			SELECT sn.id
+			FROM nodes sn
+			LEFT JOIN node_types snt ON snt.id = sn.node_type_id
+			LEFT JOIN payload_instances sp ON sp.node_id = sn.id
+			WHERE sn.node_type = 'storage' AND sn.enabled = 1 AND sn.capacity > 0
+			  AND COALESCE(snt.is_synthetic, 0) = 0
+			GROUP BY sn.id, sn.capacity
+			HAVING COUNT(sp.id) < sn.capacity
+			ORDER BY COUNT(sp.id) ASC
 			LIMIT 1
-		)`, nodeSelectCols)))
+		)`, nodeSelectCols, nodeFromClause)))
 	return scanNode(row)
 }
 
-// ListPayloadsByClaimedOrder returns all payloads claimed by a specific order.
-func (db *DB) ListPayloadsByClaimedOrder(orderID int64) ([]*Payload, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE p.claimed_by=?`, payloadJoinQuery)), orderID)
+// ListInstancesByClaimedOrder returns all instances claimed by a specific order.
+func (db *DB) ListInstancesByClaimedOrder(orderID int64) ([]*PayloadInstance, error) {
+	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE p.claimed_by=?`, instanceJoinQuery)), orderID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPayloads(rows, true)
+	return scanInstances(rows, true)
 }

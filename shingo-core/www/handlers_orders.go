@@ -1,7 +1,6 @@
 package www
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 )
@@ -20,10 +19,9 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page":          "orders",
 		"Orders":        orders,
-		"FilterStatus":  status,
-		"Authenticated": h.isAuthenticated(r),
+		"FilterStatus": status,
 	}
-	h.render(w, "orders.html", data)
+	h.render(w, r, "orders.html", data)
 }
 
 func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
@@ -45,39 +43,54 @@ func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Page":          "orders",
 		"Order":         order,
-		"History":       history,
-		"Authenticated": h.isAuthenticated(r),
+		"History": history,
 	}
-	h.render(w, "orders.html", data)
+	h.render(w, r, "orders.html", data)
 }
 
 func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OrderID int64 `json:"order_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
-	}
-
-	order, err := h.engine.DB().GetOrder(req.OrderID)
-	if err != nil {
-		h.jsonError(w, "order not found", http.StatusNotFound)
-		return
-	}
-
-	// Cancel vendor order if it has a vendor order ID
-	if order.VendorOrderID != "" {
-		_ = h.engine.Fleet().CancelOrder(order.VendorOrderID)
 	}
 
 	actor := h.getUsername(r)
-	detail := "cancelled by " + actor
-	if err := h.engine.DB().UpdateOrderStatus(order.ID, "cancelled", detail); err != nil {
+	if err := h.engine.TerminateOrder(req.OrderID, actor); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
+}
+
+func (h *Handlers) apiListOrders(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	orders, err := h.engine.DB().ListOrders(status, limit)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, orders)
+}
+
+func (h *Handlers) apiGetOrder(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	order, err := h.engine.DB().GetOrder(id)
+	if err != nil {
+		h.jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	h.jsonOK(w, order)
 }
 
 func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
@@ -85,8 +98,7 @@ func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
 		OrderID  int64 `json:"order_id"`
 		Priority int   `json:"priority"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 
@@ -108,5 +120,5 @@ func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }

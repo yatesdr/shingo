@@ -14,8 +14,9 @@ import (
 type EdgeHandler struct {
 	protocol.NoOpHandler
 
-	orderMgr    *orders.Manager
-	onCoreNodes func([]string)
+	orderMgr       *orders.Manager
+	onCoreNodes    func([]string)
+	onStyleCatalog func([]protocol.CatalogStyleInfo)
 
 	DebugLog func(string, ...any)
 }
@@ -23,6 +24,11 @@ type EdgeHandler struct {
 // NewEdgeHandler creates a handler for inbound core messages.
 func NewEdgeHandler(orderMgr *orders.Manager, onCoreNodes func([]string)) *EdgeHandler {
 	return &EdgeHandler{orderMgr: orderMgr, onCoreNodes: onCoreNodes}
+}
+
+// SetStyleCatalogHandler sets a callback for when the style catalog is received from core.
+func (h *EdgeHandler) SetStyleCatalogHandler(fn func([]protocol.CatalogStyleInfo)) {
+	h.onStyleCatalog = fn
 }
 
 func (h *EdgeHandler) debug(format string, args ...any) {
@@ -69,6 +75,27 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
+	case protocol.SubjectCatalogStylesResponse:
+		var resp protocol.CatalogStylesResponse
+		if err := json.Unmarshal(p.Body, &resp); err != nil {
+			log.Printf("edge_handler: decode catalog styles response: %v", err)
+			return
+		}
+		log.Printf("edge_handler: received style catalog (%d styles)", len(resp.Styles))
+		if h.onStyleCatalog != nil {
+			h.onStyleCatalog(resp.Styles)
+		}
+	case protocol.SubjectTagVerifyResponse:
+		var resp protocol.TagVerifyResponse
+		if err := json.Unmarshal(p.Body, &resp); err != nil {
+			log.Printf("edge_handler: decode tag verify response: %v", err)
+			return
+		}
+		if resp.Match {
+			log.Printf("edge_handler: tag verify: uuid=%s match=true detail=%s", resp.OrderUUID, resp.Detail)
+		} else {
+			log.Printf("edge_handler: tag verify: uuid=%s match=false expected=%s detail=%s", resp.OrderUUID, resp.Expected, resp.Detail)
+		}
 	case protocol.SubjectEdgeStale:
 		var stale protocol.EdgeStale
 		if err := json.Unmarshal(p.Body, &stale); err != nil {

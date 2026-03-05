@@ -35,6 +35,12 @@ const (
 
 	SubjectNodeListRequest  = "node.list_request"
 	SubjectNodeListResponse = "node.list_response"
+
+	SubjectTagVerifyRequest  = "tag.verify_request"
+	SubjectTagVerifyResponse = "tag.verify_response"
+
+	SubjectCatalogStylesRequest  = "catalog.styles_request"
+	SubjectCatalogStylesResponse = "catalog.styles_response"
 )
 
 // Roles for Address.Role.

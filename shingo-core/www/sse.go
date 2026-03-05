@@ -21,6 +21,7 @@ type EventHub struct {
 	clients   map[chan SSEEvent]struct{}
 	broadcast chan SSEEvent
 	stopChan  chan struct{}
+	stopOnce  sync.Once
 }
 
 func NewEventHub() *EventHub {
@@ -36,10 +37,7 @@ func (h *EventHub) Start() {
 }
 
 func (h *EventHub) Stop() {
-	select {
-	case h.stopChan <- struct{}{}:
-	default:
-	}
+	h.stopOnce.Do(func() { close(h.stopChan) })
 }
 
 func (h *EventHub) run() {
@@ -135,7 +133,7 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		ev := evt.Payload.(engine.PayloadChangedEvent)
-		h.Broadcast("payload-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action, "payload_id": ev.PayloadID}))
+		h.Broadcast("payload-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action, "instance_id": ev.InstanceID}))
 	}, engine.EventPayloadChanged)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
@@ -165,12 +163,12 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 	}, engine.EventMessagingDisconnected)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		h.Broadcast("system-status", `{"redis":"connected"}`)
-	}, engine.EventRedisConnected)
+		h.Broadcast("system-status", `{"database":"connected"}`)
+	}, engine.EventDBConnected)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		h.Broadcast("system-status", `{"redis":"disconnected"}`)
-	}, engine.EventRedisDisconnected)
+		h.Broadcast("system-status", `{"database":"disconnected"}`)
+	}, engine.EventDBDisconnected)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		ev := evt.Payload.(engine.RobotsUpdatedEvent)

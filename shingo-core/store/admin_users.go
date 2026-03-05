@@ -30,6 +30,6 @@ func (db *DB) GetAdminUser(username string) (*AdminUser, error) {
 
 func (db *DB) AdminUserExists() (bool, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM admin_users`).Scan(&count)
+	err := db.QueryRow(db.Q(`SELECT COUNT(*) FROM admin_users`)).Scan(&count)
 	return count > 0, err
 }

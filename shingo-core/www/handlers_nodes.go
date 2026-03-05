@@ -1,114 +1,88 @@
 package www
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/store"
-
-	"github.com/google/uuid"
 )
 
-// nodeSceneInfo holds parsed scene data for a node location, used in the template.
-type nodeSceneInfo struct {
-	PointName string
-	Tasks     string
-	BoundMap  string
+func (h *Handlers) apiListNodes(w http.ResponseWriter, r *http.Request) {
+	nodes, err := h.engine.DB().ListNodes()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, nodes)
 }
 
-// sceneProperty is a minimal representation of a scene point property for template rendering.
-type sceneProperty struct {
-	Key         string `json:"key"`
-	StringValue string `json:"stringValue,omitempty"`
+func (h *Handlers) apiNodePayloads(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	payloads, err := h.engine.DB().ListInstancesByNode(id)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, payloads)
 }
 
-func findSceneProperty(props []sceneProperty, key string) (string, bool) {
-	for _, p := range props {
-		if p.Key == key {
-			return p.StringValue, true
-		}
+func (h *Handlers) apiNodeState(w http.ResponseWriter, r *http.Request) {
+	states, err := h.engine.NodeState().GetAllNodeStates()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	return "", false
+	h.jsonOK(w, states)
 }
 
-// parseNodeTasks extracts task names from a binTask JSON property value.
-// Input is like: [{"Load":{}},{"Unload":{}}]  →  "Load, Unload"
-func parseNodeTasks(jsonStr string) string {
-	var tasks []map[string]any
-	if err := json.Unmarshal([]byte(jsonStr), &tasks); err != nil {
-		return ""
+func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
+	class := r.URL.Query().Get("class")
+	area := r.URL.Query().Get("area")
+
+	var (
+		points []*store.ScenePoint
+		err    error
+	)
+	switch {
+	case class != "":
+		points, err = h.engine.DB().ListScenePointsByClass(class)
+	case area != "":
+		points, err = h.engine.DB().ListScenePointsByArea(area)
+	default:
+		points, err = h.engine.DB().ListScenePoints()
 	}
-	var names []string
-	for _, t := range tasks {
-		for k := range t {
-			names = append(names, k)
-		}
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
-	return strings.Join(names, ", ")
+	h.jsonOK(w, points)
 }
 
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, _ := h.engine.DB().ListNodes()
-	states, _ := h.engine.NodeState().GetAllNodeStates()
-
-	// Build count map and collect distinct zones
-	counts := make(map[int64]int, len(nodes))
-	zoneSet := map[string]bool{}
-	for _, n := range nodes {
-		if st, ok := states[n.ID]; ok {
-			counts[n.ID] = st.ItemCount
-		}
-		if n.Zone != "" {
-			zoneSet[n.Zone] = true
-		}
-	}
-	zones := make([]string, 0, len(zoneSet))
-	for z := range zoneSet {
-		zones = append(zones, z)
-	}
-
-	// Build scene data for template
-	scenePoints, _ := h.engine.DB().ListScenePoints()
-	nodeLabels := make(map[string]string)
-	nodeInfo := make(map[string]*nodeSceneInfo)
-	mapGroups := make(map[string][]*store.ScenePoint)
-	for _, sp := range scenePoints {
-		if sp.ClassName == "GeneralLocation" {
-			nodeLabels[sp.InstanceName] = sp.Label
-			info := &nodeSceneInfo{PointName: sp.PointName}
-			var props []sceneProperty
-			if err := json.Unmarshal([]byte(sp.PropertiesJSON), &props); err == nil {
-				if v, ok := findSceneProperty(props, "bindRobotMap"); ok {
-					info.BoundMap = v
-				}
-				if v, ok := findSceneProperty(props, "binTask"); ok {
-					info.Tasks = parseNodeTasks(v)
-				}
-			}
-			nodeInfo[sp.InstanceName] = info
-		} else {
-			mapGroups[sp.ClassName] = append(mapGroups[sp.ClassName], sp)
-		}
-	}
+	pd, _ := h.engine.GetNodesPageData()
 
 	data := map[string]any{
-		"Page":          "nodes",
-		"Nodes":         nodes,
-		"Counts":        counts,
-		"Zones":         zones,
-		"Authenticated": h.isAuthenticated(r),
-		"NodeLabels":    nodeLabels,
-		"NodeInfo":      nodeInfo,
-		"MapGroups":     mapGroups,
-		"MapClassOrder": []string{"ActionPoint", "ChargePoint", "LocationMark"},
+		"Page":           "nodes",
+		"Nodes":          pd.Nodes,
+		"Counts":         pd.Counts,
+		"Zones":          pd.Zones,
+		"NodeLabels":    pd.NodeLabels,
+		"NodeInfo":       pd.NodeInfo,
+		"MapGroups":      pd.MapGroups,
+		"MapClassOrder":  []string{"ActionPoint", "ChargePoint", "LocationMark"},
+		"NodeTypes":      pd.NodeTypes,
+		"SyntheticNodes": pd.SyntheticNodes,
+		"PayloadStyles":  pd.PayloadStyles,
+		"Edges":          pd.Edges,
+		"ChildCounts":    pd.ChildCounts,
 	}
-	h.render(w, "nodes.html", data)
+	h.render(w, r, "nodes.html", data)
 }
 
 func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
@@ -127,12 +101,34 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		Enabled:        r.FormValue("enabled") == "on",
 	}
 
+	if ntID, err := strconv.ParseInt(r.FormValue("node_type_id"), 10, 64); err == nil && ntID > 0 {
+		node.NodeTypeID = &ntID
+	}
+	if parentID, err := strconv.ParseInt(r.FormValue("parent_id"), 10, 64); err == nil && parentID > 0 {
+		node.ParentID = &parentID
+	}
+
 	if err := h.engine.DB().CreateNode(node); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	h.engine.NodeState().RefreshNodeMeta(node.ID)
+	// Save station assignments
+	if stations := r.Form["stations"]; len(stations) > 0 {
+		h.engine.DB().SetNodeStations(node.ID, stations)
+	}
+
+	// Save payload style compatibility
+	if sIDs := r.Form["style_ids"]; len(sIDs) > 0 {
+		var ids []int64
+		for _, s := range sIDs {
+			if id, err := strconv.ParseInt(s, 10, 64); err == nil {
+				ids = append(ids, id)
+			}
+		}
+		h.engine.DB().SetNodePayloadStyles(node.ID, ids)
+	}
+
 	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: node.ID, NodeName: node.Name, Action: "created",
 	}})
@@ -166,12 +162,35 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 	node.Capacity = capacity
 	node.Enabled = r.FormValue("enabled") == "on"
 
+	if ntID, err := strconv.ParseInt(r.FormValue("node_type_id"), 10, 64); err == nil && ntID > 0 {
+		node.NodeTypeID = &ntID
+	} else {
+		node.NodeTypeID = nil
+	}
+	if parentID, err := strconv.ParseInt(r.FormValue("parent_id"), 10, 64); err == nil && parentID > 0 {
+		node.ParentID = &parentID
+	} else {
+		node.ParentID = nil
+	}
+
 	if err := h.engine.DB().UpdateNode(node); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	h.engine.NodeState().RefreshNodeMeta(node.ID)
+	// Update station assignments
+	stations := r.Form["stations"]
+	h.engine.DB().SetNodeStations(node.ID, stations)
+
+	// Update payload style compatibility
+	var styleIDs []int64
+	for _, s := range r.Form["style_ids"] {
+		if sID, err := strconv.ParseInt(s, 10, 64); err == nil {
+			styleIDs = append(styleIDs, sID)
+		}
+	}
+	h.engine.DB().SetNodePayloadStyles(node.ID, styleIDs)
+
 	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: node.ID, NodeName: node.Name, Action: "updated",
 	}})
@@ -234,71 +253,15 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiNodeOccupancy(w http.ResponseWriter, r *http.Request) {
-	np, ok := h.engine.Fleet().(fleet.NodeOccupancyProvider)
-	if !ok {
-		h.jsonError(w, "fleet backend does not support occupancy status", http.StatusNotImplemented)
-		return
-	}
-	locations, err := np.GetNodeOccupancy()
+	results, err := h.engine.GetNodeOccupancy()
 	if err != nil {
-		h.jsonError(w, "fleet error: "+err.Error(), http.StatusInternalServerError)
+		code := http.StatusInternalServerError
+		if engine.IsFleetUnsupported(err) {
+			code = http.StatusNotImplemented
+		}
+		h.jsonError(w, err.Error(), code)
 		return
 	}
-
-	nodes, _ := h.engine.DB().ListNodes()
-
-	// Build lookup maps
-	locMap := make(map[string]bool, len(locations))
-	for _, loc := range locations {
-		locMap[loc.ID] = loc.Occupied
-	}
-
-	nodeVendor := make(map[string]string, len(nodes))
-	for _, n := range nodes {
-		if n.VendorLocation != "" {
-			nodeVendor[n.VendorLocation] = n.Name
-		}
-	}
-
-	type entry struct {
-		LocationID    string `json:"location_id"`
-		NodeName      string `json:"node_name"`
-		FleetOccupied *bool  `json:"fleet_occupied"`
-		InShinGo      bool   `json:"in_shingo"`
-		Discrepancy   string `json:"discrepancy"`
-	}
-
-	var results []entry
-
-	// Locations in fleet
-	for _, loc := range locations {
-		e := entry{
-			LocationID:    loc.ID,
-			FleetOccupied: &loc.Occupied,
-			InShinGo:      nodeVendor[loc.ID] != "",
-			NodeName:      nodeVendor[loc.ID],
-		}
-		if !e.InShinGo {
-			e.Discrepancy = "fleet_only"
-		}
-		results = append(results, e)
-	}
-
-	// Nodes in ShinGo but not in fleet
-	for _, n := range nodes {
-		if n.VendorLocation == "" {
-			continue
-		}
-		if _, ok := locMap[n.VendorLocation]; !ok {
-			results = append(results, entry{
-				LocationID:  n.VendorLocation,
-				NodeName:    n.Name,
-				InShinGo:    true,
-				Discrepancy: "shingo_only",
-			})
-		}
-	}
-
 	h.jsonOK(w, results)
 }
 
@@ -307,80 +270,98 @@ func (h *Handlers) apiNodeTestOrder(w http.ResponseWriter, r *http.Request) {
 		FromNodeID int64 `json:"from_node_id"`
 		ToNodeID   int64 `json:"to_node_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 
-	if req.FromNodeID == req.ToNodeID {
-		h.jsonError(w, "source and destination must be different", http.StatusBadRequest)
-		return
-	}
-
-	sourceNode, err := h.engine.DB().GetNode(req.FromNodeID)
-	if err != nil {
-		h.jsonError(w, "source node not found", http.StatusNotFound)
-		return
-	}
-	destNode, err := h.engine.DB().GetNode(req.ToNodeID)
-	if err != nil {
-		h.jsonError(w, "destination node not found", http.StatusNotFound)
-		return
-	}
-
-	edgeUUID := "node-test-" + uuid.New().String()[:8]
-
-	order := &store.Order{
-		EdgeUUID:     edgeUUID,
-		StationID:    "core-node-test",
-		OrderType:    "move",
-		Status:       "pending",
-		PickupNode:   sourceNode.Name,
-		DeliveryNode: destNode.Name,
-		PayloadDesc:  "node test order from nodes page",
-	}
-	if err := h.engine.DB().CreateOrder(order); err != nil {
-		h.jsonError(w, "failed to create order: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.engine.DB().UpdateOrderStatus(order.ID, "pending", "node test order created")
-
-	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
-	fleetReq := fleet.TransportOrderRequest{
-		OrderID:    vendorOrderID,
-		ExternalID: edgeUUID,
-		FromLoc:    sourceNode.VendorLocation,
-		ToLoc:      destNode.VendorLocation,
-	}
-
-	log.Printf("nodes: test order fleet request: %+v", fleetReq)
-
-	if _, err := h.engine.Fleet().CreateTransportOrder(fleetReq); err != nil {
-		log.Printf("nodes: test order fleet error: %v", err)
-		h.engine.DB().UpdateOrderStatus(order.ID, "failed", err.Error())
-		h.jsonError(w, "fleet dispatch failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("nodes: test order dispatched: order=%d vendor=%s", order.ID, vendorOrderID)
-
-	h.engine.DB().UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", "")
-	h.engine.DB().UpdateOrderStatus(order.ID, "dispatched", "vendor order "+vendorOrderID)
-
-	h.engine.Events.Emit(engine.Event{
-		Type: engine.EventOrderDispatched,
-		Payload: engine.OrderDispatchedEvent{
-			OrderID:       order.ID,
-			VendorOrderID: vendorOrderID,
-			SourceNode:    sourceNode.Name,
-			DestNode:      destNode.Name,
-		},
+	result, err := h.engine.CreateDirectOrder(engine.DirectOrderRequest{
+		FromNodeID: req.FromNodeID,
+		ToNodeID:   req.ToNodeID,
+		StationID:  "core-node-test",
+		Desc:       "node test order from nodes page",
 	})
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	h.jsonOK(w, map[string]any{
-		"order_id": order.ID,
-		"from":     sourceNode.Name,
-		"to":       destNode.Name,
+		"order_id": result.OrderID,
+		"from":     result.FromNode,
+		"to":       result.ToNode,
 	})
+}
+
+// apiNodeDetail returns extended node info (stations, payload types, properties, children).
+func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil {
+		h.jsonError(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+
+	node, err := h.engine.DB().GetNode(id)
+	if err != nil {
+		h.jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	stations, _ := h.engine.DB().ListStationsForNode(id)
+	payloadStyles, _ := h.engine.DB().ListPayloadStylesForNode(id)
+	props, _ := h.engine.DB().ListNodeProperties(id)
+
+	var children []*store.Node
+	if node.IsSynthetic {
+		children, _ = h.engine.DB().ListChildNodes(id)
+	}
+
+	h.jsonOK(w, map[string]any{
+		"node":          node,
+		"stations":      stations,
+		"payload_styles": payloadStyles,
+		"properties":    props,
+		"children":      children,
+	})
+}
+
+// apiNodePropertySet upserts a key-value property on a node.
+func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeID int64  `json:"node_id"`
+		Key    string `json:"key"`
+		Value  string `json:"value"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.NodeID == 0 || req.Key == "" {
+		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.DB().SetNodeProperty(req.NodeID, req.Key, req.Value); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
+}
+
+// apiNodePropertyDelete removes a property from a node.
+func (h *Handlers) apiNodePropertyDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeID int64  `json:"node_id"`
+		Key    string `json:"key"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.NodeID == 0 || req.Key == "" {
+		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
+		return
+	}
+	if err := h.engine.DB().DeleteNodeProperty(req.NodeID, req.Key); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonSuccess(w)
 }
 

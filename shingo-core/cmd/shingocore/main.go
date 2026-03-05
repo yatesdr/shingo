@@ -12,8 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/debuglog"
@@ -69,7 +67,7 @@ func main() {
 		fmt.Println("  protocol      Protocol envelope decode/encode")
 		fmt.Println("  outbox        Outbox drain cycles and delivery")
 		fmt.Println("  core_handler  Inbound message handler dispatch")
-		fmt.Println("  nodestate     Redis cache operations, node state sync")
+		fmt.Println("  nodestate     Node state queries")
 		fmt.Println("  engine        Engine wiring, vendor status changes")
 		fmt.Println()
 		fmt.Println("Examples:")
@@ -111,28 +109,9 @@ func main() {
 	defer db.Close()
 	log.Printf("shingocore: database open (%s)", cfg.Database.Driver)
 
-	// Redis
-	redisClient := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Address,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Printf("shingocore: redis not available (%v), running without cache", err)
-	} else {
-		log.Printf("shingocore: redis connected (%s)", cfg.Redis.Address)
-	}
-	cancel()
-	defer redisClient.Close()
-
 	// Node state manager
-	redisStore := nodestate.NewRedisStore(redisClient)
-	nodeStateMgr := nodestate.NewManager(db, redisStore)
+	nodeStateMgr := nodestate.NewManager(db)
 	nodeStateMgr.DebugLog = dbg.Func("nodestate")
-	if err := nodeStateMgr.SyncRedisFromSQL(); err != nil {
-		log.Printf("shingocore: redis sync from SQL: %v", err)
-	}
 
 	// Fleet backend (Seer RDS adapter)
 	fleetAdapter := seerrds.New(seerrds.Config{

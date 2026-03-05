@@ -37,11 +37,12 @@ type Engine struct {
 
 	hourlyTracker *HourlyTracker
 
-	coreNodes      map[string]bool
-	coreNodesMu    sync.RWMutex
-	nodeSyncFn     func()
-	sendFn         func(*protocol.Envelope) error
-	kafkaReconnFn  func() error
+	coreNodes       map[string]bool
+	coreNodesMu     sync.RWMutex
+	nodeSyncFn      func()
+	catalogSyncFn   func()
+	sendFn          func(*protocol.Envelope) error
+	kafkaReconnFn   func() error
 
 	Events   *EventBus
 	stopChan chan struct{}
@@ -130,11 +131,9 @@ func (e *Engine) Stop() {
 	default:
 		close(e.stopChan)
 	}
-
 	if e.plcMgr != nil {
 		e.plcMgr.Stop()
 	}
-
 	e.logFn("Engine stopped")
 }
 
@@ -240,6 +239,33 @@ func (e *Engine) RequestNodeSync() {
 	if e.nodeSyncFn != nil {
 		e.nodeSyncFn()
 	}
+}
+
+// SetCatalogSyncFunc sets the function to call when a style catalog sync is requested.
+func (e *Engine) SetCatalogSyncFunc(fn func()) {
+	e.catalogSyncFn = fn
+}
+
+// RequestCatalogSync triggers a style catalog request to core.
+func (e *Engine) RequestCatalogSync() {
+	if e.catalogSyncFn != nil {
+		e.catalogSyncFn()
+	}
+}
+
+// HandleStyleCatalog upserts style catalog entries received from core.
+func (e *Engine) HandleStyleCatalog(styles []protocol.CatalogStyleInfo) {
+	for _, s := range styles {
+		entry := &store.StyleCatalogEntry{
+			ID: s.ID, Name: s.Name, Code: s.Code,
+			FormFactor: s.FormFactor, Description: s.Description,
+			UOPCapacity: s.UOPCapacity,
+		}
+		if err := e.db.UpsertStyleCatalog(entry); err != nil {
+			log.Printf("engine: upsert style catalog entry %s: %v", s.Name, err)
+		}
+	}
+	e.logFn("engine: updated style catalog (%d styles)", len(styles))
 }
 
 // SetSendFunc sets the function used to publish protocol envelopes.

@@ -1,7 +1,6 @@
 package www
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -13,10 +12,9 @@ func (h *Handlers) handleDemand(w http.ResponseWriter, r *http.Request) {
 	demands, _ := h.engine.DB().ListDemands()
 	data := map[string]any{
 		"Page":          "demand",
-		"Demands":       demands,
-		"Authenticated": h.isAuthenticated(r),
+		"Demands": demands,
 	}
-	h.render(w, "demand.html", data)
+	h.render(w, r, "demand.html", data)
 }
 
 // --- Demand API ---
@@ -36,8 +34,7 @@ func (h *Handlers) apiCreateDemand(w http.ResponseWriter, r *http.Request) {
 		Description string  `json:"description"`
 		DemandQty   float64 `json:"demand_qty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	if req.CatID == "" {
@@ -64,15 +61,14 @@ func (h *Handlers) apiUpdateDemand(w http.ResponseWriter, r *http.Request) {
 		DemandQty   float64 `json:"demand_qty"`
 		ProducedQty float64 `json:"produced_qty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	if err := h.engine.DB().UpdateDemand(id, req.CatID, req.Description, req.DemandQty, req.ProducedQty); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiApplyDemand(w http.ResponseWriter, r *http.Request) {
@@ -85,15 +81,14 @@ func (h *Handlers) apiApplyDemand(w http.ResponseWriter, r *http.Request) {
 		Description string  `json:"description"`
 		DemandQty   float64 `json:"demand_qty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	if err := h.engine.DB().UpdateDemandAndResetProduced(id, req.Description, req.DemandQty); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiDeleteDemand(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +101,7 @@ func (h *Handlers) apiDeleteDemand(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiApplyAllDemands(w http.ResponseWriter, r *http.Request) {
@@ -117,8 +112,7 @@ func (h *Handlers) apiApplyAllDemands(w http.ResponseWriter, r *http.Request) {
 			DemandQty   float64 `json:"demand_qty"`
 		} `json:"rows"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	for _, row := range req.Rows {
@@ -127,7 +121,7 @@ func (h *Handlers) apiApplyAllDemands(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiSetDemandProduced(w http.ResponseWriter, r *http.Request) {
@@ -139,8 +133,7 @@ func (h *Handlers) apiSetDemandProduced(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		ProducedQty float64 `json:"produced_qty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, err.Error(), http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	if req.ProducedQty < 0 {
@@ -151,7 +144,7 @@ func (h *Handlers) apiSetDemandProduced(w http.ResponseWriter, r *http.Request) 
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiClearDemandProduced(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +157,7 @@ func (h *Handlers) apiClearDemandProduced(w http.ResponseWriter, r *http.Request
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiClearAllProduced(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +165,7 @@ func (h *Handlers) apiClearAllProduced(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiDemandLog(w http.ResponseWriter, r *http.Request) {

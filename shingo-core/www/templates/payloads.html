@@ -7,16 +7,20 @@
   {{if .Authenticated}}
   <div class="accordion mb-2" id="pt-accordion">
     <button class="accordion-toggle" onclick="document.getElementById('pt-accordion').classList.toggle('open')">
-      Manage Payload Types <span class="text-muted">({{len .PayloadTypes}})</span>
+      Manage Payload Styles <span class="text-muted">({{len .PayloadStyles}})</span>
     </button>
     <div class="accordion-body">
       <div class="card mb-1">
-        <h4>Add Payload Type</h4>
-        <form method="POST" action="/payload-types/create">
+        <h4>Add Payload Style</h4>
+        <form method="POST" action="/payload-styles/create">
           <div class="grid grid-2">
             <div class="form-group">
               <label>Name</label>
               <input type="text" name="name" required placeholder="e.g. Standard Tote">
+            </div>
+            <div class="form-group">
+              <label>Code <span class="tooltip-trigger" title="Short unique identifier used in orders">?</span></label>
+              <input type="text" name="code" placeholder="e.g. BRK-ROTOR-KIT">
             </div>
             <div class="form-group">
               <label>Form Factor</label>
@@ -28,18 +32,34 @@
               </select>
             </div>
             <div class="form-group">
+              <label>UOP Capacity <span class="tooltip-trigger" title="Units of Production — how many production cycles a fully loaded cart supports">?</span></label>
+              <input type="number" name="uop_capacity" value="0" min="0">
+            </div>
+            <div class="form-group">
               <label>Description</label>
               <input type="text" name="description" placeholder="Optional description">
+            </div>
+            <div class="form-group">
+              <label>Dimensions (mm) <span class="tooltip-trigger" title="Physical cart dimensions: Width x Height x Depth">?</span></label>
+              <div style="display:flex;gap:0.25rem">
+                <input type="number" name="width_mm" placeholder="W" step="0.1" style="flex:1">
+                <input type="number" name="height_mm" placeholder="H" step="0.1" style="flex:1">
+                <input type="number" name="depth_mm" placeholder="D" step="0.1" style="flex:1">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Weight (kg)</label>
+              <input type="number" name="weight_kg" placeholder="0" step="0.1">
             </div>
             <div class="form-group">
               <label>Default Manifest (JSON)</label>
               <textarea name="default_manifest_json" rows="2" placeholder="{}">{}</textarea>
             </div>
           </div>
-          <button type="submit" class="btn btn-primary btn-sm">Create Payload Type</button>
+          <button type="submit" class="btn btn-primary btn-sm">Create Payload Style</button>
         </form>
       </div>
-      {{if .PayloadTypes}}
+      {{if .PayloadStyles}}
       <table>
         <thead>
           <tr>
@@ -47,21 +67,23 @@
             <th>Name</th>
             <th>Form Factor</th>
             <th>Description</th>
+            <th>Compatible Nodes</th>
             <th>Created</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          {{range .PayloadTypes}}
+          {{range .PayloadStyles}}
           <tr>
             <td>{{.ID}}</td>
             <td><strong>{{.Name}}</strong></td>
             <td>{{.FormFactor}}</td>
             <td>{{.Description}}</td>
+            <td class="text-muted" style="font-size:0.8rem">{{with index $.CompatNodes .ID}}{{range $i, $n := .}}{{if $i}}, {{end}}{{$n}}{{end}}{{else}}All{{end}}</td>
             <td>{{formatTime .CreatedAt}}</td>
             <td>
-              <button class="btn btn-sm" onclick="editPayloadType({{.ID}}, '{{.Name}}', '{{.Description}}', '{{.FormFactor}}', this)" data-manifest="{{.DefaultManifestJSON}}">Edit</button>
-              <form method="POST" action="/payload-types/delete" style="display:inline" onsubmit="return confirm('Delete this payload type?')">
+              <button class="btn btn-sm" onclick="editPayloadStyle({{.ID}}, '{{.Name}}', '{{.Description}}', '{{.FormFactor}}', this)" data-manifest="{{.DefaultManifestJSON}}">Edit</button>
+              <form method="POST" action="/payload-styles/delete" style="display:inline" onsubmit="return confirm('Delete this payload style?')">
                 <input type="hidden" name="id" value="{{.ID}}">
                 <button type="submit" class="btn btn-danger btn-sm">Delete</button>
               </form>
@@ -71,23 +93,27 @@
         </tbody>
       </table>
       {{else}}
-      <p class="text-muted">No payload types defined yet.</p>
+      <p class="text-muted">No payload styles defined yet.</p>
       {{end}}
     </div>
   </div>
 
   <div class="card mb-2">
-    <h3>Create Payload</h3>
-    <form method="POST" action="/payloads/create">
+    <h3>Create Instance</h3>
+    <form method="POST" action="/instances/create">
       <div class="grid grid-2">
         <div class="form-group">
-          <label>Payload Type</label>
-          <select name="payload_type_id" required>
-            <option value="">-- Select Type --</option>
-            {{range .PayloadTypes}}
+          <label>Payload Style</label>
+          <select name="style_id" required>
+            <option value="">-- Select Style --</option>
+            {{range .PayloadStyles}}
             <option value="{{.ID}}">{{.Name}} ({{.FormFactor}})</option>
             {{end}}
           </select>
+        </div>
+        <div class="form-group">
+          <label>Tag ID <span class="tooltip-trigger" title="QR code tag ID — optional, blank means untagged">?</span></label>
+          <input type="text" name="tag_id" placeholder="e.g. SHG:0001">
         </div>
         <div class="form-group">
           <label>Node (optional)</label>
@@ -111,18 +137,19 @@
           <input type="text" name="notes" placeholder="Optional notes">
         </div>
       </div>
-      <button type="submit" class="btn btn-primary">Create Payload</button>
+      <button type="submit" class="btn btn-primary">Create Instance</button>
     </form>
   </div>
   {{end}}
 
   <div class="card">
-    {{if .Payloads}}
+    {{if .Instances}}
     <table>
       <thead>
         <tr>
           <th>ID</th>
-          <th>Type</th>
+          <th>Style</th>
+          <th>Tag</th>
           <th>Form Factor</th>
           <th>Node</th>
           <th>Status</th>
@@ -132,10 +159,11 @@
         </tr>
       </thead>
       <tbody>
-        {{range .Payloads}}
+        {{range .Instances}}
         <tr data-id="{{.ID}}" style="cursor:pointer" onclick="openPayloadModal({{.ID}})">
           <td>{{.ID}}</td>
-          <td><strong>{{.PayloadTypeName}}</strong></td>
+          <td><strong>{{.StyleName}}</strong></td>
+          <td>{{if .TagID}}<code style="font-size:0.75rem">{{.TagID}}</code>{{else}}<span class="text-muted">-</span>{{end}}</td>
           <td>{{.FormFactor}}</td>
           <td>{{if .NodeName}}{{.NodeName}}{{else}}<span class="text-muted">-</span>{{end}}</td>
           <td><span class="badge {{payloadStatusColor .Status}}">{{.Status}}</span></td>
@@ -145,11 +173,11 @@
           <td onclick="event.stopPropagation()">
             <button class="btn btn-sm" onclick="editPayload(this)"
               data-id="{{.ID}}"
-              data-type="{{.PayloadTypeID}}"
+              data-type="{{.StyleID}}"
               data-node="{{deref .NodeID}}"
               data-status="{{.Status}}"
               data-notes="{{.Notes}}">Edit</button>
-            <form method="POST" action="/payloads/delete" style="display:inline" onsubmit="return confirm('Delete payload #{{.ID}}?')">
+            <form method="POST" action="/instances/delete" style="display:inline" onsubmit="return confirm('Delete payload #{{.ID}}?')">
               <input type="hidden" name="id" value="{{.ID}}">
               <button type="submit" class="btn btn-danger btn-sm">Delete</button>
             </form>
@@ -202,13 +230,13 @@
       <h2>Edit Payload</h2>
       <button class="modal-close" onclick="closePayloadEditModal()">&times;</button>
     </div>
-    <form method="POST" action="/payloads/update">
+    <form method="POST" action="/instances/update">
       <input type="hidden" name="id" id="pe-id">
       <div class="grid grid-2">
         <div class="form-group">
-          <label>Payload Type</label>
-          <select name="payload_type_id" id="pe-type" required>
-            {{range .PayloadTypes}}
+          <label>Payload Style</label>
+          <select name="style_id" id="pe-type" required>
+            {{range .PayloadStyles}}
             <option value="{{.ID}}">{{.Name}} ({{.FormFactor}})</option>
             {{end}}
           </select>
@@ -262,7 +290,7 @@ function closePayloadModal() {
 
 function loadManifest(payloadID) {
   var list = document.getElementById('pm-manifest-list');
-  fetch('/api/payloads/manifest?id=' + payloadID)
+  fetch('/api/instances/manifest?id=' + payloadID)
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(items) {
       if (!items || items.length === 0) {
@@ -287,14 +315,14 @@ function loadManifest(payloadID) {
 
 function addManifestItem() {
   var body = {
-    payload_id: currentPayloadID,
+    instance_id: currentPayloadID,
     part_number: document.getElementById('mi-part').value,
     quantity: parseFloat(document.getElementById('mi-qty').value) || 0,
     production_date: document.getElementById('mi-date').value,
     lot_code: document.getElementById('mi-lot').value,
     notes: document.getElementById('mi-notes').value
   };
-  fetch('/api/payloads/manifest/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+  fetch('/api/instances/manifest/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function() {
       document.getElementById('mi-part').value = '';
@@ -309,7 +337,7 @@ function addManifestItem() {
 
 function deleteManifestItem(id) {
   if (!confirm('Delete this manifest item?')) return;
-  fetch('/api/payloads/manifest/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})})
+  fetch('/api/instances/manifest/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:id})})
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function() { loadManifest(currentPayloadID); })
     .catch(function(e) { alert('Error: ' + e); });
@@ -336,7 +364,7 @@ function esc(s) {
   return d.innerHTML;
 }
 
-function editPayloadType(id, name, desc, ff, btn) {
+function editPayloadStyle(id, name, desc, ff, btn) {
   document.getElementById('pt-edit-id').value = id;
   document.getElementById('pt-edit-name').value = name;
   document.getElementById('pt-edit-desc').value = desc;
@@ -354,14 +382,14 @@ document.addEventListener('keydown', function(e) {
 });
 </script>
 
-<!-- Payload Type Edit Modal -->
+<!-- Payload Style Edit Modal -->
 <div id="pt-modal" class="modal-overlay" onclick="if(event.target===this)closePTModal()">
   <div class="modal">
     <div class="modal-header flex flex-between">
-      <h2>Edit Payload Type</h2>
+      <h2>Edit Payload Style</h2>
       <button class="modal-close" onclick="closePTModal()">&times;</button>
     </div>
-    <form method="POST" action="/payload-types/update">
+    <form method="POST" action="/payload-styles/update">
       <input type="hidden" name="id" id="pt-edit-id">
       <div class="grid grid-2">
         <div class="form-group">

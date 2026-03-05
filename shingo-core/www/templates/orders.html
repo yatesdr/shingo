@@ -14,12 +14,13 @@
         <tr><td><strong>UUID</strong></td><td>{{.Order.EdgeUUID}}</td></tr>
         <tr><td><strong>Station</strong></td><td>{{.Order.StationID}}</td></tr>
         <tr><td><strong>Type</strong></td><td>{{.Order.OrderType}}</td></tr>
-        <tr><td><strong>Payload Type</strong></td><td>{{if .Order.PayloadTypeID}}PT#{{deref .Order.PayloadTypeID}}{{else}}{{.Order.MaterialCode}}{{end}}</td></tr>
+        <tr><td><strong>Style</strong></td><td>{{if .Order.StyleID}}PT#{{deref .Order.StyleID}}{{else}}{{.Order.MaterialCode}}{{end}}</td></tr>
         <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
         <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
         <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}</td></tr>
         <tr><td><strong>Robot</strong></td><td>{{.Order.RobotID}}</td></tr>
         <tr><td><strong>Priority</strong></td><td>{{.Order.Priority}}</td></tr>
+        {{if .Order.ParentOrderID}}<tr><td><strong>Parent Order</strong></td><td><a href="/orders/detail?id={{deref .Order.ParentOrderID}}">#{{deref .Order.ParentOrderID}}</a> (step {{.Order.Sequence}})</td></tr>{{end}}
         <tr><td><strong>Created</strong></td><td>{{formatTime .Order.CreatedAt}}</td></tr>
         <tr><td><strong>Updated</strong></td><td>{{formatTime .Order.UpdatedAt}}</td></tr>
         <tr><td><strong>Completed</strong></td><td>{{formatTimePtr .Order.CompletedAt}}</td></tr>
@@ -70,6 +71,7 @@
       <a href="/orders?status=in_transit" class="btn btn-sm {{if eq .FilterStatus "in_transit"}}btn-primary{{end}}">In Transit</a>
       <a href="/orders?status=completed" class="btn btn-sm {{if eq .FilterStatus "completed"}}btn-primary{{end}}">Completed</a>
       <a href="/orders?status=failed" class="btn btn-sm {{if eq .FilterStatus "failed"}}btn-primary{{end}}">Failed</a>
+      <a href="/orders?status=reshuffling" class="btn btn-sm {{if eq .FilterStatus "reshuffling"}}btn-primary{{end}}">Reshuffling</a>
     </div>
   </div>
 
@@ -82,7 +84,7 @@
           <th>UUID</th>
           <th>Station</th>
           <th>Type</th>
-          <th>Payload Type</th>
+          <th>Style</th>
           <th>Status</th>
           <th>Robot</th>
           <th>Created</th>
@@ -95,7 +97,7 @@
           <td style="font-family:monospace;font-size:0.8rem">{{.EdgeUUID}}</td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
-          <td>{{if .PayloadTypeID}}PT#{{deref .PayloadTypeID}}{{else}}{{.MaterialCode}}{{end}}</td>
+          <td>{{if .StyleID}}PT#{{deref .StyleID}}{{else}}{{.MaterialCode}}{{end}}</td>
           <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
           <td>{{.RobotID}}</td>
           <td>{{formatTime .CreatedAt}}</td>

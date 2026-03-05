@@ -72,7 +72,7 @@ func (db *DB) UpsertScenePoint(sp *ScenePoint) error {
 }
 
 func (db *DB) ListScenePoints() ([]*ScenePoint, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM scene_points ORDER BY area_name, class_name, instance_name`, scenePointSelectCols))
+	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM scene_points ORDER BY area_name, class_name, instance_name`, scenePointSelectCols)))
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (db *DB) ListBinLocations() ([]*ScenePoint, error) {
 }
 
 func (db *DB) ListSceneAreaNames() ([]string, error) {
-	rows, err := db.Query(`SELECT DISTINCT area_name FROM scene_points ORDER BY area_name`)
+	rows, err := db.Query(db.Q(`SELECT DISTINCT area_name FROM scene_points ORDER BY area_name`))
 	if err != nil {
 		return nil, err
 	}

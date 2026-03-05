@@ -16,20 +16,20 @@ const (
 	EventFleetDisconnected
 	EventMessagingConnected
 	EventMessagingDisconnected
-	EventRedisConnected
-	EventRedisDisconnected
+	EventDBConnected
+	EventDBDisconnected
 	EventRobotsUpdated
 )
 
 // --- Event payloads ---
 
 type OrderReceivedEvent struct {
-	OrderID         int64
-	EdgeUUID        string
-	StationID        string
-	OrderType       string
-	PayloadTypeCode string
-	DeliveryNode    string
+	OrderID      int64
+	EdgeUUID     string
+	StationID    string
+	OrderType    string
+	StyleCode    string
+	DeliveryNode string
 }
 
 type OrderDispatchedEvent struct {
@@ -70,13 +70,13 @@ type OrderCancelledEvent struct {
 }
 
 type PayloadChangedEvent struct {
-	NodeID          int64
-	NodeName        string
-	Action          string // "added", "removed", "moved", "claimed", "unclaimed"
-	PayloadID       int64
-	PayloadTypeCode string
-	FromNodeID      int64
-	ToNodeID        int64
+	NodeID     int64
+	NodeName   string
+	Action     string // "added", "removed", "moved", "claimed", "unclaimed"
+	InstanceID int64
+	StyleCode  string
+	FromNodeID int64
+	ToNodeID   int64
 }
 
 type NodeUpdatedEvent struct {

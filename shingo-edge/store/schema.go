@@ -153,6 +153,16 @@ CREATE TABLE IF NOT EXISTS hourly_counts (
     updated_at   TEXT DEFAULT (datetime('now','localtime')),
     UNIQUE(line_id, job_style_id, count_date, hour)
 );
+
+CREATE TABLE IF NOT EXISTS style_catalog (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL,
+    code         TEXT NOT NULL DEFAULT '',
+    form_factor  TEXT NOT NULL DEFAULT '',
+    description  TEXT NOT NULL DEFAULT '',
+    uop_capacity INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
 `
 
 func (db *DB) migrate() error {

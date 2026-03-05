@@ -24,6 +24,39 @@ type VendorProxy interface {
 	BaseURL() string
 }
 
+// VendorCommand represents a raw vendor command for debugging/testing.
+type VendorCommand struct {
+	Type          string
+	RobotID       string
+	Location      string
+	ConfigID      string
+	DispatchType  string
+	MapName       string
+	OrderID       string
+	ContainerName string
+	GoodsID       string
+}
+
+// VendorCommandResult holds the result of a vendor command.
+type VendorCommandResult struct {
+	VendorOrderID string // non-empty for order-creating commands
+	State         string // COMPLETED, FAILED, CREATED
+	Detail        string // error details if failed
+}
+
+// VendorOrderDetail holds the detail of a vendor order for status polling.
+type VendorOrderDetail struct {
+	State      string
+	IsTerminal bool
+	Raw        any // vendor-specific detail for API consumers
+}
+
+// VendorCommander executes raw vendor-specific commands for debugging/testing.
+type VendorCommander interface {
+	ExecuteVendorCommand(cmd VendorCommand) (*VendorCommandResult, error)
+	GetVendorOrderDetail(vendorOrderID string) (*VendorOrderDetail, error)
+}
+
 // RobotStatus is a vendor-neutral representation of a robot's state.
 type RobotStatus struct {
 	VehicleID      string

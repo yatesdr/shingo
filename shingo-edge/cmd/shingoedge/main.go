@@ -152,6 +152,12 @@ func main() {
 		// Wire node sync so edge UI can trigger a re-request
 		eng.SetNodeSyncFunc(hb.RequestNodeSync)
 
+		// Wire style catalog sync
+		edgeHandler.SetStyleCatalogHandler(func(styles []protocol.CatalogStyleInfo) {
+			eng.HandleStyleCatalog(styles)
+		})
+		eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+
 		// Production reporter (accumulates deltas, enqueues periodic reports via outbox)
 		reporter := messaging.NewProductionReporter(db, stationID)
 		reporter.DebugLog = dbg.Func("reporter")

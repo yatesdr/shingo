@@ -12,14 +12,228 @@
     {{end}}
   </div>
 
+  {{if .Authenticated}}
+  <div class="accordion mb-2" id="nt-accordion">
+    <button class="accordion-toggle" onclick="document.getElementById('nt-accordion').classList.toggle('open')">
+      Manage Node Types <span class="text-muted">({{len .NodeTypes}})</span>
+    </button>
+    <div class="accordion-body">
+      <div class="card mb-1">
+        <h4>Add Node Type</h4>
+        <form method="POST" action="/node-types/create">
+          <div class="grid grid-2">
+            <div class="form-group">
+              <label>Code</label>
+              <input type="text" name="code" required placeholder="e.g. STG" maxlength="10" style="text-transform:uppercase">
+            </div>
+            <div class="form-group">
+              <label>Name</label>
+              <input type="text" name="name" required placeholder="e.g. Storage">
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <input type="text" name="description" placeholder="Optional description">
+            </div>
+            <div class="form-group">
+              <label>&nbsp;</label>
+              <label><input type="checkbox" name="is_synthetic"> Synthetic (group node)</label>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm">Create Node Type</button>
+        </form>
+      </div>
+      {{if .NodeTypes}}
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Synthetic</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .NodeTypes}}
+          <tr>
+            <td><strong>{{.Code}}</strong></td>
+            <td>{{.Name}}</td>
+            <td>{{.Description}}</td>
+            <td>{{if .IsSynthetic}}Yes{{else}}No{{end}}</td>
+            <td>
+              <button class="btn btn-sm" onclick="editNodeType({{.ID}}, '{{.Code}}', '{{.Name}}', '{{.Description}}', {{.IsSynthetic}})">Edit</button>
+              <form method="POST" action="/node-types/delete" style="display:inline" onsubmit="return confirm('Delete node type {{.Code}}?')">
+                <input type="hidden" name="id" value="{{.ID}}">
+                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="text-muted">No node types defined yet.</p>
+      {{end}}
+    </div>
+  </div>
+  <div class="accordion mb-2" id="create-node-accordion">
+    <button class="accordion-toggle" onclick="document.getElementById('create-node-accordion').classList.toggle('open')">
+      Create Node
+    </button>
+    <div class="accordion-body">
+      <div class="card">
+        <form method="POST" action="/nodes/create">
+          <div class="grid grid-2">
+            <div class="form-group">
+              <label>Name</label>
+              <input type="text" name="name" required placeholder="e.g. STORAGE-A1">
+            </div>
+            <div class="form-group">
+              <label>Vendor Location</label>
+              <input type="text" name="vendor_location" placeholder="Fleet location ID">
+            </div>
+            <div class="form-group">
+              <label>Node Type (legacy)</label>
+              <input type="text" name="node_type" value="storage" placeholder="storage, line_side, etc.">
+            </div>
+            <div class="form-group">
+              <label>Node Type</label>
+              <select name="node_type_id">
+                <option value="">-- None --</option>
+                {{range .NodeTypes}}
+                <option value="{{.ID}}">{{.Code}} - {{.Name}}{{if .IsSynthetic}} (Synthetic){{end}}</option>
+                {{end}}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Parent (Synthetic)</label>
+              <select name="parent_id">
+                <option value="">-- None --</option>
+                {{range .SyntheticNodes}}
+                <option value="{{.ID}}">{{.Name}}</option>
+                {{end}}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Zone</label>
+              <input type="text" name="zone" placeholder="Zone name">
+            </div>
+            <div class="form-group">
+              <label>Capacity</label>
+              <input type="number" name="capacity" value="1" min="0">
+            </div>
+            <div class="form-group">
+              <label>&nbsp;</label>
+              <label><input type="checkbox" name="enabled" checked> Enabled</label>
+            </div>
+          </div>
+          <div class="grid grid-2 mb-1">
+            <div class="form-group">
+              <label>Stations</label>
+              <select name="stations" multiple size="3" style="font-size:0.85rem">
+                {{range .Edges}}
+                <option value="{{.StationID}}">{{.StationID}}</option>
+                {{end}}
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Payload Styles</label>
+              <select name="style_ids" multiple size="3" style="font-size:0.85rem">
+                {{range .PayloadStyles}}
+                <option value="{{.ID}}">{{.Name}}</option>
+                {{end}}
+              </select>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm">Create Node</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="accordion mb-2" id="sup-accordion">
+    <button class="accordion-toggle" onclick="document.getElementById('sup-accordion').classList.toggle('open')">
+      Create Supermarket <span class="tooltip-trigger" title="Automated Storage and Retrieval System (ASRS) with lanes, depth-ordered slots, and shuffle staging">?</span>
+    </button>
+    <div class="accordion-body">
+      <div class="card">
+        <div id="wizard-steps" class="wizard-steps mb-1">
+          <div class="wizard-step active" data-step="1">1. Name</div>
+          <div class="wizard-step" data-step="2">2. Lanes</div>
+          <div class="wizard-step" data-step="3">3. Shuffle</div>
+          <div class="wizard-step" data-step="4">4. Review</div>
+        </div>
+        <!-- Step 1: Name & Zone -->
+        <div id="wiz-step-1" class="wiz-panel">
+          <div class="grid grid-2">
+            <div class="form-group">
+              <label>Supermarket Name <span class="tooltip-trigger" title="Unique name for this supermarket, e.g. SUP-ZONE-A">?</span></label>
+              <input type="text" id="sup-name" required placeholder="e.g. SUP-ZONE-A">
+            </div>
+            <div class="form-group">
+              <label>Zone <span class="tooltip-trigger" title="Physical area/zone where the supermarket is located">?</span></label>
+              <input type="text" id="sup-zone" placeholder="e.g. Zone-A">
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="wizNext(2)">Next</button>
+        </div>
+        <!-- Step 2: Lanes -->
+        <div id="wiz-step-2" class="wiz-panel" style="display:none">
+          <div class="mb-1">
+            <button class="btn btn-sm" onclick="addLaneRow()">+ Add Lane</button>
+          </div>
+          <table id="lane-table" style="font-size:0.85rem">
+            <thead><tr><th>Lane Name</th><th>Depth <span class="tooltip-trigger" title="Number of slots (positions) in this lane">?</span></th><th>Vendor Locations <span class="tooltip-trigger" title="Enter a pattern like LOC-A{1-10} or comma-separated values. Depth 1 = front.">?</span></th><th></th></tr></thead>
+            <tbody id="lane-rows">
+              <tr>
+                <td><input type="text" class="lane-name" value="LAN-01" style="width:100px"></td>
+                <td><input type="number" class="lane-depth" value="5" min="1" max="50" style="width:60px"></td>
+                <td><input type="text" class="lane-locs" placeholder="LOC-A{1-5}" style="width:200px"></td>
+                <td><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">X</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="mt-1">
+            <button class="btn btn-sm" onclick="wizNext(1)">Back</button>
+            <button class="btn btn-primary btn-sm" onclick="wizNext(3)">Next</button>
+          </div>
+        </div>
+        <!-- Step 3: Shuffle Row -->
+        <div id="wiz-step-3" class="wiz-panel" style="display:none">
+          <div class="form-group">
+            <label>Shuffle Slot Count <span class="tooltip-trigger" title="Temporary staging slots for reshuffling. Should be at least (max lane depth - 1).">?</span></label>
+            <input type="number" id="shf-count" value="4" min="1" max="20">
+            <span class="text-muted" style="font-size:0.8rem" id="shf-hint"></span>
+          </div>
+          <div class="form-group">
+            <label>Shuffle Vendor Locations <span class="tooltip-trigger" title="Comma-separated vendor location IDs for shuffle slots, or a pattern like SHF-{1-4}">?</span></label>
+            <input type="text" id="shf-locs" placeholder="SHF-{1-4}" style="width:300px">
+          </div>
+          <div class="mt-1">
+            <button class="btn btn-sm" onclick="wizNext(2)">Back</button>
+            <button class="btn btn-primary btn-sm" onclick="wizNext(4)">Next</button>
+          </div>
+        </div>
+        <!-- Step 4: Review -->
+        <div id="wiz-step-4" class="wiz-panel" style="display:none">
+          <div id="wiz-summary" style="font-size:0.85rem" class="mb-1"></div>
+          <div class="mt-1">
+            <button class="btn btn-sm" onclick="wizNext(3)">Back</button>
+            <button class="btn btn-primary btn-sm" onclick="createSupermarket()">Create Supermarket</button>
+            <span id="sup-result" class="ml-1" style="font-size:0.85rem"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
   <div class="filter-bar">
     <input type="text" id="node-search" placeholder="Filter by name or location..." oninput="filterNodes()">
     <select id="node-type-filter" onchange="filterNodes()">
       <option value="">All Types</option>
-      <option value="storage">Storage</option>
-      <option value="line_side">Line Side</option>
-      <option value="staging">Staging</option>
-      <option value="charging">Charging</option>
+      {{range .NodeTypes}}
+      <option value="{{.Code}}">{{.Name}}{{if .IsSynthetic}} (S){{end}}</option>
+      {{end}}
     </select>
     <select id="node-zone-filter" onchange="filterNodes()">
       <option value="">All Zones</option>
@@ -32,26 +246,33 @@
   <div class="tile-grid" id="tile-grid">
     {{range .Nodes}}
     {{$count := index $.Counts .ID}}
-    <div class="node-tile{{if not .Enabled}} tile-disabled{{end}}"
+    {{$childCount := index $.ChildCounts .ID}}
+    <div class="node-tile{{if not .Enabled}} tile-disabled{{end}}{{if .IsSynthetic}} tile-synthetic{{end}}"
          style="{{nodeColor $count .Capacity}}"
          data-id="{{.ID}}"
          data-name="{{.Name}}"
          data-vendor-loc="{{.VendorLocation}}"
          data-type="{{.NodeType}}"
+         data-type-code="{{.NodeTypeCode}}"
          data-zone="{{.Zone}}"
          data-cap="{{.Capacity}}"
          data-enabled="{{.Enabled}}"
          data-count="{{$count}}"
          data-label="{{index $.NodeLabels .VendorLocation}}"
+         data-synthetic="{{.IsSynthetic}}"
+         data-parent-id="{{if .ParentID}}{{deref .ParentID}}{{end}}"
+         data-parent-name="{{.ParentName}}"
+         data-node-type-id="{{if .NodeTypeID}}{{deref .NodeTypeID}}{{end}}"
          {{with index $.NodeInfo .VendorLocation}}data-point-name="{{.PointName}}" data-node-tasks="{{.Tasks}}" data-bound-map="{{.BoundMap}}"{{end}}
          onclick="openNodeModal(this)"
-         title="{{.Name}} ({{$count}}/{{.Capacity}})">
+         title="{{.Name}} ({{$count}}/{{.Capacity}}){{if .IsSynthetic}} [synthetic, {{$childCount}} children]{{end}}">
       <div>
         <span class="tile-loc">{{if .VendorLocation}}{{.VendorLocation}}{{else}}{{.Name}}{{end}}</span>
         {{with index $.NodeLabels .VendorLocation}}
         <span class="tile-label">{{.}}</span>
         {{end}}
       </div>
+      {{if .IsSynthetic}}<span class="tile-badge">S</span>{{end}}
       {{if not .Enabled}}<span class="tile-off">OFF</span>{{end}}
     </div>
     {{end}}
@@ -112,6 +333,43 @@
       </div>
     </div>
 
+    <!-- Type & parent info (read-only summary) -->
+    <div id="modal-type-info" style="display:none" class="mb-2">
+      <div class="grid grid-2" style="font-size:0.85rem">
+        <div><strong>Node Type:</strong> <span id="ti-type"></span></div>
+        <div><strong>Parent:</strong> <span id="ti-parent"></span></div>
+      </div>
+    </div>
+
+    <!-- Children section (for synthetic nodes) -->
+    <div id="modal-children" style="display:none" class="mb-2">
+      <strong style="font-size:0.85rem">Child Nodes</strong>
+      <div id="children-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
+    </div>
+
+    <!-- Stations & payload types (loaded via API) -->
+    <div id="modal-associations" style="display:none" class="mb-2">
+      <div class="grid grid-2" style="font-size:0.85rem">
+        <div><strong>Stations:</strong> <span id="assoc-stations" class="text-muted">-</span></div>
+        <div><strong>Payload Styles:</strong> <span id="assoc-pt" class="text-muted">-</span></div>
+      </div>
+    </div>
+
+    <!-- Properties -->
+    <div id="modal-properties" style="display:none" class="mb-2">
+      <strong style="font-size:0.85rem">Properties</strong>
+      <div id="props-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
+      {{if .Authenticated}}
+      <div style="margin-top:0.5rem; font-size:0.8rem">
+        <div class="flex gap-1">
+          <input type="text" id="prop-key" placeholder="Key" style="font-size:0.8rem;padding:0.2rem;flex:1">
+          <input type="text" id="prop-value" placeholder="Value" style="font-size:0.8rem;padding:0.2rem;flex:1">
+          <button class="btn btn-primary btn-sm" onclick="addNodeProperty()" style="font-size:0.75rem">Add</button>
+        </div>
+      </div>
+      {{end}}
+    </div>
+
     <!-- Payloads section -->
     <div id="modal-inventory" style="display:none" class="mb-2">
       <div class="flex flex-between mb-1">
@@ -148,11 +406,41 @@
     {{if .Authenticated}}
     <form id="node-form" method="POST" action="/nodes/update">
       <input type="hidden" name="id" id="nf-id">
-      <input type="hidden" name="name" id="nf-name">
-      <input type="hidden" name="vendor_location" id="nf-vendor-loc">
-      <input type="hidden" name="node_type" id="nf-type">
-      <input type="hidden" name="zone" id="nf-zone">
       <div class="grid grid-2">
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" name="name" id="nf-name">
+        </div>
+        <div class="form-group">
+          <label>Vendor Location</label>
+          <input type="text" name="vendor_location" id="nf-vendor-loc">
+        </div>
+        <div class="form-group">
+          <label>Node Type (legacy)</label>
+          <input type="text" name="node_type" id="nf-type">
+        </div>
+        <div class="form-group">
+          <label>Node Type</label>
+          <select name="node_type_id" id="nf-type-id">
+            <option value="">-- None --</option>
+            {{range .NodeTypes}}
+            <option value="{{.ID}}" data-synthetic="{{.IsSynthetic}}">{{.Code}} - {{.Name}}{{if .IsSynthetic}} (Synthetic){{end}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Parent (Synthetic)</label>
+          <select name="parent_id" id="nf-parent">
+            <option value="">-- None --</option>
+            {{range .SyntheticNodes}}
+            <option value="{{.ID}}">{{.Name}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Zone</label>
+          <input type="text" name="zone" id="nf-zone">
+        </div>
         <div class="form-group">
           <label>Capacity</label>
           <input type="number" name="capacity" id="nf-cap" value="1">
@@ -160,6 +448,24 @@
         <div class="form-group">
           <label>&nbsp;</label>
           <label><input type="checkbox" name="enabled" id="nf-enabled" checked> Enabled</label>
+        </div>
+      </div>
+      <div class="grid grid-2 mb-1">
+        <div class="form-group">
+          <label>Stations</label>
+          <select name="stations" id="nf-stations" multiple size="3" style="font-size:0.85rem">
+            {{range .Edges}}
+            <option value="{{.StationID}}">{{.StationID}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Payload Styles</label>
+          <select name="style_ids" id="nf-pt" multiple size="3" style="font-size:0.85rem">
+            {{range .PayloadStyles}}
+            <option value="{{.ID}}">{{.Name}}</option>
+            {{end}}
+          </select>
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Save</button>
@@ -202,7 +508,7 @@ function filterNodes() {
   var shown = 0;
   tiles.forEach(function(tile) {
     var matchName = !q || tile.dataset.name.toLowerCase().indexOf(q) >= 0 || tile.dataset.vendorLoc.toLowerCase().indexOf(q) >= 0 || (tile.dataset.label && tile.dataset.label.toLowerCase().indexOf(q) >= 0);
-    var matchType = !t || tile.dataset.type === t;
+    var matchType = !t || tile.dataset.typeCode === t;
     var matchZone = !z || tile.dataset.zone === z;
     var vis = matchName && matchType && matchZone;
     tile.style.display = vis ? '' : 'none';
@@ -234,11 +540,24 @@ function openNodeModal(el) {
     sceneDetail.style.display = 'none';
   }
 
+  // Type & parent info
+  var typeInfo = document.getElementById('modal-type-info');
+  var tiType = d.typeCode || d.type || '-';
+  var tiParent = d.parentName || '-';
+  document.getElementById('ti-type').textContent = tiType;
+  document.getElementById('ti-parent').textContent = tiParent;
+  typeInfo.style.display = '';
+
   // Inventory
-  inv.style.display = '';
+  inv.style.display = d.synthetic === 'true' ? 'none' : '';
   document.getElementById('inv-count').textContent = d.count;
   document.getElementById('inv-cap').textContent = d.cap;
-  loadInventory(d.id);
+  if (d.synthetic !== 'true') {
+    loadInventory(d.id);
+  }
+
+  // Load extended detail (stations, payload types, properties, children)
+  loadNodeDetail(d.id, d.synthetic === 'true');
 
   if (isAuth) {
     document.getElementById('nf-id').value = d.id;
@@ -248,6 +567,15 @@ function openNodeModal(el) {
     document.getElementById('nf-zone').value = d.zone;
     document.getElementById('nf-cap').value = d.cap;
     document.getElementById('nf-enabled').checked = d.enabled === 'true';
+
+    // Set node type dropdown
+    var typeSelect = document.getElementById('nf-type-id');
+    typeSelect.value = d.nodeTypeId || '';
+
+    // Set parent dropdown
+    var parentSelect = document.getElementById('nf-parent');
+    parentSelect.value = d.parentId || '';
+
     var destSelect = document.getElementById('to-dest');
     if (destSelect) {
       for (var i = 0; i < destSelect.options.length; i++) {
@@ -266,6 +594,86 @@ function openNodeModal(el) {
   }
 
   m.classList.add('active');
+}
+
+function loadNodeDetail(nodeID, isSynthetic) {
+  var childrenDiv = document.getElementById('modal-children');
+  var assocDiv = document.getElementById('modal-associations');
+  var propsDiv = document.getElementById('modal-properties');
+
+  childrenDiv.style.display = 'none';
+  assocDiv.style.display = 'none';
+  propsDiv.style.display = 'none';
+
+  fetch('/api/nodes/detail?id=' + nodeID)
+    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function(data) {
+      // Stations
+      var stations = data.stations || [];
+      document.getElementById('assoc-stations').textContent = stations.length > 0 ? stations.join(', ') : 'All (no restrictions)';
+
+      // Payload types
+      var pts = data.payload_styles || [];
+      document.getElementById('assoc-pt').textContent = pts.length > 0 ? pts.map(function(p) { return p.name; }).join(', ') : 'All (no restrictions)';
+      assocDiv.style.display = '';
+
+      // Set multi-selects for auth mode
+      if (isAuth) {
+        setMultiSelect('nf-stations', stations);
+        setMultiSelect('nf-pt', pts.map(function(p) { return String(p.id); }));
+      }
+
+      // Properties
+      var props = data.properties || [];
+      if (props.length > 0) {
+        var html = '<table><thead><tr><th>Key</th><th>Value</th>';
+        if (isAuth) html += '<th></th>';
+        html += '</tr></thead><tbody>';
+        props.forEach(function(p) {
+          html += '<tr><td>' + esc(p.key) + '</td><td>' + esc(p.value) + '</td>';
+          if (isAuth) html += '<td><button class="btn btn-danger btn-sm" style="font-size:0.65rem;padding:0.1rem 0.25rem" onclick="removeNodeProperty(\'' + esc(p.key) + '\')">X</button></td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+        document.getElementById('props-list').innerHTML = html;
+        propsDiv.style.display = '';
+      } else {
+        document.getElementById('props-list').innerHTML = '<span class="text-muted">No properties</span>';
+        propsDiv.style.display = '';
+      }
+
+      // Children (for synthetic nodes)
+      var children = data.children || [];
+      if (isSynthetic && children.length > 0) {
+        // Check if this is a SUP node — load supermarket visualization
+        var typeCode = document.querySelector('.node-tile[onclick*="openNodeModal"]') ? '' : '';
+        var nodeID = document.getElementById('nf-id') ? document.getElementById('nf-id').value : '';
+        var tile = document.querySelector('.node-tile[data-id="' + nodeID + '"]');
+        if (tile && tile.dataset.typeCode === 'SUP') {
+          loadSupermarketGrid(nodeID);
+        } else {
+          var html = '<table><thead><tr><th>Name</th><th>Location</th><th>Enabled</th></tr></thead><tbody>';
+          children.forEach(function(c) {
+            html += '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.vendor_location) + '</td><td>' + (c.enabled ? 'Yes' : 'No') + '</td></tr>';
+          });
+          html += '</tbody></table>';
+          document.getElementById('children-list').innerHTML = html;
+        }
+        childrenDiv.style.display = '';
+      } else if (isSynthetic) {
+        document.getElementById('children-list').innerHTML = '<span class="text-muted">No children assigned</span>';
+        childrenDiv.style.display = '';
+      }
+    })
+    .catch(function() {});
+}
+
+function setMultiSelect(selectId, values) {
+  var sel = document.getElementById(selectId);
+  if (!sel) return;
+  for (var i = 0; i < sel.options.length; i++) {
+    sel.options[i].selected = values.indexOf(sel.options[i].value) >= 0;
+  }
 }
 
 function closeNodeModal() {
@@ -295,7 +703,7 @@ function loadInventory(nodeID) {
       var html = '<table style="font-size:0.8rem"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Age</th></tr></thead><tbody>';
       items.forEach(function(item) {
         var age = timeAgo(item.delivered_at);
-        html += '<tr style="cursor:pointer" onclick="expandPayloadManifest(' + item.id + ')"><td>#' + item.id + '</td><td>' + esc(item.payload_type_name) + '</td><td>' + esc(item.status) + '</td><td>' + age + '</td></tr>';
+        html += '<tr style="cursor:pointer" onclick="expandPayloadManifest(' + item.id + ')"><td>#' + item.id + '</td><td>' + esc(item.style_name) + '</td><td>' + esc(item.status) + '</td><td>' + age + '</td></tr>';
       });
       html += '</tbody></table>';
       list.innerHTML = html;
@@ -462,6 +870,68 @@ function sendTestOrder() {
   });
 }
 
+function addNodeProperty() {
+  var key = document.getElementById('prop-key').value.trim();
+  var value = document.getElementById('prop-value').value.trim();
+  if (!key) { alert('Key is required'); return; }
+  var nodeID = parseInt(document.getElementById('nf-id').value);
+  fetch('/api/nodes/properties/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({node_id: nodeID, key: key, value: value})
+  })
+  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(function(data) {
+    if (data.error) { alert(data.error); return; }
+    document.getElementById('prop-key').value = '';
+    document.getElementById('prop-value').value = '';
+    loadNodeDetail(nodeID, false);
+  })
+  .catch(function(e) { alert('Error: ' + e); });
+}
+
+function removeNodeProperty(key) {
+  if (!confirm('Remove property "' + key + '"?')) return;
+  var nodeID = parseInt(document.getElementById('nf-id').value);
+  fetch('/api/nodes/properties/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({node_id: nodeID, key: key})
+  })
+  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(function(data) {
+    if (data.error) { alert(data.error); return; }
+    loadNodeDetail(nodeID, false);
+  })
+  .catch(function(e) { alert('Error: ' + e); });
+}
+
+function editNodeType(id, code, name, desc, isSynthetic) {
+  var newCode = prompt('Code:', code);
+  if (newCode === null) return;
+  var newName = prompt('Name:', name);
+  if (newName === null) return;
+  var newDesc = prompt('Description:', desc);
+  if (newDesc === null) return;
+  var newSynthetic = confirm('Is this a synthetic (group) node type?');
+
+  var form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/node-types/update';
+  form.style.display = 'none';
+  var fields = {id: id, code: newCode, name: newName, description: newDesc};
+  if (newSynthetic) fields.is_synthetic = 'on';
+  for (var k in fields) {
+    var inp = document.createElement('input');
+    inp.type = 'hidden';
+    inp.name = k;
+    inp.value = fields[k];
+    form.appendChild(inp);
+  }
+  document.body.appendChild(form);
+  form.submit();
+}
+
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') { closeNodeModal(); closeOccupancyModal(); }
 });
@@ -510,6 +980,171 @@ function checkOccupancy() {
 
 function closeOccupancyModal() {
   document.getElementById('occupancy-modal').classList.remove('active');
+}
+</script>
+
+<style>
+.tile-synthetic { border: 2px dashed var(--primary) !important; }
+.tile-badge { position:absolute; top:2px; right:4px; font-size:0.65rem; font-weight:700; color:var(--primary); }
+.node-tile { position: relative; }
+.wiz-panel { min-height: 120px; }
+</style>
+
+<script>
+var laneCounter = 1;
+
+function addLaneRow() {
+  laneCounter++;
+  var row = document.createElement('tr');
+  row.innerHTML = '<td><input type="text" class="lane-name" value="LAN-' + String(laneCounter).padStart(2, '0') + '" style="width:100px"></td>'
+    + '<td><input type="number" class="lane-depth" value="5" min="1" max="50" style="width:60px"></td>'
+    + '<td><input type="text" class="lane-locs" placeholder="LOC-B{1-5}" style="width:200px"></td>'
+    + '<td><button class="btn btn-danger btn-sm" onclick="this.closest(\'tr\').remove()">X</button></td>';
+  document.getElementById('lane-rows').appendChild(row);
+}
+
+function wizNext(step) {
+  for (var i = 1; i <= 4; i++) {
+    document.getElementById('wiz-step-' + i).style.display = i === step ? '' : 'none';
+    var stepEl = document.querySelector('.wizard-step[data-step="' + i + '"]');
+    stepEl.classList.toggle('active', i === step);
+    stepEl.classList.toggle('done', i < step);
+  }
+  if (step === 3) {
+    // Auto-suggest shuffle count
+    var maxDepth = 0;
+    document.querySelectorAll('.lane-depth').forEach(function(el) {
+      var d = parseInt(el.value) || 0;
+      if (d > maxDepth) maxDepth = d;
+    });
+    var suggested = Math.max(1, maxDepth - 1);
+    document.getElementById('shf-hint').textContent = 'Suggested: ' + suggested + ' (max lane depth - 1)';
+    document.getElementById('shf-count').value = suggested;
+  }
+  if (step === 4) {
+    buildSummary();
+  }
+}
+
+function getWizardData() {
+  var lanes = [];
+  document.querySelectorAll('#lane-rows tr').forEach(function(row) {
+    var name = row.querySelector('.lane-name').value;
+    var depth = parseInt(row.querySelector('.lane-depth').value) || 5;
+    var locs = row.querySelector('.lane-locs').value;
+    var vendorLocs = locs ? [locs] : [];
+    lanes.push({name: name, depth: depth, vendor_locations: vendorLocs});
+  });
+  var shfCount = parseInt(document.getElementById('shf-count').value) || 4;
+  var shfLocs = document.getElementById('shf-locs').value;
+  var shuffleSlots = [];
+  if (shfLocs) {
+    // Expand simple pattern or split commas
+    shuffleSlots = shfLocs.split(',').map(function(s) { return s.trim(); });
+  }
+  // If pattern with {}, just send as single item
+  if (shuffleSlots.length === 1 && shuffleSlots[0].indexOf('{') >= 0) {
+    // Server will expand it
+  }
+  // Pad to shfCount if fewer
+  while (shuffleSlots.length < shfCount) shuffleSlots.push('');
+  return {
+    name: document.getElementById('sup-name').value,
+    zone: document.getElementById('sup-zone').value,
+    lanes: lanes,
+    shuffle_slots: shuffleSlots.slice(0, shfCount)
+  };
+}
+
+function buildSummary() {
+  var d = getWizardData();
+  var totalSlots = 0;
+  d.lanes.forEach(function(l) { totalSlots += l.depth; });
+  var html = '<strong>' + esc(d.name) + '</strong>';
+  if (d.zone) html += ' (Zone: ' + esc(d.zone) + ')';
+  html += '<br>' + d.lanes.length + ' lane(s), ' + totalSlots + ' total slots, ' + d.shuffle_slots.length + ' shuffle slot(s)';
+  html += '<ul style="margin:0.5rem 0">';
+  d.lanes.forEach(function(l) {
+    html += '<li>' + esc(l.name) + ' — depth ' + l.depth;
+    if (l.vendor_locations.length > 0) html += ' — locations: ' + esc(l.vendor_locations[0]);
+    html += '</li>';
+  });
+  html += '</ul>';
+  document.getElementById('wiz-summary').innerHTML = html;
+}
+
+function loadSupermarketGrid(nodeID) {
+  var list = document.getElementById('children-list');
+  list.innerHTML = '<span class="text-muted">Loading layout...</span>';
+  fetch('/api/supermarket/layout?id=' + nodeID)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var lanes = data.lanes || [];
+      var shuffle = data.shuffle || [];
+      var stats = data.stats || {};
+      var html = '<div class="sm-grid">';
+      // Legend
+      html += '<div style="font-size:0.75rem;margin-bottom:0.5rem">';
+      html += '<span class="sm-cell sm-empty" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Empty ';
+      html += '<span class="sm-cell sm-occupied" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Occupied ';
+      html += '<span class="sm-cell sm-claimed" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Claimed ';
+      html += '<span class="sm-cell sm-shuffle" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Shuffle';
+      html += ' | Slots: ' + stats.total + ' | Occupied: ' + stats.occupied + ' | Claimed: ' + stats.claimed;
+      html += '</div>';
+      // Lanes
+      lanes.forEach(function(lane) {
+        html += '<div class="sm-lane">';
+        html += '<span class="sm-lane-label">' + esc(lane.name) + '</span>';
+        (lane.slots || []).forEach(function(slot) {
+          var cls = 'sm-empty';
+          var label = slot.depth || '';
+          if (slot.instance) {
+            cls = slot.instance.claimed_by ? 'sm-claimed' : 'sm-occupied';
+            label = '#' + slot.instance.id;
+          }
+          html += '<span class="sm-cell ' + cls + '" title="' + esc(slot.name) + (slot.instance ? ' — ' + esc(slot.instance.style_name || '') : '') + '">' + label + '</span>';
+        });
+        html += '</div>';
+      });
+      // Shuffle row
+      if (shuffle.length > 0) {
+        html += '<div class="sm-lane" style="margin-top:0.5rem;border-top:1px dashed var(--border);padding-top:0.5rem">';
+        html += '<span class="sm-lane-label">Shuffle</span>';
+        shuffle.forEach(function(slot) {
+          var cls = 'sm-shuffle';
+          var label = '';
+          if (slot.instance) {
+            cls = 'sm-claimed';
+            label = '#' + slot.instance.id;
+          }
+          html += '<span class="sm-cell ' + cls + '" title="' + esc(slot.name) + '">' + label + '</span>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+      list.innerHTML = html;
+    })
+    .catch(function() { list.innerHTML = '<span class="text-muted">Error loading supermarket layout</span>'; });
+}
+
+function createSupermarket() {
+  var d = getWizardData();
+  if (!d.name) { alert('Name is required'); return; }
+  if (d.lanes.length === 0) { alert('At least one lane is required'); return; }
+  var result = document.getElementById('sup-result');
+  result.textContent = 'Creating...';
+  fetch('/api/supermarket/create', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(d)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + esc(data.error) + '</span>'; return; }
+    result.innerHTML = '<span style="color:var(--success)">Created: ' + esc(data.name) + ' (ID: ' + data.id + ')</span>';
+    setTimeout(function() { location.reload(); }, 1500);
+  })
+  .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
 }
 </script>
 {{end}}

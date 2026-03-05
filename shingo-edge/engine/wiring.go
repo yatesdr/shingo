@@ -125,7 +125,15 @@ func (e *Engine) handleOrderCompleted(completed OrderCompletedEvent) {
 		return
 	}
 
-	if err := e.db.ResetPayload(payload.ID, payload.ProductionUnits); err != nil {
+	resetUnits := payload.ProductionUnits
+	// If ProductionUnits not configured, try style catalog UOPCapacity
+	if resetUnits == 0 && payload.Description != "" {
+		if style, err := e.db.GetStyleByName(payload.Description); err == nil && style.UOPCapacity > 0 {
+			resetUnits = style.UOPCapacity
+		}
+	}
+
+	if err := e.db.ResetPayload(payload.ID, resetUnits); err != nil {
 		log.Printf("reset payload %d: %v", payload.ID, err)
 		return
 	}

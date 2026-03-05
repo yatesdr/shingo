@@ -2,10 +2,13 @@ package seerrds
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"shingocore/fleet"
 	"shingocore/rds"
+
+	"github.com/google/uuid"
 )
 
 // Config holds the configuration for creating a Seer RDS adapter.
@@ -214,4 +217,92 @@ func (a *Adapter) GetSceneAreas() ([]fleet.SceneArea, error) {
 // (simulation, etc.) that don't belong in the fleet interface.
 func (a *Adapter) RDSClient() *rds.Client {
 	return a.client
+}
+
+// --- fleet.VendorCommander ---
+
+func (a *Adapter) ExecuteVendorCommand(cmd fleet.VendorCommand) (*fleet.VendorCommandResult, error) {
+	switch cmd.Type {
+	// Fire-and-forget commands
+	case "pause":
+		return a.fireAndForget(a.client.PauseNavigation([]string{cmd.RobotID}))
+	case "resume":
+		return a.fireAndForget(a.client.ResumeNavigation([]string{cmd.RobotID}))
+	case "redo_failed":
+		return a.fireAndForget(a.client.RedoFailed(&rds.RedoFailedRequest{Vehicles: []string{cmd.RobotID}}))
+	case "manual_finish":
+		return a.fireAndForget(a.client.ManualFinish(&rds.ManualFinishRequest{Vehicles: []string{cmd.RobotID}}))
+	case "preempt":
+		return a.fireAndForget(a.client.PreemptControl([]string{cmd.RobotID}))
+	case "release":
+		return a.fireAndForget(a.client.ReleaseControl([]string{cmd.RobotID}))
+	case "confirm_reloc":
+		return a.fireAndForget(a.client.ConfirmRelocalization([]string{cmd.RobotID}))
+	case "clear_goods":
+		return a.fireAndForget(a.client.ClearAllContainerGoods(cmd.RobotID))
+	case "dispatchable":
+		dt := cmd.DispatchType
+		if dt == "" {
+			dt = "dispatchable"
+		}
+		return a.fireAndForget(a.client.SetDispatchable(&rds.DispatchableRequest{Vehicles: []string{cmd.RobotID}, Type: dt}))
+	case "switch_map":
+		return a.fireAndForget(a.client.SwitchMap(cmd.RobotID, cmd.MapName))
+	case "terminate":
+		return a.fireAndForget(a.client.TerminateOrder(&rds.TerminateRequest{ID: cmd.OrderID}))
+	case "bind_goods":
+		return a.fireAndForget(a.client.BindContainerGoods(&rds.BindGoodsRequest{
+			Vehicle: cmd.RobotID, ContainerName: cmd.ContainerName, GoodsID: cmd.GoodsID,
+		}))
+	case "unbind_goods":
+		return a.fireAndForget(a.client.UnbindGoods(cmd.RobotID, cmd.GoodsID))
+	case "unbind_container":
+		return a.fireAndForget(a.client.UnbindContainerGoods(cmd.RobotID, cmd.ContainerName))
+
+	// Order-creating commands
+	case "move", "jack", "unjack", "charge":
+		return a.executeOrderCommand(cmd)
+	default:
+		return nil, fmt.Errorf("unknown command type: %s", cmd.Type)
+	}
+}
+
+func (a *Adapter) fireAndForget(err error) (*fleet.VendorCommandResult, error) {
+	if err != nil {
+		return &fleet.VendorCommandResult{State: "FAILED", Detail: err.Error()}, err
+	}
+	return &fleet.VendorCommandResult{State: "COMPLETED"}, nil
+}
+
+func (a *Adapter) executeOrderCommand(cmd fleet.VendorCommand) (*fleet.VendorCommandResult, error) {
+	orderID := "tc-" + uuid.New().String()[:8]
+	blockID := orderID + "-b1"
+
+	block := rds.Block{BlockID: blockID, Location: cmd.Location}
+	if cmd.Type == "jack" || cmd.Type == "unjack" {
+		block.PostAction = &rds.PostAction{ConfigID: cmd.ConfigID}
+	}
+
+	rdsReq := &rds.SetOrderRequest{
+		ID:       orderID,
+		Vehicle:  cmd.RobotID,
+		Blocks:   []rds.Block{block},
+		Complete: true,
+	}
+	if err := a.client.CreateOrder(rdsReq); err != nil {
+		return &fleet.VendorCommandResult{State: "FAILED", Detail: err.Error()}, err
+	}
+	return &fleet.VendorCommandResult{VendorOrderID: orderID, State: "CREATED"}, nil
+}
+
+func (a *Adapter) GetVendorOrderDetail(vendorOrderID string) (*fleet.VendorOrderDetail, error) {
+	detail, err := a.client.GetOrderDetails(vendorOrderID)
+	if err != nil {
+		return nil, err
+	}
+	return &fleet.VendorOrderDetail{
+		State:      string(detail.State),
+		IsTerminal: detail.State.IsTerminal(),
+		Raw:        detail,
+	}, nil
 }

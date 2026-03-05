@@ -29,7 +29,7 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msgOK := h.engine.MsgClient().IsConnected()
-	redisOK := h.engine.NodeState().Ping() == nil
+	dbOK := h.engine.DB().Ping() == nil
 
 	trackerCount := 0
 	if t := h.engine.Tracker(); t != nil {
@@ -46,10 +46,9 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"FleetOK":       fleetOK,
 		"FleetName":     h.engine.Fleet().Name(),
 		"MessagingOK":   msgOK,
-		"RedisOK":       redisOK,
+		"DatabaseOK":    dbOK,
 		"PollerActive":  trackerCount,
-		"SSEClients":    h.eventHub.ClientCount(),
-		"Authenticated": h.isAuthenticated(r),
+		"SSEClients":   h.eventHub.ClientCount(),
 	}
-	h.render(w, "dashboard.html", data)
+	h.render(w, r, "dashboard.html", data)
 }

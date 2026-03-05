@@ -11,10 +11,9 @@ import (
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
 
-	Database  DatabaseConfig `yaml:"database"`
-	Redis     RedisConfig    `yaml:"redis"`
-	RDS       RDSConfig      `yaml:"rds"`
-	Web       WebConfig      `yaml:"web"`
+	Database  DatabaseConfig  `yaml:"database"`
+	RDS       RDSConfig       `yaml:"rds"`
+	Web       WebConfig       `yaml:"web"`
 	Messaging MessagingConfig `yaml:"messaging"`
 }
 
@@ -35,12 +34,6 @@ type PostgresConfig struct {
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
 	SSLMode  string `yaml:"sslmode"`
-}
-
-type RedisConfig struct {
-	Address  string `yaml:"address"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
 }
 
 type RDSConfig struct {
@@ -81,11 +74,6 @@ func Defaults() *Config {
 				Password: "",
 				SSLMode:  "disable",
 			},
-		},
-		Redis: RedisConfig{
-			Address:  "localhost:6379",
-			Password: "",
-			DB:       0,
 		},
 		RDS: RDSConfig{
 			BaseURL:      "http://192.168.1.100:8088",

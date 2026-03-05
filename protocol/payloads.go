@@ -47,7 +47,8 @@ type EdgeHeartbeatAck struct {
 type OrderRequest struct {
 	OrderUUID       string  `json:"order_uuid"`
 	OrderType       string  `json:"order_type"`
-	PayloadTypeCode string  `json:"payload_type_code,omitempty"`
+	StyleCode       string  `json:"style_code,omitempty"`
+	PayloadTypeCode string  `json:"payload_type_code,omitempty"` // deprecated: use StyleCode
 	PayloadDesc     string  `json:"payload_desc,omitempty"`
 	Quantity        float64 `json:"quantity"`
 	DeliveryNode    string  `json:"delivery_node,omitempty"`
@@ -170,4 +171,41 @@ type ProductionReportAck struct {
 type EdgeStale struct {
 	StationID string `json:"station_id"`
 	Message   string `json:"message"`
+}
+
+// --- QR Tag Verification ---
+
+// TagVerifyRequest is sent by edge to verify a scanned QR tag against an order's instance.
+type TagVerifyRequest struct {
+	OrderUUID string `json:"order_uuid"`
+	TagID     string `json:"tag_id"`
+	Location  string `json:"location,omitempty"`
+}
+
+// TagVerifyResponse is the core's response to a tag verification request.
+type TagVerifyResponse struct {
+	OrderUUID string `json:"order_uuid"`
+	Match     bool   `json:"match"`
+	Expected  string `json:"expected,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+// --- Style Catalog ---
+
+// CatalogStylesRequest is sent by edge to request the style catalog.
+type CatalogStylesRequest struct{}
+
+// CatalogStyleInfo describes a single style in the catalog.
+type CatalogStyleInfo struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Code        string `json:"code"`
+	FormFactor  string `json:"form_factor"`
+	Description string `json:"description"`
+	UOPCapacity int    `json:"uop_capacity"`
+}
+
+// CatalogStylesResponse carries the core's style catalog.
+type CatalogStylesResponse struct {
+	Styles []CatalogStyleInfo `json:"styles"`
 }

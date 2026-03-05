@@ -35,7 +35,7 @@ Download and run the installer from [postgresql.org/download/windows](https://ww
 
 ## Database and User Setup
 
-You need to create one database and one user. No tables or grants beyond ownership are required — ShinGo Core creates all tables, indexes, and seed data automatically on first startup.
+One database and one user are required. No tables or grants beyond ownership are needed — ShinGo Core creates all tables, indexes, and seed data automatically on first startup.
 
 Connect as the PostgreSQL superuser:
 
@@ -51,7 +51,7 @@ CREATE USER shingocore WITH PASSWORD 'your-secure-password';
 CREATE DATABASE shingocore OWNER shingocore;
 ```
 
-That's it. Because `shingocore` is the database **owner**, it automatically has full privileges to create tables, indexes, and sequences — no additional `GRANT` statements are needed.
+Because `shingocore` is the database **owner**, it has full privileges to create tables, indexes, and sequences. No additional `GRANT` statements are needed.
 
 ### What happens on first startup
 
@@ -203,4 +203,4 @@ If you have an existing SQLite deployment, export data and re-import:
 4. Start ShinGo Core with `driver: postgres` — this creates the schema automatically
 5. Import data using a migration script (SQLite SQL is not directly compatible with PostgreSQL — date formats and auto-increment syntax differ)
 
-For small deployments, it's often easier to re-create nodes and payload types through the UI and start fresh.
+For small deployments, re-creating nodes and payload types through the UI may be simpler than data migration.

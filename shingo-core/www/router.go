@@ -48,6 +48,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		"templates/rds_explorer.html",
 		"templates/robots.html",
 		"templates/payloads.html",
+		"templates/inventory.html",
 		"templates/demand.html",
 		"templates/test-orders.html",
 	}
@@ -81,7 +82,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	// SSE
 	r.Get("/events", hub.SSEHandler)
 
-	// Public routes
+	// --- Public pages ---
 	r.Get("/", h.handleDashboard)
 	r.Get("/login", h.handleLoginPage)
 	r.Post("/login", h.handleLogin)
@@ -92,82 +93,148 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	r.Get("/robots", h.handleRobots)
 	r.Get("/demand", h.handleDemand)
 
-	// API routes (no auth required for read)
+	// --- Public API (read-only, no auth) ---
 	r.Route("/api", func(r chi.Router) {
+		// Nodes
 		r.Get("/nodes", h.apiListNodes)
 		r.Get("/nodes/inventory", h.apiNodePayloads)
+		r.Get("/nodes/occupancy", h.apiNodeOccupancy)
+		r.Get("/nodes/detail", h.apiNodeDetail)
+		r.Get("/nodestate", h.apiNodeState)
+		r.Get("/map/points", h.apiScenePoints)
+
+		// Orders
 		r.Get("/orders", h.apiListOrders)
 		r.Get("/orders/detail", h.apiGetOrder)
-		r.Get("/nodestate", h.apiNodeState)
+
+		// Robots
 		r.Get("/robots", h.apiRobotsStatus)
-		r.Get("/health", h.apiHealthCheck)
-		r.Get("/payload-types", h.apiListPayloadTypes)
-		r.Get("/payloads", h.apiListPayloads)
-		r.Get("/payloads/detail", h.apiGetPayload)
-		r.Get("/payloads/manifest", h.apiListManifest)
-		r.Get("/nodes/occupancy", h.apiNodeOccupancy)
+
+		// Payloads
+		r.Get("/payload-styles", h.apiListPayloadStyles)
+		r.Get("/instances", h.apiListInstances)
+		r.Get("/instances/detail", h.apiGetInstance)
+		r.Get("/instances/manifest", h.apiListManifest)
+
+		// Corrections
 		r.Get("/corrections", h.apiListNodeCorrections)
-		r.Get("/map/points", h.apiScenePoints)
+
+		// Demands
 		r.Get("/demands", h.apiListDemands)
 		r.Get("/demands/{id}/log", h.apiDemandLog)
+
+		// Health
+		r.Get("/health", h.apiHealthCheck)
 	})
 
-	// Protected routes
+	// --- Protected routes (auth required) ---
 	r.Group(func(r chi.Router) {
 		r.Use(h.requireAuth)
-		r.Post("/nodes/create", h.handleNodeCreate)
-		r.Post("/nodes/update", h.handleNodeUpdate)
-		r.Post("/nodes/delete", h.handleNodeDelete)
-		r.Post("/nodes/sync-fleet", h.handleNodeSyncFleet)
-		r.Post("/nodes/sync-scene", h.handleSceneSync)
-		// Test Orders page
+
+		// Protected pages
 		r.Get("/test-orders", h.handleTestOrders)
-		r.Post("/api/nodes/test-order", h.apiNodeTestOrder)
-		// Kafka test orders
-		r.Get("/api/test-orders", h.apiTestOrdersList)
-		r.Get("/api/test-orders/detail", h.apiTestOrderDetail)
-		r.Post("/api/test-orders/submit", h.apiTestOrderSubmit)
-		r.Post("/api/test-orders/cancel", h.apiTestOrderCancel)
-		r.Post("/api/test-orders/receipt", h.apiTestOrderReceipt)
-		// Direct-to-RDS orders
-		r.Get("/api/test-orders/direct", h.apiDirectOrdersList)
-		r.Post("/api/test-orders/direct", h.apiDirectOrderSubmit)
-		// Direct RDS robot commands
-		r.Post("/api/test-commands/submit", h.apiTestCommandSubmit)
-		r.Get("/api/test-commands", h.apiTestCommandsList)
-		r.Get("/api/test-commands/status", h.apiTestCommandStatus)
-		// Shared helpers
-		r.Get("/api/test-orders/robots", h.apiTestRobots)
-		r.Get("/api/test-orders/scene-points", h.apiTestScenePoints)
-		r.Post("/payload-types/create", h.handlePayloadTypeCreate)
-		r.Post("/payload-types/update", h.handlePayloadTypeUpdate)
-		r.Post("/payload-types/delete", h.handlePayloadTypeDelete)
 		r.Get("/payloads", h.handlePayloads)
-		r.Post("/payloads/create", h.handlePayloadCreate)
-		r.Post("/payloads/update", h.handlePayloadUpdate)
-		r.Post("/payloads/delete", h.handlePayloadDelete)
-		r.Post("/api/payloads/manifest/create", h.apiCreateManifestItem)
-		r.Post("/api/payloads/manifest/update", h.apiUpdateManifestItem)
-		r.Post("/api/payloads/manifest/delete", h.apiDeleteManifestItem)
-		r.Post("/api/corrections/create", h.apiCreateCorrection)
+		r.Get("/inventory", h.handleInventory)
 		r.Get("/diagnostics", h.handleDiagnostics)
 		r.Get("/config", h.handleConfig)
 		r.Post("/config/save", h.handleConfigSave)
 		r.Get("/fleet-explorer", h.handleFleetExplorer)
-		r.Post("/api/fleet/proxy", h.apiFleetProxy)
-		r.Post("/api/robots/availability", h.apiRobotSetAvailability)
-		r.Post("/api/robots/retry", h.apiRobotRetryFailed)
-		r.Post("/api/robots/force-complete", h.apiRobotForceComplete)
-		r.Post("/api/orders/terminate", h.apiTerminateOrder)
-		r.Post("/api/orders/priority", h.apiSetOrderPriority)
-		r.Post("/api/demands", h.apiCreateDemand)
-		r.Put("/api/demands/{id}", h.apiUpdateDemand)
-		r.Put("/api/demands/{id}/apply", h.apiApplyDemand)
-		r.Delete("/api/demands/{id}", h.apiDeleteDemand)
-		r.Post("/api/demands/apply-all", h.apiApplyAllDemands)
-		r.Put("/api/demands/{id}/produced", h.apiSetDemandProduced)
-		r.Post("/api/demands/{id}/clear", h.apiClearDemandProduced)
-		r.Post("/api/demands/clear-all", h.apiClearAllProduced)
+
+		// Node management
+		r.Route("/nodes", func(r chi.Router) {
+			r.Post("/create", h.handleNodeCreate)
+			r.Post("/update", h.handleNodeUpdate)
+			r.Post("/delete", h.handleNodeDelete)
+			r.Post("/sync-fleet", h.handleNodeSyncFleet)
+			r.Post("/sync-scene", h.handleSceneSync)
+		})
+
+		// Node type management
+		r.Route("/node-types", func(r chi.Router) {
+			r.Post("/create", h.handleNodeTypeCreate)
+			r.Post("/update", h.handleNodeTypeUpdate)
+			r.Post("/delete", h.handleNodeTypeDelete)
+		})
+
+		// Payload style management
+		r.Route("/payload-styles", func(r chi.Router) {
+			r.Post("/create", h.handlePayloadStyleCreate)
+			r.Post("/update", h.handlePayloadStyleUpdate)
+			r.Post("/delete", h.handlePayloadStyleDelete)
+		})
+
+		// Payload instance management
+		r.Route("/instances", func(r chi.Router) {
+			r.Post("/create", h.handleInstanceCreate)
+			r.Post("/update", h.handleInstanceUpdate)
+			r.Post("/delete", h.handleInstanceDelete)
+		})
+
+		// Protected API
+		r.Route("/api", func(r chi.Router) {
+			// Node properties
+			r.Post("/nodes/properties/set", h.apiNodePropertySet)
+			r.Post("/nodes/properties/delete", h.apiNodePropertyDelete)
+			r.Post("/nodes/test-order", h.apiNodeTestOrder)
+
+			// Kafka test orders
+			r.Get("/test-orders", h.apiTestOrdersList)
+			r.Get("/test-orders/detail", h.apiTestOrderDetail)
+			r.Post("/test-orders/submit", h.apiTestOrderSubmit)
+			r.Post("/test-orders/cancel", h.apiTestOrderCancel)
+			r.Post("/test-orders/receipt", h.apiTestOrderReceipt)
+			r.Get("/test-orders/robots", h.apiTestRobots)
+			r.Get("/test-orders/scene-points", h.apiTestScenePoints)
+
+			// Direct-to-fleet orders
+			r.Get("/test-orders/direct", h.apiDirectOrdersList)
+			r.Post("/test-orders/direct", h.apiDirectOrderSubmit)
+
+			// Direct RDS commands
+			r.Post("/test-commands/submit", h.apiTestCommandSubmit)
+			r.Get("/test-commands", h.apiTestCommandsList)
+			r.Get("/test-commands/status", h.apiTestCommandStatus)
+
+			// Payload manifest
+			r.Post("/payloads/manifest/create", h.apiCreateManifestItem)
+			r.Post("/payloads/manifest/update", h.apiUpdateManifestItem)
+			r.Post("/payloads/manifest/delete", h.apiDeleteManifestItem)
+
+			// Inventory instance actions
+			r.Post("/instances/action", h.apiInstanceAction)
+			r.Post("/instances/bulk-register", h.apiBulkRegisterInstances)
+			r.Get("/instances/events", h.apiListInstanceEvents)
+
+			// Supermarket management
+			r.Post("/supermarket/create", h.apiCreateSupermarket)
+			r.Get("/supermarket/layout", h.apiGetSupermarketLayout)
+			r.Post("/supermarket/delete", h.apiDeleteSupermarket)
+
+			// Corrections
+			r.Post("/corrections/create", h.apiCreateCorrection)
+
+			// Fleet proxy
+			r.Post("/fleet/proxy", h.apiFleetProxy)
+
+			// Robot management
+			r.Post("/robots/availability", h.apiRobotSetAvailability)
+			r.Post("/robots/retry", h.apiRobotRetryFailed)
+			r.Post("/robots/force-complete", h.apiRobotForceComplete)
+
+			// Order management
+			r.Post("/orders/terminate", h.apiTerminateOrder)
+			r.Post("/orders/priority", h.apiSetOrderPriority)
+
+			// Demand management
+			r.Post("/demands", h.apiCreateDemand)
+			r.Put("/demands/{id}", h.apiUpdateDemand)
+			r.Put("/demands/{id}/apply", h.apiApplyDemand)
+			r.Delete("/demands/{id}", h.apiDeleteDemand)
+			r.Post("/demands/apply-all", h.apiApplyAllDemands)
+			r.Put("/demands/{id}/produced", h.apiSetDemandProduced)
+			r.Post("/demands/{id}/clear", h.apiClearDemandProduced)
+			r.Post("/demands/clear-all", h.apiClearAllProduced)
+		})
 	})
 
 	stopFn := func() {
@@ -177,12 +244,15 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	return r, stopFn
 }
 
-func (h *Handlers) render(w http.ResponseWriter, name string, data any) {
+func (h *Handlers) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
 	tmpl, ok := h.tmpls[name]
 	if !ok {
 		log.Printf("render: template %q not found", name)
 		http.Error(w, "template not found", http.StatusInternalServerError)
 		return
+	}
+	if _, exists := data["Authenticated"]; !exists {
+		data["Authenticated"] = h.isAuthenticated(r)
 	}
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		log.Printf("render %s: %v", name, err)
@@ -190,47 +260,3 @@ func (h *Handlers) render(w http.ResponseWriter, name string, data any) {
 	}
 }
 
-func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]any{
-		"Page":          "login",
-		"Authenticated": h.isAuthenticated(r),
-	}
-	h.render(w, "login.html", data)
-}
-
-func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	username := r.FormValue("username")
-	password := r.FormValue("password")
-
-	user, err := h.engine.DB().GetAdminUser(username)
-	if err != nil || !checkPassword(user.PasswordHash, password) {
-		data := map[string]any{
-			"Page":  "login",
-			"Error": "Invalid username or password",
-		}
-		h.render(w, "login.html", data)
-		return
-	}
-
-	session, _ := h.sessions.Get(r, sessionName)
-	session.Values["authenticated"] = true
-	session.Values["username"] = username
-	if err := session.Save(r, w); err != nil {
-		log.Printf("auth: session save error: %v", err)
-	}
-
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-func (h *Handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
-	session, _ := h.sessions.Get(r, sessionName)
-	session.Values["authenticated"] = false
-	session.Values["username"] = ""
-	session.Save(r, w)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}

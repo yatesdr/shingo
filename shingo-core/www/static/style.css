@@ -63,6 +63,12 @@ nav a:hover, nav a.active { color: var(--primary); text-decoration: none; }
 .badge-delivered, .badge-confirmed, .badge-completed { background: #d1e7dd; color: #0f5132; }
 .badge-failed { background: #f8d7da; color: #842029; }
 .badge-cancelled { background: #e2e3e5; color: #41464b; }
+.badge-available, .badge-loaded { background: #d1e7dd; color: #0f5132; }
+.badge-empty { background: #e2e3e5; color: #41464b; }
+.badge-flagged { background: #fff3cd; color: #856404; }
+.badge-maintenance { background: #fff3cd; color: #664d03; }
+.badge-retired { background: #f8d7da; color: #842029; }
+.badge-reshuffling { background: #e0cffc; color: #3d0a91; }
 
 /* Health indicators */
 .health { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 0.4rem; }
@@ -447,3 +453,30 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .modal { box-shadow: 0 8px 30px rgba(0,0,0,0.6); }
 [data-theme="dark"] .robot-battery { background: rgba(255,255,255,0.12); }
 [data-theme="dark"] .node-tile { border-color: rgba(255,255,255,0.08); }
+
+/* Tooltip trigger */
+.tooltip-trigger {
+  cursor: help; color: var(--text-muted);
+  border: 1px solid var(--border); border-radius: 50%;
+  width: 1.1em; height: 1.1em; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 0.7rem;
+  vertical-align: middle; margin-left: 0.2rem;
+}
+
+/* Supermarket grid visualization */
+.sm-grid { display: flex; flex-direction: column; gap: 4px; }
+.sm-lane { display: flex; gap: 2px; align-items: center; }
+.sm-lane-label { min-width: 80px; font-size: 0.8rem; }
+.sm-cell { width: 36px; height: 36px; border-radius: 4px; cursor: pointer;
+           display: flex; align-items: center; justify-content: center; font-size: 0.65rem; }
+.sm-empty { background: var(--surface); border: 1px dashed var(--border); }
+.sm-occupied { background: var(--primary); color: white; }
+.sm-claimed { background: var(--warning); color: white; }
+.sm-flagged { background: var(--danger); color: white; }
+.sm-shuffle { background: var(--info); color: white; }
+
+/* Wizard steps */
+.wizard-steps { display: flex; gap: 1rem; margin-bottom: 1rem; }
+.wizard-step { flex: 1; padding: 0.5rem; text-align: center; border-bottom: 3px solid var(--border); }
+.wizard-step.active { border-bottom-color: var(--primary); font-weight: 600; }
+.wizard-step.done { border-bottom-color: var(--success); }

@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"errors"
 	"fmt"
 	"log"
 
@@ -15,16 +16,20 @@ type Dispatcher struct {
 	db            *store.DB
 	backend       fleet.Backend
 	emitter       Emitter
+	resolver      NodeResolver
+	laneLock      *LaneLock
 	stationID     string
 	dispatchTopic string
 	DebugLog      func(string, ...any)
 }
 
-func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string) *Dispatcher {
+func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
 	return &Dispatcher{
 		db:            db,
 		backend:       backend,
 		emitter:       emitter,
+		resolver:      resolver,
+		laneLock:      NewLaneLock(),
 		stationID:     stationID,
 		dispatchTopic: dispatchTopic,
 	}
@@ -36,20 +41,20 @@ func (d *Dispatcher) dbg(format string, args ...any) {
 	}
 }
 
-func (d *Dispatcher) coreAddress() protocol.Address {
-	return protocol.Address{Role: protocol.RoleCore, Station: d.stationID}
-}
-
 // HandleOrderRequest processes a new order from ShinGo Edge.
 func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
 	stationID := env.Src.Station
-	d.dbg("order request: station=%s uuid=%s type=%s payload_type=%s delivery=%s pickup=%s",
-		stationID, p.OrderUUID, p.OrderType, p.PayloadTypeCode, p.DeliveryNode, p.PickupNode)
+	styleCode := p.PayloadTypeCode
+	if styleCode == "" {
+		styleCode = p.StyleCode
+	}
+	d.dbg("order request: station=%s uuid=%s type=%s style=%s delivery=%s pickup=%s",
+		stationID, p.OrderUUID, p.OrderType, styleCode, p.DeliveryNode, p.PickupNode)
 
 	// Create order record
 	order := &store.Order{
 		EdgeUUID:     p.OrderUUID,
-		StationID:     stationID,
+		StationID:    stationID,
 		OrderType:    p.OrderType,
 		Status:       StatusPending,
 		Quantity:     p.Quantity,
@@ -59,26 +64,36 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		PayloadDesc:  p.PayloadDesc,
 	}
 
-	// Resolve payload type (optional — manual orders may not specify one)
-	if p.PayloadTypeCode != "" {
-		pt, err := d.db.GetPayloadTypeByName(p.PayloadTypeCode)
+	// Resolve payload style (optional — manual orders may not specify one)
+	if styleCode != "" {
+		ps, err := d.db.GetPayloadStyleByName(styleCode)
 		if err != nil {
-			log.Printf("dispatch: payload type %q not found: %v", p.PayloadTypeCode, err)
-			d.dbg("error: payload type %q not found: %v", p.PayloadTypeCode, err)
-			d.sendError(env, p.OrderUUID, "payload_type_error", fmt.Sprintf("payload type %q not found", p.PayloadTypeCode))
+			log.Printf("dispatch: payload style %q not found: %v", styleCode, err)
+			d.dbg("error: payload style %q not found: %v", styleCode, err)
+			d.sendError(env, p.OrderUUID, "style_error", fmt.Sprintf("payload style %q not found", styleCode))
 			return
 		}
-		order.PayloadTypeID = &pt.ID
+		order.StyleID = &ps.ID
 	}
 
-	// Validate destination node exists
+	// Validate destination node exists; resolve synthetic nodes
 	if p.DeliveryNode != "" {
-		_, err := d.db.GetNodeByName(p.DeliveryNode)
+		destNode, err := d.db.GetNodeByName(p.DeliveryNode)
 		if err != nil {
 			log.Printf("dispatch: delivery node %q not found: %v", p.DeliveryNode, err)
 			d.dbg("error: delivery node %q not found: %v", p.DeliveryNode, err)
 			d.sendError(env, p.OrderUUID, "invalid_node", fmt.Sprintf("delivery node %q not found", p.DeliveryNode))
 			return
+		}
+		if destNode.IsSynthetic && d.resolver != nil {
+			result, err := d.resolver.Resolve(destNode, p.OrderType, order.StyleID)
+			if err != nil {
+				d.dbg("synthetic resolution failed for %s: %v", p.DeliveryNode, err)
+				d.sendError(env, p.OrderUUID, "resolution_failed", fmt.Sprintf("cannot resolve synthetic node %s: %v", p.DeliveryNode, err))
+				return
+			}
+			d.dbg("resolved synthetic %s -> %s", p.DeliveryNode, result.Node.Name)
+			order.DeliveryNode = result.Node.Name
 		}
 	}
 
@@ -89,13 +104,13 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	}
 	d.db.UpdateOrderStatus(order.ID, StatusPending, "order received")
 
-	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, p.PayloadTypeCode, p.DeliveryNode)
+	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, styleCode, p.DeliveryNode)
 
 	switch p.OrderType {
 	case OrderTypeRetrieve:
-		d.handleRetrieve(order, env, p.PayloadTypeCode)
+		d.handleRetrieve(order, env, styleCode)
 	case OrderTypeMove:
-		d.handleMove(order, env, p.PayloadTypeCode)
+		d.handleMove(order, env, styleCode)
 	case OrderTypeStore:
 		d.handleStore(order, env)
 	default:
@@ -104,28 +119,55 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	}
 }
 
-func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, payloadTypeCode string) {
+func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, styleCode string) {
 	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding source")
 
-	// FIFO source selection for payloads
-	source, err := d.db.FindSourcePayloadFIFO(payloadTypeCode)
-	if err != nil {
-		d.dbg("retrieve: no source payload for type %s", payloadTypeCode)
-		d.failOrder(order, env, "no_source", fmt.Sprintf("no source payload found for type %s", payloadTypeCode))
-		return
-	}
-	d.dbg("retrieve: FIFO source payload=%d type=%s node=%v", source.ID, payloadTypeCode, source.NodeID)
+	var source *store.PayloadInstance
+	var sourceNode *store.Node
 
-	// Claim the payload to prevent double-dispatch
-	if err := d.db.ClaimPayload(source.ID, order.ID); err != nil {
+	// Try supermarket-aware resolution if a pickup node is specified and is a SUP
+	if order.PickupNode != "" && d.resolver != nil {
+		pickupNode, err := d.db.GetNodeByName(order.PickupNode)
+		if err == nil && pickupNode.IsSynthetic && pickupNode.NodeTypeCode == "SUP" {
+			result, err := d.resolver.Resolve(pickupNode, OrderTypeRetrieve, order.StyleID)
+			if err != nil {
+				// Check if buried — trigger reshuffle
+				var buriedErr *BuriedError
+				if errors.As(err, &buriedErr) {
+					d.dbg("retrieve: instance %d buried in lane %d, planning reshuffle", buriedErr.Instance.ID, buriedErr.LaneID)
+					d.handleBuriedReshuffle(order, env, buriedErr)
+					return
+				}
+				d.dbg("retrieve: supermarket resolution failed for %s: %v", order.PickupNode, err)
+				d.failOrder(order, env, "no_source", fmt.Sprintf("no source in supermarket %s: %v", order.PickupNode, err))
+				return
+			}
+			source = result.Instance
+			sourceNode, _ = d.db.GetNode(*source.NodeID)
+		}
+	}
+
+	// Fallback: global FIFO source selection
+	if source == nil {
+		var err error
+		source, err = d.db.FindSourceInstanceFIFO(styleCode)
+		if err != nil {
+			d.dbg("retrieve: no source instance for style %s", styleCode)
+			d.failOrder(order, env, "no_source", fmt.Sprintf("no source instance found for style %s", styleCode))
+			return
+		}
+		sourceNode, err = d.db.GetNode(*source.NodeID)
+		if err != nil {
+			d.failOrder(order, env, "node_error", err.Error())
+			return
+		}
+	}
+
+	d.dbg("retrieve: FIFO source instance=%d style=%s node=%s", source.ID, styleCode, sourceNode.Name)
+
+	// Claim the instance to prevent double-dispatch
+	if err := d.db.ClaimInstance(source.ID, order.ID); err != nil {
 		d.failOrder(order, env, "claim_failed", err.Error())
-		return
-	}
-
-	// Get node details for vendor locations
-	sourceNode, err := d.db.GetNode(*source.NodeID)
-	if err != nil {
-		d.failOrder(order, env, "node_error", err.Error())
 		return
 	}
 
@@ -141,7 +183,48 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, 
 	d.dispatchToFleet(order, env, sourceNode, destNode)
 }
 
-func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, payloadTypeCode string) {
+// handleBuriedReshuffle plans and executes a reshuffle when a FIFO target is buried.
+func (d *Dispatcher) handleBuriedReshuffle(order *store.Order, env *protocol.Envelope, buried *BuriedError) {
+	// Check lane lock
+	if d.laneLock.IsLocked(buried.LaneID) {
+		d.failOrder(order, env, "lane_locked", fmt.Sprintf("lane %d is locked by another reshuffle", buried.LaneID))
+		return
+	}
+
+	// Find the supermarket (parent of lane)
+	lane, err := d.db.GetNode(buried.LaneID)
+	if err != nil || lane.ParentID == nil {
+		d.failOrder(order, env, "reshuffle_error", "cannot determine supermarket for lane")
+		return
+	}
+
+	plan, err := PlanReshuffle(d.db, buried.Instance, buried.Slot, lane, *lane.ParentID)
+	if err != nil {
+		d.failOrder(order, env, "reshuffle_error", fmt.Sprintf("cannot plan reshuffle: %v", err))
+		return
+	}
+
+	// Lock the lane
+	if !d.laneLock.TryLock(buried.LaneID, order.ID) {
+		d.failOrder(order, env, "lane_locked", "lane locked concurrently")
+		return
+	}
+
+	// Create compound order
+	if err := d.CreateCompoundOrder(order, plan); err != nil {
+		d.laneLock.Unlock(buried.LaneID)
+		d.failOrder(order, env, "reshuffle_error", fmt.Sprintf("cannot create compound order: %v", err))
+		return
+	}
+
+	d.db.UpdateOrderStatus(order.ID, StatusReshuffling, fmt.Sprintf("reshuffling lane — %d steps", len(plan.Steps)))
+	d.dbg("retrieve: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
+
+	// Advance to first step
+	d.AdvanceCompoundOrder(order.ID)
+}
+
+func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, styleCode string) {
 	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "validating move")
 
 	if order.PickupNode == "" {
@@ -155,22 +238,22 @@ func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, payl
 		return
 	}
 
-	// Validate unclaimed payload of requested type exists at pickup node
-	if payloadTypeCode != "" {
-		payloads, _ := d.db.ListPayloadsByNode(pickupNode.ID)
-		found := false
-		for _, p := range payloads {
-			if p.PayloadTypeName == payloadTypeCode && p.ClaimedBy == nil {
-				found = true
-				if err := d.db.ClaimPayload(p.ID, order.ID); err == nil {
-					d.dbg("move: claimed payload=%d type=%s at %s", p.ID, payloadTypeCode, order.PickupNode)
+	// Validate unclaimed instance of requested style exists at pickup node
+	if styleCode != "" {
+		instances, _ := d.db.ListInstancesByNode(pickupNode.ID)
+		claimed := false
+		for _, p := range instances {
+			if p.StyleName == styleCode && p.ClaimedBy == nil {
+				if err := d.db.ClaimInstance(p.ID, order.ID); err == nil {
+					d.dbg("move: claimed instance=%d style=%s at %s", p.ID, styleCode, order.PickupNode)
+					claimed = true
 					break
 				}
 			}
 		}
-		if !found {
-			d.dbg("move: no unclaimed %s payload at %s", payloadTypeCode, order.PickupNode)
-			d.failOrder(order, env, "no_payload", fmt.Sprintf("no unclaimed %s payload at %s", payloadTypeCode, order.PickupNode))
+		if !claimed {
+			d.dbg("move: no unclaimed %s instance at %s", styleCode, order.PickupNode)
+			d.failOrder(order, env, "no_payload", fmt.Sprintf("no unclaimed %s instance at %s", styleCode, order.PickupNode))
 			return
 		}
 	}
@@ -189,12 +272,15 @@ func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, payl
 func (d *Dispatcher) handleStore(order *store.Order, env *protocol.Envelope) {
 	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding storage destination")
 
-	var payloadTypeID int64
-	if order.PayloadTypeID != nil {
-		payloadTypeID = *order.PayloadTypeID
+	var styleID int64
+	if order.StyleID != nil {
+		styleID = *order.StyleID
 	}
 
-	destNode, err := d.db.FindStorageDestinationForPayload(payloadTypeID)
+	// Capture the original delivery node before overwriting — it may be the pickup source
+	originalDeliveryNode := order.DeliveryNode
+
+	destNode, err := d.db.FindStorageDestinationForInstance(styleID)
 	if err != nil {
 		d.dbg("store: no available storage node")
 		d.failOrder(order, env, "no_storage", "no available storage node found")
@@ -212,11 +298,11 @@ func (d *Dispatcher) handleStore(order *store.Order, env *protocol.Envelope) {
 			d.failOrder(order, env, "invalid_node", fmt.Sprintf("pickup node %q not found", order.PickupNode))
 			return
 		}
-	} else if order.DeliveryNode != "" {
-		// Use delivery_node as source for store ops (line-side -> storage)
-		pickupNode, err = d.db.GetNodeByName(order.DeliveryNode)
+	} else if originalDeliveryNode != "" {
+		// Use original delivery_node as source for store ops (line-side -> storage)
+		pickupNode, err = d.db.GetNodeByName(originalDeliveryNode)
 		if err != nil {
-			d.failOrder(order, env, "invalid_node", fmt.Sprintf("node %q not found", order.DeliveryNode))
+			d.failOrder(order, env, "invalid_node", fmt.Sprintf("node %q not found", originalDeliveryNode))
 			return
 		}
 	}
@@ -265,6 +351,36 @@ func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope,
 	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode.Name)
 }
 
+// DispatchDirect dispatches an order to the fleet without a protocol envelope.
+// Used for orders created internally (e.g. direct orders from the UI).
+// Returns the vendor order ID on success.
+func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *store.Node) (string, error) {
+	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
+
+	req := fleet.TransportOrderRequest{
+		OrderID:    vendorOrderID,
+		ExternalID: order.EdgeUUID,
+		FromLoc:    sourceNode.VendorLocation,
+		ToLoc:      destNode.VendorLocation,
+		Priority:   order.Priority,
+	}
+
+	d.dbg("fleet dispatch (direct): order=%d vendor_id=%s from=%s(%s) to=%s(%s)",
+		order.ID, vendorOrderID, sourceNode.Name, sourceNode.VendorLocation, destNode.Name, destNode.VendorLocation)
+
+	if _, err := d.backend.CreateTransportOrder(req); err != nil {
+		log.Printf("dispatch: fleet create order failed: %v", err)
+		d.db.UpdateOrderStatus(order.ID, StatusFailed, err.Error())
+		return "", err
+	}
+
+	d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", "")
+	d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID))
+	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
+
+	return vendorOrderID, nil
+}
+
 // HandleOrderCancel processes a cancellation request from ShinGo Edge.
 func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel) {
 	stationID := env.Src.Station
@@ -287,7 +403,7 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	}
 
 	// Unclaim inventory if applicable
-	d.unclaimOrderPayloads(order.ID)
+	d.unclaimOrderInstances(order.ID)
 
 	d.db.UpdateOrderStatus(order.ID, StatusCancelled, p.Reason)
 
@@ -354,6 +470,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		return
 	}
 
+	d.db.UpdateOrderDeliveryNode(order.ID, p.NewDeliveryNode)
 	order.DeliveryNode = p.NewDeliveryNode
 
 	// Get source node for re-dispatch
@@ -378,7 +495,7 @@ func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protoc
 
 	order := &store.Order{
 		EdgeUUID:    p.OrderUUID,
-		StationID:    stationID,
+		StationID:   stationID,
 		OrderType:   p.OrderType,
 		Status:      StatusPending,
 		PickupNode:  p.PickupNode,
@@ -400,67 +517,14 @@ func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protoc
 func (d *Dispatcher) failOrder(order *store.Order, env *protocol.Envelope, errorCode, detail string) {
 	stationID := env.Src.Station
 	d.db.UpdateOrderStatus(order.ID, StatusFailed, detail)
-	d.unclaimOrderPayloads(order.ID)
+	d.unclaimOrderInstances(order.ID)
 	d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, stationID, errorCode, detail)
 	d.sendError(env, order.EdgeUUID, errorCode, detail)
 }
 
-func (d *Dispatcher) unclaimOrderPayloads(orderID int64) {
-	// Collect IDs first, then unclaim — avoids holding rows cursor during Exec (SQLite deadlock)
-	rows, err := d.db.Query(d.db.Q(`SELECT id FROM payloads WHERE claimed_by=?`), orderID)
-	if err != nil {
-		return
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		rows.Scan(&id)
-		ids = append(ids, id)
-	}
-	rows.Close()
-	for _, id := range ids {
-		d.db.UnclaimPayload(id)
-	}
+func (d *Dispatcher) unclaimOrderInstances(orderID int64) {
+	d.db.UnclaimOrderInstances(orderID)
 }
 
-func (d *Dispatcher) sendAck(env *protocol.Envelope, orderUUID string, shingoOrderID int64, sourceNode string) {
-	stationID := env.Src.Station
-	edgeAddr := protocol.Address{Role: protocol.RoleEdge, Station: stationID}
-	reply, err := protocol.NewReply(protocol.TypeOrderAck, d.coreAddress(), edgeAddr, env.ID, &protocol.OrderAck{
-		OrderUUID:     orderUUID,
-		ShingoOrderID: shingoOrderID,
-		SourceNode:    sourceNode,
-	})
-	if err != nil {
-		log.Printf("dispatch: build ack reply: %v", err)
-		return
-	}
-	data, err := reply.Encode()
-	if err != nil {
-		log.Printf("dispatch: encode ack reply: %v", err)
-		return
-	}
-	d.dbg("sendAck: uuid=%s shingo_id=%d source=%s", orderUUID, shingoOrderID, sourceNode)
-	d.db.EnqueueOutbox(d.dispatchTopic, data, "order.ack", stationID)
-}
-
-func (d *Dispatcher) sendError(env *protocol.Envelope, orderUUID, errorCode, detail string) {
-	stationID := env.Src.Station
-	edgeAddr := protocol.Address{Role: protocol.RoleEdge, Station: stationID}
-	reply, err := protocol.NewReply(protocol.TypeOrderError, d.coreAddress(), edgeAddr, env.ID, &protocol.OrderError{
-		OrderUUID: orderUUID,
-		ErrorCode: errorCode,
-		Detail:    detail,
-	})
-	if err != nil {
-		log.Printf("dispatch: build error reply: %v", err)
-		return
-	}
-	data, err := reply.Encode()
-	if err != nil {
-		log.Printf("dispatch: encode error reply: %v", err)
-		return
-	}
-	d.dbg("sendError: uuid=%s code=%s detail=%s", orderUUID, errorCode, detail)
-	d.db.EnqueueOutbox(d.dispatchTopic, data, "order.error", stationID)
-}
+// LaneLock returns the dispatcher's lane lock for external use.
+func (d *Dispatcher) LaneLock() *LaneLock { return d.laneLock }

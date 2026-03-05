@@ -8,7 +8,7 @@ import (
 
 type ManifestItem struct {
 	ID             int64     `json:"id"`
-	PayloadID      int64     `json:"payload_id"`
+	InstanceID     int64     `json:"instance_id"`
 	PartNumber     string    `json:"part_number"`
 	Quantity       float64   `json:"quantity"`
 	ProductionDate string    `json:"production_date,omitempty"`
@@ -17,13 +17,13 @@ type ManifestItem struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-const manifestItemSelectCols = `id, payload_id, part_number, quantity, production_date, lot_code, notes, created_at`
+const manifestItemSelectCols = `id, instance_id, part_number, quantity, production_date, lot_code, notes, created_at`
 
 func scanManifestItem(row interface{ Scan(...any) error }) (*ManifestItem, error) {
 	var m ManifestItem
 	var prodDate, lotCode sql.NullString
 	var createdAt any
-	err := row.Scan(&m.ID, &m.PayloadID, &m.PartNumber, &m.Quantity, &prodDate, &lotCode, &m.Notes, &createdAt)
+	err := row.Scan(&m.ID, &m.InstanceID, &m.PartNumber, &m.Quantity, &prodDate, &lotCode, &m.Notes, &createdAt)
 	if err != nil {
 		return nil, err
 	}
@@ -57,8 +57,8 @@ func (db *DB) CreateManifestItem(m *ManifestItem) error {
 	if m.LotCode != "" {
 		lotCode = m.LotCode
 	}
-	result, err := db.Exec(db.Q(`INSERT INTO manifest_items (payload_id, part_number, quantity, production_date, lot_code, notes) VALUES (?, ?, ?, ?, ?, ?)`),
-		m.PayloadID, m.PartNumber, m.Quantity, prodDate, lotCode, m.Notes)
+	result, err := db.Exec(db.Q(`INSERT INTO manifest_items (instance_id, part_number, quantity, production_date, lot_code, notes) VALUES (?, ?, ?, ?, ?, ?)`),
+		m.InstanceID, m.PartNumber, m.Quantity, prodDate, lotCode, m.Notes)
 	if err != nil {
 		return fmt.Errorf("create manifest item: %w", err)
 	}
@@ -88,8 +88,8 @@ func (db *DB) DeleteManifestItem(id int64) error {
 	return err
 }
 
-func (db *DB) ListManifestItems(payloadID int64) ([]*ManifestItem, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM manifest_items WHERE payload_id=? ORDER BY id`, manifestItemSelectCols)), payloadID)
+func (db *DB) ListManifestItems(instanceID int64) ([]*ManifestItem, error) {
+	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM manifest_items WHERE instance_id=? ORDER BY id`, manifestItemSelectCols)), instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (db *DB) ListManifestItems(payloadID int64) ([]*ManifestItem, error) {
 	return scanManifestItems(rows)
 }
 
-func (db *DB) DeleteManifestItemsByPayload(payloadID int64) error {
-	_, err := db.Exec(db.Q(`DELETE FROM manifest_items WHERE payload_id=?`), payloadID)
+func (db *DB) DeleteManifestItemsByInstance(instanceID int64) error {
+	_, err := db.Exec(db.Q(`DELETE FROM manifest_items WHERE instance_id=?`), instanceID)
 	return err
 }

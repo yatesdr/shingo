@@ -48,7 +48,7 @@ type Engine struct {
 	sceneSyncing   atomic.Bool
 	fleetConnected bool
 	msgConnected   bool
-	redisConnected bool
+	dbConnected    bool
 }
 
 func New(c Config) *Engine {
@@ -81,14 +81,18 @@ func (e *Engine) Start() {
 	de := &dispatchEmitter{bus: e.Events}
 	pe := &pollerEmitter{bus: e.Events}
 
-	// Create dispatcher
+	// Create dispatcher with synthetic node resolver
+	resolver := &dispatch.DefaultResolver{DB: e.db}
 	e.dispatcher = dispatch.NewDispatcher(
 		e.db,
 		e.fleet,
 		de,
 		e.cfg.Messaging.StationID,
 		e.cfg.Messaging.DispatchTopic,
+		resolver,
 	)
+	// Share the lane lock between dispatcher and resolver
+	resolver.LaneLock = e.dispatcher.LaneLock()
 
 	// Initialize tracker if backend supports it
 	if tb, ok := e.fleet.(fleet.TrackingBackend); ok {
@@ -172,16 +176,16 @@ func (e *Engine) checkConnectionStatus() {
 		}
 	}
 
-	// Redis
-	if err := e.nodeState.Ping(); err == nil {
-		if !e.redisConnected {
-			e.redisConnected = true
-			e.Events.Emit(Event{Type: EventRedisConnected, Payload: ConnectionEvent{Detail: "redis connected"}})
+	// Database
+	if err := e.db.Ping(); err == nil {
+		if !e.dbConnected {
+			e.dbConnected = true
+			e.Events.Emit(Event{Type: EventDBConnected, Payload: ConnectionEvent{Detail: "database connected"}})
 		}
 	} else {
-		if e.redisConnected {
-			e.redisConnected = false
-			e.Events.Emit(Event{Type: EventRedisDisconnected, Payload: ConnectionEvent{Detail: err.Error()}})
+		if e.dbConnected {
+			e.dbConnected = false
+			e.Events.Emit(Event{Type: EventDBDisconnected, Payload: ConnectionEvent{Detail: err.Error()}})
 		}
 	}
 }
@@ -281,6 +285,12 @@ func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]strin
 // SyncFleetNodes creates nodes for new scene locations and removes nodes no longer in the scene.
 // Returns the number of nodes created and deleted.
 func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted int) {
+	// Look up default storage node type ID
+	var storageTypeID *int64
+	if nt, err := e.db.GetNodeTypeByCode("STG"); err == nil {
+		storageTypeID = &nt.ID
+	}
+
 	// Create nodes for locations not yet in DB
 	for instanceName, areaName := range locationSet {
 		if _, err := e.db.GetNodeByVendorLocation(instanceName); err == nil {
@@ -290,6 +300,7 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 			Name:           instanceName,
 			VendorLocation: instanceName,
 			NodeType:       "storage",
+			NodeTypeID:     storageTypeID,
 			Zone:           areaName,
 			Capacity:       1,
 			Enabled:        true,
@@ -297,7 +308,6 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 		if err := e.db.CreateNode(node); err != nil {
 			continue
 		}
-		e.nodeState.RefreshNodeMeta(node.ID)
 		e.Events.Emit(Event{Type: EventNodeUpdated, Payload: NodeUpdatedEvent{
 			NodeID: node.ID, NodeName: node.Name, Action: "created",
 		}})

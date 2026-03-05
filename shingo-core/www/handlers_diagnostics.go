@@ -10,8 +10,21 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		"Page":          "logs",
 		"Entries":       h.debugLog.Entries(subsystem),
 		"Subsystems":    h.debugLog.Subsystems(),
-		"Subsystem":     subsystem,
-		"Authenticated": h.isAuthenticated(r),
+		"Subsystem":  subsystem,
 	}
-	h.render(w, "diagnostics.html", data)
+	h.render(w, r, "diagnostics.html", data)
+}
+
+func (h *Handlers) apiHealthCheck(w http.ResponseWriter, r *http.Request) {
+	fleetOK := false
+	if err := h.engine.Fleet().Ping(); err == nil {
+		fleetOK = true
+	}
+	dbOK := h.engine.DB().Ping() == nil
+	h.jsonOK(w, map[string]any{
+		"status":    "ok",
+		"fleet":     fleetOK,
+		"messaging": h.engine.MsgClient().IsConnected(),
+		"database":  dbOK,
+	})
 }

@@ -27,10 +27,10 @@
     </div>
     <div class="card stat">
       <div class="value">
-        <span id="redis-status" class="health {{if .RedisOK}}health-ok{{else}}health-fail{{end}}"></span>
-        {{if .RedisOK}}OK{{else}}Down{{end}}
+        <span id="db-status" class="health {{if .DatabaseOK}}health-ok{{else}}health-fail{{end}}"></span>
+        {{if .DatabaseOK}}OK{{else}}Down{{end}}
       </div>
-      <div class="label">Redis</div>
+      <div class="label">Database</div>
     </div>
     <div class="card stat">
       <div class="value">{{.PollerActive}}</div>

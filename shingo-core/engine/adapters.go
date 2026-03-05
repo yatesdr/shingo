@@ -5,14 +5,14 @@ type dispatchEmitter struct {
 	bus *EventBus
 }
 
-func (e *dispatchEmitter) EmitOrderReceived(orderID int64, edgeUUID, stationID, orderType, payloadTypeCode, deliveryNode string) {
+func (e *dispatchEmitter) EmitOrderReceived(orderID int64, edgeUUID, stationID, orderType, styleCode, deliveryNode string) {
 	e.bus.Emit(Event{Type: EventOrderReceived, Payload: OrderReceivedEvent{
-		OrderID:         orderID,
-		EdgeUUID:        edgeUUID,
-		StationID:        stationID,
-		OrderType:       orderType,
-		PayloadTypeCode: payloadTypeCode,
-		DeliveryNode:    deliveryNode,
+		OrderID:      orderID,
+		EdgeUUID:     edgeUUID,
+		StationID:    stationID,
+		OrderType:    orderType,
+		StyleCode:    styleCode,
+		DeliveryNode: deliveryNode,
 	}})
 }
 

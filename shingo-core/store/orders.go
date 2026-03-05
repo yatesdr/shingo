@@ -12,8 +12,6 @@ type Order struct {
 	StationID     string     `json:"station_id"`
 	OrderType     string     `json:"order_type"`
 	Status        string     `json:"status"`
-	MaterialID    *int64     `json:"material_id,omitempty"`
-	MaterialCode  string     `json:"material_code"`
 	Quantity      float64    `json:"quantity"`
 	PickupNode    string     `json:"pickup_node"`
 	DeliveryNode  string     `json:"delivery_node"`
@@ -26,8 +24,10 @@ type Order struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	PayloadTypeID *int64     `json:"payload_type_id,omitempty"`
-	PayloadID     *int64     `json:"payload_id,omitempty"`
+	StyleID       *int64     `json:"style_id,omitempty"`
+	InstanceID    *int64     `json:"instance_id,omitempty"`
+	ParentOrderID *int64     `json:"parent_order_id,omitempty"`
+	Sequence      int        `json:"sequence"`
 }
 
 type OrderHistory struct {
@@ -38,30 +38,30 @@ type OrderHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const orderSelectCols = `id, edge_uuid, station_id, order_type, status, material_id, material_code, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, payload_type_id, payload_id`
+const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, style_id, instance_id, parent_order_id, sequence`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
-	var materialID, payloadTypeID, payloadID sql.NullInt64
+	var styleID, instanceID, parentOrderID sql.NullInt64
 	var createdAt, updatedAt any
 	var completedAt any
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
-		&materialID, &o.MaterialCode, &o.Quantity,
+		&o.Quantity,
 		&o.PickupNode, &o.DeliveryNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &createdAt, &updatedAt, &completedAt,
-		&payloadTypeID, &payloadID)
+		&styleID, &instanceID, &parentOrderID, &o.Sequence)
 	if err != nil {
 		return nil, err
 	}
-	if materialID.Valid {
-		o.MaterialID = &materialID.Int64
+	if styleID.Valid {
+		o.StyleID = &styleID.Int64
 	}
-	if payloadTypeID.Valid {
-		o.PayloadTypeID = &payloadTypeID.Int64
+	if instanceID.Valid {
+		o.InstanceID = &instanceID.Int64
 	}
-	if payloadID.Valid {
-		o.PayloadID = &payloadID.Int64
+	if parentOrderID.Valid {
+		o.ParentOrderID = &parentOrderID.Int64
 	}
 	o.CreatedAt = parseTime(createdAt)
 	o.UpdatedAt = parseTime(updatedAt)
@@ -82,21 +82,12 @@ func scanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 func (db *DB) CreateOrder(o *Order) error {
-	var matID, ptID, pID any
-	if o.MaterialID != nil {
-		matID = *o.MaterialID
-	}
-	if o.PayloadTypeID != nil {
-		ptID = *o.PayloadTypeID
-	}
-	if o.PayloadID != nil {
-		pID = *o.PayloadID
-	}
-
-	result, err := db.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, material_id, material_code, quantity, pickup_node, delivery_node, priority, payload_desc, payload_type_id, payload_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+	result, err := db.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, style_id, instance_id, parent_order_id, sequence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
-		matID, o.MaterialCode, o.Quantity,
-		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc, ptID, pID)
+		o.Quantity,
+		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
+		nullableInt64(o.StyleID), nullableInt64(o.InstanceID),
+		nullableInt64(o.ParentOrderID), o.Sequence)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -106,6 +97,62 @@ func (db *DB) CreateOrder(o *Order) error {
 	}
 	o.ID = id
 	return nil
+}
+
+// CompoundChild describes a child order to create in a compound order transaction.
+type CompoundChild struct {
+	Order      *Order
+	InstanceID int64 // instance to claim for this child
+}
+
+// CreateCompoundChildren creates all child orders and claims their instances in a single transaction.
+func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, c := range children {
+		o := c.Order
+		result, err := tx.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, style_id, instance_id, parent_order_id, sequence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
+			o.Quantity,
+			o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
+			nullableInt64(o.StyleID), nullableInt64(o.InstanceID),
+			nullableInt64(o.ParentOrderID), o.Sequence)
+		if err != nil {
+			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
+		}
+		id, _ := result.LastInsertId()
+		o.ID = id
+
+		if c.InstanceID > 0 {
+			_, err = tx.Exec(db.Q(`UPDATE payload_instances SET claimed_by=?, updated_at=datetime('now','localtime') WHERE id=?`),
+				o.ID, c.InstanceID)
+			if err != nil {
+				return fmt.Errorf("claim instance %d for child %d: %w", c.InstanceID, o.ID, err)
+			}
+		}
+	}
+
+	return tx.Commit()
+}
+
+// ListChildOrders returns all child orders for a parent order.
+func (db *DB) ListChildOrders(parentOrderID int64) ([]*Order, error) {
+	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE parent_order_id=? ORDER BY sequence`, orderSelectCols)), parentOrderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// GetNextChildOrder returns the next pending child order for a parent.
+func (db *DB) GetNextChildOrder(parentOrderID int64) (*Order, error) {
+	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE parent_order_id=? AND status='pending' ORDER BY sequence LIMIT 1`, orderSelectCols)), parentOrderID)
+	return scanOrder(row)
 }
 
 func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {

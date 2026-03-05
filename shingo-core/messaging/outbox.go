@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"log"
+	"sync"
 	"time"
 
 	"shingocore/store"
@@ -13,6 +14,7 @@ type OutboxDrainer struct {
 	client   *Client
 	interval time.Duration
 	stopChan chan struct{}
+	stopOnce sync.Once
 	DebugLog func(string, ...any)
 }
 
@@ -36,10 +38,7 @@ func (d *OutboxDrainer) Start() {
 }
 
 func (d *OutboxDrainer) Stop() {
-	select {
-	case d.stopChan <- struct{}{}:
-	default:
-	}
+	d.stopOnce.Do(func() { close(d.stopChan) })
 }
 
 func (d *OutboxDrainer) run() {

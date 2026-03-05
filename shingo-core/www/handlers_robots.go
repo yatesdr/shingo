@@ -1,7 +1,6 @@
 package www
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 
@@ -19,10 +18,23 @@ func (h *Handlers) handleRobots(w http.ResponseWriter, r *http.Request) {
 	}
 	data := map[string]any{
 		"Page":          "robots",
-		"Robots":        robots,
-		"Authenticated": h.isAuthenticated(r),
+		"Robots": robots,
 	}
-	h.render(w, "robots.html", data)
+	h.render(w, r, "robots.html", data)
+}
+
+func (h *Handlers) apiRobotsStatus(w http.ResponseWriter, r *http.Request) {
+	rl, ok := h.engine.Fleet().(fleet.RobotLister)
+	if !ok {
+		h.jsonOK(w, []any{})
+		return
+	}
+	robots, err := rl.GetRobotsStatus()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, robots)
 }
 
 func (h *Handlers) apiRobotSetAvailability(w http.ResponseWriter, r *http.Request) {
@@ -30,8 +42,7 @@ func (h *Handlers) apiRobotSetAvailability(w http.ResponseWriter, r *http.Reques
 		VehicleID string `json:"vehicle_id"`
 		Available bool   `json:"available"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	rl, ok := h.engine.Fleet().(fleet.RobotLister)
@@ -43,15 +54,14 @@ func (h *Handlers) apiRobotSetAvailability(w http.ResponseWriter, r *http.Reques
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiRobotRetryFailed(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		VehicleID string `json:"vehicle_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	rl, ok := h.engine.Fleet().(fleet.RobotLister)
@@ -63,15 +73,14 @@ func (h *Handlers) apiRobotRetryFailed(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiRobotForceComplete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		VehicleID string `json:"vehicle_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	rl, ok := h.engine.Fleet().(fleet.RobotLister)
@@ -83,5 +92,5 @@ func (h *Handlers) apiRobotForceComplete(w http.ResponseWriter, r *http.Request)
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }

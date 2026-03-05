@@ -1,44 +1,62 @@
 package www
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"shingocore/store"
 )
 
+func (h *Handlers) apiListPayloadStyles(w http.ResponseWriter, r *http.Request) {
+	styles, err := h.engine.DB().ListPayloadStyles()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, styles)
+}
+
 func (h *Handlers) handlePayloads(w http.ResponseWriter, r *http.Request) {
-	payloads, _ := h.engine.DB().ListPayloads()
-	types, _ := h.engine.DB().ListPayloadTypes()
+	instances, _ := h.engine.DB().ListInstances()
+	styles, _ := h.engine.DB().ListPayloadStyles()
 	nodes, _ := h.engine.DB().ListNodes()
+
+	// Build compatible nodes map: style_id -> [node names]
+	compatNodes := make(map[int64][]string)
+	for _, ps := range styles {
+		nodeList, _ := h.engine.DB().ListNodesForPayloadStyle(ps.ID)
+		for _, n := range nodeList {
+			compatNodes[ps.ID] = append(compatNodes[ps.ID], n.Name)
+		}
+	}
 
 	data := map[string]any{
 		"Page":          "payloads",
-		"Payloads":      payloads,
-		"PayloadTypes":  types,
+		"Instances":     instances,
+		"PayloadStyles": styles,
 		"Nodes":         nodes,
-		"Authenticated": h.isAuthenticated(r),
+		"CompatNodes":   compatNodes,
 	}
-	h.render(w, "payloads.html", data)
+	h.render(w, r, "payloads.html", data)
 }
 
-func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) handleInstanceCreate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	typeID, err := strconv.ParseInt(r.FormValue("payload_type_id"), 10, 64)
+	styleID, err := strconv.ParseInt(r.FormValue("style_id"), 10, 64)
 	if err != nil {
-		http.Error(w, "invalid payload type", http.StatusBadRequest)
+		http.Error(w, "invalid payload style", http.StatusBadRequest)
 		return
 	}
 
-	p := &store.Payload{
-		PayloadTypeID: typeID,
-		Status:        r.FormValue("status"),
-		Notes:         r.FormValue("notes"),
+	p := &store.PayloadInstance{
+		StyleID: styleID,
+		TagID:   r.FormValue("tag_id"),
+		Status:  r.FormValue("status"),
+		Notes:   r.FormValue("notes"),
 	}
 
 	if nodeStr := r.FormValue("node_id"); nodeStr != "" {
@@ -51,7 +69,7 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		p.Status = "empty"
 	}
 
-	if err := h.engine.DB().CreatePayload(p); err != nil {
+	if err := h.engine.DB().CreateInstance(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -59,7 +77,7 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
-func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) handleInstanceUpdate(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -71,19 +89,20 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := h.engine.DB().GetPayload(id)
+	p, err := h.engine.DB().GetInstance(id)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	typeID, err := strconv.ParseInt(r.FormValue("payload_type_id"), 10, 64)
+	styleID, err := strconv.ParseInt(r.FormValue("style_id"), 10, 64)
 	if err != nil {
-		http.Error(w, "invalid payload type", http.StatusBadRequest)
+		http.Error(w, "invalid payload style", http.StatusBadRequest)
 		return
 	}
 
-	p.PayloadTypeID = typeID
+	p.StyleID = styleID
+	p.TagID = r.FormValue("tag_id")
 	p.Status = r.FormValue("status")
 	p.Notes = r.FormValue("notes")
 	p.NodeID = nil
@@ -94,7 +113,7 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.engine.DB().UpdatePayload(p); err != nil {
+	if err := h.engine.DB().UpdateInstance(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -102,14 +121,14 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
-func (h *Handlers) handlePayloadDelete(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) handleInstanceDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.FormValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.engine.DB().DeletePayload(id); err != nil {
+	if err := h.engine.DB().DeleteInstance(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -117,23 +136,23 @@ func (h *Handlers) handlePayloadDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/payloads", http.StatusSeeOther)
 }
 
-func (h *Handlers) apiListPayloads(w http.ResponseWriter, r *http.Request) {
-	payloads, err := h.engine.DB().ListPayloads()
+func (h *Handlers) apiListInstances(w http.ResponseWriter, r *http.Request) {
+	instances, err := h.engine.DB().ListInstances()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, payloads)
+	h.jsonOK(w, instances)
 }
 
-func (h *Handlers) apiGetPayload(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiGetInstance(w http.ResponseWriter, r *http.Request) {
 	idStr := r.URL.Query().Get("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	p, err := h.engine.DB().GetPayload(id)
+	p, err := h.engine.DB().GetInstance(id)
 	if err != nil {
 		h.jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -158,20 +177,19 @@ func (h *Handlers) apiListManifest(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PayloadID      int64   `json:"payload_id"`
+		InstanceID     int64   `json:"instance_id"`
 		PartNumber     string  `json:"part_number"`
 		Quantity       float64 `json:"quantity"`
 		ProductionDate string  `json:"production_date"`
 		LotCode        string  `json:"lot_code"`
 		Notes          string  `json:"notes"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 
 	m := &store.ManifestItem{
-		PayloadID:      req.PayloadID,
+		InstanceID:     req.InstanceID,
 		PartNumber:     req.PartNumber,
 		Quantity:       req.Quantity,
 		ProductionDate: req.ProductionDate,
@@ -194,8 +212,7 @@ func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request)
 		LotCode        string  `json:"lot_code"`
 		Notes          string  `json:"notes"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 
@@ -211,20 +228,19 @@ func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request)
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiDeleteManifestItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID int64 `json:"id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request", http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 	if err := h.engine.DB().DeleteManifestItem(req.ID); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.jsonOK(w, map[string]string{"status": "ok"})
+	h.jsonSuccess(w)
 }

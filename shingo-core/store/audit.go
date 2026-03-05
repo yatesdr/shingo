@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"time"
 )
 
@@ -27,17 +28,7 @@ func (db *DB) ListAuditLog(limit int) ([]*AuditEntry, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var entries []*AuditEntry
-	for rows.Next() {
-		var e AuditEntry
-		var createdAt any
-		if err := rows.Scan(&e.ID, &e.EntityType, &e.EntityID, &e.Action, &e.OldValue, &e.NewValue, &e.Actor, &createdAt); err != nil {
-			return nil, err
-		}
-		e.CreatedAt = parseTime(createdAt)
-		entries = append(entries, &e)
-	}
-	return entries, rows.Err()
+	return scanAuditEntries(rows)
 }
 
 func (db *DB) ListEntityAudit(entityType string, entityID int64) ([]*AuditEntry, error) {
@@ -46,6 +37,10 @@ func (db *DB) ListEntityAudit(entityType string, entityID int64) ([]*AuditEntry,
 		return nil, err
 	}
 	defer rows.Close()
+	return scanAuditEntries(rows)
+}
+
+func scanAuditEntries(rows *sql.Rows) ([]*AuditEntry, error) {
 	var entries []*AuditEntry
 	for rows.Next() {
 		var e AuditEntry

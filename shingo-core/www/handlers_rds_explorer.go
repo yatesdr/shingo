@@ -18,10 +18,9 @@ func (h *Handlers) handleFleetExplorer(w http.ResponseWriter, r *http.Request) {
 	}
 	data := map[string]any{
 		"Page":          "fleet-explorer",
-		"Authenticated": h.isAuthenticated(r),
-		"FleetBaseURL":  baseURL,
+		"FleetBaseURL": baseURL,
 	}
-	h.render(w, "rds_explorer.html", data)
+	h.render(w, r, "rds_explorer.html", data)
 }
 
 // apiFleetProxy forwards an arbitrary request to the fleet vendor API and returns the raw response.
@@ -42,8 +41,7 @@ func (h *Handlers) apiFleetProxy(w http.ResponseWriter, r *http.Request) {
 		Path   string `json:"path"`
 		Body   string `json:"body"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.jsonError(w, "invalid request: "+err.Error(), http.StatusBadRequest)
+	if !h.parseJSON(w, r, &req) {
 		return
 	}
 

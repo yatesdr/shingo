@@ -31,15 +31,6 @@ func NewEventBus() *EventBus {
 	return &EventBus{}
 }
 
-// Subscribe registers a handler for all event types.
-func (eb *EventBus) Subscribe(fn func(Event)) SubscriberID {
-	eb.mu.Lock()
-	defer eb.mu.Unlock()
-	eb.nextID++
-	eb.subscribers = append(eb.subscribers, subscriber{id: eb.nextID, fn: fn})
-	return eb.nextID
-}
-
 // SubscribeTypes registers a handler for specific event types.
 func (eb *EventBus) SubscribeTypes(fn func(Event), types ...EventType) SubscriberID {
 	filter := make(map[EventType]struct{}, len(types))
@@ -51,18 +42,6 @@ func (eb *EventBus) SubscribeTypes(fn func(Event), types ...EventType) Subscribe
 	eb.nextID++
 	eb.subscribers = append(eb.subscribers, subscriber{id: eb.nextID, fn: fn, filter: filter})
 	return eb.nextID
-}
-
-// Unsubscribe removes a subscriber by ID.
-func (eb *EventBus) Unsubscribe(id SubscriberID) {
-	eb.mu.Lock()
-	defer eb.mu.Unlock()
-	for i, s := range eb.subscribers {
-		if s.id == id {
-			eb.subscribers = append(eb.subscribers[:i], eb.subscribers[i+1:]...)
-			return
-		}
-	}
 }
 
 // Emit sends an event to all matching subscribers.

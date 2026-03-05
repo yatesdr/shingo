@@ -1,6 +1,6 @@
 # ShinGo Features — Phases 1 & 2
 
-Quick reference for the 8 features added in this release. Each section covers routes, data flow, and debugging tips.
+Reference for the 8 features added in this release. Each section covers routes, data flow, and troubleshooting.
 
 ---
 
@@ -12,7 +12,7 @@ Quick reference for the 8 features added in this release. Each section covers ro
 
 **Files:** `www/handlers_nodes.go:handleNodeSyncRDS`, `store/nodes.go:GetNodeByRDSLocation`
 
-**Debug:** If no nodes are created, check that RDS is reachable (try `/rds` explorer first). Duplicate bins are safely skipped — match is by `rds_location` column OR `name`.
+**Troubleshooting:** If no nodes are created, verify RDS is reachable via the `/rds` explorer. Duplicate bins are skipped; matching is by `rds_location` column or `name`.
 
 ---
 
@@ -33,7 +33,7 @@ Quick reference for the 8 features added in this release. Each section covers ro
 
 **Files:** `store/payload_types.go`, `www/handlers_payload_types.go`, `www/templates/payload_types.html`
 
-**Debug:** `default_manifest_json` defaults to `{}` if left blank. Delete will fail if payloads reference this type (FK constraint).
+**Notes:** `default_manifest_json` defaults to `{}` if left blank. Deletion fails if payloads reference this type (FK constraint).
 
 ---
 
@@ -57,7 +57,7 @@ Quick reference for the 8 features added in this release. Each section covers ro
 
 **Files:** `store/payloads.go`, `www/handlers_payloads.go`, `www/templates/payloads.html`, `www/helpers.go:payloadStatusColor`
 
-**Debug:** `node_id` is nullable — uses `sql.NullInt64` in the scanner. Badge CSS classes follow the pattern `badge-{status}` — add corresponding styles in `style.css` if custom colors are needed.
+**Notes:** `node_id` is nullable (`sql.NullInt64` in the scanner). Badge CSS classes follow the pattern `badge-{status}`; add corresponding styles in `style.css` for custom colors.
 
 ---
 
@@ -82,7 +82,7 @@ Quick reference for the 8 features added in this release. Each section covers ro
 
 **Files:** `store/manifest_items.go`, `www/handlers_payloads.go` (bottom half), `www/templates/payloads.html` (modal section)
 
-**Debug:** `production_date` and `lot_code` use `sql.NullString` — empty strings are stored as SQL NULL. Cascade delete means deleting a payload removes all its manifest items automatically.
+**Notes:** `production_date` and `lot_code` use `sql.NullString`; empty strings are stored as SQL NULL. Cascade delete: deleting a payload removes all its manifest items.
 
 ---
 
@@ -90,7 +90,7 @@ Quick reference for the 8 features added in this release. Each section covers ro
 
 **Route:** `GET /api/bins/status` (public JSON)
 
-**Flow:** Fetches `/binDetails` from RDS + all ShinGo nodes → builds side-by-side comparison → flags discrepancies.
+**Flow:** Fetches `/binDetails` from RDS and all ShinGo nodes, builds a side-by-side comparison, and flags discrepancies.
 
 **Response format:**
 ```json
@@ -152,7 +152,7 @@ Quick reference for the 8 features added in this release. Each section covers ro
 
 **Files:** `rds/types.go:Area`, `www/handlers_nodes.go:handleSceneSync`, `www/templates/nodes.html`
 
-**Debug:** Only updates nodes with empty zones — won't overwrite manually-set zones. If zones don't populate, verify that the RDS scene response actually includes area → point mappings (check via `/rds` explorer, GET `/scene`).
+**Notes:** Only updates nodes with empty zones; manually-set zones are not overwritten. If zones do not populate, verify the RDS scene response includes area-to-point mappings (check via `/rds` explorer, `GET /scene`).
 
 ---
 

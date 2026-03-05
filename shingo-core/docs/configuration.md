@@ -2,11 +2,11 @@
 
 ShinGo Core stores its configuration in a YAML file (default: `shingocore.yaml`). A default config is generated automatically on first run.
 
-> **Note:** The YAML file is managed by the application and should not be hand-edited. Use the web UI config page (`/config`) to change runtime settings. The database connection must be set before first run — see [Initial Setup](#initial-setup). The YAML format is subject to change in future updates.
+> The YAML file is application-managed. Use the web UI config page (`/config`) to change runtime settings. The database connection must be set before first run — see [Initial Setup](#initial-setup). The YAML format is subject to change between versions.
 
 ## Initial Setup
 
-The only setting that typically needs to be configured before first launch is the database connection. Create a minimal `shingocore.yaml`:
+The database connection is the only setting required before first launch. Create a minimal `shingocore.yaml`:
 
 ```yaml
 database:
@@ -20,7 +20,7 @@ database:
     sslmode: disable
 ```
 
-All other settings use sensible defaults and can be adjusted through the web UI after startup. See [PostgreSQL Setup](postgresql-setup.md) for server-side database configuration.
+All other settings have sensible defaults and can be adjusted through the web UI after startup. See [PostgreSQL Setup](postgresql-setup.md) for server-side database configuration.
 
 For SQLite (development/testing only):
 
@@ -59,7 +59,7 @@ Without a filter (`--log-debug`), all subsystems are logged.
 
 ## Runtime Configuration
 
-The fleet (RDS) and messaging (Kafka) settings can be changed at runtime through the web UI config page (`/config`). Changes are saved to the YAML file and the affected subsystem is hot-reloaded without restarting.
+Fleet (RDS) and messaging (Kafka) settings can be changed at runtime through the web UI config page (`/config`). Changes are saved to the YAML file and the affected subsystem is hot-reloaded without restart.
 
 ## Config File Reference
 

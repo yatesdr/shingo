@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -77,4 +78,48 @@ func (h *Handlers) ensureDefaultAdmin(db *store.DB) {
 		return
 	}
 	db.CreateAdminUser("admin", hash)
+}
+
+func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	data := map[string]any{
+		"Page": "login",
+	}
+	h.render(w, r, "login.html", data)
+}
+
+func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+
+	user, err := h.engine.DB().GetAdminUser(username)
+	if err != nil || !checkPassword(user.PasswordHash, password) {
+		data := map[string]any{
+			"Page":  "login",
+			"Error": "Invalid username or password",
+		}
+		h.render(w, r, "login.html", data)
+		return
+	}
+
+	session, _ := h.sessions.Get(r, sessionName)
+	session.Values["authenticated"] = true
+	session.Values["username"] = username
+	if err := session.Save(r, w); err != nil {
+		log.Printf("auth: session save error: %v", err)
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (h *Handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
+	session, _ := h.sessions.Get(r, sessionName)
+	session.Values["authenticated"] = false
+	session.Values["username"] = ""
+	session.Save(r, w)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
