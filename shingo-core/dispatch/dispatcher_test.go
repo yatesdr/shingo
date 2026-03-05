@@ -99,11 +99,11 @@ func testDB(t *testing.T) *store.DB {
 
 func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNode *store.Node, ps *store.PayloadStyle) {
 	t.Helper()
-	storageNode = &store.Node{Name: "STORAGE-A1", VendorLocation: "Loc-01", NodeType: "storage", Zone: "A", Capacity: 10, Enabled: true}
+	storageNode = &store.Node{Name: "STORAGE-A1", NodeType: "storage", Zone: "A", Capacity: 10, Enabled: true}
 	if err := db.CreateNode(storageNode); err != nil {
 		t.Fatalf("create storage node: %v", err)
 	}
-	lineNode = &store.Node{Name: "LINE1-IN", VendorLocation: "Loc-10", NodeType: "line_side", Capacity: 5, Enabled: true}
+	lineNode = &store.Node{Name: "LINE1-IN", NodeType: "line_side", Capacity: 5, Enabled: true}
 	if err := db.CreateNode(lineNode); err != nil {
 		t.Fatalf("create line node: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestFIFOInstanceSourceSelection(t *testing.T) {
 	storageNode, _, ps := setupTestData(t, db)
 
 	// Create another storage node
-	s2 := &store.Node{Name: "STORAGE-B1", VendorLocation: "Loc-02", NodeType: "storage", Capacity: 10, Enabled: true}
+	s2 := &store.Node{Name: "STORAGE-B1", NodeType: "storage", Capacity: 10, Enabled: true}
 	db.CreateNode(s2)
 
 	// Older available instance at storageNode

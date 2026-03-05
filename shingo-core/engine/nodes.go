@@ -35,10 +35,10 @@ func (e *Engine) GetNodeOccupancy() ([]OccupancyEntry, error) {
 		locMap[loc.ID] = loc.Occupied
 	}
 
-	nodeVendor := make(map[string]string, len(nodes))
+	nodeByName := make(map[string]string, len(nodes))
 	for _, n := range nodes {
-		if n.VendorLocation != "" {
-			nodeVendor[n.VendorLocation] = n.Name
+		if n.Name != "" {
+			nodeByName[n.Name] = n.Name
 		}
 	}
 
@@ -48,8 +48,8 @@ func (e *Engine) GetNodeOccupancy() ([]OccupancyEntry, error) {
 		e := OccupancyEntry{
 			LocationID:    loc.ID,
 			FleetOccupied: &loc.Occupied,
-			InShinGo:      nodeVendor[loc.ID] != "",
-			NodeName:      nodeVendor[loc.ID],
+			InShinGo:      nodeByName[loc.ID] != "",
+			NodeName:      nodeByName[loc.ID],
 		}
 		if !e.InShinGo {
 			e.Discrepancy = "fleet_only"
@@ -58,12 +58,12 @@ func (e *Engine) GetNodeOccupancy() ([]OccupancyEntry, error) {
 	}
 
 	for _, n := range nodes {
-		if n.VendorLocation == "" {
+		if n.Name == "" {
 			continue
 		}
-		if _, ok := locMap[n.VendorLocation]; !ok {
+		if _, ok := locMap[n.Name]; !ok {
 			results = append(results, OccupancyEntry{
-				LocationID:  n.VendorLocation,
+				LocationID:  n.Name,
 				NodeName:    n.Name,
 				InShinGo:    true,
 				Discrepancy: "shingo_only",
@@ -89,11 +89,10 @@ type NodesPageData struct {
 	NodeLabels     map[string]string
 	NodeInfo       map[string]*NodeSceneInfo
 	MapGroups      map[string][]*store.ScenePoint
-	NodeTypes      []*store.NodeType
-	SyntheticNodes []*store.Node
 	PayloadStyles  []*store.PayloadStyle
 	Edges          []store.EdgeRegistration
 	ChildCounts    map[int64]int
+	Depths         map[int64]int
 }
 
 // GetNodesPageData assembles all data for the nodes page.
@@ -139,15 +138,17 @@ func (e *Engine) GetNodesPageData() (*NodesPageData, error) {
 		}
 	}
 
-	nodeTypes, _ := e.db.ListNodeTypes()
-	syntheticNodes, _ := e.db.ListSyntheticNodes()
 	payloadStyles, _ := e.db.ListPayloadStyles()
 	edges, _ := e.db.ListEdges()
 
 	childCounts := make(map[int64]int)
+	depths := make(map[int64]int)
 	for _, n := range nodes {
 		if n.ParentID != nil {
 			childCounts[*n.ParentID]++
+			if d, err := e.db.GetSlotDepth(n.ID); err == nil {
+				depths[n.ID] = d
+			}
 		}
 	}
 
@@ -158,11 +159,10 @@ func (e *Engine) GetNodesPageData() (*NodesPageData, error) {
 		NodeLabels:     nodeLabels,
 		NodeInfo:       nodeInfo,
 		MapGroups:      mapGroups,
-		NodeTypes:      nodeTypes,
-		SyntheticNodes: syntheticNodes,
 		PayloadStyles:  payloadStyles,
 		Edges:          edges,
 		ChildCounts:    childCounts,
+		Depths:         depths,
 	}, nil
 }
 

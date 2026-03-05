@@ -55,7 +55,6 @@ func (db *DB) columnExists(table, column string) bool {
 // and renames payload_types/payloads to payload_styles/payload_instances.
 func (db *DB) migrateRenames() error {
 	renames := []struct{ table, oldCol, newCol string }{
-		{"nodes", "rds_location", "vendor_location"},
 		{"orders", "rds_order_id", "vendor_order_id"},
 		{"orders", "rds_state", "vendor_state"},
 		{"orders", "client_id", "station_id"},
@@ -129,9 +128,40 @@ func (db *DB) migrate() error {
 	if err := db.migrateNodeTypes(); err != nil {
 		return fmt.Errorf("migrate node types: %w", err)
 	}
+	db.migrateShallowLanes()
 	db.migratePayloadStyles()
+	db.migrateVendorLocation()
+	db.migrateIsSynthetic()
 	db.migrateLegacyCleanup()
 	return nil
+}
+
+// migrateVendorLocation consolidates vendor_location into name and drops the column.
+func (db *DB) migrateVendorLocation() {
+	if !db.columnExists("nodes", "vendor_location") {
+		return
+	}
+	// Copy vendor_location into name where name is empty but vendor_location is set
+	db.Exec(db.Q(`UPDATE nodes SET name = vendor_location WHERE (name = '' OR name IS NULL) AND vendor_location != ''`))
+
+	// SQLite doesn't support DROP COLUMN before 3.35 — use a rebuild.
+	// For Postgres, just drop.
+	switch db.driver {
+	case "sqlite":
+		// SQLite 3.35+ supports ALTER TABLE DROP COLUMN.
+		db.Exec(`ALTER TABLE nodes DROP COLUMN vendor_location`)
+	case "postgres":
+		db.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS vendor_location`)
+	}
+}
+
+// migrateIsSynthetic adds the is_synthetic column and populates it from node_types.
+func (db *DB) migrateIsSynthetic() {
+	if !db.columnExists("nodes", "is_synthetic") {
+		db.Exec(`ALTER TABLE nodes ADD COLUMN is_synthetic INTEGER NOT NULL DEFAULT 0`)
+	}
+	// Populate from node_types for existing rows
+	db.Exec(db.Q(`UPDATE nodes SET is_synthetic = 1 WHERE node_type_id IN (SELECT id FROM node_types WHERE is_synthetic = 1) AND is_synthetic = 0`))
 }
 
 // migrateLegacyCleanup drops legacy tables and columns from existing databases.
@@ -203,42 +233,87 @@ func (db *DB) migrateNodeTypes() error {
 		}
 	}
 
-	// Rename old 3-letter node type codes to new readable codes
-	for _, rename := range [][2]string{{"SUP", "SMKT"}, {"LAN", "LANE"}, {"SHF", "SHUF"}} {
+	// Rename old node type codes to canonical codes
+	for _, rename := range [][2]string{
+		{"SUP", "SMKT"}, {"LAN", "LANE"}, {"SHF", "SHUF"},
+		{"CHG", "CHRG"}, {"OFL", "OVFL"}, {"STN", "STAG"},
+		{"SMKT", "NGRP"},
+	} {
 		db.Exec(db.Q(`UPDATE node_types SET code=? WHERE code=?`), rename[1], rename[0])
 	}
 
+	// Remove legacy Storage type — reassign any nodes using it to nil
+	db.Exec(db.Q(`UPDATE nodes SET node_type_id = NULL WHERE node_type_id IN (SELECT id FROM node_types WHERE code = 'STG')`))
+	db.Exec(db.Q(`DELETE FROM node_types WHERE code = 'STG'`))
+
+	// Only structural (synthetic) types are needed — physical nodes don't require a type.
 	seeds := []struct {
 		code, name, desc string
-		synthetic        bool
 	}{
-		{"STG", "Storage", "General storage location", false},
-		{"LSL", "Lineside", "Line-side delivery point", false},
-		{"SMKT", "Supermarket", "Supermarket zone (synthetic parent)", true},
-		{"OFL", "Overflow", "Overflow storage area", false},
-		{"STN", "Staging", "Staging area", false},
-		{"CHG", "Charging", "Robot charging station", false},
-		{"LANE", "Lane", "Supermarket lane (groups depth-ordered slots)", true},
-		{"SHUF", "Shuffle Row", "Temporary shuffle staging row", true},
+		{"LANE", "Lane", "Lane (groups depth-ordered slots)"},
+		{"NGRP", "Node Group", "Node group (synthetic parent for lanes and direct nodes)"},
 	}
 	for _, s := range seeds {
-		synVal := 0
-		if s.synthetic {
-			synVal = 1
-		}
-		db.Exec(db.Q(`INSERT INTO node_types (code, name, description, is_synthetic) VALUES (?, ?, ?, ?) ON CONFLICT (code) DO NOTHING`),
-			s.code, s.name, s.desc, synVal)
+		db.Exec(db.Q(`INSERT INTO node_types (code, name, description, is_synthetic) VALUES (?, ?, ?, 1) ON CONFLICT (code) DO NOTHING`),
+			s.code, s.name, s.desc)
 	}
 
-	typeMap := map[string]string{
-		"storage":   "STG",
-		"line_side": "LSL",
-		"staging":   "STN",
-		"charging":  "CHG",
+	// Clear node_type_id from physical nodes — types are only for synthetic nodes
+	db.Exec(db.Q(`UPDATE nodes SET node_type_id = NULL WHERE node_type_id IN (SELECT id FROM node_types WHERE is_synthetic = 0)`))
+
+	// Remove legacy SHUF type — reassign any SHUF nodes to LANE
+	var laneTypeID int64
+	if row := db.QueryRow(db.Q(`SELECT id FROM node_types WHERE code='LANE'`)); row != nil {
+		row.Scan(&laneTypeID)
 	}
-	for textType, code := range typeMap {
-		db.Exec(db.Q(`UPDATE nodes SET node_type_id = (SELECT id FROM node_types WHERE code = ?) WHERE node_type = ? AND node_type_id IS NULL`), code, textType)
+	if laneTypeID > 0 {
+		db.Exec(db.Q(`UPDATE nodes SET node_type_id = ? WHERE node_type_id IN (SELECT id FROM node_types WHERE code = 'SHUF')`), laneTypeID)
 	}
+	db.Exec(db.Q(`DELETE FROM node_types WHERE code = 'SHUF'`))
 
 	return nil
+}
+
+// migrateShallowLanes dissolves shallow lanes into direct children of the parent group.
+// Finds LANE nodes with shallow=true property, reparents their physical children
+// to the grandparent NGRP, and deletes the empty shallow lane nodes.
+func (db *DB) migrateShallowLanes() {
+	// Find all LANE nodes with shallow=true property
+	rows, err := db.Query(db.Q(`SELECT np.node_id FROM node_properties np JOIN nodes n ON n.id = np.node_id WHERE np.key = 'shallow' AND np.value = 'true'`))
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var shallowLaneIDs []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			shallowLaneIDs = append(shallowLaneIDs, id)
+		}
+	}
+
+	for _, laneID := range shallowLaneIDs {
+		lane, err := db.GetNode(laneID)
+		if err != nil || lane.ParentID == nil {
+			continue
+		}
+		groupID := *lane.ParentID
+
+		// Reparent physical children to the group
+		children, _ := db.ListChildNodes(laneID)
+		for _, child := range children {
+			if !child.IsSynthetic {
+				db.Exec(db.Q(`UPDATE nodes SET parent_id=?, updated_at=datetime('now','localtime') WHERE id=?`), groupID, child.ID)
+				db.DeleteNodeProperty(child.ID, "depth")
+				db.DeleteNodeProperty(child.ID, "role")
+			}
+		}
+
+		// Delete the shallow lane node
+		db.Exec(db.Q(`DELETE FROM node_properties WHERE node_id=?`), laneID)
+		db.Exec(db.Q(`DELETE FROM node_stations WHERE node_id=?`), laneID)
+		db.Exec(db.Q(`DELETE FROM node_payload_styles WHERE node_id=?`), laneID)
+		db.Exec(db.Q(`DELETE FROM nodes WHERE id=?`), laneID)
+	}
 }

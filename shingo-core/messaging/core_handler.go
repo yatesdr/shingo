@@ -163,9 +163,13 @@ func (h *CoreHandler) handleNodeListRequest(env *protocol.Envelope) {
 		log.Printf("core_handler: list nodes for %s: %v", stationID, err)
 		return
 	}
-	infos := make([]protocol.NodeInfo, len(nodes))
-	for i, n := range nodes {
-		infos[i] = protocol.NodeInfo{Name: n.Name, NodeType: n.NodeType}
+	// Exclude child nodes of synthetic parents — they are managed by core only
+	var infos []protocol.NodeInfo
+	for _, n := range nodes {
+		if n.ParentID != nil {
+			continue
+		}
+		infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeType})
 	}
 	h.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{Nodes: infos})
 	log.Printf("core_handler: sent node list (%d nodes) to %s", len(infos), env.Src.Station)

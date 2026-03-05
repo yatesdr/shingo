@@ -297,40 +297,27 @@ func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]strin
 func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted int) {
 	// Look up default storage node type ID
 	var storageTypeID *int64
-	if nt, err := e.db.GetNodeTypeByCode("STG"); err == nil {
+	if nt, err := e.db.GetNodeTypeByCode("STAG"); err == nil {
 		storageTypeID = &nt.ID
 	}
 
-	// Create nodes for locations not yet in DB.
-	// Check both vendor_location and name to avoid duplicates.
+	// Create nodes for locations not yet in DB (matched by name).
 	for instanceName, areaName := range locationSet {
-		if existing, err := e.db.GetNodeByVendorLocation(instanceName); err == nil {
-			// Node already mapped to this vendor location — update zone if needed
+		if existing, err := e.db.GetNodeByName(instanceName); err == nil {
+			// Node exists — update zone if needed
 			if existing.Zone != areaName && areaName != "" {
 				existing.Zone = areaName
 				e.db.UpdateNode(existing)
 			}
 			continue
 		}
-		if existing, err := e.db.GetNodeByName(instanceName); err == nil {
-			// Node exists by name but has no/different vendor_location — link it
-			if existing.VendorLocation == "" || existing.VendorLocation != instanceName {
-				existing.VendorLocation = instanceName
-				if existing.Zone == "" {
-					existing.Zone = areaName
-				}
-				e.db.UpdateNode(existing)
-			}
-			continue
-		}
 		node := &store.Node{
-			Name:           instanceName,
-			VendorLocation: instanceName,
-			NodeType:       "storage",
-			NodeTypeID:     storageTypeID,
-			Zone:           areaName,
-			Capacity:       1,
-			Enabled:        true,
+			Name:       instanceName,
+			NodeType:   "storage",
+			NodeTypeID: storageTypeID,
+			Zone:       areaName,
+			Capacity:   1,
+			Enabled:    true,
 		}
 		if err := e.db.CreateNode(node); err != nil {
 			continue
@@ -342,15 +329,15 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 	}
 
 	// Delete physical nodes not present in current scene.
-	// Skip synthetic nodes (supermarkets, lanes, shuffle rows), nodes
-	// without a vendor_location, and child nodes (part of a hierarchy)
-	// — these are managed by shingo, not RDS.
+	// Skip synthetic nodes (node groups, lanes), nodes
+	// without a name, and child nodes (part of a hierarchy)
+	// — these are managed by shingo, not the fleet.
 	nodes, _ := e.db.ListNodes()
 	for _, n := range nodes {
-		if n.IsSynthetic || n.VendorLocation == "" || n.ParentID != nil {
+		if n.IsSynthetic || n.Name == "" || n.ParentID != nil {
 			continue
 		}
-		if _, inScene := locationSet[n.VendorLocation]; !inScene {
+		if _, inScene := locationSet[n.Name]; !inScene {
 			e.db.DeleteNode(n.ID)
 			e.Events.Emit(Event{Type: EventNodeUpdated, Payload: NodeUpdatedEvent{
 				NodeID: n.ID, NodeName: n.Name, Action: "deleted",
@@ -369,10 +356,10 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 func (e *Engine) UpdateNodeZones(locationSet map[string]string, overwrite bool) {
 	nodes, _ := e.db.ListNodes()
 	for _, n := range nodes {
-		if n.VendorLocation == "" {
+		if n.Name == "" {
 			continue
 		}
-		zone, ok := locationSet[n.VendorLocation]
+		zone, ok := locationSet[n.Name]
 		if !ok {
 			continue
 		}

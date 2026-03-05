@@ -76,11 +76,10 @@ func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"NodeInfo":       pd.NodeInfo,
 		"MapGroups":      pd.MapGroups,
 		"MapClassOrder":  []string{"ActionPoint", "ChargePoint", "LocationMark"},
-		"NodeTypes":      pd.NodeTypes,
-		"SyntheticNodes": pd.SyntheticNodes,
 		"PayloadStyles":  pd.PayloadStyles,
 		"Edges":          pd.Edges,
 		"ChildCounts":    pd.ChildCounts,
+		"Depths":         pd.Depths,
 	}
 	h.render(w, r, "nodes.html", data)
 }
@@ -93,12 +92,11 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 
 	capacity, _ := strconv.Atoi(r.FormValue("capacity"))
 	node := &store.Node{
-		Name:           r.FormValue("name"),
-		VendorLocation: r.FormValue("vendor_location"),
-		NodeType:       r.FormValue("node_type"),
-		Zone:           r.FormValue("zone"),
-		Capacity:       capacity,
-		Enabled:        r.FormValue("enabled") == "on",
+		Name:     r.FormValue("name"),
+		NodeType: r.FormValue("node_type"),
+		Zone:     r.FormValue("zone"),
+		Capacity: capacity,
+		Enabled:  r.FormValue("enabled") == "on",
 	}
 
 	if ntID, err := strconv.ParseInt(r.FormValue("node_type_id"), 10, 64); err == nil && ntID > 0 {
@@ -156,7 +154,6 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 
 	capacity, _ := strconv.Atoi(r.FormValue("capacity"))
 	node.Name = r.FormValue("name")
-	node.VendorLocation = r.FormValue("vendor_location")
 	node.NodeType = r.FormValue("node_type")
 	node.Zone = r.FormValue("zone")
 	node.Capacity = capacity
@@ -265,33 +262,6 @@ func (h *Handlers) apiNodeOccupancy(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, results)
 }
 
-func (h *Handlers) apiNodeTestOrder(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		FromNodeID int64 `json:"from_node_id"`
-		ToNodeID   int64 `json:"to_node_id"`
-	}
-	if !h.parseJSON(w, r, &req) {
-		return
-	}
-
-	result, err := h.engine.CreateDirectOrder(engine.DirectOrderRequest{
-		FromNodeID: req.FromNodeID,
-		ToNodeID:   req.ToNodeID,
-		StationID:  "core-node-test",
-		Desc:       "node test order from nodes page",
-	})
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	h.jsonOK(w, map[string]any{
-		"order_id": result.OrderID,
-		"from":     result.FromNode,
-		"to":       result.ToNode,
-	})
-}
-
 // apiNodeDetail returns extended node info (stations, payload types, properties, children).
 func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
@@ -310,17 +280,23 @@ func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 	payloadStyles, _ := h.engine.DB().ListPayloadStylesForNode(id)
 	props, _ := h.engine.DB().ListNodeProperties(id)
 
+	// Effective (inherited) values for child nodes
+	effectiveStations, _ := h.engine.DB().GetEffectiveStations(id)
+	effectiveStyles, _ := h.engine.DB().GetEffectivePayloadStyles(id)
+
 	var children []*store.Node
 	if node.IsSynthetic {
 		children, _ = h.engine.DB().ListChildNodes(id)
 	}
 
 	h.jsonOK(w, map[string]any{
-		"node":          node,
-		"stations":      stations,
-		"payload_styles": payloadStyles,
-		"properties":    props,
-		"children":      children,
+		"node":              node,
+		"stations":          stations,
+		"payload_styles":    payloadStyles,
+		"properties":        props,
+		"children":          children,
+		"effective_stations": effectiveStations,
+		"effective_styles":   effectiveStyles,
 	})
 }
 

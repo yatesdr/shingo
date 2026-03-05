@@ -18,7 +18,7 @@ type NodeResolver interface {
 }
 
 // DefaultResolver resolves synthetic nodes using the database.
-// For SMKT (supermarket) nodes, it delegates to the SupermarketResolver for two-level resolution.
+// For NGRP (node group) nodes, it delegates to the GroupResolver for two-level resolution.
 type DefaultResolver struct {
 	DB       *store.DB
 	LaneLock *LaneLock
@@ -34,23 +34,14 @@ func (r *DefaultResolver) Resolve(syntheticNode *store.Node, orderType string, s
 		return nil, fmt.Errorf("synthetic node %s has no children", syntheticNode.Name)
 	}
 
-	// Delegate to supermarket resolver if this is a SMKT with LANE children
-	if syntheticNode.NodeTypeCode == "SMKT" {
-		hasLanes := false
-		for _, c := range children {
-			if c.NodeTypeCode == "LANE" {
-				hasLanes = true
-				break
-			}
-		}
-		if hasLanes {
-			sr := &SupermarketResolver{DB: r.DB, LaneLock: r.LaneLock}
-			switch orderType {
-			case OrderTypeRetrieve:
-				return sr.ResolveRetrieve(syntheticNode, styleID)
-			case OrderTypeStore:
-				return sr.ResolveStore(syntheticNode, styleID)
-			}
+	// Delegate to group resolver for NGRP nodes
+	if syntheticNode.NodeTypeCode == "NGRP" {
+		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock}
+		switch orderType {
+		case OrderTypeRetrieve:
+			return gr.ResolveRetrieve(syntheticNode, styleID)
+		case OrderTypeStore:
+			return gr.ResolveStore(syntheticNode, styleID)
 		}
 	}
 

@@ -5,7 +5,7 @@ import "testing"
 func TestNodeCRUD(t *testing.T) {
 	db := testDB(t)
 
-	n := &Node{Name: "STORAGE-A1", VendorLocation: "Loc-01", NodeType: "storage", Zone: "A", Capacity: 10, Enabled: true}
+	n := &Node{Name: "STORAGE-A1", NodeType: "storage", Zone: "A", Capacity: 10, Enabled: true}
 	if err := db.CreateNode(n); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -19,9 +19,6 @@ func TestNodeCRUD(t *testing.T) {
 	}
 	if got.Name != "STORAGE-A1" {
 		t.Errorf("Name = %q, want %q", got.Name, "STORAGE-A1")
-	}
-	if got.VendorLocation != "Loc-01" {
-		t.Errorf("VendorLocation = %q, want %q", got.VendorLocation, "Loc-01")
 	}
 	if got.Capacity != 10 {
 		t.Errorf("Capacity = %d, want 10", got.Capacity)
@@ -54,7 +51,7 @@ func TestNodeCRUD(t *testing.T) {
 	}
 
 	// List
-	db.CreateNode(&Node{Name: "LINE1-IN", VendorLocation: "Loc-02", NodeType: "line_side", Enabled: true})
+	db.CreateNode(&Node{Name: "LINE1-IN", NodeType: "line_side", Enabled: true})
 	nodes, err := db.ListNodes()
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -83,46 +80,43 @@ func TestLaneQueries(t *testing.T) {
 	db := testDB(t)
 
 	// Create node types
-	supType := &NodeType{Code: "SMKT", Name: "Supermarket", IsSynthetic: true}
-	db.CreateNodeType(supType)
+	grpType := &NodeType{Code: "NGRP", Name: "Node Group", IsSynthetic: true}
+	db.CreateNodeType(grpType)
 
 	lanType := &NodeType{Code: "LANE", Name: "Lane", IsSynthetic: true}
 	db.CreateNodeType(lanType)
 
-	stgType := &NodeType{Code: "STG", Name: "Storage", IsSynthetic: false}
-	db.CreateNodeType(stgType)
-
-	// Create SMKT node
-	supNode := &Node{
-		Name:           "SUP-01",
-		VendorLocation: "Loc-SUP",
-		NodeType:       "storage",
-		Enabled:        true,
-		NodeTypeID:     &supType.ID,
+	// Create NGRP node
+	grpNode := &Node{
+		Name:        "GRP-01",
+		NodeType:    "storage",
+		IsSynthetic: true,
+		Enabled:     true,
+		NodeTypeID:  &grpType.ID,
 	}
-	db.CreateNode(supNode)
+	db.CreateNode(grpNode)
 
-	// Create LANE node as child of SMKT
+	// Create LANE node as child of NGRP
 	lanNode := &Node{
-		Name:           "LAN-01",
-		VendorLocation: "Loc-LAN",
-		NodeType:       "storage",
-		Enabled:        true,
-		NodeTypeID:     &lanType.ID,
-		ParentID:       &supNode.ID,
+		Name:        "LAN-01",
+		NodeType:    "storage",
+		IsSynthetic: true,
+		Enabled:     true,
+		NodeTypeID:  &lanType.ID,
+		ParentID:    &grpNode.ID,
 	}
 	db.CreateNode(lanNode)
 
 	// Create 3 slot nodes as children of LANE
-	slot1 := &Node{Name: "SLOT-01", VendorLocation: "Loc-S1", NodeType: "storage", Capacity: 1, Enabled: true, ParentID: &lanNode.ID}
+	slot1 := &Node{Name: "SLOT-01", NodeType: "storage", Capacity: 1, Enabled: true, ParentID: &lanNode.ID}
 	db.CreateNode(slot1)
 	db.SetNodeProperty(slot1.ID, "depth", "1")
 
-	slot2 := &Node{Name: "SLOT-02", VendorLocation: "Loc-S2", NodeType: "storage", Capacity: 1, Enabled: true, ParentID: &lanNode.ID}
+	slot2 := &Node{Name: "SLOT-02", NodeType: "storage", Capacity: 1, Enabled: true, ParentID: &lanNode.ID}
 	db.CreateNode(slot2)
 	db.SetNodeProperty(slot2.ID, "depth", "2")
 
-	slot3 := &Node{Name: "SLOT-03", VendorLocation: "Loc-S3", NodeType: "storage", Capacity: 1, Enabled: true, ParentID: &lanNode.ID}
+	slot3 := &Node{Name: "SLOT-03", NodeType: "storage", Capacity: 1, Enabled: true, ParentID: &lanNode.ID}
 	db.CreateNode(slot3)
 	db.SetNodeProperty(slot3.ID, "depth", "3")
 

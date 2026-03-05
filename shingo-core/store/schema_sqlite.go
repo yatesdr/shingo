@@ -4,8 +4,8 @@ const schemaSQLite = `
 CREATE TABLE IF NOT EXISTS nodes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL UNIQUE,
-    vendor_location TEXT NOT NULL DEFAULT '',
     node_type   TEXT NOT NULL DEFAULT 'storage',
+    is_synthetic INTEGER NOT NULL DEFAULT 0,
     zone        TEXT NOT NULL DEFAULT '',
     capacity    INTEGER NOT NULL DEFAULT 0,
     enabled     INTEGER NOT NULL DEFAULT 1,

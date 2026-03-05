@@ -120,7 +120,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 
 			r.Post("/nodes/properties/set", h.apiNodePropertySet)
 			r.Post("/nodes/properties/delete", h.apiNodePropertyDelete)
-			r.Post("/nodes/test-order", h.apiNodeTestOrder)
 
 			r.Get("/test-orders", h.apiTestOrdersList)
 			r.Get("/test-orders/detail", h.apiTestOrderDetail)
@@ -145,9 +144,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			r.Post("/instances/bulk-register", h.apiBulkRegisterInstances)
 			r.Get("/instances/events", h.apiListInstanceEvents)
 
-			r.Post("/supermarket/create", h.apiCreateSupermarket)
-			r.Get("/supermarket/layout", h.apiGetSupermarketLayout)
-			r.Post("/supermarket/delete", h.apiDeleteSupermarket)
+			r.Post("/nodegroup/create", h.apiCreateNodeGroup)
+			r.Get("/nodegroup/layout", h.apiGetGroupLayout)
+			r.Post("/nodegroup/delete", h.apiDeleteNodeGroup)
+			r.Post("/nodegroup/add-lane", h.apiAddLane)
+			r.Post("/nodegroup/reorder-lane", h.apiReorderLaneSlots)
+
+			r.Post("/nodes/reparent", h.apiReparentNode)
 
 			r.Post("/corrections/create", h.apiCreateCorrection)
 
@@ -190,11 +193,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Post("/nodes/delete", h.handleNodeDelete)
 		r.Post("/nodes/sync-fleet", h.handleNodeSyncFleet)
 		r.Post("/nodes/sync-scene", h.handleSceneSync)
-
-		// Node type management
-		r.Post("/node-types/create", h.handleNodeTypeCreate)
-		r.Post("/node-types/update", h.handleNodeTypeUpdate)
-		r.Post("/node-types/delete", h.handleNodeTypeDelete)
 
 		// Payload style management
 		r.Post("/payload-styles/create", h.handlePayloadStyleCreate)

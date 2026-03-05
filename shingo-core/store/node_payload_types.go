@@ -36,6 +36,29 @@ func (db *DB) ListNodesForPayloadStyle(styleID int64) ([]*Node, error) {
 	return scanNodes(rows)
 }
 
+// GetEffectivePayloadStyles returns payload styles for a node, walking up the parent
+// chain until a non-empty set is found. Returns nil (all styles) if no ancestor has styles.
+func (db *DB) GetEffectivePayloadStyles(nodeID int64) ([]*PayloadStyle, error) {
+	cur := nodeID
+	for {
+		styles, err := db.ListPayloadStylesForNode(cur)
+		if err != nil {
+			return nil, err
+		}
+		if len(styles) > 0 {
+			return styles, nil
+		}
+		node, err := db.GetNode(cur)
+		if err != nil {
+			return nil, nil
+		}
+		if node.ParentID == nil {
+			return nil, nil
+		}
+		cur = *node.ParentID
+	}
+}
+
 // SetNodePayloadStyles replaces all payload style assignments for a node.
 func (db *DB) SetNodePayloadStyles(nodeID int64, styleIDs []int64) error {
 	if _, err := db.Exec(db.Q(`DELETE FROM node_payload_styles WHERE node_id=?`), nodeID); err != nil {

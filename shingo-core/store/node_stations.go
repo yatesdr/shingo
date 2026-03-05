@@ -29,23 +29,44 @@ func (db *DB) ListStationsForNode(nodeID int64) ([]string, error) {
 	return stations, rows.Err()
 }
 
-// ListNodesForStation returns nodes assigned to a station, including children
-// of synthetic nodes assigned to the station (inherited access).
+// ListNodesForStation returns nodes directly assigned to a station.
+// Child nodes of synthetic parents are excluded — they are managed by core only.
 func (db *DB) ListNodesForStation(stationID string) ([]*Node, error) {
 	rows, err := db.Query(db.Q(fmt.Sprintf(`
 		SELECT %s %s
 		WHERE n.id IN (
 			SELECT ns.node_id FROM node_stations ns WHERE ns.station_id = ?
 		)
-		OR n.parent_id IN (
-			SELECT ns.node_id FROM node_stations ns WHERE ns.station_id = ?
-		)
-		ORDER BY n.name`, nodeSelectCols, nodeFromClause)), stationID, stationID)
+		AND n.parent_id IS NULL
+		ORDER BY n.name`, nodeSelectCols, nodeFromClause)), stationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	return scanNodes(rows)
+}
+
+// GetEffectiveStations returns stations for a node, walking up the parent chain
+// until a non-empty set is found. Returns nil (all access) if no ancestor has stations.
+func (db *DB) GetEffectiveStations(nodeID int64) ([]string, error) {
+	cur := nodeID
+	for {
+		stations, err := db.ListStationsForNode(cur)
+		if err != nil {
+			return nil, err
+		}
+		if len(stations) > 0 {
+			return stations, nil
+		}
+		node, err := db.GetNode(cur)
+		if err != nil {
+			return nil, nil
+		}
+		if node.ParentID == nil {
+			return nil, nil
+		}
+		cur = *node.ParentID
+	}
 }
 
 // SetNodeStations replaces all station assignments for a node.

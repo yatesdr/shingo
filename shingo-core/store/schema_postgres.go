@@ -4,8 +4,8 @@ const schemaPostgres = `
 CREATE TABLE IF NOT EXISTS nodes (
     id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,
-    vendor_location TEXT NOT NULL DEFAULT '',
     node_type    TEXT NOT NULL DEFAULT 'storage',
+    is_synthetic INTEGER NOT NULL DEFAULT 0,
     zone         TEXT NOT NULL DEFAULT '',
     capacity     INTEGER NOT NULL DEFAULT 0,
     enabled      BOOLEAN NOT NULL DEFAULT TRUE,

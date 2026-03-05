@@ -66,6 +66,12 @@ func (h *Handlers) apiTestCommandSubmit(w http.ResponseWriter, r *http.Request) 
 			h.jsonError(w, "container_name is required", http.StatusBadRequest)
 			return
 		}
+	case "move":
+		if req.Location == "" {
+			h.jsonError(w, "location is required for move command", http.StatusBadRequest)
+			return
+		}
+		// robot_id is optional for move — fleet auto-assigns
 	case "jack", "unjack":
 		if req.ConfigID == "" {
 			h.jsonError(w, "config_id is required for jack/unjack commands", http.StatusBadRequest)

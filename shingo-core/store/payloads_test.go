@@ -109,7 +109,7 @@ func TestPayloadInstanceCRUD(t *testing.T) {
 	ps := &PayloadStyle{Name: "Bin-X", Code: "BIN-X", FormFactor: "bin", UOPCapacity: 200}
 	db.CreatePayloadStyle(ps)
 
-	node := &Node{Name: "STORAGE-B1", VendorLocation: "Loc-10", NodeType: "storage", Enabled: true}
+	node := &Node{Name: "STORAGE-B1", NodeType: "storage", Enabled: true}
 	db.CreateNode(node)
 
 	// Create instance
@@ -219,9 +219,9 @@ func TestPayloadInstanceLifecycle(t *testing.T) {
 	ps := &PayloadStyle{Name: "Crate-Y", Code: "CRATE-Y", FormFactor: "crate", UOPCapacity: 100}
 	db.CreatePayloadStyle(ps)
 
-	node1 := &Node{Name: "STORE-1", VendorLocation: "Loc-20", NodeType: "storage", Enabled: true}
+	node1 := &Node{Name: "STORE-1", NodeType: "storage", Enabled: true}
 	db.CreateNode(node1)
-	node2 := &Node{Name: "LINE-1", VendorLocation: "Loc-21", NodeType: "line_side", Enabled: true}
+	node2 := &Node{Name: "LINE-1", NodeType: "line_side", Enabled: true}
 	db.CreateNode(node2)
 
 	inst := &PayloadInstance{StyleID: ps.ID, NodeID: &node1.ID, TagID: "TAG-100", Status: "available", UOPRemaining: 100}
@@ -286,7 +286,7 @@ func TestInstanceEventsCRUD(t *testing.T) {
 	ps := &PayloadStyle{Name: "Box-Z", Code: "BOX-Z", FormFactor: "box", UOPCapacity: 30}
 	db.CreatePayloadStyle(ps)
 
-	node := &Node{Name: "STORE-EVT", VendorLocation: "Loc-30", NodeType: "storage", Enabled: true}
+	node := &Node{Name: "STORE-EVT", NodeType: "storage", Enabled: true}
 	db.CreateNode(node)
 
 	inst := &PayloadInstance{StyleID: ps.ID, NodeID: &node.ID, TagID: "TAG-200", Status: "available", UOPRemaining: 30}

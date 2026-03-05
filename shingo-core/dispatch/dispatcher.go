@@ -125,10 +125,10 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, 
 	var source *store.PayloadInstance
 	var sourceNode *store.Node
 
-	// Try supermarket-aware resolution if a pickup node is specified and is a SMKT
+	// Try group-aware resolution if a pickup node is specified and is an NGRP
 	if order.PickupNode != "" && d.resolver != nil {
 		pickupNode, err := d.db.GetNodeByName(order.PickupNode)
-		if err == nil && pickupNode.IsSynthetic && pickupNode.NodeTypeCode == "SMKT" {
+		if err == nil && pickupNode.IsSynthetic && pickupNode.NodeTypeCode == "NGRP" {
 			result, err := d.resolver.Resolve(pickupNode, OrderTypeRetrieve, order.StyleID)
 			if err != nil {
 				// Check if buried — trigger reshuffle
@@ -138,8 +138,8 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, 
 					d.handleBuriedReshuffle(order, env, buriedErr)
 					return
 				}
-				d.dbg("retrieve: supermarket resolution failed for %s: %v", order.PickupNode, err)
-				d.failOrder(order, env, "no_source", fmt.Sprintf("no source in supermarket %s: %v", order.PickupNode, err))
+				d.dbg("retrieve: node group resolution failed for %s: %v", order.PickupNode, err)
+				d.failOrder(order, env, "no_source", fmt.Sprintf("no source in node group %s: %v", order.PickupNode, err))
 				return
 			}
 			source = result.Instance
@@ -191,10 +191,10 @@ func (d *Dispatcher) handleBuriedReshuffle(order *store.Order, env *protocol.Env
 		return
 	}
 
-	// Find the supermarket (parent of lane)
+	// Find the group (parent of lane)
 	lane, err := d.db.GetNode(buried.LaneID)
 	if err != nil || lane.ParentID == nil {
-		d.failOrder(order, env, "reshuffle_error", "cannot determine supermarket for lane")
+		d.failOrder(order, env, "reshuffle_error", "cannot determine node group for lane")
 		return
 	}
 
@@ -324,13 +324,13 @@ func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope,
 	req := fleet.TransportOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,
-		FromLoc:    sourceNode.VendorLocation,
-		ToLoc:      destNode.VendorLocation,
+		FromLoc:    sourceNode.Name,
+		ToLoc:      destNode.Name,
 		Priority:   order.Priority,
 	}
 
-	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s(%s) to=%s(%s) priority=%d",
-		order.ID, vendorOrderID, sourceNode.Name, sourceNode.VendorLocation, destNode.Name, destNode.VendorLocation, order.Priority)
+	d.dbg("fleet dispatch: order=%d vendor_id=%s from=%s to=%s priority=%d",
+		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, order.Priority)
 
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
 		log.Printf("dispatch: fleet create order failed: %v", err)
@@ -360,13 +360,13 @@ func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *st
 	req := fleet.TransportOrderRequest{
 		OrderID:    vendorOrderID,
 		ExternalID: order.EdgeUUID,
-		FromLoc:    sourceNode.VendorLocation,
-		ToLoc:      destNode.VendorLocation,
+		FromLoc:    sourceNode.Name,
+		ToLoc:      destNode.Name,
 		Priority:   order.Priority,
 	}
 
-	d.dbg("fleet dispatch (direct): order=%d vendor_id=%s from=%s(%s) to=%s(%s)",
-		order.ID, vendorOrderID, sourceNode.Name, sourceNode.VendorLocation, destNode.Name, destNode.VendorLocation)
+	d.dbg("fleet dispatch (direct): order=%d vendor_id=%s from=%s to=%s",
+		order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
 		log.Printf("dispatch: fleet create order failed: %v", err)

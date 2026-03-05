@@ -4,237 +4,17 @@
     <h1>Nodes</h1>
     {{if .Authenticated}}
     <div class="flex gap-1">
+      <button class="btn btn-primary" onclick="openNgrpModal()">Add Node Group</button>
       <form method="POST" action="/nodes/sync-fleet" style="display:inline" onsubmit="return confirm('Sync all nodes and scene data from fleet?')">
-        <button type="submit" class="btn btn-primary">Sync from Fleet</button>
+        <button type="submit" class="btn">Sync from Fleet</button>
       </form>
       <button class="btn" onclick="checkOccupancy()">Check Occupancy</button>
     </div>
     {{end}}
   </div>
 
-  {{if .Authenticated}}
-  <div class="accordion mb-2" id="nt-accordion">
-    <button class="accordion-toggle" onclick="document.getElementById('nt-accordion').classList.toggle('open')">
-      Manage Node Types <span class="text-muted">({{len .NodeTypes}})</span>
-    </button>
-    <div class="accordion-body">
-      <div class="card mb-1">
-        <h4>Add Node Type</h4>
-        <form method="POST" action="/node-types/create">
-          <div class="grid grid-2">
-            <div class="form-group">
-              <label>Code</label>
-              <input type="text" name="code" required placeholder="e.g. STG" maxlength="10" style="text-transform:uppercase">
-            </div>
-            <div class="form-group">
-              <label>Name</label>
-              <input type="text" name="name" required placeholder="e.g. Storage">
-            </div>
-            <div class="form-group">
-              <label>Description</label>
-              <input type="text" name="description" placeholder="Optional description">
-            </div>
-            <div class="form-group">
-              <label>&nbsp;</label>
-              <label><input type="checkbox" name="is_synthetic"> Synthetic (group node)</label>
-            </div>
-          </div>
-          <button type="submit" class="btn btn-primary btn-sm">Create Node Type</button>
-        </form>
-      </div>
-      {{if .NodeTypes}}
-      <table>
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Name</th>
-            <th>Description</th>
-            <th>Synthetic</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{range .NodeTypes}}
-          <tr>
-            <td><strong>{{.Code}}</strong></td>
-            <td>{{.Name}}</td>
-            <td>{{.Description}}</td>
-            <td>{{if .IsSynthetic}}Yes{{else}}No{{end}}</td>
-            <td>
-              <button class="btn btn-sm" onclick="editNodeType({{.ID}}, '{{.Code}}', '{{.Name}}', '{{.Description}}', {{.IsSynthetic}})">Edit</button>
-              <form method="POST" action="/node-types/delete" style="display:inline" onsubmit="return confirm('Delete node type {{.Code}}?')">
-                <input type="hidden" name="id" value="{{.ID}}">
-                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-              </form>
-            </td>
-          </tr>
-          {{end}}
-        </tbody>
-      </table>
-      {{else}}
-      <p class="text-muted">No node types defined yet.</p>
-      {{end}}
-    </div>
-  </div>
-  <div class="accordion mb-2" id="create-node-accordion">
-    <button class="accordion-toggle" onclick="document.getElementById('create-node-accordion').classList.toggle('open')">
-      Create Node
-    </button>
-    <div class="accordion-body">
-      <div class="card">
-        <form method="POST" action="/nodes/create">
-          <div class="grid grid-2">
-            <div class="form-group">
-              <label>Name</label>
-              <input type="text" name="name" required placeholder="e.g. STORAGE-A1">
-            </div>
-            <div class="form-group">
-              <label>Vendor Location</label>
-              <input type="text" name="vendor_location" placeholder="Fleet location ID">
-            </div>
-            <div class="form-group">
-              <label>Node Type (legacy)</label>
-              <input type="text" name="node_type" value="storage" placeholder="storage, line_side, etc.">
-            </div>
-            <div class="form-group">
-              <label>Node Type</label>
-              <select name="node_type_id">
-                <option value="">-- None --</option>
-                {{range .NodeTypes}}
-                <option value="{{.ID}}">{{.Code}} - {{.Name}}{{if .IsSynthetic}} (Synthetic){{end}}</option>
-                {{end}}
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Parent (Synthetic)</label>
-              <select name="parent_id">
-                <option value="">-- None --</option>
-                {{range .SyntheticNodes}}
-                <option value="{{.ID}}">{{.Name}}</option>
-                {{end}}
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Zone</label>
-              <input type="text" name="zone" placeholder="Zone name">
-            </div>
-            <div class="form-group">
-              <label>Capacity</label>
-              <input type="number" name="capacity" value="1" min="0">
-            </div>
-            <div class="form-group">
-              <label>&nbsp;</label>
-              <label><input type="checkbox" name="enabled" checked> Enabled</label>
-            </div>
-          </div>
-          <div class="grid grid-2 mb-1">
-            <div class="form-group">
-              <label>Stations</label>
-              <select name="stations" multiple size="3" style="font-size:0.85rem">
-                {{range .Edges}}
-                <option value="{{.StationID}}">{{.StationID}}</option>
-                {{end}}
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Payload Styles</label>
-              <select name="style_ids" multiple size="3" style="font-size:0.85rem">
-                {{range .PayloadStyles}}
-                <option value="{{.ID}}">{{.Name}}</option>
-                {{end}}
-              </select>
-            </div>
-          </div>
-          <button type="submit" class="btn btn-primary btn-sm">Create Node</button>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div class="accordion mb-2" id="sup-accordion">
-    <button class="accordion-toggle" onclick="document.getElementById('sup-accordion').classList.toggle('open')">
-      Create Supermarket <span class="tooltip-trigger" title="Automated Storage and Retrieval System (ASRS) with lanes, depth-ordered slots, and shuffle staging">?</span>
-    </button>
-    <div class="accordion-body">
-      <div class="card">
-        <div id="wizard-steps" class="wizard-steps mb-1">
-          <div class="wizard-step active" data-step="1">1. Name</div>
-          <div class="wizard-step" data-step="2">2. Lanes</div>
-          <div class="wizard-step" data-step="3">3. Shuffle</div>
-          <div class="wizard-step" data-step="4">4. Review</div>
-        </div>
-        <!-- Step 1: Name & Zone -->
-        <div id="wiz-step-1" class="wiz-panel">
-          <div class="grid grid-2">
-            <div class="form-group">
-              <label>Supermarket Name <span class="tooltip-trigger" title="Unique name for this supermarket, e.g. SUP-ZONE-A">?</span></label>
-              <input type="text" id="sup-name" required placeholder="e.g. SUP-ZONE-A">
-            </div>
-            <div class="form-group">
-              <label>Zone <span class="tooltip-trigger" title="Physical area/zone where the supermarket is located">?</span></label>
-              <input type="text" id="sup-zone" placeholder="e.g. Zone-A">
-            </div>
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="wizNext(2)">Next</button>
-        </div>
-        <!-- Step 2: Lanes -->
-        <div id="wiz-step-2" class="wiz-panel" style="display:none">
-          <div class="mb-1">
-            <button class="btn btn-sm" onclick="addLaneRow()">+ Add Lane</button>
-          </div>
-          <table id="lane-table" style="font-size:0.85rem">
-            <thead><tr><th>Lane Name</th><th>Depth <span class="tooltip-trigger" title="Number of slots (positions) in this lane">?</span></th><th>Vendor Locations <span class="tooltip-trigger" title="Enter a pattern like LOC-A{1-10} or comma-separated values. Depth 1 = front.">?</span></th><th></th></tr></thead>
-            <tbody id="lane-rows">
-              <tr>
-                <td><input type="text" class="lane-name" value="LAN-01" style="width:100px"></td>
-                <td><input type="number" class="lane-depth" value="5" min="1" max="50" style="width:60px"></td>
-                <td><input type="text" class="lane-locs" placeholder="LOC-A{1-5}" style="width:200px"></td>
-                <td><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()">X</button></td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="mt-1">
-            <button class="btn btn-sm" onclick="wizNext(1)">Back</button>
-            <button class="btn btn-primary btn-sm" onclick="wizNext(3)">Next</button>
-          </div>
-        </div>
-        <!-- Step 3: Shuffle Row -->
-        <div id="wiz-step-3" class="wiz-panel" style="display:none">
-          <div class="form-group">
-            <label>Shuffle Slot Count <span class="tooltip-trigger" title="Temporary staging slots for reshuffling. Should be at least (max lane depth - 1).">?</span></label>
-            <input type="number" id="shf-count" value="4" min="1" max="20">
-            <span class="text-muted" style="font-size:0.8rem" id="shf-hint"></span>
-          </div>
-          <div class="form-group">
-            <label>Shuffle Vendor Locations <span class="tooltip-trigger" title="Comma-separated vendor location IDs for shuffle slots, or a pattern like SHF-{1-4}">?</span></label>
-            <input type="text" id="shf-locs" placeholder="SHF-{1-4}" style="width:300px">
-          </div>
-          <div class="mt-1">
-            <button class="btn btn-sm" onclick="wizNext(2)">Back</button>
-            <button class="btn btn-primary btn-sm" onclick="wizNext(4)">Next</button>
-          </div>
-        </div>
-        <!-- Step 4: Review -->
-        <div id="wiz-step-4" class="wiz-panel" style="display:none">
-          <div id="wiz-summary" style="font-size:0.85rem" class="mb-1"></div>
-          <div class="mt-1">
-            <button class="btn btn-sm" onclick="wizNext(3)">Back</button>
-            <button class="btn btn-primary btn-sm" onclick="createSupermarket()">Create Supermarket</button>
-            <span id="sup-result" class="ml-1" style="font-size:0.85rem"></span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  {{end}}
-
   <div class="filter-bar">
     <input type="text" id="node-search" placeholder="Filter by name or location..." oninput="filterNodes()">
-    <select id="node-type-filter" onchange="filterNodes()">
-      <option value="">All Types</option>
-      {{range .NodeTypes}}
-      <option value="{{.Code}}">{{.Name}}{{if .IsSynthetic}} (S){{end}}</option>
-      {{end}}
-    </select>
     <select id="node-zone-filter" onchange="filterNodes()">
       <option value="">All Zones</option>
       {{range .Zones}}<option value="{{.}}">{{.}}</option>{{end}}
@@ -243,6 +23,7 @@
   </div>
 
   {{if .Nodes}}
+  <div id="nodes-drop-area">
   <div class="tile-grid" id="tile-grid">
     {{range .Nodes}}
     {{$count := index $.Counts .ID}}
@@ -251,24 +32,24 @@
          style="{{nodeColor $count .Capacity}}"
          data-id="{{.ID}}"
          data-name="{{.Name}}"
-         data-vendor-loc="{{.VendorLocation}}"
          data-type="{{.NodeType}}"
          data-type-code="{{.NodeTypeCode}}"
          data-zone="{{.Zone}}"
          data-cap="{{.Capacity}}"
          data-enabled="{{.Enabled}}"
          data-count="{{$count}}"
-         data-label="{{index $.NodeLabels .VendorLocation}}"
+         data-label="{{index $.NodeLabels .Name}}"
          data-synthetic="{{.IsSynthetic}}"
          data-parent-id="{{if .ParentID}}{{deref .ParentID}}{{end}}"
          data-parent-name="{{.ParentName}}"
+         data-depth="{{index $.Depths .ID}}"
          data-node-type-id="{{if .NodeTypeID}}{{deref .NodeTypeID}}{{end}}"
-         {{with index $.NodeInfo .VendorLocation}}data-point-name="{{.PointName}}" data-node-tasks="{{.Tasks}}" data-bound-map="{{.BoundMap}}"{{end}}
+         {{with index $.NodeInfo .Name}}data-point-name="{{.PointName}}" data-node-tasks="{{.Tasks}}" data-bound-map="{{.BoundMap}}"{{end}}
          onclick="openNodeModal(this)"
          title="{{.Name}} ({{$count}}/{{.Capacity}}){{if .IsSynthetic}} [synthetic, {{$childCount}} children]{{end}}">
       <div>
-        <span class="tile-loc">{{if .VendorLocation}}{{.VendorLocation}}{{else}}{{.Name}}{{end}}</span>
-        {{with index $.NodeLabels .VendorLocation}}
+        <span class="tile-loc">{{.Name}}</span>
+        {{with index $.NodeLabels .Name}}
         <span class="tile-label">{{.}}</span>
         {{end}}
       </div>
@@ -276,6 +57,7 @@
       {{if not .Enabled}}<span class="tile-off">OFF</span>{{end}}
     </div>
     {{end}}
+  </div>
   </div>
   {{else}}
   <div class="card">
@@ -323,16 +105,6 @@
       <button class="modal-close" onclick="closeNodeModal()">&times;</button>
     </div>
 
-    <!-- Scene detail section -->
-    <div id="modal-scene-detail" style="display:none" class="mb-2">
-      <div class="grid grid-2" style="font-size:0.85rem">
-        <div><strong>Point Name:</strong> <span id="sd-point"></span></div>
-        <div><strong>Area:</strong> <span id="sd-area"></span></div>
-        <div><strong>Tasks:</strong> <span id="sd-tasks"></span></div>
-        <div><strong>Assigned Map:</strong> <span id="sd-map"></span></div>
-      </div>
-    </div>
-
     <!-- Type & parent info (read-only summary) -->
     <div id="modal-type-info" style="display:none" class="mb-2">
       <div class="grid grid-2" style="font-size:0.85rem">
@@ -341,107 +113,12 @@
       </div>
     </div>
 
-    <!-- Children section (for synthetic nodes) -->
-    <div id="modal-children" style="display:none" class="mb-2">
-      <strong style="font-size:0.85rem">Child Nodes</strong>
-      <div id="children-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
-    </div>
-
-    <!-- Stations & payload types (loaded via API) -->
-    <div id="modal-associations" style="display:none" class="mb-2">
-      <div class="grid grid-2" style="font-size:0.85rem">
-        <div><strong>Stations:</strong> <span id="assoc-stations" class="text-muted">-</span></div>
-        <div><strong>Payload Styles:</strong> <span id="assoc-pt" class="text-muted">-</span></div>
-      </div>
-    </div>
-
-    <!-- Properties -->
-    <div id="modal-properties" style="display:none" class="mb-2">
-      <strong style="font-size:0.85rem">Properties</strong>
-      <div id="props-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
-      {{if .Authenticated}}
-      <div style="margin-top:0.5rem; font-size:0.8rem">
-        <div class="flex gap-1">
-          <input type="text" id="prop-key" placeholder="Key" style="font-size:0.8rem;padding:0.2rem;flex:1">
-          <input type="text" id="prop-value" placeholder="Value" style="font-size:0.8rem;padding:0.2rem;flex:1">
-          <button class="btn btn-primary btn-sm" onclick="addNodeProperty()" style="font-size:0.75rem">Add</button>
-        </div>
-      </div>
-      {{end}}
-    </div>
-
-    <!-- Payloads section -->
-    <div id="modal-inventory" style="display:none" class="mb-2">
-      <div class="flex flex-between mb-1">
-        <strong style="font-size:0.85rem">Payloads</strong>
-        <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> / <span id="inv-cap">0</span></span>
-      </div>
-      <div id="inv-list"></div>
-      <div id="inv-manifest" style="display:none; margin-top:0.5rem; border-top:1px solid var(--border); padding-top:0.5rem">
-        <div class="flex flex-between mb-1">
-          <strong style="font-size:0.8rem">Manifest — Payload #<span id="inv-manifest-pid"></span></strong>
-          <button class="btn btn-sm" onclick="closeManifestExpand()" style="font-size:0.7rem">&times; Close</button>
-        </div>
-        <div id="inv-manifest-list" style="font-size:0.8rem"></div>
-        {{if .Authenticated}}
-        <div style="margin-top:0.5rem; border-top:1px solid #e9ecef; padding-top:0.5rem">
-          <strong style="font-size:0.75rem">Add Item (Correction)</strong>
-          <div class="grid grid-2" style="font-size:0.8rem;gap:0.3rem;margin-top:0.3rem">
-            <input type="text" id="nc-part" placeholder="Part Number" style="font-size:0.8rem;padding:0.25rem">
-            <input type="number" id="nc-qty" placeholder="Qty" step="0.01" value="1" style="font-size:0.8rem;padding:0.25rem">
-          </div>
-          <input type="text" id="nc-reason" placeholder="Reason for correction" style="font-size:0.8rem;padding:0.25rem;width:100%;margin-top:0.3rem">
-          <button class="btn btn-sm btn-primary" onclick="addCorrectionItem()" style="margin-top:0.3rem">Add Item</button>
-        </div>
-        {{end}}
-      </div>
-      {{if .Authenticated}}
-      <div id="inv-corrections" style="display:none; margin-top:0.75rem; border-top:1px solid var(--border); padding-top:0.5rem">
-        <strong style="font-size:0.8rem">Recent Corrections</strong>
-        <div id="inv-corrections-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
-      </div>
-      {{end}}
-    </div>
-
     {{if .Authenticated}}
     <form id="node-form" method="POST" action="/nodes/update">
       <input type="hidden" name="id" id="nf-id">
-      <div class="grid grid-2">
-        <div class="form-group">
-          <label>Name</label>
-          <input type="text" name="name" id="nf-name">
-        </div>
-        <div class="form-group">
-          <label>Vendor Location</label>
-          <input type="text" name="vendor_location" id="nf-vendor-loc">
-        </div>
-        <div class="form-group">
-          <label>Node Type (legacy)</label>
-          <input type="text" name="node_type" id="nf-type">
-        </div>
-        <div class="form-group">
-          <label>Node Type</label>
-          <select name="node_type_id" id="nf-type-id">
-            <option value="">-- None --</option>
-            {{range .NodeTypes}}
-            <option value="{{.ID}}" data-synthetic="{{.IsSynthetic}}">{{.Code}} - {{.Name}}{{if .IsSynthetic}} (Synthetic){{end}}</option>
-            {{end}}
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Parent (Synthetic)</label>
-          <select name="parent_id" id="nf-parent">
-            <option value="">-- None --</option>
-            {{range .SyntheticNodes}}
-            <option value="{{.ID}}">{{.Name}}</option>
-            {{end}}
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Zone</label>
-          <input type="text" name="zone" id="nf-zone">
-        </div>
-        <div class="form-group">
+      <!-- Common settings: Capacity, Enabled -->
+      <div class="grid grid-2 mb-1">
+        <div class="form-group" id="nf-cap-group">
           <label>Capacity</label>
           <input type="number" name="capacity" id="nf-cap" value="1">
         </div>
@@ -450,7 +127,8 @@
           <label><input type="checkbox" name="enabled" id="nf-enabled" checked> Enabled</label>
         </div>
       </div>
-      <div class="grid grid-2 mb-1">
+      <!-- Stations & payload styles (hidden for child nodes) -->
+      <div class="grid grid-2 mb-1" id="nf-assoc-section">
         <div class="form-group">
           <label>Stations</label>
           <select name="stations" id="nf-stations" multiple size="3" style="font-size:0.85rem">
@@ -468,26 +146,117 @@
           </select>
         </div>
       </div>
-      <button type="submit" class="btn btn-primary">Save</button>
-    </form>
-    <div class="mt-2" id="modal-test-order" style="border-top:1px solid var(--border); padding-top:0.75rem">
-      <strong style="font-size:0.85rem">Send Robot Here</strong>
-      <div class="flex gap-1 mt-1">
-        <select id="to-dest" style="flex:1; font-size:0.85rem">
-          {{range .Nodes}}
-          <option value="{{.ID}}" data-name="{{.Name}}">{{.Name}}</option>
-          {{end}}
-        </select>
-        <button class="btn btn-primary btn-sm" onclick="sendTestOrder()">Send</button>
+
+    <!-- Stations & payload types (read-only, loaded via API) -->
+    <div id="modal-associations" style="display:none" class="mb-2">
+      <div class="grid grid-2" style="font-size:0.85rem">
+        <div><strong>Stations:</strong> <span id="assoc-stations" class="text-muted">-</span></div>
+        <div><strong>Payload Styles:</strong> <span id="assoc-pt" class="text-muted">-</span></div>
       </div>
-      <div id="test-order-result" class="mt-1" style="font-size:0.8rem"></div>
     </div>
+
+    <!-- Occupant section -->
+    <div id="modal-inventory" style="display:none" class="mb-2">
+      <div class="flex flex-between mb-1">
+        <strong style="font-size:0.85rem">Contents</strong>
+        <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> / <span id="inv-cap">0</span></span>
+      </div>
+      <div id="inv-list"></div>
+      <div id="inv-manifest" style="display:none; margin-top:0.5rem; border-top:1px solid var(--border); padding-top:0.5rem">
+        <div class="flex flex-between mb-1">
+          <strong style="font-size:0.8rem">Manifest — Payload #<span id="inv-manifest-pid"></span></strong>
+          <button class="btn btn-sm" onclick="closeManifestExpand()" style="font-size:0.7rem">&times; Close</button>
+        </div>
+        <div id="inv-manifest-list" style="font-size:0.8rem"></div>
+        <div style="margin-top:0.5rem; border-top:1px solid #e9ecef; padding-top:0.5rem">
+          <strong style="font-size:0.75rem">Add Item (Correction)</strong>
+          <div class="grid grid-2" style="font-size:0.8rem;gap:0.3rem;margin-top:0.3rem">
+            <input type="text" id="nc-part" placeholder="Part Number" style="font-size:0.8rem;padding:0.25rem">
+            <input type="number" id="nc-qty" placeholder="Qty" step="0.01" value="1" style="font-size:0.8rem;padding:0.25rem">
+          </div>
+          <input type="text" id="nc-reason" placeholder="Reason for correction" style="font-size:0.8rem;padding:0.25rem;width:100%;margin-top:0.3rem">
+          <button class="btn btn-sm btn-primary" onclick="addCorrectionItem()" style="margin-top:0.3rem">Add Item</button>
+        </div>
+      </div>
+      <div id="inv-corrections" style="display:none; margin-top:0.75rem; border-top:1px solid var(--border); padding-top:0.5rem">
+        <strong style="font-size:0.8rem">Recent Corrections</strong>
+        <div id="inv-corrections-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
+      </div>
+    </div>
+
+    <!-- Children section (for synthetic nodes) -->
+    <div id="modal-children" style="display:none" class="mb-2">
+      <strong style="font-size:0.85rem">Child Nodes</strong>
+      <div id="children-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
+    </div>
+
+      <!-- Location (read-only) -->
+      <div class="mb-1" style="font-size:0.85rem">
+        <strong>Location:</strong> <span id="nf-location-label"></span>
+      </div>
+      <input type="hidden" name="name" id="nf-name">
+
+      <!-- Advanced settings (collapsible) -->
+      <div class="accordion mb-1" id="node-advanced">
+        <button type="button" class="accordion-toggle" onclick="toggleAccordion('node-advanced')">
+          Advanced
+        </button>
+        <div class="accordion-body">
+          <!-- Scene detail section -->
+          <div id="modal-scene-detail" style="display:none" class="mt-1">
+            <div class="grid grid-2" style="font-size:0.85rem">
+              <div><strong>Point Name:</strong> <span id="sd-point"></span></div>
+              <div><strong>Area:</strong> <span id="sd-area"></span></div>
+              <div><strong>Tasks:</strong> <span id="sd-tasks"></span></div>
+              <div><strong>Assigned Map:</strong> <span id="sd-map"></span></div>
+            </div>
+          </div>
+          <div class="mt-2" id="modal-call-robot" style="border-top:1px solid var(--border); padding-top:0.75rem">
+            <button type="button" class="btn btn-primary btn-sm" onclick="callRobotHere()">Call Robot Here</button>
+            <div id="call-robot-result" class="mt-1" style="font-size:0.8rem"></div>
+          </div>
+        </div>
+      </div>
+      <div class="flex flex-between">
+        <button type="submit" class="btn btn-primary">Save</button>
+        <button type="button" class="btn btn-danger btn-sm" onclick="deleteNode()">Delete Node</button>
+      </div>
+    </form>
     {{else}}
+    <!-- Read-only view for unauthenticated users -->
+    <div id="modal-associations" style="display:none" class="mb-2">
+      <div class="grid grid-2" style="font-size:0.85rem">
+        <div><strong>Stations:</strong> <span id="assoc-stations" class="text-muted">-</span></div>
+        <div><strong>Payload Styles:</strong> <span id="assoc-pt" class="text-muted">-</span></div>
+      </div>
+    </div>
     <div id="node-detail-ro">
       <div class="grid grid-2" style="font-size:0.85rem">
         <div><strong>Capacity:</strong> <span id="ro-cap"></span></div>
         <div><strong>Enabled:</strong> <span id="ro-enabled"></span></div>
       </div>
+    </div>
+    <!-- Scene detail section (read-only) -->
+    <div id="modal-scene-detail" style="display:none" class="mb-2">
+      <div class="grid grid-2" style="font-size:0.85rem">
+        <div><strong>Point Name:</strong> <span id="sd-point"></span></div>
+        <div><strong>Area:</strong> <span id="sd-area"></span></div>
+        <div><strong>Tasks:</strong> <span id="sd-tasks"></span></div>
+        <div><strong>Assigned Map:</strong> <span id="sd-map"></span></div>
+      </div>
+    </div>
+    <!-- Occupant section (read-only) -->
+    <div id="modal-inventory" style="display:none" class="mb-2">
+      <div class="flex flex-between mb-1">
+        <strong style="font-size:0.85rem">Contents</strong>
+        <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> / <span id="inv-cap">0</span></span>
+      </div>
+      <div id="inv-list"></div>
+    </div>
+    <!-- Children section (for synthetic nodes) -->
+    <div id="modal-children" style="display:none" class="mb-2">
+      <strong style="font-size:0.85rem">Child Nodes</strong>
+      <div id="children-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
     </div>
     {{end}}
   </div>
@@ -502,17 +271,31 @@ function toggleAccordion(id) {
 
 function filterNodes() {
   var q = document.getElementById('node-search').value.toLowerCase();
-  var t = document.getElementById('node-type-filter').value;
   var z = document.getElementById('node-zone-filter').value;
   var tiles = document.querySelectorAll('.node-tile');
   var shown = 0;
   tiles.forEach(function(tile) {
-    var matchName = !q || tile.dataset.name.toLowerCase().indexOf(q) >= 0 || tile.dataset.vendorLoc.toLowerCase().indexOf(q) >= 0 || (tile.dataset.label && tile.dataset.label.toLowerCase().indexOf(q) >= 0);
-    var matchType = !t || tile.dataset.typeCode === t;
-    var matchZone = !z || tile.dataset.zone === z;
-    var vis = matchName && matchType && matchZone;
+    if (tile.classList.contains('smkt-absorbed') || tile.classList.contains('smkt-add-tile')) return;
+    var matchName = !q || (tile.dataset.name || '').toLowerCase().indexOf(q) >= 0 || (tile.dataset.label && tile.dataset.label.toLowerCase().indexOf(q) >= 0);
+    var matchZone = !z || (tile.dataset.zone || '') === z;
+    var vis = matchName && matchZone;
     tile.style.display = vis ? '' : 'none';
     if (vis) shown++;
+  });
+  // Update supermarket group visibility based on visible slots
+  document.querySelectorAll('.smkt-group').forEach(function(group) {
+    var laneSections = group.querySelectorAll('.smkt-lane, .smkt-shuffle');
+    var groupHasVisible = false;
+    laneSections.forEach(function(section) {
+      var slots = section.querySelectorAll('.node-tile:not(.smkt-add-tile)');
+      var sectionVisible = false;
+      slots.forEach(function(slot) {
+        if (slot.style.display !== 'none') sectionVisible = true;
+      });
+      section.style.display = sectionVisible ? '' : 'none';
+      if (sectionVisible) groupHasVisible = true;
+    });
+    group.style.display = groupHasVisible ? '' : 'none';
   });
   document.getElementById('node-count').textContent = shown + ' nodes';
 }
@@ -524,7 +307,7 @@ function openNodeModal(el) {
   var sceneDetail = document.getElementById('modal-scene-detail');
 
   var d = el.dataset;
-  document.getElementById('modal-title').textContent = d.vendorLoc || d.name;
+  document.getElementById('modal-title').textContent = d.name;
 
   // Scene detail section
   var pointName = d.pointName || '';
@@ -556,38 +339,33 @@ function openNodeModal(el) {
     loadInventory(d.id);
   }
 
-  // Load extended detail (stations, payload types, properties, children)
+  // Load extended detail (stations, payload types, children)
+  var isLeafChild = !!d.parentId && d.synthetic !== 'true';
+  var isSyntheticChild = !!d.parentId && d.synthetic === 'true'; // lanes, shuffle rows
   loadNodeDetail(d.id, d.synthetic === 'true');
 
+  // Hide associations for physical child nodes (slots — managed by core only)
+  var assocDiv = document.getElementById('modal-associations');
+  if (isLeafChild) assocDiv.style.display = 'none';
+
   if (isAuth) {
+    // Synthetic nodes: capacity is inferred from children, hide it
+    var capGroup = document.getElementById('nf-cap-group');
+    if (capGroup) capGroup.style.display = d.synthetic === 'true' ? 'none' : '';
+
+    // Slots: hide both stations and styles
+    // Lanes/shuffle: hide stations, show styles
+    // Top-level / supermarkets: show both
+    var assocSection = document.getElementById('nf-assoc-section');
+    var stationsGroup = document.getElementById('nf-stations');
+    if (assocSection) assocSection.style.display = isLeafChild ? 'none' : '';
+    if (stationsGroup) stationsGroup.closest('.form-group').style.display = (isLeafChild || isSyntheticChild) ? 'none' : '';
     document.getElementById('nf-id').value = d.id;
     document.getElementById('nf-name').value = d.name;
-    document.getElementById('nf-vendor-loc').value = d.vendorLoc;
-    document.getElementById('nf-type').value = d.type;
-    document.getElementById('nf-zone').value = d.zone;
+    document.getElementById('nf-location-label').textContent = d.name;
     document.getElementById('nf-cap').value = d.cap;
     document.getElementById('nf-enabled').checked = d.enabled === 'true';
-
-    // Set node type dropdown
-    var typeSelect = document.getElementById('nf-type-id');
-    typeSelect.value = d.nodeTypeId || '';
-
-    // Set parent dropdown
-    var parentSelect = document.getElementById('nf-parent');
-    parentSelect.value = d.parentId || '';
-
-    var destSelect = document.getElementById('to-dest');
-    if (destSelect) {
-      for (var i = 0; i < destSelect.options.length; i++) {
-        destSelect.options[i].style.display = destSelect.options[i].value === d.id ? 'none' : '';
-      }
-      if (destSelect.value === d.id && destSelect.options.length > 1) {
-        for (var i = 0; i < destSelect.options.length; i++) {
-          if (destSelect.options[i].value !== d.id) { destSelect.value = destSelect.options[i].value; break; }
-        }
-      }
-    }
-    document.getElementById('test-order-result').innerHTML = '';
+    document.getElementById('call-robot-result').innerHTML = '';
   } else {
     document.getElementById('ro-cap').textContent = d.cap;
     document.getElementById('ro-enabled').textContent = d.enabled === 'true' ? 'Yes' : 'No';
@@ -599,47 +377,32 @@ function openNodeModal(el) {
 function loadNodeDetail(nodeID, isSynthetic) {
   var childrenDiv = document.getElementById('modal-children');
   var assocDiv = document.getElementById('modal-associations');
-  var propsDiv = document.getElementById('modal-properties');
 
   childrenDiv.style.display = 'none';
   assocDiv.style.display = 'none';
-  propsDiv.style.display = 'none';
 
   fetch('/api/nodes/detail?id=' + nodeID)
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(data) {
-      // Stations
+      // Stations (show effective/inherited for child nodes)
       var stations = data.stations || [];
-      document.getElementById('assoc-stations').textContent = stations.length > 0 ? stations.join(', ') : 'All (no restrictions)';
+      var effStations = data.effective_stations || [];
+      var isChild = !!document.querySelector('.node-tile[data-id="' + nodeID + '"]')
+                    && document.querySelector('.node-tile[data-id="' + nodeID + '"]').dataset.parentId;
+      var stLabel = stations.length > 0 ? stations.join(', ') : (effStations.length > 0 ? effStations.join(', ') + ' (inherited)' : 'All (no restrictions)');
+      document.getElementById('assoc-stations').textContent = stLabel;
 
-      // Payload types
+      // Payload styles (show effective/inherited for child nodes)
       var pts = data.payload_styles || [];
-      document.getElementById('assoc-pt').textContent = pts.length > 0 ? pts.map(function(p) { return p.name; }).join(', ') : 'All (no restrictions)';
+      var effStyles = data.effective_styles || [];
+      var ptLabel = pts.length > 0 ? pts.map(function(p) { return p.name; }).join(', ') : (effStyles.length > 0 ? effStyles.map(function(p) { return p.name; }).join(', ') + ' (inherited)' : 'All (no restrictions)');
+      document.getElementById('assoc-pt').textContent = ptLabel;
       assocDiv.style.display = '';
 
       // Set multi-selects for auth mode
       if (isAuth) {
         setMultiSelect('nf-stations', stations);
         setMultiSelect('nf-pt', pts.map(function(p) { return String(p.id); }));
-      }
-
-      // Properties
-      var props = data.properties || [];
-      if (props.length > 0) {
-        var html = '<table><thead><tr><th>Key</th><th>Value</th>';
-        if (isAuth) html += '<th></th>';
-        html += '</tr></thead><tbody>';
-        props.forEach(function(p) {
-          html += '<tr><td>' + esc(p.key) + '</td><td>' + esc(p.value) + '</td>';
-          if (isAuth) html += '<td><button class="btn btn-danger btn-sm" style="font-size:0.65rem;padding:0.1rem 0.25rem" onclick="removeNodeProperty(\'' + esc(p.key) + '\')">X</button></td>';
-          html += '</tr>';
-        });
-        html += '</tbody></table>';
-        document.getElementById('props-list').innerHTML = html;
-        propsDiv.style.display = '';
-      } else {
-        document.getElementById('props-list').innerHTML = '<span class="text-muted">No properties</span>';
-        propsDiv.style.display = '';
       }
 
       // Children (for synthetic nodes)
@@ -649,12 +412,12 @@ function loadNodeDetail(nodeID, isSynthetic) {
         var typeCode = document.querySelector('.node-tile[onclick*="openNodeModal"]') ? '' : '';
         var nodeID = document.getElementById('nf-id') ? document.getElementById('nf-id').value : '';
         var tile = document.querySelector('.node-tile[data-id="' + nodeID + '"]');
-        if (tile && tile.dataset.typeCode === 'SUP') {
-          loadSupermarketGrid(nodeID);
+        if (tile && (tile.dataset.typeCode === 'NGRP' || tile.dataset.typeCode === 'SUP' || tile.dataset.typeCode === 'SMKT')) {
+          loadGroupLayout(nodeID);
         } else {
-          var html = '<table><thead><tr><th>Name</th><th>Location</th><th>Enabled</th></tr></thead><tbody>';
+          var html = '<table><thead><tr><th>Name</th><th>Enabled</th></tr></thead><tbody>';
           children.forEach(function(c) {
-            html += '<tr><td>' + esc(c.name) + '</td><td>' + esc(c.vendor_location) + '</td><td>' + (c.enabled ? 'Yes' : 'No') + '</td></tr>';
+            html += '<tr><td>' + esc(c.name) + '</td><td>' + (c.enabled ? 'Yes' : 'No') + '</td></tr>';
           });
           html += '</tbody></table>';
           document.getElementById('children-list').innerHTML = html;
@@ -678,6 +441,23 @@ function setMultiSelect(selectId, values) {
 
 function closeNodeModal() {
   document.getElementById('node-modal').classList.remove('active');
+}
+
+function deleteNode() {
+  var id = document.getElementById('nf-id').value;
+  var name = document.getElementById('nf-name').value;
+  if (!confirm('Delete node "' + name + '"? This cannot be undone.')) return;
+  var form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/nodes/delete';
+  form.style.display = 'none';
+  var inp = document.createElement('input');
+  inp.type = 'hidden';
+  inp.name = 'id';
+  inp.value = id;
+  form.appendChild(inp);
+  document.body.appendChild(form);
+  form.submit();
 }
 
 var currentNodeID = 0;
@@ -840,29 +620,21 @@ function esc(s) {
   return d.innerHTML;
 }
 
-function sendTestOrder() {
-  var fromID = document.getElementById('nf-id').value;
-  var toSel = document.getElementById('to-dest');
-  var toID = toSel.value;
-  if (fromID === toID) {
-    document.getElementById('test-order-result').innerHTML =
-      '<span style="color:var(--danger)">Source and destination must be different</span>';
-    return;
-  }
-  var resultEl = document.getElementById('test-order-result');
+function callRobotHere() {
+  var nodeName = document.getElementById('nf-name').value;
+  var resultEl = document.getElementById('call-robot-result');
   resultEl.innerHTML = '<span class="text-muted">Dispatching...</span>';
-  fetch('/api/nodes/test-order', {
+  fetch('/api/test-commands/submit', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({from_node_id: parseInt(fromID), to_node_id: parseInt(toID)})
+    body: JSON.stringify({command_type: 'move', location: nodeName})
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
     if (data.error) {
       resultEl.innerHTML = '<span style="color:var(--danger)">' + esc(data.error) + '</span>';
     } else {
-      resultEl.innerHTML = '<span style="color:var(--success)">Order #' + data.order_id +
-        ' dispatched (' + esc(data.from) + ' \u2192 ' + esc(data.to) + ')</span>';
+      resultEl.innerHTML = '<span style="color:var(--success)">Robot dispatched to ' + esc(nodeName) + '</span>';
     }
   })
   .catch(function() {
@@ -870,70 +642,8 @@ function sendTestOrder() {
   });
 }
 
-function addNodeProperty() {
-  var key = document.getElementById('prop-key').value.trim();
-  var value = document.getElementById('prop-value').value.trim();
-  if (!key) { alert('Key is required'); return; }
-  var nodeID = parseInt(document.getElementById('nf-id').value);
-  fetch('/api/nodes/properties/set', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({node_id: nodeID, key: key, value: value})
-  })
-  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-  .then(function(data) {
-    if (data.error) { alert(data.error); return; }
-    document.getElementById('prop-key').value = '';
-    document.getElementById('prop-value').value = '';
-    loadNodeDetail(nodeID, false);
-  })
-  .catch(function(e) { alert('Error: ' + e); });
-}
-
-function removeNodeProperty(key) {
-  if (!confirm('Remove property "' + key + '"?')) return;
-  var nodeID = parseInt(document.getElementById('nf-id').value);
-  fetch('/api/nodes/properties/delete', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({node_id: nodeID, key: key})
-  })
-  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-  .then(function(data) {
-    if (data.error) { alert(data.error); return; }
-    loadNodeDetail(nodeID, false);
-  })
-  .catch(function(e) { alert('Error: ' + e); });
-}
-
-function editNodeType(id, code, name, desc, isSynthetic) {
-  var newCode = prompt('Code:', code);
-  if (newCode === null) return;
-  var newName = prompt('Name:', name);
-  if (newName === null) return;
-  var newDesc = prompt('Description:', desc);
-  if (newDesc === null) return;
-  var newSynthetic = confirm('Is this a synthetic (group) node type?');
-
-  var form = document.createElement('form');
-  form.method = 'POST';
-  form.action = '/node-types/update';
-  form.style.display = 'none';
-  var fields = {id: id, code: newCode, name: newName, description: newDesc};
-  if (newSynthetic) fields.is_synthetic = 'on';
-  for (var k in fields) {
-    var inp = document.createElement('input');
-    inp.type = 'hidden';
-    inp.name = k;
-    inp.value = fields[k];
-    form.appendChild(inp);
-  }
-  document.body.appendChild(form);
-  form.submit();
-}
-
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeNodeModal(); closeOccupancyModal(); }
+  if (e.key === 'Escape') { closeNodeModal(); closeOccupancyModal(); closeAddNodeModal(); closeNgrpModal(); closeLaneModal(); }
 });
 </script>
 
@@ -983,115 +693,302 @@ function closeOccupancyModal() {
 }
 </script>
 
+<!-- Add Node Modal -->
+<div id="add-node-modal" class="modal-overlay" onclick="if(event.target===this)closeAddNodeModal()">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header flex flex-between">
+      <h2 id="add-node-title">Add Node</h2>
+      <button class="modal-close" onclick="closeAddNodeModal()">&times;</button>
+    </div>
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="an-name" placeholder="e.g. SLOT-A6" onkeydown="if(event.key==='Enter'){event.preventDefault();submitAddNode();}">
+    </div>
+    <div class="flex gap-1 mt-1" style="justify-content:flex-end">
+      <button class="btn" onclick="closeAddNodeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAddNode()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- New Node Group Modal -->
+<div id="ngrp-modal" class="modal-overlay" onclick="if(event.target===this)closeNgrpModal()">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header flex flex-between">
+      <h2>New Node Group</h2>
+      <button class="modal-close" onclick="closeNgrpModal()">&times;</button>
+    </div>
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="ngrp-name" placeholder="e.g. GRP-ZONE-A" onkeydown="if(event.key==='Enter'){event.preventDefault();createNodeGroup();}">
+    </div>
+    <div class="flex gap-1 mt-1" style="justify-content:flex-end">
+      <button class="btn" onclick="closeNgrpModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="createNodeGroup()">Create</button>
+    </div>
+    <span id="ngrp-result" style="font-size:0.85rem"></span>
+  </div>
+</div>
+
+<!-- Add Lane Modal -->
+<div id="lane-modal" class="modal-overlay" onclick="if(event.target===this)closeLaneModal()">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header flex flex-between">
+      <h2>Add Lane</h2>
+      <button class="modal-close" onclick="closeLaneModal()">&times;</button>
+    </div>
+    <div class="form-group">
+      <label>Lane Name</label>
+      <input type="text" id="lane-name" placeholder="e.g. LAN-01" onkeydown="if(event.key==='Enter'){event.preventDefault();submitAddLane();}">
+    </div>
+    <input type="hidden" id="lane-group-id">
+    <div class="flex gap-1 mt-1" style="justify-content:flex-end">
+      <button class="btn" onclick="closeLaneModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAddLane()">Create</button>
+    </div>
+    <span id="lane-result" style="font-size:0.85rem"></span>
+  </div>
+</div>
+
 <style>
 .tile-synthetic { border: 2px dashed var(--primary) !important; }
 .tile-badge { position:absolute; top:2px; right:4px; font-size:0.65rem; font-weight:700; color:var(--primary); }
 .node-tile { position: relative; }
-.wiz-panel { min-height: 120px; }
+
+/* Supermarket hierarchy groups */
+.smkt-group {
+  border: 2px solid var(--primary);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+  background: var(--bg);
+}
+.smkt-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--primary) 8%, var(--bg));
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.smkt-header:hover { background: color-mix(in srgb, var(--primary) 14%, var(--bg)); }
+.smkt-arrow {
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.smkt-collapsed .smkt-arrow { transform: rotate(-90deg); }
+.smkt-collapsed .smkt-body { display: none; }
+.smkt-name { font-weight: 600; color: var(--primary); cursor: pointer; }
+.smkt-name:hover { text-decoration: underline; }
+.smkt-summary { color: var(--text-muted); font-size: 0.8rem; margin-left: auto; }
+.smkt-body { padding: 0.5rem 0.75rem; }
+.smkt-lane { margin-bottom: 0.5rem; }
+.smkt-lane:last-child { margin-bottom: 0; }
+.smkt-lane-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.smkt-lane-header:hover { color: var(--primary); }
+.smkt-lane-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-height: 36px;
+  padding: 0.2rem;
+  border-radius: 4px;
+  transition: background 0.15s, outline-color 0.15s;
+}
+.smkt-lane-slots .node-tile {
+  min-width: 70px;
+  max-width: 100px;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.4rem;
+}
+.smkt-absorbed { display: none !important; }
+.smkt-add-lane {
+  margin-top: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  text-align: center;
+  opacity: 0.6;
+}
+.smkt-add-lane:hover { opacity: 1; color: var(--primary); border-color: var(--primary); }
+
+/* Direct node container in a node group */
+.ngrp-direct {
+  margin-bottom: 0.5rem;
+}
+.ngrp-direct .smkt-lane-slots {
+  border: 1px dashed color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+}
+
+/* Slot depth badge */
+.slot-depth {
+  position: absolute;
+  bottom: 1px;
+  right: 3px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: 0.6;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* Drag and drop */
+.node-tile[draggable="true"] { cursor: grab; }
+.node-tile[draggable="true"]:active { cursor: grabbing; }
+.dragging { opacity: 0.35; }
+.drop-target {
+  outline: 2px dashed var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--bg)) !important;
+}
+#tile-grid.drop-target {
+  outline: 2px dashed var(--text-muted);
+  background: color-mix(in srgb, var(--text-muted) 5%, var(--bg)) !important;
+  min-height: 60px;
+}
+#nodes-drop-area { min-height: 60px; }
 </style>
 
 <script>
-var laneCounter = 1;
+/* --- Node Group modal --- */
+function openNgrpModal() {
+  document.getElementById('ngrp-name').value = '';
+  document.getElementById('ngrp-result').innerHTML = '';
+  document.getElementById('ngrp-modal').classList.add('active');
+  document.getElementById('ngrp-name').focus();
+}
+function closeNgrpModal() { document.getElementById('ngrp-modal').classList.remove('active'); }
 
-function addLaneRow() {
-  laneCounter++;
-  var row = document.createElement('tr');
-  row.innerHTML = '<td><input type="text" class="lane-name" value="LAN-' + String(laneCounter).padStart(2, '0') + '" style="width:100px"></td>'
-    + '<td><input type="number" class="lane-depth" value="5" min="1" max="50" style="width:60px"></td>'
-    + '<td><input type="text" class="lane-locs" placeholder="LOC-B{1-5}" style="width:200px"></td>'
-    + '<td><button class="btn btn-danger btn-sm" onclick="this.closest(\'tr\').remove()">X</button></td>';
-  document.getElementById('lane-rows').appendChild(row);
+function createNodeGroup() {
+  var name = document.getElementById('ngrp-name').value.trim();
+  if (!name) { document.getElementById('ngrp-name').focus(); return; }
+  var result = document.getElementById('ngrp-result');
+  result.textContent = 'Creating...';
+  fetch('/api/nodegroup/create', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ name: name })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + esc(data.error) + '</span>'; return; }
+    result.innerHTML = '<span style="color:var(--success)">Created!</span>';
+    setTimeout(function() { location.reload(); }, 800);
+  })
+  .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
 }
 
-function wizNext(step) {
-  for (var i = 1; i <= 4; i++) {
-    document.getElementById('wiz-step-' + i).style.display = i === step ? '' : 'none';
-    var stepEl = document.querySelector('.wizard-step[data-step="' + i + '"]');
-    stepEl.classList.toggle('active', i === step);
-    stepEl.classList.toggle('done', i < step);
-  }
-  if (step === 3) {
-    // Auto-suggest shuffle count
-    var maxDepth = 0;
-    document.querySelectorAll('.lane-depth').forEach(function(el) {
-      var d = parseInt(el.value) || 0;
-      if (d > maxDepth) maxDepth = d;
-    });
-    var suggested = Math.max(1, maxDepth - 1);
-    document.getElementById('shf-hint').textContent = 'Suggested: ' + suggested + ' (max lane depth - 1)';
-    document.getElementById('shf-count').value = suggested;
-  }
-  if (step === 4) {
-    buildSummary();
-  }
+/* --- Lane modal --- */
+function openLaneModal(groupId) {
+  document.getElementById('lane-group-id').value = groupId;
+  document.getElementById('lane-name').value = '';
+  document.getElementById('lane-result').innerHTML = '';
+  document.getElementById('lane-modal').classList.add('active');
+  document.getElementById('lane-name').focus();
+}
+function closeLaneModal() { document.getElementById('lane-modal').classList.remove('active'); }
+function submitAddLane() {
+  var name = document.getElementById('lane-name').value.trim();
+  if (!name) { document.getElementById('lane-name').focus(); return; }
+  var result = document.getElementById('lane-result');
+  result.textContent = 'Creating...';
+  fetch('/api/nodegroup/add-lane', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      group_id: parseInt(document.getElementById('lane-group-id').value),
+      name: name
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + esc(data.error) + '</span>'; return; }
+    result.innerHTML = '<span style="color:var(--success)">Created!</span>';
+    setTimeout(function() { location.reload(); }, 800);
+  })
+  .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
 }
 
-function getWizardData() {
-  var lanes = [];
-  document.querySelectorAll('#lane-rows tr').forEach(function(row) {
-    var name = row.querySelector('.lane-name').value;
-    var depth = parseInt(row.querySelector('.lane-depth').value) || 5;
-    var locs = row.querySelector('.lane-locs').value;
-    var vendorLocs = locs ? [locs] : [];
-    lanes.push({name: name, depth: depth, vendor_locations: vendorLocs});
-  });
-  var shfCount = parseInt(document.getElementById('shf-count').value) || 4;
-  var shfLocs = document.getElementById('shf-locs').value;
-  var shuffleSlots = [];
-  if (shfLocs) {
-    // Expand simple pattern or split commas
-    shuffleSlots = shfLocs.split(',').map(function(s) { return s.trim(); });
+/* --- Add Node modal (for standalone physical node creation) --- */
+var _addNodePending = null;
+function addChildNode(parentId, zone) {
+  _addNodePending = { parentId: parentId, zone: zone };
+  document.getElementById('add-node-title').textContent = 'Add Node';
+  document.getElementById('an-name').value = '';
+  document.getElementById('add-node-modal').classList.add('active');
+  document.getElementById('an-name').focus();
+}
+function submitAddNode() {
+  var p = _addNodePending;
+  if (!p) return;
+  var name = document.getElementById('an-name').value.trim();
+  if (!name) { document.getElementById('an-name').focus(); return; }
+  var form = document.createElement('form');
+  form.method = 'POST'; form.action = '/nodes/create'; form.style.display = 'none';
+  var fields = { name: name, zone: p.zone || '', capacity: '1', enabled: 'on' };
+  if (p.parentId) fields.parent_id = p.parentId;
+  for (var k in fields) {
+    var inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = k; inp.value = fields[k];
+    form.appendChild(inp);
   }
-  // If pattern with {}, just send as single item
-  if (shuffleSlots.length === 1 && shuffleSlots[0].indexOf('{') >= 0) {
-    // Server will expand it
-  }
-  // Pad to shfCount if fewer
-  while (shuffleSlots.length < shfCount) shuffleSlots.push('');
-  return {
-    name: document.getElementById('sup-name').value,
-    zone: document.getElementById('sup-zone').value,
-    lanes: lanes,
-    shuffle_slots: shuffleSlots.slice(0, shfCount)
-  };
+  document.body.appendChild(form);
+  form.submit();
+}
+function closeAddNodeModal() {
+  document.getElementById('add-node-modal').classList.remove('active');
+  _addNodePending = null;
 }
 
-function buildSummary() {
-  var d = getWizardData();
-  var totalSlots = 0;
-  d.lanes.forEach(function(l) { totalSlots += l.depth; });
-  var html = '<strong>' + esc(d.name) + '</strong>';
-  if (d.zone) html += ' (Zone: ' + esc(d.zone) + ')';
-  html += '<br>' + d.lanes.length + ' lane(s), ' + totalSlots + ' total slots, ' + d.shuffle_slots.length + ' shuffle slot(s)';
-  html += '<ul style="margin:0.5rem 0">';
-  d.lanes.forEach(function(l) {
-    html += '<li>' + esc(l.name) + ' — depth ' + l.depth;
-    if (l.vendor_locations.length > 0) html += ' — locations: ' + esc(l.vendor_locations[0]);
-    html += '</li>';
-  });
-  html += '</ul>';
-  document.getElementById('wiz-summary').innerHTML = html;
-}
-
-function loadSupermarketGrid(nodeID) {
+/* --- Node group grid in modal --- */
+function loadGroupLayout(nodeID) {
   var list = document.getElementById('children-list');
   list.innerHTML = '<span class="text-muted">Loading layout...</span>';
-  fetch('/api/supermarket/layout?id=' + nodeID)
+  fetch('/api/nodegroup/layout?id=' + nodeID)
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var lanes = data.lanes || [];
-      var shuffle = data.shuffle || [];
+      var directNodes = data.direct_nodes || [];
       var stats = data.stats || {};
       var html = '<div class="sm-grid">';
-      // Legend
       html += '<div style="font-size:0.75rem;margin-bottom:0.5rem">';
       html += '<span class="sm-cell sm-empty" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Empty ';
       html += '<span class="sm-cell sm-occupied" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Occupied ';
       html += '<span class="sm-cell sm-claimed" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Claimed ';
-      html += '<span class="sm-cell sm-shuffle" style="width:14px;height:14px;display:inline-flex;vertical-align:middle"></span> Shuffle';
       html += ' | Slots: ' + stats.total + ' | Occupied: ' + stats.occupied + ' | Claimed: ' + stats.claimed;
       html += '</div>';
-      // Lanes
+      if (directNodes.length > 0) {
+        html += '<div class="sm-lane">';
+        html += '<span class="sm-lane-label">Direct Nodes</span>';
+        directNodes.forEach(function(node) {
+          var cls = 'sm-empty';
+          var label = esc(node.name);
+          if (node.instance) {
+            cls = node.instance.claimed_by ? 'sm-claimed' : 'sm-occupied';
+            label = '#' + node.instance.id;
+          }
+          html += '<span class="sm-cell ' + cls + '" title="' + esc(node.name) + (node.instance ? ' — ' + esc(node.instance.style_name || '') : '') + '">' + label + '</span>';
+        });
+        html += '</div>';
+      }
       lanes.forEach(function(lane) {
         html += '<div class="sm-lane">';
         html += '<span class="sm-lane-label">' + esc(lane.name) + '</span>';
@@ -1106,45 +1003,405 @@ function loadSupermarketGrid(nodeID) {
         });
         html += '</div>';
       });
-      // Shuffle row
-      if (shuffle.length > 0) {
-        html += '<div class="sm-lane" style="margin-top:0.5rem;border-top:1px dashed var(--border);padding-top:0.5rem">';
-        html += '<span class="sm-lane-label">Shuffle</span>';
-        shuffle.forEach(function(slot) {
-          var cls = 'sm-shuffle';
-          var label = '';
-          if (slot.instance) {
-            cls = 'sm-claimed';
-            label = '#' + slot.instance.id;
-          }
-          html += '<span class="sm-cell ' + cls + '" title="' + esc(slot.name) + '">' + label + '</span>';
-        });
-        html += '</div>';
-      }
       html += '</div>';
       list.innerHTML = html;
     })
-    .catch(function() { list.innerHTML = '<span class="text-muted">Error loading supermarket layout</span>'; });
+    .catch(function() { list.innerHTML = '<span class="text-muted">Error loading group layout</span>'; });
 }
 
-function createSupermarket() {
-  var d = getWizardData();
-  if (!d.name) { alert('Name is required'); return; }
-  if (d.lanes.length === 0) { alert('At least one lane is required'); return; }
-  var result = document.getElementById('sup-result');
-  result.textContent = 'Creating...';
-  fetch('/api/supermarket/create', {
+/* --- Drag & Drop --- */
+var _dragNodeID = null;
+
+function initDragAndDrop() {
+  if (!isAuth) return;
+  var grid = document.getElementById('tile-grid');
+  if (!grid) return;
+
+  // Make standalone physical nodes and lane slots draggable
+  grid.querySelectorAll('.node-tile').forEach(function(tile) {
+    if (tile.dataset.synthetic === 'true') return;
+    if (tile.classList.contains('smkt-absorbed')) return;
+    tile.setAttribute('draggable', 'true');
+    tile.addEventListener('dragstart', onDragStart);
+    tile.addEventListener('dragend', onDragEnd);
+  });
+
+  // Also make tiles inside smkt-lane-slots draggable
+  document.querySelectorAll('.smkt-lane-slots .node-tile').forEach(function(tile) {
+    if (tile.dataset.synthetic === 'true') return;
+    tile.setAttribute('draggable', 'true');
+    tile.addEventListener('dragstart', onDragStart);
+    tile.addEventListener('dragend', onDragEnd);
+  });
+
+  // Drop zones: lane slot containers
+  document.querySelectorAll('.smkt-lane-slots').forEach(function(container) {
+    container.addEventListener('dragover', onDragOver);
+    container.addEventListener('dragleave', onDragLeave);
+    container.addEventListener('drop', onDrop);
+  });
+
+  // Drop zone: entire nodes area (grid + supermarket groups) — to remove from lane
+  var dropArea = document.getElementById('nodes-drop-area');
+  if (dropArea) {
+    dropArea.addEventListener('dragover', onDragOverArea);
+    dropArea.addEventListener('dragleave', onDragLeave);
+    dropArea.addEventListener('drop', onDropGrid);
+  }
+}
+
+function onDragStart(e) {
+  _dragNodeID = this.dataset.id;
+  this.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', this.dataset.id);
+}
+
+function onDragEnd(e) {
+  this.classList.remove('dragging');
+  document.querySelectorAll('.drop-target').forEach(function(el) { el.classList.remove('drop-target'); });
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  this.classList.add('drop-target');
+}
+
+function onDragOverArea(e) {
+  // Allow drop anywhere in the nodes area except inside lane slot containers (those handle their own drops)
+  if (e.target.closest('.smkt-lane-slots')) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  document.getElementById('tile-grid').classList.add('drop-target');
+}
+
+function onDragLeave(e) {
+  this.classList.remove('drop-target');
+}
+
+function onDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  this.classList.remove('drop-target');
+  var nodeID = parseInt(e.dataTransfer.getData('text/plain'));
+  if (!nodeID) return;
+
+  var laneSection = this.closest('.smkt-lane');
+  if (!laneSection) return;
+  var isDirectSection = laneSection.classList.contains('ngrp-direct');
+  var parentID = parseInt(laneSection.dataset.laneId);
+  if (!parentID) return;
+
+  // Get existing slot IDs in this container, excluding the dragged tile
+  var tiles = this.querySelectorAll('.node-tile[draggable="true"]');
+  var existingIDs = [];
+  tiles.forEach(function(t) {
+    var tid = parseInt(t.dataset.id);
+    if (tid !== nodeID) existingIDs.push(tid);
+  });
+
+  // Find insertion index from drop position
+  var insertIdx = existingIDs.length;
+  var nonDragIdx = 0;
+  for (var i = 0; i < tiles.length; i++) {
+    if (parseInt(tiles[i].dataset.id) === nodeID) continue;
+    var rect = tiles[i].getBoundingClientRect();
+    if (e.clientX < rect.left + rect.width / 2) {
+      insertIdx = nonDragIdx;
+      break;
+    }
+    nonDragIdx++;
+  }
+
+  // Check if the dragged node is already in this lane
+  var draggedTile = document.querySelector('.node-tile[data-id="' + nodeID + '"]');
+  var isAlreadyInLane = draggedTile && draggedTile.dataset.parentId === String(parentID);
+
+  var container = this;
+  if (isDirectSection) {
+    // Dropping into direct-nodes container — reparent with position=0 (no depth)
+    reparentNode(nodeID, parentID, 0, container, draggedTile, insertIdx);
+  } else if (isAlreadyInLane) {
+    // Reorder within the same lane
+    var ordered = existingIDs.slice();
+    ordered.splice(insertIdx, 0, nodeID);
+    reorderLane(parentID, ordered, container, draggedTile, insertIdx);
+  } else {
+    // Moving into a new lane — reparent first, then reorder
+    var position = insertIdx + 1;
+    reparentNode(nodeID, parentID, position, container, draggedTile, insertIdx);
+  }
+}
+
+function onDropGrid(e) {
+  // Ignore drops inside lane slot containers (those have their own drop handler)
+  if (e.target.closest('.smkt-lane-slots')) return;
+  e.preventDefault();
+  document.getElementById('tile-grid').classList.remove('drop-target');
+  this.classList.remove('drop-target');
+  var nodeID = parseInt(e.dataTransfer.getData('text/plain'));
+  if (!nodeID) return;
+  var tile = document.querySelector('.node-tile[data-id="' + nodeID + '"]');
+  reparentNode(nodeID, null, 0, null, tile, 0);
+}
+
+function reparentNode(nodeID, parentID, position, container, tile, insertIdx) {
+  fetch('/api/nodes/reparent', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(d)
+    body: JSON.stringify({ node_id: nodeID, parent_id: parentID, position: position })
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + esc(data.error) + '</span>'; return; }
-    result.innerHTML = '<span style="color:var(--success)">Created: ' + esc(data.name) + ' (ID: ' + data.id + ')</span>';
-    setTimeout(function() { location.reload(); }, 1500);
+    if (data.error) { alert('Reparent failed: ' + data.error); return; }
+    if (!tile) return;
+    if (parentID && container) {
+      // Move tile into lane container at insertion point
+      var siblings = container.querySelectorAll('.node-tile');
+      var refNode = siblings[insertIdx] || null;
+      container.insertBefore(tile, refNode);
+      tile.dataset.parentId = String(parentID);
+      // Add depth badge if not present
+      if (!tile.querySelector('.slot-depth')) {
+        var badge = document.createElement('span');
+        badge.className = 'slot-depth';
+        tile.appendChild(badge);
+      }
+      // Make draggable if not already
+      if (!tile.getAttribute('draggable')) {
+        tile.setAttribute('draggable', 'true');
+        tile.addEventListener('dragstart', onDragStart);
+        tile.addEventListener('dragend', onDragEnd);
+      }
+      updateLaneDepths(container);
+      updateLaneCounts(container);
+    } else {
+      // Orphan — move tile back to main grid
+      var oldContainer = tile.closest('.smkt-lane-slots');
+      var grid = document.getElementById('tile-grid');
+      // Remove depth badge
+      var badge = tile.querySelector('.slot-depth');
+      if (badge) badge.remove();
+      tile.dataset.parentId = '';
+      tile.dataset.depth = '0';
+      grid.appendChild(tile);
+      // Update old lane counts
+      if (oldContainer) {
+        updateLaneDepths(oldContainer);
+        updateLaneCounts(oldContainer);
+      }
+    }
   })
-  .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
+  .catch(function(e) { alert('Reparent error: ' + e); });
 }
+
+function reorderLane(laneID, orderedIDs, container, draggedTile, insertIdx) {
+  fetch('/api/nodegroup/reorder-lane', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ lane_id: laneID, ordered_ids: orderedIDs })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    if (data.error) { alert('Reorder failed: ' + data.error); return; }
+    // Rearrange tiles in DOM to match new order
+    orderedIDs.forEach(function(id) {
+      var t = container.querySelector('.node-tile[data-id="' + id + '"]');
+      if (t) container.appendChild(t);
+    });
+    updateLaneDepths(container);
+  })
+  .catch(function(e) { alert('Reorder error: ' + e); });
+}
+
+// Update depth badges and data-depth attributes for all tiles in a lane container
+function updateLaneDepths(container) {
+  var section = container.closest('.smkt-lane');
+  var isDirectNodes = section && section.classList.contains('ngrp-direct');
+  container.querySelectorAll('.node-tile').forEach(function(tile, idx) {
+    var depth = isDirectNodes ? 0 : idx + 1;
+    tile.dataset.depth = String(depth);
+    var badge = tile.querySelector('.slot-depth');
+    if (badge) badge.textContent = isDirectNodes ? '' : depth;
+  });
+}
+
+// Update lane header slot count
+function updateLaneCounts(container) {
+  var section = container.closest('.smkt-lane');
+  if (!section) return;
+  var header = section.querySelector('.smkt-lane-header');
+  if (!header) return;
+  var count = container.querySelectorAll('.node-tile').length;
+  var name = header.dataset.laneName || '';
+  header.textContent = name + ' (' + count + ')';
+}
+
+/* --- Build supermarket hierarchy from flat tiles --- */
+function buildHierarchy() {
+  var grid = document.getElementById('tile-grid');
+  if (!grid) return;
+
+  var tilesByID = {};
+  grid.querySelectorAll('.node-tile').forEach(function(tile) {
+    tilesByID[tile.dataset.id] = tile;
+  });
+
+  // Find NGRP tiles (also accept legacy SMKT/SUP codes for compat)
+  var grpTiles = [];
+  Object.keys(tilesByID).forEach(function(id) {
+    var tile = tilesByID[id];
+    var tc = tile.dataset.typeCode;
+    if (tile.dataset.synthetic === 'true' && (tc === 'NGRP' || tc === 'SMKT' || tc === 'SUP')) {
+      grpTiles.push(tile);
+    }
+  });
+  if (grpTiles.length === 0) return;
+
+  grpTiles.forEach(function(grpTile) {
+    var grpId = grpTile.dataset.id;
+    var grpName = grpTile.dataset.name;
+
+    // Find child lanes and direct physical children
+    var lanes = [];
+    var directChildren = [];
+    var otherChildren = [];
+    Object.keys(tilesByID).forEach(function(id) {
+      var tile = tilesByID[id];
+      if (tile.dataset.parentId !== grpId) return;
+      var tc = tile.dataset.typeCode;
+      if (tc === 'LANE') lanes.push(tile);
+      else if (tile.dataset.synthetic !== 'true') directChildren.push(tile);
+      else otherChildren.push(tile);
+    });
+
+    // Find slot tiles for each lane, sorted by depth
+    function findSlots(parentTile) {
+      var pid = parentTile.dataset.id;
+      var slots = [];
+      Object.keys(tilesByID).forEach(function(id) {
+        if (tilesByID[id].dataset.parentId === pid) slots.push(tilesByID[id]);
+      });
+      slots.sort(function(a, b) {
+        return (parseInt(a.dataset.depth) || 0) - (parseInt(b.dataset.depth) || 0);
+      });
+      return slots;
+    }
+
+    var totalSlots = 0;
+    var allLaneSlots = [];
+    lanes.forEach(function(lane) {
+      var slots = findSlots(lane);
+      allLaneSlots.push({ lane: lane, slots: slots });
+      totalSlots += slots.length;
+    });
+
+    // Build group container
+    var group = document.createElement('div');
+    group.className = 'smkt-group';
+    group.dataset.smktId = grpId;
+
+    var summary = lanes.length + ' lane' + (lanes.length !== 1 ? 's' : '')
+      + ', ' + totalSlots + ' slot' + (totalSlots !== 1 ? 's' : '');
+    if (directChildren.length > 0) {
+      summary += ', ' + directChildren.length + ' direct';
+    }
+
+    var header = document.createElement('div');
+    header.className = 'smkt-header';
+    header.innerHTML = '<span class="smkt-arrow">&#9660;</span>'
+      + '<span class="smkt-name">' + esc(grpName) + '</span>'
+      + '<span class="smkt-summary">' + summary + '</span>';
+
+    header.addEventListener('click', function(e) {
+      if (e.target.classList.contains('smkt-name')) return;
+      group.classList.toggle('smkt-collapsed');
+    });
+    header.querySelector('.smkt-name').addEventListener('click', function(e) {
+      e.stopPropagation();
+      openNodeModal(grpTile);
+    });
+    group.appendChild(header);
+
+    var body = document.createElement('div');
+    body.className = 'smkt-body';
+
+    // Direct physical children section
+    if (directChildren.length > 0 || isAuth) {
+      var directSection = document.createElement('div');
+      directSection.className = 'smkt-lane ngrp-direct';
+      directSection.dataset.laneId = grpId;
+
+      var directHeader = document.createElement('div');
+      directHeader.className = 'smkt-lane-header';
+      directHeader.dataset.laneName = 'Direct Nodes';
+      directHeader.textContent = 'Direct Nodes (' + directChildren.length + ')';
+      directSection.appendChild(directHeader);
+
+      var directContainer = document.createElement('div');
+      directContainer.className = 'smkt-lane-slots';
+      directContainer.dataset.laneId = grpId;
+      directChildren.forEach(function(child) {
+        directContainer.appendChild(child);
+      });
+      directSection.appendChild(directContainer);
+      body.appendChild(directSection);
+    }
+
+    allLaneSlots.forEach(function(item) {
+      var section = document.createElement('div');
+      section.className = 'smkt-lane';
+      section.dataset.laneId = item.lane.dataset.id;
+
+      var laneName = item.lane.dataset.name;
+      var laneHeader = document.createElement('div');
+      laneHeader.className = 'smkt-lane-header';
+      laneHeader.dataset.laneName = item.lane.dataset.name;
+      laneHeader.textContent = laneName + ' (' + item.slots.length + ')';
+      laneHeader.addEventListener('click', function() { openNodeModal(item.lane); });
+      section.appendChild(laneHeader);
+
+      var slotContainer = document.createElement('div');
+      slotContainer.className = 'smkt-lane-slots';
+      slotContainer.dataset.laneId = item.lane.dataset.id;
+      item.slots.forEach(function(slot) {
+        var depth = parseInt(slot.dataset.depth) || 0;
+        var badge = document.createElement('span');
+        badge.className = 'slot-depth';
+        badge.textContent = depth;
+        slot.appendChild(badge);
+        slotContainer.appendChild(slot);
+      });
+      section.appendChild(slotContainer);
+      body.appendChild(section);
+    });
+
+    if (isAuth) {
+      var addLaneBtn = document.createElement('div');
+      addLaneBtn.className = 'smkt-add-lane';
+      addLaneBtn.textContent = '+ Add Lane';
+      addLaneBtn.addEventListener('click', function() {
+        openLaneModal(grpId);
+      });
+      body.appendChild(addLaneBtn);
+    }
+
+    group.appendChild(body);
+    var dropArea = document.getElementById('nodes-drop-area');
+    dropArea.insertBefore(group, grid);
+
+    // Hide absorbed tiles
+    grpTile.classList.add('smkt-absorbed');
+    lanes.forEach(function(l) { l.classList.add('smkt-absorbed'); });
+    directChildren.forEach(function(c) { c.classList.add('smkt-absorbed'); });
+    otherChildren.forEach(function(c) { c.classList.add('smkt-absorbed'); });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  buildHierarchy();
+  initDragAndDrop();
+});
 </script>
 {{end}}

@@ -283,7 +283,7 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 	storageNode, lineNode, ps := setupTestData(t, db)
 
 	// Create another line node
-	lineNode2 := &store.Node{Name: "LINE2-IN", VendorLocation: "Loc-20", NodeType: "line_side", Capacity: 5, Enabled: true}
+	lineNode2 := &store.Node{Name: "LINE2-IN", NodeType: "line_side", Capacity: 5, Enabled: true}
 	db.CreateNode(lineNode2)
 
 	// Create an available payload
@@ -326,15 +326,15 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	db := testDB(t)
 	_, _, ps := setupTestData(t, db)
 
-	// Look up the seeded synthetic node type (SMKT)
-	syntheticType, err := db.GetNodeTypeByCode("SMKT")
+	// Look up the seeded synthetic node type (NGRP)
+	syntheticType, err := db.GetNodeTypeByCode("NGRP")
 	if err != nil {
 		t.Fatalf("get synthetic node type: %v", err)
 	}
 
 	// Create a synthetic parent node
 	parentNode := &store.Node{
-		Name: "ZONE-A", VendorLocation: "", NodeType: "storage",
+		Name: "ZONE-A", NodeType: "storage", IsSynthetic: true,
 		NodeTypeID: &syntheticType.ID, Capacity: 0, Enabled: true,
 	}
 	if err := db.CreateNode(parentNode); err != nil {
@@ -342,15 +342,15 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	}
 
 	// Create child nodes under the synthetic parent
-	child1 := &store.Node{Name: "ZONE-A-01", VendorLocation: "Loc-A01", NodeType: "storage", Capacity: 10, Enabled: true}
-	child2 := &store.Node{Name: "ZONE-A-02", VendorLocation: "Loc-A02", NodeType: "storage", Capacity: 10, Enabled: true}
+	child1 := &store.Node{Name: "ZONE-A-01", NodeType: "storage", Capacity: 10, Enabled: true}
+	child2 := &store.Node{Name: "ZONE-A-02", NodeType: "storage", Capacity: 10, Enabled: true}
 	db.CreateNode(child1)
 	db.CreateNode(child2)
 	db.SetNodeParent(child1.ID, parentNode.ID)
 	db.SetNodeParent(child2.ID, parentNode.ID)
 
 	// Create a line node for delivery
-	lineNode := &store.Node{Name: "LINE-SYN", VendorLocation: "Loc-SYN", NodeType: "line_side", Capacity: 5, Enabled: true}
+	lineNode := &store.Node{Name: "LINE-SYN", NodeType: "line_side", Capacity: 5, Enabled: true}
 	db.CreateNode(lineNode)
 
 	// Put an available payload at child2 (not child1) to verify resolver picks the right child

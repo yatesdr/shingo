@@ -16,54 +16,48 @@ func (m *mockSuccessBackend) CreateTransportOrder(req fleet.TransportOrderReques
 	return fleet.TransportOrderResult{VendorOrderID: "vendor-" + req.OrderID}, nil
 }
 
-// --- Helper: setup supermarket with shuffle row ---
+// --- Helper: setup node group with direct children for shuffle ---
 
-func setupSupermarketWithShuffle(t *testing.T, db *store.DB) (sup, lane *store.Node, slots []*store.Node, shuffleSlots []*store.Node, style *store.PayloadStyle) {
+func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *store.Node, slots []*store.Node, shuffleSlots []*store.Node, style *store.PayloadStyle) {
 	t.Helper()
-	supType, _ := db.GetNodeTypeByCode("SMKT")
+	grpType, _ := db.GetNodeTypeByCode("NGRP")
 	lanType, _ := db.GetNodeTypeByCode("LANE")
-	shfType, _ := db.GetNodeTypeByCode("SHUF")
 
 	style = &store.PayloadStyle{Name: "PART-X", Code: "PTX", FormFactor: "tote", DefaultManifestJSON: "{}"}
 	db.CreatePayloadStyle(style)
 
-	// Create SMKT
-	sup = &store.Node{Name: "SM-TEST", NodeType: "storage", NodeTypeID: &supType.ID, Capacity: 0, Enabled: true}
-	db.CreateNode(sup)
+	// Create NGRP
+	grp = &store.Node{Name: "GRP-TEST", NodeType: "storage", NodeTypeID: &grpType.ID, Capacity: 0, Enabled: true, IsSynthetic: true}
+	db.CreateNode(grp)
 
 	// Create 1 lane with 5 slots
-	lane = &store.Node{Name: "SM-TEST-L1", NodeType: "storage", NodeTypeID: &lanType.ID, ParentID: &sup.ID, Capacity: 0, Enabled: true}
+	lane = &store.Node{Name: "GRP-TEST-L1", NodeType: "storage", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Capacity: 0, Enabled: true, IsSynthetic: true}
 	db.CreateNode(lane)
 
 	slots = make([]*store.Node, 5)
 	for d := 1; d <= 5; d++ {
 		slot := &store.Node{
-			Name: fmt.Sprintf("SM-TEST-L1-S%d", d), NodeType: "storage",
+			Name: fmt.Sprintf("GRP-TEST-L1-S%d", d), NodeType: "storage",
 			ParentID: &lane.ID, Capacity: 1, Enabled: true,
-			VendorLocation: fmt.Sprintf("LOC-L1-S%d", d),
 		}
 		db.CreateNode(slot)
 		db.SetNodeProperty(slot.ID, "depth", fmt.Sprintf("%d", d))
 		slots[d-1] = slot
 	}
 
-	// Create SHUF with 4 shuffle slots
-	shf := &store.Node{Name: "SM-TEST-SHUF", NodeType: "storage", NodeTypeID: &shfType.ID, ParentID: &sup.ID, Capacity: 0, Enabled: true}
-	db.CreateNode(shf)
-
+	// Create 4 direct physical children of the group (shuffle slots)
 	shuffleSlots = make([]*store.Node, 4)
 	for i := 0; i < 4; i++ {
 		ss := &store.Node{
-			Name: fmt.Sprintf("SM-TEST-SHUF-%d", i+1), NodeType: "storage",
-			ParentID: &shf.ID, Capacity: 1, Enabled: true,
-			VendorLocation: fmt.Sprintf("LOC-SHUF-%d", i+1),
+			Name: fmt.Sprintf("GRP-TEST-DC-%d", i+1), NodeType: "storage",
+			ParentID: &grp.ID, Capacity: 1, Enabled: true,
 		}
 		db.CreateNode(ss)
 		shuffleSlots[i] = ss
 	}
 
 	// Read back to get joined fields
-	sup, _ = db.GetNode(sup.ID)
+	grp, _ = db.GetNode(grp.ID)
 	lane, _ = db.GetNode(lane.ID)
 
 	return
@@ -73,7 +67,7 @@ func setupSupermarketWithShuffle(t *testing.T, db *store.DB) (sup, lane *store.N
 
 func TestPlanReshuffle_SingleBlocker(t *testing.T) {
 	db := testDB(t)
-	sup, lane, slots, _, style := setupSupermarketWithShuffle(t, db)
+	grp, lane, slots, _, style := setupNodeGroupWithShuffle(t, db)
 
 	// Place blocker A at depth 1
 	blockerA := &store.PayloadInstance{StyleID: style.ID, NodeID: &slots[0].ID, Status: "available", TagID: "A"}
@@ -87,7 +81,7 @@ func TestPlanReshuffle_SingleBlocker(t *testing.T) {
 		t.Fatalf("create target B: %v", err)
 	}
 
-	plan, err := PlanReshuffle(db, targetB, slots[1], lane, sup.ID)
+	plan, err := PlanReshuffle(db, targetB, slots[1], lane, grp.ID)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -133,7 +127,7 @@ func TestPlanReshuffle_SingleBlocker(t *testing.T) {
 
 func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 	db := testDB(t)
-	sup, lane, slots, _, style := setupSupermarketWithShuffle(t, db)
+	grp, lane, slots, _, style := setupNodeGroupWithShuffle(t, db)
 
 	// Place blocker at depth 1
 	blocker1 := &store.PayloadInstance{StyleID: style.ID, NodeID: &slots[0].ID, Status: "available", TagID: "B1"}
@@ -153,7 +147,7 @@ func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 		t.Fatalf("create target: %v", err)
 	}
 
-	plan, err := PlanReshuffle(db, target, slots[2], lane, sup.ID)
+	plan, err := PlanReshuffle(db, target, slots[2], lane, grp.ID)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -211,13 +205,13 @@ func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 
 func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
 	db := testDB(t)
-	sup, lane, slots, shuffleSlots, style := setupSupermarketWithShuffle(t, db)
+	grp, lane, slots, shuffleSlots, style := setupNodeGroupWithShuffle(t, db)
 
-	// Fill all 4 shuffle slots with instances
+	// Fill all 4 direct children (shuffle slots) with instances
 	for i, ss := range shuffleSlots {
 		inst := &store.PayloadInstance{
 			StyleID: style.ID, NodeID: &ss.ID, Status: "available",
-			TagID: fmt.Sprintf("SHUF-%d", i+1),
+			TagID: fmt.Sprintf("DC-%d", i+1),
 		}
 		if err := db.CreateInstance(inst); err != nil {
 			t.Fatalf("create shuffle instance %d: %v", i+1, err)
@@ -236,12 +230,12 @@ func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
 		t.Fatalf("create target: %v", err)
 	}
 
-	_, err := PlanReshuffle(db, target, slots[1], lane, sup.ID)
+	_, err := PlanReshuffle(db, target, slots[1], lane, grp.ID)
 	if err == nil {
 		t.Fatal("expected error about insufficient shuffle slots, got nil")
 	}
 
-	_ = sup // used to pass supermarketID
+	_ = grp // used to pass groupID
 }
 
 func TestLaneLock_PreventsConcurrent(t *testing.T) {
@@ -285,7 +279,7 @@ func TestLaneLock_PreventsConcurrent(t *testing.T) {
 
 func TestCompoundOrderCreation(t *testing.T) {
 	db := testDB(t)
-	sup, lane, slots, _, style := setupSupermarketWithShuffle(t, db)
+	grp, lane, slots, _, style := setupNodeGroupWithShuffle(t, db)
 
 	// Place blocker at depth 1
 	blocker := &store.PayloadInstance{StyleID: style.ID, NodeID: &slots[0].ID, Status: "available", TagID: "BLK"}
@@ -308,7 +302,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 		DeliveryNode: "LINE1-DEST",
 	}
 	// Create a delivery node so dispatchToFleet can resolve it
-	destNode := &store.Node{Name: "LINE1-DEST", NodeType: "line_side", VendorLocation: "LOC-DEST", Capacity: 5, Enabled: true}
+	destNode := &store.Node{Name: "LINE1-DEST", NodeType: "line_side", Capacity: 5, Enabled: true}
 	if err := db.CreateNode(destNode); err != nil {
 		t.Fatalf("create dest node: %v", err)
 	}
@@ -317,7 +311,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 	}
 
 	// Plan the reshuffle
-	plan, err := PlanReshuffle(db, target, slots[1], lane, sup.ID)
+	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID)
 	if err != nil {
 		t.Fatalf("PlanReshuffle: %v", err)
 	}
@@ -397,7 +391,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 
 func TestHandleChildOrderFailure(t *testing.T) {
 	db := testDB(t)
-	_, lane, slots, _, style := setupSupermarketWithShuffle(t, db)
+	_, lane, slots, _, style := setupNodeGroupWithShuffle(t, db)
 
 	// Create parent order
 	parentOrder := &store.Order{
@@ -419,7 +413,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		ParentOrderID: &parentOrder.ID,
 		Sequence:      1,
 		PickupNode:    slots[0].Name,
-		DeliveryNode:  "SM-TEST-SHUF-1",
+		DeliveryNode:  "GRP-TEST-DC-1",
 	}
 	if err := db.CreateOrder(child1); err != nil {
 		t.Fatalf("create child1: %v", err)

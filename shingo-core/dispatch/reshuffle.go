@@ -26,7 +26,7 @@ type ReshufflePlan struct {
 
 // PlanReshuffle creates a plan to unbury a target instance in a lane.
 // Steps: move blockers front-to-back to shuffle slots, retrieve target, restock blockers deepest-first.
-func PlanReshuffle(db *store.DB, target *store.PayloadInstance, targetSlot *store.Node, lane *store.Node, supermarketID int64) (*ReshufflePlan, error) {
+func PlanReshuffle(db *store.DB, target *store.PayloadInstance, targetSlot *store.Node, lane *store.Node, groupID int64) (*ReshufflePlan, error) {
 	if targetSlot.ParentID == nil {
 		return nil, fmt.Errorf("target slot has no parent lane")
 	}
@@ -62,7 +62,7 @@ func PlanReshuffle(db *store.DB, target *store.PayloadInstance, targetSlot *stor
 	}
 
 	// Find shuffle slots
-	shuffleSlots, err := FindShuffleSlots(db, supermarketID, len(blockers))
+	shuffleSlots, err := FindShuffleSlots(db, groupID, len(blockers))
 	if err != nil {
 		return nil, fmt.Errorf("find shuffle slots: %w", err)
 	}
@@ -112,40 +112,51 @@ func PlanReshuffle(db *store.DB, target *store.PayloadInstance, targetSlot *stor
 	return plan, nil
 }
 
-// FindShuffleSlots locates empty shuffle slots in the supermarket's SHUF child.
-func FindShuffleSlots(db *store.DB, supermarketID int64, count int) ([]*store.Node, error) {
-	children, err := db.ListChildNodes(supermarketID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Find the SHUF child
-	var shfNode *store.Node
-	for _, c := range children {
-		if c.NodeTypeCode == "SHUF" {
-			shfNode = c
-			break
-		}
-	}
-	if shfNode == nil {
-		return nil, fmt.Errorf("supermarket %d has no shuffle row (SHUF)", supermarketID)
-	}
-
-	shuffleChildren, err := db.ListChildNodes(shfNode.ID)
+// FindShuffleSlots locates empty accessible slots for temporary shuffle storage.
+// Pass 1: direct physical children of the group (always accessible).
+// Pass 2: accessible empty slots in regular lanes.
+func FindShuffleSlots(db *store.DB, groupID int64, count int) ([]*store.Node, error) {
+	children, err := db.ListChildNodes(groupID)
 	if err != nil {
 		return nil, err
 	}
 
 	var available []*store.Node
-	for _, slot := range shuffleChildren {
-		if !slot.Enabled {
+
+	// Pass 1: direct physical children of the group (always accessible)
+	for _, c := range children {
+		if !c.Enabled || c.IsSynthetic {
 			continue
 		}
-		cnt, _ := db.CountInstancesByNode(slot.ID)
+		cnt, _ := db.CountInstancesByNode(c.ID)
 		if cnt == 0 {
-			available = append(available, slot)
+			available = append(available, c)
 			if len(available) >= count {
-				break
+				return available, nil
+			}
+		}
+	}
+
+	// Pass 2: any empty accessible slot across all lanes
+	for _, c := range children {
+		if !c.Enabled || c.NodeTypeCode != "LANE" {
+			continue
+		}
+		slots, _ := db.ListLaneSlots(c.ID)
+		for _, slot := range slots {
+			if !slot.Enabled {
+				continue
+			}
+			acc, _ := db.IsSlotAccessible(slot.ID)
+			if !acc {
+				continue
+			}
+			cnt, _ := db.CountInstancesByNode(slot.ID)
+			if cnt == 0 {
+				available = append(available, slot)
+				if len(available) >= count {
+					return available, nil
+				}
 			}
 		}
 	}

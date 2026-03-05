@@ -5,7 +5,7 @@ import "testing"
 func TestCorrectionCRUD(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "S1", VendorLocation: "Loc-01", NodeType: "storage", Enabled: true}
+	node := &Node{Name: "S1", NodeType: "storage", Enabled: true}
 	db.CreateNode(node)
 
 	c := &Correction{
