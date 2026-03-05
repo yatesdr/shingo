@@ -203,18 +203,23 @@ func (db *DB) migrateNodeTypes() error {
 		}
 	}
 
+	// Rename old 3-letter node type codes to new readable codes
+	for _, rename := range [][2]string{{"SUP", "SMKT"}, {"LAN", "LANE"}, {"SHF", "SHUF"}} {
+		db.Exec(db.Q(`UPDATE node_types SET code=? WHERE code=?`), rename[1], rename[0])
+	}
+
 	seeds := []struct {
 		code, name, desc string
 		synthetic        bool
 	}{
 		{"STG", "Storage", "General storage location", false},
 		{"LSL", "Lineside", "Line-side delivery point", false},
-		{"SUP", "Supermarket", "Supermarket zone (synthetic parent)", true},
+		{"SMKT", "Supermarket", "Supermarket zone (synthetic parent)", true},
 		{"OFL", "Overflow", "Overflow storage area", false},
 		{"STN", "Staging", "Staging area", false},
 		{"CHG", "Charging", "Robot charging station", false},
-		{"LAN", "Lane", "Supermarket lane (groups depth-ordered slots)", true},
-		{"SHF", "Shuffle Row", "Temporary shuffle staging row", true},
+		{"LANE", "Lane", "Supermarket lane (groups depth-ordered slots)", true},
+		{"SHUF", "Shuffle Row", "Temporary shuffle staging row", true},
 	}
 	for _, s := range seeds {
 		synVal := 0

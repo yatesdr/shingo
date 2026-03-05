@@ -125,10 +125,10 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, 
 	var source *store.PayloadInstance
 	var sourceNode *store.Node
 
-	// Try supermarket-aware resolution if a pickup node is specified and is a SUP
+	// Try supermarket-aware resolution if a pickup node is specified and is a SMKT
 	if order.PickupNode != "" && d.resolver != nil {
 		pickupNode, err := d.db.GetNodeByName(order.PickupNode)
-		if err == nil && pickupNode.IsSynthetic && pickupNode.NodeTypeCode == "SUP" {
+		if err == nil && pickupNode.IsSynthetic && pickupNode.NodeTypeCode == "SMKT" {
 			result, err := d.resolver.Resolve(pickupNode, OrderTypeRetrieve, order.StyleID)
 			if err != nil {
 				// Check if buried — trigger reshuffle

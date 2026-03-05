@@ -12,13 +12,13 @@ import (
 func setupSupermarket(t *testing.T, db *store.DB) (sup *store.Node, lanes []*store.Node, slots [][]*store.Node, style *store.PayloadStyle) {
 	t.Helper()
 	// Get node type IDs
-	supType, err := db.GetNodeTypeByCode("SUP")
+	supType, err := db.GetNodeTypeByCode("SMKT")
 	if err != nil {
-		t.Fatalf("get SUP node type: %v", err)
+		t.Fatalf("get SMKT node type: %v", err)
 	}
-	lanType, err := db.GetNodeTypeByCode("LAN")
+	lanType, err := db.GetNodeTypeByCode("LANE")
 	if err != nil {
-		t.Fatalf("get LAN node type: %v", err)
+		t.Fatalf("get LANE node type: %v", err)
 	}
 
 	// Create payload style
@@ -27,10 +27,10 @@ func setupSupermarket(t *testing.T, db *store.DB) (sup *store.Node, lanes []*sto
 		t.Fatalf("create payload style: %v", err)
 	}
 
-	// Create SUP node
+	// Create SMKT node
 	sup = &store.Node{Name: "SM-1", NodeType: "storage", NodeTypeID: &supType.ID, Capacity: 0, Enabled: true}
 	if err := db.CreateNode(sup); err != nil {
-		t.Fatalf("create SUP node: %v", err)
+		t.Fatalf("create SMKT node: %v", err)
 	}
 	sup, _ = db.GetNode(sup.ID)
 

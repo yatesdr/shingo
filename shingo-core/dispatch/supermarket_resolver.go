@@ -24,7 +24,7 @@ func (e *BuriedError) Error() string {
 
 func (e *BuriedError) Unwrap() error { return ErrBuried }
 
-// SupermarketResolver handles two-level SUP → LAN → Slot resolution.
+// SupermarketResolver handles two-level SMKT → LANE → Slot resolution.
 type SupermarketResolver struct {
 	DB       *store.DB
 	LaneLock *LaneLock
@@ -54,8 +54,8 @@ func (r *SupermarketResolver) ResolveRetrieve(supermarket *store.Node, styleID *
 		if !lane.Enabled {
 			continue
 		}
-		// Only process LAN-type children
-		if lane.NodeTypeCode != "LAN" {
+		// Only process LANE-type children
+		if lane.NodeTypeCode != "LANE" {
 			continue
 		}
 		// Skip locked lanes
@@ -88,7 +88,7 @@ func (r *SupermarketResolver) ResolveRetrieve(supermarket *store.Node, styleID *
 
 	// No accessible instance found — check if any are buried
 	for _, lane := range lanes {
-		if !lane.Enabled || lane.NodeTypeCode != "LAN" {
+		if !lane.Enabled || lane.NodeTypeCode != "LANE" {
 			continue
 		}
 		buried, slot, err := r.DB.FindBuriedInstance(lane.ID, styleCode)
@@ -117,7 +117,7 @@ func (r *SupermarketResolver) ResolveStore(supermarket *store.Node, styleID *int
 
 	var candidates []candidate
 	for _, lane := range lanes {
-		if !lane.Enabled || lane.NodeTypeCode != "LAN" {
+		if !lane.Enabled || lane.NodeTypeCode != "LANE" {
 			continue
 		}
 		// Skip locked lanes

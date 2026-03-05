@@ -112,23 +112,23 @@ func PlanReshuffle(db *store.DB, target *store.PayloadInstance, targetSlot *stor
 	return plan, nil
 }
 
-// FindShuffleSlots locates empty shuffle slots in the supermarket's SHF child.
+// FindShuffleSlots locates empty shuffle slots in the supermarket's SHUF child.
 func FindShuffleSlots(db *store.DB, supermarketID int64, count int) ([]*store.Node, error) {
 	children, err := db.ListChildNodes(supermarketID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Find the SHF child
+	// Find the SHUF child
 	var shfNode *store.Node
 	for _, c := range children {
-		if c.NodeTypeCode == "SHF" {
+		if c.NodeTypeCode == "SHUF" {
 			shfNode = c
 			break
 		}
 	}
 	if shfNode == nil {
-		return nil, fmt.Errorf("supermarket %d has no shuffle row (SHF)", supermarketID)
+		return nil, fmt.Errorf("supermarket %d has no shuffle row (SHUF)", supermarketID)
 	}
 
 	shuffleChildren, err := db.ListChildNodes(shfNode.ID)

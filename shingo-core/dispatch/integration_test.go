@@ -326,8 +326,8 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	db := testDB(t)
 	_, _, ps := setupTestData(t, db)
 
-	// Look up the seeded synthetic node type (SUP)
-	syntheticType, err := db.GetNodeTypeByCode("SUP")
+	// Look up the seeded synthetic node type (SMKT)
+	syntheticType, err := db.GetNodeTypeByCode("SMKT")
 	if err != nil {
 		t.Fatalf("get synthetic node type: %v", err)
 	}

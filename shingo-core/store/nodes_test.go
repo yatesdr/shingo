@@ -83,16 +83,16 @@ func TestLaneQueries(t *testing.T) {
 	db := testDB(t)
 
 	// Create node types
-	supType := &NodeType{Code: "SUP", Name: "Supermarket", IsSynthetic: true}
+	supType := &NodeType{Code: "SMKT", Name: "Supermarket", IsSynthetic: true}
 	db.CreateNodeType(supType)
 
-	lanType := &NodeType{Code: "LAN", Name: "Lane", IsSynthetic: true}
+	lanType := &NodeType{Code: "LANE", Name: "Lane", IsSynthetic: true}
 	db.CreateNodeType(lanType)
 
 	stgType := &NodeType{Code: "STG", Name: "Storage", IsSynthetic: false}
 	db.CreateNodeType(stgType)
 
-	// Create SUP node
+	// Create SMKT node
 	supNode := &Node{
 		Name:           "SUP-01",
 		VendorLocation: "Loc-SUP",
@@ -102,7 +102,7 @@ func TestLaneQueries(t *testing.T) {
 	}
 	db.CreateNode(supNode)
 
-	// Create LAN node as child of SUP
+	// Create LANE node as child of SMKT
 	lanNode := &Node{
 		Name:           "LAN-01",
 		VendorLocation: "Loc-LAN",
@@ -113,7 +113,7 @@ func TestLaneQueries(t *testing.T) {
 	}
 	db.CreateNode(lanNode)
 
-	// Create 3 slot nodes as children of LAN
+	// Create 3 slot nodes as children of LANE
 	slot1 := &Node{Name: "SLOT-01", VendorLocation: "Loc-S1", NodeType: "storage", Capacity: 1, Enabled: true, ParentID: &lanNode.ID}
 	db.CreateNode(slot1)
 	db.SetNodeProperty(slot1.ID, "depth", "1")

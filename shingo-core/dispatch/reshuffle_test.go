@@ -20,14 +20,14 @@ func (m *mockSuccessBackend) CreateTransportOrder(req fleet.TransportOrderReques
 
 func setupSupermarketWithShuffle(t *testing.T, db *store.DB) (sup, lane *store.Node, slots []*store.Node, shuffleSlots []*store.Node, style *store.PayloadStyle) {
 	t.Helper()
-	supType, _ := db.GetNodeTypeByCode("SUP")
-	lanType, _ := db.GetNodeTypeByCode("LAN")
-	shfType, _ := db.GetNodeTypeByCode("SHF")
+	supType, _ := db.GetNodeTypeByCode("SMKT")
+	lanType, _ := db.GetNodeTypeByCode("LANE")
+	shfType, _ := db.GetNodeTypeByCode("SHUF")
 
 	style = &store.PayloadStyle{Name: "PART-X", Code: "PTX", FormFactor: "tote", DefaultManifestJSON: "{}"}
 	db.CreatePayloadStyle(style)
 
-	// Create SUP
+	// Create SMKT
 	sup = &store.Node{Name: "SM-TEST", NodeType: "storage", NodeTypeID: &supType.ID, Capacity: 0, Enabled: true}
 	db.CreateNode(sup)
 
@@ -47,16 +47,16 @@ func setupSupermarketWithShuffle(t *testing.T, db *store.DB) (sup, lane *store.N
 		slots[d-1] = slot
 	}
 
-	// Create SHF with 4 shuffle slots
-	shf := &store.Node{Name: "SM-TEST-SHF", NodeType: "storage", NodeTypeID: &shfType.ID, ParentID: &sup.ID, Capacity: 0, Enabled: true}
+	// Create SHUF with 4 shuffle slots
+	shf := &store.Node{Name: "SM-TEST-SHUF", NodeType: "storage", NodeTypeID: &shfType.ID, ParentID: &sup.ID, Capacity: 0, Enabled: true}
 	db.CreateNode(shf)
 
 	shuffleSlots = make([]*store.Node, 4)
 	for i := 0; i < 4; i++ {
 		ss := &store.Node{
-			Name: fmt.Sprintf("SM-TEST-SHF-%d", i+1), NodeType: "storage",
+			Name: fmt.Sprintf("SM-TEST-SHUF-%d", i+1), NodeType: "storage",
 			ParentID: &shf.ID, Capacity: 1, Enabled: true,
-			VendorLocation: fmt.Sprintf("LOC-SHF-%d", i+1),
+			VendorLocation: fmt.Sprintf("LOC-SHUF-%d", i+1),
 		}
 		db.CreateNode(ss)
 		shuffleSlots[i] = ss
@@ -217,7 +217,7 @@ func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
 	for i, ss := range shuffleSlots {
 		inst := &store.PayloadInstance{
 			StyleID: style.ID, NodeID: &ss.ID, Status: "available",
-			TagID: fmt.Sprintf("SHF-%d", i+1),
+			TagID: fmt.Sprintf("SHUF-%d", i+1),
 		}
 		if err := db.CreateInstance(inst); err != nil {
 			t.Fatalf("create shuffle instance %d: %v", i+1, err)
@@ -419,7 +419,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		ParentOrderID: &parentOrder.ID,
 		Sequence:      1,
 		PickupNode:    slots[0].Name,
-		DeliveryNode:  "SM-TEST-SHF-1",
+		DeliveryNode:  "SM-TEST-SHUF-1",
 	}
 	if err := db.CreateOrder(child1); err != nil {
 		t.Fatalf("create child1: %v", err)

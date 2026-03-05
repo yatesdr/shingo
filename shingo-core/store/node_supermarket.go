@@ -26,7 +26,7 @@ type SupermarketCreateResult struct {
 	Name          string
 }
 
-// CreateSupermarket creates a full SUP → LAN → Slot → SHF hierarchy in a single transaction.
+// CreateSupermarket creates a full SMKT → LANE → Slot → SHUF hierarchy in a single transaction.
 func (db *DB) CreateSupermarket(setup SupermarketSetup) (*SupermarketCreateResult, error) {
 	tx, err := db.Begin()
 	if err != nil {
@@ -34,20 +34,20 @@ func (db *DB) CreateSupermarket(setup SupermarketSetup) (*SupermarketCreateResul
 	}
 	defer tx.Rollback()
 
-	supType, err := db.GetNodeTypeByCode("SUP")
+	supType, err := db.GetNodeTypeByCode("SMKT")
 	if err != nil {
-		return nil, fmt.Errorf("SUP node type not found")
+		return nil, fmt.Errorf("SMKT node type not found")
 	}
-	lanType, err := db.GetNodeTypeByCode("LAN")
+	lanType, err := db.GetNodeTypeByCode("LANE")
 	if err != nil {
-		return nil, fmt.Errorf("LAN node type not found")
+		return nil, fmt.Errorf("LANE node type not found")
 	}
-	shfType, err := db.GetNodeTypeByCode("SHF")
+	shfType, err := db.GetNodeTypeByCode("SHUF")
 	if err != nil {
-		return nil, fmt.Errorf("SHF node type not found")
+		return nil, fmt.Errorf("SHUF node type not found")
 	}
 
-	// Create SUP node
+	// Create SMKT node
 	supResult, err := tx.Exec(db.Q(`INSERT INTO nodes (name, node_type, node_type_id, zone, capacity, enabled) VALUES (?, 'storage', ?, ?, 0, 1)`),
 		setup.Name, supType.ID, setup.Zone)
 	if err != nil {
@@ -82,14 +82,14 @@ func (db *DB) CreateSupermarket(setup SupermarketSetup) (*SupermarketCreateResul
 
 	// Create shuffle row
 	shfResult, err := tx.Exec(db.Q(`INSERT INTO nodes (name, node_type, node_type_id, parent_id, zone, capacity, enabled) VALUES (?, 'storage', ?, ?, ?, 0, 1)`),
-		setup.Name+"-SHF", shfType.ID, supID, setup.Zone)
+		setup.Name+"-SHUF", shfType.ID, supID, setup.Zone)
 	if err != nil {
 		return nil, fmt.Errorf("create shuffle row: %w", err)
 	}
 	shfID, _ := shfResult.LastInsertId()
 
 	for i, loc := range setup.ShuffleSlots {
-		slotName := fmt.Sprintf("%s-SHF-%02d", setup.Name, i+1)
+		slotName := fmt.Sprintf("%s-SHUF-%02d", setup.Name, i+1)
 		slotResult, err := tx.Exec(db.Q(`INSERT INTO nodes (name, vendor_location, node_type, parent_id, zone, capacity, enabled) VALUES (?, ?, 'storage', ?, ?, 1, 1)`),
 			slotName, loc, shfID, setup.Zone)
 		if err != nil {
@@ -145,7 +145,7 @@ func (db *DB) GetSupermarketLayout(supermarketID int64) (*SupermarketLayout, err
 	layout := &SupermarketLayout{}
 
 	for _, child := range children {
-		if child.NodeTypeCode == "LAN" {
+		if child.NodeTypeCode == "LANE" {
 			slots, _ := db.ListLaneSlots(child.ID)
 			var si []SupermarketSlotInfo
 			for _, slot := range slots {
@@ -163,7 +163,7 @@ func (db *DB) GetSupermarketLayout(supermarketID int64) (*SupermarketLayout, err
 				layout.Stats.Total++
 			}
 			layout.Lanes = append(layout.Lanes, SupermarketLaneInfo{Name: child.Name, ID: child.ID, Slots: si})
-		} else if child.NodeTypeCode == "SHF" {
+		} else if child.NodeTypeCode == "SHUF" {
 			shfChildren, _ := db.ListChildNodes(child.ID)
 			for _, slot := range shfChildren {
 				s := SupermarketSlotInfo{NodeID: slot.ID, Name: slot.Name}

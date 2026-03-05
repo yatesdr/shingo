@@ -18,7 +18,7 @@ type NodeResolver interface {
 }
 
 // DefaultResolver resolves synthetic nodes using the database.
-// For SUP (supermarket) nodes, it delegates to the SupermarketResolver for two-level resolution.
+// For SMKT (supermarket) nodes, it delegates to the SupermarketResolver for two-level resolution.
 type DefaultResolver struct {
 	DB       *store.DB
 	LaneLock *LaneLock
@@ -34,11 +34,11 @@ func (r *DefaultResolver) Resolve(syntheticNode *store.Node, orderType string, s
 		return nil, fmt.Errorf("synthetic node %s has no children", syntheticNode.Name)
 	}
 
-	// Delegate to supermarket resolver if this is a SUP with LAN children
-	if syntheticNode.NodeTypeCode == "SUP" {
+	// Delegate to supermarket resolver if this is a SMKT with LANE children
+	if syntheticNode.NodeTypeCode == "SMKT" {
 		hasLanes := false
 		for _, c := range children {
-			if c.NodeTypeCode == "LAN" {
+			if c.NodeTypeCode == "LANE" {
 				hasLanes = true
 				break
 			}
