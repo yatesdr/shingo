@@ -24,14 +24,46 @@ func (e *BuriedError) Error() string {
 
 func (e *BuriedError) Unwrap() error { return ErrBuried }
 
+// Retrieval algorithm codes.
+const (
+	RetrieveFIFO = "FIFO" // oldest loaded/created timestamp, buried-instance reshuffle
+	RetrieveFAVL = "FAVL" // first available unclaimed instance, no reshuffle
+)
+
+// Storage algorithm codes.
+const (
+	StoreLKND = "LKND" // Like Kind: consolidate matching styles, then emptiest
+	StoreDPTH = "DPTH" // Depth First: pack back-to-front regardless of style
+)
+
 // GroupResolver handles NGRP → LANE → Slot and NGRP → direct child resolution.
 type GroupResolver struct {
 	DB       *store.DB
 	LaneLock *LaneLock
 }
 
-// ResolveRetrieve finds the best accessible FIFO instance across all lanes and direct children in a node group.
+// getGroupAlgorithm reads a property from the node group, returning defaultVal if unset.
+func (r *GroupResolver) getGroupAlgorithm(groupID int64, key, defaultVal string) string {
+	v := r.DB.GetNodeProperty(groupID, key)
+	if v == "" {
+		return defaultVal
+	}
+	return v
+}
+
+// ResolveRetrieve finds the best accessible instance across all lanes and direct children.
 func (r *GroupResolver) ResolveRetrieve(group *store.Node, styleID *int64) (*ResolveResult, error) {
+	algo := r.getGroupAlgorithm(group.ID, "retrieve_algorithm", RetrieveFIFO)
+	switch algo {
+	case RetrieveFAVL:
+		return r.resolveRetrieveFAVL(group, styleID)
+	default:
+		return r.resolveRetrieveFIFO(group, styleID)
+	}
+}
+
+// resolveRetrieveFIFO picks the oldest accessible instance by timestamp, with buried-instance reshuffle.
+func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, styleID *int64) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
@@ -45,7 +77,6 @@ func (r *GroupResolver) ResolveRetrieve(group *store.Node, styleID *int64) (*Res
 		}
 	}
 
-	// Search for accessible instance across all lanes and direct children, pick oldest loaded_at
 	var bestInstance *store.PayloadInstance
 	var bestNode *store.Node
 	var bestTime time.Time
@@ -56,7 +87,6 @@ func (r *GroupResolver) ResolveRetrieve(group *store.Node, styleID *int64) (*Res
 		}
 
 		if child.NodeTypeCode == "LANE" {
-			// Skip locked lanes
 			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
 				continue
 			}
@@ -78,7 +108,6 @@ func (r *GroupResolver) ResolveRetrieve(group *store.Node, styleID *int64) (*Res
 				bestNode = slot
 			}
 		} else if !child.IsSynthetic {
-			// Direct physical child — always accessible
 			instances, err := r.DB.ListInstancesByNode(child.ID)
 			if err != nil {
 				continue
@@ -121,9 +150,70 @@ func (r *GroupResolver) ResolveRetrieve(group *store.Node, styleID *int64) (*Res
 	return nil, fmt.Errorf("no instance of requested style in node group %s", group.Name)
 }
 
+// resolveRetrieveFAVL returns the first available unclaimed instance — no timestamp comparison, no reshuffle.
+func (r *GroupResolver) resolveRetrieveFAVL(group *store.Node, styleID *int64) (*ResolveResult, error) {
+	children, err := r.DB.ListChildNodes(group.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
+	}
+
+	var styleCode string
+	if styleID != nil {
+		ps, err := r.DB.GetPayloadStyle(*styleID)
+		if err == nil {
+			styleCode = ps.Name
+		}
+	}
+
+	for _, child := range children {
+		if !child.Enabled {
+			continue
+		}
+
+		if child.NodeTypeCode == "LANE" {
+			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
+				continue
+			}
+
+			inst, err := r.DB.FindSourceInstanceInLane(child.ID, styleCode)
+			if err != nil {
+				continue
+			}
+			slot, _ := r.DB.GetNode(*inst.NodeID)
+			return &ResolveResult{Node: slot, Instance: inst}, nil
+		} else if !child.IsSynthetic {
+			instances, err := r.DB.ListInstancesByNode(child.ID)
+			if err != nil {
+				continue
+			}
+			for _, inst := range instances {
+				if inst.ClaimedBy != nil || inst.Status != "available" {
+					continue
+				}
+				if styleID != nil && inst.StyleID != *styleID {
+					continue
+				}
+				return &ResolveResult{Node: child, Instance: inst}, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no instance of requested style in node group %s", group.Name)
+}
+
 // ResolveStore finds the best slot for storing an instance in a node group.
-// Considers both lane slots and direct children. Prefers consolidation, then emptiest.
 func (r *GroupResolver) ResolveStore(group *store.Node, styleID *int64) (*ResolveResult, error) {
+	algo := r.getGroupAlgorithm(group.ID, "store_algorithm", StoreLKND)
+	switch algo {
+	case StoreDPTH:
+		return r.resolveStoreDPTH(group, styleID)
+	default:
+		return r.resolveStoreLKND(group, styleID)
+	}
+}
+
+// resolveStoreLKND consolidates matching styles first, then picks the emptiest slot.
+func (r *GroupResolver) resolveStoreLKND(group *store.Node, styleID *int64) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
@@ -144,7 +234,6 @@ func (r *GroupResolver) ResolveStore(group *store.Node, styleID *int64) (*Resolv
 		}
 
 		if child.NodeTypeCode == "LANE" {
-			// Skip locked lanes
 			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
 				continue
 			}
@@ -193,7 +282,6 @@ func (r *GroupResolver) ResolveStore(group *store.Node, styleID *int64) (*Resolv
 
 			candidates = append(candidates, candidate{node: slot, hasMatch: hasMatch, count: count, capacity: capacity})
 		} else if !child.IsSynthetic && child.Capacity > 0 {
-			// Direct physical child
 			count, err := r.DB.CountInstancesByNode(child.ID)
 			if err != nil {
 				continue
@@ -232,4 +320,61 @@ func (r *GroupResolver) ResolveStore(group *store.Node, styleID *int64) (*Resolv
 	}
 
 	return &ResolveResult{Node: best.node}, nil
+}
+
+// resolveStoreDPTH packs back-to-front regardless of style. Prefers lanes over direct children.
+func (r *GroupResolver) resolveStoreDPTH(group *store.Node, styleID *int64) (*ResolveResult, error) {
+	children, err := r.DB.ListChildNodes(group.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
+	}
+
+	// First pass: try lanes (deepest empty slot)
+	for _, child := range children {
+		if !child.Enabled || child.NodeTypeCode != "LANE" {
+			continue
+		}
+		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
+			continue
+		}
+
+		// Skip lanes with payload style restrictions that don't match
+		if styleID != nil {
+			laneStyles, _ := r.DB.GetEffectivePayloadStyles(child.ID)
+			if len(laneStyles) > 0 {
+				match := false
+				for _, ls := range laneStyles {
+					if ls.ID == *styleID {
+						match = true
+						break
+					}
+				}
+				if !match {
+					continue
+				}
+			}
+		}
+
+		slot, err := r.DB.FindStoreSlotInLane(child.ID, 0)
+		if err != nil {
+			continue // lane is full
+		}
+		return &ResolveResult{Node: slot}, nil
+	}
+
+	// Second pass: direct children with capacity
+	for _, child := range children {
+		if !child.Enabled || child.IsSynthetic || child.Capacity <= 0 {
+			continue
+		}
+		count, err := r.DB.CountInstancesByNode(child.ID)
+		if err != nil {
+			continue
+		}
+		if count < child.Capacity {
+			return &ResolveResult{Node: child}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no available slot in node group %s", group.Name)
 }

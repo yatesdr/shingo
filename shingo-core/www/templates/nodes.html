@@ -114,7 +114,7 @@
     </div>
 
     {{if .Authenticated}}
-    <form id="node-form" method="POST" action="/nodes/update">
+    <form id="node-form" method="POST" action="/nodes/update" onsubmit="saveAlgorithmProperties()">
       <input type="hidden" name="id" id="nf-id">
       <!-- Common settings: Capacity, Enabled -->
       <div class="grid grid-2 mb-1">
@@ -152,6 +152,26 @@
       <div class="grid grid-2" style="font-size:0.85rem">
         <div><strong>Stations:</strong> <span id="assoc-stations" class="text-muted">-</span></div>
         <div><strong>Payload Styles:</strong> <span id="assoc-pt" class="text-muted">-</span></div>
+      </div>
+    </div>
+
+    <!-- Algorithm settings (NGRP only) -->
+    <div id="ngrp-algorithms" style="display:none" class="mb-2">
+      <div class="grid grid-2" style="font-size:0.85rem">
+        <div class="form-group">
+          <label>Retrieval Algorithm</label>
+          <select id="nf-retrieve-algo">
+            <option value="FIFO">FIFO — Oldest First</option>
+            <option value="FAVL">FAVL — First Available</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Storage Algorithm</label>
+          <select id="nf-store-algo">
+            <option value="LKND">LKND — Like Kind</option>
+            <option value="DPTH">DPTH — Depth First</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -344,6 +364,17 @@ function openNodeModal(el) {
   var assocDiv = document.getElementById('modal-associations');
   if (isLeafChild) assocDiv.style.display = 'none';
 
+  // Show algorithm dropdowns only for NGRP nodes
+  var algoDiv = document.getElementById('ngrp-algorithms');
+  if (algoDiv) {
+    algoDiv.style.display = d.typeCode === 'NGRP' ? '' : 'none';
+    if (d.typeCode === 'NGRP') {
+      // Reset to defaults; loadNodeDetail will set actual values from properties
+      document.getElementById('nf-retrieve-algo').value = 'FIFO';
+      document.getElementById('nf-store-algo').value = 'LKND';
+    }
+  }
+
   if (isAuth) {
     // Synthetic nodes: capacity is inferred from children, hide it
     var capGroup = document.getElementById('nf-cap-group');
@@ -400,6 +431,18 @@ function loadNodeDetail(nodeID, isSynthetic) {
         setMultiSelect('nf-pt', pts.map(function(p) { return String(p.id); }));
       }
 
+      // Populate algorithm dropdowns from properties
+      var props = data.properties || [];
+      props.forEach(function(p) {
+        if (p.key === 'retrieve_algorithm') {
+          var sel = document.getElementById('nf-retrieve-algo');
+          if (sel) sel.value = p.value;
+        } else if (p.key === 'store_algorithm') {
+          var sel = document.getElementById('nf-store-algo');
+          if (sel) sel.value = p.value;
+        }
+      });
+
       // Children (for synthetic nodes)
       var children = data.children || [];
       if (isSynthetic && children.length > 0) {
@@ -436,6 +479,26 @@ function setMultiSelect(selectId, values) {
 
 function closeNodeModal() {
   document.getElementById('node-modal').classList.remove('active');
+}
+
+function saveAlgorithmProperties() {
+  var algoDiv = document.getElementById('ngrp-algorithms');
+  if (!algoDiv || algoDiv.style.display === 'none') return;
+  var nodeID = parseInt(document.getElementById('nf-id').value);
+  if (!nodeID) return;
+  var retrieveAlgo = document.getElementById('nf-retrieve-algo').value;
+  var storeAlgo = document.getElementById('nf-store-algo').value;
+  // Fire-and-forget — form POST will navigate away
+  fetch('/api/nodes/properties/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({node_id: nodeID, key: 'retrieve_algorithm', value: retrieveAlgo})
+  });
+  fetch('/api/nodes/properties/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({node_id: nodeID, key: 'store_algorithm', value: storeAlgo})
+  });
 }
 
 function deleteNode() {
@@ -1200,7 +1263,7 @@ function updateLaneDepths(container) {
   });
 }
 
-// Update lane header slot count
+// Update lane header slot count and group summary
 function updateLaneCounts(container) {
   var section = container.closest('.smkt-lane');
   if (!section) return;
@@ -1209,6 +1272,26 @@ function updateLaneCounts(container) {
   var count = container.querySelectorAll('.node-tile').length;
   var name = header.dataset.laneName || '';
   header.textContent = name + ' (' + count + ')';
+
+  var group = section.closest('.smkt-group');
+  if (group) updateGroupSummary(group);
+}
+
+function updateGroupSummary(group) {
+  var lanes = group.querySelectorAll('.smkt-lane:not(.ngrp-direct)');
+  var totalSlots = 0;
+  lanes.forEach(function(lane) {
+    totalSlots += lane.querySelectorAll('.smkt-lane-slots .node-tile').length;
+  });
+  var directSection = group.querySelector('.ngrp-direct');
+  var directCount = directSection ? directSection.querySelectorAll('.smkt-lane-slots .node-tile').length : 0;
+  var summary = lanes.length + ' lane' + (lanes.length !== 1 ? 's' : '')
+    + ', ' + totalSlots + ' slot' + (totalSlots !== 1 ? 's' : '');
+  if (directCount > 0) {
+    summary += ', ' + directCount + ' direct';
+  }
+  var el = group.querySelector('.smkt-summary');
+  if (el) el.textContent = summary;
 }
 
 /* --- Build supermarket hierarchy from flat tiles --- */

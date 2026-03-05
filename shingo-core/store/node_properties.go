@@ -43,6 +43,16 @@ func (db *DB) ListNodeProperties(nodeID int64) ([]*NodeProperty, error) {
 	return props, rows.Err()
 }
 
+// GetNodeProperty returns a single property value for a node, or empty string if not set.
+func (db *DB) GetNodeProperty(nodeID int64, key string) string {
+	var value string
+	err := db.QueryRow(db.Q(`SELECT value FROM node_properties WHERE node_id=? AND key=?`), nodeID, key).Scan(&value)
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
 // GetEffectiveProperties returns properties for a node, merging parent properties
 // (node's own values override parent's).
 func (db *DB) GetEffectiveProperties(nodeID int64) (map[string]string, error) {
