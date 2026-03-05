@@ -1,0 +1,34 @@
+# ShinGo Core Configuration
+# Copy to shingocore.yaml and edit for your environment.
+
+database:
+  driver: postgres                    # "postgres" (recommended) or "sqlite"
+  sqlite:
+    path: shingocore.db               # SQLite file path (only used when driver is "sqlite")
+  postgres:
+    host: localhost
+    port: 5432
+    database: shingocore
+    user: shingocore
+    password: changeme
+    sslmode: disable                  # disable, require, verify-ca, verify-full
+
+rds:
+  base_url: http://192.168.1.100:8088  # Seer RDS fleet backend URL
+  poll_interval: 5s                     # How often to poll for order status changes
+  timeout: 10s                          # HTTP request timeout
+
+web:
+  host: 0.0.0.0
+  port: 8083
+  session_secret: change-me-in-production  # Cookie signing key
+
+messaging:
+  kafka:
+    brokers:
+      - localhost:9092
+    group_id: shingocore
+  orders_topic: shingo.orders           # Edge -> Core topic
+  dispatch_topic: shingo.dispatch       # Core -> Edge topic
+  outbox_drain_interval: 5s             # How often to flush outbox to Kafka
+  station_id: core                      # This core instance's identity
