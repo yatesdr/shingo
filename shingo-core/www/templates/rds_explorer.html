@@ -89,7 +89,7 @@
 
         <!-- Block Builder -->
         <div id="block-builder" style="display:none;" class="mb-1">
-          <div style="background:#f8f9fa;border:1px solid var(--border);border-radius:0.4rem;padding:0.75rem;">
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:0.4rem;padding:0.75rem;">
             <div class="flex flex-between mb-1">
               <strong style="font-size:0.85rem;">Block Builder</strong>
               <button class="btn btn-sm" onclick="toggleBlockBuilder()" id="bb-toggle">Hide Builder</button>
@@ -213,7 +213,7 @@
           </div>
         </div>
         <pre id="resp-body" style="background:#1e1e1e;color:#d4d4d4;padding:0.75rem;border-radius:0.4rem;overflow-x:auto;font-size:0.8rem;max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word;">Select an endpoint and click Send. Response will appear here.</pre>
-        <pre id="resp-headers" style="display:none;background:#f8f9fa;padding:0.5rem;border-radius:0.3rem;font-size:0.75rem;margin-top:0.5rem;"></pre>
+        <pre id="resp-headers" style="display:none;background:var(--bg);padding:0.5rem;border-radius:0.3rem;font-size:0.75rem;margin-top:0.5rem;"></pre>
       </div>
     </div>
   </div>
@@ -262,7 +262,7 @@
 .help-btn {
   display:inline-flex; align-items:center; justify-content:center;
   width:14px; height:14px; border-radius:50%;
-  border:1px solid var(--border); background:#fff;
+  border:1px solid var(--border); background:var(--surface);
   color:var(--text-muted); font-size:0.55rem; font-weight:700;
   cursor:pointer; padding:0; margin-left:2px;
   vertical-align:middle; line-height:1;
@@ -288,7 +288,7 @@
 .bb-row {
   display:flex; align-items:center; gap:0.5rem;
   padding:0.3rem 0.4rem; margin-bottom:2px;
-  background:#fff; border:1px solid var(--border); border-radius:0.25rem;
+  background:var(--surface); border:1px solid var(--border); border-radius:0.25rem;
   font-size:0.78rem; font-family:monospace;
 }
 .bb-row .bb-num { font-weight:700; color:var(--text-muted); min-width:18px; }

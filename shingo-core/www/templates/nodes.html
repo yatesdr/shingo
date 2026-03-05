@@ -211,10 +211,6 @@
               <div><strong>Assigned Map:</strong> <span id="sd-map"></span></div>
             </div>
           </div>
-          <div class="mt-2" id="modal-call-robot" style="border-top:1px solid var(--border); padding-top:0.75rem">
-            <button type="button" class="btn btn-primary btn-sm" onclick="callRobotHere()">Call Robot Here</button>
-            <div id="call-robot-result" class="mt-1" style="font-size:0.8rem"></div>
-          </div>
         </div>
       </div>
       <div class="flex flex-between">
@@ -365,7 +361,6 @@ function openNodeModal(el) {
     document.getElementById('nf-location-label').textContent = d.name;
     document.getElementById('nf-cap').value = d.cap;
     document.getElementById('nf-enabled').checked = d.enabled === 'true';
-    document.getElementById('call-robot-result').innerHTML = '';
   } else {
     document.getElementById('ro-cap').textContent = d.cap;
     document.getElementById('ro-enabled').textContent = d.enabled === 'true' ? 'Yes' : 'No';
@@ -618,28 +613,6 @@ function esc(s) {
   var d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
-}
-
-function callRobotHere() {
-  var nodeName = document.getElementById('nf-name').value;
-  var resultEl = document.getElementById('call-robot-result');
-  resultEl.innerHTML = '<span class="text-muted">Dispatching...</span>';
-  fetch('/api/test-commands/submit', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({command_type: 'move', location: nodeName})
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.error) {
-      resultEl.innerHTML = '<span style="color:var(--danger)">' + esc(data.error) + '</span>';
-    } else {
-      resultEl.innerHTML = '<span style="color:var(--success)">Robot dispatched to ' + esc(nodeName) + '</span>';
-    }
-  })
-  .catch(function() {
-    resultEl.innerHTML = '<span style="color:var(--danger)">Request failed</span>';
-  });
 }
 
 document.addEventListener('keydown', function(e) {
@@ -1391,10 +1364,9 @@ function buildHierarchy() {
     var dropArea = document.getElementById('nodes-drop-area');
     dropArea.insertBefore(group, grid);
 
-    // Hide absorbed tiles
+    // Hide absorbed tiles (originals left in the flat grid)
     grpTile.classList.add('smkt-absorbed');
     lanes.forEach(function(l) { l.classList.add('smkt-absorbed'); });
-    directChildren.forEach(function(c) { c.classList.add('smkt-absorbed'); });
     otherChildren.forEach(function(c) { c.classList.add('smkt-absorbed'); });
   });
 }
