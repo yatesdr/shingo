@@ -108,7 +108,7 @@ func (db *DB) CreatePayloadWithManifest(p *Payload) error {
 	p.ID = id
 
 	// Copy blueprint manifest items
-	rows, err := db.Query(db.Q(`SELECT part_number, quantity, description FROM blueprint_manifest WHERE blueprint_id=? ORDER BY id`), p.BlueprintID)
+	rows, err := tx.Query(db.Q(`SELECT part_number, quantity, description FROM blueprint_manifest WHERE blueprint_id=? ORDER BY id`), p.BlueprintID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
