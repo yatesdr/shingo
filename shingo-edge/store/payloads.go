@@ -20,9 +20,12 @@ type Payload struct {
 	ReorderQty      int       `json:"reorder_qty"`
 	RetrieveEmpty   bool      `json:"retrieve_empty"`
 	Status          string    `json:"status"`
-	BlueprintCode   string    `json:"blueprint_code"`
-	AutoReorder     bool      `json:"auto_reorder"`
-	CreatedAt       time.Time `json:"created_at"`
+	BlueprintCode      string    `json:"blueprint_code"`
+	AutoReorder        bool      `json:"auto_reorder"`
+	Role               string    `json:"role"`
+	AutoRemoveEmpties  bool      `json:"auto_remove_empties"`
+	AutoOrderEmpties   bool      `json:"auto_order_empties"`
+	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	// Joined
 	JobStyleName string `json:"job_style_name"`
@@ -37,6 +40,7 @@ func scanPayloads(rows *sql.Rows) ([]Payload, error) {
 			&p.Description, &p.Manifest, &p.Multiplier, &p.ProductionUnits,
 			&p.Remaining, &p.ReorderPoint, &p.ReorderQty, &p.RetrieveEmpty,
 			&p.Status, &p.BlueprintCode, &p.AutoReorder,
+			&p.Role, &p.AutoRemoveEmpties, &p.AutoOrderEmpties,
 			&createdAt, &updatedAt, &p.JobStyleName); err != nil {
 			return nil, err
 		}
@@ -51,6 +55,7 @@ const payloadSelectCols = `p.id, p.job_style_id, p.location, p.staging_node,
 	p.description, p.manifest, p.multiplier, p.production_units,
 	p.remaining, p.reorder_point, p.reorder_qty, p.retrieve_empty,
 	p.status, p.blueprint_code, p.auto_reorder,
+	p.role, p.auto_remove_empties, p.auto_order_empties,
 	p.created_at, p.updated_at, COALESCE(js.name, '')`
 
 const payloadJoin = `FROM payloads p LEFT JOIN job_styles js ON js.id = p.job_style_id`
@@ -66,6 +71,15 @@ func (db *DB) ListPayloads() ([]Payload, error) {
 
 func (db *DB) ListPayloadsByJobStyle(jobStyleID int64) ([]Payload, error) {
 	rows, err := db.Query(`SELECT `+payloadSelectCols+` `+payloadJoin+` WHERE p.job_style_id = ? ORDER BY p.location`, jobStyleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPayloads(rows)
+}
+
+func (db *DB) ListProducePayloads() ([]Payload, error) {
+	rows, err := db.Query(`SELECT ` + payloadSelectCols + ` ` + payloadJoin + ` WHERE p.role = 'produce' AND p.auto_order_empties = 1 ORDER BY p.location`)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +104,7 @@ func (db *DB) GetPayload(id int64) (*Payload, error) {
 			&p.Description, &p.Manifest, &p.Multiplier, &p.ProductionUnits,
 			&p.Remaining, &p.ReorderPoint, &p.ReorderQty, &p.RetrieveEmpty,
 			&p.Status, &p.BlueprintCode, &p.AutoReorder,
+			&p.Role, &p.AutoRemoveEmpties, &p.AutoOrderEmpties,
 			&createdAt, &updatedAt, &p.JobStyleName)
 	if err != nil {
 		return nil, err
@@ -99,25 +114,33 @@ func (db *DB) GetPayload(id int64) (*Payload, error) {
 	return p, nil
 }
 
-func (db *DB) CreatePayload(jobStyleID int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool, blueprintCode string) (int64, error) {
+func (db *DB) CreatePayload(jobStyleID int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool, blueprintCode string, role string, autoRemoveEmpties, autoOrderEmpties bool) (int64, error) {
+	if role == "" {
+		role = "consume"
+	}
 	res, err := db.Exec(`
-		INSERT INTO payloads (job_style_id, location, staging_node, description, manifest, multiplier, production_units, remaining, reorder_point, reorder_qty, retrieve_empty, blueprint_code)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobStyleID, location, stagingNode, description, manifest, multiplier, productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, blueprintCode)
+		INSERT INTO payloads (job_style_id, location, staging_node, description, manifest, multiplier, production_units, remaining, reorder_point, reorder_qty, retrieve_empty, blueprint_code, role, auto_remove_empties, auto_order_empties)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobStyleID, location, stagingNode, description, manifest, multiplier, productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, blueprintCode, role, autoRemoveEmpties, autoOrderEmpties)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-func (db *DB) UpdatePayload(id int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool, blueprintCode string) error {
+func (db *DB) UpdatePayload(id int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool, blueprintCode string, role string, autoRemoveEmpties, autoOrderEmpties bool) error {
+	if role == "" {
+		role = "consume"
+	}
 	_, err := db.Exec(`
 		UPDATE payloads SET location=?, staging_node=?, description=?, manifest=?, multiplier=?,
 			production_units=?, remaining=?, reorder_point=?, reorder_qty=?, retrieve_empty=?,
-			blueprint_code=?, updated_at=datetime('now','localtime')
+			blueprint_code=?, role=?, auto_remove_empties=?, auto_order_empties=?,
+			updated_at=datetime('now','localtime')
 		WHERE id=?`,
 		location, stagingNode, description, manifest, multiplier,
-		productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, blueprintCode, id)
+		productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, blueprintCode,
+		role, autoRemoveEmpties, autoOrderEmpties, id)
 	return err
 }
 

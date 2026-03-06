@@ -344,7 +344,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 		t.Fatalf("get synthetic node type: %v", err)
 	}
 
-	// Create a synthetic parent node
+	// Create a synthetic parent node (delivery zone)
 	parentNode := &store.Node{
 		Name: "ZONE-A", IsSynthetic: true,
 		NodeTypeID: &syntheticType.ID, Enabled: true,
@@ -353,7 +353,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 		t.Fatalf("create parent node: %v", err)
 	}
 
-	// Create child nodes under the synthetic parent
+	// Create child nodes under the synthetic parent (lineside slots)
 	child1 := &store.Node{Name: "ZONE-A-01", Enabled: true}
 	child2 := &store.Node{Name: "ZONE-A-02", Enabled: true}
 	db.CreateNode(child1)
@@ -361,15 +361,16 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	db.SetNodeParent(child1.ID, parentNode.ID)
 	db.SetNodeParent(child2.ID, parentNode.ID)
 
-	// Create a line node for delivery
-	lineNode := &store.Node{Name: "LINE-SYN", Enabled: true}
-	db.CreateNode(lineNode)
+	// Put a bin at child2 to occupy it (child2 occupied, child1 empty)
+	occBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-OCC", NodeID: &child2.ID, Status: "active"}
+	db.CreateBin(occBin)
 
-	// Put an available payload at child2 (not child1) to verify resolver picks the right child
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-1", NodeID: &child2.ID, Status: "active"}
-	db.CreateBin(bin)
-	payload := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available"}
-	db.CreatePayload(payload)
+	// Create source payload at a separate node for FIFO to find
+	srcNode := &store.Node{Name: "SRC-SYN", Enabled: true}
+	db.CreateNode(srcNode)
+	srcBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-SRC", NodeID: &srcNode.ID, Status: "active"}
+	db.CreateBin(srcBin)
+	db.CreatePayload(&store.Payload{BlueprintID: bp.ID, BinID: &srcBin.ID, Status: "available"})
 
 	// Create dispatcher with resolver
 	backend := newMockTrackingBackend()
@@ -379,7 +380,8 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 
 	env := testEnvelope()
 
-	// Submit retrieve order targeting the synthetic parent — resolver should pick child2
+	// Submit retrieve order targeting synthetic parent — delivery should resolve
+	// to child1 (empty slot), source should pick srcPayload via FIFO
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
 		OrderUUID:       "syn-retrieve-1",
 		OrderType:       OrderTypeRetrieve,
@@ -403,13 +405,252 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	if order.Status != StatusDispatched {
 		t.Errorf("status = %q, want %q", order.Status, StatusDispatched)
 	}
-	// Delivery node should be resolved to child2, not the synthetic parent
-	if order.DeliveryNode != child2.Name {
-		t.Errorf("delivery node = %q, want %q (resolved child)", order.DeliveryNode, child2.Name)
+	// Delivery node should be resolved to child1 (empty slot), not child2 (occupied)
+	if order.DeliveryNode != child1.Name {
+		t.Errorf("delivery node = %q, want %q (empty child)", order.DeliveryNode, child1.Name)
 	}
-	// Pickup should be child2 (where the payload is)
-	if order.PickupNode != child2.Name {
-		t.Errorf("pickup node = %q, want %q", order.PickupNode, child2.Name)
+	// Pickup should be source node (where the FIFO payload is)
+	if order.PickupNode != srcNode.Name {
+		t.Errorf("pickup node = %q, want %q", order.PickupNode, srcNode.Name)
+	}
+}
+
+// TestDispatcher_MultiOrderToSyntheticNGRP verifies that multiple retrieve orders
+// to the same synthetic NGRP resolve to different physical children and that
+// in-flight awareness prevents double-booking of the same slot.
+func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
+	db := testDB(t)
+	_, _, _ = setupTestData(t, db)
+
+	syntheticType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("get NGRP type: %v", err)
+	}
+
+	// Create NGRP zone with 3 physical children
+	zone := &store.Node{Name: "PRESS-A1", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	db.CreateNode(zone)
+	slot1 := &store.Node{Name: "PRESS-A1-01", Enabled: true}
+	slot2 := &store.Node{Name: "PRESS-A1-02", Enabled: true}
+	slot3 := &store.Node{Name: "PRESS-A1-03", Enabled: true}
+	db.CreateNode(slot1)
+	db.CreateNode(slot2)
+	db.CreateNode(slot3)
+	db.SetNodeParent(slot1.ID, zone.ID)
+	db.SetNodeParent(slot2.ID, zone.ID)
+	db.SetNodeParent(slot3.ID, zone.ID)
+
+	// Create source payloads in a supermarket (blueprint A x2, blueprint B x1)
+	bpA := &store.Blueprint{Code: "PART-MULTI-A", DefaultManifestJSON: "{}"}
+	bpB := &store.Blueprint{Code: "PART-MULTI-B", DefaultManifestJSON: "{}"}
+	db.CreateBlueprint(bpA)
+	db.CreateBlueprint(bpB)
+
+	supermarket := &store.Node{Name: "SM-MULTI", Zone: "W", Enabled: true}
+	db.CreateNode(supermarket)
+
+	binA1 := &store.Bin{BinTypeID: 1, Label: "M-A1", NodeID: &supermarket.ID, Status: "active"}
+	binA2 := &store.Bin{BinTypeID: 1, Label: "M-A2", NodeID: &supermarket.ID, Status: "active"}
+	binB1 := &store.Bin{BinTypeID: 1, Label: "M-B1", NodeID: &supermarket.ID, Status: "active"}
+	db.CreateBin(binA1)
+	db.CreateBin(binA2)
+	db.CreateBin(binB1)
+	db.CreatePayload(&store.Payload{BlueprintID: bpA.ID, BinID: &binA1.ID, Status: "available"})
+	db.CreatePayload(&store.Payload{BlueprintID: bpA.ID, BinID: &binA2.ID, Status: "available"})
+	db.CreatePayload(&store.Payload{BlueprintID: bpB.ID, BinID: &binB1.ID, Status: "available"})
+
+	backend := newMockTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+	env := testEnvelope()
+
+	// Order 1: blueprint A -> PRESS-A1
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:       "multi-1",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "PART-MULTI-A",
+		DeliveryNode:    zone.Name,
+		Quantity:        1,
+	})
+	// Order 2: blueprint A -> PRESS-A1
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:       "multi-2",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "PART-MULTI-A",
+		DeliveryNode:    zone.Name,
+		Quantity:        1,
+	})
+	// Order 3: blueprint B -> PRESS-A1
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:       "multi-3",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "PART-MULTI-B",
+		DeliveryNode:    zone.Name,
+		Quantity:        1,
+	})
+
+	if len(emitter.failed) > 0 {
+		t.Fatalf("unexpected failures: %d (first: %s)", len(emitter.failed), emitter.failed[0].errorCode)
+	}
+
+	o1, _ := db.GetOrderByUUID("multi-1")
+	o2, _ := db.GetOrderByUUID("multi-2")
+	o3, _ := db.GetOrderByUUID("multi-3")
+
+	// All three should be dispatched
+	for _, o := range []*store.Order{o1, o2, o3} {
+		if o.Status != StatusDispatched {
+			t.Errorf("order %s status = %q, want dispatched", o.EdgeUUID, o.Status)
+		}
+	}
+
+	// Each should have a unique delivery node (no double-booking)
+	deliveries := map[string]string{
+		o1.DeliveryNode: o1.EdgeUUID,
+		o2.DeliveryNode: o2.EdgeUUID,
+		o3.DeliveryNode: o3.EdgeUUID,
+	}
+	if len(deliveries) != 3 {
+		t.Errorf("expected 3 unique delivery nodes, got %d: o1=%s o2=%s o3=%s",
+			len(deliveries), o1.DeliveryNode, o2.DeliveryNode, o3.DeliveryNode)
+	}
+
+	// A 4th order should fail — all 3 slots are in-flight
+	failsBefore := len(emitter.failed)
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:       "multi-4",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "PART-MULTI-A",
+		DeliveryNode:    zone.Name,
+		Quantity:        1,
+	})
+
+	// Resolution fails before order creation, so check emitter errors
+	if len(emitter.failed) <= failsBefore {
+		// No emitter failure means it was caught as a sendError before order creation
+		// Check that it was NOT dispatched
+		o4, err := db.GetOrderByUUID("multi-4")
+		if err == nil && o4.Status == StatusDispatched {
+			t.Errorf("4th order should not be dispatched, all slots in-flight")
+		}
+	}
+}
+
+// TestDispatcher_RetrieveEmptyToSyntheticNGRP verifies empty bin delivery
+// to a synthetic node group uses store resolution (finds empty slots).
+func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
+	db := testDB(t)
+	_, _, _ = setupTestData(t, db)
+
+	syntheticType, _ := db.GetNodeTypeByCode("NGRP")
+
+	// Create NGRP zone with 2 children, one occupied
+	zone := &store.Node{Name: "EMPTY-ZONE", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	db.CreateNode(zone)
+	slot1 := &store.Node{Name: "EZ-01", Enabled: true}
+	slot2 := &store.Node{Name: "EZ-02", Enabled: true}
+	db.CreateNode(slot1)
+	db.CreateNode(slot2)
+	db.SetNodeParent(slot1.ID, zone.ID)
+	db.SetNodeParent(slot2.ID, zone.ID)
+
+	// Occupy slot1
+	occBin := &store.Bin{BinTypeID: 1, Label: "OCC-1", NodeID: &slot1.ID, Status: "active"}
+	db.CreateBin(occBin)
+
+	// Create blueprint with bin type compatibility
+	bp := &store.Blueprint{Code: "EMPTY-BP", DefaultManifestJSON: "{}"}
+	db.CreateBlueprint(bp)
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	db.SetBlueprintBinTypes(bp.ID, []int64{bt.ID})
+
+	// Create an empty compatible bin somewhere (source)
+	srcNode := &store.Node{Name: "EMPTY-SRC", Enabled: true}
+	db.CreateNode(srcNode)
+	emptyBin := &store.Bin{BinTypeID: bt.ID, Label: "EMPTY-BIN-1", NodeID: &srcNode.ID, Status: "available"}
+	db.CreateBin(emptyBin)
+
+	backend := newMockTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:       "empty-1",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "EMPTY-BP",
+		DeliveryNode:    zone.Name,
+		RetrieveEmpty:   true,
+		Quantity:        1,
+	})
+
+	if len(emitter.failed) > 0 {
+		t.Fatalf("order should not fail, got: %s", emitter.failed[0].errorCode)
+	}
+
+	o, err := db.GetOrderByUUID("empty-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if o.Status != StatusDispatched {
+		t.Errorf("status = %q, want dispatched", o.Status)
+	}
+	// Delivery should resolve to slot2 (empty), not slot1 (occupied)
+	if o.DeliveryNode != slot2.Name {
+		t.Errorf("delivery = %q, want %q (empty slot)", o.DeliveryNode, slot2.Name)
+	}
+}
+
+// TestDispatcher_DotNotationBypassesResolver verifies that ordering to a
+// specific child using dot notation (ZONE.Node10) skips resolver — the
+// physical node is used directly.
+func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+
+	syntheticType, _ := db.GetNodeTypeByCode("NGRP")
+	zone := &store.Node{Name: "DOT-ZONE", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	db.CreateNode(zone)
+	child := &store.Node{Name: "SLOT-X", Enabled: true}
+	db.CreateNode(child)
+	db.SetNodeParent(child.ID, zone.ID)
+
+	// Create source payload
+	srcNode := &store.Node{Name: "DOT-SRC", Enabled: true}
+	db.CreateNode(srcNode)
+	bin := &store.Bin{BinTypeID: 1, Label: "DOT-BIN-1", NodeID: &srcNode.ID, Status: "active"}
+	db.CreateBin(bin)
+	db.CreatePayload(&store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available"})
+
+	backend := newMockTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+	env := testEnvelope()
+
+	// Use dot notation: "DOT-ZONE.SLOT-X" — resolves to physical child directly
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:       "dot-1",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "PART-A",
+		DeliveryNode:    "DOT-ZONE.SLOT-X",
+		Quantity:        1,
+	})
+
+	if len(emitter.failed) > 0 {
+		t.Fatalf("order should not fail, got: %s", emitter.failed[0].errorCode)
+	}
+
+	o, _ := db.GetOrderByUUID("dot-1")
+	if o.Status != StatusDispatched {
+		t.Errorf("status = %q, want dispatched", o.Status)
+	}
+	// Dot notation is stored as-is; the fleet dispatch uses the resolved node name.
+	// Verify the order was dispatched (fleet got the right node via GetNodeByDotName).
+	if o.DeliveryNode != "DOT-ZONE.SLOT-X" {
+		t.Errorf("delivery = %q, want %q", o.DeliveryNode, "DOT-ZONE.SLOT-X")
 	}
 }
 
@@ -512,5 +753,114 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 	}
 	if order2.Priority != 10 {
 		t.Errorf("high priority = %d, want 10", order2.Priority)
+	}
+}
+
+func TestHandleRetrieve_BinTracking(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	// Create bin + payload
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-BT-1", NodeID: &storageNode.ID, Status: "active"}
+	db.CreateBin(bin)
+	payload := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available"}
+	db.CreatePayload(payload)
+
+	backend := newMockTrackingBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	env := testEnvelope()
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:       "uuid-bin-track",
+		OrderType:       OrderTypeRetrieve,
+		PayloadTypeCode: "PART-A",
+		DeliveryNode:    lineNode.Name,
+		Quantity:        1.0,
+	})
+
+	order, err := db.GetOrderByUUID("uuid-bin-track")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	// Order should have BinID set
+	if order.BinID == nil {
+		t.Fatal("order BinID should be set after retrieve")
+	}
+	if *order.BinID != bin.ID {
+		t.Errorf("order BinID = %d, want %d", *order.BinID, bin.ID)
+	}
+
+	// Bin should be claimed
+	gotBin, _ := db.GetBin(bin.ID)
+	if gotBin.ClaimedBy == nil {
+		t.Fatal("bin should be claimed after retrieve")
+	}
+	if *gotBin.ClaimedBy != order.ID {
+		t.Errorf("bin claimed_by = %d, want %d", *gotBin.ClaimedBy, order.ID)
+	}
+}
+
+func TestHandleOrderIngest(t *testing.T) {
+	db := testDB(t)
+	storageNode, _, bp := setupTestData(t, db)
+
+	// Set up blueprint_bin_types for compatible empty bin
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	db.SetBlueprintBinTypes(bp.ID, []int64{bt.ID})
+
+	// Create an empty bin at the station (simulating a bin at a produce location)
+	produceNode := &store.Node{Name: "PRODUCE-1", Enabled: true}
+	db.CreateNode(produceNode)
+
+	bin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-ING-1", NodeID: &produceNode.ID, Status: "available"}
+	db.CreateBin(bin)
+
+	// Also create a storage node for the store destination
+	_ = storageNode
+
+	backend := newMockTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+
+	env := testEnvelope()
+	d.HandleOrderIngest(env, &protocol.OrderIngestRequest{
+		OrderUUID:     "uuid-ingest-1",
+		BlueprintCode: bp.Code,
+		BinLabel:      "BIN-ING-1",
+		PickupNode:    "PRODUCE-1",
+		Quantity:      100,
+		Manifest: []protocol.IngestManifestItem{
+			{PartNumber: "PN-001", Quantity: 50, Description: "Bolt M8"},
+			{PartNumber: "PN-002", Quantity: 50, Description: "Washer M8"},
+		},
+	})
+
+	// Should have received the order
+	if len(emitter.received) != 1 {
+		t.Fatalf("received events = %d, want 1", len(emitter.received))
+	}
+
+	// Should have created a payload on the bin
+	payloads, _ := db.ListPayloadsByBin(bin.ID)
+	if len(payloads) != 1 {
+		t.Fatalf("payloads on bin = %d, want 1", len(payloads))
+	}
+	if payloads[0].BlueprintID != bp.ID {
+		t.Errorf("payload blueprint = %d, want %d", payloads[0].BlueprintID, bp.ID)
+	}
+
+	// Bin should be claimed
+	gotBin, _ := db.GetBin(bin.ID)
+	if gotBin.ClaimedBy == nil {
+		t.Fatal("bin should be claimed after ingest")
+	}
+
+	// Manifest items should be created
+	order, _ := db.GetOrderByUUID("uuid-ingest-1")
+	if order == nil {
+		t.Fatal("order not found")
+	}
+	if order.BinID == nil || *order.BinID != bin.ID {
+		t.Errorf("order BinID = %v, want %d", order.BinID, bin.ID)
 	}
 }

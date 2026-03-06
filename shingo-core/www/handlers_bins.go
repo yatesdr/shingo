@@ -223,6 +223,13 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 		b.Status = "retired"
 	case "activate":
 		b.Status = "available"
+	case "release":
+		if err := h.engine.DB().ReleaseStagedBin(req.ID); err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		h.jsonSuccess(w)
+		return
 	default:
 		h.jsonError(w, "unknown action: "+req.Action, http.StatusBadRequest)
 		return

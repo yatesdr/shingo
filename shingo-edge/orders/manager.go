@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/store"
@@ -56,7 +57,8 @@ func (m *Manager) dst() protocol.Address {
 }
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the outbox.
-func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType string, autoConfirm bool) (*store.Order, error) {
+// If blueprintCode is empty and payloadID is set, it is derived from the payload.
+func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, blueprintCode string, autoConfirm bool) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
@@ -67,11 +69,13 @@ func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quan
 	}
 
 	// Look up payload description and blueprint code for message
-	var payloadDesc, blueprintCode string
+	var payloadDesc string
 	if payloadID != nil {
 		if p, err := m.db.GetPayload(*payloadID); err == nil {
 			payloadDesc = p.Description
-			blueprintCode = p.BlueprintCode
+			if blueprintCode == "" {
+				blueprintCode = p.BlueprintCode
+			}
 		}
 	}
 
@@ -223,6 +227,43 @@ func (m *Manager) CreateComplexOrder(payloadID *int64, quantity int64, steps []p
 	return m.db.GetOrder(orderID)
 }
 
+// CreateIngestOrder creates a new ingest order for originating a payload on a bin at a produce station.
+func (m *Manager) CreateIngestOrder(payloadID *int64, blueprintCode, binLabel, pickupNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool) (*store.Order, error) {
+	orderUUID := uuid.New().String()
+
+	orderID, err := m.db.CreateOrder(orderUUID, TypeIngest,
+		payloadID, false,
+		quantity, "", "", pickupNode, "", autoConfirm)
+	if err != nil {
+		return nil, fmt.Errorf("create ingest order: %w", err)
+	}
+
+	// Build and enqueue protocol envelope
+	env, err := protocol.NewEnvelope(protocol.TypeOrderIngest, m.src(), m.dst(), &protocol.OrderIngestRequest{
+		OrderUUID:     orderUUID,
+		BlueprintCode: blueprintCode,
+		BinLabel:      binLabel,
+		PickupNode:    pickupNode,
+		Quantity:      quantity,
+		Manifest:      manifest,
+	})
+	if err != nil {
+		log.Printf("build envelope for ingest order %s: %v", orderUUID, err)
+	} else if err := m.enqueueEnvelope(env); err != nil {
+		log.Printf("enqueue ingest order %s: %v", orderUUID, err)
+	}
+
+	// Auto-submit
+	if err := m.TransitionOrder(orderID, StatusSubmitted, "auto-submitted at creation"); err != nil {
+		log.Printf("auto-submit ingest order %s: %v", orderUUID, err)
+	}
+
+	m.debug("create: type=%s id=%d uuid=%s blueprint=%s bin=%s", TypeIngest, orderID, orderUUID, blueprintCode, binLabel)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeIngest)
+
+	return m.db.GetOrder(orderID)
+}
+
 // ReleaseOrder sends a release message for a staged (dwelling) order.
 func (m *Manager) ReleaseOrder(orderID int64) error {
 	order, err := m.db.GetOrder(orderID)
@@ -244,6 +285,29 @@ func (m *Manager) ReleaseOrder(orderID int64) error {
 	}
 
 	m.debug("release: id=%d uuid=%s", orderID, order.UUID)
+	return nil
+}
+
+// HandleDeliveredWithExpiry processes a delivered reply with optional staged expiry.
+func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time) error {
+	order, err := m.db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		return fmt.Errorf("order %s not found: %w", orderUUID, err)
+	}
+	return m.handleDelivered(order, statusDetail, stagedExpireAt)
+}
+
+func (m *Manager) handleDelivered(order *store.Order, statusDetail string, stagedExpireAt *time.Time) error {
+	if stagedExpireAt != nil {
+		m.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt)
+	}
+	if err := m.TransitionOrder(order.ID, StatusDelivered, statusDetail); err != nil {
+		return err
+	}
+	// Auto-confirm if enabled
+	if order.AutoConfirm {
+		return m.ConfirmDelivery(order.ID, order.Quantity)
+	}
 	return nil
 }
 
@@ -436,14 +500,8 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		}
 		return nil
 	case "delivered":
-		if err := m.TransitionOrder(order.ID, StatusDelivered, statusDetail); err != nil {
-			return err
-		}
-		// Auto-confirm if enabled
-		if order.AutoConfirm {
-			return m.ConfirmDelivery(order.ID, order.Quantity)
-		}
-		return nil
+		return m.handleDelivered(order, statusDetail, nil)
+
 	case "error":
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
 	case "staged":

@@ -28,6 +28,11 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *store.Order, plan *Reshuff
 			PayloadID:     &step.PayloadID,
 		}
 
+		// Bin-centric: look up the payload's bin so the child tracks it
+		if p, err := d.db.GetPayload(step.PayloadID); err == nil && p.BinID != nil {
+			child.BinID = p.BinID
+		}
+
 		if step.FromNode != nil {
 			child.PickupNode = step.FromNode.Name
 		}
@@ -118,7 +123,7 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 		}
 		if child.Status == StatusPending || child.Status == StatusSourcing {
 			d.db.UpdateOrderStatus(child.ID, StatusCancelled, "parent reshuffle failed")
-			d.unclaimOrderPayloads(child.ID)
+			d.unclaimOrder(child.ID)
 		}
 	}
 

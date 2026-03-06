@@ -23,9 +23,10 @@ type Order struct {
 	FinalCount     *int64    `json:"final_count"`
 	CountConfirmed bool      `json:"count_confirmed"`
 	ETA            *string   `json:"eta"`
-	AutoConfirm    bool      `json:"auto_confirm"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	AutoConfirm    bool       `json:"auto_confirm"`
+	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 
 	// Joined fields
 	PayloadDesc     string `json:"payload_desc"`
@@ -47,7 +48,7 @@ type OrderHistory struct {
 const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.payload_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.pickup_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.created_at, o.updated_at,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.created_at, o.updated_at,
 	COALESCE(p.description, ''), COALESCE(p.location, ''), COALESCE(p.blueprint_code, ''), COALESCE(pl.name, '')`
 
 const orderJoin = `FROM orders o
@@ -97,13 +98,18 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 	var orders []Order
 	for rows.Next() {
 		var o Order
+		var stagedExpireAt sql.NullString
 		var createdAt, updatedAt string
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.PayloadID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &createdAt, &updatedAt,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
 			&o.PayloadDesc, &o.PayloadLocation, &o.BlueprintCode, &o.LineName); err != nil {
 			return nil, err
+		}
+		if stagedExpireAt.Valid {
+			t := scanTime(stagedExpireAt.String)
+			o.StagedExpireAt = &t
 		}
 		o.CreatedAt = scanTime(createdAt)
 		o.UpdatedAt = scanTime(updatedAt)
@@ -113,13 +119,18 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 }
 
 func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error {
+	var stagedExpireAt sql.NullString
 	var createdAt, updatedAt string
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.PayloadID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &createdAt, &updatedAt,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
 		&o.PayloadDesc, &o.PayloadLocation, &o.BlueprintCode, &o.LineName); err != nil {
 		return err
+	}
+	if stagedExpireAt.Valid {
+		t := scanTime(stagedExpireAt.String)
+		o.StagedExpireAt = &t
 	}
 	o.CreatedAt = scanTime(createdAt)
 	o.UpdatedAt = scanTime(updatedAt)
@@ -183,10 +194,43 @@ func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
 	return err
 }
 
+func (db *DB) UpdateOrderStagedExpireAt(id int64, stagedExpireAt *time.Time) error {
+	if stagedExpireAt == nil {
+		_, err := db.Exec(`UPDATE orders SET staged_expire_at=NULL, updated_at=datetime('now','localtime') WHERE id=?`, id)
+		return err
+	}
+	_, err := db.Exec(`UPDATE orders SET staged_expire_at=?, updated_at=datetime('now','localtime') WHERE id=?`, stagedExpireAt.Format("2006-01-02 15:04:05"), id)
+	return err
+}
+
 func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail string) error {
 	_, err := db.Exec(`INSERT INTO order_history (order_id, old_status, new_status, detail) VALUES (?, ?, ?, ?)`,
 		orderID, oldStatus, newStatus, detail)
 	return err
+}
+
+// ListStagedOrdersByPayload returns staged orders linked to a specific payload.
+func (db *DB) ListStagedOrdersByPayload(payloadID int64) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
+		WHERE o.payload_id = ? AND o.status = 'staged'
+		ORDER BY o.created_at`, payloadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// ListActiveOrdersByPayloadAndType returns non-terminal orders for a payload filtered by order type.
+func (db *DB) ListActiveOrdersByPayloadAndType(payloadID int64, orderType string) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
+		WHERE o.payload_id = ? AND o.order_type = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
+		ORDER BY o.created_at`, payloadID, orderType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
 }
 
 func (db *DB) ListOrderHistory(orderID int64) ([]OrderHistory, error) {

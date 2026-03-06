@@ -15,6 +15,12 @@ type Config struct {
 	RDS       RDSConfig       `yaml:"rds"`
 	Web       WebConfig       `yaml:"web"`
 	Messaging MessagingConfig `yaml:"messaging"`
+	Staging   StagingConfig   `yaml:"staging"`
+}
+
+type StagingConfig struct {
+	TTL           time.Duration `yaml:"ttl"`            // default 2h
+	SweepInterval time.Duration `yaml:"sweep_interval"` // default 5m
 }
 
 type DatabaseConfig struct {
@@ -85,6 +91,10 @@ func Defaults() *Config {
 			Host:          "0.0.0.0",
 			Port:          8083,
 			SessionSecret: "change-me-in-production",
+		},
+		Staging: StagingConfig{
+			TTL:           0, // 0 = never auto-unstage; override per node group via staging_ttl property
+			SweepInterval: 5 * time.Minute,
 		},
 		Messaging: MessagingConfig{
 			Kafka: KafkaConfig{

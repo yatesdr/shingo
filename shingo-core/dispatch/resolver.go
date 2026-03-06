@@ -79,7 +79,7 @@ func (r *DefaultResolver) resolveRetrieve(children []*store.Node, blueprintID *i
 			continue
 		}
 		for _, p := range payloads {
-			if p.ClaimedBy != nil || p.Status != "available" {
+			if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
 				continue
 			}
 			if blueprintID != nil && p.BlueprintID != *blueprintID {
@@ -108,7 +108,8 @@ func (r *DefaultResolver) resolveStore(children []*store.Node, blueprintID *int6
 		if err != nil {
 			continue
 		}
-		if count >= 1 {
+		inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
+		if count+inflight >= 1 {
 			continue
 		}
 

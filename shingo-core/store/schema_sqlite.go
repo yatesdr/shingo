@@ -35,11 +35,13 @@ CREATE TABLE IF NOT EXISTS orders (
     blueprint_id    INTEGER REFERENCES blueprints(id),
     payload_id      INTEGER REFERENCES payloads(id),
     parent_order_id INTEGER REFERENCES orders(id),
-    sequence        INTEGER NOT NULL DEFAULT 0
+    sequence        INTEGER NOT NULL DEFAULT 0,
+    bin_id          INTEGER REFERENCES bins(id)
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
+CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);
 
 CREATE TABLE IF NOT EXISTS order_history (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,6 +114,9 @@ CREATE TABLE IF NOT EXISTS bins (
     description TEXT NOT NULL DEFAULT '',
     node_id     INTEGER REFERENCES nodes(id),
     status      TEXT NOT NULL DEFAULT 'available',
+    claimed_by  INTEGER REFERENCES orders(id),
+    staged_at   TEXT,
+    staged_expires_at TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
@@ -141,7 +146,6 @@ CREATE TABLE IF NOT EXISTS payloads (
     bin_id          INTEGER REFERENCES bins(id),
     status          TEXT NOT NULL DEFAULT 'empty',
     uop_remaining   INTEGER NOT NULL DEFAULT 0,
-    claimed_by      INTEGER REFERENCES orders(id),
     loaded_at       TEXT,
     delivered_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     notes           TEXT NOT NULL DEFAULT '',

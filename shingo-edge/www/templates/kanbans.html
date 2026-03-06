@@ -41,6 +41,7 @@
                             <button class="btn btn-sm btn-primary" onclick="confirmDelivery({{.ID}}, {{.Quantity}})">Confirm</button>
                         {{end}}
                         {{if eq .Status "staged"}}
+                            {{if .StagedExpireAt}}<span class="text-muted" data-countdown="{{.StagedExpireAt.Format "2006-01-02T15:04:05Z07:00"}}"></span>{{end}}
                             <button class="btn btn-sm btn-primary" onclick="releaseOrder({{.ID}})">Release</button>
                         {{end}}
                         {{if eq .Status "pending"}}
@@ -153,6 +154,27 @@ async function submitRedirect() {
         location.reload();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
+
+// Staged bin expiry countdown
+function updateCountdowns() {
+    document.querySelectorAll('[data-countdown]').forEach(function(el) {
+        var exp = new Date(el.getAttribute('data-countdown'));
+        var now = new Date();
+        var diff = exp - now;
+        if (diff <= 0) {
+            el.textContent = 'Expired';
+            return;
+        }
+        var mins = Math.floor(diff / 60000);
+        if (mins >= 60) {
+            el.textContent = Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
+        } else {
+            el.textContent = mins + 'm';
+        }
+    });
+}
+updateCountdowns();
+setInterval(updateCountdowns, 60000);
 
 // SSE with debounce
 var _reloadTimer = null;

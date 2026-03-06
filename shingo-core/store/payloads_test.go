@@ -458,32 +458,23 @@ func TestPayloadLifecycle(t *testing.T) {
 	payload := &Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available", UOPRemaining: 100}
 	db.CreatePayload(payload)
 
-	// Claim
+	// Claim via bin (bin-centric claiming)
 	orderID := int64(42)
-	if err := db.ClaimPayload(payload.ID, orderID); err != nil {
-		t.Fatalf("claim: %v", err)
+	if err := db.ClaimBin(bin.ID, orderID); err != nil {
+		t.Fatalf("claim bin: %v", err)
 	}
 	got, _ := db.GetPayload(payload.ID)
 	if got.ClaimedBy == nil || *got.ClaimedBy != orderID {
-		t.Errorf("ClaimedBy = %v, want %d", got.ClaimedBy, orderID)
+		t.Errorf("ClaimedBy (via bin) = %v, want %d", got.ClaimedBy, orderID)
 	}
 
-	// ListPayloadsByClaimedOrder
-	claimed, err := db.ListPayloadsByClaimedOrder(orderID)
-	if err != nil {
-		t.Fatalf("list by claimed order: %v", err)
-	}
-	if len(claimed) != 1 {
-		t.Errorf("claimed len = %d, want 1", len(claimed))
-	}
-
-	// Unclaim
-	if err := db.UnclaimPayload(payload.ID); err != nil {
-		t.Fatalf("unclaim: %v", err)
+	// Unclaim via bin
+	if err := db.UnclaimBin(bin.ID); err != nil {
+		t.Fatalf("unclaim bin: %v", err)
 	}
 	got2, _ := db.GetPayload(payload.ID)
 	if got2.ClaimedBy != nil {
-		t.Errorf("ClaimedBy after unclaim = %v, want nil", got2.ClaimedBy)
+		t.Errorf("ClaimedBy after bin unclaim = %v, want nil", got2.ClaimedBy)
 	}
 
 	// MoveBin (replaces MoveInstance)
@@ -495,8 +486,8 @@ func TestPayloadLifecycle(t *testing.T) {
 		t.Errorf("NodeID after move = %v, want %d", got3.NodeID, node2.ID)
 	}
 
-	// Claim the first payload so it's excluded from FIFO source selection
-	db.ClaimPayload(payload.ID, 99)
+	// Claim the first bin so it's excluded from FIFO source selection
+	db.ClaimBin(bin.ID, 99)
 
 	// FindSourcePayloadFIFO -- create two more payloads, verify FIFO order
 	bin2 := &Bin{BinTypeID: bt.ID, Label: "CY-002", NodeID: &node1.ID, Status: "available"}

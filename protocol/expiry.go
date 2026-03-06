@@ -10,6 +10,7 @@ var defaultTTLs = map[string]time.Duration{
 	TypeOrderCancel:         10 * time.Minute,
 	TypeOrderRedirect:       10 * time.Minute,
 	TypeOrderStorageWaybill: 10 * time.Minute,
+	TypeOrderIngest:         10 * time.Minute,
 
 	TypeOrderAck:    10 * time.Minute,
 	TypeOrderUpdate: 10 * time.Minute,

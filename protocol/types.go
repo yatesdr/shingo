@@ -16,6 +16,9 @@ const (
 	TypeComplexOrderRequest = "order.complex_request"
 	TypeOrderRelease        = "order.release"
 
+	// Edge -> Core: origination
+	TypeOrderIngest = "order.ingest"
+
 	// Core -> Edge (published on dispatch topic)
 	TypeOrderAck        = "order.ack"
 	TypeOrderWaybill    = "order.waybill"

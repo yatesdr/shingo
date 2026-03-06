@@ -247,6 +247,12 @@ func (h *CoreHandler) HandleOrderRelease(env *protocol.Envelope, p *protocol.Ord
 	h.dispatcher.HandleOrderRelease(env, p)
 }
 
+func (h *CoreHandler) HandleOrderIngest(env *protocol.Envelope, p *protocol.OrderIngestRequest) {
+	log.Printf("core_handler: order ingest from %s: uuid=%s blueprint=%s bin=%s", env.Src.Station, p.OrderUUID, p.BlueprintCode, p.BinLabel)
+	h.dbg("-> order_ingest from=%s uuid=%s blueprint=%s bin=%s", env.Src.Station, p.OrderUUID, p.BlueprintCode, p.BinLabel)
+	h.dispatcher.HandleOrderIngest(env, p)
+}
+
 func (h *CoreHandler) handleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
 	log.Printf("core_handler: production report from %s: %d entries", rpt.StationID, len(rpt.Reports))
 	accepted := 0

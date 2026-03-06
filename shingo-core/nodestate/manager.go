@@ -25,17 +25,6 @@ func (m *Manager) MoveBin(binID, toNodeID int64) error {
 	if err := m.db.MoveBin(binID, toNodeID); err != nil {
 		return err
 	}
-	// Unclaim any payload on this bin
-	payloads, err := m.db.ListPayloadsByBin(binID)
-	if err == nil {
-		for _, p := range payloads {
-			if p.ClaimedBy != nil {
-				if err := m.db.UnclaimPayload(p.ID); err != nil {
-					m.dbg("MoveBin: unclaim payload %d error (silently dropped): %v", p.ID, err)
-				}
-			}
-		}
-	}
 	return nil
 }
 

@@ -121,6 +121,9 @@ func (e *Engine) Start() {
 	}
 	e.plcMgr.StartPolling()
 
+	// Scan produce payloads for empty bin needs on startup
+	e.scanProducePayloads()
+
 	e.logFn("Engine started: namespace=%s line_id=%s lines=%d", e.cfg.Namespace, e.cfg.LineID, len(e.changeoverMgrs))
 }
 

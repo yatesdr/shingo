@@ -127,8 +127,9 @@ type OrderUpdate struct {
 
 // OrderDelivered signals fleet delivery complete.
 type OrderDelivered struct {
-	OrderUUID   string    `json:"order_uuid"`
-	DeliveredAt time.Time `json:"delivered_at"`
+	OrderUUID      string     `json:"order_uuid"`
+	DeliveredAt    time.Time  `json:"delivered_at"`
+	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
 }
 
 // OrderError signals order failure.
@@ -172,6 +173,26 @@ type OrderRelease struct {
 type OrderStaged struct {
 	OrderUUID string `json:"order_uuid"`
 	Detail    string `json:"detail,omitempty"`
+}
+
+// --- Origination payloads: Edge -> Core ---
+
+// OrderIngestRequest submits a newly filled bin for storage.
+// Core creates a payload on the bin (with manifest) and dispatches a store order.
+type OrderIngestRequest struct {
+	OrderUUID     string               `json:"order_uuid"`
+	BlueprintCode string               `json:"blueprint_code"`
+	BinLabel      string               `json:"bin_label"`
+	PickupNode    string               `json:"pickup_node"`
+	Quantity      int64                `json:"quantity"`
+	Manifest      []IngestManifestItem `json:"manifest,omitempty"`
+}
+
+// IngestManifestItem describes a single item in an ingest manifest.
+type IngestManifestItem struct {
+	PartNumber  string `json:"part_number"`
+	Quantity    int64  `json:"quantity"`
+	Description string `json:"description,omitempty"`
 }
 
 // --- Node list data schemas ---

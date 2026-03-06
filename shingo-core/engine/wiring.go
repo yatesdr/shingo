@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -182,9 +183,20 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 func (e *Engine) handleOrderDelivered(order *store.Order) {
 	e.db.UpdateOrderStatus(order.ID, dispatch.StatusDelivered, "payload delivered")
 
+	// Resolve staged expiry for the delivered message
+	var stagedExpireAt *time.Time
+	if order.DeliveryNode != "" {
+		if destNode, err := e.db.GetNodeByDotName(order.DeliveryNode); err == nil {
+			if ea := e.resolveStagingExpiry(destNode); ea != nil {
+				stagedExpireAt = ea
+			}
+		}
+	}
+
 	if err := e.sendToEdge(protocol.TypeOrderDelivered, order.StationID, &protocol.OrderDelivered{
-		OrderUUID:   order.EdgeUUID,
-		DeliveredAt: time.Now().UTC(),
+		OrderUUID:      order.EdgeUUID,
+		DeliveredAt:    time.Now().UTC(),
+		StagedExpireAt: stagedExpireAt,
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}
@@ -219,18 +231,73 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		sourceNodeID = sourceNode.ID
 	}
 
-	payloads, _ := e.db.ListPayloadsByClaimedOrder(order.ID)
-	for _, p := range payloads {
-		if p.BinID != nil {
-			e.nodeState.MoveBin(*p.BinID, destNode.ID)
+	// Bin-centric: move the bin and unclaim
+	if order.BinID != nil {
+		e.nodeState.MoveBin(*order.BinID, destNode.ID)
+		e.db.UnclaimBin(*order.BinID)
+
+		// Mark bin as staged at lineside nodes to prevent poaching.
+		// Storage slots (children of LANEs) keep available status.
+		isStorageSlot := false
+		if destNode.ParentID != nil {
+			if parent, err := e.db.GetNode(*destNode.ParentID); err == nil && parent.NodeTypeCode == "LANE" {
+				isStorageSlot = true
+			}
 		}
-		e.Events.Emit(Event{Type: EventPayloadChanged, Payload: PayloadChangedEvent{
-			Action:        "moved",
-			PayloadID:     p.ID,
-			BlueprintCode: p.BlueprintCode,
-			FromNodeID:    sourceNodeID,
-			ToNodeID:      destNode.ID,
-			NodeID:        destNode.ID,
-		}})
+		if !isStorageSlot {
+			expiresAt := e.resolveStagingExpiry(destNode)
+			e.db.StageBin(*order.BinID, expiresAt)
+		}
+
+		// Emit payload changed for any payloads on the bin
+		payloads, _ := e.db.ListPayloadsByBin(*order.BinID)
+		for _, p := range payloads {
+			e.Events.Emit(Event{Type: EventPayloadChanged, Payload: PayloadChangedEvent{
+				Action:        "moved",
+				PayloadID:     p.ID,
+				BlueprintCode: p.BlueprintCode,
+				FromNodeID:    sourceNodeID,
+				ToNodeID:      destNode.ID,
+				NodeID:        destNode.ID,
+			}})
+		}
 	}
+}
+
+// resolveStagingExpiry computes the staging expiry time for a node.
+// Returns nil if staging is permanent (ttl=0 or ttl=none).
+func (e *Engine) resolveStagingExpiry(node *store.Node) *time.Time {
+	ttlStr := ""
+
+	// Check node's own property first
+	ttlStr = e.db.GetNodeProperty(node.ID, "staging_ttl")
+
+	// If not set, check parent (via effective properties)
+	if ttlStr == "" && node.ParentID != nil {
+		ttlStr = e.db.GetNodeProperty(*node.ParentID, "staging_ttl")
+	}
+
+	// Parse the TTL value
+	if ttlStr == "0" || strings.EqualFold(ttlStr, "none") {
+		return nil // permanent staging
+	}
+
+	var ttl time.Duration
+	if ttlStr != "" {
+		parsed, err := time.ParseDuration(ttlStr)
+		if err == nil {
+			ttl = parsed
+		}
+	}
+
+	// Fall back to global config default
+	if ttl == 0 {
+		ttl = e.cfg.Staging.TTL
+	}
+	if ttl <= 0 {
+		return nil
+	}
+
+	t := time.Now().Add(ttl)
+	return &t
 }

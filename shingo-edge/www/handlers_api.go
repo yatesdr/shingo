@@ -58,12 +58,14 @@ func (h *Handlers) apiConfirmDelivery(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PayloadID     int64   `json:"payload_id"`
-		RetrieveEmpty bool    `json:"retrieve_empty"`
-		Quantity      int64   `json:"quantity"`
-		DeliveryNode  string  `json:"delivery_node"`
-		StagingNode   string  `json:"staging_node"`
-		LoadType      string  `json:"load_type"`
+		PayloadID     int64  `json:"payload_id"`
+		BlueprintCode string `json:"blueprint_code"`
+		RetrieveEmpty bool   `json:"retrieve_empty"`
+		Quantity      int64  `json:"quantity"`
+		DeliveryNode  string `json:"delivery_node"`
+		StagingNode   string `json:"staging_node"`
+		LoadType      string `json:"load_type"`
+		Count         int    `json:"count"` // >1 creates a batch of empty bin orders
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -73,7 +75,6 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 	var payloadID *int64
 	if req.PayloadID > 0 {
 		payloadID = &req.PayloadID
-		// Auto-fill from payload if not specified
 		if p, err := h.engine.DB().GetPayload(req.PayloadID); err == nil {
 			if req.DeliveryNode == "" {
 				req.DeliveryNode = p.Location
@@ -81,13 +82,34 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 			if req.StagingNode == "" {
 				req.StagingNode = p.StagingNode
 			}
+			if req.BlueprintCode == "" {
+				req.BlueprintCode = p.BlueprintCode
+			}
 			req.RetrieveEmpty = p.RetrieveEmpty
 		}
 	}
 
+	// Batch mode: create multiple empty-bin orders (max 5)
+	count := req.Count
+	if count < 1 {
+		count = 1
+	}
+	if count > 1 {
+		if count > 5 {
+			writeError(w, http.StatusBadRequest, "count exceeds maximum of 5")
+			return
+		}
+		if req.BlueprintCode == "" || req.DeliveryNode == "" {
+			writeError(w, http.StatusBadRequest, "blueprint_code and delivery_node required for batch")
+			return
+		}
+		h.createRetrieveBatch(w, req.BlueprintCode, req.DeliveryNode, count)
+		return
+	}
+
 	order, err := h.engine.OrderManager().CreateRetrieveOrder(
 		payloadID, req.RetrieveEmpty,
-		req.Quantity, req.DeliveryNode, req.StagingNode, req.LoadType,
+		req.Quantity, req.DeliveryNode, req.StagingNode, req.LoadType, req.BlueprintCode,
 		h.engine.AppConfig().Web.AutoConfirm,
 	)
 	if err != nil {
@@ -95,6 +117,33 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, order)
+}
+
+func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, blueprintCode, deliveryNode string, count int) {
+	type result struct {
+		OrderID int64  `json:"order_id,omitempty"`
+		UUID    string `json:"uuid,omitempty"`
+		Error   string `json:"error,omitempty"`
+	}
+	var results []result
+	created := 0
+	for i := 0; i < count; i++ {
+		order, err := h.engine.OrderManager().CreateRetrieveOrder(
+			nil, true, 1, deliveryNode, "", "standard", blueprintCode,
+			h.engine.AppConfig().Web.AutoConfirm,
+		)
+		if err != nil {
+			results = append(results, result{Error: err.Error()})
+			continue
+		}
+		results = append(results, result{OrderID: order.ID, UUID: order.UUID})
+		created++
+	}
+	writeJSON(w, map[string]interface{}{
+		"requested": count,
+		"created":   created,
+		"orders":    results,
+	})
 }
 
 func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +244,53 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 
 	order, err := h.engine.OrderManager().CreateComplexOrder(
 		payloadID, req.Quantity, req.Steps,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, order)
+}
+
+func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PayloadID     int64                        `json:"payload_id"`
+		BlueprintCode string                       `json:"blueprint_code"`
+		BinLabel      string                       `json:"bin_label"`
+		PickupNode    string                       `json:"pickup_node"`
+		Quantity      int64                        `json:"quantity"`
+		Manifest      []protocol.IngestManifestItem `json:"manifest"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.BlueprintCode == "" {
+		writeError(w, http.StatusBadRequest, "blueprint_code is required")
+		return
+	}
+	if req.BinLabel == "" {
+		writeError(w, http.StatusBadRequest, "bin_label is required")
+		return
+	}
+
+	var payloadID *int64
+	if req.PayloadID > 0 {
+		payloadID = &req.PayloadID
+		if p, err := h.engine.DB().GetPayload(req.PayloadID); err == nil {
+			if req.PickupNode == "" {
+				req.PickupNode = p.Location
+			}
+			if req.BlueprintCode == "" {
+				req.BlueprintCode = p.BlueprintCode
+			}
+		}
+	}
+
+	order, err := h.engine.OrderManager().CreateIngestOrder(
+		payloadID, req.BlueprintCode, req.BinLabel, req.PickupNode,
+		req.Quantity, req.Manifest,
+		h.engine.AppConfig().Web.AutoConfirm,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -907,7 +1003,10 @@ func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 		Remaining       int     `json:"remaining"`
 		ReorderPoint    int     `json:"reorder_point"`
 		ReorderQty      int     `json:"reorder_qty"`
-		RetrieveEmpty   bool    `json:"retrieve_empty"`
+		RetrieveEmpty     bool    `json:"retrieve_empty"`
+		Role              string  `json:"role"`
+		AutoRemoveEmpties bool    `json:"auto_remove_empties"`
+		AutoOrderEmpties  bool    `json:"auto_order_empties"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -922,7 +1021,7 @@ func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 	if req.ReorderQty <= 0 {
 		req.ReorderQty = 1
 	}
-	id, err := h.engine.DB().CreatePayload(req.JobStyleID, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.BlueprintCode)
+	id, err := h.engine.DB().CreatePayload(req.JobStyleID, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.BlueprintCode, req.Role, req.AutoRemoveEmpties, req.AutoOrderEmpties)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -947,13 +1046,16 @@ func (h *Handlers) apiUpdatePayload(w http.ResponseWriter, r *http.Request) {
 		Remaining       int     `json:"remaining"`
 		ReorderPoint    int     `json:"reorder_point"`
 		ReorderQty      int     `json:"reorder_qty"`
-		RetrieveEmpty   bool    `json:"retrieve_empty"`
+		RetrieveEmpty     bool    `json:"retrieve_empty"`
+		Role              string  `json:"role"`
+		AutoRemoveEmpties bool    `json:"auto_remove_empties"`
+		AutoOrderEmpties  bool    `json:"auto_order_empties"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdatePayload(id, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.BlueprintCode); err != nil {
+	if err := h.engine.DB().UpdatePayload(id, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.BlueprintCode, req.Role, req.AutoRemoveEmpties, req.AutoOrderEmpties); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

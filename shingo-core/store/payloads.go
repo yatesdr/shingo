@@ -23,10 +23,11 @@ type Payload struct {
 	BinLabel      string `json:"bin_label"`
 	NodeName      string `json:"node_name"`
 	NodeID        *int64 `json:"node_id,omitempty"` // from bin
+	BinStatus     string `json:"bin_status"`
 }
 
-const payloadJoinQuery = `SELECT p.id, p.blueprint_id, p.bin_id, p.status, p.uop_remaining, p.claimed_by, p.loaded_at, p.delivered_at, p.notes, p.created_at, p.updated_at,
-	bp.code, COALESCE(b.label, ''), COALESCE(n.name, ''), b.node_id
+const payloadJoinQuery = `SELECT p.id, p.blueprint_id, p.bin_id, p.status, p.uop_remaining, b.claimed_by, p.loaded_at, p.delivered_at, p.notes, p.created_at, p.updated_at,
+	bp.code, COALESCE(b.label, ''), COALESCE(n.name, ''), b.node_id, COALESCE(b.status, '')
 	FROM payloads p
 	JOIN blueprints bp ON bp.id = p.blueprint_id
 	LEFT JOIN bins b ON b.id = p.bin_id
@@ -39,7 +40,7 @@ func scanPayload(row interface{ Scan(...any) error }) (*Payload, error) {
 
 	err := row.Scan(&p.ID, &p.BlueprintID, &binID, &p.Status, &p.UOPRemaining, &claimedBy,
 		&loadedAt, &deliveredAt, &p.Notes, &createdAt, &updatedAt,
-		&p.BlueprintCode, &p.BinLabel, &p.NodeName, &nodeID)
+		&p.BlueprintCode, &p.BinLabel, &p.NodeName, &nodeID, &p.BinStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -174,43 +175,15 @@ func (db *DB) ListPayloadsByNode(nodeID int64) ([]*Payload, error) {
 	return scanPayloads(rows)
 }
 
-// ClaimPayload marks a payload as claimed by an order to prevent double-dispatch.
-func (db *DB) ClaimPayload(payloadID, orderID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE payloads SET claimed_by=?, updated_at=datetime('now','localtime') WHERE id=?`), orderID, payloadID)
-	if err == nil {
-		db.logPayloadEvent(payloadID, PayloadEventClaimed, fmt.Sprintf("order_id=%d", orderID))
-	}
-	return err
-}
-
-// UnclaimPayload releases a payload from an order claim.
-func (db *DB) UnclaimPayload(payloadID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE payloads SET claimed_by=NULL, updated_at=datetime('now','localtime') WHERE id=?`), payloadID)
-	if err == nil {
-		db.logPayloadEvent(payloadID, PayloadEventUnclaimed, "")
-	}
-	return err
-}
-
-// UnclaimOrderPayloads releases all payloads claimed by a specific order.
-func (db *DB) UnclaimOrderPayloads(orderID int64) {
-	payloads, err := db.ListPayloadsByClaimedOrder(orderID)
-	if err != nil {
-		return
-	}
-	for _, p := range payloads {
-		db.UnclaimPayload(p.ID)
-	}
-}
-
 // FindSourcePayloadFIFO finds the best unclaimed payload at an enabled storage node using FIFO.
 func (db *DB) FindSourcePayloadFIFO(blueprintCode string) (*Payload, error) {
 	row := db.QueryRow(db.Q(fmt.Sprintf(`%s
 		WHERE bp.code = ?
 		  AND n.enabled = 1
 		  AND n.is_synthetic = 0
-		  AND p.claimed_by IS NULL
+		  AND b.claimed_by IS NULL
 		  AND p.status = 'available'
+		  AND COALESCE(b.status, 'available') != 'staged'
 		ORDER BY p.delivered_at ASC
 		LIMIT 1`, payloadJoinQuery)), blueprintCode)
 	return scanPayload(row)
@@ -263,12 +236,3 @@ func (db *DB) ListPayloadsByBin(binID int64) ([]*Payload, error) {
 	return scanPayloads(rows)
 }
 
-// ListPayloadsByClaimedOrder returns all payloads claimed by a specific order.
-func (db *DB) ListPayloadsByClaimedOrder(orderID int64) ([]*Payload, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE p.claimed_by=?`, payloadJoinQuery)), orderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanPayloads(rows)
-}

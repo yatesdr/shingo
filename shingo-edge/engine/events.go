@@ -43,6 +43,9 @@ const (
 	EventWarLinkConnected
 	EventWarLinkDisconnected
 
+	// Produce payload events
+	EventPayloadNeedsEmptyBin
+
 	// Core node sync events
 	EventCoreNodesUpdated
 )
@@ -198,6 +201,16 @@ type PayloadEmptyEvent struct {
 	LineID     int64  `json:"line_id"`
 	JobStyleID int64  `json:"job_style_id"`
 	Location   string `json:"location"`
+}
+
+// PayloadNeedsEmptyBinEvent is emitted when a produce payload needs an empty bin delivered.
+type PayloadNeedsEmptyBinEvent struct {
+	PayloadID     int64  `json:"payload_id"`
+	LineID        int64  `json:"line_id"`
+	JobStyleID    int64  `json:"job_style_id"`
+	Location      string `json:"location"`
+	StagingNode   string `json:"staging_node"`
+	BlueprintCode string `json:"blueprint_code"`
 }
 
 // OrderFailedEvent is emitted when an order transitions to failed state.

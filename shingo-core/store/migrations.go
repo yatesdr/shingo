@@ -142,6 +142,9 @@ func (db *DB) migrate() error {
 	db.migrateCMSTransactions()
 	db.migrateQuantitiesToInteger()
 	db.migrateStepsJSON()
+	db.migrateBinClaiming()
+	db.migrateDeliveryNodeIndex()
+	db.migrateStagedBinExpiry()
 	return nil
 }
 
@@ -702,6 +705,51 @@ func (db *DB) migrateCMSTransactions() {
 			db.Exec(fmt.Sprintf(`ALTER TABLE cms_transactions ADD COLUMN %s %s`, c.name, c.def))
 		}
 	}
+}
+
+// migrateBinClaiming adds claimed_by to bins and bin_id to orders for bin-centric dispatch.
+func (db *DB) migrateBinClaiming() {
+	if !db.columnExists("bins", "claimed_by") {
+		switch db.driver {
+		case "sqlite":
+			db.Exec(`ALTER TABLE bins ADD COLUMN claimed_by INTEGER REFERENCES orders(id)`)
+		case "postgres":
+			db.Exec(`ALTER TABLE bins ADD COLUMN claimed_by BIGINT REFERENCES orders(id)`)
+		}
+	}
+	if !db.columnExists("orders", "bin_id") {
+		switch db.driver {
+		case "sqlite":
+			db.Exec(`ALTER TABLE orders ADD COLUMN bin_id INTEGER REFERENCES bins(id)`)
+		case "postgres":
+			db.Exec(`ALTER TABLE orders ADD COLUMN bin_id BIGINT REFERENCES bins(id)`)
+		}
+	}
+}
+
+// migrateStagedBinExpiry adds staged_at and staged_expires_at columns to bins.
+func (db *DB) migrateStagedBinExpiry() {
+	if !db.columnExists("bins", "staged_at") {
+		switch db.driver {
+		case "sqlite":
+			db.Exec(`ALTER TABLE bins ADD COLUMN staged_at TEXT`)
+		case "postgres":
+			db.Exec(`ALTER TABLE bins ADD COLUMN staged_at TIMESTAMPTZ`)
+		}
+	}
+	if !db.columnExists("bins", "staged_expires_at") {
+		switch db.driver {
+		case "sqlite":
+			db.Exec(`ALTER TABLE bins ADD COLUMN staged_expires_at TEXT`)
+		case "postgres":
+			db.Exec(`ALTER TABLE bins ADD COLUMN staged_expires_at TIMESTAMPTZ`)
+		}
+	}
+}
+
+// migrateDeliveryNodeIndex adds an index on orders.delivery_node for in-flight delivery counting.
+func (db *DB) migrateDeliveryNodeIndex() {
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node)`)
 }
 
 // migrateDropCapacity removes the capacity column from nodes (all nodes now have capacity 1).

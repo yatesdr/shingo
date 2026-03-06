@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS payloads (
     status           TEXT NOT NULL DEFAULT 'active',
     blueprint_code   TEXT NOT NULL DEFAULT '',
     auto_reorder     INTEGER NOT NULL DEFAULT 1,
+    role             TEXT NOT NULL DEFAULT 'consume',
+    auto_remove_empties INTEGER NOT NULL DEFAULT 0,
+    auto_order_empties  INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     updated_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     UNIQUE(job_style_id, location)
@@ -220,6 +223,14 @@ func (db *DB) migrate() error {
 
 	// Complex order steps
 	db.Exec("ALTER TABLE orders ADD COLUMN steps_json TEXT NOT NULL DEFAULT ''")
+
+	// Payload role + automation flags for produce/consume workflows
+	db.Exec("ALTER TABLE payloads ADD COLUMN role TEXT NOT NULL DEFAULT 'consume'")
+	db.Exec("ALTER TABLE payloads ADD COLUMN auto_remove_empties INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE payloads ADD COLUMN auto_order_empties INTEGER NOT NULL DEFAULT 0")
+
+	// Staged bin expiry visibility
+	db.Exec("ALTER TABLE orders ADD COLUMN staged_expire_at TEXT")
 
 	return nil
 }

@@ -8,6 +8,7 @@ const (
 	TypeStore    = "store"
 	TypeMove     = "move"
 	TypeComplex  = "complex"
+	TypeIngest   = "ingest"
 )
 
 // Order statuses aliased from protocol.

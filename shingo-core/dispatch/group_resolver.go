@@ -113,7 +113,7 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, blueprintID *int6
 				continue
 			}
 			for _, p := range payloads {
-				if p.ClaimedBy != nil || p.Status != "available" {
+				if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
 					continue
 				}
 				if blueprintID != nil && p.BlueprintID != *blueprintID {
@@ -187,7 +187,7 @@ func (r *GroupResolver) resolveRetrieveFAVL(group *store.Node, blueprintID *int6
 				continue
 			}
 			for _, p := range payloads {
-				if p.ClaimedBy != nil || p.Status != "available" {
+				if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
 					continue
 				}
 				if blueprintID != nil && p.BlueprintID != *blueprintID {
@@ -291,7 +291,8 @@ func (r *GroupResolver) resolveStoreLKND(group *store.Node, blueprintID *int64, 
 			if err != nil {
 				continue
 			}
-			if count >= 1 {
+			inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
+			if count+inflight >= 1 {
 				continue
 			}
 
@@ -398,7 +399,8 @@ func (r *GroupResolver) resolveStoreDPTH(group *store.Node, blueprintID *int64, 
 		if err != nil {
 			continue
 		}
-		if count < 1 {
+		inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
+		if count+inflight < 1 {
 			return &ResolveResult{Node: child}, nil
 		}
 	}

@@ -120,6 +120,9 @@ func (e *Engine) Start() {
 	// Start robot status refresh loop (2s)
 	go e.robotRefreshLoop()
 
+	// Start staged bin expiry sweep
+	go e.stagedBinSweepLoop()
+
 	e.logFn("engine: started")
 }
 
@@ -429,6 +432,31 @@ func (e *Engine) robotRefreshLoop() {
 				Type:    EventRobotsUpdated,
 				Payload: RobotsUpdatedEvent{Robots: robots},
 			})
+		}
+	}
+}
+
+// stagedBinSweepLoop periodically releases staged bins whose expiry has passed.
+func (e *Engine) stagedBinSweepLoop() {
+	interval := e.cfg.Staging.SweepInterval
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-e.stopChan:
+			return
+		case <-ticker.C:
+			count, err := e.db.ReleaseExpiredStagedBins()
+			if err != nil {
+				e.logFn("engine: staged bin sweep error: %v", err)
+				continue
+			}
+			if count > 0 {
+				e.logFn("engine: released %d expired staged bins", count)
+			}
 		}
 	}
 }

@@ -73,7 +73,7 @@ func (db *DB) FindSourcePayloadInLane(laneID int64, blueprintCode string) (*Payl
 		}
 
 		for _, p := range payloads {
-			if p.ClaimedBy != nil || p.Status != "available" {
+			if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
 				continue
 			}
 			if blueprintCode != "" && p.BlueprintCode != blueprintCode {
@@ -104,7 +104,8 @@ func (db *DB) FindStoreSlotInLane(laneID int64, blueprintID int64) (*Node, error
 		if err != nil {
 			continue
 		}
-		if count == 0 {
+		inflight, _ := db.CountActiveOrdersByDeliveryNode(slot.Name)
+		if count+inflight == 0 {
 			return slot, nil
 		}
 	}
@@ -135,7 +136,7 @@ func (db *DB) FindBuriedPayload(laneID int64, blueprintCode string) (*Payload, *
 			continue
 		}
 		for _, p := range payloads {
-			if p.ClaimedBy != nil || p.Status != "available" {
+			if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
 				continue
 			}
 			if blueprintCode != "" && p.BlueprintCode != blueprintCode {

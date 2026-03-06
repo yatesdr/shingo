@@ -25,6 +25,9 @@ type MessageHandler interface {
 	HandleComplexOrderRequest(env *Envelope, p *ComplexOrderRequest)
 	HandleOrderRelease(env *Envelope, p *OrderRelease)
 
+	// Edge -> Core: origination
+	HandleOrderIngest(env *Envelope, p *OrderIngestRequest)
+
 	// Core -> Edge
 	HandleOrderAck(env *Envelope, p *OrderAck)
 	HandleOrderWaybill(env *Envelope, p *OrderWaybill)
@@ -118,6 +121,8 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		decodeAndCall(ing.handler.HandleComplexOrderRequest, &env, ing.dbg)
 	case TypeOrderRelease:
 		decodeAndCall(ing.handler.HandleOrderRelease, &env, ing.dbg)
+	case TypeOrderIngest:
+		decodeAndCall(ing.handler.HandleOrderIngest, &env, ing.dbg)
 	case TypeOrderAck:
 		decodeAndCall(ing.handler.HandleOrderAck, &env, ing.dbg)
 	case TypeOrderWaybill:

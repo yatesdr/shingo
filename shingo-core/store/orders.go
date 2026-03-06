@@ -29,6 +29,7 @@ type Order struct {
 	ParentOrderID *int64     `json:"parent_order_id,omitempty"`
 	Sequence      int        `json:"sequence"`
 	StepsJSON     string     `json:"steps_json,omitempty"`
+	BinID         *int64     `json:"bin_id,omitempty"`
 }
 
 type OrderHistory struct {
@@ -39,11 +40,11 @@ type OrderHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, blueprint_id, payload_id, parent_order_id, sequence, steps_json`
+const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, blueprint_id, payload_id, parent_order_id, sequence, steps_json, bin_id`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
-	var blueprintID, payloadID, parentOrderID sql.NullInt64
+	var blueprintID, payloadID, parentOrderID, binID sql.NullInt64
 	var createdAt, updatedAt any
 	var completedAt any
 
@@ -51,7 +52,7 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&o.Quantity,
 		&o.PickupNode, &o.DeliveryNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &createdAt, &updatedAt, &completedAt,
-		&blueprintID, &payloadID, &parentOrderID, &o.Sequence, &o.StepsJSON)
+		&blueprintID, &payloadID, &parentOrderID, &o.Sequence, &o.StepsJSON, &binID)
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +64,9 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	}
 	if parentOrderID.Valid {
 		o.ParentOrderID = &parentOrderID.Int64
+	}
+	if binID.Valid {
+		o.BinID = &binID.Int64
 	}
 	o.CreatedAt = parseTime(createdAt)
 	o.UpdatedAt = parseTime(updatedAt)
@@ -83,12 +87,13 @@ func scanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 func (db *DB) CreateOrder(o *Order) error {
-	result, err := db.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, blueprint_id, payload_id, parent_order_id, sequence, steps_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+	result, err := db.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, blueprint_id, payload_id, parent_order_id, sequence, steps_json, bin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
 		nullableInt64(o.BlueprintID), nullableInt64(o.PayloadID),
-		nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON)
+		nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
+		nullableInt64(o.BinID))
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -116,23 +121,24 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 
 	for _, c := range children {
 		o := c.Order
-		result, err := tx.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, blueprint_id, payload_id, parent_order_id, sequence, steps_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		result, err := tx.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, blueprint_id, payload_id, parent_order_id, sequence, steps_json, bin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
 			o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
 			nullableInt64(o.BlueprintID), nullableInt64(o.PayloadID),
-			nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON)
+			nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
+			nullableInt64(o.BinID))
 		if err != nil {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
 		id, _ := result.LastInsertId()
 		o.ID = id
 
-		if c.PayloadID > 0 {
-			_, err = tx.Exec(db.Q(`UPDATE payloads SET claimed_by=?, updated_at=datetime('now','localtime') WHERE id=?`),
-				o.ID, c.PayloadID)
+		// Bin-centric claiming: if the child order has a bin, claim it
+		if o.BinID != nil {
+			_, err = tx.Exec(db.Q(`UPDATE bins SET claimed_by=? WHERE id=?`), o.ID, *o.BinID)
 			if err != nil {
-				return fmt.Errorf("claim payload %d for child %d: %w", c.PayloadID, o.ID, err)
+				return fmt.Errorf("claim bin %d for child %d: %w", *o.BinID, o.ID, err)
 			}
 		}
 	}
@@ -265,6 +271,13 @@ func (db *DB) ListOrdersByStation(stationID string, limit int) ([]*Order, error)
 	}
 	defer rows.Close()
 	return scanOrders(rows)
+}
+
+// CountActiveOrdersByDeliveryNode counts non-terminal orders targeting a specific delivery node.
+func (db *DB) CountActiveOrdersByDeliveryNode(nodeName string) (int, error) {
+	var count int
+	err := db.QueryRow(db.Q(`SELECT COUNT(*) FROM orders WHERE delivery_node=? AND status NOT IN ('confirmed','failed','cancelled')`), nodeName).Scan(&count)
+	return count, err
 }
 
 // ListDispatchedVendorOrderIDs returns vendor order IDs for all non-terminal orders.

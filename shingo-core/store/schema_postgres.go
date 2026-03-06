@@ -35,11 +35,13 @@ CREATE TABLE IF NOT EXISTS orders (
     blueprint_id    BIGINT REFERENCES blueprints(id),
     payload_id      BIGINT REFERENCES payloads(id),
     parent_order_id BIGINT REFERENCES orders(id),
-    sequence        INTEGER NOT NULL DEFAULT 0
+    sequence        INTEGER NOT NULL DEFAULT 0,
+    bin_id          BIGINT REFERENCES bins(id)
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_vendor ON orders(vendor_order_id);
+CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node);
 
 CREATE TABLE IF NOT EXISTS order_history (
     id          BIGSERIAL PRIMARY KEY,
@@ -112,6 +114,9 @@ CREATE TABLE IF NOT EXISTS bins (
     description TEXT NOT NULL DEFAULT '',
     node_id     BIGINT REFERENCES nodes(id),
     status      TEXT NOT NULL DEFAULT 'available',
+    claimed_by  BIGINT REFERENCES orders(id),
+    staged_at   TIMESTAMPTZ,
+    staged_expires_at TIMESTAMPTZ,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -141,7 +146,6 @@ CREATE TABLE IF NOT EXISTS payloads (
     bin_id          BIGINT REFERENCES bins(id),
     status          TEXT NOT NULL DEFAULT 'empty',
     uop_remaining   INTEGER NOT NULL DEFAULT 0,
-    claimed_by      BIGINT REFERENCES orders(id),
     loaded_at       TIMESTAMPTZ,
     delivered_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     notes           TEXT NOT NULL DEFAULT '',

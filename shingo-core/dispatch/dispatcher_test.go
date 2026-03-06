@@ -117,6 +117,11 @@ func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNod
 	if err := db.CreateBlueprint(bp); err != nil {
 		t.Fatalf("create blueprint: %v", err)
 	}
+	// Create a default bin type used by test bins
+	bt := &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+	if err := db.CreateBinType(bt); err != nil {
+		t.Fatalf("create bin type: %v", err)
+	}
 	return
 }
 
@@ -314,17 +319,17 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 
 	p := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available"}
 	db.CreatePayload(p)
-	db.ClaimPayload(p.ID, order.ID)
+	db.ClaimBin(bin.ID, order.ID)
 
 	d, _ := newTestDispatcher(t, db, &mockBackend{})
 
 	env := testEnvelope()
 	d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: "uuid-unclaim", Reason: "test"})
 
-	// Verify payload unclaimed
+	// Verify bin unclaimed (and payload shows unclaimed via bin join)
 	got, _ := db.GetPayload(p.ID)
 	if got.ClaimedBy != nil {
-		t.Errorf("ClaimedBy = %v, want nil", got.ClaimedBy)
+		t.Errorf("ClaimedBy (via bin) = %v, want nil", got.ClaimedBy)
 	}
 }
 

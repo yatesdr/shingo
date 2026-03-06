@@ -1,6 +1,11 @@
 package engine
 
-import "log"
+import (
+	"log"
+
+	"shingo/protocol"
+	"shingoedge/store"
+)
 
 // wireEventHandlers sets up the full event chain:
 // CounterDelta → payload decrement → PayloadReorder → order creation
@@ -29,6 +34,59 @@ func (e *Engine) wireEventHandlers() {
 		completed := evt.Payload.(OrderCompletedEvent)
 		e.handleOrderCompleted(completed)
 	}, EventOrderCompleted)
+
+	// PayloadNeedsEmptyBin → request empty bin for produce payloads
+	e.Events.SubscribeTypes(func(evt Event) {
+		need := evt.Payload.(PayloadNeedsEmptyBinEvent)
+		e.handlePayloadNeedsEmptyBin(need)
+	}, EventPayloadNeedsEmptyBin)
+
+	// PayloadEmpty → auto-remove empty bins for consume payloads
+	e.Events.SubscribeTypes(func(evt Event) {
+		empty := evt.Payload.(PayloadEmptyEvent)
+		e.handlePayloadAutoRemove(empty)
+	}, EventPayloadEmpty)
+
+	// OrderStatusChanged → auto-release staged resupply when store order goes in-transit
+	e.Events.SubscribeTypes(func(evt Event) {
+		changed := evt.Payload.(OrderStatusChangedEvent)
+		e.handleAutoReleaseStagedResupply(changed)
+	}, EventOrderStatusChanged)
+
+	// OrderFailed → reset produce payload from "replenishing" back to "empty"
+	e.Events.SubscribeTypes(func(evt Event) {
+		failed := evt.Payload.(OrderFailedEvent)
+		e.handleOrderFailed(failed)
+	}, EventOrderFailed)
+}
+
+// scanProducePayloads checks produce payloads on startup and emits empty bin requests if needed.
+func (e *Engine) scanProducePayloads() {
+	payloads, err := e.db.ListProducePayloads()
+	if err != nil {
+		log.Printf("scan produce payloads: %v", err)
+		return
+	}
+	for _, p := range payloads {
+		// Only request empty bin if payload is in empty/active status (not already awaiting or replenishing)
+		if p.Status != "empty" && p.Status != "active" {
+			continue
+		}
+		// Check if a supply order is already active
+		active, _ := e.db.ListActiveOrdersByPayloadAndType(p.ID, "retrieve")
+		if len(active) > 0 {
+			continue
+		}
+		var lineID int64
+		if js, err := e.db.GetJobStyle(p.JobStyleID); err == nil {
+			lineID = js.LineID
+		}
+		e.debugFn("startup: produce payload %d needs empty bin", p.ID)
+		e.Events.Emit(Event{Type: EventPayloadNeedsEmptyBin, Payload: PayloadNeedsEmptyBinEvent{
+			PayloadID: p.ID, LineID: lineID, JobStyleID: p.JobStyleID,
+			Location: p.Location, StagingNode: p.StagingNode, BlueprintCode: p.BlueprintCode,
+		}})
+	}
 }
 
 func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
@@ -94,13 +152,37 @@ func (e *Engine) handlePayloadReorder(reorder PayloadReorderEvent) {
 		reorder.PayloadID, reorder.Location, reorder.ReorderQty)
 
 	payloadID := reorder.PayloadID
-	_, err := e.orderMgr.CreateRetrieveOrder(
+
+	// Check if this payload uses staged hot-swap (auto-remove empties + staging node)
+	payload, err := e.db.GetPayload(payloadID)
+	if err == nil && payload.AutoRemoveEmpties && payload.StagingNode != "" {
+		// Complex order: pickup from storage → stage → dwell → pickup from staging → deliver to line
+		steps := []protocol.ComplexOrderStep{
+			{Action: "pickup", NodeGroup: ""}, // core resolves source via blueprint
+			{Action: "dropoff", Node: payload.StagingNode},
+			{Action: "wait"},
+			{Action: "pickup", Node: payload.StagingNode},
+			{Action: "dropoff", Node: payload.Location},
+		}
+		_, err := e.orderMgr.CreateComplexOrder(
+			&payloadID,
+			int64(reorder.ReorderQty),
+			steps,
+		)
+		if err != nil {
+			log.Printf("create staged hot-swap for payload %d: %v", reorder.PayloadID, err)
+		}
+		return
+	}
+
+	// Simple retrieve (existing behavior)
+	_, err = e.orderMgr.CreateRetrieveOrder(
 		&payloadID,
 		reorder.RetrieveEmpty,
 		int64(reorder.ReorderQty),
 		reorder.Location,
 		reorder.StagingNode,
-		"standard",
+		"standard", "",
 		e.cfg.Web.AutoConfirm,
 	)
 	if err != nil {
@@ -114,17 +196,50 @@ func (e *Engine) handleOrderCompleted(completed OrderCompletedEvent) {
 		return
 	}
 
-	// Only reset payload on retrieve order completion
-	if order.OrderType != "retrieve" {
-		return
-	}
-
 	payload, err := e.db.GetPayload(*order.PayloadID)
 	if err != nil {
 		log.Printf("get payload %d for order completion: %v", *order.PayloadID, err)
 		return
 	}
 
+	switch order.OrderType {
+	case "retrieve":
+		if payload.Role == "produce" && order.RetrieveEmpty {
+			// Empty bin arrived at produce slot — mark awaiting fill
+			e.db.UpdatePayloadRemaining(payload.ID, 0, "awaiting")
+			e.debugFn("produce payload %d: empty bin delivered, status=awaiting", payload.ID)
+			return
+		}
+		// Consume payload: reset to full
+		e.resetPayloadOnRetrieve(payload)
+
+	case "complex":
+		// Complex orders on consume payloads also reset to full
+		if payload.Role != "produce" {
+			e.resetPayloadOnRetrieve(payload)
+		}
+
+	case "ingest":
+		// Ingest complete: bin stored, produce slot is now empty and ready for next cycle
+		e.db.UpdatePayloadRemaining(payload.ID, 0, "empty")
+		e.debugFn("produce payload %d: ingest complete, status=empty", payload.ID)
+
+		// If auto-order empties, request the next empty bin
+		if payload.AutoOrderEmpties {
+			var lineID int64
+			if js, err := e.db.GetJobStyle(payload.JobStyleID); err == nil {
+				lineID = js.LineID
+			}
+			e.Events.Emit(Event{Type: EventPayloadNeedsEmptyBin, Payload: PayloadNeedsEmptyBinEvent{
+				PayloadID: payload.ID, LineID: lineID, JobStyleID: payload.JobStyleID,
+				Location: payload.Location, StagingNode: payload.StagingNode, BlueprintCode: payload.BlueprintCode,
+			}})
+		}
+	}
+}
+
+// resetPayloadOnRetrieve resets a consume payload to full after a retrieve order delivers.
+func (e *Engine) resetPayloadOnRetrieve(payload *store.Payload) {
 	resetUnits := payload.ProductionUnits
 	// If ProductionUnits not configured, try blueprint catalog UOPCapacity
 	if resetUnits == 0 && payload.BlueprintCode != "" {
@@ -144,16 +259,103 @@ func (e *Engine) handleOrderCompleted(completed OrderCompletedEvent) {
 		return
 	}
 
-	// Determine lineID from the job style
 	var lineID int64
-	js, err := e.db.GetJobStyle(payload.JobStyleID)
-	if err == nil {
+	if js, err := e.db.GetJobStyle(payload.JobStyleID); err == nil {
 		lineID = js.LineID
 	}
 
 	e.Events.Emit(Event{Type: EventPayloadUpdated, Payload: PayloadUpdatedEvent{
 		PayloadID: payload.ID, LineID: lineID, JobStyleID: payload.JobStyleID, Location: payload.Location,
-		OldRemaining: payload.Remaining, NewRemaining: payload.ProductionUnits,
+		OldRemaining: payload.Remaining, NewRemaining: resetUnits,
 		Status: "active",
 	}})
+}
+
+// handlePayloadNeedsEmptyBin requests an empty bin for a produce payload.
+func (e *Engine) handlePayloadNeedsEmptyBin(need PayloadNeedsEmptyBinEvent) {
+	// Guard: don't duplicate if supply order already active
+	active, _ := e.db.ListActiveOrdersByPayloadAndType(need.PayloadID, "retrieve")
+	if len(active) > 0 {
+		e.debugFn("produce payload %d: supply order already active, skipping", need.PayloadID)
+		return
+	}
+
+	// Mark payload as replenishing before creating the order
+	e.db.UpdatePayloadRemaining(need.PayloadID, 0, "replenishing")
+
+	e.debugFn("produce payload %d: requesting empty bin at %s", need.PayloadID, need.Location)
+	payloadID := need.PayloadID
+	_, err := e.orderMgr.CreateRetrieveOrder(
+		&payloadID,
+		true, // retrieveEmpty
+		1,
+		need.Location,
+		need.StagingNode,
+		"standard", "",
+		e.cfg.Web.AutoConfirm,
+	)
+	if err != nil {
+		log.Printf("create empty bin supply for payload %d: %v", need.PayloadID, err)
+	}
+}
+
+// handlePayloadAutoRemove auto-removes empty bins for consume payloads with auto_remove_empties.
+func (e *Engine) handlePayloadAutoRemove(empty PayloadEmptyEvent) {
+	payload, err := e.db.GetPayload(empty.PayloadID)
+	if err != nil {
+		return
+	}
+	if payload.Role != "consume" || !payload.AutoRemoveEmpties {
+		return
+	}
+
+	e.debugFn("auto-remove empty bin for payload %d at %s", payload.ID, payload.Location)
+	payloadID := payload.ID
+	_, err = e.orderMgr.CreateStoreOrder(&payloadID, 0, payload.Location)
+	if err != nil {
+		log.Printf("create auto-remove store order for payload %d: %v", payload.ID, err)
+	}
+}
+
+// handleAutoReleaseStagedResupply releases staged resupply orders when the store (empty-removal) order goes in-transit.
+func (e *Engine) handleAutoReleaseStagedResupply(changed OrderStatusChangedEvent) {
+	if changed.NewStatus != "in_transit" || changed.OrderType != "store" {
+		return
+	}
+	order, err := e.db.GetOrder(changed.OrderID)
+	if err != nil || order.PayloadID == nil {
+		return
+	}
+	payload, err := e.db.GetPayload(*order.PayloadID)
+	if err != nil || !payload.AutoRemoveEmpties {
+		return
+	}
+
+	staged, _ := e.db.ListStagedOrdersByPayload(*order.PayloadID)
+	for _, s := range staged {
+		e.debugFn("auto-releasing staged order %d for payload %d", s.ID, *order.PayloadID)
+		if err := e.orderMgr.ReleaseOrder(s.ID); err != nil {
+			log.Printf("auto-release staged order %d: %v", s.ID, err)
+		}
+	}
+}
+
+// handleOrderFailed resets produce payloads from "replenishing" back to "empty"
+// when their supply order fails (e.g. no empty bins available).
+func (e *Engine) handleOrderFailed(failed OrderFailedEvent) {
+	order, err := e.db.GetOrder(failed.OrderID)
+	if err != nil || order.PayloadID == nil {
+		return
+	}
+
+	payload, err := e.db.GetPayload(*order.PayloadID)
+	if err != nil {
+		return
+	}
+
+	// Only reset produce payloads that were waiting for an empty bin
+	if payload.Role == "produce" && payload.Status == "replenishing" && order.RetrieveEmpty {
+		e.db.UpdatePayloadRemaining(payload.ID, 0, "empty")
+		log.Printf("produce payload %d: supply order %d failed (%s), reset to empty", payload.ID, order.ID, failed.Reason)
+	}
 }

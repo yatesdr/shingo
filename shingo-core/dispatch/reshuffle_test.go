@@ -417,8 +417,8 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		t.Fatalf("create child3: %v", err)
 	}
 
-	// Claim the payload by child3
-	db.ClaimPayload(p.ID, child3.ID)
+	// Claim the bin by child3 (bin-centric claiming)
+	db.ClaimBin(*p.BinID, child3.ID)
 
 	// Lock the lane to verify it gets released
 	d, emitter := newTestDispatcher(t, db, &mockBackend{})
