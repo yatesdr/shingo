@@ -1,6 +1,7 @@
 package www
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -89,6 +90,9 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 	pd, _ := h.engine.GetNodesPageData()
 
+	binTypesJSON, _ := json.Marshal(pd.BinTypes)
+	edgesJSON, _ := json.Marshal(pd.Edges)
+
 	data := map[string]any{
 		"Page":           "nodes",
 		"Nodes":          pd.Nodes,
@@ -102,6 +106,8 @@ func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"Edges":          pd.Edges,
 		"ChildCounts":    pd.ChildCounts,
 		"Depths":         pd.Depths,
+		"BinTypesJSON":   string(binTypesJSON),
+		"EdgesJSON":      string(edgesJSON),
 	}
 	h.render(w, r, "nodes.html", data)
 }

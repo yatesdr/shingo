@@ -1,3 +1,61 @@
+// --- Shared utilities ---
+
+// HTML escape (replaces per-page esc/escapeHtml)
+function escapeHtml(s) {
+  if (!s) return '';
+  var d = document.createElement('div');
+  d.appendChild(document.createTextNode(s));
+  return d.innerHTML;
+}
+
+// Generic modal show/hide
+function showModal(id) {
+  document.getElementById(id).classList.add('active');
+}
+function hideModal(id) {
+  document.getElementById(id).classList.remove('active');
+}
+
+// Generic POST/PUT/DELETE with JSON response
+function apiPost(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  }).then(function(r) {
+    if (!r.ok) return r.text().then(function(t) { try { throw JSON.parse(t); } catch(e) { if (typeof e === 'object' && e.error) throw e.error; throw t; } });
+    return r.json();
+  });
+}
+
+function apiPut(url, body) {
+  return fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  }).then(function(r) {
+    if (!r.ok) return r.text().then(function(t) { try { throw JSON.parse(t); } catch(e) { if (typeof e === 'object' && e.error) throw e.error; throw t; } });
+    return r.json();
+  });
+}
+
+function apiDelete(url) {
+  return fetch(url, { method: 'DELETE' }).then(function(r) {
+    if (!r.ok) return r.text().then(function(t) { try { throw JSON.parse(t); } catch(e) { if (typeof e === 'object' && e.error) throw e.error; throw t; } });
+    return r.json();
+  });
+}
+
+// Time formatting
+function timeAgo(ts) {
+  if (!ts) return '-';
+  var d = Date.now() - new Date(ts).getTime();
+  if (d < 60000) return 'just now';
+  if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
+  if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
+  return Math.floor(d / 86400000) + 'd ago';
+}
+
 // Convert UTC timestamps to browser local time
 function convertTimestamps() {
   document.querySelectorAll('time[data-utc]').forEach(function(el) {
@@ -8,8 +66,6 @@ function convertTimestamps() {
   });
 }
 document.addEventListener('DOMContentLoaded', convertTimestamps);
-// Re-convert after htmx swaps inject new content
-document.body.addEventListener('htmx:afterSwap', convertTimestamps);
 
 // Theme toggle (3-state: light -> dark -> system)
 function getStoredTheme() {
@@ -60,22 +116,16 @@ document.addEventListener('DOMContentLoaded', function() {
     es = new EventSource('/events');
 
     es.addEventListener('order-update', function(e) {
-      // Refresh order-related content
-      const el = document.querySelector('[data-sse="orders"]');
-      if (el) htmx.trigger(el, 'sse-refresh');
-      // Also refresh dashboard stats
-      const dash = document.querySelector('[data-sse="dashboard"]');
-      if (dash) htmx.trigger(dash, 'sse-refresh');
+      // Page-specific handlers can override via window.onOrderUpdate
+      if (typeof window.onOrderUpdate === 'function') window.onOrderUpdate(e);
     });
 
     es.addEventListener('inventory-update', function(e) {
-      const el = document.querySelector('[data-sse="nodestate"]');
-      if (el) htmx.trigger(el, 'sse-refresh');
+      if (typeof window.onInventoryUpdate === 'function') window.onInventoryUpdate(e);
     });
 
     es.addEventListener('node-update', function(e) {
-      const el = document.querySelector('[data-sse="nodes"]');
-      if (el) htmx.trigger(el, 'sse-refresh');
+      if (typeof window.onNodeUpdate === 'function') window.onNodeUpdate(e);
     });
 
     es.addEventListener('system-status', function(e) {

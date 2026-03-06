@@ -21,6 +21,24 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	anomalies, rpMap := loadAnomalyData(h)
 
+	// JSON-encode data for page-data attributes
+	type orderSummary struct {
+		UUID      string `json:"uuid"`
+		OrderType string `json:"type"`
+		Status    string `json:"status"`
+	}
+	orderSummaries := make([]orderSummary, 0, len(orders))
+	for _, o := range orders {
+		orderSummaries = append(orderSummaries, orderSummary{
+			UUID:      o.UUID,
+			OrderType: o.OrderType,
+			Status:    o.Status,
+		})
+	}
+	ordersJSON, _ := json.Marshal(orderSummaries)
+	coreNodesJSON, _ := json.Marshal(coreNodeNames)
+	lineIDsJSON, _ := json.Marshal([]string{cfg.LineID})
+
 	data := map[string]interface{}{
 		"Page":              "manual-message",
 		"StationID":         cfg.StationID(),
@@ -29,6 +47,9 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 		"CoreNodes":         coreNodeNames,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
+		"LineIDsJSON":       string(lineIDsJSON),
+		"OrdersJSON":        string(ordersJSON),
+		"CoreNodesJSON":     string(coreNodesJSON),
 	}
 
 	h.renderTemplate(w, "manual-message.html", data)
