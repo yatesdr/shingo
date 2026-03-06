@@ -56,7 +56,7 @@ func (m *Manager) dst() protocol.Address {
 }
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the outbox.
-func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quantity float64, deliveryNode, stagingNode, loadType string, autoConfirm bool) (*store.Order, error) {
+func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType string, autoConfirm bool) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
@@ -66,11 +66,12 @@ func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quan
 		return nil, fmt.Errorf("create order: %w", err)
 	}
 
-	// Look up payload description for message
-	var payloadDesc string
+	// Look up payload description and blueprint code for message
+	var payloadDesc, blueprintCode string
 	if payloadID != nil {
 		if p, err := m.db.GetPayload(*payloadID); err == nil {
 			payloadDesc = p.Description
+			blueprintCode = p.BlueprintCode
 		}
 	}
 
@@ -79,6 +80,7 @@ func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quan
 		OrderUUID:     orderUUID,
 		OrderType:     TypeRetrieve,
 		PayloadDesc:   payloadDesc,
+		BlueprintCode: blueprintCode,
 		RetrieveEmpty: retrieveEmpty,
 		Quantity:      quantity,
 		DeliveryNode:  deliveryNode,
@@ -104,7 +106,7 @@ func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quan
 }
 
 // CreateStoreOrder creates a new store order (for returning payloads to warehouse).
-func (m *Manager) CreateStoreOrder(payloadID *int64, quantity float64, pickupNode string) (*store.Order, error) {
+func (m *Manager) CreateStoreOrder(payloadID *int64, quantity int64, pickupNode string) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeStore,
@@ -120,7 +122,7 @@ func (m *Manager) CreateStoreOrder(payloadID *int64, quantity float64, pickupNod
 }
 
 // CreateMoveOrder creates a new move order (e.g., quality hold).
-func (m *Manager) CreateMoveOrder(payloadID *int64, quantity float64, pickupNode, deliveryNode string) (*store.Order, error) {
+func (m *Manager) CreateMoveOrder(payloadID *int64, quantity int64, pickupNode, deliveryNode string) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
@@ -130,22 +132,24 @@ func (m *Manager) CreateMoveOrder(payloadID *int64, quantity float64, pickupNode
 		return nil, fmt.Errorf("create move order: %w", err)
 	}
 
-	// Look up payload description for message
-	var payloadDesc string
+	// Look up payload description and blueprint code for message
+	var payloadDesc, blueprintCode string
 	if payloadID != nil {
 		if p, err := m.db.GetPayload(*payloadID); err == nil {
 			payloadDesc = p.Description
+			blueprintCode = p.BlueprintCode
 		}
 	}
 
 	// Build and enqueue protocol envelope
 	env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, m.src(), m.dst(), &protocol.OrderRequest{
-		OrderUUID:    orderUUID,
-		OrderType:    TypeMove,
-		PayloadDesc:  payloadDesc,
-		Quantity:     quantity,
-		DeliveryNode: deliveryNode,
-		PickupNode:   pickupNode,
+		OrderUUID:     orderUUID,
+		OrderType:     TypeMove,
+		PayloadDesc:   payloadDesc,
+		BlueprintCode: blueprintCode,
+		Quantity:      quantity,
+		DeliveryNode:  deliveryNode,
+		PickupNode:    pickupNode,
 	})
 	if err != nil {
 		log.Printf("build envelope for move order %s: %v", orderUUID, err)
@@ -276,7 +280,7 @@ func (m *Manager) SubmitOrder(orderID int64) error {
 
 	// For store orders, build and enqueue the storage waybill
 	if order.OrderType == TypeStore {
-		var finalCount float64
+		var finalCount int64
 		if order.FinalCount != nil {
 			finalCount = *order.FinalCount
 		}
@@ -298,7 +302,7 @@ func (m *Manager) SubmitOrder(orderID int64) error {
 }
 
 // ConfirmDelivery sends a delivery receipt and transitions to confirmed.
-func (m *Manager) ConfirmDelivery(orderID int64, finalCount float64) error {
+func (m *Manager) ConfirmDelivery(orderID int64, finalCount int64) error {
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return err
@@ -325,7 +329,7 @@ func (m *Manager) ConfirmDelivery(orderID int64, finalCount float64) error {
 		log.Printf("enqueue delivery receipt %s: %v", order.UUID, err)
 	}
 
-	return m.TransitionOrder(orderID, StatusConfirmed, fmt.Sprintf("confirmed with count %.0f", finalCount))
+	return m.TransitionOrder(orderID, StatusConfirmed, fmt.Sprintf("confirmed with count %d", finalCount))
 }
 
 // HandleDispatchReply processes an inbound reply from central dispatch.

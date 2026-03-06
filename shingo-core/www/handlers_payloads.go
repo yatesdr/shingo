@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"shingocore/store"
 )
@@ -84,7 +85,18 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		p.Status = "empty"
 	}
 
-	if err := h.engine.DB().CreatePayload(p); err != nil {
+	// Set UOP from blueprint capacity
+	if bp, err := h.engine.DB().GetBlueprint(blueprintID); err == nil && bp.UOPCapacity > 0 {
+		p.UOPRemaining = bp.UOPCapacity
+	}
+
+	// Set loaded_at when payload starts with content
+	if p.Status == "available" {
+		now := time.Now()
+		p.LoadedAt = &now
+	}
+
+	if err := h.engine.DB().CreatePayloadWithManifest(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -193,7 +205,7 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		PayloadID      int64   `json:"payload_id"`
 		PartNumber     string  `json:"part_number"`
-		Quantity       float64 `json:"quantity"`
+		Quantity       int64   `json:"quantity"`
 		ProductionDate string  `json:"production_date"`
 		LotCode        string  `json:"lot_code"`
 		Notes          string  `json:"notes"`
@@ -221,7 +233,7 @@ func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		ID             int64   `json:"id"`
 		PartNumber     string  `json:"part_number"`
-		Quantity       float64 `json:"quantity"`
+		Quantity       int64   `json:"quantity"`
 		ProductionDate string  `json:"production_date"`
 		LotCode        string  `json:"lot_code"`
 		Notes          string  `json:"notes"`

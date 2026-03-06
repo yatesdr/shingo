@@ -51,7 +51,7 @@ type OrderRequest struct {
 	StyleCode       string  `json:"style_code,omitempty"`       // deprecated: use BlueprintCode
 	PayloadTypeCode string  `json:"payload_type_code,omitempty"` // deprecated: use BlueprintCode
 	PayloadDesc     string  `json:"payload_desc,omitempty"`
-	Quantity        float64 `json:"quantity"`
+	Quantity        int64   `json:"quantity"`
 	DeliveryNode    string  `json:"delivery_node,omitempty"`
 	PickupNode      string  `json:"pickup_node,omitempty"`
 	StagingNode     string  `json:"staging_node,omitempty"`
@@ -82,7 +82,7 @@ type OrderCancel struct {
 type OrderReceipt struct {
 	OrderUUID   string  `json:"order_uuid"`
 	ReceiptType string  `json:"receipt_type"`
-	FinalCount  float64 `json:"final_count"`
+	FinalCount  int64   `json:"final_count"`
 }
 
 // OrderRedirect changes the delivery destination.
@@ -97,7 +97,7 @@ type OrderStorageWaybill struct {
 	OrderType   string  `json:"order_type"`
 	PayloadDesc string  `json:"payload_desc,omitempty"`
 	PickupNode  string  `json:"pickup_node"`
-	FinalCount  float64 `json:"final_count"`
+	FinalCount  int64   `json:"final_count"`
 }
 
 // --- Order payloads: Core -> Edge ---
@@ -165,7 +165,7 @@ type NodeListResponse struct {
 // ProductionReportEntry is a single cat_id production count.
 type ProductionReportEntry struct {
 	CatID string  `json:"cat_id"`
-	Count float64 `json:"count"`
+	Count int64   `json:"count"`
 }
 
 // ProductionReport carries production counts from an edge station.
@@ -184,6 +184,12 @@ type ProductionReportAck struct {
 type EdgeStale struct {
 	StationID string `json:"station_id"`
 	Message   string `json:"message"`
+}
+
+// EdgeRegisterRequest is sent by core to ask an edge to re-register.
+type EdgeRegisterRequest struct {
+	StationID string `json:"station_id"`
+	Reason    string `json:"reason"`
 }
 
 // --- QR Tag Verification ---

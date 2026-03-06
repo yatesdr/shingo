@@ -147,6 +147,9 @@ func main() {
 	// Messaging client
 	msgClient := messaging.NewClient(&cfg.Messaging)
 	msgClient.DebugLog = dbg.Func("kafka")
+	if cfg.Messaging.SigningKey != "" {
+		msgClient.SigningKey = []byte(cfg.Messaging.SigningKey)
+	}
 	if err := msgClient.Connect(); err != nil {
 		log.Printf("shingocore: messaging connect failed (%v)", err)
 	} else {
@@ -177,6 +180,10 @@ func main() {
 	defer coreHandler.Stop()
 	ingestor := protocol.NewIngestor(coreHandler, func(_ *protocol.RawHeader) bool { return true })
 	ingestor.DebugLog = dbg.Func("protocol")
+	if cfg.Messaging.SigningKey != "" {
+		ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
+		log.Printf("shingocore: envelope signing enabled")
+	}
 	if err := msgClient.Subscribe(cfg.Messaging.OrdersTopic, func(_ string, data []byte) {
 		ingestor.HandleRaw(data)
 	}); err != nil {

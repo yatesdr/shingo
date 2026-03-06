@@ -1,6 +1,10 @@
 package engine
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // EventType identifies the kind of event emitted by the Engine.
 type EventType int
@@ -98,6 +102,7 @@ type PayloadReorderEvent struct {
 	Location      string `json:"location"`
 	StagingNode   string `json:"staging_node"`
 	Description   string `json:"description"`
+	BlueprintCode string `json:"blueprint_code"`
 	Remaining     int    `json:"remaining"`
 	ReorderPoint  int    `json:"reorder_point"`
 	ReorderQty    int    `json:"reorder_qty"`
@@ -176,7 +181,7 @@ type WarLinkEvent struct {
 
 // CoreNodesUpdatedEvent is emitted when the core node list is received.
 type CoreNodesUpdatedEvent struct {
-	Nodes []string `json:"nodes"`
+	Nodes []protocol.NodeInfo `json:"nodes"`
 }
 
 // CounterReadErrorEvent is emitted when a tag read fails.

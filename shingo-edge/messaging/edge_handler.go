@@ -14,21 +14,27 @@ import (
 type EdgeHandler struct {
 	protocol.NoOpHandler
 
-	orderMgr       *orders.Manager
-	onCoreNodes    func([]string)
-	onStyleCatalog func([]protocol.CatalogStyleInfo)
+	orderMgr           *orders.Manager
+	onCoreNodes        func([]protocol.NodeInfo)
+	onBlueprintCatalog func([]protocol.CatalogBlueprintInfo)
+	onRegisterReq      func()
 
 	DebugLog func(string, ...any)
 }
 
 // NewEdgeHandler creates a handler for inbound core messages.
-func NewEdgeHandler(orderMgr *orders.Manager, onCoreNodes func([]string)) *EdgeHandler {
+func NewEdgeHandler(orderMgr *orders.Manager, onCoreNodes func([]protocol.NodeInfo)) *EdgeHandler {
 	return &EdgeHandler{orderMgr: orderMgr, onCoreNodes: onCoreNodes}
 }
 
-// SetStyleCatalogHandler sets a callback for when the style catalog is received from core.
-func (h *EdgeHandler) SetStyleCatalogHandler(fn func([]protocol.CatalogStyleInfo)) {
-	h.onStyleCatalog = fn
+// SetRegisterRequestHandler sets a callback for when core requests re-registration.
+func (h *EdgeHandler) SetRegisterRequestHandler(fn func()) {
+	h.onRegisterReq = fn
+}
+
+// SetBlueprintCatalogHandler sets a callback for when the blueprint catalog is received from core.
+func (h *EdgeHandler) SetBlueprintCatalogHandler(fn func([]protocol.CatalogBlueprintInfo)) {
+	h.onBlueprintCatalog = fn
 }
 
 func (h *EdgeHandler) debug(format string, args ...any) {
@@ -62,11 +68,7 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 		}
 		log.Printf("edge_handler: received node list (%d nodes)", len(resp.Nodes))
 		if h.onCoreNodes != nil {
-			names := make([]string, len(resp.Nodes))
-			for i, n := range resp.Nodes {
-				names[i] = n.Name
-			}
-			h.onCoreNodes(names)
+			h.onCoreNodes(resp.Nodes)
 		}
 	case protocol.SubjectProductionReportAck:
 		var ack protocol.ProductionReportAck
@@ -75,15 +77,15 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
-	case protocol.SubjectCatalogStylesResponse:
-		var resp protocol.CatalogStylesResponse
+	case protocol.SubjectCatalogBlueprintsResponse, protocol.SubjectCatalogStylesResponse:
+		var resp protocol.CatalogBlueprintsResponse
 		if err := json.Unmarshal(p.Body, &resp); err != nil {
-			log.Printf("edge_handler: decode catalog styles response: %v", err)
+			log.Printf("edge_handler: decode blueprint catalog response: %v", err)
 			return
 		}
-		log.Printf("edge_handler: received style catalog (%d styles)", len(resp.Styles))
-		if h.onStyleCatalog != nil {
-			h.onStyleCatalog(resp.Styles)
+		log.Printf("edge_handler: received blueprint catalog (%d blueprints)", len(resp.Blueprints))
+		if h.onBlueprintCatalog != nil {
+			h.onBlueprintCatalog(resp.Blueprints)
 		}
 	case protocol.SubjectTagVerifyResponse:
 		var resp protocol.TagVerifyResponse
@@ -95,6 +97,16 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			log.Printf("edge_handler: tag verify: uuid=%s match=true detail=%s", resp.OrderUUID, resp.Detail)
 		} else {
 			log.Printf("edge_handler: tag verify: uuid=%s match=false expected=%s detail=%s", resp.OrderUUID, resp.Expected, resp.Detail)
+		}
+	case protocol.SubjectEdgeRegisterRequest:
+		var req protocol.EdgeRegisterRequest
+		if err := json.Unmarshal(p.Body, &req); err != nil {
+			log.Printf("edge_handler: decode register request: %v", err)
+			return
+		}
+		log.Printf("edge_handler: core requested re-registration: %s", req.Reason)
+		if h.onRegisterReq != nil {
+			h.onRegisterReq()
 		}
 	case protocol.SubjectEdgeStale:
 		var stale protocol.EdgeStale

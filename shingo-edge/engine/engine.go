@@ -37,7 +37,7 @@ type Engine struct {
 
 	hourlyTracker *HourlyTracker
 
-	coreNodes       map[string]bool
+	coreNodes       map[string]protocol.NodeInfo
 	coreNodesMu     sync.RWMutex
 	nodeSyncFn      func()
 	catalogSyncFn   func()
@@ -203,26 +203,26 @@ func (e *Engine) ChangeoverMachines() map[int64]*changeover.Machine {
 }
 
 // SetCoreNodes updates the core node set and emits EventCoreNodesUpdated.
-func (e *Engine) SetCoreNodes(names []string) {
+func (e *Engine) SetCoreNodes(nodes []protocol.NodeInfo) {
 	e.coreNodesMu.Lock()
-	e.coreNodes = make(map[string]bool, len(names))
-	for _, n := range names {
-		e.coreNodes[n] = true
+	e.coreNodes = make(map[string]protocol.NodeInfo, len(nodes))
+	for _, n := range nodes {
+		e.coreNodes[n.Name] = n
 	}
 	e.coreNodesMu.Unlock()
 
 	e.Events.Emit(Event{
 		Type:      EventCoreNodesUpdated,
 		Timestamp: time.Now(),
-		Payload:   CoreNodesUpdatedEvent{Nodes: names},
+		Payload:   CoreNodesUpdatedEvent{Nodes: nodes},
 	})
 }
 
 // CoreNodes returns a copy of the core node set.
-func (e *Engine) CoreNodes() map[string]bool {
+func (e *Engine) CoreNodes() map[string]protocol.NodeInfo {
 	e.coreNodesMu.RLock()
 	defer e.coreNodesMu.RUnlock()
-	cp := make(map[string]bool, len(e.coreNodes))
+	cp := make(map[string]protocol.NodeInfo, len(e.coreNodes))
 	for k, v := range e.coreNodes {
 		cp[k] = v
 	}
@@ -241,31 +241,31 @@ func (e *Engine) RequestNodeSync() {
 	}
 }
 
-// SetCatalogSyncFunc sets the function to call when a style catalog sync is requested.
+// SetCatalogSyncFunc sets the function to call when a blueprint catalog sync is requested.
 func (e *Engine) SetCatalogSyncFunc(fn func()) {
 	e.catalogSyncFn = fn
 }
 
-// RequestCatalogSync triggers a style catalog request to core.
+// RequestCatalogSync triggers a blueprint catalog request to core.
 func (e *Engine) RequestCatalogSync() {
 	if e.catalogSyncFn != nil {
 		e.catalogSyncFn()
 	}
 }
 
-// HandleStyleCatalog upserts style catalog entries received from core.
-func (e *Engine) HandleStyleCatalog(styles []protocol.CatalogStyleInfo) {
-	for _, s := range styles {
-		entry := &store.StyleCatalogEntry{
-			ID: s.ID, Name: s.Name, Code: s.Code,
-			FormFactor: s.FormFactor, Description: s.Description,
-			UOPCapacity: s.UOPCapacity,
+// HandleBlueprintCatalog upserts blueprint catalog entries received from core.
+func (e *Engine) HandleBlueprintCatalog(blueprints []protocol.CatalogBlueprintInfo) {
+	for _, b := range blueprints {
+		entry := &store.BlueprintCatalogEntry{
+			ID: b.ID, Name: b.Name, Code: b.Code,
+			Description: b.Description,
+			UOPCapacity: b.UOPCapacity,
 		}
-		if err := e.db.UpsertStyleCatalog(entry); err != nil {
-			log.Printf("engine: upsert style catalog entry %s: %v", s.Name, err)
+		if err := e.db.UpsertBlueprintCatalog(entry); err != nil {
+			log.Printf("engine: upsert blueprint catalog entry %s: %v", b.Name, err)
 		}
 	}
-	e.logFn("engine: updated style catalog (%d styles)", len(styles))
+	e.logFn("engine: updated blueprint catalog (%d blueprints)", len(blueprints))
 }
 
 // SetSendFunc sets the function used to publish protocol envelopes.

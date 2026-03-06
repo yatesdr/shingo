@@ -8,18 +8,20 @@ import (
 	"sync"
 	"time"
 
-	"shingoedge/config"
-
 	kafkago "github.com/segmentio/kafka-go"
+
+	"shingo/protocol"
+	"shingoedge/config"
 )
 
 // Client is the Kafka messaging client.
 type Client struct {
-	mu       sync.RWMutex
-	cfg      *config.MessagingConfig
-	kafkaW   *kafkago.Writer
-	kafkaR   *kafkago.Reader
-	stopChan chan struct{}
+	mu         sync.RWMutex
+	cfg        *config.MessagingConfig
+	kafkaW     *kafkago.Writer
+	kafkaR     *kafkago.Reader
+	stopChan   chan struct{}
+	SigningKey []byte // optional HMAC key; when set, outbound messages are signed
 
 	DebugLog func(string, ...any)
 }
@@ -90,6 +92,16 @@ func (c *Client) Publish(topic string, payload []byte) error {
 	if c.kafkaW == nil {
 		return fmt.Errorf("kafka writer not initialized")
 	}
+
+	// Sign outbound messages if signing key is configured
+	if len(c.SigningKey) > 0 {
+		signed, err := protocol.Sign(payload, c.SigningKey)
+		if err != nil {
+			return fmt.Errorf("sign message: %w", err)
+		}
+		payload = signed
+	}
+
 	c.debug("publish topic=%s len=%d", topic, len(payload))
 	return c.kafkaW.WriteMessages(context.Background(), kafkago.Message{
 		Topic: topic,

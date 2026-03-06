@@ -139,7 +139,29 @@ func (db *DB) migrate() error {
 	db.migrateLegacyCleanup()
 	db.migrateDropCapacity()
 	db.migrateDropNodeType()
+	db.migrateCMSTransactions()
+	db.migrateQuantitiesToInteger()
 	return nil
+}
+
+// migrateQuantitiesToInteger converts quantity columns from DOUBLE PRECISION to BIGINT
+// on Postgres. SQLite handles this naturally via type affinity.
+func (db *DB) migrateQuantitiesToInteger() {
+	if db.driver != "postgres" {
+		return
+	}
+	alters := []string{
+		`ALTER TABLE orders ALTER COLUMN quantity TYPE BIGINT USING quantity::bigint`,
+		`ALTER TABLE corrections ALTER COLUMN quantity TYPE BIGINT USING quantity::bigint`,
+		`ALTER TABLE blueprint_manifest ALTER COLUMN quantity TYPE BIGINT USING quantity::bigint`,
+		`ALTER TABLE manifest_items ALTER COLUMN quantity TYPE BIGINT USING quantity::bigint`,
+		`ALTER TABLE demands ALTER COLUMN demand_qty TYPE BIGINT USING demand_qty::bigint`,
+		`ALTER TABLE demands ALTER COLUMN produced_qty TYPE BIGINT USING produced_qty::bigint`,
+		`ALTER TABLE production_log ALTER COLUMN quantity TYPE BIGINT USING quantity::bigint`,
+	}
+	for _, ddl := range alters {
+		db.Exec(ddl)
+	}
 }
 
 // migrateVendorLocation consolidates vendor_location into name and drops the column.
@@ -432,7 +454,12 @@ func (db *DB) migrateBinsData() {
 		return
 	}
 
-	// Ensure a DEFAULT bin type exists
+	// Only create a DEFAULT bin type if there are legacy columns to migrate from
+	if !db.columnExists("payloads", "tag_id") && !db.columnExists("payloads", "node_id") {
+		return
+	}
+
+	// Ensure a DEFAULT bin type exists for migration
 	var defaultBinTypeID int64
 	err := db.QueryRow(db.Q(`SELECT id FROM bin_types WHERE code = ?`), "DEFAULT").Scan(&defaultBinTypeID)
 	if err != nil {
@@ -446,12 +473,6 @@ func (db *DB) migrateBinsData() {
 		}
 	}
 	if defaultBinTypeID == 0 {
-		return
-	}
-
-	// Migrate existing payloads that have tag_id or node_id but no bin_id yet
-	if !db.columnExists("payloads", "tag_id") && !db.columnExists("payloads", "node_id") {
-		// No old columns to migrate from
 		return
 	}
 
@@ -638,6 +659,39 @@ func (db *DB) migrateDropNodeType() {
 		db.Exec(`ALTER TABLE nodes DROP COLUMN node_type`)
 	case "postgres":
 		db.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS node_type`)
+	}
+}
+
+// migrateCMSTransactions alters the cms_transactions table from old schema
+// (direction/quantity) to new schema (txn_type/delta/qty_before/qty_after/bin_label).
+func (db *DB) migrateCMSTransactions() {
+	if !db.tableExists("cms_transactions") {
+		return
+	}
+	if db.columnExists("cms_transactions", "txn_type") {
+		return // already has new schema
+	}
+
+	// Rename direction -> txn_type
+	if db.columnExists("cms_transactions", "direction") {
+		db.Exec(fmt.Sprintf(`ALTER TABLE cms_transactions RENAME COLUMN direction TO txn_type`))
+	}
+
+	// Rename quantity -> delta (REAL -> stored as INTEGER going forward, existing floats are fine)
+	if db.columnExists("cms_transactions", "quantity") {
+		db.Exec(fmt.Sprintf(`ALTER TABLE cms_transactions RENAME COLUMN quantity TO delta`))
+	}
+
+	// Add missing columns
+	newCols := []struct{ name, def string }{
+		{"qty_before", "INTEGER NOT NULL DEFAULT 0"},
+		{"qty_after", "INTEGER NOT NULL DEFAULT 0"},
+		{"bin_label", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, c := range newCols {
+		if !db.columnExists("cms_transactions", c.name) {
+			db.Exec(fmt.Sprintf(`ALTER TABLE cms_transactions ADD COLUMN %s %s`, c.name, c.def))
+		}
 	}
 }
 

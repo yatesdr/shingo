@@ -51,6 +51,7 @@ type MessagingConfig struct {
 	OrdersTopic        string        `yaml:"orders_topic"`
 	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"`
 	StationID          string        `yaml:"station_id"`
+	SigningKey         string        `yaml:"signing_key"` // optional HMAC-SHA256 shared secret for envelope signing
 }
 
 // KafkaConfig defines Kafka broker settings.

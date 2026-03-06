@@ -285,7 +285,7 @@
       <h2>Create Payload</h2>
       <button class="modal-close" onclick="closePLCreateModal()">&times;</button>
     </div>
-    <form method="POST" action="/payloads/create">
+    <form method="POST" action="/payloads/create" onsubmit="this.querySelector('[type=submit]').disabled=true">
       <div class="grid grid-2">
         <div class="form-group">
           <label>Bin</label>
@@ -399,7 +399,7 @@
         <strong style="font-size:0.8rem">Add Item</strong>
         <div class="grid grid-2" style="font-size:0.8rem;gap:0.3rem;margin-top:0.3rem">
           <input type="text" id="mi-part" placeholder="Part Number" style="font-size:0.8rem;padding:0.25rem">
-          <input type="number" id="mi-qty" placeholder="Qty" step="0.01" style="font-size:0.8rem;padding:0.25rem">
+          <input type="number" id="mi-qty" placeholder="Qty" step="1" style="font-size:0.8rem;padding:0.25rem">
           <input type="text" id="mi-date" placeholder="Prod Date (YYYY-MM-DD)" style="font-size:0.8rem;padding:0.25rem">
           <input type="text" id="mi-lot" placeholder="Lot Code" style="font-size:0.8rem;padding:0.25rem">
         </div>
@@ -489,7 +489,7 @@ function addManifestRow(containerId, catid, qty) {
   row.style.cssText = 'display:flex;gap:0.4rem;align-items:center;margin-top:0.3rem';
   row.innerHTML =
     '<input type="text" placeholder="CATID" value="' + esc(catid || '') + '" style="flex:2;font-size:0.85rem;padding:0.3rem" class="mr-catid">' +
-    '<input type="number" placeholder="Qty" value="' + (qty || '') + '" step="0.01" min="0" style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-qty">' +
+    '<input type="number" placeholder="Qty" value="' + (qty || '') + '" step="1" min="0" style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-qty">' +
     '<button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.remove()" style="padding:0.15rem 0.4rem">&times;</button>';
   container.appendChild(row);
 }
@@ -499,7 +499,7 @@ function collectManifestRows(containerId) {
   var items = [];
   rows.forEach(function(row) {
     var catid = row.querySelector('.mr-catid').value.trim();
-    var qty = parseFloat(row.querySelector('.mr-qty').value) || 0;
+    var qty = parseInt(row.querySelector('.mr-qty').value) || 0;
     if (catid) items.push({part_number: catid, quantity: qty, description: ''});
   });
   return items;
@@ -715,7 +715,7 @@ function addManifestItem() {
   var body = {
     payload_id: currentPayloadID,
     part_number: document.getElementById('mi-part').value,
-    quantity: parseFloat(document.getElementById('mi-qty').value) || 0,
+    quantity: parseInt(document.getElementById('mi-qty').value) || 0,
     production_date: document.getElementById('mi-date').value,
     lot_code: document.getElementById('mi-lot').value,
     notes: document.getElementById('mi-notes').value

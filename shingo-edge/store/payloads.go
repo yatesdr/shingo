@@ -20,7 +20,7 @@ type Payload struct {
 	ReorderQty      int       `json:"reorder_qty"`
 	RetrieveEmpty   bool      `json:"retrieve_empty"`
 	Status          string    `json:"status"`
-	HasDescription  string    `json:"has_description"`
+	BlueprintCode   string    `json:"blueprint_code"`
 	AutoReorder     bool      `json:"auto_reorder"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -36,7 +36,7 @@ func scanPayloads(rows *sql.Rows) ([]Payload, error) {
 		if err := rows.Scan(&p.ID, &p.JobStyleID, &p.Location, &p.StagingNode,
 			&p.Description, &p.Manifest, &p.Multiplier, &p.ProductionUnits,
 			&p.Remaining, &p.ReorderPoint, &p.ReorderQty, &p.RetrieveEmpty,
-			&p.Status, &p.HasDescription, &p.AutoReorder,
+			&p.Status, &p.BlueprintCode, &p.AutoReorder,
 			&createdAt, &updatedAt, &p.JobStyleName); err != nil {
 			return nil, err
 		}
@@ -50,7 +50,7 @@ func scanPayloads(rows *sql.Rows) ([]Payload, error) {
 const payloadSelectCols = `p.id, p.job_style_id, p.location, p.staging_node,
 	p.description, p.manifest, p.multiplier, p.production_units,
 	p.remaining, p.reorder_point, p.reorder_qty, p.retrieve_empty,
-	p.status, p.has_description, p.auto_reorder,
+	p.status, p.blueprint_code, p.auto_reorder,
 	p.created_at, p.updated_at, COALESCE(js.name, '')`
 
 const payloadJoin = `FROM payloads p LEFT JOIN job_styles js ON js.id = p.job_style_id`
@@ -89,7 +89,7 @@ func (db *DB) GetPayload(id int64) (*Payload, error) {
 		Scan(&p.ID, &p.JobStyleID, &p.Location, &p.StagingNode,
 			&p.Description, &p.Manifest, &p.Multiplier, &p.ProductionUnits,
 			&p.Remaining, &p.ReorderPoint, &p.ReorderQty, &p.RetrieveEmpty,
-			&p.Status, &p.HasDescription, &p.AutoReorder,
+			&p.Status, &p.BlueprintCode, &p.AutoReorder,
 			&createdAt, &updatedAt, &p.JobStyleName)
 	if err != nil {
 		return nil, err
@@ -99,25 +99,25 @@ func (db *DB) GetPayload(id int64) (*Payload, error) {
 	return p, nil
 }
 
-func (db *DB) CreatePayload(jobStyleID int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool) (int64, error) {
+func (db *DB) CreatePayload(jobStyleID int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool, blueprintCode string) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO payloads (job_style_id, location, staging_node, description, manifest, multiplier, production_units, remaining, reorder_point, reorder_qty, retrieve_empty)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobStyleID, location, stagingNode, description, manifest, multiplier, productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty)
+		INSERT INTO payloads (job_style_id, location, staging_node, description, manifest, multiplier, production_units, remaining, reorder_point, reorder_qty, retrieve_empty, blueprint_code)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobStyleID, location, stagingNode, description, manifest, multiplier, productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, blueprintCode)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-func (db *DB) UpdatePayload(id int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool) error {
+func (db *DB) UpdatePayload(id int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool, blueprintCode string) error {
 	_, err := db.Exec(`
 		UPDATE payloads SET location=?, staging_node=?, description=?, manifest=?, multiplier=?,
 			production_units=?, remaining=?, reorder_point=?, reorder_qty=?, retrieve_empty=?,
-			updated_at=datetime('now','localtime')
+			blueprint_code=?, updated_at=datetime('now','localtime')
 		WHERE id=?`,
 		location, stagingNode, description, manifest, multiplier,
-		productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, id)
+		productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, blueprintCode, id)
 	return err
 }
 
@@ -145,11 +145,6 @@ func (db *DB) UpdatePayloadAutoReorder(id int64, autoReorder bool) error {
 	return err
 }
 
-func (db *DB) UpdatePayloadHasDescription(id int64, hasDescription string) error {
-	_, err := db.Exec(`UPDATE payloads SET has_description=?, updated_at=datetime('now','localtime') WHERE id=?`,
-		hasDescription, id)
-	return err
-}
 
 func (db *DB) DeletePayload(id int64) error {
 	_, err := db.Exec(`DELETE FROM payloads WHERE id=?`, id)

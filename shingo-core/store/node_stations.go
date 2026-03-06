@@ -30,14 +30,19 @@ func (db *DB) ListStationsForNode(nodeID int64) ([]string, error) {
 }
 
 // ListNodesForStation returns nodes directly assigned to a station.
-// Child nodes of synthetic parents are excluded — they are managed by core only.
+// Includes top-level nodes and non-synthetic direct children of NGRP node groups.
 func (db *DB) ListNodesForStation(stationID string) ([]*Node, error) {
 	rows, err := db.Query(db.Q(fmt.Sprintf(`
 		SELECT %s %s
 		WHERE n.id IN (
 			SELECT ns.node_id FROM node_stations ns WHERE ns.station_id = ?
 		)
-		AND n.parent_id IS NULL
+		AND (n.parent_id IS NULL
+		     OR (n.is_synthetic = 0 AND EXISTS (
+		         SELECT 1 FROM nodes p
+		         JOIN node_types pt ON pt.id = p.node_type_id
+		         WHERE p.id = n.parent_id AND pt.code = 'NGRP'
+		     )))
 		ORDER BY n.name`, nodeSelectCols, nodeFromClause)), stationID)
 	if err != nil {
 		return nil, err

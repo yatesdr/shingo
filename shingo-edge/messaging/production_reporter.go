@@ -99,7 +99,7 @@ func (pr *ProductionReporter) flush() {
 
 	var entries []protocol.ProductionReportEntry
 	for catID, count := range snapshot {
-		entries = append(entries, protocol.ProductionReportEntry{CatID: catID, Count: count})
+		entries = append(entries, protocol.ProductionReportEntry{CatID: catID, Count: int64(count)})
 	}
 
 	env, err := protocol.NewDataEnvelope(

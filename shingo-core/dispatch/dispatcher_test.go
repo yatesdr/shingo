@@ -344,6 +344,102 @@ func TestHandleOrderReceipt(t *testing.T) {
 	}
 }
 
+func TestHandleOrderCancel_RejectsWrongStation(t *testing.T) {
+	db := testDB(t)
+
+	order := &store.Order{EdgeUUID: "uuid-owned", StationID: "line-1", Status: StatusPending}
+	db.CreateOrder(order)
+
+	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+
+	// Attempt cancel from a different station
+	env := &protocol.Envelope{
+		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-2"},
+		Dst: protocol.Address{Role: protocol.RoleCore},
+	}
+	d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: "uuid-owned", Reason: "hijack"})
+
+	if len(emitter.cancelled) != 0 {
+		t.Fatalf("cancelled events = %d, want 0 (wrong station should be rejected)", len(emitter.cancelled))
+	}
+
+	// Verify order still pending
+	got, _ := db.GetOrder(order.ID)
+	if got.Status != StatusPending {
+		t.Errorf("status = %q, want %q (order should be unchanged)", got.Status, StatusPending)
+	}
+}
+
+func TestHandleOrderCancel_AllowsCoreRole(t *testing.T) {
+	db := testDB(t)
+
+	order := &store.Order{EdgeUUID: "uuid-core-cancel", StationID: "line-1", Status: StatusPending}
+	db.CreateOrder(order)
+
+	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+
+	// Core-role sender should bypass ownership check
+	env := &protocol.Envelope{
+		Src: protocol.Address{Role: protocol.RoleCore, Station: "core-test"},
+		Dst: protocol.Address{Role: protocol.RoleCore},
+	}
+	d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: "uuid-core-cancel", Reason: "admin cancel"})
+
+	if len(emitter.cancelled) != 1 {
+		t.Fatalf("cancelled events = %d, want 1 (core role should be allowed)", len(emitter.cancelled))
+	}
+
+	got, _ := db.GetOrder(order.ID)
+	if got.Status != StatusCancelled {
+		t.Errorf("status = %q, want %q", got.Status, StatusCancelled)
+	}
+}
+
+func TestHandleOrderReceipt_RejectsWrongStation(t *testing.T) {
+	db := testDB(t)
+
+	order := &store.Order{EdgeUUID: "uuid-receipt-own", StationID: "line-1", Status: StatusDelivered}
+	db.CreateOrder(order)
+
+	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+
+	env := &protocol.Envelope{
+		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-2"},
+		Dst: protocol.Address{Role: protocol.RoleCore},
+	}
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{OrderUUID: "uuid-receipt-own", ReceiptType: "confirmed", FinalCount: 10})
+
+	if len(emitter.completed) != 0 {
+		t.Fatalf("completed events = %d, want 0 (wrong station should be rejected)", len(emitter.completed))
+	}
+
+	got, _ := db.GetOrder(order.ID)
+	if got.Status != StatusDelivered {
+		t.Errorf("status = %q, want %q (order should be unchanged)", got.Status, StatusDelivered)
+	}
+}
+
+func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+
+	order := &store.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, PickupNode: lineNode.Name}
+	db.CreateOrder(order)
+
+	d, _ := newTestDispatcher(t, db, &mockBackend{})
+
+	env := &protocol.Envelope{
+		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-2"},
+		Dst: protocol.Address{Role: protocol.RoleCore},
+	}
+	d.HandleOrderRedirect(env, &protocol.OrderRedirect{OrderUUID: "uuid-redir-own", NewDeliveryNode: lineNode.Name})
+
+	got, _ := db.GetOrder(order.ID)
+	if got.Status != StatusDispatched {
+		t.Errorf("status = %q, want %q (order should be unchanged)", got.Status, StatusDispatched)
+	}
+}
+
 func TestFIFOPayloadSourceSelection(t *testing.T) {
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)

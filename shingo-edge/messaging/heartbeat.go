@@ -63,6 +63,12 @@ func (h *Heartbeater) Stop() {
 	h.stopOnce.Do(func() { close(h.stopCh) })
 }
 
+// SendRegister sends an edge.register message to core. Called on startup
+// and when core requests re-registration.
+func (h *Heartbeater) SendRegister() {
+	h.sendRegister()
+}
+
 func (h *Heartbeater) sendRegister() {
 	hostname, _ := os.Hostname()
 	env, err := protocol.NewDataEnvelope(
@@ -131,17 +137,17 @@ func (h *Heartbeater) RequestNodeSync() {
 	h.sendNodeListRequest()
 }
 
-// RequestCatalogSync sends a style catalog request to core on demand.
+// RequestCatalogSync sends a blueprint catalog request to core on demand.
 func (h *Heartbeater) RequestCatalogSync() {
 	h.sendCatalogRequest()
 }
 
 func (h *Heartbeater) sendCatalogRequest() {
 	env, err := protocol.NewDataEnvelope(
-		protocol.SubjectCatalogStylesRequest,
+		protocol.SubjectCatalogBlueprintsRequest,
 		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
 		protocol.Address{Role: protocol.RoleCore},
-		&protocol.CatalogStylesRequest{},
+		&protocol.CatalogBlueprintsRequest{},
 	)
 	if err != nil {
 		log.Printf("heartbeater: build catalog request: %v", err)
@@ -150,7 +156,7 @@ func (h *Heartbeater) sendCatalogRequest() {
 	if err := h.publishWithRetry(env, "catalog request"); err != nil {
 		log.Printf("heartbeater: send catalog request failed after retries: %v", err)
 	} else {
-		log.Printf("heartbeater: sent catalog.styles_request (station=%s)", h.stationID)
+		log.Printf("heartbeater: sent catalog.blueprints_request (station=%s)", h.stationID)
 		h.debug("catalog_request sent station=%s", h.stationID)
 	}
 }

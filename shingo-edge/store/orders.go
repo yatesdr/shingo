@@ -13,14 +13,14 @@ type Order struct {
 	Status         string    `json:"status"`
 	PayloadID      *int64    `json:"payload_id"`
 	RetrieveEmpty  bool      `json:"retrieve_empty"`
-	Quantity       float64   `json:"quantity"`
+	Quantity       int64     `json:"quantity"`
 	DeliveryNode   string    `json:"delivery_node"`
 	StagingNode    string    `json:"staging_node"`
 	PickupNode     string    `json:"pickup_node"`
 	LoadType       string    `json:"load_type"`
 	WaybillID      *string   `json:"waybill_id"`
 	ExternalRef    *string   `json:"external_ref"`
-	FinalCount     *float64  `json:"final_count"`
+	FinalCount     *int64    `json:"final_count"`
 	CountConfirmed bool      `json:"count_confirmed"`
 	ETA            *string   `json:"eta"`
 	AutoConfirm    bool      `json:"auto_confirm"`
@@ -30,6 +30,7 @@ type Order struct {
 	// Joined fields
 	PayloadDesc     string `json:"payload_desc"`
 	PayloadLocation string `json:"payload_location"`
+	BlueprintCode   string `json:"blueprint_code"`
 	LineName        string `json:"line_name"`
 }
 
@@ -47,7 +48,7 @@ const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.payload_id, o.r
 	o.delivery_node, o.staging_node, o.pickup_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.created_at, o.updated_at,
-	COALESCE(p.description, ''), COALESCE(p.location, ''), COALESCE(pl.name, '')`
+	COALESCE(p.description, ''), COALESCE(p.location, ''), COALESCE(p.blueprint_code, ''), COALESCE(pl.name, '')`
 
 const orderJoin = `FROM orders o
 	LEFT JOIN payloads p ON p.id = o.payload_id
@@ -101,7 +102,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &createdAt, &updatedAt,
-			&o.PayloadDesc, &o.PayloadLocation, &o.LineName); err != nil {
+			&o.PayloadDesc, &o.PayloadLocation, &o.BlueprintCode, &o.LineName); err != nil {
 			return nil, err
 		}
 		o.CreatedAt = scanTime(createdAt)
@@ -117,7 +118,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error 
 		&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &createdAt, &updatedAt,
-		&o.PayloadDesc, &o.PayloadLocation, &o.LineName); err != nil {
+		&o.PayloadDesc, &o.PayloadLocation, &o.BlueprintCode, &o.LineName); err != nil {
 		return err
 	}
 	o.CreatedAt = scanTime(createdAt)
@@ -141,7 +142,7 @@ func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
 	return o, nil
 }
 
-func (db *DB) CreateOrder(uuid, orderType string, payloadID *int64, retrieveEmpty bool, quantity float64, deliveryNode, stagingNode, pickupNode, loadType string, autoConfirm bool) (int64, error) {
+func (db *DB) CreateOrder(uuid, orderType string, payloadID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, pickupNode, loadType string, autoConfirm bool) (int64, error) {
 	res, err := db.Exec(`
 		INSERT INTO orders (uuid, order_type, payload_id, retrieve_empty, quantity, delivery_node, staging_node, pickup_node, load_type, auto_confirm)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -167,7 +168,7 @@ func (db *DB) UpdateOrderETA(id int64, eta string) error {
 	return err
 }
 
-func (db *DB) UpdateOrderFinalCount(id int64, finalCount float64, confirmed bool) error {
+func (db *DB) UpdateOrderFinalCount(id int64, finalCount int64, confirmed bool) error {
 	_, err := db.Exec(`UPDATE orders SET final_count=?, count_confirmed=?, updated_at=datetime('now','localtime') WHERE id=?`, finalCount, confirmed, id)
 	return err
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -96,6 +97,18 @@ func (db *DB) GetNode(id int64) (*Node, error) {
 
 func (db *DB) GetNodeByName(name string) (*Node, error) {
 	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.name=?`, nodeSelectCols, nodeFromClause)), name)
+	return scanNode(row)
+}
+
+// GetNodeByDotName resolves a node name that may use dot-notation (PARENT.CHILD).
+// If the name contains a dot, it looks up the child under the given parent.
+// Otherwise it falls back to GetNodeByName.
+func (db *DB) GetNodeByDotName(name string) (*Node, error) {
+	parts := strings.SplitN(name, ".", 2)
+	if len(parts) != 2 {
+		return db.GetNodeByName(name)
+	}
+	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.name=? AND n.parent_id IN (SELECT id FROM nodes WHERE name=?)`, nodeSelectCols, nodeFromClause)), parts[1], parts[0])
 	return scanNode(row)
 }
 

@@ -143,33 +143,61 @@ func (h *CoreHandler) handleEdgeRegister(env *protocol.Envelope, p *protocol.Edg
 }
 
 func (h *CoreHandler) handleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
-	if err := h.db.UpdateHeartbeat(p.StationID); err != nil {
+	isNew, err := h.db.UpdateHeartbeat(p.StationID)
+	if err != nil {
 		log.Printf("core_handler: update heartbeat for %s: %v", p.StationID, err)
 		return
 	}
 
 	h.replyData(env, protocol.SubjectEdgeHeartbeatAck,
 		&protocol.EdgeHeartbeatAck{StationID: p.StationID, ServerTS: time.Now().UTC()})
+
+	if isNew {
+		log.Printf("core_handler: unregistered edge %s detected via heartbeat, requesting registration", p.StationID)
+		h.sendData(protocol.SubjectEdgeRegisterRequest, p.StationID,
+			&protocol.EdgeRegisterRequest{StationID: p.StationID, Reason: "unregistered edge detected"})
+	}
 }
 
 func (h *CoreHandler) handleNodeListRequest(env *protocol.Envelope) {
 	stationID := env.Src.Station
 	// Try station-scoped node list first; fall back to all nodes if none assigned
 	nodes, err := h.db.ListNodesForStation(stationID)
-	if err != nil || len(nodes) == 0 {
+	stationScoped := err == nil && len(nodes) > 0
+	if !stationScoped {
 		nodes, err = h.db.ListNodes()
 	}
 	if err != nil {
 		log.Printf("core_handler: list nodes for %s: %v", stationID, err)
 		return
 	}
-	// Exclude child nodes of synthetic parents — they are managed by core only
+
 	var infos []protocol.NodeInfo
-	for _, n := range nodes {
-		if n.ParentID != nil {
-			continue
+	if stationScoped {
+		// Station-scoped: include all returned nodes; use dot-notation for NGRP children
+		for _, n := range nodes {
+			name := n.Name
+			if n.ParentID != nil && !n.IsSynthetic && n.ParentName != "" {
+				name = n.ParentName + "." + n.Name
+			}
+			infos = append(infos, protocol.NodeInfo{Name: name, NodeType: n.NodeTypeCode})
 		}
-		infos = append(infos, protocol.NodeInfo{Name: n.Name})
+	} else {
+		// Fallback (all nodes): include top-level and explicitly-assigned NGRP children
+		// Build a map of parent type codes for NGRP check
+		nodeMap := make(map[int64]*store.Node, len(nodes))
+		for _, n := range nodes {
+			nodeMap[n.ID] = n
+		}
+		for _, n := range nodes {
+			if n.ParentID == nil {
+				infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode})
+			} else if !n.IsSynthetic {
+				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == "NGRP" {
+					infos = append(infos, protocol.NodeInfo{Name: parent.Name + "." + n.Name, NodeType: n.NodeTypeCode})
+				}
+			}
+		}
 	}
 	h.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{Nodes: infos})
 	log.Printf("core_handler: sent node list (%d nodes) to %s", len(infos), env.Src.Station)

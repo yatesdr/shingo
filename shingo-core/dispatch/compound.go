@@ -73,13 +73,13 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
-	pickupNode, err := d.db.GetNodeByName(next.PickupNode)
+	pickupNode, err := d.db.GetNodeByDotName(next.PickupNode)
 	if err != nil {
 		d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("pickup node %q not found", next.PickupNode))
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
-	destNode, err := d.db.GetNodeByName(next.DeliveryNode)
+	destNode, err := d.db.GetNodeByDotName(next.DeliveryNode)
 	if err != nil {
 		d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("delivery node %q not found", next.DeliveryNode))
 		return d.AdvanceCompoundOrder(parentOrderID)
@@ -146,7 +146,7 @@ func (d *Dispatcher) unlockLaneForCompound(parentOrderID int64) {
 	}
 	for _, child := range children {
 		if child.PickupNode != "" {
-			node, err := d.db.GetNodeByName(child.PickupNode)
+			node, err := d.db.GetNodeByDotName(child.PickupNode)
 			if err == nil && node.ParentID != nil {
 				d.laneLock.Unlock(*node.ParentID)
 				return

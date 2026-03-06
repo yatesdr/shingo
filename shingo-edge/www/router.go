@@ -158,6 +158,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Put("/payloads/{id}/auto-reorder", h.apiToggleAutoReorder)
 		r.Get("/hourly-counts", h.apiGetHourlyCounts)
 		r.Get("/core-nodes", h.apiGetCoreNodes)
+		r.Get("/blueprint-catalog", h.apiListBlueprintCatalog)
 
 		// Admin API (setup mutations)
 		r.Group(func(r chi.Router) {
@@ -208,6 +209,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 
 			// Core nodes
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
+
+			// Blueprint catalog
+			r.Post("/blueprint-catalog/sync", h.apiSyncBlueprintCatalog)
 
 			// Shifts
 			r.Get("/shifts", h.apiListShifts)

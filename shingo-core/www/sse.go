@@ -171,6 +171,11 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 	}, engine.EventDBDisconnected)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		ev := evt.Payload.(engine.CMSTransactionEvent)
+		h.Broadcast("cms-transaction", sseJSON(ev.Transactions))
+	}, engine.EventCMSTransaction)
+
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		ev := evt.Payload.(engine.RobotsUpdatedEvent)
 		type robotJSON struct {
 			VehicleID      string  `json:"vehicle_id"`

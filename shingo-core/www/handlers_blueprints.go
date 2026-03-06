@@ -94,7 +94,7 @@ func (h *Handlers) apiCreateBlueprint(w http.ResponseWriter, r *http.Request) {
 		BinTypeIDs  []int64 `json:"bin_type_ids"`
 		Manifest    []struct {
 			PartNumber string  `json:"part_number"`
-			Quantity   float64 `json:"quantity"`
+			Quantity   int64   `json:"quantity"`
 		} `json:"manifest"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -138,7 +138,7 @@ func (h *Handlers) apiUpdateBlueprint(w http.ResponseWriter, r *http.Request) {
 		BinTypeIDs  []int64 `json:"bin_type_ids"`
 		Manifest    []struct {
 			PartNumber string  `json:"part_number"`
-			Quantity   float64 `json:"quantity"`
+			Quantity   int64   `json:"quantity"`
 		} `json:"manifest"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -193,7 +193,7 @@ func (h *Handlers) apiSaveBlueprintManifest(w http.ResponseWriter, r *http.Reque
 		BlueprintID int64 `json:"blueprint_id"`
 		Items       []struct {
 			PartNumber  string  `json:"part_number"`
-			Quantity    float64 `json:"quantity"`
+			Quantity    int64   `json:"quantity"`
 			Description string  `json:"description"`
 		} `json:"items"`
 	}

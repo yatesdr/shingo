@@ -32,6 +32,7 @@ var subjectTTLs = map[string]time.Duration{
 	SubjectProductionReport:    5 * time.Minute,
 	SubjectProductionReportAck: 5 * time.Minute,
 	SubjectEdgeStale:           5 * time.Minute,
+	SubjectEdgeRegisterRequest: 5 * time.Minute,
 	SubjectNodeListRequest:     5 * time.Minute,
 	SubjectNodeListResponse:    5 * time.Minute,
 }

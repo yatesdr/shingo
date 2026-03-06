@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS orders (
     factory_id      TEXT NOT NULL DEFAULT '',
     order_type      TEXT NOT NULL DEFAULT 'retrieve',
     status          TEXT NOT NULL DEFAULT 'pending',
-    quantity        DOUBLE PRECISION NOT NULL DEFAULT 1,
+    quantity        BIGINT NOT NULL DEFAULT 1,
     source_node_id  BIGINT REFERENCES nodes(id),
     dest_node_id    BIGINT REFERENCES nodes(id),
     pickup_node     TEXT NOT NULL DEFAULT '',
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS corrections (
     manifest_item_id BIGINT REFERENCES manifest_items(id),
     cat_id           TEXT NOT NULL DEFAULT '',
     description      TEXT NOT NULL DEFAULT '',
-    quantity         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    quantity         BIGINT NOT NULL DEFAULT 0,
     reason           TEXT NOT NULL,
     actor            TEXT NOT NULL DEFAULT 'system',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS blueprint_manifest (
     id            BIGSERIAL PRIMARY KEY,
     blueprint_id  BIGINT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
     part_number   TEXT NOT NULL DEFAULT '',
-    quantity      DOUBLE PRECISION NOT NULL DEFAULT 0,
+    quantity      BIGINT NOT NULL DEFAULT 0,
     description   TEXT NOT NULL DEFAULT '',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS manifest_items (
     id              BIGSERIAL PRIMARY KEY,
     payload_id      BIGINT NOT NULL REFERENCES payloads(id) ON DELETE CASCADE,
     part_number     TEXT NOT NULL DEFAULT '',
-    quantity        DOUBLE PRECISION NOT NULL DEFAULT 0,
+    quantity        BIGINT NOT NULL DEFAULT 0,
     production_date TEXT,
     lot_code        TEXT,
     notes           TEXT NOT NULL DEFAULT '',
@@ -219,8 +219,8 @@ CREATE TABLE IF NOT EXISTS demands (
     id           BIGSERIAL PRIMARY KEY,
     cat_id       TEXT NOT NULL UNIQUE,
     description  TEXT NOT NULL DEFAULT '',
-    demand_qty   DOUBLE PRECISION NOT NULL DEFAULT 0,
-    produced_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+    demand_qty   BIGINT NOT NULL DEFAULT 0,
+    produced_qty BIGINT NOT NULL DEFAULT 0,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS production_log (
     id          BIGSERIAL PRIMARY KEY,
     cat_id      TEXT NOT NULL,
     station_id  TEXT NOT NULL,
-    quantity    DOUBLE PRECISION NOT NULL,
+    quantity    BIGINT NOT NULL,
     reported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_production_log_cat ON production_log(cat_id);
@@ -287,4 +287,25 @@ CREATE TABLE IF NOT EXISTS node_bin_types (
     bin_type_id BIGINT NOT NULL REFERENCES bin_types(id) ON DELETE CASCADE,
     PRIMARY KEY (node_id, bin_type_id)
 );
+
+CREATE TABLE IF NOT EXISTS cms_transactions (
+    id             BIGSERIAL PRIMARY KEY,
+    node_id        BIGINT NOT NULL REFERENCES nodes(id),
+    node_name      TEXT NOT NULL DEFAULT '',
+    txn_type       TEXT NOT NULL DEFAULT '',
+    cat_id         TEXT NOT NULL,
+    delta          BIGINT NOT NULL DEFAULT 0,
+    qty_before     BIGINT NOT NULL DEFAULT 0,
+    qty_after      BIGINT NOT NULL DEFAULT 0,
+    payload_id     BIGINT NOT NULL REFERENCES payloads(id),
+    bin_id         BIGINT REFERENCES bins(id),
+    bin_label      TEXT NOT NULL DEFAULT '',
+    blueprint_code TEXT NOT NULL DEFAULT '',
+    source_type    TEXT NOT NULL DEFAULT 'movement',
+    order_id       BIGINT REFERENCES orders(id),
+    notes          TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cms_txn_node ON cms_transactions(node_id);
+CREATE INDEX IF NOT EXISTS idx_cms_txn_created ON cms_transactions(created_at);
 `

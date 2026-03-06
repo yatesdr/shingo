@@ -54,6 +54,7 @@ type MessagingConfig struct {
 	DispatchTopic       string        `yaml:"dispatch_topic"`
 	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"`
 	StationID           string        `yaml:"station_id"`
+	SigningKey          string        `yaml:"signing_key"` // optional HMAC-SHA256 shared secret for envelope signing
 }
 
 type KafkaConfig struct {

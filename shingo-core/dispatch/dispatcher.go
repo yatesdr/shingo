@@ -75,7 +75,7 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 
 	// Validate destination node exists; resolve synthetic nodes
 	if p.DeliveryNode != "" {
-		destNode, err := d.db.GetNodeByName(p.DeliveryNode)
+		destNode, err := d.db.GetNodeByDotName(p.DeliveryNode)
 		if err != nil {
 			log.Printf("dispatch: delivery node %q not found: %v", p.DeliveryNode, err)
 			d.dbg("error: delivery node %q not found: %v", p.DeliveryNode, err)
@@ -124,7 +124,7 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, 
 
 	// Try group-aware resolution if a pickup node is specified and is an NGRP
 	if order.PickupNode != "" && d.resolver != nil {
-		pickupNode, err := d.db.GetNodeByName(order.PickupNode)
+		pickupNode, err := d.db.GetNodeByDotName(order.PickupNode)
 		if err == nil && pickupNode.IsSynthetic && pickupNode.NodeTypeCode == "NGRP" {
 			result, err := d.resolver.Resolve(pickupNode, OrderTypeRetrieve, order.BlueprintID, nil)
 			if err != nil {
@@ -171,7 +171,7 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, 
 	order.PickupNode = sourceNode.Name
 	d.db.UpdateOrderPickupNode(order.ID, sourceNode.Name)
 
-	destNode, err := d.db.GetNodeByName(order.DeliveryNode)
+	destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		d.failOrder(order, env, "node_error", err.Error())
 		return
@@ -229,7 +229,7 @@ func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, blue
 		return
 	}
 
-	pickupNode, err := d.db.GetNodeByName(order.PickupNode)
+	pickupNode, err := d.db.GetNodeByDotName(order.PickupNode)
 	if err != nil {
 		d.failOrder(order, env, "invalid_node", fmt.Sprintf("pickup node %q not found", order.PickupNode))
 		return
@@ -257,7 +257,7 @@ func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, blue
 
 	d.db.UpdateOrderPickupNode(order.ID, pickupNode.Name)
 
-	destNode, err := d.db.GetNodeByName(order.DeliveryNode)
+	destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		d.failOrder(order, env, "node_error", err.Error())
 		return
@@ -290,14 +290,14 @@ func (d *Dispatcher) handleStore(order *store.Order, env *protocol.Envelope) {
 	// Pickup is the requesting line
 	var pickupNode *store.Node
 	if order.PickupNode != "" {
-		pickupNode, err = d.db.GetNodeByName(order.PickupNode)
+		pickupNode, err = d.db.GetNodeByDotName(order.PickupNode)
 		if err != nil {
 			d.failOrder(order, env, "invalid_node", fmt.Sprintf("pickup node %q not found", order.PickupNode))
 			return
 		}
 	} else if originalDeliveryNode != "" {
 		// Use original delivery_node as source for store ops (line-side -> storage)
-		pickupNode, err = d.db.GetNodeByName(originalDeliveryNode)
+		pickupNode, err = d.db.GetNodeByDotName(originalDeliveryNode)
 		if err != nil {
 			d.failOrder(order, env, "invalid_node", fmt.Sprintf("node %q not found", originalDeliveryNode))
 			return
@@ -378,6 +378,15 @@ func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *st
 	return vendorOrderID, nil
 }
 
+// checkOwnership verifies the envelope sender owns the order.
+// Core-role senders (e.g. UI-initiated actions) are always allowed.
+func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *store.Order) bool {
+	if env.Src.Role == protocol.RoleCore {
+		return true
+	}
+	return env.Src.Station == order.StationID
+}
+
 // HandleOrderCancel processes a cancellation request from ShinGo Edge.
 func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel) {
 	stationID := env.Src.Station
@@ -386,6 +395,12 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	order, err := d.db.GetOrderByUUID(p.OrderUUID)
 	if err != nil {
 		log.Printf("dispatch: cancel order %s not found: %v", p.OrderUUID, err)
+		return
+	}
+
+	if !d.checkOwnership(env, order) {
+		log.Printf("dispatch: cancel rejected — station %s does not own order %s (owner: %s)", stationID, p.OrderUUID, order.StationID)
+		d.sendError(env, p.OrderUUID, "forbidden", "station does not own this order")
 		return
 	}
 
@@ -427,7 +442,7 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 // HandleOrderReceipt processes a delivery confirmation from ShinGo Edge.
 func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.OrderReceipt) {
 	stationID := env.Src.Station
-	d.dbg("delivery receipt: station=%s uuid=%s type=%s count=%.1f", stationID, p.OrderUUID, p.ReceiptType, p.FinalCount)
+	d.dbg("delivery receipt: station=%s uuid=%s type=%s count=%d", stationID, p.OrderUUID, p.ReceiptType, p.FinalCount)
 
 	order, err := d.db.GetOrderByUUID(p.OrderUUID)
 	if err != nil {
@@ -435,7 +450,12 @@ func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	d.db.UpdateOrderStatus(order.ID, StatusConfirmed, fmt.Sprintf("receipt: %s, count: %.1f", p.ReceiptType, p.FinalCount))
+	if !d.checkOwnership(env, order) {
+		log.Printf("dispatch: receipt rejected — station %s does not own order %s (owner: %s)", stationID, p.OrderUUID, order.StationID)
+		return
+	}
+
+	d.db.UpdateOrderStatus(order.ID, StatusConfirmed, fmt.Sprintf("receipt: %s, count: %d", p.ReceiptType, p.FinalCount))
 
 	// Transition confirmed -> completed
 	d.db.CompleteOrder(order.ID)
@@ -452,6 +472,12 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		return
 	}
 
+	if !d.checkOwnership(env, order) {
+		log.Printf("dispatch: redirect rejected — station %s does not own order %s (owner: %s)", env.Src.Station, p.OrderUUID, order.StationID)
+		d.sendError(env, p.OrderUUID, "forbidden", "station does not own this order")
+		return
+	}
+
 	// Cancel existing vendor order
 	if order.VendorOrderID != "" {
 		if err := d.backend.CancelOrder(order.VendorOrderID); err != nil {
@@ -460,7 +486,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 	}
 
 	// Update destination
-	newDest, err := d.db.GetNodeByName(p.NewDeliveryNode)
+	newDest, err := d.db.GetNodeByDotName(p.NewDeliveryNode)
 	if err != nil {
 		log.Printf("dispatch: redirect dest %q not found: %v", p.NewDeliveryNode, err)
 		d.sendError(env, p.OrderUUID, "invalid_node", fmt.Sprintf("redirect destination %q not found", p.NewDeliveryNode))
@@ -475,7 +501,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		d.sendError(env, p.OrderUUID, "redirect_failed", "no source node for redirect")
 		return
 	}
-	sourceNode, err := d.db.GetNodeByName(order.PickupNode)
+	sourceNode, err := d.db.GetNodeByDotName(order.PickupNode)
 	if err != nil {
 		d.sendError(env, p.OrderUUID, "redirect_failed", err.Error())
 		return

@@ -10,7 +10,7 @@ type ManifestItem struct {
 	ID             int64     `json:"id"`
 	PayloadID      int64     `json:"payload_id"`
 	PartNumber     string    `json:"part_number"`
-	Quantity       float64   `json:"quantity"`
+	Quantity       int64     `json:"quantity"`
 	ProductionDate string    `json:"production_date,omitempty"`
 	LotCode        string    `json:"lot_code,omitempty"`
 	Notes          string    `json:"notes"`

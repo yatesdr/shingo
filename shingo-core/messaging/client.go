@@ -12,18 +12,21 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
+	"shingo/protocol"
 	"shingocore/config"
 )
 
 type MessageHandler func(topic string, payload []byte)
 
 type Client struct {
-	mu       sync.RWMutex
-	cfg      *config.MessagingConfig
-	kafka    *kafkaState
-	handlers map[string]MessageHandler
-	stopChan chan struct{}
-	DebugLog func(string, ...any)
+	mu         sync.RWMutex
+	cfg        *config.MessagingConfig
+	kafka      *kafkaState
+	handlers   map[string]MessageHandler
+	stopChan   chan struct{}
+	closeOnce  sync.Once
+	SigningKey []byte // optional HMAC key; when set, outbound messages are signed
+	DebugLog   func(string, ...any)
 }
 
 type kafkaState struct {
@@ -93,6 +96,16 @@ func (c *Client) Publish(topic string, payload []byte) error {
 	if c.kafka == nil || c.kafka.writer == nil {
 		return fmt.Errorf("kafka not connected")
 	}
+
+	// Sign outbound messages if signing key is configured
+	if len(c.SigningKey) > 0 {
+		signed, err := protocol.Sign(payload, c.SigningKey)
+		if err != nil {
+			return fmt.Errorf("sign message: %w", err)
+		}
+		payload = signed
+	}
+
 	c.dbg("publish: topic=%s size=%d", topic, len(payload))
 	return c.kafka.writer.WriteMessages(context.Background(), kafka.Message{
 		Topic: topic,
@@ -259,11 +272,9 @@ func (c *Client) Reconfigure(cfg *config.MessagingConfig) error {
 }
 
 func (c *Client) Close() {
-	select {
-	case <-c.stopChan:
-	default:
+	c.closeOnce.Do(func() {
 		close(c.stopChan)
-	}
+	})
 
 	c.mu.Lock()
 	defer c.mu.Unlock()

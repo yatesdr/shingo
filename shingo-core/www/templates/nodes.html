@@ -108,8 +108,10 @@
     </div>
 
     {{if .Authenticated}}
-    <form id="node-form" method="POST" action="/nodes/update" onsubmit="serializeChipPickers();saveAlgorithmProperties()">
+    <form id="node-form" method="POST" action="/nodes/update" onsubmit="return handleNodeSave(event)">
       <input type="hidden" name="id" id="nf-id">
+      <input type="hidden" name="node_type_id" id="nf-node-type-id">
+      <input type="hidden" name="parent_id" id="nf-parent-id">
       <div class="mb-1">
         <label><input type="checkbox" name="enabled" id="nf-enabled" checked> Enabled</label>
       </div>
@@ -172,38 +174,30 @@
     <div id="modal-inventory" style="display:none" class="mb-2">
       <div class="flex flex-between mb-1">
         <strong style="font-size:0.85rem">Contents</strong>
-        <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> items</span>
+        <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> bins</span>
       </div>
       <div id="inv-list"></div>
       <div id="inv-manifest" style="display:none; margin-top:0.5rem; border-top:1px solid var(--border); padding-top:0.5rem">
         <div class="flex flex-between mb-1">
           <strong style="font-size:0.8rem">Manifest — Payload #<span id="inv-manifest-pid"></span></strong>
-          <button class="btn btn-sm" onclick="closeManifestExpand()" style="font-size:0.7rem">&times; Close</button>
-        </div>
-        <div id="inv-manifest-list" style="font-size:0.8rem"></div>
-        <div style="margin-top:0.5rem; border-top:1px solid #e9ecef; padding-top:0.5rem">
-          <strong style="font-size:0.75rem">Add Item (Correction)</strong>
-          <div class="grid grid-2" style="font-size:0.8rem;gap:0.3rem;margin-top:0.3rem">
-            <input type="text" id="nc-part" placeholder="Part Number" style="font-size:0.8rem;padding:0.25rem">
-            <input type="number" id="nc-qty" placeholder="Qty" step="0.01" value="1" style="font-size:0.8rem;padding:0.25rem">
+          <div class="flex gap-1">
+            <button type="button" class="btn btn-sm" onclick="addNodeManifestRow()" style="font-size:0.7rem">+ Item</button>
+            <button type="button" class="btn btn-sm" onclick="closeManifestExpand()" style="font-size:0.7rem">&times; Close</button>
           </div>
-          <input type="text" id="nc-reason" placeholder="Reason for correction" style="font-size:0.8rem;padding:0.25rem;width:100%;margin-top:0.3rem">
-          <button class="btn btn-sm btn-primary" onclick="addCorrectionItem()" style="margin-top:0.3rem">Add Item</button>
         </div>
+        <table style="font-size:0.8rem;width:100%" id="inv-manifest-table">
+          <thead><tr><th style="text-align:left">CATID</th><th style="text-align:left;width:5rem">Qty</th><th style="width:1.5rem"></th></tr></thead>
+          <tbody id="inv-manifest-rows"></tbody>
+        </table>
       </div>
     </div>
 
     <!-- Children section (for synthetic nodes) -->
-    <div id="modal-children" style="display:none" class="mb-2">
-      <strong style="font-size:0.85rem">Child Nodes</strong>
-      <div id="children-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
-    </div>
-
       <input type="hidden" name="name" id="nf-name">
 
-      <div class="flex flex-between">
-        <button type="submit" class="btn btn-primary">Save</button>
+      <div class="flex flex-between" style="margin-top:0.5rem">
         <button type="button" class="btn btn-danger btn-sm" onclick="deleteNode()">Delete Node</button>
+        <button type="submit" class="btn btn-primary">Save</button>
       </div>
     </form>
     {{else}}
@@ -223,19 +217,46 @@
     <div id="modal-inventory" style="display:none" class="mb-2">
       <div class="flex flex-between mb-1">
         <strong style="font-size:0.85rem">Contents</strong>
-        <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> items</span>
+        <span class="text-muted" style="font-size:0.8rem"><span id="inv-count">0</span> bins</span>
       </div>
       <div id="inv-list"></div>
-    </div>
-    <!-- Children section (for synthetic nodes) -->
-    <div id="modal-children" style="display:none" class="mb-2">
-      <strong style="font-size:0.85rem">Child Nodes</strong>
-      <div id="children-list" style="font-size:0.8rem; margin-top:0.3rem"></div>
+      <div id="inv-manifest" style="display:none; margin-top:0.5rem; border-top:1px solid var(--border); padding-top:0.5rem">
+        <div class="flex flex-between mb-1">
+          <strong style="font-size:0.8rem">Manifest — Payload #<span id="inv-manifest-pid"></span></strong>
+          <button class="btn btn-sm" onclick="closeManifestExpand()" style="font-size:0.7rem">&times; Close</button>
+        </div>
+        <table style="font-size:0.8rem;width:100%">
+          <thead><tr><th style="text-align:left">CATID</th><th style="text-align:left">Qty</th><th>Notes</th></tr></thead>
+          <tbody id="inv-manifest-rows"></tbody>
+        </table>
+      </div>
     </div>
     {{end}}
   </div>
 </div>
 
+<style>
+.mn-val {
+  border-bottom: 1px dotted var(--border, #ccc);
+  padding: 0.15rem 0.25rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: inline-block;
+  min-width: 2rem;
+  min-height: 1.1em;
+}
+.mn-val:hover { border-bottom-color: var(--primary, #4a90d9); }
+.mn-val.mn-empty { color: var(--text-muted, #999); font-style: italic; }
+.mn-input {
+  border: none;
+  border-bottom: 1px solid var(--primary, #4a90d9);
+  background: var(--bg, #fff);
+  padding: 0.15rem 0.25rem;
+  font-size: 0.8rem;
+  width: 100%;
+  outline: none;
+}
+</style>
 <script>
 var isAuth = {{if .Authenticated}}true{{else}}false{{end}};
 
@@ -327,11 +348,19 @@ function openNodeModal(el) {
   // Load extended detail (stations, payload types, children)
   var isLeafChild = !!d.parentId && d.synthetic !== 'true';
   var isSyntheticChild = !!d.parentId && d.synthetic === 'true'; // lanes, shuffle rows
+  // Determine parent type to distinguish direct children of NGRP from lane slots
+  var parentTypeCode = '';
+  if (d.parentId) {
+    var parentTile = document.querySelector('.node-tile[data-id="' + d.parentId + '"]');
+    if (parentTile) parentTypeCode = parentTile.dataset.typeCode || '';
+  }
+  var isDirectChildOfGroup = isLeafChild && parentTypeCode === 'NGRP';
+  var isLaneSlot = isLeafChild && parentTypeCode === 'LANE';
   loadNodeDetail(d.id, d.synthetic === 'true');
 
-  // Hide associations for physical child nodes (slots — managed by core only)
+  // Hide associations for lane slots (inherit from lane), show for direct children of NGRP
   var assocDiv = document.getElementById('modal-associations');
-  if (assocDiv && isLeafChild) assocDiv.style.display = 'none';
+  if (assocDiv && isLaneSlot) assocDiv.style.display = 'none';
 
   // Show algorithm dropdowns only for NGRP nodes
   var algoDiv = document.getElementById('ngrp-algorithms');
@@ -347,8 +376,10 @@ function openNodeModal(el) {
   if (isAuth) {
     var assocSection = document.getElementById('nf-assoc-section');
     var stationsGroup = document.getElementById('cp-stations');
-    if (assocSection) assocSection.style.display = isLeafChild ? 'none' : '';
-    if (stationsGroup) stationsGroup.closest('.form-group').style.display = (isLeafChild || isSyntheticChild) ? 'none' : '';
+    // Show bin types for NGRP, lanes, and direct children of NGRP; hide for lane slots
+    if (assocSection) assocSection.style.display = isLaneSlot ? 'none' : '';
+    // Hide stations for synthetic children and lane slots; show for NGRP direct children
+    if (stationsGroup) stationsGroup.closest('.form-group').style.display = (isSyntheticChild || isLaneSlot) ? 'none' : '';
     // Hide inherit option for root nodes (no parent)
     var hasParent = !!d.parentId;
     toggleInheritOption('nf-bt-mode', hasParent);
@@ -357,6 +388,8 @@ function openNodeModal(el) {
     clearChipPicker('bin-types');
     clearChipPicker('stations');
     document.getElementById('nf-id').value = d.id;
+    document.getElementById('nf-node-type-id').value = d.nodeTypeId || '';
+    document.getElementById('nf-parent-id').value = d.parentId || '';
     document.getElementById('nf-name').value = d.name;
     document.getElementById('nf-enabled').checked = d.enabled === 'true';
   } else {
@@ -367,10 +400,8 @@ function openNodeModal(el) {
 }
 
 function loadNodeDetail(nodeID, isSynthetic) {
-  var childrenDiv = document.getElementById('modal-children');
   var assocDiv = document.getElementById('modal-associations');
 
-  childrenDiv.style.display = 'none';
   if (assocDiv) assocDiv.style.display = 'none';
 
   fetch('/api/nodes/detail?id=' + nodeID)
@@ -390,7 +421,7 @@ function loadNodeDetail(nodeID, isSynthetic) {
         document.getElementById('assoc-stations').textContent = stLabel;
         var btLabel = btMode === 'all' ? 'Any' : btMode === 'specific' ? (bts.length > 0 ? bts.map(function(b) { return b.code; }).join(', ') : 'None') : (effBts && effBts.length > 0 ? effBts.map(function(b) { return b.code; }).join(', ') + ' (inherited)' : 'Any');
         document.getElementById('assoc-bt').textContent = btLabel;
-        assocDiv.style.display = '';
+        if (assocDiv) assocDiv.style.display = '';
       }
 
       // Set chip pickers for auth mode
@@ -403,7 +434,7 @@ function loadNodeDetail(nodeID, isSynthetic) {
 
         // Station mode
         var stSelect = document.getElementById('nf-st-mode');
-        stSelect.value = stMode || (data.node && data.node.parent_id ? 'inherit' : 'all');
+        stSelect.value = stMode || (data.node && data.node.parent_id ? 'none' : 'all');
         populateChipPicker('stations', stations.map(function(s) { return { id: s, label: s }; }));
         onModeChange('stations');
       }
@@ -419,29 +450,6 @@ function loadNodeDetail(nodeID, isSynthetic) {
           if (sel) sel.value = p.value;
         }
       });
-
-      // Children (for synthetic nodes)
-      var children = data.children || [];
-      if (isSynthetic && children.length > 0) {
-        // Check if this is a SUP node — load supermarket visualization
-        var typeCode = document.querySelector('.node-tile[onclick*="openNodeModal"]') ? '' : '';
-        var nodeID = document.getElementById('nf-id') ? document.getElementById('nf-id').value : '';
-        var tile = document.querySelector('.node-tile[data-id="' + nodeID + '"]');
-        if (tile && (tile.dataset.typeCode === 'NGRP' || tile.dataset.typeCode === 'SUP' || tile.dataset.typeCode === 'SMKT')) {
-          loadGroupLayout(nodeID);
-        } else {
-          var html = '<table><thead><tr><th>Name</th><th>Enabled</th></tr></thead><tbody>';
-          children.forEach(function(c) {
-            html += '<tr><td>' + esc(c.name) + '</td><td>' + (c.enabled ? 'Yes' : 'No') + '</td></tr>';
-          });
-          html += '</tbody></table>';
-          document.getElementById('children-list').innerHTML = html;
-        }
-        childrenDiv.style.display = '';
-      } else if (isSynthetic) {
-        document.getElementById('children-list').innerHTML = '<span class="text-muted">No children assigned</span>';
-        childrenDiv.style.display = '';
-      }
     })
     .catch(function() {});
 }
@@ -466,7 +474,7 @@ function onModeChange(name) {
 function toggleInheritOption(selectId, hasParent) {
   var sel = document.getElementById(selectId);
   var opt = sel.querySelector('option[value="inherit"]');
-  if (opt) opt.style.display = hasParent ? '' : 'none';
+  if (opt) opt.disabled = !hasParent;
   if (!hasParent && sel.value === 'inherit') sel.value = 'all';
 }
 
@@ -615,21 +623,27 @@ var expandedPayloadID = 0;
 function loadInventory(nodeID) {
   currentNodeID = parseInt(nodeID);
   expandedPayloadID = 0;
-  document.getElementById('inv-manifest').style.display = 'none';
+  var manifestSec = document.getElementById('inv-manifest');
+  if (manifestSec) manifestSec.style.display = 'none';
   var list = document.getElementById('inv-list');
+  var countEl = document.getElementById('inv-count');
   list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
   fetch('/api/nodes/inventory?id=' + nodeID)
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(items) {
       if (!items || items.length === 0) {
+        countEl.textContent = '0';
         list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Empty</span>';
-
         return;
       }
-      var html = '<table style="font-size:0.8rem"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Age</th></tr></thead><tbody>';
+      countEl.textContent = items.length;
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin</th><th>Payload</th><th>Status</th></tr></thead><tbody>';
       items.forEach(function(item) {
-        var age = timeAgo(item.delivered_at);
-        html += '<tr style="cursor:pointer" onclick="expandPayloadManifest(' + item.id + ')"><td>#' + item.id + '</td><td>' + esc(item.blueprint_code) + '</td><td>' + esc(item.status) + '</td><td>' + age + '</td></tr>';
+        var b = item.bin;
+        var p = item.payload;
+        var payloadInfo = p ? ('<span style="cursor:pointer;text-decoration:underline" onclick="expandPayloadManifest(' + p.id + ')">#' + p.id + ' ' + esc(p.blueprint_code) + '</span>') : '<span class="text-muted">empty</span>';
+        var status = p ? esc(p.status) : esc(b.status);
+        html += '<tr><td>' + esc(b.label || 'Bin #' + b.id) + '</td><td>' + payloadInfo + '</td><td>' + status + '</td></tr>';
       });
       html += '</tbody></table>';
       list.innerHTML = html;
@@ -639,92 +653,161 @@ function loadInventory(nodeID) {
     });
 }
 
+var originalManifest = []; // snapshot for dirty detection
+
 function expandPayloadManifest(payloadID) {
   expandedPayloadID = payloadID;
   var sec = document.getElementById('inv-manifest');
   document.getElementById('inv-manifest-pid').textContent = payloadID;
   sec.style.display = '';
-  var list = document.getElementById('inv-manifest-list');
-  list.innerHTML = '<span class="text-muted">Loading...</span>';
+  var tbody = document.getElementById('inv-manifest-rows');
+  tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Loading...</td></tr>';
   fetch('/api/payloads/manifest?id=' + payloadID)
     .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function(items) {
-      if (!items || items.length === 0) {
-        list.innerHTML = '<span class="text-muted">No manifest items</span>';
-        return;
+      tbody.innerHTML = '';
+      originalManifest = [];
+      if (!items) items = [];
+      if (isAuth) {
+        items.forEach(function(item) {
+          originalManifest.push({id: item.id, catid: item.part_number, qty: item.quantity});
+          addNodeManifestRow(item.id, item.part_number, item.quantity);
+        });
+      } else {
+        if (items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="3" class="text-muted">No manifest items</td></tr>';
+          return;
+        }
+        items.forEach(function(item) {
+          tbody.innerHTML += '<tr><td>' + esc(item.part_number) + '</td><td>' + item.quantity + '</td><td></td></tr>';
+        });
       }
-      var html = '<table><thead><tr><th>Part#</th><th>Qty</th><th>Notes</th>';
-      if (isAuth) html += '<th></th>';
-      html += '</tr></thead><tbody>';
-      items.forEach(function(item) {
-        html += '<tr><td>' + esc(item.part_number) + '</td><td>' + item.quantity + '</td><td>' + esc(item.notes) + '</td>';
-        if (isAuth) html += '<td><button class="btn btn-danger btn-sm" style="font-size:0.7rem;padding:0.1rem 0.3rem" onclick="removeCorrectionItem(' + item.id + ',\'' + esc(item.part_number) + '\')">X</button></td>';
-        html += '</tr>';
-      });
-      html += '</tbody></table>';
-      list.innerHTML = html;
     })
-    .catch(function() { list.innerHTML = '<span class="text-muted">Error</span>'; });
+    .catch(function() { tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Error</td></tr>'; });
+}
+
+function makeEditable(span) {
+  var isQty = span.classList.contains('mr-qty');
+  var input = document.createElement('input');
+  input.type = isQty ? 'number' : 'text';
+  if (isQty) { input.step = '1'; input.min = '0'; }
+  input.className = 'mn-input ' + (isQty ? 'mr-qty' : 'mr-catid');
+  input.value = span.dataset.value || '';
+  if (!isQty) input.placeholder = 'CATID';
+  span.replaceWith(input);
+  input.focus();
+  function commit() {
+    var val = isQty ? (parseInt(input.value) || 0) : input.value.trim();
+    var s = document.createElement('span');
+    s.className = 'mn-val ' + (isQty ? 'mr-qty' : 'mr-catid');
+    if (!val && !isQty) s.classList.add('mn-empty');
+    s.dataset.value = isQty ? val : (val || '');
+    s.textContent = val || (isQty ? '0' : 'CATID');
+    s.onclick = function() { makeEditable(s); };
+    input.replaceWith(s);
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.blur(); }
+  });
+}
+
+function mnSpan(cls, value, empty) {
+  var s = document.createElement('span');
+  s.className = 'mn-val ' + cls;
+  s.dataset.value = value != null ? value : '';
+  if (empty) s.classList.add('mn-empty');
+  s.textContent = empty ? (cls === 'mr-qty' ? '0' : 'CATID') : value;
+  s.onclick = function() { makeEditable(s); };
+  return s;
+}
+
+function addNodeManifestRow(itemId, catid, qty) {
+  var tbody = document.getElementById('inv-manifest-rows');
+  var tr = document.createElement('tr');
+  tr.dataset.itemId = itemId || 0;
+  var td1 = document.createElement('td');
+  var td2 = document.createElement('td');
+  var isNew = !catid && (qty == null || qty === '');
+  td1.appendChild(mnSpan('mr-catid', catid || '', !catid));
+  td2.appendChild(mnSpan('mr-qty', qty != null && qty !== '' ? qty : 0, isNew));
+  tr.appendChild(td1);
+  tr.appendChild(td2);
+  var td3 = document.createElement('td');
+  td3.style.textAlign = 'center';
+  td3.innerHTML = '<button type="button" class="btn btn-danger btn-sm" onclick="this.closest(\'tr\').remove()" style="padding:0.1rem 0.3rem;font-size:0.65rem">&times;</button>';
+  tr.appendChild(td3);
+  tbody.appendChild(tr);
+  if (isNew) { makeEditable(td1.querySelector('.mr-catid')); }
+}
+
+function mnReadVal(el) {
+  if (!el) return '';
+  return el.tagName === 'INPUT' ? el.value : (el.dataset.value || '');
+}
+
+function isManifestDirty() {
+  var rows = document.querySelectorAll('#inv-manifest-rows tr');
+  var current = [];
+  rows.forEach(function(tr) {
+    var catidEl = tr.querySelector('.mr-catid');
+    if (!catidEl) return;
+    current.push({
+      id: parseInt(tr.dataset.itemId) || 0,
+      catid: mnReadVal(catidEl).trim(),
+      qty: parseInt(mnReadVal(tr.querySelector('.mr-qty'))) || 0
+    });
+  });
+  if (current.length !== originalManifest.length) return true;
+  for (var i = 0; i < current.length; i++) {
+    var c = current[i], o = originalManifest[i];
+    if (c.id !== o.id || c.catid !== o.catid || c.qty !== o.qty) return true;
+  }
+  return false;
+}
+
+function collectManifestItems() {
+  var rows = document.querySelectorAll('#inv-manifest-rows tr');
+  var items = [];
+  var valid = true;
+  rows.forEach(function(tr) {
+    var catidEl = tr.querySelector('.mr-catid');
+    if (!catidEl) return;
+    var catid = mnReadVal(catidEl).trim();
+    var qty = parseInt(mnReadVal(tr.querySelector('.mr-qty'))) || 0;
+    if (!catid) { valid = false; return; }
+    items.push({id: parseInt(tr.dataset.itemId) || 0, cat_id: catid, quantity: qty});
+  });
+  return valid ? items : null;
+}
+
+function handleNodeSave(e) {
+  serializeChipPickers();
+  saveAlgorithmProperties();
+  if (!expandedPayloadID || !isManifestDirty()) return true; // just submit form
+  e.preventDefault();
+  var items = collectManifestItems();
+  if (!items) { alert('All rows must have a CATID'); return false; }
+  var reason = prompt('Reason for manifest correction:');
+  if (!reason) return false;
+  fetch('/api/corrections/batch', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({payload_id: expandedPayloadID, node_id: currentNodeID, reason: reason, items: items})
+  })
+  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  .then(function(data) {
+    if (data.error) { alert(data.error); return; }
+    document.getElementById('node-form').submit();
+  })
+  .catch(function(err) { alert('Error saving manifest: ' + err); });
+  return false;
 }
 
 function closeManifestExpand() {
   document.getElementById('inv-manifest').style.display = 'none';
   expandedPayloadID = 0;
-}
-
-function addCorrectionItem() {
-  if (!expandedPayloadID) return;
-  var part = document.getElementById('nc-part').value;
-  var qty = parseFloat(document.getElementById('nc-qty').value) || 1;
-  var reason = document.getElementById('nc-reason').value;
-  if (!part || !reason) { alert('Part number and reason are required'); return; }
-  fetch('/api/corrections/create', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      correction_type: 'add_item',
-      node_id: currentNodeID,
-      payload_id: expandedPayloadID,
-      cat_id: part,
-      quantity: qty,
-      reason: reason
-    })
-  })
-  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-  .then(function(data) {
-    if (data.error) { alert(data.error); return; }
-    document.getElementById('nc-part').value = '';
-    document.getElementById('nc-qty').value = '1';
-    document.getElementById('nc-reason').value = '';
-    expandPayloadManifest(expandedPayloadID);
-    loadNodeCorrections(currentNodeID);
-  })
-  .catch(function(e) { alert('Error: ' + e); });
-}
-
-function removeCorrectionItem(manifestItemID, partNumber) {
-  var reason = prompt('Reason for removing ' + partNumber + '?');
-  if (!reason) return;
-  fetch('/api/corrections/create', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      correction_type: 'remove_item',
-      node_id: currentNodeID,
-      payload_id: expandedPayloadID,
-      cat_id: partNumber,
-      manifest_item_id: manifestItemID,
-      quantity: 0,
-      reason: reason
-    })
-  })
-  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-  .then(function(data) {
-    if (data.error) { alert(data.error); return; }
-    expandPayloadManifest(expandedPayloadID);
-    loadNodeCorrections(currentNodeID);
-  })
-  .catch(function(e) { alert('Error: ' + e); });
 }
 
 
@@ -970,6 +1053,20 @@ function closeOccupancyModal() {
   min-height: 60px;
 }
 #nodes-drop-area { min-height: 60px; }
+
+/* Ungrouped nodes wrapper */
+.ungrouped-wrapper {
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem 0.75rem;
+  margin-top: 0.5rem;
+}
+.ungrouped-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
 </style>
 
 <script>
@@ -1521,6 +1618,19 @@ function buildHierarchy() {
     lanes.forEach(function(l) { l.classList.add('smkt-absorbed'); });
     otherChildren.forEach(function(c) { c.classList.add('smkt-absorbed'); });
   });
+
+  // Wrap remaining ungrouped nodes in a dashed border
+  var remaining = grid.querySelectorAll('.node-tile:not(.smkt-absorbed)');
+  if (remaining.length > 0) {
+    var wrapper = document.createElement('div');
+    wrapper.className = 'ungrouped-wrapper';
+    var label = document.createElement('div');
+    label.className = 'ungrouped-label';
+    label.textContent = 'Ungrouped Nodes (' + remaining.length + ')';
+    grid.parentNode.insertBefore(wrapper, grid);
+    wrapper.appendChild(label);
+    wrapper.appendChild(grid);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', function() {

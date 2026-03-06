@@ -13,7 +13,7 @@ func (h *Handlers) apiCreateCorrection(w http.ResponseWriter, r *http.Request) {
 		PayloadID     int64   `json:"payload_id"`
 		CatID          string  `json:"cat_id"`
 		Description    string  `json:"description"`
-		Quantity       float64 `json:"quantity"`
+		Quantity       int64   `json:"quantity"`
 		Reason         string  `json:"reason"`
 		ManifestItemID int64   `json:"manifest_item_id"`
 	}
@@ -43,6 +43,54 @@ func (h *Handlers) apiCreateCorrection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.jsonOK(w, map[string]any{"id": id})
+}
+
+func (h *Handlers) apiApplyBatchCorrection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PayloadID int64 `json:"payload_id"`
+		NodeID    int64 `json:"node_id"`
+		Reason    string `json:"reason"`
+		Items     []struct {
+			ID       int64   `json:"id"`
+			CatID    string  `json:"cat_id"`
+			Quantity int64   `json:"quantity"`
+		} `json:"items"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.Reason == "" {
+		h.jsonError(w, "reason is required", http.StatusBadRequest)
+		return
+	}
+
+	actor := h.getUsername(r)
+	if actor == "" {
+		actor = "admin"
+	}
+
+	items := make([]engine.BatchCorrectionItem, len(req.Items))
+	for i, it := range req.Items {
+		items[i] = engine.BatchCorrectionItem{
+			ID:       it.ID,
+			CatID:    it.CatID,
+			Quantity: it.Quantity,
+		}
+	}
+
+	err := h.engine.ApplyBatchCorrection(engine.BatchCorrectionRequest{
+		PayloadID: req.PayloadID,
+		NodeID:    req.NodeID,
+		Reason:    req.Reason,
+		Actor:     actor,
+		Items:     items,
+	})
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonOK(w, map[string]any{"ok": true})
 }
 
 func (h *Handlers) apiListNodeCorrections(w http.ResponseWriter, r *http.Request) {

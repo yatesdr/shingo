@@ -105,6 +105,10 @@ func main() {
 	// Set up messaging
 	msgClient := messaging.NewClient(&cfg.Messaging)
 	msgClient.DebugLog = dbg.Func("kafka")
+	if cfg.Messaging.SigningKey != "" {
+		msgClient.SigningKey = []byte(cfg.Messaging.SigningKey)
+		log.Printf("shingoedge: envelope signing enabled")
+	}
 	defer msgClient.Close()
 	if err := msgClient.Connect(); err != nil {
 		log.Printf("messaging connect: %v (will retry via outbox)", err)
@@ -125,14 +129,17 @@ func main() {
 
 		// Protocol ingestor (inbound from ShinGo Core)
 		stationID := cfg.StationID()
-		edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(names []string) {
-			eng.SetCoreNodes(names)
+		edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(nodes []protocol.NodeInfo) {
+			eng.SetCoreNodes(nodes)
 		})
 		edgeHandler.DebugLog = dbg.Func("edge_handler")
 		ingestor := protocol.NewIngestor(edgeHandler, func(hdr *protocol.RawHeader) bool {
 			return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
 		})
 		ingestor.DebugLog = dbg.Func("protocol")
+		if cfg.Messaging.SigningKey != "" {
+			ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
+		}
 		if err := msgClient.Subscribe(cfg.Messaging.DispatchTopic, func(data []byte) {
 			ingestor.HandleRaw(data)
 		}); err != nil {
@@ -149,12 +156,15 @@ func main() {
 		hb.Start()
 		defer hb.Stop()
 
+		// Wire re-registration request from core
+		edgeHandler.SetRegisterRequestHandler(hb.SendRegister)
+
 		// Wire node sync so edge UI can trigger a re-request
 		eng.SetNodeSyncFunc(hb.RequestNodeSync)
 
-		// Wire style catalog sync
-		edgeHandler.SetStyleCatalogHandler(func(styles []protocol.CatalogStyleInfo) {
-			eng.HandleStyleCatalog(styles)
+		// Wire blueprint catalog sync
+		edgeHandler.SetBlueprintCatalogHandler(func(blueprints []protocol.CatalogBlueprintInfo) {
+			eng.HandleBlueprintCatalog(blueprints)
 		})
 		eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
 

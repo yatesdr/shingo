@@ -189,6 +189,13 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
 
+    es.addEventListener('cms-transaction', function(e) {
+      if (typeof window.cmsAppendRows === 'function') {
+        var txns = JSON.parse(e.data);
+        window.cmsAppendRows(txns);
+      }
+    });
+
     es.addEventListener('debug-log', function(e) {
       if (typeof window.debugAppendRow === 'function') {
         var entry = JSON.parse(e.data);

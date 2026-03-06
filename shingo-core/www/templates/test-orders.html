@@ -509,7 +509,7 @@ async function submitKafkaOrder() {
     pickup_node: document.getElementById('k-pickup-node').value,
     delivery_node: document.getElementById('k-delivery-node').value,
     blueprint_code: document.getElementById('k-blueprint').value,
-    quantity: parseFloat(document.getElementById('k-quantity').value) || 1,
+    quantity: parseInt(document.getElementById('k-quantity').value) || 1,
     priority: parseInt(document.getElementById('k-priority').value) || 0
   };
   if (!body.blueprint_code) { alert('Blueprint is required'); return; }
@@ -543,7 +543,7 @@ async function sendReceipt() {
   var body = {
     order_uuid: document.getElementById('receipt-uuid').value,
     receipt_type: document.getElementById('receipt-type').value,
-    final_count: parseFloat(document.getElementById('receipt-count').value) || 0
+    final_count: parseInt(document.getElementById('receipt-count').value) || 0
   };
   try {
     var res = await fetch('/api/test-orders/receipt', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });

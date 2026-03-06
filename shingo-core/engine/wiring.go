@@ -102,6 +102,14 @@ func (e *Engine) wireEventHandlers() {
 		ev := evt.Payload.(CorrectionAppliedEvent)
 		e.db.AppendAudit("correction", ev.CorrectionID, ev.CorrectionType, "", ev.Reason, ev.Actor)
 	}, EventCorrectionApplied)
+
+	// CMS transaction logging on payload movement
+	e.Events.SubscribeTypes(func(evt Event) {
+		ev := evt.Payload.(PayloadChangedEvent)
+		if ev.Action == "moved" && ev.FromNodeID != 0 && ev.ToNodeID != 0 {
+			e.RecordMovementTransactions(ev)
+		}
+	}, EventPayloadChanged)
 }
 
 func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
@@ -189,13 +197,13 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 
-	destNode, err := e.db.GetNodeByName(order.DeliveryNode)
+	destNode, err := e.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		e.logFn("engine: dest node %s not found for completion: %v", order.DeliveryNode, err)
 		return
 	}
 
-	sourceNode, _ := e.db.GetNodeByName(order.PickupNode)
+	sourceNode, _ := e.db.GetNodeByDotName(order.PickupNode)
 	sourceNodeID := int64(0)
 	if sourceNode != nil {
 		sourceNodeID = sourceNode.ID

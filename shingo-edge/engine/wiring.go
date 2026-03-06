@@ -81,7 +81,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			}
 			e.Events.Emit(Event{Type: EventPayloadReorder, Payload: PayloadReorderEvent{
 				PayloadID: p.ID, LineID: delta.LineID, JobStyleID: p.JobStyleID, Location: p.Location,
-				StagingNode: p.StagingNode, Description: p.Description,
+				StagingNode: p.StagingNode, Description: p.Description, BlueprintCode: p.BlueprintCode,
 				Remaining: newRemaining, ReorderPoint: p.ReorderPoint,
 				ReorderQty: p.ReorderQty, RetrieveEmpty: p.RetrieveEmpty,
 			}})
@@ -97,7 +97,7 @@ func (e *Engine) handlePayloadReorder(reorder PayloadReorderEvent) {
 	_, err := e.orderMgr.CreateRetrieveOrder(
 		&payloadID,
 		reorder.RetrieveEmpty,
-		float64(reorder.ReorderQty),
+		int64(reorder.ReorderQty),
 		reorder.Location,
 		reorder.StagingNode,
 		"standard",
@@ -126,21 +126,22 @@ func (e *Engine) handleOrderCompleted(completed OrderCompletedEvent) {
 	}
 
 	resetUnits := payload.ProductionUnits
-	// If ProductionUnits not configured, try style catalog UOPCapacity
+	// If ProductionUnits not configured, try blueprint catalog UOPCapacity
+	if resetUnits == 0 && payload.BlueprintCode != "" {
+		if bp, err := e.db.GetBlueprintByCode(payload.BlueprintCode); err == nil && bp.UOPCapacity > 0 {
+			resetUnits = bp.UOPCapacity
+		}
+	}
+	// Transitional fallback for payloads without blueprint_code yet
 	if resetUnits == 0 && payload.Description != "" {
-		if style, err := e.db.GetStyleByName(payload.Description); err == nil && style.UOPCapacity > 0 {
-			resetUnits = style.UOPCapacity
+		if bp, err := e.db.GetBlueprintByName(payload.Description); err == nil && bp.UOPCapacity > 0 {
+			resetUnits = bp.UOPCapacity
 		}
 	}
 
 	if err := e.db.ResetPayload(payload.ID, resetUnits); err != nil {
 		log.Printf("reset payload %d: %v", payload.ID, err)
 		return
-	}
-
-	// Track what was delivered ("has") on this payload
-	if err := e.db.UpdatePayloadHasDescription(payload.ID, payload.Description); err != nil {
-		log.Printf("update payload %d has_description: %v", payload.ID, err)
 	}
 
 	// Determine lineID from the job style

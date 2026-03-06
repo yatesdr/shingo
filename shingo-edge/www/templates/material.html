@@ -20,8 +20,7 @@
                 <tr>
                     <th>Description</th>
                     <th>LSL Node</th>
-                    <th>Wants</th>
-                    <th>Has</th>
+                    <th>Blueprint</th>
                     <th>UOP Total</th>
                     <th>Remaining</th>
                     <th>Remaining %</th>
@@ -34,18 +33,7 @@
                 <tr data-payload-id="{{.ID}}">
                     <td>{{.Description}}</td>
                     <td class="mono">{{.Location}}</td>
-                    <td>{{.Description}}</td>
-                    <td>
-                        {{if .HasDescription}}
-                            {{if ne .HasDescription .Description}}
-                                <span style="color:var(--danger);font-weight:600">{{.HasDescription}}</span>
-                            {{else}}
-                                {{.HasDescription}}
-                            {{end}}
-                        {{else}}
-                            <span style="color:var(--text-muted)">--</span>
-                        {{end}}
-                    </td>
+                    <td>{{if .BlueprintCode}}{{.BlueprintCode}}{{else if .Description}}{{.Description}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
                     <td>{{.ProductionUnits}}</td>
                     <td>
                         <span class="cell-clickable payload-remaining" onclick="openPieceCount({{.ID}}, '{{.Description}}', '{{.Location}}', {{.Multiplier}}, {{.Remaining}}, {{.ProductionUnits}})">{{.Remaining}}</span>

@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/protocol"
 	"shingoedge/engine"
 )
 
@@ -41,7 +42,7 @@ func (h *Handlers) apiConfirmDelivery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		FinalCount float64 `json:"final_count"`
+		FinalCount int64   `json:"final_count"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -59,7 +60,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 	var req struct {
 		PayloadID     int64   `json:"payload_id"`
 		RetrieveEmpty bool    `json:"retrieve_empty"`
-		Quantity      float64 `json:"quantity"`
+		Quantity      int64   `json:"quantity"`
 		DeliveryNode  string  `json:"delivery_node"`
 		StagingNode   string  `json:"staging_node"`
 		LoadType      string  `json:"load_type"`
@@ -99,8 +100,8 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PayloadID  int64   `json:"payload_id"`
-		Quantity   float64 `json:"quantity"`
-		PickupNode string  `json:"pickup_node"`
+		Quantity   int64  `json:"quantity"`
+		PickupNode string `json:"pickup_node"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -143,9 +144,9 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PayloadID    int64   `json:"payload_id"`
-		Quantity     float64 `json:"quantity"`
-		PickupNode   string  `json:"pickup_node"`
-		DeliveryNode string  `json:"delivery_node"`
+		Quantity     int64  `json:"quantity"`
+		PickupNode   string `json:"pickup_node"`
+		DeliveryNode string `json:"delivery_node"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -207,7 +208,7 @@ func (h *Handlers) apiSetOrderCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		FinalCount float64 `json:"final_count"`
+		FinalCount int64   `json:"final_count"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -855,6 +856,7 @@ func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 		Location        string  `json:"location"`
 		StagingNode     string  `json:"staging_node"`
 		Description     string  `json:"description"`
+		BlueprintCode   string  `json:"blueprint_code"`
 		Manifest        string  `json:"manifest"`
 		Multiplier      float64 `json:"multiplier"`
 		ProductionUnits int     `json:"production_units"`
@@ -876,7 +878,7 @@ func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 	if req.ReorderQty <= 0 {
 		req.ReorderQty = 1
 	}
-	id, err := h.engine.DB().CreatePayload(req.JobStyleID, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty)
+	id, err := h.engine.DB().CreatePayload(req.JobStyleID, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.BlueprintCode)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -894,6 +896,7 @@ func (h *Handlers) apiUpdatePayload(w http.ResponseWriter, r *http.Request) {
 		Location        string  `json:"location"`
 		StagingNode     string  `json:"staging_node"`
 		Description     string  `json:"description"`
+		BlueprintCode   string  `json:"blueprint_code"`
 		Manifest        string  `json:"manifest"`
 		Multiplier      float64 `json:"multiplier"`
 		ProductionUnits int     `json:"production_units"`
@@ -906,7 +909,7 @@ func (h *Handlers) apiUpdatePayload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdatePayload(id, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty); err != nil {
+	if err := h.engine.DB().UpdatePayload(id, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.BlueprintCode); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1094,15 +1097,29 @@ func (h *Handlers) apiDeleteLocationNode(w http.ResponseWriter, r *http.Request)
 
 func (h *Handlers) apiGetCoreNodes(w http.ResponseWriter, r *http.Request) {
 	nodes := h.engine.CoreNodes()
-	names := make([]string, 0, len(nodes))
-	for name := range nodes {
-		names = append(names, name)
+	infos := make([]protocol.NodeInfo, 0, len(nodes))
+	for _, n := range nodes {
+		infos = append(infos, n)
 	}
-	writeJSON(w, names)
+	writeJSON(w, infos)
 }
 
 func (h *Handlers) apiSyncCoreNodes(w http.ResponseWriter, r *http.Request) {
 	h.engine.RequestNodeSync()
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) apiListBlueprintCatalog(w http.ResponseWriter, r *http.Request) {
+	entries, err := h.engine.DB().ListBlueprintCatalog()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, entries)
+}
+
+func (h *Handlers) apiSyncBlueprintCatalog(w http.ResponseWriter, r *http.Request) {
+	h.engine.RequestCatalogSync()
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

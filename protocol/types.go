@@ -31,7 +31,8 @@ const (
 	SubjectProductionReport    = "production.report"
 	SubjectProductionReportAck = "production.report_ack"
 
-	SubjectEdgeStale = "edge.stale"
+	SubjectEdgeStale           = "edge.stale"
+	SubjectEdgeRegisterRequest = "edge.register_request"
 
 	SubjectNodeListRequest  = "node.list_request"
 	SubjectNodeListResponse = "node.list_response"

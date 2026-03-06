@@ -32,7 +32,7 @@ func (h *Handlers) apiCreateDemand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CatID       string  `json:"cat_id"`
 		Description string  `json:"description"`
-		DemandQty   float64 `json:"demand_qty"`
+		DemandQty   int64   `json:"demand_qty"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -58,8 +58,8 @@ func (h *Handlers) apiUpdateDemand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CatID       string  `json:"cat_id"`
 		Description string  `json:"description"`
-		DemandQty   float64 `json:"demand_qty"`
-		ProducedQty float64 `json:"produced_qty"`
+		DemandQty   int64   `json:"demand_qty"`
+		ProducedQty int64   `json:"produced_qty"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -79,7 +79,7 @@ func (h *Handlers) apiApplyDemand(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Description string  `json:"description"`
-		DemandQty   float64 `json:"demand_qty"`
+		DemandQty   int64   `json:"demand_qty"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -109,7 +109,7 @@ func (h *Handlers) apiApplyAllDemands(w http.ResponseWriter, r *http.Request) {
 		Rows []struct {
 			ID          int64   `json:"id"`
 			Description string  `json:"description"`
-			DemandQty   float64 `json:"demand_qty"`
+			DemandQty   int64   `json:"demand_qty"`
 		} `json:"rows"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -131,7 +131,7 @@ func (h *Handlers) apiSetDemandProduced(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		ProducedQty float64 `json:"produced_qty"`
+		ProducedQty int64   `json:"produced_qty"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return

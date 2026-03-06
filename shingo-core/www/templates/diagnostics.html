@@ -1,47 +1,121 @@
 {{define "content"}}
-<div class="flex flex-between mb-2">
-  <h1>Logs</h1>
-  <div class="flex gap-1" style="align-items:center;">
-    <select id="log-filter" onchange="debugFilter()" style="font-size:0.85rem;padding:2px 6px;">
-      <option value="">All subsystems</option>
-      {{range .Subsystems}}
-      <option value="{{.}}" {{if eq . $.Subsystem}}selected{{end}}>{{.}}</option>
-      {{end}}
-    </select>
-    <label style="display:inline;font-weight:normal;font-size:0.85rem;cursor:pointer;">
-      <input type="checkbox" id="log-autoscroll" checked> Auto-scroll
-    </label>
-    <button class="btn btn-sm btn-danger" onclick="debugClear()">Clear</button>
+<style>
+  .diag-tabs { display:flex; gap:0; margin-bottom:1rem; border-bottom:2px solid var(--border); }
+  .diag-tab { padding:0.5rem 1.2rem; cursor:pointer; border:none; background:none; font-size:0.95rem;
+    border-bottom:2px solid transparent; margin-bottom:-2px; color:var(--text-muted); }
+  .diag-tab.active { color:var(--text); border-bottom-color:var(--primary); font-weight:600; }
+  .diag-tab:hover { color:var(--text); }
+  .cms-pos { background:rgba(34,197,94,0.08); }
+  .cms-neg { background:rgba(239,68,68,0.08); }
+  .cms-qty-pos { color:#16a34a; font-weight:600; }
+  .cms-qty-neg { color:#dc2626; font-weight:600; }
+</style>
+
+<div class="diag-tabs">
+  <button class="diag-tab active" onclick="switchDiagTab('debug')">Debug Log</button>
+  <button class="diag-tab" onclick="switchDiagTab('cms')">CMS Transactions</button>
+</div>
+
+<!-- Debug Log Tab -->
+<div id="tab-debug">
+  <div class="flex flex-between mb-2">
+    <h1>Logs</h1>
+    <div class="flex gap-1" style="align-items:center;">
+      <select id="log-filter" onchange="debugFilter()" style="font-size:0.85rem;padding:2px 6px;">
+        <option value="">All subsystems</option>
+        {{range .Subsystems}}
+        <option value="{{.}}" {{if eq . $.Subsystem}}selected{{end}}>{{.}}</option>
+        {{end}}
+      </select>
+      <label style="display:inline;font-weight:normal;font-size:0.85rem;cursor:pointer;">
+        <input type="checkbox" id="log-autoscroll" checked> Auto-scroll
+      </label>
+      <button class="btn btn-sm btn-danger" onclick="debugClear()">Clear</button>
+    </div>
+  </div>
+
+  <div class="card" style="padding:0;">
+    <div class="debug-log-wrap">
+      <table class="debug-log-table">
+        <thead>
+          <tr>
+            <th style="width:160px;">Time</th>
+            <th style="width:120px;">Subsystem</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody id="debug-log-body">
+          {{range .Entries}}
+          <tr class="debug-row" data-subsystem="{{.Subsystem}}">
+            <td>{{.Time.Format "15:04:05.000"}}</td>
+            <td>{{.Subsystem}}</td>
+            <td>{{.Message}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
-<div class="card" style="padding:0;">
-  <div class="debug-log-wrap">
-    <table class="debug-log-table">
-      <thead>
-        <tr>
-          <th style="width:160px;">Time</th>
-          <th style="width:120px;">Subsystem</th>
-          <th>Message</th>
-        </tr>
-      </thead>
-      <tbody id="debug-log-body">
-        {{range .Entries}}
-        <tr class="debug-row" data-subsystem="{{.Subsystem}}">
-          <td>{{.Time.Format "15:04:05.000"}}</td>
-          <td>{{.Subsystem}}</td>
-          <td>{{.Message}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
+<!-- CMS Transactions Tab -->
+<div id="tab-cms" style="display:none;">
+  <div class="flex flex-between mb-2">
+    <h1>CMS Transactions</h1>
+    <div class="flex gap-1" style="align-items:center;">
+      <input type="text" id="cms-filter-node" placeholder="Filter node..." style="font-size:0.85rem;padding:2px 6px;width:140px;" oninput="cmsFilter()">
+      <select id="cms-filter-src" onchange="cmsFilter()" style="font-size:0.85rem;padding:2px 6px;">
+        <option value="">All sources</option>
+        <option value="movement">Movement</option>
+        <option value="correction">Correction</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card" style="padding:0;">
+    <div class="debug-log-wrap">
+      <table class="debug-log-table">
+        <thead>
+          <tr>
+            <th style="width:150px;">Time</th>
+            <th style="width:120px;">Node</th>
+            <th style="width:80px;">Type</th>
+            <th style="width:100px;">CATID</th>
+            <th style="width:70px;">Delta</th>
+            <th style="width:70px;">Before</th>
+            <th style="width:70px;">After</th>
+            <th style="width:100px;">Bin</th>
+            <th style="width:90px;">Blueprint</th>
+            <th style="width:80px;">Source</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="cms-log-body"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
 <script>
 (function() {
+  // Tab switching
+  window.switchDiagTab = function(tab) {
+    document.getElementById('tab-debug').style.display = tab === 'debug' ? '' : 'none';
+    document.getElementById('tab-cms').style.display = tab === 'cms' ? '' : 'none';
+    var tabs = document.querySelectorAll('.diag-tab');
+    tabs.forEach(function(t) { t.classList.remove('active'); });
+    if (tab === 'debug') tabs[0].classList.add('active');
+    else tabs[1].classList.add('active');
+
+    if (tab === 'cms' && !cmsLoaded) {
+      cmsLoaded = true;
+      loadCMSTransactions();
+    }
+  };
+
+  // --- Debug Log ---
   var body = document.getElementById('debug-log-body');
-  var wrap = document.querySelector('.debug-log-wrap');
+  var wrap = document.querySelector('#tab-debug .debug-log-wrap');
   var autoScroll = document.getElementById('log-autoscroll');
   var filterEl = document.getElementById('log-filter');
   var maxRows = 1000;
@@ -53,7 +127,6 @@
     var ts = entry.time ? new Date(entry.time) : new Date();
     var timeStr = ts.toTimeString().slice(0, 8) + '.' + String(ts.getMilliseconds()).padStart(3, '0');
     tr.innerHTML = '<td>' + timeStr + '</td><td>' + (entry.subsystem || '') + '</td><td>' + escapeHtml(entry.message || '') + '</td>';
-    // Hide if filter is active and doesn't match
     var f = filterEl.value;
     if (f && entry.subsystem !== f) {
       tr.style.display = 'none';
@@ -83,15 +156,84 @@
     }
   };
 
+  if (autoScroll.checked) {
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  // --- CMS Transactions ---
+  var cmsBody = document.getElementById('cms-log-body');
+  var cmsLoaded = false;
+
+  function formatCMSTime(ts) {
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return ts;
+    return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  }
+
+  function makeCMSRow(t) {
+    var tr = document.createElement('tr');
+    var isPos = t.delta >= 0;
+    tr.className = isPos ? 'cms-pos' : 'cms-neg';
+    tr.setAttribute('data-node', (t.node_name || '').toLowerCase());
+    tr.setAttribute('data-src', t.source_type);
+    var qtyClass = isPos ? 'cms-qty-pos' : 'cms-qty-neg';
+    var deltaLabel = isPos ? '+' + t.delta : String(t.delta);
+    tr.innerHTML =
+      '<td>' + formatCMSTime(t.created_at) + '</td>' +
+      '<td>' + escapeHtml(t.node_name || '') + '</td>' +
+      '<td>' + escapeHtml(t.txn_type || '') + '</td>' +
+      '<td>' + escapeHtml(t.cat_id || '') + '</td>' +
+      '<td class="' + qtyClass + '">' + deltaLabel + '</td>' +
+      '<td>' + t.qty_before + '</td>' +
+      '<td>' + t.qty_after + '</td>' +
+      '<td>' + escapeHtml(t.bin_label || '-') + '</td>' +
+      '<td>' + escapeHtml(t.blueprint_code || '') + '</td>' +
+      '<td>' + escapeHtml(t.source_type || '') + '</td>' +
+      '<td>' + escapeHtml(t.notes || '') + '</td>';
+    return tr;
+  }
+
+  function loadCMSTransactions() {
+    fetch('/api/cms-transactions?limit=200')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        cmsBody.innerHTML = '';
+        if (!data) return;
+        data.forEach(function(t) {
+          cmsBody.appendChild(makeCMSRow(t));
+        });
+        cmsFilter();
+      });
+  }
+
+  window.cmsAppendRows = function(txns) {
+    if (!txns) return;
+    txns.forEach(function(t) {
+      var tr = makeCMSRow(t);
+      cmsBody.insertBefore(tr, cmsBody.firstChild);
+    });
+    while (cmsBody.children.length > maxRows) {
+      cmsBody.removeChild(cmsBody.lastChild);
+    }
+    cmsFilter();
+  };
+
+  window.cmsFilter = function() {
+    var nodeF = (document.getElementById('cms-filter-node').value || '').toLowerCase();
+    var srcF = document.getElementById('cms-filter-src').value;
+    var rows = cmsBody.querySelectorAll('tr');
+    for (var i = 0; i < rows.length; i++) {
+      var show = true;
+      if (nodeF && rows[i].getAttribute('data-node').indexOf(nodeF) === -1) show = false;
+      if (srcF && rows[i].getAttribute('data-src') !== srcF) show = false;
+      rows[i].style.display = show ? '' : 'none';
+    }
+  };
+
   function escapeHtml(s) {
     var d = document.createElement('div');
     d.appendChild(document.createTextNode(s));
     return d.innerHTML;
-  }
-
-  // Auto-scroll to bottom on load
-  if (autoScroll.checked) {
-    wrap.scrollTop = wrap.scrollHeight;
   }
 })();
 </script>

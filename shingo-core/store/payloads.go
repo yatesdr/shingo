@@ -87,6 +87,49 @@ func (db *DB) CreatePayload(p *Payload) error {
 	return nil
 }
 
+// CreatePayloadWithManifest creates a payload and copies the blueprint's manifest
+// items into the payload's manifest in a single transaction.
+func (db *DB) CreatePayloadWithManifest(p *Payload) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.Exec(db.Q(`INSERT INTO payloads (blueprint_id, bin_id, status, uop_remaining, loaded_at, notes) VALUES (?, ?, ?, ?, ?, ?)`),
+		p.BlueprintID, nullableInt64(p.BinID), p.Status, p.UOPRemaining, nullableTime(p.LoadedAt), p.Notes)
+	if err != nil {
+		return fmt.Errorf("create payload: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("create payload last id: %w", err)
+	}
+	p.ID = id
+
+	// Copy blueprint manifest items
+	rows, err := db.Query(db.Q(`SELECT part_number, quantity, description FROM blueprint_manifest WHERE blueprint_id=? ORDER BY id`), p.BlueprintID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var partNumber, description string
+			var quantity int64
+			if err := rows.Scan(&partNumber, &quantity, &description); err != nil {
+				continue
+			}
+			tx.Exec(db.Q(`INSERT INTO manifest_items (payload_id, part_number, quantity, notes) VALUES (?, ?, ?, ?)`),
+				p.ID, partNumber, quantity, description)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit payload+manifest: %w", err)
+	}
+
+	db.logPayloadEvent(id, PayloadEventCreated, fmt.Sprintf("blueprint_id=%d status=%s", p.BlueprintID, p.Status))
+	return nil
+}
+
 func (db *DB) UpdatePayload(p *Payload) error {
 	_, err := db.Exec(db.Q(`UPDATE payloads SET blueprint_id=?, bin_id=?, status=?, uop_remaining=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?`),
 		p.BlueprintID, nullableInt64(p.BinID), p.Status, p.UOPRemaining, p.Notes, p.ID)

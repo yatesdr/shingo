@@ -1,6 +1,9 @@
 package engine
 
-import "shingocore/fleet"
+import (
+	"shingocore/fleet"
+	"shingocore/store"
+)
 
 const (
 	EventOrderReceived EventType = iota + 1
@@ -19,6 +22,7 @@ const (
 	EventDBConnected
 	EventDBDisconnected
 	EventRobotsUpdated
+	EventCMSTransaction
 )
 
 // --- Event payloads ---
@@ -99,4 +103,8 @@ type ConnectionEvent struct {
 
 type RobotsUpdatedEvent struct {
 	Robots []fleet.RobotStatus
+}
+
+type CMSTransactionEvent struct {
+	Transactions []*store.CMSTransaction
 }

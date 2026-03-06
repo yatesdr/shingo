@@ -10,14 +10,14 @@ type Demand struct {
 	ID          int64   `json:"id"`
 	CatID       string  `json:"cat_id"`
 	Description string  `json:"description"`
-	DemandQty   float64 `json:"demand_qty"`
-	ProducedQty float64 `json:"produced_qty"`
+	DemandQty   int64 `json:"demand_qty"`
+	ProducedQty int64 `json:"produced_qty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // Remaining returns demand_qty - produced_qty.
-func (d *Demand) Remaining() float64 {
+func (d *Demand) Remaining() int64 {
 	r := d.DemandQty - d.ProducedQty
 	if r < 0 {
 		return 0
@@ -30,8 +30,8 @@ type ProductionLogEntry struct {
 	ID         int64   `json:"id"`
 	CatID      string  `json:"cat_id"`
 	StationID  string  `json:"station_id"`
-	Quantity   float64 `json:"quantity"`
-	ReportedAt string  `json:"reported_at"`
+	Quantity   int64  `json:"quantity"`
+	ReportedAt string `json:"reported_at"`
 }
 
 const demandSelectCols = `id, cat_id, description, demand_qty, produced_qty, created_at, updated_at`
@@ -60,7 +60,7 @@ func scanDemands(rows *sql.Rows) ([]*Demand, error) {
 	return demands, rows.Err()
 }
 
-func (db *DB) CreateDemand(catID, description string, demandQty float64) (int64, error) {
+func (db *DB) CreateDemand(catID, description string, demandQty int64) (int64, error) {
 	res, err := db.Exec(db.Q(`INSERT INTO demands (cat_id, description, demand_qty) VALUES (?, ?, ?)`),
 		catID, description, demandQty)
 	if err != nil {
@@ -69,13 +69,13 @@ func (db *DB) CreateDemand(catID, description string, demandQty float64) (int64,
 	return res.LastInsertId()
 }
 
-func (db *DB) UpdateDemand(id int64, catID, description string, demandQty, producedQty float64) error {
+func (db *DB) UpdateDemand(id int64, catID, description string, demandQty, producedQty int64) error {
 	_, err := db.Exec(db.Q(`UPDATE demands SET cat_id=?, description=?, demand_qty=?, produced_qty=?, updated_at=datetime('now','localtime') WHERE id=?`),
 		catID, description, demandQty, producedQty, id)
 	return err
 }
 
-func (db *DB) UpdateDemandAndResetProduced(id int64, description string, demandQty float64) error {
+func (db *DB) UpdateDemandAndResetProduced(id int64, description string, demandQty int64) error {
 	_, err := db.Exec(db.Q(`UPDATE demands SET description=?, demand_qty=?, produced_qty=0, updated_at=datetime('now','localtime') WHERE id=?`),
 		description, demandQty, id)
 	return err
@@ -105,7 +105,7 @@ func (db *DB) GetDemandByCatID(catID string) (*Demand, error) {
 	return scanDemand(row)
 }
 
-func (db *DB) IncrementProduced(catID string, qty float64) error {
+func (db *DB) IncrementProduced(catID string, qty int64) error {
 	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = produced_qty + ?, updated_at=datetime('now','localtime') WHERE cat_id=?`),
 		qty, catID)
 	return err
@@ -121,12 +121,12 @@ func (db *DB) ClearProduced(id int64) error {
 	return err
 }
 
-func (db *DB) SetProduced(id int64, qty float64) error {
+func (db *DB) SetProduced(id int64, qty int64) error {
 	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = ?, updated_at=datetime('now','localtime') WHERE id=?`), qty, id)
 	return err
 }
 
-func (db *DB) LogProduction(catID, stationID string, qty float64) error {
+func (db *DB) LogProduction(catID, stationID string, qty int64) error {
 	_, err := db.Exec(db.Q(`INSERT INTO production_log (cat_id, station_id, quantity) VALUES (?, ?, ?)`),
 		catID, stationID, qty)
 	return err

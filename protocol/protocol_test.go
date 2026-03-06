@@ -60,7 +60,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 		t.Errorf("order_uuid = %q, want %q", req.OrderUUID, "test-uuid-123")
 	}
 	if req.Quantity != 10 {
-		t.Errorf("quantity = %f, want 10", req.Quantity)
+		t.Errorf("quantity = %d, want 10", req.Quantity)
 	}
 }
 
@@ -385,6 +385,132 @@ func TestDataWireFormat(t *testing.T) {
 	}
 	if hb.Orders != 2 {
 		t.Errorf("orders = %d, want 2", hb.Orders)
+	}
+}
+
+func TestSignAndVerify(t *testing.T) {
+	key := []byte("test-secret-key-1234")
+
+	env, _ := NewEnvelope(TypeOrderRequest,
+		Address{Role: RoleEdge, Station: "line-1"},
+		Address{Role: RoleCore},
+		&OrderRequest{OrderUUID: "uuid-sign-test", OrderType: "retrieve"},
+	)
+	data, _ := env.Encode()
+
+	// Sign
+	signed, err := Sign(data, key)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	// Verify with correct key
+	unwrapped, err := VerifyAndUnwrap(signed, key)
+	if err != nil {
+		t.Fatalf("VerifyAndUnwrap: %v", err)
+	}
+
+	// Should be identical to original
+	if string(unwrapped) != string(data) {
+		t.Error("unwrapped data does not match original")
+	}
+}
+
+func TestVerifyRejectsWrongKey(t *testing.T) {
+	key := []byte("correct-key")
+	wrongKey := []byte("wrong-key")
+
+	env, _ := NewEnvelope(TypeOrderRequest,
+		Address{Role: RoleEdge, Station: "line-1"},
+		Address{Role: RoleCore},
+		&OrderRequest{OrderUUID: "uuid-1"},
+	)
+	data, _ := env.Encode()
+	signed, _ := Sign(data, key)
+
+	_, err := VerifyAndUnwrap(signed, wrongKey)
+	if err != ErrInvalidSignature {
+		t.Errorf("expected ErrInvalidSignature, got %v", err)
+	}
+}
+
+func TestVerifyRejectsUnsignedWhenKeySet(t *testing.T) {
+	key := []byte("my-key")
+
+	// Plain envelope JSON (not wrapped in signed format)
+	env, _ := NewEnvelope(TypeOrderRequest,
+		Address{Role: RoleEdge, Station: "line-1"},
+		Address{Role: RoleCore},
+		&OrderRequest{OrderUUID: "uuid-1"},
+	)
+	data, _ := env.Encode()
+
+	_, err := VerifyAndUnwrap(data, key)
+	if err != ErrInvalidSignature {
+		t.Errorf("expected ErrInvalidSignature for unsigned message, got %v", err)
+	}
+}
+
+func TestVerifyPassthroughWhenNoKey(t *testing.T) {
+	data := []byte(`{"v":1,"type":"order.request"}`)
+
+	// nil key = signing disabled, should pass through
+	out, err := VerifyAndUnwrap(data, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != string(data) {
+		t.Error("data should pass through unchanged when key is nil")
+	}
+
+	// empty key = same behavior
+	out, err = VerifyAndUnwrap(data, []byte{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(out) != string(data) {
+		t.Error("data should pass through unchanged when key is empty")
+	}
+}
+
+func TestIngestorWithSigning(t *testing.T) {
+	key := []byte("ingestor-test-key")
+	handler := &testHandler{}
+	ingestor := NewIngestor(handler, nil)
+	ingestor.SigningKey = key
+
+	// Create and sign a valid message
+	env, _ := NewDataEnvelope(SubjectEdgeRegister,
+		Address{Role: RoleEdge, Station: "test-node"},
+		Address{Role: RoleCore},
+		&EdgeRegister{StationID: "test-node"},
+	)
+	data, _ := env.Encode()
+	signed, _ := Sign(data, key)
+
+	ingestor.HandleRaw(signed)
+	if !handler.dataCalled {
+		t.Error("expected HandleData to be called for valid signed message")
+	}
+}
+
+func TestIngestorRejectsUnsignedWhenKeySet(t *testing.T) {
+	key := []byte("ingestor-test-key")
+	handler := &testHandler{}
+	ingestor := NewIngestor(handler, nil)
+	ingestor.SigningKey = key
+
+	// Send unsigned message
+	env, _ := NewDataEnvelope(SubjectEdgeRegister,
+		Address{Role: RoleEdge, Station: "test-node"},
+		Address{Role: RoleCore},
+		&EdgeRegister{StationID: "test-node"},
+	)
+	data, _ := env.Encode()
+
+	ingestor.HandleRaw(data)
+	if handler.dataCalled {
+		t.Error("expected handler NOT to be called for unsigned message when signing is enabled")
 	}
 }
 

@@ -6,7 +6,7 @@ type BlueprintManifestItem struct {
 	ID          int64     `json:"id"`
 	BlueprintID int64     `json:"blueprint_id"`
 	PartNumber  string    `json:"part_number"`
-	Quantity    float64   `json:"quantity"`
+	Quantity    int64     `json:"quantity"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 }

@@ -115,6 +115,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Get("/payloads/by-node", h.apiPayloadsByNode)
 		r.Get("/bins/by-node", h.apiBinsByNode)
 		r.Get("/corrections", h.apiListNodeCorrections)
+		r.Get("/cms-transactions", h.apiListCMSTransactions)
 		r.Get("/demands", h.apiListDemands)
 		r.Get("/demands/{id}/log", h.apiDemandLog)
 		r.Get("/health", h.apiHealthCheck)
@@ -168,6 +169,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			r.Post("/nodes/reparent", h.apiReparentNode)
 
 			r.Post("/corrections/create", h.apiCreateCorrection)
+			r.Post("/corrections/batch", h.apiApplyBatchCorrection)
 
 			r.Post("/fleet/proxy", h.apiFleetProxy)
 

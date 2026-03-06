@@ -15,7 +15,7 @@ func (h *Handlers) apiTestOrderSubmit(w http.ResponseWriter, r *http.Request) {
 		PickupNode      string  `json:"pickup_node"`
 		DeliveryNode    string  `json:"delivery_node"`
 		BlueprintCode string  `json:"blueprint_code"`
-		Quantity        float64 `json:"quantity"`
+		Quantity        int64   `json:"quantity"`
 		Priority        int     `json:"priority"`
 	}
 	if !h.parseJSON(w, r, &req) {
@@ -128,7 +128,7 @@ func (h *Handlers) apiTestOrderReceipt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OrderUUID   string  `json:"order_uuid"`
 		ReceiptType string  `json:"receipt_type"`
-		FinalCount  float64 `json:"final_count"`
+		FinalCount  int64   `json:"final_count"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return

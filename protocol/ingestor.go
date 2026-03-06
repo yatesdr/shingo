@@ -32,9 +32,10 @@ type MessageHandler interface {
 
 // Ingestor performs two-phase decode and dispatches to a MessageHandler.
 type Ingestor struct {
-	handler  MessageHandler
-	filter   FilterFunc
-	DebugLog func(string, ...any)
+	handler    MessageHandler
+	filter     FilterFunc
+	SigningKey []byte // optional HMAC-SHA256 key; when set, unsigned messages are rejected
+	DebugLog   func(string, ...any)
 }
 
 // NewIngestor creates an ingestor with the given handler and filter.
@@ -54,6 +55,15 @@ func (ing *Ingestor) dbg(format string, args ...any) {
 // HandleRaw is the entry point for raw message bytes from the messaging layer.
 func (ing *Ingestor) HandleRaw(data []byte) {
 	ing.dbg("raw: size=%d data=%s", len(data), truncateBytes(data, 1024))
+
+	// Verify signature if signing is enabled
+	inner, err := VerifyAndUnwrap(data, ing.SigningKey)
+	if err != nil {
+		log.Printf("protocol: dropping message with invalid signature")
+		ing.dbg("signature verification failed: %v", err)
+		return
+	}
+	data = inner
 
 	// Phase 1: decode routing header only
 	var hdr RawHeader

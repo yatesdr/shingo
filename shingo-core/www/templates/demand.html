@@ -214,8 +214,8 @@ function stopEditProduced(input) {
 function checkDirty(tr) {
   var demandInput = tr.querySelector('[name="demand_qty"]');
   var producedInput = tr.querySelector('[name="produced_qty"]');
-  var demandDirty = (parseFloat(demandInput.value) || 0) !== (parseFloat(tr.dataset.origDemand) || 0);
-  var producedDirty = (parseFloat(producedInput.value) || 0) !== (parseFloat(tr.dataset.origProduced) || 0);
+  var demandDirty = (parseInt(demandInput.value) || 0) !== (parseInt(tr.dataset.origDemand) || 0);
+  var producedDirty = (parseInt(producedInput.value) || 0) !== (parseInt(tr.dataset.origProduced) || 0);
   demandInput.parentElement.classList.toggle('cell-dirty', demandDirty);
   producedInput.parentElement.classList.toggle('cell-dirty', producedDirty);
 }
@@ -234,7 +234,7 @@ async function addMaterial() {
   var body = {
     cat_id: catId,
     description: document.getElementById('add-description').value,
-    demand_qty: parseFloat(document.getElementById('add-demand-qty').value) || 0
+    demand_qty: parseInt(document.getElementById('add-demand-qty').value) || 0
   };
   try {
     var res = await fetch('/api/demands', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
@@ -259,8 +259,8 @@ async function saveEdit() {
   var body = {
     cat_id: document.getElementById('edit-cat-id').value.trim(),
     description: document.getElementById('edit-description').value,
-    demand_qty: parseFloat(tr.querySelector('[name="demand_qty"]').value) || 0,
-    produced_qty: parseFloat(tr.querySelector('[name="produced_qty"]').value) || 0
+    demand_qty: parseInt(tr.querySelector('[name="demand_qty"]').value) || 0,
+    produced_qty: parseInt(tr.querySelector('[name="produced_qty"]').value) || 0
   };
   if (!body.cat_id) { alert('Cat-ID is required'); return; }
   try {
@@ -276,8 +276,8 @@ function getRowData(tr) {
     id: parseInt(tr.dataset.id),
     cat_id: tr.dataset.cat,
     description: tr.dataset.origDesc,
-    demand_qty: parseFloat(tr.querySelector('[name="demand_qty"]').value) || 0,
-    produced_qty: parseFloat(tr.querySelector('[name="produced_qty"]').value) || 0
+    demand_qty: parseInt(tr.querySelector('[name="demand_qty"]').value) || 0,
+    produced_qty: parseInt(tr.querySelector('[name="produced_qty"]').value) || 0
   };
 }
 

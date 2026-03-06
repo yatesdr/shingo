@@ -116,7 +116,7 @@ async function createOrder() {
     var payloadID = parseInt(document.getElementById('mo-payload').value) || 0;
     var body = {
         payload_id: payloadID || null,
-        quantity: parseFloat(document.getElementById('mo-qty').value),
+        quantity: parseInt(document.getElementById('mo-qty').value) || 0,
         delivery_node: document.getElementById('mo-delivery').value,
         pickup_node: document.getElementById('mo-pickup').value
     };
@@ -155,7 +155,7 @@ ShingoEdge.createSSE('/events', {
             });
             // Re-add core nodes at the top (after blank first option if any)
             var ref = sel.options[1] || null;
-            nodes.sort().forEach(function(n) {
+            nodes.map(function(n) { return n.name; }).sort().forEach(function(n) {
                 var opt = document.createElement('option');
                 opt.value = n;
                 opt.textContent = n;

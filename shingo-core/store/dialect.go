@@ -62,3 +62,11 @@ func nullableInt64(p *int64) any {
 	}
 	return nil
 }
+
+// nullableTime converts a *time.Time to a value suitable for SQL params (nil-safe).
+func nullableTime(p *time.Time) any {
+	if p != nil {
+		return *p
+	}
+	return nil
+}

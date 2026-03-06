@@ -35,14 +35,22 @@ func (db *DB) RegisterEdge(stationID, hostname, version string, lineIDs []string
 	return err
 }
 
-// UpdateHeartbeat updates the last_heartbeat timestamp and sets status to active.
-func (db *DB) UpdateHeartbeat(stationID string) error {
-	_, err := db.Exec(db.Q(`
-		UPDATE edge_registry
-		SET last_heartbeat = datetime('now','localtime'), status = 'active'
-		WHERE station_id = ?
+// UpdateHeartbeat upserts the last_heartbeat timestamp and sets status to active.
+// If the edge hasn't registered yet, creates a minimal registry entry.
+// Returns true if a new row was inserted (unregistered edge detected).
+func (db *DB) UpdateHeartbeat(stationID string) (isNew bool, err error) {
+	// Check existence first — ON CONFLICT doesn't reliably report insert vs update
+	var exists bool
+	db.QueryRow(db.Q(`SELECT 1 FROM edge_registry WHERE station_id = ?`), stationID).Scan(&exists)
+
+	_, err = db.Exec(db.Q(`
+		INSERT INTO edge_registry (station_id, last_heartbeat, status)
+		VALUES (?, datetime('now','localtime'), 'active')
+		ON CONFLICT(station_id) DO UPDATE SET
+			last_heartbeat = datetime('now','localtime'),
+			status = 'active'
 	`), stationID)
-	return err
+	return !exists, err
 }
 
 // ListEdges returns all registered edges.

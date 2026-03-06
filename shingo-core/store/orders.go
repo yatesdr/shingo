@@ -12,7 +12,7 @@ type Order struct {
 	StationID     string     `json:"station_id"`
 	OrderType     string     `json:"order_type"`
 	Status        string     `json:"status"`
-	Quantity      float64    `json:"quantity"`
+	Quantity      int64      `json:"quantity"`
 	PickupNode    string     `json:"pickup_node"`
 	DeliveryNode  string     `json:"delivery_node"`
 	VendorOrderID string     `json:"vendor_order_id"`
