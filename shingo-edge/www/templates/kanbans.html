@@ -40,6 +40,9 @@
                         {{if eq .Status "delivered"}}
                             <button class="btn btn-sm btn-primary" onclick="confirmDelivery({{.ID}}, {{.Quantity}})">Confirm</button>
                         {{end}}
+                        {{if eq .Status "staged"}}
+                            <button class="btn btn-sm btn-primary" onclick="releaseOrder({{.ID}})">Release</button>
+                        {{end}}
                         {{if eq .Status "pending"}}
                             <button class="btn btn-sm btn-primary" onclick="submitOrder({{.ID}})">Submit</button>
                         {{end}}
@@ -105,6 +108,14 @@ async function submitOrder(orderID) {
     try {
         await ShingoEdge.api.post('/api/orders/' + orderID + '/submit', {});
         ShingoEdge.toast('Order submitted', 'success');
+        location.reload();
+    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+}
+
+async function releaseOrder(orderID) {
+    try {
+        await ShingoEdge.api.post('/api/orders/' + orderID + '/release', {});
+        ShingoEdge.toast('Order released from staging', 'success');
         location.reload();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }

@@ -178,6 +178,11 @@ func (db *DB) UpdateOrderDeliveryNode(id int64, deliveryNode string) error {
 	return err
 }
 
+func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
+	_, err := db.Exec(`UPDATE orders SET steps_json=?, updated_at=datetime('now','localtime') WHERE id=?`, stepsJSON, id)
+	return err
+}
+
 func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail string) error {
 	_, err := db.Exec(`INSERT INTO order_history (order_id, old_status, new_status, detail) VALUES (?, ?, ?, ?)`,
 		orderID, oldStatus, newStatus, detail)

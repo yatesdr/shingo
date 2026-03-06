@@ -168,6 +168,85 @@ func (m *Manager) CreateMoveOrder(payloadID *int64, quantity int64, pickupNode, 
 	return m.db.GetOrder(orderID)
 }
 
+// CreateComplexOrder creates a new multi-step complex order and enqueues it to the outbox.
+func (m *Manager) CreateComplexOrder(payloadID *int64, quantity int64, steps []protocol.ComplexOrderStep) (*store.Order, error) {
+	orderUUID := uuid.New().String()
+
+	stepsJSON, err := json.Marshal(steps)
+	if err != nil {
+		return nil, fmt.Errorf("marshal steps: %w", err)
+	}
+
+	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
+		payloadID, false,
+		quantity, "", "", "", "", false)
+	if err != nil {
+		return nil, fmt.Errorf("create complex order: %w", err)
+	}
+
+	// Store steps JSON
+	if err := m.db.UpdateOrderStepsJSON(orderID, string(stepsJSON)); err != nil {
+		return nil, fmt.Errorf("store steps: %w", err)
+	}
+
+	// Look up payload description and blueprint code for message
+	var payloadDesc, blueprintCode string
+	if payloadID != nil {
+		if p, err := m.db.GetPayload(*payloadID); err == nil {
+			payloadDesc = p.Description
+			blueprintCode = p.BlueprintCode
+		}
+	}
+
+	// Build and enqueue protocol envelope
+	env, err := protocol.NewEnvelope(protocol.TypeComplexOrderRequest, m.src(), m.dst(), &protocol.ComplexOrderRequest{
+		OrderUUID:     orderUUID,
+		BlueprintCode: blueprintCode,
+		PayloadDesc:   payloadDesc,
+		Quantity:      quantity,
+		Steps:         steps,
+	})
+	if err != nil {
+		log.Printf("build envelope for complex order %s: %v", orderUUID, err)
+	} else if err := m.enqueueEnvelope(env); err != nil {
+		log.Printf("enqueue complex order %s: %v", orderUUID, err)
+	}
+
+	// Auto-submit
+	if err := m.TransitionOrder(orderID, StatusSubmitted, "auto-submitted at creation"); err != nil {
+		log.Printf("auto-submit complex order %s: %v", orderUUID, err)
+	}
+
+	m.debug("create: type=%s id=%d uuid=%s steps=%d", TypeComplex, orderID, orderUUID, len(steps))
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeComplex)
+
+	return m.db.GetOrder(orderID)
+}
+
+// ReleaseOrder sends a release message for a staged (dwelling) order.
+func (m *Manager) ReleaseOrder(orderID int64) error {
+	order, err := m.db.GetOrder(orderID)
+	if err != nil {
+		return fmt.Errorf("get order: %w", err)
+	}
+	if order.Status != StatusStaged {
+		return fmt.Errorf("order must be in staged status to release, got %s", order.Status)
+	}
+
+	env, err := protocol.NewEnvelope(protocol.TypeOrderRelease, m.src(), m.dst(), &protocol.OrderRelease{
+		OrderUUID: order.UUID,
+	})
+	if err != nil {
+		return fmt.Errorf("build release envelope: %w", err)
+	}
+	if err := m.enqueueEnvelope(env); err != nil {
+		return fmt.Errorf("enqueue release: %w", err)
+	}
+
+	m.debug("release: id=%d uuid=%s", orderID, order.UUID)
+	return nil
+}
+
 // TransitionOrder moves an order to a new status with validation.
 func (m *Manager) TransitionOrder(orderID int64, newStatus, detail string) error {
 	order, err := m.db.GetOrder(orderID)
@@ -367,6 +446,8 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		return nil
 	case "error":
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
+	case "staged":
+		return m.TransitionOrder(order.ID, StatusStaged, statusDetail)
 	case "cancelled":
 		return m.TransitionOrder(order.ID, StatusCancelled, statusDetail)
 	default:

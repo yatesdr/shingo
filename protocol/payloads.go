@@ -144,6 +144,36 @@ type OrderCancelled struct {
 	Reason    string `json:"reason"`
 }
 
+// --- Complex order payloads ---
+
+// ComplexOrderStep describes a single step in a complex (multi-leg) order.
+type ComplexOrderStep struct {
+	Action    string `json:"action"`                // "pickup", "dropoff", "wait"
+	Node      string `json:"node,omitempty"`         // exact node (for dropoff to staging/production)
+	NodeGroup string `json:"node_group,omitempty"`   // synthetic parent (for pickup from storage)
+}
+
+// ComplexOrderRequest is a multi-step transport order from edge.
+type ComplexOrderRequest struct {
+	OrderUUID     string             `json:"order_uuid"`
+	BlueprintCode string             `json:"blueprint_code,omitempty"`
+	PayloadDesc   string             `json:"payload_desc,omitempty"`
+	Quantity      int64              `json:"quantity"`
+	Priority      int                `json:"priority,omitempty"`
+	Steps         []ComplexOrderStep `json:"steps"`
+}
+
+// OrderRelease signals that a staged (dwelling) order should resume.
+type OrderRelease struct {
+	OrderUUID string `json:"order_uuid"`
+}
+
+// OrderStaged notifies edge that an order is dwelling at a staging node.
+type OrderStaged struct {
+	OrderUUID string `json:"order_uuid"`
+	Detail    string `json:"detail,omitempty"`
+}
+
 // --- Node list data schemas ---
 
 // NodeListRequest is sent by edge to request the core's node list.

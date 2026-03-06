@@ -26,6 +26,12 @@ type Backend interface {
 	// IsTerminalState returns true if the vendor state represents a terminal state.
 	IsTerminalState(vendorState string) bool
 
+	// CreateStagedOrder creates an incremental (incomplete) order for multi-step transport.
+	CreateStagedOrder(req StagedOrderRequest) (TransportOrderResult, error)
+
+	// ReleaseOrder appends blocks to an incomplete order and marks it complete.
+	ReleaseOrder(vendorOrderID string, blocks []OrderBlock) error
+
 	// Reconfigure applies configuration changes at runtime.
 	Reconfigure(cfg ReconfigureParams)
 }
@@ -48,4 +54,18 @@ type TransportOrderRequest struct {
 // TransportOrderResult contains the result of a successful order creation.
 type TransportOrderResult struct {
 	VendorOrderID string // The ID assigned by the vendor system
+}
+
+// OrderBlock describes a single block in an incremental RDS order.
+type OrderBlock struct {
+	BlockID  string
+	Location string
+}
+
+// StagedOrderRequest contains parameters for creating an incremental (incomplete) order.
+type StagedOrderRequest struct {
+	OrderID    string
+	ExternalID string
+	Blocks     []OrderBlock
+	Priority   int
 }

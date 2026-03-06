@@ -149,6 +149,16 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		e.logFn("engine: status update: %v", err)
 	}
 
+	// Send dedicated staged notification when robot is dwelling
+	if newStatus == dispatch.StatusStaged {
+		if err := e.sendToEdge(protocol.TypeOrderStaged, order.StationID, &protocol.OrderStaged{
+			OrderUUID: order.EdgeUUID,
+			Detail:    "robot dwelling at staging node",
+		}); err != nil {
+			e.logFn("engine: staged notification: %v", err)
+		}
+	}
+
 	// Handle terminal states
 	if e.fleet.IsTerminalState(ev.NewStatus) {
 		switch newStatus {

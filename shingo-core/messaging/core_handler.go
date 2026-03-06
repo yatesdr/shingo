@@ -235,6 +235,18 @@ func (h *CoreHandler) HandleOrderStorageWaybill(env *protocol.Envelope, p *proto
 	h.dispatcher.HandleOrderStorageWaybill(env, p)
 }
 
+func (h *CoreHandler) HandleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
+	log.Printf("core_handler: complex order from %s: uuid=%s steps=%d", env.Src.Station, p.OrderUUID, len(p.Steps))
+	h.dbg("-> complex_order from=%s uuid=%s steps=%d", env.Src.Station, p.OrderUUID, len(p.Steps))
+	h.dispatcher.HandleComplexOrderRequest(env, p)
+}
+
+func (h *CoreHandler) HandleOrderRelease(env *protocol.Envelope, p *protocol.OrderRelease) {
+	log.Printf("core_handler: order release from %s: uuid=%s", env.Src.Station, p.OrderUUID)
+	h.dbg("-> order_release from=%s uuid=%s", env.Src.Station, p.OrderUUID)
+	h.dispatcher.HandleOrderRelease(env, p)
+}
+
 func (h *CoreHandler) handleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
 	log.Printf("core_handler: production report from %s: %d entries", rpt.StationID, len(rpt.Reports))
 	accepted := 0

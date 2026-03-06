@@ -167,3 +167,11 @@ func (h *EdgeHandler) HandleOrderCancelled(env *protocol.Envelope, p *protocol.O
 		log.Printf("edge_handler: handle cancelled for %s: %v", p.OrderUUID, err)
 	}
 }
+
+func (h *EdgeHandler) HandleOrderStaged(env *protocol.Envelope, p *protocol.OrderStaged) {
+	h.debug("order_staged uuid=%s detail=%s", p.OrderUUID, p.Detail)
+	log.Printf("edge_handler: order staged: uuid=%s detail=%s", p.OrderUUID, p.Detail)
+	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, "staged", "", "", p.Detail); err != nil {
+		log.Printf("edge_handler: handle staged for %s: %v", p.OrderUUID, err)
+	}
+}

@@ -83,6 +83,32 @@ func (a *Adapter) IsTerminalState(vendorState string) bool {
 	return IsTerminalState(vendorState)
 }
 
+func (a *Adapter) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
+	blocks := make([]rds.Block, len(req.Blocks))
+	for i, b := range req.Blocks {
+		blocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location}
+	}
+	rdsReq := &rds.SetOrderRequest{
+		ID:         req.OrderID,
+		ExternalID: req.ExternalID,
+		Blocks:     blocks,
+		Complete:   false,
+		Priority:   req.Priority,
+	}
+	if err := a.client.CreateOrder(rdsReq); err != nil {
+		return fleet.TransportOrderResult{}, err
+	}
+	return fleet.TransportOrderResult{VendorOrderID: req.OrderID}, nil
+}
+
+func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
+	rdsBlocks := make([]rds.Block, len(blocks))
+	for i, b := range blocks {
+		rdsBlocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location}
+	}
+	return a.client.AddBlocks(vendorOrderID, rdsBlocks, true)
+}
+
 func (a *Adapter) Reconfigure(cfg fleet.ReconfigureParams) {
 	timeout := cfg.Timeout
 	if timeout == 0 {

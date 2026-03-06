@@ -141,7 +141,16 @@ func (db *DB) migrate() error {
 	db.migrateDropNodeType()
 	db.migrateCMSTransactions()
 	db.migrateQuantitiesToInteger()
+	db.migrateStepsJSON()
 	return nil
+}
+
+// migrateStepsJSON adds the steps_json column to orders for complex multi-step orders.
+func (db *DB) migrateStepsJSON() {
+	if db.columnExists("orders", "steps_json") {
+		return
+	}
+	db.Exec(`ALTER TABLE orders ADD COLUMN steps_json TEXT NOT NULL DEFAULT ''`)
 }
 
 // migrateQuantitiesToInteger converts quantity columns from DOUBLE PRECISION to BIGINT

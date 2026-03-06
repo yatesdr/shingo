@@ -28,6 +28,7 @@ type Order struct {
 	PayloadID     *int64     `json:"payload_id,omitempty"`
 	ParentOrderID *int64     `json:"parent_order_id,omitempty"`
 	Sequence      int        `json:"sequence"`
+	StepsJSON     string     `json:"steps_json,omitempty"`
 }
 
 type OrderHistory struct {
@@ -38,7 +39,7 @@ type OrderHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, blueprint_id, payload_id, parent_order_id, sequence`
+const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, blueprint_id, payload_id, parent_order_id, sequence, steps_json`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
@@ -50,7 +51,7 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&o.Quantity,
 		&o.PickupNode, &o.DeliveryNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &createdAt, &updatedAt, &completedAt,
-		&blueprintID, &payloadID, &parentOrderID, &o.Sequence)
+		&blueprintID, &payloadID, &parentOrderID, &o.Sequence, &o.StepsJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -82,12 +83,12 @@ func scanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 func (db *DB) CreateOrder(o *Order) error {
-	result, err := db.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, blueprint_id, payload_id, parent_order_id, sequence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+	result, err := db.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, blueprint_id, payload_id, parent_order_id, sequence, steps_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
 		nullableInt64(o.BlueprintID), nullableInt64(o.PayloadID),
-		nullableInt64(o.ParentOrderID), o.Sequence)
+		nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -115,12 +116,12 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 
 	for _, c := range children {
 		o := c.Order
-		result, err := tx.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, blueprint_id, payload_id, parent_order_id, sequence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		result, err := tx.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, blueprint_id, payload_id, parent_order_id, sequence, steps_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
 			o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
 			nullableInt64(o.BlueprintID), nullableInt64(o.PayloadID),
-			nullableInt64(o.ParentOrderID), o.Sequence)
+			nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON)
 		if err != nil {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
@@ -268,7 +269,7 @@ func (db *DB) ListOrdersByStation(stationID string, limit int) ([]*Order, error)
 
 // ListDispatchedVendorOrderIDs returns vendor order IDs for all non-terminal orders.
 func (db *DB) ListDispatchedVendorOrderIDs() ([]string, error) {
-	rows, err := db.Query(db.Q(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN ('dispatched', 'in_transit')`))
+	rows, err := db.Query(db.Q(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN ('dispatched', 'in_transit', 'staged')`))
 	if err != nil {
 		return nil, err
 	}

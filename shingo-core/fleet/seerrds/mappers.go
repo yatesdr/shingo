@@ -13,6 +13,8 @@ func MapState(vendorState string) string {
 		return dispatch.StatusDispatched
 	case rds.StateRunning:
 		return dispatch.StatusInTransit
+	case rds.StateWaiting:
+		return dispatch.StatusStaged
 	case rds.StateFinished:
 		return dispatch.StatusDelivered
 	case rds.StateFailed:

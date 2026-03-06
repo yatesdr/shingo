@@ -14,6 +14,7 @@
                 <option value="retrieve">Retrieve</option>
                 <option value="store">Store</option>
                 <option value="move">Move</option>
+                <option value="complex">Complex (Dwell)</option>
             </select>
         </div>
         <div class="form-group">
@@ -30,14 +31,20 @@
             <input type="number" id="mo-qty" class="form-input" value="1" min="1">
         </div>
         <div class="form-group" id="mo-pickup-group" style="display:none">
-            <label>Pickup Node</label>
+            <label id="mo-pickup-label">Pickup Node</label>
             <select id="mo-pickup" class="form-input">
                 <option value="">-- Select --</option>
             </select>
         </div>
         <div class="form-group" id="mo-delivery-group">
-            <label>Delivery Node</label>
+            <label id="mo-delivery-label">Delivery Node</label>
             <select id="mo-delivery" class="form-input">
+                <option value="">-- Select --</option>
+            </select>
+        </div>
+        <div class="form-group" id="mo-staging-group" style="display:none">
+            <label>Staging Node</label>
+            <select id="mo-staging" class="form-input">
                 <option value="">-- Select --</option>
             </select>
         </div>
@@ -73,8 +80,8 @@
         }
     });
 
-    // Populate both selects
-    ['mo-pickup', 'mo-delivery'].forEach(function(selID) {
+    // Populate all node selects
+    ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
         var sel = document.getElementById(selID);
         merged.forEach(function(n) {
             var opt = document.createElement('option');
@@ -91,8 +98,11 @@
 
 function updateOrderForm() {
     var t = document.getElementById('mo-type').value;
-    document.getElementById('mo-delivery-group').style.display = (t === 'retrieve' || t === 'move') ? '' : 'none';
+    document.getElementById('mo-delivery-group').style.display = (t === 'retrieve' || t === 'move' || t === 'complex') ? '' : 'none';
     document.getElementById('mo-pickup-group').style.display = (t === 'store' || t === 'move') ? '' : 'none';
+    document.getElementById('mo-staging-group').style.display = (t === 'complex') ? '' : 'none';
+    // Update labels for complex mode
+    document.getElementById('mo-delivery-label').textContent = (t === 'complex') ? 'Production Node' : 'Delivery Node';
     autofillPayloadNodes();
 }
 
@@ -108,12 +118,45 @@ function autofillPayloadNodes() {
         document.getElementById('mo-pickup').value = opt.dataset.location || '';
     } else if (t === 'store') {
         document.getElementById('mo-pickup').value = opt.dataset.location || '';
+    } else if (t === 'complex') {
+        document.getElementById('mo-delivery').value = opt.dataset.location || '';
+        document.getElementById('mo-staging').value = opt.dataset.staging || '';
     }
 }
 
 async function createOrder() {
     var t = document.getElementById('mo-type').value;
     var payloadID = parseInt(document.getElementById('mo-payload').value) || 0;
+
+    if (t === 'complex') {
+        var stagingNode = document.getElementById('mo-staging').value;
+        var productionNode = document.getElementById('mo-delivery').value;
+        if (!stagingNode || !productionNode) {
+            ShingoEdge.toast('Staging and production nodes are required', 'error');
+            return;
+        }
+        var body = {
+            payload_id: payloadID || null,
+            quantity: parseInt(document.getElementById('mo-qty').value) || 0,
+            steps: [
+                {action: 'pickup', node_group: stagingNode},
+                {action: 'dropoff', node: stagingNode},
+                {action: 'wait'},
+                {action: 'pickup', node: stagingNode},
+                {action: 'dropoff', node: productionNode}
+            ]
+        };
+        try {
+            await ShingoEdge.api.post('/api/orders/complex', body);
+            ShingoEdge.toast('Complex order created', 'success');
+            document.getElementById('mo-payload').selectedIndex = 0;
+            document.getElementById('mo-qty').value = '1';
+            document.getElementById('mo-delivery').selectedIndex = 0;
+            document.getElementById('mo-staging').selectedIndex = 0;
+        } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+        return;
+    }
+
     var body = {
         payload_id: payloadID || null,
         quantity: parseInt(document.getElementById('mo-qty').value) || 0,
@@ -146,7 +189,7 @@ ShingoEdge.createSSE('/events', {
     onCounterAnomaly: function() { location.reload(); },
     onCoreNodes: function(data) {
         var nodes = data.nodes || [];
-        ['mo-pickup', 'mo-delivery'].forEach(function(selID) {
+        ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
             var sel = document.getElementById(selID);
             var cur = sel.value;
             // Remove core-sourced options, keep local-only

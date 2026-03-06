@@ -76,6 +76,12 @@ func (m *mockBackend) Name() string                   { return "mock" }
 func (m *mockBackend) MapState(vendorState string) string { return "dispatched" }
 func (m *mockBackend) IsTerminalState(vendorState string) bool { return false }
 func (m *mockBackend) Reconfigure(cfg fleet.ReconfigureParams) {}
+func (m *mockBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
+	return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
+}
+func (m *mockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
+	return fmt.Errorf("mock: not connected")
+}
 
 // --- Test helpers ---
 

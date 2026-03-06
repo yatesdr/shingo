@@ -12,6 +12,10 @@ const (
 	TypeOrderRedirect      = "order.redirect"
 	TypeOrderStorageWaybill = "order.storage_waybill"
 
+	// Edge -> Core: complex order lifecycle
+	TypeComplexOrderRequest = "order.complex_request"
+	TypeOrderRelease        = "order.release"
+
 	// Core -> Edge (published on dispatch topic)
 	TypeOrderAck        = "order.ack"
 	TypeOrderWaybill    = "order.waybill"
@@ -19,6 +23,7 @@ const (
 	TypeOrderDelivered  = "order.delivered"
 	TypeOrderError      = "order.error"
 	TypeOrderCancelled  = "order.cancelled"
+	TypeOrderStaged     = "order.staged"
 )
 
 // Data channel subject constants.
@@ -70,6 +75,7 @@ const (
 	StatusInTransit    = "in_transit"
 	StatusDelivered    = "delivered"
 	StatusConfirmed    = "confirmed"
+	StatusStaged       = "staged"
 	StatusFailed       = "failed"
 	StatusCancelled    = "cancelled"
 )

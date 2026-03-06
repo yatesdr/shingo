@@ -7,6 +7,7 @@ const (
 	TypeRetrieve = "retrieve"
 	TypeStore    = "store"
 	TypeMove     = "move"
+	TypeComplex  = "complex"
 )
 
 // Order statuses aliased from protocol.
@@ -15,6 +16,7 @@ const (
 	StatusSubmitted    = protocol.StatusSubmitted
 	StatusAcknowledged = protocol.StatusAcknowledged
 	StatusInTransit    = protocol.StatusInTransit
+	StatusStaged       = protocol.StatusStaged
 	StatusDelivered    = protocol.StatusDelivered
 	StatusConfirmed    = protocol.StatusConfirmed
 	StatusCancelled    = protocol.StatusCancelled
@@ -25,7 +27,8 @@ var validTransitions = map[string][]string{
 	StatusPending:      {StatusSubmitted, StatusCancelled, StatusFailed},
 	StatusSubmitted:    {StatusAcknowledged, StatusCancelled, StatusFailed},
 	StatusAcknowledged: {StatusInTransit, StatusCancelled, StatusFailed},
-	StatusInTransit:    {StatusDelivered, StatusCancelled, StatusFailed},
+	StatusInTransit:    {StatusDelivered, StatusStaged, StatusCancelled, StatusFailed},
+	StatusStaged:       {StatusInTransit, StatusCancelled, StatusFailed},
 	StatusDelivered:    {StatusConfirmed, StatusCancelled, StatusFailed},
 }
 

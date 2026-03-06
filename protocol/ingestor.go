@@ -21,6 +21,10 @@ type MessageHandler interface {
 	HandleOrderRedirect(env *Envelope, p *OrderRedirect)
 	HandleOrderStorageWaybill(env *Envelope, p *OrderStorageWaybill)
 
+	// Edge -> Core: complex order lifecycle
+	HandleComplexOrderRequest(env *Envelope, p *ComplexOrderRequest)
+	HandleOrderRelease(env *Envelope, p *OrderRelease)
+
 	// Core -> Edge
 	HandleOrderAck(env *Envelope, p *OrderAck)
 	HandleOrderWaybill(env *Envelope, p *OrderWaybill)
@@ -28,6 +32,7 @@ type MessageHandler interface {
 	HandleOrderDelivered(env *Envelope, p *OrderDelivered)
 	HandleOrderError(env *Envelope, p *OrderError)
 	HandleOrderCancelled(env *Envelope, p *OrderCancelled)
+	HandleOrderStaged(env *Envelope, p *OrderStaged)
 }
 
 // Ingestor performs two-phase decode and dispatches to a MessageHandler.
@@ -109,6 +114,10 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		decodeAndCall(ing.handler.HandleOrderRedirect, &env, ing.dbg)
 	case TypeOrderStorageWaybill:
 		decodeAndCall(ing.handler.HandleOrderStorageWaybill, &env, ing.dbg)
+	case TypeComplexOrderRequest:
+		decodeAndCall(ing.handler.HandleComplexOrderRequest, &env, ing.dbg)
+	case TypeOrderRelease:
+		decodeAndCall(ing.handler.HandleOrderRelease, &env, ing.dbg)
 	case TypeOrderAck:
 		decodeAndCall(ing.handler.HandleOrderAck, &env, ing.dbg)
 	case TypeOrderWaybill:
@@ -121,6 +130,8 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		decodeAndCall(ing.handler.HandleOrderError, &env, ing.dbg)
 	case TypeOrderCancelled:
 		decodeAndCall(ing.handler.HandleOrderCancelled, &env, ing.dbg)
+	case TypeOrderStaged:
+		decodeAndCall(ing.handler.HandleOrderStaged, &env, ing.dbg)
 	default:
 		log.Printf("protocol: unknown message type: %s", env.Type)
 	}

@@ -218,5 +218,8 @@ func (db *DB) migrate() error {
 	// Migrate queued -> pending status
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 
+	// Complex order steps
+	db.Exec("ALTER TABLE orders ADD COLUMN steps_json TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }

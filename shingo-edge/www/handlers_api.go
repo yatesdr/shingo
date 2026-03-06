@@ -173,6 +173,50 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, order)
 }
 
+func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PayloadID int64                    `json:"payload_id"`
+		Quantity  int64                    `json:"quantity"`
+		Steps     []protocol.ComplexOrderStep `json:"steps"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(req.Steps) == 0 {
+		writeError(w, http.StatusBadRequest, "steps are required")
+		return
+	}
+
+	var payloadID *int64
+	if req.PayloadID > 0 {
+		payloadID = &req.PayloadID
+	}
+
+	order, err := h.engine.OrderManager().CreateComplexOrder(
+		payloadID, req.Quantity, req.Steps,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, order)
+}
+
+func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
+	orderID, err := parseID(r, "orderID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid order ID")
+		return
+	}
+
+	if err := h.engine.OrderManager().ReleaseOrder(orderID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
 func (h *Handlers) apiSubmitOrder(w http.ResponseWriter, r *http.Request) {
 	orderID, err := parseID(r, "orderID")
 	if err != nil {
