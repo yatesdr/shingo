@@ -16,8 +16,8 @@ func parseTime(v any) time.Time {
 		if t == "" {
 			return time.Time{}
 		}
+		// Layouts with explicit timezone offsets — parse normally.
 		for _, layout := range []string{
-			"2006-01-02 15:04:05",
 			time.RFC3339,
 			time.RFC3339Nano,
 			"2006-01-02 15:04:05-07:00",
@@ -26,6 +26,10 @@ func parseTime(v any) time.Time {
 			if parsed, err := time.Parse(layout, t); err == nil {
 				return parsed
 			}
+		}
+		// Naive format (no timezone) — interpret as UTC.
+		if parsed, err := time.ParseInLocation("2006-01-02 15:04:05", t, time.UTC); err == nil {
+			return parsed
 		}
 	}
 	return time.Time{}
@@ -64,9 +68,11 @@ func nullableInt64(p *int64) any {
 }
 
 // nullableTime converts a *time.Time to a value suitable for SQL params (nil-safe).
+// Normalizes to UTC for consistent storage.
 func nullableTime(p *time.Time) any {
 	if p != nil {
-		return *p
+		utc := p.UTC()
+		return utc
 	}
 	return nil
 }

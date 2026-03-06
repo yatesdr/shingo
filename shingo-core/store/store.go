@@ -128,7 +128,7 @@ func (db *DB) Reconnect(cfg *config.DatabaseConfig) error {
 // Q rewrites ? placeholders and datetime literals for PostgreSQL, passes through for SQLite.
 func (db *DB) Q(query string) string {
 	if db.driver == "postgres" {
-		query = strings.ReplaceAll(query, "datetime('now','localtime')", "NOW()")
+		query = strings.ReplaceAll(query, "datetime('now')", "NOW()")
 		return Rebind(query)
 	}
 	return query

@@ -57,7 +57,7 @@ func (db *DB) CreateBinType(bt *BinType) error {
 }
 
 func (db *DB) UpdateBinType(bt *BinType) error {
-	_, err := db.Exec(db.Q(`UPDATE bin_types SET code=?, description=?, width_in=?, height_in=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE bin_types SET code=?, description=?, width_in=?, height_in=?, updated_at=datetime('now') WHERE id=?`),
 		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.ID)
 	return err
 }

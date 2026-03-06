@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     is_synthetic INTEGER NOT NULL DEFAULT 0,
     zone        TEXT NOT NULL DEFAULT '',
     enabled     INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -29,8 +29,8 @@ CREATE TABLE IF NOT EXISTS orders (
     priority        INTEGER NOT NULL DEFAULT 0,
     payload_desc    TEXT NOT NULL DEFAULT '',
     error_detail    TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at    TEXT,
     blueprint_id    INTEGER REFERENCES blueprints(id),
     payload_id      INTEGER REFERENCES payloads(id),
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS order_history (
     order_id    INTEGER NOT NULL REFERENCES orders(id),
     status      TEXT NOT NULL,
     detail      TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_order_history_order ON order_history(order_id);
 
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     msg_type    TEXT NOT NULL DEFAULT '',
     station_id  TEXT NOT NULL DEFAULT '',
     retries     INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     sent_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox(sent_at) WHERE sent_at IS NULL;
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     old_value   TEXT NOT NULL DEFAULT '',
     new_value   TEXT NOT NULL DEFAULT '',
     actor       TEXT NOT NULL DEFAULT 'system',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
 
@@ -87,14 +87,14 @@ CREATE TABLE IF NOT EXISTS corrections (
     quantity         INTEGER NOT NULL DEFAULT 0,
     reason           TEXT NOT NULL,
     actor            TEXT NOT NULL DEFAULT 'system',
-    created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS admin_users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS bin_types (
@@ -103,8 +103,8 @@ CREATE TABLE IF NOT EXISTS bin_types (
     description TEXT NOT NULL DEFAULT '',
     width_in    REAL NOT NULL DEFAULT 0,
     height_in   REAL NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS bins (
@@ -117,8 +117,8 @@ CREATE TABLE IF NOT EXISTS bins (
     claimed_by  INTEGER REFERENCES orders(id),
     staged_at   TEXT,
     staged_expires_at TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id);
 CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);
@@ -130,8 +130,8 @@ CREATE TABLE IF NOT EXISTS blueprints (
     description           TEXT NOT NULL DEFAULT '',
     uop_capacity          INTEGER NOT NULL DEFAULT 0,
     default_manifest_json TEXT NOT NULL DEFAULT '{}',
-    created_at            TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at            TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS blueprint_bin_types (
@@ -147,10 +147,10 @@ CREATE TABLE IF NOT EXISTS payloads (
     status          TEXT NOT NULL DEFAULT 'empty',
     uop_remaining   INTEGER NOT NULL DEFAULT 0,
     loaded_at       TEXT,
-    delivered_at    TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    delivered_at    TEXT NOT NULL DEFAULT (datetime('now')),
     notes           TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_payloads_blueprint ON payloads(blueprint_id);
 CREATE INDEX IF NOT EXISTS idx_payloads_bin ON payloads(bin_id);
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS blueprint_manifest (
     part_number   TEXT NOT NULL DEFAULT '',
     quantity      INTEGER NOT NULL DEFAULT 0,
     description   TEXT NOT NULL DEFAULT '',
-    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_blueprint_manifest_bp ON blueprint_manifest(blueprint_id);
 
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS payload_events (
     event_type  TEXT NOT NULL,
     detail      TEXT NOT NULL DEFAULT '',
     actor       TEXT NOT NULL DEFAULT 'system',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_payload_events_payload ON payload_events(payload_id);
 
@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS manifest_items (
     production_date TEXT,
     lot_code        TEXT,
     notes           TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_manifest_payload ON manifest_items(payload_id);
 
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS scene_points (
     pos_z           REAL NOT NULL DEFAULT 0,
     dir             REAL NOT NULL DEFAULT 0,
     properties_json TEXT NOT NULL DEFAULT '{}',
-    synced_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    synced_at       TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(area_name, instance_name)
 );
 CREATE INDEX IF NOT EXISTS idx_scene_points_class ON scene_points(class_name);
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS edge_registry (
     hostname        TEXT NOT NULL DEFAULT '',
     version         TEXT NOT NULL DEFAULT '',
     line_ids        TEXT NOT NULL DEFAULT '[]',
-    registered_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    registered_at   TEXT NOT NULL DEFAULT (datetime('now')),
     last_heartbeat  TEXT,
     status          TEXT NOT NULL DEFAULT 'active'
 );
@@ -225,8 +225,8 @@ CREATE TABLE IF NOT EXISTS demands (
     description  TEXT NOT NULL DEFAULT '',
     demand_qty   INTEGER NOT NULL DEFAULT 0,
     produced_qty INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS production_log (
@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS production_log (
     cat_id      TEXT NOT NULL,
     station_id  TEXT NOT NULL,
     quantity    INTEGER NOT NULL,
-    reported_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    reported_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_production_log_cat ON production_log(cat_id);
 
@@ -247,8 +247,8 @@ CREATE TABLE IF NOT EXISTS test_commands (
     location        TEXT NOT NULL DEFAULT '',
     config_id       TEXT NOT NULL DEFAULT '',
     detail          TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at    TEXT
 );
 
@@ -258,14 +258,14 @@ CREATE TABLE IF NOT EXISTS node_types (
     name         TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
     is_synthetic INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS node_stations (
     node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     station_id TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (node_id, station_id)
 );
 CREATE INDEX IF NOT EXISTS idx_node_stations_station ON node_stations(station_id);
@@ -273,7 +273,7 @@ CREATE INDEX IF NOT EXISTS idx_node_stations_station ON node_stations(station_id
 CREATE TABLE IF NOT EXISTS node_blueprints (
     node_id      INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     blueprint_id INTEGER NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (node_id, blueprint_id)
 );
 
@@ -282,7 +282,7 @@ CREATE TABLE IF NOT EXISTS node_properties (
     node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     key        TEXT NOT NULL,
     value      TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (node_id, key)
 );
 
@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS cms_transactions (
     source_type    TEXT NOT NULL DEFAULT 'movement',
     order_id       INTEGER REFERENCES orders(id),
     notes          TEXT NOT NULL DEFAULT '',
-    created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_cms_txn_node ON cms_transactions(node_id);
 CREATE INDEX IF NOT EXISTS idx_cms_txn_created ON cms_transactions(created_at);

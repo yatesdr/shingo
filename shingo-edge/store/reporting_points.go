@@ -82,7 +82,7 @@ func (db *DB) UpdateReportingPoint(id int64, plcName, tagName string, jobStyleID
 }
 
 func (db *DB) UpdateReportingPointCounter(id int64, count int64) error {
-	_, err := db.Exec(`UPDATE reporting_points SET last_count=?, last_poll_at=datetime('now','localtime') WHERE id=?`, count, id)
+	_, err := db.Exec(`UPDATE reporting_points SET last_count=?, last_poll_at=datetime('now') WHERE id=?`, count, id)
 	return err
 }
 

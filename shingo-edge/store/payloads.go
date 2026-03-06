@@ -136,7 +136,7 @@ func (db *DB) UpdatePayload(id int64, location, stagingNode, description, manife
 		UPDATE payloads SET location=?, staging_node=?, description=?, manifest=?, multiplier=?,
 			production_units=?, remaining=?, reorder_point=?, reorder_qty=?, retrieve_empty=?,
 			blueprint_code=?, role=?, auto_remove_empties=?, auto_order_empties=?,
-			updated_at=datetime('now','localtime')
+			updated_at=datetime('now')
 		WHERE id=?`,
 		location, stagingNode, description, manifest, multiplier,
 		productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, blueprintCode,
@@ -145,25 +145,25 @@ func (db *DB) UpdatePayload(id int64, location, stagingNode, description, manife
 }
 
 func (db *DB) UpdatePayloadRemaining(id int64, remaining int, status string) error {
-	_, err := db.Exec(`UPDATE payloads SET remaining=?, status=?, updated_at=datetime('now','localtime') WHERE id=?`,
+	_, err := db.Exec(`UPDATE payloads SET remaining=?, status=?, updated_at=datetime('now') WHERE id=?`,
 		remaining, status, id)
 	return err
 }
 
 func (db *DB) ResetPayload(id int64, productionUnits int) error {
-	_, err := db.Exec(`UPDATE payloads SET remaining=?, status='active', updated_at=datetime('now','localtime') WHERE id=?`,
+	_, err := db.Exec(`UPDATE payloads SET remaining=?, status='active', updated_at=datetime('now') WHERE id=?`,
 		productionUnits, id)
 	return err
 }
 
 func (db *DB) UpdatePayloadReorderPoint(id int64, reorderPoint int) error {
-	_, err := db.Exec(`UPDATE payloads SET reorder_point=?, updated_at=datetime('now','localtime') WHERE id=?`,
+	_, err := db.Exec(`UPDATE payloads SET reorder_point=?, updated_at=datetime('now') WHERE id=?`,
 		reorderPoint, id)
 	return err
 }
 
 func (db *DB) UpdatePayloadAutoReorder(id int64, autoReorder bool) error {
-	_, err := db.Exec(`UPDATE payloads SET auto_reorder=?, updated_at=datetime('now','localtime') WHERE id=?`,
+	_, err := db.Exec(`UPDATE payloads SET auto_reorder=?, updated_at=datetime('now') WHERE id=?`,
 		autoReorder, id)
 	return err
 }

@@ -225,8 +225,8 @@ func (db *DB) migrateBlueprintDropName() {
 				description           TEXT NOT NULL DEFAULT '',
 				uop_capacity          INTEGER NOT NULL DEFAULT 0,
 				default_manifest_json TEXT NOT NULL DEFAULT '{}',
-				created_at            TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-				updated_at            TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+				created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
 			)`)
 			db.Exec(`INSERT INTO blueprints_new (id, code, description, uop_capacity, default_manifest_json, created_at, updated_at)
 				SELECT id, code, description, uop_capacity, COALESCE(default_manifest_json, '{}'), created_at, updated_at FROM blueprints`)
@@ -354,8 +354,8 @@ func (db *DB) migrateBinsBlueprints() {
 				description TEXT NOT NULL DEFAULT '',
 				width_in    REAL NOT NULL DEFAULT 0,
 				height_in   REAL NOT NULL DEFAULT 0,
-				created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-				updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+				created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 			)`)
 		case "postgres":
 			db.Exec(`CREATE TABLE IF NOT EXISTS bin_types (
@@ -380,8 +380,8 @@ func (db *DB) migrateBinsBlueprints() {
 				description TEXT NOT NULL DEFAULT '',
 				node_id     INTEGER REFERENCES nodes(id),
 				status      TEXT NOT NULL DEFAULT 'available',
-				created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-				updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+				created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+				updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 			)`)
 			db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id)`)
 			db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id)`)
@@ -646,7 +646,7 @@ func (db *DB) migrateShallowLanes() {
 		children, _ := db.ListChildNodes(laneID)
 		for _, child := range children {
 			if !child.IsSynthetic {
-				db.Exec(db.Q(`UPDATE nodes SET parent_id=?, updated_at=datetime('now','localtime') WHERE id=?`), groupID, child.ID)
+				db.Exec(db.Q(`UPDATE nodes SET parent_id=?, updated_at=datetime('now') WHERE id=?`), groupID, child.ID)
 				db.DeleteNodeProperty(child.ID, "depth")
 				db.DeleteNodeProperty(child.ID, "role")
 			}

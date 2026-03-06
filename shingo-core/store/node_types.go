@@ -59,7 +59,7 @@ func (db *DB) CreateNodeType(nt *NodeType) error {
 }
 
 func (db *DB) UpdateNodeType(nt *NodeType) error {
-	_, err := db.Exec(db.Q(`UPDATE node_types SET code=?, name=?, description=?, is_synthetic=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE node_types SET code=?, name=?, description=?, is_synthetic=?, updated_at=datetime('now') WHERE id=?`),
 		nt.Code, nt.Name, nt.Description, boolToInt(nt.IsSynthetic), nt.ID)
 	return err
 }

@@ -165,41 +165,41 @@ func (db *DB) CreateOrder(uuid, orderType string, payloadID *int64, retrieveEmpt
 }
 
 func (db *DB) UpdateOrderStatus(id int64, newStatus string) error {
-	_, err := db.Exec(`UPDATE orders SET status=?, updated_at=datetime('now','localtime') WHERE id=?`, newStatus, id)
+	_, err := db.Exec(`UPDATE orders SET status=?, updated_at=datetime('now') WHERE id=?`, newStatus, id)
 	return err
 }
 
 func (db *DB) UpdateOrderWaybill(id int64, waybillID, eta string) error {
-	_, err := db.Exec(`UPDATE orders SET waybill_id=?, eta=?, updated_at=datetime('now','localtime') WHERE id=?`, waybillID, eta, id)
+	_, err := db.Exec(`UPDATE orders SET waybill_id=?, eta=?, updated_at=datetime('now') WHERE id=?`, waybillID, eta, id)
 	return err
 }
 
 func (db *DB) UpdateOrderETA(id int64, eta string) error {
-	_, err := db.Exec(`UPDATE orders SET eta=?, updated_at=datetime('now','localtime') WHERE id=?`, eta, id)
+	_, err := db.Exec(`UPDATE orders SET eta=?, updated_at=datetime('now') WHERE id=?`, eta, id)
 	return err
 }
 
 func (db *DB) UpdateOrderFinalCount(id int64, finalCount int64, confirmed bool) error {
-	_, err := db.Exec(`UPDATE orders SET final_count=?, count_confirmed=?, updated_at=datetime('now','localtime') WHERE id=?`, finalCount, confirmed, id)
+	_, err := db.Exec(`UPDATE orders SET final_count=?, count_confirmed=?, updated_at=datetime('now') WHERE id=?`, finalCount, confirmed, id)
 	return err
 }
 
 func (db *DB) UpdateOrderDeliveryNode(id int64, deliveryNode string) error {
-	_, err := db.Exec(`UPDATE orders SET delivery_node=?, updated_at=datetime('now','localtime') WHERE id=?`, deliveryNode, id)
+	_, err := db.Exec(`UPDATE orders SET delivery_node=?, updated_at=datetime('now') WHERE id=?`, deliveryNode, id)
 	return err
 }
 
 func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
-	_, err := db.Exec(`UPDATE orders SET steps_json=?, updated_at=datetime('now','localtime') WHERE id=?`, stepsJSON, id)
+	_, err := db.Exec(`UPDATE orders SET steps_json=?, updated_at=datetime('now') WHERE id=?`, stepsJSON, id)
 	return err
 }
 
 func (db *DB) UpdateOrderStagedExpireAt(id int64, stagedExpireAt *time.Time) error {
 	if stagedExpireAt == nil {
-		_, err := db.Exec(`UPDATE orders SET staged_expire_at=NULL, updated_at=datetime('now','localtime') WHERE id=?`, id)
+		_, err := db.Exec(`UPDATE orders SET staged_expire_at=NULL, updated_at=datetime('now') WHERE id=?`, id)
 		return err
 	}
-	_, err := db.Exec(`UPDATE orders SET staged_expire_at=?, updated_at=datetime('now','localtime') WHERE id=?`, stagedExpireAt.Format("2006-01-02 15:04:05"), id)
+	_, err := db.Exec(`UPDATE orders SET staged_expire_at=?, updated_at=datetime('now') WHERE id=?`, stagedExpireAt.UTC().Format("2006-01-02 15:04:05"), id)
 	return err
 }
 

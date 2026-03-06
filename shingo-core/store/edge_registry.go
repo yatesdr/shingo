@@ -24,7 +24,7 @@ func (db *DB) RegisterEdge(stationID, hostname, version string, lineIDs []string
 
 	_, err := db.Exec(db.Q(`
 		INSERT INTO edge_registry (station_id, hostname, version, line_ids, registered_at, status)
-		VALUES (?, ?, ?, ?, datetime('now','localtime'), 'active')
+		VALUES (?, ?, ?, ?, datetime('now'), 'active')
 		ON CONFLICT(station_id) DO UPDATE SET
 			hostname = excluded.hostname,
 			version = excluded.version,
@@ -45,9 +45,9 @@ func (db *DB) UpdateHeartbeat(stationID string) (isNew bool, err error) {
 
 	_, err = db.Exec(db.Q(`
 		INSERT INTO edge_registry (station_id, last_heartbeat, status)
-		VALUES (?, datetime('now','localtime'), 'active')
+		VALUES (?, datetime('now'), 'active')
 		ON CONFLICT(station_id) DO UPDATE SET
-			last_heartbeat = datetime('now','localtime'),
+			last_heartbeat = datetime('now'),
 			status = 'active'
 	`), stationID)
 	return !exists, err
@@ -83,7 +83,7 @@ func (db *DB) ListEdges() ([]EdgeRegistration, error) {
 // MarkStaleEdges sets status to "stale" for edges whose last_heartbeat is older
 // than the given threshold. Returns the station IDs that were marked stale.
 func (db *DB) MarkStaleEdges(threshold time.Duration) ([]string, error) {
-	cutoff := time.Now().Add(-threshold).Format("2006-01-02 15:04:05")
+	cutoff := time.Now().UTC().Add(-threshold).Format("2006-01-02 15:04:05")
 
 	// Find which stations will go stale
 	rows, err := db.Query(db.Q(`

@@ -70,13 +70,13 @@ func (db *DB) CreateDemand(catID, description string, demandQty int64) (int64, e
 }
 
 func (db *DB) UpdateDemand(id int64, catID, description string, demandQty, producedQty int64) error {
-	_, err := db.Exec(db.Q(`UPDATE demands SET cat_id=?, description=?, demand_qty=?, produced_qty=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE demands SET cat_id=?, description=?, demand_qty=?, produced_qty=?, updated_at=datetime('now') WHERE id=?`),
 		catID, description, demandQty, producedQty, id)
 	return err
 }
 
 func (db *DB) UpdateDemandAndResetProduced(id int64, description string, demandQty int64) error {
-	_, err := db.Exec(db.Q(`UPDATE demands SET description=?, demand_qty=?, produced_qty=0, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE demands SET description=?, demand_qty=?, produced_qty=0, updated_at=datetime('now') WHERE id=?`),
 		description, demandQty, id)
 	return err
 }
@@ -106,23 +106,23 @@ func (db *DB) GetDemandByCatID(catID string) (*Demand, error) {
 }
 
 func (db *DB) IncrementProduced(catID string, qty int64) error {
-	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = produced_qty + ?, updated_at=datetime('now','localtime') WHERE cat_id=?`),
+	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = produced_qty + ?, updated_at=datetime('now') WHERE cat_id=?`),
 		qty, catID)
 	return err
 }
 
 func (db *DB) ClearAllProduced() error {
-	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = 0, updated_at=datetime('now','localtime')`))
+	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = 0, updated_at=datetime('now')`))
 	return err
 }
 
 func (db *DB) ClearProduced(id int64) error {
-	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = 0, updated_at=datetime('now','localtime') WHERE id=?`), id)
+	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = 0, updated_at=datetime('now') WHERE id=?`), id)
 	return err
 }
 
 func (db *DB) SetProduced(id int64, qty int64) error {
-	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = ?, updated_at=datetime('now','localtime') WHERE id=?`), qty, id)
+	_, err := db.Exec(db.Q(`UPDATE demands SET produced_qty = ?, updated_at=datetime('now') WHERE id=?`), qty, id)
 	return err
 }
 

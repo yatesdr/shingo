@@ -151,7 +151,7 @@ func (db *DB) DeleteNodeGroup(grpID int64) error {
 			tx.Exec(db.Q(`DELETE FROM nodes WHERE id=?`), d.id)
 		} else {
 			// Unparent physical nodes — return them to the flat grid
-			tx.Exec(db.Q(`UPDATE nodes SET parent_id=NULL, updated_at=datetime('now','localtime') WHERE id=?`), d.id)
+			tx.Exec(db.Q(`UPDATE nodes SET parent_id=NULL, updated_at=datetime('now') WHERE id=?`), d.id)
 			tx.Exec(db.Q(`DELETE FROM node_properties WHERE node_id=? AND key IN ('depth','role')`), d.id)
 		}
 	}

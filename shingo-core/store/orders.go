@@ -163,7 +163,7 @@ func (db *DB) GetNextChildOrder(parentOrderID int64) (*Order, error) {
 }
 
 func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET status=?, error_detail=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE orders SET status=?, error_detail=?, updated_at=datetime('now') WHERE id=?`),
 		status, detail, id)
 	if err != nil {
 		return err
@@ -174,25 +174,25 @@ func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
 }
 
 func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID string) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET vendor_order_id=?, vendor_state=?, robot_id=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE orders SET vendor_order_id=?, vendor_state=?, robot_id=?, updated_at=datetime('now') WHERE id=?`),
 		vendorOrderID, vendorState, robotID, id)
 	return err
 }
 
 func (db *DB) UpdateOrderPickupNode(id int64, pickupNode string) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET pickup_node=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE orders SET pickup_node=?, updated_at=datetime('now') WHERE id=?`),
 		pickupNode, id)
 	return err
 }
 
 func (db *DB) UpdateOrderDeliveryNode(id int64, deliveryNode string) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET delivery_node=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE orders SET delivery_node=?, updated_at=datetime('now') WHERE id=?`),
 		deliveryNode, id)
 	return err
 }
 
 func (db *DB) CompleteOrder(id int64) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET status='confirmed', completed_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?`), id)
+	_, err := db.Exec(db.Q(`UPDATE orders SET status='confirmed', completed_at=datetime('now'), updated_at=datetime('now') WHERE id=?`), id)
 	if err != nil {
 		return err
 	}
@@ -259,7 +259,7 @@ func (db *DB) ListOrderHistory(orderID int64) ([]*OrderHistory, error) {
 }
 
 func (db *DB) UpdateOrderPriority(id int64, priority int) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET priority=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE orders SET priority=?, updated_at=datetime('now') WHERE id=?`),
 		priority, id)
 	return err
 }

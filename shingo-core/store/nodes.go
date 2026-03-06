@@ -77,7 +77,7 @@ func (db *DB) CreateNode(n *Node) error {
 }
 
 func (db *DB) UpdateNode(n *Node) error {
-	_, err := db.Exec(db.Q(`UPDATE nodes SET name=?, is_synthetic=?, zone=?, enabled=?, node_type_id=?, parent_id=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE nodes SET name=?, is_synthetic=?, zone=?, enabled=?, node_type_id=?, parent_id=?, updated_at=datetime('now') WHERE id=?`),
 		n.Name, boolToInt(n.IsSynthetic), n.Zone, boolToInt(n.Enabled), nullableInt64(n.NodeTypeID), nullableInt64(n.ParentID), n.ID)
 	if err != nil {
 		return fmt.Errorf("update node: %w", err)
@@ -140,12 +140,12 @@ func (db *DB) ListChildNodes(parentID int64) ([]*Node, error) {
 }
 
 func (db *DB) SetNodeParent(nodeID, parentID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE nodes SET parent_id=?, updated_at=datetime('now','localtime') WHERE id=?`), parentID, nodeID)
+	_, err := db.Exec(db.Q(`UPDATE nodes SET parent_id=?, updated_at=datetime('now') WHERE id=?`), parentID, nodeID)
 	return err
 }
 
 func (db *DB) ClearNodeParent(nodeID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE nodes SET parent_id=NULL, updated_at=datetime('now','localtime') WHERE id=?`), nodeID)
+	_, err := db.Exec(db.Q(`UPDATE nodes SET parent_id=NULL, updated_at=datetime('now') WHERE id=?`), nodeID)
 	return err
 }
 

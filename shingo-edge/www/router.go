@@ -70,17 +70,19 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		},
 		"buildVer": func() string { return buildVer },
 		"cacheBust": func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
-		"formatTime": func(t time.Time) string {
+		"formatTime": func(t time.Time) template.HTML {
 			if t.IsZero() {
-				return ""
+				return template.HTML("")
 			}
-			return t.Format("2006-01-02 15:04:05")
+			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
+				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
 		},
-		"formatTimePtr": func(t *time.Time) string {
+		"formatTimePtr": func(t *time.Time) template.HTML {
 			if t == nil {
-				return ""
+				return template.HTML("")
 			}
-			return t.Format("2006-01-02 15:04:05")
+			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
+				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
 		},
 	}
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))

@@ -58,7 +58,7 @@ func (db *DB) CreateBlueprint(bp *Blueprint) error {
 }
 
 func (db *DB) UpdateBlueprint(bp *Blueprint) error {
-	_, err := db.Exec(db.Q(`UPDATE blueprints SET code=?, description=?, uop_capacity=?, default_manifest_json=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE blueprints SET code=?, description=?, uop_capacity=?, default_manifest_json=?, updated_at=datetime('now') WHERE id=?`),
 		bp.Code, bp.Description, bp.UOPCapacity, bp.DefaultManifestJSON, bp.ID)
 	return err
 }

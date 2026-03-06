@@ -82,17 +82,19 @@ func templateFuncs() template.FuncMap {
 				return fmt.Sprintf("%d days ago", days)
 			}
 		},
-		"formatTime": func(t time.Time) string {
+		"formatTime": func(t time.Time) template.HTML {
 			if t.IsZero() {
-				return "-"
+				return template.HTML("-")
 			}
-			return t.Format("2006-01-02 15:04:05")
+			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
+				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
 		},
-		"formatTimePtr": func(t *time.Time) string {
+		"formatTimePtr": func(t *time.Time) template.HTML {
 			if t == nil {
-				return "-"
+				return template.HTML("-")
 			}
-			return t.Format("2006-01-02 15:04:05")
+			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
+				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
 		},
 		"statusColor": func(status string) string {
 			switch status {

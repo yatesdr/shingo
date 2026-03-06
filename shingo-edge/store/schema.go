@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS admin_users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS job_styles (
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS job_styles (
     name        TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
     active      INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS payloads (
@@ -42,8 +42,8 @@ CREATE TABLE IF NOT EXISTS payloads (
     role             TEXT NOT NULL DEFAULT 'consume',
     auto_remove_empties INTEGER NOT NULL DEFAULT 0,
     auto_order_empties  INTEGER NOT NULL DEFAULT 0,
-    created_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at       TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(job_style_id, location)
 );
 
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS counter_snapshots (
     delta              INTEGER NOT NULL DEFAULT 0,
     anomaly            TEXT,
     operator_confirmed INTEGER NOT NULL DEFAULT 0,
-    recorded_at        TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    recorded_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -86,8 +86,8 @@ CREATE TABLE IF NOT EXISTS orders (
     count_confirmed INTEGER NOT NULL DEFAULT 0,
     eta             TEXT,
     auto_confirm    INTEGER NOT NULL DEFAULT 0,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now','localtime')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(uuid);
@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS order_history (
     old_status TEXT NOT NULL,
     new_status TEXT NOT NULL,
     detail     TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS outbox (
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     payload    BLOB NOT NULL,
     msg_type   TEXT NOT NULL DEFAULT '',
     retries    INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     sent_at    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox(sent_at) WHERE sent_at IS NULL;
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS location_nodes (
     node_id     TEXT NOT NULL UNIQUE,
     line_id     INTEGER REFERENCES production_lines(id) ON DELETE CASCADE,
     description TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS changeover_log (
@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS changeover_log (
     state          TEXT NOT NULL,
     detail         TEXT NOT NULL DEFAULT '',
     operator       TEXT NOT NULL DEFAULT '',
-    created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS production_lines (
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS production_lines (
     name                TEXT NOT NULL UNIQUE,
     description         TEXT NOT NULL DEFAULT '',
     active_job_style_id INTEGER REFERENCES job_styles(id) ON DELETE SET NULL,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS shifts (
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS hourly_counts (
     count_date   TEXT NOT NULL,
     hour         INTEGER NOT NULL,
     delta        INTEGER NOT NULL DEFAULT 0,
-    updated_at   TEXT DEFAULT (datetime('now','localtime')),
+    updated_at   TEXT DEFAULT (datetime('now')),
     UNIQUE(line_id, job_style_id, count_date, hour)
 );
 
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS blueprint_catalog (
     code         TEXT NOT NULL DEFAULT '',
     description  TEXT NOT NULL DEFAULT '',
     uop_capacity INTEGER NOT NULL DEFAULT 0,
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `
 

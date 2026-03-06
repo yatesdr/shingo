@@ -41,7 +41,7 @@ func (db *DB) ListPendingOutbox(limit int) ([]*OutboxMessage, error) {
 }
 
 func (db *DB) AckOutbox(id int64) error {
-	_, err := db.Exec(db.Q(`UPDATE outbox SET sent_at=datetime('now','localtime') WHERE id=?`), id)
+	_, err := db.Exec(db.Q(`UPDATE outbox SET sent_at=datetime('now') WHERE id=?`), id)
 	return err
 }
 

@@ -17,7 +17,7 @@ func (db *DB) UpsertHourlyCount(lineID, jobStyleID int64, countDate string, hour
 		`INSERT INTO hourly_counts (line_id, job_style_id, count_date, hour, delta)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(line_id, job_style_id, count_date, hour)
-		 DO UPDATE SET delta = delta + excluded.delta, updated_at = datetime('now','localtime')`,
+		 DO UPDATE SET delta = delta + excluded.delta, updated_at = datetime('now')`,
 		lineID, jobStyleID, countDate, hour, delta,
 	)
 	return err

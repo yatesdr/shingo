@@ -78,7 +78,7 @@ func (db *DB) CreateBin(b *Bin) error {
 }
 
 func (db *DB) UpdateBin(b *Bin) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET bin_type_id=?, label=?, description=?, node_id=?, status=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE bins SET bin_type_id=?, label=?, description=?, node_id=?, status=?, updated_at=datetime('now') WHERE id=?`),
 		b.BinTypeID, b.Label, b.Description, nullableInt64(b.NodeID), b.Status, b.ID)
 	return err
 }
@@ -143,7 +143,7 @@ func (db *DB) CountBinsByAllNodes() (map[int64]int, error) {
 
 // MoveBin moves a bin to a new node.
 func (db *DB) MoveBin(binID, toNodeID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET node_id=?, updated_at=datetime('now','localtime') WHERE id=?`), toNodeID, binID)
+	_, err := db.Exec(db.Q(`UPDATE bins SET node_id=?, updated_at=datetime('now') WHERE id=?`), toNodeID, binID)
 	return err
 }
 
@@ -169,19 +169,19 @@ func (db *DB) ListBinsByType(binTypeID int64) ([]*Bin, error) {
 
 // ClaimBin marks a bin as claimed by an order to prevent double-dispatch.
 func (db *DB) ClaimBin(binID, orderID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET claimed_by=?, updated_at=datetime('now','localtime') WHERE id=?`), orderID, binID)
+	_, err := db.Exec(db.Q(`UPDATE bins SET claimed_by=?, updated_at=datetime('now') WHERE id=?`), orderID, binID)
 	return err
 }
 
 // UnclaimBin releases a bin from an order claim.
 func (db *DB) UnclaimBin(binID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET claimed_by=NULL, updated_at=datetime('now','localtime') WHERE id=?`), binID)
+	_, err := db.Exec(db.Q(`UPDATE bins SET claimed_by=NULL, updated_at=datetime('now') WHERE id=?`), binID)
 	return err
 }
 
 // UnclaimOrderBins releases all bins claimed by a specific order.
 func (db *DB) UnclaimOrderBins(orderID int64) {
-	db.Exec(db.Q(`UPDATE bins SET claimed_by=NULL, updated_at=datetime('now','localtime') WHERE claimed_by=?`), orderID)
+	db.Exec(db.Q(`UPDATE bins SET claimed_by=NULL, updated_at=datetime('now') WHERE claimed_by=?`), orderID)
 }
 
 // FindEmptyCompatibleBin finds an unclaimed, available bin with no payload that is
@@ -226,28 +226,28 @@ func (db *DB) FindEmptyCompatibleBin(blueprintCode, preferZone string) (*Bin, er
 
 // UpdateBinStatus sets the status on a bin.
 func (db *DB) UpdateBinStatus(binID int64, status string) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET status=?, updated_at=datetime('now','localtime') WHERE id=?`), status, binID)
+	_, err := db.Exec(db.Q(`UPDATE bins SET status=?, updated_at=datetime('now') WHERE id=?`), status, binID)
 	return err
 }
 
 // StageBin marks a bin as staged with expiry tracking.
 // If expiresAt is nil, the bin is staged permanently (no auto-release).
 func (db *DB) StageBin(binID int64, expiresAt *time.Time) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET status='staged', staged_at=datetime('now','localtime'), staged_expires_at=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE bins SET status='staged', staged_at=datetime('now'), staged_expires_at=?, updated_at=datetime('now') WHERE id=?`),
 		nullableTime(expiresAt), binID)
 	return err
 }
 
 // ReleaseStagedBin clears the staged status on a single bin, setting it back to available.
 func (db *DB) ReleaseStagedBin(binID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=datetime('now','localtime') WHERE id=?`), binID)
+	_, err := db.Exec(db.Q(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=datetime('now') WHERE id=?`), binID)
 	return err
 }
 
 // ReleaseExpiredStagedBins releases staged bins whose expiry has passed.
 // Returns the number of bins released.
 func (db *DB) ReleaseExpiredStagedBins() (int, error) {
-	result, err := db.Exec(db.Q(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=datetime('now','localtime') WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < datetime('now','localtime')`))
+	result, err := db.Exec(db.Q(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=datetime('now') WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < datetime('now')`))
 	if err != nil {
 		return 0, err
 	}
@@ -257,6 +257,6 @@ func (db *DB) ReleaseExpiredStagedBins() (int, error) {
 
 // UpdateOrderBinID sets the bin_id on an order.
 func (db *DB) UpdateOrderBinID(orderID, binID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET bin_id=?, updated_at=datetime('now','localtime') WHERE id=?`), binID, orderID)
+	_, err := db.Exec(db.Q(`UPDATE orders SET bin_id=?, updated_at=datetime('now') WHERE id=?`), binID, orderID)
 	return err
 }

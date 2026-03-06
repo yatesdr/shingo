@@ -13,9 +13,9 @@ type BlueprintCatalogEntry struct {
 
 func (db *DB) UpsertBlueprintCatalog(entry *BlueprintCatalogEntry) error {
 	_, err := db.Exec(`INSERT INTO blueprint_catalog (id, name, code, description, uop_capacity, updated_at)
-		VALUES (?, ?, ?, ?, ?, datetime('now','localtime'))
+		VALUES (?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, code=excluded.code,
-		description=excluded.description, uop_capacity=excluded.uop_capacity, updated_at=datetime('now','localtime')`,
+		description=excluded.description, uop_capacity=excluded.uop_capacity, updated_at=datetime('now')`,
 		entry.ID, entry.Name, entry.Code, entry.Description, entry.UOPCapacity)
 	return err
 }

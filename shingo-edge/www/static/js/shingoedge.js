@@ -1,3 +1,16 @@
+// Convert UTC timestamps to browser local time
+function convertTimestamps() {
+    document.querySelectorAll('time[data-utc]').forEach(function(el) {
+        var d = new Date(el.getAttribute('data-utc'));
+        if (!isNaN(d)) {
+            el.textContent = d.toLocaleString();
+        }
+    });
+}
+document.addEventListener('DOMContentLoaded', convertTimestamps);
+// Re-convert after htmx swaps inject new content
+document.body.addEventListener('htmx:afterSwap', convertTimestamps);
+
 // Shingo Edge — shop-floor materials management UI
 (function() {
     'use strict';

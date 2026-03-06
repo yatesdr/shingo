@@ -132,7 +132,7 @@ func (db *DB) CreatePayloadWithManifest(p *Payload) error {
 }
 
 func (db *DB) UpdatePayload(p *Payload) error {
-	_, err := db.Exec(db.Q(`UPDATE payloads SET blueprint_id=?, bin_id=?, status=?, uop_remaining=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE payloads SET blueprint_id=?, bin_id=?, status=?, uop_remaining=?, notes=?, updated_at=datetime('now') WHERE id=?`),
 		p.BlueprintID, nullableInt64(p.BinID), p.Status, p.UOPRemaining, p.Notes, p.ID)
 	return err
 }

@@ -66,13 +66,13 @@ func (db *DB) CreateTestCommand(tc *TestCommand) error {
 }
 
 func (db *DB) UpdateTestCommandStatus(id int64, vendorState, detail string) error {
-	_, err := db.Exec(db.Q(`UPDATE test_commands SET vendor_state=?, detail=?, updated_at=datetime('now','localtime') WHERE id=?`),
+	_, err := db.Exec(db.Q(`UPDATE test_commands SET vendor_state=?, detail=?, updated_at=datetime('now') WHERE id=?`),
 		vendorState, detail, id)
 	return err
 }
 
 func (db *DB) CompleteTestCommand(id int64) error {
-	_, err := db.Exec(db.Q(`UPDATE test_commands SET completed_at=datetime('now','localtime'), updated_at=datetime('now','localtime') WHERE id=?`), id)
+	_, err := db.Exec(db.Q(`UPDATE test_commands SET completed_at=datetime('now'), updated_at=datetime('now') WHERE id=?`), id)
 	return err
 }
 
