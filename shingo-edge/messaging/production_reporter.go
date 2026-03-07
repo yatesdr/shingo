@@ -25,7 +25,7 @@ type ProductionReporter struct {
 	DebugLog func(string, ...any)
 }
 
-func (pr *ProductionReporter) debug(format string, args ...any) {
+func (pr *ProductionReporter) dbg(format string, args ...any) {
 	if fn := pr.DebugLog; fn != nil {
 		fn(format, args...)
 	}
@@ -57,7 +57,7 @@ func (pr *ProductionReporter) RecordDelta(jobStyleID int64, delta int64) {
 		pr.accumulator[catID] += float64(delta)
 	}
 	pr.mu.Unlock()
-	pr.debug("delta recorded: style=%d delta=%d cat_ids=%v", jobStyleID, delta, style.CatIDs)
+	pr.dbg("delta recorded: style=%d delta=%d cat_ids=%v", jobStyleID, delta, style.CatIDs)
 }
 
 // Start begins the periodic flush loop.
@@ -124,6 +124,6 @@ func (pr *ProductionReporter) flush() {
 		log.Printf("production_reporter: enqueue outbox: %v", err)
 	} else {
 		log.Printf("production_reporter: enqueued %d cat_id entries via outbox", len(entries))
-		pr.debug("flush: enqueued %d cat_id entries", len(entries))
+		pr.dbg("flush: enqueued %d cat_id entries", len(entries))
 	}
 }

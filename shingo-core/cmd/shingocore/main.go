@@ -14,7 +14,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/config"
-	"shingocore/debuglog"
+	"shingo/protocol/debuglog"
 	"shingocore/engine"
 	"shingocore/fleet/seerrds"
 	"shingocore/messaging"

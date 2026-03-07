@@ -8,7 +8,7 @@ import (
 
 	"shingoedge/changeover"
 	"shingoedge/config"
-	"shingoedge/debuglog"
+	"shingo/protocol/debuglog"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/store"

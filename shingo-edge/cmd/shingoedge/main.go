@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"shingoedge/config"
-	"shingoedge/debuglog"
+	"shingo/protocol/debuglog"
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingo/protocol"

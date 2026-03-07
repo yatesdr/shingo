@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"shingoedge/debuglog"
+	"shingo/protocol/debuglog"
 	"shingoedge/engine"
 
 	"github.com/go-chi/chi/v5"

@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/gorilla/sessions"
 
-	"shingocore/debuglog"
+	"shingo/protocol/debuglog"
 	"shingocore/engine"
 )
 

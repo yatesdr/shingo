@@ -82,7 +82,7 @@ func (e *Engine) Start() {
 	pe := &pollerEmitter{bus: e.Events}
 
 	// Create dispatcher with synthetic node resolver
-	resolver := &dispatch.DefaultResolver{DB: e.db}
+	resolver := &dispatch.DefaultResolver{DB: e.db, DebugLog: e.debugLog}
 	e.dispatcher = dispatch.NewDispatcher(
 		e.db,
 		e.fleet,

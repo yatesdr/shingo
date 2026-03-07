@@ -40,6 +40,13 @@ const (
 type GroupResolver struct {
 	DB       *store.DB
 	LaneLock *LaneLock
+	DebugLog func(string, ...any)
+}
+
+func (r *GroupResolver) dbg(format string, args ...any) {
+	if fn := r.DebugLog; fn != nil {
+		fn(format, args...)
+	}
 }
 
 // getGroupAlgorithm reads a property from the node group, returning defaultVal if unset.
@@ -85,6 +92,7 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, payloadCode strin
 
 			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
 			if err != nil {
+				r.dbg("FIFO: FindSourceBinInLane lane=%s: %v", child.Name, err)
 				continue
 			}
 
@@ -96,19 +104,20 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, payloadCode strin
 			if bestBin == nil || bTime.Before(bestTime) {
 				bestBin = b
 				bestTime = bTime
-				slot, _ := r.DB.GetNode(*b.NodeID)
+				slot, err := r.DB.GetNode(*b.NodeID)
+				if err != nil {
+					r.dbg("FIFO: GetNode for bin %d slot: %v", b.ID, err)
+				}
 				bestNode = slot
 			}
 		} else if !child.IsSynthetic {
 			bins, err := r.DB.ListBinsByNode(child.ID)
 			if err != nil {
+				r.dbg("FIFO: ListBinsByNode node=%s: %v", child.Name, err)
 				continue
 			}
 			for _, b := range bins {
-				if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != "available" {
-					continue
-				}
-				if payloadCode != "" && b.PayloadCode != payloadCode {
+				if !isBinAvailableForRetrieve(b, payloadCode) {
 					continue
 				}
 				bTime := b.CreatedAt
@@ -161,20 +170,22 @@ func (r *GroupResolver) resolveRetrieveFAVL(group *store.Node, payloadCode strin
 
 			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
 			if err != nil {
+				r.dbg("FAVL: FindSourceBinInLane lane=%s: %v", child.Name, err)
 				continue
 			}
-			slot, _ := r.DB.GetNode(*b.NodeID)
+			slot, err := r.DB.GetNode(*b.NodeID)
+			if err != nil {
+				r.dbg("FAVL: GetNode for bin %d slot: %v", b.ID, err)
+			}
 			return &ResolveResult{Node: slot, Bin: b}, nil
 		} else if !child.IsSynthetic {
 			bins, err := r.DB.ListBinsByNode(child.ID)
 			if err != nil {
+				r.dbg("FAVL: ListBinsByNode node=%s: %v", child.Name, err)
 				continue
 			}
 			for _, b := range bins {
-				if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != "available" {
-					continue
-				}
-				if payloadCode != "" && b.PayloadCode != payloadCode {
+				if !isBinAvailableForRetrieve(b, payloadCode) {
 					continue
 				}
 				return &ResolveResult{Node: child, Bin: b}, nil
@@ -203,13 +214,7 @@ func (r *GroupResolver) resolveStoreLKND(group *store.Node, payloadCode string, 
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
 
-	type candidate struct {
-		node     *store.Node
-		hasMatch bool
-		count    int
-	}
-
-	var candidates []candidate
+	var candidates []storageCandidate
 
 	for _, child := range children {
 		if !child.Enabled {
@@ -247,6 +252,7 @@ func (r *GroupResolver) resolveStoreLKND(group *store.Node, payloadCode string, 
 
 			slot, err := r.DB.FindStoreSlotInLane(child.ID)
 			if err != nil {
+				r.dbg("LKND: FindStoreSlotInLane lane=%s: %v", child.Name, err)
 				continue // lane is full
 			}
 
@@ -269,10 +275,11 @@ func (r *GroupResolver) resolveStoreLKND(group *store.Node, payloadCode string, 
 				}
 			}
 
-			candidates = append(candidates, candidate{node: slot, hasMatch: hasMatch, count: count})
+			candidates = append(candidates, storageCandidate{node: slot, hasMatch: hasMatch, count: count})
 		} else if !child.IsSynthetic {
 			count, err := r.DB.CountBinsByNode(child.ID)
 			if err != nil {
+				r.dbg("LKND: CountBinsByNode node=%s: %v", child.Name, err)
 				continue
 			}
 			inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
@@ -298,7 +305,7 @@ func (r *GroupResolver) resolveStoreLKND(group *store.Node, payloadCode string, 
 				}
 			}
 
-			candidates = append(candidates, candidate{node: child, hasMatch: hasMatch, count: count})
+			candidates = append(candidates, storageCandidate{node: child, hasMatch: hasMatch, count: count})
 		}
 	}
 
@@ -306,17 +313,7 @@ func (r *GroupResolver) resolveStoreLKND(group *store.Node, payloadCode string, 
 		return nil, fmt.Errorf("no available slot in node group %s", group.Name)
 	}
 
-	// Prefer consolidation, then emptiest
-	best := candidates[0]
-	for _, c := range candidates[1:] {
-		if c.hasMatch && !best.hasMatch {
-			best = c
-		} else if c.hasMatch == best.hasMatch && c.count < best.count {
-			best = c
-		}
-	}
-
-	return &ResolveResult{Node: best.node}, nil
+	return &ResolveResult{Node: bestStorageCandidate(candidates)}, nil
 }
 
 // resolveStoreDPTH packs back-to-front regardless of payload. Prefers lanes over direct children.
@@ -361,6 +358,7 @@ func (r *GroupResolver) resolveStoreDPTH(group *store.Node, payloadCode string, 
 
 		slot, err := r.DB.FindStoreSlotInLane(child.ID)
 		if err != nil {
+			r.dbg("DPTH: FindStoreSlotInLane lane=%s: %v", child.Name, err)
 			continue // lane is full
 		}
 		return &ResolveResult{Node: slot}, nil
@@ -381,6 +379,7 @@ func (r *GroupResolver) resolveStoreDPTH(group *store.Node, payloadCode string, 
 
 		count, err := r.DB.CountBinsByNode(child.ID)
 		if err != nil {
+			r.dbg("DPTH: CountBinsByNode node=%s: %v", child.Name, err)
 			continue
 		}
 		inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)

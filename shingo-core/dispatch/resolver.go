@@ -22,6 +22,13 @@ type NodeResolver interface {
 type DefaultResolver struct {
 	DB       *store.DB
 	LaneLock *LaneLock
+	DebugLog func(string, ...any)
+}
+
+func (r *DefaultResolver) dbg(format string, args ...any) {
+	if fn := r.DebugLog; fn != nil {
+		fn(format, args...)
+	}
 }
 
 // Resolve selects the best physical child of a synthetic node for the given order type.
@@ -36,7 +43,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *store.Node, orderType string, p
 
 	// Delegate to group resolver for NGRP nodes
 	if syntheticNode.NodeTypeCode == "NGRP" {
-		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock}
+		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock, DebugLog: r.DebugLog}
 		switch orderType {
 		case OrderTypeRetrieve:
 			return gr.ResolveRetrieve(syntheticNode, payloadCode)
@@ -76,13 +83,11 @@ func (r *DefaultResolver) resolveRetrieve(children []*store.Node, payloadCode st
 		}
 		bins, err := r.DB.ListBinsByNode(child.ID)
 		if err != nil {
+			r.dbg("resolveRetrieve: ListBinsByNode node=%s: %v", child.Name, err)
 			continue
 		}
 		for _, b := range bins {
-			if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != "available" {
-				continue
-			}
-			if payloadCode != "" && b.PayloadCode != payloadCode {
+			if !isBinAvailableForRetrieve(b, payloadCode) {
 				continue
 			}
 			return child, nil
@@ -93,19 +98,14 @@ func (r *DefaultResolver) resolveRetrieve(children []*store.Node, payloadCode st
 
 // resolveStore finds the best child node for storage (consolidation-first, then emptiest).
 func (r *DefaultResolver) resolveStore(children []*store.Node, payloadCode string) (*store.Node, error) {
-	type candidate struct {
-		node     *store.Node
-		count    int
-		hasMatch bool
-	}
-
-	var candidates []candidate
+	var candidates []storageCandidate
 	for _, child := range children {
 		if !child.Enabled || child.IsSynthetic {
 			continue
 		}
 		count, err := r.DB.CountBinsByNode(child.ID)
 		if err != nil {
+			r.dbg("resolveStore: CountBinsByNode node=%s: %v", child.Name, err)
 			continue
 		}
 		inflight, _ := r.DB.CountActiveOrdersByDeliveryNode(child.Name)
@@ -123,21 +123,12 @@ func (r *DefaultResolver) resolveStore(children []*store.Node, payloadCode strin
 				}
 			}
 		}
-		candidates = append(candidates, candidate{node: child, count: count, hasMatch: hasMatch})
+		candidates = append(candidates, storageCandidate{node: child, count: count, hasMatch: hasMatch})
 	}
 
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no child node available for storage")
 	}
 
-	best := candidates[0]
-	for _, c := range candidates[1:] {
-		if c.hasMatch && !best.hasMatch {
-			best = c
-		} else if c.hasMatch == best.hasMatch && c.count < best.count {
-			best = c
-		}
-	}
-
-	return best.node, nil
+	return bestStorageCandidate(candidates), nil
 }

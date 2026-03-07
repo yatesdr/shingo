@@ -29,7 +29,7 @@ type Heartbeater struct {
 	DebugLog func(string, ...any)
 }
 
-func (h *Heartbeater) debug(format string, args ...any) {
+func (h *Heartbeater) dbg(format string, args ...any) {
 	if fn := h.DebugLog; fn != nil {
 		fn(format, args...)
 	}
@@ -90,7 +90,7 @@ func (h *Heartbeater) sendRegister() {
 		log.Printf("heartbeater: send register failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent edge.register (station=%s)", h.stationID)
-		h.debug("register sent station=%s", h.stationID)
+		h.dbg("register sent station=%s", h.stationID)
 	}
 }
 
@@ -109,7 +109,7 @@ func (h *Heartbeater) sendNodeListRequest() {
 		log.Printf("heartbeater: send node list request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent node.list_request (station=%s)", h.stationID)
-		h.debug("node_list_request sent station=%s", h.stationID)
+		h.dbg("node_list_request sent station=%s", h.stationID)
 	}
 }
 
@@ -157,7 +157,7 @@ func (h *Heartbeater) sendCatalogRequest() {
 		log.Printf("heartbeater: send catalog request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent catalog.payloads_request (station=%s)", h.stationID)
-		h.debug("catalog_request sent station=%s", h.stationID)
+		h.dbg("catalog_request sent station=%s", h.stationID)
 	}
 }
 
@@ -184,7 +184,7 @@ func (h *Heartbeater) sendHeartbeat() {
 	if err := h.client.PublishEnvelope(h.topic, env); err != nil {
 		log.Printf("heartbeater: send heartbeat: %v", err)
 	} else {
-		h.debug("heartbeat sent uptime=%ds orders=%d", uptime, activeOrders)
+		h.dbg("heartbeat sent uptime=%ds orders=%d", uptime, activeOrders)
 	}
 }
 

@@ -1,8 +1,10 @@
 package store
 
-import (
-	"time"
-)
+import "time"
+
+// MaxOutboxRetries is the number of delivery attempts before a message is
+// considered dead-lettered and skipped by the drainer.
+const MaxOutboxRetries = 10
 
 type OutboxMessage struct {
 	ID        int64      `json:"id"`
@@ -22,7 +24,7 @@ func (db *DB) EnqueueOutbox(topic string, payload []byte, eventType, stationID s
 }
 
 func (db *DB) ListPendingOutbox(limit int) ([]*OutboxMessage, error) {
-	rows, err := db.Query(db.Q(`SELECT id, topic, payload, msg_type, station_id, retries, created_at FROM outbox WHERE sent_at IS NULL ORDER BY id LIMIT ?`), limit)
+	rows, err := db.Query(db.Q(`SELECT id, topic, payload, msg_type, station_id, retries, created_at FROM outbox WHERE sent_at IS NULL AND retries < ? ORDER BY id LIMIT ?`), MaxOutboxRetries, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -48,4 +50,15 @@ func (db *DB) AckOutbox(id int64) error {
 func (db *DB) IncrementOutboxRetries(id int64) error {
 	_, err := db.Exec(db.Q(`UPDATE outbox SET retries=retries+1 WHERE id=?`), id)
 	return err
+}
+
+// PurgeOldOutbox deletes sent messages older than the given duration,
+// and dead-lettered messages (retries >= max) older than the given duration.
+func (db *DB) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-olderThan).Format("2006-01-02 15:04:05")
+	res, err := db.Exec(db.Q(`DELETE FROM outbox WHERE (sent_at IS NOT NULL AND sent_at < ?) OR (retries >= ? AND created_at < ?)`), cutoff, MaxOutboxRetries, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
