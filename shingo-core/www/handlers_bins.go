@@ -217,6 +217,8 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch req.Action {
+	case "flag":
+		b.Status = "flagged"
 	case "maintenance":
 		b.Status = "maintenance"
 	case "retire":

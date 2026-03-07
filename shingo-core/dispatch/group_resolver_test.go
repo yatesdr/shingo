@@ -12,11 +12,11 @@ import (
 // createTestPayloadAtNode creates a bin at the given node and a payload in that bin.
 func createTestPayloadAtNode(t *testing.T, db *store.DB, blueprintID int64, nodeID int64, label string) *store.Payload {
 	t.Helper()
-	bin := &store.Bin{BinTypeID: 1, Label: label, NodeID: &nodeID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: label, NodeID: &nodeID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin %s: %v", label, err)
 	}
-	p := &store.Payload{BlueprintID: blueprintID, BinID: &bin.ID, Status: "available"}
+	p := &store.Payload{BlueprintID: blueprintID, BinID: &bin.ID, ManifestConfirmed: true}
 	if err := db.CreatePayload(p); err != nil {
 		t.Fatalf("create payload for bin %s: %v", label, err)
 	}

@@ -85,6 +85,7 @@ type NodeSceneInfo struct {
 type NodesPageData struct {
 	Nodes          []*store.Node
 	Counts         map[int64]int
+	TileStates     map[int64]store.NodeTileState
 	Zones          []string
 	NodeLabels     map[string]string
 	NodeInfo       map[string]*NodeSceneInfo
@@ -103,10 +104,17 @@ func (e *Engine) GetNodesPageData() (*NodesPageData, error) {
 	if counts == nil {
 		counts = make(map[int64]int, len(nodes))
 	}
+	tileStates, _ := e.db.NodeTileStates()
+	if tileStates == nil {
+		tileStates = make(map[int64]store.NodeTileState, len(nodes))
+	}
 	zoneSet := map[string]bool{}
 	for _, n := range nodes {
 		if n.Zone != "" {
 			zoneSet[n.Zone] = true
+		}
+		if _, ok := tileStates[n.ID]; !ok {
+			tileStates[n.ID] = store.NodeTileState{}
 		}
 	}
 	zones := make([]string, 0, len(zoneSet))
@@ -154,6 +162,7 @@ func (e *Engine) GetNodesPageData() (*NodesPageData, error) {
 	return &NodesPageData{
 		Nodes:          nodes,
 		Counts:         counts,
+		TileStates:     tileStates,
 		Zones:          zones,
 		NodeLabels:     nodeLabels,
 		NodeInfo:       nodeInfo,

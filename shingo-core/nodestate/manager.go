@@ -58,15 +58,14 @@ func (m *Manager) getNodeStateFromSQL(nodeID int64) (*NodeState, error) {
 	items := make([]PayloadItem, len(payloads))
 	for i, p := range payloads {
 		items[i] = PayloadItem{
-			ID:            p.ID,
-			BlueprintID:   p.BlueprintID,
-			BlueprintCode: p.BlueprintCode,
-			BinID:         p.BinID,
-			BinLabel:      p.BinLabel,
-			Status:        p.Status,
-			DeliveredAt:   p.DeliveredAt,
-			Notes:         p.Notes,
-			ClaimedBy:     p.ClaimedBy,
+			ID:                p.ID,
+			BlueprintID:       p.BlueprintID,
+			BlueprintCode:     p.BlueprintCode,
+			BinID:             p.BinID,
+			BinLabel:          p.BinLabel,
+			ManifestConfirmed: p.ManifestConfirmed,
+			Notes:             p.Notes,
+			ClaimedBy:         p.ClaimedBy,
 		}
 	}
 

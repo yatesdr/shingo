@@ -141,20 +141,18 @@ CREATE TABLE IF NOT EXISTS blueprint_bin_types (
 );
 
 CREATE TABLE IF NOT EXISTS payloads (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    blueprint_id    INTEGER NOT NULL REFERENCES blueprints(id),
-    bin_id          INTEGER REFERENCES bins(id),
-    status          TEXT NOT NULL DEFAULT 'empty',
-    uop_remaining   INTEGER NOT NULL DEFAULT 0,
-    loaded_at       TEXT,
-    delivered_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    notes           TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    blueprint_id        INTEGER NOT NULL REFERENCES blueprints(id),
+    bin_id              INTEGER UNIQUE REFERENCES bins(id),
+    uop_remaining       INTEGER NOT NULL DEFAULT 0,
+    manifest_confirmed  INTEGER NOT NULL DEFAULT 0,
+    loaded_at           TEXT,
+    notes               TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_payloads_blueprint ON payloads(blueprint_id);
 CREATE INDEX IF NOT EXISTS idx_payloads_bin ON payloads(bin_id);
-CREATE INDEX IF NOT EXISTS idx_payloads_status ON payloads(status);
 
 CREATE TABLE IF NOT EXISTS blueprint_manifest (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,

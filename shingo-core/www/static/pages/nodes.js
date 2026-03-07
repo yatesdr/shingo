@@ -361,13 +361,15 @@ function loadInventory(nodeID) {
         return;
       }
       countEl.textContent = items.length;
-      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin</th><th>Payload</th><th>Status</th></tr></thead><tbody>';
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin</th><th>Bin Status</th><th>Payload</th></tr></thead><tbody>';
       items.forEach(function(item) {
         var b = item.bin;
         var p = item.payload;
         var payloadInfo = p ? ('<span style="cursor:pointer;text-decoration:underline" onclick="expandPayloadManifest(' + p.id + ')">#' + p.id + ' ' + escapeHtml(p.blueprint_code) + '</span>') : '<span class="text-muted">empty</span>';
-        var status = p ? escapeHtml(p.status) : escapeHtml(b.status);
-        html += '<tr><td>' + escapeHtml(b.label || 'Bin #' + b.id) + '</td><td>' + payloadInfo + '</td><td>' + status + '</td></tr>';
+        // Bin status badges
+        var binBadges = '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>';
+        if (b.claimed_by) binBadges += ' <span class="badge badge-claimed">claimed</span>';
+        html += '<tr><td>' + escapeHtml(b.label || 'Bin #' + b.id) + '</td><td>' + binBadges + '</td><td>' + payloadInfo + '</td></tr>';
       });
       html += '</tbody></table>';
       list.innerHTML = html;

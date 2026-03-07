@@ -42,14 +42,14 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin at the storage node and an available payload
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-RET-1", NodeID: &storageNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-RET-1", NodeID: &storageNode.ID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
 	payload := &store.Payload{
 		BlueprintID: bp.ID,
 		BinID:       &bin.ID,
-		Status:      "available",
+		ManifestConfirmed: true,
 	}
 	if err := db.CreatePayload(payload); err != nil {
 		t.Fatalf("create payload: %v", err)
@@ -128,12 +128,12 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin at storage node and an available payload
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-MOV-1", NodeID: &storageNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-MOV-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	payload := &store.Payload{
 		BlueprintID: bp.ID,
 		BinID:       &bin.ID,
-		Status:      "available",
+		ManifestConfirmed: true,
 	}
 	if err := db.CreatePayload(payload); err != nil {
 		t.Fatalf("create payload: %v", err)
@@ -184,12 +184,12 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin at line-side and an available payload
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-STO-1", NodeID: &lineNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-STO-1", NodeID: &lineNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	payload := &store.Payload{
 		BlueprintID: bp.ID,
 		BinID:       &bin.ID,
-		Status:      "available",
+		ManifestConfirmed: true,
 	}
 	if err := db.CreatePayload(payload); err != nil {
 		t.Fatalf("create payload: %v", err)
@@ -233,12 +233,12 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin at storage and an available payload
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-CAN-1", NodeID: &storageNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-CAN-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	payload := &store.Payload{
 		BlueprintID: bp.ID,
 		BinID:       &bin.ID,
-		Status:      "available",
+		ManifestConfirmed: true,
 	}
 	db.CreatePayload(payload)
 
@@ -297,12 +297,12 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 	db.CreateNode(lineNode2)
 
 	// Create a bin and an available payload
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-RED-1", NodeID: &storageNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-RED-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	payload := &store.Payload{
 		BlueprintID: bp.ID,
 		BinID:       &bin.ID,
-		Status:      "available",
+		ManifestConfirmed: true,
 	}
 	db.CreatePayload(payload)
 
@@ -362,15 +362,15 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	db.SetNodeParent(child2.ID, parentNode.ID)
 
 	// Put a bin at child2 to occupy it (child2 occupied, child1 empty)
-	occBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-OCC", NodeID: &child2.ID, Status: "active"}
+	occBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-OCC", NodeID: &child2.ID, Status: "available"}
 	db.CreateBin(occBin)
 
 	// Create source payload at a separate node for FIFO to find
 	srcNode := &store.Node{Name: "SRC-SYN", Enabled: true}
 	db.CreateNode(srcNode)
-	srcBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-SRC", NodeID: &srcNode.ID, Status: "active"}
+	srcBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-SRC", NodeID: &srcNode.ID, Status: "available"}
 	db.CreateBin(srcBin)
-	db.CreatePayload(&store.Payload{BlueprintID: bp.ID, BinID: &srcBin.ID, Status: "available"})
+	db.CreatePayload(&store.Payload{BlueprintID: bp.ID, BinID: &srcBin.ID, ManifestConfirmed: true})
 
 	// Create dispatcher with resolver
 	backend := newMockTrackingBackend()
@@ -449,15 +449,15 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	supermarket := &store.Node{Name: "SM-MULTI", Zone: "W", Enabled: true}
 	db.CreateNode(supermarket)
 
-	binA1 := &store.Bin{BinTypeID: 1, Label: "M-A1", NodeID: &supermarket.ID, Status: "active"}
-	binA2 := &store.Bin{BinTypeID: 1, Label: "M-A2", NodeID: &supermarket.ID, Status: "active"}
-	binB1 := &store.Bin{BinTypeID: 1, Label: "M-B1", NodeID: &supermarket.ID, Status: "active"}
+	binA1 := &store.Bin{BinTypeID: 1, Label: "M-A1", NodeID: &supermarket.ID, Status: "available"}
+	binA2 := &store.Bin{BinTypeID: 1, Label: "M-A2", NodeID: &supermarket.ID, Status: "available"}
+	binB1 := &store.Bin{BinTypeID: 1, Label: "M-B1", NodeID: &supermarket.ID, Status: "available"}
 	db.CreateBin(binA1)
 	db.CreateBin(binA2)
 	db.CreateBin(binB1)
-	db.CreatePayload(&store.Payload{BlueprintID: bpA.ID, BinID: &binA1.ID, Status: "available"})
-	db.CreatePayload(&store.Payload{BlueprintID: bpA.ID, BinID: &binA2.ID, Status: "available"})
-	db.CreatePayload(&store.Payload{BlueprintID: bpB.ID, BinID: &binB1.ID, Status: "available"})
+	db.CreatePayload(&store.Payload{BlueprintID: bpA.ID, BinID: &binA1.ID, ManifestConfirmed: true})
+	db.CreatePayload(&store.Payload{BlueprintID: bpA.ID, BinID: &binA2.ID, ManifestConfirmed: true})
+	db.CreatePayload(&store.Payload{BlueprintID: bpB.ID, BinID: &binB1.ID, ManifestConfirmed: true})
 
 	backend := newMockTrackingBackend()
 	emitter := &mockEmitter{}
@@ -556,7 +556,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	db.SetNodeParent(slot2.ID, zone.ID)
 
 	// Occupy slot1
-	occBin := &store.Bin{BinTypeID: 1, Label: "OCC-1", NodeID: &slot1.ID, Status: "active"}
+	occBin := &store.Bin{BinTypeID: 1, Label: "OCC-1", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(occBin)
 
 	// Create blueprint with bin type compatibility
@@ -620,9 +620,9 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 	// Create source payload
 	srcNode := &store.Node{Name: "DOT-SRC", Enabled: true}
 	db.CreateNode(srcNode)
-	bin := &store.Bin{BinTypeID: 1, Label: "DOT-BIN-1", NodeID: &srcNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "DOT-BIN-1", NodeID: &srcNode.ID, Status: "available"}
 	db.CreateBin(bin)
-	db.CreatePayload(&store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available"})
+	db.CreatePayload(&store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, ManifestConfirmed: true})
 
 	backend := newMockTrackingBackend()
 	emitter := &mockEmitter{}
@@ -659,9 +659,9 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin and an available payload
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-FF-1", NodeID: &storageNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-FF-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
-	payload := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available"}
+	payload := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, ManifestConfirmed: true}
 	db.CreatePayload(payload)
 
 	// Use mockBackend (returns errors for all fleet ops)
@@ -709,14 +709,14 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create bins and available payloads
-	bin1 := &store.Bin{BinTypeID: 1, Label: "BIN-PRI-1", NodeID: &storageNode.ID, Status: "active"}
+	bin1 := &store.Bin{BinTypeID: 1, Label: "BIN-PRI-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin1)
-	payload1 := &store.Payload{BlueprintID: bp.ID, BinID: &bin1.ID, Status: "available"}
+	payload1 := &store.Payload{BlueprintID: bp.ID, BinID: &bin1.ID, ManifestConfirmed: true}
 	db.CreatePayload(payload1)
 
-	bin2 := &store.Bin{BinTypeID: 1, Label: "BIN-PRI-2", NodeID: &storageNode.ID, Status: "active"}
+	bin2 := &store.Bin{BinTypeID: 1, Label: "BIN-PRI-2", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin2)
-	payload2 := &store.Payload{BlueprintID: bp.ID, BinID: &bin2.ID, Status: "available"}
+	payload2 := &store.Payload{BlueprintID: bp.ID, BinID: &bin2.ID, ManifestConfirmed: true}
 	db.CreatePayload(payload2)
 
 	backend := newMockTrackingBackend()
@@ -761,9 +761,9 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create bin + payload
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-BT-1", NodeID: &storageNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-BT-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
-	payload := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available"}
+	payload := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, ManifestConfirmed: true}
 	db.CreatePayload(payload)
 
 	backend := newMockTrackingBackend()

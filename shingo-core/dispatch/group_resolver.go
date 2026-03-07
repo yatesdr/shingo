@@ -113,7 +113,7 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, blueprintID *int6
 				continue
 			}
 			for _, p := range payloads {
-				if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
+				if p.ClaimedBy != nil || !p.ManifestConfirmed || p.BinStatus != "available" {
 					continue
 				}
 				if blueprintID != nil && p.BlueprintID != *blueprintID {
@@ -187,7 +187,7 @@ func (r *GroupResolver) resolveRetrieveFAVL(group *store.Node, blueprintID *int6
 				continue
 			}
 			for _, p := range payloads {
-				if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
+				if p.ClaimedBy != nil || !p.ManifestConfirmed || p.BinStatus != "available" {
 					continue
 				}
 				if blueprintID != nil && p.BlueprintID != *blueprintID {

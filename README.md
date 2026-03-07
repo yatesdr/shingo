@@ -36,14 +36,15 @@ See [shingo-core/README.md](shingo-core/README.md) for full build targets and co
 
 | Document | Location |
 |----------|----------|
-| Core setup & configuration | [shingo-core/README.md](shingo-core/README.md) |
-| PostgreSQL setup | [shingo-core/docs/postgresql-setup.md](shingo-core/docs/postgresql-setup.md) |
-| Configuration reference | [shingo-core/docs/configuration.md](shingo-core/docs/configuration.md) |
-| UI guide | [shingo-core/docs/ui-guide.md](shingo-core/docs/ui-guide.md) |
+| Data model | [docs/data-model.md](docs/data-model.md) |
+| Bins & blueprints | [docs/payloads.md](docs/payloads.md) |
+| Terminology | [docs/terminology.md](docs/terminology.md) |
+| Wire protocol spec | [docs/wire-protocol.md](docs/wire-protocol.md) |
 | Architecture & development | [shingo-core/docs/architecture.md](shingo-core/docs/architecture.md) |
 | REST API reference | [shingo-core/docs/api-reference.md](shingo-core/docs/api-reference.md) |
-| Wire protocol spec | [docs/wire-protocol.md](docs/wire-protocol.md) |
-| Terminology | [docs/terminology.md](docs/terminology.md) |
+| UI guide | [shingo-core/docs/ui-guide.md](shingo-core/docs/ui-guide.md) |
+| Configuration reference | [shingo-core/docs/configuration.md](shingo-core/docs/configuration.md) |
+| PostgreSQL setup | [shingo-core/docs/postgresql-setup.md](shingo-core/docs/postgresql-setup.md) |
 
 ## Messaging
 

@@ -1,0 +1,151 @@
+{{define "content"}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Blueprints</h1>
+  </div>
+
+  {{if .Authenticated}}
+  <div style="margin-bottom:0.5rem;text-align:right">
+    <button class="btn btn-primary btn-sm" onclick="openCreateBlueprintModal()">+ Blueprint</button>
+  </div>
+  {{end}}
+
+  {{if .Blueprints}}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Code</th>
+        <th>UOP</th>
+        <th>Bin Types</th>
+        <th>Notes</th>
+        <th>Compatible Nodes</th>
+        {{if .Authenticated}}<th>Actions</th>{{end}}
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Blueprints}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td><code>{{.Code}}</code></td>
+        <td>{{.UOPCapacity}}</td>
+        <td class="text-muted" style="font-size:0.8rem">{{with index $.BPBinTypes .ID}}{{range $i, $bt := .}}{{if $i}}, {{end}}{{$bt}}{{end}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+        <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
+        <td class="text-muted" style="font-size:0.8rem">{{with index $.CompatNodes .ID}}{{range $i, $n := .}}{{if $i}}, {{end}}{{$n}}{{end}}{{else}}All{{end}}</td>
+        {{if $.Authenticated}}
+        <td>
+          <button class="btn btn-sm" onclick="openEditBlueprintModal(this)"
+            data-id="{{.ID}}"
+            data-code="{{.Code}}"
+            data-notes="{{.Description}}"
+            data-uop="{{.UOPCapacity}}">Edit</button>
+          <form method="POST" action="/blueprints/delete" style="display:inline" onsubmit="return confirm('Delete this blueprint?')">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </form>
+        </td>
+        {{end}}
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="card">
+    <p class="text-muted">No blueprints defined yet.{{if .Authenticated}} Use "+ Blueprint" to create one.{{end}}</p>
+  </div>
+  {{end}}
+</div>
+
+{{if .Authenticated}}
+<!-- Create Blueprint Modal -->
+<div id="bp-create-modal" class="modal-overlay" onclick="if(event.target===this)closeBPCreateModal()">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header flex flex-between">
+      <h2>Create Blueprint</h2>
+      <button class="modal-close" onclick="closeBPCreateModal()">&times;</button>
+    </div>
+    <form id="bp-create-form" method="POST" action="/blueprints/create" onsubmit="return submitBPCreate(event)">
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Code <span class="tooltip-trigger" title="Unique identifier used in orders">?</span></label>
+          <input type="text" name="code" id="bpc-code" required placeholder="e.g. BRK-ROTOR-KIT">
+        </div>
+        <div class="form-group">
+          <label>UOP Capacity <span class="tooltip-trigger" title="Units of Production per fully loaded cart">?</span></label>
+          <input type="number" name="uop_capacity" id="bpc-uop" value="0" min="0">
+        </div>
+      </div>
+      <div class="form-group mb-1">
+        <label>Bin Types <span class="tooltip-trigger" title="Which bin types can hold this blueprint">?</span></label>
+        <select id="bpc-bin-types" multiple style="height:4rem">
+          {{range .BinTypes}}
+          <option value="{{.ID}}">{{.Code}}{{if .Description}} - {{.Description}}{{end}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="form-group mb-1">
+        <label>Notes</label>
+        <textarea name="description" id="bpc-notes" rows="2" placeholder="Optional notes"></textarea>
+      </div>
+      <div class="mb-1">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <label style="font-weight:600;font-size:0.85rem;margin:0">Default Manifest</label>
+          <button type="button" class="btn btn-sm" onclick="addManifestRow('bpc-manifest-rows')">+ Part</button>
+        </div>
+        <div id="bpc-manifest-rows"></div>
+      </div>
+      <input type="hidden" name="default_manifest_json" id="bpc-manifest-json" value="{}">
+      <button type="submit" class="btn btn-primary">Create</button>
+      <button type="button" class="btn" onclick="closeBPCreateModal()" style="margin-left:0.5rem">Cancel</button>
+    </form>
+  </div>
+</div>
+
+<!-- Edit Blueprint Modal -->
+<div id="bp-edit-modal" class="modal-overlay" onclick="if(event.target===this)closeBPEditModal()">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header flex flex-between">
+      <h2>Edit Blueprint</h2>
+      <button class="modal-close" onclick="closeBPEditModal()">&times;</button>
+    </div>
+    <form id="bp-edit-form" method="POST" action="/blueprints/update" onsubmit="return submitBPEdit(event)">
+      <input type="hidden" name="id" id="bp-edit-id">
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label>Code</label>
+          <input type="text" name="code" id="bp-edit-code" required>
+        </div>
+        <div class="form-group">
+          <label>UOP Capacity</label>
+          <input type="number" name="uop_capacity" id="bp-edit-uop" min="0">
+        </div>
+      </div>
+      <div class="form-group mb-1">
+        <label>Bin Types</label>
+        <select id="bpe-bin-types" multiple style="height:4rem">
+          {{range .BinTypes}}
+          <option value="{{.ID}}">{{.Code}}{{if .Description}} - {{.Description}}{{end}}</option>
+          {{end}}
+        </select>
+      </div>
+      <div class="form-group mb-1">
+        <label>Notes</label>
+        <textarea name="description" id="bp-edit-notes" rows="2"></textarea>
+      </div>
+      <div class="mb-1">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <label style="font-weight:600;font-size:0.85rem;margin:0">Default Manifest</label>
+          <button type="button" class="btn btn-sm" onclick="addManifestRow('bpe-manifest-rows')">+ Part</button>
+        </div>
+        <div id="bpe-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
+      </div>
+      <input type="hidden" name="default_manifest_json" id="bpe-manifest-json" value="{}">
+      <button type="submit" class="btn btn-primary">Save Changes</button>
+      <button type="button" class="btn" onclick="closeBPEditModal()" style="margin-left:0.5rem">Cancel</button>
+    </form>
+  </div>
+</div>
+{{end}}
+
+<script src="/static/pages/blueprints.js"></script>
+{{end}}

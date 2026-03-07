@@ -7,27 +7,26 @@ import (
 )
 
 type Payload struct {
-	ID           int64      `json:"id"`
-	BlueprintID  int64      `json:"blueprint_id"`
-	BinID        *int64     `json:"bin_id,omitempty"`
-	Status       string     `json:"status"`
-	UOPRemaining int        `json:"uop_remaining"`
-	ClaimedBy    *int64     `json:"claimed_by,omitempty"`
-	LoadedAt     *time.Time `json:"loaded_at,omitempty"`
-	DeliveredAt  time.Time  `json:"delivered_at"`
-	Notes        string     `json:"notes"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	// Joined fields
+	ID                int64      `json:"id"`
+	BlueprintID       int64      `json:"blueprint_id"`
+	BinID             *int64     `json:"bin_id,omitempty"`
+	UOPRemaining      int        `json:"uop_remaining"`
+	ManifestConfirmed bool       `json:"manifest_confirmed"`
+	LoadedAt          *time.Time `json:"loaded_at,omitempty"`
+	Notes             string     `json:"notes"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	// Joined fields (read-only, from bin)
+	ClaimedBy     *int64 `json:"claimed_by,omitempty"`
+	BinStatus     string `json:"bin_status"`
 	BlueprintCode string `json:"blueprint_code"`
 	BinLabel      string `json:"bin_label"`
 	NodeName      string `json:"node_name"`
-	NodeID        *int64 `json:"node_id,omitempty"` // from bin
-	BinStatus     string `json:"bin_status"`
+	NodeID        *int64 `json:"node_id,omitempty"`
 }
 
-const payloadJoinQuery = `SELECT p.id, p.blueprint_id, p.bin_id, p.status, p.uop_remaining, b.claimed_by, p.loaded_at, p.delivered_at, p.notes, p.created_at, p.updated_at,
-	bp.code, COALESCE(b.label, ''), COALESCE(n.name, ''), b.node_id, COALESCE(b.status, '')
+const payloadJoinQuery = `SELECT p.id, p.blueprint_id, p.bin_id, p.uop_remaining, p.manifest_confirmed, p.loaded_at, p.notes, p.created_at, p.updated_at,
+	b.claimed_by, COALESCE(b.status, ''), bp.code, COALESCE(b.label, ''), COALESCE(n.name, ''), b.node_id
 	FROM payloads p
 	JOIN blueprints bp ON bp.id = p.blueprint_id
 	LEFT JOIN bins b ON b.id = p.bin_id
@@ -36,11 +35,10 @@ const payloadJoinQuery = `SELECT p.id, p.blueprint_id, p.bin_id, p.status, p.uop
 func scanPayload(row interface{ Scan(...any) error }) (*Payload, error) {
 	var p Payload
 	var binID, claimedBy, nodeID sql.NullInt64
-	var loadedAt, deliveredAt, createdAt, updatedAt any
+	var loadedAt, createdAt, updatedAt any
 
-	err := row.Scan(&p.ID, &p.BlueprintID, &binID, &p.Status, &p.UOPRemaining, &claimedBy,
-		&loadedAt, &deliveredAt, &p.Notes, &createdAt, &updatedAt,
-		&p.BlueprintCode, &p.BinLabel, &p.NodeName, &nodeID, &p.BinStatus)
+	err := row.Scan(&p.ID, &p.BlueprintID, &binID, &p.UOPRemaining, &p.ManifestConfirmed, &loadedAt, &p.Notes, &createdAt, &updatedAt,
+		&claimedBy, &p.BinStatus, &p.BlueprintCode, &p.BinLabel, &p.NodeName, &nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +53,6 @@ func scanPayload(row interface{ Scan(...any) error }) (*Payload, error) {
 		p.NodeID = &nodeID.Int64
 	}
 	p.LoadedAt = parseTimePtr(loadedAt)
-	p.DeliveredAt = parseTime(deliveredAt)
 	p.CreatedAt = parseTime(createdAt)
 	p.UpdatedAt = parseTime(updatedAt)
 	return &p, nil
@@ -74,8 +71,8 @@ func scanPayloads(rows *sql.Rows) ([]*Payload, error) {
 }
 
 func (db *DB) CreatePayload(p *Payload) error {
-	result, err := db.Exec(db.Q(`INSERT INTO payloads (blueprint_id, bin_id, status, uop_remaining, notes) VALUES (?, ?, ?, ?, ?)`),
-		p.BlueprintID, nullableInt64(p.BinID), p.Status, p.UOPRemaining, p.Notes)
+	result, err := db.Exec(db.Q(`INSERT INTO payloads (blueprint_id, bin_id, uop_remaining, manifest_confirmed, loaded_at, notes) VALUES (?, ?, ?, ?, ?, ?)`),
+		p.BlueprintID, nullableInt64(p.BinID), p.UOPRemaining, p.ManifestConfirmed, nullableTime(p.LoadedAt), p.Notes)
 	if err != nil {
 		return fmt.Errorf("create payload: %w", err)
 	}
@@ -84,7 +81,7 @@ func (db *DB) CreatePayload(p *Payload) error {
 		return fmt.Errorf("create payload last id: %w", err)
 	}
 	p.ID = id
-	db.logPayloadEvent(id, PayloadEventCreated, fmt.Sprintf("blueprint_id=%d status=%s", p.BlueprintID, p.Status))
+	db.logPayloadEvent(id, PayloadEventCreated, fmt.Sprintf("blueprint_id=%d confirmed=%v", p.BlueprintID, p.ManifestConfirmed))
 	return nil
 }
 
@@ -97,8 +94,8 @@ func (db *DB) CreatePayloadWithManifest(p *Payload) error {
 	}
 	defer tx.Rollback()
 
-	result, err := tx.Exec(db.Q(`INSERT INTO payloads (blueprint_id, bin_id, status, uop_remaining, loaded_at, notes) VALUES (?, ?, ?, ?, ?, ?)`),
-		p.BlueprintID, nullableInt64(p.BinID), p.Status, p.UOPRemaining, nullableTime(p.LoadedAt), p.Notes)
+	result, err := tx.Exec(db.Q(`INSERT INTO payloads (blueprint_id, bin_id, uop_remaining, manifest_confirmed, loaded_at, notes) VALUES (?, ?, ?, ?, ?, ?)`),
+		p.BlueprintID, nullableInt64(p.BinID), p.UOPRemaining, p.ManifestConfirmed, nullableTime(p.LoadedAt), p.Notes)
 	if err != nil {
 		return fmt.Errorf("create payload: %w", err)
 	}
@@ -127,13 +124,13 @@ func (db *DB) CreatePayloadWithManifest(p *Payload) error {
 		return fmt.Errorf("commit payload+manifest: %w", err)
 	}
 
-	db.logPayloadEvent(id, PayloadEventCreated, fmt.Sprintf("blueprint_id=%d status=%s", p.BlueprintID, p.Status))
+	db.logPayloadEvent(id, PayloadEventCreated, fmt.Sprintf("blueprint_id=%d confirmed=%v", p.BlueprintID, p.ManifestConfirmed))
 	return nil
 }
 
 func (db *DB) UpdatePayload(p *Payload) error {
-	_, err := db.Exec(db.Q(`UPDATE payloads SET blueprint_id=?, bin_id=?, status=?, uop_remaining=?, notes=?, updated_at=datetime('now') WHERE id=?`),
-		p.BlueprintID, nullableInt64(p.BinID), p.Status, p.UOPRemaining, p.Notes, p.ID)
+	_, err := db.Exec(db.Q(`UPDATE payloads SET blueprint_id=?, bin_id=?, uop_remaining=?, manifest_confirmed=?, loaded_at=?, notes=?, updated_at=datetime('now') WHERE id=?`),
+		p.BlueprintID, nullableInt64(p.BinID), p.UOPRemaining, p.ManifestConfirmed, nullableTime(p.LoadedAt), p.Notes, p.ID)
 	return err
 }
 
@@ -149,15 +146,6 @@ func (db *DB) GetPayload(id int64) (*Payload, error) {
 
 func (db *DB) ListPayloads() ([]*Payload, error) {
 	rows, err := db.Query(db.Q(fmt.Sprintf(`%s ORDER BY p.id DESC`, payloadJoinQuery)))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanPayloads(rows)
-}
-
-func (db *DB) ListPayloadsByStatus(status string) ([]*Payload, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE p.status=? ORDER BY p.id DESC`, payloadJoinQuery)), status)
 	if err != nil {
 		return nil, err
 	}
@@ -182,9 +170,9 @@ func (db *DB) FindSourcePayloadFIFO(blueprintCode string) (*Payload, error) {
 		  AND n.enabled = 1
 		  AND n.is_synthetic = 0
 		  AND b.claimed_by IS NULL
-		  AND p.status = 'available'
-		  AND COALESCE(b.status, 'available') != 'staged'
-		ORDER BY p.delivered_at ASC
+		  AND p.manifest_confirmed = 1
+		  AND COALESCE(b.status, 'available') NOT IN ('staged', 'maintenance', 'flagged', 'retired')
+		ORDER BY COALESCE(p.loaded_at, p.created_at) ASC
 		LIMIT 1`, payloadJoinQuery)), blueprintCode)
 	return scanPayload(row)
 }

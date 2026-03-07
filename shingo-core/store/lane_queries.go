@@ -73,7 +73,7 @@ func (db *DB) FindSourcePayloadInLane(laneID int64, blueprintCode string) (*Payl
 		}
 
 		for _, p := range payloads {
-			if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
+			if p.ClaimedBy != nil || !p.ManifestConfirmed || p.BinStatus != "available" {
 				continue
 			}
 			if blueprintCode != "" && p.BlueprintCode != blueprintCode {
@@ -136,7 +136,7 @@ func (db *DB) FindBuriedPayload(laneID int64, blueprintCode string) (*Payload, *
 			continue
 		}
 		for _, p := range payloads {
-			if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
+			if p.ClaimedBy != nil || !p.ManifestConfirmed || p.BinStatus != "available" {
 				continue
 			}
 			if blueprintCode != "" && p.BlueprintCode != blueprintCode {

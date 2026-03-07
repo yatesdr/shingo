@@ -134,22 +134,6 @@ func templateFuncs() template.FuncMap {
 		"f1": func(f float64) string {
 			return fmt.Sprintf("%.1f", f)
 		},
-		"payloadStatusColor": func(status string) string {
-			switch status {
-			case "available":
-				return "badge-available"
-			case "in_transit":
-				return "badge-in_transit"
-			case "at_line":
-				return "badge-at_line"
-			case "empty":
-				return "badge-empty"
-			case "hold":
-				return "badge-hold"
-			default:
-				return ""
-			}
-		},
 		"splitBroker": func(broker string) [2]string {
 			parts := strings.SplitN(broker, ":", 2)
 			if len(parts) == 2 {
@@ -158,7 +142,7 @@ func templateFuncs() template.FuncMap {
 			return [2]string{broker, "9093"}
 		},
 		"nodeColor": func(count, _ int) string {
-			return "" // Styling handled via tile-occupied CSS class
+			return "" // Styling handled via tile state CSS classes
 		},
 	}
 }

@@ -205,17 +205,24 @@ This builds a protocol envelope, encodes it, and enqueues it in the outbox. Used
 
 | Table | Purpose |
 |-------|---------|
-| `nodes` | Physical locations (storage, line-side, staging) |
-| `node_types` | Node type definitions (STG, LSL, SUP, etc.) |
+| `nodes` | Physical locations (storage, line-side, staging, lane slots) |
+| `node_types` | Node type definitions (NGRP, LANE, SHF) |
 | `node_stations` | Node-to-station assignments |
-| `node_payload_types` | Which payload types a node accepts |
-| `node_properties` | Key-value properties per node |
+| `node_blueprints` | Which blueprints a node accepts |
+| `node_bin_types` | Which bin types a node/lane accepts |
+| `node_properties` | Key-value properties per node (e.g., `depth`) |
+| `bin_types` | Physical container class definitions |
+| `bins` | Tracked physical containers |
+| `blueprints` | Container content templates (code, UOP capacity, manifest) |
+| `blueprint_bin_types` | Which bin types are compatible with a blueprint |
+| `blueprint_manifest` | Template manifest items per blueprint |
+| `payloads` | Blueprint-to-bin application records (manifest confirmation, UOP tracking) |
+| `manifest_items` | Actual items inside each payload |
+| `payload_events` | Audit trail per payload |
 | `orders` | Transport orders with full lifecycle state |
 | `order_history` | Status change log per order |
-| `payload_types` | Container type definitions |
-| `payloads` | Tracked containers/bins |
-| `manifest_items` | Items inside each payload |
 | `corrections` | Manual inventory corrections |
+| `cms_transactions` | Material movement transaction log |
 | `demands` | Material demand planning entries |
 | `production_log` | Production event log |
 | `outbox` | Message queue for Kafka delivery |
@@ -225,18 +232,20 @@ This builds a protocol envelope, encodes it, and enqueues it in the outbox. Used
 | `scene_points` | Fleet scene/map point cache |
 | `test_commands` | RDS command test history |
 
+See [Data Model](../../docs/data-model.md) for the full entity reference and relationship diagram.
+
 ### Key Relationships
 
 ```
-node_types ---< nodes ---< payloads ---< manifest_items
-                  |
-                  +---< node_properties
+node_types ---< nodes ---< bins ---< payloads ---< manifest_items
+                  |                      |
+                  +---< node_properties  +---< payload_events
                   +---< node_stations
-                  +---< node_payload_types
-
-payload_types ---< payloads
+                  +---< node_blueprints ----> blueprints ---< blueprint_manifest
+                  +---< node_bin_types ----> bin_types ---< blueprint_bin_types
 
 orders ---< order_history
+  |----> nodes, blueprints, payloads, bins
 ```
 
 ## SSE (Server-Sent Events)

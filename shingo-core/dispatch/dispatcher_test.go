@@ -314,10 +314,10 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db.CreateOrder(order)
 
 	// Create a bin at the storage node
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-UC-1", NodeID: &storageNode.ID, Status: "active"}
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-UC-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 
-	p := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available"}
+	p := &store.Payload{BlueprintID: bp.ID, BinID: &bin.ID, ManifestConfirmed: true}
 	db.CreatePayload(p)
 	db.ClaimBin(bin.ID, order.ID)
 
@@ -460,16 +460,16 @@ func TestFIFOPayloadSourceSelection(t *testing.T) {
 	db.CreateNode(s2)
 
 	// Create bins at each storage node
-	bin1 := &store.Bin{BinTypeID: 1, Label: "BIN-FIFO-1", NodeID: &storageNode.ID, Status: "active"}
+	bin1 := &store.Bin{BinTypeID: 1, Label: "BIN-FIFO-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin1)
-	bin2 := &store.Bin{BinTypeID: 1, Label: "BIN-FIFO-2", NodeID: &s2.ID, Status: "active"}
+	bin2 := &store.Bin{BinTypeID: 1, Label: "BIN-FIFO-2", NodeID: &s2.ID, Status: "available"}
 	db.CreateBin(bin2)
 
 	// Older available payload at storageNode
-	p1 := &store.Payload{BlueprintID: bp.ID, BinID: &bin1.ID, Status: "available"}
+	p1 := &store.Payload{BlueprintID: bp.ID, BinID: &bin1.ID, ManifestConfirmed: true}
 	db.CreatePayload(p1)
 	// Newer available payload at s2
-	p2 := &store.Payload{BlueprintID: bp.ID, BinID: &bin2.ID, Status: "available"}
+	p2 := &store.Payload{BlueprintID: bp.ID, BinID: &bin2.ID, ManifestConfirmed: true}
 	db.CreatePayload(p2)
 
 	// FIFO should select oldest (p1) first

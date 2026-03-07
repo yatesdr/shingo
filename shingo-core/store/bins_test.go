@@ -131,7 +131,7 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 
 	// Bins with payloads should be excluded
 	db.UnclaimBin(binA.ID)
-	payload := &Payload{BlueprintID: bp.ID, BinID: &binA.ID, Status: "available"}
+	payload := &Payload{BlueprintID: bp.ID, BinID: &binA.ID, ManifestConfirmed: true}
 	db.CreatePayload(payload)
 
 	found5, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-a")

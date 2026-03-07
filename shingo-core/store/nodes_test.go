@@ -112,14 +112,14 @@ func TestLaneQueries(t *testing.T) {
 	bp := &Blueprint{Code: "LANE-TOTE", UOPCapacity: 50}
 	db.CreateBlueprint(bp)
 
-	binFront := &Bin{BinTypeID: bt.ID, Label: "LT-001", NodeID: &slot1.ID, Status: "active"}
+	binFront := &Bin{BinTypeID: bt.ID, Label: "LT-001", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(binFront)
-	binBack := &Bin{BinTypeID: bt.ID, Label: "LT-003", NodeID: &slot3.ID, Status: "active"}
+	binBack := &Bin{BinTypeID: bt.ID, Label: "LT-003", NodeID: &slot3.ID, Status: "available"}
 	db.CreateBin(binBack)
 
-	pFront := &Payload{BlueprintID: bp.ID, BinID: &binFront.ID, Status: "available", UOPRemaining: 50}
+	pFront := &Payload{BlueprintID: bp.ID, BinID: &binFront.ID, ManifestConfirmed: true, UOPRemaining: 50}
 	db.CreatePayload(pFront)
-	pBack := &Payload{BlueprintID: bp.ID, BinID: &binBack.ID, Status: "available", UOPRemaining: 50}
+	pBack := &Payload{BlueprintID: bp.ID, BinID: &binBack.ID, ManifestConfirmed: true, UOPRemaining: 50}
 	db.CreatePayload(pBack)
 
 	// ListLaneSlots: should return slots ordered by depth ascending

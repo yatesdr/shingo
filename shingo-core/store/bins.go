@@ -141,6 +141,49 @@ func (db *DB) CountBinsByAllNodes() (map[int64]int, error) {
 	return counts, rows.Err()
 }
 
+// NodeTileState holds summary flags for rendering a node tile.
+type NodeTileState struct {
+	HasPayload  bool // bin with a confirmed payload
+	HasEmptyBin bool // bin with no payload or unconfirmed manifest
+	Claimed     bool
+	Staged      bool
+	Maintenance bool // bin in maintenance or flagged
+}
+
+// NodeTileStates returns per-node tile rendering state for all nodes that have bins.
+func (db *DB) NodeTileStates() (map[int64]NodeTileState, error) {
+	rows, err := db.Query(`SELECT b.node_id,
+		MAX(CASE WHEN p.id IS NOT NULL AND p.manifest_confirmed = 1 THEN 1 ELSE 0 END),
+		MAX(CASE WHEN p.id IS NULL OR p.manifest_confirmed = 0 THEN 1 ELSE 0 END),
+		MAX(CASE WHEN b.claimed_by IS NOT NULL THEN 1 ELSE 0 END),
+		MAX(CASE WHEN b.status = 'staged' THEN 1 ELSE 0 END),
+		MAX(CASE WHEN b.status IN ('maintenance', 'flagged') THEN 1 ELSE 0 END)
+		FROM bins b
+		LEFT JOIN payloads p ON p.bin_id = b.id
+		WHERE b.node_id IS NOT NULL
+		GROUP BY b.node_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	states := make(map[int64]NodeTileState)
+	for rows.Next() {
+		var nodeID int64
+		var hasPayload, hasEmptyBin, claimed, staged, maintenance int
+		if err := rows.Scan(&nodeID, &hasPayload, &hasEmptyBin, &claimed, &staged, &maintenance); err != nil {
+			return nil, err
+		}
+		states[nodeID] = NodeTileState{
+			HasPayload:  hasPayload == 1,
+			HasEmptyBin: hasEmptyBin == 1,
+			Claimed:     claimed == 1,
+			Staged:      staged == 1,
+			Maintenance: maintenance == 1,
+		}
+	}
+	return states, rows.Err()
+}
+
 // MoveBin moves a bin to a new node.
 func (db *DB) MoveBin(binID, toNodeID int64) error {
 	_, err := db.Exec(db.Q(`UPDATE bins SET node_id=?, updated_at=datetime('now') WHERE id=?`), toNodeID, binID)

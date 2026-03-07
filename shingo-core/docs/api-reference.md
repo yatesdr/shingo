@@ -102,14 +102,17 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
 ]
 ```
 
-### Payloads
+### Blueprints & Payloads
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/payload-types` | List payload type definitions |
+| `GET` | `/api/blueprints` | List all blueprints |
+| `GET` | `/api/blueprints/manifest?id=<ID>` | Template manifest for a blueprint |
+| `GET` | `/api/blueprints/bin-types?id=<ID>` | Compatible bin types for a blueprint |
 | `GET` | `/api/payloads` | List all payloads |
 | `GET` | `/api/payloads/detail?id=<ID>` | Single payload with details |
 | `GET` | `/api/payloads/manifest?id=<ID>` | Manifest items for a payload |
+| `GET` | `/api/payloads/by-node?node_id=<ID>` | Payloads at a specific node |
 
 #### GET /api/payloads
 
@@ -117,31 +120,24 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
 [
   {
     "id": 1,
-    "payload_type_name": "BIN-A",
-    "form_factor": "tote",
-    "node_id": 5,
+    "blueprint_id": 3,
+    "blueprint_code": "BRK-ROTOR-KIT",
+    "bin_id": 5,
+    "bin_label": "SHG:0042",
     "node_name": "STG-005",
-    "status": "available",
+    "manifest_confirmed": true,
+    "uop_remaining": 18,
     "notes": ""
   }
 ]
 ```
 
-#### GET /api/payloads/manifest?id=1
+### Bins
 
-```json
-[
-  {
-    "id": 1,
-    "payload_id": 1,
-    "part_number": "PART-001",
-    "quantity": 48,
-    "production_date": "2026-03-01",
-    "lot_code": "LOT-42",
-    "notes": ""
-  }
-]
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/bins/by-node?node_id=<ID>` | Bins at a specific node |
+| `GET` | `/api/bins/available` | List available (unoccupied) bins |
 
 ### Corrections
 
@@ -202,21 +198,40 @@ Authentication required (session cookie).
 | `POST` | `/api/nodes/properties/set` | `{"node_id": 1, "key": "k", "value": "v"}` | Set a key-value property |
 | `POST` | `/api/nodes/properties/delete` | `{"node_id": 1, "key": "k"}` | Delete a property |
 
-### Payload Type Management
+### Blueprint Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/payload-types/create` | Create payload type (form post) |
-| `POST` | `/payload-types/update` | Update payload type (form post) |
-| `POST` | `/payload-types/delete` | Delete payload type (form post) |
+| `POST` | `/blueprints/create` | Create blueprint (form post) |
+| `POST` | `/blueprints/update` | Update blueprint (form post) |
+| `POST` | `/blueprints/delete` | Delete blueprint (form post) |
+| `POST` | `/api/blueprints/create` | Create blueprint (JSON) |
+| `POST` | `/api/blueprints/update` | Update blueprint (JSON) |
+| `POST` | `/api/blueprints/manifest` | Save blueprint template manifest (JSON) |
+| `POST` | `/api/blueprints/bin-types` | Set compatible bin types (JSON) |
+
+### Bin Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/bins/create` | Create bin (form post) |
+| `POST` | `/bins/update` | Update bin (form post) |
+| `POST` | `/bins/delete` | Delete bin (form post) |
+| `POST` | `/bin-types/create` | Create bin type (form post) |
+| `POST` | `/bin-types/update` | Update bin type (form post) |
+| `POST` | `/bin-types/delete` | Delete bin type (form post) |
+| `POST` | `/api/bins/action` | Bin status action (JSON: flag, maintain, retire, activate) |
+| `POST` | `/api/bins/bulk-register` | Bulk register bins (JSON) |
 
 ### Payload Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/payloads/create` | Create payload (form post) |
+| `POST` | `/payloads/create` | Create payload — apply blueprint to bin (form post) |
 | `POST` | `/payloads/update` | Update payload (form post) |
-| `POST` | `/payloads/delete` | Delete payload (form post) |
+| `POST` | `/payloads/delete` | Delete payload — clear bin (form post) |
+| `POST` | `/api/payloads/confirm-manifest` | Confirm manifest (sets manifest_confirmed, loaded_at) |
+| `POST` | `/api/payloads/bulk-register` | Bulk register payloads (JSON) |
 
 ### Manifest Items
 
@@ -225,6 +240,16 @@ Authentication required (session cookie).
 | `POST` | `/api/payloads/manifest/create` | `{"payload_id": 1, "part_number": "P1", "quantity": 10}` | Add manifest item |
 | `POST` | `/api/payloads/manifest/update` | `{"id": 1, "part_number": "P1", "quantity": 20}` | Update manifest item |
 | `POST` | `/api/payloads/manifest/delete` | `{"id": 1}` | Remove manifest item |
+
+### Node Group Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/nodegroup/create` | Create supermarket node group (JSON) |
+| `GET` | `/api/nodegroup/layout?id=<ID>` | Get group layout (lanes, slots) |
+| `POST` | `/api/nodegroup/delete` | Delete node group (JSON) |
+| `POST` | `/api/nodegroup/add-lane` | Add lane to group (JSON) |
+| `POST` | `/api/nodegroup/reorder-lane` | Reorder lane slots (JSON) |
 
 ### Order Management
 

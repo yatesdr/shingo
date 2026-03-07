@@ -26,13 +26,18 @@
     {{range .Nodes}}
     {{$count := index $.Counts .ID}}
     {{$childCount := index $.ChildCounts .ID}}
-    <div class="node-tile{{if not .Enabled}} tile-disabled{{end}}{{if .IsSynthetic}} tile-synthetic{{end}}{{if $count}} tile-occupied{{end}}"
+    {{$ts := index $.TileStates .ID}}
+    <div class="node-tile{{if not .Enabled}} tile-disabled{{end}}{{if .IsSynthetic}} tile-synthetic{{end}}{{if $ts.Maintenance}} tile-maintenance{{else if $ts.Staged}} tile-staged{{else if $ts.HasPayload}} tile-has-payload{{else if $ts.HasEmptyBin}} tile-empty-bin{{end}}{{if $ts.Claimed}} tile-claimed{{end}}"
          data-id="{{.ID}}"
          data-name="{{.Name}}"
          data-type-code="{{.NodeTypeCode}}"
          data-zone="{{.Zone}}"
          data-enabled="{{.Enabled}}"
          data-count="{{$count}}"
+         data-has-payload="{{$ts.HasPayload}}"
+         data-has-empty-bin="{{$ts.HasEmptyBin}}"
+         data-claimed="{{$ts.Claimed}}"
+         data-staged="{{$ts.Staged}}"
          data-label="{{index $.NodeLabels .Name}}"
          data-synthetic="{{.IsSynthetic}}"
          data-parent-id="{{if .ParentID}}{{deref .ParentID}}{{end}}"
@@ -430,7 +435,7 @@
   right: 3px;
   font-size: 0.55rem;
   font-weight: 700;
-  color: var(--text-muted);
+  color: inherit;
   opacity: 0.6;
   line-height: 1;
   pointer-events: none;

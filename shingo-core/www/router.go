@@ -47,7 +47,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		"templates/config.html",
 		"templates/rds_explorer.html",
 		"templates/robots.html",
-		"templates/payloads.html",
+		"templates/blueprints.html",
 		"templates/bins.html",
 		"templates/demand.html",
 		"templates/test-orders.html",
@@ -104,6 +104,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Get("/map/points", h.apiScenePoints)
 		r.Get("/orders", h.apiListOrders)
 		r.Get("/orders/detail", h.apiGetOrder)
+		r.Get("/orders/enriched", h.apiGetOrderEnriched)
 		r.Get("/robots", h.apiRobotsStatus)
 		r.Get("/nodes/bin-types", h.apiGetNodeBinTypes)
 		r.Get("/blueprints", h.apiListBlueprints)
@@ -114,6 +115,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Get("/payloads/manifest", h.apiListManifest)
 		r.Get("/payloads/by-node", h.apiPayloadsByNode)
 		r.Get("/bins/by-node", h.apiBinsByNode)
+		r.Get("/bins/available", h.apiListAvailableBins)
 		r.Get("/corrections", h.apiListNodeCorrections)
 		r.Get("/cms-transactions", h.apiListCMSTransactions)
 		r.Get("/demands", h.apiListDemands)
@@ -154,7 +156,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			r.Post("/payloads/manifest/update", h.apiUpdateManifestItem)
 			r.Post("/payloads/manifest/delete", h.apiDeleteManifestItem)
 
-			r.Post("/payloads/action", h.apiPayloadAction)
+			r.Post("/payloads/confirm-manifest", h.apiConfirmManifest)
 			r.Post("/payloads/bulk-register", h.apiBulkRegisterPayloads)
 			r.Get("/payloads/events", h.apiListPayloadEvents)
 			r.Post("/bins/bulk-register", h.apiBulkRegisterBins)
@@ -179,6 +181,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 
 			r.Post("/orders/terminate", h.apiTerminateOrder)
 			r.Post("/orders/priority", h.apiSetOrderPriority)
+			r.Post("/orders/spot", h.apiSpotOrderSubmit)
 
 			r.Post("/demands", h.apiCreateDemand)
 			r.Put("/demands/{id}", h.apiUpdateDemand)
@@ -197,7 +200,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 
 		// Protected pages
 		r.Get("/test-orders", h.handleTestOrders)
-		r.Get("/payloads", h.handlePayloads)
+		r.Get("/blueprints", h.handleBlueprints)
+		r.Get("/payloads", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/blueprints", http.StatusMovedPermanently)
+		})
 		r.Get("/bins", h.handleBins)
 		r.Get("/diagnostics", h.handleDiagnostics)
 		r.Get("/config", h.handleConfig)

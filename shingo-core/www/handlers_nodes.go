@@ -97,6 +97,7 @@ func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
 		"Page":           "nodes",
 		"Nodes":          pd.Nodes,
 		"Counts":         pd.Counts,
+		"TileStates":     pd.TileStates,
 		"Zones":          pd.Zones,
 		"NodeLabels":    pd.NodeLabels,
 		"NodeInfo":       pd.NodeInfo,

@@ -17,25 +17,40 @@ A physical location in the facility where payloads can be stored, picked up, or 
 | 6 River Systems | Destination |
 | VDA 5050 | Node (same) |
 
-Node types: `storage`, `line_side`, `staging`, `charging`.
+Node types include `NGRP` (node group), `LANE` (lane), `SHF` (shuffle row), plus physical nodes for storage, line-side, and staging.
 
-### Payload
+### Bin
 
-A container or bin that holds materials and is tracked as it moves between nodes. Each payload has a type, a status, and a manifest of items inside it.
+A physical container that holds materials and is tracked as it moves between nodes. Each bin has a type, a status, and optionally a payload (blueprint application with manifest). The bin is the primary physical entity in Shingo.
 
 | System | Term |
 |---|---|
-| ShinGo | **Payload** |
+| ShinGo | **Bin** |
 | Seer RDS | Goods / Container (`goodsId`, `containerName`) |
-| MiR | Payload (same) |
+| MiR | Payload |
 | Locus Robotics | Tote / Cart |
 | VDA 5050 | Load |
 
-Payload statuses: `available`, `in_transit`, `at_line`, `empty`, `hold`.
+Bin statuses: `available`, `staged`, `flagged`, `maintenance`, `retired`.
+
+### Blueprint
+
+A template defining what a bin should contain — its expected parts, quantities, and UOP capacity. When a blueprint is applied to a bin, a **payload** record is created.
+
+| System | Term |
+|---|---|
+| ShinGo | **Blueprint** |
+| Warehouse systems | SKU / Item master |
+
+### Payload
+
+An internal record linking a blueprint to a bin. Tracks manifest confirmation and UOP consumption. Users interact with bins and blueprints; the payload is an implementation detail.
+
+A payload is only eligible for dispatch when its manifest is confirmed (`manifest_confirmed = true`), the bin status is `available`, and the bin is not claimed by another order.
 
 ### Manifest
 
-The list of items (parts, materials) inside a payload. Each manifest item has a part number, quantity, and optional notes.
+The list of items (parts, materials) inside a payload. Each manifest item has a part number, quantity, and optional notes. A **blueprint manifest** defines the template; the payload's **manifest items** are the actual contents.
 
 | System | Term |
 |---|---|
@@ -201,7 +216,7 @@ The admin tool for sending raw API requests to the fleet backend. Vendor-specifi
 
 ## Naming Conventions
 
-- **Go interfaces and structs** use the ShinGo terms: `RobotLister`, `NodeOccupancyProvider`, `OccupancyDetail`, `RobotStatus.Available`.
-- **JSON API fields** use `snake_case`: `location_id`, `fleet_occupied`, `vehicle_id`, `available`.
+- **Go interfaces and structs** use the ShinGo terms: `store.Bin`, `store.Blueprint`, `store.Payload`, `store.Node`, `RobotStatus.Available`.
+- **JSON API fields** use `snake_case`: `bin_type_id`, `blueprint_id`, `manifest_confirmed`, `node_id`, `available`.
 - **HTML/CSS classes** use `kebab-case`: `tile-loc`, `occupancy-modal`, `data-available`.
 - **Vendor-specific code** (inside `fleet/seerrds/`, RDS client, Fleet Explorer template) uses the vendor's own terminology since it maps directly to their API.

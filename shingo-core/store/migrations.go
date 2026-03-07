@@ -145,6 +145,7 @@ func (db *DB) migrate() error {
 	db.migrateBinClaiming()
 	db.migrateDeliveryNodeIndex()
 	db.migrateStagedBinExpiry()
+	db.migratePayloadSimplify()
 	return nil
 }
 
@@ -744,6 +745,56 @@ func (db *DB) migrateStagedBinExpiry() {
 		case "postgres":
 			db.Exec(`ALTER TABLE bins ADD COLUMN staged_expires_at TIMESTAMPTZ`)
 		}
+	}
+}
+
+// migratePayloadSimplify removes payload.status and payload.delivered_at,
+// replacing them with manifest_confirmed.
+// Also adds a UNIQUE constraint on payloads.bin_id (1 payload per bin).
+func (db *DB) migratePayloadSimplify() {
+	if !db.tableExists("payloads") {
+		return
+	}
+
+	// Add manifest_confirmed column if missing
+	if !db.columnExists("payloads", "manifest_confirmed") {
+		switch db.driver {
+		case "sqlite":
+			db.Exec(`ALTER TABLE payloads ADD COLUMN manifest_confirmed INTEGER NOT NULL DEFAULT 0`)
+		case "postgres":
+			db.Exec(`ALTER TABLE payloads ADD COLUMN manifest_confirmed BOOLEAN NOT NULL DEFAULT FALSE`)
+		}
+
+		// Backfill: existing payloads with status='available' are confirmed
+		if db.columnExists("payloads", "status") {
+			db.Exec(db.Q(`UPDATE payloads SET manifest_confirmed = 1 WHERE status = 'available'`))
+		}
+	}
+
+	// Drop status column
+	if db.columnExists("payloads", "status") {
+		switch db.driver {
+		case "sqlite":
+			db.Exec(`ALTER TABLE payloads DROP COLUMN status`)
+		case "postgres":
+			db.Exec(`ALTER TABLE payloads DROP COLUMN IF EXISTS status`)
+		}
+		db.Exec(`DROP INDEX IF EXISTS idx_payloads_status`)
+	}
+
+	// Drop delivered_at column
+	if db.columnExists("payloads", "delivered_at") {
+		switch db.driver {
+		case "sqlite":
+			db.Exec(`ALTER TABLE payloads DROP COLUMN delivered_at`)
+		case "postgres":
+			db.Exec(`ALTER TABLE payloads DROP COLUMN IF EXISTS delivered_at`)
+		}
+	}
+
+	// Add UNIQUE constraint on payloads.bin_id (Postgres only; SQLite gets it from schema)
+	if db.driver == "postgres" {
+		db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_payloads_bin_unique ON payloads(bin_id) WHERE bin_id IS NOT NULL`)
 	}
 }
 

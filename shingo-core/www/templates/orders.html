@@ -14,7 +14,7 @@
         <tr><td><strong>UUID</strong></td><td>{{.Order.EdgeUUID}}</td></tr>
         <tr><td><strong>Station</strong></td><td>{{.Order.StationID}}</td></tr>
         <tr><td><strong>Type</strong></td><td>{{.Order.OrderType}}</td></tr>
-        <tr><td><strong>Blueprint</strong></td><td>{{if .Order.BlueprintID}}BP#{{deref .Order.BlueprintID}}{{else}}{{.Order.MaterialCode}}{{end}}</td></tr>
+        <tr><td><strong>Blueprint</strong></td><td>{{if .Order.BlueprintID}}BP#{{deref .Order.BlueprintID}}{{else}}{{.Order.PayloadDesc}}{{end}}</td></tr>
         <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
         <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
         <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}</td></tr>
@@ -62,8 +62,8 @@
 
   {{else}}
   {{/* Order list view */}}
-  <div class="flex flex-between mb-2">
-    <h1>Orders</h1>
+  <div class="flex flex-between mb-1">
+    <h1 style="font-size:1.3rem">Orders</h1>
     <div class="flex gap-1">
       <a href="/orders" class="btn btn-sm {{if not .FilterStatus}}btn-primary{{end}}">All</a>
       <a href="/orders?status=pending" class="btn btn-sm {{if eq .FilterStatus "pending"}}btn-primary{{end}}">Pending</a>
@@ -75,9 +75,15 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="filter-bar" style="display:flex;align-items:center;gap:0.5rem">
+    <input type="text" id="filter-search" placeholder="Filter by station, type, robot..." style="min-width:220px">
+    <span id="filter-count" class="text-muted" style="font-size:0.78rem"></span>
+    {{if .Authenticated}}<button class="btn btn-primary btn-sm" onclick="openSpotOrderModal()" style="margin-left:auto">Spot Order</button>{{end}}
+  </div>
+
+  <div class="card" style="padding:0.75rem">
     {{if .Orders}}
-    <table>
+    <table class="table-compact" id="orders-table">
       <thead>
         <tr>
           <th>ID</th>
@@ -92,12 +98,12 @@
       </thead>
       <tbody>
         {{range .Orders}}
-        <tr>
-          <td><a href="/orders/detail?id={{.ID}}">{{.ID}}</a></td>
-          <td style="font-family:monospace;font-size:0.8rem">{{.EdgeUUID}}</td>
+        <tr style="cursor:pointer" onclick="openOrderModal({{.ID}})">
+          <td><a href="/orders/detail?id={{.ID}}" onclick="event.stopPropagation()">{{.ID}}</a></td>
+          <td style="font-family:monospace;font-size:0.75rem">{{.EdgeUUID}}</td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
-          <td>{{if .BlueprintID}}BP#{{deref .BlueprintID}}{{else}}{{.MaterialCode}}{{end}}</td>
+          <td>{{if .BlueprintID}}BP#{{deref .BlueprintID}}{{else}}{{.PayloadDesc}}{{end}}</td>
           <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
           <td>{{.RobotID}}</td>
           <td>{{formatTime .CreatedAt}}</td>
@@ -110,6 +116,136 @@
     {{end}}
   </div>
   {{end}}
+</div>
+
+<div class="modal-overlay" id="spot-order-modal" onclick="if(event.target===this)closeSpotOrderModal()">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header flex flex-between">
+      <h2>Spot Order</h2>
+      <button class="modal-close" onclick="closeSpotOrderModal()">&times;</button>
+    </div>
+    <div style="padding:1rem">
+      <div class="spot-tabs">
+        <button class="spot-tab active" onclick="switchSpotTab('transport',this)">Transport</button>
+        <button class="spot-tab" onclick="switchSpotTab('staged',this)">Staged</button>
+        <button class="spot-tab" onclick="switchSpotTab('swap',this)">Swap</button>
+        <button class="spot-tab" onclick="switchSpotTab('send_to',this)">Send to Location</button>
+      </div>
+
+      <!-- Tab 1: Transport -->
+      <div id="spot-tab-transport" class="spot-tab-content active">
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label><strong>Order Type</strong></label>
+          <select id="spot-transport-type" onchange="spotTransportTypeChanged()">
+            <option value="move">Move</option>
+            <option value="retrieve">Retrieve</option>
+            <option value="retrieve_empty">Retrieve Empty</option>
+            <option value="retrieve_specific">Retrieve Specific Bin</option>
+            <option value="store">Store</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0.75rem" id="spot-pickup-group">
+          <label><strong>Pickup Node</strong></label>
+          <select id="spot-pickup"><option value="">Loading...</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0.75rem" id="spot-delivery-group">
+          <label><strong>Delivery Node</strong></label>
+          <select id="spot-delivery"><option value="">Loading...</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0.75rem" id="spot-blueprint-group">
+          <label><strong>Blueprint</strong> <span class="text-muted">(optional)</span></label>
+          <select id="spot-blueprint"><option value="">— none —</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0.75rem;display:none" id="spot-bin-group">
+          <label><strong>Bin</strong></label>
+          <select id="spot-bin"><option value="">Loading...</option></select>
+        </div>
+      </div>
+
+      <!-- Tab 2: Staged -->
+      <div id="spot-tab-staged" class="spot-tab-content">
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label><strong>Pickup Node</strong></label>
+          <select id="spot-staged-pickup"><option value="">Loading...</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label><strong>Staging Node</strong></label>
+          <select id="spot-staged-staging"><option value="">Loading...</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label><strong>Delivery Node</strong></label>
+          <select id="spot-staged-delivery"><option value="">Loading...</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label><strong>Blueprint</strong> <span class="text-muted">(optional)</span></label>
+          <select id="spot-staged-blueprint"><option value="">— none —</option></select>
+        </div>
+      </div>
+
+      <!-- Tab 3: Swap -->
+      <div id="spot-tab-swap" class="spot-tab-content">
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label><strong>Target Node</strong></label>
+          <select id="spot-swap-node"><option value="">Loading...</option></select>
+        </div>
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label><strong>New Blueprint</strong></label>
+          <select id="spot-swap-blueprint"><option value="">Loading...</option></select>
+        </div>
+      </div>
+
+      <!-- Tab 4: Send to Location -->
+      <div id="spot-tab-send_to" class="spot-tab-content">
+        <div class="form-group" style="margin-bottom:0.75rem">
+          <label><strong>Destination Node</strong></label>
+          <select id="spot-sendto-dest"><option value="">Loading...</option></select>
+        </div>
+      </div>
+
+      <!-- Shared fields -->
+      <div class="form-group" style="margin-bottom:0.75rem;display:none" id="spot-quantity-group">
+        <label><strong>Quantity</strong></label>
+        <input type="number" id="spot-quantity" value="1" min="1" max="20" style="width:5rem">
+      </div>
+      <div class="form-group" style="margin-bottom:0.75rem">
+        <label><strong>Priority</strong></label>
+        <input type="number" id="spot-priority" value="0" style="width:5rem">
+      </div>
+      <div class="form-group" style="margin-bottom:0.75rem">
+        <label><strong>Description</strong> <span class="text-muted">(optional)</span></label>
+        <input type="text" id="spot-description" placeholder="e.g. urgent replenishment">
+      </div>
+      <div id="spot-status" style="min-height:1.4em;font-size:0.85rem;margin-bottom:0.5rem"></div>
+      <div class="flex gap-1">
+        <button class="btn btn-primary" id="spot-submit-btn" onclick="submitSpotOrder()">Submit</button>
+        <button class="btn" onclick="closeSpotOrderModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+<style>
+.spot-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1rem; }
+.spot-tab {
+  background:none; border:none; padding:.5rem 1rem; cursor:pointer;
+  font-size:.9rem; color:var(--text-muted); border-bottom:2px solid transparent;
+  margin-bottom:-2px; font-weight:500;
+}
+.spot-tab:hover { color:var(--text); }
+.spot-tab.active { color:#7c3aed; border-bottom-color:#7c3aed; }
+.spot-tab-content { display:none; }
+.spot-tab-content.active { display:block; }
+</style>
+
+<div class="modal-overlay" id="order-modal-overlay" onclick="if(event.target===this)closeOrderModal()">
+  <div class="modal modal-wide">
+    <div class="modal-header flex flex-between">
+      <h2 id="order-modal-title">Order Detail</h2>
+      <button class="modal-close" onclick="closeOrderModal()">&times;</button>
+    </div>
+    <div id="order-modal-loading" style="text-align:center;padding:2rem" class="text-muted">Loading...</div>
+    <div id="order-modal-error" style="display:none;color:var(--danger);padding:1rem"></div>
+    <div id="order-modal-content" style="display:none"></div>
+  </div>
 </div>
 
 <script src="/static/pages/orders.js"></script>

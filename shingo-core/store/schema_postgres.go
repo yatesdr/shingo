@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS blueprints (
     code                  TEXT NOT NULL UNIQUE,
     description           TEXT NOT NULL DEFAULT '',
     uop_capacity          INTEGER NOT NULL DEFAULT 0,
-    default_manifest_json JSONB NOT NULL DEFAULT '{}',
+    default_manifest_json TEXT NOT NULL DEFAULT '{}',
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -141,20 +141,18 @@ CREATE TABLE IF NOT EXISTS blueprint_bin_types (
 );
 
 CREATE TABLE IF NOT EXISTS payloads (
-    id              BIGSERIAL PRIMARY KEY,
-    blueprint_id    BIGINT NOT NULL REFERENCES blueprints(id),
-    bin_id          BIGINT REFERENCES bins(id),
-    status          TEXT NOT NULL DEFAULT 'empty',
-    uop_remaining   INTEGER NOT NULL DEFAULT 0,
-    loaded_at       TIMESTAMPTZ,
-    delivered_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    notes           TEXT NOT NULL DEFAULT '',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id                  BIGSERIAL PRIMARY KEY,
+    blueprint_id        BIGINT NOT NULL REFERENCES blueprints(id),
+    bin_id              BIGINT UNIQUE REFERENCES bins(id),
+    uop_remaining       INTEGER NOT NULL DEFAULT 0,
+    manifest_confirmed  BOOLEAN NOT NULL DEFAULT FALSE,
+    loaded_at           TIMESTAMPTZ,
+    notes               TEXT NOT NULL DEFAULT '',
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_payloads_blueprint ON payloads(blueprint_id);
 CREATE INDEX IF NOT EXISTS idx_payloads_bin ON payloads(bin_id);
-CREATE INDEX IF NOT EXISTS idx_payloads_status ON payloads(status);
 
 CREATE TABLE IF NOT EXISTS blueprint_manifest (
     id            BIGSERIAL PRIMARY KEY,

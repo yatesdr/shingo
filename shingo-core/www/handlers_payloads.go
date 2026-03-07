@@ -18,11 +18,8 @@ func (h *Handlers) apiListBlueprints(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, blueprints)
 }
 
-func (h *Handlers) handlePayloads(w http.ResponseWriter, r *http.Request) {
-	payloads, _ := h.engine.DB().ListPayloads()
+func (h *Handlers) handleBlueprints(w http.ResponseWriter, r *http.Request) {
 	blueprints, _ := h.engine.DB().ListBlueprints()
-	nodes, _ := h.engine.DB().ListNodes()
-	bins, _ := h.engine.DB().ListBins()
 
 	// Build compatible nodes map: blueprint_id -> [node names]
 	compatNodes := make(map[int64][]string)
@@ -45,16 +42,13 @@ func (h *Handlers) handlePayloads(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"Page":        "payloads",
-		"Payloads":    payloads,
+		"Page":        "blueprints",
 		"Blueprints":  blueprints,
-		"Nodes":       nodes,
-		"Bins":        bins,
 		"BinTypes":    binTypes,
 		"CompatNodes": compatNodes,
 		"BPBinTypes":  bpBinTypes,
 	}
-	h.render(w, r, "payloads.html", data)
+	h.render(w, r, "blueprints.html", data)
 }
 
 func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +65,6 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 
 	p := &store.Payload{
 		BlueprintID: blueprintID,
-		Status:      r.FormValue("status"),
 		Notes:       r.FormValue("notes"),
 	}
 
@@ -81,17 +74,14 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if p.Status == "" {
-		p.Status = "empty"
-	}
-
 	// Set UOP from blueprint capacity
 	if bp, err := h.engine.DB().GetBlueprint(blueprintID); err == nil && bp.UOPCapacity > 0 {
 		p.UOPRemaining = bp.UOPCapacity
 	}
 
-	// Set loaded_at when payload starts with content
-	if p.Status == "available" {
+	// Mark confirmed if requested
+	if r.FormValue("manifest_confirmed") == "1" {
+		p.ManifestConfirmed = true
 		now := time.Now()
 		p.LoadedAt = &now
 	}
@@ -129,7 +119,6 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p.BlueprintID = blueprintID
-	p.Status = r.FormValue("status")
 	p.Notes = r.FormValue("notes")
 	p.BinID = nil
 
@@ -271,11 +260,9 @@ func (h *Handlers) apiDeleteManifestItem(w http.ResponseWriter, r *http.Request)
 	h.jsonSuccess(w)
 }
 
-func (h *Handlers) apiPayloadAction(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiConfirmManifest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID     int64  `json:"id"`
-		Action string `json:"action"`
-		Reason string `json:"reason"`
+		ID int64 `json:"id"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -287,21 +274,10 @@ func (h *Handlers) apiPayloadAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch req.Action {
-	case "flag":
-		p.Status = "flagged"
-	case "maintenance":
-		p.Status = "maintenance"
-	case "retire":
-		p.Status = "retired"
-	case "activate":
-		p.Status = "available"
-	default:
-		h.jsonError(w, "unknown action: "+req.Action, http.StatusBadRequest)
-		return
-	}
+	p.ManifestConfirmed = true
+	now := time.Now()
+	p.LoadedAt = &now
 
-	p.Notes = req.Reason
 	if err := h.engine.DB().UpdatePayload(p); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -311,9 +287,8 @@ func (h *Handlers) apiPayloadAction(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiBulkRegisterPayloads(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		BlueprintID int64  `json:"blueprint_id"`
-		Count       int    `json:"count"`
-		Status      string `json:"status"`
+		BlueprintID int64 `json:"blueprint_id"`
+		Count       int   `json:"count"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -323,15 +298,11 @@ func (h *Handlers) apiBulkRegisterPayloads(w http.ResponseWriter, r *http.Reques
 		h.jsonError(w, "count must be 1-100", http.StatusBadRequest)
 		return
 	}
-	if req.Status == "" {
-		req.Status = "empty"
-	}
 
 	var created []int64
 	for i := 0; i < req.Count; i++ {
 		p := &store.Payload{
 			BlueprintID: req.BlueprintID,
-			Status:      req.Status,
 		}
 		if err := h.engine.DB().CreatePayload(p); err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)

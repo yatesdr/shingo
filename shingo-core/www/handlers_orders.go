@@ -1,8 +1,16 @@
 package www
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
+
+	"github.com/google/uuid"
+
+	"shingo/protocol"
+	"shingocore/fleet"
+	"shingocore/store"
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +101,81 @@ func (h *Handlers) apiGetOrder(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, order)
 }
 
+func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	order, err := h.engine.DB().GetOrder(id)
+	if err != nil {
+		h.jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	type enrichedOrder struct {
+		Order        *store.Order          `json:"order"`
+		History      []*store.OrderHistory `json:"history,omitempty"`
+		Bin          *store.Bin            `json:"bin,omitempty"`
+		Payload      *store.Payload        `json:"payload,omitempty"`
+		PickupNode   *store.Node           `json:"pickup_node,omitempty"`
+		DeliveryNode *store.Node           `json:"delivery_node,omitempty"`
+		Children     []*store.Order        `json:"children,omitempty"`
+		Parent       *store.Order          `json:"parent,omitempty"`
+		VendorDetail  *fleet.VendorOrderDetail `json:"vendor_detail,omitempty"`
+		Robot         *fleet.RobotStatus     `json:"robot,omitempty"`
+		ManifestItems []*store.ManifestItem  `json:"manifest_items,omitempty"`
+	}
+
+	result := enrichedOrder{Order: order}
+
+	result.History, _ = h.engine.DB().ListOrderHistory(id)
+
+	if order.BinID != nil {
+		result.Bin, _ = h.engine.DB().GetBin(*order.BinID)
+	}
+	if order.PayloadID != nil {
+		result.Payload, _ = h.engine.DB().GetPayload(*order.PayloadID)
+		items, _ := h.engine.DB().ListManifestItems(*order.PayloadID)
+		if len(items) > 0 {
+			result.ManifestItems = items
+		}
+	}
+	if order.PickupNode != "" {
+		result.PickupNode, _ = h.engine.DB().GetNodeByName(order.PickupNode)
+	}
+	if order.DeliveryNode != "" {
+		result.DeliveryNode, _ = h.engine.DB().GetNodeByName(order.DeliveryNode)
+	}
+	if order.ParentOrderID != nil {
+		result.Parent, _ = h.engine.DB().GetOrder(*order.ParentOrderID)
+	}
+
+	children, _ := h.engine.DB().ListChildOrders(id)
+	if len(children) > 0 {
+		result.Children = children
+	}
+
+	if order.VendorOrderID != "" {
+		if vc, ok := h.engine.Fleet().(fleet.VendorCommander); ok {
+			result.VendorDetail, _ = vc.GetVendorOrderDetail(order.VendorOrderID)
+		}
+	}
+	if order.RobotID != "" {
+		if rl, ok := h.engine.Fleet().(fleet.RobotLister); ok {
+			if robots, err := rl.GetRobotsStatus(); err == nil {
+				for i := range robots {
+					if robots[i].VehicleID == order.RobotID {
+						result.Robot = &robots[i]
+						break
+					}
+				}
+			}
+		}
+	}
+
+	h.jsonOK(w, result)
+}
+
 func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OrderID  int64 `json:"order_id"`
@@ -121,4 +204,401 @@ func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonSuccess(w)
+}
+
+func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderType     string `json:"order_type"`
+		PickupNode    string `json:"pickup_node"`
+		DeliveryNode  string `json:"delivery_node"`
+		StagingNode   string `json:"staging_node"`
+		Priority      int    `json:"priority"`
+		Description   string `json:"description"`
+		BlueprintCode string `json:"blueprint_code"`
+		BinLabel      string `json:"bin_label"`
+		Quantity      int    `json:"quantity"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+
+	if req.OrderType == "" {
+		h.jsonError(w, "order_type is required", http.StatusBadRequest)
+		return
+	}
+	if req.Quantity <= 0 {
+		req.Quantity = 1
+	}
+
+	orderUUID := fmt.Sprintf("spot-%s", uuid.New().String()[:8])
+	src := protocol.Address{Role: protocol.RoleCore, Station: "core-spot"}
+	dst := protocol.Address{Role: protocol.RoleCore}
+
+	switch req.OrderType {
+	case "staged":
+		h.submitSpotComplexOrder(w, req.PickupNode, req.StagingNode, req.DeliveryNode,
+			req.BlueprintCode, req.Description, req.Priority, orderUUID, src, dst)
+		return
+	case "send_to":
+		h.submitSpotSendTo(w, req.DeliveryNode, req.Description, req.Priority, orderUUID)
+		return
+	case "retrieve_specific":
+		h.submitSpotRetrieveSpecific(w, req.BinLabel, req.DeliveryNode, req.Description, req.Priority, orderUUID)
+		return
+	case "swap":
+		h.submitSpotSwap(w, req.DeliveryNode, req.BlueprintCode, req.Description, req.Priority)
+		return
+	}
+
+	// Transport types: move, retrieve, retrieve_empty, store
+	actualType := req.OrderType
+	retrieveEmpty := false
+	if req.OrderType == "retrieve_empty" {
+		actualType = "retrieve"
+		retrieveEmpty = true
+	}
+
+	// Batch retrieve: create N independent orders
+	if req.Quantity > 20 {
+		req.Quantity = 20
+	}
+	if req.Quantity > 1 && (req.OrderType == "retrieve" || req.OrderType == "retrieve_empty") {
+		var firstOrderID int64
+		var firstStatus string
+		for i := 1; i <= req.Quantity; i++ {
+			batchUUID := fmt.Sprintf("%s-%d", orderUUID, i)
+			orderReq := &protocol.OrderRequest{
+				OrderUUID:     batchUUID,
+				OrderType:     actualType,
+				BlueprintCode: req.BlueprintCode,
+				PayloadDesc:   req.Description,
+				Quantity:      1,
+				PickupNode:    req.PickupNode,
+				DeliveryNode:  req.DeliveryNode,
+				Priority:      req.Priority,
+				RetrieveEmpty: retrieveEmpty,
+			}
+			env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, orderReq)
+			if err != nil {
+				log.Printf("spot batch order %d/%d envelope error: %v", i, req.Quantity, err)
+				continue
+			}
+			h.engine.Dispatcher().HandleOrderRequest(env, orderReq)
+			if i == 1 {
+				if o, err := h.engine.DB().GetOrderByUUID(batchUUID); err == nil {
+					firstOrderID = o.ID
+					firstStatus = o.Status
+				}
+			}
+		}
+		h.jsonOK(w, map[string]any{
+			"order_id": firstOrderID,
+			"status":   firstStatus,
+			"count":    req.Quantity,
+		})
+		return
+	}
+
+	orderReq := &protocol.OrderRequest{
+		OrderUUID:     orderUUID,
+		OrderType:     actualType,
+		BlueprintCode: req.BlueprintCode,
+		PayloadDesc:   req.Description,
+		Quantity:      1,
+		PickupNode:    req.PickupNode,
+		DeliveryNode:  req.DeliveryNode,
+		Priority:      req.Priority,
+		RetrieveEmpty: retrieveEmpty,
+	}
+
+	env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, orderReq)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.engine.Dispatcher().HandleOrderRequest(env, orderReq)
+	h.readBackSpotOrder(w, orderUUID)
+}
+
+func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc string, priority int, orderUUID string) {
+	if destination == "" {
+		h.jsonError(w, "destination node is required", http.StatusBadRequest)
+		return
+	}
+
+	destNode, err := h.engine.DB().GetNodeByName(destination)
+	if err != nil {
+		h.jsonError(w, "destination node not found: "+destination, http.StatusBadRequest)
+		return
+	}
+
+	order := &store.Order{
+		EdgeUUID:     orderUUID,
+		StationID:    "core-spot",
+		OrderType:    "send_to",
+		Status:       "pending",
+		Quantity:     1,
+		DeliveryNode: destNode.Name,
+		Priority:     priority,
+		PayloadDesc:  desc,
+	}
+	if err := h.engine.DB().CreateOrder(order); err != nil {
+		h.jsonError(w, "failed to create order: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
+	req := fleet.StagedOrderRequest{
+		OrderID:    vendorOrderID,
+		ExternalID: orderUUID,
+		Blocks: []fleet.OrderBlock{
+			{BlockID: "B1", Location: destNode.Name},
+		},
+		Priority: priority,
+	}
+
+	if _, err := h.engine.Fleet().CreateStagedOrder(req); err != nil {
+		h.engine.DB().UpdateOrderStatus(order.ID, "failed", "fleet error: "+err.Error())
+		h.readBackSpotOrder(w, orderUUID)
+		return
+	}
+
+	h.engine.DB().UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", "")
+	h.engine.DB().UpdateOrderStatus(order.ID, "dispatched", fmt.Sprintf("send-to %s via %s (incomplete)", destNode.Name, vendorOrderID))
+	h.readBackSpotOrder(w, orderUUID)
+}
+
+func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
+	pickupNode, stagingNode, deliveryNode, blueprintCode, desc string,
+	priority int, orderUUID string, src, dst protocol.Address) {
+
+	if pickupNode == "" {
+		h.jsonError(w, "pickup node is required for staged orders", http.StatusBadRequest)
+		return
+	}
+	if stagingNode == "" {
+		h.jsonError(w, "staging node is required for staged orders", http.StatusBadRequest)
+		return
+	}
+	if deliveryNode == "" {
+		h.jsonError(w, "delivery node is required for staged orders", http.StatusBadRequest)
+		return
+	}
+
+	complexReq := &protocol.ComplexOrderRequest{
+		OrderUUID:     orderUUID,
+		BlueprintCode: blueprintCode,
+		PayloadDesc:   desc,
+		Quantity:      1,
+		Priority:      priority,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: pickupNode},
+			{Action: "dropoff", Node: stagingNode},
+			{Action: "wait"},
+			{Action: "pickup", Node: stagingNode},
+			{Action: "dropoff", Node: deliveryNode},
+		},
+	}
+
+	env, err := protocol.NewEnvelope(protocol.TypeComplexOrderRequest, src, dst, complexReq)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.engine.Dispatcher().HandleComplexOrderRequest(env, complexReq)
+	h.readBackSpotOrder(w, orderUUID)
+}
+
+func (h *Handlers) readBackSpotOrder(w http.ResponseWriter, orderUUID string) {
+	order, err := h.engine.DB().GetOrderByUUID(orderUUID)
+	if err != nil {
+		h.jsonError(w, "order submitted but could not read back: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	h.jsonOK(w, map[string]any{
+		"order_id":     order.ID,
+		"status":       order.Status,
+		"error_detail": order.ErrorDetail,
+	})
+}
+
+func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, deliveryNode, desc string, priority int, orderUUID string) {
+	if binLabel == "" {
+		h.jsonError(w, "bin_label is required", http.StatusBadRequest)
+		return
+	}
+	if deliveryNode == "" {
+		h.jsonError(w, "delivery node is required", http.StatusBadRequest)
+		return
+	}
+
+	bin, err := h.engine.DB().GetBinByLabel(binLabel)
+	if err != nil {
+		h.jsonError(w, "bin not found: "+binLabel, http.StatusBadRequest)
+		return
+	}
+	if bin.ClaimedBy != nil {
+		h.jsonError(w, "bin is already claimed by order #"+strconv.FormatInt(*bin.ClaimedBy, 10), http.StatusConflict)
+		return
+	}
+	if bin.NodeID == nil {
+		h.jsonError(w, "bin has no assigned node", http.StatusBadRequest)
+		return
+	}
+
+	sourceNode, err := h.engine.DB().GetNode(*bin.NodeID)
+	if err != nil {
+		h.jsonError(w, "source node not found", http.StatusInternalServerError)
+		return
+	}
+	destNode, err := h.engine.DB().GetNodeByName(deliveryNode)
+	if err != nil {
+		h.jsonError(w, "delivery node not found: "+deliveryNode, http.StatusBadRequest)
+		return
+	}
+
+	order := &store.Order{
+		EdgeUUID:     orderUUID,
+		StationID:    "core-spot",
+		OrderType:    "move",
+		Status:       "pending",
+		Quantity:     1,
+		PickupNode:   sourceNode.Name,
+		DeliveryNode: destNode.Name,
+		Priority:     priority,
+		PayloadDesc:  desc,
+		BinID:        &bin.ID,
+	}
+	if err := h.engine.DB().CreateOrder(order); err != nil {
+		h.jsonError(w, "failed to create order: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.engine.DB().ClaimBin(bin.ID, order.ID); err != nil {
+		h.jsonError(w, "failed to claim bin: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := h.engine.Dispatcher().DispatchDirect(order, sourceNode, destNode); err != nil {
+		h.engine.DB().UnclaimBin(bin.ID)
+		h.readBackSpotOrder(w, orderUUID)
+		return
+	}
+
+	h.readBackSpotOrder(w, orderUUID)
+}
+
+func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, blueprintCode, desc string, priority int) {
+	if targetNode == "" {
+		h.jsonError(w, "target node is required", http.StatusBadRequest)
+		return
+	}
+	if blueprintCode == "" {
+		h.jsonError(w, "blueprint is required", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := h.engine.DB().GetNodeByName(targetNode); err != nil {
+		h.jsonError(w, "target node not found: "+targetNode, http.StatusBadRequest)
+		return
+	}
+
+	baseUUID := uuid.New().String()[:8]
+	storeUUID := fmt.Sprintf("spot-swap-s-%s", baseUUID)
+	retrieveUUID := fmt.Sprintf("spot-swap-r-%s", baseUUID)
+
+	src := protocol.Address{Role: protocol.RoleCore, Station: "core-spot"}
+	dst := protocol.Address{Role: protocol.RoleCore}
+
+	// Store order: pickup from target node
+	storeReq := &protocol.OrderRequest{
+		OrderUUID: storeUUID,
+		OrderType: "store",
+		Quantity:  1,
+		PickupNode: targetNode,
+		Priority:   priority,
+		PayloadDesc: desc,
+	}
+	storeEnv, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, storeReq)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.engine.Dispatcher().HandleOrderRequest(storeEnv, storeReq)
+
+	// Retrieve order: deliver to target node with blueprint
+	retrieveReq := &protocol.OrderRequest{
+		OrderUUID:     retrieveUUID,
+		OrderType:     "retrieve",
+		BlueprintCode: blueprintCode,
+		Quantity:      1,
+		DeliveryNode:  targetNode,
+		Priority:      priority,
+		PayloadDesc:   desc,
+	}
+	retrieveEnv, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, retrieveReq)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.engine.Dispatcher().HandleOrderRequest(retrieveEnv, retrieveReq)
+
+	// Read back both orders
+	resp := map[string]any{}
+	if o, err := h.engine.DB().GetOrderByUUID(storeUUID); err == nil {
+		resp["store_order_id"] = o.ID
+		resp["store_status"] = o.Status
+	}
+	if o, err := h.engine.DB().GetOrderByUUID(retrieveUUID); err == nil {
+		resp["retrieve_order_id"] = o.ID
+		resp["retrieve_status"] = o.Status
+	}
+	h.jsonOK(w, resp)
+}
+
+func (h *Handlers) apiListAvailableBins(w http.ResponseWriter, r *http.Request) {
+	bins, err := h.engine.DB().ListBins()
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type availableBin struct {
+		Label         string `json:"label"`
+		NodeName      string `json:"node_name"`
+		Zone          string `json:"zone"`
+		BlueprintCode string `json:"blueprint_code"`
+	}
+
+	// Build a map of node_id -> zone for quick lookup
+	nodes, _ := h.engine.DB().ListNodes()
+	nodeZone := make(map[int64]string, len(nodes))
+	for _, n := range nodes {
+		nodeZone[n.ID] = n.Zone
+	}
+
+	var result []availableBin
+	for _, b := range bins {
+		if b.ClaimedBy != nil || b.NodeID == nil {
+			continue
+		}
+		zone := nodeZone[*b.NodeID]
+		// Look up payload blueprint code if bin has a payload
+		var bpCode string
+		payloads, _ := h.engine.DB().ListPayloadsByBin(b.ID)
+		if len(payloads) > 0 {
+			bpCode = payloads[0].BlueprintCode
+		}
+		result = append(result, availableBin{
+			Label:         b.Label,
+			NodeName:      b.NodeName,
+			Zone:          zone,
+			BlueprintCode: bpCode,
+		})
+	}
+
+	h.jsonOK(w, result)
 }

@@ -335,11 +335,11 @@ func TestPayloadCRUD(t *testing.T) {
 
 	// Create payload
 	payload := &Payload{
-		BlueprintID:  bp.ID,
-		BinID:        &bin.ID,
-		Status:       "available",
-		UOPRemaining: 100,
-		Notes:        "test payload",
+		BlueprintID:       bp.ID,
+		BinID:             &bin.ID,
+		ManifestConfirmed: true,
+		UOPRemaining:      100,
+		Notes:             "test payload",
 	}
 	if err := db.CreatePayload(payload); err != nil {
 		t.Fatalf("create payload: %v", err)
@@ -365,8 +365,8 @@ func TestPayloadCRUD(t *testing.T) {
 	if got.NodeID == nil || *got.NodeID != node.ID {
 		t.Errorf("NodeID = %v, want %d", got.NodeID, node.ID)
 	}
-	if got.Status != "available" {
-		t.Errorf("Status = %q, want %q", got.Status, "available")
+	if !got.ManifestConfirmed {
+		t.Error("ManifestConfirmed should be true")
 	}
 	if got.UOPRemaining != 100 {
 		t.Errorf("UOPRemaining = %d, want 100", got.UOPRemaining)
@@ -389,7 +389,7 @@ func TestPayloadCRUD(t *testing.T) {
 	// Create a second payload in a different bin at same node
 	bin2 := &Bin{BinTypeID: bt.ID, Label: "BX-002", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin2)
-	payload2 := &Payload{BlueprintID: bp.ID, BinID: &bin2.ID, Status: "available", UOPRemaining: 50}
+	payload2 := &Payload{BlueprintID: bp.ID, BinID: &bin2.ID, ManifestConfirmed: true, UOPRemaining: 50}
 	db.CreatePayload(payload2)
 
 	// ListPayloads
@@ -419,15 +419,6 @@ func TestPayloadCRUD(t *testing.T) {
 		t.Errorf("count = %d, want 2", count)
 	}
 
-	// ListPayloadsByStatus
-	byStatus, err := db.ListPayloadsByStatus("available")
-	if err != nil {
-		t.Fatalf("list by status: %v", err)
-	}
-	if len(byStatus) != 2 {
-		t.Errorf("by status len = %d, want 2", len(byStatus))
-	}
-
 	// Delete
 	if err := db.DeletePayload(payload.ID); err != nil {
 		t.Fatalf("delete payload: %v", err)
@@ -455,7 +446,7 @@ func TestPayloadLifecycle(t *testing.T) {
 	bin := &Bin{BinTypeID: bt.ID, Label: "CY-001", NodeID: &node1.ID, Status: "available"}
 	db.CreateBin(bin)
 
-	payload := &Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available", UOPRemaining: 100}
+	payload := &Payload{BlueprintID: bp.ID, BinID: &bin.ID, ManifestConfirmed: true, UOPRemaining: 100}
 	db.CreatePayload(payload)
 
 	// Claim via bin (bin-centric claiming)
@@ -492,19 +483,19 @@ func TestPayloadLifecycle(t *testing.T) {
 	// FindSourcePayloadFIFO -- create two more payloads, verify FIFO order
 	bin2 := &Bin{BinTypeID: bt.ID, Label: "CY-002", NodeID: &node1.ID, Status: "available"}
 	db.CreateBin(bin2)
-	payload2 := &Payload{BlueprintID: bp.ID, BinID: &bin2.ID, Status: "available", UOPRemaining: 50}
+	payload2 := &Payload{BlueprintID: bp.ID, BinID: &bin2.ID, ManifestConfirmed: true, UOPRemaining: 50}
 	db.CreatePayload(payload2)
 
 	bin3 := &Bin{BinTypeID: bt.ID, Label: "CY-003", NodeID: &node1.ID, Status: "available"}
 	db.CreateBin(bin3)
-	payload3 := &Payload{BlueprintID: bp.ID, BinID: &bin3.ID, Status: "available", UOPRemaining: 75}
+	payload3 := &Payload{BlueprintID: bp.ID, BinID: &bin3.ID, ManifestConfirmed: true, UOPRemaining: 75}
 	db.CreatePayload(payload3)
 
 	fifo, err := db.FindSourcePayloadFIFO("CRATE-Y")
 	if err != nil {
 		t.Fatalf("FindSourcePayloadFIFO: %v", err)
 	}
-	// payload2 was created first at node1, should be returned (FIFO by delivered_at)
+	// payload2 was created first at node1, should be returned (FIFO by created_at)
 	if fifo.ID != payload2.ID {
 		t.Errorf("FIFO payload ID = %d, want %d", fifo.ID, payload2.ID)
 	}
@@ -525,7 +516,7 @@ func TestPayloadEventsCRUD(t *testing.T) {
 	bin := &Bin{BinTypeID: bt.ID, Label: "BZ-001", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin)
 
-	payload := &Payload{BlueprintID: bp.ID, BinID: &bin.ID, Status: "available", UOPRemaining: 30}
+	payload := &Payload{BlueprintID: bp.ID, BinID: &bin.ID, ManifestConfirmed: true, UOPRemaining: 30}
 	db.CreatePayload(payload) // This should auto-log a "created" event
 
 	// Create additional events

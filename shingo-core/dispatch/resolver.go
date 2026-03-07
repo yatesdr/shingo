@@ -79,7 +79,7 @@ func (r *DefaultResolver) resolveRetrieve(children []*store.Node, blueprintID *i
 			continue
 		}
 		for _, p := range payloads {
-			if p.ClaimedBy != nil || p.Status != "available" || p.BinStatus == "staged" {
+			if p.ClaimedBy != nil || !p.ManifestConfirmed || p.BinStatus != "available" {
 				continue
 			}
 			if blueprintID != nil && p.BlueprintID != *blueprintID {

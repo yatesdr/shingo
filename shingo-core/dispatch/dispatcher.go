@@ -648,11 +648,11 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 	// Create payload on the bin
 	now := time.Now()
 	payload := &store.Payload{
-		BlueprintID:  bp.ID,
-		BinID:        &bin.ID,
-		Status:       "available",
-		UOPRemaining: bp.UOPCapacity,
-		LoadedAt:     &now,
+		BlueprintID:       bp.ID,
+		BinID:             &bin.ID,
+		UOPRemaining:      bp.UOPCapacity,
+		ManifestConfirmed: true,
+		LoadedAt:          &now,
 	}
 
 	if len(p.Manifest) > 0 {
