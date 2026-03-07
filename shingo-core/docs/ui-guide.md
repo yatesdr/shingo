@@ -84,33 +84,33 @@ Material demand planning interface. Create demand entries specifying what payloa
 
 These pages require authentication. Log in at `/login` (default credentials: `admin` / `admin`).
 
-### Blueprints
+### Payloads
 
-**Route:** `/blueprints`
+**Route:** `/payloads`
 
-Manage blueprint definitions (container content templates). Create, edit, and delete blueprints with their UOP capacity, template manifests, and compatible bin types.
+Manage payload definitions (container content templates). Create, edit, and delete payloads with their UOP capacity, template manifests, and compatible bin types.
 
 Actions:
-- Create, edit, and delete blueprints
+- Create, edit, and delete payloads
 - Define template manifest (expected parts and quantities)
 - Assign compatible bin types
 
-<!-- screenshot:blueprints -->
-![Blueprints](screenshots/blueprints.png)
+<!-- screenshot:payloads -->
+![Payloads](screenshots/payloads.png)
 <!-- /screenshot -->
 
 ### Bins
 
 **Route:** `/bins`
 
-Manage physical containers. View all bins with their type, status, location, and blueprint assignment. Apply blueprints to bins, confirm manifests, and manage bin lifecycle.
+Manage physical containers. View all bins with their type, status, location, and payload assignment. Assign payloads to bins, confirm manifests, and manage bin lifecycle.
 
 Actions:
 - Create, edit, and delete bins
 - Manage bin types (create/edit/delete)
-- Apply blueprint to bin (creates payload)
+- Assign payload to bin (sets payload code, populates manifest from template)
 - Confirm manifest (marks bin as loaded, sets FIFO timestamp)
-- Clear bin (removes payload)
+- Clear bin (removes payload assignment)
 - Flag, maintain, retire, or activate bins
 - Bulk register bins
 

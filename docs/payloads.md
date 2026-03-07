@@ -1,58 +1,41 @@
-# Bins & Blueprints — Concepts & Setup
+# Bins and Payloads
 
-This document covers bin management, blueprint assignment, and automated supermarket storage in Shingo: core concepts, terminology, and setup procedures.
-
----
-
-## Design Principles
-
-Shingo treats bin management as a closed-loop system. Every bin is registered, tracked, and verified at each handoff.
-
-- **System-directed retrieval.** Operators request material by blueprint; the system locates and retrieves the correct bin automatically, including reshuffling blocked bins.
-- **Engineered depletion.** Bins are loaded so all parts deplete together after a known number of production cycles. A single value — units of production (UOP) remaining — describes bin state.
-- **FIFO enforcement.** The oldest material is always retrieved first, enforced automatically by storage and retrieval logic.
-- **Physical verification.** Each bin carries a QR code scanned by the robot at pickup to confirm identity and maintain chain of custody.
+This document covers bin management, payload assignment, and automated supermarket storage in Shingo.
 
 ---
 
 ## Terminology
 
-### Blueprint
+### Payload
 
-A blueprint defines a bin type configuration — its expected contents and capacity.
+A payload defines a bin's expected contents and production capacity.
 
 Fields:
 - **Code**: short identifier (e.g., `BRK-ROTOR-KIT`)
 - **Description**: descriptive label (e.g., "Brake Rotor Kit")
 - **UOP Capacity**: production cycles supported by a full load (e.g., 24)
 - **Template Manifest**: expected part numbers and quantities for a full load
-- **Compatible Bin Types**: which physical bin types can carry this blueprint
+- **Compatible Bin Types**: which physical bin types can carry this payload
 
-If the same physical bin frame carries different parts for different processes, define separate blueprints. The blueprint represents the combination of container configuration and contents.
+If the same physical bin frame carries different parts for different processes, define separate payloads. The payload represents the combination of container configuration and contents.
 
 ### Bin
 
-A bin is a specific physical container.
+A bin is a specific physical container. It carries its payload assignment, manifest, and consumption state directly.
 
 Fields:
 - **Label**: unique QR code identifier (e.g., `SHG:0042`)
-- **Bin Type**: physical container class (determines size/compatibility)
+- **Bin Type**: physical container class (determines size and compatibility)
 - **Node**: current floor location
 - **Status**: `available`, `staged`, `flagged`, `maintenance`, `retired`
+- **Payload Code**: assigned payload template (empty if unloaded)
+- **Manifest**: JSON parts list (actual contents)
+- **Manifest Confirmed**: whether the operator has verified contents
+- **UOP Remaining**: production cycles of material left
+- **Loaded At**: timestamp for FIFO ordering (set when manifest is confirmed)
 - **Claimed By**: order ID if reserved for transport
 
-### Payload
-
-A payload is created when a blueprint is applied to a bin. It tracks the actual contents and consumption state.
-
-Fields:
-- **Blueprint**: which blueprint was applied
-- **Manifest Confirmed**: whether the operator has verified contents
-- **Loaded At**: timestamp for FIFO ordering (set when manifest is confirmed)
-- **UOP Remaining**: production cycles of material left
-- **Manifest Items**: actual parts and quantities (may differ from template)
-
-A bin without a payload (or with an unconfirmed payload) is treated as empty by the dispatch system.
+A bin without a payload assignment (or with an unconfirmed manifest) is treated as empty by the dispatch system.
 
 ### Supermarket
 
@@ -60,7 +43,7 @@ An automated storage area consisting of lanes and a shuffle row, represented as 
 
 ### Lane
 
-A linear sequence of storage slots within a supermarket. The front slot (depth 1) is robot-accessible; deeper slots are blocked by those in front. Lane depth varies — lanes in the same supermarket may differ in length. Each lane is a synthetic node of type `LANE`.
+A linear sequence of storage slots within a supermarket. The front slot (depth 1) is robot-accessible; deeper slots are blocked by those in front. Lane depth varies. Each lane is a synthetic node of type `LANE`.
 
 ### Slot
 
@@ -85,9 +68,9 @@ One cycle of the manufacturing process supported by the bin's parts. A Brake Rot
 Bins in a lane are packed from the back. Occupied slots form a continuous block from the deepest position forward. No empty gaps exist between bins. New bins are placed in the deepest available empty slot.
 
 ```
-Empty lane:    [ ][ ][ ][ ][ ]    Store first bin →  [ ][ ][ ][ ][A]
-                                  Store second bin → [ ][ ][ ][B][A]
-                                  Store third bin →  [ ][ ][C][B][A]
+Empty lane:    [ ][ ][ ][ ][ ]    Store first bin ->  [ ][ ][ ][ ][A]
+                                  Store second bin -> [ ][ ][ ][B][A]
+                                  Store third bin ->  [ ][ ][C][B][A]
 ```
 
 Bin A is the oldest (first in, deepest position). FIFO retrieval takes A first.
@@ -97,17 +80,17 @@ Bin A is the oldest (first in, deepest position). FIFO retrieval takes A first.
 When a store order targets a supermarket:
 
 1. Find all lanes with available space
-2. Prefer lanes already holding the same blueprint (consolidation)
+2. Prefer lanes already holding the same payload (consolidation)
 3. Among those, prefer the lane with the deepest target slot (most packed)
-4. If no lane holds that blueprint, select any lane with space
+4. If no lane holds that payload, select any lane with space
 5. Place the bin in the deepest accessible empty slot
 6. Skip lanes that restrict bin types incompatible with the incoming bin
 
 ### Retrieve — Direct Access
 
-When a station requests a bin of a specific blueprint:
+When a station requests a bin of a specific payload:
 
-1. Locate the oldest bin of that blueprint across all lanes (by `loaded_at` timestamp)
+1. Locate the oldest bin of that payload across all lanes (by `loaded_at` timestamp)
 2. If the bin is at the front of its lane (no blocking bins), retrieve directly
 3. Deliver to the requesting station
 
@@ -124,9 +107,9 @@ After restocking, remaining bins maintain FIFO order and the lane is packed with
 ```
 Before:   [C][B][A]    Target: A (oldest)
 
-Unbury:   Move C → Shuffle, Move B → Shuffle
-Pick:     Retrieve A → deliver to station
-Restock:  Move B → depth 3, Move C → depth 2
+Unbury:   Move C -> Shuffle, Move B -> Shuffle
+Pick:     Retrieve A -> deliver to station
+Restock:  Move B -> depth 3, Move C -> depth 2
 
 After:    [ ][C][B]    B is now oldest, at the back
 ```
@@ -158,7 +141,7 @@ Flagged bins are treated as occupied slots. Stores can occur in front of them. D
 
 When a bin is delivered to a production station:
 
-1. UOP remaining is initialized to the blueprint's full capacity
+1. UOP remaining is initialized to the payload's full capacity
 2. PLC counters track production output
 3. Each unit produced decrements UOP remaining by 1
 4. At the configured threshold, a replacement bin is ordered automatically
@@ -166,7 +149,7 @@ When a bin is delivered to a production station:
 
 ### Reorder Rules
 
-Each station configures reorder rules linking a blueprint to a UOP threshold:
+Each station configures reorder rules linking a payload to a UOP threshold:
 
 - "BRK-ROTOR-KIT: reorder at 6 UOP remaining"
 - "BRK-PAD-KIT: reorder at 20 UOP remaining"
@@ -196,7 +179,7 @@ Labels follow the format `SHG:NNNN` (e.g., `SHG:0042`). The `SHG:` prefix distin
 
 ---
 
-## Flagging & Maintenance
+## Flagging and Maintenance
 
 ### Flagging
 
@@ -208,9 +191,9 @@ A flagged bin:
 
 ### Maintenance Flow
 
-1. Operator flags the bin with a reason → status: `flagged`
-2. Operator triggers "Retrieve for Maintenance" → system delivers to accessible location → status: `maintenance`
-3. After repair, operator activates the bin → status: `available`, returned to storage
+1. Operator flags the bin with a reason — status: `flagged`
+2. Operator triggers "Retrieve for Maintenance" — system delivers to accessible location — status: `maintenance`
+3. After repair, operator activates the bin — status: `available`, returned to storage
 
 ### Retiring
 
@@ -226,10 +209,10 @@ On the **Bins** page:
 1. Open the Bin Types section
 2. For each container class, create a bin type with code, description, and dimensions
 
-### Step 2: Define Blueprints
+### Step 2: Define Payloads
 
-On the **Blueprints** page:
-1. Create a blueprint with code, description, and UOP capacity
+On the **Payloads** page:
+1. Create a payload with code, description, and UOP capacity
 2. Set the template manifest (expected parts and quantities)
 3. Assign compatible bin types
 
@@ -241,11 +224,11 @@ On the **Bins** page:
 3. Select the bin type
 4. Optionally assign an initial node location
 
-### Step 4: Apply Blueprints to Bins
+### Step 4: Assign Payloads to Bins
 
 On the **Bins** page:
 1. Select a bin
-2. Apply a blueprint — this creates a payload record
+2. Assign a payload — this sets the payload code and populates the manifest from the template
 3. Confirm the manifest — marks the bin as loaded and sets the FIFO timestamp
 
 ### Step 5: Create a Supermarket
@@ -256,24 +239,24 @@ On the **Nodes** page:
 3. Define the shuffle row: slot count and vendor locations (minimum: deepest lane minus one)
 4. Review and create — the system generates all nodes, sets depth properties, and links the hierarchy
 
-### Step 6: Assign Blueprint Eligibility
+### Step 6: Assign Payload Eligibility
 
 For each delivery node:
 1. Open the node detail
-2. Under "Blueprints", select accepted blueprints
-3. This controls which blueprints appear in the edge station's order dropdown
+2. Under "Payloads", select accepted payloads
+3. This controls which payloads appear in the edge station's order dropdown
 
 ### Step 7: Configure Edge Reorder Rules
 
 On each edge station's **Setup** page:
-1. Under "Reorder Rules", add a rule per blueprint
+1. Under "Reorder Rules", add a rule per payload
 2. Set the UOP threshold for auto-reorder
 3. Enable the rule
-4. The blueprint catalog is synced automatically from core
+4. The payload catalog is synced automatically from core
 
 ### Step 8: Load Initial Inventory
 
-1. Load bins at the loading dock (apply blueprint, confirm manifest)
+1. Load bins at the loading dock (assign payload, confirm manifest)
 2. Issue store orders to place them in the supermarket
 3. The system assigns each bin to the optimal lane and slot
 4. Verify positions in the supermarket visualization
@@ -288,7 +271,7 @@ Click a supermarket on the Nodes page to view the lane visualization: slot occup
 
 ### Bins Page
 
-Lists all bins with filtering by bin type, status, or location. Shows blueprint assignment and manifest confirmation state. Click a bin for details and actions (flag, maintain, retire, clear, apply blueprint).
+Lists all bins with filtering by bin type, status, or location. Shows payload assignment and manifest confirmation state. Click a bin for details and actions (flag, maintain, retire, clear, assign payload).
 
 ### Orders
 
@@ -307,13 +290,12 @@ On QR scan mismatch:
 
 | Term | Definition |
 |------|-----------|
-| **Blueprint** | A template defining expected bin contents and UOP capacity |
+| **Payload** | A template defining expected bin contents and UOP capacity |
 | **Bin** | A specific physical container, identified by QR label |
-| **Payload** | Record linking a blueprint to a bin, tracking manifest confirmation and UOP |
 | **Bin Type** | Physical container classification (size, form factor) |
 | **Label** | Unique QR code identifier on a bin (e.g., `SHG:0042`) |
 | **UOP** | Unit of Production — one manufacturing cycle supported by the bin's parts |
-| **Manifest Confirmed** | Whether an operator has verified the bin's contents match the blueprint |
+| **Manifest Confirmed** | Whether an operator has verified the bin's contents match the payload template |
 | **Supermarket** | Automated storage zone containing lanes and a shuffle row |
 | **Lane** | Linear sequence of storage slots; front is accessible, back is blocked |
 | **Slot** | Single storage position in a lane; holds one bin |
@@ -324,6 +306,6 @@ On QR scan mismatch:
 | **Contiguous Packing** | Occupied slots form an unbroken block from the back of a lane |
 | **Flagged** | Bin marked as problematic, excluded from dispatch until resolved |
 | **Manifest** | List of parts and quantities on a specific bin |
-| **Template Manifest** | Expected parts and quantities for a fully-loaded bin of a given blueprint |
+| **Template Manifest** | Expected parts and quantities for a fully-loaded bin of a given payload |
 | **Reorder Rule** | Edge configuration triggering an automatic order when UOP remaining drops below a threshold |
-| **Blueprint Catalog** | List of blueprints available to an edge station, synced from core |
+| **Payload Catalog** | List of payloads available to an edge station, synced from core |

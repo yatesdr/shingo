@@ -208,17 +208,14 @@ This builds a protocol envelope, encodes it, and enqueues it in the outbox. Used
 | `nodes` | Physical locations (storage, line-side, staging, lane slots) |
 | `node_types` | Node type definitions (NGRP, LANE, SHF) |
 | `node_stations` | Node-to-station assignments |
-| `node_blueprints` | Which blueprints a node accepts |
+| `node_payloads` | Which payloads a node accepts |
 | `node_bin_types` | Which bin types a node/lane accepts |
 | `node_properties` | Key-value properties per node (e.g., `depth`) |
 | `bin_types` | Physical container class definitions |
 | `bins` | Tracked physical containers |
-| `blueprints` | Container content templates (code, UOP capacity, manifest) |
-| `blueprint_bin_types` | Which bin types are compatible with a blueprint |
-| `blueprint_manifest` | Template manifest items per blueprint |
-| `payloads` | Blueprint-to-bin application records (manifest confirmation, UOP tracking) |
-| `manifest_items` | Actual items inside each payload |
-| `payload_events` | Audit trail per payload |
+| `payloads` | Container content templates (code, UOP capacity, manifest) |
+| `payload_bin_types` | Which bin types are compatible with a payload |
+| `payload_manifest` | Template manifest items per payload |
 | `orders` | Transport orders with full lifecycle state |
 | `order_history` | Status change log per order |
 | `corrections` | Manual inventory corrections |
@@ -237,15 +234,15 @@ See [Data Model](../../docs/data-model.md) for the full entity reference and rel
 ### Key Relationships
 
 ```
-node_types ---< nodes ---< bins ---< payloads ---< manifest_items
-                  |                      |
-                  +---< node_properties  +---< payload_events
+node_types ---< nodes ---< bins
+                  |
+                  +---< node_properties
                   +---< node_stations
-                  +---< node_blueprints ----> blueprints ---< blueprint_manifest
-                  +---< node_bin_types ----> bin_types ---< blueprint_bin_types
+                  +---< node_payloads ----> payloads ---< payload_manifest
+                  +---< node_bin_types ----> bin_types ---< payload_bin_types
 
 orders ---< order_history
-  |----> nodes, blueprints, payloads, bins
+  |----> nodes, payloads, bins
 ```
 
 ## SSE (Server-Sent Events)

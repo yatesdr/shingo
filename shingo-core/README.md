@@ -1,42 +1,51 @@
-# ShinGo Core
+# Shingo Core
 
-Central server for the ShinGo material tracking system. Receives transport orders from edge stations, resolves source/destination nodes, dispatches to the robot fleet, and tracks fulfillment through delivery.
+Central server for the Shingo material tracking system. Receives transport orders from edge stations, resolves source and destination nodes, dispatches to the robot fleet, and tracks fulfillment through delivery.
 
-## Quick Start
-
-### Prerequisites
+## Prerequisites
 
 - Go 1.24+
 - PostgreSQL 14+ (recommended) or SQLite
 - Kafka broker
 - Seer RDS fleet backend (or compatible)
 
-### Build & Run
+## Quick Start
 
 ```sh
 make build
 ./shingocore --config shingocore.yaml
 ```
 
-The web UI is available at `http://localhost:8083` by default. Default login: `admin` / `admin`.
+The web UI is available at `http://localhost:8083`. Default login: `admin` / `admin`.
 
-### Configuration
+### Initial Setup
 
-A default config is generated on first run. The only setting you typically need before starting is the database connection — see [PostgreSQL Setup](docs/postgresql-setup.md). All other settings can be adjusted through the web UI at `/config`.
+The database connection is the only setting that must be configured before first launch. Create a minimal `shingocore.yaml` with the connection details:
 
-See [Configuration Reference](docs/configuration.md) for details.
+```yaml
+database:
+  driver: postgres
+  postgres:
+    host: 192.168.1.10
+    port: 5432
+    database: shingocore
+    user: shingocore
+    password: your-password
+    sslmode: disable
+```
 
-## Documentation
+See [PostgreSQL Setup](docs/postgresql-setup.md) for server-side database configuration. For development or testing, SQLite can be used instead:
 
-| Document | Description |
-|----------|-------------|
-| [Configuration Reference](docs/configuration.md) | Full YAML config reference |
-| [PostgreSQL Setup](docs/postgresql-setup.md) | Database server setup, user creation, connection config |
-| [UI Guide](docs/ui-guide.md) | All web pages with screenshots |
-| [Architecture](docs/architecture.md) | Package layout, data flow, key patterns |
-| [API Reference](docs/api-reference.md) | REST API endpoints |
-| [Wire Protocol](../docs/wire-protocol.md) | Kafka messaging protocol spec |
-| [Terminology](../docs/terminology.md) | Domain terms and vendor mapping |
+```yaml
+database:
+  driver: sqlite
+  sqlite:
+    path: shingocore.db
+```
+
+All other settings — fleet connection, Kafka brokers, web server port — have sensible defaults and can be adjusted through the web UI at `/config`. The YAML file is application-managed and should not be edited by hand during normal operation.
+
+On first startup, Shingo Core creates all database tables, indexes, and a default admin user automatically.
 
 ## Build Targets
 
@@ -56,7 +65,49 @@ Enable subsystem-filtered debug output:
 ./shingocore --log-debug=dispatch,rds,kafka
 ```
 
-Available subsystems: `rds`, `kafka`, `dispatch`, `protocol`, `outbox`, `core_handler`, `nodestate`, `engine`
+Without a filter (`--log-debug`), all subsystems are logged.
+
+| Subsystem | Description |
+|-----------|-------------|
+| `rds` | Fleet API requests and responses |
+| `kafka` | Kafka producer and consumer events |
+| `dispatch` | Order routing and dispatch decisions |
+| `protocol` | Wire protocol encode and decode |
+| `outbox` | Outbox drain cycles |
+| `core_handler` | Inbound message handling |
+| `nodestate` | Node state cache operations |
+| `engine` | Engine lifecycle events |
+
+## Web Interface
+
+Shingo Core provides a management interface for fleet operations, inventory, and system administration. Key pages:
+
+| Page | Route | Description |
+|------|-------|-------------|
+| Dashboard | `/` | Real-time system overview with active orders and fleet status |
+| Nodes | `/nodes` | Registered locations, supermarket visualization, fleet sync |
+| Orders | `/orders` | Transport order list with status tracking and timeline |
+| Robots | `/robots` | Live fleet status with availability and task controls |
+| Bins | `/bins` | Physical container management, payload assignment, lifecycle |
+| Payloads | `/payloads` | Payload template definitions and manifest configuration |
+| Demand | `/demand` | Material demand planning and order generation |
+| Test Orders | `/test-orders` | Order submission for testing (Kafka and direct fleet) |
+| Diagnostics | `/diagnostics` | Kafka, fleet, and edge connectivity status |
+| Configuration | `/config` | Runtime settings (fleet, messaging) |
+| Fleet Explorer | `/fleet-explorer` | Raw API explorer for the fleet backend |
+
+See [UI Guide](docs/ui-guide.md) for detailed page descriptions.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [UI Guide](docs/ui-guide.md) | Web interface pages and features |
+| [API Reference](docs/api-reference.md) | REST API endpoints |
+| [PostgreSQL Setup](docs/postgresql-setup.md) | Database server setup and connection |
+| [Architecture](docs/architecture.md) | Package layout, data flow, extension points |
+| [Wire Protocol](../docs/wire-protocol.md) | Kafka messaging protocol specification |
+| [Terminology](../docs/terminology.md) | Domain terms and vendor mapping |
 
 ## License
 
