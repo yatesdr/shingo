@@ -43,14 +43,10 @@ func scanBinTypes(rows *sql.Rows) ([]*BinType, error) {
 }
 
 func (db *DB) CreateBinType(bt *BinType) error {
-	result, err := db.Exec(db.Q(`INSERT INTO bin_types (code, description, width_in, height_in) VALUES (?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO bin_types (code, description, width_in, height_in) VALUES (?, ?, ?, ?) RETURNING id`,
 		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn)
 	if err != nil {
 		return fmt.Errorf("create bin type: %w", err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("create bin type last id: %w", err)
 	}
 	bt.ID = id
 	return nil

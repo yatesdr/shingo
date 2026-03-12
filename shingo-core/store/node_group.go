@@ -9,12 +9,11 @@ func (db *DB) CreateNodeGroup(name string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("NGRP node type not found")
 	}
-	result, err := db.Exec(db.Q(`INSERT INTO nodes (name, is_synthetic, node_type_id, enabled) VALUES (?, 1, ?, 1)`),
+	id, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, node_type_id, enabled) VALUES (?, 1, ?, 1) RETURNING id`,
 		name, grpType.ID)
 	if err != nil {
 		return 0, fmt.Errorf("create node group: %w", err)
 	}
-	id, _ := result.LastInsertId()
 	return id, nil
 }
 
@@ -28,12 +27,11 @@ func (db *DB) AddLane(groupID int64, name string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("LANE node type not found")
 	}
-	result, err := db.Exec(db.Q(`INSERT INTO nodes (name, is_synthetic, node_type_id, parent_id, zone, enabled) VALUES (?, 1, ?, ?, ?, 1)`),
+	laneID, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, node_type_id, parent_id, zone, enabled) VALUES (?, 1, ?, ?, ?, 1) RETURNING id`,
 		name, lanType.ID, groupID, grpNode.Zone)
 	if err != nil {
 		return 0, fmt.Errorf("create lane: %w", err)
 	}
-	laneID, _ := result.LastInsertId()
 	return laneID, nil
 }
 

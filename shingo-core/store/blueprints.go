@@ -45,14 +45,10 @@ func scanPayloads(rows *sql.Rows) ([]*Payload, error) {
 }
 
 func (db *DB) CreatePayload(p *Payload) error {
-	result, err := db.Exec(db.Q(`INSERT INTO payloads (code, description, uop_capacity, default_manifest_json) VALUES (?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO payloads (code, description, uop_capacity, default_manifest_json) VALUES (?, ?, ?, ?) RETURNING id`,
 		p.Code, p.Description, p.UOPCapacity, p.DefaultManifestJSON)
 	if err != nil {
 		return fmt.Errorf("create payload: %w", err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("create payload last id: %w", err)
 	}
 	p.ID = id
 	return nil

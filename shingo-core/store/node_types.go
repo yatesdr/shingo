@@ -45,14 +45,10 @@ func scanNodeTypes(rows *sql.Rows) ([]*NodeType, error) {
 }
 
 func (db *DB) CreateNodeType(nt *NodeType) error {
-	result, err := db.Exec(db.Q(`INSERT INTO node_types (code, name, description, is_synthetic) VALUES (?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO node_types (code, name, description, is_synthetic) VALUES (?, ?, ?, ?) RETURNING id`,
 		nt.Code, nt.Name, nt.Description, boolToInt(nt.IsSynthetic))
 	if err != nil {
 		return fmt.Errorf("create node type: %w", err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("create node type last id: %w", err)
 	}
 	nt.ID = id
 	return nil

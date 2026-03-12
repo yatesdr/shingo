@@ -63,14 +63,10 @@ func scanNodes(rows *sql.Rows) ([]*Node, error) {
 }
 
 func (db *DB) CreateNode(n *Node) error {
-	result, err := db.Exec(db.Q(`INSERT INTO nodes (name, is_synthetic, zone, enabled, node_type_id, parent_id) VALUES (?, ?, ?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, zone, enabled, node_type_id, parent_id) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
 		n.Name, boolToInt(n.IsSynthetic), n.Zone, boolToInt(n.Enabled), nullableInt64(n.NodeTypeID), nullableInt64(n.ParentID))
 	if err != nil {
 		return fmt.Errorf("create node: %w", err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("create node last id: %w", err)
 	}
 	n.ID = id
 	return nil

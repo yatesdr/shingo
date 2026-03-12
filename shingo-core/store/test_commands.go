@@ -52,14 +52,10 @@ func scanTestCommands(rows *sql.Rows) ([]*TestCommand, error) {
 const testCommandCols = `id, command_type, robot_id, vendor_order_id, vendor_state, location, config_id, detail, created_at, updated_at, completed_at`
 
 func (db *DB) CreateTestCommand(tc *TestCommand) error {
-	result, err := db.Exec(db.Q(`INSERT INTO test_commands (command_type, robot_id, vendor_order_id, vendor_state, location, config_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO test_commands (command_type, robot_id, vendor_order_id, vendor_state, location, config_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 		tc.CommandType, tc.RobotID, tc.VendorOrderID, tc.VendorState, tc.Location, tc.ConfigID, tc.Detail)
 	if err != nil {
 		return fmt.Errorf("create test command: %w", err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("create test command last id: %w", err)
 	}
 	tc.ID = id
 	return nil

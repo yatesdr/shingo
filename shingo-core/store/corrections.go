@@ -20,12 +20,11 @@ type Correction struct {
 }
 
 func (db *DB) CreateCorrection(c *Correction) error {
-	result, err := db.Exec(db.Q(`INSERT INTO corrections (correction_type, node_id, bin_id, cat_id, description, quantity, reason, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO corrections (correction_type, node_id, bin_id, cat_id, description, quantity, reason, actor) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 		c.CorrectionType, c.NodeID, nullableInt64(c.BinID), c.CatID, c.Description, c.Quantity, c.Reason, c.Actor)
 	if err != nil {
 		return err
 	}
-	id, _ := result.LastInsertId()
 	c.ID = id
 	return nil
 }

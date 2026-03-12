@@ -221,10 +221,15 @@ func (a *Adapter) GetSceneAreas() ([]fleet.SceneArea, error) {
 		}
 		for _, blg := range rdsArea.LogicalMap.BinLocationsList {
 			for _, bin := range blg.BinLocationList {
+				label := ""
+				if p, ok := rds.FindProperty(bin.Property, "label"); ok {
+					label = p.StringValue
+				}
 				propsJSON, _ := json.Marshal(bin.Property)
 				fa.BinLocations = append(fa.BinLocations, fleet.ScenePoint{
 					ClassName:      bin.ClassName,
 					InstanceName:   bin.InstanceName,
+					Label:          label,
 					PointName:      bin.PointName,
 					GroupName:      bin.GroupName,
 					PosX:           bin.Pos.X,

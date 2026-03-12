@@ -149,6 +149,7 @@ func (db *DB) migrate() error {
 	db.migratePayloadSimplify()
 	db.migrateBinCentric()
 	db.migrateBinsCommandCenter()
+	db.migrateBooleanToInteger()
 	return nil
 }
 
@@ -773,7 +774,7 @@ func (db *DB) migratePayloadSimplify() {
 		case "sqlite":
 			db.Exec(`ALTER TABLE payloads ADD COLUMN manifest_confirmed INTEGER NOT NULL DEFAULT 0`)
 		case "postgres":
-			db.Exec(`ALTER TABLE payloads ADD COLUMN manifest_confirmed BOOLEAN NOT NULL DEFAULT FALSE`)
+			db.Exec(`ALTER TABLE payloads ADD COLUMN manifest_confirmed INTEGER NOT NULL DEFAULT 0`)
 		}
 
 		// Backfill: existing payloads with status='available' are confirmed
@@ -855,7 +856,7 @@ func (db *DB) migrateBinCentric() {
 		{"payload_code", "TEXT NOT NULL DEFAULT ''", "TEXT NOT NULL DEFAULT ''"},
 		{"manifest", "TEXT", "JSONB"},
 		{"uop_remaining", "INTEGER NOT NULL DEFAULT 0", "INTEGER NOT NULL DEFAULT 0"},
-		{"manifest_confirmed", "INTEGER NOT NULL DEFAULT 0", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{"manifest_confirmed", "INTEGER NOT NULL DEFAULT 0", "INTEGER NOT NULL DEFAULT 0"},
 		{"loaded_at", "TEXT", "TIMESTAMPTZ"},
 	}
 	for _, c := range binCols {
@@ -1050,7 +1051,7 @@ func (db *DB) migrateBinCentricPayloadData() {
 // migrateBinsCommandCenter adds locked/counting columns to bins for the command center UI.
 func (db *DB) migrateBinsCommandCenter() {
 	cols := []struct{ name, sqliteDef, pgDef string }{
-		{"locked", "INTEGER NOT NULL DEFAULT 0", "BOOLEAN NOT NULL DEFAULT FALSE"},
+		{"locked", "INTEGER NOT NULL DEFAULT 0", "INTEGER NOT NULL DEFAULT 0"},
 		{"locked_by", "TEXT NOT NULL DEFAULT ''", "TEXT NOT NULL DEFAULT ''"},
 		{"locked_at", "TEXT", "TIMESTAMPTZ"},
 		{"last_counted_at", "TEXT", "TIMESTAMPTZ"},
@@ -1071,7 +1072,7 @@ func (db *DB) migrateBinsCommandCenter() {
 	case "sqlite":
 		db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = 1`)
 	case "postgres":
-		db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = TRUE`)
+		db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = 1`)
 	}
 }
 
@@ -1093,4 +1094,26 @@ func (db *DB) migrateBinCentricCleanup() {
 	db.Exec(`DROP INDEX IF EXISTS idx_blueprint_manifest_bp`)
 	db.Exec(`DROP INDEX IF EXISTS idx_payload_events_payload`)
 	db.Exec(`DROP INDEX IF EXISTS idx_manifest_payload`)
+}
+
+// migrateBooleanToInteger converts Postgres BOOLEAN columns to INTEGER for
+// cross-database consistency. Existing Postgres databases may have BOOLEAN
+// columns from earlier schema versions; the schema now uses INTEGER everywhere.
+func (db *DB) migrateBooleanToInteger() {
+	if db.driver != "postgres" {
+		return
+	}
+	// Each ALTER is idempotent: if the column is already INTEGER, the cast is a no-op.
+	alters := []string{
+		`ALTER TABLE nodes ALTER COLUMN enabled TYPE INTEGER USING CASE WHEN enabled::text = 'true' THEN 1 WHEN enabled::text = 'false' THEN 0 ELSE enabled::integer END`,
+		`ALTER TABLE node_types ALTER COLUMN is_synthetic TYPE INTEGER USING CASE WHEN is_synthetic::text = 'true' THEN 1 WHEN is_synthetic::text = 'false' THEN 0 ELSE is_synthetic::integer END`,
+		`ALTER TABLE bins ALTER COLUMN manifest_confirmed TYPE INTEGER USING CASE WHEN manifest_confirmed::text = 'true' THEN 1 WHEN manifest_confirmed::text = 'false' THEN 0 ELSE manifest_confirmed::integer END`,
+		`ALTER TABLE bins ALTER COLUMN locked TYPE INTEGER USING CASE WHEN locked::text = 'true' THEN 1 WHEN locked::text = 'false' THEN 0 ELSE locked::integer END`,
+	}
+	for _, ddl := range alters {
+		db.Exec(ddl)
+	}
+	// Rebuild partial index with integer predicate
+	db.Exec(`DROP INDEX IF EXISTS idx_bins_locked`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = 1`)
 }

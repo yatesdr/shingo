@@ -76,3 +76,11 @@ func nullableTime(p *time.Time) any {
 	}
 	return nil
 }
+
+// insertID executes an INSERT ... RETURNING id query and returns the new row ID.
+// Works on both SQLite (3.35+) and PostgreSQL.
+func (db *DB) insertID(query string, args ...any) (int64, error) {
+	var id int64
+	err := db.QueryRow(db.Q(query), args...).Scan(&id)
+	return id, err
+}

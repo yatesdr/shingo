@@ -281,6 +281,7 @@ func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]strin
 				AreaName:       area.Name,
 				InstanceName:   bin.InstanceName,
 				ClassName:      bin.ClassName,
+				Label:          bin.Label,
 				PointName:      bin.PointName,
 				GroupName:      bin.GroupName,
 				PosX:           bin.PosX,
@@ -321,6 +322,7 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 			Enabled:    true,
 		}
 		if err := e.db.CreateNode(node); err != nil {
+			e.logFn("engine: sync fleet nodes: create node %q: %v", instanceName, err)
 			continue
 		}
 		e.Events.Emit(Event{Type: EventNodeUpdated, Payload: NodeUpdatedEvent{

@@ -6,10 +6,59 @@ CREATE TABLE IF NOT EXISTS nodes (
     name         TEXT NOT NULL UNIQUE,
     is_synthetic INTEGER NOT NULL DEFAULT 0,
     zone         TEXT NOT NULL DEFAULT '',
-    enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+    enabled      INTEGER NOT NULL DEFAULT 1,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS bin_types (
+    id          BIGSERIAL PRIMARY KEY,
+    code        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    width_in    DOUBLE PRECISION NOT NULL DEFAULT 0,
+    height_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS payloads (
+    id                    BIGSERIAL PRIMARY KEY,
+    code                  TEXT NOT NULL UNIQUE,
+    description           TEXT NOT NULL DEFAULT '',
+    uop_capacity          INTEGER NOT NULL DEFAULT 0,
+    default_manifest_json TEXT NOT NULL DEFAULT '{}',
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS bins (
+    id                 BIGSERIAL PRIMARY KEY,
+    bin_type_id        BIGINT NOT NULL REFERENCES bin_types(id),
+    label              TEXT NOT NULL DEFAULT '',
+    description        TEXT NOT NULL DEFAULT '',
+    node_id            BIGINT REFERENCES nodes(id),
+    status             TEXT NOT NULL DEFAULT 'available',
+    claimed_by         BIGINT,
+    staged_at          TIMESTAMPTZ,
+    staged_expires_at  TIMESTAMPTZ,
+    payload_code       TEXT NOT NULL DEFAULT '',
+    manifest           JSONB,
+    uop_remaining      INTEGER NOT NULL DEFAULT 0,
+    manifest_confirmed INTEGER NOT NULL DEFAULT 0,
+    locked             INTEGER NOT NULL DEFAULT 0,
+    locked_by          TEXT NOT NULL DEFAULT '',
+    locked_at          TIMESTAMPTZ,
+    last_counted_at    TIMESTAMPTZ,
+    last_counted_by    TEXT NOT NULL DEFAULT '',
+    loaded_at          TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id);
+CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);
+CREATE INDEX IF NOT EXISTS idx_bins_status ON bins(status);
+CREATE INDEX IF NOT EXISTS idx_bins_payload_code ON bins(payload_code);
+CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = 1;
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGSERIAL PRIMARY KEY,
@@ -93,55 +142,6 @@ CREATE TABLE IF NOT EXISTS admin_users (
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS bin_types (
-    id          BIGSERIAL PRIMARY KEY,
-    code        TEXT NOT NULL UNIQUE,
-    description TEXT NOT NULL DEFAULT '',
-    width_in    DOUBLE PRECISION NOT NULL DEFAULT 0,
-    height_in   DOUBLE PRECISION NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS bins (
-    id                 BIGSERIAL PRIMARY KEY,
-    bin_type_id        BIGINT NOT NULL REFERENCES bin_types(id),
-    label              TEXT NOT NULL DEFAULT '',
-    description        TEXT NOT NULL DEFAULT '',
-    node_id            BIGINT REFERENCES nodes(id),
-    status             TEXT NOT NULL DEFAULT 'available',
-    claimed_by         BIGINT REFERENCES orders(id),
-    staged_at          TIMESTAMPTZ,
-    staged_expires_at  TIMESTAMPTZ,
-    payload_code       TEXT NOT NULL DEFAULT '',
-    manifest           JSONB,
-    uop_remaining      INTEGER NOT NULL DEFAULT 0,
-    manifest_confirmed BOOLEAN NOT NULL DEFAULT FALSE,
-    locked             BOOLEAN NOT NULL DEFAULT FALSE,
-    locked_by          TEXT NOT NULL DEFAULT '',
-    locked_at          TIMESTAMPTZ,
-    last_counted_at    TIMESTAMPTZ,
-    last_counted_by    TEXT NOT NULL DEFAULT '',
-    loaded_at          TIMESTAMPTZ,
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id);
-CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);
-CREATE INDEX IF NOT EXISTS idx_bins_status ON bins(status);
-CREATE INDEX IF NOT EXISTS idx_bins_payload_code ON bins(payload_code);
-CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = TRUE;
-
-CREATE TABLE IF NOT EXISTS payloads (
-    id                    BIGSERIAL PRIMARY KEY,
-    code                  TEXT NOT NULL UNIQUE,
-    description           TEXT NOT NULL DEFAULT '',
-    uop_capacity          INTEGER NOT NULL DEFAULT 0,
-    default_manifest_json TEXT NOT NULL DEFAULT '{}',
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS payload_bin_types (
@@ -229,7 +229,7 @@ CREATE TABLE IF NOT EXISTS node_types (
     code         TEXT NOT NULL UNIQUE,
     name         TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
-    is_synthetic BOOLEAN NOT NULL DEFAULT FALSE,
+    is_synthetic INTEGER NOT NULL DEFAULT 0,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

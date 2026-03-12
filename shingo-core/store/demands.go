@@ -61,12 +61,8 @@ func scanDemands(rows *sql.Rows) ([]*Demand, error) {
 }
 
 func (db *DB) CreateDemand(catID, description string, demandQty int64) (int64, error) {
-	res, err := db.Exec(db.Q(`INSERT INTO demands (cat_id, description, demand_qty) VALUES (?, ?, ?)`),
+	return db.insertID(`INSERT INTO demands (cat_id, description, demand_qty) VALUES (?, ?, ?) RETURNING id`,
 		catID, description, demandQty)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
 }
 
 func (db *DB) UpdateDemand(id int64, catID, description string, demandQty, producedQty int64) error {

@@ -63,14 +63,13 @@ func scanCMSTransactions(rows *sql.Rows) ([]*CMSTransaction, error) {
 
 func (db *DB) CreateCMSTransactions(txns []*CMSTransaction) error {
 	for _, t := range txns {
-		result, err := db.Exec(db.Q(`INSERT INTO cms_transactions (node_id, node_name, txn_type, cat_id, delta, qty_before, qty_after, bin_id, bin_label, payload_code, source_type, order_id, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		id, err := db.insertID(`INSERT INTO cms_transactions (node_id, node_name, txn_type, cat_id, delta, qty_before, qty_after, bin_id, bin_label, payload_code, source_type, order_id, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 			t.NodeID, t.NodeName, t.TxnType, t.CatID, t.Delta, t.QtyBefore, t.QtyAfter,
 			nullableInt64(t.BinID), t.BinLabel, t.PayloadCode, t.SourceType,
 			nullableInt64(t.OrderID), t.Notes)
 		if err != nil {
 			return fmt.Errorf("create cms transaction: %w", err)
 		}
-		id, _ := result.LastInsertId()
 		t.ID = id
 	}
 	return nil

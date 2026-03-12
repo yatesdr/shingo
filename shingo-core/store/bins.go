@@ -88,14 +88,10 @@ func scanBins(rows *sql.Rows) ([]*Bin, error) {
 }
 
 func (db *DB) CreateBin(b *Bin) error {
-	result, err := db.Exec(db.Q(`INSERT INTO bins (bin_type_id, label, description, node_id, status) VALUES (?, ?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO bins (bin_type_id, label, description, node_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id`,
 		b.BinTypeID, b.Label, b.Description, nullableInt64(b.NodeID), b.Status)
 	if err != nil {
 		return fmt.Errorf("create bin: %w", err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("create bin last id: %w", err)
 	}
 	b.ID = id
 	return nil

@@ -13,15 +13,12 @@ type PayloadManifestItem struct {
 }
 
 func (db *DB) CreatePayloadManifestItem(item *PayloadManifestItem) error {
-	result, err := db.Exec(db.Q(`INSERT INTO payload_manifest (payload_id, part_number, quantity, description) VALUES (?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO payload_manifest (payload_id, part_number, quantity, description) VALUES (?, ?, ?, ?) RETURNING id`,
 		item.PayloadID, item.PartNumber, item.Quantity, item.Description)
 	if err != nil {
 		return err
 	}
-	id, err := result.LastInsertId()
-	if err == nil {
-		item.ID = id
-	}
+	item.ID = id
 	return nil
 }
 

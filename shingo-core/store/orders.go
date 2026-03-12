@@ -83,7 +83,7 @@ func scanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 func (db *DB) CreateOrder(o *Order) error {
-	result, err := db.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, payload_id, parent_order_id, sequence, steps_json, bin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+	id, err := db.insertID(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, payload_id, parent_order_id, sequence, steps_json, bin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
@@ -92,10 +92,6 @@ func (db *DB) CreateOrder(o *Order) error {
 		nullableInt64(o.BinID))
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("create order last id: %w", err)
 	}
 	o.ID = id
 	return nil
@@ -117,17 +113,17 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 
 	for _, c := range children {
 		o := c.Order
-		result, err := tx.Exec(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, payload_id, parent_order_id, sequence, steps_json, bin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+		var id int64
+		err := tx.QueryRow(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, payload_id, parent_order_id, sequence, steps_json, bin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`),
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
 			o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
 			nullableInt64(o.PayloadID),
 			nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-			nullableInt64(o.BinID))
+			nullableInt64(o.BinID)).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}
-		id, _ := result.LastInsertId()
 		o.ID = id
 
 		// Bin-centric claiming: if the child order has a bin, claim it
