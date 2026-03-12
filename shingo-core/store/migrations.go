@@ -1131,11 +1131,12 @@ func (db *DB) migrateBooleanToInteger() {
 		return
 	}
 	// Only alter columns that are actually boolean; skip if already integer.
-	cols := []struct{ table, column string }{
-		{"nodes", "enabled"},
-		{"node_types", "is_synthetic"},
-		{"bins", "manifest_confirmed"},
-		{"bins", "locked"},
+	// Must drop DEFAULT first — Postgres can't auto-convert a boolean default to integer.
+	cols := []struct{ table, column, newDefault string }{
+		{"nodes", "enabled", "1"},
+		{"node_types", "is_synthetic", "0"},
+		{"bins", "manifest_confirmed", "0"},
+		{"bins", "locked", "0"},
 	}
 	for _, c := range cols {
 		isBool := db.isColumnBoolean(c.table, c.column)
@@ -1143,16 +1144,18 @@ func (db *DB) migrateBooleanToInteger() {
 		if !isBool {
 			continue
 		}
-		ddl := fmt.Sprintf(
-			`ALTER TABLE %s ALTER COLUMN %s TYPE INTEGER USING CASE WHEN %s THEN 1 ELSE 0 END`,
-			c.table, c.column, c.column,
-		)
-		log.Printf("[migrate] ALTER: %s", ddl)
-		if _, err := db.Exec(ddl); err != nil {
-			log.Printf("[migrate] ALTER failed: %v", err)
-		} else {
-			log.Printf("[migrate] ALTER ok: %s.%s", c.table, c.column)
+		steps := []string{
+			fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT`, c.table, c.column),
+			fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE INTEGER USING CASE WHEN %s THEN 1 ELSE 0 END`, c.table, c.column, c.column),
+			fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s`, c.table, c.column, c.newDefault),
 		}
+		for _, ddl := range steps {
+			log.Printf("[migrate] exec: %s", ddl)
+			if _, err := db.Exec(ddl); err != nil {
+				log.Printf("[migrate] failed: %v", err)
+			}
+		}
+		log.Printf("[migrate] converted %s.%s to INTEGER", c.table, c.column)
 	}
 	// Rebuild partial index with integer predicate
 	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_bins_locked`); err != nil {
