@@ -305,7 +305,12 @@ func (m *Manager) handleSSEHealth(data string) {
 // Returns false if a stop signal was received during the wait.
 func (m *Manager) sseBackoff(attempt int) bool {
 	// Base delay: 1s * 2^(attempt-1), capped at 30s
-	base := time.Duration(1<<uint(attempt-1)) * time.Second
+	// Cap the exponent to avoid int64 overflow (1<<63 wraps to 0).
+	exp := attempt - 1
+	if exp > 5 { // 2^5 = 32s, already above the 30s cap
+		exp = 5
+	}
+	base := time.Duration(1<<uint(exp)) * time.Second
 	if base > 30*time.Second {
 		base = 30 * time.Second
 	}

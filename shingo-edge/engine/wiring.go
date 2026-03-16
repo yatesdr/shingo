@@ -156,21 +156,39 @@ func (e *Engine) handlePayloadReorder(reorder PayloadReorderEvent) {
 	// Check if this payload uses staged hot-swap (auto-remove empties + staging node)
 	payload, err := e.db.GetPayload(payloadID)
 	if err == nil && payload.AutoRemoveEmpties && payload.StagingNode != "" {
-		// Complex order: pickup from storage → stage → dwell → pickup from staging → deliver to line
-		steps := []protocol.ComplexOrderStep{
+		// Order A: resupply — pickup from storage → stage → dwell → pickup from staging → deliver to line
+		resupplySteps := []protocol.ComplexOrderStep{
 			{Action: "pickup", NodeGroup: ""}, // core resolves source via payload
 			{Action: "dropoff", Node: payload.StagingNode},
 			{Action: "wait"},
 			{Action: "pickup", Node: payload.StagingNode},
 			{Action: "dropoff", Node: payload.Location},
 		}
-		_, err := e.orderMgr.CreateComplexOrder(
+		resupply, err := e.orderMgr.CreateComplexOrder(
 			&payloadID,
 			int64(reorder.ReorderQty),
-			steps,
+			resupplySteps,
 		)
 		if err != nil {
-			log.Printf("create staged hot-swap for payload %d: %v", reorder.PayloadID, err)
+			log.Printf("create hot-swap resupply for payload %d: %v", reorder.PayloadID, err)
+			return
+		}
+
+		// Order B: empty removal — navigate to line → dwell → pickup empty → drive to storage
+		removalSteps := []protocol.ComplexOrderStep{
+			{Action: "dropoff", Node: payload.Location}, // navigate to line (no cargo — location-only block)
+			{Action: "wait"},
+			{Action: "pickup", Node: payload.Location},  // pick up the empty bin
+			{Action: "dropoff", NodeGroup: ""},           // drive to storage and drop
+		}
+		_, err = e.orderMgr.CreateComplexOrder(
+			&payloadID,
+			int64(reorder.ReorderQty),
+			removalSteps,
+		)
+		if err != nil {
+			log.Printf("hot-swap: resupply order %d created but removal failed for payload %d: %v",
+				resupply.ID, reorder.PayloadID, err)
 		}
 		return
 	}

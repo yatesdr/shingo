@@ -1,6 +1,7 @@
 package www
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -84,6 +85,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			return template.HTML(`<time data-utc="` + t.UTC().Format(time.RFC3339) + `">` +
 				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
 		},
+		"json": func(v interface{}) template.JS {
+			b, _ := json.Marshal(v)
+			return template.JS(b)
+		},
 	}
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 
@@ -124,6 +129,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	r.Get("/changeover", h.handleChangeover)
 	r.Get("/manual-order", h.handleManualOrder)
 	r.Get("/production", h.handleProduction)
+	r.Get("/operator", h.handleOperatorScreenList)
+	r.Get("/operator/cell/{id}", h.handleOperatorCellDisplay)
+	r.Get("/operator/display/{id}", h.handleOperatorDisplay)
+	r.Get("/operator/designer", h.handleOperatorDesigner)
 
 	// Login/logout
 	r.Get("/login", h.handleLoginPage)
@@ -151,6 +160,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Post("/orders/store", h.apiCreateStoreOrder)
 		r.Post("/orders/move", h.apiCreateMoveOrder)
 		r.Post("/orders/complex", h.apiCreateComplexOrder)
+		r.Post("/orders/request", h.apiSmartRequest)
 		r.Post("/orders/ingest", h.apiCreateIngestOrder)
 		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
 		r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
@@ -161,6 +171,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Put("/payloads/{id}/count", h.apiPayloadCount)
 		r.Put("/payloads/{id}/reorder-point", h.apiUpdateReorderPoint)
 		r.Put("/payloads/{id}/auto-reorder", h.apiToggleAutoReorder)
+		r.Get("/orders/active", h.apiGetActiveOrders)
+		r.Get("/payloads/line/{lineID}", h.apiListPayloadsByLinePublic)
 		r.Get("/hourly-counts", h.apiGetHourlyCounts)
 		r.Get("/core-nodes", h.apiGetCoreNodes)
 		r.Get("/payload-catalog", h.apiListPayloadCatalog)
@@ -231,6 +243,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 
 			// Manual message
 			r.Post("/manual-message", h.apiSendManualMessage)
+
+			// Operator screens (designer CRUD)
+			r.Post("/operator-screens", h.apiCreateOperatorScreen)
+			r.Get("/operator-screens", h.apiListOperatorScreens)
+			r.Get("/operator-screens/{id}/layout", h.apiGetOperatorScreenLayout)
+			r.Put("/operator-screens/{id}/layout", h.apiSaveOperatorScreenLayout)
 		})
 	})
 

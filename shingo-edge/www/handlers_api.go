@@ -1508,3 +1508,131 @@ func (h *Handlers) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
+
+// --- Public Payload Read (for operator displays) ---
+
+func (h *Handlers) apiListPayloadsByLinePublic(w http.ResponseWriter, r *http.Request) {
+	lineID, err := parseID(r, "lineID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid line ID")
+		return
+	}
+	line, err := h.engine.DB().GetProductionLine(lineID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "line not found")
+		return
+	}
+	if line.ActiveJobStyleID == nil {
+		writeJSON(w, []interface{}{})
+		return
+	}
+	payloads, err := h.engine.DB().ListPayloadsByJobStyle(*line.ActiveJobStyleID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, payloads)
+}
+
+// apiSmartRequest creates the correct order type based on payload config.
+//
+// Two-robot hot-swap path (AutoRemoveEmpties + StagingNode configured):
+//   Order A (resupply): pickup from storage → dropoff at staging → WAIT →
+//                       pickup from staging → dropoff at line node
+//   Order B (removal):  navigate to line node → WAIT →
+//                       pickup empty at line → dropoff empty at storage
+//   Both orders are created as staged (complete=false) with a wait step.
+//   The operator sees POSITIONING until both robots reach their wait points,
+//   then RELEASE fires both simultaneously.
+//
+// Simple retrieve path (default): single order via CreateRetrieveOrder.
+//
+// This mirrors the decision logic in engine/wiring.go handlePayloadReorder.
+func (h *Handlers) apiSmartRequest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PayloadID int64 `json:"payload_id"`
+		Quantity  int64 `json:"quantity"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.PayloadID == 0 {
+		writeError(w, http.StatusBadRequest, "payload_id is required")
+		return
+	}
+	if req.Quantity < 1 {
+		req.Quantity = 1
+	}
+
+	p, err := h.engine.DB().GetPayload(req.PayloadID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "payload not found")
+		return
+	}
+
+	payloadID := p.ID
+
+	// ── Two-robot hot-swap path ──────────────────────────────────────
+	if p.AutoRemoveEmpties && p.StagingNode != "" {
+		// Order A: resupply — robot 1 picks up fresh bin, stages it, waits,
+		// then on release delivers from staging to line
+		resupplySteps := []protocol.ComplexOrderStep{
+			{Action: "pickup", NodeGroup: ""},
+			{Action: "dropoff", Node: p.StagingNode},
+			{Action: "wait"},
+			{Action: "pickup", Node: p.StagingNode},
+			{Action: "dropoff", Node: p.Location},
+		}
+		resupply, err := h.engine.OrderManager().CreateComplexOrder(
+			&payloadID, req.Quantity, resupplySteps,
+		)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "resupply order: "+err.Error())
+			return
+		}
+
+		// Order B: empty removal — robot 2 navigates to line node, waits,
+		// then on release picks up the empty bin and drives to storage
+		removalSteps := []protocol.ComplexOrderStep{
+			{Action: "dropoff", Node: p.Location}, // navigate to line (no cargo — block becomes location-only)
+			{Action: "wait"},
+			{Action: "pickup", Node: p.Location},  // pick up the empty bin
+			{Action: "dropoff", NodeGroup: ""},     // drive to storage and drop
+		}
+		removal, err := h.engine.OrderManager().CreateComplexOrder(
+			&payloadID, req.Quantity, removalSteps,
+		)
+		if err != nil {
+			// Resupply already created — log but don't leave it dangling
+			log.Printf("hot-swap: resupply order %d created but removal failed: %v", resupply.ID, err)
+			writeError(w, http.StatusInternalServerError, "removal order: "+err.Error())
+			return
+		}
+
+		writeJSON(w, map[string]interface{}{
+			"hot_swap":   true,
+			"resupply":   resupply,
+			"removal":    removal,
+			"payload_id": payloadID,
+		})
+		return
+	}
+
+	// ── Simple retrieve path ─────────────────────────────────────────
+	order, err := h.engine.OrderManager().CreateRetrieveOrder(
+		&payloadID, p.RetrieveEmpty,
+		req.Quantity, p.Location, p.StagingNode,
+		"standard", p.PayloadCode,
+		h.engine.AppConfig().Web.AutoConfirm,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"hot_swap":   false,
+		"resupply":   order,
+		"payload_id": payloadID,
+	})
+}
