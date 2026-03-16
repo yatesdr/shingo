@@ -165,6 +165,15 @@ CREATE TABLE IF NOT EXISTS payload_catalog (
     uop_capacity INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS operator_screens (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    slug       TEXT NOT NULL UNIQUE,
+    layout     TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `
 
 func (db *DB) migrate() error {
