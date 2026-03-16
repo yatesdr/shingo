@@ -114,26 +114,29 @@ type PayloadReorderEvent struct {
 
 // OrderCreatedEvent is emitted when a new order is placed.
 type OrderCreatedEvent struct {
-	OrderID   int64
-	OrderUUID string
-	OrderType string
+	OrderID   int64  `json:"order_id"`
+	OrderUUID string `json:"order_uuid"`
+	OrderType string `json:"order_type"`
+	PayloadID *int64 `json:"payload_id,omitempty"`
 }
 
 // OrderStatusChangedEvent is emitted on order state transitions.
 type OrderStatusChangedEvent struct {
-	OrderID   int64
-	OrderUUID string
-	OrderType string
-	OldStatus string
-	NewStatus string
-	ETA       string
+	OrderID   int64  `json:"order_id"`
+	OrderUUID string `json:"order_uuid"`
+	OrderType string `json:"order_type"`
+	OldStatus string `json:"old_status"`
+	NewStatus string `json:"new_status"`
+	ETA       string `json:"eta"`
+	PayloadID *int64 `json:"payload_id,omitempty"`
 }
 
 // OrderCompletedEvent is emitted when an order reaches terminal state.
 type OrderCompletedEvent struct {
-	OrderID   int64
-	OrderUUID string
-	OrderType string
+	OrderID   int64  `json:"order_id"`
+	OrderUUID string `json:"order_uuid"`
+	OrderType string `json:"order_type"`
+	PayloadID *int64 `json:"payload_id,omitempty"`
 }
 
 // ChangeoverStartedEvent is emitted when a changeover begins.

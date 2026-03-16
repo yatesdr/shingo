@@ -104,7 +104,7 @@ func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quan
 	}
 
 	m.dbg("create: type=%s id=%d uuid=%s delivery=%s", TypeRetrieve, orderID, orderUUID, deliveryNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve, payloadID)
 
 	return m.db.GetOrder(orderID)
 }
@@ -121,7 +121,7 @@ func (m *Manager) CreateStoreOrder(payloadID *int64, quantity int64, pickupNode 
 	}
 
 	m.dbg("create: type=%s id=%d uuid=%s pickup=%s", TypeStore, orderID, orderUUID, pickupNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeStore)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeStore, payloadID)
 	return m.db.GetOrder(orderID)
 }
 
@@ -168,7 +168,7 @@ func (m *Manager) CreateMoveOrder(payloadID *int64, quantity int64, pickupNode, 
 	}
 
 	m.dbg("create: type=%s id=%d uuid=%s pickup=%s delivery=%s", TypeMove, orderID, orderUUID, pickupNode, deliveryNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, payloadID)
 	return m.db.GetOrder(orderID)
 }
 
@@ -222,7 +222,7 @@ func (m *Manager) CreateComplexOrder(payloadID *int64, quantity int64, steps []p
 	}
 
 	m.dbg("create: type=%s id=%d uuid=%s steps=%d", TypeComplex, orderID, orderUUID, len(steps))
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeComplex)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeComplex, payloadID)
 
 	return m.db.GetOrder(orderID)
 }
@@ -259,7 +259,7 @@ func (m *Manager) CreateIngestOrder(payloadID *int64, payloadCode, binLabel, pic
 	}
 
 	m.dbg("create: type=%s id=%d uuid=%s payload=%s bin=%s", TypeIngest, orderID, orderUUID, payloadCode, binLabel)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeIngest)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeIngest, payloadID)
 
 	return m.db.GetOrder(orderID)
 }
@@ -342,10 +342,10 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus, detail string) error
 	if updated != nil && updated.ETA != nil {
 		eta = *updated.ETA
 	}
-	m.emitter.EmitOrderStatusChanged(orderID, order.UUID, order.OrderType, oldStatus, newStatus, eta)
+	m.emitter.EmitOrderStatusChanged(orderID, order.UUID, order.OrderType, oldStatus, newStatus, eta, order.PayloadID)
 
 	if IsTerminal(newStatus) {
-		m.emitter.EmitOrderCompleted(orderID, order.UUID, order.OrderType)
+		m.emitter.EmitOrderCompleted(orderID, order.UUID, order.OrderType, order.PayloadID)
 		if newStatus == StatusFailed {
 			m.emitter.EmitOrderFailed(orderID, order.UUID, order.OrderType, detail)
 		}
