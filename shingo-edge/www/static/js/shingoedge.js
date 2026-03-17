@@ -7,9 +7,11 @@ function convertTimestamps() {
         }
     });
 }
-document.addEventListener('DOMContentLoaded', convertTimestamps);
-// Re-convert after htmx swaps inject new content
-document.body.addEventListener('htmx:afterSwap', convertTimestamps);
+document.addEventListener('DOMContentLoaded', function() {
+    convertTimestamps();
+    // Re-convert after htmx swaps inject new content
+    document.body.addEventListener('htmx:afterSwap', convertTimestamps);
+});
 
 // Shingo Edge — shop-floor materials management UI
 (function() {
