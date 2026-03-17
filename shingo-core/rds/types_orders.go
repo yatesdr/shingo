@@ -102,9 +102,9 @@ type OrderDetail struct {
 	CreateTime    int64         `json:"createTime"`
 	TerminalTime  int64         `json:"terminalTime"`
 	Blocks        []BlockDetail `json:"blocks"`
-	Errors        []string      `json:"errors"`
-	Warnings      []string      `json:"warnings"`
-	Notices       []string      `json:"notices"`
+	Errors        []OrderMessage `json:"errors"`
+	Warnings      []OrderMessage `json:"warnings"`
+	Notices       []OrderMessage `json:"notices"`
 	// Join order fields
 	FromLoc       string     `json:"fromLoc,omitempty"`
 	ToLoc         string     `json:"toLoc,omitempty"`
@@ -114,6 +114,15 @@ type OrderDetail struct {
 	LoadState     OrderState `json:"loadState,omitempty"`
 	UnloadOrderID string     `json:"unloadOrderId,omitempty"`
 	UnloadState   OrderState `json:"unloadState,omitempty"`
+}
+
+// OrderMessage represents a structured notice, warning, or error from SEER RDS.
+// RDS returns these as objects with code/desc/times/timestamp rather than plain strings.
+type OrderMessage struct {
+	Code      int    `json:"code"`
+	Desc      string `json:"desc"`
+	Times     int    `json:"times"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 // BlockDetailsResponse handles the Seer RDS response for block detail endpoints.

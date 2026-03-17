@@ -1,6 +1,8 @@
 package seerrds
 
 import (
+	"log"
+
 	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/rds"
@@ -22,6 +24,7 @@ func MapState(vendorState string) string {
 	case rds.StateStopped:
 		return dispatch.StatusCancelled
 	default:
+		log.Printf("mapstate: unrecognized RDS state %q, defaulting to dispatched", vendorState)
 		return dispatch.StatusDispatched
 	}
 }

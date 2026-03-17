@@ -134,7 +134,18 @@ func (p *Poller) poll() {
 
 		p.dbg("transition %s: %s -> %s (robot=%s)", rdsID, oldState, newState, detail.Vehicle)
 
-		// State transition detected
+		// Resolve the ShinGo order ID before updating tracked state.
+		// If resolution fails, we keep the old tracked state so the
+		// transition is retried on the next poll cycle instead of being
+		// silently lost.
+		orderID, err := p.resolver.ResolveRDSOrderID(rdsID)
+		if err != nil {
+			log.Printf("poller: resolve %s: %v", rdsID, err)
+			p.dbg("poll error: resolve(%s): %v — will retry next cycle", rdsID, err)
+			continue
+		}
+
+		// Resolution succeeded — now commit the state transition.
 		p.mu.Lock()
 		if newState.IsTerminal() {
 			delete(p.active, rdsID)
@@ -142,13 +153,6 @@ func (p *Poller) poll() {
 			p.active[rdsID] = newState
 		}
 		p.mu.Unlock()
-
-		orderID, err := p.resolver.ResolveRDSOrderID(rdsID)
-		if err != nil {
-			log.Printf("poller: resolve %s: %v", rdsID, err)
-			p.dbg("poll error: resolve(%s): %v", rdsID, err)
-			continue
-		}
 
 		p.emitter.EmitOrderStatusChanged(orderID, rdsID, string(oldState), string(newState), detail.Vehicle, fmt.Sprintf("fleet state: %s -> %s", oldState, newState))
 	}
