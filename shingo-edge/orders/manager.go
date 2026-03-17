@@ -284,6 +284,13 @@ func (m *Manager) ReleaseOrder(orderID int64) error {
 		return fmt.Errorf("enqueue release: %w", err)
 	}
 
+	// Transition Edge status to in_transit now that the robot is resuming.
+	// Core won't send a dedicated in_transit message (TypeOrderUpdate ignores
+	// status), so we transition locally to keep Edge in sync.
+	if err := m.TransitionOrder(orderID, StatusInTransit, "released from staging"); err != nil {
+		return fmt.Errorf("transition to in_transit: %w", err)
+	}
+
 	m.dbg("release: id=%d uuid=%s", orderID, order.UUID)
 	return nil
 }
