@@ -1591,6 +1591,9 @@ func (h *Handlers) apiSmartRequest(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "resupply order: "+err.Error())
 			return
 		}
+		// Tag resupply with its final destination so handleOrderCompleted
+		// can distinguish it from the removal order.
+		h.engine.DB().UpdateOrderDeliveryNode(resupply.ID, p.Location)
 
 		// Order B: empty removal — robot 2 navigates to line node, waits,
 		// then on release picks up the empty bin and drives to storage

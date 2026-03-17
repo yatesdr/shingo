@@ -173,6 +173,9 @@ func (e *Engine) handlePayloadReorder(reorder PayloadReorderEvent) {
 			log.Printf("create hot-swap resupply for payload %d: %v", reorder.PayloadID, err)
 			return
 		}
+		// Tag resupply with its final destination so handleOrderCompleted
+		// can distinguish it from the removal order.
+		e.db.UpdateOrderDeliveryNode(resupply.ID, payload.Location)
 
 		// Order B: empty removal — navigate to line → dwell → pickup empty → drive to storage
 		removalSteps := []protocol.ComplexOrderStep{
@@ -232,8 +235,9 @@ func (e *Engine) handleOrderCompleted(completed OrderCompletedEvent) {
 		e.resetPayloadOnRetrieve(payload)
 
 	case "complex":
-		// Complex orders on consume payloads also reset to full
-		if payload.Role != "produce" {
+		// Only reset when the resupply order completes (delivers TO the line).
+		// The removal order has no delivery_node set, so it won't match.
+		if payload.Role != "produce" && order.DeliveryNode == payload.Location {
 			e.resetPayloadOnRetrieve(payload)
 		}
 
