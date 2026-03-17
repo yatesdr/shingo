@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+
+	"shingoedge/store"
 )
 
 func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -38,10 +40,10 @@ func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 	anomalies, rpMap := loadAnomalyData(h)
 
 	shifts, _ := db.ListShifts()
-	shiftsJSON, _ := json.Marshal(shifts)
-	if shiftsJSON == nil {
-		shiftsJSON = []byte("[]")
+	if shifts == nil {
+		shifts = []store.Shift{}
 	}
+	shiftsJSON, _ := json.Marshal(shifts)
 
 	data := map[string]interface{}{
 		"Page":              "setup",

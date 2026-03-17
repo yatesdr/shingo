@@ -1,7 +1,6 @@
 // --- Shifts ---
 (function loadShifts() {
-    var raw = document.getElementById('page-data').dataset.shifts;
-    var shifts = raw ? JSON.parse(raw) : [];
+    var shifts = JSON.parse(document.getElementById('page-data').dataset.shifts);
     for (var i = 0; i < shifts.length; i++) {
         var s = shifts[i];
         var nameEl = document.querySelector('.shift-name[data-shift="' + s.shift_number + '"]');
