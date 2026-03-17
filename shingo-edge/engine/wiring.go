@@ -327,6 +327,14 @@ func (e *Engine) handlePayloadAutoRemove(empty PayloadEmptyEvent) {
 		return
 	}
 
+	// If complex (hot-swap) orders are already active for this payload,
+	// removal is handled as part of those orders — skip standalone store.
+	activeComplex, _ := e.db.ListActiveOrdersByPayloadAndType(payload.ID, "complex")
+	if len(activeComplex) > 0 {
+		e.debugFn("payload %d: complex order active, skipping standalone auto-remove", payload.ID)
+		return
+	}
+
 	e.debugFn("auto-remove empty bin for payload %d at %s", payload.ID, payload.Location)
 	payloadID := payload.ID
 	_, err = e.orderMgr.CreateStoreOrder(&payloadID, 0, payload.Location)
@@ -336,6 +344,13 @@ func (e *Engine) handlePayloadAutoRemove(empty PayloadEmptyEvent) {
 }
 
 // handleAutoReleaseStagedResupply releases staged resupply orders when the store (empty-removal) order goes in-transit.
+//
+// CODE REVIEW NOTE: This handler may be dead code as of the complex order rework.
+// Simple store orders created by handlePayloadAutoRemove are never auto-submitted
+// (they require operator count confirmation), and the two-robot hot-swap creates
+// complex orders (not store type), so the OrderType != "store" guard exits early.
+// Keeping for now — needs review to determine if this serves any other flow or
+// was scaffolding for an incomplete design. Flagged during complex order rework.
 func (e *Engine) handleAutoReleaseStagedResupply(changed OrderStatusChangedEvent) {
 	if changed.NewStatus != "in_transit" || changed.OrderType != "store" {
 		return

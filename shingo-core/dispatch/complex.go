@@ -215,7 +215,32 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 		}
 		return result.Node.Name, nil
 	}
-	return "", fmt.Errorf("step requires either node or node_group")
+	// Global fallback: when Edge sends neither node nor node_group,
+	// resolve using the payload code — same approach simple orders use
+	// via FindSourceBinFIFO (retrieve) and FindStorageDestination (store).
+	if payloadCode != "" {
+		switch step.Action {
+		case "pickup":
+			bin, err := d.db.FindSourceBinFIFO(payloadCode)
+			if err != nil {
+				return "", fmt.Errorf("no source bin for payload %q: %v", payloadCode, err)
+			}
+			node, err := d.db.GetNode(*bin.NodeID)
+			if err != nil {
+				return "", fmt.Errorf("resolve node for source bin %d: %v", bin.ID, err)
+			}
+			d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", node.Name, bin.ID)
+			return node.Name, nil
+		case "dropoff":
+			node, err := d.db.FindStorageDestination(payloadCode)
+			if err != nil {
+				return "", fmt.Errorf("no storage destination for payload %q: %v", payloadCode, err)
+			}
+			d.dbg("resolveStepNode: global fallback dropoff → %s", node.Name)
+			return node.Name, nil
+		}
+	}
+	return "", fmt.Errorf("step requires either node, node_group, or payload_code for resolution")
 }
 
 // extractEndpoints returns the pickup (first actionable) and delivery (last actionable) nodes.
