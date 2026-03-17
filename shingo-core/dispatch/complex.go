@@ -67,7 +67,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 
 	// Build RDS blocks for pre-wait steps
 	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
-	blocks := stepsToBlocks(vendorOrderID, preWait)
+	blocks := stepsToBlocks(vendorOrderID, preWait, 0)
 
 	if len(blocks) == 0 {
 		d.failOrder(order, env, "invalid_steps", "no actionable steps before wait")
@@ -145,8 +145,8 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	_, postWait := splitPostWait(steps)
-	blocks := stepsToBlocks(order.VendorOrderID, postWait)
+	preWait, postWait := splitPostWait(steps)
+	blocks := stepsToBlocks(order.VendorOrderID, postWait, len(preWait)+1)
 
 	d.dbg("complex release: order=%d vendor=%s adding %d blocks", order.ID, order.VendorOrderID, len(blocks))
 
@@ -277,14 +277,16 @@ func splitPostWait(steps []resolvedStep) (preWait, postWait []resolvedStep) {
 }
 
 // stepsToBlocks converts resolved steps to fleet OrderBlocks.
-func stepsToBlocks(vendorOrderID string, steps []resolvedStep) []fleet.OrderBlock {
+// blockOffset shifts the block numbering so that post-wait blocks don't
+// collide with pre-wait block IDs already submitted to RDS.
+func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int) []fleet.OrderBlock {
 	var blocks []fleet.OrderBlock
 	for i, s := range steps {
 		if s.Action == "wait" {
 			continue
 		}
 		blocks = append(blocks, fleet.OrderBlock{
-			BlockID:  fmt.Sprintf("%s-b%d", vendorOrderID, i+1),
+			BlockID:  fmt.Sprintf("%s-b%d", vendorOrderID, blockOffset+i+1),
 			Location: s.Node,
 		})
 	}
