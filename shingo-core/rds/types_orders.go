@@ -139,16 +139,16 @@ func (r *BlockDetailsResponse) UnmarshalJSON(data []byte) error {
 }
 
 type BlockDetail struct {
-	BlockID       string     `json:"blockId"`
-	Location      string     `json:"location"`
-	State         OrderState `json:"state"`
-	ContainerName string     `json:"containerName"`
-	GoodsID       string     `json:"goodsId"`
-	Operation     string     `json:"operation"`
-	BinTask       string     `json:"binTask"`
-	OperationArgs string     `json:"operation_args"`
-	ScriptArgs    string     `json:"script_args"`
-	ScriptName    string     `json:"script_name"`
+	BlockID       string         `json:"blockId"`
+	Location      string         `json:"location"`
+	State         OrderState     `json:"state"`
+	ContainerName string         `json:"containerName"`
+	GoodsID       string         `json:"goodsId"`
+	Operation     string         `json:"operation"`
+	BinTask       string         `json:"binTask"`
+	OperationArgs map[string]any `json:"operation_args"`
+	ScriptArgs    map[string]any `json:"script_args"`
+	ScriptName    string         `json:"script_name"`
 }
 
 type OrderListResponse struct {
