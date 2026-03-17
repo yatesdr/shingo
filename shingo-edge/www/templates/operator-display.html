@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Screen.Name}} — Shingo Edge</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html, body { width:100%; height:100%; overflow:hidden; background:#121212; font-family:Arial,sans-serif; }
+        .display-container { width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+        .op-notification { position:fixed; top:20px; left:50%; transform:translateX(-50%) translateY(-60px); padding:14px 32px; border-radius:8px; font-size:18px; font-weight:bold; color:#fff; z-index:9999; transition:transform .3s ease; box-shadow:0 4px 16px rgba(0,0,0,.5); }
+        .op-notification.show { transform:translateX(-50%) translateY(0); }
+        .op-notification-success { background:#388E3C; }
+        .op-notification-error { background:#D32F2F; }
+        .op-notification-info { background:#1976D2; }
+        canvas { -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+    </style>
+</head>
+<body>
+    <div class="display-container"><canvas id="display-canvas" width="1920" height="1080"></canvas></div>
+    <script type="module">
+        import { initDisplay } from '/static/operator-canvas/display.js';
+        initDisplay(document.getElementById('display-canvas'), {{.Screen | json}});
+    </script>
+</body>
+</html>

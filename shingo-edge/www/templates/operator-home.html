@@ -1,0 +1,57 @@
+{{template "header" .}}
+<style>
+    .op-home { max-width:900px; margin:40px auto; padding:0 20px; }
+    .op-home h1 { color:#fff; margin-bottom:8px; font-size:28px; }
+    .section-label { color:#888; font-size:14px; text-transform:uppercase; letter-spacing:1px; margin:32px 0 12px; }
+    .card-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; }
+    .card { background:#1e1e1e; border:1px solid #333; border-radius:10px; padding:20px; transition:border-color .15s; text-decoration:none; display:block; }
+    .card:hover { border-color:#1976D2; }
+    .card h3 { color:#fff; margin:0 0 6px; font-size:18px; }
+    .card .meta { color:#888; font-size:13px; }
+    .card .badge { display:inline-block; background:#1976D2; color:#fff; font-size:11px; padding:2px 8px; border-radius:4px; margin-top:8px; }
+    .card .badge-designer { background:#7B1FA2; }
+    .empty-state { text-align:center; padding:48px 20px; color:#666; }
+    .empty-state h2 { font-size:20px; margin-bottom:8px; color:#888; }
+    .empty-state p { font-size:14px; }
+    .designer-link { display:inline-block; margin-top:24px; color:#1976D2; text-decoration:none; font-size:14px; }
+    .designer-link:hover { text-decoration:underline; }
+</style>
+<div class="op-home">
+    <h1>Operator Screens</h1>
+
+    {{if .Lines}}
+    <div class="section-label">Production Lines</div>
+    <div class="card-grid">
+        {{range .Lines}}
+        <a href="/operator/cell/{{.ID}}" class="card">
+            <h3>{{.Name}}</h3>
+            <div class="meta">{{.Description}}</div>
+            <div class="badge">Auto Layout</div>
+        </a>
+        {{end}}
+    </div>
+    {{end}}
+
+    {{if .Screens}}
+    <div class="section-label">Custom Screens</div>
+    <div class="card-grid">
+        {{range .Screens}}
+        <a href="/operator/display/{{.ID}}" class="card">
+            <h3>{{.Name}}</h3>
+            <div class="meta">Custom designed layout</div>
+            <div class="badge badge-designer">Designed</div>
+        </a>
+        {{end}}
+    </div>
+    {{end}}
+
+    {{if and (not .Lines) (not .Screens)}}
+    <div class="empty-state">
+        <h2>No production lines configured</h2>
+        <p>Add lines in Setup to get started, or create a custom screen in the designer.</p>
+    </div>
+    {{end}}
+
+    <a href="/operator/designer" class="designer-link">Open Screen Designer</a>
+</div>
+{{template "footer" .}}
