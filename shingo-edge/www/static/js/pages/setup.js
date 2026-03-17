@@ -505,6 +505,7 @@ function openEditPayload(p) {
         multiplier: p.multiplier, production_units: p.production_units,
         remaining: p.remaining, reorder_point: p.reorder_point,
         reorder_qty: p.reorder_qty, retrieve_empty: p.retrieve_empty,
+        auto_remove_empties: p.auto_remove_empties, auto_order_empties: p.auto_order_empties,
         status: p.status
     });
     ShingoEdge.showModal('payload-edit');
