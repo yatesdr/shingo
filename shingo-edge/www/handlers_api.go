@@ -1030,7 +1030,22 @@ func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 	if req.ReorderQty <= 0 {
 		req.ReorderQty = 1
 	}
-	cfg := store.PayloadConfig{
+	id, err := h.engine.DB().CreatePayload(store.PayloadInput{
+		JobStyleID:          req.JobStyleID,
+		Location:            req.Location,
+		StagingNode:         req.StagingNode,
+		Description:         req.Description,
+		Manifest:            req.Manifest,
+		Multiplier:          req.Multiplier,
+		ProductionUnits:     req.ProductionUnits,
+		Remaining:           req.Remaining,
+		ReorderPoint:        req.ReorderPoint,
+		ReorderQty:          req.ReorderQty,
+		RetrieveEmpty:       req.RetrieveEmpty,
+		PayloadCode:         req.PayloadCode,
+		Role:                req.Role,
+		AutoRemoveEmpties:   req.AutoRemoveEmpties,
+		AutoOrderEmpties:    req.AutoOrderEmpties,
 		HotSwap:             req.HotSwap,
 		StagingNodeGroup:    req.StagingNodeGroup,
 		StagingNode2:        req.StagingNode2,
@@ -1039,8 +1054,7 @@ func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 		FullPickupNodeGroup: req.FullPickupNodeGroup,
 		EmptyDropNode:       req.EmptyDropNode,
 		EmptyDropNodeGroup:  req.EmptyDropNodeGroup,
-	}
-	id, err := h.engine.DB().CreatePayload(req.JobStyleID, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.PayloadCode, req.Role, req.AutoRemoveEmpties, req.AutoOrderEmpties, cfg)
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1083,7 +1097,21 @@ func (h *Handlers) apiUpdatePayload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	cfg := store.PayloadConfig{
+	if err := h.engine.DB().UpdatePayload(id, store.PayloadInput{
+		Location:            req.Location,
+		StagingNode:         req.StagingNode,
+		Description:         req.Description,
+		Manifest:            req.Manifest,
+		Multiplier:          req.Multiplier,
+		ProductionUnits:     req.ProductionUnits,
+		Remaining:           req.Remaining,
+		ReorderPoint:        req.ReorderPoint,
+		ReorderQty:          req.ReorderQty,
+		RetrieveEmpty:       req.RetrieveEmpty,
+		PayloadCode:         req.PayloadCode,
+		Role:                req.Role,
+		AutoRemoveEmpties:   req.AutoRemoveEmpties,
+		AutoOrderEmpties:    req.AutoOrderEmpties,
 		HotSwap:             req.HotSwap,
 		StagingNodeGroup:    req.StagingNodeGroup,
 		StagingNode2:        req.StagingNode2,
@@ -1092,8 +1120,7 @@ func (h *Handlers) apiUpdatePayload(w http.ResponseWriter, r *http.Request) {
 		FullPickupNodeGroup: req.FullPickupNodeGroup,
 		EmptyDropNode:       req.EmptyDropNode,
 		EmptyDropNodeGroup:  req.EmptyDropNodeGroup,
-	}
-	if err := h.engine.DB().UpdatePayload(id, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.PayloadCode, req.Role, req.AutoRemoveEmpties, req.AutoOrderEmpties, cfg); err != nil {
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

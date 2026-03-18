@@ -140,8 +140,25 @@ func (db *DB) GetPayload(id int64) (*Payload, error) {
 	return p, nil
 }
 
-// PayloadConfig holds the hot-swap and node configuration fields for create/update.
-type PayloadConfig struct {
+// PayloadInput holds all writable fields for creating or updating a payload.
+// Using a struct avoids long parameter lists and prevents argument ordering bugs.
+type PayloadInput struct {
+	JobStyleID        int64
+	Location          string
+	StagingNode       string
+	Description       string
+	Manifest          string
+	Multiplier        float64
+	ProductionUnits   int
+	Remaining         int
+	ReorderPoint      int
+	ReorderQty        int
+	RetrieveEmpty     bool
+	PayloadCode       string
+	Role              string
+	AutoRemoveEmpties bool
+	AutoOrderEmpties  bool
+	// Hot-swap configuration
 	HotSwap             string
 	StagingNodeGroup    string
 	StagingNode2        string
@@ -152,9 +169,9 @@ type PayloadConfig struct {
 	EmptyDropNodeGroup  string
 }
 
-func (db *DB) CreatePayload(jobStyleID int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool, payloadCode string, role string, autoRemoveEmpties, autoOrderEmpties bool, cfg PayloadConfig) (int64, error) {
-	if role == "" {
-		role = "consume"
+func (db *DB) CreatePayload(p PayloadInput) (int64, error) {
+	if p.Role == "" {
+		p.Role = "consume"
 	}
 	res, err := db.Exec(`
 		INSERT INTO payloads (job_style_id, location, staging_node, description, manifest, multiplier,
@@ -163,19 +180,20 @@ func (db *DB) CreatePayload(jobStyleID int64, location, stagingNode, description
 			hot_swap, staging_node_group, staging_node_2, staging_node_2_group,
 			full_pickup_node, full_pickup_node_group, empty_drop_node, empty_drop_node_group)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobStyleID, location, stagingNode, description, manifest, multiplier, productionUnits, remaining,
-		reorderPoint, reorderQty, retrieveEmpty, payloadCode, role, autoRemoveEmpties, autoOrderEmpties,
-		cfg.HotSwap, cfg.StagingNodeGroup, cfg.StagingNode2, cfg.StagingNode2Group,
-		cfg.FullPickupNode, cfg.FullPickupNodeGroup, cfg.EmptyDropNode, cfg.EmptyDropNodeGroup)
+		p.JobStyleID, p.Location, p.StagingNode, p.Description, p.Manifest, p.Multiplier,
+		p.ProductionUnits, p.Remaining, p.ReorderPoint, p.ReorderQty, p.RetrieveEmpty,
+		p.PayloadCode, p.Role, p.AutoRemoveEmpties, p.AutoOrderEmpties,
+		p.HotSwap, p.StagingNodeGroup, p.StagingNode2, p.StagingNode2Group,
+		p.FullPickupNode, p.FullPickupNodeGroup, p.EmptyDropNode, p.EmptyDropNodeGroup)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-func (db *DB) UpdatePayload(id int64, location, stagingNode, description, manifest string, multiplier float64, productionUnits, remaining, reorderPoint, reorderQty int, retrieveEmpty bool, payloadCode string, role string, autoRemoveEmpties, autoOrderEmpties bool, cfg PayloadConfig) error {
-	if role == "" {
-		role = "consume"
+func (db *DB) UpdatePayload(id int64, p PayloadInput) error {
+	if p.Role == "" {
+		p.Role = "consume"
 	}
 	_, err := db.Exec(`
 		UPDATE payloads SET location=?, staging_node=?, description=?, manifest=?, multiplier=?,
@@ -185,11 +203,11 @@ func (db *DB) UpdatePayload(id int64, location, stagingNode, description, manife
 			full_pickup_node=?, full_pickup_node_group=?, empty_drop_node=?, empty_drop_node_group=?,
 			updated_at=datetime('now')
 		WHERE id=?`,
-		location, stagingNode, description, manifest, multiplier,
-		productionUnits, remaining, reorderPoint, reorderQty, retrieveEmpty, payloadCode,
-		role, autoRemoveEmpties, autoOrderEmpties,
-		cfg.HotSwap, cfg.StagingNodeGroup, cfg.StagingNode2, cfg.StagingNode2Group,
-		cfg.FullPickupNode, cfg.FullPickupNodeGroup, cfg.EmptyDropNode, cfg.EmptyDropNodeGroup,
+		p.Location, p.StagingNode, p.Description, p.Manifest, p.Multiplier,
+		p.ProductionUnits, p.Remaining, p.ReorderPoint, p.ReorderQty, p.RetrieveEmpty,
+		p.PayloadCode, p.Role, p.AutoRemoveEmpties, p.AutoOrderEmpties,
+		p.HotSwap, p.StagingNodeGroup, p.StagingNode2, p.StagingNode2Group,
+		p.FullPickupNode, p.FullPickupNodeGroup, p.EmptyDropNode, p.EmptyDropNodeGroup,
 		id)
 	return err
 }
