@@ -106,7 +106,8 @@ function drawOrderCombo(ctx, cfg, live) {
     const total = (live && live.total != null) ? live.total : (cfg.total != null ? cfg.total : '—');
     const orderStatus = (live && live.order_status) || cfg.orderStatus || '';
     const orderETA = (live && live.order_eta) || cfg.orderETA || '';
-    const description = cfg.description || cfg.payloadCode || 'Payload';
+    const titleText = cfg.description || cfg.payloadCode || 'Payload';
+    const subtitleText = (cfg.description && cfg.payloadCode) ? cfg.payloadCode : '';
     const actionLabel = cfg.actionLabel || 'REQUEST';
     const canConfirm = (live && live.can_confirm) || false;
     const isFlashing = payloadStatus === 'empty' && flashOn;
@@ -143,15 +144,73 @@ function drawOrderCombo(ctx, cfg, live) {
     ctx.fillStyle = '#2A2A2A';
     ctx.fill();
 
-    const titleFontSize = Math.min(titleH * 0.55, 24);
-    ctx.font = `bold ${titleFontSize}px Arial`;
-    ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(description, x + pad, y + titleH / 2, w - pad * 2 - 80);
+    const badgeSpace = 80;
+    const maxTextW = w - pad * 2 - badgeSpace;
+    let titleFontSize;
 
-    // Status badge (top right)
-    if (orderStatus) {
+    if (subtitleText) {
+        // Two lines: title + part number
+        titleFontSize = Math.min(titleH * 0.42, 18);
+        const subFontSize = Math.min(titleH * 0.3, 12);
+        ctx.font = `bold ${titleFontSize}px Arial`;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(titleText, x + pad, y + titleH * 0.35, maxTextW);
+
+        ctx.font = `${subFontSize}px Arial`;
+        ctx.fillStyle = '#888888';
+        ctx.fillText(subtitleText, x + pad, y + titleH * 0.72, maxTextW);
+    } else {
+        // Single line
+        titleFontSize = Math.min(titleH * 0.55, 24);
+        ctx.font = `bold ${titleFontSize}px Arial`;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(titleText, x + pad, y + titleH / 2, maxTextW);
+    }
+
+    // Status badge(s) (top right)
+    // Two-robot hot-swap: show R1 and R2 badges side by side
+    // Single-robot or simple: show one badge
+    const isHotSwap = live && live.hot_swap;
+    const isTwoRobot = isHotSwap && !live.single_robot;
+
+    if (isTwoRobot && (live.resupply_status || live.removal_status)) {
+        const badgeFontSize = Math.min(titleFontSize * 0.6, 12);
+        const badgeH = titleH * 0.5;
+        const badgeY = y + (titleH - badgeH) / 2;
+        ctx.font = `bold ${badgeFontSize}px Arial`;
+
+        // R2 badge (rightmost)
+        const r2Label = 'R2: ' + orderStatusLabel(live.removal_status || 'pending');
+        const r2Color = orderStatusColor(live.removal_status || 'pending');
+        const r2W = ctx.measureText(r2Label).width + 10;
+        const r2X = x + w - pad - r2W;
+
+        ctx.beginPath();
+        roundRect(ctx, r2X, badgeY, r2W, badgeH, 4);
+        ctx.fillStyle = r2Color;
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        ctx.fillText(r2Label, r2X + r2W / 2, badgeY + badgeH / 2);
+
+        // R1 badge (left of R2)
+        const r1Label = 'R1: ' + orderStatusLabel(live.resupply_status || 'pending');
+        const r1Color = orderStatusColor(live.resupply_status || 'pending');
+        const r1W = ctx.measureText(r1Label).width + 10;
+        const r1X = r2X - r1W - 4;
+
+        ctx.beginPath();
+        roundRect(ctx, r1X, badgeY, r1W, badgeH, 4);
+        ctx.fillStyle = r1Color;
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textAlign = 'center';
+        ctx.fillText(r1Label, r1X + r1W / 2, badgeY + badgeH / 2);
+    } else if (orderStatus) {
         const badgeColor = orderStatusColor(orderStatus);
         const badgeLabel = orderStatusLabel(orderStatus);
         const badgeFontSize = Math.min(titleFontSize * 0.7, 14);

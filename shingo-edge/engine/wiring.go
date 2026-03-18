@@ -147,68 +147,40 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	}
 }
 
+// buildPickupStep creates a ComplexOrderStep for a pickup action.
+// It checks node first, then node_group, then leaves both empty (Core decides).
+func buildPickupStep(node, nodeGroup string) protocol.ComplexOrderStep {
+	if node != "" {
+		return protocol.ComplexOrderStep{Action: "pickup", Node: node}
+	}
+	if nodeGroup != "" {
+		return protocol.ComplexOrderStep{Action: "pickup", NodeGroup: nodeGroup}
+	}
+	return protocol.ComplexOrderStep{Action: "pickup"}
+}
+
+// buildDropoffStep creates a ComplexOrderStep for a dropoff action.
+// Same logic: node first, then node_group, then empty (Core decides).
+func buildDropoffStep(node, nodeGroup string) protocol.ComplexOrderStep {
+	if node != "" {
+		return protocol.ComplexOrderStep{Action: "dropoff", Node: node}
+	}
+	if nodeGroup != "" {
+		return protocol.ComplexOrderStep{Action: "dropoff", NodeGroup: nodeGroup}
+	}
+	return protocol.ComplexOrderStep{Action: "dropoff"}
+}
+
 func (e *Engine) handlePayloadReorder(reorder PayloadReorderEvent) {
 	e.debugFn("payload reorder: payload=%d loc=%s qty=%d",
 		reorder.PayloadID, reorder.Location, reorder.ReorderQty)
 
-	payloadID := reorder.PayloadID
-
-	// Check if this payload uses staged hot-swap (auto-remove empties + staging node)
-	payload, err := e.db.GetPayload(payloadID)
-	if err == nil && payload.AutoRemoveEmpties && payload.StagingNode != "" {
-		// Order A: resupply — pickup from storage → stage → dwell → pickup from staging → deliver to line
-		resupplySteps := []protocol.ComplexOrderStep{
-			{Action: "pickup", NodeGroup: ""}, // core resolves source via payload
-			{Action: "dropoff", Node: payload.StagingNode},
-			{Action: "wait"},
-			{Action: "pickup", Node: payload.StagingNode},
-			{Action: "dropoff", Node: payload.Location},
-		}
-		resupply, err := e.orderMgr.CreateComplexOrder(
-			&payloadID,
-			int64(reorder.ReorderQty),
-			resupplySteps,
-		)
-		if err != nil {
-			log.Printf("create hot-swap resupply for payload %d: %v", reorder.PayloadID, err)
-			return
-		}
-		// Tag resupply with its final destination so handleOrderCompleted
-		// can distinguish it from the removal order.
-		e.db.UpdateOrderDeliveryNode(resupply.ID, payload.Location)
-
-		// Order B: empty removal — navigate to line → dwell → pickup empty → drive to storage
-		removalSteps := []protocol.ComplexOrderStep{
-			{Action: "dropoff", Node: payload.Location}, // navigate to line (no cargo — location-only block)
-			{Action: "wait"},
-			{Action: "pickup", Node: payload.Location},  // pick up the empty bin
-			{Action: "dropoff", NodeGroup: ""},           // drive to storage and drop
-		}
-		_, err = e.orderMgr.CreateComplexOrder(
-			&payloadID,
-			int64(reorder.ReorderQty),
-			removalSteps,
-		)
-		if err != nil {
-			log.Printf("hot-swap: resupply order %d created but removal failed for payload %d: %v",
-				resupply.ID, reorder.PayloadID, err)
-		}
-		return
-	}
-
-	// Simple retrieve (existing behavior)
-	_, err = e.orderMgr.CreateRetrieveOrder(
-		&payloadID,
-		reorder.RetrieveEmpty,
-		int64(reorder.ReorderQty),
-		reorder.Location,
-		reorder.StagingNode,
-		"standard", "",
-		e.cfg.Web.AutoConfirm,
-	)
+	result, err := e.RequestOrders(reorder.PayloadID, int64(reorder.ReorderQty))
 	if err != nil {
 		log.Printf("create reorder for payload %d: %v", reorder.PayloadID, err)
+		return
 	}
+	e.debugFn("payload reorder result: hot_swap=%v single_robot=%v", result.HotSwap, result.SingleRobot)
 }
 
 func (e *Engine) handleOrderCompleted(completed OrderCompletedEvent) {

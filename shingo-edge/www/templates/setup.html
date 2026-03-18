@@ -355,13 +355,12 @@
             <div class="card-body" id="payload-add-form">
                 <div class="form-row">
                     <div class="form-group"><label>Location (LSL Node)</label><input type="text" name="location" class="form-input" placeholder="e.g. LSL-3A"></div>
-                    <div class="form-group"><label>Staging Node</label><input type="text" name="staging_node" class="form-input" placeholder="e.g. STG-3A"></div>
+                    <div class="form-group"><label>Payload Code</label><input type="text" name="payload_code" class="form-input" placeholder="e.g. BIN-STD-01"></div>
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label>Description</label><input type="text" name="description" class="form-input"></div>
-                    <div class="form-group"><label>Payload Code</label><input type="text" name="payload_code" class="form-input" placeholder="e.g. BIN-STD-01"></div>
+                    <div class="form-group"><label>Manifest (JSON)</label><textarea name="manifest" class="form-input mono" rows="2">{}</textarea></div>
                 </div>
-                <div class="form-group"><label>Manifest (JSON)</label><textarea name="manifest" class="form-input mono" rows="3">{}</textarea></div>
                 <div class="form-row">
                     <div class="form-group"><label>Multiplier</label><input type="number" name="multiplier" class="form-input" value="1" step="0.1" min="0.1"></div>
                     <div class="form-group"><label>Production Units</label><input type="number" name="production_units" class="form-input" value="0" min="0"></div>
@@ -371,8 +370,43 @@
                     <div class="form-group"><label>Reorder Qty</label><input type="number" name="reorder_qty" class="form-input" value="1" min="1"></div>
                 </div>
                 <div class="form-group"><label><input type="checkbox" name="retrieve_empty" checked> Retrieve Empty</label></div>
-                <div class="form-group"><label><input type="checkbox" name="auto_remove_empties"> Auto Remove Empties (hot-swap)</label></div>
                 <div class="form-group"><label><input type="checkbox" name="auto_order_empties"> Auto Order Empties (produce)</label></div>
+
+                <!-- Hot-Swap Configuration -->
+                <div class="form-group">
+                    <label>Hot-Swap Mode</label>
+                    <select name="hot_swap" class="form-input" onchange="onHotSwapChange('payload-add-form')">
+                        <option value="">Off</option>
+                        <option value="two_robot">Two Robot</option>
+                        <option value="single_robot">Single Robot</option>
+                    </select>
+                </div>
+                <div class="hotswap-fields" style="display:none">
+                    <div class="form-row">
+                        <div class="form-group"><label>Full Pickup</label>
+                            <select name="full_pickup_type" class="form-input" onchange="onNodeTypeChange(this)"><option value="">Core Decides</option><option value="node">Specific Node</option><option value="group">Node Group</option></select>
+                        </div>
+                        <div class="form-group node-value-group" style="display:none"><label>Node / Group</label><input type="text" name="full_pickup_value" class="form-input" placeholder="e.g. STORAGE.LANE3.S1"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Staging 1</label>
+                            <select name="staging_type" class="form-input" onchange="onNodeTypeChange(this)"><option value="node" selected>Specific Node</option><option value="group">Node Group</option></select>
+                        </div>
+                        <div class="form-group node-value-group"><label>Node / Group</label><input type="text" name="staging_value" class="form-input" placeholder="e.g. STG-1A"></div>
+                    </div>
+                    <div class="form-row staging2-row" style="display:none">
+                        <div class="form-group"><label>Staging 2</label>
+                            <select name="staging2_type" class="form-input" onchange="onNodeTypeChange(this)"><option value="node" selected>Specific Node</option><option value="group">Node Group</option></select>
+                        </div>
+                        <div class="form-group node-value-group"><label>Node / Group</label><input type="text" name="staging2_value" class="form-input" placeholder="e.g. STG-2A"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Empty Drop</label>
+                            <select name="empty_drop_type" class="form-input" onchange="onNodeTypeChange(this)"><option value="">Core Decides</option><option value="node">Specific Node</option><option value="group">Node Group</option></select>
+                        </div>
+                        <div class="form-group node-value-group" style="display:none"><label>Node / Group</label><input type="text" name="empty_drop_value" class="form-input" placeholder="e.g. DROP.ZONE.A"></div>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="ShingoEdge.hideModal('payload-add')">Cancel</button>
@@ -391,13 +425,12 @@
                 <input type="hidden" name="id">
                 <div class="form-row">
                     <div class="form-group"><label>Location (LSL Node)</label><input type="text" name="location" class="form-input"></div>
-                    <div class="form-group"><label>Staging Node</label><input type="text" name="staging_node" class="form-input"></div>
+                    <div class="form-group"><label>Payload Code</label><input type="text" name="payload_code" class="form-input"></div>
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label>Description</label><input type="text" name="description" class="form-input"></div>
-                    <div class="form-group"><label>Payload Code</label><input type="text" name="payload_code" class="form-input"></div>
+                    <div class="form-group"><label>Manifest (JSON)</label><textarea name="manifest" class="form-input mono" rows="2"></textarea></div>
                 </div>
-                <div class="form-group"><label>Manifest (JSON)</label><textarea name="manifest" class="form-input mono" rows="3"></textarea></div>
                 <div class="form-row">
                     <div class="form-group"><label>Multiplier</label><input type="number" name="multiplier" class="form-input" step="0.1" min="0.1"></div>
                     <div class="form-group"><label>Production Units</label><input type="number" name="production_units" class="form-input" min="0"></div>
@@ -418,8 +451,43 @@
                     <div class="form-group"><label>Reorder Qty</label><input type="number" name="reorder_qty" class="form-input" min="1"></div>
                 </div>
                 <div class="form-group"><label><input type="checkbox" name="retrieve_empty"> Retrieve Empty</label></div>
-                <div class="form-group"><label><input type="checkbox" name="auto_remove_empties"> Auto Remove Empties (hot-swap)</label></div>
                 <div class="form-group"><label><input type="checkbox" name="auto_order_empties"> Auto Order Empties (produce)</label></div>
+
+                <!-- Hot-Swap Configuration -->
+                <div class="form-group">
+                    <label>Hot-Swap Mode</label>
+                    <select name="hot_swap" class="form-input" onchange="onHotSwapChange('payload-edit-form')">
+                        <option value="">Off</option>
+                        <option value="two_robot">Two Robot</option>
+                        <option value="single_robot">Single Robot</option>
+                    </select>
+                </div>
+                <div class="hotswap-fields" style="display:none">
+                    <div class="form-row">
+                        <div class="form-group"><label>Full Pickup</label>
+                            <select name="full_pickup_type" class="form-input" onchange="onNodeTypeChange(this)"><option value="">Core Decides</option><option value="node">Specific Node</option><option value="group">Node Group</option></select>
+                        </div>
+                        <div class="form-group node-value-group" style="display:none"><label>Node / Group</label><input type="text" name="full_pickup_value" class="form-input" placeholder="e.g. STORAGE.LANE3.S1"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Staging 1</label>
+                            <select name="staging_type" class="form-input" onchange="onNodeTypeChange(this)"><option value="node" selected>Specific Node</option><option value="group">Node Group</option></select>
+                        </div>
+                        <div class="form-group node-value-group"><label>Node / Group</label><input type="text" name="staging_value" class="form-input" placeholder="e.g. STG-1A"></div>
+                    </div>
+                    <div class="form-row staging2-row" style="display:none">
+                        <div class="form-group"><label>Staging 2</label>
+                            <select name="staging2_type" class="form-input" onchange="onNodeTypeChange(this)"><option value="node" selected>Specific Node</option><option value="group">Node Group</option></select>
+                        </div>
+                        <div class="form-group node-value-group"><label>Node / Group</label><input type="text" name="staging2_value" class="form-input" placeholder="e.g. STG-2A"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>Empty Drop</label>
+                            <select name="empty_drop_type" class="form-input" onchange="onNodeTypeChange(this)"><option value="">Core Decides</option><option value="node">Specific Node</option><option value="group">Node Group</option></select>
+                        </div>
+                        <div class="form-group node-value-group" style="display:none"><label>Node / Group</label><input type="text" name="empty_drop_value" class="form-input" placeholder="e.g. DROP.ZONE.A"></div>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="ShingoEdge.hideModal('payload-edit')">Cancel</button>

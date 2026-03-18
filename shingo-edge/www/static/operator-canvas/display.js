@@ -127,38 +127,65 @@ function connectSSE() {
         const newStatus = d.new_status || d.NewStatus || d.Status || '';
 
         if (newStatus) {
-            // Hot-swap mode: update the individual order status, then derive overall
+            // Hot-swap mode: update order status(es)
             if (live.hot_swap) {
-                const oid = String(orderId);
-                if (live.resupply_order_id && oid === String(live.resupply_order_id)) {
+                if (live.single_robot) {
+                    // Single robot: one order, direct status tracking
                     live.resupply_status = newStatus;
-                } else if (live.removal_order_id && oid === String(live.removal_order_id)) {
-                    live.removal_status = newStatus;
-                }
-                live.order_status = deriveHotSwapStatus(live);
-                live.order_eta = d.eta || d.ETA || '';
-                // Confirm available when resupply is delivered
-                live.can_confirm = (live.resupply_status === 'delivered');
+                    live.order_status = newStatus;
+                    live.order_eta = d.eta || d.ETA || '';
+                    live.can_confirm = (newStatus === 'delivered');
 
-                // Terminal: both done
-                if (['confirmed', 'cancelled'].includes(live.resupply_status) &&
-                    ['confirmed', 'cancelled', ''].includes(live.removal_status)) {
-                    const resOid = String(live.resupply_order_id);
-                    const remOid = String(live.removal_order_id);
-                    setTimeout(() => {
-                        const l = getLive(sid);
-                        l.order_status = '';
-                        l.order_id = null;
-                        l.can_confirm = false;
-                        l.hot_swap = false;
-                        l.resupply_order_id = null;
-                        l.removal_order_id = null;
-                        l.resupply_status = '';
-                        l.removal_status = '';
-                        liveData.set(sid, l);
-                        orderShapeMap.delete(resOid);
-                        orderShapeMap.delete(remOid);
-                    }, 3000);
+                    // Terminal: clear after delay
+                    if (['confirmed', 'cancelled'].includes(newStatus)) {
+                        const oid = String(orderId);
+                        setTimeout(() => {
+                            const l = getLive(sid);
+                            l.order_status = '';
+                            l.order_id = null;
+                            l.can_confirm = false;
+                            l.hot_swap = false;
+                            l.single_robot = false;
+                            l.resupply_order_id = null;
+                            l.resupply_status = '';
+                            liveData.set(sid, l);
+                            orderShapeMap.delete(oid);
+                        }, 3000);
+                    }
+                } else {
+                    // Two robot: dual tracking, derive combined status
+                    const oid = String(orderId);
+                    if (live.resupply_order_id && oid === String(live.resupply_order_id)) {
+                        live.resupply_status = newStatus;
+                    } else if (live.removal_order_id && oid === String(live.removal_order_id)) {
+                        live.removal_status = newStatus;
+                    }
+                    live.order_status = deriveHotSwapStatus(live);
+                    live.order_eta = d.eta || d.ETA || '';
+                    // Confirm available when resupply is delivered
+                    live.can_confirm = (live.resupply_status === 'delivered');
+
+                    // Terminal: both done
+                    if (['confirmed', 'cancelled'].includes(live.resupply_status) &&
+                        ['confirmed', 'cancelled', ''].includes(live.removal_status)) {
+                        const resOid = String(live.resupply_order_id);
+                        const remOid = String(live.removal_order_id);
+                        setTimeout(() => {
+                            const l = getLive(sid);
+                            l.order_status = '';
+                            l.order_id = null;
+                            l.can_confirm = false;
+                            l.hot_swap = false;
+                            l.single_robot = false;
+                            l.resupply_order_id = null;
+                            l.removal_order_id = null;
+                            l.resupply_status = '';
+                            l.removal_status = '';
+                            liveData.set(sid, l);
+                            orderShapeMap.delete(resOid);
+                            orderShapeMap.delete(remOid);
+                        }, 3000);
+                    }
                 }
             } else {
                 // Simple single-order mode
@@ -302,13 +329,14 @@ function applyActiveOrders(orders) {
         const live = getLive(sid);
 
         if (group.length >= 2) {
-            // Hot-swap pair — first is resupply, second is removal
-            // (Core creates resupply first, so it has the lower ID)
+            // Two-robot hot-swap pair — first is resupply, second is removal
+            // (Edge creates resupply first, so it has the lower ID)
             group.sort((a, b) => a.id - b.id);
             const resupply = group[0];
             const removal = group[1];
 
             live.hot_swap = true;
+            live.single_robot = false;
             live.resupply_order_id = resupply.id;
             live.removal_order_id = removal.id;
             live.resupply_status = resupply.status;
@@ -320,9 +348,25 @@ function applyActiveOrders(orders) {
 
             orderShapeMap.set(String(resupply.id), sid);
             orderShapeMap.set(String(removal.id), sid);
-        } else {
-            // Single active order
+        } else if (group.length === 1 && group[0].order_type === 'complex') {
+            // Single-robot hot-swap — one complex order with staging/release
             const o = group[0];
+            live.hot_swap = true;
+            live.single_robot = true;
+            live.order_id = o.id;
+            live.resupply_order_id = o.id;
+            live.resupply_status = o.status;
+            live.removal_order_id = null;
+            live.removal_status = '';
+            live.order_status = o.status;
+            live.order_eta = o.eta || '';
+            live.can_confirm = (o.status === 'delivered');
+            orderShapeMap.set(String(o.id), sid);
+        } else {
+            // Simple retrieve — single active order
+            const o = group[0];
+            live.hot_swap = false;
+            live.single_robot = false;
             live.order_status = o.status;
             live.order_id = o.id;
             live.order_eta = o.eta || '';
@@ -360,9 +404,13 @@ async function onCanvasClick(e) {
     const live = getLive(hit.id);
     const cfg = hit.config;
 
-    // Hot-swap: both robots staged → release both
+    // Hot-swap: staged → release
     if (live.hot_swap && live.order_status === 'staged') {
-        await releaseHotSwap(hit);
+        if (live.single_robot) {
+            await releaseOrder(live.order_id, hit);
+        } else {
+            await releaseHotSwap(hit);
+        }
         return;
     }
 
@@ -413,9 +461,25 @@ async function createOrder(cfg, shape) {
 
         const data = await res.json();
 
-        if (data.hot_swap) {
-            // Two-robot hot-swap response
+        if (data.hot_swap && data.single_robot) {
+            // Single-robot hot-swap: one order, still has staging/release
             live.hot_swap = true;
+            live.single_robot = true;
+            live.order_id = data.resupply.id;
+            live.resupply_order_id = data.resupply.id;
+            live.resupply_status = data.resupply.status;
+            live.removal_order_id = null;
+            live.removal_status = '';
+            live.order_status = data.resupply.status;
+            liveData.set(shape.id, live);
+
+            orderShapeMap.set(String(data.resupply.id), shape.id);
+
+            showNotification('Hot-swap order created', 'success');
+        } else if (data.hot_swap) {
+            // Two-robot hot-swap: two orders, dual tracking
+            live.hot_swap = true;
+            live.single_robot = false;
             live.resupply_order_id = data.resupply.id;
             live.removal_order_id = data.removal.id;
             live.resupply_status = data.resupply.status;
@@ -432,6 +496,7 @@ async function createOrder(cfg, shape) {
             // Simple single-order response
             const order = data.resupply;
             live.hot_swap = false;
+            live.single_robot = false;
             live.order_id = order.id;
             live.order_status = order.status;
             liveData.set(shape.id, live);

@@ -1006,6 +1006,15 @@ func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 		Role              string  `json:"role"`
 		AutoRemoveEmpties bool    `json:"auto_remove_empties"`
 		AutoOrderEmpties  bool    `json:"auto_order_empties"`
+		// Hot-swap configuration
+		HotSwap             string `json:"hot_swap"`
+		StagingNodeGroup    string `json:"staging_node_group"`
+		StagingNode2        string `json:"staging_node_2"`
+		StagingNode2Group   string `json:"staging_node_2_group"`
+		FullPickupNode      string `json:"full_pickup_node"`
+		FullPickupNodeGroup string `json:"full_pickup_node_group"`
+		EmptyDropNode       string `json:"empty_drop_node"`
+		EmptyDropNodeGroup  string `json:"empty_drop_node_group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1020,7 +1029,17 @@ func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 	if req.ReorderQty <= 0 {
 		req.ReorderQty = 1
 	}
-	id, err := h.engine.DB().CreatePayload(req.JobStyleID, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.PayloadCode, req.Role, req.AutoRemoveEmpties, req.AutoOrderEmpties)
+	cfg := store.PayloadConfig{
+		HotSwap:             req.HotSwap,
+		StagingNodeGroup:    req.StagingNodeGroup,
+		StagingNode2:        req.StagingNode2,
+		StagingNode2Group:   req.StagingNode2Group,
+		FullPickupNode:      req.FullPickupNode,
+		FullPickupNodeGroup: req.FullPickupNodeGroup,
+		EmptyDropNode:       req.EmptyDropNode,
+		EmptyDropNodeGroup:  req.EmptyDropNodeGroup,
+	}
+	id, err := h.engine.DB().CreatePayload(req.JobStyleID, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.PayloadCode, req.Role, req.AutoRemoveEmpties, req.AutoOrderEmpties, cfg)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1049,12 +1068,31 @@ func (h *Handlers) apiUpdatePayload(w http.ResponseWriter, r *http.Request) {
 		Role              string  `json:"role"`
 		AutoRemoveEmpties bool    `json:"auto_remove_empties"`
 		AutoOrderEmpties  bool    `json:"auto_order_empties"`
+		// Hot-swap configuration
+		HotSwap             string `json:"hot_swap"`
+		StagingNodeGroup    string `json:"staging_node_group"`
+		StagingNode2        string `json:"staging_node_2"`
+		StagingNode2Group   string `json:"staging_node_2_group"`
+		FullPickupNode      string `json:"full_pickup_node"`
+		FullPickupNodeGroup string `json:"full_pickup_node_group"`
+		EmptyDropNode       string `json:"empty_drop_node"`
+		EmptyDropNodeGroup  string `json:"empty_drop_node_group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdatePayload(id, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.PayloadCode, req.Role, req.AutoRemoveEmpties, req.AutoOrderEmpties); err != nil {
+	cfg := store.PayloadConfig{
+		HotSwap:             req.HotSwap,
+		StagingNodeGroup:    req.StagingNodeGroup,
+		StagingNode2:        req.StagingNode2,
+		StagingNode2Group:   req.StagingNode2Group,
+		FullPickupNode:      req.FullPickupNode,
+		FullPickupNodeGroup: req.FullPickupNodeGroup,
+		EmptyDropNode:       req.EmptyDropNode,
+		EmptyDropNodeGroup:  req.EmptyDropNodeGroup,
+	}
+	if err := h.engine.DB().UpdatePayload(id, req.Location, req.StagingNode, req.Description, req.Manifest, req.Multiplier, req.ProductionUnits, req.Remaining, req.ReorderPoint, req.ReorderQty, req.RetrieveEmpty, req.PayloadCode, req.Role, req.AutoRemoveEmpties, req.AutoOrderEmpties, cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1535,19 +1573,8 @@ func (h *Handlers) apiListPayloadsByLinePublic(w http.ResponseWriter, r *http.Re
 }
 
 // apiSmartRequest creates the correct order type based on payload config.
-//
-// Two-robot hot-swap path (AutoRemoveEmpties + StagingNode configured):
-//   Order A (resupply): pickup from storage → dropoff at staging → WAIT →
-//                       pickup from staging → dropoff at line node
-//   Order B (removal):  navigate to line node → WAIT →
-//                       pickup empty at line → dropoff empty at storage
-//   Both orders are created as staged (complete=false) with a wait step.
-//   The operator sees POSITIONING until both robots reach their wait points,
-//   then RELEASE fires both simultaneously.
-//
-// Simple retrieve path (default): single order via CreateRetrieveOrder.
-//
-// This mirrors the decision logic in engine/wiring.go handlePayloadReorder.
+// Delegates to engine.RequestOrders which handles all hot-swap modes
+// (single_robot, two_robot) and simple retrieve.
 func (h *Handlers) apiSmartRequest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PayloadID int64 `json:"payload_id"`
@@ -1565,77 +1592,10 @@ func (h *Handlers) apiSmartRequest(w http.ResponseWriter, r *http.Request) {
 		req.Quantity = 1
 	}
 
-	p, err := h.engine.DB().GetPayload(req.PayloadID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "payload not found")
-		return
-	}
-
-	payloadID := p.ID
-
-	// ── Two-robot hot-swap path ──────────────────────────────────────
-	if p.AutoRemoveEmpties && p.StagingNode != "" {
-		// Order A: resupply — robot 1 picks up fresh bin, stages it, waits,
-		// then on release delivers from staging to line
-		resupplySteps := []protocol.ComplexOrderStep{
-			{Action: "pickup", NodeGroup: ""},
-			{Action: "dropoff", Node: p.StagingNode},
-			{Action: "wait"},
-			{Action: "pickup", Node: p.StagingNode},
-			{Action: "dropoff", Node: p.Location},
-		}
-		resupply, err := h.engine.OrderManager().CreateComplexOrder(
-			&payloadID, req.Quantity, resupplySteps,
-		)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "resupply order: "+err.Error())
-			return
-		}
-		// Tag resupply with its final destination so handleOrderCompleted
-		// can distinguish it from the removal order.
-		h.engine.DB().UpdateOrderDeliveryNode(resupply.ID, p.Location)
-
-		// Order B: empty removal — robot 2 navigates to line node, waits,
-		// then on release picks up the empty bin and drives to storage
-		removalSteps := []protocol.ComplexOrderStep{
-			{Action: "dropoff", Node: p.Location}, // navigate to line (no cargo — block becomes location-only)
-			{Action: "wait"},
-			{Action: "pickup", Node: p.Location},  // pick up the empty bin
-			{Action: "dropoff", NodeGroup: ""},     // drive to storage and drop
-		}
-		removal, err := h.engine.OrderManager().CreateComplexOrder(
-			&payloadID, req.Quantity, removalSteps,
-		)
-		if err != nil {
-			// Resupply already created — log but don't leave it dangling
-			log.Printf("hot-swap: resupply order %d created but removal failed: %v", resupply.ID, err)
-			writeError(w, http.StatusInternalServerError, "removal order: "+err.Error())
-			return
-		}
-
-		writeJSON(w, map[string]interface{}{
-			"hot_swap":   true,
-			"resupply":   resupply,
-			"removal":    removal,
-			"payload_id": payloadID,
-		})
-		return
-	}
-
-	// ── Simple retrieve path ─────────────────────────────────────────
-	order, err := h.engine.OrderManager().CreateRetrieveOrder(
-		&payloadID, p.RetrieveEmpty,
-		req.Quantity, p.Location, p.StagingNode,
-		"standard", p.PayloadCode,
-		h.engine.AppConfig().Web.AutoConfirm,
-	)
+	result, err := h.engine.RequestOrders(req.PayloadID, req.Quantity)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, map[string]interface{}{
-		"hot_swap":   false,
-		"resupply":   order,
-		"payload_id": payloadID,
-	})
+	writeJSON(w, result)
 }

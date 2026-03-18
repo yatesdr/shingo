@@ -244,5 +244,18 @@ func (db *DB) migrate() error {
 	// Staged bin expiry visibility
 	db.Exec("ALTER TABLE orders ADD COLUMN staged_expire_at TEXT")
 
+	// Hot-swap mode + node configuration (replaces auto_remove_empties)
+	db.Exec("ALTER TABLE payloads ADD COLUMN hot_swap TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN staging_node_group TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN staging_node_2 TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN staging_node_2_group TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN full_pickup_node TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN full_pickup_node_group TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN empty_drop_node TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN empty_drop_node_group TEXT NOT NULL DEFAULT ''")
+
+	// Migrate existing auto_remove_empties=1 payloads to hot_swap='two_robot'
+	db.Exec("UPDATE payloads SET hot_swap = 'two_robot' WHERE auto_remove_empties = 1 AND staging_node != ''")
+
 	return nil
 }
