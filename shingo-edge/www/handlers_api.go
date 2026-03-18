@@ -15,6 +15,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/engine"
+	"shingoedge/store"
 )
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
