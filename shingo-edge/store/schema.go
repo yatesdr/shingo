@@ -29,19 +29,13 @@ CREATE TABLE IF NOT EXISTS payloads (
     location         TEXT NOT NULL,
     staging_node     TEXT NOT NULL DEFAULT '',
     description      TEXT NOT NULL DEFAULT '',
-    manifest         TEXT NOT NULL DEFAULT '{}',
-    multiplier       REAL NOT NULL DEFAULT 1,
-    production_units INTEGER NOT NULL DEFAULT 0,
     remaining        INTEGER NOT NULL DEFAULT 0,
     reorder_point    INTEGER NOT NULL DEFAULT 0,
-    reorder_qty      INTEGER NOT NULL DEFAULT 1,
-    retrieve_empty   INTEGER NOT NULL DEFAULT 1,
     status           TEXT NOT NULL DEFAULT 'active',
     payload_code     TEXT NOT NULL DEFAULT '',
     auto_reorder     INTEGER NOT NULL DEFAULT 1,
     role             TEXT NOT NULL DEFAULT 'consume',
-    auto_remove_empties INTEGER NOT NULL DEFAULT 0,
-    auto_order_empties  INTEGER NOT NULL DEFAULT 0,
+    cycle_mode       TEXT NOT NULL DEFAULT 'sequential',
     created_at       TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(job_style_id, location)
@@ -236,26 +230,23 @@ func (db *DB) migrate() error {
 	// Complex order steps
 	db.Exec("ALTER TABLE orders ADD COLUMN steps_json TEXT NOT NULL DEFAULT ''")
 
-	// Payload role + automation flags for produce/consume workflows
+	// Payload role (in base CREATE TABLE for new DBs, ALTER for existing)
 	db.Exec("ALTER TABLE payloads ADD COLUMN role TEXT NOT NULL DEFAULT 'consume'")
-	db.Exec("ALTER TABLE payloads ADD COLUMN auto_remove_empties INTEGER NOT NULL DEFAULT 0")
-	db.Exec("ALTER TABLE payloads ADD COLUMN auto_order_empties INTEGER NOT NULL DEFAULT 0")
 
 	// Staged bin expiry visibility
 	db.Exec("ALTER TABLE orders ADD COLUMN staged_expire_at TEXT")
 
-	// Hot-swap mode + node configuration (replaces auto_remove_empties)
-	db.Exec("ALTER TABLE payloads ADD COLUMN hot_swap TEXT NOT NULL DEFAULT ''")
+	// Node configuration for cycle modes
 	db.Exec("ALTER TABLE payloads ADD COLUMN staging_node_group TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE payloads ADD COLUMN staging_node_2 TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE payloads ADD COLUMN staging_node_2_group TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE payloads ADD COLUMN full_pickup_node TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE payloads ADD COLUMN full_pickup_node_group TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE payloads ADD COLUMN empty_drop_node TEXT NOT NULL DEFAULT ''")
-	db.Exec("ALTER TABLE payloads ADD COLUMN empty_drop_node_group TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN outgoing_node TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE payloads ADD COLUMN outgoing_node_group TEXT NOT NULL DEFAULT ''")
 
-	// Migrate existing auto_remove_empties=1 payloads to hot_swap='two_robot'
-	db.Exec("UPDATE payloads SET hot_swap = 'two_robot' WHERE auto_remove_empties = 1 AND staging_node != ''")
+	// cycle_mode: in base CREATE TABLE for new DBs, ALTER for existing DBs
+	db.Exec("ALTER TABLE payloads ADD COLUMN cycle_mode TEXT NOT NULL DEFAULT 'sequential'")
 
 	return nil
 }

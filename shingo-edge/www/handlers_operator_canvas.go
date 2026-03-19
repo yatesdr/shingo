@@ -106,7 +106,7 @@ func (h *Handlers) handleOperatorCellDisplay(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	layout := generateDefaultLayout(line, payloads)
+	layout := generateDefaultLayout(db, line, payloads)
 
 	screen := &store.OperatorScreen{
 		ID:     0, // ephemeral — not persisted
@@ -256,7 +256,7 @@ func (h *Handlers) apiSaveOperatorScreenLayout(w http.ResponseWriter, r *http.Re
 const canvasW = 1920
 const canvasH = 1080
 
-func generateDefaultLayout(line *store.ProductionLine, payloads []store.Payload) json.RawMessage {
+func generateDefaultLayout(db *store.DB, line *store.ProductionLine, payloads []store.Payload) json.RawMessage {
 	type shapeConfig map[string]interface{}
 	type shape struct {
 		ID     string      `json:"id"`
@@ -335,9 +335,15 @@ func generateDefaultLayout(line *store.ProductionLine, payloads []store.Payload)
 			desc = p.Location
 		}
 
+		// Look up UOP capacity from catalog for progress bar total
+		uopCapacity := 0
+		if bp, err := db.GetPayloadCatalogByCode(p.PayloadCode); err == nil {
+			uopCapacity = bp.UOPCapacity
+		}
+
 		pct := 0.0
-		if p.ProductionUnits > 0 {
-			pct = float64(p.Remaining) / float64(p.ProductionUnits) * 100.0
+		if uopCapacity > 0 {
+			pct = float64(p.Remaining) / float64(uopCapacity) * 100.0
 		}
 
 		shapes = append(shapes, shape{
@@ -352,12 +358,12 @@ func generateDefaultLayout(line *store.ProductionLine, payloads []store.Payload)
 				"payloadStatus":   p.Status,
 				"remainingPct":    pct,
 				"remaining":       p.Remaining,
-				"total":           p.ProductionUnits,
+				"total":           uopCapacity,
 				"orderStatus":     "",
 				"orderETA":        "",
 				"actionLabel":     "REQUEST",
 				"actionType":      "retrieve",
-				"retrieveEmpty":   p.RetrieveEmpty,
+				"retrieveEmpty":   p.Role == "produce",
 				"backgroundColor": "#1E1E1E",
 			},
 		})

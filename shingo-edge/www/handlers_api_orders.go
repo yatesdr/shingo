@@ -36,7 +36,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		if req.PayloadCode == "" {
 			req.PayloadCode = p.PayloadCode
 		}
-		req.RetrieveEmpty = p.RetrieveEmpty
+		req.RetrieveEmpty = p.Role == "produce"
 	}
 
 	// Batch mode: create multiple empty-bin orders (max 5)

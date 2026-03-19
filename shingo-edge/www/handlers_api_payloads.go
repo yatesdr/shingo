@@ -2,7 +2,6 @@ package www
 
 import (
 	"encoding/json"
-	"math"
 	"net/http"
 
 	"shingoedge/engine"
@@ -36,68 +35,44 @@ func (h *Handlers) apiListPayloadsByJobStyle(w http.ResponseWriter, r *http.Requ
 
 func (h *Handlers) apiCreatePayload(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		JobStyleID      int64   `json:"job_style_id"`
-		Location        string  `json:"location"`
-		StagingNode     string  `json:"staging_node"`
-		Description     string  `json:"description"`
-		PayloadCode     string  `json:"payload_code"`
-		Manifest        string  `json:"manifest"`
-		Multiplier      float64 `json:"multiplier"`
-		ProductionUnits int     `json:"production_units"`
-		Remaining       int     `json:"remaining"`
-		ReorderPoint    int     `json:"reorder_point"`
-		ReorderQty      int     `json:"reorder_qty"`
-		RetrieveEmpty     bool    `json:"retrieve_empty"`
-		Role              string  `json:"role"`
-		AutoRemoveEmpties bool    `json:"auto_remove_empties"`
-		AutoOrderEmpties  bool    `json:"auto_order_empties"`
-		// Hot-swap configuration
-		HotSwap             string `json:"hot_swap"`
+		JobStyleID          int64  `json:"job_style_id"`
+		Location            string `json:"location"`
+		StagingNode         string `json:"staging_node"`
+		Description         string `json:"description"`
+		PayloadCode         string `json:"payload_code"`
+		Role                string `json:"role"`
+		AutoReorder         bool   `json:"auto_reorder"`
+		ReorderPoint        int    `json:"reorder_point"`
+		CycleMode           string `json:"cycle_mode"`
 		StagingNodeGroup    string `json:"staging_node_group"`
 		StagingNode2        string `json:"staging_node_2"`
 		StagingNode2Group   string `json:"staging_node_2_group"`
 		FullPickupNode      string `json:"full_pickup_node"`
 		FullPickupNodeGroup string `json:"full_pickup_node_group"`
-		EmptyDropNode       string `json:"empty_drop_node"`
-		EmptyDropNodeGroup  string `json:"empty_drop_node_group"`
+		OutgoingNode       string `json:"outgoing_node"`
+		OutgoingNodeGroup  string `json:"outgoing_node_group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	if req.Manifest == "" {
-		req.Manifest = "{}"
-	}
-	if req.Multiplier <= 0 {
-		req.Multiplier = 1
-	}
-	if req.ReorderQty <= 0 {
-		req.ReorderQty = 1
 	}
 	id, err := h.engine.DB().CreatePayload(store.PayloadInput{
 		JobStyleID:          req.JobStyleID,
 		Location:            req.Location,
 		StagingNode:         req.StagingNode,
 		Description:         req.Description,
-		Manifest:            req.Manifest,
-		Multiplier:          req.Multiplier,
-		ProductionUnits:     req.ProductionUnits,
-		Remaining:           req.Remaining,
-		ReorderPoint:        req.ReorderPoint,
-		ReorderQty:          req.ReorderQty,
-		RetrieveEmpty:       req.RetrieveEmpty,
 		PayloadCode:         req.PayloadCode,
 		Role:                req.Role,
-		AutoRemoveEmpties:   req.AutoRemoveEmpties,
-		AutoOrderEmpties:    req.AutoOrderEmpties,
-		HotSwap:             req.HotSwap,
+		AutoReorder:         req.AutoReorder,
+		ReorderPoint:        req.ReorderPoint,
+		CycleMode:           req.CycleMode,
 		StagingNodeGroup:    req.StagingNodeGroup,
 		StagingNode2:        req.StagingNode2,
 		StagingNode2Group:   req.StagingNode2Group,
 		FullPickupNode:      req.FullPickupNode,
 		FullPickupNodeGroup: req.FullPickupNodeGroup,
-		EmptyDropNode:       req.EmptyDropNode,
-		EmptyDropNodeGroup:  req.EmptyDropNodeGroup,
+		OutgoingNode:       req.OutgoingNode,
+		OutgoingNodeGroup:  req.OutgoingNodeGroup,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -113,29 +88,21 @@ func (h *Handlers) apiUpdatePayload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Location        string  `json:"location"`
-		StagingNode     string  `json:"staging_node"`
-		Description     string  `json:"description"`
-		PayloadCode     string  `json:"payload_code"`
-		Manifest        string  `json:"manifest"`
-		Multiplier      float64 `json:"multiplier"`
-		ProductionUnits int     `json:"production_units"`
-		Remaining       int     `json:"remaining"`
-		ReorderPoint    int     `json:"reorder_point"`
-		ReorderQty      int     `json:"reorder_qty"`
-		RetrieveEmpty     bool    `json:"retrieve_empty"`
-		Role              string  `json:"role"`
-		AutoRemoveEmpties bool    `json:"auto_remove_empties"`
-		AutoOrderEmpties  bool    `json:"auto_order_empties"`
-		// Hot-swap configuration
-		HotSwap             string `json:"hot_swap"`
+		Location            string `json:"location"`
+		StagingNode         string `json:"staging_node"`
+		Description         string `json:"description"`
+		PayloadCode         string `json:"payload_code"`
+		Role                string `json:"role"`
+		AutoReorder         bool   `json:"auto_reorder"`
+		ReorderPoint        int    `json:"reorder_point"`
+		CycleMode           string `json:"cycle_mode"`
 		StagingNodeGroup    string `json:"staging_node_group"`
 		StagingNode2        string `json:"staging_node_2"`
 		StagingNode2Group   string `json:"staging_node_2_group"`
 		FullPickupNode      string `json:"full_pickup_node"`
 		FullPickupNodeGroup string `json:"full_pickup_node_group"`
-		EmptyDropNode       string `json:"empty_drop_node"`
-		EmptyDropNodeGroup  string `json:"empty_drop_node_group"`
+		OutgoingNode       string `json:"outgoing_node"`
+		OutgoingNodeGroup  string `json:"outgoing_node_group"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -145,25 +112,18 @@ func (h *Handlers) apiUpdatePayload(w http.ResponseWriter, r *http.Request) {
 		Location:            req.Location,
 		StagingNode:         req.StagingNode,
 		Description:         req.Description,
-		Manifest:            req.Manifest,
-		Multiplier:          req.Multiplier,
-		ProductionUnits:     req.ProductionUnits,
-		Remaining:           req.Remaining,
-		ReorderPoint:        req.ReorderPoint,
-		ReorderQty:          req.ReorderQty,
-		RetrieveEmpty:       req.RetrieveEmpty,
 		PayloadCode:         req.PayloadCode,
 		Role:                req.Role,
-		AutoRemoveEmpties:   req.AutoRemoveEmpties,
-		AutoOrderEmpties:    req.AutoOrderEmpties,
-		HotSwap:             req.HotSwap,
+		AutoReorder:         req.AutoReorder,
+		ReorderPoint:        req.ReorderPoint,
+		CycleMode:           req.CycleMode,
 		StagingNodeGroup:    req.StagingNodeGroup,
 		StagingNode2:        req.StagingNode2,
 		StagingNode2Group:   req.StagingNode2Group,
 		FullPickupNode:      req.FullPickupNode,
 		FullPickupNodeGroup: req.FullPickupNodeGroup,
-		EmptyDropNode:       req.EmptyDropNode,
-		EmptyDropNodeGroup:  req.EmptyDropNodeGroup,
+		OutgoingNode:       req.OutgoingNode,
+		OutgoingNodeGroup:  req.OutgoingNodeGroup,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -205,18 +165,26 @@ func (h *Handlers) apiPayloadCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up UOP capacity from catalog (single source of truth)
+	bp, err := h.engine.DB().GetPayloadCatalogByCode(p.PayloadCode)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "payload catalog entry not found for code: "+p.PayloadCode)
+		return
+	}
+
 	var prodUnits int
 	var status string
 
 	if req.Reset {
-		if err := h.engine.DB().ResetPayload(id, p.ProductionUnits); err != nil {
+		if err := h.engine.DB().ResetPayload(id, bp.UOPCapacity); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		prodUnits = p.ProductionUnits
+		prodUnits = bp.UOPCapacity
 		status = "active"
 	} else {
-		prodUnits = int(math.Round(req.PieceCount / p.Multiplier))
+		// Multiplier is always 1 — piece count = production units
+		prodUnits = int(req.PieceCount)
 		if prodUnits < 0 {
 			prodUnits = 0
 		}

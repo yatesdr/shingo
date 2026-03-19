@@ -172,10 +172,9 @@ function drawOrderCombo(ctx, cfg, live) {
     }
 
     // Status badge(s) (top right)
-    // Two-robot hot-swap: show R1 and R2 badges side by side
-    // Single-robot or simple: show one badge
-    const isHotSwap = live && live.hot_swap;
-    const isTwoRobot = isHotSwap && !live.single_robot;
+    // Two-robot: show R1 and R2 badges side by side
+    // All other modes: show one badge
+    const isTwoRobot = live && live.cycle_mode === 'two_robot';
 
     if (isTwoRobot && (live.resupply_status || live.removal_status)) {
         const badgeFontSize = Math.min(titleFontSize * 0.6, 12);

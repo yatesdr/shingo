@@ -23,13 +23,9 @@ let shapes = [];
 const liveData = new Map();
 let screenId = null;
 
-// Forward: payloadId → shapeId (for payload events)
 const payloadShapeMap = new Map();
-// Forward: lineId → [shapeId, ...] (for status bar / line-level events)
 const lineShapeMap = new Map();
-// Reverse: orderId → shapeId (for order events that lack payload_id)
 const orderShapeMap = new Map();
-// Debounce flag for fallback re-fetch
 let refetchPending = false;
 
 export function initDisplay(canvasEl, screenData) {
@@ -62,10 +58,20 @@ function buildIndexes() {
     }
 }
 
+function clearLiveState(live) {
+    live.order_status = '';
+    live.order_id = null;
+    live.can_confirm = false;
+    live.cycle_mode = '';
+    live.resupply_order_id = null;
+    live.removal_order_id = null;
+    live.resupply_status = '';
+    live.removal_status = '';
+}
+
 function connectSSE() {
     const es = new EventSource('/events');
 
-    // ── Payload events (have json tags → snake_case) ────────────
     es.addEventListener('payload-update', e => {
         const d = JSON.parse(e.data);
         const sid = payloadShapeMap.get(String(d.payload_id));
@@ -78,7 +84,6 @@ function connectSSE() {
             if (shape.config.total) {
                 live.remaining_pct = (d.new_remaining / shape.config.total) * 100;
             }
-            // Keep shape config in sync for renderer
             shape.config.remaining = d.new_remaining;
             shape.config.payloadStatus = d.status;
         }
@@ -96,20 +101,11 @@ function connectSSE() {
         liveData.set(sid, live);
     });
 
-    // ── Order events ────────────────────────────────────────────
-    // Compatibility: check both PascalCase (current) and snake_case (after fix).
-    // OrderCreatedEvent:        { OrderID | order_id }
-    // OrderStatusChangedEvent:  { OrderID | order_id, NewStatus | new_status, ETA | eta }
-    // OrderCompletedEvent:      { OrderID | order_id }
-    //
-    // None of these carry payload_id (yet). We look up the shape via
-    // orderShapeMap. If the order ID is unknown, we re-fetch active orders.
     es.addEventListener('order-update', e => {
         const d = JSON.parse(e.data);
         const orderId = d.order_id || d.OrderID;
         if (!orderId) return;
 
-        // Also check if event carries payload_id (after Edge Change 2 lands)
         if (d.payload_id && !orderShapeMap.has(String(orderId))) {
             const sid = payloadShapeMap.get(String(d.payload_id));
             if (sid) orderShapeMap.set(String(orderId), sid);
@@ -117,8 +113,6 @@ function connectSSE() {
 
         let sid = orderShapeMap.get(String(orderId));
         if (!sid) {
-            // Unknown order — likely created externally (auto-reorder, main UI, WarLink)
-            // Re-fetch active orders to rebuild the map
             debouncedRefetch();
             return;
         }
@@ -127,80 +121,57 @@ function connectSSE() {
         const newStatus = d.new_status || d.NewStatus || d.Status || '';
 
         if (newStatus) {
-            // Hot-swap mode: update order status(es)
-            if (live.hot_swap) {
-                if (live.single_robot) {
-                    // Single robot: one order, direct status tracking
+            if (live.cycle_mode === 'two_robot') {
+                // Two robot: dual tracking, derive combined status
+                const oid = String(orderId);
+                if (live.resupply_order_id && oid === String(live.resupply_order_id)) {
                     live.resupply_status = newStatus;
-                    live.order_status = newStatus;
-                    live.order_eta = d.eta || d.ETA || '';
-                    live.can_confirm = (newStatus === 'delivered');
-
-                    // Terminal: clear after delay
-                    if (['confirmed', 'cancelled'].includes(newStatus)) {
-                        const oid = String(orderId);
-                        setTimeout(() => {
-                            const l = getLive(sid);
-                            l.order_status = '';
-                            l.order_id = null;
-                            l.can_confirm = false;
-                            l.hot_swap = false;
-                            l.single_robot = false;
-                            l.resupply_order_id = null;
-                            l.resupply_status = '';
-                            liveData.set(sid, l);
-                            orderShapeMap.delete(oid);
-                        }, 3000);
-                    }
-                } else {
-                    // Two robot: dual tracking, derive combined status
-                    const oid = String(orderId);
-                    if (live.resupply_order_id && oid === String(live.resupply_order_id)) {
-                        live.resupply_status = newStatus;
-                    } else if (live.removal_order_id && oid === String(live.removal_order_id)) {
-                        live.removal_status = newStatus;
-                    }
-                    live.order_status = deriveHotSwapStatus(live);
-                    live.order_eta = d.eta || d.ETA || '';
-                    // Confirm available when resupply is delivered
-                    live.can_confirm = (live.resupply_status === 'delivered');
-
-                    // Terminal: both done
-                    if (['confirmed', 'cancelled'].includes(live.resupply_status) &&
-                        ['confirmed', 'cancelled', ''].includes(live.removal_status)) {
-                        const resOid = String(live.resupply_order_id);
-                        const remOid = String(live.removal_order_id);
-                        setTimeout(() => {
-                            const l = getLive(sid);
-                            l.order_status = '';
-                            l.order_id = null;
-                            l.can_confirm = false;
-                            l.hot_swap = false;
-                            l.single_robot = false;
-                            l.resupply_order_id = null;
-                            l.removal_order_id = null;
-                            l.resupply_status = '';
-                            l.removal_status = '';
-                            liveData.set(sid, l);
-                            orderShapeMap.delete(resOid);
-                            orderShapeMap.delete(remOid);
-                        }, 3000);
-                    }
+                } else if (live.removal_order_id && oid === String(live.removal_order_id)) {
+                    live.removal_status = newStatus;
                 }
-            } else {
-                // Simple single-order mode
+                live.order_status = deriveHotSwapStatus(live);
+                live.order_eta = d.eta || d.ETA || '';
+                live.can_confirm = (live.resupply_status === 'delivered');
+
+                if (['confirmed', 'cancelled'].includes(live.resupply_status) &&
+                    ['confirmed', 'cancelled', ''].includes(live.removal_status)) {
+                    const resOid = String(live.resupply_order_id);
+                    const remOid = String(live.removal_order_id);
+                    setTimeout(() => {
+                        const l = getLive(sid);
+                        clearLiveState(l);
+                        liveData.set(sid, l);
+                        orderShapeMap.delete(resOid);
+                        orderShapeMap.delete(remOid);
+                    }, 3000);
+                }
+            } else if (live.cycle_mode === 'single_robot' || live.cycle_mode === 'sequential') {
+                // Single robot or sequential: one order, direct tracking
+                live.resupply_status = newStatus;
                 live.order_status = newStatus;
                 live.order_eta = d.eta || d.ETA || '';
                 live.can_confirm = (newStatus === 'delivered');
 
-                // Terminal state — clear after a delay
                 if (['confirmed', 'cancelled'].includes(newStatus)) {
                     const oid = String(orderId);
                     setTimeout(() => {
                         const l = getLive(sid);
-                        l.order_status = '';
-                        l.order_id = null;
-                        l.can_confirm = false;
+                        clearLiveState(l);
+                        liveData.set(sid, l);
+                        orderShapeMap.delete(oid);
+                    }, 3000);
+                }
+            } else {
+                // No cycle mode set — simple order (manual, etc.)
+                live.order_status = newStatus;
+                live.order_eta = d.eta || d.ETA || '';
+                live.can_confirm = (newStatus === 'delivered');
+
+                if (['confirmed', 'cancelled'].includes(newStatus)) {
+                    const oid = String(orderId);
+                    setTimeout(() => {
+                        const l = getLive(sid);
+                        clearLiveState(l);
                         liveData.set(sid, l);
                         orderShapeMap.delete(oid);
                     }, 3000);
@@ -211,7 +182,6 @@ function connectSSE() {
         liveData.set(sid, live);
     });
 
-    // OrderFailedEvent has json tags: { order_id, order_uuid, order_type, reason }
     es.addEventListener('order-failed', e => {
         const d = JSON.parse(e.data);
         const orderId = d.order_id;
@@ -222,7 +192,7 @@ function connectSSE() {
 
         const live = getLive(sid);
 
-        if (live.hot_swap) {
+        if (live.cycle_mode === 'two_robot') {
             const oid = String(orderId);
             if (live.resupply_order_id && oid === String(live.resupply_order_id)) {
                 live.resupply_status = 'failed';
@@ -238,20 +208,12 @@ function connectSSE() {
 
         showNotification('Order failed: ' + (d.reason || 'unknown'), 'error');
 
-        // Clear failed status after a few seconds — clean up all tracked IDs
         const resOid = live.resupply_order_id ? String(live.resupply_order_id) : null;
         const remOid = live.removal_order_id ? String(live.removal_order_id) : null;
         const oid = String(orderId);
         setTimeout(() => {
             const l = getLive(sid);
-            l.order_status = '';
-            l.order_id = null;
-            l.can_confirm = false;
-            l.hot_swap = false;
-            l.resupply_order_id = null;
-            l.removal_order_id = null;
-            l.resupply_status = '';
-            l.removal_status = '';
+            clearLiveState(l);
             liveData.set(sid, l);
             orderShapeMap.delete(oid);
             if (resOid) orderShapeMap.delete(resOid);
@@ -259,20 +221,13 @@ function connectSSE() {
         }, 5000);
     });
 
-    // ── Changeover events ──────────────────────────────────────────
-    // All changeover lifecycle events arrive as 'changeover-update'.
-    // ChangeoverStateChangedEvent has old_state/new_state (mid-changeover).
-    // Completed and Cancelled events signal the end — payloads may change.
-    // We reload on any non-transition event (no old_state field). This also
-    // catches ChangeoverStartedEvent, but an extra reload there is harmless.
     es.addEventListener('changeover-update', e => {
         const d = JSON.parse(e.data);
-        if (d.old_state) return; // mid-changeover state transition — ignore
+        if (d.old_state) return;
         showNotification('Changeover detected — reloading...', 'info');
         setTimeout(() => location.reload(), 1500);
     });
 
-    // ── PLC connection status ────────────────────────────────────
     es.addEventListener('plc-status', e => {
         const d = JSON.parse(e.data);
         for (const s of shapes) {
@@ -295,11 +250,6 @@ function connectSSE() {
     };
 }
 
-// ── Initial state fetch ─────────────────────────────────────────────
-// We only fetch active orders (public endpoint). Payload state comes from
-// the shape configs baked in by the Go handler (auto-layout) or from SSE
-// events (designer screens). We do NOT call /api/payloads (admin-only).
-
 async function fetchActiveOrders() {
     try {
         const res = await fetch('/api/orders/active');
@@ -312,8 +262,6 @@ async function fetchActiveOrders() {
 }
 
 function applyActiveOrders(orders) {
-    // Group orders by payload_id to detect hot-swap pairs.
-    // If two active orders share the same payload, treat them as hot-swap.
     const byPayload = new Map();
     for (const o of orders) {
         if (!o.payload_id) continue;
@@ -329,14 +277,12 @@ function applyActiveOrders(orders) {
         const live = getLive(sid);
 
         if (group.length >= 2) {
-            // Two-robot hot-swap pair — first is resupply, second is removal
-            // (Edge creates resupply first, so it has the lower ID)
+            // Two-robot: two active orders for same payload
             group.sort((a, b) => a.id - b.id);
             const resupply = group[0];
             const removal = group[1];
 
-            live.hot_swap = true;
-            live.single_robot = false;
+            live.cycle_mode = 'two_robot';
             live.resupply_order_id = resupply.id;
             live.removal_order_id = removal.id;
             live.resupply_status = resupply.status;
@@ -349,10 +295,9 @@ function applyActiveOrders(orders) {
             orderShapeMap.set(String(resupply.id), sid);
             orderShapeMap.set(String(removal.id), sid);
         } else if (group.length === 1 && group[0].order_type === 'complex') {
-            // Single-robot hot-swap — one complex order with staging/release
+            // Single complex order = single_robot or sequential (both have staging/release)
             const o = group[0];
-            live.hot_swap = true;
-            live.single_robot = true;
+            live.cycle_mode = 'single_robot'; // could be sequential too; both behave the same for display
             live.order_id = o.id;
             live.resupply_order_id = o.id;
             live.resupply_status = o.status;
@@ -363,10 +308,9 @@ function applyActiveOrders(orders) {
             live.can_confirm = (o.status === 'delivered');
             orderShapeMap.set(String(o.id), sid);
         } else {
-            // Simple retrieve — single active order
+            // Simple retrieve
             const o = group[0];
-            live.hot_swap = false;
-            live.single_robot = false;
+            live.cycle_mode = '';
             live.order_status = o.status;
             live.order_id = o.id;
             live.order_eta = o.eta || '';
@@ -378,9 +322,6 @@ function applyActiveOrders(orders) {
     }
 }
 
-// Debounced re-fetch — called when an SSE order event arrives for an
-// unknown order ID (externally created order). Waits 500ms to batch
-// multiple rapid events, then re-fetches /api/orders/active.
 function debouncedRefetch() {
     if (refetchPending) return;
     refetchPending = true;
@@ -404,23 +345,17 @@ async function onCanvasClick(e) {
     const live = getLive(hit.id);
     const cfg = hit.config;
 
-    // Hot-swap: staged → release
-    if (live.hot_swap && live.order_status === 'staged') {
-        if (live.single_robot) {
-            await releaseOrder(live.order_id, hit);
-        } else {
+    // Staged → release (all cycle modes have this)
+    if (live.order_status === 'staged') {
+        if (live.cycle_mode === 'two_robot') {
             await releaseHotSwap(hit);
+        } else if (live.order_id) {
+            await releaseOrder(live.order_id, hit);
         }
         return;
     }
 
-    // Single-order staged → release
-    if (!live.hot_swap && live.order_status === 'staged' && live.order_id) {
-        await releaseOrder(live.order_id, hit);
-        return;
-    }
-
-    // Confirm delivery (hot-swap or single)
+    // Confirm delivery
     if (live.can_confirm && live.order_id) {
         await confirmDelivery(live.order_id, hit);
         return;
@@ -431,6 +366,7 @@ async function onCanvasClick(e) {
         return;
     }
 
+    // REQUEST — create new order
     await createOrder(cfg, hit);
 }
 
@@ -460,31 +396,16 @@ async function createOrder(cfg, shape) {
         if (!res.ok) throw new Error(await res.text());
 
         const data = await res.json();
+        const mode = data.cycle_mode || '';
 
-        if (data.hot_swap && data.single_robot) {
-            // Single-robot hot-swap: one order, still has staging/release
-            live.hot_swap = true;
-            live.single_robot = true;
-            live.order_id = data.resupply.id;
-            live.resupply_order_id = data.resupply.id;
-            live.resupply_status = data.resupply.status;
-            live.removal_order_id = null;
-            live.removal_status = '';
-            live.order_status = data.resupply.status;
-            liveData.set(shape.id, live);
+        live.cycle_mode = mode;
 
-            orderShapeMap.set(String(data.resupply.id), shape.id);
-
-            showNotification('Hot-swap order created', 'success');
-        } else if (data.hot_swap) {
-            // Two-robot hot-swap: two orders, dual tracking
-            live.hot_swap = true;
-            live.single_robot = false;
+        if (mode === 'two_robot') {
             live.resupply_order_id = data.resupply.id;
             live.removal_order_id = data.removal.id;
             live.resupply_status = data.resupply.status;
             live.removal_status = data.removal.status;
-            live.order_id = data.resupply.id; // primary for confirm
+            live.order_id = data.resupply.id;
             live.order_status = deriveHotSwapStatus(live);
             liveData.set(shape.id, live);
 
@@ -492,11 +413,19 @@ async function createOrder(cfg, shape) {
             orderShapeMap.set(String(data.removal.id), shape.id);
 
             showNotification('Hot-swap orders created', 'success');
+        } else if (mode === 'single_robot' || mode === 'sequential') {
+            live.order_id = data.resupply.id;
+            live.resupply_order_id = data.resupply.id;
+            live.resupply_status = data.resupply.status;
+            live.order_status = data.resupply.status;
+            liveData.set(shape.id, live);
+
+            orderShapeMap.set(String(data.resupply.id), shape.id);
+
+            showNotification('Order created', 'success');
         } else {
-            // Simple single-order response
+            // Simple (no cycle mode — shouldn't happen with new API, but safe fallback)
             const order = data.resupply;
-            live.hot_swap = false;
-            live.single_robot = false;
             live.order_id = order.id;
             live.order_status = order.status;
             liveData.set(shape.id, live);
@@ -507,36 +436,24 @@ async function createOrder(cfg, shape) {
         }
     } catch (err) {
         live.order_status = '';
-        live.hot_swap = false;
+        live.cycle_mode = '';
         liveData.set(shape.id, live);
         showNotification('Order failed: ' + err.message, 'error');
     }
 }
 
 // Derive the overall card status from two hot-swap order statuses.
-// Both must be 'staged' for the card to show RELEASE.
-// If one is staged and the other is still in transit, show 'positioning'.
 function deriveHotSwapStatus(live) {
     const a = live.resupply_status || '';
     const b = live.removal_status || '';
 
-    // Terminal states propagate immediately
     if (a === 'failed' || b === 'failed') return 'failed';
     if (a === 'cancelled' || b === 'cancelled') return 'cancelled';
-
-    // Both staged → ready for release
     if (a === 'staged' && b === 'staged') return 'staged';
-
-    // Delivered (post-release) — resupply drives to line
     if (a === 'delivered') return 'delivered';
-
-    // One staged, other still moving → positioning
     if (a === 'staged' || b === 'staged') return 'positioning';
-
-    // Both in transit
     if (a === 'in_transit' || b === 'in_transit') return 'in_transit';
 
-    // Fallback to resupply status
     return a || b || 'pending';
 }
 
@@ -554,21 +471,13 @@ async function confirmDelivery(orderId, shape) {
         live.can_confirm = false;
         liveData.set(shape.id, live);
 
-        // Clear after brief confirmation display — clean up all tracked IDs
         const oid = String(orderId);
         const resupplyOid = live.resupply_order_id ? String(live.resupply_order_id) : null;
         const removalOid = live.removal_order_id ? String(live.removal_order_id) : null;
 
         setTimeout(() => {
             const l = getLive(shape.id);
-            l.order_status = '';
-            l.order_id = null;
-            l.can_confirm = false;
-            l.hot_swap = false;
-            l.resupply_order_id = null;
-            l.removal_order_id = null;
-            l.resupply_status = '';
-            l.removal_status = '';
+            clearLiveState(l);
             liveData.set(shape.id, l);
 
             orderShapeMap.delete(oid);
@@ -595,7 +504,7 @@ async function releaseOrder(orderId, shape) {
         live.order_status = 'in_transit';
         liveData.set(shape.id, live);
 
-        showNotification('Order released — delivering to line', 'success');
+        showNotification('Order released', 'success');
     } catch (err) {
         showNotification('Release failed: ' + err.message, 'error');
     }
@@ -612,7 +521,6 @@ async function releaseHotSwap(shape) {
     }
 
     try {
-        // Fire both releases simultaneously
         const [resRes, remRes] = await Promise.all([
             fetch(`/api/orders/${resupplyId}/release`, {
                 method: 'POST',
@@ -629,7 +537,6 @@ async function releaseHotSwap(shape) {
         if (!resRes.ok) throw new Error('Resupply release: ' + await resRes.text());
         if (!remRes.ok) throw new Error('Removal release: ' + await remRes.text());
 
-        // Only update state after both succeed
         live.resupply_status = 'in_transit';
         live.removal_status = 'in_transit';
         live.order_status = 'in_transit';
@@ -637,14 +544,11 @@ async function releaseHotSwap(shape) {
 
         showNotification('Hot-swap released — both robots moving', 'success');
     } catch (err) {
-        // Revert to staged so operator can retry
         live.order_status = 'staged';
         liveData.set(shape.id, live);
         showNotification('Release failed: ' + err.message, 'error');
     }
 }
-
-// ── UI helpers ──────────────────────────────────────────────────────
 
 function showNotification(msg, type = 'info') {
     const el = document.createElement('div');

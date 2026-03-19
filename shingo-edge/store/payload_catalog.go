@@ -38,16 +38,6 @@ func (db *DB) ListPayloadCatalog() ([]*PayloadCatalogEntry, error) {
 	return entries, nil
 }
 
-func (db *DB) GetPayloadCatalogByName(name string) (*PayloadCatalogEntry, error) {
-	e := &PayloadCatalogEntry{}
-	err := db.QueryRow(`SELECT id, name, code, description, uop_capacity, updated_at FROM payload_catalog WHERE name=?`, name).
-		Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return e, nil
-}
-
 func (db *DB) GetPayloadCatalogByCode(code string) (*PayloadCatalogEntry, error) {
 	e := &PayloadCatalogEntry{}
 	err := db.QueryRow(`SELECT id, name, code, description, uop_capacity, updated_at FROM payload_catalog WHERE code=?`, code).

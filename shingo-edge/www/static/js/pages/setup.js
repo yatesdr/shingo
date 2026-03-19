@@ -443,7 +443,7 @@ async function loadPayloads() {
     var body = document.getElementById('payload-body');
     var addBar = document.getElementById('payload-add-bar');
     if (!jsID) {
-        body.innerHTML = '<tr><td colspan="11" class="empty-cell">Select a process and style to view payloads</td></tr>';
+        body.innerHTML = '<tr><td colspan="9" class="empty-cell">Select a process and style to view payloads</td></tr>';
         addBar.style.display = 'none';
         return;
     }
@@ -451,26 +451,25 @@ async function loadPayloads() {
     try {
         var payloads = await ShingoEdge.api.get('/api/payloads/job-style/' + jsID);
         if (!payloads || payloads.length === 0) {
-            body.innerHTML = '<tr><td colspan="11" class="empty-cell">No payloads for this style</td></tr>';
+            body.innerHTML = '<tr><td colspan="9" class="empty-cell">No payloads for this style</td></tr>';
             return;
         }
         var html = '';
         for (var i = 0; i < payloads.length; i++) {
             var p = payloads[i];
+            var modeLabel = p.cycle_mode === 'two_robot' ? 'Two Robot' : p.cycle_mode === 'single_robot' ? 'Single Robot' : 'Sequential';
             html += '<tr id="payload-' + p.id + '">' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(p.location) + '</td>' +
-                '<td class="mono">' + ShingoEdge.escapeHtml(p.staging_node) + '</td>' +
+                '<td class="mono">' + ShingoEdge.escapeHtml(p.payload_code) + '</td>' +
                 '<td>' + ShingoEdge.escapeHtml(p.description) + '</td>' +
-                '<td>' + p.multiplier + '</td>' +
-                '<td>' + p.production_units + '</td>' +
-                '<td>' + p.remaining + '</td>' +
+                '<td>' + p.role + '</td>' +
+                '<td>' + p.remaining + ' / ' + p.reorder_point + '</td>' +
                 '<td>' + p.reorder_point + '</td>' +
-                '<td>' + p.reorder_qty + '</td>' +
-                '<td>' + (p.retrieve_empty ? 'Yes' : 'No') + '</td>' +
+                '<td><span class="status-badge status-' + (p.cycle_mode === 'sequential' ? 'stored' : 'active') + '">' + modeLabel + '</span></td>' +
                 '<td><span class="status-badge status-' + p.status + '">' + p.status + '</span></td>' +
                 '<td class="actions">' +
                     '<button class="btn-icon" onclick=\'openEditPayload(' + JSON.stringify(p).replace(/'/g, "\\'") + ')\' title="Edit">&#9998;</button>' +
-                    '<button class="btn-icon" onclick="resetPayload(' + p.id + ', ' + p.production_units + ')" title="Reset to full">&#8634;</button>' +
+                    '<button class="btn-icon" onclick="resetPayload(' + p.id + ')" title="Reset to full">&#8634;</button>' +
                     '<button class="btn-icon btn-icon-danger" onclick="deletePayload(' + p.id + ')" title="Delete">&#10005;</button>' +
                 '</td></tr>';
         }
@@ -478,12 +477,11 @@ async function loadPayloads() {
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-// ── Hot-swap form helpers ────────────────────────────────────────────
+// ── Cycle mode form helpers ──────────────────────────────────────────
 
-// Called when the hot-swap dropdown changes. Shows/hides node fields.
-function onHotSwapChange(formId) {
+function onCycleModeChange(formId) {
     var form = document.getElementById(formId);
-    var mode = form.querySelector('[name="hot_swap"]').value;
+    var mode = form.querySelector('[name="cycle_mode"]').value;
     var fields = form.querySelector('.hotswap-fields');
     var staging2 = form.querySelectorAll('.staging2-row');
 
@@ -491,21 +489,17 @@ function onHotSwapChange(formId) {
         fields.style.display = '';
     } else {
         fields.style.display = 'none';
-        // Clear all hotswap text inputs when turning off
         fields.querySelectorAll('input[type="text"]').forEach(function(el) { el.value = ''; });
     }
 
     staging2.forEach(function(el) {
         el.style.display = (mode === 'single_robot') ? '' : 'none';
-        // Clear Staging 2 inputs when switching away from single robot
         if (mode !== 'single_robot') {
             el.querySelectorAll('input[type="text"]').forEach(function(inp) { inp.value = ''; });
         }
     });
 }
 
-// Called when a node type dropdown (Specific Node / Node Group / Core Decides) changes.
-// Shows/hides the adjacent text input.
 function onNodeTypeChange(sel) {
     var row = sel.closest('.form-row');
     var valueGroup = row.querySelector('.node-value-group');
@@ -518,17 +512,14 @@ function onNodeTypeChange(sel) {
     }
 }
 
-// Read hot-swap node fields from a form and return the API-ready fields.
-// Each node has a type selector and a value input. Based on the type,
-// the value goes to either the _node or _node_group column.
-function readHotSwapFields(formId) {
+function readCycleModeFields(formId) {
     var form = document.getElementById(formId);
-    var result = { hot_swap: '', staging_node: '', staging_node_group: '', staging_node_2: '', staging_node_2_group: '', full_pickup_node: '', full_pickup_node_group: '', empty_drop_node: '', empty_drop_node_group: '' };
+    var result = { cycle_mode: 'sequential', staging_node: '', staging_node_group: '', staging_node_2: '', staging_node_2_group: '', full_pickup_node: '', full_pickup_node_group: '', outgoing_node: '', outgoing_node_group: '' };
 
-    var mode = form.querySelector('[name="hot_swap"]');
-    if (mode) result.hot_swap = mode.value || '';
+    var mode = form.querySelector('[name="cycle_mode"]');
+    if (mode) result.cycle_mode = mode.value || 'sequential';
 
-    if (!result.hot_swap) return result;
+    if (result.cycle_mode === 'sequential') return result;
 
     // Full Pickup
     var fpType = form.querySelector('[name="full_pickup_type"]');
@@ -549,23 +540,20 @@ function readHotSwapFields(formId) {
     else if (st2Type && st2Val && st2Type.value === 'group') result.staging_node_2_group = st2Val.value;
 
     // Empty Drop
-    var edType = form.querySelector('[name="empty_drop_type"]');
-    var edVal = form.querySelector('[name="empty_drop_value"]');
-    if (edType && edVal && edType.value === 'node') result.empty_drop_node = edVal.value;
-    else if (edType && edVal && edType.value === 'group') result.empty_drop_node_group = edVal.value;
+    var edType = form.querySelector('[name="outgoing_type"]');
+    var edVal = form.querySelector('[name="outgoing_value"]');
+    if (edType && edVal && edType.value === 'node') result.outgoing_node = edVal.value;
+    else if (edType && edVal && edType.value === 'group') result.outgoing_node_group = edVal.value;
 
     return result;
 }
 
-// Populate hot-swap fields on the edit form from payload data.
-function populateHotSwapFields(formId, p) {
+function populateCycleModeFields(formId, p) {
     var form = document.getElementById(formId);
 
-    // Set hot-swap mode
-    var modeSelect = form.querySelector('[name="hot_swap"]');
-    if (modeSelect) modeSelect.value = p.hot_swap || '';
+    var modeSelect = form.querySelector('[name="cycle_mode"]');
+    if (modeSelect) modeSelect.value = p.cycle_mode || 'sequential';
 
-    // Helper: set a node type/value pair
     function setNodeField(typeName, valueName, nodeVal, groupVal) {
         var typeEl = form.querySelector('[name="' + typeName + '"]');
         var valEl = form.querySelector('[name="' + valueName + '"]');
@@ -579,9 +567,9 @@ function populateHotSwapFields(formId, p) {
     setNodeField('full_pickup_type', 'full_pickup_value', p.full_pickup_node, p.full_pickup_node_group);
     setNodeField('staging_type', 'staging_value', p.staging_node, p.staging_node_group);
     setNodeField('staging2_type', 'staging2_value', p.staging_node_2, p.staging_node_2_group);
-    setNodeField('empty_drop_type', 'empty_drop_value', p.empty_drop_node, p.empty_drop_node_group);
+    setNodeField('outgoing_type', 'outgoing_value', p.outgoing_node, p.outgoing_node_group);
 
-    onHotSwapChange(formId);
+    onCycleModeChange(formId);
 }
 
 // ── Payload CRUD ─────────────────────────────────────────────────────
@@ -591,22 +579,17 @@ async function addPayload() {
     if (!jsID) { ShingoEdge.toast('Select a style first', 'warning'); return; }
     var d = ShingoEdge.getFormData('payload-add-form');
     d.job_style_id = parseInt(jsID);
-    d.multiplier = parseFloat(d.multiplier) || 1;
-    d.production_units = parseInt(d.production_units) || 0;
-    d.remaining = d.production_units;
     d.reorder_point = parseInt(d.reorder_point) || 0;
-    d.reorder_qty = parseInt(d.reorder_qty) || 1;
-    if (!d.manifest) d.manifest = '{}';
 
-    // Merge hot-swap fields
-    var hs = readHotSwapFields('payload-add-form');
-    Object.assign(d, hs);
+    // Merge cycle mode fields
+    var cm = readCycleModeFields('payload-add-form');
+    Object.assign(d, cm);
 
-    // Clean up UI-only fields that the API doesn't expect
+    // Clean up UI-only fields
     delete d.full_pickup_type; delete d.full_pickup_value;
     delete d.staging_type; delete d.staging_value;
     delete d.staging2_type; delete d.staging2_value;
-    delete d.empty_drop_type; delete d.empty_drop_value;
+    delete d.outgoing_type; delete d.outgoing_value;
 
     try {
         await ShingoEdge.api.post('/api/payloads', d);
@@ -620,36 +603,27 @@ function openEditPayload(p) {
     ShingoEdge.populateForm('payload-edit-form', {
         id: p.id, location: p.location,
         description: p.description, payload_code: p.payload_code || '',
-        manifest: p.manifest,
-        multiplier: p.multiplier, production_units: p.production_units,
-        remaining: p.remaining, reorder_point: p.reorder_point,
-        reorder_qty: p.reorder_qty, retrieve_empty: p.retrieve_empty,
-        auto_order_empties: p.auto_order_empties,
-        status: p.status
+        role: p.role, auto_reorder: p.auto_reorder,
+        reorder_point: p.reorder_point
     });
-    populateHotSwapFields('payload-edit-form', p);
+    populateCycleModeFields('payload-edit-form', p);
     ShingoEdge.showModal('payload-edit');
 }
 
 async function savePayload() {
     var d = ShingoEdge.getFormData('payload-edit-form');
     var id = d.id; delete d.id;
-    d.multiplier = parseFloat(d.multiplier) || 1;
-    d.production_units = parseInt(d.production_units) || 0;
-    d.remaining = parseInt(d.remaining) || 0;
     d.reorder_point = parseInt(d.reorder_point) || 0;
-    d.reorder_qty = parseInt(d.reorder_qty) || 1;
-    if (!d.manifest) d.manifest = '{}';
 
-    // Merge hot-swap fields
-    var hs = readHotSwapFields('payload-edit-form');
-    Object.assign(d, hs);
+    // Merge cycle mode fields
+    var cm = readCycleModeFields('payload-edit-form');
+    Object.assign(d, cm);
 
     // Clean up UI-only fields
     delete d.full_pickup_type; delete d.full_pickup_value;
     delete d.staging_type; delete d.staging_value;
     delete d.staging2_type; delete d.staging2_value;
-    delete d.empty_drop_type; delete d.empty_drop_value;
+    delete d.outgoing_type; delete d.outgoing_value;
 
     try {
         await ShingoEdge.api.put('/api/payloads/' + id, d);
@@ -669,8 +643,8 @@ async function deletePayload(id) {
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-async function resetPayload(id, productionUnits) {
-    var ok = await ShingoEdge.confirm('Reset this payload to ' + productionUnits + ' production units?');
+async function resetPayload(id) {
+    var ok = await ShingoEdge.confirm('Reset this payload to full capacity?');
     if (!ok) return;
     try {
         await ShingoEdge.api.put('/api/payloads/' + id + '/count', { piece_count: 0, reset: true });

@@ -43,9 +43,6 @@ const (
 	EventWarLinkConnected
 	EventWarLinkDisconnected
 
-	// Produce payload events
-	EventPayloadNeedsEmptyBin
-
 	// Core node sync events
 	EventCoreNodesUpdated
 )
@@ -98,18 +95,12 @@ type PayloadUpdatedEvent struct {
 }
 
 // PayloadReorderEvent is emitted when payload crosses reorder point.
+// The handler loads the full payload from DB to determine cycle mode, role, etc.
 type PayloadReorderEvent struct {
-	PayloadID     int64  `json:"payload_id"`
-	LineID        int64  `json:"line_id"`
-	JobStyleID    int64  `json:"job_style_id"`
-	Location      string `json:"location"`
-	StagingNode   string `json:"staging_node"`
-	Description   string `json:"description"`
-	PayloadCode string `json:"payload_code"`
-	Remaining     int    `json:"remaining"`
-	ReorderPoint  int    `json:"reorder_point"`
-	ReorderQty    int    `json:"reorder_qty"`
-	RetrieveEmpty bool   `json:"retrieve_empty"`
+	PayloadID  int64  `json:"payload_id"`
+	LineID     int64  `json:"line_id"`
+	JobStyleID int64  `json:"job_style_id"`
+	Location   string `json:"location"`
 }
 
 // OrderCreatedEvent is emitted when a new order is placed.
@@ -204,16 +195,6 @@ type PayloadEmptyEvent struct {
 	LineID     int64  `json:"line_id"`
 	JobStyleID int64  `json:"job_style_id"`
 	Location   string `json:"location"`
-}
-
-// PayloadNeedsEmptyBinEvent is emitted when a produce payload needs an empty bin delivered.
-type PayloadNeedsEmptyBinEvent struct {
-	PayloadID     int64  `json:"payload_id"`
-	LineID        int64  `json:"line_id"`
-	JobStyleID    int64  `json:"job_style_id"`
-	Location      string `json:"location"`
-	StagingNode   string `json:"staging_node"`
-	PayloadCode string `json:"payload_code"`
 }
 
 // OrderFailedEvent is emitted when an order transitions to failed state.
