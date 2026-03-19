@@ -220,7 +220,7 @@ When an order targets a synthetic node (NGRP), the dispatch resolver walks the h
 
 ### Lane Storage
 
-Lanes are linear sequences of slots where only the front slot (depth 1) is physically accessible. Storage is packed from the back (deepest first). See [payloads.md](payloads.md) for detailed storage and reshuffle logic.
+Lanes are linear sequences of slots where only the front slot (depth 1) is physically accessible. Storage is packed from the back (deepest first). See [Material Flow](material-flow.md) for detailed storage and reshuffle logic.
 
 ### Bin Type Restrictions
 

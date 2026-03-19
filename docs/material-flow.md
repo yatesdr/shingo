@@ -1,6 +1,6 @@
-# Bins and Payloads
+# Material Flow
 
-This document covers bin management, payload assignment, and automated supermarket storage in Shingo.
+This document covers bins, payloads, automated supermarket storage, and material handling cycles in Shingo.
 
 ---
 
@@ -135,26 +135,68 @@ Flagged bins are treated as occupied slots. Stores can occur in front of them. D
 
 ---
 
-## Consumption Tracking
+## Material Handling Cycles
 
-### Station-Side (Edge)
+Material flow follows a circular pattern. A bin sits at a station. It is consumed (parts removed) or filled (parts added). When the bin is spent, two things happen: the outgoing bin leaves and a replacement arrives. This is one cycle, regardless of whether the station consumes or produces material.
 
-When a bin is delivered to a production station:
+Both consume and produce payloads follow the same cycle path. The **role** determines which direction bins flow — full in / empty out (consume), or empty in / full out (produce). The **cycle mode** determines the robot choreography.
 
-1. UOP remaining is initialized to the payload's full capacity
-2. PLC counters track production output
-3. Each unit produced decrements UOP remaining by 1
-4. At the configured threshold, a replacement bin is ordered automatically
-5. At zero, the bin is marked empty
+### Triggering
 
-### Reorder Rules
+A cycle triggers when UOP remaining crosses the configured reorder point. Two trigger sources are available, controlled by the **AutoReorder** setting:
 
-Each station configures reorder rules linking a payload to a UOP threshold:
+- **AutoReorder ON** — The system monitors PLC counter deltas and triggers the cycle automatically when remaining drops below the reorder point.
+- **AutoReorder OFF** — The operator presses the REQUEST button on the operator canvas to trigger the cycle manually.
 
-- "BRK-ROTOR-KIT: reorder at 6 UOP remaining"
-- "BRK-PAD-KIT: reorder at 20 UOP remaining"
+Both consume and produce payloads use the same trigger mechanism. For consume payloads, remaining drops as parts are used. For produce payloads, remaining drops as bin capacity fills up.
 
-Set the threshold to allow sufficient time for retrieval and delivery before depletion.
+### Cycle Modes
+
+Each payload is configured with one of three cycle modes. The mode applies equally to both roles.
+
+**Sequential** (default) — One robot handles the swap in two phases. Order A drives to lineside empty, waits for operator release, picks up the outgoing bin, and delivers it to the outgoing destination. When Order A is released, Order B is created to deliver the replacement from the pickup source.
+
+**Two Robot** — Two robots work concurrently. Robot 1 (resupply) stages the replacement at the staging area and waits. Robot 2 (removal) navigates to lineside and waits. The operator releases both when ready — removal picks up the outgoing bin, resupply delivers the replacement.
+
+**Single Robot** — One robot executes a 10-step sequence using two staging areas: pickup replacement → stage at area 1 → navigate to lineside → wait → pickup outgoing → stage at area 2 → pickup replacement from area 1 → deliver to lineside → pickup outgoing from area 2 → deliver to outgoing destination.
+
+### Roles
+
+| | Consume | Produce |
+|---|---|---|
+| **Incoming bins** | Full (parts to use) | Empty (capacity to fill) |
+| **Outgoing bins** | Empty (spent) | Full (finished goods) |
+| **RetrieveEmpty flag** | `false` — retrieve a full bin | `true` — retrieve an empty bin |
+
+The role is derived at order creation time from the payload's `role` field. Operators do not configure retrieval direction directly.
+
+### Operator Interactions
+
+The operator canvas presents three actions for each payload:
+
+- **REQUEST** — Triggers a material handling cycle (available as an early override even when AutoReorder is ON)
+- **RELEASE** — Signals the robot to pick up the outgoing bin (when the order is staged at lineside)
+- **CONFIRM** — Acknowledges delivery of the replacement bin; resets UOP remaining to capacity
+
+### Reset Behavior
+
+UOP remaining resets when the replacement bin is delivered and confirmed, not when the outgoing bin is ingested by Core. The reset value comes from the payload catalog's UOP capacity, synced from Core via Kafka. PayloadCode is mandatory on every payload configuration — it is the lookup key for the catalog.
+
+### Node Configuration
+
+Each cycle mode requires a set of node assignments. Nodes can be configured as a specific node, a node group (Core resolves to a physical node), or left blank for Core to decide.
+
+| Node Field | Sequential | Two Robot | Single Robot |
+|---|---|---|---|
+| **Full Pickup Source** | Yes | Yes | Yes |
+| **Staging Area 1** | — | Yes | Yes |
+| **Staging Area 2** | — | — | Yes |
+| **Outgoing Destination** | Yes | Yes | Yes |
+
+- **Full Pickup Source**: where replacement bins come from (e.g., a supermarket node group)
+- **Staging Area 1**: intermediate staging for the replacement bin before the swap
+- **Staging Area 2**: second staging area for the outgoing bin during single-robot shuffle
+- **Outgoing Destination**: where outgoing bins are sent (e.g., empty bin storage, wash area, or shipping)
 
 ---
 
@@ -246,13 +288,16 @@ For each delivery node:
 2. Under "Payloads", select accepted payloads
 3. This controls which payloads appear in the edge station's order dropdown
 
-### Step 7: Configure Edge Reorder Rules
+### Step 7: Configure Edge Payloads
 
 On each edge station's **Setup** page:
-1. Under "Reorder Rules", add a rule per payload
-2. Set the UOP threshold for auto-reorder
-3. Enable the rule
-4. The payload catalog is synced automatically from core
+1. Under "Payloads", add a payload configuration
+2. Select a Payload Code from the catalog (auto-fills description and UOP capacity)
+3. Set the Location (lineside node), Role (consume or produce), and Reorder Point
+4. Choose a Cycle Mode: sequential, two_robot, or single_robot
+5. Configure node fields based on cycle mode: Full Pickup Source, Staging Area(s), Outgoing Destination
+6. Enable AutoReorder for system-triggered cycles, or leave it off for operator-triggered REQUEST
+7. The payload catalog is synced automatically from Core
 
 ### Step 8: Load Initial Inventory
 
@@ -307,5 +352,12 @@ On QR scan mismatch:
 | **Flagged** | Bin marked as problematic, excluded from dispatch until resolved |
 | **Manifest** | List of parts and quantities on a specific bin |
 | **Template Manifest** | Expected parts and quantities for a fully-loaded bin of a given payload |
-| **Reorder Rule** | Edge configuration triggering an automatic order when UOP remaining drops below a threshold |
-| **Payload Catalog** | List of payloads available to an edge station, synced from core |
+| **Reorder Point** | UOP threshold below which a material handling cycle is triggered (when AutoReorder is ON) |
+| **AutoReorder** | Setting that controls whether cycles are triggered automatically by PLC counters or manually by the operator |
+| **Cycle Mode** | Robot choreography strategy for a material handling cycle (sequential, two-robot, single-robot) |
+| **Role** | Direction of material flow — consume (full in, empty out) or produce (empty in, full out) |
+| **Outgoing Destination** | Node where spent or finished bins are sent after removal from the station |
+| **Full Pickup Source** | Node or node group where replacement bins are retrieved from |
+| **Staging Area** | Intermediate holding node used in hot-swap cycle modes |
+| **Operator Canvas** | Real-time visual display on Edge showing payload states, order progress, and operator action buttons |
+| **Payload Catalog** | List of payloads available to an edge station, synced from Core |

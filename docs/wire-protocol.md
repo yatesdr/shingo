@@ -1,7 +1,7 @@
 # Shingo Wire Protocol Specification
 
 **Version:** 1
-**Last updated:** 2026-02-18
+**Last updated:** 2026-03-19
 
 ## Overview
 
@@ -152,13 +152,17 @@ Type strings use dotted notation: `{category}.{action}`. Two categories exist fo
 |---|---|---|---|---|
 | `data` | Both | Both | [Data](#data-channel) | Generic data exchange (registration, heartbeat, queries, etc.). Subject-based dispatch. |
 | `order.request` | `shingo.orders` | Edge -> Core | [OrderRequest](#orderrequest) | New transport order submission |
+| `order.complex_request` | `shingo.orders` | Edge -> Core | [ComplexOrderRequest](#complexorderrequest) | Multi-step transport order submission |
 | `order.cancel` | `shingo.orders` | Edge -> Core | [OrderCancel](#ordercancel) | Request to cancel an existing order |
 | `order.receipt` | `shingo.orders` | Edge -> Core | [OrderReceipt](#orderreceipt) | Delivery confirmation from operator |
 | `order.redirect` | `shingo.orders` | Edge -> Core | [OrderRedirect](#orderredirect) | Change delivery destination mid-flight |
+| `order.release` | `shingo.orders` | Edge -> Core | [OrderRelease](#orderrelease) | Resume a staged (dwelling) order |
 | `order.storage_waybill` | `shingo.orders` | Edge -> Core | [OrderStorageWaybill](#orderstoragewaybill) | Store order submission (return to warehouse) |
+| `order.ingest` | `shingo.orders` | Edge -> Core | [OrderIngestRequest](#orderingestrequest) | Submit a filled bin for storage |
 | `order.ack` | `shingo.dispatch` | Core -> Edge | [OrderAck](#orderack) | Order accepted, source material located |
 | `order.waybill` | `shingo.dispatch` | Core -> Edge | [OrderWaybill](#orderwaybill) | Robot assigned and dispatched |
 | `order.update` | `shingo.dispatch` | Core -> Edge | [OrderUpdate](#orderupdate) | Status change or ETA update |
+| `order.staged` | `shingo.dispatch` | Core -> Edge | [OrderStaged](#orderstaged) | Order dwelling at staging node, awaiting release |
 | `order.delivered` | `shingo.dispatch` | Core -> Edge | [OrderDelivered](#orderdelivered) | Fleet reports delivery complete |
 | `order.error` | `shingo.dispatch` | Core -> Edge | [OrderError](#ordererror) | Order processing failed |
 | `order.cancelled` | `shingo.dispatch` | Core -> Edge | [OrderCancelled](#ordercancelled) | Order cancellation confirmed |
@@ -213,8 +217,18 @@ Data messages use the envelope's existing `cor` (correlation ID) field for reque
 | `edge.registered` | Core -> Edge | [EdgeRegistered](#edgeregistered) | Core acknowledges registration |
 | `edge.heartbeat` | Edge -> Core | [EdgeHeartbeat](#edgeheartbeat) | Periodic health ping (every 60 seconds) |
 | `edge.heartbeat_ack` | Core -> Edge | [EdgeHeartbeatAck](#edgeheartbeatack) | Core acknowledges heartbeat |
+| `edge.stale` | Core -> Edge | [EdgeStale](#edgestale) | Core notifies edge it has been marked stale |
+| `edge.register_request` | Core -> Edge | [EdgeRegisterRequest](#edgeregisterrequest) | Core asks edge to re-register |
+| `production.report` | Edge -> Core | [ProductionReport](#productionreport) | Edge sends production counts |
+| `production.report_ack` | Core -> Edge | [ProductionReportAck](#productionreportack) | Core acknowledges production report |
+| `node.list_request` | Edge -> Core | [NodeListRequest](#nodelistrequest) | Edge requests core's node list |
+| `node.list_response` | Core -> Edge | [NodeListResponse](#nodelistresponse) | Core returns authoritative node list |
+| `tag.verify_request` | Edge -> Core | [TagVerifyRequest](#tagverifyrequest) | Edge verifies scanned QR tag against order |
+| `tag.verify_response` | Core -> Edge | [TagVerifyResponse](#tagverifyresponse) | Core returns tag verification result |
+| `catalog.payloads_request` | Edge -> Core | [CatalogPayloadsRequest](#catalogpayloadsrequest) | Edge requests payload catalog |
+| `catalog.payloads_response` | Core -> Edge | [CatalogPayloadsResponse](#catalogpayloadsresponse) | Core returns payload catalog |
 
-New subjects (e.g., `inventory.query`, `production.stats`) can be added by defining a constant and a data schema -- no protocol interface changes required.
+New subjects can be added by defining a constant and a data schema -- no protocol interface changes required.
 
 ### Subject-Specific TTLs
 
@@ -226,6 +240,12 @@ Data messages have a default TTL of 5 minutes, but individual subjects can overr
 | `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
 | `edge.register` | 5 minutes | Should complete quickly after connect |
 | `edge.registered` | 5 minutes | Should complete quickly after connect |
+| `production.report` | 5 minutes | Should be processed promptly |
+| `production.report_ack` | 5 minutes | Should be processed promptly |
+| `edge.stale` | 5 minutes | Notification, not time-critical |
+| `edge.register_request` | 5 minutes | Should trigger re-register promptly |
+| `node.list_request` | 5 minutes | Sync request |
+| `node.list_response` | 5 minutes | Sync response |
 | Unknown subjects | 5 minutes | Safe general default |
 
 ---
@@ -248,7 +268,7 @@ These are the TTLs applied by the sender when creating a message. The `exp` fiel
 | Data channel | `data` (default) | 5 minutes | Safe general default for data exchange |
 | Data: heartbeat | `data` with subject `edge.heartbeat` / `edge.heartbeat_ack` | 90 seconds | Stale after 1.5 heartbeat intervals |
 | Data: registration | `data` with subject `edge.register` / `edge.registered` | 5 minutes | Should complete quickly after connect |
-| Order commands | `order.request`, `order.cancel`, `order.redirect`, `order.storage_waybill` | 10 minutes | Operator can resubmit if expired |
+| Order commands | `order.request`, `order.complex_request`, `order.cancel`, `order.redirect`, `order.release`, `order.storage_waybill`, `order.ingest` | 10 minutes | Operator can resubmit if expired |
 | Order status | `order.ack`, `order.update` | 10 minutes | Status updates age fast |
 | Important replies | `order.receipt`, `order.waybill`, `order.error`, `order.cancelled` | 30 minutes | Important, longer window needed |
 | Delivery notification | `order.delivered` | 60 minutes | Critical notification, longest window |
@@ -274,21 +294,21 @@ Sent by an edge node on startup and on every reconnect via `data` message with s
 
 ```json
 {
-  "station_id":  "plant-a.line-1",
-  "factory":  "plant-a",
-  "hostname": "edge-01.local",
-  "version":  "1.2.0",
-  "line_ids": ["line-1"]
+  "station_id": "plant-a.line-1",
+  "hostname":   "edge-01.local",
+  "version":    "1.2.0",
+  "line_ids":   ["line-1"]
 }
 ```
 
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
 | Station ID | `station_id` | string | Yes | Unique edge station identifier. Convention: `"{namespace}.{line_id}"`. |
-| Factory | `factory` | string | Yes | Factory/plant this edge belongs to. |
 | Hostname | `hostname` | string | No | OS hostname of the edge machine. Informational. |
 | Version | `version` | string | No | Software version of the edge application. |
 | Line IDs | `line_ids` | string[] | No | Production line identifiers this edge manages. JSON array of strings. |
+
+The factory identifier is derived from the envelope `src.factory` field, not the registration payload.
 
 #### EdgeHeartbeat
 
@@ -330,15 +350,192 @@ Acknowledges a heartbeat via `data` message with subject `edge.heartbeat_ack`. P
 
 ```json
 {
-  "station_id":   "plant-a.line-1",
-  "server_ts": 1739876400
+  "station_id": "plant-a.line-1",
+  "server_ts":  "2026-02-18T10:01:01Z"
 }
 ```
 
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
 | Station ID | `station_id` | string | Yes | The heartbeating edge station ID (echo back). |
-| Server Timestamp | `server_ts` | integer | Yes | Core's current time as Unix epoch seconds. Edges can compare with their own clock to detect drift. |
+| Server Timestamp | `server_ts` | timestamp | Yes | Core's current time as ISO 8601 / RFC 3339. Edges can compare with their own clock to detect drift. |
+
+#### EdgeStale
+
+Sent by core to notify an edge that it has been marked stale (missed heartbeats).
+
+```json
+{
+  "station_id": "plant-a.line-1",
+  "message":    "Edge marked stale: no heartbeat for 180s"
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Station ID | `station_id` | string | Yes | The stale edge station ID. |
+| Message | `message` | string | No | Human-readable detail. |
+
+#### EdgeRegisterRequest
+
+Sent by core to request that an edge re-register (e.g., after core restart or edge registry cleanup).
+
+```json
+{
+  "station_id": "plant-a.line-1",
+  "reason":     "Core restarted, edge registry cleared"
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Station ID | `station_id` | string | Yes | The edge station that should re-register. |
+| Reason | `reason` | string | No | Why re-registration is needed. |
+
+#### ProductionReport
+
+Sent by edge to report production counts from PLC reporting points.
+
+```json
+{
+  "station_id": "plant-a.line-1",
+  "reports": [
+    {"cat_id": "BRK-ROTOR-KIT", "count": 12}
+  ]
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Station ID | `station_id` | string | Yes | Reporting edge station. |
+| Reports | `reports` | ProductionReportEntry[] | Yes | Array of production counts per payload catalog ID. |
+
+**ProductionReportEntry:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Cat ID | `cat_id` | string | Yes | Payload catalog identifier. |
+| Count | `count` | integer | Yes | Production count for this entry. |
+
+#### ProductionReportAck
+
+Acknowledges processing of a production report.
+
+```json
+{
+  "station_id": "plant-a.line-1",
+  "accepted":   1
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Station ID | `station_id` | string | Yes | The reporting edge station (echo back). |
+| Accepted | `accepted` | integer | Yes | Number of report entries accepted. |
+
+#### NodeListRequest
+
+Sent by edge to request the core's authoritative node list. Empty body.
+
+```json
+{}
+```
+
+#### NodeListResponse
+
+Core returns its node list. Used by edge to populate node dropdowns in the payload configuration UI.
+
+```json
+{
+  "nodes": [
+    {"name": "STG-001", "node_type": ""},
+    {"name": "STORAGE-A", "node_type": "NGRP"}
+  ]
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Nodes | `nodes` | NodeInfo[] | Yes | Array of node entries. |
+
+**NodeInfo:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Name | `name` | string | Yes | Node name. |
+| Node Type | `node_type` | string | No | Node type code (e.g., `"NGRP"`, `"LANE"`). Empty for physical nodes. |
+
+#### TagVerifyRequest
+
+Sent by edge to verify a scanned QR tag against the expected bin for an order.
+
+```json
+{
+  "order_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "tag_id":     "SHG:0042",
+  "location":   "LINE1-IN"
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Order UUID | `order_uuid` | string | Yes | The order being verified. |
+| Tag ID | `tag_id` | string | Yes | Scanned QR tag value. |
+| Location | `location` | string | No | Where the scan occurred. |
+
+#### TagVerifyResponse
+
+Core's response to a tag verification request.
+
+```json
+{
+  "order_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "match":      true,
+  "expected":   "SHG:0042",
+  "detail":     "Tag matches claimed bin"
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Order UUID | `order_uuid` | string | Yes | The order that was verified. |
+| Match | `match` | boolean | Yes | Whether the scanned tag matches the expected bin. |
+| Expected | `expected` | string | No | The expected tag value (for mismatch diagnostics). |
+| Detail | `detail` | string | No | Human-readable result detail. |
+
+#### CatalogPayloadsRequest
+
+Sent by edge to request the payload catalog from core. Empty body.
+
+```json
+{}
+```
+
+#### CatalogPayloadsResponse
+
+Core returns the payload catalog. Used by edge to populate payload code dropdowns and look up UOP capacity.
+
+```json
+{
+  "payloads": [
+    {"id": 1, "name": "Brake Rotor Kit", "code": "BRK-ROTOR-KIT", "description": "Rotor assembly parts", "uop_capacity": 24}
+  ]
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Payloads | `payloads` | CatalogPayloadInfo[] | Yes | Array of payload templates. |
+
+**CatalogPayloadInfo:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| ID | `id` | integer | Yes | Core's internal payload ID. |
+| Name | `name` | string | Yes | Payload template name. |
+| Code | `code` | string | Yes | Unique payload type code (e.g., `"BRK-ROTOR-KIT"`). |
+| Description | `description` | string | No | Human-readable description. |
+| UOP Capacity | `uop_capacity` | integer | Yes | Production cycles supported by a full load. |
 
 ### Order Payloads: Edge -> Core
 
@@ -350,9 +547,9 @@ Submits a new transport order. The `order_uuid` is generated by the edge and use
 {
   "order_uuid":       "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "order_type":       "retrieve",
-  "payload_type_code": "BIN-A",
+  "payload_code":     "BIN-A",
   "payload_desc":     "Small parts bin",
-  "quantity":         1.0,
+  "quantity":         1,
   "delivery_node":    "line-1-station-a",
   "pickup_node":      "",
   "staging_node":     "line-1-staging",
@@ -366,9 +563,9 @@ Submits a new transport order. The `order_uuid` is generated by the edge and use
 |---|---|---|---|---|
 | Order UUID | `order_uuid` | string | Yes | Client-generated UUID v4. Unique across all orders. |
 | Order Type | `order_type` | string | Yes | One of: `"retrieve"`, `"move"`, `"store"`. |
-| Payload Type Code | `payload_type_code` | string | No | Registered payload type name (e.g., `"BIN-A"`). Used by core to locate source material. |
+| Payload Code | `payload_code` | string | No | Registered payload type code (e.g., `"BIN-A"`). Used by core to locate source material. |
 | Payload Description | `payload_desc` | string | No | Human-readable description of the payload. |
-| Quantity | `quantity` | float | Yes | Number of items or units. |
+| Quantity | `quantity` | integer | Yes | Number of items or units. |
 | Delivery Node | `delivery_node` | string | Conditional | Where to deliver. Required for `retrieve` and `move` orders. |
 | Pickup Node | `pickup_node` | string | Conditional | Where to pick up. Required for `move` and `store` orders. |
 | Staging Node | `staging_node` | string | No | Intermediate staging location (e.g., for line-side buffer). |
@@ -405,7 +602,7 @@ Sent by the edge operator to confirm physical receipt of a delivery.
 {
   "order_uuid":   "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "receipt_type": "confirmed",
-  "final_count":  48.0
+  "final_count":  48
 }
 ```
 
@@ -413,7 +610,7 @@ Sent by the edge operator to confirm physical receipt of a delivery.
 |---|---|---|---|---|
 | Order UUID | `order_uuid` | string | Yes | UUID of the delivered order. |
 | Receipt Type | `receipt_type` | string | Yes | Currently always `"confirmed"`. |
-| Final Count | `final_count` | float | Yes | Actual received quantity (may differ from ordered quantity). |
+| Final Count | `final_count` | integer | Yes | Actual received quantity (may differ from ordered quantity). |
 
 #### OrderRedirect
 
@@ -441,7 +638,7 @@ Submits a store order with pickup details and count.
   "order_type":   "store",
   "payload_desc": "Empty bin return",
   "pickup_node":  "line-1-station-a",
-  "final_count":  0.0
+  "final_count":  0
 }
 ```
 
@@ -451,7 +648,7 @@ Submits a store order with pickup details and count.
 | Order Type | `order_type` | string | Yes | Always `"store"`. |
 | Payload Description | `payload_desc` | string | No | Human-readable description. |
 | Pickup Node | `pickup_node` | string | Yes | Where to pick up the payload for storage. |
-| Final Count | `final_count` | float | Yes | Item count at time of storage submission. |
+| Final Count | `final_count` | integer | Yes | Item count at time of storage submission. |
 
 ### Order Payloads: Core -> Edge
 
@@ -519,8 +716,9 @@ Fleet reports that the robot has completed delivery at the destination node. The
 
 ```json
 {
-  "order_uuid":   "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "delivered_at": "2026-02-18T10:13:45Z"
+  "order_uuid":        "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "delivered_at":      "2026-02-18T10:13:45Z",
+  "staged_expire_at":  "2026-02-18T10:23:45Z"
 }
 ```
 
@@ -528,6 +726,7 @@ Fleet reports that the robot has completed delivery at the destination node. The
 |---|---|---|---|---|
 | Order UUID | `order_uuid` | string | Yes | The edge-generated order UUID. |
 | Delivered At | `delivered_at` | string | Yes | ISO 8601 / RFC 3339 timestamp of physical delivery. |
+| Staged Expire At | `staged_expire_at` | string | No | If present, the order enters `staged` status (dwelling) until this time or until an `order.release` is received. Omitted for non-staged deliveries. |
 
 #### OrderError
 
@@ -563,6 +762,114 @@ Confirms that an order has been successfully cancelled on the core side.
 | Order UUID | `order_uuid` | string | Yes | The cancelled order UUID. |
 | Reason | `reason` | string | Yes | Cancellation reason (echoed from the cancel request). |
 
+### Complex Order Payloads: Edge -> Core
+
+#### ComplexOrderRequest
+
+Submits a multi-step transport order. Used by material handling cycles (sequential, two-robot, single-robot) where a single order involves multiple pickup, dropoff, and wait steps chained together. Core dispatches the steps as a block-based order to the fleet backend.
+
+```json
+{
+  "order_uuid":   "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "payload_code": "BIN-A",
+  "payload_desc": "Small parts bin",
+  "quantity":     1,
+  "priority":     0,
+  "steps": [
+    {"action": "pickup",  "node_group": "STORAGE-A"},
+    {"action": "dropoff", "node": "STG-001"},
+    {"action": "wait"},
+    {"action": "pickup",  "node": "STG-001"},
+    {"action": "dropoff", "node": "LINE1-IN"}
+  ]
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Order UUID | `order_uuid` | string | Yes | Client-generated UUID v4. |
+| Payload Code | `payload_code` | string | No | Payload type code for source material selection. |
+| Payload Description | `payload_desc` | string | No | Human-readable description. |
+| Quantity | `quantity` | integer | Yes | Number of items or units. |
+| Priority | `priority` | integer | No | Higher = more urgent. Default `0`. |
+| Steps | `steps` | ComplexOrderStep[] | Yes | Ordered list of steps. See below. |
+
+**ComplexOrderStep:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Action | `action` | string | Yes | One of: `"pickup"`, `"dropoff"`, `"wait"`. |
+| Node | `node` | string | No | Exact node name for the step (used for dropoff to a specific location). |
+| Node Group | `node_group` | string | No | Synthetic parent node (used for pickup from storage where core resolves the specific slot). |
+
+Steps are executed in sequence. A `wait` step causes the robot to dwell at its current position until an `order.release` message is received.
+
+#### OrderRelease
+
+Signals that a staged (dwelling) order should resume execution. Sent by the operator when the outgoing bin is ready for pickup.
+
+```json
+{
+  "order_uuid": "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Order UUID | `order_uuid` | string | Yes | UUID of the staged order to release. |
+
+#### OrderIngestRequest
+
+Submits a newly filled bin for storage. Core sets the bin manifest from the payload template and dispatches a store order to move the bin to the warehouse.
+
+```json
+{
+  "order_uuid":   "c3d4e5f6-a7b8-9012-cdef-234567890123",
+  "payload_code": "BIN-A",
+  "bin_label":    "SHG:0042",
+  "pickup_node":  "LINE1-OUT",
+  "quantity":     1,
+  "manifest": [
+    {"part_number": "RT-100", "quantity": 24, "description": "Rotor assembly"}
+  ]
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Order UUID | `order_uuid` | string | Yes | Client-generated UUID v4. |
+| Payload Code | `payload_code` | string | Yes | Payload type for manifest lookup. |
+| Bin Label | `bin_label` | string | Yes | QR label of the bin to ingest. |
+| Pickup Node | `pickup_node` | string | Yes | Where the filled bin is located. |
+| Quantity | `quantity` | integer | Yes | Number of items or units. |
+| Manifest | `manifest` | IngestManifestItem[] | No | Explicit manifest items. If omitted, core uses the payload template. |
+
+**IngestManifestItem:**
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Part Number | `part_number` | string | Yes | Part identifier. |
+| Quantity | `quantity` | integer | Yes | Count of this part. |
+| Description | `description` | string | No | Human-readable part description. |
+
+### Complex Order Payloads: Core -> Edge
+
+#### OrderStaged
+
+Notifies the edge that an order has entered a dwelling (wait) state at a staging node. The operator should release the order when the physical swap is ready.
+
+```json
+{
+  "order_uuid": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "detail":     "Waiting at STG-001 for operator release"
+}
+```
+
+| Field | JSON Key | Type | Required | Description |
+|---|---|---|---|---|
+| Order UUID | `order_uuid` | string | Yes | The edge-generated order UUID. |
+| Detail | `detail` | string | No | Human-readable status detail. |
+
 ---
 
 ## Error Codes
@@ -592,7 +899,9 @@ The `error_code` field in `order.error` messages uses the following values:
 
 ```
 queued -> submitted -> acknowledged -> in_transit -> delivered -> confirmed
-                                                                      |
+                                  \                /
+                                   +-> staged ----+
+                                       (wait for release)
                                              cancelled <-- (from any non-terminal)
 ```
 
@@ -602,6 +911,7 @@ queued -> submitted -> acknowledged -> in_transit -> delivered -> confirmed
 | `submitted` | Sent to core via messaging | Edge: outbox drainer publishes `order.request` |
 | `acknowledged` | Core accepted, source located | Core sends `order.ack` |
 | `in_transit` | Robot dispatched and moving | Core sends `order.waybill` |
+| `staged` | Robot dwelling at node, awaiting release | Core sends `order.staged` |
 | `delivered` | Fleet reports delivery complete | Core sends `order.delivered` |
 | `confirmed` | Operator confirmed receipt | Edge sends `order.receipt` |
 | `cancelled` | Order cancelled | Edge sends `order.cancel` or core sends `order.cancelled` |
@@ -610,7 +920,9 @@ queued -> submitted -> acknowledged -> in_transit -> delivered -> confirmed
 
 ```
 pending -> sourcing -> dispatched -> in_transit -> delivered -> confirmed -> completed
-                                                                     |
+                                \                /
+                                 +-> staged ----+
+                                     (dwelling / wait step)
                                               failed / cancelled <-- (from active states)
 ```
 
@@ -620,6 +932,7 @@ pending -> sourcing -> dispatched -> in_transit -> delivered -> confirmed -> com
 | `sourcing` | Locating source material / validating nodes |
 | `dispatched` | Transport order created with fleet backend |
 | `in_transit` | Robot is moving (fleet poller updates) |
+| `staged` | Robot dwelling at a node, waiting for operator release (complex orders with `wait` steps) |
 | `delivered` | Fleet reports delivery complete |
 | `confirmed` | Edge sent delivery receipt |
 | `completed` | Order fully completed |
@@ -641,6 +954,32 @@ Edge                          Broker                         Core
  |<- order.delivered ----------|<- shingo.dispatch ---------- |
  |                              |                              |
  | (operator confirms receipt)  |                              |
+ |-- order.receipt ----------->|-- shingo.orders ------------>|
+ |                              |                              | (mark confirmed -> completed)
+```
+
+### Message Flow: Complex Order with Wait Step
+
+```
+Edge                          Broker                         Core
+ |                              |                              |
+ |-- order.complex_request --->|-- shingo.orders ------------>|
+ |                              |                              | (build block chain,
+ |                              |                              |  dispatch to fleet)
+ |<- order.ack ----------------|<- shingo.dispatch ---------- |
+ |                              |                              | (fleet assigns robot,
+ |                              |                              |  robot executes steps)
+ |<- order.waybill ------------|<- shingo.dispatch ---------- |
+ |                              |                              | (robot reaches wait step)
+ |<- order.staged -------------|<- shingo.dispatch ---------- |
+ |                              |                              |
+ | (operator releases order)   |                              |
+ |-- order.release ----------->|-- shingo.orders ------------>|
+ |                              |                              | (fleet resumes,
+ |                              |                              |  robot completes steps)
+ |<- order.delivered ----------|<- shingo.dispatch ---------- |
+ |                              |                              |
+ | (operator confirms receipt) |                              |
  |-- order.receipt ----------->|-- shingo.orders ------------>|
  |                              |                              | (mark confirmed -> completed)
 ```
@@ -871,7 +1210,6 @@ shingo.dispatch -+--> filter(type="order.delivered") -+--> deliveries_per_hour
     "subject": "edge.register",
     "data": {
       "station_id": "plant-a.line-1",
-      "factory": "plant-a",
       "hostname": "edge-01.local",
       "version": "1.2.0",
       "line_ids": ["line-1"]
@@ -938,7 +1276,7 @@ shingo.dispatch -+--> filter(type="order.delivered") -+--> deliveries_per_hour
   "p": {
     "order_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "order_type": "retrieve",
-    "payload_type_code": "BIN-A",
+    "payload_code": "BIN-A",
     "quantity": 1,
     "delivery_node": "line-1-station-a",
     "staging_node": "line-1-staging"

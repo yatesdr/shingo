@@ -65,7 +65,7 @@ See [shingo-core/README.md](shingo-core/README.md) and [shingo-edge/README.md](s
 | Document | Description |
 |----------|-------------|
 | [Data Model](docs/data-model.md) | Core entities, relationships, and status definitions |
-| [Bins and Payloads](docs/payloads.md) | Bin management, payload assignment, supermarket storage |
+| [Material Flow](docs/material-flow.md) | Bins, payloads, supermarket storage, material handling cycles |
 | [Terminology](docs/terminology.md) | Domain terms and vendor terminology mapping |
 | [Wire Protocol](docs/wire-protocol.md) | Kafka messaging protocol specification |
 
