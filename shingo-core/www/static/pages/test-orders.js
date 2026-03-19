@@ -110,6 +110,9 @@ function renderOrdersTable(orders, containerId, isKafka) {
       if (isKafka && isDelivered) {
         html += '<button class="to-btn-sm" onclick="openReceipt(\'' + escapeHtml(o.edge_uuid) + '\')">Receipt</button>';
       }
+      if (o.status === 'staged') {
+        html += '<button class="to-btn-sm" style="border-color:#ff9800;color:#ff9800;" onclick="releaseComplexOrder(\'' + escapeHtml(o.edge_uuid) + '\')">Release</button>';
+      }
       html += '</td>';
     }
     html += '</tr>';
@@ -362,12 +365,75 @@ es.addEventListener('order-update', function(e) {
   } catch(ex) {}
 });
 
+// --- Complex Orders ---
+
+function updateComplexFields() {
+  var mode = document.getElementById('cx-cycle-mode').value;
+  document.getElementById('cx-staging1-wrap').style.display = (mode === 'two_robot' || mode === 'single_robot') ? '' : 'none';
+  document.getElementById('cx-staging2-wrap').style.display = (mode === 'single_robot') ? '' : 'none';
+  document.getElementById('cx-pickup-wrap').style.display = (mode === 'two_robot' || mode === 'single_robot') ? '' : 'none';
+}
+
+async function submitComplexOrder() {
+  var body = {
+    cycle_mode: document.getElementById('cx-cycle-mode').value,
+    location: document.getElementById('cx-location').value,
+    payload_code: document.getElementById('cx-payload').value,
+    full_pickup: document.getElementById('cx-full-pickup').value,
+    staging_node: document.getElementById('cx-staging1').value,
+    staging_node_2: document.getElementById('cx-staging2').value,
+    outgoing_dest: document.getElementById('cx-outgoing').value,
+    priority: parseInt(document.getElementById('cx-priority').value) || 0
+  };
+  if (!body.location) { alert('Lineside location is required'); return; }
+  try {
+    var res = await fetch('/api/test-orders/direct/complex', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    });
+    var data = await res.json();
+    if (res.ok) {
+      var uuids = (data.orders || []).map(function(o) { return o.role + ': ' + o.order_uuid; }).join(', ');
+      showToast('Complex order created: ' + uuids, 'info');
+      refreshComplexOrders();
+    } else {
+      showToast('Error: ' + (data.error || 'unknown'), 'error');
+    }
+  } catch(e) { showToast('Error: ' + e, 'error'); }
+}
+
+async function releaseComplexOrder(orderUUID) {
+  try {
+    var res = await fetch('/api/test-orders/direct/release', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ order_uuid: orderUUID })
+    });
+    var data = await res.json();
+    if (res.ok) {
+      showToast('Released: ' + orderUUID, 'info');
+      refreshComplexOrders();
+    } else {
+      showToast('Error: ' + (data.error || 'unknown'), 'error');
+    }
+  } catch(e) { showToast('Error: ' + e, 'error'); }
+}
+
+async function refreshComplexOrders() {
+  try {
+    var res = await fetch('/api/test-orders/direct');
+    if (!res.ok) return;
+    var orders = await res.json();
+    renderOrdersTable(orders, 'complex-orders-table', false);
+  } catch(e) {}
+}
+
 // --- Init ---
 document.addEventListener('DOMContentLoaded', function() {
   updateKafkaFields();
   updateCmdFields();
+  updateComplexFields();
   refreshKafkaOrders();
   refreshDirectOrders();
+  refreshComplexOrders();
   refreshCommands();
   if (authenticated) { loadRobots(); loadScenePoints(); }
 });

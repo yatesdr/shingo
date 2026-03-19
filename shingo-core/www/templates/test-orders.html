@@ -6,6 +6,7 @@
   <div class="to-tabs">
     <button class="to-tab active" onclick="switchTab('kafka')">Kafka Orders</button>
     <button class="to-tab" onclick="switchTab('direct')">Direct-to-RDS</button>
+    <button class="to-tab" onclick="switchTab('complex')">Complex Orders</button>
     <button class="to-tab" onclick="switchTab('commands')">Robot Commands</button>
   </div>
 
@@ -102,7 +103,80 @@
     </div>
   </div>
 
-  <!-- Tab 3: Robot Commands -->
+  <!-- Tab 3: Complex Orders -->
+  <div id="tab-complex" class="to-tab-content">
+    {{if .Authenticated}}
+    <div class="to-form-card">
+      <h3>Submit Complex Order (Direct to Dispatcher)</h3>
+      <div class="to-form-grid">
+        <div>
+          <label class="to-label">Cycle Mode</label>
+          <select id="cx-cycle-mode" class="to-input" onchange="updateComplexFields()">
+            <option value="sequential">Sequential</option>
+            <option value="two_robot">Two Robot Hot-Swap</option>
+            <option value="single_robot">Single Robot Hot-Swap</option>
+          </select>
+        </div>
+        <div>
+          <label class="to-label">Lineside Location</label>
+          <select id="cx-location" class="to-input">
+            <option value="">-- select --</option>
+            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+          </select>
+        </div>
+        <div>
+          <label class="to-label">Payload Code</label>
+          <select id="cx-payload" class="to-input">
+            <option value="">-- optional --</option>
+            {{range .Payloads}}<option value="{{.Code}}">{{.Code}}</option>{{end}}
+          </select>
+        </div>
+        <div id="cx-pickup-wrap">
+          <label class="to-label">Full Pickup Source</label>
+          <select id="cx-full-pickup" class="to-input">
+            <option value="">Core Decides</option>
+            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+          </select>
+        </div>
+        <div id="cx-staging1-wrap" style="display:none">
+          <label class="to-label">Staging Area 1</label>
+          <select id="cx-staging1" class="to-input">
+            <option value="">-- select --</option>
+            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+          </select>
+        </div>
+        <div id="cx-staging2-wrap" style="display:none">
+          <label class="to-label">Staging Area 2</label>
+          <select id="cx-staging2" class="to-input">
+            <option value="">-- select --</option>
+            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+          </select>
+        </div>
+        <div>
+          <label class="to-label">Outgoing Destination</label>
+          <select id="cx-outgoing" class="to-input">
+            <option value="">Core Decides</option>
+            {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+          </select>
+        </div>
+        <div>
+          <label class="to-label">Priority</label>
+          <input type="number" id="cx-priority" class="to-input" value="0" min="0">
+        </div>
+      </div>
+      <div style="margin-top:.75rem;">
+        <button class="btn btn-primary" onclick="submitComplexOrder()">Submit Complex Order</button>
+      </div>
+    </div>
+    {{end}}
+
+    <h3>Complex Orders (station: core-direct)</h3>
+    <div id="complex-orders-table">
+      <p style="color:#888;">Loading...</p>
+    </div>
+  </div>
+
+  <!-- Tab 4: Robot Commands -->
   <div id="tab-commands" class="to-tab-content">
     {{if .Authenticated}}
     <div class="to-form-card">
