@@ -291,31 +291,35 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		return
 	}
 
-	// Guard: don't create Order B if a backfill order already exists
-	active, _ := e.db.ListActiveOrdersByPayloadAndType(*order.PayloadID, "retrieve")
-	if len(active) > 0 {
-		e.debugFn("sequential backfill: payload %d already has active retrieve, skipping", *order.PayloadID)
+	// Guard: don't create Order B if a backfill order already exists.
+	// Check both retrieve and complex since Order B is now a complex order.
+	activeR, _ := e.db.ListActiveOrdersByPayloadAndType(*order.PayloadID, "retrieve")
+	activeC, _ := e.db.ListActiveOrdersByPayloadAndType(*order.PayloadID, "complex")
+	// Subtract 1 from complex count because Order A (the one being released) is still active
+	if len(activeR) > 0 || len(activeC) > 1 {
+		e.debugFn("sequential backfill: payload %d already has active backfill, skipping", *order.PayloadID)
 		return
 	}
 
-	// Create Order B: retrieve the replacement bin.
-	// Consume payloads get a full bin. Produce payloads get an empty bin.
-	retrieveEmpty := payload.Role == "produce"
+	// Create Order B: pickup replacement from source, deliver to lineside.
+	// Uses FullPickupNode if configured, otherwise Core decides.
 	payloadID := *order.PayloadID
 
-	backfill, err := e.orderMgr.CreateRetrieveOrder(
-		&payloadID, retrieveEmpty,
-		1, payload.Location, payload.StagingNode,
-		"standard", payload.PayloadCode,
-		e.cfg.Web.AutoConfirm,
-	)
+	steps := []protocol.ComplexOrderStep{
+		buildPickupStep(payload.FullPickupNode, payload.FullPickupNodeGroup),
+		{Action: "dropoff", Node: payload.Location},
+	}
+
+	backfill, err := e.orderMgr.CreateComplexOrder(&payloadID, 1, steps)
 	if err != nil {
 		log.Printf("sequential backfill for payload %d: %v", payloadID, err)
 		return
 	}
+	// Tag with lineside so handleOrderCompleted resets the payload
+	e.db.UpdateOrderDeliveryNode(backfill.ID, payload.Location)
 
-	e.debugFn("sequential backfill: created Order B %d for payload %d (retrieve_empty=%v)",
-		backfill.ID, payloadID, retrieveEmpty)
+	e.debugFn("sequential backfill: created Order B %d for payload %d",
+		backfill.ID, payloadID)
 }
 
 // handleOrderFailed resets payloads from "replenishing" back to "active"

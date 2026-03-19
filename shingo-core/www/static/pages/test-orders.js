@@ -369,9 +369,11 @@ es.addEventListener('order-update', function(e) {
 
 function updateComplexFields() {
   var mode = document.getElementById('cx-cycle-mode').value;
+  // All modes need: source (full pickup), lineside (location), outgoing destination
+  // Hot-swap modes additionally need staging nodes
+  document.getElementById('cx-pickup-wrap').style.display = '';
   document.getElementById('cx-staging1-wrap').style.display = (mode === 'two_robot' || mode === 'single_robot') ? '' : 'none';
   document.getElementById('cx-staging2-wrap').style.display = (mode === 'single_robot') ? '' : 'none';
-  document.getElementById('cx-pickup-wrap').style.display = (mode === 'two_robot' || mode === 'single_robot') ? '' : 'none';
 }
 
 async function submitComplexOrder() {
