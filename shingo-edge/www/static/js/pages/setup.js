@@ -489,13 +489,18 @@ function onCycleModeChange(formId) {
         fields.style.display = '';
     } else {
         fields.style.display = 'none';
-        fields.querySelectorAll('input[type="text"]').forEach(function(el) { el.value = ''; });
+        // Reset all node value dropdowns when turning off hotswap
+        fields.querySelectorAll('.node-value-group select').forEach(function(el) {
+            el.innerHTML = '<option value="">-- Select --</option>';
+        });
     }
 
     staging2.forEach(function(el) {
         el.style.display = (mode === 'single_robot') ? '' : 'none';
         if (mode !== 'single_robot') {
-            el.querySelectorAll('input[type="text"]').forEach(function(inp) { inp.value = ''; });
+            el.querySelectorAll('.node-value-group select').forEach(function(sel) {
+                sel.innerHTML = '<option value="">-- Select --</option>';
+            });
         }
     });
 }
@@ -505,11 +510,46 @@ function onNodeTypeChange(sel) {
     var valueGroup = row.querySelector('.node-value-group');
     if (sel.value) {
         valueGroup.style.display = '';
+        var valueSel = valueGroup.querySelector('select');
+        if (valueSel) populateNodeSelect(valueSel, sel.value);
     } else {
         valueGroup.style.display = 'none';
-        var input = valueGroup.querySelector('input');
-        if (input) input.value = '';
+        var valueSel = valueGroup.querySelector('select');
+        if (valueSel) { valueSel.innerHTML = '<option value="">-- Select --</option>'; }
     }
+}
+
+// Populate a node value dropdown with nodes from Core, filtered by type.
+// nodeType: "node" = physical nodes (non-NGRP), "group" = NGRP synthetic groups
+function populateNodeSelect(sel, nodeType) {
+    var currentVal = sel.value;
+    loadCoreNodeListFull(function(nodes) {
+        sel.innerHTML = '<option value="">-- Select --</option>';
+        for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            var isGroup = (n.node_type === 'NGRP');
+            if (nodeType === 'group' && !isGroup) continue;
+            if (nodeType === 'node' && isGroup) continue;
+            var opt = document.createElement('option');
+            opt.value = n.name;
+            opt.textContent = n.name;
+            if (n.name === currentVal) opt.selected = true;
+            sel.appendChild(opt);
+        }
+    });
+}
+
+// Cache full node objects (name + node_type) from Core
+var _coreNodeListFull = null;
+
+function loadCoreNodeListFull(cb) {
+    if (_coreNodeListFull !== null) { cb(_coreNodeListFull); return; }
+    ShingoEdge.api.get('/api/core-nodes').then(function(nodes) {
+        _coreNodeListFull = (nodes || []).sort(function(a, b) {
+            return a.name.localeCompare(b.name);
+        });
+        cb(_coreNodeListFull);
+    }).catch(function() { cb([]); });
 }
 
 function readCycleModeFields(formId) {
@@ -558,10 +598,22 @@ function populateCycleModeFields(formId, p) {
         var typeEl = form.querySelector('[name="' + typeName + '"]');
         var valEl = form.querySelector('[name="' + valueName + '"]');
         if (!typeEl || !valEl) return;
-        if (nodeVal) { typeEl.value = 'node'; valEl.value = nodeVal; }
-        else if (groupVal) { typeEl.value = 'group'; valEl.value = groupVal; }
-        else { typeEl.value = ''; valEl.value = ''; }
-        onNodeTypeChange(typeEl);
+        var targetVal = nodeVal || groupVal || '';
+        if (nodeVal) { typeEl.value = 'node'; }
+        else if (groupVal) { typeEl.value = 'group'; }
+        else { typeEl.value = ''; }
+        // Trigger node type change to show/populate the dropdown
+        var row = typeEl.closest('.form-row');
+        var valueGroup = row.querySelector('.node-value-group');
+        if (typeEl.value) {
+            valueGroup.style.display = '';
+            populateNodeSelect(valEl, typeEl.value);
+            // Set value after populate completes (async)
+            loadCoreNodeListFull(function() { valEl.value = targetVal; });
+        } else {
+            valueGroup.style.display = 'none';
+            valEl.innerHTML = '<option value="">-- Select --</option>';
+        }
     }
 
     setNodeField('full_pickup_type', 'full_pickup_value', p.full_pickup_node, p.full_pickup_node_group);
