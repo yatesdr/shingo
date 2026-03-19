@@ -751,8 +751,9 @@ async function syncCoreNodes() {
     try {
         await ShingoEdge.api.post('/api/core-nodes/sync', {});
         ShingoEdge.toast('Syncing nodes...', 'success');
-        // Invalidate cached node list so picker re-fetches
+        // Invalidate both cached node lists so pickers re-fetch
         _coreNodeList = null;
+        _coreNodeListFull = null;
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
@@ -1048,6 +1049,7 @@ ShingoEdge.createSSE('/events', {
             _coreNodeSet[nodes[i].name] = true;
         }
         _coreNodeList = nodes.map(function(n) { return n.name; }).sort();
+        _coreNodeListFull = null; // Invalidate full list so cycle mode dropdowns re-fetch with types
         // Refresh node chips without re-fetching core nodes
         var cards = document.querySelectorAll('[data-line-id]');
         for (var i = 0; i < cards.length; i++) {
