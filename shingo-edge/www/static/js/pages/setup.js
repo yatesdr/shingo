@@ -485,15 +485,8 @@ function onCycleModeChange(formId) {
     var fields = form.querySelector('.hotswap-fields');
     var staging2 = form.querySelectorAll('.staging2-row');
 
-    if (mode === 'two_robot' || mode === 'single_robot') {
-        fields.style.display = '';
-    } else {
-        fields.style.display = 'none';
-        // Reset all node value dropdowns when turning off hotswap
-        fields.querySelectorAll('.node-value-group select').forEach(function(el) {
-            el.innerHTML = '<option value="">-- Select --</option>';
-        });
-    }
+    // Node selection fields apply to all cycle modes
+    fields.style.display = '';
 
     staging2.forEach(function(el) {
         el.style.display = (mode === 'single_robot') ? '' : 'none';
@@ -552,14 +545,40 @@ function loadCoreNodeListFull(cb) {
     }).catch(function() { cb([]); });
 }
 
+// Cache location nodes from Edge DB (node_id, description)
+var _locationNodeList = null;
+
+function loadLocationNodeList(cb) {
+    if (_locationNodeList !== null) { cb(_locationNodeList); return; }
+    ShingoEdge.api.get('/api/location-nodes').then(function(nodes) {
+        _locationNodeList = (nodes || []).sort(function(a, b) {
+            return a.node_id.localeCompare(b.node_id);
+        });
+        cb(_locationNodeList);
+    }).catch(function() { cb([]); });
+}
+
+function populateLocationSelect(sel, currentVal, cb) {
+    loadLocationNodeList(function(nodes) {
+        sel.innerHTML = '<option value="">-- Select --</option>';
+        for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            var opt = document.createElement('option');
+            opt.value = n.node_id;
+            opt.textContent = n.node_id + (n.description ? ' \u2013 ' + n.description : '');
+            if (n.node_id === currentVal) opt.selected = true;
+            sel.appendChild(opt);
+        }
+        if (cb) cb();
+    });
+}
+
 function readCycleModeFields(formId) {
     var form = document.getElementById(formId);
     var result = { cycle_mode: 'sequential', staging_node: '', staging_node_group: '', staging_node_2: '', staging_node_2_group: '', full_pickup_node: '', full_pickup_node_group: '', outgoing_node: '', outgoing_node_group: '' };
 
     var mode = form.querySelector('[name="cycle_mode"]');
     if (mode) result.cycle_mode = mode.value || 'sequential';
-
-    if (result.cycle_mode === 'sequential') return result;
 
     // Full Pickup
     var fpType = form.querySelector('[name="full_pickup_type"]');
@@ -651,15 +670,25 @@ async function addPayload() {
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-function openEditPayload(p) {
-    ShingoEdge.populateForm('payload-edit-form', {
-        id: p.id, location: p.location,
-        description: p.description, payload_code: p.payload_code || '',
-        role: p.role, auto_reorder: p.auto_reorder,
-        reorder_point: p.reorder_point
+function openAddPayload() {
+    var sel = document.querySelector('#payload-add-form [name="location"]');
+    populateLocationSelect(sel, '', function() {
+        ShingoEdge.showModal('payload-add');
     });
-    populateCycleModeFields('payload-edit-form', p);
-    ShingoEdge.showModal('payload-edit');
+}
+
+function openEditPayload(p) {
+    var sel = document.querySelector('#payload-edit-form [name="location"]');
+    populateLocationSelect(sel, p.location, function() {
+        ShingoEdge.populateForm('payload-edit-form', {
+            id: p.id, location: p.location,
+            description: p.description, payload_code: p.payload_code || '',
+            role: p.role, auto_reorder: p.auto_reorder,
+            reorder_point: p.reorder_point
+        });
+        populateCycleModeFields('payload-edit-form', p);
+        ShingoEdge.showModal('payload-edit');
+    });
 }
 
 async function savePayload() {

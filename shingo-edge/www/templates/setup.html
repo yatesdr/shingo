@@ -343,7 +343,7 @@
         </tbody>
     </table>
     <div id="payload-add-bar" style="display:none;text-align:right;margin-top:0.75rem">
-        <button class="btn btn-sm btn-primary" onclick="ShingoEdge.showModal('payload-add')">+ Add Payload</button>
+        <button class="btn btn-sm btn-primary" onclick="openAddPayload()">+ Add Payload</button>
     </div>
 </div>
 
@@ -357,7 +357,7 @@
                     <div class="form-group"><label>Payload Code</label><input type="text" name="payload_code" class="form-input" placeholder="e.g. BIN-STD-01" required></div>
                     <div class="form-group"><label>Description</label><input type="text" name="description" class="form-input"></div>
                 </div>
-                <div class="form-group"><label>Location (ALN)</label><input type="text" name="location" class="form-input" placeholder="e.g. LSL-3A"></div>
+                <div class="form-group"><label>Delivery Node Location (ALN or PLN)</label><select name="location" class="form-input"><option value="">-- Select --</option></select></div>
                 <div class="form-row">
                     <div class="form-group"><label>Role</label>
                         <select name="role" class="form-input">
@@ -424,7 +424,7 @@
                     <div class="form-group"><label>Payload Code</label><input type="text" name="payload_code" class="form-input" required></div>
                     <div class="form-group"><label>Description</label><input type="text" name="description" class="form-input"></div>
                 </div>
-                <div class="form-group"><label>Location (ALN)</label><input type="text" name="location" class="form-input"></div>
+                <div class="form-group"><label>Delivery Node Location (ALN or PLN)</label><select name="location" class="form-input"><option value="">-- Select --</option></select></div>
                 <div class="form-row">
                     <div class="form-group"><label>Role</label>
                         <select name="role" class="form-input">
