@@ -143,6 +143,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 
 			r.Get("/test-orders/direct", h.apiDirectOrdersList)
 			r.Post("/test-orders/direct", h.apiDirectOrderSubmit)
+			r.Post("/test-orders/direct/complex", h.apiDirectComplexOrderSubmit)
+			r.Post("/test-orders/direct/release", h.apiDirectOrderRelease)
 
 			r.Post("/test-commands/submit", h.apiTestCommandSubmit)
 			r.Get("/test-commands", h.apiTestCommandsList)
