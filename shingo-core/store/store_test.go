@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,15 @@ import (
 func testDB(t *testing.T) *DB {
 	t.Helper()
 	ctx := context.Background()
+	defer func() {
+		if r := recover(); r != nil {
+			msg := fmt.Sprint(r)
+			if strings.Contains(strings.ToLower(msg), "docker") {
+				t.Skipf("skipping integration test: %s", msg)
+			}
+			panic(r)
+		}
+	}()
 
 	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
 		postgres.WithDatabase("shingocore_test"),
@@ -28,6 +38,9 @@ func testDB(t *testing.T) *DB {
 				WithStartupTimeout(30*time.Second)),
 	)
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "docker") {
+			t.Skipf("skipping integration test: %v", err)
+		}
 		t.Fatalf("start postgres container: %v", err)
 	}
 	t.Cleanup(func() {

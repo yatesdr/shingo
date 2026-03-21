@@ -37,6 +37,18 @@
       <div class="label">Polling Orders</div>
     </div>
   </div>
+  {{if .Recon}}
+  <div class="grid grid-6 mb-1">
+    <div class="card stat">
+      <div class="value">{{.Recon.CompletionAnomalies}}</div>
+      <div class="label">Completion Anomalies</div>
+    </div>
+    <div class="card stat">
+      <div class="value">{{.Recon.OutboxPending}}</div>
+      <div class="label">Pending Outbox</div>
+    </div>
+  </div>
+  {{end}}
   <div class="text-muted mb-3 text-right" style="font-size:0.8rem;">SSE clients: {{.SSEClients}}</div>
 
   {{if .ActiveOrders}}

@@ -43,6 +43,25 @@ func (db *DB) ListPendingOutbox(limit int) ([]OutboxMessage, error) {
 	return msgs, rows.Err()
 }
 
+func (db *DB) ListDeadLetterOutbox(limit int) ([]OutboxMessage, error) {
+	rows, err := db.Query(`SELECT id, payload, msg_type, retries, created_at FROM outbox WHERE sent_at IS NULL AND retries >= ? ORDER BY id LIMIT ?`, MaxOutboxRetries, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var msgs []OutboxMessage
+	for rows.Next() {
+		var m OutboxMessage
+		var createdAt string
+		if err := rows.Scan(&m.ID, &m.Payload, &m.MsgType, &m.Retries, &createdAt); err != nil {
+			return nil, err
+		}
+		m.CreatedAt = scanTime(createdAt)
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
 func (db *DB) AckOutbox(id int64) error {
 	_, err := db.Exec(`UPDATE outbox SET sent_at = datetime('now') WHERE id = ?`, id)
 	return err
@@ -50,6 +69,11 @@ func (db *DB) AckOutbox(id int64) error {
 
 func (db *DB) IncrementOutboxRetries(id int64) error {
 	_, err := db.Exec(`UPDATE outbox SET retries = retries + 1 WHERE id = ?`, id)
+	return err
+}
+
+func (db *DB) RequeueOutbox(id int64) error {
+	_, err := db.Exec(`UPDATE outbox SET retries = 0 WHERE id = ? AND sent_at IS NULL`, id)
 	return err
 }
 

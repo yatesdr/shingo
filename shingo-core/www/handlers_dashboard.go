@@ -30,6 +30,7 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	msgOK := h.engine.MsgClient().IsConnected()
 	dbOK := h.engine.DB().Ping() == nil
+	recon, _ := h.engine.DB().GetReconciliationSummary()
 
 	trackerCount := 0
 	if t := h.engine.Tracker(); t != nil {
@@ -37,18 +38,19 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"Page":          "dashboard",
-		"ActiveOrders":  activeOrders,
-		"StatusCounts":  statusCounts,
-		"TotalOrders":   len(activeOrders),
-		"TotalNodes":    len(nodes),
-		"EnabledNodes":  enabledNodes,
-		"FleetOK":       fleetOK,
-		"FleetName":     h.engine.Fleet().Name(),
-		"MessagingOK":   msgOK,
-		"DatabaseOK":    dbOK,
-		"PollerActive":  trackerCount,
+		"Page":         "dashboard",
+		"ActiveOrders": activeOrders,
+		"StatusCounts": statusCounts,
+		"TotalOrders":  len(activeOrders),
+		"TotalNodes":   len(nodes),
+		"EnabledNodes": enabledNodes,
+		"FleetOK":      fleetOK,
+		"FleetName":    h.engine.Fleet().Name(),
+		"MessagingOK":  msgOK,
+		"DatabaseOK":   dbOK,
+		"PollerActive": trackerCount,
 		"SSEClients":   h.eventHub.ClientCount(),
+		"Recon":        recon,
 	}
 	h.render(w, r, "dashboard.html", data)
 }

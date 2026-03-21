@@ -26,6 +26,8 @@ type Manager struct {
 	db        *store.DB
 	emitter   EventEmitter
 	stationID string
+	lifecycle *LifecycleService
+	sender    *OrderSender
 
 	DebugLog DebugLogFunc
 }
@@ -36,27 +38,13 @@ func NewManager(db *store.DB, emitter EventEmitter, stationID string) *Manager {
 		db:        db,
 		emitter:   emitter,
 		stationID: stationID,
+		lifecycle: newLifecycleService(db, emitter, nil),
+		sender:    newOrderSender(db, stationID),
 	}
 }
 
-// enqueueEnvelope marshals a protocol envelope and enqueues it to the outbox.
 func (m *Manager) enqueueEnvelope(env *protocol.Envelope) error {
-	data, err := json.Marshal(env)
-	if err != nil {
-		return fmt.Errorf("marshal envelope: %w", err)
-	}
-	if _, err := m.db.EnqueueOutbox(data, env.Type); err != nil {
-		return fmt.Errorf("enqueue %s: %w", env.Type, err)
-	}
-	return nil
-}
-
-func (m *Manager) src() protocol.Address {
-	return protocol.Address{Role: protocol.RoleEdge, Station: m.stationID}
-}
-
-func (m *Manager) dst() protocol.Address {
-	return protocol.Address{Role: protocol.RoleCore}
+	return m.sender.enqueue(env)
 }
 
 // lookupPayloadMeta returns description and payload code from the material slot record.
@@ -115,7 +103,7 @@ func (m *Manager) CreateRetrieveOrder(payloadID *int64, retrieveEmpty bool, quan
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(payloadID, payloadCode)
 
-	env, envErr := protocol.NewEnvelope(protocol.TypeOrderRequest, m.src(), m.dst(), &protocol.OrderRequest{
+	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:     orderUUID,
 		OrderType:     TypeRetrieve,
 		PayloadDesc:   payloadDesc,
@@ -173,7 +161,7 @@ func (m *Manager) CreateMoveOrder(payloadID *int64, quantity int64, pickupNode, 
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(payloadID, "")
 
-	env, envErr := protocol.NewEnvelope(protocol.TypeOrderRequest, m.src(), m.dst(), &protocol.OrderRequest{
+	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:    orderUUID,
 		OrderType:    TypeMove,
 		PayloadDesc:  payloadDesc,
@@ -213,7 +201,7 @@ func (m *Manager) CreateComplexOrder(payloadID *int64, quantity int64, deliveryN
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(payloadID, "")
 
-	env, envErr := protocol.NewEnvelope(protocol.TypeComplexOrderRequest, m.src(), m.dst(), &protocol.ComplexOrderRequest{
+	env, envErr := m.sender.build(protocol.TypeComplexOrderRequest, &protocol.ComplexOrderRequest{
 		OrderUUID:   orderUUID,
 		PayloadCode: payloadCode,
 		PayloadDesc: payloadDesc,
@@ -239,7 +227,7 @@ func (m *Manager) CreateIngestOrder(payloadID *int64, payloadCode, binLabel, pic
 		return nil, fmt.Errorf("create ingest order: %w", err)
 	}
 
-	env, envErr := protocol.NewEnvelope(protocol.TypeOrderIngest, m.src(), m.dst(), &protocol.OrderIngestRequest{
+	env, envErr := m.sender.build(protocol.TypeOrderIngest, &protocol.OrderIngestRequest{
 		OrderUUID:   orderUUID,
 		PayloadCode: payloadCode,
 		BinLabel:    binLabel,
@@ -265,13 +253,9 @@ func (m *Manager) ReleaseOrder(orderID int64) error {
 		return fmt.Errorf("order must be in staged status to release, got %s", order.Status)
 	}
 
-	env, err := protocol.NewEnvelope(protocol.TypeOrderRelease, m.src(), m.dst(), &protocol.OrderRelease{
+	if err := m.sender.Queue(protocol.TypeOrderRelease, &protocol.OrderRelease{
 		OrderUUID: order.UUID,
-	})
-	if err != nil {
-		return fmt.Errorf("build release envelope: %w", err)
-	}
-	if err := m.enqueueEnvelope(env); err != nil {
+	}); err != nil {
 		return fmt.Errorf("enqueue release: %w", err)
 	}
 
@@ -296,60 +280,13 @@ func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stag
 }
 
 func (m *Manager) handleDelivered(order *store.Order, statusDetail string, stagedExpireAt *time.Time) error {
-	if stagedExpireAt != nil {
-		m.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt)
-	}
-	if err := m.TransitionOrder(order.ID, StatusDelivered, statusDetail); err != nil {
-		return err
-	}
-	if order.AutoConfirm {
-		m.DebugLog.log("auto-confirm: id=%d uuid=%s qty=%d", order.ID, order.UUID, order.Quantity)
-		return m.ConfirmDelivery(order.ID, order.Quantity)
-	}
-	return nil
+	return m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, m.ConfirmDelivery)
 }
 
 // TransitionOrder moves an order to a new status with validation.
 func (m *Manager) TransitionOrder(orderID int64, newStatus, detail string) error {
-	order, err := m.db.GetOrder(orderID)
-	if err != nil {
-		return fmt.Errorf("get order: %w", err)
-	}
-
-	if !IsValidTransition(order.Status, newStatus) {
-		return fmt.Errorf("invalid transition from %s to %s", order.Status, newStatus)
-	}
-
-	// Store orders require count confirmation before submitting
-	if order.OrderType == TypeStore && newStatus == StatusSubmitted && !order.CountConfirmed {
-		return fmt.Errorf("store order requires count confirmation before submitting")
-	}
-
-	oldStatus := order.Status
-	m.DebugLog.log("transition: id=%d uuid=%s %s->%s", orderID, order.UUID, oldStatus, newStatus)
-	if err := m.db.UpdateOrderStatus(orderID, newStatus); err != nil {
-		return fmt.Errorf("update order status: %w", err)
-	}
-	if err := m.db.InsertOrderHistory(orderID, oldStatus, newStatus, detail); err != nil {
-		log.Printf("insert order history: %v", err)
-	}
-
-	// Re-read to pick up any ETA set before transition (e.g. waybill)
-	updated, _ := m.db.GetOrder(orderID)
-	eta := ""
-	if updated != nil && updated.ETA != nil {
-		eta = *updated.ETA
-	}
-	m.emitter.EmitOrderStatusChanged(orderID, order.UUID, order.OrderType, oldStatus, newStatus, eta, order.PayloadID)
-
-	if IsTerminal(newStatus) {
-		m.emitter.EmitOrderCompleted(orderID, order.UUID, order.OrderType, order.PayloadID)
-		if newStatus == StatusFailed {
-			m.emitter.EmitOrderFailed(orderID, order.UUID, order.OrderType, detail)
-		}
-	}
-
-	return nil
+	m.lifecycle.debug = m.DebugLog
+	return m.lifecycle.Transition(orderID, newStatus, detail)
 }
 
 // AbortOrder cancels a non-terminal order and enqueues a cancel message.
@@ -371,14 +308,10 @@ func (m *Manager) AbortOrder(orderID int64) error {
 	// operator can retry rather than having a locally-cancelled order
 	// with a robot still executing on the floor.
 	const abortReason = "aborted by operator"
-	env, err := protocol.NewEnvelope(protocol.TypeOrderCancel, m.src(), m.dst(), &protocol.OrderCancel{
+	if err := m.sender.Queue(protocol.TypeOrderCancel, &protocol.OrderCancel{
 		OrderUUID: order.UUID,
 		Reason:    abortReason,
-	})
-	if err != nil {
-		return fmt.Errorf("build cancel envelope: %w", err)
-	}
-	if err := m.enqueueEnvelope(env); err != nil {
+	}); err != nil {
 		return fmt.Errorf("enqueue cancel message: %w", err)
 	}
 
@@ -403,14 +336,10 @@ func (m *Manager) RedirectOrder(orderID int64, newDeliveryNode string) (*store.O
 
 	// Build and enqueue redirect message first. If this fails, don't
 	// update local state — the operator can retry.
-	env, err := protocol.NewEnvelope(protocol.TypeOrderRedirect, m.src(), m.dst(), &protocol.OrderRedirect{
+	if err := m.sender.Queue(protocol.TypeOrderRedirect, &protocol.OrderRedirect{
 		OrderUUID:       order.UUID,
 		NewDeliveryNode: newDeliveryNode,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build redirect envelope: %w", err)
-	}
-	if err := m.enqueueEnvelope(env); err != nil {
+	}); err != nil {
 		return nil, fmt.Errorf("enqueue redirect: %w", err)
 	}
 
@@ -438,7 +367,7 @@ func (m *Manager) SubmitOrder(orderID int64) error {
 		if order.FinalCount != nil {
 			finalCount = *order.FinalCount
 		}
-		env, err := protocol.NewEnvelope(protocol.TypeOrderStorageWaybill, m.src(), m.dst(), &protocol.OrderStorageWaybill{
+		env, err := m.sender.build(protocol.TypeOrderStorageWaybill, &protocol.OrderStorageWaybill{
 			OrderUUID:   order.UUID,
 			OrderType:   TypeStore,
 			PayloadDesc: order.PayloadDesc,
@@ -476,15 +405,12 @@ func (m *Manager) ConfirmDelivery(orderID int64, finalCount int64) error {
 	// Enqueue delivery receipt — failure is logged but does not block
 	// the confirmation. The receipt is informational; Core tracks delivery
 	// via its own fleet polling. The outbox will retry if Kafka is down.
-	env, err := protocol.NewEnvelope(protocol.TypeOrderReceipt, m.src(), m.dst(), &protocol.OrderReceipt{
+	if err := m.sender.Queue(protocol.TypeOrderReceipt, &protocol.OrderReceipt{
 		OrderUUID:   order.UUID,
 		ReceiptType: "confirmed",
 		FinalCount:  finalCount,
-	})
-	if err != nil {
-		log.Printf("build receipt envelope for order %s: %v", order.UUID, err)
-	} else if err := m.enqueueEnvelope(env); err != nil {
-		log.Printf("enqueue delivery receipt %s: %v", order.UUID, err)
+	}); err != nil {
+		return fmt.Errorf("enqueue delivery receipt %s: %w", order.UUID, err)
 	}
 
 	return m.TransitionOrder(orderID, StatusConfirmed, fmt.Sprintf("confirmed with count %d", finalCount))
@@ -525,4 +451,15 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 	default:
 		return fmt.Errorf("unknown reply type: %s", replyType)
 	}
+}
+
+// ApplyCoreStatusSnapshot reconciles a local order with Core's authoritative status.
+func (m *Manager) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot) error {
+	m.lifecycle.debug = m.DebugLog
+	return m.lifecycle.ApplyCoreStatusSnapshot(snapshot)
+}
+
+func (m *Manager) forceTransitionOrder(orderID int64, newStatus, detail string) error {
+	m.lifecycle.debug = m.DebugLog
+	return m.lifecycle.ForceTransition(orderID, newStatus, detail)
 }

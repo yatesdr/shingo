@@ -66,9 +66,9 @@ type OrderCancel struct {
 
 // OrderReceipt confirms delivery acceptance.
 type OrderReceipt struct {
-	OrderUUID   string  `json:"order_uuid"`
-	ReceiptType string  `json:"receipt_type"`
-	FinalCount  int64   `json:"final_count"`
+	OrderUUID   string `json:"order_uuid"`
+	ReceiptType string `json:"receipt_type"`
+	FinalCount  int64  `json:"final_count"`
 }
 
 // OrderRedirect changes the delivery destination.
@@ -79,11 +79,11 @@ type OrderRedirect struct {
 
 // OrderStorageWaybill submits a store order.
 type OrderStorageWaybill struct {
-	OrderUUID   string  `json:"order_uuid"`
-	OrderType   string  `json:"order_type"`
-	PayloadDesc string  `json:"payload_desc,omitempty"`
-	PickupNode  string  `json:"pickup_node"`
-	FinalCount  int64   `json:"final_count"`
+	OrderUUID   string `json:"order_uuid"`
+	OrderType   string `json:"order_type"`
+	PayloadDesc string `json:"payload_desc,omitempty"`
+	PickupNode  string `json:"pickup_node"`
+	FinalCount  int64  `json:"final_count"`
 }
 
 // --- Order payloads: Core -> Edge ---
@@ -135,9 +135,9 @@ type OrderCancelled struct {
 
 // ComplexOrderStep describes a single step in a complex (multi-leg) order.
 type ComplexOrderStep struct {
-	Action    string `json:"action"`                // "pickup", "dropoff", "wait"
-	Node      string `json:"node,omitempty"`         // exact node (for dropoff to staging/production)
-	NodeGroup string `json:"node_group,omitempty"`   // synthetic parent (for pickup from storage)
+	Action    string `json:"action"`               // "pickup", "dropoff", "wait"
+	Node      string `json:"node,omitempty"`       // exact node (for dropoff to staging/production)
+	NodeGroup string `json:"node_group,omitempty"` // synthetic parent (for pickup from storage)
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.
@@ -201,8 +201,8 @@ type NodeListResponse struct {
 
 // ProductionReportEntry is a single cat_id production count.
 type ProductionReportEntry struct {
-	CatID string  `json:"cat_id"`
-	Count int64   `json:"count"`
+	CatID string `json:"cat_id"`
+	Count int64  `json:"count"`
 }
 
 // ProductionReport carries production counts from an edge station.
@@ -265,3 +265,24 @@ type CatalogPayloadsResponse struct {
 	Payloads []CatalogPayloadInfo `json:"payloads"`
 }
 
+// OrderStatusRequest asks Core for the current authoritative status of a set of orders.
+type OrderStatusRequest struct {
+	OrderUUIDs []string `json:"order_uuids"`
+}
+
+// OrderStatusSnapshot is the current Core-side view of an order.
+type OrderStatusSnapshot struct {
+	OrderUUID     string `json:"order_uuid"`
+	Found         bool   `json:"found"`
+	Status        string `json:"status,omitempty"`
+	StationID     string `json:"station_id,omitempty"`
+	PickupNode    string `json:"pickup_node,omitempty"`
+	DeliveryNode  string `json:"delivery_node,omitempty"`
+	VendorOrderID string `json:"vendor_order_id,omitempty"`
+	ErrorDetail   string `json:"error_detail,omitempty"`
+}
+
+// OrderStatusResponse carries the authoritative Core-side state for requested orders.
+type OrderStatusResponse struct {
+	Orders []OrderStatusSnapshot `json:"orders"`
+}

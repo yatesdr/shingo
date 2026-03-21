@@ -67,6 +67,7 @@ Without a filter (`--log-debug`), all subsystems are logged.
 | `protocol` | Wire protocol encode and decode |
 | `outbox` | Outbox drain cycles |
 | `core_handler` | Inbound message handling |
+| `reconciliation` | Drift detection and recovery signals |
 | `nodestate` | Node state cache operations |
 | `engine` | Engine lifecycle events |
 
@@ -89,6 +90,13 @@ Shingo Core provides a management interface for fleet operations, inventory, and
 | Fleet Explorer | `/fleet-explorer` | Raw API explorer for the fleet backend |
 
 See [UI Guide](docs/ui-guide.md) for detailed page descriptions.
+
+## Reliability Notes
+
+- All Core-to-Edge business and control traffic is queued through the durable outbox.
+- Core tracks processed inbound envelope IDs in a durable inbox to suppress replayed mutating commands.
+- The diagnostics page includes reconciliation drift checks and recovery tooling for dead-lettered outbox messages.
+- The `/health` endpoint now reflects reconciliation severity in addition to dependency connectivity.
 
 ## Documentation
 

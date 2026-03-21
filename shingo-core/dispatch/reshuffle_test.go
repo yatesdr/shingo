@@ -38,7 +38,7 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *store.Nod
 	for d := 1; d <= 5; d++ {
 		depth := d
 		slot := &store.Node{
-			Name: fmt.Sprintf("GRP-TEST-L1-S%d", d),
+			Name:     fmt.Sprintf("GRP-TEST-L1-S%d", d),
 			ParentID: &lane.ID, Enabled: true, Depth: &depth,
 		}
 		db.CreateNode(slot)
@@ -49,7 +49,7 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *store.Nod
 	shuffleSlots = make([]*store.Node, 4)
 	for i := 0; i < 4; i++ {
 		ss := &store.Node{
-			Name: fmt.Sprintf("GRP-TEST-DC-%d", i+1),
+			Name:     fmt.Sprintf("GRP-TEST-DC-%d", i+1),
 			ParentID: &grp.ID, Enabled: true,
 		}
 		db.CreateNode(ss)

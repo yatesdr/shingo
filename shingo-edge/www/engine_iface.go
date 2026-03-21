@@ -20,6 +20,8 @@ type EngineAccess interface {
 	ConfigPath() string
 	PLCManager() *plc.Manager
 	OrderManager() *orders.Manager
+	Reconciliation() *engine.ReconciliationService
+	CoreSync() *engine.CoreSyncService
 	ChangeoverMachine(lineID int64) *changeover.Machine
 	ChangeoverMachines() map[int64]*changeover.Machine
 	ApplyWarLinkConfig()
@@ -28,6 +30,8 @@ type EngineAccess interface {
 	CoreNodes() map[string]protocol.NodeInfo
 	RequestNodeSync()
 	RequestCatalogSync()
+	RequestOrderStatusSync() error
+	StartupReconcile() error
 	RequestOrders(payloadID int64, quantity int64) (*engine.OrderRequestResult, error)
 
 	// WarLink tag management

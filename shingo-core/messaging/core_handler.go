@@ -1,7 +1,6 @@
 package messaging
 
 import (
-	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -17,12 +16,13 @@ import (
 type CoreHandler struct {
 	protocol.NoOpHandler
 
-	db         *store.DB
-	client     *Client
-	stationID  string
+	db            *store.DB
+	client        *Client
+	stationID     string
 	dispatchTopic string
-	dispatcher *dispatch.Dispatcher
-	DebugLog   func(string, ...any)
+	dispatcher    *dispatch.Dispatcher
+	dataService   *CoreDataService
+	DebugLog      func(string, ...any)
 
 	// Background goroutine for stale edge detection
 	stopOnce sync.Once
@@ -31,7 +31,7 @@ type CoreHandler struct {
 
 // NewCoreHandler creates a handler for inbound edge messages.
 func NewCoreHandler(db *store.DB, client *Client, stationID, dispatchTopic string, dispatcher *dispatch.Dispatcher) *CoreHandler {
-	return &CoreHandler{
+	h := &CoreHandler{
 		db:            db,
 		client:        client,
 		stationID:     stationID,
@@ -39,6 +39,8 @@ func NewCoreHandler(db *store.DB, client *Client, stationID, dispatchTopic strin
 		dispatcher:    dispatcher,
 		stopCh:        make(chan struct{}),
 	}
+	h.dataService = newCoreDataService(db, h)
+	return h
 }
 
 func (h *CoreHandler) dbg(format string, args ...any) {
@@ -52,6 +54,14 @@ func (h *CoreHandler) coreAddr() protocol.Address {
 	return protocol.Address{Role: protocol.RoleCore, Station: h.stationID}
 }
 
+func (h *CoreHandler) enqueueEnvelope(msgType, stationID string, env interface{ Encode() ([]byte, error) }) error {
+	data, err := env.Encode()
+	if err != nil {
+		return err
+	}
+	return h.db.EnqueueOutbox(h.dispatchTopic, data, msgType, stationID)
+}
+
 // replyData builds and publishes a data reply envelope to the requesting edge station.
 func (h *CoreHandler) replyData(env *protocol.Envelope, subject string, payload any) {
 	dst := protocol.Address{Role: protocol.RoleEdge, Station: env.Src.Station}
@@ -60,8 +70,9 @@ func (h *CoreHandler) replyData(env *protocol.Envelope, subject string, payload 
 		log.Printf("core_handler: build reply %s: %v", subject, err)
 		return
 	}
-	if err := h.client.PublishEnvelope(h.dispatchTopic, reply); err != nil {
-		log.Printf("core_handler: publish reply %s: %v", subject, err)
+	msgType := "data.reply." + subject
+	if err := h.enqueueEnvelope(msgType, env.Src.Station, reply); err != nil {
+		log.Printf("core_handler: enqueue reply %s: %v", subject, err)
 	}
 }
 
@@ -73,8 +84,9 @@ func (h *CoreHandler) sendData(subject, stationID string, payload any) {
 		log.Printf("core_handler: build %s for %s: %v", subject, stationID, err)
 		return
 	}
-	if err := h.client.PublishEnvelope(h.dispatchTopic, env); err != nil {
-		log.Printf("core_handler: publish %s for %s: %v", subject, stationID, err)
+	msgType := "data." + subject
+	if err := h.enqueueEnvelope(msgType, stationID, env); err != nil {
+		log.Printf("core_handler: enqueue %s for %s: %v", subject, stationID, err)
 	}
 }
 
@@ -89,189 +101,97 @@ func (h *CoreHandler) Stop() {
 }
 
 func (h *CoreHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
-	h.dbg("data: subject=%s body_size=%d from=%s", p.Subject, len(p.Body), env.Src.Station)
-	switch p.Subject {
-	case protocol.SubjectEdgeRegister:
-		var reg protocol.EdgeRegister
-		if err := json.Unmarshal(p.Body, &reg); err != nil {
-			log.Printf("core_handler: decode edge register body: %v", err)
-			return
-		}
-		h.handleEdgeRegister(env, &reg)
-	case protocol.SubjectEdgeHeartbeat:
-		var hb protocol.EdgeHeartbeat
-		if err := json.Unmarshal(p.Body, &hb); err != nil {
-			log.Printf("core_handler: decode edge heartbeat body: %v", err)
-			return
-		}
-		h.handleEdgeHeartbeat(env, &hb)
-	case protocol.SubjectNodeListRequest:
-		h.handleNodeListRequest(env)
-	case protocol.SubjectProductionReport:
-		var rpt protocol.ProductionReport
-		if err := json.Unmarshal(p.Body, &rpt); err != nil {
-			log.Printf("core_handler: decode production report body: %v", err)
-			return
-		}
-		h.handleProductionReport(env, &rpt)
-	case protocol.SubjectTagVerifyRequest:
-		var req protocol.TagVerifyRequest
-		if err := json.Unmarshal(p.Body, &req); err != nil {
-			log.Printf("core_handler: decode tag verify request body: %v", err)
-			return
-		}
-		h.handleTagVerifyRequest(env, &req)
-	case protocol.SubjectCatalogPayloadsRequest:
-		h.handleCatalogPayloadsRequest(env)
-	default:
-		log.Printf("core_handler: unhandled data subject: %s", p.Subject)
-	}
-}
-
-func (h *CoreHandler) handleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
-	log.Printf("core_handler: edge registered: %s (hostname=%s, version=%s, lines=%v)",
-		p.StationID, p.Hostname, p.Version, p.LineIDs)
-
-	if err := h.db.RegisterEdge(p.StationID, p.Hostname, p.Version, p.LineIDs); err != nil {
-		log.Printf("core_handler: register edge %s: %v", p.StationID, err)
-		return
-	}
-
-	h.replyData(env, protocol.SubjectEdgeRegistered,
-		&protocol.EdgeRegistered{StationID: p.StationID, Message: "registered"})
-	h.dbg("reply published: subject=edge.registered station=%s", p.StationID)
-}
-
-func (h *CoreHandler) handleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
-	isNew, err := h.db.UpdateHeartbeat(p.StationID)
-	if err != nil {
-		log.Printf("core_handler: update heartbeat for %s: %v", p.StationID, err)
-		return
-	}
-
-	h.replyData(env, protocol.SubjectEdgeHeartbeatAck,
-		&protocol.EdgeHeartbeatAck{StationID: p.StationID, ServerTS: time.Now().UTC()})
-
-	if isNew {
-		log.Printf("core_handler: unregistered edge %s detected via heartbeat, requesting registration", p.StationID)
-		h.sendData(protocol.SubjectEdgeRegisterRequest, p.StationID,
-			&protocol.EdgeRegisterRequest{StationID: p.StationID, Reason: "unregistered edge detected"})
-	}
-}
-
-func (h *CoreHandler) handleNodeListRequest(env *protocol.Envelope) {
-	stationID := env.Src.Station
-	// Try station-scoped node list first; fall back to all nodes if none assigned
-	nodes, err := h.db.ListNodesForStation(stationID)
-	stationScoped := err == nil && len(nodes) > 0
-	if !stationScoped {
-		nodes, err = h.db.ListNodes()
-	}
-	if err != nil {
-		log.Printf("core_handler: list nodes for %s: %v", stationID, err)
-		return
-	}
-
-	var infos []protocol.NodeInfo
-	if stationScoped {
-		// Station-scoped: include all returned nodes; use dot-notation for NGRP children
-		for _, n := range nodes {
-			name := n.Name
-			if n.ParentID != nil && !n.IsSynthetic && n.ParentName != "" {
-				name = n.ParentName + "." + n.Name
-			}
-			infos = append(infos, protocol.NodeInfo{Name: name, NodeType: n.NodeTypeCode})
-		}
-	} else {
-		// Fallback (all nodes): include top-level and explicitly-assigned NGRP children
-		// Build a map of parent type codes for NGRP check
-		nodeMap := make(map[int64]*store.Node, len(nodes))
-		for _, n := range nodes {
-			nodeMap[n.ID] = n
-		}
-		for _, n := range nodes {
-			if n.ParentID == nil {
-				infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode})
-			} else if !n.IsSynthetic {
-				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == "NGRP" {
-					infos = append(infos, protocol.NodeInfo{Name: parent.Name + "." + n.Name, NodeType: n.NodeTypeCode})
-				}
-			}
-		}
-	}
-	h.replyData(env, protocol.SubjectNodeListResponse, &protocol.NodeListResponse{Nodes: infos})
-	log.Printf("core_handler: sent node list (%d nodes) to %s", len(infos), env.Src.Station)
+	h.dataService.Handle(env, p)
 }
 
 // Order message handlers delegate to the dispatcher.
 
 func (h *CoreHandler) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
+	if !h.shouldProcessInbound(env) {
+		return
+	}
 	log.Printf("core_handler: order request from %s: uuid=%s type=%s", env.Src.Station, p.OrderUUID, p.OrderType)
 	h.dbg("-> order_request from=%s uuid=%s type=%s", env.Src.Station, p.OrderUUID, p.OrderType)
 	h.dispatcher.HandleOrderRequest(env, p)
 }
 
 func (h *CoreHandler) HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel) {
+	if !h.shouldProcessInbound(env) {
+		return
+	}
 	log.Printf("core_handler: order cancel from %s: uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dbg("-> order_cancel from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderCancel(env, p)
 }
 
 func (h *CoreHandler) HandleOrderReceipt(env *protocol.Envelope, p *protocol.OrderReceipt) {
+	if !h.shouldProcessInbound(env) {
+		return
+	}
 	log.Printf("core_handler: delivery receipt from %s: uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dbg("-> order_receipt from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderReceipt(env, p)
 }
 
 func (h *CoreHandler) HandleOrderRedirect(env *protocol.Envelope, p *protocol.OrderRedirect) {
+	if !h.shouldProcessInbound(env) {
+		return
+	}
 	log.Printf("core_handler: redirect from %s: uuid=%s -> %s", env.Src.Station, p.OrderUUID, p.NewDeliveryNode)
 	h.dbg("-> order_redirect from=%s uuid=%s new_dest=%s", env.Src.Station, p.OrderUUID, p.NewDeliveryNode)
 	h.dispatcher.HandleOrderRedirect(env, p)
 }
 
 func (h *CoreHandler) HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill) {
+	if !h.shouldProcessInbound(env) {
+		return
+	}
 	log.Printf("core_handler: storage waybill from %s: uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dbg("-> storage_waybill from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderStorageWaybill(env, p)
 }
 
 func (h *CoreHandler) HandleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
+	if !h.shouldProcessInbound(env) {
+		return
+	}
 	log.Printf("core_handler: complex order from %s: uuid=%s steps=%d", env.Src.Station, p.OrderUUID, len(p.Steps))
 	h.dbg("-> complex_order from=%s uuid=%s steps=%d", env.Src.Station, p.OrderUUID, len(p.Steps))
 	h.dispatcher.HandleComplexOrderRequest(env, p)
 }
 
 func (h *CoreHandler) HandleOrderRelease(env *protocol.Envelope, p *protocol.OrderRelease) {
+	if !h.shouldProcessInbound(env) {
+		return
+	}
 	log.Printf("core_handler: order release from %s: uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dbg("-> order_release from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderRelease(env, p)
 }
 
 func (h *CoreHandler) HandleOrderIngest(env *protocol.Envelope, p *protocol.OrderIngestRequest) {
+	if !h.shouldProcessInbound(env) {
+		return
+	}
 	log.Printf("core_handler: order ingest from %s: uuid=%s payload=%s bin=%s", env.Src.Station, p.OrderUUID, p.PayloadCode, p.BinLabel)
 	h.dbg("-> order_ingest from=%s uuid=%s payload=%s bin=%s", env.Src.Station, p.OrderUUID, p.PayloadCode, p.BinLabel)
 	h.dispatcher.HandleOrderIngest(env, p)
 }
 
-func (h *CoreHandler) handleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
-	log.Printf("core_handler: production report from %s: %d entries", rpt.StationID, len(rpt.Reports))
-	accepted := 0
-	for _, entry := range rpt.Reports {
-		if entry.CatID == "" || entry.Count <= 0 {
-			continue
-		}
-		if err := h.db.IncrementProduced(entry.CatID, entry.Count); err != nil {
-			log.Printf("core_handler: increment produced %s: %v", entry.CatID, err)
-			continue
-		}
-		if err := h.db.LogProduction(entry.CatID, rpt.StationID, entry.Count); err != nil {
-			log.Printf("core_handler: log production %s: %v", entry.CatID, err)
-		}
-		accepted++
+func (h *CoreHandler) shouldProcessInbound(env *protocol.Envelope) bool {
+	if env == nil || env.ID == "" {
+		return true
 	}
-
-	h.replyData(env, protocol.SubjectProductionReportAck,
-		&protocol.ProductionReportAck{StationID: rpt.StationID, Accepted: accepted})
+	inserted, err := h.db.RecordInboundMessage(env.ID, env.Type, env.Src.Station)
+	if err != nil {
+		log.Printf("core_handler: inbox record %s: %v", env.ID, err)
+		return false
+	}
+	if !inserted {
+		h.dbg("duplicate inbound ignored: id=%s type=%s from=%s", env.ID, env.Type, env.Src.Station)
+		return false
+	}
+	return true
 }
 
 func (h *CoreHandler) staleEdgeLoop() {
@@ -296,45 +216,6 @@ func (h *CoreHandler) staleEdgeLoop() {
 			}
 		}
 	}
-}
-
-func (h *CoreHandler) handleTagVerifyRequest(env *protocol.Envelope, req *protocol.TagVerifyRequest) {
-	log.Printf("core_handler: tag verify from %s: uuid=%s tag=%s", env.Src.Station, req.OrderUUID, req.TagID)
-
-	result := h.db.VerifyTag(req.OrderUUID, req.TagID, req.Location)
-	if !result.Match {
-		log.Printf("core_handler: tag mismatch for order %s: expected=%s (proceeding best-effort)", req.OrderUUID, result.Expected)
-	}
-
-	h.sendTagVerifyResponse(env, &protocol.TagVerifyResponse{
-		OrderUUID: req.OrderUUID,
-		Match:     result.Match,
-		Expected:  result.Expected,
-		Detail:    result.Detail,
-	})
-}
-
-func (h *CoreHandler) sendTagVerifyResponse(env *protocol.Envelope, resp *protocol.TagVerifyResponse) {
-	h.replyData(env, protocol.SubjectTagVerifyResponse, resp)
-}
-
-func (h *CoreHandler) handleCatalogPayloadsRequest(env *protocol.Envelope) {
-	log.Printf("core_handler: catalog payloads request from %s", env.Src.Station)
-	payloads, err := h.db.ListPayloads()
-	if err != nil {
-		log.Printf("core_handler: list payloads for catalog: %v", err)
-		return
-	}
-	infos := make([]protocol.CatalogPayloadInfo, len(payloads))
-	for i, p := range payloads {
-		infos[i] = protocol.CatalogPayloadInfo{
-			ID: p.ID, Name: p.Code, Code: p.Code,
-			Description: p.Description,
-			UOPCapacity: p.UOPCapacity,
-		}
-	}
-	h.replyData(env, protocol.SubjectCatalogPayloadsResponse, &protocol.CatalogPayloadsResponse{Payloads: infos})
-	log.Printf("core_handler: sent payload catalog (%d payloads) to %s", len(infos), env.Src.Station)
 }
 
 func (h *CoreHandler) sendStaleNotification(stationID string) {

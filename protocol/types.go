@@ -6,10 +6,10 @@ const (
 	TypeData = "data"
 
 	// Edge -> Core (published on orders topic)
-	TypeOrderRequest       = "order.request"
-	TypeOrderCancel        = "order.cancel"
-	TypeOrderReceipt       = "order.receipt"
-	TypeOrderRedirect      = "order.redirect"
+	TypeOrderRequest        = "order.request"
+	TypeOrderCancel         = "order.cancel"
+	TypeOrderReceipt        = "order.receipt"
+	TypeOrderRedirect       = "order.redirect"
 	TypeOrderStorageWaybill = "order.storage_waybill"
 
 	// Edge -> Core: complex order lifecycle
@@ -20,20 +20,20 @@ const (
 	TypeOrderIngest = "order.ingest"
 
 	// Core -> Edge (published on dispatch topic)
-	TypeOrderAck        = "order.ack"
-	TypeOrderWaybill    = "order.waybill"
-	TypeOrderUpdate     = "order.update"
-	TypeOrderDelivered  = "order.delivered"
-	TypeOrderError      = "order.error"
-	TypeOrderCancelled  = "order.cancelled"
-	TypeOrderStaged     = "order.staged"
+	TypeOrderAck       = "order.ack"
+	TypeOrderWaybill   = "order.waybill"
+	TypeOrderUpdate    = "order.update"
+	TypeOrderDelivered = "order.delivered"
+	TypeOrderError     = "order.error"
+	TypeOrderCancelled = "order.cancelled"
+	TypeOrderStaged    = "order.staged"
 )
 
 // Data channel subject constants.
 const (
-	SubjectEdgeRegister    = "edge.register"
-	SubjectEdgeRegistered  = "edge.registered"
-	SubjectEdgeHeartbeat   = "edge.heartbeat"
+	SubjectEdgeRegister     = "edge.register"
+	SubjectEdgeRegistered   = "edge.registered"
+	SubjectEdgeHeartbeat    = "edge.heartbeat"
 	SubjectEdgeHeartbeatAck = "edge.heartbeat_ack"
 
 	SubjectProductionReport    = "production.report"
@@ -50,6 +50,9 @@ const (
 
 	SubjectCatalogPayloadsRequest  = "catalog.payloads_request"
 	SubjectCatalogPayloadsResponse = "catalog.payloads_response"
+
+	SubjectOrderStatusRequest  = "order.status_request"
+	SubjectOrderStatusResponse = "order.status_response"
 )
 
 // Roles for Address.Role.

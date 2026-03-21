@@ -39,6 +39,92 @@
   </div>
 </div>
 
+{{if .Recon}}
+<div class="card mt-2">
+  <div class="flex flex-between mb-1">
+    <h2 style="margin:0;">Reconciliation</h2>
+    <div class="flex gap-1">
+      <button class="btn btn-sm" onclick="requestOrderStatusSync()">Sync Order Status</button>
+    </div>
+  </div>
+  <div class="text-muted" style="font-size:0.9rem;">
+    Status: {{.Recon.Status}} | Total anomalies: {{.Recon.TotalAnomalies}} | Pending outbox: {{.Recon.OutboxPending}} | Dead letters: {{.Recon.DeadLetters}}
+  </div>
+</div>
+
+<div class="card mt-2" style="padding:0;">
+  <div class="debug-log-wrap">
+    <table class="debug-log-table">
+      <thead>
+        <tr>
+          <th style="width:100px;">Severity</th>
+          <th style="width:90px;">Order ID</th>
+          <th style="width:220px;">UUID</th>
+          <th style="width:120px;">Status</th>
+          <th>Issue</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Anomalies}}
+          {{range .Anomalies}}
+          <tr>
+            <td>{{.Severity}}</td>
+            <td>{{if .OrderID}}{{.OrderID}}{{else}}-{{end}}</td>
+            <td>{{.OrderUUID}}</td>
+            <td>{{.Status}}</td>
+            <td>{{.Issue}}</td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr><td colspan="5" class="text-muted">No edge reconciliation anomalies detected.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mt-2" style="padding:0;">
+  <div class="debug-log-wrap">
+    <table class="debug-log-table">
+      <thead>
+        <tr>
+          <th style="width:80px;">ID</th>
+          <th style="width:160px;">Created</th>
+          <th style="width:160px;">Type</th>
+          <th style="width:80px;">Retries</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{if .Deadletters}}
+          {{range .Deadletters}}
+          <tr>
+            <td>{{.ID}}</td>
+            <td>{{formatTime .CreatedAt}}</td>
+            <td>{{.MsgType}}</td>
+            <td>{{.Retries}}</td>
+            <td><button class="btn btn-sm" onclick="replayDeadLetter({{.ID}})">Replay</button></td>
+          </tr>
+          {{end}}
+        {{else}}
+          <tr><td colspan="5" class="text-muted">No edge dead-lettered outbox messages.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}
+
 <script src="/static/js/pages/diagnostics.js"></script>
+<script>
+async function replayDeadLetter(id) {
+  const resp = await fetch('/api/diagnostics/outbox/replay?id=' + encodeURIComponent(id), { method: 'POST' });
+  if (resp.ok) location.reload();
+}
+async function requestOrderStatusSync() {
+  const resp = await fetch('/api/diagnostics/orders/sync', { method: 'POST' });
+  if (resp.ok) location.reload();
+}
+</script>
 
 {{template "footer" .}}

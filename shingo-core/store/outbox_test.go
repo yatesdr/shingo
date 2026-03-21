@@ -40,3 +40,42 @@ func TestOutboxCRUD(t *testing.T) {
 		t.Errorf("retries = %d, want 1", msgs3[0].Retries)
 	}
 }
+
+func TestOutboxDeadLetterReplay(t *testing.T) {
+	db := testDB(t)
+
+	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{"dead":true}`), "order.error", "line-1"); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	msgs, err := db.ListPendingOutbox(10)
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("list pending: len=%d err=%v", len(msgs), err)
+	}
+	for i := 0; i < MaxOutboxRetries; i++ {
+		if err := db.IncrementOutboxRetries(msgs[0].ID); err != nil {
+			t.Fatalf("increment retries: %v", err)
+		}
+	}
+
+	dead, err := db.ListDeadLetterOutbox(10)
+	if err != nil {
+		t.Fatalf("list dead letters: %v", err)
+	}
+	if len(dead) != 1 {
+		t.Fatalf("dead letters = %d, want 1", len(dead))
+	}
+
+	if err := db.RequeueOutbox(dead[0].ID); err != nil {
+		t.Fatalf("requeue: %v", err)
+	}
+	pending, err := db.ListPendingOutbox(10)
+	if err != nil {
+		t.Fatalf("list pending after requeue: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending after requeue = %d, want 1", len(pending))
+	}
+	if pending[0].Retries != 0 {
+		t.Fatalf("retries after requeue = %d, want 0", pending[0].Retries)
+	}
+}

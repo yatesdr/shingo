@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"shingo/protocol/debuglog"
 	"shingoedge/changeover"
 	"shingoedge/config"
-	"shingo/protocol/debuglog"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/store"
@@ -48,14 +48,16 @@ type Engine struct {
 	changeoverMgrs map[int64]*changeover.Machine
 	coEmit         *changeoverEmitter
 
-	hourlyTracker *HourlyTracker
+	hourlyTracker  *HourlyTracker
+	reconciliation *ReconciliationService
+	coreSync       *CoreSyncService
 
-	coreNodes       map[string]protocol.NodeInfo
-	coreNodesMu     sync.RWMutex
-	nodeSyncFn      func()
-	catalogSyncFn   func()
-	sendFn          func(*protocol.Envelope) error
-	kafkaReconnFn   func() error
+	coreNodes     map[string]protocol.NodeInfo
+	coreNodesMu   sync.RWMutex
+	nodeSyncFn    func()
+	catalogSyncFn func()
+	sendFn        func(*protocol.Envelope) error
+	kafkaReconnFn func() error
 
 	Events   *EventBus
 	stopChan chan struct{}
@@ -80,7 +82,7 @@ func New(c Config) *Engine {
 	if c.DebugLogger != nil {
 		debugFn = DebugLogFunc(c.DebugLogger.Func("engine"))
 	}
-	return &Engine{
+	e := &Engine{
 		cfg:            c.AppConfig,
 		configPath:     c.ConfigPath,
 		db:             c.DB,
@@ -91,6 +93,9 @@ func New(c Config) *Engine {
 		stopChan:       make(chan struct{}),
 		changeoverMgrs: make(map[int64]*changeover.Machine),
 	}
+	e.reconciliation = newReconciliationService(e.db)
+	e.coreSync = newCoreSyncService(e)
+	return e
 }
 
 // Start creates all managers, wires event handlers, and starts subsystems.
@@ -179,7 +184,9 @@ func (e *Engine) ConfigPath() string { return e.configPath }
 func (e *Engine) PLCManager() *plc.Manager { return e.plcMgr }
 
 // OrderManager returns the order manager.
-func (e *Engine) OrderManager() *orders.Manager { return e.orderMgr }
+func (e *Engine) OrderManager() *orders.Manager          { return e.orderMgr }
+func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
+func (e *Engine) CoreSync() *CoreSyncService             { return e.coreSync }
 
 // ChangeoverMachine returns the changeover state machine for a specific line.
 // If no machine exists for the line, one is lazily created.

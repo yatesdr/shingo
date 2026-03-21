@@ -40,6 +40,8 @@ type Engine struct {
 	Events         *EventBus
 	logFn          LogFunc
 	debugLog       func(string, ...any)
+	reconciliation *ReconciliationService
+	recovery       *RecoveryService
 	stopChan       chan struct{}
 	stopOnce       sync.Once
 	sceneSyncing   atomic.Bool
@@ -55,7 +57,7 @@ func New(c Config) *Engine {
 	if logFn == nil {
 		logFn = log.Printf
 	}
-	return &Engine{
+	e := &Engine{
 		cfg:         c.AppConfig,
 		configPath:  c.ConfigPath,
 		db:          c.DB,
@@ -67,6 +69,9 @@ func New(c Config) *Engine {
 		stopChan:    make(chan struct{}),
 		robotsCache: make(map[string]fleet.RobotStatus),
 	}
+	e.reconciliation = newReconciliationService(e.db, e.logFn)
+	e.recovery = newRecoveryService(e)
+	return e
 }
 
 func (e *Engine) dbg(format string, args ...any) {
@@ -131,6 +136,9 @@ func (e *Engine) Start() {
 	// Start staged bin expiry sweep
 	go e.stagedBinSweepLoop()
 
+	// Start periodic reconciliation logging
+	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval)
+
 	e.logFn("engine: started")
 }
 
@@ -143,13 +151,15 @@ func (e *Engine) Stop() {
 }
 
 // Accessors
-func (e *Engine) DB() *store.DB                    { return e.db }
-func (e *Engine) AppConfig() *config.Config        { return e.cfg }
-func (e *Engine) ConfigPath() string               { return e.configPath }
-func (e *Engine) Dispatcher() *dispatch.Dispatcher  { return e.dispatcher }
-func (e *Engine) Tracker() fleet.OrderTracker       { return e.tracker }
-func (e *Engine) Fleet() fleet.Backend              { return e.fleet }
-func (e *Engine) MsgClient() *messaging.Client      { return e.msgClient }
+func (e *Engine) DB() *store.DB                          { return e.db }
+func (e *Engine) AppConfig() *config.Config              { return e.cfg }
+func (e *Engine) ConfigPath() string                     { return e.configPath }
+func (e *Engine) Dispatcher() *dispatch.Dispatcher       { return e.dispatcher }
+func (e *Engine) Tracker() fleet.OrderTracker            { return e.tracker }
+func (e *Engine) Fleet() fleet.Backend                   { return e.fleet }
+func (e *Engine) MsgClient() *messaging.Client           { return e.msgClient }
+func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
+func (e *Engine) Recovery() *RecoveryService             { return e.recovery }
 
 func (e *Engine) checkConnectionStatus() {
 	// Fleet

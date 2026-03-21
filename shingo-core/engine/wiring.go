@@ -253,12 +253,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 	// Bin-centric: move the bin and unclaim
 	if order.BinID != nil {
-		e.db.MoveBin(*order.BinID, destNode.ID)
-		if err := e.db.UnclaimBin(*order.BinID); err != nil {
-			e.logFn("engine: unclaim bin %d after delivery: %v", *order.BinID, err)
-		}
-
-		// Mark bin as staged at lineside nodes to prevent poaching.
+		// Mark bins staged at lineside nodes to prevent poaching.
 		// Storage slots (children of LANEs) keep available status.
 		isStorageSlot := false
 		if destNode.ParentID != nil {
@@ -266,11 +261,14 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 				isStorageSlot = true
 			}
 		}
+		var expiresAt *time.Time
 		if !isStorageSlot {
-			expiresAt := e.resolveStagingExpiry(destNode)
-			if err := e.db.StageBin(*order.BinID, expiresAt); err != nil {
-				e.logFn("engine: stage bin %d: %v", *order.BinID, err)
-			}
+			expiresAt = e.resolveStagingExpiry(destNode)
+		}
+
+		if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, !isStorageSlot, expiresAt); err != nil {
+			e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
+			return
 		}
 
 		// Emit bin contents changed

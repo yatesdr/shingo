@@ -14,13 +14,12 @@ type ActiveOrderCountFunc func() int
 
 // Heartbeater sends edge.register on startup and edge.heartbeat periodically.
 type Heartbeater struct {
-	client    *Client
-	stationID string
-	version   string
-	lineIDs   []string
-	topic     string // orders topic to publish on
-	interval  time.Duration
-	startTime time.Time
+	sender       *DataSender
+	stationID    string
+	version      string
+	lineIDs      []string
+	interval     time.Duration
+	startTime    time.Time
 	orderCountFn ActiveOrderCountFunc
 
 	stopOnce sync.Once
@@ -31,15 +30,15 @@ type Heartbeater struct {
 
 // NewHeartbeater creates a heartbeater for the given edge identity.
 func NewHeartbeater(client *Client, stationID, version string, lineIDs []string, ordersTopic string, orderCountFn ActiveOrderCountFunc) *Heartbeater {
+	stopCh := make(chan struct{})
 	return &Heartbeater{
-		client:       client,
+		sender:       NewDataSender(client, ordersTopic, stopCh),
 		stationID:    stationID,
 		version:      version,
 		lineIDs:      lineIDs,
-		topic:        ordersTopic,
 		interval:     60 * time.Second,
 		orderCountFn: orderCountFn,
-		stopCh:       make(chan struct{}),
+		stopCh:       stopCh,
 	}
 }
 
@@ -80,7 +79,8 @@ func (h *Heartbeater) sendRegister() {
 		log.Printf("heartbeater: build register: %v", err)
 		return
 	}
-	if err := h.publishWithRetry(env, "register"); err != nil {
+	h.sender.DebugLog = h.DebugLog
+	if err := h.sender.PublishEnvelope(env, "register"); err != nil {
 		log.Printf("heartbeater: send register failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent edge.register (station=%s)", h.stationID)
@@ -99,31 +99,13 @@ func (h *Heartbeater) sendNodeListRequest() {
 		log.Printf("heartbeater: build node list request: %v", err)
 		return
 	}
-	if err := h.publishWithRetry(env, "node list request"); err != nil {
+	h.sender.DebugLog = h.DebugLog
+	if err := h.sender.PublishEnvelope(env, "node list request"); err != nil {
 		log.Printf("heartbeater: send node list request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent node.list_request (station=%s)", h.stationID)
 		h.DebugLog.log("node_list_request sent station=%s", h.stationID)
 	}
-}
-
-// publishWithRetry attempts to publish an envelope with exponential backoff (3 attempts, 2s/4s/8s).
-func (h *Heartbeater) publishWithRetry(env *protocol.Envelope, label string) error {
-	var err error
-	backoff := 2 * time.Second
-	for attempt := 0; attempt < 3; attempt++ {
-		if err = h.client.PublishEnvelope(h.topic, env); err == nil {
-			return nil
-		}
-		log.Printf("heartbeater: %s attempt %d failed: %v (retrying in %s)", label, attempt+1, err, backoff)
-		select {
-		case <-h.stopCh:
-			return err
-		case <-time.After(backoff):
-		}
-		backoff *= 2
-	}
-	return err
 }
 
 // RequestNodeSync sends a node list request to core on demand.
@@ -147,7 +129,8 @@ func (h *Heartbeater) sendCatalogRequest() {
 		log.Printf("heartbeater: build catalog request: %v", err)
 		return
 	}
-	if err := h.publishWithRetry(env, "catalog request"); err != nil {
+	h.sender.DebugLog = h.DebugLog
+	if err := h.sender.PublishEnvelope(env, "catalog request"); err != nil {
 		log.Printf("heartbeater: send catalog request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent catalog.payloads_request (station=%s)", h.stationID)
@@ -175,7 +158,8 @@ func (h *Heartbeater) sendHeartbeat() {
 		log.Printf("heartbeater: build heartbeat: %v", err)
 		return
 	}
-	if err := h.publishWithRetry(env, "heartbeat"); err != nil {
+	h.sender.DebugLog = h.DebugLog
+	if err := h.sender.PublishEnvelope(env, "heartbeat"); err != nil {
 		log.Printf("heartbeater: send heartbeat failed after retries: %v", err)
 	} else {
 		h.DebugLog.log("heartbeat sent uptime=%ds orders=%d", uptime, activeOrders)

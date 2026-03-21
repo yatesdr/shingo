@@ -71,7 +71,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			}
 			return ""
 		},
-		"buildVer": func() string { return buildVer },
+		"buildVer":  func() string { return buildVer },
 		"cacheBust": func() string { return fmt.Sprintf("%x", time.Now().UnixNano()) },
 		"formatTime": func(t time.Time) template.HTML {
 			if t.IsZero() {
@@ -247,6 +247,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 
 			// Manual message
 			r.Post("/manual-message", h.apiSendManualMessage)
+			r.Post("/diagnostics/outbox/replay", h.apiReplayOutbox)
+			r.Post("/diagnostics/orders/sync", h.apiRequestOrderStatusSync)
 
 			// Operator screens (designer CRUD)
 			r.Post("/operator-screens", h.apiCreateOperatorScreen)

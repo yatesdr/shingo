@@ -56,11 +56,11 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 
 	// Phase 1: Submit retrieve order
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "retrieve-uuid-1",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-A",
-		DeliveryNode:    lineNode.Name,
-		Quantity:        1.0,
+		OrderUUID:    "retrieve-uuid-1",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-A",
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
 	})
 
 	// Verify order was created
@@ -134,12 +134,12 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 
 	// Phase 1: Submit move order
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "move-uuid-1",
-		OrderType:       OrderTypeMove,
-		PayloadCode: "PART-A",
-		PickupNode:      storageNode.Name,
-		DeliveryNode:    lineNode.Name,
-		Quantity:        1.0,
+		OrderUUID:    "move-uuid-1",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  "PART-A",
+		PickupNode:   storageNode.Name,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
 	})
 
 	if len(emitter.received) != 1 {
@@ -184,11 +184,11 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 
 	// Phase 1: Submit store order
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "store-uuid-1",
-		OrderType:       OrderTypeStore,
+		OrderUUID:   "store-uuid-1",
+		OrderType:   OrderTypeStore,
 		PayloadCode: "PART-A",
-		PickupNode:      lineNode.Name,
-		Quantity:        1.0,
+		PickupNode:  lineNode.Name,
+		Quantity:    1.0,
 	})
 
 	// Store orders should select a storage destination
@@ -227,11 +227,11 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 
 	// Submit retrieve order — dispatch will claim the bin
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "cancel-uuid-1",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-A",
-		DeliveryNode:    lineNode.Name,
-		Quantity:        1.0,
+		OrderUUID:    "cancel-uuid-1",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-A",
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
 	})
 
 	order, _ := db.GetOrderByUUID("cancel-uuid-1")
@@ -287,12 +287,12 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 
 	// Submit move order from storage to line1
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "redirect-uuid-1",
-		OrderType:       OrderTypeMove,
-		PayloadCode: "PART-A",
-		PickupNode:      storageNode.Name,
-		DeliveryNode:    lineNode.Name,
-		Quantity:        1.0,
+		OrderUUID:    "redirect-uuid-1",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  "PART-A",
+		PickupNode:   storageNode.Name,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
 	})
 
 	// Redirect to line2
@@ -358,11 +358,11 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	// Submit retrieve order targeting synthetic parent — delivery should resolve
 	// to child1 (empty slot), source should pick srcPayload via FIFO
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "syn-retrieve-1",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-A",
-		DeliveryNode:    parentNode.Name,
-		Quantity:        1.0,
+		OrderUUID:    "syn-retrieve-1",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-A",
+		DeliveryNode: parentNode.Name,
+		Quantity:     1.0,
 	})
 
 	// Verify order was dispatched (not failed)
@@ -445,27 +445,27 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 
 	// Order 1: payload A -> PRESS-A1
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "multi-1",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-MULTI-A",
-		DeliveryNode:    zone.Name,
-		Quantity:        1,
+		OrderUUID:    "multi-1",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-MULTI-A",
+		DeliveryNode: zone.Name,
+		Quantity:     1,
 	})
 	// Order 2: payload A -> PRESS-A1
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "multi-2",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-MULTI-A",
-		DeliveryNode:    zone.Name,
-		Quantity:        1,
+		OrderUUID:    "multi-2",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-MULTI-A",
+		DeliveryNode: zone.Name,
+		Quantity:     1,
 	})
 	// Order 3: payload B -> PRESS-A1
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "multi-3",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-MULTI-B",
-		DeliveryNode:    zone.Name,
-		Quantity:        1,
+		OrderUUID:    "multi-3",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-MULTI-B",
+		DeliveryNode: zone.Name,
+		Quantity:     1,
 	})
 
 	if len(emitter.failed) > 0 {
@@ -497,11 +497,11 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	// A 4th order should fail — all 3 slots are in-flight
 	failsBefore := len(emitter.failed)
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "multi-4",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-MULTI-A",
-		DeliveryNode:    zone.Name,
-		Quantity:        1,
+		OrderUUID:    "multi-4",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-MULTI-A",
+		DeliveryNode: zone.Name,
+		Quantity:     1,
 	})
 
 	// Resolution fails before order creation, so check emitter errors
@@ -556,12 +556,12 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	env := testEnvelope()
 
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "empty-1",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "EMPTY-BP",
-		DeliveryNode:    zone.Name,
-		RetrieveEmpty:   true,
-		Quantity:        1,
+		OrderUUID:     "empty-1",
+		OrderType:     OrderTypeRetrieve,
+		PayloadCode:   "EMPTY-BP",
+		DeliveryNode:  zone.Name,
+		RetrieveEmpty: true,
+		Quantity:      1,
 	})
 
 	if len(emitter.failed) > 0 {
@@ -611,11 +611,11 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 
 	// Use dot notation: "DOT-ZONE.SLOT-X" — resolves to physical child directly
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "dot-1",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-A",
-		DeliveryNode:    "DOT-ZONE.SLOT-X",
-		Quantity:        1,
+		OrderUUID:    "dot-1",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-A",
+		DeliveryNode: "DOT-ZONE.SLOT-X",
+		Quantity:     1,
 	})
 
 	if len(emitter.failed) > 0 {
@@ -649,11 +649,11 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 	env := testEnvelope()
 
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "fleet-fail-1",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-A",
-		DeliveryNode:    lineNode.Name,
-		Quantity:        1.0,
+		OrderUUID:    "fleet-fail-1",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-A",
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
 	})
 
 	// Order should be received then failed
@@ -705,22 +705,22 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 
 	// Submit low priority order
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "low-priority",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-A",
-		DeliveryNode:    lineNode.Name,
-		Quantity:        1.0,
-		Priority:        0,
+		OrderUUID:    "low-priority",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-A",
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
+		Priority:     0,
 	})
 
 	// Submit high priority order
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "high-priority",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-A",
-		DeliveryNode:    lineNode.Name,
-		Quantity:        1.0,
-		Priority:        10,
+		OrderUUID:    "high-priority",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-A",
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
+		Priority:     10,
 	})
 
 	// Both orders should be dispatched
@@ -750,11 +750,11 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 
 	env := testEnvelope()
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
-		OrderUUID:       "uuid-bin-track",
-		OrderType:       OrderTypeRetrieve,
-		PayloadCode: "PART-A",
-		DeliveryNode:    lineNode.Name,
-		Quantity:        1.0,
+		OrderUUID:    "uuid-bin-track",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  "PART-A",
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
 	})
 
 	order, err := db.GetOrderByUUID("uuid-bin-track")
@@ -803,11 +803,11 @@ func TestHandleOrderIngest(t *testing.T) {
 
 	env := testEnvelope()
 	d.HandleOrderIngest(env, &protocol.OrderIngestRequest{
-		OrderUUID:     "uuid-ingest-1",
+		OrderUUID:   "uuid-ingest-1",
 		PayloadCode: bp.Code,
-		BinLabel:      "BIN-ING-1",
-		PickupNode:    "PRODUCE-1",
-		Quantity:      100,
+		BinLabel:    "BIN-ING-1",
+		PickupNode:  "PRODUCE-1",
+		Quantity:    100,
 		Manifest: []protocol.IngestManifestItem{
 			{PartNumber: "PN-001", Quantity: 50, Description: "Bolt M8"},
 			{PartNumber: "PN-002", Quantity: 50, Description: "Washer M8"},

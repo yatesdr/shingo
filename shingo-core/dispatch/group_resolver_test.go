@@ -86,7 +86,7 @@ func setupNodeGroup(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store
 		for d := 1; d <= 3; d++ {
 			depth := d
 			slot := &store.Node{
-				Name: fmt.Sprintf("GRP-1-L%d-S%d", i+1, d),
+				Name:     fmt.Sprintf("GRP-1-L%d-S%d", i+1, d),
 				ParentID: &lane.ID, Enabled: true, Depth: &depth,
 			}
 			if err := db.CreateNode(slot); err != nil {

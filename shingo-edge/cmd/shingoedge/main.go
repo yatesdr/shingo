@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"shingoedge/config"
+	"shingo/protocol"
 	"shingo/protocol/debuglog"
+	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/messaging"
-	"shingo/protocol"
 	"shingoedge/store"
 	"shingoedge/www"
 )
@@ -112,8 +112,10 @@ func main() {
 	defer msgClient.Close()
 
 	// Wire send function and reconnect unconditionally — they self-gate on connection state
+	dataSender := messaging.NewDataSender(msgClient, cfg.Messaging.OrdersTopic, nil)
+	dataSender.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
 	eng.SetSendFunc(func(env *protocol.Envelope) error {
-		return msgClient.PublishEnvelope(cfg.Messaging.OrdersTopic, env)
+		return dataSender.PublishEnvelope(env, "core data sync")
 	})
 	eng.SetKafkaReconnectFunc(msgClient.Reconnect)
 
@@ -170,9 +172,6 @@ func main() {
 		hb.Start()
 		defer hb.Stop()
 
-		// Wire re-registration request from core
-		edgeHandler.SetRegisterRequestHandler(hb.SendRegister)
-
 		// Wire node sync so edge UI can trigger a re-request
 		eng.SetNodeSyncFunc(hb.RequestNodeSync)
 
@@ -180,7 +179,20 @@ func main() {
 		edgeHandler.SetPayloadCatalogHandler(func(entries []protocol.CatalogPayloadInfo) {
 			eng.HandlePayloadCatalog(entries)
 		})
+		edgeHandler.SetOrderStatusHandler(func(items []protocol.OrderStatusSnapshot) {
+			eng.HandleOrderStatusSnapshots(items)
+		})
 		eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+		edgeHandler.SetRegisterRequestHandler(func() {
+			hb.SendRegister()
+			if err := eng.StartupReconcile(); err != nil {
+				log.Printf("startup reconcile after register request: %v", err)
+			}
+		})
+
+		if err := eng.StartupReconcile(); err != nil {
+			log.Printf("initial startup reconcile: %v", err)
+		}
 	}
 
 	// Set up HTTP server

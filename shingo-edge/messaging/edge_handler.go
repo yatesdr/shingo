@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"shingoedge/orders"
 	"shingo/protocol"
+	"shingoedge/orders"
 )
 
 // EdgeHandler handles inbound protocol messages on the dispatch topic.
@@ -14,10 +14,11 @@ import (
 type EdgeHandler struct {
 	protocol.NoOpHandler
 
-	orderMgr           *orders.Manager
-	onCoreNodes        func([]protocol.NodeInfo)
-	onPayloadCatalog   func([]protocol.CatalogPayloadInfo)
-	onRegisterReq      func()
+	orderMgr         *orders.Manager
+	onCoreNodes      func([]protocol.NodeInfo)
+	onPayloadCatalog func([]protocol.CatalogPayloadInfo)
+	onRegisterReq    func()
+	onOrderStatuses  func([]protocol.OrderStatusSnapshot)
 
 	DebugLog DebugLogFunc
 }
@@ -37,6 +38,9 @@ func (h *EdgeHandler) SetPayloadCatalogHandler(fn func([]protocol.CatalogPayload
 	h.onPayloadCatalog = fn
 }
 
+func (h *EdgeHandler) SetOrderStatusHandler(fn func([]protocol.OrderStatusSnapshot)) {
+	h.onOrderStatuses = fn
+}
 
 func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 	h.DebugLog.log("data subject=%s from=%s", p.Subject, env.Src.Station)
@@ -81,6 +85,15 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 		log.Printf("edge_handler: received payload catalog (%d entries)", len(resp.Payloads))
 		if h.onPayloadCatalog != nil {
 			h.onPayloadCatalog(resp.Payloads)
+		}
+	case protocol.SubjectOrderStatusResponse:
+		var resp protocol.OrderStatusResponse
+		if err := json.Unmarshal(p.Body, &resp); err != nil {
+			log.Printf("edge_handler: decode order status response: %v", err)
+			return
+		}
+		if h.onOrderStatuses != nil {
+			h.onOrderStatuses(resp.Orders)
 		}
 	case protocol.SubjectTagVerifyResponse:
 		var resp protocol.TagVerifyResponse

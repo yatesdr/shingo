@@ -111,6 +111,14 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox(sent_at) WHERE sent_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS inbox (
+    msg_id       TEXT PRIMARY KEY,
+    msg_type     TEXT NOT NULL DEFAULT '',
+    station_id   TEXT NOT NULL DEFAULT '',
+    processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_processed_at ON inbox(processed_at);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id          BIGSERIAL PRIMARY KEY,
     entity_type TEXT NOT NULL,
@@ -122,6 +130,17 @@ CREATE TABLE IF NOT EXISTS audit_log (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
+
+CREATE TABLE IF NOT EXISTS recovery_actions (
+    id          BIGSERIAL PRIMARY KEY,
+    action      TEXT NOT NULL,
+    target_type TEXT NOT NULL,
+    target_id   BIGINT NOT NULL DEFAULT 0,
+    detail      TEXT NOT NULL DEFAULT '',
+    actor       TEXT NOT NULL DEFAULT 'system',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_recovery_actions_created ON recovery_actions(created_at);
 
 CREATE TABLE IF NOT EXISTS corrections (
     id               BIGSERIAL PRIMARY KEY,

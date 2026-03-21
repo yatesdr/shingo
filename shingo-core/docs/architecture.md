@@ -124,6 +124,24 @@ OutboxDrainer (runs every 5s)
 
 This ensures at-least-once delivery even when Kafka is temporarily unavailable.
 
+### Inbox Pattern
+
+Mutating inbound messages from edge stations are deduplicated using the envelope `id`:
+
+```
+Inbound envelope
+    |
+    v
+DB: INSERT INTO inbox (msg_id, msg_type, station_id)
+    |
+    |-- duplicate key -> drop replay
+    |
+    v
+CoreHandler -> Dispatcher
+```
+
+This suppresses replayed cancels, receipts, redirects, requests, releases, ingest commands, and other mutating commands without relying on best-effort in-memory state.
+
 ## Key Patterns
 
 ### EventBus
@@ -256,6 +274,21 @@ Connected browsers (GET /events)
 ```
 
 Event types sent to browsers: `order-update`, `node-update`, `payload-update`, `robot-update`, `debug-log`
+
+## Reconciliation And Recovery
+
+Core maintains reconciliation checks for:
+
+- terminal orders that still claim bins
+- completed orders with no linked bin
+- confirmed orders with no `completed_at`
+- pending and dead-lettered outbox backlog
+
+These are surfaced through:
+
+- `/diagnostics` for operator/admin visibility
+- `/api/reconciliation` for programmatic inspection
+- `/api/outbox/deadletters` and `/api/outbox/replay` for controlled recovery of dead-lettered outbound messages
 
 ## Testing
 

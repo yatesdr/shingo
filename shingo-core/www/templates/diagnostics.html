@@ -2,6 +2,8 @@
 <div class="diag-tabs">
   <button class="diag-tab active" onclick="switchDiagTab('debug')">Debug Log</button>
   <button class="diag-tab" onclick="switchDiagTab('cms')">CMS Transactions</button>
+  <button class="diag-tab" onclick="switchDiagTab('recon')">Reconciliation</button>
+  <button class="diag-tab" onclick="switchDiagTab('recovery')">Recovery</button>
 </div>
 
 <!-- Debug Log Tab -->
@@ -79,6 +81,140 @@
           </tr>
         </thead>
         <tbody id="cms-log-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Reconciliation Tab -->
+<div id="tab-recon" class="hide">
+  <div class="flex flex-between mb-2">
+    <h1>Reconciliation</h1>
+    <div class="text-muted" style="font-size:0.9rem;">
+      {{if .Recon}}
+        Total anomalies: {{.Recon.TotalAnomalies}} | Pending outbox: {{.Recon.OutboxPending}} | Stuck orders: {{.Recon.StuckOrders}} | Expired staged bins: {{.Recon.ExpiredStagedBins}}
+      {{end}}
+    </div>
+  </div>
+
+  <div class="card p-0">
+    <div class="debug-log-wrap">
+      <table class="debug-log-table">
+        <thead>
+          <tr>
+            <th style="width:130px;">Category</th>
+            <th style="width:100px;">Severity</th>
+            <th style="width:90px;">Order ID</th>
+            <th style="width:90px;">Bin ID</th>
+            <th style="width:120px;">Station</th>
+            <th style="width:140px;">Order Status</th>
+            <th style="width:120px;">Bin Status</th>
+            <th>Issue</th>
+            <th style="width:180px;">Action</th>
+          </tr>
+        </thead>
+        <tbody id="recon-body">
+          {{if .Anomalies}}
+            {{range .Anomalies}}
+            <tr>
+              <td>{{.Category}}</td>
+              <td>{{.Severity}}</td>
+              <td>{{if .OrderID}}{{.OrderID}}{{else}}-{{end}}</td>
+              <td>{{if .BinID}}{{.BinID}}{{else}}-{{end}}</td>
+              <td>{{if .StationID}}{{.StationID}}{{else}}-{{end}}</td>
+              <td>{{.OrderStatus}}</td>
+              <td>{{if .BinStatus}}{{.BinStatus}}{{else}}-{{end}}</td>
+              <td>{{.Issue}}</td>
+              <td>
+                {{if eq .RecommendedAction "reapply_completion"}}
+                <button class="btn btn-sm" onclick="repairAnomaly('reapply_completion', {{.OrderID}}, 0)">Reapply Completion</button>
+                {{else if eq .RecommendedAction "release_terminal_claim"}}
+                <button class="btn btn-sm" onclick="repairAnomaly('release_terminal_claim', {{.OrderID}}, {{.BinID}})">Release Claim</button>
+                {{else if eq .RecommendedAction "release_staged_bin"}}
+                <button class="btn btn-sm" onclick="repairAnomaly('release_staged_bin', 0, {{.BinID}})">Release Staged Bin</button>
+                {{else if eq .RecommendedAction "cancel_stuck_order"}}
+                <button class="btn btn-sm" onclick="repairAnomaly('cancel_stuck_order', {{.OrderID}}, 0)">Cancel Stuck Order</button>
+                {{else}}
+                <span class="text-muted">Manual review</span>
+                {{end}}
+              </td>
+            </tr>
+            {{end}}
+          {{else}}
+            <tr>
+              <td colspan="9" class="text-muted">No anomalies detected.</td>
+            </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Recovery Tab -->
+<div id="tab-recovery" class="hide">
+  <div class="flex flex-between mb-2">
+    <h1>Recovery</h1>
+    <div class="text-muted" style="font-size:0.9rem;">
+      {{if .Recon}}Dead letters: {{.Recon.DeadLetters}} | Use Reconciliation for state repairs{{end}}
+    </div>
+  </div>
+
+  <div class="card p-0">
+    <div class="debug-log-wrap">
+      <table class="debug-log-table">
+        <thead>
+          <tr>
+            <th style="width:80px;">ID</th>
+            <th style="width:160px;">Created</th>
+            <th style="width:160px;">Type</th>
+            <th style="width:120px;">Station</th>
+            <th style="width:80px;">Retries</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="recovery-body">
+          <tr>
+            <td colspan="6" class="text-muted">Open this tab to load dead-lettered outbox messages.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card p-0 mt-2">
+    <div class="debug-log-wrap">
+      <table class="debug-log-table">
+        <thead>
+          <tr>
+            <th style="width:80px;">ID</th>
+            <th style="width:160px;">Created</th>
+            <th style="width:160px;">Action</th>
+            <th style="width:100px;">Target</th>
+            <th style="width:80px;">Target ID</th>
+            <th style="width:120px;">Actor</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody id="recovery-actions-body">
+          {{if .RecoveryActions}}
+            {{range .RecoveryActions}}
+            <tr>
+              <td>{{.ID}}</td>
+              <td>{{formatTime .CreatedAt}}</td>
+              <td>{{.Action}}</td>
+              <td>{{.TargetType}}</td>
+              <td>{{.TargetID}}</td>
+              <td>{{.Actor}}</td>
+              <td>{{.Detail}}</td>
+            </tr>
+            {{end}}
+          {{else}}
+            <tr>
+              <td colspan="7" class="text-muted">No recovery actions recorded yet.</td>
+            </tr>
+          {{end}}
+        </tbody>
       </table>
     </div>
   </div>
