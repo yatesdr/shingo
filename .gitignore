@@ -39,6 +39,10 @@ Thumbs.db
 coverage.txt
 coverage.html
 
+# Go module cache (local builds)
+.cache/
+**/.cache/
+
 # Temp / scratch files
 scene.json
 scene.txt
