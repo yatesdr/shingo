@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingoedge/config"
@@ -28,6 +29,7 @@ type Service struct {
 	stopCh         chan struct{}
 	wg             sync.WaitGroup
 	storageFactory func(config.BackupS3Config) (Storage, error)
+	runFlag        atomic.Bool
 }
 
 func NewService(db *store.DB, cfg *config.Config, configPath, appVersion string, logf func(string, ...any)) *Service {
@@ -256,6 +258,11 @@ func (s *Service) shouldRunScheduled() bool {
 }
 
 func (s *Service) runBackup(ctx context.Context, reason string) error {
+	if !s.runFlag.CompareAndSwap(false, true) {
+		return fmt.Errorf("backup already running")
+	}
+	defer s.runFlag.Store(false)
+
 	storage, stationID, backupCfg, err := s.storageFromConfig()
 	if err != nil {
 		s.markFailure(err)

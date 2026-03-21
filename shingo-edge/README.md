@@ -75,6 +75,7 @@ Without a filter (`--log-debug`), all subsystems are logged.
 |------|-------------|
 | `--config PATH` | Path to config file (default: `shingoedge.yaml`) |
 | `-port PORT` | HTTP port override |
+| `--restore` | Interactive restore from S3-compatible backup storage before startup |
 | `--log-debug[=FILTER]` | Enable debug logging with optional subsystem filter |
 
 ## Operator Interface
@@ -143,6 +144,7 @@ Each payload can be configured with a reorder threshold. When PLC counters decre
 
 | Document | Description |
 |----------|-------------|
+| [Backup and Restore](docs/backup-restore.md) | Backup configuration, automatic backup behavior, and dead-machine restore procedure |
 | [UI Guide](docs/ui-guide.md) | Operator interface pages and workflows |
 | [Wire Protocol](../docs/wire-protocol.md) | Kafka messaging protocol specification |
 | [Terminology](../docs/terminology.md) | Domain terms and vendor mapping |
