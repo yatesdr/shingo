@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"log"
 	"time"
 )
 
@@ -52,9 +53,9 @@ const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.payload_id, o.r
 	COALESCE(p.description, ''), COALESCE(p.location, ''), COALESCE(p.payload_code, ''), COALESCE(pl.name, '')`
 
 const orderJoin = `FROM orders o
-	LEFT JOIN payloads p ON p.id = o.payload_id
-	LEFT JOIN job_styles js ON js.id = p.job_style_id
-	LEFT JOIN production_lines pl ON pl.id = js.line_id`
+	LEFT JOIN material_slots p ON p.id = o.payload_id
+	LEFT JOIN styles js ON js.id = p.job_style_id
+	LEFT JOIN processes pl ON pl.id = js.line_id`
 
 func (db *DB) ListOrders() ([]Order, error) {
 	rows, err := db.Query(`SELECT ` + orderSelectCols + ` ` + orderJoin + ` ORDER BY o.created_at DESC`)
@@ -78,7 +79,10 @@ func (db *DB) ListActiveOrders() ([]Order, error) {
 
 func (db *DB) CountActiveOrders() int {
 	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('confirmed', 'cancelled', 'failed')`).Scan(&count)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('confirmed', 'cancelled', 'failed')`).Scan(&count); err != nil {
+		log.Printf("count active orders: %v", err)
+		return 0
+	}
 	return count
 }
 

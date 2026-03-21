@@ -26,16 +26,16 @@ func parseID(r *http.Request, param string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)
 }
 
-// resolvePayload loads a payload by ID and returns a pointer for order linking.
-// Returns (nil, nil) if id is zero. Returns (ptr, nil) if the payload can't be found.
-func (h *Handlers) resolvePayload(id int64) (payloadPtr *int64, p *store.Payload) {
+// resolveSlot loads a material slot by ID and returns a pointer for order linking.
+// Returns (nil, nil) if id is zero. Returns (ptr, nil) if the slot can't be found.
+func (h *Handlers) resolveSlot(id int64) (slotPtr *int64, p *store.MaterialSlot) {
 	if id <= 0 {
 		return nil, nil
 	}
-	payloadPtr = &id
-	payload, err := h.engine.DB().GetPayload(id)
+	slotPtr = &id
+	slot, err := h.engine.DB().GetSlot(id)
 	if err != nil {
-		return payloadPtr, nil
+		return slotPtr, nil
 	}
-	return payloadPtr, payload
+	return slotPtr, slot
 }

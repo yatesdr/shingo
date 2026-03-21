@@ -22,13 +22,7 @@ type ProductionReporter struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 
-	DebugLog func(string, ...any)
-}
-
-func (pr *ProductionReporter) dbg(format string, args ...any) {
-	if fn := pr.DebugLog; fn != nil {
-		fn(format, args...)
-	}
+	DebugLog DebugLogFunc
 }
 
 // NewProductionReporter creates a reporter for the given edge identity.
@@ -48,7 +42,7 @@ func (pr *ProductionReporter) RecordDelta(jobStyleID int64, delta int64) {
 	if delta <= 0 {
 		return
 	}
-	style, err := pr.db.GetJobStyle(jobStyleID)
+	style, err := pr.db.GetStyle(jobStyleID)
 	if err != nil || style == nil || len(style.CatIDs) == 0 {
 		return
 	}
@@ -57,7 +51,7 @@ func (pr *ProductionReporter) RecordDelta(jobStyleID int64, delta int64) {
 		pr.accumulator[catID] += float64(delta)
 	}
 	pr.mu.Unlock()
-	pr.dbg("delta recorded: style=%d delta=%d cat_ids=%v", jobStyleID, delta, style.CatIDs)
+	pr.DebugLog.log("delta recorded: style=%d delta=%d cat_ids=%v", jobStyleID, delta, style.CatIDs)
 }
 
 // Start begins the periodic flush loop.
@@ -92,7 +86,7 @@ func (pr *ProductionReporter) flush() {
 		pr.mu.Unlock()
 		return
 	}
-	// Swap out the accumulator
+	// Swap out the accumulator so new deltas don't block on this flush.
 	snapshot := pr.accumulator
 	pr.accumulator = make(map[string]float64)
 	pr.mu.Unlock()
@@ -113,17 +107,29 @@ func (pr *ProductionReporter) flush() {
 	)
 	if err != nil {
 		log.Printf("production_reporter: build envelope: %v", err)
+		pr.restoreSnapshot(snapshot)
 		return
 	}
 	data, err := env.Encode()
 	if err != nil {
 		log.Printf("production_reporter: encode envelope: %v", err)
+		pr.restoreSnapshot(snapshot)
 		return
 	}
 	if _, err := pr.db.EnqueueOutbox(data, protocol.SubjectProductionReport); err != nil {
-		log.Printf("production_reporter: enqueue outbox: %v", err)
+		log.Printf("ERROR: production_reporter: enqueue outbox failed, restoring deltas: %v", err)
+		pr.restoreSnapshot(snapshot)
 	} else {
-		log.Printf("production_reporter: enqueued %d cat_id entries via outbox", len(entries))
-		pr.dbg("flush: enqueued %d cat_id entries", len(entries))
+		pr.DebugLog.log("flush: enqueued %d cat_id entries", len(entries))
 	}
+}
+
+// restoreSnapshot merges a failed snapshot back into the accumulator so
+// deltas are not lost when the outbox write fails.
+func (pr *ProductionReporter) restoreSnapshot(snapshot map[string]float64) {
+	pr.mu.Lock()
+	for catID, count := range snapshot {
+		pr.accumulator[catID] += count
+	}
+	pr.mu.Unlock()
 }

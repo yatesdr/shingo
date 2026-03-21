@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"log"
+	"time"
+)
 
 type PayloadCatalogEntry struct {
 	ID          int64     `json:"id"`
@@ -31,6 +34,7 @@ func (db *DB) ListPayloadCatalog() ([]*PayloadCatalogEntry, error) {
 	for rows.Next() {
 		e := &PayloadCatalogEntry{}
 		if err := rows.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.UpdatedAt); err != nil {
+			log.Printf("scan payload catalog row: %v", err)
 			continue
 		}
 		entries = append(entries, e)

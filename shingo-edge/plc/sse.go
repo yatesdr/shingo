@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"math/rand"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -108,26 +107,14 @@ func (m *Manager) sseConnect() error {
 
 	defer cancel()
 
-	url := m.baseURL() + "/events?types=value-change,status-change,health"
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	stream, err := m.wl.OpenEventStream(ctx)
 	if err != nil {
-		return fmt.Errorf("SSE request: %w", err)
-	}
-	req.Header.Set("Accept", "text/event-stream")
-
-	resp, err := m.sseClient.Do(req)
-	if err != nil {
-		// Context cancellation is a clean shutdown
 		if ctx.Err() != nil {
-			return nil
+			return nil // clean shutdown
 		}
-		return fmt.Errorf("SSE connect: %w", err)
+		return err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("SSE status %d", resp.StatusCode)
-	}
+	defer stream.Close()
 
 	// Connected — REST bootstrap to populate cache before processing SSE events
 	m.warlinkPollTick()
@@ -138,7 +125,7 @@ func (m *Manager) sseConnect() error {
 	m.warlinkError = nil
 	m.mu.Unlock()
 	if wasDisconnected {
-		log.Printf("WarLink SSE connected: %s", url)
+		log.Printf("WarLink SSE connected: %s", m.baseURL())
 		m.emitter.EmitWarLinkConnected()
 	}
 
@@ -156,7 +143,7 @@ func (m *Manager) sseConnect() error {
 		}
 	}()
 
-	reader := NewSSEReader(resp.Body)
+	reader := NewSSEReader(stream)
 	for {
 		ev, err := reader.Next()
 		if err != nil {

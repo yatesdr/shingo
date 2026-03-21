@@ -12,5 +12,5 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		"Subsystems": h.debugLog.Subsystems(),
 		"Subsystem":  subsystem,
 	}
-	h.renderTemplate(w, "diagnostics.html", data)
+	h.renderTemplate(w, r, "diagnostics.html", data)
 }

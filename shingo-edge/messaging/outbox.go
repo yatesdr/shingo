@@ -17,13 +17,7 @@ type OutboxDrainer struct {
 	stopChan chan struct{}
 	wg       sync.WaitGroup
 
-	DebugLog func(string, ...any)
-}
-
-func (d *OutboxDrainer) dbg(format string, args ...any) {
-	if fn := d.DebugLog; fn != nil {
-		fn(format, args...)
-	}
+	DebugLog DebugLogFunc
 }
 
 // NewOutboxDrainer creates a new outbox drainer.
@@ -76,7 +70,7 @@ func (d *OutboxDrainer) drainLoop() {
 					log.Printf("purge old outbox: %v", err)
 				} else if n > 0 {
 					log.Printf("purged %d old outbox messages", n)
-					d.dbg("purged %d old outbox messages", n)
+					d.DebugLog.log("purged %d old outbox messages", n)
 				}
 			}
 		}
@@ -95,7 +89,7 @@ func (d *OutboxDrainer) drain() {
 	}
 
 	if len(msgs) > 0 {
-		d.dbg("drain cycle: %d pending messages", len(msgs))
+		d.DebugLog.log("drain cycle: %d pending messages", len(msgs))
 	}
 
 	for _, msg := range msgs {
@@ -103,16 +97,17 @@ func (d *OutboxDrainer) drain() {
 		if err := d.client.Publish(topic, msg.Payload); err != nil {
 			d.db.IncrementOutboxRetries(msg.ID)
 			if msg.Retries+1 >= store.MaxOutboxRetries {
-				log.Printf("outbox msg %d dead-lettered after %d retries (type=%s): %v", msg.ID, msg.Retries+1, msg.MsgType, err)
+				log.Printf("ERROR: outbox msg %d dead-lettered after %d retries (type=%s): %v", msg.ID, msg.Retries+1, msg.MsgType, err)
+				d.DebugLog.log("DEAD-LETTER: msg %d type=%s retries=%d err=%v", msg.ID, msg.MsgType, msg.Retries+1, err)
 			} else {
-				log.Printf("publish outbox msg %d (retry %d/%d): %v", msg.ID, msg.Retries+1, store.MaxOutboxRetries, err)
+				d.DebugLog.log("retry: msg %d type=%s attempt=%d/%d err=%v", msg.ID, msg.MsgType, msg.Retries+1, store.MaxOutboxRetries, err)
 			}
 			continue
 		}
 		if err := d.db.AckOutbox(msg.ID); err != nil {
 			log.Printf("ack outbox msg %d: %v", msg.ID, err)
 		} else {
-			d.dbg("published outbox msg %d type=%s", msg.ID, msg.MsgType)
+			d.DebugLog.log("published outbox msg %d type=%s", msg.ID, msg.MsgType)
 		}
 	}
 }

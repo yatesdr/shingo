@@ -10,7 +10,7 @@
 // reverse map. When an unknown order ID arrives (externally created order),
 // we re-fetch /api/orders/active to rebuild the map.
 //
-// /api/payloads is admin-only, so we DON'T call it. Auto-generated screens
+// /api/material-slots is admin-only, so we DON'T call it. Auto-generated screens
 // have current state baked into the shape configs. Designer screens may show
 // briefly stale counts until the first SSE event arrives.
 // ─────────────────────────────────────────────────────────────────────

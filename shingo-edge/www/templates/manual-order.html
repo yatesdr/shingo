@@ -21,7 +21,7 @@
             <label>Payload</label>
             <select id="mo-payload" class="form-input" onchange="autofillPayloadNodes()">
                 <option value="">-- Select --</option>
-                {{range .Payloads}}
+                {{range .Slots}}
                 <option value="{{.ID}}" data-location="{{.Location}}" data-staging="{{.StagingNode}}" data-retrieve-empty="{{.RetrieveEmpty}}">{{.Description}} ({{.Location}})</option>
                 {{end}}
             </select>

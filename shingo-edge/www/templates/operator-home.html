@@ -19,10 +19,10 @@
 <div class="op-home">
     <h1>Operator Screens</h1>
 
-    {{if .Lines}}
+    {{if .Processes}}
     <div class="section-label">Production Lines</div>
     <div class="card-grid">
-        {{range .Lines}}
+        {{range .Processes}}
         <a href="/operator/cell/{{.ID}}" class="card">
             <h3>{{.Name}}</h3>
             <div class="meta">{{.Description}}</div>
@@ -45,7 +45,7 @@
     </div>
     {{end}}
 
-    {{if and (not .Lines) (not .Screens)}}
+    {{if and (not .Processes) (not .Screens)}}
     <div class="empty-state">
         <h2>No production lines configured</h2>
         <p>Add lines in Setup to get started, or create a custom screen in the designer.</p>

@@ -8,6 +8,15 @@ import (
 	"shingoedge/store"
 )
 
+// DebugLogFunc is a nil-safe debug logging function.
+type DebugLogFunc func(format string, args ...any)
+
+func (fn DebugLogFunc) log(format string, args ...any) {
+	if fn != nil {
+		fn(format, args...)
+	}
+}
+
 // Machine manages the changeover state machine for a production line.
 type Machine struct {
 	mu           sync.Mutex
@@ -20,13 +29,7 @@ type Machine struct {
 	state        string
 	active       bool
 
-	DebugLog func(string, ...any)
-}
-
-func (m *Machine) dbg(format string, args ...any) {
-	if fn := m.DebugLog; fn != nil {
-		fn(format, args...)
-	}
+	DebugLog DebugLogFunc
 }
 
 // NewMachine creates a changeover state machine for a specific production line.
@@ -56,7 +59,7 @@ func (m *Machine) Restore() {
 	m.state = entry.State
 	m.active = true
 	m.mu.Unlock()
-	m.dbg("restore: line=%d state=%s %s->%s", m.lineID, entry.State, entry.FromJobStyle, entry.ToJobStyle)
+	m.DebugLog.log("restore: line=%d state=%s %s->%s", m.lineID, entry.State, entry.FromJobStyle, entry.ToJobStyle)
 	log.Printf("changeover: restored in-progress changeover for line %d (state=%s, %s→%s)", m.lineID, entry.State, entry.FromJobStyle, entry.ToJobStyle)
 }
 
@@ -100,13 +103,17 @@ func (m *Machine) Start(fromJobStyle, toJobStyle, operator string) error {
 		return fmt.Errorf("changeover already in progress from %s to %s", m.fromJobStyle, m.toJobStyle)
 	}
 
+	// Persist to DB first — if this fails, don't modify in-memory state.
+	if err := m.logTransition(fromJobStyle, toJobStyle, StateRunning, StateStopping, "changeover initiated", operator); err != nil {
+		return fmt.Errorf("log changeover start: %w", err)
+	}
+
 	m.fromJobStyle = fromJobStyle
 	m.toJobStyle = toJobStyle
 	m.state = StateStopping
 	m.active = true
 
-	m.dbg("start: line=%d %s->%s", m.lineID, fromJobStyle, toJobStyle)
-	m.logTransition(StateRunning, StateStopping, "changeover initiated", operator)
+	m.DebugLog.log("start: line=%d %s->%s", m.lineID, fromJobStyle, toJobStyle)
 	m.emitter.EmitChangeoverStarted(m.lineID, fromJobStyle, toJobStyle)
 	m.emitter.EmitChangeoverStateChanged(m.lineID, fromJobStyle, toJobStyle, StateRunning, StateStopping)
 
@@ -128,10 +135,15 @@ func (m *Machine) Advance(operator string) error {
 	}
 
 	oldState := m.state
-	m.state = next
-	m.dbg("advance: line=%d %s->%s", m.lineID, oldState, next)
 
-	m.logTransition(oldState, next, "", operator)
+	// Persist to DB first — if this fails, don't modify in-memory state.
+	if err := m.logTransition(m.fromJobStyle, m.toJobStyle, oldState, next, "", operator); err != nil {
+		return fmt.Errorf("log changeover advance: %w", err)
+	}
+
+	m.state = next
+	m.DebugLog.log("advance: line=%d %s->%s", m.lineID, oldState, next)
+
 	m.emitter.EmitChangeoverStateChanged(m.lineID, m.fromJobStyle, m.toJobStyle, oldState, next)
 
 	// If we've returned to Running, the changeover is complete
@@ -154,21 +166,28 @@ func (m *Machine) Cancel(operator string) error {
 
 	oldState := m.state
 	from, to := m.fromJobStyle, m.toJobStyle
-	m.dbg("cancel: line=%d from_state=%s", m.lineID, oldState)
+
+	// Persist to DB first — if this fails, don't modify in-memory state.
+	if err := m.logTransition(from, to, oldState, StateRunning, "changeover cancelled", operator); err != nil {
+		return fmt.Errorf("log changeover cancel: %w", err)
+	}
+
+	m.DebugLog.log("cancel: line=%d from_state=%s", m.lineID, oldState)
 	m.state = StateRunning
 	m.active = false
 	m.fromJobStyle = ""
 	m.toJobStyle = ""
 
-	m.logTransition(oldState, StateRunning, "changeover cancelled", operator)
 	m.emitter.EmitChangeoverStateChanged(m.lineID, from, to, oldState, StateRunning)
 	m.emitter.EmitChangeoverCancelled(m.lineID, from, to, operator)
 
 	return nil
 }
 
-func (m *Machine) logTransition(oldState, newState, detail, operator string) {
-	if _, err := m.db.InsertChangeoverLog(m.fromJobStyle, m.toJobStyle, newState, detail, operator, m.lineID); err != nil {
+func (m *Machine) logTransition(from, to, oldState, newState, detail, operator string) error {
+	_, err := m.db.InsertChangeoverLog(from, to, newState, detail, operator, m.lineID)
+	if err != nil {
 		log.Printf("insert changeover log: %v", err)
 	}
+	return err
 }

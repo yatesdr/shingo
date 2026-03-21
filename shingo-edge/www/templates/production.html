@@ -1,10 +1,10 @@
 {{template "header" .}}
 
 <div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.75rem">
-    {{if .Lines}}
+    {{if .Processes}}
     <select class="form-input" style="width:14rem" id="prod-line-select" onchange="onProdLineChange()">
-        {{range .Lines}}
-        <option value="{{.ID}}" {{if eq .ID $.ActiveLineID}}selected{{end}}>{{.Name}}</option>
+        {{range .Processes}}
+        <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
     </select>
     {{end}}
@@ -40,7 +40,7 @@
      data-shifts='{{.ShiftsJSON}}'
      data-hourly-counts='{{.HourlyCountsJSON}}'
      data-styles='{{.StylesJSON}}'
-     data-active-line-id="{{.ActiveLineID}}"
+     data-active-line-id="{{.ActiveProcessID}}"
      data-filter-style-id="{{.FilterStyleID}}"
      data-date="{{.Date}}">
 </div>

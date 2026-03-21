@@ -21,7 +21,8 @@ var buildVer = time.Now().Format("20060102150405")
 
 // Handlers holds dependencies for HTTP handlers.
 type Handlers struct {
-	engine   *engine.Engine
+	engine   EngineAccess
+	eng      *engine.Engine // concrete engine for EventBus/SSE wiring
 	sessions *sessionStore
 	tmpl     *template.Template
 	eventHub *EventHub
@@ -32,6 +33,7 @@ type Handlers struct {
 func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) {
 	h := &Handlers{
 		engine:   eng,
+		eng:      eng,
 		sessions: newSessionStore(eng.AppConfig().Web.SessionSecret),
 		eventHub: NewEventHub(),
 		debugLog: dbg,
@@ -93,7 +95,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 
 	h.eventHub.Start()
-	h.eventHub.SetupEngineListeners(eng)
+	h.eventHub.SetupEngineListeners(h.eng)
 
 	// Wire debug log entries to SSE broadcast
 	dbg.SetOnEntry(func(e debuglog.Entry) {
@@ -127,12 +129,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	r.Get("/material", h.handleMaterial)
 	r.Get("/kanbans", h.handleKanbans)
 	r.Get("/changeover", h.handleChangeover)
-	r.Get("/manual-order", h.handleManualOrder)
-	r.Get("/production", h.handleProduction)
-	r.Get("/operator", h.handleOperatorScreenList)
+
+	// Operator display/cell views are public (shop floor monitors)
 	r.Get("/operator/cell/{id}", h.handleOperatorCellDisplay)
 	r.Get("/operator/display/{id}", h.handleOperatorDisplay)
-	r.Get("/operator/designer", h.handleOperatorDesigner)
 
 	// Login/logout
 	r.Get("/login", h.handleLoginPage)
@@ -143,6 +143,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	r.Group(func(r chi.Router) {
 		r.Use(h.adminMiddleware)
 		r.Get("/setup", h.handleSetup)
+		r.Get("/production", h.handleProduction)
+		r.Get("/manual-order", h.handleManualOrder)
+		r.Get("/operator", h.handleOperatorScreenList)
+		r.Get("/operator/designer", h.handleOperatorDesigner)
 		r.Get("/manual-message", h.handleManualMessage)
 		r.Get("/diagnostics", h.handleDiagnostics)
 	})
@@ -165,14 +169,14 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
 		r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
 		r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
-		r.Post("/orders/{orderID}/abort", h.apiAbortOrder)
+		r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
 		r.Post("/orders/{orderID}/redirect", h.apiRedirectOrder)
 		r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
-		r.Put("/payloads/{id}/count", h.apiPayloadCount)
-		r.Put("/payloads/{id}/reorder-point", h.apiUpdateReorderPoint)
-		r.Put("/payloads/{id}/auto-reorder", h.apiToggleAutoReorder)
+		r.Put("/material-slots/{id}/count", h.apiSlotCount)
+		r.Put("/material-slots/{id}/reorder-point", h.apiUpdateReorderPoint)
+		r.Put("/material-slots/{id}/auto-reorder", h.apiToggleAutoReorder)
 		r.Get("/orders/active", h.apiGetActiveOrders)
-		r.Get("/payloads/line/{lineID}", h.apiListPayloadsByLinePublic)
+		r.Get("/material-slots/process/{processID}", h.apiListSlotsByProcessPublic)
 		r.Get("/hourly-counts", h.apiGetHourlyCounts)
 		r.Get("/core-nodes", h.apiGetCoreNodes)
 		r.Get("/payload-catalog", h.apiListPayloadCatalog)
@@ -195,34 +199,34 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			r.Put("/reporting-points/{id}", h.apiUpdateReportingPoint)
 			r.Delete("/reporting-points/{id}", h.apiDeleteReportingPoint)
 
-			// Production lines
-			r.Get("/lines", h.apiListLines)
-			r.Post("/lines", h.apiCreateLine)
-			r.Put("/lines/{id}", h.apiUpdateLine)
-			r.Delete("/lines/{id}", h.apiDeleteLine)
-			r.Put("/lines/{id}/active-style", h.apiSetActiveStyle)
-			r.Get("/lines/{id}/job-styles", h.apiListLineJobStyles)
-			r.Get("/lines/{id}/location-nodes", h.apiListLineLocationNodes)
+			// Processes
+			r.Get("/processes", h.apiListProcesses)
+			r.Post("/processes", h.apiCreateProcess)
+			r.Put("/processes/{id}", h.apiUpdateProcess)
+			r.Delete("/processes/{id}", h.apiDeleteProcess)
+			r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
+			r.Get("/processes/{id}/styles", h.apiListProcessStyles)
+			r.Get("/processes/{id}/nodes", h.apiListProcessNodes)
 
-			// Job styles
-			r.Get("/job-styles", h.apiListJobStyles)
-			r.Post("/job-styles", h.apiCreateJobStyle)
-			r.Put("/job-styles/{id}", h.apiUpdateJobStyle)
-			r.Delete("/job-styles/{id}", h.apiDeleteJobStyle)
-			r.Get("/job-styles/{id}/reporting-point", h.apiGetStyleReportingPoint)
+			// Styles
+			r.Get("/styles", h.apiListStyles)
+			r.Post("/styles", h.apiCreateStyle)
+			r.Put("/styles/{id}", h.apiUpdateStyle)
+			r.Delete("/styles/{id}", h.apiDeleteStyle)
+			r.Get("/styles/{id}/reporting-point", h.apiGetStyleReportingPoint)
 
-			// Payloads
-			r.Get("/payloads", h.apiListPayloads)
-			r.Post("/payloads", h.apiCreatePayload)
-			r.Get("/payloads/job-style/{jobStyleID}", h.apiListPayloadsByJobStyle)
-			r.Put("/payloads/{id}", h.apiUpdatePayload)
-			r.Delete("/payloads/{id}", h.apiDeletePayload)
+			// Material slots
+			r.Get("/material-slots", h.apiListSlots)
+			r.Post("/material-slots", h.apiCreateSlot)
+			r.Get("/material-slots/style/{styleID}", h.apiListSlotsByStyle)
+			r.Put("/material-slots/{id}", h.apiUpdateSlot)
+			r.Delete("/material-slots/{id}", h.apiDeleteSlot)
 
-			// Location nodes
-			r.Get("/location-nodes", h.apiListLocationNodes)
-			r.Post("/location-nodes", h.apiCreateLocationNode)
-			r.Put("/location-nodes/{id}", h.apiUpdateLocationNode)
-			r.Delete("/location-nodes/{id}", h.apiDeleteLocationNode)
+			// Nodes
+			r.Get("/nodes", h.apiListNodes)
+			r.Post("/nodes", h.apiCreateNode)
+			r.Put("/nodes/{id}", h.apiUpdateNode)
+			r.Delete("/nodes/{id}", h.apiDeleteNode)
 
 			// Core nodes
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
@@ -273,7 +277,11 @@ func (h *Handlers) adminMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (h *Handlers) renderTemplate(w http.ResponseWriter, name string, data interface{}) {
+func (h *Handlers) renderTemplate(w http.ResponseWriter, r *http.Request, name string, data interface{}) {
+	if m, ok := data.(map[string]interface{}); ok {
+		_, isAuth := h.sessions.getUser(r)
+		m["Authenticated"] = isAuth
+	}
 	if err := h.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}

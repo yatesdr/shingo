@@ -101,7 +101,7 @@
     <div class="section-header" onclick="toggleSection('section-lines')">
         <h2><span class="section-chevron">&#9662;</span> Processes</h2>
     </div>
-    {{range .Lines}}
+    {{range .Processes}}
     <div class="card" style="margin-bottom:0.75rem" data-line-id="{{.ID}}">
         <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
             <div style="display:flex;align-items:center;gap:0.75rem">
@@ -267,7 +267,7 @@
 <div class="modal" id="node-add" style="display:none">
     <div class="modal-content">
         <div class="card">
-            <div class="modal-header">Add Location Node <button class="btn btn-sm" onclick="ShingoEdge.hideModal('node-add')">&times;</button></div>
+            <div class="modal-header">Add Node <button class="btn btn-sm" onclick="ShingoEdge.hideModal('node-add')">&times;</button></div>
             <div class="card-body" id="node-add-form">
                 <input type="hidden" name="line_id">
                 <div class="form-group"><label>Node ID</label>
@@ -292,7 +292,7 @@
 <div class="modal" id="node-edit" style="display:none">
     <div class="modal-content">
         <div class="card">
-            <div class="modal-header">Edit Location Node <button class="btn btn-sm" onclick="ShingoEdge.hideModal('node-edit')">&times;</button></div>
+            <div class="modal-header">Edit Node <button class="btn btn-sm" onclick="ShingoEdge.hideModal('node-edit')">&times;</button></div>
             <div class="card-body" id="node-edit-form">
                 <input type="hidden" name="id">
                 <input type="hidden" name="line_id">
@@ -317,33 +317,33 @@
 <!-- 2. Payloads -->
 <div class="setup-section" id="section-payload">
     <div class="section-header" onclick="toggleSection('section-payload')">
-        <h2><span class="section-chevron">&#9662;</span> Define Payloads</h2>
+        <h2><span class="section-chevron">&#9662;</span> Material Slots</h2>
     </div>
     <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:flex-end">
         <div class="form-group" style="margin-bottom:0">
             <label>Process</label>
-            <select id="payload-line" class="form-input" style="width:200px" onchange="onPayloadLineChange()">
+            <select id="payload-line" class="form-input" style="width:200px" onchange="onSlotProcessChange()">
                 <option value="">-- Select Process --</option>
-                {{range .Lines}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+                {{range .Processes}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
             </select>
         </div>
         <div class="form-group" style="margin-bottom:0">
             <label>Style</label>
-            <select id="payload-job-style" class="form-input" style="width:200px" onchange="loadPayloads()">
+            <select id="payload-job-style" class="form-input" style="width:200px" onchange="loadSlots()">
                 <option value="">-- Select Style --</option>
             </select>
         </div>
     </div>
     <table class="table">
         <thead>
-            <tr><th>Location</th><th>Payload Code</th><th>Description</th><th>Role</th><th>Remaining</th><th>Reorder Pt</th><th>Cycle Mode</th><th>Status</th><th>Actions</th></tr>
+            <tr><th>Location</th><th>Payload Code</th><th>Description</th><th>Role</th><th>Remaining</th><th>Reorder At</th><th>Cycle Mode</th><th>Status</th><th>Actions</th></tr>
         </thead>
         <tbody id="payload-body">
-            <tr><td colspan="9" class="empty-cell">Select a style to view payloads</td></tr>
+            <tr><td colspan="9" class="empty-cell">Select a style to view material slots</td></tr>
         </tbody>
     </table>
     <div id="payload-add-bar" style="display:none;text-align:right;margin-top:0.75rem">
-        <button class="btn btn-sm btn-primary" onclick="openAddPayload()">+ Add Payload</button>
+        <button class="btn btn-sm btn-primary" onclick="openAddSlot()">+ Add Slot</button>
     </div>
 </div>
 
@@ -351,13 +351,13 @@
 <div class="modal" id="payload-add" style="display:none">
     <div class="modal-content">
         <div class="card">
-            <div class="modal-header">Add Payload <button class="btn btn-sm" onclick="ShingoEdge.hideModal('payload-add')">&times;</button></div>
+            <div class="modal-header">Add Material Slot <button class="btn btn-sm" onclick="ShingoEdge.hideModal('payload-add')">&times;</button></div>
             <div class="card-body" id="payload-add-form">
                 <div class="form-row">
                     <div class="form-group"><label>Payload Code</label><input type="text" name="payload_code" class="form-input" placeholder="e.g. BIN-STD-01" required></div>
                     <div class="form-group"><label>Description</label><input type="text" name="description" class="form-input"></div>
                 </div>
-                <div class="form-group"><label>Delivery Node Location (ALN or PLN)</label><select name="location" class="form-input"><option value="">-- Select --</option></select></div>
+                <div class="form-group"><label>Delivery Node</label><select name="location" class="form-input"><option value="">-- Select --</option></select></div>
                 <div class="form-row">
                     <div class="form-group"><label>Role</label>
                         <select name="role" class="form-input">
@@ -407,7 +407,7 @@
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="ShingoEdge.hideModal('payload-add')">Cancel</button>
-                <button class="btn btn-primary" onclick="addPayload()">Add</button>
+                <button class="btn btn-primary" onclick="addSlot()">Add</button>
             </div>
         </div>
     </div>
@@ -417,14 +417,14 @@
 <div class="modal" id="payload-edit" style="display:none">
     <div class="modal-content">
         <div class="card">
-            <div class="modal-header">Edit Payload <button class="btn btn-sm" onclick="ShingoEdge.hideModal('payload-edit')">&times;</button></div>
+            <div class="modal-header">Edit Material Slot <button class="btn btn-sm" onclick="ShingoEdge.hideModal('payload-edit')">&times;</button></div>
             <div class="card-body" id="payload-edit-form">
                 <input type="hidden" name="id">
                 <div class="form-row">
                     <div class="form-group"><label>Payload Code</label><input type="text" name="payload_code" class="form-input" required></div>
                     <div class="form-group"><label>Description</label><input type="text" name="description" class="form-input"></div>
                 </div>
-                <div class="form-group"><label>Delivery Node Location (ALN or PLN)</label><select name="location" class="form-input"><option value="">-- Select --</option></select></div>
+                <div class="form-group"><label>Delivery Node</label><select name="location" class="form-input"><option value="">-- Select --</option></select></div>
                 <div class="form-row">
                     <div class="form-group"><label>Role</label>
                         <select name="role" class="form-input">
@@ -474,7 +474,7 @@
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="ShingoEdge.hideModal('payload-edit')">Cancel</button>
-                <button class="btn btn-primary" onclick="savePayload()">Save</button>
+                <button class="btn btn-primary" onclick="saveSlot()">Save</button>
             </div>
         </div>
     </div>

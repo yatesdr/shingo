@@ -47,8 +47,8 @@
 <script type="module">
     import { initDesigner } from '/static/operator-canvas/designer.js';
     const screenData = {{if .Screen}}{{.Screen | json}}{{else}}null{{end}};
-    const payloadList = {{.Payloads | json}};
-    const lineList = {{.Lines | json}};
+    const payloadList = {{.Slots | json}};
+    const lineList = {{.Processes | json}};
     initDesigner(document.getElementById('designer-canvas'), screenData, payloadList, lineList);
     document.getElementById('screen-name').addEventListener('change', function() { window._designerState.screenName = this.value; });
 </script>

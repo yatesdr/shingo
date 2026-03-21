@@ -11,17 +11,17 @@ import (
 func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 
-	lines, _ := db.ListProductionLines()
+	processes, _ := db.ListProcesses()
 
-	// Determine active line
-	var activeLineID int64
-	if lineParam := r.URL.Query().Get("line"); lineParam != "" {
+	// Determine active process
+	var activeProcessID int64
+	if lineParam := r.URL.Query().Get("process"); lineParam != "" {
 		if id, err := strconv.ParseInt(lineParam, 10, 64); err == nil {
-			activeLineID = id
+			activeProcessID = id
 		}
 	}
-	if activeLineID == 0 && len(lines) > 0 {
-		activeLineID = lines[0].ID
+	if activeProcessID == 0 && len(processes) > 0 {
+		activeProcessID = processes[0].ID
 	}
 
 	// Date param (default today)
@@ -30,8 +30,8 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		dateStr = time.Now().Format("2006-01-02")
 	}
 
-	// Job styles for this line (for the style toggle)
-	jobStyles, _ := db.ListJobStylesByLine(activeLineID)
+	// Styles for this process (for the style toggle)
+	styles, _ := db.ListStylesByProcess(activeProcessID)
 
 	// Style filter: "all" (default) or a specific style ID
 	styleParam := r.URL.Query().Get("style")
@@ -39,7 +39,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	var filterStyleName string
 	if styleParam != "" && styleParam != "all" {
 		if id, err := strconv.ParseInt(styleParam, 10, 64); err == nil {
-			for _, js := range jobStyles {
+			for _, js := range styles {
 				if js.ID == id {
 					filterStyleID = id
 					filterStyleName = js.Name
@@ -53,16 +53,16 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 
 	// Load hourly counts
 	var hourlyCounts map[int]int64
-	if activeLineID > 0 {
+	if activeProcessID > 0 {
 		if filterStyleID > 0 {
 			// Single style: convert list to map
-			counts, _ := db.ListHourlyCounts(activeLineID, filterStyleID, dateStr)
+			counts, _ := db.ListHourlyCounts(activeProcessID, filterStyleID, dateStr)
 			hourlyCounts = make(map[int]int64)
 			for _, c := range counts {
 				hourlyCounts[c.Hour] = c.Delta
 			}
 		} else {
-			hourlyCounts, _ = db.HourlyCountTotals(activeLineID, dateStr)
+			hourlyCounts, _ = db.HourlyCountTotals(activeProcessID, dateStr)
 		}
 	}
 	if hourlyCounts == nil {
@@ -86,8 +86,8 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	styleList := make([]styleEntry, len(jobStyles))
-	for i, js := range jobStyles {
+	styleList := make([]styleEntry, len(styles))
+	for i, js := range styles {
 		styleList[i] = styleEntry{ID: js.ID, Name: js.Name}
 	}
 	stylesJSON, _ := json.Marshal(styleList)
@@ -97,8 +97,8 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Page":              "production",
-		"Lines":             lines,
-		"ActiveLineID":      activeLineID,
+		"Processes":         processes,
+		"ActiveProcessID":   activeProcessID,
 		"Date":              dateStr,
 		"Shifts":            shifts,
 		"ShiftsJSON":        template.JS(shiftsJSON),
@@ -110,7 +110,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		"ReportingPointMap": rpMap,
 	}
 
-	h.renderTemplate(w, "production.html", data)
+	h.renderTemplate(w, r, "production.html", data)
 }
 
 func (h *Handlers) apiListShifts(w http.ResponseWriter, r *http.Request) {

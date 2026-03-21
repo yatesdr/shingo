@@ -1,16 +1,16 @@
 {{template "header" .}}
 
 <div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap">
-    {{if .Lines}}
-    <select class="form-input" style="width:14rem" onchange="if(this.value)window.location='?line='+this.value">
-        {{range .Lines}}
-        <option value="{{.ID}}" {{if eq .ID $.ActiveLineID}}selected{{end}}>{{.Name}}</option>
+    {{if .Processes}}
+    <select class="form-input" style="width:14rem" onchange="if(this.value)window.location='?process='+this.value">
+        {{range .Processes}}
+        <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
     </select>
     {{end}}
 </div>
 
-{{if .ActiveLineID}}
+{{if .ActiveProcessID}}
 <div class="card">
     <div class="card-body">
         {{if .Changeover.Active}}
@@ -40,13 +40,13 @@
         <div style="display:flex;align-items:flex-end;gap:1rem;flex-wrap:wrap">
             <div class="form-group" style="margin-bottom:0">
                 <label>From</label>
-                <input type="text" id="co-from" class="form-input" value="{{.ActiveJobStyle}}" readonly style="background:var(--bg-muted);width:14rem">
+                <input type="text" id="co-from" class="form-input" value="{{.ActiveStyle}}" readonly style="background:var(--bg-muted);width:14rem">
             </div>
             <div class="form-group" style="margin-bottom:0">
                 <label>To</label>
                 <select id="co-to" class="form-input" style="width:14rem">
                     <option value="">-- Select --</option>
-                    {{range .JobStyles}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+                    {{range .Styles}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
                 </select>
             </div>
             <button class="btn btn-primary" id="co-start-btn" onclick="startChangeover()" disabled>Start Changeover</button>
@@ -146,7 +146,7 @@
 }
 </style>
 
-<div id="page-data" data-active-line-id="{{.ActiveLineID}}"></div>
+<div id="page-data" data-active-line-id="{{.ActiveProcessID}}"></div>
 <script src="/static/js/pages/changeover.js"></script>
 
 {{template "footer" .}}

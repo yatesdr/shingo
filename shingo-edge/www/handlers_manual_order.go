@@ -8,8 +8,8 @@ import (
 func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 
-	payloads, _ := db.ListPayloads()
-	nodes, _ := db.ListLocationNodes()
+	slots, _ := db.ListSlots()
+	nodes, _ := db.ListNodes()
 	coreNodes := h.engine.CoreNodes()
 	coreNodeNames := make([]string, 0, len(coreNodes))
 	for name := range coreNodes {
@@ -31,7 +31,7 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Page":              "manual-order",
-		"Payloads":          payloads,
+		"Slots":             slots,
 		"Nodes":             nodes,
 		"CoreNodes":         coreNodeNames,
 		"Anomalies":         anomalies,
@@ -40,5 +40,5 @@ func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 		"CoreNodesJSON":     string(coreNodesJSON),
 	}
 
-	h.renderTemplate(w, "manual-order.html", data)
+	h.renderTemplate(w, r, "manual-order.html", data)
 }

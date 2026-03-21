@@ -4,88 +4,96 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingoedge/orders"
 	"shingoedge/store"
 )
 
 // wireEventHandlers sets up the full event chain:
-// CounterDelta → payload decrement → PayloadReorder → order creation
-// OrderCompleted → payload reset
+// CounterDelta → slot decrement → SlotReorder → order creation
+// OrderCompleted → slot reset
 func (e *Engine) wireEventHandlers() {
-	// CounterDelta → payload consumption
+	// CounterDelta → slot consumption
 	e.Events.SubscribeTypes(func(evt Event) {
-		delta := evt.Payload.(CounterDeltaEvent)
-		e.handleCounterDelta(delta)
+		if delta, ok := evt.Payload.(CounterDeltaEvent); ok {
+			e.handleCounterDelta(delta)
+		}
 	}, EventCounterDelta)
 
 	// CounterDelta → hourly production tracking
 	e.Events.SubscribeTypes(func(evt Event) {
-		delta := evt.Payload.(CounterDeltaEvent)
-		e.hourlyTracker.HandleDelta(delta)
+		if delta, ok := evt.Payload.(CounterDeltaEvent); ok {
+			e.hourlyTracker.HandleDelta(delta)
+		}
 	}, EventCounterDelta)
 
-	// PayloadReorder → create cycle orders
+	// SlotReorder → create cycle orders
 	e.Events.SubscribeTypes(func(evt Event) {
-		reorder := evt.Payload.(PayloadReorderEvent)
-		e.handlePayloadReorder(reorder)
-	}, EventPayloadReorder)
+		if reorder, ok := evt.Payload.(SlotReorderEvent); ok {
+			e.handleSlotReorder(reorder)
+		}
+	}, EventSlotReorder)
 
-	// OrderCompleted → reset payload if linked
+	// OrderCompleted → reset slot if linked
 	e.Events.SubscribeTypes(func(evt Event) {
-		completed := evt.Payload.(OrderCompletedEvent)
-		e.handleOrderCompleted(completed)
+		if completed, ok := evt.Payload.(OrderCompletedEvent); ok {
+			e.handleOrderCompleted(completed)
+		}
 	}, EventOrderCompleted)
 
-	// PayloadEmpty → auto-remove empty bins for non-sequential consume payloads
+	// SlotEmpty → auto-remove empty bins for non-sequential consume slots
 	e.Events.SubscribeTypes(func(evt Event) {
-		empty := evt.Payload.(PayloadEmptyEvent)
-		e.handlePayloadAutoRemove(empty)
-	}, EventPayloadEmpty)
+		if empty, ok := evt.Payload.(SlotEmptyEvent); ok {
+			e.handleSlotAutoRemove(empty)
+		}
+	}, EventSlotEmpty)
 
 	// OrderStatusChanged → sequential backfill: when Order A is released,
 	// create Order B to deliver the replacement bin.
 	e.Events.SubscribeTypes(func(evt Event) {
-		changed := evt.Payload.(OrderStatusChangedEvent)
-		e.handleSequentialBackfill(changed)
+		if changed, ok := evt.Payload.(OrderStatusChangedEvent); ok {
+			e.handleSequentialBackfill(changed)
+		}
 	}, EventOrderStatusChanged)
 
-	// OrderFailed → reset produce payload from "replenishing" back to "empty"
+	// OrderFailed → reset produce slot from "replenishing" back to "empty"
 	e.Events.SubscribeTypes(func(evt Event) {
-		failed := evt.Payload.(OrderFailedEvent)
-		e.handleOrderFailed(failed)
+		if failed, ok := evt.Payload.(OrderFailedEvent); ok {
+			e.handleOrderFailed(failed)
+		}
 	}, EventOrderFailed)
 }
 
-// scanProducePayloads checks produce payloads on startup and delivers empty bins
+// scanProduceSlots checks produce slots on startup and delivers empty bins
 // for initial provisioning. This is NOT the cycle trigger — the cycle is triggered
 // by handleCounterDelta when remaining crosses the reorder point. This scan handles
 // the bootstrap case where a station has no bin yet and needs one delivered.
-func (e *Engine) scanProducePayloads() {
-	payloads, err := e.db.ListProducePayloads()
+func (e *Engine) scanProduceSlots() {
+	slots, err := e.db.ListProduceSlots()
 	if err != nil {
-		log.Printf("scan produce payloads: %v", err)
+		log.Printf("scan produce slots: %v", err)
 		return
 	}
-	for _, p := range payloads {
-		if p.Status != "empty" && p.Status != "active" {
+	for _, s := range slots {
+		if s.Status != store.SlotEmpty && s.Status != store.SlotActive {
 			continue
 		}
-		activeR, _ := e.db.ListActiveOrdersByPayloadAndType(p.ID, "retrieve")
-		activeC, _ := e.db.ListActiveOrdersByPayloadAndType(p.ID, "complex")
+		activeR, _ := e.db.ListActiveOrdersByPayloadAndType(s.ID, orders.TypeRetrieve)
+		activeC, _ := e.db.ListActiveOrdersByPayloadAndType(s.ID, orders.TypeComplex)
 		if len(activeR) > 0 || len(activeC) > 0 {
 			continue
 		}
 		// Initial provisioning: simple retrieve to deliver an empty bin.
 		// No cycle needed — there's nothing to swap (station is empty).
-		e.debugFn("startup: produce payload %d needs initial empty bin", p.ID)
-		payloadID := p.ID
+		e.debugFn.Log("startup: produce slot %d needs initial empty bin", s.ID)
+		slotID := s.ID
 		_, err := e.orderMgr.CreateRetrieveOrder(
-			&payloadID, true, 1,
-			p.Location, p.StagingNode,
-			"standard", p.PayloadCode,
+			&slotID, true, 1,
+			s.Location, s.StagingNode,
+			"standard", s.PayloadCode,
 			e.cfg.Web.AutoConfirm,
 		)
 		if err != nil {
-			log.Printf("startup: produce payload %d initial provision failed: %v", p.ID, err)
+			log.Printf("startup: produce slot %d initial provision failed: %v", s.ID, err)
 		}
 	}
 }
@@ -95,52 +103,52 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		return
 	}
 
-	e.debugFn("counter delta: rp=%d line=%d job_style=%d delta=%d new_count=%d",
+	e.debugFn.Log("counter delta: rp=%d line=%d job_style=%d delta=%d new_count=%d",
 		delta.ReportingPointID, delta.LineID, delta.JobStyleID, delta.Delta, delta.NewCount)
 
-	payloads, err := e.db.ListActivePayloadsByJobStyle(delta.JobStyleID)
+	slots, err := e.db.ListActiveSlotsByStyle(delta.JobStyleID)
 	if err != nil {
-		log.Printf("list active payloads for job style %d: %v", delta.JobStyleID, err)
+		log.Printf("list active slots for style %d: %v", delta.JobStyleID, err)
 		return
 	}
 
-	for _, p := range payloads {
-		oldRemaining := p.Remaining
+	for _, s := range slots {
+		oldRemaining := s.Remaining
 		newRemaining := oldRemaining - int(delta.Delta)
 		if newRemaining < 0 {
 			newRemaining = 0
 		}
 
-		status := p.Status
+		status := s.Status
 		if newRemaining == 0 {
-			status = "empty"
+			status = store.SlotEmpty
 		}
 
-		if err := e.db.UpdatePayloadRemaining(p.ID, newRemaining, status); err != nil {
-			log.Printf("update payload %d remaining: %v", p.ID, err)
+		if err := e.db.UpdateSlotRemaining(s.ID, newRemaining, status); err != nil {
+			log.Printf("update slot %d remaining: %v", s.ID, err)
 			continue
 		}
 
-		e.Events.Emit(Event{Type: EventPayloadUpdated, Payload: PayloadUpdatedEvent{
-			PayloadID: p.ID, LineID: delta.LineID, JobStyleID: p.JobStyleID, Location: p.Location,
+		e.Events.Emit(Event{Type: EventSlotUpdated, Payload: SlotUpdatedEvent{
+			PayloadID: s.ID, LineID: delta.LineID, JobStyleID: s.StyleID, Location: s.Location,
 			OldRemaining: oldRemaining, NewRemaining: newRemaining, Status: status,
 		}})
 
 		if newRemaining == 0 && oldRemaining > 0 {
-			e.Events.Emit(Event{Type: EventPayloadEmpty, Payload: PayloadEmptyEvent{
-				PayloadID: p.ID, LineID: delta.LineID, JobStyleID: p.JobStyleID, Location: p.Location,
+			e.Events.Emit(Event{Type: EventSlotEmpty, Payload: SlotEmptyEvent{
+				PayloadID: s.ID, LineID: delta.LineID, JobStyleID: s.StyleID, Location: s.Location,
 			}})
 		}
 
 		// Crossed reorder point — trigger the material handling cycle.
 		// Gated on AutoReorder: ON = system triggers, OFF = operator presses REQUEST button.
-		if p.AutoReorder && oldRemaining > p.ReorderPoint && newRemaining <= p.ReorderPoint && p.Status != "replenishing" {
-			if err := e.db.UpdatePayloadRemaining(p.ID, newRemaining, "replenishing"); err != nil {
-				log.Printf("update payload %d to replenishing: %v", p.ID, err)
+		if s.AutoReorder && oldRemaining > s.ReorderPoint && newRemaining <= s.ReorderPoint && s.Status != store.SlotReplenishing {
+			if err := e.db.UpdateSlotRemaining(s.ID, newRemaining, store.SlotReplenishing); err != nil {
+				log.Printf("update slot %d to replenishing: %v", s.ID, err)
 				continue
 			}
-			e.Events.Emit(Event{Type: EventPayloadReorder, Payload: PayloadReorderEvent{
-				PayloadID: p.ID, LineID: delta.LineID, JobStyleID: p.JobStyleID, Location: p.Location,
+			e.Events.Emit(Event{Type: EventSlotReorder, Payload: SlotReorderEvent{
+				PayloadID: s.ID, LineID: delta.LineID, JobStyleID: s.StyleID, Location: s.Location,
 			}})
 		}
 	}
@@ -168,16 +176,25 @@ func buildDropoffStep(node, nodeGroup string) protocol.ComplexOrderStep {
 	return protocol.ComplexOrderStep{Action: "dropoff"}
 }
 
-func (e *Engine) handlePayloadReorder(reorder PayloadReorderEvent) {
-	e.debugFn("payload reorder: payload=%d loc=%s", reorder.PayloadID, reorder.Location)
+func (e *Engine) handleSlotReorder(reorder SlotReorderEvent) {
+	e.debugFn.Log("slot reorder: slot=%d loc=%s", reorder.PayloadID, reorder.Location)
 
 	// Quantity is always 1: one order = one bin.
 	result, err := e.RequestOrders(reorder.PayloadID, 1)
 	if err != nil {
-		log.Printf("create reorder for payload %d: %v", reorder.PayloadID, err)
+		log.Printf("create reorder for slot %d: %v", reorder.PayloadID, err)
+		// Order creation failed but the slot is already in "replenishing"
+		// state. Reset it to "active" so the counter can re-trigger the
+		// reorder when it crosses the threshold again.
+		slot, pErr := e.db.GetSlot(reorder.PayloadID)
+		if pErr == nil && slot.Status == store.SlotReplenishing {
+			e.db.UpdateSlotRemaining(slot.ID, slot.Remaining, store.SlotActive)
+			log.Printf("slot %d: order creation failed, reset from replenishing to active for retry", reorder.PayloadID)
+			e.debugFn.Log("slot %d: reset to active after failed reorder", reorder.PayloadID)
+		}
 		return
 	}
-	e.debugFn("payload reorder result: cycle_mode=%s", result.CycleMode)
+	e.debugFn.Log("slot reorder result: cycle_mode=%s", result.CycleMode)
 }
 
 func (e *Engine) handleOrderCompleted(completed OrderCompletedEvent) {
@@ -186,86 +203,83 @@ func (e *Engine) handleOrderCompleted(completed OrderCompletedEvent) {
 		return
 	}
 
-	payload, err := e.db.GetPayload(*order.PayloadID)
+	slot, err := e.db.GetSlot(*order.PayloadID)
 	if err != nil {
-		log.Printf("get payload %d for order completion: %v", *order.PayloadID, err)
+		log.Printf("get slot %d for order completion: %v", *order.PayloadID, err)
 		return
 	}
 
-	switch order.OrderType {
-	case "retrieve":
-		// Replacement bin delivered to station. Reset remaining to UOP capacity.
-		// Same for both roles — consume gets a full bin, produce gets an empty bin.
-		// Either way, the station is restocked and the counter starts fresh.
-		e.resetPayloadOnRetrieve(payload)
+	e.debugFn.Log("order completed: id=%d type=%s slot=%d delivery=%s loc=%s",
+		order.ID, order.OrderType, slot.ID, order.DeliveryNode, slot.Location)
 
-	case "complex":
-		// Only reset when the replacement is delivered TO the line.
-		// The removal/outgoing order has no delivery_node set, so it won't match.
-		if order.DeliveryNode == payload.Location {
-			e.resetPayloadOnRetrieve(payload)
+	switch order.OrderType {
+	case orders.TypeRetrieve:
+		e.resetSlotOnRetrieve(slot)
+
+	case orders.TypeComplex:
+		if order.DeliveryNode == slot.Location {
+			e.debugFn.Log("complex order %d delivered to lineside — resetting slot %d", order.ID, slot.ID)
+			e.resetSlotOnRetrieve(slot)
+		} else {
+			e.debugFn.Log("complex order %d: delivery_node=%q != location=%q, no reset", order.ID, order.DeliveryNode, slot.Location)
 		}
 
-	case "ingest":
-		// Ingest is Core's concern — manifest assignment and storage routing.
-		// The cycle was already triggered by the counter. The reset happens when
-		// Order B delivers the replacement bin (handled by the "retrieve" case).
-		// Nothing to do here on Edge.
-		e.debugFn("payload %d: ingest complete (Core stored the bin)", payload.ID)
+	// Ingest and store are Core's concern — no slot reset needed on Edge.
 	}
 }
 
-// resetPayloadOnRetrieve resets a consume payload to full after a retrieve order delivers.
+// resetSlotOnRetrieve resets a consume slot to full after a retrieve order delivers.
 // UOP capacity is looked up from the payload catalog (synced from Core).
-func (e *Engine) resetPayloadOnRetrieve(payload *store.Payload) {
-	bp, err := e.db.GetPayloadCatalogByCode(payload.PayloadCode)
+func (e *Engine) resetSlotOnRetrieve(slot *store.MaterialSlot) {
+	bp, err := e.db.GetPayloadCatalogByCode(slot.PayloadCode)
 	if err != nil || bp.UOPCapacity == 0 {
-		log.Printf("reset payload %d: no catalog entry for code %q", payload.ID, payload.PayloadCode)
+		log.Printf("reset slot %d: no catalog entry for code %q", slot.ID, slot.PayloadCode)
 		return
 	}
 
-	if err := e.db.ResetPayload(payload.ID, bp.UOPCapacity); err != nil {
-		log.Printf("reset payload %d: %v", payload.ID, err)
+	if err := e.db.ResetSlot(slot.ID, bp.UOPCapacity); err != nil {
+		log.Printf("reset slot %d: %v", slot.ID, err)
 		return
 	}
 
 	var lineID int64
-	if js, err := e.db.GetJobStyle(payload.JobStyleID); err == nil {
+	if js, err := e.db.GetStyle(slot.StyleID); err == nil {
 		lineID = js.LineID
 	}
 
-	e.Events.Emit(Event{Type: EventPayloadUpdated, Payload: PayloadUpdatedEvent{
-		PayloadID: payload.ID, LineID: lineID, JobStyleID: payload.JobStyleID, Location: payload.Location,
-		OldRemaining: payload.Remaining, NewRemaining: bp.UOPCapacity,
-		Status: "active",
+	e.Events.Emit(Event{Type: EventSlotUpdated, Payload: SlotUpdatedEvent{
+		PayloadID: slot.ID, LineID: lineID, JobStyleID: slot.StyleID, Location: slot.Location,
+		OldRemaining: slot.Remaining, NewRemaining: bp.UOPCapacity,
+		Status: store.SlotActive,
 	}})
 }
 
-// handlePayloadAutoRemove auto-removes empty bins for consume payloads in
+// handleSlotAutoRemove auto-removes empty bins for consume slots in
 // hot-swap modes. Sequential mode handles removal via Order A's pickup step.
-func (e *Engine) handlePayloadAutoRemove(empty PayloadEmptyEvent) {
-	payload, err := e.db.GetPayload(empty.PayloadID)
+func (e *Engine) handleSlotAutoRemove(empty SlotEmptyEvent) {
+	slot, err := e.db.GetSlot(empty.PayloadID)
 	if err != nil {
+		log.Printf("auto-remove: get slot %d: %v", empty.PayloadID, err)
 		return
 	}
-	// Only consume payloads in non-sequential modes need standalone removal.
+	// Only consume slots in non-sequential modes need standalone removal.
 	// Sequential: Order A picks up the empty as its first action.
 	// Hot-swap: complex orders handle removal as part of the step sequence.
-	if payload.Role != "consume" || payload.CycleMode == "sequential" || payload.CycleMode == "" {
+	if slot.Role != store.RoleConsume || slot.CycleMode == store.CycleModeSequential || slot.CycleMode == "" {
 		return
 	}
 
-	activeComplex, _ := e.db.ListActiveOrdersByPayloadAndType(payload.ID, "complex")
+	activeComplex, _ := e.db.ListActiveOrdersByPayloadAndType(slot.ID, orders.TypeComplex)
 	if len(activeComplex) > 0 {
-		e.debugFn("payload %d: complex order active, skipping standalone auto-remove", payload.ID)
+		e.debugFn.Log("slot %d: complex order active, skipping standalone auto-remove", slot.ID)
 		return
 	}
 
-	e.debugFn("auto-remove empty bin for payload %d at %s", payload.ID, payload.Location)
-	payloadID := payload.ID
-	_, err = e.orderMgr.CreateStoreOrder(&payloadID, 0, payload.Location)
+	e.debugFn.Log("auto-remove empty bin for slot %d at %s", slot.ID, slot.Location)
+	slotID := slot.ID
+	_, err = e.orderMgr.CreateStoreOrder(&slotID, 0, slot.Location)
 	if err != nil {
-		log.Printf("create auto-remove store order for payload %d: %v", payload.ID, err)
+		log.Printf("create auto-remove store order for slot %d: %v", slot.ID, err)
 	}
 }
 
@@ -273,72 +287,82 @@ func (e *Engine) handlePayloadAutoRemove(empty PayloadEmptyEvent) {
 // is released (transitions to in_transit). The operator has confirmed the outgoing
 // bin is ready — now fire the replacement delivery.
 func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
-	if changed.NewStatus != "in_transit" || changed.OrderType != "complex" {
+	if changed.NewStatus != orders.StatusInTransit || changed.OrderType != orders.TypeComplex {
 		return
 	}
 
 	order, err := e.db.GetOrder(changed.OrderID)
-	if err != nil || order.PayloadID == nil {
-		return
-	}
-
-	payload, err := e.db.GetPayload(*order.PayloadID)
 	if err != nil {
+		e.debugFn.Log("sequential backfill: get order %d: %v", changed.OrderID, err)
+		return
+	}
+	if order.PayloadID == nil {
 		return
 	}
 
-	if payload.CycleMode != "sequential" {
+	slot, err := e.db.GetSlot(*order.PayloadID)
+	if err != nil {
+		e.debugFn.Log("sequential backfill: get slot %d: %v", *order.PayloadID, err)
+		return
+	}
+
+	if slot.CycleMode != store.CycleModeSequential {
 		return
 	}
 
 	// Guard: don't create Order B if a backfill order already exists.
 	// Check both retrieve and complex since Order B is now a complex order.
-	activeR, _ := e.db.ListActiveOrdersByPayloadAndType(*order.PayloadID, "retrieve")
-	activeC, _ := e.db.ListActiveOrdersByPayloadAndType(*order.PayloadID, "complex")
+	activeR, _ := e.db.ListActiveOrdersByPayloadAndType(*order.PayloadID, orders.TypeRetrieve)
+	activeC, _ := e.db.ListActiveOrdersByPayloadAndType(*order.PayloadID, orders.TypeComplex)
 	// Subtract 1 from complex count because Order A (the one being released) is still active
 	if len(activeR) > 0 || len(activeC) > 1 {
-		e.debugFn("sequential backfill: payload %d already has active backfill, skipping", *order.PayloadID)
+		e.debugFn.Log("sequential backfill: slot %d already has active backfill, skipping", *order.PayloadID)
 		return
 	}
 
 	// Create Order B: pickup replacement from source, deliver to lineside.
 	// Uses FullPickupNode if configured, otherwise Core decides.
-	payloadID := *order.PayloadID
+	slotID := *order.PayloadID
 
 	steps := []protocol.ComplexOrderStep{
-		buildPickupStep(payload.FullPickupNode, payload.FullPickupNodeGroup),
-		{Action: "dropoff", Node: payload.Location},
+		buildPickupStep(slot.FullPickupNode, slot.FullPickupNodeGroup),
+		{Action: "dropoff", Node: slot.Location},
 	}
 
-	backfill, err := e.orderMgr.CreateComplexOrder(&payloadID, 1, steps)
+	backfill, err := e.orderMgr.CreateComplexOrder(&slotID, 1, slot.Location, steps)
 	if err != nil {
-		log.Printf("sequential backfill for payload %d: %v", payloadID, err)
+		log.Printf("sequential backfill for slot %d: %v", slotID, err)
 		return
 	}
-	// Tag with lineside so handleOrderCompleted resets the payload
-	e.db.UpdateOrderDeliveryNode(backfill.ID, payload.Location)
 
-	e.debugFn("sequential backfill: created Order B %d for payload %d",
-		backfill.ID, payloadID)
+	e.debugFn.Log("sequential backfill: created Order B %d for slot %d",
+		backfill.ID, slotID)
 }
 
-// handleOrderFailed resets payloads from "replenishing" back to "active"
+// handleOrderFailed resets slots from "replenishing" back to "active"
 // when their cycle order fails, so the counter can re-trigger the cycle.
 func (e *Engine) handleOrderFailed(failed OrderFailedEvent) {
+	e.debugFn.Log("order failed: id=%d type=%s reason=%s", failed.OrderID, failed.OrderType, failed.Reason)
+
 	order, err := e.db.GetOrder(failed.OrderID)
 	if err != nil || order.PayloadID == nil {
 		return
 	}
 
-	payload, err := e.db.GetPayload(*order.PayloadID)
+	slot, err := e.db.GetSlot(*order.PayloadID)
 	if err != nil {
+		log.Printf("get slot %d for failed order %d: %v", *order.PayloadID, failed.OrderID, err)
 		return
 	}
 
-	// If the payload was waiting for a cycle order that failed, reset to active
+	// If the slot was waiting for a cycle order that failed, reset to active
 	// so the counter can cross the reorder point again and re-trigger.
-	if payload.Status == "replenishing" {
-		e.db.UpdatePayloadRemaining(payload.ID, payload.Remaining, "active")
-		log.Printf("payload %d: order %d failed (%s), reset to active for retry", payload.ID, order.ID, failed.Reason)
+	if slot.Status == store.SlotReplenishing {
+		if err := e.db.UpdateSlotRemaining(slot.ID, slot.Remaining, store.SlotActive); err != nil {
+			log.Printf("failed to reset slot %d from replenishing: %v", slot.ID, err)
+			return
+		}
+		e.debugFn.Log("slot %d: reset to active after order %d failed", slot.ID, order.ID)
+		log.Printf("slot %d: order %d failed (%s), reset to active for retry", slot.ID, order.ID, failed.Reason)
 	}
 }

@@ -1,11 +1,11 @@
 {{template "header" .}}
 
 <div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap">
-    {{if .Lines}}
-    <select class="form-input" style="width:14rem" onchange="window.location=this.value?'?line='+this.value:'/kanbans'">
-        <option value="" {{if eq .ActiveLineID 0}}selected{{end}}>All Processes</option>
-        {{range .Lines}}
-        <option value="{{.ID}}" {{if eq .ID $.ActiveLineID}}selected{{end}}>{{.Name}}</option>
+    {{if .Processes}}
+    <select class="form-input" style="width:14rem" onchange="window.location=this.value?'?process='+this.value:'/kanbans'">
+        <option value="" {{if eq .ActiveProcessID 0}}selected{{end}}>All Processes</option>
+        {{range .Processes}}
+        <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
     </select>
     {{end}}

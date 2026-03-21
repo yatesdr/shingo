@@ -11,43 +11,43 @@ import (
 func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 
-	lines, _ := db.ListProductionLines()
+	processes, _ := db.ListProcesses()
 
-	// Determine active line from query param or default to first
-	var activeLine *store.ProductionLine
-	if lineParam := r.URL.Query().Get("line"); lineParam != "" {
+	// Determine active process from query param or default to first
+	var activeProcess *store.Process
+	if lineParam := r.URL.Query().Get("process"); lineParam != "" {
 		if lineID, err := strconv.ParseInt(lineParam, 10, 64); err == nil {
-			for i := range lines {
-				if lines[i].ID == lineID {
-					activeLine = &lines[i]
+			for i := range processes {
+				if processes[i].ID == lineID {
+					activeProcess = &processes[i]
 					break
 				}
 			}
 		}
 	}
-	if activeLine == nil && len(lines) > 0 {
-		activeLine = &lines[0]
+	if activeProcess == nil && len(processes) > 0 {
+		activeProcess = &processes[0]
 	}
 
-	var activeLineID int64
+	var activeProcessID int64
 	var fromJob, toJob, state string
 	var active bool
-	var jobStyles []store.JobStyle
-	var activeJobStyleName string
+	var styles []store.Style
+	var activeStyleName string
 
-	if activeLine != nil {
-		activeLineID = activeLine.ID
-		m := h.engine.ChangeoverMachine(activeLine.ID)
+	if activeProcess != nil {
+		activeProcessID = activeProcess.ID
+		m := h.engine.ChangeoverMachine(activeProcess.ID)
 		if m != nil {
 			fromJob, toJob, state, active = m.Info()
 		}
-		jobStyles, _ = db.ListJobStylesByLine(activeLine.ID)
+		styles, _ = db.ListStylesByProcess(activeProcess.ID)
 
-		// Resolve active job style name for the "From" field
-		if activeLine.ActiveJobStyleID != nil {
-			for _, js := range jobStyles {
-				if js.ID == *activeLine.ActiveJobStyleID {
-					activeJobStyleName = js.Name
+		// Resolve active style name for the "From" field
+		if activeProcess.ActiveStyleID != nil {
+			for _, js := range styles {
+				if js.ID == *activeProcess.ActiveStyleID {
+					activeStyleName = js.Name
 					break
 				}
 			}
@@ -55,18 +55,18 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var changeoverLog []store.ChangeoverLog
-	if activeLineID > 0 {
-		changeoverLog, _ = db.ListCurrentChangeoverLog(activeLineID)
+	if activeProcessID > 0 {
+		changeoverLog, _ = db.ListCurrentChangeoverLog(activeProcessID)
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
 
 	data := map[string]interface{}{
 		"Page":              "changeover",
-		"Lines":             lines,
-		"ActiveLineID":      activeLineID,
-		"JobStyles":         jobStyles,
-		"ActiveJobStyle":    activeJobStyleName,
+		"Processes":         processes,
+		"ActiveProcessID":   activeProcessID,
+		"Styles":            styles,
+		"ActiveStyle":       activeStyleName,
 		"ChangeoverLog":     changeoverLog,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
@@ -79,5 +79,5 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	h.renderTemplate(w, "changeover.html", data)
+	h.renderTemplate(w, r, "changeover.html", data)
 }

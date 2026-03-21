@@ -146,64 +146,83 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		var sseEvt SSEEvent
 
 		switch evt.Type {
-		case engine.EventPayloadUpdated:
-			p := evt.Payload.(engine.PayloadUpdatedEvent)
-			sseEvt = SSEEvent{Type: "payload-update", Data: p}
-		case engine.EventPayloadReorder:
-			p := evt.Payload.(engine.PayloadReorderEvent)
-			sseEvt = SSEEvent{Type: "payload-reorder", Data: p}
+		case engine.EventSlotUpdated:
+			if p, ok := evt.Payload.(engine.SlotUpdatedEvent); ok {
+				sseEvt = SSEEvent{Type: "payload-update", Data: p}
+			}
+		case engine.EventSlotReorder:
+			if p, ok := evt.Payload.(engine.SlotReorderEvent); ok {
+				sseEvt = SSEEvent{Type: "payload-reorder", Data: p}
+			}
 		case engine.EventOrderCreated:
-			p := evt.Payload.(engine.OrderCreatedEvent)
-			sseEvt = SSEEvent{Type: "order-update", Data: p}
+			if p, ok := evt.Payload.(engine.OrderCreatedEvent); ok {
+				sseEvt = SSEEvent{Type: "order-update", Data: p}
+			}
 		case engine.EventOrderStatusChanged:
-			p := evt.Payload.(engine.OrderStatusChangedEvent)
-			sseEvt = SSEEvent{Type: "order-update", Data: p}
+			if p, ok := evt.Payload.(engine.OrderStatusChangedEvent); ok {
+				sseEvt = SSEEvent{Type: "order-update", Data: p}
+			}
 		case engine.EventOrderCompleted:
-			p := evt.Payload.(engine.OrderCompletedEvent)
-			sseEvt = SSEEvent{Type: "order-update", Data: p}
+			if p, ok := evt.Payload.(engine.OrderCompletedEvent); ok {
+				sseEvt = SSEEvent{Type: "order-update", Data: p}
+			}
 		case engine.EventCounterDelta:
-			p := evt.Payload.(engine.CounterDeltaEvent)
-			sseEvt = SSEEvent{Type: "counter-update", Data: p}
+			if p, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
+				sseEvt = SSEEvent{Type: "counter-update", Data: p}
+			}
 		case engine.EventCounterAnomaly:
-			p := evt.Payload.(engine.CounterAnomalyEvent)
-			sseEvt = SSEEvent{Type: "counter-anomaly", Data: p}
+			if p, ok := evt.Payload.(engine.CounterAnomalyEvent); ok {
+				sseEvt = SSEEvent{Type: "counter-anomaly", Data: p}
+			}
 		case engine.EventChangeoverStarted, engine.EventChangeoverStateChanged, engine.EventChangeoverCompleted, engine.EventChangeoverCancelled:
 			sseEvt = SSEEvent{Type: "changeover-update", Data: evt.Payload}
 		case engine.EventCounterRead:
-			p := evt.Payload.(engine.CounterReadEvent)
-			sseEvt = SSEEvent{Type: "counter-read", Data: p}
+			if p, ok := evt.Payload.(engine.CounterReadEvent); ok {
+				sseEvt = SSEEvent{Type: "counter-read", Data: p}
+			}
 		case engine.EventPLCHealthAlert:
-			p := evt.Payload.(engine.PLCHealthAlertEvent)
-			sseEvt = SSEEvent{Type: "plc-health-alert", Data: p}
+			if p, ok := evt.Payload.(engine.PLCHealthAlertEvent); ok {
+				sseEvt = SSEEvent{Type: "plc-health-alert", Data: p}
+			}
 		case engine.EventPLCHealthRecover:
-			p := evt.Payload.(engine.PLCHealthRecoverEvent)
-			sseEvt = SSEEvent{Type: "plc-health-recover", Data: p}
+			if p, ok := evt.Payload.(engine.PLCHealthRecoverEvent); ok {
+				sseEvt = SSEEvent{Type: "plc-health-recover", Data: p}
+			}
 		case engine.EventPLCConnected:
-			p := evt.Payload.(engine.PLCEvent)
-			sseEvt = SSEEvent{Type: "plc-status", Data: map[string]interface{}{"plcName": p.PLCName, "connected": true}}
+			if p, ok := evt.Payload.(engine.PLCEvent); ok {
+				sseEvt = SSEEvent{Type: "plc-status", Data: map[string]interface{}{"plcName": p.PLCName, "connected": true}}
+			}
 		case engine.EventPLCDisconnected:
-			p := evt.Payload.(engine.PLCEvent)
-			sseEvt = SSEEvent{Type: "plc-status", Data: map[string]interface{}{"plcName": p.PLCName, "connected": false, "error": p.Error}}
+			if p, ok := evt.Payload.(engine.PLCEvent); ok {
+				sseEvt = SSEEvent{Type: "plc-status", Data: map[string]interface{}{"plcName": p.PLCName, "connected": false, "error": p.Error}}
+			}
 		case engine.EventWarLinkConnected, engine.EventWarLinkDisconnected:
-			p := evt.Payload.(engine.WarLinkEvent)
-			sseEvt = SSEEvent{Type: "warlink-status", Data: p}
+			if p, ok := evt.Payload.(engine.WarLinkEvent); ok {
+				sseEvt = SSEEvent{Type: "warlink-status", Data: p}
+			}
 		case engine.EventCoreNodesUpdated:
-			p := evt.Payload.(engine.CoreNodesUpdatedEvent)
-			sseEvt = SSEEvent{Type: "core-nodes", Data: p}
+			if p, ok := evt.Payload.(engine.CoreNodesUpdatedEvent); ok {
+				sseEvt = SSEEvent{Type: "core-nodes", Data: p}
+			}
 		case engine.EventCounterReadError:
-			p := evt.Payload.(engine.CounterReadErrorEvent)
-			sseEvt = SSEEvent{Type: "counter-read-error", Data: p}
-		case engine.EventPayloadEmpty:
-			p := evt.Payload.(engine.PayloadEmptyEvent)
-			sseEvt = SSEEvent{Type: "payload-empty", Data: p}
+			if p, ok := evt.Payload.(engine.CounterReadErrorEvent); ok {
+				sseEvt = SSEEvent{Type: "counter-read-error", Data: p}
+			}
+		case engine.EventSlotEmpty:
+			if p, ok := evt.Payload.(engine.SlotEmptyEvent); ok {
+				sseEvt = SSEEvent{Type: "payload-empty", Data: p}
+			}
 		case engine.EventOrderFailed:
-			p := evt.Payload.(engine.OrderFailedEvent)
-			sseEvt = SSEEvent{Type: "order-failed", Data: p}
+			if p, ok := evt.Payload.(engine.OrderFailedEvent); ok {
+				sseEvt = SSEEvent{Type: "order-failed", Data: p}
+			}
 		default:
 			return
 		}
 
-		h.Broadcast(sseEvt)
+		if sseEvt.Type != "" {
+			h.Broadcast(sseEvt)
+		}
 	})
 
 	log.Printf("SSE listeners wired to engine events")

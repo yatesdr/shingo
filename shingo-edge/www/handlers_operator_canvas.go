@@ -54,20 +54,20 @@ import (
 // handleOperatorScreenList shows all production lines (quick launch) plus
 // any saved designer screens.
 func (h *Handlers) handleOperatorScreenList(w http.ResponseWriter, r *http.Request) {
-	lines, err := h.engine.DB().ListProductionLines()
+	processes, err := h.engine.DB().ListProcesses()
 	if err != nil {
-		log.Printf("operator: failed to list lines: %v", err)
+		log.Printf("operator: failed to list processes: %v", err)
 	}
 	screens, err := h.engine.DB().ListOperatorScreens()
 	if err != nil {
 		log.Printf("operator: failed to list screens: %v", err)
 	}
 	data := map[string]interface{}{
-		"Page":    "operator",
-		"Lines":   lines,
-		"Screens": screens,
+		"Page":      "operator",
+		"Processes": processes,
+		"Screens":   screens,
 	}
-	h.renderTemplate(w, "operator-home.html", data)
+	h.renderTemplate(w, r, "operator-home.html", data)
 }
 
 // handleOperatorCellDisplay auto-generates a screen layout from a
@@ -86,32 +86,32 @@ func (h *Handlers) handleOperatorCellDisplay(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	line, err := db.GetProductionLine(lineID)
+	process, err := db.GetProcess(lineID)
 	if err != nil {
-		http.Error(w, "line not found", http.StatusNotFound)
+		http.Error(w, "process not found", http.StatusNotFound)
 		return
 	}
-	if line.ActiveJobStyleID == nil {
-		http.Error(w, "no active job style — set one in Setup first", http.StatusBadRequest)
+	if process.ActiveStyleID == nil {
+		http.Error(w, "no active style — set one in Setup first", http.StatusBadRequest)
 		return
 	}
 
-	payloads, err := db.ListPayloadsByJobStyle(*line.ActiveJobStyleID)
+	slots, err := db.ListSlotsByStyle(*process.ActiveStyleID)
 	if err != nil {
-		http.Error(w, "failed to load payloads", http.StatusInternalServerError)
+		http.Error(w, "failed to load material slots", http.StatusInternalServerError)
 		return
 	}
-	if len(payloads) == 0 {
-		http.Error(w, "no payloads on this job style", http.StatusBadRequest)
+	if len(slots) == 0 {
+		http.Error(w, "no material slots on this style", http.StatusBadRequest)
 		return
 	}
 
-	layout := generateDefaultLayout(db, line, payloads)
+	layout := generateDefaultLayout(db, process, slots)
 
 	screen := &store.OperatorScreen{
 		ID:     0, // ephemeral — not persisted
-		Name:   line.Name,
-		Slug:   fmt.Sprintf("cell-%d", line.ID),
+		Name:   process.Name,
+		Slug:   fmt.Sprintf("cell-%d", process.ID),
 		Layout: layout,
 	}
 
@@ -119,7 +119,7 @@ func (h *Handlers) handleOperatorCellDisplay(w http.ResponseWriter, r *http.Requ
 		"Page":   "operator-display",
 		"Screen": screen,
 	}
-	h.renderTemplate(w, "operator-display.html", data)
+	h.renderTemplate(w, r, "operator-display.html", data)
 }
 
 // handleOperatorDisplay serves a saved (designed) screen.
@@ -139,7 +139,7 @@ func (h *Handlers) handleOperatorDisplay(w http.ResponseWriter, r *http.Request)
 		"Page":   "operator-display",
 		"Screen": screen,
 	}
-	h.renderTemplate(w, "operator-display.html", data)
+	h.renderTemplate(w, r, "operator-display.html", data)
 }
 
 // handleOperatorDesigner serves the drag-and-drop screen editor.
@@ -152,15 +152,15 @@ func (h *Handlers) handleOperatorDesigner(w http.ResponseWriter, r *http.Request
 			screen, _ = h.engine.DB().GetOperatorScreen(id)
 		}
 	}
-	lines, _ := h.engine.DB().ListProductionLines()
-	payloads, _ := h.engine.DB().ListPayloads()
+	processes, _ := h.engine.DB().ListProcesses()
+	slots, _ := h.engine.DB().ListSlots()
 	data := map[string]interface{}{
-		"Page":     "operator-designer",
-		"Screen":   screen,
-		"Lines":    lines,
-		"Payloads": payloads,
+		"Page":      "operator-designer",
+		"Screen":    screen,
+		"Processes": processes,
+		"Slots":     slots,
 	}
-	h.renderTemplate(w, "operator-designer.html", data)
+	h.renderTemplate(w, r, "operator-designer.html", data)
 }
 
 // ── API Handlers ─────────────────────────────────────────────────────
@@ -256,7 +256,7 @@ func (h *Handlers) apiSaveOperatorScreenLayout(w http.ResponseWriter, r *http.Re
 const canvasW = 1920
 const canvasH = 1080
 
-func generateDefaultLayout(db *store.DB, line *store.ProductionLine, payloads []store.Payload) json.RawMessage {
+func generateDefaultLayout(db *store.DB, line *store.Process, payloads []store.MaterialSlot) json.RawMessage {
 	type shapeConfig map[string]interface{}
 	type shape struct {
 		ID     string      `json:"id"`

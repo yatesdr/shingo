@@ -24,6 +24,17 @@ const (
 	StatusFailed       = protocol.StatusFailed
 )
 
+// Dispatch reply types — used by HandleDispatchReply and edge_handler.
+const (
+	ReplyAck       = "ack"
+	ReplyWaybill   = "waybill"
+	ReplyUpdate    = "update"
+	ReplyDelivered = "delivered"
+	ReplyError     = "error"
+	ReplyStaged    = "staged"
+	ReplyCancelled = "cancelled"
+)
+
 var validTransitions = map[string][]string{
 	StatusPending:      {StatusSubmitted, StatusCancelled, StatusFailed},
 	StatusSubmitted:    {StatusAcknowledged, StatusCancelled, StatusFailed},

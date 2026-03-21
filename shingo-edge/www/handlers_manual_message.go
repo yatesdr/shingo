@@ -52,7 +52,7 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 		"CoreNodesJSON":     string(coreNodesJSON),
 	}
 
-	h.renderTemplate(w, "manual-message.html", data)
+	h.renderTemplate(w, r, "manual-message.html", data)
 }
 
 func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) {

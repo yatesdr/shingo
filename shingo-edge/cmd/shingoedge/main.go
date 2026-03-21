@@ -104,35 +104,49 @@ func main() {
 
 	// Set up messaging
 	msgClient := messaging.NewClient(&cfg.Messaging)
-	msgClient.DebugLog = dbg.Func("kafka")
+	msgClient.DebugLog = messaging.DebugLogFunc(dbg.Func("kafka"))
 	if cfg.Messaging.SigningKey != "" {
 		msgClient.SigningKey = []byte(cfg.Messaging.SigningKey)
 		log.Printf("shingoedge: envelope signing enabled")
 	}
 	defer msgClient.Close()
+
+	// Wire send function and reconnect unconditionally — they self-gate on connection state
+	eng.SetSendFunc(func(env *protocol.Envelope) error {
+		return msgClient.PublishEnvelope(cfg.Messaging.OrdersTopic, env)
+	})
+	eng.SetKafkaReconnectFunc(msgClient.Reconnect)
+
+	// Start outbox drainer unconditionally — it checks IsConnected() each cycle
+	// and skips when Kafka is unavailable, but messages still accumulate in the
+	// outbox and will drain once the connection is established.
+	drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
+	drainer.DebugLog = messaging.DebugLogFunc(dbg.Func("outbox"))
+	drainer.Start()
+	defer drainer.Stop()
+
+	// Production reporter uses the outbox for delivery — always start it
+	stationID := cfg.StationID()
+	reporter := messaging.NewProductionReporter(db, stationID)
+	reporter.DebugLog = messaging.DebugLogFunc(dbg.Func("reporter"))
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		if delta, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
+			reporter.RecordDelta(delta.JobStyleID, delta.Delta)
+		}
+	}, engine.EventCounterDelta)
+	reporter.Start()
+	defer reporter.Stop()
+
+	// Connect to Kafka — if unavailable, the outbox drainer and reporter still
+	// run (they self-gate). Subscription and heartbeat require a live connection.
 	if err := msgClient.Connect(); err != nil {
-		log.Printf("messaging connect: %v (will retry via outbox)", err)
+		log.Printf("messaging connect: %v (outbox drainer active, will drain when connected)", err)
 	} else {
-		// Wire send function so web handlers can publish envelopes directly
-		eng.SetSendFunc(func(env *protocol.Envelope) error {
-			return msgClient.PublishEnvelope(cfg.Messaging.OrdersTopic, env)
-		})
-
-		// Wire reconnect so web config changes take effect without restart
-		eng.SetKafkaReconnectFunc(msgClient.Reconnect)
-
-		// Start outbox drainer
-		drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
-		drainer.DebugLog = dbg.Func("outbox")
-		drainer.Start()
-		defer drainer.Stop()
-
 		// Protocol ingestor (inbound from ShinGo Core)
-		stationID := cfg.StationID()
 		edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(nodes []protocol.NodeInfo) {
 			eng.SetCoreNodes(nodes)
 		})
-		edgeHandler.DebugLog = dbg.Func("edge_handler")
+		edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
 		ingestor := protocol.NewIngestor(edgeHandler, func(hdr *protocol.RawHeader) bool {
 			return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
 		})
@@ -152,7 +166,7 @@ func main() {
 		hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
 			return db.CountActiveOrders()
 		})
-		hb.DebugLog = dbg.Func("heartbeat")
+		hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
 		hb.Start()
 		defer hb.Stop()
 
@@ -167,17 +181,6 @@ func main() {
 			eng.HandlePayloadCatalog(entries)
 		})
 		eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
-
-		// Production reporter (accumulates deltas, enqueues periodic reports via outbox)
-		reporter := messaging.NewProductionReporter(db, stationID)
-		reporter.DebugLog = dbg.Func("reporter")
-		eng.Events.SubscribeTypes(func(evt engine.Event) {
-			if delta, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
-				reporter.RecordDelta(delta.JobStyleID, delta.Delta)
-			}
-		}, engine.EventCounterDelta)
-		reporter.Start()
-		defer reporter.Stop()
 	}
 
 	// Set up HTTP server

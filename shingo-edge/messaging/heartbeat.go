@@ -26,13 +26,7 @@ type Heartbeater struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 
-	DebugLog func(string, ...any)
-}
-
-func (h *Heartbeater) dbg(format string, args ...any) {
-	if fn := h.DebugLog; fn != nil {
-		fn(format, args...)
-	}
+	DebugLog DebugLogFunc
 }
 
 // NewHeartbeater creates a heartbeater for the given edge identity.
@@ -90,7 +84,7 @@ func (h *Heartbeater) sendRegister() {
 		log.Printf("heartbeater: send register failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent edge.register (station=%s)", h.stationID)
-		h.dbg("register sent station=%s", h.stationID)
+		h.DebugLog.log("register sent station=%s", h.stationID)
 	}
 }
 
@@ -109,7 +103,7 @@ func (h *Heartbeater) sendNodeListRequest() {
 		log.Printf("heartbeater: send node list request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent node.list_request (station=%s)", h.stationID)
-		h.dbg("node_list_request sent station=%s", h.stationID)
+		h.DebugLog.log("node_list_request sent station=%s", h.stationID)
 	}
 }
 
@@ -157,7 +151,7 @@ func (h *Heartbeater) sendCatalogRequest() {
 		log.Printf("heartbeater: send catalog request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent catalog.payloads_request (station=%s)", h.stationID)
-		h.dbg("catalog_request sent station=%s", h.stationID)
+		h.DebugLog.log("catalog_request sent station=%s", h.stationID)
 	}
 }
 
@@ -181,10 +175,10 @@ func (h *Heartbeater) sendHeartbeat() {
 		log.Printf("heartbeater: build heartbeat: %v", err)
 		return
 	}
-	if err := h.client.PublishEnvelope(h.topic, env); err != nil {
-		log.Printf("heartbeater: send heartbeat: %v", err)
+	if err := h.publishWithRetry(env, "heartbeat"); err != nil {
+		log.Printf("heartbeater: send heartbeat failed after retries: %v", err)
 	} else {
-		h.dbg("heartbeat sent uptime=%ds orders=%d", uptime, activeOrders)
+		h.DebugLog.log("heartbeat sent uptime=%ds orders=%d", uptime, activeOrders)
 	}
 }
 
@@ -199,7 +193,7 @@ func (h *Heartbeater) loop() {
 		case <-ticker.C:
 			h.sendHeartbeat()
 			tick++
-			if tick%5 == 0 { // re-request node list and style catalog every ~5 min
+			if tick%5 == 0 { // re-request node list and payload catalog every ~5 min
 				h.sendNodeListRequest()
 				h.sendCatalogRequest()
 			}

@@ -231,62 +231,62 @@ function setCatIDs(prefix, ids) {
 }
 
 // --- Production Lines ---
-async function addLine() {
+async function addProcess() {
     var d = ShingoEdge.getFormData('line-add-form');
     try {
-        await ShingoEdge.api.post('/api/lines', d);
+        await ShingoEdge.api.post('/api/processes', d);
         ShingoEdge.toast('Process added', 'success');
         ShingoEdge.hideModal('line-add');
         location.reload();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-function openEditLine(id, name, desc) {
+function openEditProcess(id, name, desc) {
     ShingoEdge.populateForm('line-edit-form', { id: id, name: name, description: desc });
     ShingoEdge.showModal('line-edit');
 }
 
-async function saveLine() {
+async function saveProcess() {
     var d = ShingoEdge.getFormData('line-edit-form');
     var id = d.id; delete d.id;
     try {
-        await ShingoEdge.api.put('/api/lines/' + id, d);
+        await ShingoEdge.api.put('/api/processes/' + id, d);
         ShingoEdge.toast('Process updated', 'success');
         ShingoEdge.hideModal('line-edit');
         location.reload();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-async function deleteLine(id) {
+async function deleteProcess(id) {
     var ok = await ShingoEdge.confirm('Delete this process and all its styles?');
     if (!ok) return;
     try {
-        await ShingoEdge.api.del('/api/lines/' + id);
+        await ShingoEdge.api.del('/api/processes/' + id);
         ShingoEdge.toast('Deleted', 'success');
         location.reload();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-async function setActiveStyle(lineID, jsID) {
+async function setActiveStyle(processID, styleID) {
     try {
-        await ShingoEdge.api.put('/api/lines/' + lineID + '/active-style', {
-            job_style_id: jsID ? parseInt(jsID) : null
+        await ShingoEdge.api.put('/api/processes/' + processID + '/active-style', {
+            style_id: styleID ? parseInt(styleID) : null
         });
         ShingoEdge.toast('Active style updated', 'success');
-        loadStyleChips(lineID);
+        loadStyleChips(processID);
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
 // --- Style Chips ---
-async function loadStyleChips(lineID) {
-    var container = document.getElementById('style-chips-' + lineID);
+async function loadStyleChips(processID) {
+    var container = document.getElementById('style-chips-' + processID);
     if (!container) return;
     try {
-        var styles = await ShingoEdge.api.get('/api/lines/' + lineID + '/job-styles');
-        var lines = await ShingoEdge.api.get('/api/lines');
+        var styles = await ShingoEdge.api.get('/api/processes/' + processID + '/styles');
+        var processes = await ShingoEdge.api.get('/api/processes');
         var activeStyleID = null;
-        for (var i = 0; i < lines.length; i++) {
-            if (lines[i].id === lineID) { activeStyleID = lines[i].active_job_style_id; break; }
+        for (var i = 0; i < processes.length; i++) {
+            if (processes[i].id === processID) { activeStyleID = processes[i].active_style_id; break; }
         }
         if (!styles || styles.length === 0) {
             container.innerHTML = '<span style="font-size:0.8rem;color:var(--text-muted);padding:0.25rem 0">No styles</span>';
@@ -296,7 +296,7 @@ async function loadStyleChips(lineID) {
         for (var i = 0; i < styles.length; i++) {
             var s = styles[i];
             var cls = s.id === activeStyleID ? 'style-chip style-chip-active' : 'style-chip style-chip-inactive';
-            html += '<span class="' + cls + '" onclick="openEditJS(' + s.id + ',' + lineID + ',' + (s.id === activeStyleID ? 'true' : 'false') + ')" title="' + ShingoEdge.escapeHtml(s.description || '') + '">' + ShingoEdge.escapeHtml(s.name) + '</span>';
+            html += '<span class="' + cls + '" onclick="openEditStyle(' + s.id + ',' + processID + ',' + (s.id === activeStyleID ? 'true' : 'false') + ')" title="' + ShingoEdge.escapeHtml(s.description || '') + '">' + ShingoEdge.escapeHtml(s.name) + '</span>';
         }
         container.innerHTML = html;
     } catch (e) {
@@ -305,23 +305,23 @@ async function loadStyleChips(lineID) {
 }
 
 function refreshAllStyleChips() {
-    var cards = document.querySelectorAll('[data-line-id]');
+    var cards = document.querySelectorAll('[data-process-id]');
     for (var i = 0; i < cards.length; i++) {
-        loadStyleChips(parseInt(cards[i].getAttribute('data-line-id')));
+        loadStyleChips(parseInt(cards[i].getAttribute('data-process-id')));
     }
 }
 
 // Load all chips on page load
 (function() { refreshAllStyleChips(); })();
 
-// --- Job Styles ---
-var _currentJSLineID = 0;
-var _currentJSIsActive = false;
+// --- Styles ---
+var _currentStyleProcessID = 0;
+var _currentStyleIsActive = false;
 
-function openAddJS(lineID) {
-    _currentJSLineID = lineID;
+function openAddStyle(processID) {
+    _currentStyleProcessID = processID;
     var form = document.getElementById('js-add-form');
-    form.querySelector('[name="line_id"]').value = lineID;
+    form.querySelector('[name="line_id"]').value = processID;
     form.querySelector('[name="name"]').value = '';
     form.querySelector('[name="description"]').value = '';
     form.querySelector('[name="plc_name"]').value = '';
@@ -331,7 +331,7 @@ function openAddJS(lineID) {
     ShingoEdge.showModal('js-add');
 }
 
-async function addJobStyle() {
+async function addStyle() {
     var d = ShingoEdge.getFormData('js-add-form');
     d.line_id = parseInt(d.line_id);
     d.cat_ids = getCatIDs('js-add');
@@ -341,19 +341,19 @@ async function addJobStyle() {
     delete d.plc_name;
     delete d.tag_name;
     try {
-        await ShingoEdge.api.post('/api/job-styles', d);
+        await ShingoEdge.api.post('/api/styles', d);
         ShingoEdge.toast('Style added', 'success');
         ShingoEdge.hideModal('js-add');
         loadStyleChips(d.line_id);
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-async function openEditJS(id, lineID, isActive) {
-    _currentJSLineID = lineID;
-    _currentJSIsActive = isActive;
+async function openEditStyle(id, processID, isActive) {
+    _currentStyleProcessID = processID;
+    _currentStyleIsActive = isActive;
 
     // Fetch style data
-    var styles = await ShingoEdge.api.get('/api/lines/' + lineID + '/job-styles');
+    var styles = await ShingoEdge.api.get('/api/processes/' + processID + '/styles');
     var style = null;
     for (var i = 0; i < (styles || []).length; i++) {
         if (styles[i].id === id) { style = styles[i]; break; }
@@ -370,7 +370,7 @@ async function openEditJS(id, lineID, isActive) {
     // Fetch reporting point for this style
     var rp = null;
     try {
-        rp = await ShingoEdge.api.get('/api/job-styles/' + id + '/reporting-point');
+        rp = await ShingoEdge.api.get('/api/styles/' + id + '/reporting-point');
     } catch (e) {}
 
     form.querySelector('[name="plc_name"]').value = rp ? rp.plc_name : '';
@@ -384,7 +384,7 @@ async function openEditJS(id, lineID, isActive) {
     ShingoEdge.showModal('js-edit');
 }
 
-async function saveJobStyle() {
+async function saveStyle() {
     var d = ShingoEdge.getFormData('js-edit-form');
     var id = d.id; delete d.id;
     d.line_id = parseInt(d.line_id);
@@ -395,7 +395,7 @@ async function saveJobStyle() {
     delete d.plc_name;
     delete d.tag_name;
     try {
-        await ShingoEdge.api.put('/api/job-styles/' + id, d);
+        await ShingoEdge.api.put('/api/styles/' + id, d);
         ShingoEdge.toast('Style updated', 'success');
         ShingoEdge.hideModal('js-edit');
         loadStyleChips(d.line_id);
@@ -405,72 +405,72 @@ async function saveJobStyle() {
 async function setActiveStyleFromModal() {
     var form = document.getElementById('js-edit-form');
     var styleID = parseInt(form.querySelector('[name="id"]').value);
-    var lineID = parseInt(form.querySelector('[name="line_id"]').value);
-    await setActiveStyle(lineID, styleID);
+    var processID = parseInt(form.querySelector('[name="line_id"]').value);
+    await setActiveStyle(processID, styleID);
     ShingoEdge.hideModal('js-edit');
 }
 
-async function deleteJobStyle(id, lineID) {
+async function deleteStyle(id, processID) {
     var ok = await ShingoEdge.confirm('Delete this style?');
     if (!ok) return;
     try {
-        await ShingoEdge.api.del('/api/job-styles/' + id);
+        await ShingoEdge.api.del('/api/styles/' + id);
         ShingoEdge.toast('Deleted', 'success');
-        loadStyleChips(lineID);
+        loadStyleChips(processID);
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-// --- Payloads ---
-async function onPayloadLineChange() {
-    var lineID = document.getElementById('payload-line').value;
-    var jsSel = document.getElementById('payload-job-style');
-    jsSel.innerHTML = '<option value="">-- Select Style --</option>';
-    if (!lineID) { loadPayloads(); return; }
+// --- Material Slots ---
+async function onSlotProcessChange() {
+    var processID = document.getElementById('payload-line').value;
+    var styleSel = document.getElementById('payload-job-style');
+    styleSel.innerHTML = '<option value="">-- Select Style --</option>';
+    if (!processID) { loadSlots(); return; }
     try {
-        var styles = await ShingoEdge.api.get('/api/lines/' + lineID + '/job-styles');
+        var styles = await ShingoEdge.api.get('/api/processes/' + processID + '/styles');
         for (var i = 0; i < (styles || []).length; i++) {
             var opt = document.createElement('option');
             opt.value = styles[i].id;
             opt.textContent = styles[i].name;
-            jsSel.appendChild(opt);
+            styleSel.appendChild(opt);
         }
     } catch (e) {}
-    loadPayloads();
+    loadSlots();
 }
 
-async function loadPayloads() {
-    var jsID = document.getElementById('payload-job-style').value;
+async function loadSlots() {
+    var styleID = document.getElementById('payload-job-style').value;
     var body = document.getElementById('payload-body');
     var addBar = document.getElementById('payload-add-bar');
-    if (!jsID) {
-        body.innerHTML = '<tr><td colspan="9" class="empty-cell">Select a process and style to view payloads</td></tr>';
+    if (!styleID) {
+        body.innerHTML = '<tr><td colspan="9" class="empty-cell">Select a process and style to view material slots</td></tr>';
         addBar.style.display = 'none';
         return;
     }
     addBar.style.display = '';
     try {
-        var payloads = await ShingoEdge.api.get('/api/payloads/job-style/' + jsID);
-        if (!payloads || payloads.length === 0) {
-            body.innerHTML = '<tr><td colspan="9" class="empty-cell">No payloads for this style</td></tr>';
+        var slots = await ShingoEdge.api.get('/api/material-slots/style/' + styleID);
+        if (!slots || slots.length === 0) {
+            body.innerHTML = '<tr><td colspan="9" class="empty-cell">No material slots for this style</td></tr>';
             return;
         }
         var html = '';
-        for (var i = 0; i < payloads.length; i++) {
-            var p = payloads[i];
-            var modeLabel = p.cycle_mode === 'two_robot' ? 'Two Robot' : p.cycle_mode === 'single_robot' ? 'Single Robot' : 'Sequential';
-            html += '<tr id="payload-' + p.id + '">' +
-                '<td class="mono">' + ShingoEdge.escapeHtml(p.location) + '</td>' +
-                '<td class="mono">' + ShingoEdge.escapeHtml(p.payload_code) + '</td>' +
-                '<td>' + ShingoEdge.escapeHtml(p.description) + '</td>' +
-                '<td>' + p.role + '</td>' +
-                '<td>' + p.remaining + ' / ' + p.reorder_point + '</td>' +
-                '<td>' + p.reorder_point + '</td>' +
-                '<td><span class="status-badge status-' + (p.cycle_mode === 'sequential' ? 'stored' : 'active') + '">' + modeLabel + '</span></td>' +
-                '<td><span class="status-badge status-' + p.status + '">' + p.status + '</span></td>' +
+        for (var i = 0; i < slots.length; i++) {
+            var s = slots[i];
+            var modeLabel = s.cycle_mode === 'two_robot' ? 'Two Robot' : s.cycle_mode === 'single_robot' ? 'Single Robot' : 'Sequential';
+            html += '<tr id="slot-' + s.id + '">' +
+                '<td class="mono">' + ShingoEdge.escapeHtml(s.location) + '</td>' +
+                '<td class="mono">' + ShingoEdge.escapeHtml(s.payload_code) + '</td>' +
+                '<td>' + ShingoEdge.escapeHtml(s.description) + '</td>' +
+                '<td>' + s.role + '</td>' +
+                '<td>' + s.remaining + ' / ' + s.reorder_point + '</td>' +
+                '<td>' + s.reorder_point + '</td>' +
+                '<td><span class="status-badge status-' + (s.cycle_mode === 'sequential' ? 'stored' : 'active') + '">' + modeLabel + '</span></td>' +
+                '<td><span class="status-badge status-' + s.status + '">' + s.status + '</span></td>' +
                 '<td class="actions">' +
-                    '<button class="btn-icon" onclick=\'openEditPayload(' + JSON.stringify(p).replace(/'/g, "\\'") + ')\' title="Edit">&#9998;</button>' +
-                    '<button class="btn-icon" onclick="resetPayload(' + p.id + ')" title="Reset to full">&#8634;</button>' +
-                    '<button class="btn-icon btn-icon-danger" onclick="deletePayload(' + p.id + ')" title="Delete">&#10005;</button>' +
+                    '<button class="btn-icon" onclick=\'openEditSlot(' + JSON.stringify(s).replace(/'/g, "\\'") + ')\' title="Edit">&#9998;</button>' +
+                    '<button class="btn-icon" onclick="resetSlot(' + s.id + ')" title="Reset to full">&#8634;</button>' +
+                    '<button class="btn-icon btn-icon-danger" onclick="deleteSlot(' + s.id + ')" title="Delete">&#10005;</button>' +
                 '</td></tr>';
         }
         body.innerHTML = html;
@@ -550,7 +550,7 @@ var _locationNodeList = null;
 
 function loadLocationNodeList(cb) {
     if (_locationNodeList !== null) { cb(_locationNodeList); return; }
-    ShingoEdge.api.get('/api/location-nodes').then(function(nodes) {
+    ShingoEdge.api.get('/api/nodes').then(function(nodes) {
         _locationNodeList = (nodes || []).sort(function(a, b) {
             return a.node_id.localeCompare(b.node_id);
         });
@@ -643,13 +643,13 @@ function populateCycleModeFields(formId, p) {
     onCycleModeChange(formId);
 }
 
-// ── Payload CRUD ─────────────────────────────────────────────────────
+// ── Slot CRUD ────────────────────────────────────────────────────────
 
-async function addPayload() {
-    var jsID = document.getElementById('payload-job-style').value;
-    if (!jsID) { ShingoEdge.toast('Select a style first', 'warning'); return; }
+async function addSlot() {
+    var styleID = document.getElementById('payload-job-style').value;
+    if (!styleID) { ShingoEdge.toast('Select a style first', 'warning'); return; }
     var d = ShingoEdge.getFormData('payload-add-form');
-    d.job_style_id = parseInt(jsID);
+    d.style_id = parseInt(styleID);
     d.reorder_point = parseInt(d.reorder_point) || 0;
 
     // Merge cycle mode fields
@@ -663,35 +663,35 @@ async function addPayload() {
     delete d.outgoing_type; delete d.outgoing_value;
 
     try {
-        await ShingoEdge.api.post('/api/payloads', d);
-        ShingoEdge.toast('Payload added', 'success');
+        await ShingoEdge.api.post('/api/material-slots', d);
+        ShingoEdge.toast('Slot added', 'success');
         ShingoEdge.hideModal('payload-add');
-        loadPayloads();
+        loadSlots();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-function openAddPayload() {
+function openAddSlot() {
     var sel = document.querySelector('#payload-add-form [name="location"]');
     populateLocationSelect(sel, '', function() {
         ShingoEdge.showModal('payload-add');
     });
 }
 
-function openEditPayload(p) {
+function openEditSlot(s) {
     var sel = document.querySelector('#payload-edit-form [name="location"]');
-    populateLocationSelect(sel, p.location, function() {
+    populateLocationSelect(sel, s.location, function() {
         ShingoEdge.populateForm('payload-edit-form', {
-            id: p.id, location: p.location,
-            description: p.description, payload_code: p.payload_code || '',
-            role: p.role, auto_reorder: p.auto_reorder,
-            reorder_point: p.reorder_point
+            id: s.id, location: s.location,
+            description: s.description, payload_code: s.payload_code || '',
+            role: s.role, auto_reorder: s.auto_reorder,
+            reorder_point: s.reorder_point
         });
-        populateCycleModeFields('payload-edit-form', p);
+        populateCycleModeFields('payload-edit-form', s);
         ShingoEdge.showModal('payload-edit');
     });
 }
 
-async function savePayload() {
+async function saveSlot() {
     var d = ShingoEdge.getFormData('payload-edit-form');
     var id = d.id; delete d.id;
     d.reorder_point = parseInt(d.reorder_point) || 0;
@@ -707,30 +707,30 @@ async function savePayload() {
     delete d.outgoing_type; delete d.outgoing_value;
 
     try {
-        await ShingoEdge.api.put('/api/payloads/' + id, d);
-        ShingoEdge.toast('Payload updated', 'success');
+        await ShingoEdge.api.put('/api/material-slots/' + id, d);
+        ShingoEdge.toast('Slot updated', 'success');
         ShingoEdge.hideModal('payload-edit');
-        loadPayloads();
+        loadSlots();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-async function deletePayload(id) {
-    var ok = await ShingoEdge.confirm('Delete this payload?');
+async function deleteSlot(id) {
+    var ok = await ShingoEdge.confirm('Delete this material slot?');
     if (!ok) return;
     try {
-        await ShingoEdge.api.del('/api/payloads/' + id);
+        await ShingoEdge.api.del('/api/material-slots/' + id);
         ShingoEdge.toast('Deleted', 'success');
-        loadPayloads();
+        loadSlots();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-async function resetPayload(id) {
-    var ok = await ShingoEdge.confirm('Reset this payload to full capacity?');
+async function resetSlot(id) {
+    var ok = await ShingoEdge.confirm('Reset this slot to full capacity?');
     if (!ok) return;
     try {
-        await ShingoEdge.api.put('/api/payloads/' + id + '/count', { piece_count: 0, reset: true });
-        ShingoEdge.toast('Payload reset', 'success');
-        loadPayloads();
+        await ShingoEdge.api.put('/api/material-slots/' + id + '/count', { piece_count: 0, reset: true });
+        ShingoEdge.toast('Slot reset', 'success');
+        loadSlots();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
@@ -757,18 +757,18 @@ async function syncCoreNodes() {
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-// --- Location Nodes (nested under processes) ---
-async function loadLineNodes(lineID) {
-    var container = document.getElementById('node-list-' + lineID);
+// --- Nodes (nested under processes) ---
+async function loadProcessNodes(processID) {
+    var container = document.getElementById('node-list-' + processID);
     if (!container) return;
     try {
-        var nodes = await ShingoEdge.api.get('/api/lines/' + lineID + '/location-nodes');
+        var nodes = await ShingoEdge.api.get('/api/processes/' + processID + '/nodes');
         if (!nodes || nodes.length === 0) {
             container.innerHTML = '';
             return;
         }
         var html = '<div style="border-top:1px solid var(--border);padding-top:0.4rem;margin-top:0.25rem">' +
-            '<label style="display:block;margin-bottom:0.25rem;font-weight:500;font-size:0.8rem;color:var(--text-muted)">Location Nodes</label>' +
+            '<label style="display:block;margin-bottom:0.25rem;font-weight:500;font-size:0.8rem;color:var(--text-muted)">Nodes</label>' +
             '<div style="display:flex;gap:0.4rem;flex-wrap:wrap">';
         for (var i = 0; i < nodes.length; i++) {
             var n = nodes[i];
@@ -785,23 +785,23 @@ async function loadLineNodes(lineID) {
     }
 }
 
-async function refreshAllLineNodes() {
+async function refreshAllProcessNodes() {
     await fetchCoreNodes();
-    var cards = document.querySelectorAll('[data-line-id]');
+    var cards = document.querySelectorAll('[data-process-id]');
     for (var i = 0; i < cards.length; i++) {
-        loadLineNodes(parseInt(cards[i].getAttribute('data-line-id')));
+        loadProcessNodes(parseInt(cards[i].getAttribute('data-process-id')));
     }
 }
 
 // Load all nodes on page load
-(function() { refreshAllLineNodes(); })();
+(function() { refreshAllProcessNodes(); })();
 
-var _currentNodeLineID = 0;
+var _currentNodeProcessID = 0;
 
-function openAddNode(lineID) {
-    _currentNodeLineID = lineID;
+function openAddNode(processID) {
+    _currentNodeProcessID = processID;
     var form = document.getElementById('node-add-form');
-    form.querySelector('[name="line_id"]').value = lineID;
+    form.querySelector('[name="line_id"]').value = processID;
     form.querySelector('[name="node_id"]').value = '';
     form.querySelector('[name="description"]').value = '';
     ShingoEdge.showModal('node-add');
@@ -811,23 +811,23 @@ async function addNode() {
     var d = ShingoEdge.getFormData('node-add-form');
     d.line_id = parseInt(d.line_id);
     try {
-        await ShingoEdge.api.post('/api/location-nodes', d);
+        await ShingoEdge.api.post('/api/nodes', d);
         ShingoEdge.toast('Node added', 'success');
         ShingoEdge.hideModal('node-add');
-        loadLineNodes(d.line_id);
+        loadProcessNodes(d.line_id);
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-async function openEditNode(id, lineID) {
-    _currentNodeLineID = lineID;
+async function openEditNode(id, processID) {
+    _currentNodeProcessID = processID;
     // Fetch current node data
-    var nodes = await ShingoEdge.api.get('/api/lines/' + lineID + '/location-nodes');
+    var nodes = await ShingoEdge.api.get('/api/processes/' + processID + '/nodes');
     var node = null;
     for (var i = 0; i < (nodes || []).length; i++) {
         if (nodes[i].id === id) { node = nodes[i]; break; }
     }
     if (!node) { ShingoEdge.toast('Node not found', 'error'); return; }
-    ShingoEdge.populateForm('node-edit-form', { id: id, line_id: lineID, node_id: node.node_id, description: node.description });
+    ShingoEdge.populateForm('node-edit-form', { id: id, line_id: processID, node_id: node.node_id, description: node.description });
     ShingoEdge.showModal('node-edit');
 }
 
@@ -836,20 +836,20 @@ async function saveNode() {
     var id = d.id; delete d.id;
     d.line_id = parseInt(d.line_id);
     try {
-        await ShingoEdge.api.put('/api/location-nodes/' + id, d);
+        await ShingoEdge.api.put('/api/nodes/' + id, d);
         ShingoEdge.toast('Node updated', 'success');
         ShingoEdge.hideModal('node-edit');
-        loadLineNodes(d.line_id);
+        loadProcessNodes(d.line_id);
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-async function deleteNode(id, lineID) {
+async function deleteNode(id, processID) {
     var ok = await ShingoEdge.confirm('Delete this location node?');
     if (!ok) return;
     try {
-        await ShingoEdge.api.del('/api/location-nodes/' + id);
+        await ShingoEdge.api.del('/api/nodes/' + id);
         ShingoEdge.toast('Deleted', 'success');
-        loadLineNodes(lineID || _currentNodeLineID);
+        loadProcessNodes(processID || _currentNodeProcessID);
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
@@ -860,10 +860,10 @@ async function deleteNodeFromModal() {
     var ok = await ShingoEdge.confirm('Delete this location node?');
     if (!ok) return;
     try {
-        await ShingoEdge.api.del('/api/location-nodes/' + id);
+        await ShingoEdge.api.del('/api/nodes/' + id);
         ShingoEdge.toast('Deleted', 'success');
         ShingoEdge.hideModal('node-edit');
-        loadLineNodes(lineID);
+        loadProcessNodes(lineID);
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
@@ -1051,9 +1051,9 @@ ShingoEdge.createSSE('/events', {
         _coreNodeList = nodes.map(function(n) { return n.name; }).sort();
         _coreNodeListFull = null; // Invalidate full list so cycle mode dropdowns re-fetch with types
         // Refresh node chips without re-fetching core nodes
-        var cards = document.querySelectorAll('[data-line-id]');
+        var cards = document.querySelectorAll('[data-process-id]');
         for (var i = 0; i < cards.length; i++) {
-            loadLineNodes(parseInt(cards[i].getAttribute('data-line-id')));
+            loadProcessNodes(parseInt(cards[i].getAttribute('data-process-id')));
         }
         ShingoEdge.toast('Node list updated (' + nodes.length + ' nodes)', 'success');
     },

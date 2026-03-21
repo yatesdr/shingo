@@ -10,63 +10,63 @@ import (
 func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 
-	lines, _ := db.ListProductionLines()
+	processes, _ := db.ListProcesses()
 
-	// Determine active line from query param or default to first
-	var activeLine *store.ProductionLine
-	if lineParam := r.URL.Query().Get("line"); lineParam != "" {
+	// Determine active process from query param or default to first
+	var activeProcess *store.Process
+	if lineParam := r.URL.Query().Get("process"); lineParam != "" {
 		if lineID, err := strconv.ParseInt(lineParam, 10, 64); err == nil {
-			for i := range lines {
-				if lines[i].ID == lineID {
-					activeLine = &lines[i]
+			for i := range processes {
+				if processes[i].ID == lineID {
+					activeProcess = &processes[i]
 					break
 				}
 			}
 		}
 	}
-	if activeLine == nil && len(lines) > 0 {
-		activeLine = &lines[0]
+	if activeProcess == nil && len(processes) > 0 {
+		activeProcess = &processes[0]
 	}
 
-	var activeLineID int64
+	var activeProcessID int64
 	var activeStyleName string
-	var payloads []store.Payload
+	var slots []store.MaterialSlot
 
-	if activeLine != nil {
-		activeLineID = activeLine.ID
-		if activeLine.ActiveJobStyleID != nil {
-			js, err := db.GetJobStyle(*activeLine.ActiveJobStyleID)
+	if activeProcess != nil {
+		activeProcessID = activeProcess.ID
+		if activeProcess.ActiveStyleID != nil {
+			js, err := db.GetStyle(*activeProcess.ActiveStyleID)
 			if err == nil {
 				activeStyleName = js.Name
-				payloads, _ = db.ListPayloadsByJobStyle(js.ID)
+				slots, _ = db.ListSlotsByStyle(js.ID)
 			}
 		}
 	}
 
-	if payloads == nil && activeLine != nil {
-		// No active style set — show all payloads for this line's styles
-		styles, _ := db.ListJobStylesByLine(activeLineID)
+	if slots == nil && activeProcess != nil {
+		// No active style set — show all slots for this process's styles
+		styles, _ := db.ListStylesByProcess(activeProcessID)
 		for _, s := range styles {
-			sp, _ := db.ListPayloadsByJobStyle(s.ID)
-			payloads = append(payloads, sp...)
+			sp, _ := db.ListSlotsByStyle(s.ID)
+			slots = append(slots, sp...)
 		}
 	}
 
-	if payloads == nil {
-		payloads, _ = db.ListPayloads()
+	if slots == nil {
+		slots, _ = db.ListSlots()
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
 
 	data := map[string]interface{}{
 		"Page":              "material",
-		"Lines":             lines,
-		"ActiveLineID":      activeLineID,
-		"Payloads":          payloads,
-		"ActiveJobStyle":    activeStyleName,
+		"Processes":         processes,
+		"ActiveProcessID":   activeProcessID,
+		"Slots":             slots,
+		"ActiveStyle":       activeStyleName,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
 	}
 
-	h.renderTemplate(w, "material.html", data)
+	h.renderTemplate(w, r, "material.html", data)
 }

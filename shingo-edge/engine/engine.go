@@ -17,7 +17,20 @@ import (
 )
 
 // LogFunc is the logging callback signature.
-type LogFunc func(format string, args ...interface{})
+type LogFunc func(format string, args ...any)
+
+// DebugLogFunc is a nil-safe debug logging function. Call Log() on it
+// directly — a nil DebugLogFunc is safe and does nothing.
+// Defined in the engine package to avoid import cycles; subsystem packages
+// that cannot import engine define their own equivalent (same signature).
+type DebugLogFunc func(format string, args ...any)
+
+// Log calls the debug log function if non-nil. Safe to call on a nil receiver.
+func (fn DebugLogFunc) Log(format string, args ...any) {
+	if fn != nil {
+		fn(format, args...)
+	}
+}
 
 // Engine centralizes all business logic and orchestrates subsystems.
 type Engine struct {
@@ -25,7 +38,7 @@ type Engine struct {
 	configPath  string
 	db          *store.DB
 	logFn       LogFunc
-	debugFn     LogFunc
+	debugFn     DebugLogFunc
 	debugLogger *debuglog.Logger
 
 	plcMgr   *plc.Manager
@@ -63,9 +76,9 @@ func New(c Config) *Engine {
 	if logFn == nil {
 		logFn = func(string, ...interface{}) {}
 	}
-	debugFn := LogFunc(func(string, ...interface{}) {})
+	var debugFn DebugLogFunc
 	if c.DebugLogger != nil {
-		debugFn = c.DebugLogger.Func("engine")
+		debugFn = DebugLogFunc(c.DebugLogger.Func("engine"))
 	}
 	return &Engine{
 		cfg:            c.AppConfig,
@@ -93,20 +106,20 @@ func (e *Engine) Start() {
 
 	// Wire debug logging to subsystems
 	if e.debugLogger != nil {
-		e.plcMgr.DebugLog = e.debugLogger.Func("plc")
-		e.orderMgr.DebugLog = e.debugLogger.Func("orders")
+		e.plcMgr.DebugLog = plc.DebugLogFunc(e.debugLogger.Func("plc"))
+		e.orderMgr.DebugLog = orders.DebugLogFunc(e.debugLogger.Func("orders"))
 	}
 	e.hourlyTracker = NewHourlyTracker(e.db, e.cfg.Timezone)
 
-	// Initialize changeover machines for all production lines
-	lines, err := e.db.ListProductionLines()
+	// Initialize changeover machines for all processes
+	lines, err := e.db.ListProcesses()
 	if err != nil {
-		log.Printf("load production lines for changeover: %v", err)
+		log.Printf("load processes for changeover: %v", err)
 	}
 	for _, line := range lines {
 		m := changeover.NewMachine(e.db, e.coEmit, line.ID, line.Name)
 		if e.debugLogger != nil {
-			m.DebugLog = e.debugLogger.Func("changeover")
+			m.DebugLog = changeover.DebugLogFunc(e.debugLogger.Func("changeover"))
 		}
 		m.Restore()
 		e.changeoverMgrs[line.ID] = m
@@ -121,8 +134,8 @@ func (e *Engine) Start() {
 	}
 	e.plcMgr.StartPolling()
 
-	// Scan produce payloads for empty bin needs on startup
-	e.scanProducePayloads()
+	// Scan produce slots for empty bin needs on startup
+	e.scanProduceSlots()
 
 	e.logFn("Engine started: namespace=%s line_id=%s lines=%d", e.cfg.Namespace, e.cfg.LineID, len(e.changeoverMgrs))
 }
@@ -142,8 +155,12 @@ func (e *Engine) Stop() {
 
 // ApplyWarLinkConfig stops and restarts the WarLink poller/SSE to match the current config.
 // Always stops first to handle mode switches (poll→sse or sse→poll) cleanly.
+// Rebuilds the WarLink HTTP client in case host/port changed.
 func (e *Engine) ApplyWarLinkConfig() {
 	e.plcMgr.StopWarLinkPoller()
+	e.plcMgr.ReplaceClient(plc.NewWarlinkClient(
+		fmt.Sprintf("http://%s:%d/api", e.cfg.WarLink.Host, e.cfg.WarLink.Port),
+	))
 	if e.cfg.WarLink.Enabled {
 		e.plcMgr.StartWarLinkPoller()
 	}
@@ -175,7 +192,7 @@ func (e *Engine) ChangeoverMachine(lineID int64) *changeover.Machine {
 	}
 
 	// Lazy create
-	line, err := e.db.GetProductionLine(lineID)
+	line, err := e.db.GetProcess(lineID)
 	if err != nil {
 		return nil
 	}
@@ -187,7 +204,7 @@ func (e *Engine) ChangeoverMachine(lineID int64) *changeover.Machine {
 	}
 	m = changeover.NewMachine(e.db, e.coEmit, line.ID, line.Name)
 	if e.debugLogger != nil {
-		m.DebugLog = e.debugLogger.Func("changeover")
+		m.DebugLog = changeover.DebugLogFunc(e.debugLogger.Func("changeover"))
 	}
 	m.Restore()
 	e.changeoverMgrs[lineID] = m

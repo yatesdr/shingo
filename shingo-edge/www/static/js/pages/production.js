@@ -113,11 +113,11 @@ function cycleStyle() {
 function navigateWithStyle(style) {
     var lineID = document.getElementById('prod-line-select').value;
     var date = document.getElementById('prod-date').value;
-    window.location = '/production?line=' + lineID + '&date=' + date + '&style=' + style;
+    window.location = '/production?process=' + lineID + '&date=' + date + '&style=' + style;
 }
 
 function buildUrl(lineID, date) {
-    var url = '/production?line=' + lineID + '&date=' + date;
+    var url = '/production?process=' + lineID + '&date=' + date;
     if (_filterStyleID) url += '&style=' + _filterStyleID;
     return url;
 }
@@ -126,7 +126,7 @@ function onProdLineChange() {
     var lineID = document.getElementById('prod-line-select').value;
     var date = document.getElementById('prod-date').value;
     // Reset to "all" when switching lines since styles differ
-    window.location = '/production?line=' + lineID + '&date=' + date;
+    window.location = '/production?process=' + lineID + '&date=' + date;
 }
 
 function onProdDateChange() {

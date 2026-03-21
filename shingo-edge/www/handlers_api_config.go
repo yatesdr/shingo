@@ -281,16 +281,7 @@ func (h *Handlers) apiCreateReportingPoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	mgr := h.engine.PLCManager()
-	if !mgr.IsTagPublished(req.PLCName, req.TagName) {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-		if err := mgr.EnableTagPublishing(ctx, req.PLCName, req.TagName); err != nil {
-			log.Printf("warlink: auto-enable %s/%s failed (RP %d created): %v", req.PLCName, req.TagName, id, err)
-		} else {
-			h.engine.DB().SetReportingPointManaged(id, true)
-		}
-	}
+	h.engine.EnsureTagPublished(id, req.PLCName, req.TagName)
 
 	writeJSON(w, map[string]int64{"id": id})
 }
@@ -319,27 +310,8 @@ func (h *Handlers) apiUpdateReportingPoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if oldRP != nil && (oldRP.PLCName != req.PLCName || oldRP.TagName != req.TagName) {
-		mgr := h.engine.PLCManager()
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-
-		if oldRP.WarlinkManaged {
-			if err := mgr.DisableTagPublishing(ctx, oldRP.PLCName, oldRP.TagName); err != nil {
-				log.Printf("warlink: auto-disable old %s/%s failed: %v", oldRP.PLCName, oldRP.TagName, err)
-			}
-		}
-
-		if !mgr.IsTagPublished(req.PLCName, req.TagName) {
-			if err := mgr.EnableTagPublishing(ctx, req.PLCName, req.TagName); err != nil {
-				log.Printf("warlink: auto-enable new %s/%s failed: %v", req.PLCName, req.TagName, err)
-				h.engine.DB().SetReportingPointManaged(id, false)
-			} else {
-				h.engine.DB().SetReportingPointManaged(id, true)
-			}
-		} else {
-			h.engine.DB().SetReportingPointManaged(id, false)
-		}
+	if oldRP != nil {
+		h.engine.ManageReportingPointTag(id, oldRP.PLCName, oldRP.TagName, oldRP.WarlinkManaged, req.PLCName, req.TagName)
 	}
 
 	writeJSON(w, map[string]string{"status": "ok"})
@@ -359,21 +331,17 @@ func (h *Handlers) apiDeleteReportingPoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if rp != nil && rp.WarlinkManaged {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-		if err := h.engine.PLCManager().DisableTagPublishing(ctx, rp.PLCName, rp.TagName); err != nil {
-			log.Printf("warlink: auto-disable %s/%s failed: %v", rp.PLCName, rp.TagName, err)
-		}
+	if rp != nil {
+		h.engine.CleanupReportingPointTag(id, rp.PLCName, rp.TagName, rp.WarlinkManaged)
 	}
 
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-// --- Job Styles Admin ---
+// --- Styles Admin ---
 
-func (h *Handlers) apiListJobStyles(w http.ResponseWriter, r *http.Request) {
-	styles, err := h.engine.DB().ListJobStyles()
+func (h *Handlers) apiListStyles(w http.ResponseWriter, r *http.Request) {
+	styles, err := h.engine.DB().ListStyles()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -381,7 +349,7 @@ func (h *Handlers) apiListJobStyles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, styles)
 }
 
-func (h *Handlers) apiCreateJobStyle(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name        string   `json:"name"`
 		Description string   `json:"description"`
@@ -399,7 +367,7 @@ func (h *Handlers) apiCreateJobStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "line_id is required")
 		return
 	}
-	id, err := h.engine.DB().CreateJobStyle(req.Name, req.Description, req.CatIDs, req.LineID)
+	id, err := h.engine.DB().CreateStyle(req.Name, req.Description, req.CatIDs, req.LineID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -413,23 +381,14 @@ func (h *Handlers) apiCreateJobStyle(w http.ResponseWriter, r *http.Request) {
 			if !req.RPEnabled {
 				h.engine.DB().UpdateReportingPoint(rpID, req.RPPLCName, req.RPTagName, id, false)
 			}
-			mgr := h.engine.PLCManager()
-			if !mgr.IsTagPublished(req.RPPLCName, req.RPTagName) {
-				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-				defer cancel()
-				if err := mgr.EnableTagPublishing(ctx, req.RPPLCName, req.RPTagName); err != nil {
-					log.Printf("warlink: auto-enable %s/%s failed (RP %d): %v", req.RPPLCName, req.RPTagName, rpID, err)
-				} else {
-					h.engine.DB().SetReportingPointManaged(rpID, true)
-				}
-			}
+			h.engine.EnsureTagPublished(rpID, req.RPPLCName, req.RPTagName)
 		}
 	}
 
 	writeJSON(w, map[string]int64{"id": id})
 }
 
-func (h *Handlers) apiUpdateJobStyle(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
@@ -452,7 +411,7 @@ func (h *Handlers) apiUpdateJobStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "line_id is required")
 		return
 	}
-	if err := h.engine.DB().UpdateJobStyle(id, req.Name, req.Description, req.CatIDs, req.LineID); err != nil {
+	if err := h.engine.DB().UpdateStyle(id, req.Name, req.Description, req.CatIDs, req.LineID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -463,69 +422,43 @@ func (h *Handlers) apiUpdateJobStyle(w http.ResponseWriter, r *http.Request) {
 		if existingRP != nil {
 			oldPLC, oldTag := existingRP.PLCName, existingRP.TagName
 			h.engine.DB().UpdateReportingPoint(existingRP.ID, req.RPPLCName, req.RPTagName, id, req.RPEnabled)
-
-			if oldPLC != req.RPPLCName || oldTag != req.RPTagName {
-				mgr := h.engine.PLCManager()
-				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-				defer cancel()
-				if existingRP.WarlinkManaged {
-					mgr.DisableTagPublishing(ctx, oldPLC, oldTag)
-				}
-				if !mgr.IsTagPublished(req.RPPLCName, req.RPTagName) {
-					if err := mgr.EnableTagPublishing(ctx, req.RPPLCName, req.RPTagName); err != nil {
-						h.engine.DB().SetReportingPointManaged(existingRP.ID, false)
-					} else {
-						h.engine.DB().SetReportingPointManaged(existingRP.ID, true)
-					}
-				}
-			}
+			h.engine.ManageReportingPointTag(existingRP.ID, oldPLC, oldTag, existingRP.WarlinkManaged, req.RPPLCName, req.RPTagName)
 		} else {
 			rpID, rpErr := h.engine.DB().CreateReportingPoint(req.RPPLCName, req.RPTagName, id)
 			if rpErr == nil {
 				if !req.RPEnabled {
 					h.engine.DB().UpdateReportingPoint(rpID, req.RPPLCName, req.RPTagName, id, false)
 				}
-				mgr := h.engine.PLCManager()
-				if !mgr.IsTagPublished(req.RPPLCName, req.RPTagName) {
-					ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-					defer cancel()
-					if err := mgr.EnableTagPublishing(ctx, req.RPPLCName, req.RPTagName); err != nil {
-						h.engine.DB().SetReportingPointManaged(rpID, false)
-					} else {
-						h.engine.DB().SetReportingPointManaged(rpID, true)
-					}
-				}
+				h.engine.EnsureTagPublished(rpID, req.RPPLCName, req.RPTagName)
+			} else {
+				log.Printf("create RP for style %d: %v", id, rpErr)
 			}
 		}
 	} else if existingRP != nil {
-		if existingRP.WarlinkManaged {
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-			defer cancel()
-			h.engine.PLCManager().DisableTagPublishing(ctx, existingRP.PLCName, existingRP.TagName)
-		}
+		h.engine.CleanupReportingPointTag(existingRP.ID, existingRP.PLCName, existingRP.TagName, existingRP.WarlinkManaged)
 		h.engine.DB().DeleteReportingPoint(existingRP.ID)
 	}
 
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiDeleteJobStyle(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	if err := h.engine.DB().DeleteJobStyle(id); err != nil {
+	if err := h.engine.DB().DeleteStyle(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-// --- Location Nodes Admin ---
+// --- Nodes Admin ---
 
-func (h *Handlers) apiListLocationNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.engine.DB().ListLocationNodes()
+func (h *Handlers) apiListNodes(w http.ResponseWriter, r *http.Request) {
+	nodes, err := h.engine.DB().ListNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -533,13 +466,13 @@ func (h *Handlers) apiListLocationNodes(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, nodes)
 }
 
-func (h *Handlers) apiListLineLocationNodes(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiListProcessNodes(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	nodes, err := h.engine.DB().ListLocationNodesByLine(id)
+	nodes, err := h.engine.DB().ListNodesByProcess(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -547,7 +480,7 @@ func (h *Handlers) apiListLineLocationNodes(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, nodes)
 }
 
-func (h *Handlers) apiCreateLocationNode(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NodeID      string `json:"node_id"`
 		LineID      int64  `json:"line_id"`
@@ -565,7 +498,7 @@ func (h *Handlers) apiCreateLocationNode(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "line_id is required")
 		return
 	}
-	id, err := h.engine.DB().CreateLocationNode(req.NodeID, req.LineID, req.Description)
+	id, err := h.engine.DB().CreateNode(req.NodeID, req.LineID, req.Description)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -573,7 +506,7 @@ func (h *Handlers) apiCreateLocationNode(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]int64{"id": id})
 }
 
-func (h *Handlers) apiUpdateLocationNode(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiUpdateNode(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
@@ -592,20 +525,20 @@ func (h *Handlers) apiUpdateLocationNode(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "line_id is required")
 		return
 	}
-	if err := h.engine.DB().UpdateLocationNode(id, req.NodeID, req.LineID, req.Description); err != nil {
+	if err := h.engine.DB().UpdateNode(id, req.NodeID, req.LineID, req.Description); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiDeleteLocationNode(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiDeleteNode(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	if err := h.engine.DB().DeleteLocationNode(id); err != nil {
+	if err := h.engine.DB().DeleteNode(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -642,18 +575,18 @@ func (h *Handlers) apiSyncPayloadCatalog(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-// --- Production Lines Admin ---
+// --- Processes Admin ---
 
-func (h *Handlers) apiListLines(w http.ResponseWriter, r *http.Request) {
-	lines, err := h.engine.DB().ListProductionLines()
+func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
+	processes, err := h.engine.DB().ListProcesses()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, lines)
+	writeJSON(w, processes)
 }
 
-func (h *Handlers) apiCreateLine(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -666,7 +599,7 @@ func (h *Handlers) apiCreateLine(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	id, err := h.engine.DB().CreateProductionLine(req.Name, req.Description)
+	id, err := h.engine.DB().CreateProcess(req.Name, req.Description)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -674,7 +607,7 @@ func (h *Handlers) apiCreateLine(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int64{"id": id})
 }
 
-func (h *Handlers) apiUpdateLine(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
@@ -688,20 +621,20 @@ func (h *Handlers) apiUpdateLine(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdateProductionLine(id, req.Name, req.Description); err != nil {
+	if err := h.engine.DB().UpdateProcess(id, req.Name, req.Description); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiDeleteLine(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiDeleteProcess(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	if err := h.engine.DB().DeleteProductionLine(id); err != nil {
+	if err := h.engine.DB().DeleteProcess(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -721,20 +654,20 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().SetActiveJobStyle(id, req.JobStyleID); err != nil {
+	if err := h.engine.DB().SetActiveStyle(id, req.JobStyleID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiListLineJobStyles(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiListProcessStyles(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	styles, err := h.engine.DB().ListJobStylesByLine(id)
+	styles, err := h.engine.DB().ListStylesByProcess(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

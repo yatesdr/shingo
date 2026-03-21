@@ -1,15 +1,15 @@
 {{template "header" .}}
 
 <div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap">
-    {{if .Lines}}
-    <select class="form-input" style="width:14rem" onchange="if(this.value)window.location='?line='+this.value">
-        {{range .Lines}}
-        <option value="{{.ID}}" {{if eq .ID $.ActiveLineID}}selected{{end}}>{{.Name}}</option>
+    {{if .Processes}}
+    <select class="form-input" style="width:14rem" onchange="if(this.value)window.location='?process='+this.value">
+        {{range .Processes}}
+        <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
     </select>
     {{end}}
     <span style="margin-left:auto;font-size:0.85rem;color:var(--text-muted)">
-        {{if .ActiveJobStyle}}Style: <strong>{{.ActiveJobStyle}}</strong>{{else}}No active style{{end}}
+        {{if .ActiveStyle}}Style: <strong>{{.ActiveStyle}}</strong>{{else}}No active style{{end}}
     </span>
 </div>
 
@@ -19,31 +19,31 @@
             <thead>
                 <tr>
                     <th>Description</th>
-                    <th>LSL Node</th>
+                    <th>Location</th>
                     <th>Payload</th>
-                    <th>UOP Total</th>
+                    <th>Capacity</th>
                     <th>Remaining</th>
                     <th>Remaining %</th>
-                    <th>Reorder Pt</th>
+                    <th>Reorder At</th>
                     <th>Auto-Reorder</th>
                 </tr>
             </thead>
             <tbody id="payloads-body">
-                {{range .Payloads}}
-                <tr data-payload-id="{{.ID}}">
+                {{range .Slots}}
+                <tr data-slot-id="{{.ID}}">
                     <td>{{.Description}}</td>
                     <td class="mono">{{.Location}}</td>
                     <td>{{if .PayloadCode}}{{.PayloadCode}}{{else if .Description}}{{.Description}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
-                    <td>{{.ProductionUnits}}</td>
+                    <td>{{.Capacity}}</td>
                     <td>
-                        <span class="cell-clickable payload-remaining" onclick="openPieceCount({{.ID}}, '{{.Description}}', '{{.Location}}', {{.Multiplier}}, {{.Remaining}}, {{.ProductionUnits}})">{{.Remaining}}</span>
+                        <span class="cell-clickable slot-remaining" onclick="openPieceCount({{.ID}}, '{{.Description}}', '{{.Location}}', {{.Remaining}}, {{.Capacity}})">{{.Remaining}}</span>
                     </td>
                     <td>
                         <div class="progress-bar-container">
-                            {{if gt .ProductionUnits 0}}
-                            <div class="progress-bar {{if eq .Status "empty"}}progress-danger{{else if eq .Status "replenishing"}}progress-warning{{else}}progress-success{{end}}" style="width:{{printf "%.0f" (divPercent .Remaining .ProductionUnits)}}%"></div>
+                            {{if gt .Capacity 0}}
+                            <div class="progress-bar {{if eq .Status "empty"}}progress-danger{{else if eq .Status "replenishing"}}progress-warning{{else}}progress-success{{end}}" style="width:{{printf "%.0f" (divPercent .Remaining .Capacity)}}%"></div>
                             {{end}}
-                            <span class="progress-label">{{if gt .ProductionUnits 0}}{{printf "%.0f" (divPercent .Remaining .ProductionUnits)}}%{{else}}--{{end}}</span>
+                            <span class="progress-label">{{if gt .Capacity 0}}{{printf "%.0f" (divPercent .Remaining .Capacity)}}%{{else}}--{{end}}</span>
                         </div>
                     </td>
                     <td>
@@ -57,7 +57,7 @@
                     </td>
                 </tr>
                 {{else}}
-                <tr><td colspan="9" class="empty-cell">No payloads configured</td></tr>
+                <tr><td colspan="9" class="empty-cell">No material slots configured</td></tr>
                 {{end}}
             </tbody>
         </table>
@@ -71,14 +71,12 @@
             <div class="modal-header">Piece Count <button class="btn btn-sm" onclick="ShingoEdge.hideModal('piece-count')">&times;</button></div>
             <div class="card-body">
                 <p><strong id="pc-desc"></strong> at <span class="mono" id="pc-loc"></span></p>
-                <p style="font-size:0.85rem;color:var(--text-muted)">Multiplier: <span id="pc-mult"></span> pieces/assembly</p>
                 <div class="form-group">
-                    <label>Physical Piece Count</label>
+                    <label>Piece Count</label>
                     <input type="number" id="pc-pieces" class="form-input" min="0" oninput="previewProdUnits()">
                 </div>
-                <p style="font-size:0.85rem">Production Units: <strong id="pc-preview">--</strong></p>
+                <p style="font-size:0.85rem">New Remaining: <strong id="pc-preview">--</strong></p>
                 <input type="hidden" id="pc-id">
-                <input type="hidden" id="pc-multiplier">
             </div>
             <div class="modal-footer">
                 <button class="btn" onclick="ShingoEdge.hideModal('piece-count')">Cancel</button>

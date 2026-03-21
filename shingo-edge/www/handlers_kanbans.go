@@ -10,16 +10,16 @@ import (
 func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 
-	lines, _ := db.ListProductionLines()
+	processes, _ := db.ListProcesses()
 
-	// Determine active line from query param (0 = all lines)
-	var activeLineID int64
-	if lineParam := r.URL.Query().Get("line"); lineParam != "" {
+	// Determine active process from query param (0 = all processes)
+	var activeProcessID int64
+	if lineParam := r.URL.Query().Get("process"); lineParam != "" {
 		if id, err := strconv.ParseInt(lineParam, 10, 64); err == nil {
-			// Validate line exists
-			for _, l := range lines {
+			// Validate process exists
+			for _, l := range processes {
 				if l.ID == id {
-					activeLineID = id
+					activeProcessID = id
 					break
 				}
 			}
@@ -27,8 +27,8 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var activeOrders []store.Order
-	if activeLineID > 0 {
-		activeOrders, _ = db.ListActiveOrdersByLine(activeLineID)
+	if activeProcessID > 0 {
+		activeOrders, _ = db.ListActiveOrdersByLine(activeProcessID)
 	} else {
 		activeOrders, _ = db.ListActiveOrders()
 	}
@@ -51,13 +51,13 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]interface{}{
 		"Page":              "kanbans",
-		"Lines":             lines,
-		"ActiveLineID":      activeLineID,
+		"Processes":         processes,
+		"ActiveProcessID":   activeProcessID,
 		"ActiveOrders":      activeOrders,
 		"KnownNodes":        knownNodes,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
 	}
 
-	h.renderTemplate(w, "kanbans.html", data)
+	h.renderTemplate(w, r, "kanbans.html", data)
 }

@@ -16,10 +16,10 @@ const (
 	EventCounterAnomaly
 	EventCounterReadError
 
-	// Payload events
-	EventPayloadUpdated
-	EventPayloadReorder
-	EventPayloadEmpty
+	// Slot events
+	EventSlotUpdated
+	EventSlotReorder
+	EventSlotEmpty
 
 	// Order events
 	EventOrderCreated
@@ -83,8 +83,8 @@ type CounterAnomalyEvent struct {
 	AnomalyType      string // "reset" or "jump"
 }
 
-// PayloadUpdatedEvent is emitted when payload remaining changes.
-type PayloadUpdatedEvent struct {
+// SlotUpdatedEvent is emitted when a slot's remaining count changes.
+type SlotUpdatedEvent struct {
 	PayloadID    int64  `json:"payload_id"`
 	LineID       int64  `json:"line_id"`
 	JobStyleID   int64  `json:"job_style_id"`
@@ -94,9 +94,9 @@ type PayloadUpdatedEvent struct {
 	Status       string `json:"status"`
 }
 
-// PayloadReorderEvent is emitted when payload crosses reorder point.
-// The handler loads the full payload from DB to determine cycle mode, role, etc.
-type PayloadReorderEvent struct {
+// SlotReorderEvent is emitted when a slot crosses its reorder point.
+// The handler loads the full slot from DB to determine cycle mode, role, etc.
+type SlotReorderEvent struct {
 	PayloadID  int64  `json:"payload_id"`
 	LineID     int64  `json:"line_id"`
 	JobStyleID int64  `json:"job_style_id"`
@@ -189,8 +189,8 @@ type CounterReadErrorEvent struct {
 	Error            string `json:"error"`
 }
 
-// PayloadEmptyEvent is emitted when a payload's remaining count hits zero.
-type PayloadEmptyEvent struct {
+// SlotEmptyEvent is emitted when a slot's remaining count hits zero.
+type SlotEmptyEvent struct {
 	PayloadID  int64  `json:"payload_id"`
 	LineID     int64  `json:"line_id"`
 	JobStyleID int64  `json:"job_style_id"`

@@ -13,20 +13,20 @@ func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 	cfg := h.engine.AppConfig()
 	mgr := h.engine.PLCManager()
 
-	lines, _ := db.ListProductionLines()
-	jobStyles, _ := db.ListJobStyles()
-	payloads, _ := db.ListPayloads()
+	processes, _ := db.ListProcesses()
+	styles, _ := db.ListStyles()
+	slots, _ := db.ListSlots()
 	reportingPoints, _ := db.ListReportingPoints()
-	// Build JobStyleMap (ID -> Name) for display
-	jobStyleMap := make(map[int64]string)
-	for _, js := range jobStyles {
-		jobStyleMap[js.ID] = js.Name
+	// Build StyleMap (ID -> Name) for display
+	styleMap := make(map[int64]string)
+	for _, js := range styles {
+		styleMap[js.ID] = js.Name
 	}
 
-	// Build LineMap (ID -> Name) for display
-	lineMap := make(map[int64]string)
-	for _, l := range lines {
-		lineMap[l.ID] = l.Name
+	// Build ProcessMap (ID -> Name) for display
+	processMap := make(map[int64]string)
+	for _, l := range processes {
+		processMap[l.ID] = l.Name
 	}
 
 	// Build PLCNames list and connection status from WarLink discovery
@@ -49,13 +49,13 @@ func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 		"Page":              "setup",
 		"PLCStatus":         plcStatus,
 		"PLCStatuses":       plcStatuses,
-		"Lines":             lines,
-		"JobStyles":         jobStyles,
-		"Payloads":          payloads,
+		"Processes":         processes,
+		"Styles":            styles,
+		"Slots":             slots,
 		"ReportingPoints":   reportingPoints,
 		"Config":            cfg,
-		"JobStyleMap":       jobStyleMap,
-		"LineMap":           lineMap,
+		"StyleMap":          styleMap,
+		"ProcessMap":        processMap,
 		"PLCNames":          plcNames,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
@@ -64,7 +64,7 @@ func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 		"ShiftsJSON":        template.JS(shiftsJSON),
 	}
 
-	h.renderTemplate(w, "setup.html", data)
+	h.renderTemplate(w, r, "setup.html", data)
 }
 
 func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +73,7 @@ func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/setup", http.StatusSeeOther)
 		return
 	}
-	h.renderTemplate(w, "login.html", map[string]interface{}{
+	h.renderTemplate(w, r, "login.html", map[string]interface{}{
 		"Page": "login",
 	})
 }
@@ -103,7 +103,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := db.GetAdminUser(username)
 	if err != nil || !checkPassword(password, user.PasswordHash) {
-		h.renderTemplate(w, "login.html", map[string]interface{}{
+		h.renderTemplate(w, r, "login.html", map[string]interface{}{
 			"Page":  "login",
 			"Error": "Invalid username or password",
 		})

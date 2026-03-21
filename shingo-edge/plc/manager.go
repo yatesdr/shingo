@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -14,25 +13,6 @@ import (
 	"shingoedge/config"
 	"shingoedge/store"
 )
-
-// --- WarLink API response types ---
-
-type warlinkPLCResponse struct {
-	Name        string `json:"name"`
-	Address     string `json:"address"`
-	Slot        int    `json:"slot"`
-	Status      string `json:"status"`
-	ProductName string `json:"product_name"`
-	Error       string `json:"error"`
-}
-
-type warlinkTagResponse struct {
-	PLC   string      `json:"plc"`
-	Name  string      `json:"name"`
-	Type  string      `json:"type"`
-	Value interface{} `json:"value"`
-	Error string      `json:"error"`
-}
 
 // TagInfo describes a tag available on a PLC.
 type TagInfo struct {
@@ -69,17 +49,25 @@ type ManagedPLC struct {
 	mu          sync.RWMutex
 }
 
+// DebugLogFunc is a nil-safe debug logging function.
+type DebugLogFunc func(format string, args ...any)
+
+func (fn DebugLogFunc) log(format string, args ...any) {
+	if fn != nil {
+		fn(format, args...)
+	}
+}
+
 // Manager manages PLC data via WarLink HTTP polling or SSE and counter polling.
 type Manager struct {
 	mu      sync.RWMutex
 	db      *store.DB
 	cfg     *config.Config
 	emitter EventEmitter
-	client  http.Client
-	sseClient http.Client // no timeout — used for long-lived SSE connections
+	wl      WarlinkClient
 	plcs    map[string]*ManagedPLC
 
-	DebugLog func(string, ...any)
+	DebugLog DebugLogFunc
 
 	warlinkConnected bool
 	warlinkError     error
@@ -93,21 +81,14 @@ type Manager struct {
 	sseCancel context.CancelFunc
 }
 
-func (m *Manager) dbg(format string, args ...any) {
-	if fn := m.DebugLog; fn != nil {
-		fn(format, args...)
-	}
-}
-
 // NewManager creates a PLC manager.
 func NewManager(db *store.DB, cfg *config.Config, emitter EventEmitter) *Manager {
 	return &Manager{
-		db:        db,
-		cfg:       cfg,
-		emitter:   emitter,
-		client:    http.Client{Timeout: 10 * time.Second},
-		sseClient: http.Client{Timeout: 0},
-		plcs:      make(map[string]*ManagedPLC),
+		db:      db,
+		cfg:     cfg,
+		emitter: emitter,
+		wl:      NewWarlinkClient(fmt.Sprintf("http://%s:%d/api", cfg.WarLink.Host, cfg.WarLink.Port)),
+		plcs:    make(map[string]*ManagedPLC),
 
 		stopChan: make(chan struct{}),
 	}
@@ -116,6 +97,13 @@ func NewManager(db *store.DB, cfg *config.Config, emitter EventEmitter) *Manager
 // baseURL returns the WarLink base URL built from host+port config.
 func (m *Manager) baseURL() string {
 	return fmt.Sprintf("http://%s:%d/api", m.cfg.WarLink.Host, m.cfg.WarLink.Port)
+}
+
+// ReplaceClient swaps the WarLink client (used when config changes at runtime).
+func (m *Manager) ReplaceClient(wl WarlinkClient) {
+	m.mu.Lock()
+	m.wl = wl
+	m.mu.Unlock()
 }
 
 // StartWarLinkPoller starts the goroutine that fetches PLC and tag data from WarLink.
@@ -197,7 +185,7 @@ func (m *Manager) warlinkPollLoop() {
 	defer ticker.Stop()
 
 	// Do an immediate first poll
-	m.dbg("warlink poll loop started (mode=poll)")
+	m.DebugLog.log("warlink poll loop started (mode=poll)")
 	m.warlinkPollTick()
 
 	for {
@@ -228,7 +216,7 @@ func (m *Manager) warlinkPollTick() {
 		m.mu.Unlock()
 		if wasConnected {
 			log.Printf("WarLink connection lost: %v", err)
-			m.dbg("warlink disconnected: %v", err)
+			m.DebugLog.log("warlink disconnected: %v", err)
 			m.emitter.EmitWarLinkDisconnected(err)
 		}
 		return
@@ -241,7 +229,7 @@ func (m *Manager) warlinkPollTick() {
 	m.mu.Unlock()
 	if wasDisconnected {
 		log.Printf("WarLink connected: %s", m.baseURL())
-		m.dbg("warlink connected: %s", m.baseURL())
+		m.DebugLog.log("warlink connected: %s", m.baseURL())
 	}
 
 	// Track which PLCs we've seen this tick for status transitions
@@ -269,14 +257,14 @@ func (m *Manager) warlinkPollTick() {
 
 		// Emit connection transitions
 		if p.Status == "Connected" && oldStatus != "Connected" {
-			m.dbg("plc connected: %s", p.Name)
+			m.DebugLog.log("plc connected: %s", p.Name)
 			m.emitter.EmitPLCConnected(p.Name)
 		} else if p.Status != "Connected" && oldStatus == "Connected" {
 			var emitErr error
 			if p.Error != "" {
 				emitErr = fmt.Errorf("%s", p.Error)
 			}
-			m.dbg("plc disconnected: %s err=%v", p.Name, emitErr)
+			m.DebugLog.log("plc disconnected: %s err=%v", p.Name, emitErr)
 			m.emitter.EmitPLCDisconnected(p.Name, emitErr)
 		}
 
@@ -320,47 +308,15 @@ func (m *Manager) warlinkPollTick() {
 	}
 }
 
-func (m *Manager) fetchPLCs(ctx context.Context) ([]warlinkPLCResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", m.baseURL()+"/", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("WarLink returned %d", resp.StatusCode)
-	}
-	var plcs []warlinkPLCResponse
-	if err := json.NewDecoder(resp.Body).Decode(&plcs); err != nil {
-		return nil, fmt.Errorf("decode PLCs: %w", err)
-	}
-	return plcs, nil
+func (m *Manager) fetchPLCs(ctx context.Context) ([]WarlinkPLC, error) {
+	return m.wl.ListPLCs(ctx)
 }
 
-func (m *Manager) fetchTags(ctx context.Context, plcName string) (map[string]warlinkTagResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", m.baseURL()+"/"+plcName+"/tags", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := m.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("WarLink tags %s returned %d", plcName, resp.StatusCode)
-	}
-	var tags map[string]warlinkTagResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
-		return nil, fmt.Errorf("decode tags %s: %w", plcName, err)
-	}
-	return tags, nil
+func (m *Manager) fetchTags(ctx context.Context, plcName string) (map[string]WarlinkTag, error) {
+	return m.wl.ListTags(ctx, plcName)
 }
 
-func (m *Manager) applyTags(plcName string, tags map[string]warlinkTagResponse) {
+func (m *Manager) applyTags(plcName string, tags map[string]WarlinkTag) {
 	m.mu.RLock()
 	mp, ok := m.plcs[plcName]
 	m.mu.RUnlock()
@@ -553,7 +509,7 @@ func (m *Manager) pollAllReportingPoints() {
 func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 	val, err := m.ReadTag(rp.PLCName, rp.TagName)
 	if err != nil {
-		m.dbg("tag read error: %s/%s rp=%d: %v", rp.PLCName, rp.TagName, rp.ID, err)
+		m.DebugLog.log("tag read error: %s/%s rp=%d: %v", rp.PLCName, rp.TagName, rp.ID, err)
 		log.Printf("read tag %s/%s (rp %d): %v", rp.PLCName, rp.TagName, rp.ID, err)
 		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, err.Error())
 		return
@@ -571,7 +527,7 @@ func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 		return
 	}
 
-	m.dbg("counter delta: rp=%d %s/%s last=%d new=%d delta=%d anomaly=%s",
+	m.DebugLog.log("counter delta: rp=%d %s/%s last=%d new=%d delta=%d anomaly=%s",
 		rp.ID, rp.PLCName, rp.TagName, rp.LastCount, newCount, delta, anomaly)
 
 	// Record snapshot
@@ -591,19 +547,12 @@ func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 		m.emitter.EmitCounterAnomaly(snapID, rp.ID, rp.PLCName, rp.TagName, rp.LastCount, newCount, anomaly)
 	}
 
-	// Resolve effective job style ID and line ID from the linked job style
-	effectiveJSID := rp.JobStyleID
-	if effectiveJSID == 0 {
+	// Only emit delta for normal counts and resets (not jumps, which need operator confirmation)
+	if rp.JobStyleID == 0 {
 		return // no job style linked
 	}
-	var lineID int64
-	if js, err := m.db.GetJobStyle(effectiveJSID); err == nil {
-		lineID = js.LineID
-	}
-
-	// Only emit delta for normal counts and resets (not jumps, which need operator confirmation)
 	if anomaly != "jump" && delta > 0 {
-		m.emitter.EmitCounterDelta(rp.ID, lineID, effectiveJSID, delta, newCount, anomaly)
+		m.emitter.EmitCounterDelta(rp.ID, rp.LineID, rp.JobStyleID, delta, newCount, anomaly)
 	}
 }
 

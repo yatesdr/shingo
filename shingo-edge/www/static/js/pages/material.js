@@ -1,25 +1,22 @@
-function openPieceCount(id, desc, loc, multiplier, remaining, total) {
+function openPieceCount(id, desc, loc, remaining, capacity) {
     document.getElementById('pc-id').value = id;
     document.getElementById('pc-desc').textContent = desc;
     document.getElementById('pc-loc').textContent = loc;
-    document.getElementById('pc-mult').textContent = multiplier;
-    document.getElementById('pc-multiplier').value = multiplier;
-    document.getElementById('pc-pieces').value = Math.round(remaining * multiplier);
-    previewProdUnits();
+    document.getElementById('pc-pieces').value = remaining;
+    document.getElementById('pc-preview').textContent = remaining;
     ShingoEdge.showModal('piece-count');
 }
 
 function previewProdUnits() {
     var pieces = parseFloat(document.getElementById('pc-pieces').value) || 0;
-    var mult = parseFloat(document.getElementById('pc-multiplier').value) || 1;
-    document.getElementById('pc-preview').textContent = Math.round(pieces / mult);
+    document.getElementById('pc-preview').textContent = Math.round(pieces);
 }
 
 async function submitPieceCount() {
     var id = document.getElementById('pc-id').value;
     var pieces = parseFloat(document.getElementById('pc-pieces').value) || 0;
     try {
-        await ShingoEdge.api.put('/api/payloads/' + id + '/count', { piece_count: pieces });
+        await ShingoEdge.api.put('/api/material-slots/' + id + '/count', { piece_count: pieces });
         ShingoEdge.toast('Count updated', 'success');
         ShingoEdge.hideModal('piece-count');
         location.reload();
@@ -61,24 +58,24 @@ function editReorderPoint(el, id, currentVal) {
 
 async function saveReorderPoint(id, val) {
     try {
-        await ShingoEdge.api.put('/api/payloads/' + id + '/reorder-point', { reorder_point: val });
+        await ShingoEdge.api.put('/api/material-slots/' + id + '/reorder-point', { reorder_point: val });
         ShingoEdge.toast('Reorder point updated', 'success');
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
 async function toggleAutoReorder(id, enabled) {
     try {
-        await ShingoEdge.api.put('/api/payloads/' + id + '/auto-reorder', { enabled: enabled });
+        await ShingoEdge.api.put('/api/material-slots/' + id + '/auto-reorder', { enabled: enabled });
         ShingoEdge.toast('Auto-reorder ' + (enabled ? 'enabled' : 'disabled'), 'success');
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
-// SSE: real-time payload updates
+// SSE: real-time slot updates
 ShingoEdge.createSSE('/events', {
     onPayloadUpdate: function(data) {
-        var row = document.querySelector('tr[data-payload-id="' + data.payload_id + '"]');
+        var row = document.querySelector('tr[data-slot-id="' + data.payload_id + '"]');
         if (!row) return;
-        var remainCell = row.querySelector('.payload-remaining');
+        var remainCell = row.querySelector('.slot-remaining');
         if (remainCell) remainCell.textContent = data.new_remaining;
         location.reload();
     },

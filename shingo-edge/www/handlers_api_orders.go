@@ -25,7 +25,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	payloadID, p := h.resolvePayload(req.PayloadID)
+	payloadID, p := h.resolveSlot(req.PayloadID)
 	if p != nil {
 		if req.DeliveryNode == "" {
 			req.DeliveryNode = p.Location
@@ -107,7 +107,7 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payloadID, p := h.resolvePayload(req.PayloadID)
+	payloadID, p := h.resolveSlot(req.PayloadID)
 	if p != nil && req.PickupNode == "" {
 		req.PickupNode = p.Location
 	}
@@ -121,11 +121,7 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auto-set count and submit so the order actually gets sent to core.
-	if err := h.engine.DB().UpdateOrderFinalCount(order.ID, req.Quantity, true); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := h.engine.OrderManager().SubmitOrder(order.ID); err != nil {
+	if err := h.engine.OrderManager().SubmitStoreOrder(order.ID, req.Quantity); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -145,7 +141,7 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payloadID, p := h.resolvePayload(req.PayloadID)
+	payloadID, p := h.resolveSlot(req.PayloadID)
 	if p != nil && req.PickupNode == "" {
 		req.PickupNode = p.Location
 	}
@@ -181,7 +177,7 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 	}
 
 	order, err := h.engine.OrderManager().CreateComplexOrder(
-		payloadID, req.Quantity, req.Steps,
+		payloadID, req.Quantity, "", req.Steps,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -212,14 +208,9 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	payloadID, p := h.resolvePayload(req.PayloadID)
-	if p != nil {
-		if req.PickupNode == "" {
-			req.PickupNode = p.Location
-		}
-		if req.PayloadCode == "" {
-			req.PayloadCode = p.PayloadCode
-		}
+	payloadID, p := h.resolveSlot(req.PayloadID)
+	if p != nil && req.PickupNode == "" {
+		req.PickupNode = p.Location
 	}
 
 	order, err := h.engine.OrderManager().CreateIngestOrder(
@@ -317,19 +308,6 @@ func (h *Handlers) apiSetOrderCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiAbortOrder(w http.ResponseWriter, r *http.Request) {
-	orderID, err := parseID(r, "orderID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid order ID")
-		return
-	}
-	if err := h.engine.OrderManager().AbortOrder(orderID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
 func (h *Handlers) apiRedirectOrder(w http.ResponseWriter, r *http.Request) {
 	orderID, err := parseID(r, "orderID")
 	if err != nil {
@@ -372,7 +350,7 @@ func (h *Handlers) apiUpdateReorderPoint(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "reorder_point must be >= 0")
 		return
 	}
-	if err := h.engine.DB().UpdatePayloadReorderPoint(id, req.ReorderPoint); err != nil {
+	if err := h.engine.DB().UpdateSlotReorderPoint(id, req.ReorderPoint); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -392,7 +370,7 @@ func (h *Handlers) apiToggleAutoReorder(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdatePayloadAutoReorder(id, req.Enabled); err != nil {
+	if err := h.engine.DB().UpdateSlotAutoReorder(id, req.Enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

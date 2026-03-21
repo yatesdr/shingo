@@ -14,6 +14,15 @@ import (
 	"shingoedge/config"
 )
 
+// DebugLogFunc is a nil-safe debug logging function.
+type DebugLogFunc func(format string, args ...any)
+
+func (fn DebugLogFunc) log(format string, args ...any) {
+	if fn != nil {
+		fn(format, args...)
+	}
+}
+
 // Client is the Kafka messaging client.
 type Client struct {
 	mu         sync.RWMutex
@@ -23,7 +32,7 @@ type Client struct {
 	stopChan   chan struct{}
 	SigningKey []byte // optional HMAC key; when set, outbound messages are signed
 
-	DebugLog func(string, ...any)
+	DebugLog DebugLogFunc
 }
 
 // NewClient creates a messaging client based on config.
@@ -31,12 +40,6 @@ func NewClient(cfg *config.MessagingConfig) *Client {
 	return &Client{
 		cfg:      cfg,
 		stopChan: make(chan struct{}),
-	}
-}
-
-func (c *Client) dbg(format string, args ...any) {
-	if fn := c.DebugLog; fn != nil {
-		fn(format, args...)
 	}
 }
 
@@ -54,7 +57,7 @@ func (c *Client) Connect() error {
 		Balancer:     &kafkago.LeastBytes{},
 		RequiredAcks: kafkago.RequireOne,
 	}
-	c.dbg("connected to brokers %v", c.cfg.Kafka.Brokers)
+	c.DebugLog.log("connected to brokers %v", c.cfg.Kafka.Brokers)
 	return nil
 }
 
@@ -80,7 +83,7 @@ func (c *Client) Reconnect() error {
 	}
 
 	log.Printf("kafka writer reconnected to %v", c.cfg.Kafka.Brokers)
-	c.dbg("reconnected to brokers %v", c.cfg.Kafka.Brokers)
+	c.DebugLog.log("reconnected to brokers %v", c.cfg.Kafka.Brokers)
 	return nil
 }
 
@@ -102,7 +105,7 @@ func (c *Client) Publish(topic string, payload []byte) error {
 		payload = signed
 	}
 
-	c.dbg("publish topic=%s len=%d", topic, len(payload))
+	c.DebugLog.log("publish topic=%s len=%d", topic, len(payload))
 	return c.kafkaW.WriteMessages(context.Background(), kafkago.Message{
 		Topic: topic,
 		Value: payload,
@@ -133,7 +136,7 @@ func (c *Client) Subscribe(topic string, handler func(payload []byte)) error {
 		Topic:   topic,
 		GroupID: c.cfg.Kafka.GroupID,
 	})
-	c.dbg("subscribed to topic=%s group=%s", topic, c.cfg.Kafka.GroupID)
+	c.DebugLog.log("subscribed to topic=%s group=%s", topic, c.cfg.Kafka.GroupID)
 	go c.readLoop(topic, handler)
 	return nil
 }
@@ -188,7 +191,7 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 				GroupID: c.cfg.Kafka.GroupID,
 			})
 			c.mu.Unlock()
-			c.dbg("reader reconnected for topic=%s", topic)
+			c.DebugLog.log("reader reconnected for topic=%s", topic)
 
 			// Increase backoff for next failure
 			backoff *= 2
@@ -200,7 +203,7 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 
 		// Reset backoff on successful read
 		backoff = baseBackoff
-		c.dbg("recv topic=%s len=%d", topic, len(msg.Value))
+		c.DebugLog.log("recv topic=%s len=%d", topic, len(msg.Value))
 		handler(msg.Value)
 	}
 }
