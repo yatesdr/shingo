@@ -133,6 +133,9 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	if err := db.CreateOrder(order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	if err := db.UpdateOrderVendor(order.ID, "vendor-1", "CREATED", ""); err != nil {
+		t.Fatalf("persist vendor order: %v", err)
+	}
 	backend := &countingBackend{}
 	dispatcher := dispatch.NewDispatcher(db, backend, noopEmitter{}, "core", "dispatch", nil)
 	handler := NewCoreHandler(db, nil, "core", "dispatch", dispatcher)
