@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -32,10 +31,9 @@ func scanCMSTransaction(row interface{ Scan(...any) error }) (*CMSTransaction, e
 	var t CMSTransaction
 	var binID sql.NullInt64
 	var orderID sql.NullInt64
-	var createdAt any
 	err := row.Scan(&t.ID, &t.NodeID, &t.NodeName, &t.TxnType, &t.CatID, &t.Delta,
 		&t.QtyBefore, &t.QtyAfter, &binID, &t.BinLabel, &t.PayloadCode,
-		&t.SourceType, &orderID, &t.Notes, &createdAt)
+		&t.SourceType, &orderID, &t.Notes, &t.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +43,6 @@ func scanCMSTransaction(row interface{ Scan(...any) error }) (*CMSTransaction, e
 	if orderID.Valid {
 		t.OrderID = &orderID.Int64
 	}
-	t.CreatedAt = parseTime(createdAt)
 	return &t, nil
 }
 
@@ -62,24 +59,30 @@ func scanCMSTransactions(rows *sql.Rows) ([]*CMSTransaction, error) {
 }
 
 func (db *DB) CreateCMSTransactions(txns []*CMSTransaction) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin cms tx: %w", err)
+	}
+	defer tx.Rollback()
 	for _, t := range txns {
-		id, err := db.insertID(`INSERT INTO cms_transactions (node_id, node_name, txn_type, cat_id, delta, qty_before, qty_after, bin_id, bin_label, payload_code, source_type, order_id, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+		var id int64
+		err := tx.QueryRow(`INSERT INTO cms_transactions (node_id, node_name, txn_type, cat_id, delta, qty_before, qty_after, bin_id, bin_label, payload_code, source_type, order_id, notes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 			t.NodeID, t.NodeName, t.TxnType, t.CatID, t.Delta, t.QtyBefore, t.QtyAfter,
 			nullableInt64(t.BinID), t.BinLabel, t.PayloadCode, t.SourceType,
-			nullableInt64(t.OrderID), t.Notes)
+			nullableInt64(t.OrderID), t.Notes).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("create cms transaction: %w", err)
 		}
 		t.ID = id
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (db *DB) ListCMSTransactions(nodeID int64, limit, offset int) ([]*CMSTransaction, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM cms_transactions WHERE node_id=? ORDER BY id DESC LIMIT ? OFFSET ?`, cmsTxnSelectCols)),
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM cms_transactions WHERE node_id=$1 ORDER BY id DESC LIMIT $2 OFFSET $3`, cmsTxnSelectCols),
 		nodeID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -92,7 +95,7 @@ func (db *DB) ListAllCMSTransactions(limit, offset int) ([]*CMSTransaction, erro
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM cms_transactions ORDER BY id DESC LIMIT ? OFFSET ?`, cmsTxnSelectCols)),
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM cms_transactions ORDER BY id DESC LIMIT $1 OFFSET $2`, cmsTxnSelectCols),
 		limit, offset)
 	if err != nil {
 		return nil, err
@@ -101,45 +104,21 @@ func (db *DB) ListAllCMSTransactions(limit, offset int) ([]*CMSTransaction, erro
 	return scanCMSTransactions(rows)
 }
 
-// CollectDescendantNodeIDs returns all node IDs under a boundary (including the
-// boundary itself, plus all children and grandchildren).
-func (db *DB) CollectDescendantNodeIDs(boundaryID int64) []int64 {
-	var ids []int64
-	ids = append(ids, boundaryID)
-	children, err := db.ListChildNodes(boundaryID)
-	if err != nil {
-		return ids
-	}
-	for _, c := range children {
-		ids = append(ids, c.ID)
-		grandchildren, err := db.ListChildNodes(c.ID)
-		if err != nil {
-			continue
-		}
-		for _, gc := range grandchildren {
-			ids = append(ids, gc.ID)
-		}
-	}
-	return ids
-}
-
 // SumCatIDsAtBoundary returns total manifest quantities for all CATIDs
 // across all bins at nodes under the given boundary, parsing from bin manifest JSON.
 func (db *DB) SumCatIDsAtBoundary(boundaryID int64) map[string]int64 {
 	totals := make(map[string]int64)
-	nodeIDs := db.CollectDescendantNodeIDs(boundaryID)
-	if len(nodeIDs) == 0 {
-		return totals
-	}
-	placeholders := make([]string, len(nodeIDs))
-	args := make([]any, len(nodeIDs))
-	for i, id := range nodeIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	query := fmt.Sprintf(`SELECT b.manifest FROM bins b
-		WHERE b.node_id IN (%s) AND b.manifest IS NOT NULL`, strings.Join(placeholders, ","))
-	rows, err := db.Query(db.Q(query), args...)
+	rows, err := db.Query(`
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM nodes WHERE id = $1
+			UNION ALL
+			SELECT n.id FROM nodes n
+			JOIN descendants d ON n.parent_id = d.id
+		)
+		SELECT b.manifest FROM bins b
+		JOIN descendants d ON b.node_id = d.id
+		WHERE b.manifest IS NOT NULL
+	`, boundaryID)
 	if err != nil {
 		return totals
 	}

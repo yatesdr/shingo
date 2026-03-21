@@ -177,15 +177,6 @@ func TestBinCRUD(t *testing.T) {
 		t.Errorf("count = %d, want 2", count)
 	}
 
-	// ListBinsByType
-	byType, err := db.ListBinsByType(bt.ID)
-	if err != nil {
-		t.Fatalf("list by type: %v", err)
-	}
-	if len(byType) != 2 {
-		t.Errorf("by type len = %d, want 2", len(byType))
-	}
-
 	// MoveBin
 	node2 := &Node{Name: "LINE-1", Enabled: true}
 	db.CreateNode(node2)
@@ -320,17 +311,16 @@ func TestPayloadBinTypeJunction(t *testing.T) {
 func TestPayloadTemplateCRUD(t *testing.T) {
 	db := testDB(t)
 
-	// Create payload template (was payload)
-	bp := &Payload{Code: "BIN-X", UOPCapacity: 200, Description: "Test template"}
-	if err := db.CreatePayload(bp); err != nil {
+	p := &Payload{Code: "BIN-X", UOPCapacity: 200, Description: "Test template"}
+	if err := db.CreatePayload(p); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
-	if bp.ID == 0 {
+	if p.ID == 0 {
 		t.Fatal("ID should be assigned")
 	}
 
 	// Get
-	got, err := db.GetPayload(bp.ID)
+	got, err := db.GetPayload(p.ID)
 	if err != nil {
 		t.Fatalf("get payload: %v", err)
 	}
@@ -346,14 +336,14 @@ func TestPayloadTemplateCRUD(t *testing.T) {
 	if err := db.UpdatePayload(got); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	got2, _ := db.GetPayload(bp.ID)
+	got2, _ := db.GetPayload(p.ID)
 	if got2.UOPCapacity != 150 {
 		t.Errorf("UOPCapacity after update = %d, want 150", got2.UOPCapacity)
 	}
 
 	// Create second template
-	bp2 := &Payload{Code: "BIN-Y", UOPCapacity: 50}
-	db.CreatePayload(bp2)
+	p2 := &Payload{Code: "BIN-Y", UOPCapacity: 50}
+	db.CreatePayload(p2)
 
 	// ListPayloads
 	all, err := db.ListPayloads()
@@ -365,7 +355,7 @@ func TestPayloadTemplateCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := db.DeletePayload(bp.ID); err != nil {
+	if err := db.DeletePayload(p.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	remaining, _ := db.ListPayloads()

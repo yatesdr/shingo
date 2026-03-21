@@ -11,7 +11,7 @@
       Bin Types <span class="text-muted">({{len .BinTypes}})</span>
     </button>
     <div class="accordion-body">
-      <div style="margin-bottom:0.5rem;text-align:right">
+      <div class="mb-1 text-right">
         <button class="btn btn-primary btn-sm" onclick="openCreateBTModal()">+ Bin Type</button>
       </div>
       {{if .BinTypes}}
@@ -87,7 +87,7 @@
     </select>
     <span class="text-muted" style="font-size:0.8rem" id="bin-count">{{len .Bins}} bins</span>
     {{if .Authenticated}}
-    <button class="btn btn-sm" onclick="openCycleCount()" style="margin-left:auto">Cycle Count</button>
+    <button class="btn btn-sm ml-auto" onclick="openCycleCount()">Cycle Count</button>
     <button class="btn btn-primary btn-sm" onclick="openCreateBinModal()">+ Bin</button>
     {{end}}
   </div>
@@ -170,13 +170,13 @@
       </div>
       <div class="form-group">
         <label>Dimensions (in) <span class="tooltip-trigger" title="Physical dimensions: Width x Height">?</span></label>
-        <div style="display:flex;gap:0.25rem">
+        <div class="flex gap-05">
           <input type="number" name="width_in" placeholder="W" step="0.1" style="flex:1">
           <input type="number" name="height_in" placeholder="H" step="0.1" style="flex:1">
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Create</button>
-      <button type="button" class="btn" onclick="closeBTCreateModal()" style="margin-left:0.5rem">Cancel</button>
+      <button type="button" class="btn ml-05" onclick="closeBTCreateModal()">Cancel</button>
     </form>
   </div>
 </div>
@@ -202,13 +202,13 @@
       </div>
       <div class="form-group">
         <label>Dimensions (in)</label>
-        <div style="display:flex;gap:0.25rem">
+        <div class="flex gap-05">
           <input type="number" name="width_in" id="bt-edit-w" placeholder="W" step="0.1" style="flex:1">
           <input type="number" name="height_in" id="bt-edit-h" placeholder="H" step="0.1" style="flex:1">
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
-      <button type="button" class="btn" onclick="closeBTEditModal()" style="margin-left:0.5rem">Cancel</button>
+      <button type="button" class="btn ml-05" onclick="closeBTEditModal()">Cancel</button>
     </form>
   </div>
 </div>
@@ -257,7 +257,7 @@
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Create</button>
-      <button type="button" class="btn" onclick="closeCreateBinModal()" style="margin-left:0.5rem">Cancel</button>
+      <button type="button" class="btn ml-05" onclick="closeCreateBinModal()">Cancel</button>
     </form>
   </div>
 </div>
@@ -279,9 +279,9 @@
       <button class="tab-btn" onclick="switchTab('journal')">Journal</button>
     </div>
     <div id="bd-overview" class="tab-panel"></div>
-    <div id="bd-contents" class="tab-panel" style="display:none"></div>
-    <div id="bd-actions" class="tab-panel" style="display:none"></div>
-    <div id="bd-journal" class="tab-panel" style="display:none"></div>
+    <div id="bd-contents" class="tab-panel hide"></div>
+    <div id="bd-actions" class="tab-panel hide"></div>
+    <div id="bd-journal" class="tab-panel hide"></div>
   </div>
 </div>
 
@@ -299,7 +299,7 @@
         <button class="btn btn-primary" onclick="ccStart()">Start Counting</button>
       </div>
     </div>
-    <div id="cc-step2" style="display:none">
+    <div id="cc-step2" class="hide">
       <div class="cc-progress mb-1"><div class="cc-progress-fill" id="cc-progress-bar"></div></div>
       <div class="text-muted mb-1" style="font-size:0.8rem"><span id="cc-index">0</span> of <span id="cc-total">0</span></div>
       <div class="cc-bin-card" id="cc-bin-card"></div>
@@ -313,7 +313,7 @@
           <input type="text" id="cc-actor" placeholder="Name" style="width:150px">
         </div>
       </div>
-      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+      <div class="flex gap-1 flex-wrap">
         <button class="btn btn-primary" onclick="ccConfirm()">Confirm Match</button>
         <button class="btn" onclick="ccDiscrepancy()">Record Discrepancy</button>
         <button class="btn" onclick="ccSkip()">Skip</button>
@@ -321,7 +321,7 @@
       </div>
       <p class="text-muted" style="font-size:0.75rem;margin-top:0.5rem">Enter=Confirm &middot; Tab=Skip &middot; F=Flag</p>
     </div>
-    <div id="cc-step3" style="display:none">
+    <div id="cc-step3" class="hide">
       <h3 class="mb-1">Summary</h3>
       <div id="cc-summary"></div>
       <button class="btn btn-primary mt-2" onclick="closeCycleCount()">Close</button>
@@ -330,7 +330,7 @@
 </div>
 
 <!-- Bulk Action Bar -->
-<div id="bulk-bar" class="bulk-bar" style="display:none">
+<div id="bulk-bar" class="bulk-bar hide">
   <span id="bulk-count">0 selected</span>
   <button class="btn btn-sm" onclick="bulkAction('activate')">Activate</button>
   <button class="btn btn-sm" onclick="bulkAction('flag')">Flag</button>
@@ -339,7 +339,7 @@
   <button class="btn btn-sm" onclick="bulkAction('lock')">Lock</button>
   <button class="btn btn-sm" onclick="bulkAction('unlock')">Unlock</button>
   <button class="btn btn-sm btn-danger" onclick="bulkAction('retire')">Retire</button>
-  <button class="btn btn-sm" onclick="clearSelection()" style="margin-left:auto">Clear</button>
+  <button class="btn btn-sm ml-auto" onclick="clearSelection()">Clear</button>
 </div>
 {{end}}
 

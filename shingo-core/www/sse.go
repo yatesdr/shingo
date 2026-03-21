@@ -116,6 +116,35 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "status_changed", "order_id": ev.OrderID, "new_status": ev.NewStatus}))
 	}, engine.EventOrderStatusChanged)
 
+	// Mission telemetry live updates (separate event name from order-update)
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		ev := evt.Payload.(engine.OrderStatusChangedEvent)
+		data := map[string]any{
+			"order_id":        ev.OrderID,
+			"vendor_order_id": ev.VendorOrderID,
+			"old_state":       ev.OldStatus,
+			"new_state":       ev.NewStatus,
+			"robot_id":        ev.RobotID,
+		}
+		if ev.Snapshot != nil {
+			if len(ev.Snapshot.Blocks) > 0 {
+				data["blocks"] = ev.Snapshot.Blocks
+			}
+			if len(ev.Snapshot.Errors) > 0 {
+				data["errors"] = ev.Snapshot.Errors
+			}
+		}
+		if ev.RobotID != "" {
+			if rs, ok := eng.GetCachedRobotStatus(ev.RobotID); ok {
+				data["robot_x"] = rs.X
+				data["robot_y"] = rs.Y
+				data["robot_station"] = rs.CurrentStation
+				data["robot_battery"] = rs.BatteryLevel
+			}
+		}
+		h.Broadcast("mission-event", sseJSON(data))
+	}, engine.EventOrderStatusChanged)
+
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		ev := evt.Payload.(engine.OrderCompletedEvent)
 		h.Broadcast("order-update", sseJSON(map[string]any{"type": "completed", "order_id": ev.OrderID}))

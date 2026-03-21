@@ -132,6 +132,10 @@ document.addEventListener('DOMContentLoaded', function() {
       if (typeof window.onBinUpdate === 'function') window.onBinUpdate(e);
     });
 
+    es.addEventListener('mission-event', function(e) {
+      if (typeof window.onMissionEvent === 'function') window.onMissionEvent(e);
+    });
+
     es.addEventListener('system-status', function(e) {
       const data = JSON.parse(e.data);
       if (data.fleet !== undefined) {

@@ -1,0 +1,54 @@
+{{define "content"}}
+<div class="flex-center gap-2 mb-1"
+  <a href="/missions">&larr; Back to Missions</a>
+  <a href="/orders/detail?id={{.OrderID}}" title="View this order on the Orders page" style="font-size:.9em">View Order</a>
+</div>
+<h2>Mission #<span id="mission-order-id">{{.OrderID}}</span></h2>
+
+<div id="mission-loading">Loading...</div>
+<div id="mission-content" style="display:none">
+
+  <!-- Summary -->
+  <div class="card mb-2" id="mission-summary"></div>
+
+  <!-- Duration breakdown bar -->
+  <div class="card mb-2">
+    <h3 class="mt-0" title="Visual breakdown of time spent in each fleet state during this mission">Duration Breakdown</h3>
+    <div class="duration-bar" id="duration-bar"></div>
+    <div class="duration-legend flex gap-2 flex-wrap text-sm" id="duration-legend" style="margin-top:.5rem"></div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="card mb-2">
+    <h3 class="mt-0" title="Chronological state transitions with robot position snapshots at each step">State Timeline</h3>
+    <div class="mission-timeline" id="mission-timeline"></div>
+  </div>
+
+  <!-- RDS Messages -->
+  <div class="card mb-2" id="mission-messages-card" style="display:none">
+    <h3 class="mt-0" title="Errors, warnings, and notices reported by the fleet backend during this mission">Fleet Messages</h3>
+    <div id="mission-messages"></div>
+  </div>
+
+  <!-- Event Log -->
+  <div class="card">
+    <h3 class="mt-0" title="Raw event log showing every state transition with robot telemetry">Event Log</h3>
+    <table class="table-compact w-full">
+      <thead>
+        <tr>
+          <th title="Timestamp when this state transition was recorded">Time</th>
+          <th title="Fleet state transition (old state to new state)">Transition</th>
+          <th title="Robot vehicle ID at this transition">Robot</th>
+          <th title="Fleet station the robot was at or near">Station</th>
+          <th title="Robot map coordinates (X, Y) at this transition">Position</th>
+          <th title="Robot battery level at this transition">Battery</th>
+        </tr>
+      </thead>
+      <tbody id="event-log"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<script src="/static/pages/mission-detail.js"></script>
+{{end}}

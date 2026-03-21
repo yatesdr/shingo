@@ -138,14 +138,14 @@
             {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
           </select>
         </div>
-        <div id="cx-staging1-wrap" style="display:none">
+        <div id="cx-staging1-wrap" class="hide">
           <label class="to-label">Staging Area 1</label>
           <select id="cx-staging1" class="to-input">
             <option value="">-- select --</option>
             {{range .Nodes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
           </select>
         </div>
-        <div id="cx-staging2-wrap" style="display:none">
+        <div id="cx-staging2-wrap" class="hide">
           <label class="to-label">Staging Area 2</label>
           <select id="cx-staging2" class="to-input">
             <option value="">-- select --</option>
@@ -231,7 +231,7 @@
           <label class="to-label">Config ID</label>
           <input type="text" id="c-config-id" class="to-input" placeholder="PostAction configId">
         </div>
-        <div id="c-dispatch-wrap" style="display:none">
+        <div id="c-dispatch-wrap" class="hide">
           <label class="to-label">Dispatch Type</label>
           <select id="c-dispatch-type" class="to-input">
             <option value="dispatchable">Dispatchable</option>
@@ -239,19 +239,19 @@
             <option value="undispatchable_ignore">Undispatchable (ignore)</option>
           </select>
         </div>
-        <div id="c-map-wrap" style="display:none">
+        <div id="c-map-wrap" class="hide">
           <label class="to-label">Map Name</label>
           <input type="text" id="c-map-name" class="to-input" placeholder="Map name">
         </div>
-        <div id="c-orderid-wrap" style="display:none">
+        <div id="c-orderid-wrap" class="hide">
           <label class="to-label">Order ID</label>
           <input type="text" id="c-order-id" class="to-input" placeholder="RDS order ID to terminate">
         </div>
-        <div id="c-container-wrap" style="display:none">
+        <div id="c-container-wrap" class="hide">
           <label class="to-label">Container Name</label>
           <input type="text" id="c-container-name" class="to-input" placeholder="Container name">
         </div>
-        <div id="c-goods-wrap" style="display:none">
+        <div id="c-goods-wrap" class="hide">
           <label class="to-label">Goods ID</label>
           <input type="text" id="c-goods-id" class="to-input" placeholder="Goods ID">
         </div>
@@ -272,14 +272,14 @@
 <!-- Order History Modal -->
 <div class="modal-overlay" id="history-modal">
   <div class="modal" style="max-width:700px">
-    <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <div class="modal-header flex flex-between">
       <h2>Order History: <span id="hist-order-id"></span></h2>
       <button class="modal-close" onclick="hideModal('history-modal')">&times;</button>
     </div>
     <div id="hist-body" style="max-height:400px;overflow-y:auto;">
       <p style="color:#888;">Loading...</p>
     </div>
-    <div style="text-align:right;margin-top:1rem;">
+    <div class="text-right mt-2">
       <button class="btn" onclick="hideModal('history-modal')">Close</button>
     </div>
   </div>
@@ -288,7 +288,7 @@
 <!-- Confirm Receipt Modal -->
 <div class="modal-overlay" id="receipt-modal">
   <div class="modal" style="max-width:400px">
-    <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;">
+    <div class="modal-header flex flex-between">
       <h2>Confirm Receipt</h2>
       <button class="modal-close" onclick="hideModal('receipt-modal')">&times;</button>
     </div>
@@ -301,78 +301,16 @@
         <option value="rejected">Rejected</option>
       </select>
     </div>
-    <div style="margin-bottom:1rem;">
+    <div class="mb-2">
       <label class="to-label">Final Count</label>
       <input type="number" id="receipt-count" class="to-input" value="1" step="any" min="0">
     </div>
-    <div style="display:flex;gap:.5rem;justify-content:flex-end;">
+    <div class="flex-end gap-1">
       <button class="btn" onclick="hideModal('receipt-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="sendReceipt()">Confirm</button>
     </div>
   </div>
 </div>
-
-<style>
-.to-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1.5rem; }
-.to-tab {
-  background:none; border:none; padding:.6rem 1.2rem; cursor:pointer;
-  font-size:.95rem; color:var(--text-muted); border-bottom:2px solid transparent;
-  margin-bottom:-2px; font-weight:500;
-}
-.to-tab:hover { color:var(--text); }
-.to-tab.active { color:#7c3aed; border-bottom-color:#7c3aed; }
-.to-tab-content { display:none; }
-.to-tab-content.active { display:block; }
-.to-form-card {
-  background:var(--surface); border:1px solid var(--border); border-radius:.5rem;
-  padding:1rem 1.25rem; margin-bottom:1.5rem;
-}
-.to-form-card h3 { margin:0 0 .75rem; font-size:1rem; }
-.to-form-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:.75rem; }
-.to-label { display:block; margin-bottom:.2rem; font-weight:600; font-size:.85rem; }
-.to-input {
-  width:100%; padding:.35rem .5rem; border:1px solid var(--border); border-radius:4px;
-  font-size:.9rem; box-sizing:border-box; background:var(--bg); color:var(--text);
-}
-.to-status { display:inline-block; padding:2px 8px; border-radius:3px; font-size:.8rem; font-weight:600; }
-.to-status-pending { background:#ffeaa7; color:#856404; }
-.to-status-sourcing { background:#dfe6e9; color:#636e72; }
-.to-status-dispatched { background:#74b9ff; color:#0c3d6b; }
-.to-status-in_transit { background:#a29bfe; color:#2d1f6b; }
-.to-status-delivered { background:#55efc4; color:#00694a; }
-.to-status-confirmed { background:#00b894; color:#fff; }
-.to-status-completed { background:#00cec9; color:#fff; }
-.to-status-failed { background:#fab1a0; color:#831010; }
-.to-status-cancelled { background:#dfe6e9; color:#636e72; }
-.to-status-CREATED { background:#ffeaa7; color:#856404; }
-.to-status-TOBEDISPATCHED { background:#dfe6e9; color:#636e72; }
-.to-status-RUNNING { background:#74b9ff; color:#0c3d6b; }
-.to-status-FINISHED { background:#00cec9; color:#fff; }
-.to-status-FAILED { background:#fab1a0; color:#831010; }
-.to-status-STOPPED { background:#dfe6e9; color:#636e72; }
-.to-actions { white-space:nowrap; }
-.to-actions button { margin-right:.25rem; }
-.to-btn-sm {
-  padding:2px 8px; font-size:.78rem; border:1px solid var(--border); border-radius:3px;
-  background:var(--surface); cursor:pointer; color:var(--text);
-}
-.to-btn-sm:hover { background:var(--bg); }
-.to-btn-danger { border-color:#dc3545; color:#dc3545; }
-.to-btn-danger:hover { background:#f8d7da; }
-.to-toast {
-  position:fixed; top:1rem; right:1rem; z-index:9999;
-  padding:.75rem 1.25rem; border-radius:.5rem; font-size:.9rem; font-weight:500;
-  box-shadow:0 4px 12px rgba(0,0,0,.15); opacity:0; transform:translateX(100%);
-  transition:opacity .3s, transform .3s; max-width:450px;
-}
-.to-toast-visible { opacity:1; transform:translateX(0); }
-.to-toast-error { background:#f8d7da; color:#721c24; border:1px solid #f5c6cb; }
-.to-toast-info { background:#d1ecf1; color:#0c5460; border:1px solid #bee5eb; }
-[data-theme="dark"] .to-btn-danger:hover { background:#3b1219; }
-[data-theme="dark"] .to-toast-error { background:#3b1219; color:#f85149; border-color:#f8514933; }
-[data-theme="dark"] .to-toast-info { background:#0c2d6b; color:#58a6ff; border-color:#58a6ff33; }
-</style>
-
 
 <div id="page-data" data-authenticated="{{.Authenticated}}"></div>
 <script src="/static/pages/test-orders.js"></script>

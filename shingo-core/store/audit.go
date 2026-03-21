@@ -17,13 +17,13 @@ type AuditEntry struct {
 }
 
 func (db *DB) AppendAudit(entityType string, entityID int64, action, oldValue, newValue, actor string) error {
-	_, err := db.Exec(db.Q(`INSERT INTO audit_log (entity_type, entity_id, action, old_value, new_value, actor) VALUES (?, ?, ?, ?, ?, ?)`),
+	_, err := db.Exec(`INSERT INTO audit_log (entity_type, entity_id, action, old_value, new_value, actor) VALUES ($1, $2, $3, $4, $5, $6)`,
 		entityType, entityID, action, oldValue, newValue, actor)
 	return err
 }
 
 func (db *DB) ListAuditLog(limit int) ([]*AuditEntry, error) {
-	rows, err := db.Query(db.Q(`SELECT id, entity_type, entity_id, action, old_value, new_value, actor, created_at FROM audit_log ORDER BY id DESC LIMIT ?`), limit)
+	rows, err := db.Query(`SELECT id, entity_type, entity_id, action, old_value, new_value, actor, created_at FROM audit_log ORDER BY id DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func (db *DB) ListAuditLog(limit int) ([]*AuditEntry, error) {
 }
 
 func (db *DB) ListEntityAudit(entityType string, entityID int64) ([]*AuditEntry, error) {
-	rows, err := db.Query(db.Q(`SELECT id, entity_type, entity_id, action, old_value, new_value, actor, created_at FROM audit_log WHERE entity_type=? AND entity_id=? ORDER BY id DESC`), entityType, entityID)
+	rows, err := db.Query(`SELECT id, entity_type, entity_id, action, old_value, new_value, actor, created_at FROM audit_log WHERE entity_type=$1 AND entity_id=$2 ORDER BY id DESC`, entityType, entityID)
 	if err != nil {
 		return nil, err
 	}
@@ -49,11 +49,9 @@ func scanAuditEntries(rows *sql.Rows) ([]*AuditEntry, error) {
 	var entries []*AuditEntry
 	for rows.Next() {
 		var e AuditEntry
-		var createdAt any
-		if err := rows.Scan(&e.ID, &e.EntityType, &e.EntityID, &e.Action, &e.OldValue, &e.NewValue, &e.Actor, &createdAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.EntityType, &e.EntityID, &e.Action, &e.OldValue, &e.NewValue, &e.Actor, &e.CreatedAt); err != nil {
 			return nil, err
 		}
-		e.CreatedAt = parseTime(createdAt)
 		entries = append(entries, &e)
 	}
 	return entries, rows.Err()

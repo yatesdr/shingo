@@ -119,8 +119,7 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
     "id": 1,
     "code": "BRK-ROTOR-KIT",
     "description": "Brake Rotor Kit",
-    "uop_capacity": 24,
-    "default_manifest_json": "{...}"
+    "uop_capacity": 24
   }
 ]
 ```

@@ -1,0 +1,64 @@
+{{define "content"}}
+<div>
+  <div class="flex flex-between mb-2">
+    <h1>Inventory</h1>
+    <div class="flex-center gap-1">
+      <span id="row-count" class="text-muted text-sm"></span>
+      {{if .Authenticated}}
+      <button class="btn btn-primary btn-sm" onclick="exportInventory()" id="export-btn" disabled>Export Excel</button>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="filter-bar mb-1">
+    <input type="text" id="inv-search" placeholder="Search..." oninput="applyFilters()">
+    <select id="inv-zone" onchange="applyFilters()"><option value="">All Zones</option></select>
+    <select id="inv-group" onchange="applyFilters()"><option value="">All Groups</option></select>
+    <select id="inv-status" onchange="applyFilters()">
+      <option value="">All Statuses</option>
+      <option value="available">Available</option>
+      <option value="staged">Staged</option>
+      <option value="flagged">Flagged</option>
+      <option value="maintenance">Maintenance</option>
+      <option value="retired">Retired</option>
+    </select>
+    <label class="text-sm flex-center" style="gap:0.3rem;">
+      <input type="checkbox" id="inv-transit" onchange="applyFilters()"> In Transit
+    </label>
+  </div>
+
+  <div id="inv-loading" class="loading-overlay">
+    <div class="spinner"></div>
+    <span>Loading inventory...</span>
+  </div>
+
+  <div id="inv-error" class="alert hide"></div>
+
+  <div id="inv-table-wrap" class="hide">
+    <div style="overflow-x:auto;">
+      <table id="inv-table">
+        <thead>
+          <tr>
+            <th class="sortable" data-col="group_name" onclick="sortBy('group_name')">Group</th>
+            <th class="sortable" data-col="lane_name" onclick="sortBy('lane_name')">Lane</th>
+            <th class="sortable" data-col="node_name" onclick="sortBy('node_name')">Node</th>
+            <th class="sortable" data-col="zone" onclick="sortBy('zone')">Zone</th>
+            <th class="sortable" data-col="bin_label" onclick="sortBy('bin_label')">Bin</th>
+            <th class="sortable" data-col="bin_type" onclick="sortBy('bin_type')">Type</th>
+            <th class="sortable" data-col="status" onclick="sortBy('status')">Status</th>
+            <th>Transit</th>
+            <th class="sortable" data-col="payload_code" onclick="sortBy('payload_code')">Payload</th>
+            <th class="sortable" data-col="cat_id" onclick="sortBy('cat_id')">Cat-ID</th>
+            <th class="sortable" data-col="qty" onclick="sortBy('qty')">Qty</th>
+            <th>UOP Rem.</th>
+            <th>Confirmed</th>
+          </tr>
+        </thead>
+        <tbody id="inv-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="/static/pages/inventory.js"></script>
+{{end}}

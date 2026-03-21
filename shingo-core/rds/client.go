@@ -159,7 +159,7 @@ func (c *Client) Reconfigure(baseURL string, timeout time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.baseURL = baseURL
-	c.httpClient.Timeout = timeout
+	c.httpClient = &http.Client{Timeout: timeout}
 }
 
 // checkResponse validates the RDS response envelope code.

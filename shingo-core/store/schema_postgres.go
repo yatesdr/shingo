@@ -4,9 +4,12 @@ const schemaPostgres = `
 CREATE TABLE IF NOT EXISTS nodes (
     id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,
-    is_synthetic INTEGER NOT NULL DEFAULT 0,
+    is_synthetic BOOLEAN NOT NULL DEFAULT false,
     zone         TEXT NOT NULL DEFAULT '',
-    enabled      INTEGER NOT NULL DEFAULT 1,
+    enabled      BOOLEAN NOT NULL DEFAULT true,
+    depth        INTEGER,
+    node_type_id BIGINT,
+    parent_id    BIGINT REFERENCES nodes(id),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -22,13 +25,12 @@ CREATE TABLE IF NOT EXISTS bin_types (
 );
 
 CREATE TABLE IF NOT EXISTS payloads (
-    id                    BIGSERIAL PRIMARY KEY,
-    code                  TEXT NOT NULL UNIQUE,
-    description           TEXT NOT NULL DEFAULT '',
-    uop_capacity          INTEGER NOT NULL DEFAULT 0,
-    default_manifest_json TEXT NOT NULL DEFAULT '{}',
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id           BIGSERIAL PRIMARY KEY,
+    code         TEXT NOT NULL UNIQUE,
+    description  TEXT NOT NULL DEFAULT '',
+    uop_capacity INTEGER NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS bins (
@@ -44,8 +46,8 @@ CREATE TABLE IF NOT EXISTS bins (
     payload_code       TEXT NOT NULL DEFAULT '',
     manifest           JSONB,
     uop_remaining      INTEGER NOT NULL DEFAULT 0,
-    manifest_confirmed INTEGER NOT NULL DEFAULT 0,
-    locked             INTEGER NOT NULL DEFAULT 0,
+    manifest_confirmed BOOLEAN NOT NULL DEFAULT false,
+    locked             BOOLEAN NOT NULL DEFAULT false,
     locked_by          TEXT NOT NULL DEFAULT '',
     locked_at          TIMESTAMPTZ,
     last_counted_at    TIMESTAMPTZ,
@@ -58,18 +60,15 @@ CREATE INDEX IF NOT EXISTS idx_bins_type ON bins(bin_type_id);
 CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);
 CREATE INDEX IF NOT EXISTS idx_bins_status ON bins(status);
 CREATE INDEX IF NOT EXISTS idx_bins_payload_code ON bins(payload_code);
-CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = 1;
+CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = true;
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGSERIAL PRIMARY KEY,
     edge_uuid       TEXT NOT NULL,
     station_id      TEXT NOT NULL DEFAULT '',
-    factory_id      TEXT NOT NULL DEFAULT '',
     order_type      TEXT NOT NULL DEFAULT 'retrieve',
     status          TEXT NOT NULL DEFAULT 'pending',
     quantity        BIGINT NOT NULL DEFAULT 1,
-    source_node_id  BIGINT REFERENCES nodes(id),
-    dest_node_id    BIGINT REFERENCES nodes(id),
     pickup_node     TEXT NOT NULL DEFAULT '',
     delivery_node   TEXT NOT NULL DEFAULT '',
     vendor_order_id TEXT NOT NULL DEFAULT '',
@@ -78,10 +77,10 @@ CREATE TABLE IF NOT EXISTS orders (
     priority        INTEGER NOT NULL DEFAULT 0,
     payload_desc    TEXT NOT NULL DEFAULT '',
     error_detail    TEXT NOT NULL DEFAULT '',
+    steps_json      TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at    TIMESTAMPTZ,
-    payload_id      BIGINT REFERENCES payloads(id),
     parent_order_id BIGINT REFERENCES orders(id),
     sequence        INTEGER NOT NULL DEFAULT 0,
     bin_id          BIGINT REFERENCES bins(id)
@@ -182,7 +181,6 @@ CREATE INDEX IF NOT EXISTS idx_scene_points_area ON scene_points(area_name);
 CREATE TABLE IF NOT EXISTS edge_registry (
     id              BIGSERIAL PRIMARY KEY,
     station_id      TEXT NOT NULL UNIQUE,
-    factory_id      TEXT NOT NULL DEFAULT '',
     hostname        TEXT NOT NULL DEFAULT '',
     version         TEXT NOT NULL DEFAULT '',
     line_ids        TEXT NOT NULL DEFAULT '[]',
@@ -229,7 +227,7 @@ CREATE TABLE IF NOT EXISTS node_types (
     code         TEXT NOT NULL UNIQUE,
     name         TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
-    is_synthetic INTEGER NOT NULL DEFAULT 0,
+    is_synthetic BOOLEAN NOT NULL DEFAULT false,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -283,4 +281,49 @@ CREATE TABLE IF NOT EXISTS cms_transactions (
 );
 CREATE INDEX IF NOT EXISTS idx_cms_txn_node ON cms_transactions(node_id);
 CREATE INDEX IF NOT EXISTS idx_cms_txn_created ON cms_transactions(created_at);
+
+CREATE TABLE IF NOT EXISTS mission_events (
+    id              BIGSERIAL PRIMARY KEY,
+    order_id        BIGINT NOT NULL,
+    vendor_order_id TEXT NOT NULL DEFAULT '',
+    old_state       TEXT NOT NULL,
+    new_state       TEXT NOT NULL,
+    robot_id        TEXT NOT NULL DEFAULT '',
+    robot_x         DOUBLE PRECISION,
+    robot_y         DOUBLE PRECISION,
+    robot_angle     DOUBLE PRECISION,
+    robot_battery   DOUBLE PRECISION,
+    robot_station   TEXT NOT NULL DEFAULT '',
+    blocks_json     JSONB NOT NULL DEFAULT '[]',
+    errors_json     JSONB NOT NULL DEFAULT '[]',
+    detail          TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mission_events_order ON mission_events(order_id);
+
+CREATE TABLE IF NOT EXISTS mission_telemetry (
+    id                 BIGSERIAL PRIMARY KEY,
+    order_id           BIGINT NOT NULL UNIQUE,
+    vendor_order_id    TEXT NOT NULL DEFAULT '',
+    robot_id           TEXT NOT NULL DEFAULT '',
+    station_id         TEXT NOT NULL DEFAULT '',
+    order_type         TEXT NOT NULL DEFAULT '',
+    pickup_node        TEXT NOT NULL DEFAULT '',
+    delivery_node      TEXT NOT NULL DEFAULT '',
+    terminal_state     TEXT NOT NULL DEFAULT '',
+    vendor_created     TIMESTAMPTZ,
+    vendor_completed   TIMESTAMPTZ,
+    core_created       TIMESTAMPTZ,
+    core_completed     TIMESTAMPTZ,
+    duration_ms        BIGINT NOT NULL DEFAULT 0,
+    vendor_duration_ms BIGINT NOT NULL DEFAULT 0,
+    blocks_json        JSONB NOT NULL DEFAULT '[]',
+    errors_json        JSONB NOT NULL DEFAULT '[]',
+    warnings_json      JSONB NOT NULL DEFAULT '[]',
+    notices_json       JSONB NOT NULL DEFAULT '[]',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mission_telemetry_station ON mission_telemetry(station_id);
+CREATE INDEX IF NOT EXISTS idx_mission_telemetry_robot ON mission_telemetry(robot_id);
+CREATE INDEX IF NOT EXISTS idx_mission_telemetry_completed ON mission_telemetry(core_completed);
 `

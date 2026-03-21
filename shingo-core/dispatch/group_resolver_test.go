@@ -55,7 +55,7 @@ func setupNodeGroup(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store
 	}
 
 	// Create payload template
-	bp = &store.Payload{Code: "WGA", DefaultManifestJSON: "{}"}
+	bp = &store.Payload{Code: "WGA"}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
@@ -84,15 +84,13 @@ func setupNodeGroup(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store
 		// 3 slots per lane
 		slots[i] = make([]*store.Node, 3)
 		for d := 1; d <= 3; d++ {
+			depth := d
 			slot := &store.Node{
 				Name: fmt.Sprintf("GRP-1-L%d-S%d", i+1, d),
-				ParentID: &lane.ID, Enabled: true,
+				ParentID: &lane.ID, Enabled: true, Depth: &depth,
 			}
 			if err := db.CreateNode(slot); err != nil {
 				t.Fatalf("create slot L%d-S%d: %v", i+1, d, err)
-			}
-			if err := db.SetNodeProperty(slot.ID, "depth", fmt.Sprintf("%d", d)); err != nil {
-				t.Fatalf("set depth L%d-S%d: %v", i+1, d, err)
 			}
 			slots[i][d-1] = slot
 		}
@@ -134,7 +132,7 @@ func TestGroupResolveRetrieve_BuriedFails(t *testing.T) {
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
 	// Create a different payload template for the blocker
-	blockerBP := &store.Payload{Code: "BLK", DefaultManifestJSON: "{}"}
+	blockerBP := &store.Payload{Code: "BLK"}
 	if err := db.CreatePayload(blockerBP); err != nil {
 		t.Fatalf("create blocker payload: %v", err)
 	}
@@ -255,7 +253,7 @@ func TestNodeGroupResolveRetrieve_DirectChildren(t *testing.T) {
 		t.Fatalf("get NGRP type: %v", err)
 	}
 
-	bp := &store.Payload{Code: "PDC", DefaultManifestJSON: "{}"}
+	bp := &store.Payload{Code: "PDC"}
 	db.CreatePayload(bp)
 
 	// Create group with direct physical children (no lanes)
@@ -315,7 +313,7 @@ func TestNodeGroupResolveStore_DirectChildren(t *testing.T) {
 	db := testDB(t)
 
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	bp := &store.Payload{Code: "PDS", DefaultManifestJSON: "{}"}
+	bp := &store.Payload{Code: "PDS"}
 	db.CreatePayload(bp)
 
 	grp := &store.Node{Name: "GRP-DS", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}

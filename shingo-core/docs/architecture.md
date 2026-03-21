@@ -176,18 +176,9 @@ store.DB          -- shared by engine, dispatch, handlers
 fleet.Backend     -- used by dispatch, engine
 ```
 
-### Dialect Abstraction (SQL)
+### Database
 
-The store layer supports both SQLite and PostgreSQL using placeholder rewriting:
-
-```go
-// Write queries with ? placeholders
-db.Q("SELECT * FROM nodes WHERE id = ? AND zone = ?", id, zone)
-
-// Rebind() converts to $1, $2 for PostgreSQL at runtime
-```
-
-Schema files are separate: `schema_sqlite.go` and `schema_postgres.go`. Migrations run automatically on startup.
+The store layer uses PostgreSQL with native `$1, $2` placeholder syntax. Schema is defined in `schema_postgres.go`. Migrations run automatically on startup.
 
 ### sendToEdge Helper
 
@@ -274,7 +265,7 @@ go test -v ./dispatch -run TestHandleOrderRequest   # single test
 go test -v ./store                                  # store layer
 ```
 
-- Store tests use temporary SQLite databases via `t.TempDir()`
+- Store tests use ephemeral PostgreSQL containers via `testcontainers-go`
 - Dispatch tests use mock emitter and fleet backend interfaces
 - No external dependencies (Kafka, PostgreSQL, RDS) needed for tests
 
@@ -285,7 +276,6 @@ go test -v ./store                                  # store layer
 | `github.com/go-chi/chi/v5` | HTTP router |
 | `github.com/gorilla/sessions` | Cookie-based sessions |
 | `github.com/jackc/pgx/v5/stdlib` | PostgreSQL driver |
-| `modernc.org/sqlite` | Pure-Go SQLite driver |
 | `github.com/segmentio/kafka-go` | Kafka client |
 | `github.com/google/uuid` | UUID generation |
 | `golang.org/x/crypto/bcrypt` | Password hashing |

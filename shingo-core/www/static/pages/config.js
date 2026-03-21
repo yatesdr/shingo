@@ -14,9 +14,3 @@ function removeKafkaBroker(btn) {
   btn.parentElement.remove();
 }
 
-function toggleDbFields() {
-  var driver = document.getElementById('db-driver').value;
-  document.getElementById('db-sqlite-fields').style.display = driver === 'sqlite' ? '' : 'none';
-  document.getElementById('db-postgres-fields').style.display = driver === 'postgres' ? '' : 'none';
-}
-toggleDbFields();

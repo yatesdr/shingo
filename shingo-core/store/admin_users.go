@@ -12,24 +12,22 @@ type AdminUser struct {
 }
 
 func (db *DB) CreateAdminUser(username, passwordHash string) error {
-	_, err := db.Exec(db.Q(`INSERT INTO admin_users (username, password_hash) VALUES (?, ?)`), username, passwordHash)
+	_, err := db.Exec(`INSERT INTO admin_users (username, password_hash) VALUES ($1, $2)`, username, passwordHash)
 	return err
 }
 
 func (db *DB) GetAdminUser(username string) (*AdminUser, error) {
 	var u AdminUser
-	var createdAt any
-	err := db.QueryRow(db.Q(`SELECT id, username, password_hash, created_at FROM admin_users WHERE username=?`), username).
-		Scan(&u.ID, &u.Username, &u.PasswordHash, &createdAt)
+	err := db.QueryRow(`SELECT id, username, password_hash, created_at FROM admin_users WHERE username=$1`, username).
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
-	u.CreatedAt = parseTime(createdAt)
 	return &u, nil
 }
 
 func (db *DB) AdminUserExists() (bool, error) {
 	var count int
-	err := db.QueryRow(db.Q(`SELECT COUNT(*) FROM admin_users`)).Scan(&count)
+	err := db.QueryRow(`SELECT COUNT(*) FROM admin_users`).Scan(&count)
 	return count > 0, err
 }

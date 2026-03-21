@@ -2,7 +2,7 @@
 <div>
   <div class="flex flex-between mb-2">
     <h1>Robots</h1>
-    <span class="text-muted" style="font-size:0.85rem" id="robot-count">{{len .Robots}} robots</span>
+    <span class="text-muted text-sm" id="robot-count">{{len .Robots}} robots</span>
   </div>
 
   <div class="filter-bar">
@@ -65,7 +65,7 @@
       <h2 id="rm-title">Robot</h2>
       <button class="modal-close" onclick="closeRobotModal()">&times;</button>
     </div>
-    <div class="grid grid-2" style="font-size:0.85rem;row-gap:0.4rem">
+    <div class="grid grid-2 text-sm" style="row-gap:0.4rem">
       <div><strong>State:</strong> <span id="rm-state" class="badge"></span></div>
       <div><strong>IP:</strong> <span id="rm-ip"></span></div>
       <div><strong>Model:</strong> <span id="rm-model"></span></div>
@@ -84,10 +84,10 @@
     </div>
     {{if .Authenticated}}
     <hr style="margin:0.75rem 0">
-    <div style="font-size:0.85rem">
+    <div class="text-sm">
       <strong>Controls</strong>
       <div id="rm-status-msg" style="font-size:0.8rem;margin:0.25rem 0;min-height:1.2em" class="text-muted"></div>
-      <div class="flex gap-1" style="flex-wrap:wrap;margin-top:0.5rem">
+      <div class="flex gap-1 flex-wrap" style="margin-top:0.5rem">
         <button class="btn btn-sm" id="rm-btn-pause" onclick="robotSetAvailability(false)">Pause</button>
         <button class="btn btn-sm btn-primary" id="rm-btn-resume" onclick="robotSetAvailability(true)">Resume</button>
         <button class="btn btn-sm" onclick="robotRetryFailed()">Retry Failed</button>

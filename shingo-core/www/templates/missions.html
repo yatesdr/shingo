@@ -1,0 +1,47 @@
+{{define "content"}}
+<h2>Mission Telemetry</h2>
+
+<div class="card mb-2">
+  <div class="flex gap-2 flex-wrap" style="align-items:end">
+    <label title="Show missions completed on or after this date">Since <input type="date" id="filter-since"></label>
+    <label title="Show missions completed on or before this date">Until <input type="date" id="filter-until"></label>
+    <label title="Filter by edge station ID (exact match)">Station <input type="text" id="filter-station" placeholder="all" style="width:10rem"></label>
+    <label title="Filter by robot vehicle ID (exact match)">Robot <input type="text" id="filter-robot" placeholder="all" style="width:8rem"></label>
+    <div id="state-filters" class="flex gap-05">
+      <button class="btn btn-sm state-btn active" data-state="" title="Show all terminal states">All</button>
+      <button class="btn btn-sm state-btn" data-state="FINISHED" title="Missions that finished successfully">Completed</button>
+      <button class="btn btn-sm state-btn" data-state="FAILED" title="Missions that failed (robot error, unreachable, etc.)">Failed</button>
+      <button class="btn btn-sm state-btn" data-state="STOPPED" title="Missions manually cancelled">Cancelled</button>
+    </div>
+    <button class="btn btn-sm btn-primary" id="btn-apply" title="Apply date, station, and robot filters">Apply</button>
+  </div>
+</div>
+
+<div class="grid-4 mb-2" id="stats-row">
+  <div class="card" title="Total number of completed missions matching the current filters"><div class="stat-value" id="stat-total">-</div><div class="stat-label">Total Missions</div></div>
+  <div class="card" title="Average mission duration (core created to core completed)"><div class="stat-value" id="stat-avg">-</div><div class="stat-label">Avg Duration</div></div>
+  <div class="card" title="95th percentile duration — 95% of missions complete faster than this"><div class="stat-value" id="stat-p95">-</div><div class="stat-label">P95 Duration</div></div>
+  <div class="card" title="Percentage of missions that completed successfully vs. failed or cancelled"><div class="stat-value" id="stat-rate">-</div><div class="stat-label">Success Rate</div></div>
+</div>
+
+<div class="card">
+  <table class="table-compact w-full">
+    <thead>
+      <tr>
+        <th title="Shingo order ID">Order</th>
+        <th title="Robot vehicle ID assigned to this mission">Robot</th>
+        <th title="Edge station that requested this order">Station</th>
+        <th title="Pickup node to delivery node">Route</th>
+        <th title="Terminal state of the mission">State</th>
+        <th title="Total mission duration (core created to completed)">Duration</th>
+        <th title="Time since mission completed">Completed</th>
+      </tr>
+    </thead>
+    <tbody id="mission-list"></tbody>
+  </table>
+  <div id="pagination" class="flex-center gap-1" style="margin-top:.5rem"></div>
+  <div class="text-sm text-muted" style="margin-top:.25rem">Click any row to view full mission details</div>
+</div>
+
+<script src="/static/pages/missions.js"></script>
+{{end}}

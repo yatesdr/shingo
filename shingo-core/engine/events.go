@@ -5,6 +5,7 @@ import (
 	"shingocore/store"
 )
 
+
 const (
 	EventOrderReceived EventType = iota + 1
 	EventOrderDispatched
@@ -50,6 +51,7 @@ type OrderStatusChangedEvent struct {
 	NewStatus     string
 	RobotID       string
 	Detail        string
+	Snapshot      *fleet.OrderSnapshot
 }
 
 type OrderCompletedEvent struct {

@@ -416,8 +416,8 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	db.SetNodeParent(slot3.ID, zone.ID)
 
 	// Create source payloads in a supermarket (payload A x2, payload B x1)
-	bpA := &store.Payload{Code: "PART-MULTI-A", DefaultManifestJSON: "{}"}
-	bpB := &store.Payload{Code: "PART-MULTI-B", DefaultManifestJSON: "{}"}
+	bpA := &store.Payload{Code: "PART-MULTI-A"}
+	bpB := &store.Payload{Code: "PART-MULTI-B"}
 	db.CreatePayload(bpA)
 	db.CreatePayload(bpB)
 
@@ -538,7 +538,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	db.CreateBin(occBin)
 
 	// Create payload with bin type compatibility
-	bp := &store.Payload{Code: "EMPTY-BP", DefaultManifestJSON: "{}"}
+	bp := &store.Payload{Code: "EMPTY-BP"}
 	db.CreatePayload(bp)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})

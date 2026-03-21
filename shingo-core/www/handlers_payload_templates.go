@@ -13,18 +13,12 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	manifest := r.FormValue("default_manifest_json")
-	if manifest == "" {
-		manifest = "{}"
-	}
-
 	uop, _ := strconv.Atoi(r.FormValue("uop_capacity"))
 
 	p := &store.Payload{
-		Code:                r.FormValue("code"),
-		Description:         r.FormValue("description"),
-		UOPCapacity:         uop,
-		DefaultManifestJSON: manifest,
+		Code:        r.FormValue("code"),
+		Description: r.FormValue("description"),
+		UOPCapacity: uop,
 	}
 
 	if err := h.engine.DB().CreatePayload(p); err != nil {
@@ -53,15 +47,9 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	manifest := r.FormValue("default_manifest_json")
-	if manifest == "" {
-		manifest = "{}"
-	}
-
 	p.Code = r.FormValue("code")
 	p.Description = r.FormValue("description")
 	p.UOPCapacity, _ = strconv.Atoi(r.FormValue("uop_capacity"))
-	p.DefaultManifestJSON = manifest
 
 	if err := h.engine.DB().UpdatePayload(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -102,10 +90,9 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	}
 
 	p := &store.Payload{
-		Code:                req.Code,
-		Description:         req.Description,
-		UOPCapacity:         req.UOPCapacity,
-		DefaultManifestJSON: "{}",
+		Code:        req.Code,
+		Description: req.Description,
+		UOPCapacity: req.UOPCapacity,
 	}
 	if err := h.engine.DB().CreatePayload(p); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)

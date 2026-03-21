@@ -1,6 +1,9 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // CreateNodeGroup creates an empty NGRP node with the given name.
 // Lanes and direct children are added separately via AddLane and drag-and-drop reparenting.
@@ -9,7 +12,7 @@ func (db *DB) CreateNodeGroup(name string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("NGRP node type not found")
 	}
-	id, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, node_type_id, enabled) VALUES (?, 1, ?, 1) RETURNING id`,
+	id, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, node_type_id, enabled) VALUES ($1, true, $2, true) RETURNING id`,
 		name, grpType.ID)
 	if err != nil {
 		return 0, fmt.Errorf("create node group: %w", err)
@@ -27,7 +30,7 @@ func (db *DB) AddLane(groupID int64, name string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("LANE node type not found")
 	}
-	laneID, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, node_type_id, parent_id, zone, enabled) VALUES (?, 1, ?, ?, ?, 1) RETURNING id`,
+	laneID, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, node_type_id, parent_id, zone, enabled) VALUES ($1, true, $2, $3, $4, true) RETURNING id`,
 		name, lanType.ID, groupID, grpNode.Zone)
 	if err != nil {
 		return 0, fmt.Errorf("create lane: %w", err)
@@ -65,26 +68,76 @@ type GroupStats struct {
 }
 
 // GetGroupLayout assembles the lane/slot/payload layout for a node group.
+// Uses bulk queries to avoid N+1 per-slot database round trips.
 func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 	children, err := db.ListChildNodes(groupID)
 	if err != nil {
 		return nil, err
 	}
 
-	layout := &GroupLayout{}
+	// Collect all slot/direct-child node IDs under this group
+	var allNodeIDs []int64
+	laneSlots := make(map[int64][]*Node)  // laneID -> ordered slots
+	slotDepths := make(map[int64]int)       // nodeID -> depth
 
 	for _, child := range children {
 		if child.NodeTypeCode == "LANE" {
 			slots, _ := db.ListLaneSlots(child.ID)
+			laneSlots[child.ID] = slots
+			for _, slot := range slots {
+				allNodeIDs = append(allNodeIDs, slot.ID)
+				depth := 0
+				if slot.Depth != nil {
+					depth = *slot.Depth
+				}
+				slotDepths[slot.ID] = depth
+			}
+		} else if !child.IsSynthetic {
+			allNodeIDs = append(allNodeIDs, child.ID)
+		}
+	}
+
+	// Bulk-fetch all bins at these nodes in one query
+	binsByNode := make(map[int64]*Bin)
+	if len(allNodeIDs) > 0 {
+		placeholders := make([]string, len(allNodeIDs))
+		args := make([]any, len(allNodeIDs))
+		for i, id := range allNodeIDs {
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+			args[i] = id
+		}
+		query := fmt.Sprintf(`%s WHERE b.node_id IN (%s) ORDER BY b.id ASC`,
+			binJoinQuery, strings.Join(placeholders, ", "))
+		rows, err := db.Query(query, args...)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				bin, err := scanBin(rows)
+				if err != nil {
+					continue
+				}
+				if bin.NodeID != nil {
+					// Keep only the first (oldest) bin per node
+					if _, exists := binsByNode[*bin.NodeID]; !exists {
+						binsByNode[*bin.NodeID] = bin
+					}
+				}
+			}
+		}
+	}
+
+	// Assemble layout from pre-fetched data
+	layout := &GroupLayout{}
+	for _, child := range children {
+		if child.NodeTypeCode == "LANE" {
+			slots := laneSlots[child.ID]
 			var si []GroupSlotInfo
 			for _, slot := range slots {
-				depth, _ := db.GetSlotDepth(slot.ID)
-				s := GroupSlotInfo{NodeID: slot.ID, Name: slot.Name, Depth: depth}
-				bins, _ := db.ListBinsByNode(slot.ID)
-				if len(bins) > 0 {
-					s.Bin = bins[0]
+				s := GroupSlotInfo{NodeID: slot.ID, Name: slot.Name, Depth: slotDepths[slot.ID]}
+				if bin, ok := binsByNode[slot.ID]; ok {
+					s.Bin = bin
 					layout.Stats.Occupied++
-					if bins[0].ClaimedBy != nil {
+					if bin.ClaimedBy != nil {
 						layout.Stats.Claimed++
 					}
 				}
@@ -97,13 +150,11 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 				Slots: si,
 			})
 		} else if !child.IsSynthetic {
-			// Direct physical child of the group
 			s := GroupSlotInfo{NodeID: child.ID, Name: child.Name}
-			bins, _ := db.ListBinsByNode(child.ID)
-			if len(bins) > 0 {
-				s.Bin = bins[0]
+			if bin, ok := binsByNode[child.ID]; ok {
+				s.Bin = bin
 				layout.Stats.Occupied++
-				if bins[0].ClaimedBy != nil {
+				if bin.ClaimedBy != nil {
 					layout.Stats.Claimed++
 				}
 			}
@@ -119,8 +170,7 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 // child nodes are unparented and returned to the flat grid. Synthetic nodes
 // (the NGRP, LANE containers) are deleted.
 func (db *DB) DeleteNodeGroup(grpID int64) error {
-	// Collect all descendant info before starting the transaction to avoid
-	// deadlocking on SQLite's single-connection pool.
+	// Collect all descendant info before starting the transaction.
 	type nodeInfo struct {
 		id          int64
 		isSynthetic bool
@@ -143,22 +193,22 @@ func (db *DB) DeleteNodeGroup(grpID int64) error {
 
 	for _, d := range descendants {
 		if d.isSynthetic {
-			tx.Exec(db.Q(`DELETE FROM node_properties WHERE node_id=?`), d.id)
-			tx.Exec(db.Q(`DELETE FROM node_stations WHERE node_id=?`), d.id)
-			tx.Exec(db.Q(`DELETE FROM node_payloads WHERE node_id=?`), d.id)
-			tx.Exec(db.Q(`DELETE FROM nodes WHERE id=?`), d.id)
+			tx.Exec(`DELETE FROM node_properties WHERE node_id=$1`, d.id)
+			tx.Exec(`DELETE FROM node_stations WHERE node_id=$1`, d.id)
+			tx.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, d.id)
+			tx.Exec(`DELETE FROM nodes WHERE id=$1`, d.id)
 		} else {
 			// Unparent physical nodes — return them to the flat grid
-			tx.Exec(db.Q(`UPDATE nodes SET parent_id=NULL, updated_at=datetime('now') WHERE id=?`), d.id)
-			tx.Exec(db.Q(`DELETE FROM node_properties WHERE node_id=? AND key IN ('depth','role')`), d.id)
+			tx.Exec(`UPDATE nodes SET parent_id=NULL, updated_at=NOW() WHERE id=$1`, d.id)
+			tx.Exec(`DELETE FROM node_properties WHERE node_id=$1 AND key IN ('depth','role')`, d.id)
 		}
 	}
 
 	// Delete the node group itself
-	tx.Exec(db.Q(`DELETE FROM node_properties WHERE node_id=?`), grpID)
-	tx.Exec(db.Q(`DELETE FROM node_stations WHERE node_id=?`), grpID)
-	tx.Exec(db.Q(`DELETE FROM node_payloads WHERE node_id=?`), grpID)
-	tx.Exec(db.Q(`DELETE FROM nodes WHERE id=?`), grpID)
+	tx.Exec(`DELETE FROM node_properties WHERE node_id=$1`, grpID)
+	tx.Exec(`DELETE FROM node_stations WHERE node_id=$1`, grpID)
+	tx.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, grpID)
+	tx.Exec(`DELETE FROM nodes WHERE id=$1`, grpID)
 
 	return tx.Commit()
 }

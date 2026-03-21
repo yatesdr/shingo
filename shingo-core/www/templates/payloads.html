@@ -5,7 +5,7 @@
   </div>
 
   {{if .Authenticated}}
-  <div style="margin-bottom:0.5rem;text-align:right">
+  <div class="mb-1 text-right">
     <button class="btn btn-primary btn-sm" onclick="openCreatePayloadModal()">+ Payload</button>
   </div>
   {{end}}
@@ -88,15 +88,14 @@
         <textarea name="description" id="plc-notes" rows="2" placeholder="Optional notes"></textarea>
       </div>
       <div class="mb-1">
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <label style="font-weight:600;font-size:0.85rem;margin:0">Default Manifest</label>
+        <div class="flex flex-between">
+          <label class="font-semibold text-sm" style="margin:0">Default Manifest</label>
           <button type="button" class="btn btn-sm" onclick="addManifestRow('plc-manifest-rows')">+ Part</button>
         </div>
         <div id="plc-manifest-rows"></div>
       </div>
-      <input type="hidden" name="default_manifest_json" id="plc-manifest-json" value="{}">
       <button type="submit" class="btn btn-primary">Create</button>
-      <button type="button" class="btn" onclick="closePLCreateModal()" style="margin-left:0.5rem">Cancel</button>
+      <button type="button" class="btn ml-05" onclick="closePLCreateModal()">Cancel</button>
     </form>
   </div>
 </div>
@@ -133,15 +132,14 @@
         <textarea name="description" id="pl-edit-notes" rows="2"></textarea>
       </div>
       <div class="mb-1">
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <label style="font-weight:600;font-size:0.85rem;margin:0">Default Manifest</label>
+        <div class="flex flex-between">
+          <label class="font-semibold text-sm" style="margin:0">Default Manifest</label>
           <button type="button" class="btn btn-sm" onclick="addManifestRow('ple-manifest-rows')">+ Part</button>
         </div>
         <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
       </div>
-      <input type="hidden" name="default_manifest_json" id="ple-manifest-json" value="{}">
       <button type="submit" class="btn btn-primary">Save Changes</button>
-      <button type="button" class="btn" onclick="closePLEditModal()" style="margin-left:0.5rem">Cancel</button>
+      <button type="button" class="btn ml-05" onclick="closePLEditModal()">Cancel</button>
     </form>
   </div>
 </div>

@@ -106,7 +106,9 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
 		return
 	}
-	d.db.UpdateOrderStatus(order.ID, StatusPending, "order received")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusPending, "order received"); err != nil {
+		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
+	}
 
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, payloadCode, p.DeliveryNode)
 
@@ -124,7 +126,9 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 }
 
 func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, payloadCode string) {
-	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding source")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding source"); err != nil {
+		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	}
 
 	// Empty bin retrieval — find an empty compatible bin instead of a loaded bin
 	if order.PayloadDesc == "retrieve_empty" {
@@ -181,10 +185,14 @@ func (d *Dispatcher) handleRetrieve(order *store.Order, env *protocol.Envelope, 
 		return
 	}
 	order.BinID = &source.ID
-	d.db.UpdateOrderBinID(order.ID, source.ID)
+	if err := d.db.UpdateOrderBinID(order.ID, source.ID); err != nil {
+		log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
+	}
 
 	order.PickupNode = sourceNode.Name
-	d.db.UpdateOrderPickupNode(order.ID, sourceNode.Name)
+	if err := d.db.UpdateOrderPickupNode(order.ID, sourceNode.Name); err != nil {
+		log.Printf("dispatch: update order %d pickup_node: %v", order.ID, err)
+	}
 
 	destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
@@ -219,7 +227,9 @@ func (d *Dispatcher) handleRetrieveEmpty(order *store.Order, env *protocol.Envel
 		return
 	}
 	order.BinID = &bin.ID
-	d.db.UpdateOrderBinID(order.ID, bin.ID)
+	if err := d.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
+		log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
+	}
 
 	sourceNode, err := d.db.GetNode(*bin.NodeID)
 	if err != nil {
@@ -227,7 +237,9 @@ func (d *Dispatcher) handleRetrieveEmpty(order *store.Order, env *protocol.Envel
 		return
 	}
 	order.PickupNode = sourceNode.Name
-	d.db.UpdateOrderPickupNode(order.ID, sourceNode.Name)
+	if err := d.db.UpdateOrderPickupNode(order.ID, sourceNode.Name); err != nil {
+		log.Printf("dispatch: update order %d pickup_node: %v", order.ID, err)
+	}
 
 	destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
@@ -272,7 +284,9 @@ func (d *Dispatcher) handleBuriedReshuffle(order *store.Order, env *protocol.Env
 		return
 	}
 
-	d.db.UpdateOrderStatus(order.ID, StatusReshuffling, fmt.Sprintf("reshuffling lane — %d steps", len(plan.Steps)))
+	if err := d.db.UpdateOrderStatus(order.ID, StatusReshuffling, fmt.Sprintf("reshuffling lane — %d steps", len(plan.Steps))); err != nil {
+		log.Printf("dispatch: update order %d status to reshuffling: %v", order.ID, err)
+	}
 	d.dbg("retrieve: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
 
 	// Advance to first step
@@ -280,7 +294,9 @@ func (d *Dispatcher) handleBuriedReshuffle(order *store.Order, env *protocol.Env
 }
 
 func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, payloadCode string) {
-	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "validating move")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusSourcing, "validating move"); err != nil {
+		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	}
 
 	if order.PickupNode == "" {
 		d.failOrder(order, env, "missing_pickup", "move order requires pickup_node")
@@ -306,7 +322,9 @@ func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, payl
 		}
 		if err := d.db.ClaimBin(bin.ID, order.ID); err == nil {
 			order.BinID = &bin.ID
-			d.db.UpdateOrderBinID(order.ID, bin.ID)
+			if err := d.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
+				log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
+			}
 			d.dbg("move: claimed bin=%d at %s", bin.ID, order.PickupNode)
 			binClaimed = true
 			break
@@ -318,7 +336,9 @@ func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, payl
 		return
 	}
 
-	d.db.UpdateOrderPickupNode(order.ID, pickupNode.Name)
+	if err := d.db.UpdateOrderPickupNode(order.ID, pickupNode.Name); err != nil {
+		log.Printf("dispatch: update order %d pickup_node: %v", order.ID, err)
+	}
 
 	destNode, err := d.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
@@ -330,7 +350,9 @@ func (d *Dispatcher) handleMove(order *store.Order, env *protocol.Envelope, payl
 }
 
 func (d *Dispatcher) handleStore(order *store.Order, env *protocol.Envelope, payloadCode string) {
-	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding storage destination")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding storage destination"); err != nil {
+		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	}
 
 	// Capture the original delivery node before overwriting — it may be the pickup source
 	originalDeliveryNode := order.DeliveryNode
@@ -343,7 +365,9 @@ func (d *Dispatcher) handleStore(order *store.Order, env *protocol.Envelope, pay
 	}
 	d.dbg("store: selected destination=%s for order %d", destNode.Name, order.ID)
 	order.DeliveryNode = destNode.Name
-	d.db.UpdateOrderDeliveryNode(order.ID, destNode.Name)
+	if err := d.db.UpdateOrderDeliveryNode(order.ID, destNode.Name); err != nil {
+		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
+	}
 
 	// Pickup is the requesting line
 	var pickupNode *store.Node
@@ -374,7 +398,9 @@ func (d *Dispatcher) handleStore(order *store.Order, env *protocol.Envelope, pay
 			if bin.ClaimedBy == nil {
 				if err := d.db.ClaimBin(bin.ID, order.ID); err == nil {
 					order.BinID = &bin.ID
-					d.db.UpdateOrderBinID(order.ID, bin.ID)
+					if err := d.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
+						log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
+					}
 					d.dbg("store: claimed bin=%d at %s", bin.ID, pickupNode.Name)
 					break
 				}
@@ -382,7 +408,9 @@ func (d *Dispatcher) handleStore(order *store.Order, env *protocol.Envelope, pay
 		}
 	}
 
-	d.db.UpdateOrderPickupNode(order.ID, pickupNode.Name)
+	if err := d.db.UpdateOrderPickupNode(order.ID, pickupNode.Name); err != nil {
+		log.Printf("dispatch: update order %d pickup_node: %v", order.ID, err)
+	}
 
 	d.dispatchToFleet(order, env, pickupNode, destNode)
 }
@@ -411,8 +439,12 @@ func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope,
 	log.Printf("dispatch: order %d dispatched as %s (%s -> %s)", order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 	d.dbg("fleet dispatch ok: order=%d vendor_id=%s", order.ID, vendorOrderID)
 
-	d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", "")
-	d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID))
+	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
+		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
+	}
+	if err := d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID)); err != nil {
+		log.Printf("dispatch: update order %d status to dispatched: %v", order.ID, err)
+	}
 
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 
@@ -439,12 +471,18 @@ func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *st
 
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
 		log.Printf("dispatch: fleet create order failed: %v", err)
-		d.db.UpdateOrderStatus(order.ID, StatusFailed, err.Error())
+		if dbErr := d.db.UpdateOrderStatus(order.ID, StatusFailed, err.Error()); dbErr != nil {
+			log.Printf("dispatch: update order %d status to failed: %v", order.ID, dbErr)
+		}
 		return "", err
 	}
 
-	d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", "")
-	d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID))
+	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
+		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
+	}
+	if err := d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID)); err != nil {
+		log.Printf("dispatch: update order %d status to dispatched: %v", order.ID, err)
+	}
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 
 	return vendorOrderID, nil
@@ -489,7 +527,9 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 	// Unclaim inventory if applicable
 	d.unclaimOrder(order.ID)
 
-	d.db.UpdateOrderStatus(order.ID, StatusCancelled, p.Reason)
+	if err := d.db.UpdateOrderStatus(order.ID, StatusCancelled, p.Reason); err != nil {
+		log.Printf("dispatch: update order %d status to cancelled: %v", order.ID, err)
+	}
 
 	d.emitter.EmitOrderCancelled(order.ID, order.EdgeUUID, stationID, p.Reason)
 
@@ -508,7 +548,9 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 		log.Printf("dispatch: encode cancelled reply: %v", err)
 		return
 	}
-	d.db.EnqueueOutbox(d.dispatchTopic, data, "order.cancelled", stationID)
+	if err := d.db.EnqueueOutbox(d.dispatchTopic, data, "order.cancelled", stationID); err != nil {
+		log.Printf("dispatch: enqueue cancelled reply for order %s: %v", p.OrderUUID, err)
+	}
 }
 
 // HandleOrderReceipt processes a delivery confirmation from ShinGo Edge.
@@ -527,10 +569,14 @@ func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	d.db.UpdateOrderStatus(order.ID, StatusConfirmed, fmt.Sprintf("receipt: %s, count: %d", p.ReceiptType, p.FinalCount))
+	if err := d.db.UpdateOrderStatus(order.ID, StatusConfirmed, fmt.Sprintf("receipt: %s, count: %d", p.ReceiptType, p.FinalCount)); err != nil {
+		log.Printf("dispatch: update order %d status to confirmed: %v", order.ID, err)
+	}
 
 	// Transition confirmed -> completed
-	d.db.CompleteOrder(order.ID)
+	if err := d.db.CompleteOrder(order.ID); err != nil {
+		log.Printf("dispatch: complete order %d: %v", order.ID, err)
+	}
 	d.emitter.EmitOrderCompleted(order.ID, order.EdgeUUID, stationID)
 }
 
@@ -565,7 +611,9 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		return
 	}
 
-	d.db.UpdateOrderDeliveryNode(order.ID, p.NewDeliveryNode)
+	if err := d.db.UpdateOrderDeliveryNode(order.ID, p.NewDeliveryNode); err != nil {
+		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
+	}
 	order.DeliveryNode = p.NewDeliveryNode
 
 	// Get source node for re-dispatch
@@ -579,7 +627,9 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		return
 	}
 
-	d.db.UpdateOrderStatus(order.ID, StatusSourcing, fmt.Sprintf("redirecting to %s", p.NewDeliveryNode))
+	if err := d.db.UpdateOrderStatus(order.ID, StatusSourcing, fmt.Sprintf("redirecting to %s", p.NewDeliveryNode)); err != nil {
+		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	}
 	d.dispatchToFleet(order, env, sourceNode, newDest)
 }
 
@@ -602,7 +652,9 @@ func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protoc
 		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
 		return
 	}
-	d.db.UpdateOrderStatus(order.ID, StatusPending, "store order received")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusPending, "store order received"); err != nil {
+		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
+	}
 
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, "", p.PickupNode)
 
@@ -654,7 +706,9 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 
 	// Confirm manifest and set loaded timestamp
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	d.db.ConfirmBinManifest(bin.ID)
+	if err := d.db.ConfirmBinManifest(bin.ID); err != nil {
+		log.Printf("dispatch: confirm bin %d manifest: %v", bin.ID, err)
+	}
 
 	d.dbg("ingest: set manifest on bin=%d, payload=%s, loaded_at=%s", bin.ID, payloadCode, now)
 
@@ -674,10 +728,14 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
 		return
 	}
-	d.db.UpdateOrderStatus(order.ID, StatusPending, "ingest order received")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusPending, "ingest order received"); err != nil {
+		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
+	}
 
 	// Claim the bin
-	d.db.ClaimBin(bin.ID, order.ID)
+	if err := d.db.ClaimBin(bin.ID, order.ID); err != nil {
+		log.Printf("dispatch: claim bin %d for order %d: %v", bin.ID, order.ID, err)
+	}
 
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeStore, payloadCode, "")
 
@@ -687,7 +745,9 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 
 func (d *Dispatcher) failOrder(order *store.Order, env *protocol.Envelope, errorCode, detail string) {
 	stationID := env.Src.Station
-	d.db.UpdateOrderStatus(order.ID, StatusFailed, detail)
+	if err := d.db.UpdateOrderStatus(order.ID, StatusFailed, detail); err != nil {
+		log.Printf("dispatch: update order %d status to failed: %v", order.ID, err)
+	}
 	d.unclaimOrder(order.ID)
 	d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, stationID, errorCode, detail)
 	d.sendError(env, order.EdgeUUID, errorCode, detail)

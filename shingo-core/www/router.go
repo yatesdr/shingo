@@ -51,6 +51,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		"templates/bins.html",
 		"templates/demand.html",
 		"templates/test-orders.html",
+		"templates/missions.html",
+		"templates/mission-detail.html",
+		"templates/inventory.html",
 	}
 	tmpls := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
@@ -91,7 +94,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	r.Get("/orders", h.handleOrders)
 	r.Get("/orders/detail", h.handleOrderDetail)
 	r.Get("/robots", h.handleRobots)
+	r.Get("/inventory", h.handleInventory)
 	r.Get("/demand", h.handleDemand)
+	r.Get("/missions", h.handleMissions)
+	r.Get("/missions/{orderID}", h.handleMissionDetail)
 
 	// --- API routes ---
 	r.Route("/api", func(r chi.Router) {
@@ -122,10 +128,16 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Get("/demands", h.apiListDemands)
 		r.Get("/demands/{id}/log", h.apiDemandLog)
 		r.Get("/health", h.apiHealthCheck)
+		r.Get("/inventory", h.apiInventory)
+		r.Get("/missions", h.apiListMissions)
+		r.Get("/missions/stats", h.apiMissionStats)
+		r.Get("/missions/{orderID}", h.apiGetMission)
 
 		// Protected (auth required)
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireAuth)
+
+			r.Get("/inventory/export", h.apiInventoryExport)
 
 			r.Post("/nodes/generate-test", h.apiGenerateTestNodes)
 			r.Post("/nodes/delete-test", h.apiDeleteTestNodes)

@@ -36,7 +36,7 @@ func (h *Handlers) apiNodePayloads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiNodeState(w http.ResponseWriter, r *http.Request) {
-	states, err := h.engine.NodeState().GetAllNodeStates()
+	states, err := h.engine.DB().ListNodeStates()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -68,7 +68,10 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
-	pd, _ := h.engine.GetNodesPageData()
+	pd, err := getNodesPageData(h.engine.DB())
+	if err != nil {
+		log.Printf("nodes page: get page data: %v", err)
+	}
 
 	binTypesJSON, _ := json.Marshal(pd.BinTypes)
 	edgesJSON, _ := json.Marshal(pd.Edges)
@@ -120,18 +123,26 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 	// Save station mode + assignments
 	stationMode := r.FormValue("station_mode")
 	if stationMode != "" {
-		h.engine.DB().SetNodeProperty(node.ID, "station_mode", stationMode)
+		if err := h.engine.DB().SetNodeProperty(node.ID, "station_mode", stationMode); err != nil {
+			log.Printf("node create: set station_mode for node %d: %v", node.ID, err)
+		}
 	}
 	if stationMode == "specific" {
-		h.engine.DB().SetNodeStations(node.ID, r.Form["stations"])
+		if err := h.engine.DB().SetNodeStations(node.ID, r.Form["stations"]); err != nil {
+			log.Printf("node create: set stations for node %d: %v", node.ID, err)
+		}
 	} else {
-		h.engine.DB().SetNodeStations(node.ID, nil)
+		if err := h.engine.DB().SetNodeStations(node.ID, nil); err != nil {
+			log.Printf("node create: clear stations for node %d: %v", node.ID, err)
+		}
 	}
 
 	// Save bin type mode + assignments
 	binTypeMode := r.FormValue("bin_type_mode")
 	if binTypeMode != "" {
-		h.engine.DB().SetNodeProperty(node.ID, "bin_type_mode", binTypeMode)
+		if err := h.engine.DB().SetNodeProperty(node.ID, "bin_type_mode", binTypeMode); err != nil {
+			log.Printf("node create: set bin_type_mode for node %d: %v", node.ID, err)
+		}
 	}
 	if binTypeMode == "specific" {
 		var ids []int64
@@ -140,9 +151,13 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 				ids = append(ids, id)
 			}
 		}
-		h.engine.DB().SetNodeBinTypes(node.ID, ids)
+		if err := h.engine.DB().SetNodeBinTypes(node.ID, ids); err != nil {
+			log.Printf("node create: set bin types for node %d: %v", node.ID, err)
+		}
 	} else {
-		h.engine.DB().SetNodeBinTypes(node.ID, nil)
+		if err := h.engine.DB().SetNodeBinTypes(node.ID, nil); err != nil {
+			log.Printf("node create: clear bin types for node %d: %v", node.ID, err)
+		}
 	}
 
 	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
@@ -192,16 +207,24 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Update station mode + assignments
 	stationMode := r.FormValue("station_mode")
-	h.engine.DB().SetNodeProperty(node.ID, "station_mode", stationMode)
+	if err := h.engine.DB().SetNodeProperty(node.ID, "station_mode", stationMode); err != nil {
+		log.Printf("node update: set station_mode for node %d: %v", node.ID, err)
+	}
 	if stationMode == "specific" {
-		h.engine.DB().SetNodeStations(node.ID, r.Form["stations"])
+		if err := h.engine.DB().SetNodeStations(node.ID, r.Form["stations"]); err != nil {
+			log.Printf("node update: set stations for node %d: %v", node.ID, err)
+		}
 	} else {
-		h.engine.DB().SetNodeStations(node.ID, nil)
+		if err := h.engine.DB().SetNodeStations(node.ID, nil); err != nil {
+			log.Printf("node update: clear stations for node %d: %v", node.ID, err)
+		}
 	}
 
 	// Update bin type mode + assignments
 	binTypeMode := r.FormValue("bin_type_mode")
-	h.engine.DB().SetNodeProperty(node.ID, "bin_type_mode", binTypeMode)
+	if err := h.engine.DB().SetNodeProperty(node.ID, "bin_type_mode", binTypeMode); err != nil {
+		log.Printf("node update: set bin_type_mode for node %d: %v", node.ID, err)
+	}
 	if binTypeMode == "specific" {
 		var binTypeIDs []int64
 		for _, s := range r.Form["bin_type_ids"] {
@@ -209,9 +232,13 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 				binTypeIDs = append(binTypeIDs, sID)
 			}
 		}
-		h.engine.DB().SetNodeBinTypes(node.ID, binTypeIDs)
+		if err := h.engine.DB().SetNodeBinTypes(node.ID, binTypeIDs); err != nil {
+			log.Printf("node update: set bin types for node %d: %v", node.ID, err)
+		}
 	} else {
-		h.engine.DB().SetNodeBinTypes(node.ID, nil)
+		if err := h.engine.DB().SetNodeBinTypes(node.ID, nil); err != nil {
+			log.Printf("node update: clear bin types for node %d: %v", node.ID, err)
+		}
 	}
 
 	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
@@ -302,13 +329,28 @@ func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stations, _ := h.engine.DB().ListStationsForNode(id)
-	binTypes, _ := h.engine.DB().ListBinTypesForNode(id)
-	props, _ := h.engine.DB().ListNodeProperties(id)
+	stations, err := h.engine.DB().ListStationsForNode(id)
+	if err != nil {
+		log.Printf("node detail: list stations for node %d: %v", id, err)
+	}
+	binTypes, err := h.engine.DB().ListBinTypesForNode(id)
+	if err != nil {
+		log.Printf("node detail: list bin types for node %d: %v", id, err)
+	}
+	props, err := h.engine.DB().ListNodeProperties(id)
+	if err != nil {
+		log.Printf("node detail: list properties for node %d: %v", id, err)
+	}
 
 	// Effective (inherited) values for child nodes
-	effectiveStations, _ := h.engine.DB().GetEffectiveStations(id)
-	effectiveBinTypes, _ := h.engine.DB().GetEffectiveBinTypes(id)
+	effectiveStations, err := h.engine.DB().GetEffectiveStations(id)
+	if err != nil {
+		log.Printf("node detail: effective stations for node %d: %v", id, err)
+	}
+	effectiveBinTypes, err := h.engine.DB().GetEffectiveBinTypes(id)
+	if err != nil {
+		log.Printf("node detail: effective bin types for node %d: %v", id, err)
+	}
 
 	// Mode properties
 	binTypeMode := h.engine.DB().GetNodeProperty(id, "bin_type_mode")
@@ -316,7 +358,10 @@ func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 
 	var children []*store.Node
 	if node.IsSynthetic {
-		children, _ = h.engine.DB().ListChildNodes(id)
+		children, err = h.engine.DB().ListChildNodes(id)
+		if err != nil {
+			log.Printf("node detail: list children for node %d: %v", id, err)
+		}
 	}
 
 	h.jsonOK(w, map[string]any{

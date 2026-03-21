@@ -1,5 +1,7 @@
 package engine
 
+import "shingocore/fleet"
+
 // dispatchEmitter bridges the dispatch package's emitter interface to the EventBus.
 type dispatchEmitter struct {
 	bus *EventBus
@@ -57,7 +59,7 @@ type pollerEmitter struct {
 	bus *EventBus
 }
 
-func (e *pollerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string) {
+func (e *pollerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *fleet.OrderSnapshot) {
 	e.bus.Emit(Event{Type: EventOrderStatusChanged, Payload: OrderStatusChangedEvent{
 		OrderID:       orderID,
 		VendorOrderID: vendorOrderID,
@@ -65,5 +67,6 @@ func (e *pollerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, old
 		NewStatus:     newStatus,
 		RobotID:       robotID,
 		Detail:        detail,
+		Snapshot:      snapshot,
 	}})
 }

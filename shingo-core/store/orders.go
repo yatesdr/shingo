@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -24,7 +25,6 @@ type Order struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	PayloadID     *int64     `json:"payload_id,omitempty"`
 	ParentOrderID *int64     `json:"parent_order_id,omitempty"`
 	Sequence      int        `json:"sequence"`
 	StepsJSON     string     `json:"steps_json,omitempty"`
@@ -39,24 +39,19 @@ type OrderHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, payload_id, parent_order_id, sequence, steps_json, bin_id`
+const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
-	var payloadID, parentOrderID, binID sql.NullInt64
-	var createdAt, updatedAt any
-	var completedAt any
+	var parentOrderID, binID sql.NullInt64
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
 		&o.PickupNode, &o.DeliveryNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
-		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &createdAt, &updatedAt, &completedAt,
-		&payloadID, &parentOrderID, &o.Sequence, &o.StepsJSON, &binID)
+		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
+		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID)
 	if err != nil {
 		return nil, err
-	}
-	if payloadID.Valid {
-		o.PayloadID = &payloadID.Int64
 	}
 	if parentOrderID.Valid {
 		o.ParentOrderID = &parentOrderID.Int64
@@ -64,9 +59,6 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	if binID.Valid {
 		o.BinID = &binID.Int64
 	}
-	o.CreatedAt = parseTime(createdAt)
-	o.UpdatedAt = parseTime(updatedAt)
-	o.CompletedAt = parseTimePtr(completedAt)
 	return &o, nil
 }
 
@@ -83,11 +75,10 @@ func scanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 func (db *DB) CreateOrder(o *Order) error {
-	id, err := db.insertID(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, payload_id, parent_order_id, sequence, steps_json, bin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+	id, err := db.insertID(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
-		nullableInt64(o.PayloadID),
 		nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
 		nullableInt64(o.BinID))
 	if err != nil {
@@ -114,11 +105,10 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 	for _, c := range children {
 		o := c.Order
 		var id int64
-		err := tx.QueryRow(db.Q(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, payload_id, parent_order_id, sequence, steps_json, bin_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`),
+		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
 			o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
-			nullableInt64(o.PayloadID),
 			nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
 			nullableInt64(o.BinID)).Scan(&id)
 		if err != nil {
@@ -128,7 +118,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 
 		// Bin-centric claiming: if the child order has a bin, claim it
 		if o.BinID != nil {
-			_, err = tx.Exec(db.Q(`UPDATE bins SET claimed_by=? WHERE id=?`), o.ID, *o.BinID)
+			_, err = tx.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, o.ID, *o.BinID)
 			if err != nil {
 				return fmt.Errorf("claim bin %d for child %d: %w", *o.BinID, o.ID, err)
 			}
@@ -140,7 +130,7 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 
 // ListChildOrders returns all child orders for a parent order.
 func (db *DB) ListChildOrders(parentOrderID int64) ([]*Order, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE parent_order_id=? ORDER BY sequence`, orderSelectCols)), parentOrderID)
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE parent_order_id=$1 ORDER BY sequence`, orderSelectCols), parentOrderID)
 	if err != nil {
 		return nil, err
 	}
@@ -150,60 +140,70 @@ func (db *DB) ListChildOrders(parentOrderID int64) ([]*Order, error) {
 
 // GetNextChildOrder returns the next pending child order for a parent.
 func (db *DB) GetNextChildOrder(parentOrderID int64) (*Order, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE parent_order_id=? AND status='pending' ORDER BY sequence LIMIT 1`, orderSelectCols)), parentOrderID)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders WHERE parent_order_id=$1 AND status='pending' ORDER BY sequence LIMIT 1`, orderSelectCols), parentOrderID)
 	return scanOrder(row)
 }
 
 func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET status=?, error_detail=?, updated_at=datetime('now') WHERE id=?`),
-		status, detail, id)
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(db.Q(`INSERT INTO order_history (order_id, status, detail) VALUES (?, ?, ?)`),
-		id, status, detail)
-	return err
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW() WHERE id=$3`, status, detail, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, id, status, detail); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID string) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET vendor_order_id=?, vendor_state=?, robot_id=?, updated_at=datetime('now') WHERE id=?`),
+	_, err := db.Exec(`UPDATE orders SET vendor_order_id=$1, vendor_state=$2, robot_id=$3, updated_at=NOW() WHERE id=$4`,
 		vendorOrderID, vendorState, robotID, id)
 	return err
 }
 
 func (db *DB) UpdateOrderPickupNode(id int64, pickupNode string) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET pickup_node=?, updated_at=datetime('now') WHERE id=?`),
+	_, err := db.Exec(`UPDATE orders SET pickup_node=$1, updated_at=NOW() WHERE id=$2`,
 		pickupNode, id)
 	return err
 }
 
 func (db *DB) UpdateOrderDeliveryNode(id int64, deliveryNode string) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET delivery_node=?, updated_at=datetime('now') WHERE id=?`),
+	_, err := db.Exec(`UPDATE orders SET delivery_node=$1, updated_at=NOW() WHERE id=$2`,
 		deliveryNode, id)
 	return err
 }
 
 func (db *DB) CompleteOrder(id int64) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET status='confirmed', completed_at=datetime('now'), updated_at=datetime('now') WHERE id=?`), id)
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(db.Q(`INSERT INTO order_history (order_id, status, detail) VALUES (?, 'confirmed', 'order confirmed')`), id)
-	return err
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE orders SET status='confirmed', completed_at=NOW(), updated_at=NOW() WHERE id=$1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'confirmed', 'order confirmed')`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) GetOrder(id int64) (*Order, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE id=?`, orderSelectCols)), id)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders WHERE id=$1`, orderSelectCols), id)
 	return scanOrder(row)
 }
 
 func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE edge_uuid=? ORDER BY id DESC LIMIT 1`, orderSelectCols)), uuid)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders WHERE edge_uuid=$1 ORDER BY id DESC LIMIT 1`, orderSelectCols), uuid)
 	return scanOrder(row)
 }
 
 func (db *DB) GetOrderByVendorID(vendorOrderID string) (*Order, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE vendor_order_id=? LIMIT 1`, orderSelectCols)), vendorOrderID)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM orders WHERE vendor_order_id=$1 LIMIT 1`, orderSelectCols), vendorOrderID)
 	return scanOrder(row)
 }
 
@@ -211,10 +211,63 @@ func (db *DB) ListOrders(status string, limit int) ([]*Order, error) {
 	var rows *sql.Rows
 	var err error
 	if status != "" {
-		rows, err = db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE status=? ORDER BY id DESC LIMIT ?`, orderSelectCols)), status, limit)
+		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status=$1 ORDER BY id DESC LIMIT $2`, orderSelectCols), status, limit)
 	} else {
-		rows, err = db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM orders ORDER BY id DESC LIMIT ?`, orderSelectCols)), limit)
+		rows, err = db.Query(fmt.Sprintf(`SELECT %s FROM orders ORDER BY id DESC LIMIT $1`, orderSelectCols), limit)
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// OrderFilter supports filtered, paginated order queries.
+type OrderFilter struct {
+	Statuses  []string   // filter by status IN (...); empty = all
+	StationID string     // filter by station_id; empty = all
+	Since     *time.Time // filter by created_at >= since
+	Limit     int        // max rows; 0 = default 100
+	Offset    int        // pagination offset
+}
+
+// ListOrdersFiltered returns orders matching the given filter with pagination.
+func (db *DB) ListOrdersFiltered(f OrderFilter) ([]*Order, error) {
+	if f.Limit <= 0 {
+		f.Limit = 100
+	}
+	query := fmt.Sprintf(`SELECT %s FROM orders WHERE 1=1`, orderSelectCols)
+	args := []any{}
+	n := 0
+
+	if len(f.Statuses) > 0 {
+		placeholders := make([]string, len(f.Statuses))
+		for i, s := range f.Statuses {
+			n++
+			placeholders[i] = fmt.Sprintf("$%d", n)
+			args = append(args, s)
+		}
+		query += fmt.Sprintf(` AND status IN (%s)`, strings.Join(placeholders, ", "))
+	}
+	if f.StationID != "" {
+		n++
+		query += fmt.Sprintf(` AND station_id = $%d`, n)
+		args = append(args, f.StationID)
+	}
+	if f.Since != nil {
+		n++
+		query += fmt.Sprintf(` AND created_at >= $%d`, n)
+		args = append(args, *f.Since)
+	}
+
+	n++
+	query += fmt.Sprintf(` ORDER BY id DESC LIMIT $%d`, n)
+	args = append(args, f.Limit)
+	n++
+	query += fmt.Sprintf(` OFFSET $%d`, n)
+	args = append(args, f.Offset)
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +276,7 @@ func (db *DB) ListOrders(status string, limit int) ([]*Order, error) {
 }
 
 func (db *DB) ListActiveOrders() ([]*Order, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN ('confirmed', 'failed', 'cancelled') ORDER BY id DESC`, orderSelectCols)))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN ('confirmed', 'failed', 'cancelled') ORDER BY id DESC`, orderSelectCols))
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +285,7 @@ func (db *DB) ListActiveOrders() ([]*Order, error) {
 }
 
 func (db *DB) ListOrderHistory(orderID int64) ([]*OrderHistory, error) {
-	rows, err := db.Query(db.Q(`SELECT id, order_id, status, detail, created_at FROM order_history WHERE order_id=? ORDER BY id`), orderID)
+	rows, err := db.Query(`SELECT id, order_id, status, detail, created_at FROM order_history WHERE order_id=$1 ORDER BY id`, orderID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,24 +293,22 @@ func (db *DB) ListOrderHistory(orderID int64) ([]*OrderHistory, error) {
 	var history []*OrderHistory
 	for rows.Next() {
 		var h OrderHistory
-		var createdAt any
-		if err := rows.Scan(&h.ID, &h.OrderID, &h.Status, &h.Detail, &createdAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.OrderID, &h.Status, &h.Detail, &h.CreatedAt); err != nil {
 			return nil, err
 		}
-		h.CreatedAt = parseTime(createdAt)
 		history = append(history, &h)
 	}
 	return history, rows.Err()
 }
 
 func (db *DB) UpdateOrderPriority(id int64, priority int) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET priority=?, updated_at=datetime('now') WHERE id=?`),
+	_, err := db.Exec(`UPDATE orders SET priority=$1, updated_at=NOW() WHERE id=$2`,
 		priority, id)
 	return err
 }
 
 func (db *DB) ListOrdersByStation(stationID string, limit int) ([]*Order, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE station_id=? ORDER BY id DESC LIMIT ?`, orderSelectCols)), stationID, limit)
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE station_id=$1 ORDER BY id DESC LIMIT $2`, orderSelectCols), stationID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -268,13 +319,13 @@ func (db *DB) ListOrdersByStation(stationID string, limit int) ([]*Order, error)
 // CountActiveOrdersByDeliveryNode counts non-terminal orders targeting a specific delivery node.
 func (db *DB) CountActiveOrdersByDeliveryNode(nodeName string) (int, error) {
 	var count int
-	err := db.QueryRow(db.Q(`SELECT COUNT(*) FROM orders WHERE delivery_node=? AND status NOT IN ('confirmed','failed','cancelled')`), nodeName).Scan(&count)
+	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node=$1 AND status NOT IN ('confirmed','failed','cancelled')`, nodeName).Scan(&count)
 	return count, err
 }
 
 // ListDispatchedVendorOrderIDs returns vendor order IDs for all non-terminal orders.
 func (db *DB) ListDispatchedVendorOrderIDs() ([]string, error) {
-	rows, err := db.Query(db.Q(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN ('dispatched', 'in_transit', 'staged')`))
+	rows, err := db.Query(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN ('dispatched', 'in_transit', 'staged')`)
 	if err != nil {
 		return nil, err
 	}

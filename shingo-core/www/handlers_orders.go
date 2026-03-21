@@ -22,7 +22,10 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	orders, _ := h.engine.DB().ListOrders(status, limit)
+	orders, err := h.engine.DB().ListOrders(status, limit)
+	if err != nil {
+		log.Printf("orders page: list orders: %v", err)
+	}
 
 	data := map[string]any{
 		"Page":          "orders",
@@ -46,7 +49,10 @@ func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, _ := h.engine.DB().ListOrderHistory(id)
+	history, err := h.engine.DB().ListOrderHistory(id)
+	if err != nil {
+		log.Printf("order detail: list history for order %d: %v", id, err)
+	}
 
 	data := map[string]any{
 		"Page":          "orders",

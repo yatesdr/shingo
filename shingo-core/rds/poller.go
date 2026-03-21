@@ -10,7 +10,7 @@ import (
 
 // PollerEmitter receives state transition events from the poller.
 type PollerEmitter interface {
-	EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string)
+	EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string, orderDetail *OrderDetail)
 }
 
 // OrderIDResolver maps RDS order IDs back to ShinGo order IDs.
@@ -29,6 +29,7 @@ type Poller struct {
 	mu       sync.Mutex
 	active   map[string]OrderState // rdsOrderID -> last known state
 	stopChan chan struct{}
+	stopOnce sync.Once
 }
 
 func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, interval time.Duration) *Poller {
@@ -76,10 +77,7 @@ func (p *Poller) Start() {
 }
 
 func (p *Poller) Stop() {
-	select {
-	case p.stopChan <- struct{}{}:
-	default:
-	}
+	p.stopOnce.Do(func() { close(p.stopChan) })
 }
 
 func (p *Poller) run() {
@@ -154,6 +152,6 @@ func (p *Poller) poll() {
 		}
 		p.mu.Unlock()
 
-		p.emitter.EmitOrderStatusChanged(orderID, rdsID, string(oldState), string(newState), detail.Vehicle, fmt.Sprintf("fleet state: %s -> %s", oldState, newState))
+		p.emitter.EmitOrderStatusChanged(orderID, rdsID, string(oldState), string(newState), detail.Vehicle, fmt.Sprintf("fleet state: %s -> %s", oldState, newState), detail)
 	}
 }

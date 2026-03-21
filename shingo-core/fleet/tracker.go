@@ -11,7 +11,7 @@ type OrderTracker interface {
 
 // TrackerEmitter receives state transition events from a tracker.
 type TrackerEmitter interface {
-	EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string)
+	EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *OrderSnapshot)
 }
 
 // OrderIDResolver maps vendor order IDs back to ShinGo order IDs.

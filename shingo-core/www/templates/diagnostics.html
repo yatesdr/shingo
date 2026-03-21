@@ -1,16 +1,4 @@
 {{define "content"}}
-<style>
-  .diag-tabs { display:flex; gap:0; margin-bottom:1rem; border-bottom:2px solid var(--border); }
-  .diag-tab { padding:0.5rem 1.2rem; cursor:pointer; border:none; background:none; font-size:0.95rem;
-    border-bottom:2px solid transparent; margin-bottom:-2px; color:var(--text-muted); }
-  .diag-tab.active { color:var(--text); border-bottom-color:var(--primary); font-weight:600; }
-  .diag-tab:hover { color:var(--text); }
-  .cms-pos { background:rgba(34,197,94,0.08); }
-  .cms-neg { background:rgba(239,68,68,0.08); }
-  .cms-qty-pos { color:#16a34a; font-weight:600; }
-  .cms-qty-neg { color:#dc2626; font-weight:600; }
-</style>
-
 <div class="diag-tabs">
   <button class="diag-tab active" onclick="switchDiagTab('debug')">Debug Log</button>
   <button class="diag-tab" onclick="switchDiagTab('cms')">CMS Transactions</button>
@@ -20,7 +8,7 @@
 <div id="tab-debug">
   <div class="flex flex-between mb-2">
     <h1>Logs</h1>
-    <div class="flex gap-1" style="align-items:center;">
+    <div class="flex gap-1 items-center">
       <select id="log-filter" onchange="debugFilter()" style="font-size:0.85rem;padding:2px 6px;">
         <option value="">All subsystems</option>
         {{range .Subsystems}}
@@ -34,7 +22,7 @@
     </div>
   </div>
 
-  <div class="card" style="padding:0;">
+  <div class="card p-0">
     <div class="debug-log-wrap">
       <table class="debug-log-table">
         <thead>
@@ -59,10 +47,10 @@
 </div>
 
 <!-- CMS Transactions Tab -->
-<div id="tab-cms" style="display:none;">
+<div id="tab-cms" class="hide">
   <div class="flex flex-between mb-2">
     <h1>CMS Transactions</h1>
-    <div class="flex gap-1" style="align-items:center;">
+    <div class="flex gap-1 items-center">
       <input type="text" id="cms-filter-node" placeholder="Filter node..." style="font-size:0.85rem;padding:2px 6px;width:140px;" oninput="cmsFilter()">
       <select id="cms-filter-src" onchange="cmsFilter()" style="font-size:0.85rem;padding:2px 6px;">
         <option value="">All sources</option>
@@ -72,7 +60,7 @@
     </div>
   </div>
 
-  <div class="card" style="padding:0;">
+  <div class="card p-0">
     <div class="debug-log-wrap">
       <table class="debug-log-table">
         <thead>

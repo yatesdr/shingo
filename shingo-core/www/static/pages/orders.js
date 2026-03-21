@@ -238,6 +238,7 @@ function renderOrderModal(data) {
 
   // Footer
   h += '<div style="text-align:right;font-size:0.75rem;margin-top:0.625rem;padding-top:0.375rem;border-top:1px solid var(--border)">';
+  if (o.vendor_order_id) h += '<a href="/missions/' + o.id + '" title="View mission telemetry, timeline, and robot tracking for this order">Mission Telemetry</a> &middot; ';
   h += '<a href="/orders/detail?id=' + o.id + '">Open full detail page &rarr;</a></div>';
 
   h += '</div>'; // end manifest

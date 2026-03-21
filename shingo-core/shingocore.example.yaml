@@ -2,9 +2,6 @@
 # Copy to shingocore.yaml and edit for your environment.
 
 database:
-  driver: postgres                    # "postgres" (recommended) or "sqlite"
-  sqlite:
-    path: shingocore.db               # SQLite file path (only used when driver is "sqlite")
   postgres:
     host: localhost
     port: 5432

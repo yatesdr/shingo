@@ -93,17 +93,15 @@ func TestLaneQueries(t *testing.T) {
 	db.CreateNode(lanNode)
 
 	// Create 3 slot nodes as children of LANE
-	slot1 := &Node{Name: "SLOT-01", Enabled: true, ParentID: &lanNode.ID}
+	d1, d2, d3 := 1, 2, 3
+	slot1 := &Node{Name: "SLOT-01", Enabled: true, ParentID: &lanNode.ID, Depth: &d1}
 	db.CreateNode(slot1)
-	db.SetNodeProperty(slot1.ID, "depth", "1")
 
-	slot2 := &Node{Name: "SLOT-02", Enabled: true, ParentID: &lanNode.ID}
+	slot2 := &Node{Name: "SLOT-02", Enabled: true, ParentID: &lanNode.ID, Depth: &d2}
 	db.CreateNode(slot2)
-	db.SetNodeProperty(slot2.ID, "depth", "2")
 
-	slot3 := &Node{Name: "SLOT-03", Enabled: true, ParentID: &lanNode.ID}
+	slot3 := &Node{Name: "SLOT-03", Enabled: true, ParentID: &lanNode.ID, Depth: &d3}
 	db.CreateNode(slot3)
-	db.SetNodeProperty(slot3.ID, "depth", "3")
 
 	// Create bin type, payload template, bins with manifests
 	bt := &BinType{Code: "TOTE", Description: "Tote"}

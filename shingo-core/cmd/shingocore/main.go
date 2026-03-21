@@ -18,7 +18,6 @@ import (
 	"shingocore/engine"
 	"shingocore/fleet/seerrds"
 	"shingocore/messaging"
-	"shingocore/nodestate"
 	"shingocore/store"
 	"shingocore/www"
 )
@@ -69,7 +68,6 @@ func main() {
 		fmt.Println("  protocol      Protocol envelope decode/encode")
 		fmt.Println("  outbox        Outbox drain cycles and delivery")
 		fmt.Println("  core_handler  Inbound message handler dispatch")
-		fmt.Println("  nodestate     Node state queries")
 		fmt.Println("  engine        Engine wiring, vendor status changes")
 		fmt.Println()
 		fmt.Println("Examples:")
@@ -105,7 +103,7 @@ func main() {
 
 	// Reset database if requested
 	if *resetDB {
-		fmt.Fprintf(os.Stderr, "WARNING: This will permanently delete all data in the %s database.\n", cfg.Database.Driver)
+		fmt.Fprintf(os.Stderr, "WARNING: This will permanently delete all data in the database.\n")
 		fmt.Fprintf(os.Stderr, "Type 'yes' to confirm: ")
 		var answer string
 		fmt.Scanln(&answer)
@@ -125,11 +123,7 @@ func main() {
 		log.Fatalf("open database: %v", err)
 	}
 	defer db.Close()
-	log.Printf("shingocore: database open (%s)", cfg.Database.Driver)
-
-	// Node state manager
-	nodeStateMgr := nodestate.NewManager(db)
-	nodeStateMgr.DebugLog = dbg.Func("nodestate")
+	log.Printf("shingocore: database open (postgres)")
 
 	// Fleet backend (Seer RDS adapter)
 	fleetAdapter := seerrds.New(seerrds.Config{
@@ -163,7 +157,6 @@ func main() {
 		ConfigPath: *configPath,
 		DB:         db,
 		Fleet:      fleetAdapter,
-		NodeState:  nodeStateMgr,
 		MsgClient:  msgClient,
 		DebugLog:   dbg.Func("engine"),
 	})

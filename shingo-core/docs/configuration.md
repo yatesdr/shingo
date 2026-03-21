@@ -10,7 +10,6 @@ The database connection is the only setting required before first launch. Create
 
 ```yaml
 database:
-  driver: postgres
   postgres:
     host: 192.168.1.10
     port: 5432
@@ -21,15 +20,6 @@ database:
 ```
 
 All other settings have sensible defaults and can be adjusted through the web UI after startup. See [PostgreSQL Setup](postgresql-setup.md) for server-side database configuration.
-
-For SQLite (development/testing only):
-
-```yaml
-database:
-  driver: sqlite
-  sqlite:
-    path: shingocore.db
-```
 
 ## Command-Line Flags
 
@@ -69,8 +59,6 @@ The tables below document the current YAML structure for reference. This format 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `driver` | string | `sqlite` | Database backend: `postgres` or `sqlite` |
-
 #### database.postgres
 
 | Field | Type | Default | Description |
@@ -81,12 +69,6 @@ The tables below document the current YAML structure for reference. This format 
 | `user` | string | `shingocore` | Database user |
 | `password` | string | _(empty)_ | Database password |
 | `sslmode` | string | `disable` | SSL mode: `disable`, `require`, `verify-ca`, `verify-full` |
-
-#### database.sqlite
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `path` | string | `shingocore.db` | Path to SQLite database file |
 
 ### rds
 

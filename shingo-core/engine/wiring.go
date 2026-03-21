@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -23,7 +24,8 @@ func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error
 		return fmt.Errorf("encode %s: %w", msgType, err)
 	}
 	if err := e.db.EnqueueOutbox(e.cfg.Messaging.DispatchTopic, data, msgType, stationID); err != nil {
-		e.dbg("EnqueueOutbox %s error (silently dropped): %v", msgType, err)
+		e.logFn("engine: outbox enqueue %s to %s failed: %v", msgType, stationID, err)
+		return fmt.Errorf("enqueue %s: %w", msgType, err)
 	}
 	return nil
 }
@@ -50,6 +52,12 @@ func (e *Engine) wireEventHandlers() {
 		ev := evt.Payload.(OrderStatusChangedEvent)
 		e.dbg("vendor status change: order=%d vendor=%s %s->%s robot=%s", ev.OrderID, ev.VendorOrderID, ev.OldStatus, ev.NewStatus, ev.RobotID)
 		e.handleVendorStatusChange(ev)
+	}, EventOrderStatusChanged)
+
+	// Record mission telemetry on every vendor status change
+	e.Events.SubscribeTypes(func(evt Event) {
+		ev := evt.Payload.(OrderStatusChangedEvent)
+		e.recordMissionEvent(ev)
 	}, EventOrderStatusChanged)
 
 	// When an order fails, log it and handle compound orders
@@ -122,7 +130,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 
 	// Update robot ID if we got one
 	if ev.RobotID != "" && order.RobotID == "" {
-		e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, ev.RobotID)
+		if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, ev.RobotID); err != nil {
+			e.logFn("engine: update order %d vendor (robot): %v", order.ID, err)
+		}
 
 		if err := e.sendToEdge(protocol.TypeOrderWaybill, order.StationID, &protocol.OrderWaybill{
 			OrderUUID: order.EdgeUUID,
@@ -138,8 +148,12 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		return
 	}
 
-	e.db.UpdateOrderStatus(order.ID, newStatus, fmt.Sprintf("fleet: %s -> %s", ev.OldStatus, ev.NewStatus))
-	e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, ev.RobotID)
+	if err := e.db.UpdateOrderStatus(order.ID, newStatus, fmt.Sprintf("fleet: %s -> %s", ev.OldStatus, ev.NewStatus)); err != nil {
+		e.logFn("engine: update order %d status to %s: %v", order.ID, newStatus, err)
+	}
+	if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, ev.RobotID); err != nil {
+		e.logFn("engine: update order %d vendor state: %v", order.ID, err)
+	}
 
 	// Send status update to ShinGo Edge
 	if err := e.sendToEdge(protocol.TypeOrderUpdate, order.StationID, &protocol.OrderUpdate{
@@ -166,7 +180,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		case dispatch.StatusDelivered:
 			e.handleOrderDelivered(order)
 		case dispatch.StatusFailed:
-			e.db.UpdateOrderStatus(order.ID, dispatch.StatusFailed, "fleet order failed")
+			if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusFailed, "fleet order failed"); err != nil {
+				e.logFn("engine: update order %d status to failed: %v", order.ID, err)
+			}
 			e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
 				OrderID:   order.ID,
 				EdgeUUID:  order.EdgeUUID,
@@ -175,13 +191,17 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 				Detail:    "fleet order failed",
 			}})
 		case dispatch.StatusCancelled:
-			e.db.UpdateOrderStatus(order.ID, dispatch.StatusCancelled, "fleet order stopped")
+			if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusCancelled, "fleet order stopped"); err != nil {
+				e.logFn("engine: update order %d status to cancelled: %v", order.ID, err)
+			}
 		}
 	}
 }
 
 func (e *Engine) handleOrderDelivered(order *store.Order) {
-	e.db.UpdateOrderStatus(order.ID, dispatch.StatusDelivered, "payload delivered")
+	if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusDelivered, "payload delivered"); err != nil {
+		e.logFn("engine: update order %d status to delivered: %v", order.ID, err)
+	}
 
 	// Resolve staged expiry for the delivered message
 	var stagedExpireAt *time.Time
@@ -233,8 +253,10 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 	// Bin-centric: move the bin and unclaim
 	if order.BinID != nil {
-		e.nodeState.MoveBin(*order.BinID, destNode.ID)
-		e.db.UnclaimBin(*order.BinID)
+		e.db.MoveBin(*order.BinID, destNode.ID)
+		if err := e.db.UnclaimBin(*order.BinID); err != nil {
+			e.logFn("engine: unclaim bin %d after delivery: %v", *order.BinID, err)
+		}
 
 		// Mark bin as staged at lineside nodes to prevent poaching.
 		// Storage slots (children of LANEs) keep available status.
@@ -246,11 +268,16 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		}
 		if !isStorageSlot {
 			expiresAt := e.resolveStagingExpiry(destNode)
-			e.db.StageBin(*order.BinID, expiresAt)
+			if err := e.db.StageBin(*order.BinID, expiresAt); err != nil {
+				e.logFn("engine: stage bin %d: %v", *order.BinID, err)
+			}
 		}
 
 		// Emit bin contents changed
-		bin, _ := e.db.GetBin(*order.BinID)
+		bin, binErr := e.db.GetBin(*order.BinID)
+		if binErr != nil {
+			e.logFn("engine: get bin %d for completion event: %v", *order.BinID, binErr)
+		}
 		if bin != nil {
 			e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
 				Action:      "moved",
@@ -285,7 +312,9 @@ func (e *Engine) resolveStagingExpiry(node *store.Node) *time.Time {
 	var ttl time.Duration
 	if ttlStr != "" {
 		parsed, err := time.ParseDuration(ttlStr)
-		if err == nil {
+		if err != nil {
+			e.logFn("engine: staging ttl parse error for node %d: %q: %v", node.ID, ttlStr, err)
+		} else {
 			ttl = parsed
 		}
 	}
@@ -300,4 +329,110 @@ func (e *Engine) resolveStagingExpiry(node *store.Node) *time.Time {
 
 	t := time.Now().Add(ttl)
 	return &t
+}
+
+// recordMissionEvent captures a state transition with robot position snapshot for telemetry.
+func (e *Engine) recordMissionEvent(ev OrderStatusChangedEvent) {
+	me := &store.MissionEvent{
+		OrderID:       ev.OrderID,
+		VendorOrderID: ev.VendorOrderID,
+		OldState:      ev.OldStatus,
+		NewState:      ev.NewStatus,
+		RobotID:       ev.RobotID,
+		Detail:        ev.Detail,
+		BlocksJSON:    "[]",
+		ErrorsJSON:    "[]",
+	}
+
+	// Snapshot robot position from cache
+	if ev.RobotID != "" {
+		if rs, ok := e.GetCachedRobotStatus(ev.RobotID); ok {
+			me.RobotX = &rs.X
+			me.RobotY = &rs.Y
+			me.RobotAngle = &rs.Angle
+			me.RobotBattery = &rs.BatteryLevel
+			me.RobotStation = rs.CurrentStation
+		}
+	}
+
+	// Capture block states and errors from vendor snapshot
+	if ev.Snapshot != nil {
+		if len(ev.Snapshot.Blocks) > 0 {
+			if data, err := json.Marshal(ev.Snapshot.Blocks); err == nil {
+				me.BlocksJSON = string(data)
+			}
+		}
+		if len(ev.Snapshot.Errors) > 0 {
+			if data, err := json.Marshal(ev.Snapshot.Errors); err == nil {
+				me.ErrorsJSON = string(data)
+			}
+		}
+	}
+
+	if err := e.db.InsertMissionEvent(me); err != nil {
+		e.logFn("engine: record mission event: %v", err)
+	}
+
+	// On terminal state, write the mission summary
+	if e.fleet.IsTerminalState(ev.NewStatus) {
+		e.finalizeMissionTelemetry(ev)
+	}
+}
+
+// finalizeMissionTelemetry writes the summary row when a mission reaches a terminal state.
+func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
+	order, err := e.db.GetOrder(ev.OrderID)
+	if err != nil {
+		e.logFn("engine: finalize telemetry: get order %d: %v", ev.OrderID, err)
+		return
+	}
+
+	now := time.Now().UTC()
+	mt := &store.MissionTelemetry{
+		OrderID:       ev.OrderID,
+		VendorOrderID: ev.VendorOrderID,
+		RobotID:       ev.RobotID,
+		StationID:     order.StationID,
+		OrderType:     order.OrderType,
+		PickupNode:    order.PickupNode,
+		DeliveryNode:  order.DeliveryNode,
+		TerminalState: ev.NewStatus,
+		CoreCreated:   &order.CreatedAt,
+		CoreCompleted: &now,
+		DurationMS:    now.Sub(order.CreatedAt).Milliseconds(),
+		BlocksJSON:    "[]",
+		ErrorsJSON:    "[]",
+		WarningsJSON:  "[]",
+		NoticesJSON:   "[]",
+	}
+
+	if ev.Snapshot != nil {
+		if ev.Snapshot.CreateTime > 0 {
+			t := time.UnixMilli(ev.Snapshot.CreateTime)
+			mt.VendorCreated = &t
+		}
+		if ev.Snapshot.TerminalTime > 0 {
+			t := time.UnixMilli(ev.Snapshot.TerminalTime)
+			mt.VendorCompleted = &t
+		}
+		if mt.VendorCreated != nil && mt.VendorCompleted != nil {
+			mt.VendorDurationMS = mt.VendorCompleted.Sub(*mt.VendorCreated).Milliseconds()
+		}
+		if data, err := json.Marshal(ev.Snapshot.Blocks); err == nil {
+			mt.BlocksJSON = string(data)
+		}
+		if data, err := json.Marshal(ev.Snapshot.Errors); err == nil {
+			mt.ErrorsJSON = string(data)
+		}
+		if data, err := json.Marshal(ev.Snapshot.Warnings); err == nil {
+			mt.WarningsJSON = string(data)
+		}
+		if data, err := json.Marshal(ev.Snapshot.Notices); err == nil {
+			mt.NoticesJSON = string(data)
+		}
+	}
+
+	if err := e.db.UpsertMissionTelemetry(mt); err != nil {
+		e.logFn("engine: finalize telemetry: %v", err)
+	}
 }

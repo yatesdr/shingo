@@ -1,15 +1,18 @@
 package dispatch
 
 import (
+	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/fleet"
 	"shingocore/store"
+
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // --- Mock emitter ---
@@ -87,19 +90,36 @@ func (m *mockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlo
 
 func testDB(t *testing.T) *store.DB {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
+	ctx := context.Background()
+
+	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
+		postgres.WithDatabase("shingocore_test"),
+		postgres.WithUsername("test"),
+		postgres.WithPassword("test"),
+		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+	)
+	if err != nil {
+		t.Fatalf("start postgres container: %v", err)
+	}
+	t.Cleanup(func() { pgContainer.Terminate(ctx) })
+
+	host, _ := pgContainer.Host(ctx)
+	port, _ := pgContainer.MappedPort(ctx, "5432")
+
 	db, err := store.Open(&config.DatabaseConfig{
-		Driver: "sqlite",
-		SQLite: config.SQLiteConfig{Path: dbPath},
+		Postgres: config.PostgresConfig{
+			Host:     host,
+			Port:     port.Int(),
+			Database: "shingocore_test",
+			User:     "test",
+			Password: "test",
+			SSLMode:  "disable",
+		},
 	})
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	t.Cleanup(func() {
-		db.Close()
-		os.Remove(dbPath)
-	})
+	t.Cleanup(func() { db.Close() })
 	return db
 }
 
@@ -113,7 +133,7 @@ func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNod
 	if err := db.CreateNode(lineNode); err != nil {
 		t.Fatalf("create line node: %v", err)
 	}
-	bp = &store.Payload{Code: "PART-A", Description: "Steel bracket tote", DefaultManifestJSON: "{}"}
+	bp = &store.Payload{Code: "PART-A", Description: "Steel bracket tote"}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}

@@ -47,12 +47,11 @@ func scanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 	var b Bin
 	var nodeID, claimedBy sql.NullInt64
 	var manifest sql.NullString
-	var stagedAt, stagedExpiresAt, lockedAt, lastCountedAt, loadedAt, createdAt, updatedAt any
 	err := row.Scan(&b.ID, &b.BinTypeID, &b.Label, &b.Description, &nodeID, &b.Status, &claimedBy,
-		&stagedAt, &stagedExpiresAt,
+		&b.StagedAt, &b.StagedExpiresAt,
 		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.ManifestConfirmed,
-		&b.Locked, &b.LockedBy, &lockedAt, &lastCountedAt, &b.LastCountedBy,
-		&loadedAt, &createdAt, &updatedAt, &b.BinTypeCode, &b.NodeName)
+		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
+		&b.LoadedAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName)
 	if err != nil {
 		return nil, err
 	}
@@ -65,13 +64,6 @@ func scanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 	if manifest.Valid {
 		b.Manifest = &manifest.String
 	}
-	b.StagedAt = parseTimePtr(stagedAt)
-	b.StagedExpiresAt = parseTimePtr(stagedExpiresAt)
-	b.LockedAt = parseTimePtr(lockedAt)
-	b.LastCountedAt = parseTimePtr(lastCountedAt)
-	b.LoadedAt = parseTimePtr(loadedAt)
-	b.CreatedAt = parseTime(createdAt)
-	b.UpdatedAt = parseTime(updatedAt)
 	return &b, nil
 }
 
@@ -88,7 +80,7 @@ func scanBins(rows *sql.Rows) ([]*Bin, error) {
 }
 
 func (db *DB) CreateBin(b *Bin) error {
-	id, err := db.insertID(`INSERT INTO bins (bin_type_id, label, description, node_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id`,
+	id, err := db.insertID(`INSERT INTO bins (bin_type_id, label, description, node_id, status) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
 		b.BinTypeID, b.Label, b.Description, nullableInt64(b.NodeID), b.Status)
 	if err != nil {
 		return fmt.Errorf("create bin: %w", err)
@@ -98,28 +90,28 @@ func (db *DB) CreateBin(b *Bin) error {
 }
 
 func (db *DB) UpdateBin(b *Bin) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET bin_type_id=?, label=?, description=?, node_id=?, status=?, updated_at=datetime('now') WHERE id=?`),
+	_, err := db.Exec(`UPDATE bins SET bin_type_id=$1, label=$2, description=$3, node_id=$4, status=$5, updated_at=NOW() WHERE id=$6`,
 		b.BinTypeID, b.Label, b.Description, nullableInt64(b.NodeID), b.Status, b.ID)
 	return err
 }
 
 func (db *DB) DeleteBin(id int64) error {
-	_, err := db.Exec(db.Q(`DELETE FROM bins WHERE id=?`), id)
+	_, err := db.Exec(`DELETE FROM bins WHERE id=$1`, id)
 	return err
 }
 
 func (db *DB) GetBin(id int64) (*Bin, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`%s WHERE b.id=?`, binJoinQuery)), id)
+	row := db.QueryRow(fmt.Sprintf(`%s WHERE b.id=$1`, binJoinQuery), id)
 	return scanBin(row)
 }
 
 func (db *DB) GetBinByLabel(label string) (*Bin, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`%s WHERE b.label=?`, binJoinQuery)), label)
+	row := db.QueryRow(fmt.Sprintf(`%s WHERE b.label=$1`, binJoinQuery), label)
 	return scanBin(row)
 }
 
 func (db *DB) ListBins() ([]*Bin, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s ORDER BY b.id DESC`, binJoinQuery)))
+	rows, err := db.Query(fmt.Sprintf(`%s ORDER BY b.id DESC`, binJoinQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +120,7 @@ func (db *DB) ListBins() ([]*Bin, error) {
 }
 
 func (db *DB) ListBinsByNode(nodeID int64) ([]*Bin, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE b.node_id=? ORDER BY b.id DESC`, binJoinQuery)), nodeID)
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.node_id=$1 ORDER BY b.id DESC`, binJoinQuery), nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +130,7 @@ func (db *DB) ListBinsByNode(nodeID int64) ([]*Bin, error) {
 
 func (db *DB) CountBinsByNode(nodeID int64) (int, error) {
 	var count int
-	err := db.QueryRow(db.Q(`SELECT COUNT(*) FROM bins WHERE node_id=?`), nodeID).Scan(&count)
+	err := db.QueryRow(`SELECT COUNT(*) FROM bins WHERE node_id=$1`, nodeID).Scan(&count)
 	return count, err
 }
 
@@ -173,8 +165,8 @@ type NodeTileState struct {
 // NodeTileStates returns per-node tile rendering state for all nodes that have bins.
 func (db *DB) NodeTileStates() (map[int64]NodeTileState, error) {
 	rows, err := db.Query(`SELECT b.node_id,
-		MAX(CASE WHEN b.manifest IS NOT NULL AND b.manifest_confirmed = 1 THEN 1 ELSE 0 END),
-		MAX(CASE WHEN b.manifest IS NULL OR b.manifest_confirmed = 0 THEN 1 ELSE 0 END),
+		MAX(CASE WHEN b.manifest IS NOT NULL AND b.manifest_confirmed = true THEN 1 ELSE 0 END),
+		MAX(CASE WHEN b.manifest IS NULL OR b.manifest_confirmed = false THEN 1 ELSE 0 END),
 		MAX(CASE WHEN b.claimed_by IS NOT NULL THEN 1 ELSE 0 END),
 		MAX(CASE WHEN b.status = 'staged' THEN 1 ELSE 0 END),
 		MAX(CASE WHEN b.status IN ('maintenance', 'flagged', 'quality_hold') THEN 1 ELSE 0 END)
@@ -205,13 +197,13 @@ func (db *DB) NodeTileStates() (map[int64]NodeTileState, error) {
 
 // MoveBin moves a bin to a new node.
 func (db *DB) MoveBin(binID, toNodeID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET node_id=?, updated_at=datetime('now') WHERE id=?`), toNodeID, binID)
+	_, err := db.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID)
 	return err
 }
 
 // ListAvailableBins returns bins with no manifest (empty, available for loading).
 func (db *DB) ListAvailableBins() ([]*Bin, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE (b.manifest IS NULL OR b.payload_code = '') ORDER BY b.id`, binJoinQuery)))
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE (b.manifest IS NULL OR b.payload_code = '') ORDER BY b.id`, binJoinQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -219,20 +211,11 @@ func (db *DB) ListAvailableBins() ([]*Bin, error) {
 	return scanBins(rows)
 }
 
-// ListBinsByType returns all bins of a given bin type.
-func (db *DB) ListBinsByType(binTypeID int64) ([]*Bin, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`%s WHERE b.bin_type_id=? ORDER BY b.label`, binJoinQuery)), binTypeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanBins(rows)
-}
 
 // ClaimBin marks a bin as claimed by an order to prevent double-dispatch.
 // Fails if the bin is locked.
 func (db *DB) ClaimBin(binID, orderID int64) error {
-	res, err := db.Exec(db.Q(`UPDATE bins SET claimed_by=?, updated_at=datetime('now') WHERE id=? AND locked=0`), orderID, binID)
+	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=NOW() WHERE id=$2 AND locked=false`, orderID, binID)
 	if err != nil {
 		return err
 	}
@@ -245,13 +228,13 @@ func (db *DB) ClaimBin(binID, orderID int64) error {
 
 // UnclaimBin releases a bin from an order claim.
 func (db *DB) UnclaimBin(binID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET claimed_by=NULL, updated_at=datetime('now') WHERE id=?`), binID)
+	_, err := db.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID)
 	return err
 }
 
 // UnclaimOrderBins releases all bins claimed by a specific order.
 func (db *DB) UnclaimOrderBins(orderID int64) {
-	db.Exec(db.Q(`UPDATE bins SET claimed_by=NULL, updated_at=datetime('now') WHERE claimed_by=?`), orderID)
+	db.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID)
 }
 
 // FindEmptyCompatibleBin finds an unclaimed, available bin with no manifest that is
@@ -260,66 +243,66 @@ func (db *DB) UnclaimOrderBins(orderID int64) {
 func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string) (*Bin, error) {
 	// Zone-preferred query
 	if preferZone != "" {
-		row := db.QueryRow(db.Q(fmt.Sprintf(`%s
+		row := db.QueryRow(fmt.Sprintf(`%s
 			JOIN payload_bin_types pbt ON pbt.bin_type_id = b.bin_type_id
 			JOIN payloads p ON p.id = pbt.payload_id
-			WHERE p.code = ?
+			WHERE p.code = $1
 			  AND b.status = 'available'
 			  AND b.claimed_by IS NULL
-			  AND b.locked = 0
+			  AND b.locked = false
 			  AND b.node_id IS NOT NULL
-			  AND n.enabled = 1
-			  AND n.is_synthetic = 0
-			  AND n.zone = ?
+			  AND n.enabled = true
+			  AND n.is_synthetic = false
+			  AND n.zone = $2
 			  AND (b.manifest IS NULL OR b.payload_code = '')
 			ORDER BY b.id ASC
-			LIMIT 1`, binJoinQuery)), payloadCode, preferZone)
+			LIMIT 1`, binJoinQuery), payloadCode, preferZone)
 		bin, err := scanBin(row)
 		if err == nil {
 			return bin, nil
 		}
 	}
 	// Any zone fallback
-	row := db.QueryRow(db.Q(fmt.Sprintf(`%s
+	row := db.QueryRow(fmt.Sprintf(`%s
 		JOIN payload_bin_types pbt ON pbt.bin_type_id = b.bin_type_id
 		JOIN payloads p ON p.id = pbt.payload_id
-		WHERE p.code = ?
+		WHERE p.code = $1
 		  AND b.status = 'available'
 		  AND b.claimed_by IS NULL
-		  AND b.locked = 0
+		  AND b.locked = false
 		  AND b.node_id IS NOT NULL
-		  AND n.enabled = 1
-		  AND n.is_synthetic = 0
+		  AND n.enabled = true
+		  AND n.is_synthetic = false
 		  AND (b.manifest IS NULL OR b.payload_code = '')
 		ORDER BY b.id ASC
-		LIMIT 1`, binJoinQuery)), payloadCode)
+		LIMIT 1`, binJoinQuery), payloadCode)
 	return scanBin(row)
 }
 
 // UpdateBinStatus sets the status on a bin.
 func (db *DB) UpdateBinStatus(binID int64, status string) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET status=?, updated_at=datetime('now') WHERE id=?`), status, binID)
+	_, err := db.Exec(`UPDATE bins SET status=$1, updated_at=NOW() WHERE id=$2`, status, binID)
 	return err
 }
 
 // StageBin marks a bin as staged with expiry tracking.
 // If expiresAt is nil, the bin is staged permanently (no auto-release).
 func (db *DB) StageBin(binID int64, expiresAt *time.Time) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET status='staged', staged_at=datetime('now'), staged_expires_at=?, updated_at=datetime('now') WHERE id=?`),
+	_, err := db.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
 		nullableTime(expiresAt), binID)
 	return err
 }
 
 // ReleaseStagedBin clears the staged status on a single bin, setting it back to available.
 func (db *DB) ReleaseStagedBin(binID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=datetime('now') WHERE id=?`), binID)
+	_, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE id=$1`, binID)
 	return err
 }
 
 // ReleaseExpiredStagedBins releases staged bins whose expiry has passed.
 // Returns the number of bins released.
 func (db *DB) ReleaseExpiredStagedBins() (int, error) {
-	result, err := db.Exec(db.Q(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=datetime('now') WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < datetime('now')`))
+	result, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW()`)
 	if err != nil {
 		return 0, err
 	}
@@ -329,13 +312,13 @@ func (db *DB) ReleaseExpiredStagedBins() (int, error) {
 
 // UpdateOrderBinID sets the bin_id on an order.
 func (db *DB) UpdateOrderBinID(orderID, binID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE orders SET bin_id=?, updated_at=datetime('now') WHERE id=?`), binID, orderID)
+	_, err := db.Exec(`UPDATE orders SET bin_id=$1, updated_at=NOW() WHERE id=$2`, binID, orderID)
 	return err
 }
 
 // LockBin prevents automated claiming/movement of a bin.
 func (db *DB) LockBin(binID int64, actor string) error {
-	res, err := db.Exec(db.Q(`UPDATE bins SET locked=1, locked_by=?, locked_at=datetime('now'), updated_at=datetime('now') WHERE id=? AND locked=0`),
+	res, err := db.Exec(`UPDATE bins SET locked=true, locked_by=$1, locked_at=NOW(), updated_at=NOW() WHERE id=$2 AND locked=false`,
 		actor, binID)
 	if err != nil {
 		return fmt.Errorf("lock bin: %w", err)
@@ -349,26 +332,26 @@ func (db *DB) LockBin(binID int64, actor string) error {
 
 // UnlockBin clears the lock on a bin.
 func (db *DB) UnlockBin(binID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET locked=0, locked_by='', locked_at=NULL, updated_at=datetime('now') WHERE id=?`), binID)
+	_, err := db.Exec(`UPDATE bins SET locked=false, locked_by='', locked_at=NULL, updated_at=NOW() WHERE id=$1`, binID)
 	return err
 }
 
 // RecordBinCount updates UOP and records the count timestamp.
 func (db *DB) RecordBinCount(binID int64, actualUOP int, actor string) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET uop_remaining=?, last_counted_at=datetime('now'), last_counted_by=?, updated_at=datetime('now') WHERE id=?`),
+	_, err := db.Exec(`UPDATE bins SET uop_remaining=$1, last_counted_at=NOW(), last_counted_by=$2, updated_at=NOW() WHERE id=$3`,
 		actualUOP, actor, binID)
 	return err
 }
 
 // UnconfirmBinManifest resets the manifest confirmation flag.
 func (db *DB) UnconfirmBinManifest(binID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE bins SET manifest_confirmed=0, updated_at=datetime('now') WHERE id=?`), binID)
+	_, err := db.Exec(`UPDATE bins SET manifest_confirmed=false, updated_at=NOW() WHERE id=$1`, binID)
 	return err
 }
 
 // ListOrdersByBin returns recent orders involving a specific bin.
 func (db *DB) ListOrdersByBin(binID int64, limit int) ([]*Order, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM orders WHERE bin_id=? ORDER BY id DESC LIMIT ?`, orderSelectCols)), binID, limit)
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE bin_id=$1 ORDER BY id DESC LIMIT $2`, orderSelectCols), binID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -385,12 +368,12 @@ func (db *DB) BinHasNotes(binIDs []int64) (map[int64]bool, error) {
 	placeholders := make([]string, len(binIDs))
 	args := make([]any, len(binIDs))
 	for i, id := range binIDs {
-		placeholders[i] = "?"
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = id
 	}
 	query := fmt.Sprintf(`SELECT DISTINCT entity_id FROM audit_log WHERE entity_type='bin' AND entity_id IN (%s)`,
 		strings.Join(placeholders, ","))
-	rows, err := db.Query(db.Q(query), args...)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

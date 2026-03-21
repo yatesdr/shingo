@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -224,7 +225,14 @@ func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHan
 
 		backoff = baseBackoff
 		c.dbg("received: topic=%s size=%d", msg.Topic, len(msg.Value))
-		handler(msg.Topic, msg.Value)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("kafka handler panic: topic=%s: %v\n%s", topic, r, debug.Stack())
+				}
+			}()
+			handler(msg.Topic, msg.Value)
+		}()
 	}
 }
 
@@ -251,6 +259,7 @@ func (c *Client) Reconfigure(cfg *config.MessagingConfig) error {
 	c.mu.Lock()
 	c.cfg = cfg
 	c.stopChan = make(chan struct{})
+	c.closeOnce = sync.Once{}
 	// Snapshot handlers before releasing lock
 	handlers := make(map[string]MessageHandler, len(c.handlers))
 	for k, v := range c.handlers {

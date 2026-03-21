@@ -12,8 +12,10 @@ const StatusReshuffling = "reshuffling"
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
 // All children and bin claims are created in a single transaction.
 func (d *Dispatcher) CreateCompoundOrder(parentOrder *store.Order, plan *ReshufflePlan) error {
-	d.db.UpdateOrderStatus(parentOrder.ID, StatusReshuffling,
-		fmt.Sprintf("reshuffling: %d steps to unbury bin %d", len(plan.Steps), plan.TargetBin.ID))
+	if err := d.db.UpdateOrderStatus(parentOrder.ID, StatusReshuffling,
+		fmt.Sprintf("reshuffling: %d steps to unbury bin %d", len(plan.Steps), plan.TargetBin.ID)); err != nil {
+		log.Printf("dispatch: update order %d status to reshuffling: %v", parentOrder.ID, err)
+	}
 
 	var children []store.CompoundChild
 	for _, step := range plan.Steps {
@@ -54,8 +56,12 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	next, err := d.db.GetNextChildOrder(parentOrderID)
 	if err != nil {
 		// No more children — compound order is complete
-		d.db.UpdateOrderStatus(parentOrderID, StatusConfirmed, "reshuffle complete")
-		d.db.CompleteOrder(parentOrderID)
+		if err := d.db.UpdateOrderStatus(parentOrderID, StatusConfirmed, "reshuffle complete"); err != nil {
+			log.Printf("dispatch: update compound order %d status to confirmed: %v", parentOrderID, err)
+		}
+		if err := d.db.CompleteOrder(parentOrderID); err != nil {
+			log.Printf("dispatch: complete compound order %d: %v", parentOrderID, err)
+		}
 
 		// Unlock lane
 		d.unlockLaneForCompound(parentOrderID)
@@ -69,23 +75,31 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 
 	// Dispatch the child to fleet
 	if next.PickupNode == "" || next.DeliveryNode == "" {
-		d.db.UpdateOrderStatus(next.ID, StatusFailed, "missing pickup or delivery node")
+		if err := d.db.UpdateOrderStatus(next.ID, StatusFailed, "missing pickup or delivery node"); err != nil {
+			log.Printf("dispatch: update child order %d status to failed: %v", next.ID, err)
+		}
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
 	pickupNode, err := d.db.GetNodeByDotName(next.PickupNode)
 	if err != nil {
-		d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("pickup node %q not found", next.PickupNode))
+		if dbErr := d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("pickup node %q not found", next.PickupNode)); dbErr != nil {
+			log.Printf("dispatch: update child order %d status to failed: %v", next.ID, dbErr)
+		}
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
 	destNode, err := d.db.GetNodeByDotName(next.DeliveryNode)
 	if err != nil {
-		d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("delivery node %q not found", next.DeliveryNode))
+		if dbErr := d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("delivery node %q not found", next.DeliveryNode)); dbErr != nil {
+			log.Printf("dispatch: update child order %d status to failed: %v", next.ID, dbErr)
+		}
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
-	d.db.UpdateOrderStatus(next.ID, StatusSourcing, "dispatching reshuffle step")
+	if err = d.db.UpdateOrderStatus(next.ID, StatusSourcing, "dispatching reshuffle step"); err != nil {
+		log.Printf("dispatch: update child order %d status to sourcing: %v", next.ID, err)
+	}
 	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
 
 	// Build a synthetic envelope for the child dispatch
@@ -117,7 +131,9 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 			continue
 		}
 		if child.Status == StatusPending || child.Status == StatusSourcing {
-			d.db.UpdateOrderStatus(child.ID, StatusCancelled, "parent reshuffle failed")
+			if err := d.db.UpdateOrderStatus(child.ID, StatusCancelled, "parent reshuffle failed"); err != nil {
+				log.Printf("dispatch: cancel child order %d: %v", child.ID, err)
+			}
 			d.unclaimOrder(child.ID)
 		}
 	}
@@ -127,7 +143,9 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	if err != nil {
 		return
 	}
-	d.db.UpdateOrderStatus(parentOrderID, StatusFailed, fmt.Sprintf("child order %d failed", childOrderID))
+	if err := d.db.UpdateOrderStatus(parentOrderID, StatusFailed, fmt.Sprintf("child order %d failed", childOrderID)); err != nil {
+		log.Printf("dispatch: update compound order %d status to failed: %v", parentOrderID, err)
+	}
 	d.emitter.EmitOrderFailed(parentOrderID, parent.EdgeUUID, parent.StationID, "reshuffle_failed",
 		fmt.Sprintf("child order %d failed during reshuffle", childOrderID))
 

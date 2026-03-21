@@ -4,23 +4,28 @@ import "fmt"
 
 // SetNodeBinTypes replaces all bin type assignments for a node.
 func (db *DB) SetNodeBinTypes(nodeID int64, binTypeIDs []int64) error {
-	if _, err := db.Exec(db.Q(`DELETE FROM node_bin_types WHERE node_id=?`), nodeID); err != nil {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM node_bin_types WHERE node_id=$1`, nodeID); err != nil {
 		return err
 	}
 	for _, btID := range binTypeIDs {
-		if _, err := db.Exec(db.Q(`INSERT INTO node_bin_types (node_id, bin_type_id) VALUES (?, ?)`), nodeID, btID); err != nil {
+		if _, err := tx.Exec(`INSERT INTO node_bin_types (node_id, bin_type_id) VALUES ($1, $2)`, nodeID, btID); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ListBinTypesForNode returns the directly assigned bin types for a node.
 func (db *DB) ListBinTypesForNode(nodeID int64) ([]*BinType, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`
+	rows, err := db.Query(fmt.Sprintf(`
 		SELECT %s FROM bin_types
-		WHERE id IN (SELECT bin_type_id FROM node_bin_types WHERE node_id=?)
-		ORDER BY code`, binTypeSelectCols)), nodeID)
+		WHERE id IN (SELECT bin_type_id FROM node_bin_types WHERE node_id=$1)
+		ORDER BY code`, binTypeSelectCols), nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -40,23 +45,28 @@ func (db *DB) GetEffectiveBinTypes(nodeID int64) ([]*BinType, error) {
 	case "specific":
 		return db.ListBinTypesForNode(nodeID)
 	default: // "" or "inherit"
-		cur := nodeID
-		for {
-			bts, err := db.ListBinTypesForNode(cur)
-			if err != nil {
-				return nil, err
-			}
-			if len(bts) > 0 {
-				return bts, nil
-			}
-			node, err := db.GetNode(cur)
-			if err != nil {
-				return nil, nil
-			}
-			if node.ParentID == nil {
-				return nil, nil
-			}
-			cur = *node.ParentID
+		rows, err := db.Query(fmt.Sprintf(`
+			WITH RECURSIVE ancestors AS (
+				SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = $1
+				UNION ALL
+				SELECT n.id, n.parent_id, a.depth + 1 FROM nodes n
+				JOIN ancestors a ON n.id = a.parent_id
+			)
+			SELECT %s FROM bin_types
+			WHERE id IN (
+				SELECT nbt.bin_type_id FROM node_bin_types nbt
+				WHERE nbt.node_id = (
+					SELECT a.id FROM ancestors a
+					WHERE EXISTS (SELECT 1 FROM node_bin_types nbt2 WHERE nbt2.node_id = a.id)
+					ORDER BY a.depth ASC
+					LIMIT 1
+				)
+			)
+			ORDER BY code`, binTypeSelectCols), nodeID)
+		if err != nil {
+			return nil, err
 		}
+		defer rows.Close()
+		return scanBinTypes(rows)
 	}
 }

@@ -1,17 +1,12 @@
 package store
 
-import (
-	"fmt"
-	"strconv"
-)
+import "fmt"
 
 // ListLaneSlots returns all child nodes of a lane, ordered by depth (ascending).
 func (db *DB) ListLaneSlots(laneID int64) ([]*Node, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s %s
-		WHERE n.parent_id=?
-		ORDER BY CAST(COALESCE(
-			(SELECT np.value FROM node_properties np WHERE np.node_id=n.id AND np.key='depth'), '0'
-		) AS INTEGER) ASC`, nodeSelectCols, nodeFromClause)), laneID)
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s
+		WHERE n.parent_id=$1
+		ORDER BY COALESCE(n.depth, 0) ASC`, nodeSelectCols, nodeFromClause), laneID)
 	if err != nil {
 		return nil, err
 	}
@@ -19,14 +14,17 @@ func (db *DB) ListLaneSlots(laneID int64) ([]*Node, error) {
 	return scanNodes(rows)
 }
 
-// GetSlotDepth reads the "depth" property for a node.
+// GetSlotDepth returns the depth for a node, or 0 if not set.
 func (db *DB) GetSlotDepth(nodeID int64) (int, error) {
-	var val string
-	err := db.QueryRow(db.Q(`SELECT value FROM node_properties WHERE node_id=? AND key='depth'`), nodeID).Scan(&val)
+	var depth *int
+	err := db.QueryRow(`SELECT depth FROM nodes WHERE id=$1`, nodeID).Scan(&depth)
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(val)
+	if depth == nil {
+		return 0, nil
+	}
+	return *depth, nil
 }
 
 // IsSlotAccessible returns true if no occupied slots exist at a shallower depth in the same lane.
@@ -38,116 +36,108 @@ func (db *DB) IsSlotAccessible(slotNodeID int64) (bool, error) {
 	if slot.ParentID == nil {
 		return true, nil
 	}
-
-	depth, err := db.GetSlotDepth(slotNodeID)
-	if err != nil {
-		return true, nil // no depth property = accessible
+	if slot.Depth == nil {
+		return true, nil // no depth = accessible
 	}
 
-	// Check if any shallower slot (depth < this depth) has a bin
 	var count int
-	err = db.QueryRow(db.Q(`
+	err = db.QueryRow(`
 		SELECT COUNT(*) FROM nodes sib
-		JOIN node_properties dp ON dp.node_id=sib.id AND dp.key='depth'
-		JOIN bins b ON b.node_id=sib.id
-		WHERE sib.parent_id=? AND sib.id!=? AND CAST(dp.value AS INTEGER) < ?
-	`), *slot.ParentID, slotNodeID, depth).Scan(&count)
+		JOIN bins b ON b.node_id = sib.id
+		WHERE sib.parent_id = $1 AND sib.id != $2
+		  AND sib.depth IS NOT NULL AND sib.depth < $3
+	`, *slot.ParentID, slotNodeID, *slot.Depth).Scan(&count)
 	if err != nil {
 		return false, err
 	}
 	return count == 0, nil
 }
 
-// FindSourceBinInLane finds the FIFO-oldest accessible unclaimed bin in a lane
-// matching the given payload code.
+// FindSourceBinInLane finds the shallowest accessible unclaimed bin in a lane
+// matching the given payload code. Uses a single query.
 func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*Bin, error) {
-	slots, err := db.ListLaneSlots(laneID)
+	query := fmt.Sprintf(`%s
+		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
+		  AND b.claimed_by IS NULL
+		  AND b.locked = false
+		  AND b.manifest_confirmed = true
+		  AND b.status = 'available'
+		  AND ($2 = '' OR b.payload_code = $2)
+		  AND NOT EXISTS (
+			SELECT 1 FROM nodes sib
+			JOIN bins sb ON sb.node_id = sib.id
+			WHERE sib.parent_id = $1
+			  AND sib.depth IS NOT NULL
+			  AND n.depth IS NOT NULL
+			  AND sib.depth < n.depth
+		  )
+		ORDER BY COALESCE(n.depth, 0) ASC
+		LIMIT 1`, binJoinQuery)
+	row := db.QueryRow(query, laneID, payloadCode)
+	bin, err := scanBin(row)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no accessible bin in lane %d", laneID)
 	}
-
-	// Walk from front (shallowest) to back, find first accessible slot with matching bin
-	for _, slot := range slots {
-		bins, err := db.ListBinsByNode(slot.ID)
-		if err != nil || len(bins) == 0 {
-			continue
-		}
-
-		for _, b := range bins {
-			if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != "available" {
-				continue
-			}
-			if payloadCode != "" && b.PayloadCode != payloadCode {
-				continue
-			}
-			return b, nil
-		}
-		// If this slot is occupied but doesn't match, deeper slots are blocked
-		if len(bins) > 0 {
-			break
-		}
-	}
-	return nil, fmt.Errorf("no accessible bin in lane %d", laneID)
+	return bin, nil
 }
 
 // FindStoreSlotInLane finds the deepest empty slot in a lane for back-to-front packing.
 func (db *DB) FindStoreSlotInLane(laneID int64) (*Node, error) {
-	slots, err := db.ListLaneSlots(laneID)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s
+		WHERE n.parent_id = $1
+		  AND n.is_synthetic = false
+		  AND NOT EXISTS (SELECT 1 FROM bins b WHERE b.node_id = n.id)
+		  AND NOT EXISTS (
+			SELECT 1 FROM orders o
+			WHERE o.delivery_node = n.name
+			  AND o.status NOT IN ('confirmed', 'failed', 'cancelled')
+		  )
+		ORDER BY COALESCE(n.depth, 0) DESC
+		LIMIT 1`, nodeSelectCols, nodeFromClause), laneID)
+	n, err := scanNode(row)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no empty slot in lane %d", laneID)
 	}
-
-	// Walk from back (deepest) to front, find first empty slot
-	for i := len(slots) - 1; i >= 0; i-- {
-		slot := slots[i]
-		count, err := db.CountBinsByNode(slot.ID)
-		if err != nil {
-			continue
-		}
-		inflight, _ := db.CountActiveOrdersByDeliveryNode(slot.Name)
-		if count+inflight == 0 {
-			return slot, nil
-		}
-	}
-	return nil, fmt.Errorf("no empty slot in lane %d", laneID)
+	return n, nil
 }
 
 // CountBinsInLane counts total bins across all slots in a lane.
 func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 	var count int
-	err := db.QueryRow(db.Q(`
+	err := db.QueryRow(`
 		SELECT COUNT(*) FROM bins b
 		JOIN nodes slot ON slot.id = b.node_id
-		WHERE slot.parent_id = ?
-	`), laneID).Scan(&count)
+		WHERE slot.parent_id = $1
+	`, laneID).Scan(&count)
 	return count, err
 }
 
 // FindBuriedBin finds a bin that exists in a lane but is blocked by shallower bins.
 func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*Bin, *Node, error) {
-	slots, err := db.ListLaneSlots(laneID)
+	row := db.QueryRow(fmt.Sprintf(`%s
+		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
+		  AND b.claimed_by IS NULL
+		  AND b.locked = false
+		  AND b.manifest_confirmed = true
+		  AND b.status = 'available'
+		  AND ($2 = '' OR b.payload_code = $2)
+		  AND EXISTS (
+			SELECT 1 FROM nodes sib
+			JOIN bins sb ON sb.node_id = sib.id
+			WHERE sib.parent_id = $1
+			  AND sib.depth IS NOT NULL
+			  AND n.depth IS NOT NULL
+			  AND sib.depth < n.depth
+		  )
+		ORDER BY COALESCE(n.depth, 0) ASC
+		LIMIT 1`, binJoinQuery), laneID, payloadCode)
+	bin, err := scanBin(row)
+	if err != nil {
+		return nil, nil, fmt.Errorf("no buried bin in lane %d", laneID)
+	}
+	slot, err := db.GetNode(*bin.NodeID)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	for _, slot := range slots {
-		bins, err := db.ListBinsByNode(slot.ID)
-		if err != nil || len(bins) == 0 {
-			continue
-		}
-		for _, b := range bins {
-			if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != "available" {
-				continue
-			}
-			if payloadCode != "" && b.PayloadCode != payloadCode {
-				continue
-			}
-			accessible, _ := db.IsSlotAccessible(slot.ID)
-			if !accessible {
-				return b, slot, nil
-			}
-		}
-	}
-	return nil, nil, fmt.Errorf("no buried bin in lane %d", laneID)
+	return bin, slot, nil
 }
-

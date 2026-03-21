@@ -17,7 +17,7 @@
         <tr><td><strong>Payload</strong></td><td>{{if .Order.PayloadID}}BP#{{deref .Order.PayloadID}}{{else}}{{.Order.PayloadDesc}}{{end}}</td></tr>
         <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
         <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
-        <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}</td></tr>
+        <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}{{if .Order.VendorOrderID}} <a href="/missions/{{.Order.ID}}" title="View mission telemetry, timeline, and robot tracking" style="font-size:.85em;margin-left:.5rem">View Mission</a>{{end}}</td></tr>
         <tr><td><strong>Robot</strong></td><td>{{.Order.RobotID}}</td></tr>
         <tr><td><strong>Priority</strong></td><td>{{.Order.Priority}}</td></tr>
         {{if .Order.ParentOrderID}}<tr><td><strong>Parent Order</strong></td><td><a href="/orders/detail?id={{deref .Order.ParentOrderID}}">#{{deref .Order.ParentOrderID}}</a> (step {{.Order.Sequence}})</td></tr>{{end}}
@@ -48,8 +48,8 @@
   {{if .Authenticated}}
   <div class="card mb-2">
     <h3>Controls</h3>
-    <div id="order-status-msg" style="font-size:0.85rem;margin-bottom:0.5rem;min-height:1.2em" class="text-muted"></div>
-    <div class="flex gap-1" style="align-items:center;flex-wrap:wrap">
+    <div id="order-status-msg" class="text-muted text-sm mb-1" style="min-height:1.2em"></div>
+    <div class="flex gap-1 items-center flex-wrap">
       {{if and (ne .Order.Status "completed") (ne .Order.Status "cancelled") (ne .Order.Status "failed")}}
       <button class="btn btn-danger btn-sm" onclick="terminateOrder({{.Order.ID}})">Terminate Order</button>
       {{end}}
@@ -75,10 +75,10 @@
     </div>
   </div>
 
-  <div class="filter-bar" style="display:flex;align-items:center;gap:0.5rem">
+  <div class="filter-bar">
     <input type="text" id="filter-search" placeholder="Filter by station, type, robot..." style="min-width:220px">
     <span id="filter-count" class="text-muted" style="font-size:0.78rem"></span>
-    {{if .Authenticated}}<button class="btn btn-primary btn-sm" onclick="openSpotOrderModal()" style="margin-left:auto">Spot Order</button>{{end}}
+    {{if .Authenticated}}<button class="btn btn-primary btn-sm ml-auto" onclick="openSpotOrderModal()">Spot Order</button>{{end}}
   </div>
 
   <div class="card" style="padding:0.75rem">
@@ -124,7 +124,7 @@
       <h2>Spot Order</h2>
       <button class="modal-close" onclick="closeSpotOrderModal()">&times;</button>
     </div>
-    <div style="padding:1rem">
+    <div class="p-2">
       <div class="spot-tabs">
         <button class="spot-tab active" onclick="switchSpotTab('transport',this)">Transport</button>
         <button class="spot-tab" onclick="switchSpotTab('staged',this)">Staged</button>
@@ -156,7 +156,7 @@
           <label><strong>Payload</strong> <span class="text-muted">(optional)</span></label>
           <select id="spot-payload"><option value="">— none —</option></select>
         </div>
-        <div class="form-group" style="margin-bottom:0.75rem;display:none" id="spot-bin-group">
+        <div class="form-group hide" style="margin-bottom:0.75rem" id="spot-bin-group">
           <label><strong>Bin</strong></label>
           <select id="spot-bin"><option value="">Loading...</option></select>
         </div>
@@ -203,7 +203,7 @@
       </div>
 
       <!-- Shared fields -->
-      <div class="form-group" style="margin-bottom:0.75rem;display:none" id="spot-quantity-group">
+      <div class="form-group hide" style="margin-bottom:0.75rem" id="spot-quantity-group">
         <label><strong>Quantity</strong></label>
         <input type="number" id="spot-quantity" value="1" min="1" max="20" style="width:5rem">
       </div>
@@ -215,7 +215,7 @@
         <label><strong>Description</strong> <span class="text-muted">(optional)</span></label>
         <input type="text" id="spot-description" placeholder="e.g. urgent replenishment">
       </div>
-      <div id="spot-status" style="min-height:1.4em;font-size:0.85rem;margin-bottom:0.5rem"></div>
+      <div id="spot-status" class="text-sm mb-1" style="min-height:1.4em"></div>
       <div class="flex gap-1">
         <button class="btn btn-primary" id="spot-submit-btn" onclick="submitSpotOrder()">Submit</button>
         <button class="btn" onclick="closeSpotOrderModal()">Cancel</button>
@@ -223,28 +223,15 @@
     </div>
   </div>
 </div>
-<style>
-.spot-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1rem; }
-.spot-tab {
-  background:none; border:none; padding:.5rem 1rem; cursor:pointer;
-  font-size:.9rem; color:var(--text-muted); border-bottom:2px solid transparent;
-  margin-bottom:-2px; font-weight:500;
-}
-.spot-tab:hover { color:var(--text); }
-.spot-tab.active { color:#7c3aed; border-bottom-color:#7c3aed; }
-.spot-tab-content { display:none; }
-.spot-tab-content.active { display:block; }
-</style>
-
 <div class="modal-overlay" id="order-modal-overlay" onclick="if(event.target===this)closeOrderModal()">
   <div class="modal modal-wide">
     <div class="modal-header flex flex-between">
       <h2 id="order-modal-title">Order Detail</h2>
       <button class="modal-close" onclick="closeOrderModal()">&times;</button>
     </div>
-    <div id="order-modal-loading" style="text-align:center;padding:2rem" class="text-muted">Loading...</div>
-    <div id="order-modal-error" style="display:none;color:var(--danger);padding:1rem"></div>
-    <div id="order-modal-content" style="display:none"></div>
+    <div id="order-modal-loading" class="text-muted text-center" style="padding:2rem">Loading...</div>
+    <div id="order-modal-error" class="hide p-2" style="color:var(--danger)"></div>
+    <div id="order-modal-content" class="hide"></div>
   </div>
 </div>
 

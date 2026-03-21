@@ -30,8 +30,6 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	cfg.Lock()
 	switch section {
 	case "database":
-		cfg.Database.Driver = r.FormValue("db_driver")
-		cfg.Database.SQLite.Path = r.FormValue("sqlite_path")
 		cfg.Database.Postgres.Host = r.FormValue("pg_host")
 		if p, err := strconv.Atoi(r.FormValue("pg_port")); err == nil {
 			cfg.Database.Postgres.Port = p

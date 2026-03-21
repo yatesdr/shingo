@@ -59,7 +59,9 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
 		return
 	}
-	d.db.UpdateOrderStatus(order.ID, StatusPending, "complex order received")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusPending, "complex order received"); err != nil {
+		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
+	}
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
 
 	// Split steps at the first "wait" action
@@ -74,7 +76,9 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 
-	d.db.UpdateOrderStatus(order.ID, StatusSourcing, "resolving complex steps")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusSourcing, "resolving complex steps"); err != nil {
+		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	}
 
 	if hasWait {
 		// Incremental order: send initial blocks with complete=false
@@ -110,8 +114,12 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	}
 
 	log.Printf("dispatch: complex order %d dispatched as %s (%d steps)", order.ID, vendorOrderID, len(resolvedSteps))
-	d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", "")
-	d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID))
+	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
+		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
+	}
+	if err := d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID)); err != nil {
+		log.Printf("dispatch: update order %d status to dispatched: %v", order.ID, err)
+	}
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, pickupNode, deliveryNode)
 	d.sendAck(env, order.EdgeUUID, order.ID, pickupNode)
 }
@@ -156,7 +164,9 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	d.db.UpdateOrderStatus(order.ID, StatusInTransit, "released from staging")
+	if err := d.db.UpdateOrderStatus(order.ID, StatusInTransit, "released from staging"); err != nil {
+		log.Printf("dispatch: update order %d status to in_transit: %v", order.ID, err)
+	}
 	log.Printf("dispatch: complex order %d released with %d additional blocks", order.ID, len(blocks))
 }
 

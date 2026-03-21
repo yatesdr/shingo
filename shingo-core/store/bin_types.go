@@ -20,13 +20,10 @@ const binTypeSelectCols = `id, code, description, width_in, height_in, created_a
 
 func scanBinType(row interface{ Scan(...any) error }) (*BinType, error) {
 	var bt BinType
-	var createdAt, updatedAt any
-	err := row.Scan(&bt.ID, &bt.Code, &bt.Description, &bt.WidthIn, &bt.HeightIn, &createdAt, &updatedAt)
+	err := row.Scan(&bt.ID, &bt.Code, &bt.Description, &bt.WidthIn, &bt.HeightIn, &bt.CreatedAt, &bt.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
-	bt.CreatedAt = parseTime(createdAt)
-	bt.UpdatedAt = parseTime(updatedAt)
 	return &bt, nil
 }
 
@@ -43,7 +40,7 @@ func scanBinTypes(rows *sql.Rows) ([]*BinType, error) {
 }
 
 func (db *DB) CreateBinType(bt *BinType) error {
-	id, err := db.insertID(`INSERT INTO bin_types (code, description, width_in, height_in) VALUES (?, ?, ?, ?) RETURNING id`,
+	id, err := db.insertID(`INSERT INTO bin_types (code, description, width_in, height_in) VALUES ($1, $2, $3, $4) RETURNING id`,
 		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn)
 	if err != nil {
 		return fmt.Errorf("create bin type: %w", err)
@@ -53,28 +50,28 @@ func (db *DB) CreateBinType(bt *BinType) error {
 }
 
 func (db *DB) UpdateBinType(bt *BinType) error {
-	_, err := db.Exec(db.Q(`UPDATE bin_types SET code=?, description=?, width_in=?, height_in=?, updated_at=datetime('now') WHERE id=?`),
+	_, err := db.Exec(`UPDATE bin_types SET code=$1, description=$2, width_in=$3, height_in=$4, updated_at=NOW() WHERE id=$5`,
 		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn, bt.ID)
 	return err
 }
 
 func (db *DB) DeleteBinType(id int64) error {
-	_, err := db.Exec(db.Q(`DELETE FROM bin_types WHERE id=?`), id)
+	_, err := db.Exec(`DELETE FROM bin_types WHERE id=$1`, id)
 	return err
 }
 
 func (db *DB) GetBinType(id int64) (*BinType, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM bin_types WHERE id=?`, binTypeSelectCols)), id)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM bin_types WHERE id=$1`, binTypeSelectCols), id)
 	return scanBinType(row)
 }
 
 func (db *DB) GetBinTypeByCode(code string) (*BinType, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s FROM bin_types WHERE code=?`, binTypeSelectCols)), code)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s FROM bin_types WHERE code=$1`, binTypeSelectCols), code)
 	return scanBinType(row)
 }
 
 func (db *DB) ListBinTypes() ([]*BinType, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s FROM bin_types ORDER BY code`, binTypeSelectCols)))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM bin_types ORDER BY code`, binTypeSelectCols))
 	if err != nil {
 		return nil, err
 	}

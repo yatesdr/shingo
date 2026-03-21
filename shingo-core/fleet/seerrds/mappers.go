@@ -34,6 +34,34 @@ func IsTerminalState(vendorState string) bool {
 	return rds.OrderState(vendorState).IsTerminal()
 }
 
+// mapOrderSnapshot converts an rds.OrderDetail to a fleet.OrderSnapshot.
+func mapOrderSnapshot(d *rds.OrderDetail) *fleet.OrderSnapshot {
+	s := &fleet.OrderSnapshot{
+		VendorOrderID: d.ID,
+		State:         string(d.State),
+		Vehicle:       d.Vehicle,
+		CreateTime:    d.CreateTime,
+		TerminalTime:  d.TerminalTime,
+	}
+	for _, b := range d.Blocks {
+		s.Blocks = append(s.Blocks, fleet.BlockSnapshot{
+			BlockID:  b.BlockID,
+			Location: b.Location,
+			State:    string(b.State),
+		})
+	}
+	for _, e := range d.Errors {
+		s.Errors = append(s.Errors, fleet.OrderMessage{Code: e.Code, Desc: e.Desc, Times: e.Times, Timestamp: e.Timestamp})
+	}
+	for _, w := range d.Warnings {
+		s.Warnings = append(s.Warnings, fleet.OrderMessage{Code: w.Code, Desc: w.Desc, Times: w.Times, Timestamp: w.Timestamp})
+	}
+	for _, n := range d.Notices {
+		s.Notices = append(s.Notices, fleet.OrderMessage{Code: n.Code, Desc: n.Desc, Times: n.Times, Timestamp: n.Timestamp})
+	}
+	return s
+}
+
 // mapRobotStatus converts an rds.RobotStatus to a fleet.RobotStatus.
 func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
 	return fleet.RobotStatus{

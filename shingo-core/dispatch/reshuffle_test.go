@@ -23,7 +23,7 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *store.Nod
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
 	lanType, _ := db.GetNodeTypeByCode("LANE")
 
-	bp = &store.Payload{Code: "PTX", DefaultManifestJSON: "{}"}
+	bp = &store.Payload{Code: "PTX"}
 	db.CreatePayload(bp)
 
 	// Create NGRP
@@ -36,12 +36,12 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *store.Nod
 
 	slots = make([]*store.Node, 5)
 	for d := 1; d <= 5; d++ {
+		depth := d
 		slot := &store.Node{
 			Name: fmt.Sprintf("GRP-TEST-L1-S%d", d),
-			ParentID: &lane.ID, Enabled: true,
+			ParentID: &lane.ID, Enabled: true, Depth: &depth,
 		}
 		db.CreateNode(slot)
-		db.SetNodeProperty(slot.ID, "depth", fmt.Sprintf("%d", d))
 		slots[d-1] = slot
 	}
 

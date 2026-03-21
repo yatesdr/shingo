@@ -13,6 +13,7 @@ type Node struct {
 	IsSynthetic bool      `json:"is_synthetic"`
 	Zone        string    `json:"zone"`
 	Enabled     bool      `json:"enabled"`
+	Depth       *int      `json:"depth,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	NodeTypeID  *int64    `json:"node_type_id,omitempty"`
@@ -23,24 +24,23 @@ type Node struct {
 	ParentName   string `json:"parent_name,omitempty"`
 }
 
-const nodeSelectCols = `n.id, n.name, n.is_synthetic, n.zone, n.enabled, n.created_at, n.updated_at, n.node_type_id, n.parent_id, COALESCE(nt.code, ''), COALESCE(nt.name, ''), COALESCE(pn.name, '')`
+const nodeSelectCols = `n.id, n.name, n.is_synthetic, n.zone, n.enabled, n.depth, n.created_at, n.updated_at, n.node_type_id, n.parent_id, COALESCE(nt.code, ''), COALESCE(nt.name, ''), COALESCE(pn.name, '')`
 
 const nodeFromClause = `FROM nodes n LEFT JOIN node_types nt ON nt.id = n.node_type_id LEFT JOIN nodes pn ON pn.id = n.parent_id`
 
 func scanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	var n Node
-	var enabled, isSynthetic int
-	var createdAt, updatedAt any
+	var depth sql.NullInt32
 	var nodeTypeID, parentID sql.NullInt64
-	err := row.Scan(&n.ID, &n.Name, &isSynthetic, &n.Zone, &enabled, &createdAt, &updatedAt,
+	err := row.Scan(&n.ID, &n.Name, &n.IsSynthetic, &n.Zone, &n.Enabled, &depth, &n.CreatedAt, &n.UpdatedAt,
 		&nodeTypeID, &parentID, &n.NodeTypeCode, &n.NodeTypeName, &n.ParentName)
 	if err != nil {
 		return nil, err
 	}
-	n.Enabled = enabled != 0
-	n.IsSynthetic = isSynthetic != 0
-	n.CreatedAt = parseTime(createdAt)
-	n.UpdatedAt = parseTime(updatedAt)
+	if depth.Valid {
+		d := int(depth.Int32)
+		n.Depth = &d
+	}
 	if nodeTypeID.Valid {
 		n.NodeTypeID = &nodeTypeID.Int64
 	}
@@ -62,9 +62,16 @@ func scanNodes(rows *sql.Rows) ([]*Node, error) {
 	return nodes, rows.Err()
 }
 
+func nullableInt(p *int) any {
+	if p != nil {
+		return *p
+	}
+	return nil
+}
+
 func (db *DB) CreateNode(n *Node) error {
-	id, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, zone, enabled, node_type_id, parent_id) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
-		n.Name, boolToInt(n.IsSynthetic), n.Zone, boolToInt(n.Enabled), nullableInt64(n.NodeTypeID), nullableInt64(n.ParentID))
+	id, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, zone, enabled, depth, node_type_id, parent_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		n.Name, n.IsSynthetic, n.Zone, n.Enabled, nullableInt(n.Depth), nullableInt64(n.NodeTypeID), nullableInt64(n.ParentID))
 	if err != nil {
 		return fmt.Errorf("create node: %w", err)
 	}
@@ -73,8 +80,8 @@ func (db *DB) CreateNode(n *Node) error {
 }
 
 func (db *DB) UpdateNode(n *Node) error {
-	_, err := db.Exec(db.Q(`UPDATE nodes SET name=?, is_synthetic=?, zone=?, enabled=?, node_type_id=?, parent_id=?, updated_at=datetime('now') WHERE id=?`),
-		n.Name, boolToInt(n.IsSynthetic), n.Zone, boolToInt(n.Enabled), nullableInt64(n.NodeTypeID), nullableInt64(n.ParentID), n.ID)
+	_, err := db.Exec(`UPDATE nodes SET name=$1, is_synthetic=$2, zone=$3, enabled=$4, depth=$5, node_type_id=$6, parent_id=$7, updated_at=NOW() WHERE id=$8`,
+		n.Name, n.IsSynthetic, n.Zone, n.Enabled, nullableInt(n.Depth), nullableInt64(n.NodeTypeID), nullableInt64(n.ParentID), n.ID)
 	if err != nil {
 		return fmt.Errorf("update node: %w", err)
 	}
@@ -82,17 +89,17 @@ func (db *DB) UpdateNode(n *Node) error {
 }
 
 func (db *DB) DeleteNode(id int64) error {
-	_, err := db.Exec(db.Q(`DELETE FROM nodes WHERE id=?`), id)
+	_, err := db.Exec(`DELETE FROM nodes WHERE id=$1`, id)
 	return err
 }
 
 func (db *DB) GetNode(id int64) (*Node, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.id=?`, nodeSelectCols, nodeFromClause)), id)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s WHERE n.id=$1`, nodeSelectCols, nodeFromClause), id)
 	return scanNode(row)
 }
 
 func (db *DB) GetNodeByName(name string) (*Node, error) {
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.name=?`, nodeSelectCols, nodeFromClause)), name)
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s WHERE n.name=$1`, nodeSelectCols, nodeFromClause), name)
 	return scanNode(row)
 }
 
@@ -104,21 +111,12 @@ func (db *DB) GetNodeByDotName(name string) (*Node, error) {
 	if len(parts) != 2 {
 		return db.GetNodeByName(name)
 	}
-	row := db.QueryRow(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.name=? AND n.parent_id IN (SELECT id FROM nodes WHERE name=?)`, nodeSelectCols, nodeFromClause)), parts[1], parts[0])
+	row := db.QueryRow(fmt.Sprintf(`SELECT %s %s WHERE n.name=$1 AND n.parent_id IN (SELECT id FROM nodes WHERE name=$2)`, nodeSelectCols, nodeFromClause), parts[1], parts[0])
 	return scanNode(row)
 }
 
 func (db *DB) ListNodes() ([]*Node, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s %s ORDER BY n.name`, nodeSelectCols, nodeFromClause)))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanNodes(rows)
-}
-
-func (db *DB) ListNodesByTypeID(nodeTypeID int64) ([]*Node, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.node_type_id=? ORDER BY n.name`, nodeSelectCols, nodeFromClause)), nodeTypeID)
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s ORDER BY n.name`, nodeSelectCols, nodeFromClause))
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +125,7 @@ func (db *DB) ListNodesByTypeID(nodeTypeID int64) ([]*Node, error) {
 }
 
 func (db *DB) ListChildNodes(parentID int64) ([]*Node, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.parent_id=? ORDER BY n.name`, nodeSelectCols, nodeFromClause)), parentID)
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s WHERE n.parent_id=$1 ORDER BY n.name`, nodeSelectCols, nodeFromClause), parentID)
 	if err != nil {
 		return nil, err
 	}
@@ -136,42 +134,24 @@ func (db *DB) ListChildNodes(parentID int64) ([]*Node, error) {
 }
 
 func (db *DB) SetNodeParent(nodeID, parentID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE nodes SET parent_id=?, updated_at=datetime('now') WHERE id=?`), parentID, nodeID)
+	_, err := db.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW() WHERE id=$2`, parentID, nodeID)
 	return err
 }
 
 func (db *DB) ClearNodeParent(nodeID int64) error {
-	_, err := db.Exec(db.Q(`UPDATE nodes SET parent_id=NULL, updated_at=datetime('now') WHERE id=?`), nodeID)
+	_, err := db.Exec(`UPDATE nodes SET parent_id=NULL, updated_at=NOW() WHERE id=$1`, nodeID)
 	return err
 }
 
-func (db *DB) ListSyntheticNodes() ([]*Node, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.is_synthetic=1 ORDER BY n.name`, nodeSelectCols, nodeFromClause)))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanNodes(rows)
-}
-
-func (db *DB) ListOrphanPhysicalNodes() ([]*Node, error) {
-	rows, err := db.Query(db.Q(fmt.Sprintf(`SELECT %s %s WHERE n.parent_id IS NULL AND n.is_synthetic=0 ORDER BY n.name`, nodeSelectCols, nodeFromClause)))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanNodes(rows)
-}
-
 // ReparentNode moves a node into a new parent (or removes it from a parent).
-// When adopting into a lane, it sets the depth property based on position.
+// When adopting into a lane, it sets the depth based on position.
 // When orphaning, it clears depth and role properties.
 func (db *DB) ReparentNode(nodeID int64, parentID *int64, position int) error {
 	if parentID == nil {
 		if err := db.ClearNodeParent(nodeID); err != nil {
 			return err
 		}
-		db.DeleteNodeProperty(nodeID, "depth")
+		db.Exec(`UPDATE nodes SET depth=NULL WHERE id=$1`, nodeID)
 		db.DeleteNodeProperty(nodeID, "role")
 		return nil
 	}
@@ -179,26 +159,19 @@ func (db *DB) ReparentNode(nodeID int64, parentID *int64, position int) error {
 		return err
 	}
 	if position > 0 {
-		db.SetNodeProperty(nodeID, "depth", fmt.Sprintf("%d", position))
+		db.Exec(`UPDATE nodes SET depth=$1 WHERE id=$2`, position, nodeID)
 	}
 	return nil
 }
 
-// ReorderLaneSlots updates depth properties for all slots in a lane based on
+// ReorderLaneSlots updates depth for all slots in a lane based on
 // the provided ordered list of node IDs.
 func (db *DB) ReorderLaneSlots(laneID int64, orderedNodeIDs []int64) error {
 	for i, nid := range orderedNodeIDs {
 		depth := i + 1
-		if err := db.SetNodeProperty(nid, "depth", fmt.Sprintf("%d", depth)); err != nil {
+		if _, err := db.Exec(`UPDATE nodes SET depth=$1 WHERE id=$2`, depth, nid); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }

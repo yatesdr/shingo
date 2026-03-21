@@ -5,7 +5,7 @@ Central server for the Shingo material tracking system. Receives transport order
 ## Prerequisites
 
 - Go 1.24+
-- PostgreSQL 14+ (recommended) or SQLite
+- PostgreSQL 14+
 - Kafka broker
 - Seer RDS fleet backend (or compatible)
 
@@ -24,7 +24,6 @@ The database connection is the only setting that must be configured before first
 
 ```yaml
 database:
-  driver: postgres
   postgres:
     host: 192.168.1.10
     port: 5432
@@ -34,14 +33,7 @@ database:
     sslmode: disable
 ```
 
-See [PostgreSQL Setup](docs/postgresql-setup.md) for server-side database configuration. For development or testing, SQLite can be used instead:
-
-```yaml
-database:
-  driver: sqlite
-  sqlite:
-    path: shingocore.db
-```
+See [PostgreSQL Setup](docs/postgresql-setup.md) for server-side database configuration.
 
 All other settings — fleet connection, Kafka brokers, web server port — have sensible defaults and can be adjusted through the web UI at `/config`. The YAML file is application-managed and should not be edited by hand during normal operation.
 

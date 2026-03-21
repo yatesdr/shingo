@@ -276,7 +276,7 @@ type pollerEvent struct {
 	robotID    string
 }
 
-func (m *mockPollerEmitter) EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string) {
+func (m *mockPollerEmitter) EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string, orderDetail *OrderDetail) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, pollerEvent{orderID, rdsOrderID, oldStatus, newStatus, robotID})

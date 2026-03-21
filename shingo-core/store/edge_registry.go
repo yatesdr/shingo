@@ -22,16 +22,16 @@ type EdgeRegistration struct {
 func (db *DB) RegisterEdge(stationID, hostname, version string, lineIDs []string) error {
 	lineJSON, _ := json.Marshal(lineIDs)
 
-	_, err := db.Exec(db.Q(`
+	_, err := db.Exec(`
 		INSERT INTO edge_registry (station_id, hostname, version, line_ids, registered_at, status)
-		VALUES (?, ?, ?, ?, datetime('now'), 'active')
+		VALUES ($1, $2, $3, $4, NOW(), 'active')
 		ON CONFLICT(station_id) DO UPDATE SET
 			hostname = excluded.hostname,
 			version = excluded.version,
 			line_ids = excluded.line_ids,
 			registered_at = excluded.registered_at,
 			status = 'active'
-	`), stationID, hostname, version, string(lineJSON))
+	`, stationID, hostname, version, string(lineJSON))
 	return err
 }
 
@@ -41,24 +41,24 @@ func (db *DB) RegisterEdge(stationID, hostname, version string, lineIDs []string
 func (db *DB) UpdateHeartbeat(stationID string) (isNew bool, err error) {
 	// Check existence first — ON CONFLICT doesn't reliably report insert vs update
 	var exists bool
-	db.QueryRow(db.Q(`SELECT 1 FROM edge_registry WHERE station_id = ?`), stationID).Scan(&exists)
+	db.QueryRow(`SELECT 1 FROM edge_registry WHERE station_id = $1`, stationID).Scan(&exists)
 
-	_, err = db.Exec(db.Q(`
+	_, err = db.Exec(`
 		INSERT INTO edge_registry (station_id, last_heartbeat, status)
-		VALUES (?, datetime('now'), 'active')
+		VALUES ($1, NOW(), 'active')
 		ON CONFLICT(station_id) DO UPDATE SET
-			last_heartbeat = datetime('now'),
+			last_heartbeat = NOW(),
 			status = 'active'
-	`), stationID)
+	`, stationID)
 	return !exists, err
 }
 
 // ListEdges returns all registered edges.
 func (db *DB) ListEdges() ([]EdgeRegistration, error) {
-	rows, err := db.Query(db.Q(`
+	rows, err := db.Query(`
 		SELECT id, station_id, hostname, version, line_ids, registered_at, last_heartbeat, status
 		FROM edge_registry ORDER BY station_id
-	`))
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -68,13 +68,10 @@ func (db *DB) ListEdges() ([]EdgeRegistration, error) {
 	for rows.Next() {
 		var e EdgeRegistration
 		var lineJSON string
-		var regAt, hbAt any
-		if err := rows.Scan(&e.ID, &e.StationID, &e.Hostname, &e.Version, &lineJSON, &regAt, &hbAt, &e.Status); err != nil {
+		if err := rows.Scan(&e.ID, &e.StationID, &e.Hostname, &e.Version, &lineJSON, &e.RegisteredAt, &e.LastHeartbeat, &e.Status); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(lineJSON), &e.LineIDs)
-		e.RegisteredAt = parseTime(regAt)
-		e.LastHeartbeat = parseTimePtr(hbAt)
 		edges = append(edges, e)
 	}
 	return edges, rows.Err()
@@ -83,15 +80,16 @@ func (db *DB) ListEdges() ([]EdgeRegistration, error) {
 // MarkStaleEdges sets status to "stale" for edges whose last_heartbeat is older
 // than the given threshold. Returns the station IDs that were marked stale.
 func (db *DB) MarkStaleEdges(threshold time.Duration) ([]string, error) {
-	cutoff := time.Now().UTC().Add(-threshold).Format("2006-01-02 15:04:05")
+	cutoff := time.Now().UTC().Add(-threshold)
 
-	// Find which stations will go stale
-	rows, err := db.Query(db.Q(`
-		SELECT station_id FROM edge_registry
+	rows, err := db.Query(`
+		UPDATE edge_registry
+		SET status = 'stale'
 		WHERE status = 'active'
 		  AND last_heartbeat IS NOT NULL
-		  AND last_heartbeat < ?
-	`), cutoff)
+		  AND last_heartbeat < $1
+		RETURNING station_id
+	`, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -109,18 +107,6 @@ func (db *DB) MarkStaleEdges(threshold time.Duration) ([]string, error) {
 	}
 	if len(staleIDs) == 0 {
 		return nil, nil
-	}
-
-	// Mark them stale
-	_, err = db.Exec(db.Q(`
-		UPDATE edge_registry
-		SET status = 'stale'
-		WHERE status = 'active'
-		  AND last_heartbeat IS NOT NULL
-		  AND last_heartbeat < ?
-	`), cutoff)
-	if err != nil {
-		return nil, err
 	}
 	return staleIDs, nil
 }

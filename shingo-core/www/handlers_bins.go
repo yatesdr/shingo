@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -19,8 +20,16 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	widthIn, _ := strconv.ParseFloat(r.FormValue("width_in"), 64)
-	heightIn, _ := strconv.ParseFloat(r.FormValue("height_in"), 64)
+	widthIn, err := strconv.ParseFloat(r.FormValue("width_in"), 64)
+	if err != nil && r.FormValue("width_in") != "" {
+		http.Error(w, "invalid width_in", http.StatusBadRequest)
+		return
+	}
+	heightIn, err := strconv.ParseFloat(r.FormValue("height_in"), 64)
+	if err != nil && r.FormValue("height_in") != "" {
+		http.Error(w, "invalid height_in", http.StatusBadRequest)
+		return
+	}
 
 	bt := &store.BinType{
 		Code:        r.FormValue("code"),
@@ -57,8 +66,12 @@ func (h *Handlers) handleBinTypeUpdate(w http.ResponseWriter, r *http.Request) {
 
 	bt.Code = r.FormValue("code")
 	bt.Description = r.FormValue("description")
-	bt.WidthIn, _ = strconv.ParseFloat(r.FormValue("width_in"), 64)
-	bt.HeightIn, _ = strconv.ParseFloat(r.FormValue("height_in"), 64)
+	if w, err := strconv.ParseFloat(r.FormValue("width_in"), 64); err == nil || r.FormValue("width_in") == "" {
+		bt.WidthIn = w
+	}
+	if h, err := strconv.ParseFloat(r.FormValue("height_in"), 64); err == nil || r.FormValue("height_in") == "" {
+		bt.HeightIn = h
+	}
 
 	if err := h.engine.DB().UpdateBinType(bt); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -86,17 +99,32 @@ func (h *Handlers) handleBinTypeDelete(w http.ResponseWriter, r *http.Request) {
 // --- Page handler ---
 
 func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
-	bins, _ := h.engine.DB().ListBins()
-	binTypes, _ := h.engine.DB().ListBinTypes()
-	nodes, _ := h.engine.DB().ListNodes()
-	payloads, _ := h.engine.DB().ListPayloads()
+	bins, err := h.engine.DB().ListBins()
+	if err != nil {
+		log.Printf("bins page: list bins: %v", err)
+	}
+	binTypes, err := h.engine.DB().ListBinTypes()
+	if err != nil {
+		log.Printf("bins page: list bin types: %v", err)
+	}
+	nodes, err := h.engine.DB().ListNodes()
+	if err != nil {
+		log.Printf("bins page: list nodes: %v", err)
+	}
+	payloads, err := h.engine.DB().ListPayloads()
+	if err != nil {
+		log.Printf("bins page: list payloads: %v", err)
+	}
 
 	// Build bin IDs for notes indicator
 	binIDs := make([]int64, len(bins))
 	for i, b := range bins {
 		binIDs[i] = b.ID
 	}
-	binHasNotes, _ := h.engine.DB().BinHasNotes(binIDs)
+	binHasNotes, err := h.engine.DB().BinHasNotes(binIDs)
+	if err != nil {
+		log.Printf("bins page: check bin notes: %v", err)
+	}
 
 	// JSON-encode nodes and payloads for JS consumption
 	nodesJSON, _ := json.Marshal(nodes)
@@ -129,7 +157,11 @@ func (h *Handlers) handleBinCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, _ := strconv.Atoi(r.FormValue("quantity"))
+	count, err := strconv.Atoi(r.FormValue("quantity"))
+	if err != nil && r.FormValue("quantity") != "" {
+		http.Error(w, "invalid quantity", http.StatusBadRequest)
+		return
+	}
 	if count <= 0 {
 		count = 1
 	}
@@ -231,7 +263,9 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 			Reason string `json:"reason"`
 			Actor  string `json:"actor"`
 		}
-		json.Unmarshal(params, &p)
+		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+			return fmt.Errorf("invalid params: %w", err)
+		}
 		if err := db.UpdateBinStatus(b.ID, "quality_hold"); err != nil {
 			return err
 		}
@@ -267,7 +301,9 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 		var p struct {
 			Actor string `json:"actor"`
 		}
-		json.Unmarshal(params, &p)
+		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+			return fmt.Errorf("invalid params: %w", err)
+		}
 		actor := h.resolveActor(p.Actor)
 		if actor == "" {
 			return fmt.Errorf("actor is required for lock")
@@ -290,7 +326,9 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 			PayloadCode string `json:"payload_code"`
 			UOPOverride int    `json:"uop_override"`
 		}
-		json.Unmarshal(params, &p)
+		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+			return fmt.Errorf("invalid params: %w", err)
+		}
 		if p.PayloadCode == "" {
 			return fmt.Errorf("payload_code is required")
 		}
@@ -332,7 +370,9 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 		var p struct {
 			NodeID int64 `json:"node_id"`
 		}
-		json.Unmarshal(params, &p)
+		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+			return fmt.Errorf("invalid params: %w", err)
+		}
 		if p.NodeID == 0 {
 			return fmt.Errorf("node_id is required")
 		}
@@ -358,7 +398,9 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 			ActualUOP int    `json:"actual_uop"`
 			Actor     string `json:"actor"`
 		}
-		json.Unmarshal(params, &p)
+		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+			return fmt.Errorf("invalid params: %w", err)
+		}
 		actor := h.resolveActor(p.Actor)
 		expected := b.UOPRemaining
 		if err := db.RecordBinCount(b.ID, p.ActualUOP, actor); err != nil {
@@ -376,7 +418,9 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 			Message  string `json:"message"`
 			Actor    string `json:"actor"`
 		}
-		json.Unmarshal(params, &p)
+		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+			return fmt.Errorf("invalid params: %w", err)
+		}
 		if p.Message == "" {
 			return fmt.Errorf("message is required")
 		}
@@ -393,7 +437,9 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 			Description *string `json:"description"`
 			BinTypeID   *int64  `json:"bin_type_id"`
 		}
-		json.Unmarshal(params, &p)
+		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+			return fmt.Errorf("invalid params: %w", err)
+		}
 		if p.Label != nil {
 			b.Label = *p.Label
 		}

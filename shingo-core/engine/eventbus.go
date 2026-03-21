@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"log"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -92,6 +94,13 @@ func (eb *EventBus) Emit(evt Event) {
 				continue
 			}
 		}
-		s.fn(evt)
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("eventbus: subscriber %d panicked on event type %d: %v\n%s", s.id, evt.Type, r, debug.Stack())
+				}
+			}()
+			s.fn(evt)
+		}()
 	}
 }

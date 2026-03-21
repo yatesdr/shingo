@@ -28,7 +28,9 @@ func (d *Dispatcher) sendAck(env *protocol.Envelope, orderUUID string, shingoOrd
 		return
 	}
 	d.dbg("sendAck: uuid=%s shingo_id=%d source=%s", orderUUID, shingoOrderID, sourceNode)
-	d.db.EnqueueOutbox(d.dispatchTopic, data, "order.ack", stationID)
+	if err := d.db.EnqueueOutbox(d.dispatchTopic, data, "order.ack", stationID); err != nil {
+		log.Printf("dispatch: enqueue ack for %s: %v", orderUUID, err)
+	}
 }
 
 func (d *Dispatcher) sendError(env *protocol.Envelope, orderUUID, errorCode, detail string) {
@@ -49,7 +51,9 @@ func (d *Dispatcher) sendError(env *protocol.Envelope, orderUUID, errorCode, det
 		return
 	}
 	d.dbg("sendError: uuid=%s code=%s detail=%s", orderUUID, errorCode, detail)
-	d.db.EnqueueOutbox(d.dispatchTopic, data, "order.error", stationID)
+	if err := d.db.EnqueueOutbox(d.dispatchTopic, data, "order.error", stationID); err != nil {
+		log.Printf("dispatch: enqueue error reply for %s: %v", orderUUID, err)
+	}
 }
 
 // syntheticEnvelope creates a minimal envelope for internal dispatch (compound orders).

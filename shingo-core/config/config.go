@@ -24,13 +24,7 @@ type StagingConfig struct {
 }
 
 type DatabaseConfig struct {
-	Driver   string         `yaml:"driver"`
-	SQLite   SQLiteConfig   `yaml:"sqlite"`
 	Postgres PostgresConfig `yaml:"postgres"`
-}
-
-type SQLiteConfig struct {
-	Path string `yaml:"path"`
 }
 
 type PostgresConfig struct {
@@ -71,8 +65,6 @@ type KafkaConfig struct {
 func Defaults() *Config {
 	return &Config{
 		Database: DatabaseConfig{
-			Driver: "sqlite",
-			SQLite: SQLiteConfig{Path: "shingocore.db"},
 			Postgres: PostgresConfig{
 				Host:     "localhost",
 				Port:     5432,

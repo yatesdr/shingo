@@ -148,7 +148,6 @@ In your `shingocore.yaml`:
 
 ```yaml
 database:
-  driver: postgres
   postgres:
     host: 192.168.1.10
     port: 5432
@@ -193,14 +192,3 @@ pg_dump -h localhost -U shingocore shingocore > shingocore_backup.sql
 psql -h localhost -U shingocore shingocore < shingocore_backup.sql
 ```
 
-## Migrating from SQLite
-
-If you have an existing SQLite deployment, export data and re-import:
-
-1. Stop ShinGo Core
-2. Export from SQLite: `sqlite3 shingocore.db .dump > sqlite_dump.sql`
-3. Create the PostgreSQL database (see above)
-4. Start ShinGo Core with `driver: postgres` — this creates the schema automatically
-5. Import data using a migration script (SQLite SQL is not directly compatible with PostgreSQL — date formats and auto-increment syntax differ)
-
-For small deployments, re-creating nodes and payload types through the UI may be simpler than data migration.

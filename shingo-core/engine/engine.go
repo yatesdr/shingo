@@ -13,7 +13,6 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/messaging"
-	"shingocore/nodestate"
 	"shingocore/store"
 )
 
@@ -24,7 +23,6 @@ type Config struct {
 	ConfigPath string
 	DB         *store.DB
 	Fleet      fleet.Backend
-	NodeState  *nodestate.Manager
 	MsgClient  *messaging.Client
 	LogFunc    LogFunc
 	Debug      bool
@@ -36,7 +34,6 @@ type Engine struct {
 	configPath     string
 	db             *store.DB
 	fleet          fleet.Backend
-	nodeState      *nodestate.Manager
 	msgClient      *messaging.Client
 	dispatcher     *dispatch.Dispatcher
 	tracker        fleet.OrderTracker
@@ -46,9 +43,11 @@ type Engine struct {
 	stopChan       chan struct{}
 	stopOnce       sync.Once
 	sceneSyncing   atomic.Bool
-	fleetConnected bool
-	msgConnected   bool
-	dbConnected    bool
+	fleetConnected atomic.Bool
+	msgConnected   atomic.Bool
+	dbConnected    atomic.Bool
+	robotsMu       sync.RWMutex
+	robotsCache    map[string]fleet.RobotStatus
 }
 
 func New(c Config) *Engine {
@@ -57,16 +56,16 @@ func New(c Config) *Engine {
 		logFn = log.Printf
 	}
 	return &Engine{
-		cfg:        c.AppConfig,
-		configPath: c.ConfigPath,
-		db:         c.DB,
-		fleet:      c.Fleet,
-		nodeState:  c.NodeState,
-		msgClient:  c.MsgClient,
-		Events:     NewEventBus(),
-		logFn:      logFn,
-		debugLog:   c.DebugLog,
-		stopChan:   make(chan struct{}),
+		cfg:         c.AppConfig,
+		configPath:  c.ConfigPath,
+		db:          c.DB,
+		fleet:       c.Fleet,
+		msgClient:   c.MsgClient,
+		Events:      NewEventBus(),
+		logFn:       logFn,
+		debugLog:    c.DebugLog,
+		stopChan:    make(chan struct{}),
+		robotsCache: make(map[string]fleet.RobotStatus),
 	}
 }
 
@@ -74,6 +73,15 @@ func (e *Engine) dbg(format string, args ...any) {
 	if fn := e.debugLog; fn != nil {
 		fn(format, args...)
 	}
+}
+
+// GetCachedRobotStatus returns the last known status of a robot from the in-memory cache.
+// The cache is refreshed every 2 seconds by robotRefreshLoop.
+func (e *Engine) GetCachedRobotStatus(vehicleID string) (fleet.RobotStatus, bool) {
+	e.robotsMu.RLock()
+	defer e.robotsMu.RUnlock()
+	r, ok := e.robotsCache[vehicleID]
+	return r, ok
 }
 
 func (e *Engine) Start() {
@@ -139,7 +147,6 @@ func (e *Engine) DB() *store.DB                    { return e.db }
 func (e *Engine) AppConfig() *config.Config        { return e.cfg }
 func (e *Engine) ConfigPath() string               { return e.configPath }
 func (e *Engine) Dispatcher() *dispatch.Dispatcher  { return e.dispatcher }
-func (e *Engine) NodeState() *nodestate.Manager     { return e.nodeState }
 func (e *Engine) Tracker() fleet.OrderTracker       { return e.tracker }
 func (e *Engine) Fleet() fleet.Backend              { return e.fleet }
 func (e *Engine) MsgClient() *messaging.Client      { return e.msgClient }
@@ -147,8 +154,7 @@ func (e *Engine) MsgClient() *messaging.Client      { return e.msgClient }
 func (e *Engine) checkConnectionStatus() {
 	// Fleet
 	if err := e.fleet.Ping(); err == nil {
-		if !e.fleetConnected {
-			e.fleetConnected = true
+		if e.fleetConnected.CompareAndSwap(false, true) {
 			e.Events.Emit(Event{Type: EventFleetConnected, Payload: ConnectionEvent{Detail: e.fleet.Name() + " connected"}})
 			go func() {
 				total, created, deleted, err := e.SceneSync()
@@ -160,34 +166,29 @@ func (e *Engine) checkConnectionStatus() {
 			}()
 		}
 	} else {
-		if e.fleetConnected {
-			e.fleetConnected = false
+		if e.fleetConnected.CompareAndSwap(true, false) {
 			e.Events.Emit(Event{Type: EventFleetDisconnected, Payload: ConnectionEvent{Detail: err.Error()}})
 		}
 	}
 
 	// Messaging
 	if e.msgClient.IsConnected() {
-		if !e.msgConnected {
-			e.msgConnected = true
+		if e.msgConnected.CompareAndSwap(false, true) {
 			e.Events.Emit(Event{Type: EventMessagingConnected, Payload: ConnectionEvent{Detail: "messaging connected"}})
 		}
 	} else {
-		if e.msgConnected {
-			e.msgConnected = false
+		if e.msgConnected.CompareAndSwap(true, false) {
 			e.Events.Emit(Event{Type: EventMessagingDisconnected, Payload: ConnectionEvent{Detail: "messaging disconnected"}})
 		}
 	}
 
 	// Database
 	if err := e.db.Ping(); err == nil {
-		if !e.dbConnected {
-			e.dbConnected = true
+		if e.dbConnected.CompareAndSwap(false, true) {
 			e.Events.Emit(Event{Type: EventDBConnected, Payload: ConnectionEvent{Detail: "database connected"}})
 		}
 	} else {
-		if e.dbConnected {
-			e.dbConnected = false
+		if e.dbConnected.CompareAndSwap(true, false) {
 			e.Events.Emit(Event{Type: EventDBDisconnected, Payload: ConnectionEvent{Detail: err.Error()}})
 		}
 	}
@@ -228,7 +229,7 @@ func (e *Engine) ReconfigureDatabase() {
 	if err := e.db.Reconnect(&e.cfg.Database); err != nil {
 		e.logFn("engine: database reconfigure error: %v", err)
 	} else {
-		e.logFn("engine: database reconfigured (%s)", e.cfg.Database.Driver)
+		e.logFn("engine: database reconfigured")
 	}
 	e.checkConnectionStatus()
 }
@@ -259,7 +260,9 @@ func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]strin
 	locationSet := make(map[string]string)
 	total := 0
 	for _, area := range areas {
-		e.db.DeleteScenePointsByArea(area.Name)
+		if err := e.db.DeleteScenePointsByArea(area.Name); err != nil {
+			e.logFn("engine: sync scene: delete points for area %s: %v", area.Name, err)
+		}
 		for _, ap := range area.AdvancedPoints {
 			sp := &store.ScenePoint{
 				AreaName:       area.Name,
@@ -272,7 +275,9 @@ func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]strin
 				Dir:            ap.Dir,
 				PropertiesJSON: ap.PropertiesJSON,
 			}
-			e.db.UpsertScenePoint(sp)
+			if err := e.db.UpsertScenePoint(sp); err != nil {
+				e.logFn("engine: sync scene: upsert point %s: %v", ap.InstanceName, err)
+			}
 			total++
 		}
 		for _, bin := range area.BinLocations {
@@ -289,7 +294,9 @@ func (e *Engine) SyncScenePoints(areas []fleet.SceneArea) (int, map[string]strin
 				PosZ:           bin.PosZ,
 				PropertiesJSON: bin.PropertiesJSON,
 			}
-			e.db.UpsertScenePoint(sp)
+			if err := e.db.UpsertScenePoint(sp); err != nil {
+				e.logFn("engine: sync scene: upsert point %s: %v", bin.InstanceName, err)
+			}
 			total++
 		}
 	}
@@ -311,7 +318,9 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 			// Node exists — update zone if needed
 			if existing.Zone != areaName && areaName != "" {
 				existing.Zone = areaName
-				e.db.UpdateNode(existing)
+				if err := e.db.UpdateNode(existing); err != nil {
+					e.logFn("engine: sync fleet nodes: update node %s zone: %v", instanceName, err)
+				}
 			}
 			continue
 		}
@@ -335,13 +344,18 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 	// Skip synthetic nodes (node groups, lanes), nodes
 	// without a name, and child nodes (part of a hierarchy)
 	// — these are managed by shingo, not the fleet.
-	nodes, _ := e.db.ListNodes()
+	nodes, err := e.db.ListNodes()
+	if err != nil {
+		e.logFn("engine: sync fleet nodes: list nodes: %v", err)
+	}
 	for _, n := range nodes {
 		if n.IsSynthetic || n.Name == "" || n.ParentID != nil {
 			continue
 		}
 		if _, inScene := locationSet[n.Name]; !inScene {
-			e.db.DeleteNode(n.ID)
+			if err := e.db.DeleteNode(n.ID); err != nil {
+				e.logFn("engine: sync fleet nodes: delete node %s: %v", n.Name, err)
+			}
 			e.Events.Emit(Event{Type: EventNodeUpdated, Payload: NodeUpdatedEvent{
 				NodeID: n.ID, NodeName: n.Name, Action: "deleted",
 			}})
@@ -349,7 +363,7 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 		}
 	}
 
-	// Update zones on remaining nodes
+	// Update zones on remaining nodes.
 	e.UpdateNodeZones(locationSet, true)
 	return
 }
@@ -357,7 +371,11 @@ func (e *Engine) SyncFleetNodes(locationSet map[string]string) (created, deleted
 // UpdateNodeZones updates node zones from a location→area map.
 // If overwrite is true, updates zone whenever it differs; if false, only fills empty zones.
 func (e *Engine) UpdateNodeZones(locationSet map[string]string, overwrite bool) {
-	nodes, _ := e.db.ListNodes()
+	nodes, err := e.db.ListNodes()
+	if err != nil {
+		e.logFn("engine: update node zones: list nodes: %v", err)
+		return
+	}
 	for _, n := range nodes {
 		if n.Name == "" {
 			continue
@@ -373,7 +391,9 @@ func (e *Engine) UpdateNodeZones(locationSet map[string]string, overwrite bool) 
 			continue
 		}
 		n.Zone = zone
-		e.db.UpdateNode(n)
+		if err := e.db.UpdateNode(n); err != nil {
+			e.logFn("engine: update node %s zone: %v", n.Name, err)
+		}
 		e.Events.Emit(Event{Type: EventNodeUpdated, Payload: NodeUpdatedEvent{
 			NodeID: n.ID, NodeName: n.Name, Action: "updated",
 		}})
@@ -412,7 +432,7 @@ func (e *Engine) robotRefreshLoop() {
 		case <-e.stopChan:
 			return
 		case <-ticker.C:
-			if !e.fleetConnected {
+			if !e.fleetConnected.Load() {
 				continue
 			}
 			rl, ok := e.fleet.(fleet.RobotLister)
@@ -424,6 +444,13 @@ func (e *Engine) robotRefreshLoop() {
 				e.dbg("engine: robot refresh: %v", err)
 				continue
 			}
+			// Update robot position cache (used for telemetry snapshots)
+			e.robotsMu.Lock()
+			for _, r := range robots {
+				e.robotsCache[r.VehicleID] = r
+			}
+			e.robotsMu.Unlock()
+
 			data, _ := json.Marshal(robots)
 			hash := sha256.Sum256(data)
 			if hash == prevHash {

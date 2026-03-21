@@ -11,20 +11,7 @@
     <h3>Database</h3>
     <form method="POST" action="/config/save">
       <input type="hidden" name="section" value="database">
-      <div class="form-group mb-1">
-        <label>Driver</label>
-        <select name="db_driver" id="db-driver" onchange="toggleDbFields()">
-          <option value="sqlite" {{if eq .Config.Database.Driver "sqlite"}}selected{{end}}>SQLite</option>
-          <option value="postgres" {{if eq .Config.Database.Driver "postgres"}}selected{{end}}>PostgreSQL</option>
-        </select>
-      </div>
-
-      <div id="db-sqlite-fields" class="form-group mb-1">
-        <label>Database Path</label>
-        <input type="text" name="sqlite_path" value="{{.Config.Database.SQLite.Path}}" placeholder="shingocore.db">
-      </div>
-
-      <div id="db-postgres-fields">
+      <div>
         <div class="grid grid-3">
           <div class="form-group">
             <label>Host</label>
@@ -97,7 +84,7 @@
       <!-- Messaging subsection -->
       <h4 class="mb-1">Messaging (Kafka)</h4>
 
-      <label style="font-size:0.85rem">Brokers</label>
+      <label class="text-sm">Brokers</label>
       <div id="kafka-broker-rows">
         {{range $i, $b := .Config.Messaging.Kafka.Brokers}}
         {{$parts := splitBroker $b}}
@@ -108,7 +95,7 @@
         </div>
         {{end}}
       </div>
-      <button type="button" class="btn btn-sm" onclick="addKafkaBroker()" style="margin-bottom:0.5rem">+ Add Broker</button>
+      <button type="button" class="btn btn-sm mb-1" onclick="addKafkaBroker()">+ Add Broker</button>
 
       <div class="form-group mb-1">
         <label>Group ID</label>
