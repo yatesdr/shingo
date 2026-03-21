@@ -96,6 +96,28 @@ This document tracks known problems with the changeover implementation, their st
 
 ---
 
+## Problem 8 — Clearing strategy: sweep_to_stage Phase B timing
+
+**Status: DESIGN DECIDED**
+
+**Problem:** In the `sweep_to_stage` clearing strategy, Phase A moves old bins from lineside to clearing nodes. Phase B creates store orders to move bins from clearing nodes to outgoing. When should Phase B orders be dispatched?
+
+**Decision:** Phase B store orders are dispatched when the operator presses "Tooling Done." They run in the background and do NOT block the changeover gate. The bins sit at clearing nodes during the entire tooling phase (which is fine — clearing nodes are designated staging areas). After Tooling Done, the line track marks done, and Phase B orders are fire-and-forget.
+
+**Rationale:** Clearing nodes are near the cell, not in the way of anything. There's no urgency to move bins to outgoing — the important thing is that lineside is clear for tooling. Moving bins to outgoing can happen while the swap is being set up or executed.
+
+---
+
+## Problem 9 — Cancel during clearing phase
+
+**Status: OPEN**
+
+**Problem:** If the operator cancels during the clearing phase, clearing orders are in-flight. For `direct` strategy, store orders are moving bins to outgoing — those can be aborted and bins stay at lineside (no harm). For `sweep_to_stage`, bins may already be at clearing nodes — aborting leaves bins stranded at clearing nodes, not at lineside and not at outgoing. Need a recovery path to either return bins to lineside or continue them to outgoing.
+
+**Fix needed:** On cancel during sweep_to_stage clearing: if Phase A is still running, abort remaining Phase A orders. For bins already at clearing nodes, dispatch return-to-lineside orders (reverse the sweep). Or: let the operator decide via a "Return Bins" option on the cancel confirmation dialog.
+
+---
+
 ## Summary
 
 | # | Problem | Status | Blocking? |
@@ -107,5 +129,7 @@ This document tracks known problems with the changeover implementation, their st
 | 5 | No swap order visibility for operators | **OPEN** | No — enhancement |
 | 6 | Executing tracker empty / hangs | **SOLVED** (via #2) | Was blocker |
 | 7 | Old-style payload state cleanup | **OPEN** | No — stale data |
+| 8 | Sweep_to_stage Phase B timing | **DESIGN DECIDED** | No — Phase B is background |
+| 9 | Cancel during clearing phase | **OPEN** | No — edge case, needs design |
 
-**Next session priorities:** Problem 3 (quick fix), Problem 4 (needs design for mid-swap safety), then finish Problem 2 implementation.
+**Next session priorities:** Problem 3 (quick fix), Problem 4 (needs design for mid-swap safety), then finish Problem 2 implementation. Clearing strategy implementation (Problems 8-9) can follow.
