@@ -1,6 +1,6 @@
-# Changeover — Open Problems Tracker
+# Changeover — Problems & Integration Analysis
 
-This document tracks known problems with the changeover implementation, their status, and the decisions made for resolved ones. Use as reference when resuming development.
+This document tracks known problems with the changeover implementation, their status, and the decisions made for resolved ones. It also captures integration points across the system, overlap risks between changeover and existing subsystems, and patterns transferable to other Shingo systems. Use as reference when resuming development.
 
 ---
 
@@ -328,6 +328,130 @@ OrderDelivered:
 
 ---
 
+## Problem 12 — Counter delta after Parts Done may corrupt UOP snapshot
+
+**Status: OPEN**
+
+**Problem:** `handleCounterDelta` in `engine/wiring.go` decrements `payload.remaining` on every PLC tick. During the Stopping phase this is correct — the operator is still running parts. But after Parts Done, the old-style payloads' `remaining` values become the source of truth for `ChangeoverSwapItem.RemainingUOP`. Stray PLC ticks after Parts Done (buffer flush, delayed counter reads, electrical noise) would decrement remaining further, making the swap item's UOP count inaccurate. The bin arrives in storage with the wrong remaining, and when FIFO retrieves it later, Edge sets the wrong capacity.
+
+**Recommendation:** Snapshot `payload.remaining` for all old-style payloads at Parts Done time. Store the snapshot in the changeover machine or tracker state. Use the snapshot — not the live value — when building swap items at execute time. This avoids modifying the counter delta handler and keeps the fix local to the changeover path.
+
+**Alternative:** Add a guard in `handleCounterDelta` that skips decrement for old-style payloads after Parts Done. Simpler but couples the counter handler to changeover state.
+
+---
+
+## Problem 13 — Phase B store order failure is invisible
+
+**Status: OPEN**
+
+**Problem:** In `sweep_to_stage`, Phase B store orders are dispatched fire-and-forget after Tooling Done. If a Phase B order fails (robot can't reach outgoing, fleet error, bin mismatch), the bin sits at the clearing node permanently. No tracker monitors these orders, no operator notification fires, and the stranded bin has no visibility in the UI. Over time, clearing nodes accumulate orphaned bins.
+
+**Recommendation:** Add a lightweight failure listener for Phase B orders. Subscribe to `EventOrderFailed` and check if the failed order's pickup node is a clearing node associated with an active (or recently completed) changeover. On match, emit an operator notification — anomaly entry on the changeover page or a toast on the canvas. The bin can stay at the clearing node for manual recovery, but the operator needs to know.
+
+**Scope:** Enhancement, not blocker. Phase B failure is unlikely under normal conditions and the bin is physically accessible at the clearing node.
+
+---
+
+## Problem 14 — Changeover restore doesn't rebuild tracker state
+
+**Status: OPEN**
+
+**Problem:** `Machine.Restore()` rebuilds changeover state from the last log entry, but tracker state (which orders are in-flight for staging/clearing/executing) is not persisted. If Edge crashes during the Staging phase with 3 of 5 staging orders complete, on restart the machine restores to the correct phase but the tracker is empty. Those 3 completed orders won't re-emit completion events. The tracker never reaches "done" and the changeover hangs forever.
+
+**Recommendation:** On restore, derive tracker state from the order table rather than persisting tracker state to disk:
+1. Query `ListActiveOrdersByLine(lineID)` to find non-terminal orders
+2. Filter to orders created after the changeover started (compare `created_at` to changeover log timestamp)
+3. Rebuild the tracker with only those order IDs
+4. Immediately call `checkDone()` — if all orders are already terminal, advance the phase
+
+This is robust because the order table is the authoritative record. No new persistence needed.
+
+**Scope:** Blocker for production reliability. A crash during any tracked phase leaves the changeover stuck without this fix.
+
+---
+
+## Problem 15 — No validation that target job style has payloads
+
+**Status: OPEN**
+
+**Problem:** `apiChangeoverStart` accepts any target job style without checking that it has payloads configured in Edge's database. The spec mentions `ValidateChangeoverStart(toJobStyleName)` in the `engine/changeover.go` design but it's not implemented. Starting a changeover to a style with no payloads produces an empty staging tracker (immediately fires "done"), an empty swap item list (execute is a no-op), and the production line switches to a style that can't auto-reorder — a silent misconfiguration.
+
+**Recommendation:** Add validation in `apiChangeoverStart` before calling `Machine.Start()`:
+1. Look up the target job style by name → get `jobStyleID`
+2. Query `ListPayloadsByJobStyle(jobStyleID)`
+3. If empty, return HTTP 400 with `{"error": "Target style has no payloads configured"}`
+
+**Scope:** Small fix, should be included in the first slice. Prevents operator confusion.
+
+---
+
+## Problem 16 — Concurrent changeovers sharing fleet resources
+
+**Status: OPEN (low priority)**
+
+**Problem:** Multiple production lines can run changeovers simultaneously, each creating staging, clearing, and swap orders. If two lines share robots or staging areas, concurrent changeovers could overwhelm the fleet backend or create conflicting robot assignments. The tracker infrastructure correctly isolates per-line state via `lineID:phase` keys, but the fleet backend sees all orders together.
+
+**Recommendation:** Low risk in practice — lines typically have separate staging areas and the fleet backend (RDS) handles robot contention natively. No code change needed for MVP. If problems arise at scale, consider:
+- Adding a warning in changeover start validation if another line is mid-changeover using overlapping staging nodes
+- A changeover scheduler that serializes changeovers across lines sharing staging resources
+
+**Scope:** Not a blocker. Monitor during first multi-line deployments.
+
+---
+
+## Problem 17 — Operator canvas reload on changeover + sub-station management
+
+**Status: OPEN**
+
+**Problem:** The operator canvas uses the auto-generated path (`/operator/cell/{lineID}`) — it queries `ActiveJobStyleID`, loads that style's payloads, and builds a layout via `generateDefaultLayout()`. This is already per-line and per-style, which is correct. On changeover, the SSE `changeover-update` event triggers a full `location.reload()`, which picks up the new style's payloads. This works but has two issues:
+
+1. **Blunt reload:** The full page reload drops SSE connections, resets all canvas state, and causes a visible flash. On a shop floor HMI this is disruptive. A targeted layout swap via SSE would be smoother.
+
+2. **No sub-station concept:** There's no model for physical operator terminals. Screens are just browser tabs pointed at URLs. Nobody knows which terminal is showing what line, and there's no way to manage them (e.g., "push Line 1 canvas to Terminal 3" or "which terminals are online?").
+
+**Note on designed screens:** The codebase contains a drag-and-drop designer (`designer.js`, `operator-designer.html`), saved screen storage (`operator_screens` table), and a display route (`/operator/display/{screenID}`). This is scaffolding carried over from andon v4 — it's not the intended architecture. The auto-generated path is the real system. The designer code should be evaluated for removal or clearly marked as unused. It should not be extended.
+
+**Design direction:**
+
+**1. Replace page reload with SSE layout push:**
+- `handleChangeoverCompleted` already updates `ActiveJobStyleID`
+- After that update, build the new layout via `generateDefaultLayout` and send it as a `screen-change` SSE event
+- `display.js` receives the event, replaces its shapes array and rebuilds its index maps, and the existing render loop picks up the new shapes on the next frame
+- No `location.reload()` — the page stays up, SSE connection stays open, no flash
+- Fall back to full reload if the SSE push fails
+
+**2. Sub-station registry (future):**
+- New table: `sub_stations {id, name, line_id, display_type, last_seen_at}`
+- A sub-station is a physical operator terminal associated with a process (line)
+- Sub-stations self-register on SSE connect (client sends line ID in query param, server tracks connection)
+- Enables: admin visibility into which terminals are online, push-to-terminal features
+
+**3. Per-style layout overrides (future, optional):**
+- The auto-generator already handles different payload counts per style (1-row vs 2-row grid, card sizing)
+- If finer control is ever needed, store layout overrides keyed by `(line_id, job_style_id)` that patch the auto-generated base — don't build a separate designer
+- Not needed for MVP
+
+**Operator transparency:** The StatusBar already renders `"{lineName} — {styleName}"`. When the layout updates via SSE, the style name updates with it. The operator sees the cards change and the style name change in the same frame.
+
+**Implementation:**
+- `engine/changeover.go`: in `handleChangeoverCompleted`, after `SetActiveJobStyle`, call `generateDefaultLayout` for the new style and emit the layout via `EventScreenChange`
+- `www/sse.go`: broadcast `screen-change` SSE event with layout JSON
+- `display.js`: handle `screen-change` — replace shapes, rebuild index maps (replaces current `location.reload()` handler)
+- Sub-station table + self-registration (separate, not required for the layout push)
+
+**Cleanup — remove designed-screen scaffolding:** The following are andon v4 carry-over and not part of the intended architecture. Remove:
+- `www/static/operator-canvas/designer.js`
+- `www/templates/operator-designer.html`
+- `www/templates/operator-home.html`
+- `store/operator_screens.go` (and `operator_screens` table from schema)
+- `handleOperatorDesigner`, `handleOperatorDisplay`, `handleOperatorScreenList` handlers
+- `apiCreateOperatorScreen`, `apiListOperatorScreens`, `apiGetOperatorScreenLayout`, `apiSaveOperatorScreenLayout` API handlers
+- Associated routes in `www/router.go`: `/operator/designer`, `/operator/display/{id}`, `/operator` (home), `/api/operator-screens/*`
+
+**Scope:** SSE layout push is a quality-of-life improvement. Sub-station registry is for multi-terminal deployments. Neither blocks changeover MVP.
+
+---
+
 ## Summary
 
 | # | Problem | Status | Blocking? |
@@ -343,5 +467,130 @@ OrderDelivered:
 | 9 | Cancel → redirect flow (clearing phase + general) | **DESIGN DECIDED** | Yes — stranded bins need recovery |
 | 10 | Per-line auto-reorder toggle on canvas | **DESIGN DECIDED** (impl pending) | No — operator UX |
 | 11 | Engine handlers not wired (first slice) | **DESIGN DECIDED** (revised, impl pending) | Yes — foundation for all automation |
+| 12 | Counter delta after Parts Done corrupts UOP snapshot | **OPEN** | Yes — incorrect bin state in storage |
+| 13 | Phase B store order failure is invisible | **OPEN** | No — enhancement |
+| 14 | Changeover restore doesn't rebuild tracker state | **OPEN** | Yes — crash during tracked phase hangs forever |
+| 15 | No validation that target style has payloads | **OPEN** | No — but causes silent misconfiguration |
+| 16 | Concurrent changeovers sharing fleet resources | **OPEN** (low priority) | No — fleet handles contention natively |
+| 17 | Operator screens not bound to process/style | **OPEN** | No — auto-generated path works; designed screens stale after changeover |
 
-**Next session priorities:** Problem 11 (engine handler wiring — the first slice of real automation), which also delivers Problems 3 (reorder guard), 4 (start-time cancellation), and 10 (canvas toggle). Then Problem 7 (UOP remaining sync). Then finish Problem 2 implementation. Cancel → redirect flow (Problem 9) and mid-phase cancellation (remainder of Problem 4) integrate with clearing strategy implementation (Problem 8).
+**Next session priorities:** Problem 11 (engine handler wiring — the first slice of real automation), which also delivers Problems 3 (reorder guard), 4 (start-time cancellation), and 10 (canvas toggle). Problem 15 (target style validation) should be included in the first slice — small fix, prevents confusion. Then Problem 7 (UOP remaining sync). Then finish Problem 2 implementation. Problem 12 (counter delta snapshot) should be addressed alongside Problem 7 since both affect UOP accuracy. Problem 14 (restore + tracker) is needed before production deployment. Cancel → redirect flow (Problem 9) and mid-phase cancellation (remainder of Problem 4) integrate with clearing strategy implementation (Problem 8). Problem 17 (screen-per-style binding) should be addressed before production deployments with designed screens. Problems 13 and 16 are enhancements for later.
+
+---
+
+## Overlap Risks
+
+Areas where changeover touches the same concern as an existing system through two different mechanisms. These aren't bugs — they're interaction points that need awareness during implementation to avoid conflicting behavior.
+
+### Overlap 1: Auto-reorder — suppression guard vs. canvas toggle
+
+Two independent mechanisms affect auto-reorder behavior:
+
+- **Suppression guard** (Problem 3): `handlePayloadReorder` checks `ChangeoverMachine(lineID).IsActive()` and skips reorder dispatch. Per-payload `auto_reorder` flags in the DB are **never modified** by changeover.
+- **Canvas toggle** (Problem 10): Operator clicks the StatusBar button → `POST /api/line/auto-reorder` → `SetAutoReorderByJobStyle(jobStyleID, enabled)` → **actually flips** `auto_reorder` boolean per payload in the DB.
+
+**Risk:** If the canvas toggle is clicked OFF before a changeover starts, then a changeover runs and completes, the guard lifts — but the flags are still OFF from the operator's earlier toggle. This is correct behavior (the operator explicitly turned it off), but could be confusing if the operator forgot they toggled it.
+
+**Mitigation:** The toggle is greyed out during changeover (Problem 10, disabled state). After changeover completes, the toggle shows its actual DB state (OFF in this case). No code fix needed — the visual state is accurate. Operators need to understand the toggle is their explicit control and changeover doesn't touch it.
+
+### Overlap 2: Order cancellation — start-time vs. mid-phase
+
+Problem 4 describes two cancellation contexts:
+- **Start-time** (decided): `handleChangeoverStarted` loops `ListActiveOrdersByLine` + `AbortOrder` for each. Abort reason: `"changeover initiated"`.
+- **Mid-phase** (open): If operator cancels during staging/clearing/executing, the changeover's own orders (staging, clearing, swap) also need aborting.
+
+**Risk:** Both contexts use `ListActiveOrdersByLine` + `AbortOrder`, but they need different abort reasons (`"changeover initiated"` vs. `"changeover cancelled"`) for traceability. More critically, aborting a dedicated robot mid-swap (bin picked up, not yet placed) is dangerous — the robot has nowhere to put the bin.
+
+**Mitigation:** Start-time cancel is safe (those are pre-changeover orders). Mid-phase cancel needs phase-aware logic: let the current block complete before aborting remaining blocks. Use distinct abort reasons per context. The mid-phase cancel design is deferred (Problem 4 "still open") — when implemented, it must account for block-level safety.
+
+### Overlap 3: UOP remaining sync — changeover-specific vs. general
+
+Problem 7 introduces two sync mechanisms:
+- **`ChangeoverSwapItem.RemainingUOP`** (changeover-specific, Edge → Core): Carries actual remaining when swap items are built during execute.
+- **`OrderDelivered.UOPRemaining`** (general, Core → Edge): Carries actual remaining on any delivery, so `resetPayloadOnRetrieve` uses the real count instead of catalog capacity.
+
+**Risk:** The general `OrderDelivered` path fixes the return trip for any delivery. But the outbound sync (`RemainingUOP` on swap items) only fires during changeover execution. A manual store order — operator manually stores a partial bin — has the same Edge → Core gap: Core's `bins.uop_remaining` stays stale.
+
+**Mitigation:** Problem 7 Section B ("General store orders — future") explicitly calls this out. Not a blocker for changeover MVP. Follow-up: add `RemainingUOP` to regular store order payloads so any bin leaving lineside carries its actual count to Core.
+
+---
+
+## Integration Map
+
+Nine integration points where changeover connects to existing systems. Use this to understand the full surface area before implementing.
+
+| # | Integration Point | Direction | Existing System | What Changeover Does | Status |
+|---|---|---|---|---|---|
+| 1 | **Order Lifecycle** | Edge + Core | `orders/manager.go`, `dispatch/dispatcher.go` | Cancel active orders on start; create staging/clearing/swap orders; track completion via `EventOrderCompleted` | Designed, not wired |
+| 2 | **Auto-Reorder Suppression** | Edge | `engine/wiring.go` → `handlePayloadReorder` | Guard checks `ChangeoverMachine(lineID).IsActive()` before dispatching reorder | Designed, not implemented |
+| 3 | **Kafka Data Channel** | Edge → Core → Edge | `messaging/edge_handler.go`, `messaging/core_handler.go` | `changeover.execute` / `changeover.execute_ack` subjects through existing `HandleData` switch | Protocol types don't exist yet |
+| 4 | **Complex / Staged Orders** | Core dispatch | `dispatch/complex.go`, `fleet/fleet.go` | Dedicated robots use `CreateStagedOrder` with `complete: false`; `ReleaseOrder` appends swap blocks | Infrastructure exists; changeover-specific logic doesn't |
+| 5 | **UOP Remaining Sync** | Both directions | `protocol/payloads.go` → `OrderDelivered`; `engine/wiring.go` → `resetPayloadOnRetrieve` | Edge → Core via swap item `RemainingUOP`; Core → Edge via `OrderDelivered.UOPRemaining` | Neither field exists in protocol yet |
+| 6 | **SSE / Operator Canvas** | Edge → Browser | `www/sse.go`, `render.js`, `display.js` | `EventChangeoverActive` for toggle greying; `EventAutoReorderChanged` for toggle state | Events not defined yet |
+| 7 | **Payload Catalog & Reset** | Edge | `engine/wiring.go` → `resetPayloadOnRetrieve` | Must use delivered UOP remaining instead of blindly resetting to catalog capacity | Not modified yet |
+| 8 | **Production Line ActiveJobStyleID** | Edge store | `store/production_lines` table | Updated on changeover completion; drives which payloads are active for auto-reorder | Logic designed, not coded |
+| 9 | **Operator Screen Context Switch** | Edge → Browser | `store/operator_screens.go`, `display.js` | On completion, push the new style's designed screen to connected terminals via `EventScreenChange` SSE; sub-stations hot-swap layout | Not implemented (Problem 17) |
+
+### Architecture Note: State Machine Model Gap
+
+The current implementation uses a **7-state linear machine** (running → stopping → counting_out → storing → delivering → counting_in → ready → running). The spec describes a **parallel-track architecture** (staging track + line track + convergence gate). Every integration point above is designed against the parallel model. The first slice (Problem 11) wires handlers to the existing linear events — acceptable tech debt, but plan for re-wiring when the parallel model lands (items 14–15 in the tech spec's implementation order).
+
+---
+
+## Transferable Benefits
+
+Patterns emerging from changeover design that solve general problems across Shingo. These should inform future system work beyond changeover.
+
+### 1. Suppression Guard Pattern → Any "Hold" Mode
+
+The guard in `handlePayloadReorder` — check a runtime condition before dispatching, without modifying persistent configuration — is a general pattern for any mode where behavior should be temporarily suspended.
+
+**How it works:** Don't modify flags (keep operator intent intact). Suppress behavior via a runtime check. Lift the check when the condition clears. Flags resume their configured effect immediately.
+
+**Applicable to:**
+- **Line maintenance windows** — suppress auto-reorder during planned maintenance without touching payload configs
+- **Shift changes** — hold all dispatch during handoff, resume without reconfiguration
+- **Quality holds** — suppress ordering for a specific payload pending investigation
+- **Manual override periods** — operator takes manual control, system defers
+
+**Future consideration:** Extract into a general `LineMode` or `DispatchGuard` that checks multiple conditions (changeover active, maintenance active, manual hold, etc.) rather than hardcoding changeover-specific checks in `handlePayloadReorder`.
+
+### 2. UOP Remaining on OrderDelivered → System-Wide Inventory Accuracy
+
+The `OrderDelivered.UOPRemaining` field fixes the general case for any delivery of a partial bin — not just changeover. This is the first time Shingo syncs real-time consumption data from Edge back through Core to a re-delivered bin.
+
+**Applicable to:**
+- **Quality hold → return:** Bin flagged for quality, pulled to inspection, returned to storage, later re-delivered. Correct remaining travels with it.
+- **Manual store → re-retrieve:** Operator manually stores a half-used bin. Next shift retrieves it and gets the actual remaining, not full capacity.
+- **Inventory reporting:** Core's `bins.uop_remaining` becomes accurate, enabling consumption rate analytics and predictive staging.
+
+**Priority:** Consider implementing the `OrderDelivered.UOPRemaining` field early — it improves system-wide accuracy independent of changeover.
+
+### 3. Parallel Track + Convergence Gate → Multi-Concern Orchestration
+
+The staging track + line track + convergence gate pattern cleanly coordinates independent async processes with different completion criteria (automatic vs. operator-driven).
+
+**Applicable to:**
+- **Shift handoff:** Material staging for next shift (automatic, background) + current shift wind-down (operator-driven). Gate: both complete → switch shift.
+- **Quality containment:** Quarantine track (isolate suspect bins, automatic) + production track (switch to known-good material, operator confirms). Gate: both complete → resume.
+- **Batch changeover:** Current batch completion track + next batch material staging track. Gate: both complete → start next batch.
+
+### 4. Order Group Tracker → General Fan-In Monitoring
+
+The `changeoverTracker` — register N order IDs, call `onDone` when all reach terminal state — is a reusable fan-in construct.
+
+**Applicable to:**
+- **Batch delivery tracking:** Deliver N bins to a staging area, notify when all arrive.
+- **Reshuffle group monitoring:** Track compound order child moves (currently uses a different mechanism in `dispatch/compound.go`).
+- **Shift-end material return:** Track all store orders issued at shift end, notify when warehouse is restocked.
+
+**Recommendation:** When implementing the tracker, make it generic (accept any callback, any set of order IDs, any completion predicate) rather than changeover-specific.
+
+### 5. Cancel = Redirect → General Recovery Pattern
+
+The insight that "cancel is never just stop — it's stop and redirect" applies to any abort scenario where physical material is in motion.
+
+**Applicable to:**
+- **Cancelled retrieve orders:** Bin is in-transit. Where does it go? Current behavior: robot completes delivery (bin arrives at a node nobody expected). Better: explicit redirect to storage or return to source.
+- **Failed reshuffles:** Bins split between lane and shuffle row. Current behavior: lane locked, operator alert. Could benefit from a "recover reshuffle" flow that offers redirect options.
+- **Quality diversion:** Mid-delivery quality flag. Redirect to quarantine node instead of original destination.

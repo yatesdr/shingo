@@ -642,6 +642,45 @@ The `OrderDelivered.UOPRemaining` field fixes the general case: any delivery of 
 
 ---
 
+## Operator Screen Context Switch
+
+When a changeover completes and `ActiveJobStyleID` switches, operator terminals need to display the correct screen for the new style. The operator canvas uses the auto-generated path (`/operator/cell/{lineID}`), which builds a layout from the active style's payloads via `generateDefaultLayout()`. Today it handles changeover via a full `location.reload()` on the `changeover-update` SSE event. This works but is disruptive on shop floor HMIs.
+
+**Note:** The codebase contains a drag-and-drop designer and saved-screen system (`operator_screens` table, `/operator/designer`, `/operator/display/{id}`) carried over from andon v4. This is scaffolding — the auto-generated path is the intended architecture. The designer code should not be extended for changeover integration.
+
+### Layout Push on Changeover (replaces page reload)
+
+In `handleChangeoverCompleted`, after updating `ActiveJobStyleID`:
+1. Load the new style's payloads via `ListPayloadsByJobStyle(newJobStyleID)`
+2. Build a new layout via `generateDefaultLayout(db, line, payloads)`
+3. Emit `EventScreenChange{LineID, Layout}`
+4. SSE broadcasts `screen-change` to connected canvas clients watching that line
+5. `display.js` receives the event, replaces its shapes array, rebuilds its index maps (`payloadShapeMap`, `lineShapeMap`, `orderShapeMap`), and the existing render loop picks up the new shapes on the next frame — no page reload, no dropped SSE connection
+6. Fall back to full `location.reload()` if the SSE push fails
+
+### Sub-Station Registry (future enhancement)
+
+```sql
+CREATE TABLE sub_stations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    line_id      INTEGER NOT NULL REFERENCES production_lines(id),
+    display_type TEXT NOT NULL DEFAULT 'canvas',
+    last_seen_at TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+Sub-stations are physical operator terminals (tablets, HMI panels) associated with a process. They self-register on SSE connect by passing line ID in the query param. Enables: admin visibility into which terminals are online, future push-to-terminal features.
+
+### Operator Transparency
+
+The StatusBar already renders `"{lineName} — {styleName}"`. When the layout updates via SSE, the style name updates with it. Manual override is URL-based — the operator navigates to `/operator/cell/{differentLineID}` and the layout push only fires for the line the terminal is watching.
+
+See `changeover-open-problems.md` Problem 17 for the full problem statement.
+
+---
+
 ## Open Issues
 
 ### 1. Idle Auto-Detect for Parts Done
@@ -682,11 +721,11 @@ Changeover revealed a bin state sync gap: Edge tracks real-time consumption via 
 
 ### Open Questions
 
-1. **Release strategy during Executing:** Release each station individually, or "release all" at once?
-2. **Staging order failure:** Retry, skip and flag, or block changeover?
-3. **Swap failure during Executing:** Retry, continue with other stations, or pause?
-4. **Payloads without staging nodes:** Deliver directly to lineside during Executing?
+1. ~~**Release strategy during Executing:** Release each station individually, or "release all" at once?~~ **Decided (2026-03-21):** Release all at once. Dedicated robots are already parked at staging — no reason to stagger. The fleet backend handles concurrent robot movement natively. Sequential release would just extend cell idle time.
+2. ~~**Staging order failure:** Retry, skip and flag, or block changeover?~~ **Decided (2026-03-21):** Skip and flag. If 1 of N staging orders fails, the rest proceed. The failed payload is marked in the tracker and the operator is notified with the failure reason so operations can react (manually stage the bin, reassign, etc.). During Execute, that payload gets a standard individual swap order instead of using a dedicated robot. Blocking the entire changeover on a single staging failure is too conservative. Automatic retry is risky — if the failure is systemic (bin mismatch, node offline), retrying loops.
+3. ~~**Swap failure during Executing:** Retry, continue with other stations, or pause?~~ **Decided (2026-03-21):** Other robots continue — swap failures are isolated per robot. The failed robot's swap is paused and the operator is notified. Tech/support responds to the robot failure using the existing order failure workflow (retry failed, force complete, or manual intervention). Each robot's swap chain is a sequential delivery — the failure handling method is already defined in the normal order lifecycle. The changeover doesn't pause globally for one robot's problem.
+4. ~~**Payloads without staging nodes:** Deliver directly to lineside during Executing?~~ **Decided (2026-03-21):** Yes. If a payload has no staging node configured, the bin can't be pre-staged. During Execute, it gets a standard retrieve order (pickup from source → deliver to lineside). Slower than a dedicated robot swap but functional. The swap item carries `staging_node: ""` and Core creates a simple retrieve order instead of appending blocks to a staged order.
 5. ~~**Operator canvas:** Show changeover status indicator?~~ **Decided (2026-03-21):** StatusBar gets auto-reorder toggle. Changeover banner already exists. Further operator visibility (Problem 5) is an enhancement.
-6. **New-style payload creation:** Must payloads exist before changeover starts, or auto-create from job style?
+6. ~~**New-style payload creation:** Must payloads exist before changeover starts, or auto-create from job style?~~ **Decided (2026-03-21):** Payloads must exist before changeover starts. No auto-creation. Payloads require engineering decisions — cycle mode, staging nodes, reorder points, outgoing destinations — that cannot be guessed. Job styles and their payloads are set up by an engineer on the Setup page before a changeover to that style is attempted. Problem 15 (target style validation) enforces this by rejecting changeover start if the target style has no payloads configured.
 7. ~~**Counter reset:** Does `resetPayloadOnRetrieve` handle this, or does changeover need a separate reset?~~ **Decided (2026-03-21):** `resetPayloadOnRetrieve` is modified to use actual bin remaining from `OrderDelivered.UOPRemaining` when available, falling back to catalog capacity for full bins. No separate changeover reset needed — the delivery path handles both full and partial bins. See UOP Remaining Sync section.
 8. ~~**Cancel during sweep_to_stage clearing:** Bins stranded at clearing nodes — return-to-lineside or let operator decide?~~ **Decided (2026-03-21):** Cancel is a redirect — operator must select the next style. If same style → bins return to lineside. If different style → bins continue to storage. Cancel API extended to accept `next_style`. See `changeover-open-problems.md` Problem 9 for full design.
