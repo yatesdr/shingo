@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"shingocore/config"
 
@@ -21,7 +22,10 @@ func testDB(t *testing.T) *DB {
 		postgres.WithDatabase("shingocore_test"),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(30*time.Second)),
 	)
 	if err != nil {
 		t.Fatalf("start postgres container: %v", err)
