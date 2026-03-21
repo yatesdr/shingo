@@ -194,6 +194,7 @@ func (h *Handlers) apiCreateOperatorScreen(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("operator-screen-created")
 	writeJSON(w, screen)
 }
 
@@ -236,6 +237,7 @@ func (h *Handlers) apiSaveOperatorScreenLayout(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("operator-screen-layout")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, `{"ok":true}`)
 }
@@ -275,7 +277,7 @@ func generateDefaultLayout(db *store.DB, line *store.Process, payloads []store.M
 		Type: "header",
 		Config: shapeConfig{
 			"x": 0, "y": 0, "w": canvasW, "h": headerH,
-			"text": line.Name,
+			"text":  line.Name,
 			"textX": 0.5, "textY": 0.5,
 		},
 	})
@@ -286,8 +288,8 @@ func generateDefaultLayout(db *store.DB, line *store.Process, payloads []store.M
 		Type: "statusbar",
 		Config: shapeConfig{
 			"x": 0, "y": canvasH - statusBarH, "w": canvasW, "h": statusBarH,
-			"lineName": line.Name,
-			"lineId":   line.ID,
+			"lineName":  line.Name,
+			"lineId":    line.ID,
 			"styleName": "",
 		},
 	})
@@ -372,4 +374,3 @@ func generateDefaultLayout(db *store.DB, line *store.Process, payloads []store.M
 	data, _ := json.Marshal(shapes)
 	return data
 }
-

@@ -149,6 +149,7 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.requestBackup("shifts")
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"ok":true}`))
 }

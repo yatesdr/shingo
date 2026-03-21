@@ -519,7 +519,92 @@
     </div>
 </div>
 
-<!-- 3. Admin Password -->
+<!-- 3. Backups -->
+<div class="setup-section" id="section-backups">
+    <div class="section-header" onclick="toggleSection('section-backups')">
+        <h2><span class="section-chevron">&#9662;</span> Backups</h2>
+    </div>
+    <div class="card" style="margin-bottom:0.75rem">
+        <div class="card-body" id="backup-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.5rem">
+                        <span class="toggle-switch">
+                            <input type="checkbox" name="enabled" id="backup-enabled" {{if .Config.Backup.Enabled}}checked{{end}}>
+                            <span class="toggle-slider"></span>
+                        </span>
+                        Enable automatic backups
+                    </label>
+                    <div id="backup-enabled-hint" style="margin-top:0.35rem;font-size:0.85rem;color:var(--text-muted)">
+                        Automatic backups are disabled. Manual backup and connection testing remain available.
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Schedule Interval</label>
+                    <input type="text" name="schedule_interval" class="form-input" value="{{.Config.Backup.ScheduleInterval}}" placeholder="1h">
+                    <div style="margin-top:0.35rem;font-size:0.85rem;color:var(--text-muted)">Examples: <code>15m</code>, <code>1h</code>, <code>6h</code></div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Endpoint URL</label><input type="text" name="endpoint" class="form-input" value="{{.Config.Backup.S3.Endpoint}}" placeholder="http://core-host:9000"></div>
+                <div class="form-group"><label>Bucket</label><input type="text" name="bucket" class="form-input" value="{{.Config.Backup.S3.Bucket}}" placeholder="shingo-edge-backups"></div>
+                <div class="form-group"><label>Region</label><input type="text" name="region" class="form-input" value="{{.Config.Backup.S3.Region}}" placeholder="us-east-1"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Access Key</label><input type="text" name="access_key" class="form-input" value="{{.Config.Backup.S3.AccessKey}}"></div>
+                <div class="form-group"><label>Secret Key</label><input type="password" name="secret_key" class="form-input" value="{{.Config.Backup.S3.SecretKey}}"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>Keep Hourly</label><input type="number" name="keep_hourly" class="form-input" value="{{.Config.Backup.KeepHourly}}" min="0"></div>
+                <div class="form-group"><label>Keep Daily</label><input type="number" name="keep_daily" class="form-input" value="{{.Config.Backup.KeepDaily}}" min="0"></div>
+                <div class="form-group"><label>Keep Weekly</label><input type="number" name="keep_weekly" class="form-input" value="{{.Config.Backup.KeepWeekly}}" min="0"></div>
+                <div class="form-group"><label>Keep Monthly</label><input type="number" name="keep_monthly" class="form-input" value="{{.Config.Backup.KeepMonthly}}" min="0"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label><input type="checkbox" name="use_path_style" {{if .Config.Backup.S3.UsePathStyle}}checked{{end}}> Use path-style S3</label>
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" name="insecure_skip_tls_verify" {{if .Config.Backup.S3.InsecureSkipTLSVerify}}checked{{end}}> Skip TLS verification</label>
+                </div>
+                <div class="form-group">
+                    <label>Station Scope</label>
+                    <div style="padding-top:0.65rem;color:var(--text-muted)"><code>{{if .Config.Messaging.StationID}}{{.Config.Messaging.StationID}}{{else}}{{.StationIDDefault}}{{end}}</code></div>
+                </div>
+            </div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end">
+                <button class="btn" id="backup-test-btn" onclick="testBackupConfig()">Test Connection</button>
+                <button class="btn" id="backup-run-btn" onclick="runBackupNow()">Backup Now</button>
+                <button class="btn btn-primary" id="backup-save-btn" onclick="saveBackupConfig()">Save Backup Settings</button>
+            </div>
+        </div>
+    </div>
+    <div class="card" style="margin-bottom:0.75rem">
+        <div class="card-body">
+            <div id="backup-connection-status" class="text-muted" style="margin-bottom:0.5rem">Connection test not yet run in this session.</div>
+            <div id="backup-operation-status" class="text-muted" style="margin-bottom:0.5rem">No manual backup operation running.</div>
+            <div id="backup-status" class="text-muted">Loading backup status...</div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-body" style="overflow-x:auto">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+                <strong>Available Backups</strong>
+                <button class="btn btn-sm" onclick="loadBackups()">Refresh</button>
+            </div>
+            <table class="table">
+                <thead>
+                    <tr><th>Created</th><th>Size</th><th>Key</th><th>Action</th></tr>
+                </thead>
+                <tbody id="backup-body">
+                    <tr><td colspan="4" class="empty-cell">Loading backups...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 4. Admin Password -->
 <div class="setup-section" id="section-pw">
     <div class="section-header" onclick="toggleSection('section-pw')">
         <h2><span class="section-chevron">&#9662;</span> Admin Password</h2>
@@ -538,7 +623,7 @@
     </div>
 </div>
 
-<div id="page-data" data-shifts='{{.ShiftsJSON}}'></div>
+<div id="page-data" data-shifts='{{.ShiftsJSON}}' data-station-id='{{if .Config.Messaging.StationID}}{{.Config.Messaging.StationID}}{{else}}{{.StationIDDefault}}{{end}}'></div>
 <script src="/static/js/pages/setup.js"></script>
 
 {{template "footer" .}}

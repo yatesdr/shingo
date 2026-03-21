@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -8,12 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
+	"shingoedge/backup"
 	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/messaging"
@@ -48,6 +51,7 @@ func main() {
 
 	configPath := flag.String("config", "shingoedge.yaml", "path to config file")
 	port := flag.Int("port", 0, "HTTP port (overrides config)")
+	restoreMode := flag.Bool("restore", false, "interactive restore from backup storage before starting")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: shingoedge [flags]\n\nFlags:\n")
 		flag.PrintDefaults()
@@ -60,6 +64,16 @@ func main() {
 
 	if debugFlag {
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
+	}
+
+	if *restoreMode {
+		if err := runInteractiveRestore(*configPath); err != nil {
+			log.Fatalf("interactive restore: %v", err)
+		}
+	}
+
+	if err := backup.ApplyPendingRestore(*configPath, log.Printf); err != nil {
+		log.Fatalf("apply pending restore: %v", err)
 	}
 
 	// Create debug logger (ring buffer always active; file only with --log-debug)
@@ -96,6 +110,10 @@ func main() {
 	})
 	eng.Start()
 	defer eng.Stop()
+
+	backupSvc := backup.NewService(db, cfg, *configPath, "dev", log.Printf)
+	backupSvc.Start()
+	defer backupSvc.Stop()
 
 	// Ensure Kafka GroupID is set (unique per edge so each gets all messages)
 	if cfg.Messaging.Kafka.GroupID == "" {
@@ -196,7 +214,7 @@ func main() {
 	}
 
 	// Set up HTTP server
-	router, stopWeb := www.NewRouter(eng, dbg)
+	router, stopWeb := www.NewRouter(eng, dbg, backupSvc)
 	defer stopWeb()
 
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
@@ -226,4 +244,177 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		log.Printf("http server shutdown: %v", err)
 	}
+}
+
+func runInteractiveRestore(configPath string) error {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("ShinGo Edge interactive restore")
+	fmt.Println("Provide minimal backup storage settings to restore this machine before startup.")
+
+	stationID, err := promptNonEmpty(reader, "Station ID")
+	if err != nil {
+		return err
+	}
+	endpoint, err := promptNonEmpty(reader, "S3 Endpoint URL")
+	if err != nil {
+		return err
+	}
+	bucket, err := promptNonEmpty(reader, "Bucket")
+	if err != nil {
+		return err
+	}
+	region, err := promptWithDefault(reader, "Region", "us-east-1")
+	if err != nil {
+		return err
+	}
+	accessKey, err := promptNonEmpty(reader, "Access Key")
+	if err != nil {
+		return err
+	}
+	secretKey, err := promptNonEmpty(reader, "Secret Key")
+	if err != nil {
+		return err
+	}
+	usePathStyle, err := promptYesNo(reader, "Use path-style S3", true)
+	if err != nil {
+		return err
+	}
+	insecureSkip, err := promptYesNo(reader, "Skip TLS verification", false)
+	if err != nil {
+		return err
+	}
+
+	s3cfg := config.BackupS3Config{
+		Endpoint:              endpoint,
+		Bucket:                bucket,
+		Region:                region,
+		AccessKey:             accessKey,
+		SecretKey:             secretKey,
+		UsePathStyle:          usePathStyle,
+		InsecureSkipTLSVerify: insecureSkip,
+	}
+
+	storage, err := backup.NewS3Storage(s3cfg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := storage.Test(ctx, stationID); err != nil {
+		return fmt.Errorf("storage test failed: %w", err)
+	}
+	fmt.Println("Connection test succeeded.")
+
+	backups, err := backup.ListBackupsWithConfig(ctx, s3cfg, stationID)
+	if err != nil {
+		return err
+	}
+	if len(backups) == 0 {
+		return fmt.Errorf("no backups found for station %q", stationID)
+	}
+	if len(backups) > 20 {
+		backups = backups[:20]
+	}
+	fmt.Println("Available backups:")
+	for i, item := range backups {
+		created := item.CreatedAt
+		if created == nil {
+			created = item.LastModified
+		}
+		when := "unknown"
+		if created != nil {
+			when = created.UTC().Format(time.RFC3339)
+		}
+		fmt.Printf("  %d. %s  %s  %s\n", i+1, when, humanBytes(item.Size), item.Key)
+	}
+	selectionText, err := promptNonEmpty(reader, "Select backup number")
+	if err != nil {
+		return err
+	}
+	selection, err := strconv.Atoi(selectionText)
+	if err != nil || selection < 1 || selection > len(backups) {
+		return fmt.Errorf("invalid selection")
+	}
+	selected := backups[selection-1]
+
+	confirm, err := promptNonEmpty(reader, "Type the station ID to confirm restore")
+	if err != nil {
+		return err
+	}
+	if confirm != stationID {
+		return fmt.Errorf("confirmation station ID did not match")
+	}
+
+	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer restoreCancel()
+	if err := backup.RestoreNow(restoreCtx, configPath, s3cfg, stationID, selected.Key); err != nil {
+		return err
+	}
+	fmt.Println("Restore completed successfully. Launching ShinGo Edge...")
+	return nil
+}
+
+func promptNonEmpty(reader *bufio.Reader, label string) (string, error) {
+	for {
+		fmt.Printf("%s: ", label)
+		text, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		text = strings.TrimSpace(text)
+		if text != "" {
+			return text, nil
+		}
+	}
+}
+
+func promptWithDefault(reader *bufio.Reader, label, def string) (string, error) {
+	fmt.Printf("%s [%s]: ", label, def)
+	text, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return def, nil
+	}
+	return text, nil
+}
+
+func promptYesNo(reader *bufio.Reader, label string, def bool) (bool, error) {
+	defText := "y/N"
+	if def {
+		defText = "Y/n"
+	}
+	for {
+		fmt.Printf("%s [%s]: ", label, defText)
+		text, err := reader.ReadString('\n')
+		if err != nil {
+			return false, err
+		}
+		text = strings.ToLower(strings.TrimSpace(text))
+		if text == "" {
+			return def, nil
+		}
+		if text == "y" || text == "yes" {
+			return true, nil
+		}
+		if text == "n" || text == "no" {
+			return false, nil
+		}
+	}
+}
+
+func humanBytes(v int64) string {
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	size := float64(v)
+	idx := 0
+	for size >= 1024 && idx < len(units)-1 {
+		size /= 1024
+		idx++
+	}
+	if idx == 0 {
+		return fmt.Sprintf("%d %s", v, units[idx])
+	}
+	return fmt.Sprintf("%.1f %s", size, units[idx])
 }

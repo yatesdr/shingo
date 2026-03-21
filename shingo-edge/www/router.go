@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"shingo/protocol/debuglog"
+	"shingoedge/backup"
 	"shingoedge/engine"
 
 	"github.com/go-chi/chi/v5"
@@ -23,6 +24,7 @@ var buildVer = time.Now().Format("20060102150405")
 type Handlers struct {
 	engine   EngineAccess
 	eng      *engine.Engine // concrete engine for EventBus/SSE wiring
+	backup   *backup.Service
 	sessions *sessionStore
 	tmpl     *template.Template
 	eventHub *EventHub
@@ -30,10 +32,11 @@ type Handlers struct {
 }
 
 // NewRouter creates the chi router and returns it along with a stop function.
-func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) {
+func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Service) (http.Handler, func()) {
 	h := &Handlers{
 		engine:   eng,
 		eng:      eng,
+		backup:   backupSvc,
 		sessions: newSessionStore(eng.AppConfig().Web.SessionSecret),
 		eventHub: NewEventHub(),
 		debugLog: dbg,
@@ -244,6 +247,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			r.Post("/config/kafka/test", h.apiTestKafka)
 			r.Put("/config/auto-confirm", h.apiUpdateAutoConfirm)
 			r.Post("/config/password", h.apiChangePassword)
+			r.Get("/backups", h.apiListBackups)
+			r.Get("/backups/status", h.apiBackupStatus)
+			r.Put("/backups/config", h.apiUpdateBackupConfig)
+			r.Post("/backups/test", h.apiTestBackupConfig)
+			r.Post("/backups/run", h.apiRunBackup)
+			r.Post("/backups/restore", h.apiStageBackupRestore)
 
 			// Manual message
 			r.Post("/manual-message", h.apiSendManualMessage)

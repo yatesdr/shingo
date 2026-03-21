@@ -212,6 +212,7 @@ func (h *Handlers) apiUpdateWarLink(w http.ResponseWriter, r *http.Request) {
 
 	h.engine.ApplyWarLinkConfig()
 
+	h.requestBackup("warlink-config")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -283,6 +284,7 @@ func (h *Handlers) apiCreateReportingPoint(w http.ResponseWriter, r *http.Reques
 
 	h.engine.EnsureTagPublished(id, req.PLCName, req.TagName)
 
+	h.requestBackup("reporting-point-created")
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -314,6 +316,7 @@ func (h *Handlers) apiUpdateReportingPoint(w http.ResponseWriter, r *http.Reques
 		h.engine.ManageReportingPointTag(id, oldRP.PLCName, oldRP.TagName, oldRP.WarlinkManaged, req.PLCName, req.TagName)
 	}
 
+	h.requestBackup("reporting-point-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -335,6 +338,7 @@ func (h *Handlers) apiDeleteReportingPoint(w http.ResponseWriter, r *http.Reques
 		h.engine.CleanupReportingPointTag(id, rp.PLCName, rp.TagName, rp.WarlinkManaged)
 	}
 
+	h.requestBackup("reporting-point-deleted")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -385,6 +389,7 @@ func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.requestBackup("style-created")
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -439,6 +444,7 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 		h.engine.DB().DeleteReportingPoint(existingRP.ID)
 	}
 
+	h.requestBackup("style-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -452,6 +458,7 @@ func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("style-deleted")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -503,6 +510,7 @@ func (h *Handlers) apiCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("node-created")
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -529,6 +537,7 @@ func (h *Handlers) apiUpdateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("node-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -542,6 +551,7 @@ func (h *Handlers) apiDeleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("node-deleted")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -604,6 +614,7 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("process-created")
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -625,6 +636,7 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("process-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -638,6 +650,7 @@ func (h *Handlers) apiDeleteProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("process-deleted")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -658,6 +671,7 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("active-style-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -714,6 +728,7 @@ func (h *Handlers) apiUpdateMessaging(w http.ResponseWriter, r *http.Request) {
 		log.Printf("kafka reconnect after config update: %v", err)
 	}
 
+	h.requestBackup("messaging-config")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -735,6 +750,7 @@ func (h *Handlers) apiUpdateStationID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("station-id")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -773,6 +789,7 @@ func (h *Handlers) apiUpdateAutoConfirm(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("auto-confirm")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

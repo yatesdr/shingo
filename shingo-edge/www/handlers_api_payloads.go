@@ -44,6 +44,7 @@ func (h *Handlers) apiCreateSlot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("slot-created")
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -62,6 +63,7 @@ func (h *Handlers) apiUpdateSlot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("slot-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -75,6 +77,7 @@ func (h *Handlers) apiDeleteSlot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.requestBackup("slot-deleted")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

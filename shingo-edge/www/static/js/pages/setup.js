@@ -26,6 +26,245 @@ async function saveShifts() {
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
 
+// --- Backups ---
+var _backupUI = {
+    connection: { state: 'idle', message: 'Connection test not yet run in this session.' },
+    operation: { state: 'idle', message: 'No manual backup operation running.' },
+    testedFingerprint: '',
+    stationID: ''
+};
+
+function setButtonBusy(id, busy, idleText, busyText) {
+    var btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled = !!busy;
+    btn.textContent = busy ? busyText : idleText;
+}
+
+function setBackupConnection(state, message) {
+    _backupUI.connection.state = state;
+    _backupUI.connection.message = message;
+    renderBackupConnectionStatus();
+}
+
+function setBackupOperation(state, message) {
+    _backupUI.operation.state = state;
+    _backupUI.operation.message = message;
+    renderBackupOperationStatus();
+}
+
+function renderBackupConnectionStatus() {
+    var el = document.getElementById('backup-connection-status');
+    if (!el) return;
+    var badge = '';
+    if (_backupUI.connection.state === 'ok') {
+        badge = '<span class="status-badge status-connected" style="margin-right:0.5rem">Connected</span>';
+    } else if (_backupUI.connection.state === 'error') {
+        badge = '<span class="status-badge status-disconnected" style="margin-right:0.5rem">Failed</span>';
+    }
+    el.innerHTML = badge + ShingoEdge.escapeHtml(_backupUI.connection.message);
+}
+
+function renderBackupOperationStatus() {
+    var el = document.getElementById('backup-operation-status');
+    if (!el) return;
+    var badge = '';
+    if (_backupUI.operation.state === 'ok') {
+        badge = '<span class="status-badge status-connected" style="margin-right:0.5rem">Ready</span>';
+    } else if (_backupUI.operation.state === 'error') {
+        badge = '<span class="status-badge status-disconnected" style="margin-right:0.5rem">Error</span>';
+    } else if (_backupUI.operation.state === 'busy') {
+        badge = '<span class="status-badge status-connected" style="margin-right:0.5rem">Working</span>';
+    }
+    el.innerHTML = badge + ShingoEdge.escapeHtml(_backupUI.operation.message);
+}
+
+function updateBackupEnabledHint() {
+    var toggle = document.getElementById('backup-enabled');
+    var hint = document.getElementById('backup-enabled-hint');
+    if (!toggle || !hint) return;
+    if (toggle.checked) {
+        hint.textContent = 'Automatic backups are enabled. Saved settings will be used by the scheduler.';
+    } else {
+        hint.textContent = 'Automatic backups are disabled. Manual backup and connection testing remain available.';
+    }
+}
+
+function backupConnectionFingerprint() {
+    var data = ShingoEdge.getFormData('backup-form');
+    return JSON.stringify({
+        endpoint: data.endpoint || '',
+        bucket: data.bucket || '',
+        region: data.region || '',
+        access_key: data.access_key || '',
+        secret_key: data.secret_key || '',
+        use_path_style: !!data.use_path_style,
+        insecure_skip_tls_verify: !!data.insecure_skip_tls_verify
+    });
+}
+
+function markBackupConnectionDirty() {
+    _backupUI.testedFingerprint = '';
+    setBackupConnection('idle', 'Connection settings changed. Run Test Connection before enabling automatic backups.');
+}
+
+async function saveBackupConfig() {
+    setButtonBusy('backup-save-btn', true, 'Save Backup Settings', 'Saving...');
+    try {
+        var data = ShingoEdge.getFormData('backup-form');
+        if (data.enabled && _backupUI.testedFingerprint !== backupConnectionFingerprint()) {
+            throw 'run Test Connection after editing storage settings before enabling automatic backups';
+        }
+        await ShingoEdge.api.put('/api/backups/config', data);
+        updateBackupEnabledHint();
+        setBackupOperation('ok', data.enabled ? 'Backup settings saved. Automatic backups are enabled.' : 'Backup settings saved. Automatic backups are disabled.');
+        ShingoEdge.toast(data.enabled ? 'Backup settings saved. Auto backup enabled.' : 'Backup settings saved. Auto backup disabled.', 'success');
+        await loadBackupStatus();
+        await loadBackups();
+    } catch (e) {
+        setBackupOperation('error', 'Failed to save backup settings: ' + e);
+        ShingoEdge.toast('Error: ' + e, 'error');
+    } finally {
+        setButtonBusy('backup-save-btn', false, 'Save Backup Settings', 'Saving...');
+    }
+}
+
+async function testBackupConfig() {
+    setButtonBusy('backup-test-btn', true, 'Test Connection', 'Testing...');
+    setBackupConnection('idle', 'Testing backup storage connection...');
+    try {
+        await ShingoEdge.api.post('/api/backups/test', ShingoEdge.getFormData('backup-form'));
+        _backupUI.testedFingerprint = backupConnectionFingerprint();
+        setBackupConnection('ok', 'Connection test succeeded for the configured bucket and credentials.');
+        ShingoEdge.toast('Backup storage test succeeded', 'success');
+    } catch (e) {
+        setBackupConnection('error', 'Connection test failed: ' + e);
+        ShingoEdge.toast('Backup test failed: ' + e, 'error');
+    } finally {
+        setButtonBusy('backup-test-btn', false, 'Test Connection', 'Testing...');
+    }
+}
+
+async function runBackupNow() {
+    setButtonBusy('backup-run-btn', true, 'Backup Now', 'Running...');
+    setBackupOperation('busy', 'Manual backup in progress. Creating snapshot and uploading archive.');
+    try {
+        await ShingoEdge.api.post('/api/backups/run', {});
+        setBackupOperation('ok', 'Manual backup completed successfully.');
+        ShingoEdge.toast('Backup completed', 'success');
+        await loadBackupStatus();
+        await loadBackups();
+    } catch (e) {
+        setBackupOperation('error', 'Manual backup failed: ' + e);
+        ShingoEdge.toast('Backup failed: ' + e, 'error');
+    } finally {
+        setButtonBusy('backup-run-btn', false, 'Backup Now', 'Running...');
+    }
+}
+
+async function loadBackupStatus() {
+    var el = document.getElementById('backup-status');
+    if (!el) return;
+    try {
+        var status = await ShingoEdge.api.get('/api/backups/status');
+        var lines = [];
+        lines.push('<div><strong>Automatic Backups:</strong> ' + ShingoEdge.escapeHtml(status.enabled ? 'Enabled' : 'Disabled') + '</div>');
+        lines.push('<div><strong>Scheduler:</strong> ' + ShingoEdge.escapeHtml(status.running ? 'Backup currently running' : 'Idle') + '</div>');
+        if (status.pending) lines.push('<div><strong>Queued Trigger:</strong> ' + ShingoEdge.escapeHtml((status.pending_reasons || []).join(', ')) + '</div>');
+        if (status.last_success_at) lines.push('<div><strong>Last Success:</strong> ' + ShingoEdge.escapeHtml(formatMaybeDate(status.last_success_at)) + (status.last_success_key ? ' <code>' + ShingoEdge.escapeHtml(status.last_success_key) + '</code>' : '') + '</div>');
+        if (status.last_failure_at) lines.push('<div><strong>Last Failure:</strong> ' + ShingoEdge.escapeHtml(formatMaybeDate(status.last_failure_at)) + (status.last_error ? ' ' + ShingoEdge.escapeHtml(status.last_error) : '') + '</div>');
+        if (status.stale) lines.push('<div><strong>Warning:</strong> ' + ShingoEdge.escapeHtml(status.stale_reason || 'backup status is stale') + '</div>');
+        if (status.next_scheduled_at) lines.push('<div><strong>Next Scheduled Run:</strong> ' + ShingoEdge.escapeHtml(formatMaybeDate(status.next_scheduled_at)) + '</div>');
+        if (status.restore_pending) lines.push('<div><strong>Pending Restore On Restart:</strong> <code>' + ShingoEdge.escapeHtml(status.pending_restore_key || 'pending') + '</code></div>');
+        el.innerHTML = lines.join('');
+    } catch (e) {
+        el.textContent = 'Backup status unavailable: ' + e;
+    }
+}
+
+async function loadBackups() {
+    var body = document.getElementById('backup-body');
+    if (!body) return;
+    body.innerHTML = '<tr><td colspan="4" class="empty-cell">Loading backups...</td></tr>';
+    try {
+        var items = await ShingoEdge.api.get('/api/backups');
+        if (!items || items.length === 0) {
+            body.innerHTML = '<tr><td colspan="4" class="empty-cell">No backups found for this station</td></tr>';
+            return;
+        }
+        body.innerHTML = items.map(function(item) {
+            var created = item.created_at || item.last_modified || '';
+            var age = created ? formatAge(created) : '';
+            var action = '<button class="btn btn-sm btn-danger" onclick="stageRestore(' +
+                JSON.stringify(item.key).replace(/"/g, '&quot;') + ',' +
+                JSON.stringify(created).replace(/"/g, '&quot;') + ')">Restore On Restart</button>';
+            if (item.restore_pending) action = '<span class="status-badge status-connected">Pending Restart</span>';
+            return '<tr>' +
+                '<td>' + ShingoEdge.escapeHtml(formatMaybeDate(created)) + (age ? '<div class="text-muted" style="font-size:0.85rem">' + ShingoEdge.escapeHtml(age) + '</div>' : '') + '</td>' +
+                '<td>' + ShingoEdge.escapeHtml(formatBytes(item.size || 0)) + '</td>' +
+                '<td><code>' + ShingoEdge.escapeHtml(item.key) + '</code></td>' +
+                '<td>' + action + '</td>' +
+                '</tr>';
+        }).join('');
+    } catch (e) {
+        body.innerHTML = '<tr><td colspan="4" class="empty-cell">Failed to load backups: ' + ShingoEdge.escapeHtml(String(e)) + '</td></tr>';
+    }
+}
+
+async function stageRestore(key, createdAt) {
+    if (!_backupUI.stationID) {
+        ShingoEdge.toast('Station ID must be configured before restore', 'error');
+        return;
+    }
+    var warning = createdAt ? (' Backup age: ' + formatAge(createdAt) + '.') : '';
+    var ok = await ShingoEdge.confirm('Stage restore from this backup? The backup will be applied on the next shingo-edge restart.' + warning);
+    if (!ok) return;
+    var typed = window.prompt('Type the station ID to confirm restore for this edge.', _backupUI.stationID);
+    if (typed !== _backupUI.stationID) {
+        ShingoEdge.toast('Restore cancelled: station ID confirmation did not match.', 'warning');
+        return;
+    }
+    setBackupOperation('busy', 'Downloading and staging restore archive...');
+    try {
+        await ShingoEdge.api.post('/api/backups/restore', { key: key });
+        setBackupOperation('ok', 'Restore staged successfully. Restart shingo-edge to apply it.');
+        ShingoEdge.toast('Restore staged. Restart shingo-edge to apply it.', 'warning');
+        await loadBackupStatus();
+        await loadBackups();
+    } catch (e) {
+        setBackupOperation('error', 'Restore staging failed: ' + e);
+        ShingoEdge.toast('Restore staging failed: ' + e, 'error');
+    }
+}
+
+function formatBytes(bytes) {
+    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var value = bytes;
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    return (unit === 0 ? String(value) : value.toFixed(1)) + ' ' + units[unit];
+}
+
+function formatMaybeDate(value) {
+    if (!value) return '';
+    var d = new Date(value);
+    if (isNaN(d)) return String(value);
+    return d.toLocaleString();
+}
+
+function formatAge(value) {
+    var d = new Date(value);
+    if (isNaN(d)) return '';
+    var sec = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+    if (sec < 60) return sec + 's old';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm old';
+    if (sec < 86400) return Math.floor(sec / 3600) + 'h old';
+    return Math.floor(sec / 86400) + 'd old';
+}
+
 // --- Section collapse ---
 function toggleSection(id) {
     var el = document.getElementById(id);
@@ -54,6 +293,28 @@ function saveSectionState() {
             }
         }
     } catch (e) {}
+})();
+
+(function initBackupUI() {
+    if (!document.getElementById('backup-body')) return;
+    var toggle = document.getElementById('backup-enabled');
+    if (toggle) toggle.addEventListener('change', updateBackupEnabledHint);
+    var form = document.getElementById('backup-form');
+    if (form) {
+        form.querySelectorAll('input, select').forEach(function(el) {
+            if (el.name === 'enabled' || el.name === 'schedule_interval' || el.name.indexOf('keep_') === 0) return;
+            el.addEventListener('input', markBackupConnectionDirty);
+            el.addEventListener('change', markBackupConnectionDirty);
+        });
+    }
+    var pageData = document.getElementById('page-data');
+    if (pageData) _backupUI.stationID = pageData.dataset.stationId || '';
+    updateBackupEnabledHint();
+    renderBackupConnectionStatus();
+    renderBackupOperationStatus();
+    loadBackupStatus();
+    loadBackups();
+    setInterval(loadBackupStatus, 30000);
 })();
 
 // --- Station Configuration (unified save) ---

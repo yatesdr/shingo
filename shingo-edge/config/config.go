@@ -25,6 +25,7 @@ type Config struct {
 	Web       WebConfig       `yaml:"web"`
 	Messaging MessagingConfig `yaml:"messaging"`
 	Counter   CounterConfig   `yaml:"counter"`
+	Backup    BackupConfig    `yaml:"backup"`
 }
 
 // WarLinkConfig defines the WarLink connection.
@@ -46,12 +47,12 @@ type WebConfig struct {
 
 // MessagingConfig defines the messaging backend.
 type MessagingConfig struct {
-	Kafka              KafkaConfig   `yaml:"kafka"`
-	DispatchTopic      string        `yaml:"dispatch_topic"`
-	OrdersTopic        string        `yaml:"orders_topic"`
+	Kafka               KafkaConfig   `yaml:"kafka"`
+	DispatchTopic       string        `yaml:"dispatch_topic"`
+	OrdersTopic         string        `yaml:"orders_topic"`
 	OutboxDrainInterval time.Duration `yaml:"outbox_drain_interval"`
-	StationID          string        `yaml:"station_id"`
-	SigningKey         string        `yaml:"signing_key"` // optional HMAC-SHA256 shared secret for envelope signing
+	StationID           string        `yaml:"station_id"`
+	SigningKey          string        `yaml:"signing_key"` // optional HMAC-SHA256 shared secret for envelope signing
 }
 
 // KafkaConfig defines Kafka broker settings.
@@ -63,6 +64,28 @@ type KafkaConfig struct {
 // CounterConfig defines counter anomaly thresholds.
 type CounterConfig struct {
 	JumpThreshold int64 `yaml:"jump_threshold"`
+}
+
+// BackupConfig defines edge backup behavior and storage.
+type BackupConfig struct {
+	Enabled          bool           `yaml:"enabled" json:"enabled"`
+	ScheduleInterval time.Duration  `yaml:"schedule_interval" json:"schedule_interval"`
+	KeepHourly       int            `yaml:"keep_hourly" json:"keep_hourly"`
+	KeepDaily        int            `yaml:"keep_daily" json:"keep_daily"`
+	KeepWeekly       int            `yaml:"keep_weekly" json:"keep_weekly"`
+	KeepMonthly      int            `yaml:"keep_monthly" json:"keep_monthly"`
+	S3               BackupS3Config `yaml:"s3" json:"s3"`
+}
+
+// BackupS3Config defines an S3-compatible storage target.
+type BackupS3Config struct {
+	Endpoint              string `yaml:"endpoint" json:"endpoint"`
+	Bucket                string `yaml:"bucket" json:"bucket"`
+	Region                string `yaml:"region" json:"region"`
+	AccessKey             string `yaml:"access_key" json:"access_key"`
+	SecretKey             string `yaml:"secret_key" json:"secret_key"`
+	UsePathStyle          bool   `yaml:"use_path_style" json:"use_path_style"`
+	InsecureSkipTLSVerify bool   `yaml:"insecure_skip_tls_verify" json:"insecure_skip_tls_verify"`
 }
 
 // Defaults returns a Config with sane defaults.
@@ -85,8 +108,8 @@ func Defaults() *Config {
 			SessionSecret: generateSecret(),
 		},
 		Messaging: MessagingConfig{
-			DispatchTopic:      "shingo.dispatch",
-			OrdersTopic:        "shingo.orders",
+			DispatchTopic:       "shingo.dispatch",
+			OrdersTopic:         "shingo.orders",
 			OutboxDrainInterval: 5 * time.Second,
 			Kafka: KafkaConfig{
 				Brokers: []string{},
@@ -94,6 +117,18 @@ func Defaults() *Config {
 		},
 		Counter: CounterConfig{
 			JumpThreshold: 1000,
+		},
+		Backup: BackupConfig{
+			Enabled:          false,
+			ScheduleInterval: time.Hour,
+			KeepHourly:       48,
+			KeepDaily:        14,
+			KeepWeekly:       8,
+			KeepMonthly:      12,
+			S3: BackupS3Config{
+				Region:       "us-east-1",
+				UsePathStyle: true,
+			},
 		},
 	}
 }
@@ -161,6 +196,12 @@ func (c *Config) Lock() { c.mu.Lock() }
 
 // Unlock releases the config mutex.
 func (c *Config) Unlock() { c.mu.Unlock() }
+
+// RLock acquires the config read lock.
+func (c *Config) RLock() { c.mu.RLock() }
+
+// RUnlock releases the config read lock.
+func (c *Config) RUnlock() { c.mu.RUnlock() }
 
 // generateSecret returns a random 32-byte hex-encoded string for session signing.
 func generateSecret() string {
