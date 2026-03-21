@@ -42,16 +42,16 @@ type ReconciliationSummary struct {
 // ListOrderCompletionAnomalies surfaces high-risk drift between terminal orders and bin claim state.
 func (db *DB) ListOrderCompletionAnomalies() ([]*OrderCompletionAnomaly, error) {
 	rows, err := db.Query(`
-		SELECT o.id, b.id, o.status, b.status, 'terminal_order_still_claims_bin' AS issue
+		SELECT o.id AS order_id, b.id AS bin_id, o.status AS order_status, b.status AS bin_status, 'terminal_order_still_claims_bin' AS issue
 		FROM orders o
 		JOIN bins b ON b.claimed_by = o.id
 		WHERE o.completed_at IS NOT NULL OR o.status IN ('cancelled', 'failed')
 		UNION ALL
-		SELECT o.id, NULL::bigint, o.status, '' AS bin_status, 'completed_order_missing_bin' AS issue
+		SELECT o.id AS order_id, NULL::bigint AS bin_id, o.status AS order_status, '' AS bin_status, 'completed_order_missing_bin' AS issue
 		FROM orders o
 		WHERE o.completed_at IS NOT NULL AND o.bin_id IS NULL
 		UNION ALL
-		SELECT o.id, o.bin_id, o.status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue
+		SELECT o.id AS order_id, o.bin_id AS bin_id, o.status AS order_status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue
 		FROM orders o
 		LEFT JOIN bins b ON b.id = o.bin_id
 		WHERE o.status = 'confirmed' AND o.completed_at IS NULL
