@@ -18,11 +18,11 @@
             </select>
         </div>
         <div class="form-group">
-            <label>Payload</label>
-            <select id="mo-payload" class="form-input" onchange="autofillPayloadNodes()">
+            <label>Operator Node</label>
+            <select id="mo-node" class="form-input" onchange="autofillNodeDefaults()">
                 <option value="">-- Select --</option>
-                {{range .Slots}}
-                <option value="{{.ID}}" data-location="{{.Location}}" data-staging="{{.StagingNode}}" data-retrieve-empty="{{.RetrieveEmpty}}">{{.Description}} ({{.Location}})</option>
+                {{range .OpNodes}}
+                <option value="{{.ID}}" data-delivery="{{.DeliveryNode}}" data-staging="{{.StagingNode}}" data-outgoing="{{.OutgoingNode}}">{{.ProcessName}} / {{.StationName}} / {{.Name}}</option>
                 {{end}}
             </select>
         </div>

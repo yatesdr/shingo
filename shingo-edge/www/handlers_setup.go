@@ -15,7 +15,6 @@ func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 
 	processes, _ := db.ListProcesses()
 	styles, _ := db.ListStyles()
-	slots, _ := db.ListSlots()
 	reportingPoints, _ := db.ListReportingPoints()
 	// Build StyleMap (ID -> Name) for display
 	styleMap := make(map[int64]string)
@@ -51,7 +50,6 @@ func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 		"PLCStatuses":       plcStatuses,
 		"Processes":         processes,
 		"Styles":            styles,
-		"Slots":             slots,
 		"ReportingPoints":   reportingPoints,
 		"Config":            cfg,
 		"StyleMap":          styleMap,

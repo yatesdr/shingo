@@ -47,9 +47,9 @@
                         {{if eq .Status "pending"}}
                             <button class="btn btn-sm btn-primary" onclick="submitOrder({{.ID}})">Submit</button>
                         {{end}}
-                        {{if and .PayloadID (not (eq .Status "confirmed")) (not (eq .Status "cancelled"))}}
+                        {{if and .OpNodeID (not (eq .Status "confirmed")) (not (eq .Status "cancelled"))}}
                             {{if eq .DeliveryNode .StagingNode}}
-                                <button class="btn btn-sm" onclick="stageOrder({{.ID}}, '{{.PayloadLocation}}')">Move to LSL</button>
+                                <button class="btn btn-sm" onclick="stageOrder({{.ID}}, '{{.PickupNode}}')">Move to LSL</button>
                             {{else}}
                                 {{if .StagingNode}}
                                 <button class="btn btn-sm" onclick="stageOrder({{.ID}}, '{{.StagingNode}}')">Stage</button>

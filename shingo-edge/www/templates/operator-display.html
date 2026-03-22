@@ -2,25 +2,84 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.Screen.Name}} — Shingo Edge</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>{{.Station.Name}} - Operator Station</title>
     <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        html, body { width:100%; height:100%; overflow:hidden; background:#121212; font-family:Arial,sans-serif; }
-        .display-container { width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
-        .op-notification { position:fixed; top:20px; left:50%; transform:translateX(-50%) translateY(-60px); padding:14px 32px; border-radius:8px; font-size:18px; font-weight:bold; color:#fff; z-index:9999; transition:transform .3s ease; box-shadow:0 4px 16px rgba(0,0,0,.5); }
-        .op-notification.show { transform:translateX(-50%) translateY(0); }
-        .op-notification-success { background:#388E3C; }
-        .op-notification-error { background:#D32F2F; }
-        .op-notification-info { background:#1976D2; }
-        canvas { -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+        * { box-sizing:border-box; margin:0; padding:0; }
+        html, body { width:100%; height:100%; overflow:hidden; background:#101418; font-family:Arial,sans-serif; }
+        #hmi-root { width:100%; height:100%; position:relative; }
+        #hmi-canvas { width:100%; height:100%; display:block; touch-action:manipulation; }
+        .keypad-overlay {
+            position:absolute; inset:0; background:rgba(0,0,0,0.7);
+            display:none; align-items:center; justify-content:center;
+        }
+        .keypad {
+            width:min(92vw, 560px); background:#1b232d; border:2px solid #314153; border-radius:18px; padding:20px;
+        }
+        .keypad-display {
+            font-size:40px; color:#fff; background:#0f141a; border:1px solid #314153;
+            padding:18px; text-align:right; border-radius:12px; margin-bottom:14px;
+        }
+        .keypad-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+        .keypad-grid button, .keypad-actions button {
+            border:none; border-radius:12px; padding:18px 0; font-size:28px; font-weight:bold;
+        }
+        .keypad-grid button { background:#2d3b4a; color:#fff; }
+        .keypad-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:12px; }
+        .keypad-cancel { background:#5d2d2d; color:#fff; }
+        .keypad-clear { background:#574820; color:#fff; }
+        .keypad-ok { background:#1f6840; color:#fff; }
+        .style-overlay {
+            position:absolute; inset:0; background:rgba(0,0,0,0.7);
+            display:none; align-items:center; justify-content:center;
+        }
+        .style-picker {
+            width:min(92vw, 720px); background:#1b232d; border:2px solid #314153; border-radius:18px; padding:20px;
+        }
+        .style-picker h2 { color:#fff; margin-bottom:12px; font-size:28px; }
+        .style-picker-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; }
+        .style-picker-grid button, .style-picker-close {
+            border:none; border-radius:12px; padding:16px 14px; font-size:22px; font-weight:bold;
+        }
+        .style-picker-grid button { background:#2d3b4a; color:#fff; text-align:left; }
+        .style-picker-close { margin-top:14px; width:100%; background:#5d2d2d; color:#fff; }
     </style>
 </head>
 <body>
-    <div class="display-container"><canvas id="display-canvas" width="1920" height="1080"></canvas></div>
-    <script type="module">
-        import { initDisplay } from '/static/operator-canvas/display.js';
-        initDisplay(document.getElementById('display-canvas'), {{.Screen | json}});
-    </script>
+    <div id="hmi-root" data-station-id="{{.Station.ID}}">
+        <canvas id="hmi-canvas" width="1280" height="800"></canvas>
+        <div class="keypad-overlay" id="keypad-overlay">
+            <div class="keypad">
+                <div class="keypad-display" id="keypad-display">0</div>
+                <div class="keypad-grid">
+                    <button onclick="window.OperatorStationHMI.pressKey('1')">1</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('2')">2</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('3')">3</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('4')">4</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('5')">5</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('6')">6</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('7')">7</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('8')">8</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('9')">9</button>
+                    <button onclick="window.OperatorStationHMI.backspace()">⌫</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('0')">0</button>
+                    <button onclick="window.OperatorStationHMI.pressKey('00')">00</button>
+                </div>
+                <div class="keypad-actions">
+                    <button class="keypad-cancel" onclick="window.OperatorStationHMI.cancelKeypad()">Cancel</button>
+                    <button class="keypad-clear" onclick="window.OperatorStationHMI.clearKeypad()">Clear</button>
+                    <button class="keypad-ok" onclick="window.OperatorStationHMI.submitKeypad()">OK</button>
+                </div>
+            </div>
+        </div>
+        <div class="style-overlay" id="style-overlay">
+            <div class="style-picker">
+                <h2>Select Target Style</h2>
+                <div class="style-picker-grid" id="style-picker-grid"></div>
+                <button class="style-picker-close" onclick="window.OperatorStationHMI.closeStylePicker()">Cancel</button>
+            </div>
+        </div>
+    </div>
+    <script type="module" src="/static/operator-station/hmi.js"></script>
 </body>
 </html>

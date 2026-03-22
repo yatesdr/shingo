@@ -146,14 +146,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		var sseEvt SSEEvent
 
 		switch evt.Type {
-		case engine.EventSlotUpdated:
-			if p, ok := evt.Payload.(engine.SlotUpdatedEvent); ok {
-				sseEvt = SSEEvent{Type: "payload-update", Data: p}
-			}
-		case engine.EventSlotReorder:
-			if p, ok := evt.Payload.(engine.SlotReorderEvent); ok {
-				sseEvt = SSEEvent{Type: "payload-reorder", Data: p}
-			}
 		case engine.EventOrderCreated:
 			if p, ok := evt.Payload.(engine.OrderCreatedEvent); ok {
 				sseEvt = SSEEvent{Type: "order-update", Data: p}
@@ -174,8 +166,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.CounterAnomalyEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-anomaly", Data: p}
 			}
-		case engine.EventChangeoverStarted, engine.EventChangeoverStateChanged, engine.EventChangeoverCompleted, engine.EventChangeoverCancelled:
-			sseEvt = SSEEvent{Type: "changeover-update", Data: evt.Payload}
 		case engine.EventCounterRead:
 			if p, ok := evt.Payload.(engine.CounterReadEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-read", Data: p}
@@ -207,10 +197,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		case engine.EventCounterReadError:
 			if p, ok := evt.Payload.(engine.CounterReadErrorEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-read-error", Data: p}
-			}
-		case engine.EventSlotEmpty:
-			if p, ok := evt.Payload.(engine.SlotEmptyEvent); ok {
-				sseEvt = SSEEvent{Type: "payload-empty", Data: p}
 			}
 		case engine.EventOrderFailed:
 			if p, ok := evt.Payload.(engine.OrderFailedEvent); ok {

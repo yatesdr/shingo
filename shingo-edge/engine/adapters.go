@@ -68,21 +68,21 @@ type orderEmitter struct {
 	bus *EventBus
 }
 
-func (e *orderEmitter) EmitOrderCreated(orderID int64, orderUUID, orderType string, payloadID *int64) {
+func (e *orderEmitter) EmitOrderCreated(orderID int64, orderUUID, orderType string, payloadID, opNodeID *int64) {
 	e.bus.Emit(Event{Type: EventOrderCreated, Payload: OrderCreatedEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, PayloadID: payloadID,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, OpNodeID: opNodeID,
 	}})
 }
 
-func (e *orderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string, payloadID *int64) {
+func (e *orderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string, payloadID, opNodeID *int64) {
 	e.bus.Emit(Event{Type: EventOrderStatusChanged, Payload: OrderStatusChangedEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, OldStatus: oldStatus, NewStatus: newStatus, ETA: eta, PayloadID: payloadID,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, OldStatus: oldStatus, NewStatus: newStatus, ETA: eta, OpNodeID: opNodeID,
 	}})
 }
 
-func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType string, payloadID *int64) {
+func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType string, payloadID, opNodeID *int64) {
 	e.bus.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, PayloadID: payloadID,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, OpNodeID: opNodeID,
 	}})
 }
 
@@ -92,31 +92,3 @@ func (e *orderEmitter) EmitOrderFailed(orderID int64, orderUUID, orderType, reas
 	}})
 }
 
-// changeoverEmitter adapts the engine's EventBus to the changeover.EventEmitter interface.
-type changeoverEmitter struct {
-	bus *EventBus
-}
-
-func (e *changeoverEmitter) EmitChangeoverStarted(lineID int64, fromJobStyle, toJobStyle string) {
-	e.bus.Emit(Event{Type: EventChangeoverStarted, Payload: ChangeoverStartedEvent{
-		LineID: lineID, FromJobStyle: fromJobStyle, ToJobStyle: toJobStyle,
-	}})
-}
-
-func (e *changeoverEmitter) EmitChangeoverStateChanged(lineID int64, fromJobStyle, toJobStyle, oldState, newState string) {
-	e.bus.Emit(Event{Type: EventChangeoverStateChanged, Payload: ChangeoverStateChangedEvent{
-		LineID: lineID, FromJobStyle: fromJobStyle, ToJobStyle: toJobStyle, OldState: oldState, NewState: newState,
-	}})
-}
-
-func (e *changeoverEmitter) EmitChangeoverCompleted(lineID int64, fromJobStyle, toJobStyle string) {
-	e.bus.Emit(Event{Type: EventChangeoverCompleted, Payload: ChangeoverCompletedEvent{
-		LineID: lineID, FromJobStyle: fromJobStyle, ToJobStyle: toJobStyle,
-	}})
-}
-
-func (e *changeoverEmitter) EmitChangeoverCancelled(lineID int64, fromJobStyle, toJobStyle, operator string) {
-	e.bus.Emit(Event{Type: EventChangeoverCancelled, Payload: ChangeoverCancelledEvent{
-		LineID: lineID, FromJobStyle: fromJobStyle, ToJobStyle: toJobStyle, Operator: operator,
-	}})
-}

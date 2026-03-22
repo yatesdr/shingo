@@ -1,8 +1,8 @@
 {{template "header" .}}
 
-<div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap">
+<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;flex-wrap:wrap">
     {{if .Processes}}
-    <select class="form-input" style="width:14rem" onchange="if(this.value)window.location='?process='+this.value">
+    <select class="form-input" style="width:16rem" onchange="if(this.value)window.location='?process='+this.value">
         {{range .Processes}}
         <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
@@ -12,81 +12,79 @@
 
 {{if .ActiveProcessID}}
 <div class="card">
-    <div class="card-body">
-        {{if .Changeover.Active}}
-        <!-- Active changeover -->
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem">
-            <div>
-                <span style="font-size:0.85rem;color:var(--text-muted)">Changing from</span>
-                <strong>{{.Changeover.FromJobStyle}}</strong>
-                <span style="font-size:0.85rem;color:var(--text-muted)">to</span>
-                <strong>{{.Changeover.ToJobStyle}}</strong>
-            </div>
-            <button class="btn btn-sm btn-danger" onclick="cancelChangeover()">Cancel Changeover</button>
+    <div class="card-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
+        <div>
+            <strong>Process Changeover</strong>
+            <div style="color:var(--text-muted);font-size:0.9rem">Current style: {{if .CurrentStyle}}{{.CurrentStyle}}{{else}}None{{end}}</div>
         </div>
-
-        <div class="co-flow" data-state-index="{{.Changeover.StateIndex}}">
-            <button class="co-step" onclick="advanceChangeover()">Move to Staging</button>
-            <span class="co-arrow">&rarr;</span>
-            <button class="co-step" onclick="advanceChangeover()">Finalize Counts</button>
-            <span class="co-arrow">&rarr;</span>
-            <button class="co-step" onclick="advanceChangeover()">Move to Line</button>
-            <span class="co-arrow">&rarr;</span>
-            <button class="co-step" onclick="advanceChangeover()">Auto Run</button>
-        </div>
-
+        {{if .ActiveChangeover}}
+        <button class="btn btn-danger btn-sm" onclick="cancelProcessChangeover()">Cancel Changeover</button>
         {{else}}
-        <!-- Start changeover -->
-        <div style="display:flex;align-items:flex-end;gap:1rem;flex-wrap:wrap">
-            <div class="form-group" style="margin-bottom:0">
-                <label>From</label>
-                <input type="text" id="co-from" class="form-input" value="{{.ActiveStyle}}" readonly style="background:var(--bg-muted);width:14rem">
-            </div>
-            <div class="form-group" style="margin-bottom:0">
-                <label>To</label>
-                <select id="co-to" class="form-input" style="width:14rem">
+        <div style="display:flex;align-items:flex-end;gap:0.75rem">
+            <div class="form-group" style="margin:0">
+                <label>Target Style</label>
+                <select id="co-to-style" class="form-input">
                     <option value="">-- Select --</option>
-                    {{range .Styles}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+                    {{range .Styles}}
+                    <option value="{{.ID}}">{{.Name}}</option>
+                    {{end}}
                 </select>
             </div>
-            <button class="btn btn-primary" id="co-start-btn" onclick="startChangeover()" disabled>Start Changeover</button>
+            <button class="btn btn-primary" onclick="startProcessChangeover()">Start</button>
         </div>
-
-        <div class="co-flow co-flow-idle" style="margin-top:1.5rem">
-            <button class="co-step" disabled>Move to Staging</button>
-            <span class="co-arrow">&rarr;</span>
-            <button class="co-step" disabled>Finalize Counts</button>
-            <span class="co-arrow">&rarr;</span>
-            <button class="co-step" disabled>Move to Line</button>
-            <span class="co-arrow">&rarr;</span>
-            <button class="co-step" disabled>Auto Run</button>
+        {{end}}
+    </div>
+    <div class="card-body">
+        {{if .ActiveChangeover}}
+        <div style="margin-bottom:1rem">
+            <div><strong>{{.ActiveChangeover.FromStyleName}}</strong> -> <strong>{{.ActiveChangeover.ToStyleName}}</strong></div>
+            <div style="color:var(--text-muted);font-size:0.9rem">State: {{.ActiveChangeover.State}} | Phase: <strong>{{.ActiveChangeover.Phase}}</strong></div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
+                <button class="btn btn-sm" onclick="setChangeoverPhase('runout')">Runout</button>
+                <button class="btn btn-sm" onclick="setChangeoverPhase('tool_change')">Tool Change</button>
+                <button class="btn btn-sm" onclick="setChangeoverPhase('release')">Release</button>
+                <button class="btn btn-sm" onclick="setChangeoverPhase('verify')">Verify</button>
+            </div>
         </div>
+        {{else}}
+        <p style="color:var(--text-muted)">No active process changeover.</p>
         {{end}}
     </div>
 </div>
 
-<!-- Status Log -->
-{{if .ChangeoverLog}}
+{{if .StationTasks}}
+{{range .StationTasks}}
 <div class="card" style="margin-top:1rem">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
+        <div>
+            <strong>{{.StationName}}</strong>
+            <span style="margin-left:0.5rem" class="status-badge">{{.State}}</span>
+            <span style="margin-left:0.5rem;color:var(--text-muted)">Phase: {{.CurrentPhase}}</span>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="switchStation({{.OperatorStationID}})">Complete Station</button>
+    </div>
     <div class="card-body">
         <table class="table">
             <thead>
                 <tr>
-                    <th>Time</th>
-                    <th>From</th>
-                    <th>To</th>
+                    <th>Node</th>
                     <th>State</th>
-                    <th>Detail</th>
+                    <th>Release Required</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
-                {{range .ChangeoverLog}}
+                {{range index $.NodeTaskMap .ID}}
                 <tr>
-                    <td style="white-space:nowrap;font-size:0.8rem">{{formatTime .CreatedAt}}</td>
-                    <td>{{.FromJobStyle}}</td>
-                    <td>{{.ToJobStyle}}</td>
+                    <td>{{.NodeName}}</td>
                     <td><span class="status-badge">{{.State}}</span></td>
-                    <td style="font-size:0.85rem;color:var(--text-muted)">{{if .Detail}}{{.Detail}}{{else}}--{{end}}</td>
+                    <td>{{if .OldMaterialReleaseRequired}}Yes{{else}}No{{end}}</td>
+                    <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
+                        <button class="btn btn-sm" onclick="stageNode({{.OpNodeID}})">Stage</button>
+                        <button class="btn btn-sm" onclick="emptyNode({{.OpNodeID}})">Empty</button>
+                        <button class="btn btn-sm" onclick="releaseNode({{.OpNodeID}})">Release</button>
+                        <button class="btn btn-sm" onclick="switchNode({{.OpNodeID}})">Force Switch</button>
+                    </td>
                 </tr>
                 {{end}}
             </tbody>
@@ -94,59 +92,13 @@
     </div>
 </div>
 {{end}}
-
-{{else}}
-<div class="card">
-    <div class="card-body">
-        <p class="empty-cell">No processes configured</p>
-    </div>
-</div>
 {{end}}
 
-<style>
-.co-flow {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-}
-.co-arrow {
-    color: var(--text-muted);
-    font-size: 1.1rem;
-    user-select: none;
-}
-.co-step {
-    padding: 0.5rem 1.25rem;
-    border: 2px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    font-weight: 500;
-    cursor: default;
-    transition: all 0.15s;
-}
-.co-step.co-done {
-    border-color: var(--success);
-    background: var(--success);
-    color: #fff;
-}
-.co-step.co-active {
-    border-color: var(--primary);
-    background: var(--primary);
-    color: #fff;
-    cursor: pointer;
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent);
-}
-.co-step.co-active:hover {
-    filter: brightness(1.1);
-}
-.co-flow-idle .co-step {
-    opacity: 0.5;
-}
-</style>
+{{else}}
+<div class="card"><div class="card-body"><p class="empty-cell">No processes configured</p></div></div>
+{{end}}
 
-<div id="page-data" data-active-line-id="{{.ActiveProcessID}}"></div>
+<div id="page-data" data-process-id="{{.ActiveProcessID}}"></div>
 <script src="/static/js/pages/changeover.js"></script>
 
 {{template "footer" .}}

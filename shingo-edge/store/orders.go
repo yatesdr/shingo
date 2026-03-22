@@ -12,7 +12,7 @@ type Order struct {
 	UUID           string    `json:"uuid"`
 	OrderType      string    `json:"order_type"`
 	Status         string    `json:"status"`
-	PayloadID      *int64    `json:"payload_id"`
+	OpNodeID       *int64    `json:"op_node_id,omitempty"`
 	RetrieveEmpty  bool      `json:"retrieve_empty"`
 	Quantity       int64     `json:"quantity"`
 	DeliveryNode   string    `json:"delivery_node"`
@@ -31,9 +31,10 @@ type Order struct {
 
 	// Joined fields
 	PayloadDesc     string `json:"payload_desc"`
-	PayloadLocation string `json:"payload_location"`
-	PayloadCode   string `json:"payload_code"`
+	PayloadCode     string `json:"payload_code"`
 	LineName        string `json:"line_name"`
+	OpNodeName      string `json:"op_node_name"`
+	StationName     string `json:"station_name"`
 }
 
 // OrderHistory records a status transition.
@@ -46,16 +47,21 @@ type OrderHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.payload_id, o.retrieve_empty, o.quantity,
+const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.op_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.pickup_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.created_at, o.updated_at,
-	COALESCE(p.description, ''), COALESCE(p.location, ''), COALESCE(p.payload_code, ''), COALESCE(pl.name, '')`
+	COALESCE(CASE WHEN sa.payload_description != '' THEN sa.payload_description ELSE aa.payload_description END, ''),
+	COALESCE(CASE WHEN sa.payload_code != '' THEN sa.payload_code ELSE aa.payload_code END, ''),
+	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
 
 const orderJoin = `FROM orders o
-	LEFT JOIN material_slots p ON p.id = o.payload_id
-	LEFT JOIN styles js ON js.id = p.job_style_id
-	LEFT JOIN processes pl ON pl.id = js.line_id`
+	LEFT JOIN op_station_nodes n ON n.id = o.op_node_id
+	LEFT JOIN operator_stations os ON os.id = n.operator_station_id
+	LEFT JOIN processes pl ON pl.id = os.process_id
+	LEFT JOIN op_node_runtime_states rs ON rs.op_node_id = n.id
+	LEFT JOIN op_node_style_assignments aa ON aa.id = rs.active_assignment_id
+	LEFT JOIN op_node_style_assignments sa ON sa.id = rs.staged_assignment_id`
 
 func (db *DB) ListOrders() ([]Order, error) {
 	rows, err := db.Query(`SELECT ` + orderSelectCols + ` ` + orderJoin + ` ORDER BY o.created_at DESC`)
@@ -104,11 +110,11 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var o Order
 		var stagedExpireAt sql.NullString
 		var createdAt, updatedAt string
-		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.PayloadID, &o.RetrieveEmpty, &o.Quantity,
+		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.OpNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
-			&o.PayloadDesc, &o.PayloadLocation, &o.PayloadCode, &o.LineName); err != nil {
+			&o.PayloadDesc, &o.PayloadCode, &o.LineName, &o.OpNodeName, &o.StationName); err != nil {
 			return nil, err
 		}
 		if stagedExpireAt.Valid {
@@ -125,11 +131,11 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error {
 	var stagedExpireAt sql.NullString
 	var createdAt, updatedAt string
-	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.PayloadID, &o.RetrieveEmpty, &o.Quantity,
+	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.OpNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
-		&o.PayloadDesc, &o.PayloadLocation, &o.PayloadCode, &o.LineName); err != nil {
+		&o.PayloadDesc, &o.PayloadCode, &o.LineName, &o.OpNodeName, &o.StationName); err != nil {
 		return err
 	}
 	if stagedExpireAt.Valid {
@@ -157,15 +163,20 @@ func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
 	return o, nil
 }
 
-func (db *DB) CreateOrder(uuid, orderType string, payloadID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, pickupNode, loadType string, autoConfirm bool) (int64, error) {
+func (db *DB) CreateOrder(uuid, orderType string, opNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, pickupNode, loadType string, autoConfirm bool) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO orders (uuid, order_type, payload_id, retrieve_empty, quantity, delivery_node, staging_node, pickup_node, load_type, auto_confirm)
+		INSERT INTO orders (uuid, order_type, op_node_id, retrieve_empty, quantity, delivery_node, staging_node, pickup_node, load_type, auto_confirm)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uuid, orderType, payloadID, retrieveEmpty, quantity, deliveryNode, stagingNode, pickupNode, loadType, autoConfirm)
+		uuid, orderType, opNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, pickupNode, loadType, autoConfirm)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+func (db *DB) UpdateOrderOpNode(id int64, opNodeID *int64) error {
+	_, err := db.Exec(`UPDATE orders SET op_node_id=?, updated_at=datetime('now') WHERE id=?`, opNodeID, id)
+	return err
 }
 
 func (db *DB) UpdateOrderStatus(id int64, newStatus string) error {
@@ -214,10 +225,10 @@ func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail str
 }
 
 // ListStagedOrdersByPayload returns staged orders linked to a specific payload.
-func (db *DB) ListStagedOrdersByPayload(payloadID int64) ([]Order, error) {
+func (db *DB) ListStagedOrdersByOpNode(opNodeID int64) ([]Order, error) {
 	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
-		WHERE o.payload_id = ? AND o.status = 'staged'
-		ORDER BY o.created_at`, payloadID)
+		WHERE o.op_node_id = ? AND o.status = 'staged'
+		ORDER BY o.created_at`, opNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -225,11 +236,22 @@ func (db *DB) ListStagedOrdersByPayload(payloadID int64) ([]Order, error) {
 	return scanOrders(rows)
 }
 
-// ListActiveOrdersByPayloadAndType returns non-terminal orders for a payload filtered by order type.
-func (db *DB) ListActiveOrdersByPayloadAndType(payloadID int64, orderType string) ([]Order, error) {
+// ListActiveOrdersByOpNodeAndType returns non-terminal orders for an operator node filtered by order type.
+func (db *DB) ListActiveOrdersByOpNodeAndType(opNodeID int64, orderType string) ([]Order, error) {
 	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
-		WHERE o.payload_id = ? AND o.order_type = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
-		ORDER BY o.created_at`, payloadID, orderType)
+		WHERE o.op_node_id = ? AND o.order_type = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
+		ORDER BY o.created_at`, opNodeID, orderType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+func (db *DB) ListActiveOrdersByOpNode(opNodeID int64) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
+		WHERE o.op_node_id = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
+		ORDER BY o.created_at`, opNodeID)
 	if err != nil {
 		return nil, err
 	}

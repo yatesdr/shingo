@@ -4,21 +4,18 @@ import (
 	"net/http"
 	"strconv"
 
-	"shingoedge/changeover"
 	"shingoedge/store"
 )
 
 func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
-
 	processes, _ := db.ListProcesses()
 
-	// Determine active process from query param or default to first
 	var activeProcess *store.Process
-	if lineParam := r.URL.Query().Get("process"); lineParam != "" {
-		if lineID, err := strconv.ParseInt(lineParam, 10, 64); err == nil {
+	if processParam := r.URL.Query().Get("process"); processParam != "" {
+		if processID, err := strconv.ParseInt(processParam, 10, 64); err == nil {
 			for i := range processes {
-				if processes[i].ID == lineID {
+				if processes[i].ID == processID {
 					activeProcess = &processes[i]
 					break
 				}
@@ -30,54 +27,41 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var activeProcessID int64
-	var fromJob, toJob, state string
-	var active bool
 	var styles []store.Style
-	var activeStyleName string
+	var currentStyleName string
+	var activeChangeover *store.ProcessChangeover
+	var stationTasks []store.ChangeoverStationTask
+	nodeTaskMap := map[int64][]store.ChangeoverNodeTask{}
 
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
-		m := h.engine.ChangeoverMachine(activeProcess.ID)
-		if m != nil {
-			fromJob, toJob, state, active = m.Info()
-		}
 		styles, _ = db.ListStylesByProcess(activeProcess.ID)
-
-		// Resolve active style name for the "From" field
 		if activeProcess.ActiveStyleID != nil {
-			for _, js := range styles {
-				if js.ID == *activeProcess.ActiveStyleID {
-					activeStyleName = js.Name
-					break
-				}
+			if s, err := db.GetStyle(*activeProcess.ActiveStyleID); err == nil {
+				currentStyleName = s.Name
+			}
+		}
+		activeChangeover, _ = db.GetActiveProcessChangeover(activeProcess.ID)
+		if activeChangeover != nil {
+			stationTasks, _ = db.ListChangeoverStationTasks(activeChangeover.ID)
+			for _, task := range stationTasks {
+				nodeTaskMap[task.ID], _ = db.ListChangeoverNodeTasks(task.ID)
 			}
 		}
 	}
 
-	var changeoverLog []store.ChangeoverLog
-	if activeProcessID > 0 {
-		changeoverLog, _ = db.ListCurrentChangeoverLog(activeProcessID)
-	}
-
 	anomalies, rpMap := loadAnomalyData(h)
-
 	data := map[string]interface{}{
-		"Page":              "changeover",
-		"Processes":         processes,
-		"ActiveProcessID":   activeProcessID,
-		"Styles":            styles,
-		"ActiveStyle":       activeStyleName,
-		"ChangeoverLog":     changeoverLog,
-		"Anomalies":         anomalies,
+		"Page":             "changeover",
+		"Processes":        processes,
+		"ActiveProcessID":  activeProcessID,
+		"Styles":           styles,
+		"CurrentStyle":     currentStyleName,
+		"ActiveChangeover": activeChangeover,
+		"StationTasks":     stationTasks,
+		"NodeTaskMap":      nodeTaskMap,
+		"Anomalies":        anomalies,
 		"ReportingPointMap": rpMap,
-		"Changeover": map[string]interface{}{
-			"Active":       active,
-			"FromJobStyle": fromJob,
-			"ToJobStyle":   toJob,
-			"State":        state,
-			"StateIndex":   changeover.StateIndex(state),
-		},
 	}
-
 	h.renderTemplate(w, r, "changeover.html", data)
 }

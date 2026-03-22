@@ -1,91 +1,68 @@
 {{template "header" .}}
 
-<div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap">
+<div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;flex-wrap:wrap">
     {{if .Processes}}
-    <select class="form-input" style="width:14rem" onchange="if(this.value)window.location='?process='+this.value">
+    <select class="form-input" style="width:16rem" onchange="if(this.value)window.location='?process='+this.value">
         {{range .Processes}}
         <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
     </select>
     {{end}}
     <span style="margin-left:auto;font-size:0.85rem;color:var(--text-muted)">
-        {{if .ActiveStyle}}Style: <strong>{{.ActiveStyle}}</strong>{{else}}No active style{{end}}
+        Current: <strong>{{if .CurrentStyle}}{{.CurrentStyle}}{{else}}None{{end}}</strong>
+        {{if .TargetStyle}} | Target: <strong>{{.TargetStyle}}</strong>{{end}}
     </span>
 </div>
 
-<div class="card">
+{{if .StationViews}}
+{{range .StationViews}}
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
+        <div>
+            <strong>{{.Station.Name}}</strong>
+            <span style="color:var(--text-muted);margin-left:0.5rem">{{.Station.AreaLabel}}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+            <span class="status-badge">{{.Station.HealthStatus}}</span>
+            <a class="btn btn-sm" href="/operator/station/{{.Station.ID}}" target="_blank">Open HMI</a>
+        </div>
+    </div>
     <div class="card-body">
         <table class="table">
             <thead>
                 <tr>
-                    <th>Description</th>
-                    <th>Location</th>
-                    <th>Payload</th>
-                    <th>Capacity</th>
+                    <th>Node</th>
+                    <th>Current Material</th>
+                    <th>Status</th>
                     <th>Remaining</th>
-                    <th>Remaining %</th>
-                    <th>Reorder At</th>
-                    <th>Auto-Reorder</th>
+                    <th>Manifest</th>
+                    <th>Next Style</th>
+                    <th>Active Orders</th>
                 </tr>
             </thead>
-            <tbody id="payloads-body">
-                {{range .Slots}}
-                <tr data-slot-id="{{.ID}}">
-                    <td>{{.Description}}</td>
-                    <td class="mono">{{.Location}}</td>
-                    <td>{{if .PayloadCode}}{{.PayloadCode}}{{else if .Description}}{{.Description}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
-                    <td>{{.Capacity}}</td>
-                    <td>
-                        <span class="cell-clickable slot-remaining" onclick="openPieceCount({{.ID}}, '{{.Description}}', '{{.Location}}', {{.Remaining}}, {{.Capacity}})">{{.Remaining}}</span>
-                    </td>
-                    <td>
-                        <div class="progress-bar-container">
-                            {{if gt .Capacity 0}}
-                            <div class="progress-bar {{if eq .Status "empty"}}progress-danger{{else if eq .Status "replenishing"}}progress-warning{{else}}progress-success{{end}}" style="width:{{printf "%.0f" (divPercent .Remaining .Capacity)}}%"></div>
-                            {{end}}
-                            <span class="progress-label">{{if gt .Capacity 0}}{{printf "%.0f" (divPercent .Remaining .Capacity)}}%{{else}}--{{end}}</span>
-                        </div>
-                    </td>
-                    <td>
-                        <span class="cell-clickable" onclick="editReorderPoint(this, {{.ID}}, {{.ReorderPoint}})">{{.ReorderPoint}}</span>
-                    </td>
-                    <td>
-                        <label class="toggle-switch">
-                            <input type="checkbox" {{if .AutoReorder}}checked{{end}} onchange="toggleAutoReorder({{.ID}}, this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </td>
+            <tbody>
+                {{range .Nodes}}
+                <tr>
+                    <td>{{.Node.Name}}</td>
+                    <td>{{if .Assignment}}{{if .Assignment.PayloadDescription}}{{.Assignment.PayloadDescription}}{{else}}{{.Assignment.PayloadCode}}{{end}}{{else}}<span style="color:var(--text-muted)">Unassigned</span>{{end}}</td>
+                    <td>{{if .Runtime}}<span class="status-badge">{{.Runtime.MaterialStatus}}</span>{{else}}<span style="color:var(--text-muted)">n/a</span>{{end}}</td>
+                    <td>{{if .Runtime}}{{.Runtime.RemainingUOP}}{{else}}--{{end}}</td>
+                    <td>{{if .Runtime}}{{.Runtime.ManifestStatus}}{{else}}--{{end}}</td>
+                    <td>{{if .NextStyle}}{{if .NextStyle.PayloadDescription}}{{.NextStyle.PayloadDescription}}{{else}}{{.NextStyle.PayloadCode}}{{end}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
+                    <td>{{if .Orders}}{{range .Orders}}<div><code>{{.UUID}}</code> <span class="status-badge">{{.Status}}</span></div>{{end}}{{else}}<span style="color:var(--text-muted)">None</span>{{end}}</td>
                 </tr>
-                {{else}}
-                <tr><td colspan="9" class="empty-cell">No material slots configured</td></tr>
                 {{end}}
             </tbody>
         </table>
     </div>
 </div>
-
-<!-- Piece Count Modal -->
-<div class="modal" id="piece-count" style="display:none">
-    <div class="modal-content">
-        <div class="card">
-            <div class="modal-header">Piece Count <button class="btn btn-sm" onclick="ShingoEdge.hideModal('piece-count')">&times;</button></div>
-            <div class="card-body">
-                <p><strong id="pc-desc"></strong> at <span class="mono" id="pc-loc"></span></p>
-                <div class="form-group">
-                    <label>Piece Count</label>
-                    <input type="number" id="pc-pieces" class="form-input" min="0" oninput="previewProdUnits()">
-                </div>
-                <p style="font-size:0.85rem">New Remaining: <strong id="pc-preview">--</strong></p>
-                <input type="hidden" id="pc-id">
-            </div>
-            <div class="modal-footer">
-                <button class="btn" onclick="ShingoEdge.hideModal('piece-count')">Cancel</button>
-                <button class="btn btn-primary" onclick="submitPieceCount()">Submit</button>
-            </div>
-        </div>
+{{end}}
+{{else}}
+<div class="card">
+    <div class="card-body">
+        <p class="empty-cell">No operator station material nodes are configured for this process.</p>
     </div>
 </div>
-
-<script src="/static/js/pages/material.js"></script>
+{{end}}
 
 {{template "footer" .}}

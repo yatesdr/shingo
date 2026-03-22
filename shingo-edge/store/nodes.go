@@ -42,9 +42,12 @@ func (db *DB) ListNodesByProcess(lineID int64) ([]Node, error) {
 	return nodes, rows.Err()
 }
 
-// ListKnownNodes returns distinct location and staging_node values from material_slots.
+// ListKnownNodes returns distinct process nodes referenced by operator station nodes.
 func (db *DB) ListKnownNodes() ([]string, error) {
-	rows, err := db.Query(`SELECT DISTINCT location FROM material_slots UNION SELECT DISTINCT staging_node FROM material_slots WHERE staging_node != '' ORDER BY 1`)
+	rows, err := db.Query(`SELECT DISTINCT delivery_node FROM op_station_nodes WHERE delivery_node != ''
+		UNION SELECT DISTINCT staging_node FROM op_station_nodes WHERE staging_node != ''
+		UNION SELECT DISTINCT outgoing_node FROM op_station_nodes WHERE outgoing_node != ''
+		ORDER BY 1`)
 	if err != nil {
 		return nil, err
 	}

@@ -16,22 +16,11 @@ const (
 	EventCounterAnomaly
 	EventCounterReadError
 
-	// Slot events
-	EventSlotUpdated
-	EventSlotReorder
-	EventSlotEmpty
-
 	// Order events
 	EventOrderCreated
 	EventOrderStatusChanged
 	EventOrderCompleted
 	EventOrderFailed
-
-	// Changeover events
-	EventChangeoverStarted
-	EventChangeoverStateChanged
-	EventChangeoverCompleted
-	EventChangeoverCancelled
 
 	// PLC events
 	EventPLCConnected
@@ -83,32 +72,12 @@ type CounterAnomalyEvent struct {
 	AnomalyType      string // "reset" or "jump"
 }
 
-// SlotUpdatedEvent is emitted when a slot's remaining count changes.
-type SlotUpdatedEvent struct {
-	PayloadID    int64  `json:"payload_id"`
-	LineID       int64  `json:"line_id"`
-	JobStyleID   int64  `json:"job_style_id"`
-	Location     string `json:"location"`
-	OldRemaining int    `json:"old_remaining"`
-	NewRemaining int    `json:"new_remaining"`
-	Status       string `json:"status"`
-}
-
-// SlotReorderEvent is emitted when a slot crosses its reorder point.
-// The handler loads the full slot from DB to determine cycle mode, role, etc.
-type SlotReorderEvent struct {
-	PayloadID  int64  `json:"payload_id"`
-	LineID     int64  `json:"line_id"`
-	JobStyleID int64  `json:"job_style_id"`
-	Location   string `json:"location"`
-}
-
 // OrderCreatedEvent is emitted when a new order is placed.
 type OrderCreatedEvent struct {
 	OrderID   int64  `json:"order_id"`
 	OrderUUID string `json:"order_uuid"`
 	OrderType string `json:"order_type"`
-	PayloadID *int64 `json:"payload_id,omitempty"`
+	OpNodeID  *int64 `json:"op_node_id,omitempty"`
 }
 
 // OrderStatusChangedEvent is emitted on order state transitions.
@@ -119,7 +88,7 @@ type OrderStatusChangedEvent struct {
 	OldStatus string `json:"old_status"`
 	NewStatus string `json:"new_status"`
 	ETA       string `json:"eta"`
-	PayloadID *int64 `json:"payload_id,omitempty"`
+	OpNodeID  *int64 `json:"op_node_id,omitempty"`
 }
 
 // OrderCompletedEvent is emitted when an order reaches terminal state.
@@ -127,30 +96,7 @@ type OrderCompletedEvent struct {
 	OrderID   int64  `json:"order_id"`
 	OrderUUID string `json:"order_uuid"`
 	OrderType string `json:"order_type"`
-	PayloadID *int64 `json:"payload_id,omitempty"`
-}
-
-// ChangeoverStartedEvent is emitted when a changeover begins.
-type ChangeoverStartedEvent struct {
-	LineID       int64  `json:"line_id"`
-	FromJobStyle string `json:"from_job_style"`
-	ToJobStyle   string `json:"to_job_style"`
-}
-
-// ChangeoverStateChangedEvent is emitted on changeover state transitions.
-type ChangeoverStateChangedEvent struct {
-	LineID       int64  `json:"line_id"`
-	FromJobStyle string `json:"from_job_style"`
-	ToJobStyle   string `json:"to_job_style"`
-	OldState     string `json:"old_state"`
-	NewState     string `json:"new_state"`
-}
-
-// ChangeoverCompletedEvent is emitted when a changeover finishes.
-type ChangeoverCompletedEvent struct {
-	LineID       int64  `json:"line_id"`
-	FromJobStyle string `json:"from_job_style"`
-	ToJobStyle   string `json:"to_job_style"`
+	OpNodeID  *int64 `json:"op_node_id,omitempty"`
 }
 
 // PLCEvent is emitted for PLC connection state changes.
@@ -189,14 +135,6 @@ type CounterReadErrorEvent struct {
 	Error            string `json:"error"`
 }
 
-// SlotEmptyEvent is emitted when a slot's remaining count hits zero.
-type SlotEmptyEvent struct {
-	PayloadID  int64  `json:"payload_id"`
-	LineID     int64  `json:"line_id"`
-	JobStyleID int64  `json:"job_style_id"`
-	Location   string `json:"location"`
-}
-
 // OrderFailedEvent is emitted when an order transitions to failed state.
 type OrderFailedEvent struct {
 	OrderID   int64  `json:"order_id"`
@@ -205,10 +143,3 @@ type OrderFailedEvent struct {
 	Reason    string `json:"reason"`
 }
 
-// ChangeoverCancelledEvent is emitted when a changeover is cancelled (distinct from completion).
-type ChangeoverCancelledEvent struct {
-	LineID       int64  `json:"line_id"`
-	FromJobStyle string `json:"from_job_style"`
-	ToJobStyle   string `json:"to_job_style"`
-	Operator     string `json:"operator"`
-}

@@ -43,30 +43,30 @@ function updateOrderForm() {
     document.getElementById('mo-staging-group').style.display = (t === 'complex') ? '' : 'none';
     // Update labels for complex mode
     document.getElementById('mo-delivery-label').textContent = (t === 'complex') ? 'Production Node' : 'Delivery Node';
-    autofillPayloadNodes();
+    autofillNodeDefaults();
 }
 
-function autofillPayloadNodes() {
-    var sel = document.getElementById('mo-payload');
+function autofillNodeDefaults() {
+    var sel = document.getElementById('mo-node');
     var opt = sel.options[sel.selectedIndex];
     if (!opt || !opt.value) return;
     var t = document.getElementById('mo-type').value;
     if (t === 'retrieve') {
-        document.getElementById('mo-delivery').value = opt.dataset.location || '';
+        document.getElementById('mo-delivery').value = opt.dataset.delivery || '';
     } else if (t === 'move') {
         document.getElementById('mo-delivery').value = '';
-        document.getElementById('mo-pickup').value = opt.dataset.location || '';
+        document.getElementById('mo-pickup').value = opt.dataset.delivery || '';
     } else if (t === 'store') {
-        document.getElementById('mo-pickup').value = opt.dataset.location || '';
+        document.getElementById('mo-pickup').value = opt.dataset.delivery || '';
     } else if (t === 'complex') {
-        document.getElementById('mo-delivery').value = opt.dataset.location || '';
+        document.getElementById('mo-delivery').value = opt.dataset.delivery || '';
         document.getElementById('mo-staging').value = opt.dataset.staging || '';
     }
 }
 
 async function createOrder() {
     var t = document.getElementById('mo-type').value;
-    var payloadID = parseInt(document.getElementById('mo-payload').value) || 0;
+    var opNodeID = parseInt(document.getElementById('mo-node').value) || 0;
 
     if (t === 'complex') {
         var stagingNode = document.getElementById('mo-staging').value;
@@ -76,7 +76,7 @@ async function createOrder() {
             return;
         }
         var body = {
-            payload_id: payloadID || null,
+            op_node_id: opNodeID || null,
             quantity: parseInt(document.getElementById('mo-qty').value) || 0,
             steps: [
                 {action: 'pickup', node_group: stagingNode},
@@ -89,7 +89,7 @@ async function createOrder() {
         try {
             await ShingoEdge.api.post('/api/orders/complex', body);
             ShingoEdge.toast('Complex order created', 'success');
-            document.getElementById('mo-payload').selectedIndex = 0;
+            document.getElementById('mo-node').selectedIndex = 0;
             document.getElementById('mo-qty').value = '1';
             document.getElementById('mo-delivery').selectedIndex = 0;
             document.getElementById('mo-staging').selectedIndex = 0;
@@ -98,7 +98,7 @@ async function createOrder() {
     }
 
     var body = {
-        payload_id: payloadID || null,
+        op_node_id: opNodeID || null,
         quantity: parseInt(document.getElementById('mo-qty').value) || 0,
         delivery_node: document.getElementById('mo-delivery').value,
         pickup_node: document.getElementById('mo-pickup').value
@@ -107,7 +107,7 @@ async function createOrder() {
         await ShingoEdge.api.post('/api/orders/' + t, body);
         ShingoEdge.toast('Order created', 'success');
         // Reset form
-        document.getElementById('mo-payload').selectedIndex = 0;
+        document.getElementById('mo-node').selectedIndex = 0;
         document.getElementById('mo-qty').value = '1';
         document.getElementById('mo-delivery').selectedIndex = 0;
         document.getElementById('mo-pickup').selectedIndex = 0;

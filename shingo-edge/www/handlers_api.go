@@ -6,8 +6,6 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-
-	"shingoedge/store"
 )
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -24,18 +22,4 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func parseID(r *http.Request, param string) (int64, error) {
 	s := chi.URLParam(r, param)
 	return strconv.ParseInt(s, 10, 64)
-}
-
-// resolveSlot loads a material slot by ID and returns a pointer for order linking.
-// Returns (nil, nil) if id is zero. Returns (ptr, nil) if the slot can't be found.
-func (h *Handlers) resolveSlot(id int64) (slotPtr *int64, p *store.MaterialSlot) {
-	if id <= 0 {
-		return nil, nil
-	}
-	slotPtr = &id
-	slot, err := h.engine.DB().GetSlot(id)
-	if err != nil {
-		return slotPtr, nil
-	}
-	return slotPtr, slot
 }

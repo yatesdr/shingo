@@ -1,7 +1,6 @@
 package www
 
 import (
-	"shingoedge/changeover"
 	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/orders"
@@ -22,8 +21,6 @@ type EngineAccess interface {
 	OrderManager() *orders.Manager
 	Reconciliation() *engine.ReconciliationService
 	CoreSync() *engine.CoreSyncService
-	ChangeoverMachine(lineID int64) *changeover.Machine
-	ChangeoverMachines() map[int64]*changeover.Machine
 	ApplyWarLinkConfig()
 	ReconnectKafka() error
 	SendEnvelope(env *protocol.Envelope) error
@@ -32,7 +29,18 @@ type EngineAccess interface {
 	RequestCatalogSync()
 	RequestOrderStatusSync() error
 	StartupReconcile() error
-	RequestOrders(payloadID int64, quantity int64) (*engine.OrderRequestResult, error)
+	RequestOpNodeMaterial(opNodeID int64, quantity int64) (*engine.OpNodeOrderResult, error)
+	ReleaseOpNodeEmpty(opNodeID int64) (*store.Order, error)
+	ReleaseOpNodePartial(opNodeID int64, qty int64) (*store.Order, error)
+	ConfirmOpNodeManifest(opNodeID int64) error
+	StartProcessChangeoverV2(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error)
+	AdvanceProcessChangeoverPhase(processID int64, phase string) error
+	CancelProcessChangeoverV2(processID int64) error
+	StageOpNodeChangeoverMaterial(processID, opNodeID int64) (*store.Order, error)
+	EmptyOpNodeForToolChange(processID, opNodeID int64, partialQty int64) (*store.Order, error)
+	ReleaseOpNodeIntoProduction(processID, opNodeID int64) (*store.Order, error)
+	SwitchOpNodeToTarget(processID, opNodeID int64) error
+	SwitchOperatorStationToTarget(processID, stationID int64) error
 
 	// WarLink tag management
 	EnsureTagPublished(rpID int64, plcName, tagName string)

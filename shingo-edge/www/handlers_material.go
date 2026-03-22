@@ -9,15 +9,13 @@ import (
 
 func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
-
 	processes, _ := db.ListProcesses()
 
-	// Determine active process from query param or default to first
 	var activeProcess *store.Process
-	if lineParam := r.URL.Query().Get("process"); lineParam != "" {
-		if lineID, err := strconv.ParseInt(lineParam, 10, 64); err == nil {
+	if processParam := r.URL.Query().Get("process"); processParam != "" {
+		if processID, err := strconv.ParseInt(processParam, 10, 64); err == nil {
 			for i := range processes {
-				if processes[i].ID == lineID {
+				if processes[i].ID == processID {
 					activeProcess = &processes[i]
 					break
 				}
@@ -29,44 +27,39 @@ func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var activeProcessID int64
-	var activeStyleName string
-	var slots []store.MaterialSlot
+	var stationViews []store.OperatorStationView
+	var currentStyleName, targetStyleName string
 
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
+		stations, _ := db.ListOperatorStationsByProcess(activeProcess.ID)
+		for _, station := range stations {
+			if view, err := db.BuildOperatorStationView(station.ID); err == nil {
+				stationViews = append(stationViews, *view)
+			}
+		}
 		if activeProcess.ActiveStyleID != nil {
-			js, err := db.GetStyle(*activeProcess.ActiveStyleID)
-			if err == nil {
-				activeStyleName = js.Name
-				slots, _ = db.ListSlotsByStyle(js.ID)
+			if style, err := db.GetStyle(*activeProcess.ActiveStyleID); err == nil {
+				currentStyleName = style.Name
+			}
+		}
+		if activeProcess.TargetStyleID != nil {
+			if style, err := db.GetStyle(*activeProcess.TargetStyleID); err == nil {
+				targetStyleName = style.Name
 			}
 		}
 	}
 
-	if slots == nil && activeProcess != nil {
-		// No active style set — show all slots for this process's styles
-		styles, _ := db.ListStylesByProcess(activeProcessID)
-		for _, s := range styles {
-			sp, _ := db.ListSlotsByStyle(s.ID)
-			slots = append(slots, sp...)
-		}
-	}
-
-	if slots == nil {
-		slots, _ = db.ListSlots()
-	}
-
 	anomalies, rpMap := loadAnomalyData(h)
-
 	data := map[string]interface{}{
-		"Page":              "material",
-		"Processes":         processes,
-		"ActiveProcessID":   activeProcessID,
-		"Slots":             slots,
-		"ActiveStyle":       activeStyleName,
-		"Anomalies":         anomalies,
+		"Page":            "material",
+		"Processes":       processes,
+		"ActiveProcessID": activeProcessID,
+		"StationViews":    stationViews,
+		"CurrentStyle":    currentStyleName,
+		"TargetStyle":     targetStyleName,
+		"Anomalies":       anomalies,
 		"ReportingPointMap": rpMap,
 	}
-
 	h.renderTemplate(w, r, "material.html", data)
 }

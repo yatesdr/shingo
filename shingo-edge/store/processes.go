@@ -4,15 +4,16 @@ import "time"
 
 // Process represents a production process (physical production area).
 type Process struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	ActiveStyleID  *int64    `json:"active_style_id"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description"`
+	ActiveStyleID *int64    `json:"active_style_id"`
+	TargetStyleID *int64    `json:"target_style_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func (db *DB) ListProcesses() ([]Process, error) {
-	rows, err := db.Query(`SELECT id, name, description, active_job_style_id, created_at FROM processes ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, description, active_job_style_id, target_job_style_id, created_at FROM processes ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -21,7 +22,7 @@ func (db *DB) ListProcesses() ([]Process, error) {
 	for rows.Next() {
 		var l Process
 		var createdAt string
-		if err := rows.Scan(&l.ID, &l.Name, &l.Description, &l.ActiveStyleID, &createdAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.Name, &l.Description, &l.ActiveStyleID, &l.TargetStyleID, &createdAt); err != nil {
 			return nil, err
 		}
 		l.CreatedAt = scanTime(createdAt)
@@ -33,8 +34,8 @@ func (db *DB) ListProcesses() ([]Process, error) {
 func (db *DB) GetProcess(id int64) (*Process, error) {
 	l := &Process{}
 	var createdAt string
-	err := db.QueryRow(`SELECT id, name, description, active_job_style_id, created_at FROM processes WHERE id = ?`, id).
-		Scan(&l.ID, &l.Name, &l.Description, &l.ActiveStyleID, &createdAt)
+	err := db.QueryRow(`SELECT id, name, description, active_job_style_id, target_job_style_id, created_at FROM processes WHERE id = ?`, id).
+		Scan(&l.ID, &l.Name, &l.Description, &l.ActiveStyleID, &l.TargetStyleID, &createdAt)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +63,11 @@ func (db *DB) DeleteProcess(id int64) error {
 
 func (db *DB) SetActiveStyle(lineID int64, styleID *int64) error {
 	_, err := db.Exec(`UPDATE processes SET active_job_style_id=? WHERE id=?`, styleID, lineID)
+	return err
+}
+
+func (db *DB) SetTargetStyle(processID int64, styleID *int64) error {
+	_, err := db.Exec(`UPDATE processes SET target_job_style_id=? WHERE id=?`, styleID, processID)
 	return err
 }
 

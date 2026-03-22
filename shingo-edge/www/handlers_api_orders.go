@@ -11,7 +11,7 @@ import (
 
 func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PayloadID     int64  `json:"payload_id"`
+		OpNodeID      int64  `json:"op_node_id"`
 		PayloadCode   string `json:"payload_code"`
 		RetrieveEmpty bool   `json:"retrieve_empty"`
 		Quantity      int64  `json:"quantity"`
@@ -25,18 +25,19 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	payloadID, p := h.resolveSlot(req.PayloadID)
-	if p != nil {
+	var opNodeID *int64
+	if req.OpNodeID > 0 {
+		opNodeID = &req.OpNodeID
+	}
+	if opNodeID != nil {
+		if node, err := h.engine.DB().GetOpStationNode(*opNodeID); err == nil {
 		if req.DeliveryNode == "" {
-			req.DeliveryNode = p.Location
+			req.DeliveryNode = node.DeliveryNode
 		}
 		if req.StagingNode == "" {
-			req.StagingNode = p.StagingNode
+			req.StagingNode = node.StagingNode
 		}
-		if req.PayloadCode == "" {
-			req.PayloadCode = p.PayloadCode
 		}
-		req.RetrieveEmpty = p.Role == "produce"
 	}
 
 	// Batch mode: create multiple empty-bin orders (max 5)
@@ -58,7 +59,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 	}
 
 	order, err := h.engine.OrderManager().CreateRetrieveOrder(
-		payloadID, req.RetrieveEmpty,
+		opNodeID, req.RetrieveEmpty,
 		req.Quantity, req.DeliveryNode, req.StagingNode, req.LoadType, req.PayloadCode,
 		h.engine.AppConfig().Web.AutoConfirm,
 	)
@@ -98,7 +99,7 @@ func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliv
 
 func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PayloadID  int64  `json:"payload_id"`
+		OpNodeID   int64  `json:"op_node_id"`
 		Quantity   int64  `json:"quantity"`
 		PickupNode string `json:"pickup_node"`
 	}
@@ -107,13 +108,16 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payloadID, p := h.resolveSlot(req.PayloadID)
-	if p != nil && req.PickupNode == "" {
-		req.PickupNode = p.Location
+	var opNodeID *int64
+	if req.OpNodeID > 0 {
+		opNodeID = &req.OpNodeID
+		if node, err := h.engine.DB().GetOpStationNode(*opNodeID); err == nil && req.PickupNode == "" {
+			req.PickupNode = node.DeliveryNode
+		}
 	}
 
 	order, err := h.engine.OrderManager().CreateStoreOrder(
-		payloadID, req.Quantity, req.PickupNode,
+		opNodeID, req.Quantity, req.PickupNode,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -131,7 +135,7 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PayloadID    int64  `json:"payload_id"`
+		OpNodeID     int64  `json:"op_node_id"`
 		Quantity     int64  `json:"quantity"`
 		PickupNode   string `json:"pickup_node"`
 		DeliveryNode string `json:"delivery_node"`
@@ -141,13 +145,16 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payloadID, p := h.resolveSlot(req.PayloadID)
-	if p != nil && req.PickupNode == "" {
-		req.PickupNode = p.Location
+	var opNodeID *int64
+	if req.OpNodeID > 0 {
+		opNodeID = &req.OpNodeID
+		if node, err := h.engine.DB().GetOpStationNode(*opNodeID); err == nil && req.PickupNode == "" {
+			req.PickupNode = node.DeliveryNode
+		}
 	}
 
 	order, err := h.engine.OrderManager().CreateMoveOrder(
-		payloadID, req.Quantity, req.PickupNode, req.DeliveryNode,
+		opNodeID, req.Quantity, req.PickupNode, req.DeliveryNode,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -158,7 +165,7 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PayloadID int64                      `json:"payload_id"`
+		OpNodeID  int64                      `json:"op_node_id"`
 		Quantity  int64                      `json:"quantity"`
 		Steps     []protocol.ComplexOrderStep `json:"steps"`
 	}
@@ -171,13 +178,13 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var payloadID *int64
-	if req.PayloadID > 0 {
-		payloadID = &req.PayloadID
+	var opNodeID *int64
+	if req.OpNodeID > 0 {
+		opNodeID = &req.OpNodeID
 	}
 
 	order, err := h.engine.OrderManager().CreateComplexOrder(
-		payloadID, req.Quantity, "", req.Steps,
+		opNodeID, req.Quantity, "", req.Steps,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -188,7 +195,7 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 
 func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PayloadID   int64                        `json:"payload_id"`
+		OpNodeID    int64                        `json:"op_node_id"`
 		PayloadCode string                       `json:"payload_code"`
 		BinLabel    string                       `json:"bin_label"`
 		PickupNode  string                       `json:"pickup_node"`
@@ -208,13 +215,16 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	payloadID, p := h.resolveSlot(req.PayloadID)
-	if p != nil && req.PickupNode == "" {
-		req.PickupNode = p.Location
+	var opNodeID *int64
+	if req.OpNodeID > 0 {
+		opNodeID = &req.OpNodeID
+		if node, err := h.engine.DB().GetOpStationNode(*opNodeID); err == nil && req.PickupNode == "" {
+			req.PickupNode = node.DeliveryNode
+		}
 	}
 
 	order, err := h.engine.OrderManager().CreateIngestOrder(
-		payloadID, req.PayloadCode, req.BinLabel, req.PickupNode,
+		opNodeID, req.PayloadCode, req.BinLabel, req.PickupNode,
 		req.Quantity, req.Manifest,
 		h.engine.AppConfig().Web.AutoConfirm,
 	)
@@ -333,76 +343,3 @@ func (h *Handlers) apiRedirectOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, order)
 }
 
-func (h *Handlers) apiUpdateReorderPoint(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ID")
-		return
-	}
-	var req struct {
-		ReorderPoint int `json:"reorder_point"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.ReorderPoint < 0 {
-		writeError(w, http.StatusBadRequest, "reorder_point must be >= 0")
-		return
-	}
-	if err := h.engine.DB().UpdateSlotReorderPoint(id, req.ReorderPoint); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-func (h *Handlers) apiToggleAutoReorder(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ID")
-		return
-	}
-	var req struct {
-		Enabled bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := h.engine.DB().UpdateSlotAutoReorder(id, req.Enabled); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-// --- Smart Request (operator button) ---
-
-// apiSmartRequest creates the correct order type based on payload config.
-// Delegates to engine.RequestOrders which handles all hot-swap modes
-// (single_robot, two_robot) and simple retrieve.
-func (h *Handlers) apiSmartRequest(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		PayloadID int64 `json:"payload_id"`
-		Quantity  int64 `json:"quantity"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.PayloadID == 0 {
-		writeError(w, http.StatusBadRequest, "payload_id is required")
-		return
-	}
-	if req.Quantity < 1 {
-		req.Quantity = 1
-	}
-
-	result, err := h.engine.RequestOrders(req.PayloadID, req.Quantity)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, result)
-}

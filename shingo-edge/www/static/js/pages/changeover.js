@@ -1,87 +1,87 @@
-var activeLineID = JSON.parse(document.getElementById('page-data').dataset.activeLineId);
+var processID = parseInt(document.getElementById('page-data').dataset.processId || '0', 10);
 
-// Enable start button when a "To" style is selected
-(function() {
-    var toSel = document.getElementById('co-to');
-    var startBtn = document.getElementById('co-start-btn');
-    if (toSel && startBtn) {
-        toSel.addEventListener('change', function() {
-            startBtn.disabled = !this.value;
-        });
+async function startProcessChangeover() {
+    var toStyleID = parseInt(document.getElementById('co-to-style').value || '0', 10);
+    if (!toStyleID) {
+        ShingoEdge.toast('Select a target style', 'warning');
+        return;
     }
-})();
-
-// Style the flow chart steps based on current state
-(function() {
-    var flow = document.querySelector('.co-flow[data-state-index]');
-    if (!flow) return;
-    var idx = parseInt(flow.dataset.stateIndex);
-    var steps = flow.querySelectorAll('.co-step');
-    // Map state index ranges to step buttons:
-    // Step 0 (Move to Staging):  states 1-2 (stopping, counting_out)
-    // Step 1 (Finalize Counts):  state 3 (storing)
-    // Step 2 (Move to Line):     state 4 (delivering)
-    // Step 3 (Auto Run):         states 5-6 (counting_in, ready)
-    var stepRanges = [[1,2],[3,3],[4,4],[5,6]];
-    var activeStep = -1;
-    for (var i = 0; i < stepRanges.length; i++) {
-        if (idx >= stepRanges[i][0] && idx <= stepRanges[i][1]) {
-            activeStep = i;
-            break;
-        }
-    }
-    for (var i = 0; i < steps.length; i++) {
-        if (i < activeStep) {
-            steps[i].classList.add('co-done');
-        } else if (i === activeStep) {
-            steps[i].classList.add('co-active');
-        }
-        if (i !== activeStep) {
-            steps[i].disabled = true;
-        }
-    }
-})();
-
-async function startChangeover() {
-    var fromVal = document.getElementById('co-from').value;
-    var toVal = document.getElementById('co-to').value;
-    if (!toVal) return;
     try {
-        await ShingoEdge.api.post('/api/changeover/start', {
-            line_id: activeLineID,
-            from_job_style: fromVal,
-            to_job_style: toVal,
-            operator: ''
+        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/start', {
+            to_style_id: toStyleID,
+            called_by: '',
+            notes: ''
         });
-        ShingoEdge.toast('Changeover started', 'success');
         location.reload();
-    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
 }
 
-async function advanceChangeover() {
+async function cancelProcessChangeover() {
+    if (!await ShingoEdge.confirm('Cancel the active process changeover?')) return;
     try {
-        await ShingoEdge.api.post('/api/changeover/advance', {
-            line_id: activeLineID,
-            operator: ''
-        });
-        ShingoEdge.toast('Changeover advanced', 'success');
+        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/cancel', {});
         location.reload();
-    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
 }
 
-async function cancelChangeover() {
-    var ok = await ShingoEdge.confirm('Cancel this changeover? The line will return to its current state.');
-    if (!ok) return;
+async function setChangeoverPhase(phase) {
     try {
-        await ShingoEdge.api.post('/api/changeover/cancel', {
-            line_id: activeLineID
-        });
-        ShingoEdge.toast('Changeover cancelled', 'success');
+        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/phase', { phase: phase });
         location.reload();
-    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
+async function switchStation(stationID) {
+    try {
+        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/switch-station/' + stationID, {});
+        location.reload();
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
+async function stageNode(nodeID) {
+    try {
+        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/stage-node/' + nodeID, {});
+        location.reload();
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
+async function emptyNode(nodeID) {
+    try {
+        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/empty-node/' + nodeID, {});
+        location.reload();
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
+async function releaseNode(nodeID) {
+    try {
+        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/release-node/' + nodeID, {});
+        location.reload();
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
+async function switchNode(nodeID) {
+    try {
+        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/switch-node/' + nodeID, {});
+        location.reload();
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
 }
 
 ShingoEdge.createSSE('/events', {
-    onChangeoverUpdate: function() { location.reload(); },
-    onCounterAnomaly: function() { location.reload(); }
+    onOrderUpdate: function() { location.reload(); }
 });
