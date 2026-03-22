@@ -62,9 +62,9 @@ func (s *LifecycleService) applyTransition(order *store.Order, newStatus, detail
 	if updated != nil && updated.ETA != nil {
 		eta = *updated.ETA
 	}
-	s.emitter.EmitOrderStatusChanged(order.ID, order.UUID, order.OrderType, oldStatus, newStatus, eta, nil, order.OpNodeID)
+	s.emitter.EmitOrderStatusChanged(order.ID, order.UUID, order.OrderType, oldStatus, newStatus, eta, nil, order.ProcessNodeID)
 	if IsTerminal(newStatus) {
-		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.OpNodeID)
+		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
 		if newStatus == StatusFailed {
 			s.emitter.EmitOrderFailed(order.ID, order.UUID, order.OrderType, detail)
 		}

@@ -11,7 +11,7 @@ import (
 
 func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OpNodeID      int64  `json:"op_node_id"`
+		ProcessNodeID int64  `json:"process_node_id"`
 		PayloadCode   string `json:"payload_code"`
 		RetrieveEmpty bool   `json:"retrieve_empty"`
 		Quantity      int64  `json:"quantity"`
@@ -25,18 +25,18 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var opNodeID *int64
-	if req.OpNodeID > 0 {
-		opNodeID = &req.OpNodeID
+	var processNodeID *int64
+	if req.ProcessNodeID > 0 {
+		processNodeID = &req.ProcessNodeID
 	}
-	if opNodeID != nil {
-		if node, err := h.engine.DB().GetOpStationNode(*opNodeID); err == nil {
-		if req.DeliveryNode == "" {
-			req.DeliveryNode = node.DeliveryNode
-		}
-		if req.StagingNode == "" {
-			req.StagingNode = node.StagingNode
-		}
+	if processNodeID != nil {
+		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil {
+			if req.DeliveryNode == "" {
+				req.DeliveryNode = node.DeliveryNode
+			}
+			if req.StagingNode == "" {
+				req.StagingNode = node.StagingNode
+			}
 		}
 	}
 
@@ -59,7 +59,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 	}
 
 	order, err := h.engine.OrderManager().CreateRetrieveOrder(
-		opNodeID, req.RetrieveEmpty,
+		processNodeID, req.RetrieveEmpty,
 		req.Quantity, req.DeliveryNode, req.StagingNode, req.LoadType, req.PayloadCode,
 		h.engine.AppConfig().Web.AutoConfirm,
 	)
@@ -99,25 +99,25 @@ func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliv
 
 func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OpNodeID   int64  `json:"op_node_id"`
-		Quantity   int64  `json:"quantity"`
-		PickupNode string `json:"pickup_node"`
+		ProcessNodeID int64  `json:"process_node_id"`
+		Quantity      int64  `json:"quantity"`
+		PickupNode    string `json:"pickup_node"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	var opNodeID *int64
-	if req.OpNodeID > 0 {
-		opNodeID = &req.OpNodeID
-		if node, err := h.engine.DB().GetOpStationNode(*opNodeID); err == nil && req.PickupNode == "" {
+	var processNodeID *int64
+	if req.ProcessNodeID > 0 {
+		processNodeID = &req.ProcessNodeID
+		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
 			req.PickupNode = node.DeliveryNode
 		}
 	}
 
 	order, err := h.engine.OrderManager().CreateStoreOrder(
-		opNodeID, req.Quantity, req.PickupNode,
+		processNodeID, req.Quantity, req.PickupNode,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -135,26 +135,26 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OpNodeID     int64  `json:"op_node_id"`
-		Quantity     int64  `json:"quantity"`
-		PickupNode   string `json:"pickup_node"`
-		DeliveryNode string `json:"delivery_node"`
+		ProcessNodeID int64  `json:"process_node_id"`
+		Quantity      int64  `json:"quantity"`
+		PickupNode    string `json:"pickup_node"`
+		DeliveryNode  string `json:"delivery_node"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	var opNodeID *int64
-	if req.OpNodeID > 0 {
-		opNodeID = &req.OpNodeID
-		if node, err := h.engine.DB().GetOpStationNode(*opNodeID); err == nil && req.PickupNode == "" {
+	var processNodeID *int64
+	if req.ProcessNodeID > 0 {
+		processNodeID = &req.ProcessNodeID
+		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
 			req.PickupNode = node.DeliveryNode
 		}
 	}
 
 	order, err := h.engine.OrderManager().CreateMoveOrder(
-		opNodeID, req.Quantity, req.PickupNode, req.DeliveryNode,
+		processNodeID, req.Quantity, req.PickupNode, req.DeliveryNode,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -165,9 +165,9 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OpNodeID  int64                      `json:"op_node_id"`
-		Quantity  int64                      `json:"quantity"`
-		Steps     []protocol.ComplexOrderStep `json:"steps"`
+		ProcessNodeID int64                       `json:"process_node_id"`
+		Quantity      int64                       `json:"quantity"`
+		Steps         []protocol.ComplexOrderStep `json:"steps"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -178,13 +178,13 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var opNodeID *int64
-	if req.OpNodeID > 0 {
-		opNodeID = &req.OpNodeID
+	var processNodeID *int64
+	if req.ProcessNodeID > 0 {
+		processNodeID = &req.ProcessNodeID
 	}
 
 	order, err := h.engine.OrderManager().CreateComplexOrder(
-		opNodeID, req.Quantity, "", req.Steps,
+		processNodeID, req.Quantity, "", req.Steps,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -195,12 +195,12 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 
 func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OpNodeID    int64                        `json:"op_node_id"`
-		PayloadCode string                       `json:"payload_code"`
-		BinLabel    string                       `json:"bin_label"`
-		PickupNode  string                       `json:"pickup_node"`
-		Quantity    int64                        `json:"quantity"`
-		Manifest    []protocol.IngestManifestItem `json:"manifest"`
+		ProcessNodeID int64                         `json:"process_node_id"`
+		PayloadCode   string                        `json:"payload_code"`
+		BinLabel      string                        `json:"bin_label"`
+		PickupNode    string                        `json:"pickup_node"`
+		Quantity      int64                         `json:"quantity"`
+		Manifest      []protocol.IngestManifestItem `json:"manifest"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -215,16 +215,16 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var opNodeID *int64
-	if req.OpNodeID > 0 {
-		opNodeID = &req.OpNodeID
-		if node, err := h.engine.DB().GetOpStationNode(*opNodeID); err == nil && req.PickupNode == "" {
+	var processNodeID *int64
+	if req.ProcessNodeID > 0 {
+		processNodeID = &req.ProcessNodeID
+		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
 			req.PickupNode = node.DeliveryNode
 		}
 	}
 
 	order, err := h.engine.OrderManager().CreateIngestOrder(
-		opNodeID, req.PayloadCode, req.BinLabel, req.PickupNode,
+		processNodeID, req.PayloadCode, req.BinLabel, req.PickupNode,
 		req.Quantity, req.Manifest,
 		h.engine.AppConfig().Web.AutoConfirm,
 	)
@@ -342,4 +342,3 @@ func (h *Handlers) apiRedirectOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, order)
 }
-

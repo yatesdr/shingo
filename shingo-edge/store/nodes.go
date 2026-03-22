@@ -42,11 +42,11 @@ func (db *DB) ListNodesByProcess(lineID int64) ([]Node, error) {
 	return nodes, rows.Err()
 }
 
-// ListKnownNodes returns distinct process nodes referenced by operator station nodes.
+// ListKnownNodes returns distinct physical nodes referenced by process nodes.
 func (db *DB) ListKnownNodes() ([]string, error) {
-	rows, err := db.Query(`SELECT DISTINCT delivery_node FROM op_station_nodes WHERE delivery_node != ''
-		UNION SELECT DISTINCT staging_node FROM op_station_nodes WHERE staging_node != ''
-		UNION SELECT DISTINCT outgoing_node FROM op_station_nodes WHERE outgoing_node != ''
+	rows, err := db.Query(`SELECT DISTINCT delivery_node FROM process_nodes WHERE delivery_node != ''
+		UNION SELECT DISTINCT staging_node FROM process_nodes WHERE staging_node != ''
+		UNION SELECT DISTINCT outgoing_node FROM process_nodes WHERE outgoing_node != ''
 		ORDER BY 1`)
 	if err != nil {
 		return nil, err

@@ -11,9 +11,9 @@ const (
 	CycleModeTwoRobot    = "two_robot"
 )
 
-type OpNodeStyleAssignment struct {
+type ProcessNodeStyleAssignment struct {
 	ID                           int64     `json:"id"`
-	OpNodeID                     int64     `json:"op_node_id"`
+	ProcessNodeID                int64     `json:"process_node_id"`
 	StyleID                      int64     `json:"style_id"`
 	PayloadCode                  string    `json:"payload_code"`
 	PayloadDescription           string    `json:"payload_description"`
@@ -35,8 +35,8 @@ type OpNodeStyleAssignment struct {
 	NodeName  string `json:"node_name"`
 }
 
-type OpNodeStyleAssignmentInput struct {
-	OpNodeID                     int64  `json:"op_node_id"`
+type ProcessNodeStyleAssignmentInput struct {
+	ProcessNodeID                int64  `json:"process_node_id"`
 	StyleID                      int64  `json:"style_id"`
 	PayloadCode                  string `json:"payload_code"`
 	PayloadDescription           string `json:"payload_description"`
@@ -53,9 +53,9 @@ type OpNodeStyleAssignmentInput struct {
 	ChangeoverPolicy             string `json:"changeover_policy"`
 }
 
-type OpNodeRuntimeState struct {
+type ProcessNodeRuntimeState struct {
 	ID                 int64      `json:"id"`
-	OpNodeID           int64      `json:"op_node_id"`
+	ProcessNodeID      int64      `json:"process_node_id"`
 	EffectiveStyleID   *int64     `json:"effective_style_id,omitempty"`
 	ActiveAssignmentID *int64     `json:"active_assignment_id,omitempty"`
 	StagedAssignmentID *int64     `json:"staged_assignment_id,omitempty"`
@@ -70,21 +70,21 @@ type OpNodeRuntimeState struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
-const assignmentSelect = `a.id, a.op_node_id, a.style_id, a.payload_code, a.payload_description,
+const assignmentSelect = `a.id, a.process_node_id, a.style_id, a.payload_code, a.payload_description,
 	a.role, a.uop_capacity, a.reorder_point, a.auto_reorder_enabled, a.cycle_mode,
 	a.retrieve_empty, a.requires_manifest_confirmation, a.allows_partial_return,
 	a.changeover_group, a.changeover_sequence, a.changeover_policy,
 	a.created_at, a.updated_at, COALESCE(s.name, ''), COALESCE(n.name, '')`
 
-const assignmentJoin = `FROM op_node_style_assignments a
+const assignmentJoin = `FROM process_node_style_assignments a
 	LEFT JOIN styles s ON s.id = a.style_id
-	LEFT JOIN op_station_nodes n ON n.id = a.op_node_id`
+	LEFT JOIN process_nodes n ON n.id = a.process_node_id`
 
-func scanAssignment(scanner interface{ Scan(...interface{}) error }) (OpNodeStyleAssignment, error) {
-	var a OpNodeStyleAssignment
+func scanAssignment(scanner interface{ Scan(...interface{}) error }) (ProcessNodeStyleAssignment, error) {
+	var a ProcessNodeStyleAssignment
 	var createdAt, updatedAt string
 	err := scanner.Scan(
-		&a.ID, &a.OpNodeID, &a.StyleID, &a.PayloadCode, &a.PayloadDescription,
+		&a.ID, &a.ProcessNodeID, &a.StyleID, &a.PayloadCode, &a.PayloadDescription,
 		&a.Role, &a.UOPCapacity, &a.ReorderPoint, &a.AutoReorderEnabled, &a.CycleMode,
 		&a.RetrieveEmpty, &a.RequiresManifestConfirmation, &a.AllowsPartialReturn,
 		&a.ChangeoverGroup, &a.ChangeoverSequence, &a.ChangeoverPolicy,
@@ -98,8 +98,8 @@ func scanAssignment(scanner interface{ Scan(...interface{}) error }) (OpNodeStyl
 	return a, nil
 }
 
-func scanAssignments(rows rowScanner) ([]OpNodeStyleAssignment, error) {
-	var out []OpNodeStyleAssignment
+func scanAssignments(rows rowScanner) ([]ProcessNodeStyleAssignment, error) {
+	var out []ProcessNodeStyleAssignment
 	for rows.Next() {
 		a, err := scanAssignment(rows)
 		if err != nil {
@@ -110,7 +110,7 @@ func scanAssignments(rows rowScanner) ([]OpNodeStyleAssignment, error) {
 	return out, rows.Err()
 }
 
-func (db *DB) ListOpNodeAssignmentsByStyle(styleID int64) ([]OpNodeStyleAssignment, error) {
+func (db *DB) ListProcessNodeAssignmentsByStyle(styleID int64) ([]ProcessNodeStyleAssignment, error) {
 	rows, err := db.Query(`SELECT `+assignmentSelect+` `+assignmentJoin+` WHERE a.style_id=? ORDER BY n.name`, styleID)
 	if err != nil {
 		return nil, err
@@ -119,8 +119,8 @@ func (db *DB) ListOpNodeAssignmentsByStyle(styleID int64) ([]OpNodeStyleAssignme
 	return scanAssignments(rows)
 }
 
-func (db *DB) ListOpNodeAssignmentsByNode(opNodeID int64) ([]OpNodeStyleAssignment, error) {
-	rows, err := db.Query(`SELECT `+assignmentSelect+` `+assignmentJoin+` WHERE a.op_node_id=? ORDER BY s.name`, opNodeID)
+func (db *DB) ListProcessNodeAssignmentsByNode(processNodeID int64) ([]ProcessNodeStyleAssignment, error) {
+	rows, err := db.Query(`SELECT `+assignmentSelect+` `+assignmentJoin+` WHERE a.process_node_id=? ORDER BY s.name`, processNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -128,13 +128,12 @@ func (db *DB) ListOpNodeAssignmentsByNode(opNodeID int64) ([]OpNodeStyleAssignme
 	return scanAssignments(rows)
 }
 
-func (db *DB) ListOpNodeAssignmentsByProcess(processID int64) ([]OpNodeStyleAssignment, error) {
-	query := `SELECT ` + assignmentSelect + ` ` + assignmentJoin + `
-		LEFT JOIN operator_stations os ON os.id = n.operator_station_id`
+func (db *DB) ListProcessNodeAssignmentsByProcess(processID int64) ([]ProcessNodeStyleAssignment, error) {
+	query := `SELECT ` + assignmentSelect + ` ` + assignmentJoin
 	var rows *sql.Rows
 	var err error
 	if processID > 0 {
-		query += ` WHERE os.process_id=? ORDER BY s.name, n.name`
+		query += ` WHERE n.process_id=? ORDER BY s.name, n.name`
 		rows, err = db.Query(query, processID)
 	} else {
 		query += ` ORDER BY s.name, n.name`
@@ -147,7 +146,7 @@ func (db *DB) ListOpNodeAssignmentsByProcess(processID int64) ([]OpNodeStyleAssi
 	return scanAssignments(rows)
 }
 
-func (db *DB) GetOpNodeAssignment(id int64) (*OpNodeStyleAssignment, error) {
+func (db *DB) GetProcessNodeAssignment(id int64) (*ProcessNodeStyleAssignment, error) {
 	a, err := scanAssignment(db.QueryRow(`SELECT `+assignmentSelect+` `+assignmentJoin+` WHERE a.id=?`, id))
 	if err != nil {
 		return nil, err
@@ -155,25 +154,25 @@ func (db *DB) GetOpNodeAssignment(id int64) (*OpNodeStyleAssignment, error) {
 	return &a, nil
 }
 
-func (db *DB) GetOpNodeAssignmentForStyle(opNodeID, styleID int64) (*OpNodeStyleAssignment, error) {
-	a, err := scanAssignment(db.QueryRow(`SELECT `+assignmentSelect+` `+assignmentJoin+` WHERE a.op_node_id=? AND a.style_id=?`, opNodeID, styleID))
+func (db *DB) GetProcessNodeAssignmentForStyle(processNodeID, styleID int64) (*ProcessNodeStyleAssignment, error) {
+	a, err := scanAssignment(db.QueryRow(`SELECT `+assignmentSelect+` `+assignmentJoin+` WHERE a.process_node_id=? AND a.style_id=?`, processNodeID, styleID))
 	if err != nil {
 		return nil, err
 	}
 	return &a, nil
 }
 
-func (db *DB) GetPreferredOpNodeAssignment(opNodeID int64) (*OpNodeStyleAssignment, error) {
-	runtime, err := db.EnsureOpNodeRuntime(opNodeID)
+func (db *DB) GetPreferredProcessNodeAssignment(processNodeID int64) (*ProcessNodeStyleAssignment, error) {
+	runtime, err := db.EnsureProcessNodeRuntime(processNodeID)
 	if err == nil {
 		if runtime.ActiveAssignmentID != nil {
-			return db.GetOpNodeAssignment(*runtime.ActiveAssignmentID)
+			return db.GetProcessNodeAssignment(*runtime.ActiveAssignmentID)
 		}
 		if runtime.StagedAssignmentID != nil {
-			return db.GetOpNodeAssignment(*runtime.StagedAssignmentID)
+			return db.GetProcessNodeAssignment(*runtime.StagedAssignmentID)
 		}
 	}
-	node, err := db.GetOpStationNode(opNodeID)
+	node, err := db.GetProcessNode(processNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -182,22 +181,22 @@ func (db *DB) GetPreferredOpNodeAssignment(opNodeID int64) (*OpNodeStyleAssignme
 		return nil, err
 	}
 	if process.ActiveStyleID != nil {
-		if a, err := db.GetOpNodeAssignmentForStyle(opNodeID, *process.ActiveStyleID); err == nil {
+		if a, err := db.GetProcessNodeAssignmentForStyle(processNodeID, *process.ActiveStyleID); err == nil {
 			return a, nil
 		}
 	}
 	if process.TargetStyleID != nil {
-		if a, err := db.GetOpNodeAssignmentForStyle(opNodeID, *process.TargetStyleID); err == nil {
+		if a, err := db.GetProcessNodeAssignmentForStyle(processNodeID, *process.TargetStyleID); err == nil {
 			return a, nil
 		}
 	}
 	return nil, sql.ErrNoRows
 }
 
-func (db *DB) UpsertOpNodeAssignment(in OpNodeStyleAssignmentInput) (int64, error) {
-	existing, err := db.GetOpNodeAssignmentForStyle(in.OpNodeID, in.StyleID)
+func (db *DB) UpsertProcessNodeAssignment(in ProcessNodeStyleAssignmentInput) (int64, error) {
+	existing, err := db.GetProcessNodeAssignmentForStyle(in.ProcessNodeID, in.StyleID)
 	if err == nil && existing != nil {
-		_, err = db.Exec(`UPDATE op_node_style_assignments SET
+		_, err = db.Exec(`UPDATE process_node_style_assignments SET
 			payload_code=?, payload_description=?, role=?, uop_capacity=?, reorder_point=?,
 			auto_reorder_enabled=?, cycle_mode=?, retrieve_empty=?, requires_manifest_confirmation=?,
 			allows_partial_return=?, changeover_group=?, changeover_sequence=?, changeover_policy=?,
@@ -210,12 +209,12 @@ func (db *DB) UpsertOpNodeAssignment(in OpNodeStyleAssignmentInput) (int64, erro
 		)
 		return existing.ID, err
 	}
-	res, err := db.Exec(`INSERT INTO op_node_style_assignments (
-		op_node_id, style_id, payload_code, payload_description, role, uop_capacity, reorder_point,
+	res, err := db.Exec(`INSERT INTO process_node_style_assignments (
+		process_node_id, style_id, payload_code, payload_description, role, uop_capacity, reorder_point,
 		auto_reorder_enabled, cycle_mode, retrieve_empty, requires_manifest_confirmation,
 		allows_partial_return, changeover_group, changeover_sequence, changeover_policy
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		in.OpNodeID, in.StyleID, in.PayloadCode, in.PayloadDescription, in.Role, in.UOPCapacity, in.ReorderPoint,
+		in.ProcessNodeID, in.StyleID, in.PayloadCode, in.PayloadDescription, in.Role, in.UOPCapacity, in.ReorderPoint,
 		in.AutoReorderEnabled, in.CycleMode, in.RetrieveEmpty, in.RequiresManifestConfirmation,
 		in.AllowsPartialReturn, in.ChangeoverGroup, in.ChangeoverSequence, in.ChangeoverPolicy,
 	)
@@ -225,16 +224,16 @@ func (db *DB) UpsertOpNodeAssignment(in OpNodeStyleAssignmentInput) (int64, erro
 	return res.LastInsertId()
 }
 
-func (db *DB) DeleteOpNodeAssignment(id int64) error {
-	_, err := db.Exec(`DELETE FROM op_node_style_assignments WHERE id=?`, id)
+func (db *DB) DeleteProcessNodeAssignment(id int64) error {
+	_, err := db.Exec(`DELETE FROM process_node_style_assignments WHERE id=?`, id)
 	return err
 }
 
-func scanRuntime(scanner interface{ Scan(...interface{}) error }) (OpNodeRuntimeState, error) {
-	var r OpNodeRuntimeState
+func scanRuntime(scanner interface{ Scan(...interface{}) error }) (ProcessNodeRuntimeState, error) {
+	var r ProcessNodeRuntimeState
 	var loadedAt, updatedAt string
 	err := scanner.Scan(
-		&r.ID, &r.OpNodeID, &r.EffectiveStyleID, &r.ActiveAssignmentID, &r.StagedAssignmentID,
+		&r.ID, &r.ProcessNodeID, &r.EffectiveStyleID, &r.ActiveAssignmentID, &r.StagedAssignmentID,
 		&r.LoadedPayloadCode, &r.MaterialStatus, &r.RemainingUOP, &r.ManifestStatus,
 		&r.ActiveOrderID, &r.StagedOrderID, &r.LoadedBinLabel, &loadedAt, &updatedAt,
 	)
@@ -249,66 +248,52 @@ func scanRuntime(scanner interface{ Scan(...interface{}) error }) (OpNodeRuntime
 	return r, nil
 }
 
-func (db *DB) EnsureOpNodeRuntime(opNodeID int64) (*OpNodeRuntimeState, error) {
-	r, err := db.GetOpNodeRuntime(opNodeID)
+func (db *DB) EnsureProcessNodeRuntime(processNodeID int64) (*ProcessNodeRuntimeState, error) {
+	r, err := db.GetProcessNodeRuntime(processNodeID)
 	if err == nil {
 		return r, nil
 	}
-	_, err = db.Exec(`INSERT INTO op_node_runtime_states (op_node_id) VALUES (?)`, opNodeID)
+	_, err = db.Exec(`INSERT INTO process_node_runtime_states (process_node_id) VALUES (?)`, processNodeID)
 	if err != nil {
 		return nil, err
 	}
-	return db.GetOpNodeRuntime(opNodeID)
+	return db.GetProcessNodeRuntime(processNodeID)
 }
 
-func (db *DB) GetOpNodeRuntime(opNodeID int64) (*OpNodeRuntimeState, error) {
-	r, err := scanRuntime(db.QueryRow(`SELECT id, op_node_id, effective_style_id, active_assignment_id, staged_assignment_id,
-		loaded_payload_code, material_status, remaining_uop, manifest_status, active_order_id, staged_order_id,
-		loaded_bin_label, COALESCE(loaded_at, ''), updated_at
-		FROM op_node_runtime_states WHERE op_node_id=?`, opNodeID))
+func (db *DB) GetProcessNodeRuntime(processNodeID int64) (*ProcessNodeRuntimeState, error) {
+	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, effective_style_id, active_assignment_id, staged_assignment_id,
+		loaded_payload_code, material_status, remaining_uop, manifest_status,
+		active_order_id, staged_order_id, loaded_bin_label, COALESCE(loaded_at, ''), updated_at
+		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
-func (db *DB) SetOpNodeRuntime(opNodeID int64, effectiveStyleID, activeAssignmentID, stagedAssignmentID *int64, loadedPayloadCode, materialStatus string, remainingUOP int, manifestStatus string) error {
-	if _, err := db.EnsureOpNodeRuntime(opNodeID); err != nil {
-		return err
-	}
-	_, err := db.Exec(`UPDATE op_node_runtime_states SET
+func (db *DB) SetProcessNodeRuntime(processNodeID int64, effectiveStyleID, activeAssignmentID, stagedAssignmentID *int64, payloadCode, materialStatus string, remaining int, manifestStatus string) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
 		effective_style_id=?, active_assignment_id=?, staged_assignment_id=?, loaded_payload_code=?,
 		material_status=?, remaining_uop=?, manifest_status=?, updated_at=datetime('now')
-		WHERE op_node_id=?`,
-		effectiveStyleID, activeAssignmentID, stagedAssignmentID, loadedPayloadCode,
-		materialStatus, remainingUOP, manifestStatus, opNodeID,
-	)
+		WHERE process_node_id=?`,
+		effectiveStyleID, activeAssignmentID, stagedAssignmentID, payloadCode, materialStatus, remaining, manifestStatus, processNodeID)
 	return err
 }
 
-func (db *DB) UpdateOpNodeRuntimeOrders(opNodeID int64, activeOrderID, stagedOrderID *int64) error {
-	if _, err := db.EnsureOpNodeRuntime(opNodeID); err != nil {
-		return err
-	}
-	_, err := db.Exec(`UPDATE op_node_runtime_states SET active_order_id=?, staged_order_id=?, updated_at=datetime('now') WHERE op_node_id=?`,
-		activeOrderID, stagedOrderID, opNodeID)
+func (db *DB) UpdateProcessNodeRuntimeOrders(processNodeID int64, activeOrderID, stagedOrderID *int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET active_order_id=?, staged_order_id=?, updated_at=datetime('now') WHERE process_node_id=?`,
+		activeOrderID, stagedOrderID, processNodeID)
 	return err
 }
 
-func (db *DB) UpdateOpNodeManifestStatus(opNodeID int64, manifestStatus string) error {
-	if _, err := db.EnsureOpNodeRuntime(opNodeID); err != nil {
-		return err
-	}
-	_, err := db.Exec(`UPDATE op_node_runtime_states SET manifest_status=?, updated_at=datetime('now') WHERE op_node_id=?`,
-		manifestStatus, opNodeID)
+func (db *DB) UpdateProcessNodeManifestStatus(processNodeID int64, manifestStatus string) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET manifest_status=?, updated_at=datetime('now') WHERE process_node_id=?`,
+		manifestStatus, processNodeID)
 	return err
 }
 
-func (db *DB) UpdateOpNodeRemaining(opNodeID int64, remainingUOP int, materialStatus string) error {
-	if _, err := db.EnsureOpNodeRuntime(opNodeID); err != nil {
-		return err
-	}
-	_, err := db.Exec(`UPDATE op_node_runtime_states SET remaining_uop=?, material_status=?, updated_at=datetime('now') WHERE op_node_id=?`,
-		remainingUOP, materialStatus, opNodeID)
+func (db *DB) UpdateProcessNodeMaterialState(processNodeID int64, remaining int, materialStatus string) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET remaining_uop=?, material_status=?, updated_at=datetime('now') WHERE process_node_id=?`,
+		remaining, materialStatus, processNodeID)
 	return err
 }

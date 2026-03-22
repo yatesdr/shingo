@@ -48,7 +48,7 @@ function render() {
 
     const cards = stationView.nodes || [];
     if (!cards.length) {
-        drawCentered('No operator station nodes configured', w, h);
+        drawCentered('No delegated process nodes configured', w, h);
         return;
     }
 
@@ -213,11 +213,11 @@ canvas.addEventListener('click', async (evt) => {
 });
 
 async function requestMaterial(nodeID) {
-    await postAction('/api/op-nodes/' + nodeID + '/request', {});
+    await postAction('/api/process-nodes/' + nodeID + '/request', {});
 }
 
 async function releaseEmpty(nodeID) {
-    await postAction('/api/op-nodes/' + nodeID + '/release-empty', {});
+    await postAction('/api/process-nodes/' + nodeID + '/release-empty', {});
 }
 
 function openPartialKeypad(nodeID) {
@@ -227,7 +227,7 @@ function openPartialKeypad(nodeID) {
 }
 
 async function confirmManifest(nodeID) {
-    await postAction('/api/op-nodes/' + nodeID + '/manifest/confirm', {});
+    await postAction('/api/process-nodes/' + nodeID + '/manifest/confirm', {});
 }
 
 async function switchNode(nodeID) {
@@ -359,7 +359,7 @@ window.OperatorStationHMI = {
         const nodeID = keypadState.nodeID;
         keypadState = null;
         overlay.style.display = 'none';
-        await postAction('/api/op-nodes/' + nodeID + '/release-partial', { qty });
+        await postAction('/api/process-nodes/' + nodeID + '/release-partial', { qty });
     }
 };
 

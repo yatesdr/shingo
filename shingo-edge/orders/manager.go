@@ -47,16 +47,16 @@ func (m *Manager) enqueueEnvelope(env *protocol.Envelope) error {
 	return m.sender.enqueue(env)
 }
 
-// lookupPayloadMeta returns description and payload code from the active op-node assignment.
-// If opNodeID is nil or the lookup fails, returns empty strings.
+// lookupPayloadMeta returns description and payload code from the active process-node assignment.
+// If processNodeID is nil or the lookup fails, returns empty strings.
 // If payloadCode is already set, it is preserved.
-func (m *Manager) lookupPayloadMeta(opNodeID *int64, payloadCode string) (desc, code string) {
-	if opNodeID == nil {
+func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (desc, code string) {
+	if processNodeID == nil {
 		return "", payloadCode
 	}
-	a, err := m.db.GetPreferredOpNodeAssignment(*opNodeID)
+	a, err := m.db.GetPreferredProcessNodeAssignment(*processNodeID)
 	if err != nil {
-		m.DebugLog.log("op-node assignment lookup failed: id=%d err=%v", *opNodeID, err)
+		m.DebugLog.log("process-node assignment lookup failed: id=%d err=%v", *processNodeID, err)
 		return "", payloadCode
 	}
 	if payloadCode == "" {
@@ -91,17 +91,17 @@ func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *pro
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the outbox.
 // If payloadCode is empty and payloadID is set, it is derived from the payload.
-func (m *Manager) CreateRetrieveOrder(opNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, payloadCode string, autoConfirm bool) (*store.Order, error) {
+func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, payloadCode string, autoConfirm bool) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
-		opNodeID, retrieveEmpty,
+		processNodeID, retrieveEmpty,
 		quantity, deliveryNode, stagingNode, "", loadType, autoConfirm)
 	if err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
 
-	payloadDesc, payloadCode := m.lookupPayloadMeta(opNodeID, payloadCode)
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:     orderUUID,
@@ -117,24 +117,24 @@ func (m *Manager) CreateRetrieveOrder(opNodeID *int64, retrieveEmpty bool, quant
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
 	m.DebugLog.log("create: type=%s id=%d uuid=%s delivery=%s", TypeRetrieve, orderID, orderUUID, deliveryNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve, nil, opNodeID)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve, nil, processNodeID)
 
 	return m.db.GetOrder(orderID)
 }
 
 // CreateStoreOrder creates a new store order (for returning payloads to warehouse).
-func (m *Manager) CreateStoreOrder(opNodeID *int64, quantity int64, pickupNode string) (*store.Order, error) {
+func (m *Manager) CreateStoreOrder(processNodeID *int64, quantity int64, pickupNode string) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeStore,
-		opNodeID, false,
+		processNodeID, false,
 		quantity, "", "", pickupNode, "", false)
 	if err != nil {
 		return nil, fmt.Errorf("create store order: %w", err)
 	}
 
 	m.DebugLog.log("create: type=%s id=%d uuid=%s pickup=%s", TypeStore, orderID, orderUUID, pickupNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeStore, nil, opNodeID)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeStore, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }
 
@@ -149,17 +149,17 @@ func (m *Manager) SubmitStoreOrder(orderID int64, finalCount int64) error {
 }
 
 // CreateMoveOrder creates a new move order (e.g., quality hold).
-func (m *Manager) CreateMoveOrder(opNodeID *int64, quantity int64, pickupNode, deliveryNode string) (*store.Order, error) {
+func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, pickupNode, deliveryNode string) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
-		opNodeID, false,
+		processNodeID, false,
 		quantity, deliveryNode, "", pickupNode, "", false)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
 	}
 
-	payloadDesc, payloadCode := m.lookupPayloadMeta(opNodeID, "")
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:    orderUUID,
@@ -173,14 +173,14 @@ func (m *Manager) CreateMoveOrder(opNodeID *int64, quantity int64, pickupNode, d
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
 	m.DebugLog.log("create: type=%s id=%d uuid=%s pickup=%s delivery=%s", TypeMove, orderID, orderUUID, pickupNode, deliveryNode)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, opNodeID)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }
 
 // CreateComplexOrder creates a new multi-step complex order and enqueues it to the outbox.
 // deliveryNode is stored on the order for downstream logic (e.g., handleOrderCompleted
 // uses it to determine which payload to reset on completion).
-func (m *Manager) CreateComplexOrder(opNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep) (*store.Order, error) {
+func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	stepsJSON, err := json.Marshal(steps)
@@ -189,7 +189,7 @@ func (m *Manager) CreateComplexOrder(opNodeID *int64, quantity int64, deliveryNo
 	}
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
-		opNodeID, false,
+		processNodeID, false,
 		quantity, deliveryNode, "", "", "", false)
 	if err != nil {
 		return nil, fmt.Errorf("create complex order: %w", err)
@@ -199,7 +199,7 @@ func (m *Manager) CreateComplexOrder(opNodeID *int64, quantity int64, deliveryNo
 		return nil, fmt.Errorf("store steps: %w", err)
 	}
 
-	payloadDesc, payloadCode := m.lookupPayloadMeta(opNodeID, "")
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
 
 	env, envErr := m.sender.build(protocol.TypeComplexOrderRequest, &protocol.ComplexOrderRequest{
 		OrderUUID:   orderUUID,
@@ -211,17 +211,17 @@ func (m *Manager) CreateComplexOrder(opNodeID *int64, quantity int64, deliveryNo
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
 	m.DebugLog.log("create: type=%s id=%d uuid=%s steps=%d", TypeComplex, orderID, orderUUID, len(steps))
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeComplex, nil, opNodeID)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeComplex, nil, processNodeID)
 
 	return m.db.GetOrder(orderID)
 }
 
 // CreateIngestOrder creates a new ingest order for originating a payload on a bin at a produce station.
-func (m *Manager) CreateIngestOrder(opNodeID *int64, payloadCode, binLabel, pickupNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool) (*store.Order, error) {
+func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel, pickupNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeIngest,
-		opNodeID, false,
+		processNodeID, false,
 		quantity, "", "", pickupNode, "", autoConfirm)
 	if err != nil {
 		return nil, fmt.Errorf("create ingest order: %w", err)
@@ -238,7 +238,7 @@ func (m *Manager) CreateIngestOrder(opNodeID *int64, payloadCode, binLabel, pick
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
 	m.DebugLog.log("create: type=%s id=%d uuid=%s payload=%s bin=%s", TypeIngest, orderID, orderUUID, payloadCode, binLabel)
-	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeIngest, nil, opNodeID)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeIngest, nil, processNodeID)
 
 	return m.db.GetOrder(orderID)
 }

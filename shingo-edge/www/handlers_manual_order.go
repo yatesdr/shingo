@@ -8,7 +8,7 @@ import (
 func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 
-	opNodes, _ := db.ListOpStationNodes()
+	opNodes, _ := db.ListProcessNodes()
 	nodes, _ := db.ListNodes()
 	coreNodes := h.engine.CoreNodes()
 	coreNodeNames := make([]string, 0, len(coreNodes))

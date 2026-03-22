@@ -8,7 +8,7 @@ import (
 	"shingoedge/store"
 )
 
-// wireEventHandlers keeps process ownership in Edge and updates op-node runtime
+// wireEventHandlers keeps process ownership in Edge and updates process-node runtime
 // from order lifecycle events. Counter deltas still feed hourly production.
 func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(func(evt Event) {
@@ -31,7 +31,7 @@ func (e *Engine) wireEventHandlers() {
 }
 
 // scanProduceSlots is intentionally a no-op in the operator-station architecture.
-// Initial provisioning is now an explicit station or Edge operation on op nodes.
+// Initial provisioning is now an explicit station or Edge operation on process nodes.
 func (e *Engine) scanProduceSlots() {}
 
 func buildPickupStep(node, nodeGroup string) protocol.ComplexOrderStep {
@@ -55,31 +55,29 @@ func buildDropoffStep(node, nodeGroup string) protocol.ComplexOrderStep {
 }
 
 func (e *Engine) handleOpNodeOrderCompleted(completed OrderCompletedEvent) {
-	if completed.OpNodeID == nil {
+	if completed.ProcessNodeID == nil {
 		return
 	}
 	order, err := e.db.GetOrder(completed.OrderID)
 	if err != nil {
 		return
 	}
-	node, err := e.db.GetOpStationNode(*completed.OpNodeID)
+	node, err := e.db.GetProcessNode(*completed.ProcessNodeID)
 	if err != nil {
 		return
 	}
-	runtime, err := e.db.EnsureOpNodeRuntime(node.ID)
+	runtime, err := e.db.EnsureProcessNodeRuntime(node.ID)
 	if err != nil {
 		return
 	}
 
-	var stationTaskID *int64
+	var changeoverID *int64
 	if changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
-		if stationTask, err := e.db.GetChangeoverStationTaskByStation(changeover.ID, node.OperatorStationID); err == nil {
-			stationTaskID = &stationTask.ID
-		}
+		changeoverID = &changeover.ID
 	}
 	var nodeTask *store.ChangeoverNodeTask
-	if stationTaskID != nil {
-		if t, err := e.db.GetChangeoverNodeTaskByNode(*stationTaskID, node.ID); err == nil {
+	if changeoverID != nil {
+		if t, err := e.db.GetChangeoverNodeTaskByNode(*changeoverID, node.ID); err == nil {
 			nodeTask = t
 		}
 	}
@@ -87,9 +85,9 @@ func (e *Engine) handleOpNodeOrderCompleted(completed OrderCompletedEvent) {
 	// Staged delivery during runout phase.
 	if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID &&
 		node.StagingNode != "" && order.DeliveryNode == node.StagingNode && runtime.StagedAssignmentID != nil {
-		assignment, err := e.db.GetOpNodeAssignment(*runtime.StagedAssignmentID)
+		assignment, err := e.db.GetProcessNodeAssignment(*runtime.StagedAssignmentID)
 		if err == nil {
-			_ = e.db.SetOpNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
+			_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
 				assignment.PayloadCode, "staged", runtime.RemainingUOP, runtime.ManifestStatus)
 		}
 		if nodeTask != nil {
@@ -101,7 +99,7 @@ func (e *Engine) handleOpNodeOrderCompleted(completed OrderCompletedEvent) {
 	// Empty line / clear access for tool change.
 	if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID &&
 		order.OrderType == orders.TypeMove && order.PickupNode == node.DeliveryNode && order.DeliveryNode == node.OutgoingNode {
-		_ = e.db.SetOpNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
+		_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
 			runtime.LoadedPayloadCode, "empty", 0, runtime.ManifestStatus)
 		if nodeTask != nil {
 			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared")
@@ -112,11 +110,11 @@ func (e *Engine) handleOpNodeOrderCompleted(completed OrderCompletedEvent) {
 	// Release staged or replenished material into production.
 	if order.DeliveryNode == node.DeliveryNode {
 		if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID && runtime.StagedAssignmentID != nil {
-			assign, err := e.db.GetOpNodeAssignment(*runtime.StagedAssignmentID)
+			assign, err := e.db.GetProcessNodeAssignment(*runtime.StagedAssignmentID)
 			if err == nil {
 				assignID := assign.ID
 				styleID := assign.StyleID
-				_ = e.db.SetOpNodeRuntime(node.ID, &styleID, &assignID, nil, assign.PayloadCode, "active", assign.UOPCapacity, "pending_confirmation")
+				_ = e.db.SetProcessNodeRuntime(node.ID, &styleID, &assignID, nil, assign.PayloadCode, "active", assign.UOPCapacity, "pending_confirmation")
 				if nodeTask != nil {
 					_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
 				}
@@ -125,9 +123,9 @@ func (e *Engine) handleOpNodeOrderCompleted(completed OrderCompletedEvent) {
 			}
 		}
 		if runtime.ActiveAssignmentID != nil && order.OrderType == orders.TypeRetrieve {
-			assign, err := e.db.GetOpNodeAssignment(*runtime.ActiveAssignmentID)
+			assign, err := e.db.GetProcessNodeAssignment(*runtime.ActiveAssignmentID)
 			if err == nil {
-				_ = e.db.SetOpNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
+				_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
 					assign.PayloadCode, "active", assign.UOPCapacity, runtime.ManifestStatus)
 			}
 		}
@@ -136,18 +134,18 @@ func (e *Engine) handleOpNodeOrderCompleted(completed OrderCompletedEvent) {
 
 func (e *Engine) handleOpNodeOrderFailed(failed OrderFailedEvent) {
 	order, err := e.db.GetOrder(failed.OrderID)
-	if err != nil || order.OpNodeID == nil {
+	if err != nil || order.ProcessNodeID == nil {
 		return
 	}
-	runtime, err := e.db.EnsureOpNodeRuntime(*order.OpNodeID)
+	runtime, err := e.db.EnsureProcessNodeRuntime(*order.ProcessNodeID)
 	if err != nil {
 		return
 	}
-	assign, err := e.db.GetPreferredOpNodeAssignment(*order.OpNodeID)
+	assign, err := e.db.GetPreferredProcessNodeAssignment(*order.ProcessNodeID)
 	if err != nil {
-		log.Printf("order failed: op-node assignment lookup %d: %v", *order.OpNodeID, err)
+		log.Printf("order failed: process-node assignment lookup %d: %v", *order.ProcessNodeID, err)
 		return
 	}
-	_ = e.db.SetOpNodeRuntime(*order.OpNodeID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
+	_ = e.db.SetProcessNodeRuntime(*order.ProcessNodeID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
 		assign.PayloadCode, "empty", runtime.RemainingUOP, runtime.ManifestStatus)
 }

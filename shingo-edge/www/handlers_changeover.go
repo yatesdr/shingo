@@ -32,6 +32,7 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	var activeChangeover *store.ProcessChangeover
 	var stationTasks []store.ChangeoverStationTask
 	nodeTaskMap := map[int64][]store.ChangeoverNodeTask{}
+	var centralNodeTasks []store.ChangeoverNodeTask
 
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
@@ -44,8 +45,13 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		activeChangeover, _ = db.GetActiveProcessChangeover(activeProcess.ID)
 		if activeChangeover != nil {
 			stationTasks, _ = db.ListChangeoverStationTasks(activeChangeover.ID)
-			for _, task := range stationTasks {
-				nodeTaskMap[task.ID], _ = db.ListChangeoverNodeTasks(task.ID)
+			allNodeTasks, _ := db.ListChangeoverNodeTasks(activeChangeover.ID)
+			for _, task := range allNodeTasks {
+				if task.OperatorStationID != nil {
+					nodeTaskMap[*task.OperatorStationID] = append(nodeTaskMap[*task.OperatorStationID], task)
+				} else {
+					centralNodeTasks = append(centralNodeTasks, task)
+				}
 			}
 		}
 	}
@@ -61,6 +67,7 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		"ActiveChangeover":  activeChangeover,
 		"StationTasks":      stationTasks,
 		"NodeTaskMap":       nodeTaskMap,
+		"CentralNodeTasks":  centralNodeTasks,
 		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
 	}

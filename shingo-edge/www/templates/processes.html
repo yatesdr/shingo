@@ -21,21 +21,7 @@
                     <div class="empty-cell">No processes configured</div>
                     {{end}}
                 </div>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header"><strong>Add Process</strong></div>
-            <div class="card-body">
-                <div class="form-group">
-                    <label>Name</label>
-                    <input type="text" id="new-process-name" class="form-input" placeholder="Front Rail">
-                </div>
-                <div class="form-group" style="margin-bottom:0.75rem">
-                    <label>Description</label>
-                    <input type="text" id="new-process-description" class="form-input" placeholder="Assembled process">
-                </div>
-                <button class="btn btn-primary" onclick="createProcess()">Create Process</button>
+                <button class="btn btn-primary" style="margin-top:0.75rem;width:100%" onclick="openCreateProcessModal()">Add Process</button>
             </div>
         </div>
     </div>
@@ -60,10 +46,9 @@
             <div class="card-body" style="padding-bottom:0">
                 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem">
                     <button class="btn btn-sm process-tab active" data-tab="general" onclick="showProcessTab('general')">General</button>
-                    <button class="btn btn-sm process-tab" data-tab="counter" onclick="showProcessTab('counter')">Counter</button>
+                    <button class="btn btn-sm process-tab" data-tab="counter" onclick="showProcessTab('counter')">PLC Counts</button>
                     <button class="btn btn-sm process-tab" data-tab="styles" onclick="showProcessTab('styles')">Job Styles</button>
                     <button class="btn btn-sm process-tab" data-tab="stations" onclick="showProcessTab('stations')">Stations</button>
-                    <button class="btn btn-sm process-tab" data-tab="assignments" onclick="showProcessTab('assignments')">Assignments</button>
                     <button class="btn btn-sm process-tab" data-tab="flow" onclick="showProcessTab('flow')">Changeover Flow</button>
                 </div>
             </div>
@@ -120,27 +105,9 @@
             </div>
 
             <div class="card-body process-tab-panel" id="process-tab-styles" style="display:none">
-                <div class="card" style="margin-bottom:1rem">
-                    <div class="card-header"><strong>Style Editor</strong></div>
-                    <div class="card-body">
-                        <input type="hidden" id="style-id">
-                        <div class="form-group">
-                            <label>Name</label>
-                            <input type="text" id="style-name" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label>Description</label>
-                            <input type="text" id="style-description" class="form-input">
-                        </div>
-                        <div class="form-group">
-                            <label>Catalog IDs</label>
-                            <input type="text" id="style-catids" class="form-input" placeholder="comma,separated,ids">
-                        </div>
-                        <div style="display:flex;gap:0.5rem">
-                            <button class="btn btn-primary" onclick="saveStyle()">Save Style</button>
-                            <button class="btn" onclick="resetStyleForm()">Clear</button>
-                        </div>
-                    </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
+                    <div style="color:var(--text-muted)">Define the job styles available to this process and the material context stations will inherit.</div>
+                    <button class="btn btn-primary" onclick="openCreateStyleModal()">Add Job Style</button>
                 </div>
                 <table class="table">
                     <thead>
@@ -171,43 +138,23 @@
             </div>
 
             <div class="card-body process-tab-panel" id="process-tab-stations" style="display:none">
-                <div class="card" style="margin-bottom:1rem">
-                    <div class="card-header"><strong>Operator Station Editor</strong></div>
-                    <div class="card-body">
-                        <input type="hidden" id="station-id">
-                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:0.75rem">
-                            <label class="form-group" style="margin:0"><span>Code</span><input type="text" id="station-code" class="form-input"></label>
-                            <label class="form-group" style="margin:0"><span>Name</span><input type="text" id="station-name" class="form-input"></label>
-                            <label class="form-group" style="margin:0"><span>Area</span><input type="text" id="station-area" class="form-input"></label>
-                            <label class="form-group" style="margin:0"><span>Sequence</span><input type="number" id="station-sequence" class="form-input" value="0"></label>
-                            <label class="form-group" style="margin:0"><span>Parent Station</span>
-                                <select id="station-parent" class="form-input">
-                                    <option value="">None</option>
-                                    {{range .ProcessStations}}<option value="{{.ID}}">{{.HierarchyPath}}</option>{{end}}
-                                </select>
-                            </label>
-                            <label class="form-group" style="margin:0"><span>Controller Node</span><input type="text" id="station-controller" class="form-input" list="core-node-options"></label>
-                        </div>
-                        <label style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem">
-                            <input type="checkbox" id="station-enabled" checked>
-                            <span>Enabled</span>
-                        </label>
-                        <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
-                            <button class="btn btn-primary" onclick="saveStation()">Save Station</button>
-                            <button class="btn" onclick="resetStationForm()">Clear</button>
-                        </div>
-                    </div>
-                </div>
-
                 <datalist id="core-node-options">
                     {{range $name, $_ := .CoreNodes}}<option value="{{$name}}"></option>{{end}}
                 </datalist>
 
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
+                    <div style="color:var(--text-muted)">Define process-owned control nodes once, then optionally delegate remote control of each node to an operator station.</div>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+                        <button class="btn" onclick="openCreateNodeModal()">Add Process Node</button>
+                        <button class="btn btn-primary" onclick="openCreateStationModal()">Add Operator Station</button>
+                    </div>
+                </div>
+
                 <table class="table" style="margin-bottom:1rem">
                     <thead>
                         <tr>
-                            <th>Hierarchy</th>
-                            <th>Controller</th>
+                            <th>Station</th>
+                            <th>Note</th>
                             <th>Health</th>
                             <th>Actions</th>
                         </tr>
@@ -215,10 +162,15 @@
                     <tbody>
                         {{range .ProcessStations}}
                         <tr>
-                            <td>{{.HierarchyPath}}</td>
-                            <td class="mono">{{if .ControllerNodeID}}{{.ControllerNodeID}}{{else}}-{{end}}</td>
+                            <td>
+                                <div>{{.Name}}</div>
+                                <div style="color:var(--text-muted);font-size:0.85rem">{{.Code}}</div>
+                            </td>
+                            <td>{{if .Note}}{{.Note}}{{else}}<span style="color:var(--text-muted)">-</span>{{end}}</td>
                             <td><span class="status-badge">{{.HealthStatus}}</span></td>
                             <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
+                                <button class="btn btn-sm" onclick="moveStation({{.ID}}, 'up')">Up</button>
+                                <button class="btn btn-sm" onclick="moveStation({{.ID}}, 'down')">Down</button>
                                 <button class="btn btn-sm" onclick='editStation({{json .}})'>Edit</button>
                                 <a class="btn btn-sm" href="/operator/station/{{.ID}}" target="_blank">Open HMI</a>
                                 <button class="btn btn-sm btn-danger" onclick="deleteStation({{.ID}})">Delete</button>
@@ -230,152 +182,78 @@
                     </tbody>
                 </table>
 
-                <div class="card" style="margin-bottom:1rem">
-                    <div class="card-header"><strong>Station Node Editor</strong></div>
-                    <div class="card-body">
-                        <input type="hidden" id="node-id">
-                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:0.75rem">
-                            <label class="form-group" style="margin:0"><span>Station</span>
-                                <select id="node-station-id" class="form-input">
-                                    {{range .ProcessStations}}<option value="{{.ID}}">{{.HierarchyPath}}</option>{{end}}
-                                </select>
-                            </label>
-                            <label class="form-group" style="margin:0"><span>Code</span><input type="text" id="node-code" class="form-input"></label>
-                            <label class="form-group" style="margin:0"><span>Name</span><input type="text" id="node-name" class="form-input"></label>
-                            <label class="form-group" style="margin:0"><span>Type</span><input type="text" id="node-position-type" class="form-input" value="consume"></label>
-                            <label class="form-group" style="margin:0"><span>Sequence</span><input type="number" id="node-sequence" class="form-input" value="0"></label>
-                            <label class="form-group" style="margin:0"><span>Delivery Node</span><input type="text" id="node-delivery" class="form-input" list="core-node-options"></label>
-                            <label class="form-group" style="margin:0"><span>Staging Node</span><input type="text" id="node-staging" class="form-input" list="core-node-options"></label>
-                            <label class="form-group" style="margin:0"><span>Staging Group</span><input type="text" id="node-staging-group" class="form-input" list="core-node-options"></label>
-                            <label class="form-group" style="margin:0"><span>Secondary Staging</span><input type="text" id="node-secondary-staging" class="form-input" list="core-node-options"></label>
-                            <label class="form-group" style="margin:0"><span>Secondary Group</span><input type="text" id="node-secondary-group" class="form-input" list="core-node-options"></label>
-                            <label class="form-group" style="margin:0"><span>Full Pickup Node</span><input type="text" id="node-full-pickup" class="form-input" list="core-node-options"></label>
-                            <label class="form-group" style="margin:0"><span>Full Pickup Group</span><input type="text" id="node-full-pickup-group" class="form-input" list="core-node-options"></label>
-                            <label class="form-group" style="margin:0"><span>Outgoing Node</span><input type="text" id="node-outgoing" class="form-input" list="core-node-options"></label>
-                            <label class="form-group" style="margin:0"><span>Outgoing Group</span><input type="text" id="node-outgoing-group" class="form-input" list="core-node-options"></label>
-                        </div>
-                        <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.75rem">
-                            <label><input type="checkbox" id="node-allows-reorder" checked> Reorder</label>
-                            <label><input type="checkbox" id="node-allows-empty" checked> Empty Release</label>
-                            <label><input type="checkbox" id="node-allows-partial" checked> Partial Release</label>
-                            <label><input type="checkbox" id="node-allows-manifest" checked> Manifest Confirm</label>
-                            <label><input type="checkbox" id="node-allows-station-change" checked> Station Change</label>
-                            <label><input type="checkbox" id="node-enabled" checked> Enabled</label>
-                        </div>
-                        <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
-                            <button class="btn btn-primary" onclick="saveNode()">Save Node</button>
-                            <button class="btn" onclick="resetNodeForm()">Clear</button>
-                        </div>
-                    </div>
-                </div>
-
                 <table class="table">
                     <thead>
                         <tr>
-                            <th>Station</th>
+                            <th>Delegated Station</th>
+                            <th>Core Node</th>
                             <th>Name</th>
+                            <th>Control</th>
                             <th>Delivery</th>
                             <th>Staging</th>
-                            <th>Outgoing</th>
+                            <th>Styles</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {{range .ProcessNodes}}
                         <tr>
-                            <td>{{.StationName}}</td>
+                            <td>{{if .DelegatedStationName}}{{.DelegatedStationName}}{{else}}<span style="color:var(--text-muted)">Edge Only</span>{{end}}</td>
+                            <td class="mono">{{.CoreNodeName}}</td>
                             <td>{{.Name}}</td>
+                            <td>{{if eq .PositionType "produce"}}Producing{{else}}Consuming{{end}}</td>
                             <td class="mono">{{.DeliveryNode}}</td>
-                            <td class="mono">{{if .StagingNode}}{{.StagingNode}}{{else}}{{.StagingNodeGroup}}{{end}}</td>
-                            <td class="mono">{{if .OutgoingNode}}{{.OutgoingNode}}{{else}}{{.OutgoingNodeGroup}}{{end}}</td>
+                            <td class="mono">{{if .StagingNode}}{{.StagingNode}}{{else}}<span style="color:var(--text-muted)">-</span>{{end}}</td>
+                            <td id="node-style-count-{{.ID}}">-</td>
                             <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
                                 <button class="btn btn-sm" onclick='editNode({{json .}})'>Edit</button>
+                                <button class="btn btn-sm" onclick="focusNodeAssignments({{.ID}})">Styles</button>
                                 <button class="btn btn-sm btn-danger" onclick="deleteNode({{.ID}})">Delete</button>
                             </td>
                         </tr>
                         {{else}}
-                        <tr><td colspan="6" class="empty-cell">No station nodes configured</td></tr>
+                        <tr><td colspan="8" class="empty-cell">No process nodes configured</td></tr>
                         {{end}}
                     </tbody>
                 </table>
-            </div>
 
-            <div class="card-body process-tab-panel" id="process-tab-assignments" style="display:none">
-                <div class="card" style="margin-bottom:1rem">
-                    <div class="card-header"><strong>Assignment Editor</strong></div>
+                <div class="card" id="node-style-builder" style="margin-top:1rem">
+                    <div class="card-header"><strong>Node Style Assignments</strong></div>
                     <div class="card-body">
-                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:0.75rem">
-                            <label class="form-group" style="margin:0"><span>Node</span>
-                                <select id="assignment-node-id" class="form-input">
-                                    {{range .ProcessNodes}}<option value="{{.ID}}">{{.StationName}} / {{.Name}}</option>{{end}}
+                        <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
+                            <label class="form-group" style="margin:0;min-width:min(100%, 26rem)">
+                                <span>Selected Process Node</span>
+                                <select id="station-assignment-node-filter" class="form-input" onchange="renderNodeAssignments()">
+                                    <option value="">-- Select a process node --</option>
+                                    {{range .ProcessNodes}}<option value="{{.ID}}">{{if .DelegatedStationName}}{{.DelegatedStationName}} / {{end}}{{.Name}}</option>{{end}}
                                 </select>
                             </label>
-                            <label class="form-group" style="margin:0"><span>Style</span>
-                                <select id="assignment-style-id" class="form-input">
-                                    {{range .ProcessStyles}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
-                                </select>
-                            </label>
-                            <label class="form-group" style="margin:0"><span>Payload Code</span><input type="text" id="assignment-payload-code" class="form-input"></label>
-                            <label class="form-group" style="margin:0"><span>Description</span><input type="text" id="assignment-payload-description" class="form-input"></label>
-                            <label class="form-group" style="margin:0"><span>UOP Capacity</span><input type="number" id="assignment-capacity" class="form-input" value="0"></label>
-                            <label class="form-group" style="margin:0"><span>Reorder Point</span><input type="number" id="assignment-reorder" class="form-input" value="0"></label>
-                            <label class="form-group" style="margin:0"><span>Cycle Mode</span>
-                                <select id="assignment-cycle-mode" class="form-input">
-                                    <option value="simple">Simple</option>
-                                    <option value="sequential">Sequential</option>
-                                    <option value="single_robot">Single Robot</option>
-                                    <option value="two_robot">Two Robot</option>
-                                </select>
-                            </label>
-                            <label class="form-group" style="margin:0"><span>Changeover Policy</span>
-                                <select id="assignment-changeover-policy" class="form-input">
-                                    <option value="manual_station_change">Manual Station Change</option>
-                                    <option value="central_only">Central Only</option>
-                                </select>
-                            </label>
-                            <label class="form-group" style="margin:0"><span>Changeover Group</span><input type="text" id="assignment-changeover-group" class="form-input"></label>
-                            <label class="form-group" style="margin:0"><span>Changeover Sequence</span><input type="number" id="assignment-changeover-sequence" class="form-input" value="0"></label>
+                            <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+                                <button class="btn" onclick="openCreateNodeModal()">Add Process Node</button>
+                                <button class="btn btn-primary" onclick="openCreateAssignmentModal()">Add Style Assignment</button>
+                            </div>
                         </div>
-                        <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.75rem">
-                            <label><input type="checkbox" id="assignment-auto-reorder" checked> Auto Reorder</label>
-                            <label><input type="checkbox" id="assignment-retrieve-empty"> Retrieve Empty</label>
-                            <label><input type="checkbox" id="assignment-requires-manifest" checked> Requires Manifest</label>
-                            <label><input type="checkbox" id="assignment-allows-partial" checked> Allows Partial Return</label>
+                        <div id="node-assignment-summary" style="color:var(--text-muted);margin-bottom:0.75rem">
+                            Select a process node to manage its job-style-specific material behavior.
                         </div>
-                        <div style="display:flex;gap:0.5rem;margin-top:0.75rem">
-                            <button class="btn btn-primary" onclick="saveAssignment()">Save Assignment</button>
-                            <button class="btn" onclick="resetAssignmentForm()">Clear</button>
-                        </div>
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Style</th>
+                                    <th>Payload</th>
+                                    <th>Capacity</th>
+                                    <th>Reorder</th>
+                                    <th>Cycle</th>
+                                    <th>Changeover</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="node-assignments-body">
+                                <tr><td colspan="7" class="empty-cell">Select a process node to view its style assignments</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
-
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Style</th>
-                            <th>Node</th>
-                            <th>Payload</th>
-                            <th>Cycle</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{range .ProcessAssignments}}
-                        <tr>
-                            <td>{{.StyleName}}</td>
-                            <td>{{.NodeName}}</td>
-                            <td>{{if .PayloadDescription}}{{.PayloadDescription}}{{else}}{{.PayloadCode}}{{end}}</td>
-                            <td>{{.CycleMode}}</td>
-                            <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
-                                <button class="btn btn-sm" onclick='editAssignment({{json .}})'>Edit</button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteAssignment({{.ID}})">Delete</button>
-                            </td>
-                        </tr>
-                        {{else}}
-                        <tr><td colspan="5" class="empty-cell">No style assignments configured</td></tr>
-                        {{end}}
-                    </tbody>
-                </table>
             </div>
 
             <div class="card-body process-tab-panel" id="process-tab-flow" style="display:none">
@@ -434,13 +312,202 @@
             </div>
         </div>
         {{else}}
-        <div class="card"><div class="card-body"><p class="empty-cell">Create a process to begin building job styles, counters, operator stations, and assignments.</p></div></div>
+        <div class="card"><div class="card-body"><p class="empty-cell">Create a process to begin building job styles, counters, process nodes, and operator stations.</p></div></div>
         {{end}}
     </div>
 </div>
 
 <script>
 window.processFlow = {{if .ActiveProcess}}{{json .ActiveProcess.ChangeoverFlow}}{{else}}[]{{end}};
+window.processNodes = {{json .ProcessNodes}};
+window.processStyles = {{json .ProcessStyles}};
+window.processAssignments = {{json .ProcessAssignments}};
 </script>
+
+<div class="modal" id="process-modal" style="display:none">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span id="process-modal-title">Add Process</span>
+            <button class="btn btn-sm" onclick="closeProcessModal()">&times;</button>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="new-process-name" class="form-input" placeholder="Front Rail">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" id="new-process-description" class="form-input" placeholder="Assembled process">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeProcessModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="createProcess()">Create Process</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="style-modal" style="display:none">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span id="style-modal-title">Add Job Style</span>
+            <button class="btn btn-sm" onclick="closeStyleModal()">&times;</button>
+        </div>
+        <div class="card-body">
+            <input type="hidden" id="style-id">
+            <div class="form-group">
+                <label>Name</label>
+                <input type="text" id="style-name" class="form-input">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <input type="text" id="style-description" class="form-input">
+            </div>
+            <div class="form-group">
+                <label>Catalog IDs</label>
+                <input type="text" id="style-catids" class="form-input" placeholder="comma,separated,ids">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeStyleModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveStyle()">Save Style</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="station-modal" style="display:none">
+        <div class="modal-content" style="max-width:860px">
+        <div class="modal-header">
+            <span id="station-modal-title">Add Operator Station</span>
+            <button class="btn btn-sm" onclick="closeStationModal()">&times;</button>
+        </div>
+        <div class="card-body">
+            <input type="hidden" id="station-id">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:0.75rem">
+                <label class="form-group" style="margin:0"><span>Name</span><input type="text" id="station-name" class="form-input"></label>
+            </div>
+            <label class="form-group" style="margin-top:0.75rem">
+                <span>Note</span>
+                <textarea id="station-note" class="form-input" rows="3" placeholder="Short description for operators and admins"></textarea>
+            </label>
+            <label style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem">
+                <input type="checkbox" id="station-enabled" checked>
+                <span>Enabled</span>
+            </label>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeStationModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveStation()">Save Station</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="node-modal" style="display:none">
+    <div class="modal-content" style="max-width:980px">
+        <div class="modal-header">
+            <span id="node-modal-title">Add Process Node</span>
+            <button class="btn btn-sm" onclick="closeNodeModal()">&times;</button>
+        </div>
+        <div class="card-body">
+            <input type="hidden" id="node-id">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:0.75rem">
+                <label class="form-group" style="margin:0"><span>Remote Control Station</span>
+                    <select id="node-station-id" class="form-input">
+                        <option value="">-- Edge Only --</option>
+                        {{range .ProcessStations}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+                    </select>
+                </label>
+                <label class="form-group" style="margin:0"><span>Core Delegate Node</span><input type="text" id="node-core-node" class="form-input" list="core-node-options"></label>
+                <label class="form-group" style="margin:0"><span>Display Name</span><input type="text" id="node-name" class="form-input" placeholder="Defaults to core node name"></label>
+                <label class="form-group" style="margin:0"><span>Control Type</span>
+                    <select id="node-position-type" class="form-input">
+                        <option value="consume">Consuming</option>
+                        <option value="produce">Producing</option>
+                    </select>
+                </label>
+                <label class="form-group" style="margin:0"><span>Delivery Node</span><input type="text" id="node-delivery" class="form-input" list="core-node-options"></label>
+                <label class="form-group" style="margin:0"><span>Staging Node</span><input type="text" id="node-staging" class="form-input" list="core-node-options" placeholder="Optional"></label>
+            </div>
+            <div style="color:var(--text-muted);font-size:0.9rem;margin-top:0.75rem">
+                Core provides the node identity. Edge defines how this process uses the node and whether remote control is delegated to a station.
+            </div>
+            <div style="margin-top:0.75rem">
+                <button type="button" class="btn btn-sm" onclick="toggleNodeAdvanced()">Advanced Routing</button>
+            </div>
+            <div id="node-advanced-fields" style="display:none;margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border)">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:0.75rem">
+                    <label class="form-group" style="margin:0"><span>Staging Group</span><input type="text" id="node-staging-group" class="form-input" list="core-node-options"></label>
+                    <label class="form-group" style="margin:0"><span>Secondary Staging</span><input type="text" id="node-secondary-staging" class="form-input" list="core-node-options"></label>
+                    <label class="form-group" style="margin:0"><span>Secondary Group</span><input type="text" id="node-secondary-group" class="form-input" list="core-node-options"></label>
+                    <label class="form-group" style="margin:0"><span>Full Pickup Node</span><input type="text" id="node-full-pickup" class="form-input" list="core-node-options"></label>
+                    <label class="form-group" style="margin:0"><span>Full Pickup Group</span><input type="text" id="node-full-pickup-group" class="form-input" list="core-node-options"></label>
+                    <label class="form-group" style="margin:0"><span>Outgoing Node</span><input type="text" id="node-outgoing" class="form-input" list="core-node-options" placeholder="Defaults to core delegate node"></label>
+                    <label class="form-group" style="margin:0"><span>Outgoing Group</span><input type="text" id="node-outgoing-group" class="form-input" list="core-node-options"></label>
+                </div>
+            </div>
+            <label style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem">
+                <input type="checkbox" id="node-enabled" checked>
+                <span>Enabled</span>
+            </label>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeNodeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveNode()">Save Node</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal" id="assignment-modal" style="display:none">
+    <div class="modal-content" style="max-width:980px">
+        <div class="modal-header">
+            <span id="assignment-modal-title">Add Assignment</span>
+            <button class="btn btn-sm" onclick="closeAssignmentModal()">&times;</button>
+        </div>
+        <div class="card-body">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:0.75rem">
+                <label class="form-group" style="margin:0"><span>Node</span>
+                    <select id="assignment-node-id" class="form-input">
+                        {{range .ProcessNodes}}<option value="{{.ID}}">{{if .DelegatedStationName}}{{.DelegatedStationName}} / {{end}}{{.Name}}</option>{{end}}
+                    </select>
+                </label>
+                <label class="form-group" style="margin:0"><span>Style</span>
+                    <select id="assignment-style-id" class="form-input">
+                        {{range .ProcessStyles}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+                    </select>
+                </label>
+                <label class="form-group" style="margin:0"><span>Payload Code</span><input type="text" id="assignment-payload-code" class="form-input"></label>
+                <label class="form-group" style="margin:0"><span>Description</span><input type="text" id="assignment-payload-description" class="form-input"></label>
+                <label class="form-group" style="margin:0"><span>UOP Capacity</span><input type="number" id="assignment-capacity" class="form-input" value="0"></label>
+                <label class="form-group" style="margin:0"><span>Reorder Point</span><input type="number" id="assignment-reorder" class="form-input" value="0"></label>
+                <label class="form-group" style="margin:0"><span>Cycle Mode</span>
+                    <select id="assignment-cycle-mode" class="form-input">
+                        <option value="simple">Simple</option>
+                        <option value="sequential">Sequential</option>
+                        <option value="single_robot">One Robot</option>
+                        <option value="two_robot">Two Robot</option>
+                    </select>
+                </label>
+                <label class="form-group" style="margin:0"><span>Changeover Policy</span>
+                    <select id="assignment-changeover-policy" class="form-input">
+                        <option value="manual_station_change">Manual Station Change</option>
+                        <option value="central_only">Central Only</option>
+                    </select>
+                </label>
+                <label class="form-group" style="margin:0"><span>Changeover Group</span><input type="text" id="assignment-changeover-group" class="form-input"></label>
+                <label class="form-group" style="margin:0"><span>Changeover Sequence</span><input type="number" id="assignment-changeover-sequence" class="form-input" value="0"></label>
+            </div>
+            <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.75rem">
+                <label><input type="checkbox" id="assignment-auto-reorder" checked> Auto Reorder</label>
+                <label><input type="checkbox" id="assignment-retrieve-empty"> Retrieve Empty</label>
+                <label><input type="checkbox" id="assignment-requires-manifest" checked> Requires Manifest</label>
+                <label><input type="checkbox" id="assignment-allows-partial" checked> Allows Partial Return</label>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeAssignmentModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveAssignment()">Save Assignment</button>
+        </div>
+    </div>
+</div>
 <script src="/static/js/pages/processes.js"></script>
 {{template "footer" .}}

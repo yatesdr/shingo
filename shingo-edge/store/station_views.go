@@ -1,12 +1,12 @@
 package store
 
 type StationNodeView struct {
-	Node           OpStationNode          `json:"node"`
-	Runtime        *OpNodeRuntimeState    `json:"runtime,omitempty"`
-	Assignment     *OpNodeStyleAssignment `json:"assignment,omitempty"`
-	NextStyle      *OpNodeStyleAssignment `json:"next_style,omitempty"`
-	ChangeoverTask *ChangeoverNodeTask    `json:"changeover_task,omitempty"`
-	Orders         []Order                `json:"orders"`
+	Node           ProcessNode                 `json:"node"`
+	Runtime        *ProcessNodeRuntimeState    `json:"runtime,omitempty"`
+	Assignment     *ProcessNodeStyleAssignment `json:"assignment,omitempty"`
+	NextStyle      *ProcessNodeStyleAssignment `json:"next_style,omitempty"`
+	ChangeoverTask *ChangeoverNodeTask         `json:"changeover_task,omitempty"`
+	Orders         []Order                     `json:"orders"`
 }
 
 type OperatorStationView struct {
@@ -56,15 +56,15 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 		}
 	}
 
-	nodes, err := db.ListOpStationNodesByStation(stationID)
+	nodes, err := db.ListProcessNodesByStation(stationID)
 	if err != nil {
 		return nil, err
 	}
 	nodeTaskMap := map[int64]ChangeoverNodeTask{}
 	if view.StationTask != nil {
-		nodeTasks, _ := db.ListChangeoverNodeTasks(view.StationTask.ID)
+		nodeTasks, _ := db.ListChangeoverNodeTasksByStation(view.ActiveChangeover.ID, stationID)
 		for _, nodeTask := range nodeTasks {
-			nodeTaskMap[nodeTask.OpNodeID] = nodeTask
+			nodeTaskMap[nodeTask.ProcessNodeID] = nodeTask
 			if isNodeTaskCompleteForPhase(nodeTask, view.StationTask.CurrentPhase) {
 				view.CompletedNodeChanges++
 			} else {
@@ -74,21 +74,21 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 	}
 	for _, node := range nodes {
 		nodeView := StationNodeView{Node: node}
-		runtime, _ := db.EnsureOpNodeRuntime(node.ID)
+		runtime, _ := db.EnsureProcessNodeRuntime(node.ID)
 		nodeView.Runtime = runtime
 		if runtime.ActiveAssignmentID != nil {
-			nodeView.Assignment, _ = db.GetOpNodeAssignment(*runtime.ActiveAssignmentID)
+			nodeView.Assignment, _ = db.GetProcessNodeAssignment(*runtime.ActiveAssignmentID)
 		} else if process.ActiveStyleID != nil {
-			nodeView.Assignment, _ = db.GetOpNodeAssignmentForStyle(node.ID, *process.ActiveStyleID)
+			nodeView.Assignment, _ = db.GetProcessNodeAssignmentForStyle(node.ID, *process.ActiveStyleID)
 		}
 		if process.TargetStyleID != nil {
-			nodeView.NextStyle, _ = db.GetOpNodeAssignmentForStyle(node.ID, *process.TargetStyleID)
+			nodeView.NextStyle, _ = db.GetProcessNodeAssignmentForStyle(node.ID, *process.TargetStyleID)
 		}
 		if nodeTask, ok := nodeTaskMap[node.ID]; ok {
 			taskCopy := nodeTask
 			nodeView.ChangeoverTask = &taskCopy
 		}
-		nodeView.Orders, _ = db.ListActiveOrdersByOpNode(node.ID)
+		nodeView.Orders, _ = db.ListActiveOrdersByProcessNode(node.ID)
 		view.Nodes = append(view.Nodes, nodeView)
 	}
 	return view, nil

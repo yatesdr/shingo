@@ -104,8 +104,32 @@ func (h *Handlers) apiDeleteOperatorStation(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiListOpStationNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.engine.DB().ListOpStationNodes()
+func (h *Handlers) apiMoveOperatorStation(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Direction string `json:"direction"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Direction != "up" && req.Direction != "down" {
+		writeError(w, http.StatusBadRequest, "direction must be up or down")
+		return
+	}
+	if err := h.engine.DB().MoveOperatorStation(id, req.Direction); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) apiListConfiguredProcessNodes(w http.ResponseWriter, r *http.Request) {
+	nodes, err := h.engine.DB().ListProcessNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -113,13 +137,13 @@ func (h *Handlers) apiListOpStationNodes(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, nodes)
 }
 
-func (h *Handlers) apiListOpStationNodesByStation(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiListConfiguredProcessNodesByStation(w http.ResponseWriter, r *http.Request) {
 	stationID, err := parseID(r, "stationID")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	nodes, err := h.engine.DB().ListOpStationNodesByStation(stationID)
+	nodes, err := h.engine.DB().ListProcessNodesByStation(stationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -127,59 +151,59 @@ func (h *Handlers) apiListOpStationNodesByStation(w http.ResponseWriter, r *http
 	writeJSON(w, nodes)
 }
 
-func (h *Handlers) apiCreateOpStationNode(w http.ResponseWriter, r *http.Request) {
-	var in store.OpStationNodeInput
+func (h *Handlers) apiCreateProcessNode(w http.ResponseWriter, r *http.Request) {
+	var in store.ProcessNodeInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.engine.DB().CreateOpStationNode(in)
+	id, err := h.engine.DB().CreateProcessNode(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_, _ = h.engine.DB().EnsureOpNodeRuntime(id)
+	_, _ = h.engine.DB().EnsureProcessNodeRuntime(id)
 	writeJSON(w, map[string]int64{"id": id})
 }
 
-func (h *Handlers) apiUpdateOpStationNode(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiUpdateProcessNode(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var in store.OpStationNodeInput
+	var in store.ProcessNodeInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdateOpStationNode(id, in); err != nil {
+	if err := h.engine.DB().UpdateProcessNode(id, in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiDeleteOpStationNode(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiDeleteProcessNode(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.engine.DB().DeleteOpStationNode(id); err != nil {
+	if err := h.engine.DB().DeleteProcessNode(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiListOpNodeAssignmentsByProcess(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiListProcessNodeAssignmentsByProcess(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "processID")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	assignments, err := h.engine.DB().ListOpNodeAssignmentsByProcess(processID)
+	assignments, err := h.engine.DB().ListProcessNodeAssignmentsByProcess(processID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -187,13 +211,13 @@ func (h *Handlers) apiListOpNodeAssignmentsByProcess(w http.ResponseWriter, r *h
 	writeJSON(w, assignments)
 }
 
-func (h *Handlers) apiListOpNodeAssignmentsByNode(w http.ResponseWriter, r *http.Request) {
-	opNodeID, err := parseID(r, "opNodeID")
+func (h *Handlers) apiListProcessNodeAssignmentsByNode(w http.ResponseWriter, r *http.Request) {
+	processNodeID, err := parseID(r, "opNodeID")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	assignments, err := h.engine.DB().ListOpNodeAssignmentsByNode(opNodeID)
+	assignments, err := h.engine.DB().ListProcessNodeAssignmentsByNode(processNodeID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -201,13 +225,13 @@ func (h *Handlers) apiListOpNodeAssignmentsByNode(w http.ResponseWriter, r *http
 	writeJSON(w, assignments)
 }
 
-func (h *Handlers) apiListOpNodeAssignmentsByStyle(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiListProcessNodeAssignmentsByStyle(w http.ResponseWriter, r *http.Request) {
 	styleID, err := parseID(r, "styleID")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid style id")
 		return
 	}
-	assignments, err := h.engine.DB().ListOpNodeAssignmentsByStyle(styleID)
+	assignments, err := h.engine.DB().ListProcessNodeAssignmentsByStyle(styleID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -215,13 +239,13 @@ func (h *Handlers) apiListOpNodeAssignmentsByStyle(w http.ResponseWriter, r *htt
 	writeJSON(w, assignments)
 }
 
-func (h *Handlers) apiUpsertOpNodeAssignment(w http.ResponseWriter, r *http.Request) {
-	var in store.OpNodeStyleAssignmentInput
+func (h *Handlers) apiUpsertProcessNodeAssignment(w http.ResponseWriter, r *http.Request) {
+	var in store.ProcessNodeStyleAssignmentInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.engine.DB().UpsertOpNodeAssignment(in)
+	id, err := h.engine.DB().UpsertProcessNodeAssignment(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -229,13 +253,13 @@ func (h *Handlers) apiUpsertOpNodeAssignment(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, map[string]int64{"id": id})
 }
 
-func (h *Handlers) apiDeleteOpNodeAssignment(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiDeleteProcessNodeAssignment(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.engine.DB().DeleteOpNodeAssignment(id); err != nil {
+	if err := h.engine.DB().DeleteProcessNodeAssignment(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

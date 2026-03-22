@@ -48,8 +48,8 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	processes, _ := db.ListProcesses()
 	styles, _ := db.ListStyles()
 	stations, _ := db.ListOperatorStations()
-	nodes, _ := db.ListOpStationNodes()
-	assignments, _ := db.ListOpNodeAssignmentsByProcess(0)
+	nodes, _ := db.ListProcessNodes()
+	assignments, _ := db.ListProcessNodeAssignmentsByProcess(0)
 	coreNodes := h.engine.CoreNodes()
 	plcNames := h.engine.PLCManager().PLCNames()
 
@@ -71,15 +71,15 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	var activeProcessID int64
 	var processStyles []store.Style
 	var processStations []store.OperatorStation
-	var processNodes []store.OpStationNode
-	var processAssignments []store.OpNodeStyleAssignment
+	var processNodes []store.ProcessNode
+	var processAssignments []store.ProcessNodeStyleAssignment
 	var processCounter *store.ProcessCounterBinding
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
 		processStyles, _ = db.ListStylesByProcess(activeProcess.ID)
 		processStations, _ = db.ListOperatorStationsByProcess(activeProcess.ID)
-		processNodes, _ = db.ListOpStationNodesByProcess(activeProcess.ID)
-		processAssignments, _ = db.ListOpNodeAssignmentsByProcess(activeProcess.ID)
+		processNodes, _ = db.ListProcessNodesByProcess(activeProcess.ID)
+		processAssignments, _ = db.ListProcessNodeAssignmentsByProcess(activeProcess.ID)
 		processCounter, _ = db.GetProcessCounterBinding(activeProcess.ID)
 	}
 

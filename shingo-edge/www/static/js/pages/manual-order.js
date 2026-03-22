@@ -74,7 +74,7 @@ function autofillNodeDefaults() {
 
 async function createOrder() {
     var t = document.getElementById('mo-type').value;
-    var opNodeID = parseInt(document.getElementById('mo-node').value) || 0;
+    var processNodeID = parseInt(document.getElementById('mo-node').value) || 0;
 
     if (t === 'complex') {
         var stagingNode = document.getElementById('mo-staging').value;
@@ -84,7 +84,7 @@ async function createOrder() {
             return;
         }
         var body = {
-            op_node_id: opNodeID || null,
+            process_node_id: processNodeID || null,
             quantity: parseInt(document.getElementById('mo-qty').value) || 0,
             steps: [
                 {action: 'pickup', node_group: stagingNode},
@@ -106,7 +106,7 @@ async function createOrder() {
     }
 
     var body = {
-        op_node_id: opNodeID || null,
+        process_node_id: processNodeID || null,
         quantity: parseInt(document.getElementById('mo-qty').value) || 0,
         delivery_node: document.getElementById('mo-delivery').value,
         pickup_node: document.getElementById('mo-pickup').value

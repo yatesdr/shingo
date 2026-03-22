@@ -68,21 +68,21 @@ type orderEmitter struct {
 	bus *EventBus
 }
 
-func (e *orderEmitter) EmitOrderCreated(orderID int64, orderUUID, orderType string, payloadID, opNodeID *int64) {
+func (e *orderEmitter) EmitOrderCreated(orderID int64, orderUUID, orderType string, payloadID, processNodeID *int64) {
 	e.bus.Emit(Event{Type: EventOrderCreated, Payload: OrderCreatedEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, OpNodeID: opNodeID,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID,
 	}})
 }
 
-func (e *orderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string, payloadID, opNodeID *int64) {
+func (e *orderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64) {
 	e.bus.Emit(Event{Type: EventOrderStatusChanged, Payload: OrderStatusChangedEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, OldStatus: oldStatus, NewStatus: newStatus, ETA: eta, OpNodeID: opNodeID,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, OldStatus: oldStatus, NewStatus: newStatus, ETA: eta, ProcessNodeID: processNodeID,
 	}})
 }
 
-func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType string, payloadID, opNodeID *int64) {
+func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType string, payloadID, processNodeID *int64) {
 	e.bus.Emit(Event{Type: EventOrderCompleted, Payload: OrderCompletedEvent{
-		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, OpNodeID: opNodeID,
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID,
 	}})
 }
 
@@ -91,4 +91,3 @@ func (e *orderEmitter) EmitOrderFailed(orderID int64, orderUUID, orderType, reas
 		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, Reason: reason,
 	}})
 }
-

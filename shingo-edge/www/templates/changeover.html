@@ -84,16 +84,16 @@
                 </tr>
             </thead>
             <tbody>
-                {{range index $.NodeTaskMap .ID}}
+                {{range index $.NodeTaskMap .OperatorStationID}}
                 <tr>
                     <td>{{.NodeName}}</td>
                     <td><span class="status-badge">{{.State}}</span></td>
                     <td>{{if .OldMaterialReleaseRequired}}Yes{{else}}No{{end}}</td>
                     <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
-                        <button class="btn btn-sm" onclick="stageNode({{.OpNodeID}})">Stage</button>
-                        <button class="btn btn-sm" onclick="emptyNode({{.OpNodeID}})">Empty</button>
-                        <button class="btn btn-sm" onclick="releaseNode({{.OpNodeID}})">Release</button>
-                        <button class="btn btn-sm" onclick="switchNode({{.OpNodeID}})">Force Switch</button>
+                        <button class="btn btn-sm" onclick="stageNode({{.ProcessNodeID}})">Stage</button>
+                        <button class="btn btn-sm" onclick="emptyNode({{.ProcessNodeID}})">Empty</button>
+                        <button class="btn btn-sm" onclick="releaseNode({{.ProcessNodeID}})">Release</button>
+                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
                     </td>
                 </tr>
                 {{end}}
@@ -102,6 +102,41 @@
     </div>
 </div>
 {{end}}
+{{end}}
+
+{{if .CentralNodeTasks}}
+<div class="card" style="margin-top:1rem">
+    <div class="card-header">
+        <strong>Edge Controlled Nodes</strong>
+    </div>
+    <div class="card-body">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Node</th>
+                    <th>State</th>
+                    <th>Release Required</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .CentralNodeTasks}}
+                <tr>
+                    <td>{{.NodeName}}</td>
+                    <td><span class="status-badge">{{.State}}</span></td>
+                    <td>{{if .OldMaterialReleaseRequired}}Yes{{else}}No{{end}}</td>
+                    <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
+                        <button class="btn btn-sm" onclick="stageNode({{.ProcessNodeID}})">Stage</button>
+                        <button class="btn btn-sm" onclick="emptyNode({{.ProcessNodeID}})">Empty</button>
+                        <button class="btn btn-sm" onclick="releaseNode({{.ProcessNodeID}})">Release</button>
+                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
 {{end}}
 
 {{else}}

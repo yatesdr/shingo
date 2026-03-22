@@ -40,18 +40,20 @@ type ChangeoverStationTask struct {
 }
 
 type ChangeoverNodeTask struct {
-	ID                        int64     `json:"id"`
-	ChangeoverStationTaskID   int64     `json:"changeover_station_task_id"`
-	OpNodeID                  int64     `json:"op_node_id"`
-	FromAssignmentID          *int64    `json:"from_assignment_id,omitempty"`
-	ToAssignmentID            *int64    `json:"to_assignment_id,omitempty"`
-	State                     string    `json:"state"`
-	OldMaterialReleaseRequired bool     `json:"old_material_release_required"`
-	NextMaterialOrderID       *int64    `json:"next_material_order_id,omitempty"`
-	OldMaterialReleaseOrderID *int64    `json:"old_material_release_order_id,omitempty"`
-	UpdatedAt                 time.Time `json:"updated_at"`
+	ID                         int64     `json:"id"`
+	ProcessChangeoverID        int64     `json:"process_changeover_id"`
+	OperatorStationID          *int64    `json:"operator_station_id,omitempty"`
+	ProcessNodeID              int64     `json:"process_node_id"`
+	FromAssignmentID           *int64    `json:"from_assignment_id,omitempty"`
+	ToAssignmentID             *int64    `json:"to_assignment_id,omitempty"`
+	State                      string    `json:"state"`
+	OldMaterialReleaseRequired bool      `json:"old_material_release_required"`
+	NextMaterialOrderID        *int64    `json:"next_material_order_id,omitempty"`
+	OldMaterialReleaseOrderID  *int64    `json:"old_material_release_order_id,omitempty"`
+	UpdatedAt                  time.Time `json:"updated_at"`
 
-	NodeName string `json:"node_name"`
+	NodeName    string `json:"node_name"`
+	StationName string `json:"station_name"`
 }
 
 func scanProcessChangeover(scanner interface{ Scan(...interface{}) error }) (ProcessChangeover, error) {
@@ -209,23 +211,24 @@ func (db *DB) GetChangeoverStationTaskByStation(changeoverID, stationID int64) (
 	return nil, sql.ErrNoRows
 }
 
-func (db *DB) CreateChangeoverNodeTask(stationTaskID, opNodeID int64, fromAssignmentID, toAssignmentID *int64, state string, releaseRequired bool) (int64, error) {
+func (db *DB) CreateChangeoverNodeTask(changeoverID int64, stationID *int64, processNodeID int64, fromAssignmentID, toAssignmentID *int64, state string, releaseRequired bool) (int64, error) {
 	res, err := db.Exec(`INSERT INTO changeover_node_tasks (
-		changeover_station_task_id, op_node_id, from_assignment_id, to_assignment_id, state, old_material_release_required
-	) VALUES (?, ?, ?, ?, ?, ?)`, stationTaskID, opNodeID, fromAssignmentID, toAssignmentID, state, releaseRequired)
+		process_changeover_id, operator_station_id, process_node_id, from_assignment_id, to_assignment_id, state, old_material_release_required
+	) VALUES (?, ?, ?, ?, ?, ?, ?)`, changeoverID, stationID, processNodeID, fromAssignmentID, toAssignmentID, state, releaseRequired)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-func (db *DB) ListChangeoverNodeTasks(stationTaskID int64) ([]ChangeoverNodeTask, error) {
-	rows, err := db.Query(`SELECT t.id, t.changeover_station_task_id, t.op_node_id, t.from_assignment_id, t.to_assignment_id,
+func (db *DB) ListChangeoverNodeTasks(changeoverID int64) ([]ChangeoverNodeTask, error) {
+	rows, err := db.Query(`SELECT t.id, t.process_changeover_id, t.operator_station_id, t.process_node_id, t.from_assignment_id, t.to_assignment_id,
 		t.state, t.old_material_release_required, t.next_material_order_id, t.old_material_release_order_id,
-		t.updated_at, COALESCE(n.name, '')
+		t.updated_at, COALESCE(n.name, ''), COALESCE(s.name, '')
 		FROM changeover_node_tasks t
-		LEFT JOIN op_station_nodes n ON n.id = t.op_node_id
-		WHERE t.changeover_station_task_id=? ORDER BY n.sequence, n.name`, stationTaskID)
+		LEFT JOIN process_nodes n ON n.id = t.process_node_id
+		LEFT JOIN operator_stations s ON s.id = t.operator_station_id
+		WHERE t.process_changeover_id=? ORDER BY COALESCE(s.sequence, 99999), n.sequence, n.name`, changeoverID)
 	if err != nil {
 		return nil, err
 	}
@@ -234,10 +237,15 @@ func (db *DB) ListChangeoverNodeTasks(stationTaskID int64) ([]ChangeoverNodeTask
 	for rows.Next() {
 		var t ChangeoverNodeTask
 		var updatedAt string
-		if err := rows.Scan(&t.ID, &t.ChangeoverStationTaskID, &t.OpNodeID, &t.FromAssignmentID, &t.ToAssignmentID,
+		var stationID sql.NullInt64
+		if err := rows.Scan(&t.ID, &t.ProcessChangeoverID, &stationID, &t.ProcessNodeID, &t.FromAssignmentID, &t.ToAssignmentID,
 			&t.State, &t.OldMaterialReleaseRequired, &t.NextMaterialOrderID, &t.OldMaterialReleaseOrderID,
-			&updatedAt, &t.NodeName); err != nil {
+			&updatedAt, &t.NodeName, &t.StationName); err != nil {
 			return nil, err
+		}
+		if stationID.Valid {
+			v := stationID.Int64
+			t.OperatorStationID = &v
 		}
 		t.UpdatedAt = scanTime(updatedAt)
 		out = append(out, t)
@@ -245,13 +253,45 @@ func (db *DB) ListChangeoverNodeTasks(stationTaskID int64) ([]ChangeoverNodeTask
 	return out, rows.Err()
 }
 
-func (db *DB) GetChangeoverNodeTaskByNode(stationTaskID, opNodeID int64) (*ChangeoverNodeTask, error) {
-	rows, err := db.ListChangeoverNodeTasks(stationTaskID)
+func (db *DB) ListChangeoverNodeTasksByStation(changeoverID, stationID int64) ([]ChangeoverNodeTask, error) {
+	rows, err := db.Query(`SELECT t.id, t.process_changeover_id, t.operator_station_id, t.process_node_id, t.from_assignment_id, t.to_assignment_id,
+		t.state, t.old_material_release_required, t.next_material_order_id, t.old_material_release_order_id,
+		t.updated_at, COALESCE(n.name, ''), COALESCE(s.name, '')
+		FROM changeover_node_tasks t
+		LEFT JOIN process_nodes n ON n.id = t.process_node_id
+		LEFT JOIN operator_stations s ON s.id = t.operator_station_id
+		WHERE t.process_changeover_id=? AND t.operator_station_id=? ORDER BY n.sequence, n.name`, changeoverID, stationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ChangeoverNodeTask
+	for rows.Next() {
+		var t ChangeoverNodeTask
+		var updatedAt string
+		var stationID sql.NullInt64
+		if err := rows.Scan(&t.ID, &t.ProcessChangeoverID, &stationID, &t.ProcessNodeID, &t.FromAssignmentID, &t.ToAssignmentID,
+			&t.State, &t.OldMaterialReleaseRequired, &t.NextMaterialOrderID, &t.OldMaterialReleaseOrderID,
+			&updatedAt, &t.NodeName, &t.StationName); err != nil {
+			return nil, err
+		}
+		if stationID.Valid {
+			v := stationID.Int64
+			t.OperatorStationID = &v
+		}
+		t.UpdatedAt = scanTime(updatedAt)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) GetChangeoverNodeTaskByNode(changeoverID, processNodeID int64) (*ChangeoverNodeTask, error) {
+	rows, err := db.ListChangeoverNodeTasks(changeoverID)
 	if err != nil {
 		return nil, err
 	}
 	for _, t := range rows {
-		if t.OpNodeID == opNodeID {
+		if t.ProcessNodeID == processNodeID {
 			return &t, nil
 		}
 	}

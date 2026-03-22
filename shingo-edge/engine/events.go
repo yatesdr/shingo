@@ -74,29 +74,29 @@ type CounterAnomalyEvent struct {
 
 // OrderCreatedEvent is emitted when a new order is placed.
 type OrderCreatedEvent struct {
-	OrderID   int64  `json:"order_id"`
-	OrderUUID string `json:"order_uuid"`
-	OrderType string `json:"order_type"`
-	OpNodeID  *int64 `json:"op_node_id,omitempty"`
+	OrderID       int64  `json:"order_id"`
+	OrderUUID     string `json:"order_uuid"`
+	OrderType     string `json:"order_type"`
+	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
 }
 
 // OrderStatusChangedEvent is emitted on order state transitions.
 type OrderStatusChangedEvent struct {
-	OrderID   int64  `json:"order_id"`
-	OrderUUID string `json:"order_uuid"`
-	OrderType string `json:"order_type"`
-	OldStatus string `json:"old_status"`
-	NewStatus string `json:"new_status"`
-	ETA       string `json:"eta"`
-	OpNodeID  *int64 `json:"op_node_id,omitempty"`
+	OrderID       int64  `json:"order_id"`
+	OrderUUID     string `json:"order_uuid"`
+	OrderType     string `json:"order_type"`
+	OldStatus     string `json:"old_status"`
+	NewStatus     string `json:"new_status"`
+	ETA           string `json:"eta"`
+	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
 }
 
 // OrderCompletedEvent is emitted when an order reaches terminal state.
 type OrderCompletedEvent struct {
-	OrderID   int64  `json:"order_id"`
-	OrderUUID string `json:"order_uuid"`
-	OrderType string `json:"order_type"`
-	OpNodeID  *int64 `json:"op_node_id,omitempty"`
+	OrderID       int64  `json:"order_id"`
+	OrderUUID     string `json:"order_uuid"`
+	OrderType     string `json:"order_type"`
+	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
 }
 
 // PLCEvent is emitted for PLC connection state changes.
@@ -142,4 +142,3 @@ type OrderFailedEvent struct {
 	OrderType string `json:"order_type"`
 	Reason    string `json:"reason"`
 }
-
