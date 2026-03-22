@@ -1,26 +1,100 @@
 # Changeover System — Technical Specification
 
-This document is the single source of truth for the changeover system design across all three Shingo modules (Protocol, Core, Edge). It covers the architecture, clearing strategies, robot orchestration, cross-module implementation details, and open issues.
+This document covers changeover design: clearing strategies, robot orchestration, dedicated robots, cross-module protocol changes, and open issues.
 
-For tracked bugs and design decisions, see [changeover-open-problems.md](changeover-open-problems.md).
+> **Architecture Note (2026-03-22):** This spec was written before the operator station redesign (`docs/edge-operator-station-redesign.md`). The v2 architecture replaces the flat line-wide changeover model with a hierarchical per-position model: ProcessChangeover → ChangeoverStationTask → ChangeoverNodeTask. The old `changeover/` package (types.go, machine.go) described in Cross-Module Changes below **does not exist** — the actual implementation lives in `engine/operator_stations.go` (orchestration), `store/changeovers_v2.go` (persistence), and `www/handlers_operator_stations_v2.go` (API).
+>
+> **What's still valid in this spec:** Clearing strategies (direct, sweep-to-stage), dedicated robot process, protocol messages (changeover.execute/ack), UOP remaining sync, and the general phasing concepts (staging, clearing, executing). What needs translation: all references to `changeover/machine.go`, line-wide state tracking, `operator-canvas/`, and the linear `Machine` struct should be read as applying to the per-position v2 model instead.
 
 ---
 
 ## Overview
 
-A changeover switches a production line from one job style to another. The system automates material staging, clearing, and swapping using two parallel tracks that converge when the operator presses Execute.
+A changeover switches a process from one job style to another. The system automates material staging, clearing, and swapping. Each operator station and position can transition at different times (rolling changeover).
 
-**What exists today:** The changeover state machine is built and functional but uses an old linear model (7 states, manual advance, no automation). The parallel-track architecture described here is fully designed but not yet coded.
+**What exists today (v2 architecture):**
+- Three-tier changeover tracking: ProcessChangeover → ChangeoverStationTask → ChangeoverNodeTask
+- Per-position state progression: `unchanged → staging_requested → staged → empty_requested → line_cleared → release_requested → released → switched → verified`
+- Start/cancel/advance APIs, per-position material staging/emptying/release actions
+- Wiring integration linking order lifecycle events to changeover node task state
+- Canvas-based operator station HMI with changeover context
 
-**The goal:** Connect the changeover state machine to the material handling cycle system. When an operator initiates a changeover, the system automatically stages new-style bins, pauses automation, optionally clears old bins for tooling access, and executes the swap using the same cycle infrastructure that runs normal operations.
+**What still needs implementation:**
+- Automated staging order creation (currently manual per-position)
+- Clearing strategy execution (direct and sweep-to-stage as designed below)
+- Dedicated robot process with Core-side protocol handling
+- PLC counter integration with per-position remaining tracking
+- Cancel flow with in-flight order redirection
+- Crash recovery / state restoration
 
-**The operator's role:** Initiate (select new style, press Start), signal readiness (Parts Done, Tooling Done), and execute (press Execute). The system handles everything in between.
+**The goal:** Connect the changeover orchestration to the material handling cycle system. When an operator initiates a changeover, the system automatically stages new-style bins per position, pauses automation, optionally clears old bins for tooling access, and executes the swap using the same cycle infrastructure that runs normal operations.
+
+**The operator's role:** Initiate (select new style, press Start), signal readiness per station, and verify completion. The system handles material movement in between.
+
+---
+
+## Coding Conventions for Implementation
+
+All changeover code must follow the established codebase patterns. These were audited across engine, store, API, and messaging layers on 2026-03-22.
+
+### Error Handling — Three Tiers
+1. **Critical path** (return error): State machine violations, validation, missing data, permission denials. Descriptive error messages.
+2. **Operational side effects** (log and swallow): Runtime state updates, audit writes, health pings. Pattern: `_ = db.Update(...)` or `if err != nil { log.Printf(...) }` without returning.
+3. **Data reads** (bubble up): Lookup failures return errors to caller. Nil checks guard dereferencing. Chain fails fast on missing data.
+
+### Guard Clauses
+- Every engine function opens with validation: entity exists → right state → no conflicting operation → then mutate.
+- Use `ensureNodeTaskCanRequestOrder` pattern: check if order ID already linked AND whether that order is terminal before creating new orders.
+- Multi-condition guards on completion (all conditions must hold, no else clause, unmatched = silent no-op).
+- Idempotency: if already in target state, return nil (not error).
+
+### State Machine
+- Strict transition allowlists (`IsValidTransition`, `isNodeStateAtLeast`).
+- Force transitions only for crash recovery reconciliation — log explicitly when used.
+- No partial states; terminal states are final.
+
+### Database
+- **Edge (SQLite)**: Single connection (`SetMaxOpenConns(1)`), WAL mode, foreign keys on. Use `EnsureXxx` pattern for lazy row creation. `COALESCE` in JOINs. `sql.NullInt64/NullString` for scans. No ORM.
+- **Core (Postgres)**: Explicit transactions with `defer tx.Rollback()` for multi-step operations (bin claims + order inserts). `RETURNING id` for inserts.
+- All timestamps stored as `TEXT` (Edge) or `TIMESTAMP` (Core). Use `datetime('now')` in SQLite, `NOW()` in Postgres.
+
+### Messaging
+- All Kafka messages go through the **outbox** — persist first, drain async. Never direct-publish.
+- Use existing `DataSender` (3 retries, exponential backoff) for protocol messages.
+- Nil-safe `DebugLogFunc` for debug logging; `log.Printf` for operational errors.
+
+### API Handlers
+- Parse URL params with `parseID()`, return 400 on failure.
+- Decode JSON with `json.NewDecoder(r.Body).Decode(&req)`, return 400 on failure.
+- Validate required fields before engine calls.
+- Use `writeError(w, status, msg)` for consistent `{"error": "msg"}` responses.
+- Non-critical side effects (e.g., `TouchOperatorStation`) silently swallowed.
+
+### SSE / Events
+- Use `EventHub.Broadcast()` (non-blocking, drops if buffer full).
+- Map engine events → SSE types in `sse.go`.
+- Synchronous emission on publisher goroutine; handlers must not block.
+
+### Thread Safety
+- `sync.RWMutex` for shared config (getter: RLock + defensive copy; setter: Lock + rebuild + Unlock + emit).
+- EventBus copies subscriber list under RLock before invoking callbacks.
+- Respect `LaneLock` if creating orders that could conflict with reshuffles.
+
+### Nil Safety
+- Check all pointers before dereferencing. Use `sql.NullX` types for DB scans.
+- Optional callbacks: `if h.callback != nil { h.callback(...) }`.
+- `DebugLogFunc` is nil-safe by design.
+
+### Prefer Simple Solutions
+- Set one field at creation, check it at completion (complex order completion guard pattern).
+- No new abstractions when a guard clause suffices.
+- No protocol changes when a local field check works.
 
 ---
 
 ## Changeover Configuration
 
-Set per changeover on the changeover menu (different job style transitions on the same line may need different settings):
+Set per changeover on the changeover menu (different job style transitions on the same process may need different settings):
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -373,7 +447,9 @@ The changeover reuses the same infrastructure as normal material handling:
 
 ### Shingo Edge (`shingo-edge/`)
 
-**Revised: `changeover/types.go`**
+> **v2 Note:** The sections below describe the original design targeting a standalone `changeover/` package. In the actual codebase, this functionality lives in: `engine/operator_stations.go` (orchestration), `store/changeovers_v2.go` (persistence), `www/handlers_operator_stations_v2.go` (API). The phase progression, clearing strategies, and protocol integration concepts still apply — they just operate on the per-position model (ProcessChangeover → StationTask → NodeTask) rather than a line-wide Machine struct.
+
+**~~Revised~~ Original design: `changeover/types.go`** (not implemented — see v2 model above)
 
 | Change | Detail |
 |--------|--------|
@@ -563,7 +639,7 @@ Edge                          Kafka                         Core
 
 ## UOP Remaining Sync (Partial Bin State)
 
-Changeover is the first case where a partially consumed bin re-enters storage and later comes back out. Normal cycles hide this gap because bins always start full and end empty. See Problem 7 in `changeover-open-problems.md` for full design.
+Changeover is the first case where a partially consumed bin re-enters storage and later comes back out. Normal cycles hide this gap because bins always start full and end empty. See Problem 7 in the "Open Issues" section below for full design.
 
 ### The Gap
 
@@ -609,44 +685,154 @@ The `OrderDelivered.UOPRemaining` field fixes the general case: any delivery of 
 
 ---
 
-## Implementation Order
+## Implementation Plan
 
-**First slice (designed 2026-03-21, revised same day — see Problem 11 in open-problems.md):**
-1. `store/payloads.go` — add `SetAutoReorderByJobStyle` bulk method (for canvas toggle, NOT used by changeover lifecycle)
-2. `engine/events.go` — add `EventChangeoverActive` + `EventAutoReorderChanged` constants and structs
-3. `engine/changeover.go` — NEW FILE: `handleChangeoverStarted` (cancel all active orders + emit changeover-active), `handleChangeoverCancelled` (emit changeover-active=false), `handleChangeoverCompleted` (emit changeover-active=false)
-4. `engine/wiring.go` — wire 3 changeover event subscriptions + add reorder suppression guard in `handlePayloadReorder` (skip if changeover active on the line)
-5. `www/sse.go` — add `EventChangeoverActive` → `"changeover-active"` + `EventAutoReorderChanged` → `"auto-reorder-update"` SSE cases
-6. `www/handlers_api_config.go` + `www/router.go` — `POST /api/line/auto-reorder` toggle endpoint
-7. `www/static/operator-canvas/render.js` — StatusBar auto-reorder toggle with 3 visual states (ON/OFF/disabled-during-changeover) + `hitStatusBarButton` export
-8. `www/static/operator-canvas/display.js` — click handler (disabled during changeover), SSE listeners for both events, cursor update
+> **Last updated:** 2026-03-22
+> **Architecture basis:** `docs/edge-operator-station-redesign.md` (v2 operator station model)
 
-**Second slice: UOP remaining sync (designed 2026-03-21 — see Problem 7 in open-problems.md):**
-9. `protocol/payloads.go` — add `RemainingUOP` to `ChangeoverSwapItem`, add `UOPRemaining` + `BinLabel` to `OrderDelivered`
-10. `shingo-core/engine/wiring.go` — modify `handleOrderDelivered` to look up bin UOP and populate `OrderDelivered`
-11. `shingo-edge/messaging/edge_handler.go` — pass `UOPRemaining` through from delivered message
-12. `shingo-edge/engine/wiring.go` — modify `resetPayloadOnRetrieve` to use delivered UOP when available
-13. `shingo-core/dispatch/changeover.go` — in `HandleChangeoverExecute`, update `bins.uop_remaining` from swap item before releasing
+### Current State
 
-**Remaining (after first and second slices):**
-14. Revise state machine (changeover/types.go) — parallel tracks, ChangeoverConfig
-15. Rewrite machine (changeover/machine.go) — dual-track with convergence gate
-16. Implement Staging logic (staging orders + dedicated robot wait + tracker)
-17. Implement Clearing logic — both strategies:
-    a. `direct`: store orders per bin, track completion
-    b. `sweep_to_stage`: Phase A complex chains, Phase B background store orders
-18. Implement Executing logic (changeover.execute message, Core handler, swap block building)
-19. Implement completion logic (update job style)
-20. Update changeover UI (parallel track display, strategy selection, contextual buttons)
-21. Testing: full changeover cycle end-to-end (all scenarios)
+The v2 operator station architecture provides the changeover foundation. The following is already implemented:
+
+| Component | File | Status |
+|-----------|------|--------|
+| Three-tier changeover model (ProcessChangeover → StationTask → NodeTask) | `store/changeovers_v2.go` | Done |
+| Per-position state progression (unchanged → ... → verified) | `engine/operator_stations.go` | Done |
+| Start/cancel/advance orchestration | `engine/operator_stations.go` | Done |
+| Per-position material operations (stage, empty, release, switch, verify) | `engine/operator_stations.go` | Done |
+| Order events → changeover node task state updates | `engine/wiring.go` | Done |
+| REST APIs for all changeover commands | `www/handlers_operator_stations_v2.go` | Done |
+| Changeover dashboard page | `www/handlers_changeover.go` | Done |
+| Operator station HMI with changeover context | `www/static/operator-station/hmi.js` | Done |
+| Composite station views for HMI | `store/station_views.go` | Done |
+| Runtime material state per position | `store/op_node_assignments.go` | Done |
+
+### Remaining Slices
+
+#### Slice 1: Auto-Reorder Suppression During Changeover
+
+**Goal:** Prevent automatic material reorders while a changeover is active on a process.
+
+**Changes:**
+- `engine/wiring.go` — Add guard in the reorder handler: before dispatching a reorder, check if a non-completed/non-cancelled ProcessChangeover exists for the position's process. If yes, skip the reorder and log.
+- `engine/operator_stations.go` — On changeover completion (`tryCompleteProcessChangeover`), emit an event so suppressed positions can re-evaluate their reorder state.
+
+**Why first:** This is a safety guard that prevents conflicting orders during changeover. Low risk, high value.
+
+#### Slice 2: Automated Staging Order Creation
+
+**Goal:** When changeover starts, automatically create retrieve orders for each position's target-style material instead of requiring manual per-position staging.
+
+**Changes:**
+- `engine/operator_stations.go` — In `StartProcessChangeoverV2`, after creating all NodeTasks, iterate positions and for each one that has a target-style assignment with a different payload than the current: create a retrieve order for the new material to the position's staging area (staging_area_1 node binding). Update the NodeTask state to `staging_requested` and link the order ID.
+- `store/changeovers_v2.go` — May need a method to bulk-update NodeTask states and order IDs.
+- Wiring integration already handles: when the staging order completes/stages, the NodeTask advances to `staged`.
+
+**Dependencies:** Requires positions to have `staging_area_1` node bindings configured and target-style assignments set up.
+
+#### Slice 3: Clearing Strategy Execution
+
+**Goal:** When operator signals parts done at a station, automatically clear old-style bins based on the configured clearing strategy.
+
+**Changes:**
+- `engine/operator_stations.go` — New functions: `executeClearingDirect(stationTask)` creates one store order per position (pickup lineside → dropoff outgoing_destination). `executeClearingSweep(stationTask, robotCount)` creates multi-bin complex order chains distributed across N robots to nearby clearing nodes, then Phase B background store orders.
+- Clearing strategy config — Add `clearing_strategy`, `clearing_robots` fields to ProcessChangeover or a new changeover config table.
+- NodeTask state progression: when clearing orders complete, advance from `empty_requested` → `line_cleared`.
+
+**Design reference:** See "Clearing Strategies" section above for full direct vs. sweep-to-stage design.
+
+#### Slice 4: UOP Remaining Sync
+
+**Goal:** Ensure partial bins carry correct remaining count through storage and back.
+
+**Changes:**
+- `protocol/payloads.go` — Add `UOPRemaining int` and `BinLabel string` fields to `OrderDelivered` (both `json:",omitempty"`)
+- `shingo-core/engine/wiring.go` — In `handleOrderDelivered`, look up `order.BinID` → `GetBin` → populate `UOPRemaining` and `BinLabel` before sending to Edge
+- `shingo-edge/messaging/edge_handler.go` — Pass `UOPRemaining` through from delivered message to order record
+- `shingo-edge/engine/wiring.go` — Modify slot/position reset to use delivered UOP when available instead of blindly resetting to catalog capacity
+
+**Design reference:** See "UOP Remaining Sync" section above.
+
+#### Slice 5: Protocol + Core Changeover Handler
+
+**Goal:** Core-side handling of changeover execute requests — find staged robots, build swap blocks, release.
+
+**Changes:**
+- `protocol/types.go` — Add `SubjectChangeoverExecute`, `SubjectChangeoverExecuteAck` constants
+- `protocol/payloads.go` — Add `ChangeoverSwapItem`, `ChangeoverExecuteRequest`, `ChangeoverExecuteAck`, `ChangeoverOrderInfo` structs
+- `shingo-core/dispatch/changeover.go` — New file: `HandleChangeoverExecute`, `releaseWithSwapBlocks`, `createIndividualSwapOrder`, swap step builders
+- `shingo-core/messaging/core_handler.go` — Add `SubjectChangeoverExecute` case in HandleData
+- `shingo-core/store/orders.go` — `ListStagedOrdersByStation(stationID)` query
+- `protocol/ingestor.go` — Register new message types
+
+**Design reference:** See "Message Flow: Execute Phase" and "Cross-Module Changes" sections above.
+
+#### Slice 6: Dedicated Robot Process
+
+**Goal:** Last N staging robots stay at staging area (complex orders with wait), then Core appends swap blocks on execute.
+
+**Changes:**
+- `engine/operator_stations.go` — When creating staging orders, the last N orders are created as complex orders with a final `wait` step (robot parks at staging). Track these as "dedicated" in the NodeTask.
+- `fleet/fleet.go` — Ensure `StagedOrderRequest.Vehicle` field exists for targeting specific robots
+- `fleet/seerrds/adapter.go` — Map `Vehicle` field through to RDS API
+- Core `dispatch/changeover.go` — On execute, find staged orders, distribute swap items across dedicated robots, append swap blocks, release
+
+**Dependencies:** Slice 5 (protocol + Core handler) must be done first.
+
+#### Slice 7: Cancel Flow
+
+**Goal:** Cancel as redirect — operator selects what to changeover into next. In-flight changeover orders are aborted.
+
+**Changes:**
+- `engine/operator_stations.go` — Enhance `CancelProcessChangeoverV2` to:
+  1. Accept a `next_style_id` parameter (same style = revert, different style = redirect)
+  2. Abort all in-flight changeover orders (staging, clearing, swap) by iterating NodeTasks with linked order IDs
+  3. If reverting to same style: return stranded bins to lineside positions
+  4. If redirecting to new style: stranded bins continue to storage, start new changeover
+- API — Update cancel endpoint to accept next_style_id
+
+#### Slice 8: Crash Recovery
+
+**Goal:** Restore changeover state from DB on restart, rebuild tracking from active orders.
+
+**Changes:**
+- `engine/operator_stations.go` or new `engine/changeover_restore.go` — On engine startup, query for non-completed ProcessChangeovers. For each: load StationTasks and NodeTasks, check linked order states, rebuild any tracking state.
+- Handle edge cases: orders that completed while Edge was down (check order table states), orders that are still in-flight (resume tracking).
+
+#### Slice 9: Enhanced Changeover Dashboard
+
+**Goal:** Full monitoring UI showing per-station and per-position changeover progress.
+
+**Changes:**
+- `www/handlers_changeover.go` — Enhance template data with station/position progress details, clearing status, phase timings
+- `www/templates/changeover.html` — Per-station progress cards, per-position state indicators, phase timeline
+- SSE integration — Real-time updates as positions progress through changeover states
+
+### Slice Dependencies
+
+```
+Slice 1 (auto-reorder suppression) ─── no dependencies, do first
+Slice 2 (automated staging) ─── no dependencies
+Slice 3 (clearing strategies) ─── no dependencies
+Slice 4 (UOP sync) ─── no dependencies (protocol change)
+Slice 5 (protocol + Core) ─── Slice 4 (uses UOP fields)
+Slice 6 (dedicated robots) ─── Slice 5 (needs Core handler)
+Slice 7 (cancel flow) ─── Slice 2 + 3 (needs orders to cancel)
+Slice 8 (crash recovery) ─── Slice 2 + 3 + 6 (needs full order flow to restore)
+Slice 9 (dashboard UI) ─── no hard dependencies, can start anytime
+```
+
+**Recommended order:** 1 → 2 → 4 → 3 → 5 → 6 → 7 → 8 → 9
+
+Slice 1 is the quickest safety win. Slice 2 unlocks the automated changeover flow. Slice 4 is a protocol change that should go in early so Core can start populating UOP data. Slices 5-6 are the Core-side work. Slices 7-8 are hardening. Slice 9 is polish.
 
 ---
 
 ## Operator Screen Context Switch
 
-When a changeover completes and `ActiveJobStyleID` switches, operator terminals need to display the correct screen for the new style. The operator canvas uses the auto-generated path (`/operator/cell/{lineID}`), which builds a layout from the active style's payloads via `generateDefaultLayout()`. Today it handles changeover via a full `location.reload()` on the `changeover-update` SSE event. This works but is disruptive on shop floor HMIs.
+> **v2 Note:** The legacy operator canvas (`operator-canvas/`) has been removed. Operator stations now use the HMI at `/operator-station/{stationID}/hmi` which fetches composite station views. The concepts below (layout push, sub-station registry) should be adapted to the v2 station model — the HMI already has changeover context built into its position cards.
 
-**Note:** The codebase contains a drag-and-drop designer and saved-screen system (`operator_screens` table, `/operator/designer`, `/operator/display/{id}`) carried over from andon v4. This is scaffolding — the auto-generated path is the intended architecture. The designer code should not be extended for changeover integration.
+When a changeover completes and `ActiveStyleID` switches on a process, operator station HMIs need to refresh their position cards to reflect the new style's assignments. The HMI fetches a composite station view that includes current assignments and runtime state, so a re-fetch after changeover completion updates the display.
 
 ### Layout Push on Changeover (replaces page reload)
 
@@ -677,7 +863,7 @@ Sub-stations are physical operator terminals (tablets, HMI panels) associated wi
 
 The StatusBar already renders `"{lineName} — {styleName}"`. When the layout updates via SSE, the style name updates with it. Manual override is URL-based — the operator navigates to `/operator/cell/{differentLineID}` and the layout push only fires for the line the terminal is watching.
 
-See `changeover-open-problems.md` Problem 17 for the full problem statement.
+See the "Open Issues" section below Problem 17 for the full problem statement.
 
 ---
 
@@ -711,13 +897,13 @@ The `changeover.execute` and `changeover.execute_ack` subjects need to be added 
 The changeover log stores `state` as a string representing the line phase, not both tracks. Adequate for audit but doesn't allow perfect state reconstruction from logs alone.
 
 ### 10. Per-Line Auto-Reorder Toggle on Operator Canvas
-The operator canvas needs a per-line toggle for auto-reorder. Decided (2026-03-21): render a button in the StatusBar element (right side, 160px wide). Three visual states: green ON, red OFF, grey disabled-during-changeover. During active changeover, toggle is greyed out and non-interactive — communicates to operators that auto-reorder is suppressed. Clicks POST to `/api/line/auto-reorder` which bulk-toggles all payloads on the line's active job style via `SetAutoReorderByJobStyle`. Updates propagate via SSE. See `changeover-open-problems.md` Problem 10 for full design.
+The operator canvas needs a per-line toggle for auto-reorder. Decided (2026-03-21): render a button in the StatusBar element (right side, 160px wide). Three visual states: green ON, red OFF, grey disabled-during-changeover. During active changeover, toggle is greyed out and non-interactive — communicates to operators that auto-reorder is suppressed. Clicks POST to `/api/line/auto-reorder` which bulk-toggles all payloads on the line's active job style via `SetAutoReorderByJobStyle`. Updates propagate via SSE. See the "Open Issues" section below Problem 10 for full design.
 
 ### 11. Engine Changeover Handler Wiring (First Slice)
-Three engine event handlers need to be wired as the first slice of changeover automation. Decided (2026-03-21, revised same day): new file `engine/changeover.go` with `handleChangeoverStarted` (cancel all active orders + emit changeover-active), `handleChangeoverCancelled` (emit changeover-active=false), `handleChangeoverCompleted` (emit changeover-active=false). Auto-reorder flags are NEVER modified by changeover — instead, a guard in `handlePayloadReorder` suppresses reorder dispatch while changeover is active. See `changeover-open-problems.md` Problem 11 for full implementation plan.
+Three engine event handlers need to be wired as the first slice of changeover automation. Decided (2026-03-21, revised same day): new file `engine/changeover.go` with `handleChangeoverStarted` (cancel all active orders + emit changeover-active), `handleChangeoverCancelled` (emit changeover-active=false), `handleChangeoverCompleted` (emit changeover-active=false). Auto-reorder flags are NEVER modified by changeover — instead, a guard in `handlePayloadReorder` suppresses reorder dispatch while changeover is active. See the "Open Issues" section below Problem 11 for full implementation plan.
 
 ### 12. UOP Remaining Sync (Partial Bin State)
-Changeover revealed a bin state sync gap: Edge tracks real-time consumption via PLC but never tells Core. Core's `bins.uop_remaining` is stale. When partial bins return to storage and are later re-retrieved via FIFO, Edge blindly resets remaining to full capacity. Decided (2026-03-21): add `RemainingUOP` to `ChangeoverSwapItem` (Edge → Core during swap), add `UOPRemaining` + `BinLabel` to `OrderDelivered` (Core → Edge on any delivery), modify `resetPayloadOnRetrieve` to use actual remaining. See `changeover-open-problems.md` Problem 7 and the "UOP Remaining Sync" section above for full design.
+Changeover revealed a bin state sync gap: Edge tracks real-time consumption via PLC but never tells Core. Core's `bins.uop_remaining` is stale. When partial bins return to storage and are later re-retrieved via FIFO, Edge blindly resets remaining to full capacity. Decided (2026-03-21): add `RemainingUOP` to `ChangeoverSwapItem` (Edge → Core during swap), add `UOPRemaining` + `BinLabel` to `OrderDelivered` (Core → Edge on any delivery), modify `resetPayloadOnRetrieve` to use actual remaining. See the "Open Issues" section below Problem 7 and the "UOP Remaining Sync" section above for full design.
 
 ### Open Questions
 
@@ -728,4 +914,4 @@ Changeover revealed a bin state sync gap: Edge tracks real-time consumption via 
 5. ~~**Operator canvas:** Show changeover status indicator?~~ **Decided (2026-03-21):** StatusBar gets auto-reorder toggle. Changeover banner already exists. Further operator visibility (Problem 5) is an enhancement.
 6. ~~**New-style payload creation:** Must payloads exist before changeover starts, or auto-create from job style?~~ **Decided (2026-03-21):** Payloads must exist before changeover starts. No auto-creation. Payloads require engineering decisions — cycle mode, staging nodes, reorder points, outgoing destinations — that cannot be guessed. Job styles and their payloads are set up by an engineer on the Setup page before a changeover to that style is attempted. Problem 15 (target style validation) enforces this by rejecting changeover start if the target style has no payloads configured.
 7. ~~**Counter reset:** Does `resetPayloadOnRetrieve` handle this, or does changeover need a separate reset?~~ **Decided (2026-03-21):** `resetPayloadOnRetrieve` is modified to use actual bin remaining from `OrderDelivered.UOPRemaining` when available, falling back to catalog capacity for full bins. No separate changeover reset needed — the delivery path handles both full and partial bins. See UOP Remaining Sync section.
-8. ~~**Cancel during sweep_to_stage clearing:** Bins stranded at clearing nodes — return-to-lineside or let operator decide?~~ **Decided (2026-03-21):** Cancel is a redirect — operator must select the next style. If same style → bins return to lineside. If different style → bins continue to storage. Cancel API extended to accept `next_style`. See `changeover-open-problems.md` Problem 9 for full design.
+8. ~~**Cancel during sweep_to_stage clearing:** Bins stranded at clearing nodes — return-to-lineside or let operator decide?~~ **Decided (2026-03-21):** Cancel is a redirect — operator must select the next style. If same style → bins return to lineside. If different style → bins continue to storage. Cancel API extended to accept `next_style`. See the "Open Issues" section below Problem 9 for full design.
