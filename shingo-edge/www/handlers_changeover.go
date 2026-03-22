@@ -52,15 +52,16 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 
 	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]interface{}{
-		"Page":             "changeover",
-		"Processes":        processes,
-		"ActiveProcessID":  activeProcessID,
-		"Styles":           styles,
-		"CurrentStyle":     currentStyleName,
-		"ActiveChangeover": activeChangeover,
-		"StationTasks":     stationTasks,
-		"NodeTaskMap":      nodeTaskMap,
-		"Anomalies":        anomalies,
+		"Page":              "changeover",
+		"Processes":         processes,
+		"ActiveProcess":     activeProcess,
+		"ActiveProcessID":   activeProcessID,
+		"Styles":            styles,
+		"CurrentStyle":      currentStyleName,
+		"ActiveChangeover":  activeChangeover,
+		"StationTasks":      stationTasks,
+		"NodeTaskMap":       nodeTaskMap,
+		"Anomalies":         anomalies,
 		"ReportingPointMap": rpMap,
 	}
 	h.renderTemplate(w, r, "changeover.html", data)

@@ -137,6 +137,14 @@ body {
 
 /* Nav dropdowns */
 .nav-dropdown { position: relative; }
+.nav-dropdown::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 0.75rem;
+}
 .nav-dropdown-toggle { cursor: pointer; padding-bottom: 1rem; margin-bottom: -1rem; }
 .nav-dropdown-toggle::after { content: ' \25BE'; font-size: 0.7em; }
 .nav-dropdown-menu {

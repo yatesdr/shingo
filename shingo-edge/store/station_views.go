@@ -12,6 +12,7 @@ type StationNodeView struct {
 type OperatorStationView struct {
 	Station              OperatorStation        `json:"station"`
 	Process              Process                `json:"process"`
+	ProcessCounter       *ProcessCounterBinding `json:"process_counter,omitempty"`
 	CurrentStyle         *Style                 `json:"current_style,omitempty"`
 	TargetStyle          *Style                 `json:"target_style,omitempty"`
 	AvailableStyles      []Style                `json:"available_styles,omitempty"`
@@ -36,6 +37,7 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 		Station: *station,
 		Process: *process,
 	}
+	view.ProcessCounter, _ = db.GetProcessCounterBinding(process.ID)
 	if process.ActiveStyleID != nil {
 		if s, err := db.GetStyle(*process.ActiveStyleID); err == nil {
 			view.CurrentStyle = s
@@ -102,6 +104,11 @@ func isNodeTaskCompleteForPhase(task ChangeoverNodeTask, phase string) bool {
 		}
 		return task.State == "unchanged" || task.State == "staged" || task.State == "released" || task.State == "switched" || task.State == "verified"
 	case "release":
+		if task.ToAssignmentID == nil {
+			return task.State == "unchanged" || task.State == "line_cleared" || task.State == "switched" || task.State == "verified"
+		}
+		return task.State == "released" || task.State == "switched" || task.State == "verified"
+	case "cutover":
 		if task.ToAssignmentID == nil {
 			return task.State == "unchanged" || task.State == "line_cleared" || task.State == "switched" || task.State == "verified"
 		}

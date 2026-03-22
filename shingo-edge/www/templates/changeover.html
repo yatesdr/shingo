@@ -16,6 +16,7 @@
         <div>
             <strong>Process Changeover</strong>
             <div style="color:var(--text-muted);font-size:0.9rem">Current style: {{if .CurrentStyle}}{{.CurrentStyle}}{{else}}None{{end}}</div>
+            {{if .ActiveProcess}}<div style="color:var(--text-muted);font-size:0.9rem">Production state: <strong>{{.ActiveProcess.ProductionState}}</strong></div>{{end}}
         </div>
         {{if .ActiveChangeover}}
         <button class="btn btn-danger btn-sm" onclick="cancelProcessChangeover()">Cancel Changeover</button>
@@ -40,10 +41,19 @@
             <div><strong>{{.ActiveChangeover.FromStyleName}}</strong> -> <strong>{{.ActiveChangeover.ToStyleName}}</strong></div>
             <div style="color:var(--text-muted);font-size:0.9rem">State: {{.ActiveChangeover.State}} | Phase: <strong>{{.ActiveChangeover.Phase}}</strong></div>
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
-                <button class="btn btn-sm" onclick="setChangeoverPhase('runout')">Runout</button>
-                <button class="btn btn-sm" onclick="setChangeoverPhase('tool_change')">Tool Change</button>
-                <button class="btn btn-sm" onclick="setChangeoverPhase('release')">Release</button>
-                <button class="btn btn-sm" onclick="setChangeoverPhase('verify')">Verify</button>
+                {{range .ActiveProcess.ChangeoverFlow}}
+                <span class="status-badge {{if eq $.ActiveChangeover.Phase .Kind}}status-connected{{end}}">{{.Label}}</span>
+                {{end}}
+            </div>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
+                <button class="btn btn-sm btn-primary" onclick="advanceToNextPhase()">Advance To Next Step</button>
+                {{if and .ActiveProcess.TargetStyleID .ActiveProcess.ActiveStyleID}}
+                    {{if ne (deref .ActiveProcess.TargetStyleID) (deref .ActiveProcess.ActiveStyleID)}}
+                        <button class="btn btn-sm" onclick="completeCutover()">Start New Style Production</button>
+                    {{end}}
+                {{else if .ActiveProcess.TargetStyleID}}
+                    <button class="btn btn-sm" onclick="completeCutover()">Start New Style Production</button>
+                {{end}}
             </div>
         </div>
         {{else}}
@@ -99,6 +109,10 @@
 {{end}}
 
 <div id="page-data" data-process-id="{{.ActiveProcessID}}"></div>
+<script>
+window.changeoverFlow = {{if .ActiveProcess}}{{json .ActiveProcess.ChangeoverFlow}}{{else}}[]{{end}};
+window.changeoverPhase = {{if .ActiveChangeover}}{{json .ActiveChangeover.Phase}}{{else}}""{{end}};
+</script>
 <script src="/static/js/pages/changeover.js"></script>
 
 {{template "footer" .}}

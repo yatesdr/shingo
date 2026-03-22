@@ -124,6 +124,8 @@ func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, 
 	if style.LineID != processID {
 		return nil, fmt.Errorf("target style %d does not belong to process %d", toStyleID, processID)
 	}
+	flow := store.SanitizeProcessFlow(process.ChangeoverFlow)
+	firstPhase := flow[0].Kind
 	tx, err := e.db.Begin()
 	if err != nil {
 		return nil, err
@@ -131,7 +133,7 @@ func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, 
 	defer tx.Rollback()
 
 	res, err := tx.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, phase, called_by, notes)
-		VALUES (?, ?, ?, 'active', 'runout', ?, ?)`, processID, process.ActiveStyleID, toStyleID, calledBy, notes)
+		VALUES (?, ?, ?, 'active', ?, ?, ?)`, processID, process.ActiveStyleID, toStyleID, firstPhase, calledBy, notes)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +144,9 @@ func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, 
 	if _, err := tx.Exec(`UPDATE processes SET target_job_style_id=? WHERE id=?`, toStyleID, processID); err != nil {
 		return nil, err
 	}
+	if _, err := tx.Exec(`UPDATE processes SET production_state='changeover_active' WHERE id=?`, processID); err != nil {
+		return nil, err
+	}
 
 	stations, err := e.db.ListOperatorStationsByProcess(processID)
 	if err != nil {
@@ -150,7 +155,7 @@ func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, 
 	for _, station := range stations {
 		res, err := tx.Exec(`INSERT INTO changeover_station_tasks (
 			process_changeover_id, operator_station_id, state, current_phase, transition_mode, ready_for_local_change
-		) VALUES (?, ?, ?, 'runout', ?, ?)`, changeoverID, station.ID, "waiting", "rolling_local", true)
+		) VALUES (?, ?, ?, ?, ?, ?)`, changeoverID, station.ID, deriveStationTaskState("waiting", firstPhase), firstPhase, "rolling_local", shouldStationBeReadyForPhase(firstPhase))
 		if err != nil {
 			return nil, err
 		}
@@ -209,20 +214,26 @@ func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, 
 }
 
 func (e *Engine) AdvanceProcessChangeoverPhase(processID int64, phase string) error {
+	process, err := e.db.GetProcess(processID)
+	if err != nil {
+		return err
+	}
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return err
 	}
-	switch phase {
-	case "runout", "tool_change", "release", "verify":
-	default:
+	if store.ProcessFlowIndex(process.ChangeoverFlow, phase) < 0 {
 		return fmt.Errorf("invalid changeover phase %q", phase)
 	}
 	if phase == changeover.Phase {
 		return nil
 	}
-	if !isAllowedNextChangeoverPhase(changeover.Phase, phase) {
+	next := store.NextProcessFlowStep(process.ChangeoverFlow, changeover.Phase)
+	if next == nil || next.Kind != phase {
 		return fmt.Errorf("invalid phase transition from %s to %s", changeover.Phase, phase)
+	}
+	if changeover.Phase == "cutover" && (process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID) {
+		return fmt.Errorf("start new style production before advancing past cutover")
 	}
 	if err := e.validateChangeoverPhaseTransition(changeover.ID, phase); err != nil {
 		return err
@@ -237,7 +248,38 @@ func (e *Engine) AdvanceProcessChangeoverPhase(processID int64, phase string) er
 			_ = e.db.UpdateChangeoverStationTaskState(task.ID, deriveStationTaskState(task.State, phase), ready)
 		}
 	}
+	switch phase {
+	case "cutover":
+		_ = e.db.SetProcessProductionState(processID, "awaiting_cutover")
+	case "verify":
+		if process.ActiveStyleID != nil && changeover.ToStyleID == *process.ActiveStyleID {
+			_ = e.db.SetProcessProductionState(processID, "new_style_production")
+		}
+	default:
+		_ = e.db.SetProcessProductionState(processID, "changeover_active")
+	}
 	return nil
+}
+
+func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
+	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if err != nil {
+		return err
+	}
+	if changeover.Phase != "cutover" && changeover.Phase != "verify" {
+		return fmt.Errorf("process is not in cutover")
+	}
+	toStyleID := changeover.ToStyleID
+	if err := e.db.SetActiveStyle(processID, &toStyleID); err != nil {
+		return err
+	}
+	if err := e.db.SetProcessProductionState(processID, "new_style_production"); err != nil {
+		return err
+	}
+	if err := e.SyncProcessCounterBinding(processID); err != nil {
+		return err
+	}
+	return e.tryCompleteProcessChangeover(processID)
 }
 
 func (e *Engine) CancelProcessChangeoverV2(processID int64) error {
@@ -248,7 +290,10 @@ func (e *Engine) CancelProcessChangeoverV2(processID int64) error {
 	if err := e.db.UpdateProcessChangeoverState(changeover.ID, "cancelled"); err != nil {
 		return err
 	}
-	return e.db.SetTargetStyle(processID, nil)
+	if err := e.db.SetTargetStyle(processID, nil); err != nil {
+		return err
+	}
+	return e.db.SetProcessProductionState(processID, "active_production")
 }
 
 func (e *Engine) StageOpNodeChangeoverMaterial(processID, opNodeID int64) (*store.Order, error) {
@@ -344,8 +389,8 @@ func (e *Engine) ReleaseOpNodeIntoProduction(processID, opNodeID int64) (*store.
 	if err != nil {
 		return nil, err
 	}
-	if changeover.Phase != "release" && changeover.Phase != "verify" {
-		return nil, fmt.Errorf("release to production is only available during release or verify")
+	if changeover.Phase != "release" && changeover.Phase != "cutover" && changeover.Phase != "verify" {
+		return nil, fmt.Errorf("release to production is only available during release, cutover, or verify")
 	}
 	node, runtime, _, err := e.loadActiveOpNode(opNodeID)
 	if err != nil {
@@ -454,8 +499,18 @@ func (e *Engine) SwitchOperatorStationToTarget(processID, stationID int64) error
 }
 
 func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
+	process, err := e.db.GetProcess(processID)
+	if err != nil {
+		return err
+	}
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
+		return nil
+	}
+	if process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID {
+		return nil
+	}
+	if store.NextProcessFlowStep(process.ChangeoverFlow, changeover.Phase) != nil {
 		return nil
 	}
 	tasks, err := e.db.ListChangeoverStationTasks(changeover.ID)
@@ -479,14 +534,12 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 	if !allDone {
 		return nil
 	}
-	toStyleID := changeover.ToStyleID
-	if err := e.db.SetActiveStyle(processID, &toStyleID); err != nil {
-		return err
-	}
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}
-	_ = e.db.UpdateProcessChangeoverPhase(changeover.ID, "verify")
+	if err := e.db.SetProcessProductionState(processID, "active_production"); err != nil {
+		return err
+	}
 	return e.db.UpdateProcessChangeoverState(changeover.ID, "completed")
 }
 
@@ -518,18 +571,9 @@ func scanTxOpNodeRuntime(tx *sql.Tx, opNodeID int64) (*store.OpNodeRuntimeState,
 	return &r, nil
 }
 
-func isAllowedNextChangeoverPhase(current, next string) bool {
-	allowed := map[string]string{
-		"runout":      "tool_change",
-		"tool_change": "release",
-		"release":     "verify",
-	}
-	return allowed[current] == next
-}
-
 func shouldStationBeReadyForPhase(phase string) bool {
 	switch phase {
-	case "runout", "tool_change", "release", "verify":
+	case "runout", "tool_change", "release", "cutover", "verify":
 		return true
 	default:
 		return false
@@ -552,6 +596,8 @@ func canNodeTaskEnterPhase(task *store.ChangeoverNodeTask, targetPhase string) b
 		return task.State != "released" && task.State != "switched" && task.State != "verified"
 	case "release":
 		return task.State != "released" && task.State != "switched" && task.State != "verified"
+	case "cutover":
+		return task.State != "switched" && task.State != "verified"
 	case "verify":
 		return task.State != "released" && task.State != "switched" && task.State != "verified"
 	default:
@@ -620,6 +666,14 @@ func nodeTaskReadyForPhase(task *store.ChangeoverNodeTask, nextPhase string) boo
 		}
 		return isNodeStateAtLeast(task.State, "staged")
 	case "verify":
+		if task.ToAssignmentID != nil {
+			return isNodeStateAtLeast(task.State, "released")
+		}
+		if task.OldMaterialReleaseRequired {
+			return isNodeStateAtLeast(task.State, "line_cleared")
+		}
+		return true
+	case "cutover":
 		if task.ToAssignmentID != nil {
 			return isNodeStateAtLeast(task.State, "released")
 		}

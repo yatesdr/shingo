@@ -1,0 +1,211 @@
+{{template "header" .}}
+
+<div class="page-header">
+    <h1>Config</h1>
+</div>
+
+<div id="page-data" data-station-id="{{.Config.StationID}}" data-station-id-default="{{.StationIDDefault}}"></div>
+
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header"><strong>Identity</strong></div>
+    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="margin:0;min-width:18rem;flex:1">
+            <label>Station ID</label>
+            <input type="text" id="station-id-input" class="form-input" value="{{.Config.Messaging.StationID}}" placeholder="{{.StationIDDefault}}">
+        </div>
+        <div style="color:var(--text-muted);font-size:0.9rem;flex:1;min-width:16rem">
+            If blank, Edge derives the station ID as <code>{{.StationIDDefault}}</code>.
+        </div>
+        <button class="btn btn-primary" onclick="saveIdentity()">Save Identity</button>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header"><strong>WarLink</strong></div>
+    <div class="card-body" id="warlink-form">
+        <div style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="margin:0;flex:1;min-width:14rem">
+                <label>Host</label>
+                <input type="text" name="host" class="form-input" value="{{.Config.WarLink.Host}}">
+            </div>
+            <div class="form-group" style="margin:0;width:7rem">
+                <label>Port</label>
+                <input type="number" name="port" class="form-input" value="{{.Config.WarLink.Port}}">
+            </div>
+            <div class="form-group" style="margin:0;width:8rem">
+                <label>Poll Rate</label>
+                <input type="text" name="poll_rate" class="form-input" value="{{.Config.WarLink.PollRate}}">
+            </div>
+            <div class="form-group" style="margin:0;width:8rem">
+                <label>Mode</label>
+                <select name="mode" class="form-input">
+                    <option value="poll" {{if eq .Config.WarLink.Mode "poll"}}selected{{end}}>Poll</option>
+                    <option value="sse" {{if ne .Config.WarLink.Mode "poll"}}selected{{end}}>SSE</option>
+                </select>
+            </div>
+            <label style="display:flex;align-items:center;gap:0.45rem;margin:0 0 0.5rem 0">
+                <input type="checkbox" name="enabled" {{if .Config.WarLink.Enabled}}checked{{end}}>
+                <span>Enabled</span>
+            </label>
+            <div class="status-badge {{if .WarLinkConnected}}status-connected{{else}}status-disconnected{{end}}" id="warlink-status">{{if .WarLinkConnected}}Connected{{else}}Disconnected{{end}}</div>
+            <button class="btn btn-primary" onclick="saveWarLink()">Save WarLink</button>
+        </div>
+        <div style="margin-top:0.75rem">
+            <strong style="display:block;margin-bottom:0.4rem">Available PLCs</strong>
+            <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+                {{range .PLCNames}}
+                <span class="plc-chip {{if index $.PLCStatus .}}plc-chip-connected{{else}}plc-chip-disconnected{{end}}">
+                    <span class="plc-health-dot {{if index $.PLCStatus .}}plc-health-online{{else}}plc-health-unknown{{end}}"></span>{{.}}
+                </span>
+                {{else}}
+                <span class="empty-cell">No PLCs discovered</span>
+                {{end}}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header"><strong>Messaging</strong></div>
+    <div class="card-body">
+        <div id="broker-rows">
+            {{range .Config.Messaging.Kafka.Brokers}}
+            <div class="broker-row">
+                <input type="text" class="form-input broker-host" style="flex:1" value="{{brokerHost .}}" placeholder="localhost">
+                <input type="number" class="form-input broker-port" style="width:7rem" value="{{brokerPort .}}" placeholder="9092">
+                <button class="btn btn-sm" onclick="testBroker(this)">Test</button>
+                <span class="broker-status"></span>
+                <button class="btn-icon btn-icon-danger" onclick="removeBrokerRow(this)" title="Remove">&#10005;</button>
+            </div>
+            {{else}}
+            <div class="broker-row">
+                <input type="text" class="form-input broker-host" style="flex:1" placeholder="localhost">
+                <input type="number" class="form-input broker-port" style="width:7rem" placeholder="9092">
+                <button class="btn btn-sm" onclick="testBroker(this)">Test</button>
+                <span class="broker-status"></span>
+                <button class="btn-icon btn-icon-danger" onclick="removeBrokerRow(this)" title="Remove">&#10005;</button>
+            </div>
+            {{end}}
+        </div>
+        <div style="display:flex;gap:0.75rem;justify-content:space-between;align-items:center;margin-top:0.75rem;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:0.5rem">
+                <input type="checkbox" id="auto-confirm" {{if .Config.Web.AutoConfirm}}checked{{end}}>
+                <span>Auto-confirm deliveries when AMR reports arrival</span>
+            </label>
+            <div style="display:flex;gap:0.5rem">
+                <button class="btn btn-sm" onclick="addBrokerRow()">+ Add Broker</button>
+                <button class="btn btn-primary" onclick="saveMessaging()">Save Messaging</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header"><strong>Backups</strong></div>
+    <div class="card-body">
+        <div id="backup-form">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:0.75rem">
+                <label class="form-group" style="margin:0">
+                    <span>Enabled</span>
+                    <input type="checkbox" id="backup-enabled" name="enabled" {{if .Config.Backup.Enabled}}checked{{end}}>
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Schedule Interval</span>
+                    <input type="text" name="schedule_interval" class="form-input" value="{{.Config.Backup.ScheduleInterval}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Keep Hourly</span>
+                    <input type="number" name="keep_hourly" class="form-input" value="{{.Config.Backup.KeepHourly}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Keep Daily</span>
+                    <input type="number" name="keep_daily" class="form-input" value="{{.Config.Backup.KeepDaily}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Keep Weekly</span>
+                    <input type="number" name="keep_weekly" class="form-input" value="{{.Config.Backup.KeepWeekly}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Keep Monthly</span>
+                    <input type="number" name="keep_monthly" class="form-input" value="{{.Config.Backup.KeepMonthly}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Endpoint</span>
+                    <input type="text" name="endpoint" class="form-input" value="{{.Config.Backup.S3.Endpoint}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Bucket</span>
+                    <input type="text" name="bucket" class="form-input" value="{{.Config.Backup.S3.Bucket}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Region</span>
+                    <input type="text" name="region" class="form-input" value="{{.Config.Backup.S3.Region}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Access Key</span>
+                    <input type="text" name="access_key" class="form-input" value="{{.Config.Backup.S3.AccessKey}}">
+                </label>
+                <label class="form-group" style="margin:0">
+                    <span>Secret Key</span>
+                    <input type="password" name="secret_key" class="form-input" value="{{.Config.Backup.S3.SecretKey}}">
+                </label>
+                <label style="display:flex;align-items:center;gap:0.5rem;margin-top:1.8rem">
+                    <input type="checkbox" name="use_path_style" {{if .Config.Backup.S3.UsePathStyle}}checked{{end}}>
+                    <span>Use Path Style</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:0.5rem;margin-top:1.8rem">
+                    <input type="checkbox" name="insecure_skip_tls_verify" {{if .Config.Backup.S3.InsecureSkipTLSVerify}}checked{{end}}>
+                    <span>Skip TLS Verify</span>
+                </label>
+            </div>
+        </div>
+        <div id="backup-connection-status" style="margin-top:0.75rem;color:var(--text-muted)">Connection test not yet run.</div>
+        <div id="backup-operation-status" style="margin-top:0.35rem;color:var(--text-muted)">No manual backup operation running.</div>
+        <div id="backup-status" style="margin-top:0.75rem;color:var(--text-muted)">Loading backup status...</div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
+            <button class="btn" id="backup-test-btn" onclick="testBackupConfig()">Test Connection</button>
+            <button class="btn" id="backup-run-btn" onclick="runBackupNow()">Backup Now</button>
+            <button class="btn btn-primary" id="backup-save-btn" onclick="saveBackupConfig()">Save Backup Settings</button>
+        </div>
+        <div class="card" style="margin-top:1rem">
+            <div class="card-header"><strong>Available Backups</strong></div>
+            <div class="card-body" style="padding:0">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Created</th>
+                            <th>Size</th>
+                            <th>Key</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="backup-body">
+                        <tr><td colspan="4" class="empty-cell">Loading backups...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header"><strong>Security</strong></div>
+    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="margin:0;min-width:14rem">
+            <label>Current Password</label>
+            <input type="password" id="pw-old" class="form-input">
+        </div>
+        <div class="form-group" style="margin:0;min-width:14rem">
+            <label>New Password</label>
+            <input type="password" id="pw-new" class="form-input">
+        </div>
+        <div class="form-group" style="margin:0;min-width:14rem">
+            <label>Confirm New Password</label>
+            <input type="password" id="pw-confirm" class="form-input">
+        </div>
+        <button class="btn btn-primary" onclick="changePassword()">Change Password</button>
+    </div>
+</div>
+
+<script src="/static/js/pages/config.js"></script>
+{{template "footer" .}}

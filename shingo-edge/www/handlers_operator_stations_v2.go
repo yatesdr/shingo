@@ -7,26 +7,6 @@ import (
 	"shingoedge/store"
 )
 
-func (h *Handlers) handleOperatorStationAdmin(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
-	processes, _ := db.ListProcesses()
-	styles, _ := db.ListStyles()
-	stations, _ := db.ListOperatorStations()
-	nodes, _ := db.ListOpStationNodes()
-	assignments, _ := db.ListOpNodeAssignmentsByProcess(0)
-	coreNodes := h.engine.CoreNodes()
-	data := map[string]interface{}{
-		"Page":        "operator",
-		"Processes":   processes,
-		"Styles":      styles,
-		"Stations":    stations,
-		"Nodes":       nodes,
-		"Assignments": assignments,
-		"CoreNodes":   coreNodes,
-	}
-	h.renderTemplate(w, r, "operator-home.html", data)
-}
-
 func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -374,6 +354,19 @@ func (h *Handlers) apiAdvanceProcessChangeoverPhase(w http.ResponseWriter, r *ht
 		return
 	}
 	if err := h.engine.AdvanceProcessChangeoverPhase(processID, req.Phase); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	if err := h.engine.CompleteProcessProductionCutover(processID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

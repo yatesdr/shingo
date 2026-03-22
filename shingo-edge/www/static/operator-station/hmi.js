@@ -95,6 +95,10 @@ function drawHeader(w) {
     } else {
         hitZones.push(drawButton(x, 46, 148, 32, nextPhaseColor(), nextPhaseLabel(), advanceChangeoverPhase, 14));
         x += 160;
+        if (needsProductionCutover()) {
+            hitZones.push(drawButton(x, 46, 148, 32, '#7a4e26', 'START STYLE', completeProductionCutover, 14));
+            x += 160;
+        }
     }
     if (stationView.active_changeover && stationView.station_task && stationView.station_task.ready_for_local_change) {
         hitZones.push(drawButton(x, 46, 148, 32, '#7a4e26', 'COMPLETE CO', completeStationChangeover, 15));
@@ -111,7 +115,8 @@ function drawFooter(w, h) {
     const co = stationView.active_changeover;
     const total = stationView.completed_node_changes + stationView.pending_node_changes;
     const progress = co ? (' [' + stationView.completed_node_changes + '/' + total + ' nodes]') : '';
-    const msg = co ? ('Changeover ' + co.phase.toUpperCase() + ': ' + co.from_style_name + ' -> ' + co.to_style_name + progress) : 'Touch-ready operator station';
+    const prod = stationView.process && stationView.process.production_state ? (' | ' + stationView.process.production_state.replace(/_/g, ' ')) : '';
+    const msg = co ? ('Changeover ' + co.phase.toUpperCase() + ': ' + co.from_style_name + ' -> ' + co.to_style_name + progress + prod) : ('Touch-ready operator station' + prod);
     ctx.fillText(msg, 18, h - 18);
 }
 
@@ -164,7 +169,7 @@ function drawCard(entry, x, y, w, h) {
         buttons.push(drawButton(x + 18, y + h - 192, w - 36, 42, '#2f6f4a', 'STAGE NEXT MATERIAL', () => stageNode(entry.node.id), 17));
     } else if (stationView.active_changeover && stationView.active_changeover.phase === 'tool_change') {
         buttons.push(drawButton(x + 18, y + h - 192, w - 36, 42, '#855c22', 'EMPTY LINE FOR TOOLS', () => emptyForToolChange(entry.node.id), 17));
-    } else if (stationView.active_changeover && (stationView.active_changeover.phase === 'release' || stationView.active_changeover.phase === 'verify') && (nextStyle.payload_code || nextStyle.payload_description)) {
+    } else if (stationView.active_changeover && (stationView.active_changeover.phase === 'release' || stationView.active_changeover.phase === 'cutover' || stationView.active_changeover.phase === 'verify') && (nextStyle.payload_code || nextStyle.payload_description)) {
         buttons.push(drawButton(x + 18, y + h - 192, w - 36, 42, '#7a4e26', 'RELEASE NEW MATERIAL', () => releaseToProduction(entry.node.id), 17));
     } else if (stationView.target_style && (nextStyle.payload_code || nextStyle.payload_description)) {
         buttons.push(drawButton(x + 18, y + h - 192, w - 36, 42, '#7a4e26', 'SWITCH TO NEXT STYLE', () => switchNode(entry.node.id), 18));
@@ -266,12 +271,9 @@ function closeStylePicker() {
 }
 
 function nextPhaseLabel() {
-    if (!stationView || !stationView.active_changeover) return 'NEXT';
-    const phase = stationView.active_changeover.phase;
-    if (phase === 'runout') return 'TO TOOL CHANGE';
-    if (phase === 'tool_change') return 'TO RELEASE';
-    if (phase === 'release') return 'TO VERIFY';
-    return 'VERIFY';
+    const next = nextPhaseStep();
+    if (!next) return 'COMPLETE';
+    return 'TO ' + String(next.label || next.kind || 'NEXT').toUpperCase();
 }
 
 function nextPhaseColor() {
@@ -280,21 +282,40 @@ function nextPhaseColor() {
     if (phase === 'runout') return '#6b4a1f';
     if (phase === 'tool_change') return '#7a5a22';
     if (phase === 'release') return '#2f6f4a';
+    if (phase === 'cutover') return '#7a4e26';
     return '#2d4f7d';
 }
 
 async function advanceChangeoverPhase() {
-    if (!stationView || !stationView.active_changeover) return;
-    const phase = stationView.active_changeover.phase;
-    let next = 'verify';
-    if (phase === 'runout') next = 'tool_change';
-    else if (phase === 'tool_change') next = 'release';
-    else if (phase === 'release') next = 'verify';
-    await postAction('/api/processes/' + stationView.process.id + '/changeover/phase', { phase: next });
+    const next = nextPhaseStep();
+    if (!next) return;
+    await postAction('/api/processes/' + stationView.process.id + '/changeover/phase', { phase: next.kind });
 }
 
 async function completeStationChangeover() {
     await postAction('/api/processes/' + stationView.process.id + '/changeover/switch-station/' + stationID, {});
+}
+
+async function completeProductionCutover() {
+    await postAction('/api/processes/' + stationView.process.id + '/changeover/cutover', {});
+}
+
+function nextPhaseStep() {
+    if (!stationView || !stationView.active_changeover) return null;
+    const flow = Array.isArray(stationView.process.changeover_flow) ? stationView.process.changeover_flow : [];
+    for (let i = 0; i < flow.length; i++) {
+        if (flow[i].kind === stationView.active_changeover.phase && i + 1 < flow.length) {
+            return flow[i + 1];
+        }
+    }
+    return null;
+}
+
+function needsProductionCutover() {
+    if (!stationView || !stationView.active_changeover || !stationView.target_style) return false;
+    const phase = stationView.active_changeover.phase;
+    if (phase !== 'cutover' && phase !== 'verify') return false;
+    return !stationView.current_style || stationView.current_style.id !== stationView.target_style.id;
 }
 
 async function postAction(url, body) {

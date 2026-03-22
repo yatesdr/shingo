@@ -3,7 +3,15 @@
 (function() {
     var _pd = document.getElementById('page-data').dataset;
     var edgeNodes = JSON.parse(_pd.nodes);
-    var coreNodes = JSON.parse(_pd.coreNodes);
+    var coreNodesRaw = JSON.parse(_pd.coreNodes);
+    function coreNodeName(entry) {
+        if (!entry) return '';
+        if (typeof entry === 'string') return entry;
+        if (typeof entry.name === 'string') return entry.name;
+        if (typeof entry.node_id === 'string') return entry.node_id;
+        return '';
+    }
+    var coreNodes = coreNodesRaw.map(coreNodeName).filter(Boolean);
 
     // Build merged set: core nodes first, then any edge-only nodes
     var seen = {};
@@ -128,7 +136,10 @@ async function syncNodes() {
 ShingoEdge.createSSE('/events', {
     onCounterAnomaly: function() { location.reload(); },
     onCoreNodes: function(data) {
-        var nodes = data.nodes || [];
+        var nodes = (data.nodes || []).map(function(n) {
+            if (typeof n === 'string') return n;
+            return n && n.name ? n.name : '';
+        }).filter(Boolean);
         ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
             var sel = document.getElementById(selID);
             var cur = sel.value;
@@ -138,7 +149,7 @@ ShingoEdge.createSSE('/events', {
             });
             // Re-add core nodes at the top (after blank first option if any)
             var ref = sel.options[1] || null;
-            nodes.map(function(n) { return n.name; }).sort().forEach(function(n) {
+            nodes.sort().forEach(function(n) {
                 var opt = document.createElement('option');
                 opt.value = n;
                 opt.textContent = n;

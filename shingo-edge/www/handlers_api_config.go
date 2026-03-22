@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingo/protocol"
+	"shingoedge/store"
 )
 
 // --- Counter Anomalies ---
@@ -519,8 +520,11 @@ func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name            string                  `json:"name"`
+		Description     string                  `json:"description"`
+		ProductionState string                  `json:"production_state"`
+		CutoverMode     string                  `json:"cutover_mode"`
+		ChangeoverFlow  []store.ProcessFlowStep `json:"changeover_flow"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -530,7 +534,7 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	id, err := h.engine.DB().CreateProcess(req.Name, req.Description)
+	id, err := h.engine.DB().CreateProcess(req.Name, req.Description, req.ProductionState, req.CutoverMode, req.ChangeoverFlow)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -546,14 +550,17 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name            string                  `json:"name"`
+		Description     string                  `json:"description"`
+		ProductionState string                  `json:"production_state"`
+		CutoverMode     string                  `json:"cutover_mode"`
+		ChangeoverFlow  []store.ProcessFlowStep `json:"changeover_flow"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdateProcess(id, req.Name, req.Description); err != nil {
+	if err := h.engine.DB().UpdateProcess(id, req.Name, req.Description, req.ProductionState, req.CutoverMode, req.ChangeoverFlow); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -592,8 +599,59 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := h.engine.SyncProcessCounterBinding(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	h.requestBackup("active-style-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) apiGetProcessCounterBinding(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ID")
+		return
+	}
+	binding, err := h.engine.DB().GetProcessCounterBinding(id)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{
+			"process_id": id,
+			"plc_name":   "",
+			"tag_name":   "",
+			"enabled":    false,
+		})
+		return
+	}
+	writeJSON(w, binding)
+}
+
+func (h *Handlers) apiUpsertProcessCounterBinding(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ID")
+		return
+	}
+	var req struct {
+		PLCName string `json:"plc_name"`
+		TagName string `json:"tag_name"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	bindingID, err := h.engine.DB().UpsertProcessCounterBinding(id, req.PLCName, req.TagName, req.Enabled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.engine.SyncProcessCounterBinding(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.requestBackup("process-counter-binding-updated")
+	writeJSON(w, map[string]int64{"id": bindingID})
 }
 
 func (h *Handlers) apiListProcessStyles(w http.ResponseWriter, r *http.Request) {

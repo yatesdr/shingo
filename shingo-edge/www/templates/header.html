@@ -26,12 +26,12 @@
             {{if .Authenticated}}
             <span class="nav-sep"></span>
             <div class="nav-dropdown">
-              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "setup") (eq .Page "production") (eq .Page "manual-order") (eq .Page "operator") (eq .Page "manual-message") (eq .Page "logs")}} active{{end}}">Admin</a>
+              <a href="#" class="nav-dropdown-toggle{{if or (eq .Page "config") (eq .Page "processes") (eq .Page "production") (eq .Page "manual-order") (eq .Page "manual-message") (eq .Page "logs")}} active{{end}}">Admin</a>
               <div class="nav-dropdown-menu">
-                <a href="/setup"{{if eq .Page "setup"}} class="active"{{end}}>Setup</a>
+                <a href="/config"{{if eq .Page "config"}} class="active"{{end}}>Config</a>
+                <a href="/processes"{{if eq .Page "processes"}} class="active"{{end}}>Processes</a>
                 <a href="/production"{{if eq .Page "production"}} class="active"{{end}}>Production</a>
                 <a href="/manual-order"{{if eq .Page "manual-order"}} class="active"{{end}}>Manual Order</a>
-                <a href="/operator"{{if eq .Page "operator"}} class="active"{{end}}>Operator</a>
                 <a href="/manual-message"{{if eq .Page "manual-message"}} class="active"{{end}}>Messages</a>
                 <a href="/diagnostics"{{if eq .Page "logs"}} class="active"{{end}}>Logs</a>
               </div>

@@ -68,7 +68,6 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(uuid);
-CREATE INDEX IF NOT EXISTS idx_orders_op_node_id ON orders(op_node_id);
 
 CREATE TABLE IF NOT EXISTS order_history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,7 +113,22 @@ CREATE TABLE IF NOT EXISTS processes (
     description         TEXT NOT NULL DEFAULT '',
     active_job_style_id INTEGER REFERENCES styles(id) ON DELETE SET NULL,
     target_job_style_id INTEGER REFERENCES styles(id) ON DELETE SET NULL,
+    production_state    TEXT NOT NULL DEFAULT 'active_production',
+    cutover_mode        TEXT NOT NULL DEFAULT 'manual',
+    changeover_flow_json TEXT NOT NULL DEFAULT '',
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS process_counter_bindings (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id        INTEGER NOT NULL UNIQUE REFERENCES processes(id) ON DELETE CASCADE,
+    reporting_point_id INTEGER REFERENCES reporting_points(id) ON DELETE SET NULL,
+    plc_name          TEXT NOT NULL DEFAULT '',
+    tag_name          TEXT NOT NULL DEFAULT '',
+    enabled           INTEGER NOT NULL DEFAULT 1,
+    warlink_managed   INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS shifts (
@@ -305,10 +319,24 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE changeover_log ADD COLUMN line_id INTEGER")
 	db.Exec("ALTER TABLE styles ADD COLUMN cat_id TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE processes ADD COLUMN target_job_style_id INTEGER REFERENCES styles(id) ON DELETE SET NULL")
+	db.Exec("ALTER TABLE processes ADD COLUMN production_state TEXT NOT NULL DEFAULT 'active_production'")
+	db.Exec("ALTER TABLE processes ADD COLUMN cutover_mode TEXT NOT NULL DEFAULT 'manual'")
+	db.Exec("ALTER TABLE processes ADD COLUMN changeover_flow_json TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE operator_stations ADD COLUMN parent_station_id INTEGER REFERENCES operator_stations(id) ON DELETE SET NULL")
 	db.Exec("ALTER TABLE operator_stations ADD COLUMN controller_node_id TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE process_changeovers ADD COLUMN phase TEXT NOT NULL DEFAULT 'runout'")
 	db.Exec("ALTER TABLE changeover_station_tasks ADD COLUMN current_phase TEXT NOT NULL DEFAULT 'runout'")
+	db.Exec(`CREATE TABLE IF NOT EXISTS process_counter_bindings (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		process_id INTEGER NOT NULL UNIQUE REFERENCES processes(id) ON DELETE CASCADE,
+		reporting_point_id INTEGER REFERENCES reporting_points(id) ON DELETE SET NULL,
+		plc_name TEXT NOT NULL DEFAULT '',
+		tag_name TEXT NOT NULL DEFAULT '',
+		enabled INTEGER NOT NULL DEFAULT 1,
+		warlink_managed INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`)
 
 	// Auto-create default line if styles exist but no processes do
 	var lineCount int
@@ -341,6 +369,7 @@ func (db *DB) migrate() error {
 	// Staged bin expiry visibility
 	db.Exec("ALTER TABLE orders ADD COLUMN staged_expire_at TEXT")
 	db.Exec("ALTER TABLE orders ADD COLUMN op_node_id INTEGER REFERENCES op_station_nodes(id) ON DELETE SET NULL")
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_orders_op_node_id ON orders(op_node_id)")
 
 	return nil
 }

@@ -42,10 +42,10 @@ type ManagedPLC struct {
 	Name        string
 	Status      string
 	Error       string
-	ProductName string              // from status-change
-	Vendor      string              // from status-change
+	ProductName string // from status-change
+	Vendor      string // from status-change
 	Values      map[string]TagValue
-	Health      *PLCHealth          // nil until first health event
+	Health      *PLCHealth // nil until first health event
 	mu          sync.RWMutex
 }
 
@@ -249,32 +249,46 @@ func (m *Manager) warlinkPollTick() {
 		}
 		m.mu.Unlock()
 
+		effectiveStatus := p.Status
+		effectiveErr := p.Error
+		var tags map[string]WarlinkTag
+
+		if p.Status == "Connected" {
+			tags, err = m.fetchTags(ctx, p.Name)
+			if err != nil {
+				log.Printf("WarLink fetch tags %s: %v", p.Name, err)
+				effectiveStatus = "Disconnected"
+				effectiveErr = err.Error()
+			} else if connErr := connectionErrorFromTags(tags); connErr != "" {
+				effectiveStatus = "Disconnected"
+				effectiveErr = connErr
+			}
+		}
+
 		existing.mu.Lock()
 		oldStatus := existing.Status
-		existing.Status = p.Status
-		existing.Error = p.Error
+		existing.Status = effectiveStatus
+		existing.Error = effectiveErr
+		if effectiveStatus != "Connected" {
+			existing.Values = map[string]TagValue{}
+		}
 		existing.mu.Unlock()
 
 		// Emit connection transitions
-		if p.Status == "Connected" && oldStatus != "Connected" {
+		if effectiveStatus == "Connected" && oldStatus != "Connected" {
 			m.DebugLog.log("plc connected: %s", p.Name)
 			m.emitter.EmitPLCConnected(p.Name)
-		} else if p.Status != "Connected" && oldStatus == "Connected" {
+		} else if effectiveStatus != "Connected" && oldStatus == "Connected" {
 			var emitErr error
-			if p.Error != "" {
-				emitErr = fmt.Errorf("%s", p.Error)
+			if effectiveErr != "" {
+				emitErr = fmt.Errorf("%s", effectiveErr)
 			}
 			m.DebugLog.log("plc disconnected: %s err=%v", p.Name, emitErr)
 			m.emitter.EmitPLCDisconnected(p.Name, emitErr)
 		}
 
 		// Fetch tags for connected PLCs
-		if p.Status == "Connected" {
-			tags, err := m.fetchTags(ctx, p.Name)
-			if err != nil {
-				log.Printf("WarLink fetch tags %s: %v", p.Name, err)
-				continue
-			}
+		if effectiveStatus == "Connected" {
 			m.applyTags(p.Name, tags)
 		}
 	}
@@ -429,6 +443,12 @@ func (m *Manager) ReadTag(plcName, tagName string) (interface{}, error) {
 
 	tv, ok := mp.Values[tagName]
 	if !ok {
+		if mp.Status != "Connected" {
+			if mp.Error != "" {
+				return nil, fmt.Errorf("PLC %s not connected: %s", plcName, mp.Error)
+			}
+			return nil, fmt.Errorf("PLC %s not connected", plcName)
+		}
 		return nil, fmt.Errorf("tag %s not found on %s", tagName, plcName)
 	}
 	if tv.Error != "" {
@@ -507,6 +527,9 @@ func (m *Manager) pollAllReportingPoints() {
 }
 
 func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
+	if !m.IsConnected(rp.PLCName) {
+		return
+	}
 	val, err := m.ReadTag(rp.PLCName, rp.TagName)
 	if err != nil {
 		m.DebugLog.log("tag read error: %s/%s rp=%d: %v", rp.PLCName, rp.TagName, rp.ID, err)
@@ -554,6 +577,33 @@ func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 	if anomaly != "jump" && delta > 0 {
 		m.emitter.EmitCounterDelta(rp.ID, rp.LineID, rp.JobStyleID, delta, newCount, anomaly)
 	}
+}
+
+func connectionErrorFromTags(tags map[string]WarlinkTag) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	var first string
+	for _, tag := range tags {
+		if !isConnectionLevelTagError(tag.Error) {
+			return ""
+		}
+		if first == "" {
+			first = tag.Error
+		}
+	}
+	return first
+}
+
+func isConnectionLevelTagError(err string) bool {
+	if err == "" {
+		return false
+	}
+	lower := strings.ToLower(err)
+	return strings.Contains(lower, "not connected") ||
+		strings.Contains(lower, "sendunitdatatransaction") ||
+		strings.Contains(lower, "connection failed") ||
+		strings.Contains(lower, "session") && strings.Contains(lower, "closed")
 }
 
 func toInt64(v interface{}) (int64, bool) {

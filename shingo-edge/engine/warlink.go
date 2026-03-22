@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"time"
 )
@@ -90,4 +91,52 @@ func (e *Engine) CleanupReportingPointTag(rpID int64, plcName, tagName string, m
 	if managed {
 		e.EnsureTagUnpublished(rpID, plcName, tagName)
 	}
+}
+
+func (e *Engine) SyncProcessCounterBinding(processID int64) error {
+	process, err := e.db.GetProcess(processID)
+	if err != nil {
+		return err
+	}
+	binding, err := e.db.GetProcessCounterBinding(processID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return err
+	}
+	if binding.PLCName == "" || binding.TagName == "" {
+		return nil
+	}
+	if process.ActiveStyleID == nil {
+		return nil
+	}
+
+	var oldPLC, oldTag string
+	var oldManaged bool
+	if binding.ReportingPointID != nil {
+		if rp, err := e.db.GetReportingPoint(*binding.ReportingPointID); err == nil {
+			oldPLC, oldTag, oldManaged = rp.PLCName, rp.TagName, rp.WarlinkManaged
+			if err := e.db.UpdateReportingPoint(rp.ID, binding.PLCName, binding.TagName, *process.ActiveStyleID, binding.Enabled); err != nil {
+				return err
+			}
+			e.ManageReportingPointTag(rp.ID, oldPLC, oldTag, oldManaged, binding.PLCName, binding.TagName)
+			rpID := rp.ID
+			return e.db.UpdateProcessCounterReportingPoint(processID, &rpID, oldManaged || e.plcMgr.IsTagPublished(binding.PLCName, binding.TagName))
+		}
+	}
+
+	rpID, err := e.db.CreateReportingPoint(binding.PLCName, binding.TagName, *process.ActiveStyleID)
+	if err != nil {
+		return err
+	}
+	if !binding.Enabled {
+		_ = e.db.UpdateReportingPoint(rpID, binding.PLCName, binding.TagName, *process.ActiveStyleID, false)
+	}
+	e.EnsureTagPublished(rpID, binding.PLCName, binding.TagName)
+	managed := false
+	if rp, err := e.db.GetReportingPoint(rpID); err == nil {
+		managed = rp.WarlinkManaged
+	}
+	return e.db.UpdateProcessCounterReportingPoint(processID, &rpID, managed)
 }

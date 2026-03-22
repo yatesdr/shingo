@@ -2,7 +2,12 @@ var _pd = document.getElementById('page-data').dataset;
 var _stationID = _pd.stationId;
 var _lineIDs = JSON.parse(_pd.lineIds);
 var _orders = JSON.parse(_pd.orders);
-var _coreNodes = JSON.parse(_pd.coreNodes);
+var _coreNodes = JSON.parse(_pd.coreNodes).map(function(n) {
+    if (typeof n === 'string') return n;
+    if (n && typeof n.name === 'string') return n.name;
+    if (n && typeof n.node_id === 'string') return n.node_id;
+    return '';
+}).filter(Boolean);
 
 var _fieldDefs = {
     'edge.register': [
