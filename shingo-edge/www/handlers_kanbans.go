@@ -54,3 +54,26 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 
 	h.renderTemplate(w, r, "kanbans.html", data)
 }
+
+func (h *Handlers) handleKanbansPartial(w http.ResponseWriter, r *http.Request) {
+	db := h.engine.DB()
+	var activeProcessID int64
+	if p := r.URL.Query().Get("process"); p != "" {
+		if id, err := strconv.ParseInt(p, 10, 64); err == nil {
+			activeProcessID = id
+		}
+	}
+	var activeOrders []store.Order
+	if activeProcessID > 0 {
+		activeOrders, _ = db.ListActiveOrdersByProcess(activeProcessID)
+	} else {
+		activeOrders, _ = db.ListActiveOrders()
+	}
+	data := map[string]interface{}{
+		"ActiveOrders": activeOrders,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := h.tmpl.ExecuteTemplate(w, "orders-body", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}

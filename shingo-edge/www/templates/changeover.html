@@ -11,160 +11,46 @@
 </div>
 
 {{if .ActiveProcessID}}
-<div class="card">
-    <div class="card-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
-        <div>
-            <strong>Process Changeover</strong>
-            <div style="color:var(--text-muted);font-size:0.9rem">Current style: {{if .CurrentStyle}}<strong>{{.CurrentStyle}}</strong>{{else}}None{{end}}</div>
-        </div>
-        {{if .ActiveChangeover}}
-            {{if eq .ActiveChangeover.State "active"}}
-            <button class="btn btn-danger btn-sm" onclick="cancelProcessChangeover()">Cancel Changeover</button>
-            {{end}}
-        {{else}}
-        <div style="display:flex;align-items:flex-end;gap:0.75rem">
-            <div class="form-group" style="margin:0">
-                <label>Target Style</label>
-                <select id="co-to-style" class="form-input">
-                    <option value="">-- Select --</option>
-                    {{range .Styles}}
-                    <option value="{{.ID}}">{{.Name}}</option>
-                    {{end}}
-                </select>
-            </div>
-            <button class="btn btn-primary" onclick="startProcessChangeover()">Start Changeover</button>
-        </div>
-        {{end}}
-    </div>
+<div class="card" id="changeover-content"
+     hx-ext="sse"
+     sse-connect="/events"
+     hx-get="/changeover/partial?process={{.ActiveProcessID}}"
+     hx-trigger="refreshChangeover from:body, sse:order-update throttle:2s, sse:order-failed"
+     hx-swap="innerHTML">
+    {{template "changeover-body" .}}
+</div>
 
-    {{if .ActiveChangeover}}
+{{if .ChangeoverHistory}}
+<div class="card" style="margin-top:1rem">
+    <div class="card-header"><strong>Changeover History</strong></div>
     <div class="card-body">
-        <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
-            <div><strong>{{.ActiveChangeover.FromStyleName}}</strong> &rarr; <strong>{{.ActiveChangeover.ToStyleName}}</strong></div>
-            <span class="status-badge">{{.ActiveChangeover.State}}</span>
-            {{if and .ActiveProcess.TargetStyleID .ActiveProcess.ActiveStyleID}}
-                {{if ne (deref .ActiveProcess.TargetStyleID) (deref .ActiveProcess.ActiveStyleID)}}
-                    <button class="btn btn-sm" onclick="completeCutover()">Complete Cutover</button>
-                {{end}}
-            {{else if .ActiveProcess.TargetStyleID}}
-                <button class="btn btn-sm" onclick="completeCutover()">Complete Cutover</button>
-            {{end}}
-        </div>
-
-        {{if .CentralNodeTasks}}
-        <table class="table" style="margin-bottom:1rem">
+        <table class="table">
             <thead>
                 <tr>
-                    <th>Node</th>
-                    <th>Status</th>
                     <th>From</th>
                     <th>To</th>
-                    <th style="width:1%">Actions</th>
+                    <th>State</th>
+                    <th>Started</th>
+                    <th>Completed</th>
+                    <th>Called By</th>
                 </tr>
             </thead>
             <tbody>
-                {{range .CentralNodeTasks}}
+                {{range .ChangeoverHistory}}
                 <tr>
-                    <td class="mono">{{.NodeName}}</td>
-                    <td>
-                        <span class="status-badge">{{.State}}</span>
-                        {{if .LastOrderError}}<span style="color:red;font-size:0.85rem;margin-left:0.5rem">{{.LastOrderError}}</span>{{end}}
-                    </td>
-                    <td>{{if .FromPayload}}{{.FromPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.FromRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
-                    <td>{{if .ToPayload}}{{.ToPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.ToRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
-                    <td style="white-space:nowrap">
-                        {{if eq .State "swap_required"}}
-                        <button class="btn btn-sm btn-primary" onclick="stageNode({{.ProcessNodeID}})">Stage New Material</button>
-                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
-                        {{else if eq .State "staging_requested"}}
-                        <span style="color:var(--text-muted);font-size:0.85rem">Staging in progress...</span>
-                        {{else if eq .State "staged"}}
-                        <button class="btn btn-sm btn-primary" onclick="emptyNode({{.ProcessNodeID}})">Release Old Material</button>
-                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
-                        {{else if eq .State "empty_requested"}}
-                        <span style="color:var(--text-muted);font-size:0.85rem">Releasing old material...</span>
-                        {{else if eq .State "line_cleared"}}
-                        <button class="btn btn-sm btn-primary" onclick="releaseNode({{.ProcessNodeID}})">Deliver New Material</button>
-                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
-                        {{else if eq .State "release_requested"}}
-                        <span style="color:var(--text-muted);font-size:0.85rem">Delivering new material...</span>
-                        {{else if or (eq .State "released") (eq .State "switched") (eq .State "verified")}}
-                        <span style="color:var(--text-muted);font-size:0.85rem">Complete</span>
-                        {{else if eq .State "unchanged"}}
-                        <span style="color:var(--text-muted);font-size:0.85rem">No change needed</span>
-                        {{end}}
-                    </td>
+                    <td>{{.FromStyleName}}</td>
+                    <td>{{.ToStyleName}}</td>
+                    <td><span class="status-badge">{{.State}}</span></td>
+                    <td>{{formatTime .StartedAt}}</td>
+                    <td>{{if .CompletedAt}}{{formatTimePtr .CompletedAt}}{{else}}--{{end}}</td>
+                    <td>{{if .CalledBy}}{{.CalledBy}}{{else}}--{{end}}</td>
                 </tr>
                 {{end}}
             </tbody>
         </table>
-        {{end}}
-
-        {{range .StationTasks}}
-        <div style="border:1px solid var(--border);border-radius:6px;padding:0.75rem 1rem;margin-bottom:0.75rem">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem">
-                <div>
-                    <strong>{{.StationName}}</strong>
-                    <span class="status-badge" style="margin-left:0.5rem">{{.State}}</span>
-                </div>
-                <button class="btn btn-sm" onclick="switchStation({{.OperatorStationID}})">Complete Station</button>
-            </div>
-            <table class="table" style="margin:0">
-                <thead>
-                    <tr>
-                        <th>Node</th>
-                        <th>Status</th>
-                        <th>From</th>
-                        <th>To</th>
-                        <th style="width:1%">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range index $.NodeTaskMap .OperatorStationID}}
-                    <tr>
-                        <td class="mono">{{.NodeName}}</td>
-                        <td>
-                            <span class="status-badge">{{.State}}</span>
-                            {{if .LastOrderError}}<span style="color:red;font-size:0.85rem;margin-left:0.5rem">{{.LastOrderError}}</span>{{end}}
-                        </td>
-                        <td>{{if .FromPayload}}{{.FromPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.FromRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
-                        <td>{{if .ToPayload}}{{.ToPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.ToRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
-                        <td style="white-space:nowrap">
-                            {{if eq .State "swap_required"}}
-                            <button class="btn btn-sm btn-primary" onclick="stageNode({{.ProcessNodeID}})">Stage New Material</button>
-                            <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
-                            {{else if eq .State "staging_requested"}}
-                            <span style="color:var(--text-muted);font-size:0.85rem">Staging in progress...</span>
-                            {{else if eq .State "staged"}}
-                            <button class="btn btn-sm btn-primary" onclick="emptyNode({{.ProcessNodeID}})">Release Old Material</button>
-                            <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
-                            {{else if eq .State "empty_requested"}}
-                            <span style="color:var(--text-muted);font-size:0.85rem">Releasing old material...</span>
-                            {{else if eq .State "line_cleared"}}
-                            <button class="btn btn-sm btn-primary" onclick="releaseNode({{.ProcessNodeID}})">Deliver New Material</button>
-                            <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
-                            {{else if eq .State "release_requested"}}
-                            <span style="color:var(--text-muted);font-size:0.85rem">Delivering new material...</span>
-                            {{else if or (eq .State "released") (eq .State "switched") (eq .State "verified")}}
-                            <span style="color:var(--text-muted);font-size:0.85rem">Complete</span>
-                            {{else if eq .State "unchanged"}}
-                            <span style="color:var(--text-muted);font-size:0.85rem">No change needed</span>
-                            {{end}}
-                        </td>
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
-        </div>
-        {{end}}
-
     </div>
-    {{else}}
-    <div class="card-body">
-        <p style="color:var(--text-muted)">No active changeover. Select a target style and click Start.</p>
-    </div>
-    {{end}}
 </div>
+{{end}}
 
 {{else}}
 <div class="card"><div class="card-body"><p class="empty-cell">No processes configured</p></div></div>

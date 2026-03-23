@@ -125,7 +125,7 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, order)
+	writeJSONWithTrigger(w, r, order, "refreshMaterial")
 }
 
 func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
@@ -250,7 +250,7 @@ func (h *Handlers) apiConfirmDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
 }
 
 func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +264,7 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
 }
 
 func (h *Handlers) apiSubmitOrder(w http.ResponseWriter, r *http.Request) {
@@ -277,7 +277,7 @@ func (h *Handlers) apiSubmitOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
 }
 
 func (h *Handlers) apiCancelOrder(w http.ResponseWriter, r *http.Request) {
@@ -290,7 +290,7 @@ func (h *Handlers) apiCancelOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
 }
 
 func (h *Handlers) apiSetOrderCount(w http.ResponseWriter, r *http.Request) {

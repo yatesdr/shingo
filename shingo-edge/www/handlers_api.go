@@ -13,6 +13,15 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// writeJSONWithTrigger writes JSON and adds an HX-Trigger header for htmx callers.
+func writeJSONWithTrigger(w http.ResponseWriter, r *http.Request, v interface{}, trigger string) {
+	if r.Header.Get("HX-Request") == "true" && trigger != "" {
+		w.Header().Set("HX-Trigger", trigger)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
 func writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

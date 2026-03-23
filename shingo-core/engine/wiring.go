@@ -60,15 +60,18 @@ func (e *Engine) wireEventHandlers() {
 		e.recordMissionEvent(ev)
 	}, EventOrderStatusChanged)
 
-	// When an order fails, log it and handle compound orders
+	// When an order fails, log it, handle compound orders, and auto-return bins
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderFailedEvent)
 		e.logFn("engine: order %d failed: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
 		e.db.AppendAudit("order", ev.OrderID, "failed", "", ev.Detail, "system")
 
-		// If child of a compound order, handle parent failure
-		if order, err := e.db.GetOrder(ev.OrderID); err == nil && order.ParentOrderID != nil && e.dispatcher != nil {
-			e.dispatcher.HandleChildOrderFailure(*order.ParentOrderID, ev.OrderID)
+		if order, err := e.db.GetOrder(ev.OrderID); err == nil {
+			// If child of a compound order, handle parent failure
+			if order.ParentOrderID != nil && e.dispatcher != nil {
+				e.dispatcher.HandleChildOrderFailure(*order.ParentOrderID, ev.OrderID)
+			}
+			e.maybeCreateReturnOrder(order, "failed")
 		}
 	}, EventOrderFailed)
 
@@ -80,11 +83,15 @@ func (e *Engine) wireEventHandlers() {
 		e.handleOrderCompleted(ev)
 	}, EventOrderCompleted)
 
-	// When an order is cancelled, audit it
+	// When an order is cancelled, audit it and auto-return bins
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderCancelledEvent)
 		e.logFn("engine: order %d cancelled: %s", ev.OrderID, ev.Reason)
 		e.db.AppendAudit("order", ev.OrderID, "cancelled", "", ev.Reason, "system")
+
+		if order, err := e.db.GetOrder(ev.OrderID); err == nil {
+			e.maybeCreateReturnOrder(order, "cancelled")
+		}
 	}, EventOrderCancelled)
 
 	// When an order is received, audit it
@@ -194,6 +201,13 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusCancelled, "fleet order stopped"); err != nil {
 				e.logFn("engine: update order %d status to cancelled: %v", order.ID, err)
 			}
+			e.db.UnclaimOrderBins(order.ID)
+			e.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
+				OrderID:   order.ID,
+				EdgeUUID:  order.EdgeUUID,
+				StationID: order.StationID,
+				Reason:    "fleet order stopped",
+			}})
 		}
 	}
 }
@@ -287,6 +301,82 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 			}})
 		}
 	}
+}
+
+// maybeCreateReturnOrder creates a STORE order to return a bin to its origin
+// when an in-flight order is cancelled or fails. The bin is routed to the
+// root parent of the pickup node so the group resolver can pick the best slot.
+func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
+	// Only act on orders that were in-flight with a bin
+	if order.BinID == nil {
+		return
+	}
+	switch order.Status {
+	case dispatch.StatusDispatched, dispatch.StatusInTransit, dispatch.StatusStaged,
+		dispatch.StatusFailed, dispatch.StatusCancelled:
+		// These are states where the bin may have left its origin
+	default:
+		return
+	}
+
+	// Don't create return orders for return orders (prevent infinite loops)
+	if order.PayloadDesc == "auto_return" {
+		e.logFn("engine: order %d is already a return order, skipping auto-return", order.ID)
+		return
+	}
+
+	// Don't create return orders for compound/reshuffle children
+	if order.ParentOrderID != nil {
+		return
+	}
+
+	if order.PickupNode == "" {
+		e.logFn("engine: order %d has no pickup node, cannot create return order", order.ID)
+		return
+	}
+
+	// Resolve the pickup node and walk to its root parent
+	pickupNode, err := e.db.GetNodeByDotName(order.PickupNode)
+	if err != nil {
+		e.logFn("engine: resolve pickup node %q for return order: %v", order.PickupNode, err)
+		return
+	}
+
+	rootNode, err := e.db.GetRootNode(pickupNode.ID)
+	if err != nil {
+		e.logFn("engine: resolve root node for %q: %v", order.PickupNode, err)
+		return
+	}
+
+	returnOrder := &store.Order{
+		StationID:   order.StationID,
+		OrderType:   dispatch.OrderTypeStore,
+		Status:      dispatch.StatusPending,
+		PickupNode:  order.DeliveryNode, // bin is at (or near) the original destination
+		DeliveryNode: rootNode.Name,
+		BinID:       order.BinID,
+		PayloadDesc: "auto_return",
+	}
+
+	if err := e.db.CreateOrder(returnOrder); err != nil {
+		e.logFn("engine: create return order for order %d: %v", order.ID, err)
+		return
+	}
+
+	// Claim the bin for the return order
+	if err := e.db.ClaimBin(*order.BinID, returnOrder.ID); err != nil {
+		e.logFn("engine: claim bin %d for return order %d: %v", *order.BinID, returnOrder.ID, err)
+	}
+
+	e.logFn("engine: created return order %d (store to %s) for %s order %d", returnOrder.ID, rootNode.Name, reason, order.ID)
+	e.db.AppendAudit("order", returnOrder.ID, "auto_return", "", fmt.Sprintf("returning bin from %s order %d", reason, order.ID), "system")
+
+	e.Events.Emit(Event{Type: EventOrderReceived, Payload: OrderReceivedEvent{
+		OrderID:      returnOrder.ID,
+		StationID:    returnOrder.StationID,
+		OrderType:    returnOrder.OrderType,
+		DeliveryNode: returnOrder.DeliveryNode,
+	}})
 }
 
 // resolveStagingExpiry computes the staging expiry time for a node.

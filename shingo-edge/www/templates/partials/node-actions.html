@@ -1,0 +1,47 @@
+{{define "nodeActions"}}
+{{if eq .State "unchanged"}}
+    <button class="btn btn-sm" disabled>1. Stage</button>
+    <button class="btn btn-sm" disabled>2. Release</button>
+    <button class="btn btn-sm" disabled>3. Deliver</button>
+    <span style="color:var(--text-muted);font-size:0.85rem;margin-left:0.25rem">No change needed</span>
+{{else if or (eq .State "switched") (eq .State "verified") (eq .State "released")}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">1. Stage &#10003;</button>
+    <button class="btn btn-sm" disabled style="opacity:0.5">2. Release &#10003;</button>
+    <button class="btn btn-sm" disabled style="opacity:0.5">3. Deliver &#10003;</button>
+    <span style="color:var(--text-muted);font-size:0.85rem;margin-left:0.25rem">Complete</span>
+{{else if eq .State "swap_required"}}
+    <button class="btn btn-sm btn-primary" hx-post="/api/processes/{{.ProcessID}}/changeover/stage-node/{{.ProcessNodeID}}" hx-swap="none">1. Stage</button>
+    <button class="btn btn-sm" disabled>2. Release</button>
+    <button class="btn btn-sm" disabled>3. Deliver</button>
+    <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/switch-node/{{.ProcessNodeID}}" hx-swap="none" style="margin-left:0.5rem">Skip</button>
+{{else if eq .State "staging_requested"}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">1. Stage...</button>
+    <button class="btn btn-sm" disabled>2. Release</button>
+    <button class="btn btn-sm" disabled>3. Deliver</button>
+{{else if eq .State "staged"}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">1. Stage &#10003;</button>
+    <button class="btn btn-sm btn-primary" hx-post="/api/processes/{{.ProcessID}}/changeover/empty-node/{{.ProcessNodeID}}" hx-swap="none">2. Release</button>
+    <button class="btn btn-sm" disabled>3. Deliver</button>
+    <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/switch-node/{{.ProcessNodeID}}" hx-swap="none" style="margin-left:0.5rem">Skip</button>
+{{else if eq .State "empty_requested"}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">1. Stage &#10003;</button>
+    <button class="btn btn-sm" disabled style="opacity:0.5">2. Release...</button>
+    <button class="btn btn-sm" disabled>3. Deliver</button>
+{{else if eq .State "line_cleared"}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">1. Stage &#10003;</button>
+    <button class="btn btn-sm" disabled style="opacity:0.5">2. Release &#10003;</button>
+    <button class="btn btn-sm btn-primary" hx-post="/api/processes/{{.ProcessID}}/changeover/release-node/{{.ProcessNodeID}}" hx-swap="none">3. Deliver</button>
+    <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/switch-node/{{.ProcessNodeID}}" hx-swap="none" style="margin-left:0.5rem">Skip</button>
+{{else if eq .State "release_requested"}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">1. Stage &#10003;</button>
+    <button class="btn btn-sm" disabled style="opacity:0.5">2. Release &#10003;</button>
+    <button class="btn btn-sm" disabled style="opacity:0.5">3. Deliver...</button>
+{{else if eq .State "error"}}
+    <button class="btn btn-sm btn-danger" hx-post="/api/processes/{{.ProcessID}}/changeover/stage-node/{{.ProcessNodeID}}" hx-swap="none">Retry</button>
+    <button class="btn btn-sm" disabled>2. Release</button>
+    <button class="btn btn-sm" disabled>3. Deliver</button>
+    <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/switch-node/{{.ProcessNodeID}}" hx-swap="none" style="margin-left:0.5rem">Skip</button>
+{{else if eq .State "cancelled"}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">Cancelled</button>
+{{end}}
+{{end}}

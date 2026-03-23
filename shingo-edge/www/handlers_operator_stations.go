@@ -208,7 +208,7 @@ func (h *Handlers) apiRequestNodeMaterial(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, result)
+	writeJSONWithTrigger(w, r, result, "refreshMaterial")
 }
 
 func (h *Handlers) apiReleaseNodeEmpty(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +222,7 @@ func (h *Handlers) apiReleaseNodeEmpty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, order)
+	writeJSONWithTrigger(w, r, order, "refreshMaterial")
 }
 
 func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +243,7 @@ func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, order)
+	writeJSONWithTrigger(w, r, order, "refreshMaterial")
 }
 
 func (h *Handlers) apiConfirmNodeManifest(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +257,19 @@ func (h *Handlers) apiConfirmNodeManifest(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	if err := h.engine.DB().UpdateProcessNodeRuntimeOrders(id, nil, nil); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
 func (h *Handlers) apiStartProcessChangeover(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +292,7 @@ func (h *Handlers) apiStartProcessChangeover(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, co)
+	writeJSONWithTrigger(w, r, co, "refreshChangeover")
 }
 
 func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +305,7 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
 func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +318,7 @@ func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
 func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http.Request) {
@@ -324,7 +337,7 @@ func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, order)
+	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 
 func (h *Handlers) apiEmptyNodeForToolChange(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +360,7 @@ func (h *Handlers) apiEmptyNodeForToolChange(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, order)
+	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 
 func (h *Handlers) apiReleaseNodeIntoProduction(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +379,7 @@ func (h *Handlers) apiReleaseNodeIntoProduction(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, order)
+	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 
 func (h *Handlers) apiSwitchNodeToTarget(w http.ResponseWriter, r *http.Request) {
@@ -384,7 +397,7 @@ func (h *Handlers) apiSwitchNodeToTarget(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
 func (h *Handlers) apiSwitchOperatorStationToTarget(w http.ResponseWriter, r *http.Request) {
@@ -402,5 +415,5 @@ func (h *Handlers) apiSwitchOperatorStationToTarget(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, map[string]string{"status": "ok"})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }

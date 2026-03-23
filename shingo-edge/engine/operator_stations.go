@@ -3,6 +3,7 @@ package engine
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	"shingoedge/orders"
 	"shingoedge/store"
@@ -287,6 +288,39 @@ func (e *Engine) CancelProcessChangeover(processID int64) error {
 	if err != nil {
 		return err
 	}
+
+	// Abort all in-flight orders linked to this changeover's node tasks.
+	// Core will handle safe resolution (convert loaded robots to store orders).
+	nodeTasks, _ := e.db.ListChangeoverNodeTasks(changeover.ID)
+	for _, task := range nodeTasks {
+		for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
+			if orderID == nil {
+				continue
+			}
+			order, err := e.db.GetOrder(*orderID)
+			if err != nil {
+				continue
+			}
+			if orders.IsTerminal(order.Status) {
+				continue
+			}
+			if err := e.orderMgr.AbortOrder(order.ID); err != nil {
+				log.Printf("changeover cancel: abort order %s: %v", order.UUID, err)
+			}
+		}
+		// Mark node task as cancelled
+		_ = e.db.UpdateChangeoverNodeTaskState(task.ID, "cancelled")
+	}
+
+	// Clear runtime order references for affected nodes
+	for _, task := range nodeTasks {
+		runtime, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
+		if err != nil || runtime == nil {
+			continue
+		}
+		_ = e.db.UpdateProcessNodeRuntimeOrders(task.ProcessNodeID, nil, nil)
+	}
+
 	if err := e.db.UpdateProcessChangeoverState(changeover.ID, "cancelled"); err != nil {
 		return err
 	}

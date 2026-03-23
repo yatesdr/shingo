@@ -69,12 +69,15 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			}
 			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
 
-			// Auto-reorder if threshold reached and enabled
+			// Auto-reorder if threshold reached, enabled, and no changeover active
 			if claim.AutoReorder && newRemaining <= claim.ReorderPoint &&
 				runtime.ActiveOrderID == nil && newRemaining > 0 {
-				_, err := e.RequestNodeMaterial(node.ID, 1)
-				if err != nil {
-					log.Printf("auto-reorder for node %s: %v", node.Name, err)
+				// Don't auto-reorder during an active changeover — changeover owns material movement
+				if _, coErr := e.db.GetActiveProcessChangeover(delta.ProcessID); coErr != nil {
+					_, err := e.RequestNodeMaterial(node.ID, 1)
+					if err != nil {
+						log.Printf("auto-reorder for node %s: %v", node.Name, err)
+					}
 				}
 			}
 
@@ -82,12 +85,14 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			newRemaining := runtime.RemainingUOP + int(delta.Delta)
 			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
 
-			// Auto-relief at capacity
+			// Auto-relief at capacity (skip during active changeover)
 			if claim.AutoReorder && claim.UOPCapacity > 0 &&
 				newRemaining >= claim.UOPCapacity && runtime.ActiveOrderID == nil {
-				_, err := e.ReleaseNodeEmpty(node.ID)
-				if err != nil {
-					log.Printf("auto-relief for produce node %s: %v", node.Name, err)
+				if _, coErr := e.db.GetActiveProcessChangeover(delta.ProcessID); coErr != nil {
+					_, err := e.ReleaseNodeEmpty(node.ID)
+					if err != nil {
+						log.Printf("auto-relief for produce node %s: %v", node.Name, err)
+					}
 				}
 			}
 		}
@@ -204,22 +209,12 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 		return
 	}
 
-	// Clear the failed order from runtime tracking
-	runtime, err := e.db.EnsureProcessNodeRuntime(*order.ProcessNodeID)
-	if err != nil {
-		return
-	}
-	// Clear active/staged order if it matches the failed one
-	var activeOrd, stagedOrd *int64
-	if runtime.ActiveOrderID != nil && *runtime.ActiveOrderID != order.ID {
-		activeOrd = runtime.ActiveOrderID
-	}
-	if runtime.StagedOrderID != nil && *runtime.StagedOrderID != order.ID {
-		stagedOrd = runtime.StagedOrderID
-	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, activeOrd, stagedOrd)
+	// IMPORTANT: Do NOT clear the failed order from runtime tracking.
+	// Keeping the order ID prevents auto-reorder from re-triggering in a loop.
+	// The operator must use the material page to manually clear and retry.
+	_ = node // context for changeover lookup below
 
-	// If this order was part of a changeover, revert the node task state
+	// If this order was part of a changeover, mark node task as failed (requires manual retry)
 	changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID)
 	if err != nil {
 		return
@@ -228,13 +223,9 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	if err != nil {
 		return
 	}
-	// Revert to swap_required so operator can retry
-	if nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID {
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "swap_required")
-		log.Printf("changeover: staging order failed for node %s, reverted to swap_required", node.Name)
-	}
-	if nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID {
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "swap_required")
-		log.Printf("changeover: release order failed for node %s, reverted to swap_required", node.Name)
+	if (nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID) ||
+		(nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID) {
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error")
+		log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
 	}
 }

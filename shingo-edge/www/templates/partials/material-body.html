@@ -1,0 +1,84 @@
+{{define "material-body"}}
+{{if .StationViews}}
+{{range .StationViews}}
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
+        <div>
+            <strong>{{.Station.Name}}</strong>
+            <span style="color:var(--text-muted);margin-left:0.5rem">{{.Station.AreaLabel}}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+            <span class="status-badge">{{.Station.HealthStatus}}</span>
+        </div>
+    </div>
+    <div class="card-body">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>Node</th>
+                    <th>Payload</th>
+                    <th>UOP</th>
+                    <th>Orders</th>
+                    <th style="width:1%">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Nodes}}
+                <tr>
+                    <td>
+                        <div class="mono">{{.Node.CoreNodeName}}</div>
+                        <div style="color:var(--text-muted);font-size:0.85rem">{{.Node.Name}}</div>
+                    </td>
+                    <td>
+                        {{if .ActiveClaim}}
+                            <span class="status-badge">{{.ActiveClaim.Role}}</span>
+                            {{.ActiveClaim.PayloadCode}}
+                        {{else}}
+                            <span style="color:var(--text-muted)">No claim</span>
+                        {{end}}
+                    </td>
+                    <td>
+                        {{if .Runtime}}
+                            <strong>{{.Runtime.RemainingUOP}}</strong>
+                            {{if .ActiveClaim}}/ {{.ActiveClaim.UOPCapacity}}{{end}}
+                        {{else}}
+                            --
+                        {{end}}
+                    </td>
+                    <td>
+                        {{if .Orders}}
+                            {{range .Orders}}
+                            <div style="font-size:0.85rem">
+                                <code>{{printf "%.8s" .UUID}}</code>
+                                <span class="status-badge">{{.Status}}</span>
+                            </div>
+                            {{end}}
+                        {{else}}
+                            <span style="color:var(--text-muted)">None</span>
+                        {{end}}
+                    </td>
+                    <td style="white-space:nowrap">
+                        {{if .ActiveClaim}}
+                        <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Order material to this node">Request</button>
+                        <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/release-empty" hx-swap="none" title="Send current bin to outbound staging">Release</button>
+                        <button class="btn btn-sm" hx-post="/api/orders/store" hx-vals='{"process_node_id":{{.Node.ID}},"quantity":1}' hx-swap="none" title="Send current bin to storage">Store</button>
+                        {{end}}
+                        {{if .Runtime}}{{if .Runtime.ActiveOrderID}}
+                        <button class="btn btn-sm btn-danger" hx-post="/api/process-nodes/{{.Node.ID}}/clear-orders" hx-swap="none" title="Clear stuck/failed order references">Clear</button>
+                        {{end}}{{end}}
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+{{end}}
+{{else}}
+<div class="card">
+    <div class="card-body">
+        <p class="empty-cell">No operator stations configured for this process.</p>
+    </div>
+</div>
+{{end}}
+{{end}}

@@ -115,6 +115,20 @@ func (db *DB) GetNodeByDotName(name string) (*Node, error) {
 	return scanNode(row)
 }
 
+// GetRootNode walks the parent_id chain from the given node up to the
+// top-level ancestor (where parent_id IS NULL) and returns it.
+// If the node has no parent, it returns the node itself.
+func (db *DB) GetRootNode(nodeID int64) (*Node, error) {
+	row := db.QueryRow(fmt.Sprintf(`
+		WITH RECURSIVE ancestors AS (
+			SELECT id, parent_id FROM nodes WHERE id = $1
+			UNION ALL
+			SELECT n.id, n.parent_id FROM nodes n JOIN ancestors a ON n.id = a.parent_id
+		)
+		SELECT %s %s WHERE n.id = (SELECT id FROM ancestors WHERE parent_id IS NULL)`, nodeSelectCols, nodeFromClause), nodeID)
+	return scanNode(row)
+}
+
 func (db *DB) ListNodes() ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s %s ORDER BY n.name`, nodeSelectCols, nodeFromClause))
 	if err != nil {

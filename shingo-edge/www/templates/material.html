@@ -14,49 +14,13 @@
     </span>
 </div>
 
-{{if .StationViews}}
-{{range .StationViews}}
-<div class="card" style="margin-bottom:1rem">
-    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
-        <div>
-            <strong>{{.Station.Name}}</strong>
-            <span style="color:var(--text-muted);margin-left:0.5rem">{{.Station.AreaLabel}}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:0.5rem">
-            <span class="status-badge">{{.Station.HealthStatus}}</span>
-            <a class="btn btn-sm" href="/operator/station/{{.Station.ID}}" target="_blank">Open HMI</a>
-        </div>
-    </div>
-    <div class="card-body">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Node</th>
-                    <th>Current Material</th>
-                    <th>Remaining</th>
-                    <th>Active Orders</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .Nodes}}
-                <tr>
-                    <td>{{.Node.Name}}</td>
-                    <td>{{if .ActiveClaim}}{{.ActiveClaim.PayloadCode}}{{else}}<span style="color:var(--text-muted)">Unassigned</span>{{end}}</td>
-                    <td>{{if .Runtime}}{{.Runtime.RemainingUOP}}{{else}}--{{end}}</td>
-                    <td>{{if .Orders}}{{range .Orders}}<div><code>{{.UUID}}</code> <span class="status-badge">{{.Status}}</span></div>{{end}}{{else}}<span style="color:var(--text-muted)">None</span>{{end}}</td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
-    </div>
+<div id="material-content"
+     hx-get="/material/partial?process={{.ActiveProcessID}}"
+     hx-trigger="refreshMaterial from:body, sse:order-update throttle:5s, sse:order-completed, sse:order-failed, sse:counter-update throttle:10s"
+     hx-swap="innerHTML"
+     hx-ext="sse"
+     sse-connect="/events">
+    {{template "material-body" .}}
 </div>
-{{end}}
-{{else}}
-<div class="card">
-    <div class="card-body">
-        <p class="empty-cell">No operator station material nodes are configured for this process.</p>
-    </div>
-</div>
-{{end}}
 
 {{template "footer" .}}

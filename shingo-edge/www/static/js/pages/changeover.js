@@ -1,5 +1,10 @@
 var processID = parseInt(document.getElementById('page-data').dataset.processId || '0', 10);
 
+// Actions that need JSON bodies or confirm dialogs remain as thin JS wrappers.
+// Node action buttons (Stage, Release, Deliver, Switch, Skip, Retry) are pure htmx
+// in node-actions.html. SSE auto-refresh is handled by the htmx SSE extension on
+// the changeover-content div.
+
 async function startProcessChangeover() {
     var toStyleID = parseInt(document.getElementById('co-to-style').value || '0', 10);
     if (!toStyleID) {
@@ -12,7 +17,7 @@ async function startProcessChangeover() {
             called_by: '',
             notes: ''
         });
-        location.reload();
+        htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         ShingoEdge.toast('Error: ' + e, 'error');
     }
@@ -22,7 +27,7 @@ async function cancelProcessChangeover() {
     if (!await ShingoEdge.confirm('Cancel the active process changeover?')) return;
     try {
         await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/cancel', {});
-        location.reload();
+        htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         ShingoEdge.toast('Error: ' + e, 'error');
     }
@@ -31,7 +36,7 @@ async function cancelProcessChangeover() {
 async function completeCutover() {
     try {
         await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/cutover', {});
-        location.reload();
+        htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         ShingoEdge.toast('Error: ' + e, 'error');
     }
@@ -40,48 +45,8 @@ async function completeCutover() {
 async function switchStation(stationID) {
     try {
         await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/switch-station/' + stationID, {});
-        location.reload();
+        htmx.trigger(document.body, 'refreshChangeover');
     } catch (e) {
         ShingoEdge.toast('Error: ' + e, 'error');
     }
 }
-
-async function stageNode(nodeID) {
-    try {
-        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/stage-node/' + nodeID, {});
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-async function emptyNode(nodeID) {
-    try {
-        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/empty-node/' + nodeID, {});
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-async function releaseNode(nodeID) {
-    try {
-        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/release-node/' + nodeID, {});
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-async function switchNode(nodeID) {
-    try {
-        await ShingoEdge.api.post('/api/processes/' + processID + '/changeover/switch-node/' + nodeID, {});
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-ShingoEdge.createSSE('/events', {
-    onOrderUpdate: function() { location.reload(); }
-});

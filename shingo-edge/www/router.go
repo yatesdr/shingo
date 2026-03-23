@@ -133,6 +133,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	r.Get("/kanbans", h.handleKanbans)
 	r.Get("/production", h.handleProduction)
 	r.Get("/changeover", h.handleChangeover)
+	r.Get("/changeover/partial", h.handleChangeoverPartial)
+	r.Get("/kanbans/partial", h.handleKanbansPartial)
+	r.Get("/material/partial", h.handleMaterialPartial)
 
 	// Operator station HMI views are public (shop floor monitors)
 	r.Get("/operator/station/{id}", h.handleOperatorStationDisplay)
@@ -163,6 +166,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/process-nodes/{id}/release-empty", h.apiReleaseNodeEmpty)
 		r.Post("/process-nodes/{id}/release-partial", h.apiReleaseNodePartial)
 		r.Post("/process-nodes/{id}/manifest/confirm", h.apiConfirmNodeManifest)
+		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 		r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
