@@ -4,82 +4,60 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>{{.Station.Name}} - Operator Station</title>
-    <style>
-        * { box-sizing:border-box; margin:0; padding:0; }
-        html, body { width:100%; height:100%; overflow:hidden; background:#101418; font-family:Arial,sans-serif; }
-        #hmi-root { width:100%; height:100%; position:relative; }
-        #hmi-canvas { width:100%; height:100%; display:block; touch-action:manipulation; }
-        .keypad-overlay {
-            position:absolute; inset:0; background:rgba(0,0,0,0.7);
-            display:none; align-items:center; justify-content:center;
-        }
-        .keypad {
-            width:min(92vw, 560px); background:#1b232d; border:2px solid #314153; border-radius:18px; padding:20px;
-        }
-        .keypad-display {
-            font-size:40px; color:#fff; background:#0f141a; border:1px solid #314153;
-            padding:18px; text-align:right; border-radius:12px; margin-bottom:14px;
-        }
-        .keypad-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
-        .keypad-grid button, .keypad-actions button {
-            border:none; border-radius:12px; padding:18px 0; font-size:28px; font-weight:bold;
-        }
-        .keypad-grid button { background:#2d3b4a; color:#fff; }
-        .keypad-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:12px; }
-        .keypad-cancel { background:#5d2d2d; color:#fff; }
-        .keypad-clear { background:#574820; color:#fff; }
-        .keypad-ok { background:#1f6840; color:#fff; }
-        .style-overlay {
-            position:absolute; inset:0; background:rgba(0,0,0,0.7);
-            display:none; align-items:center; justify-content:center;
-        }
-        .style-picker {
-            width:min(92vw, 720px); background:#1b232d; border:2px solid #314153; border-radius:18px; padding:20px;
-        }
-        .style-picker h2 { color:#fff; margin-bottom:12px; font-size:28px; }
-        .style-picker-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; }
-        .style-picker-grid button, .style-picker-close {
-            border:none; border-radius:12px; padding:16px 14px; font-size:22px; font-weight:bold;
-        }
-        .style-picker-grid button { background:#2d3b4a; color:#fff; text-align:left; }
-        .style-picker-close { margin-top:14px; width:100%; background:#5d2d2d; color:#fff; }
-    </style>
+    <link rel="stylesheet" href="/static/operator-station/operator.css?v={{cacheBust}}">
 </head>
-<body>
-    <div id="hmi-root" data-station-id="{{.Station.ID}}">
-        <canvas id="hmi-canvas" width="1280" height="800"></canvas>
-        <div class="keypad-overlay" id="keypad-overlay">
-            <div class="keypad">
-                <div class="keypad-display" id="keypad-display">0</div>
-                <div class="keypad-grid">
-                    <button onclick="window.OperatorStationHMI.pressKey('1')">1</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('2')">2</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('3')">3</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('4')">4</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('5')">5</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('6')">6</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('7')">7</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('8')">8</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('9')">9</button>
-                    <button onclick="window.OperatorStationHMI.backspace()">⌫</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('0')">0</button>
-                    <button onclick="window.OperatorStationHMI.pressKey('00')">00</button>
-                </div>
-                <div class="keypad-actions">
-                    <button class="keypad-cancel" onclick="window.OperatorStationHMI.cancelKeypad()">Cancel</button>
-                    <button class="keypad-clear" onclick="window.OperatorStationHMI.clearKeypad()">Clear</button>
-                    <button class="keypad-ok" onclick="window.OperatorStationHMI.submitKeypad()">OK</button>
-                </div>
-            </div>
+<body data-station-id="{{.Station.ID}}">
+
+    <header id="os-header">
+        <div class="os-header-left">
+            <div class="os-header-station" id="os-station-name">{{.Station.Name}}</div>
+            <div class="os-header-info" id="os-header-info">Loading...</div>
         </div>
-        <div class="style-overlay" id="style-overlay">
-            <div class="style-picker">
-                <h2>Select Target Style</h2>
-                <div class="style-picker-grid" id="style-picker-grid"></div>
-                <button class="style-picker-close" onclick="window.OperatorStationHMI.closeStylePicker()">Cancel</button>
+        <div class="os-header-right" id="os-header-actions"></div>
+    </header>
+
+    <main id="os-grid"></main>
+
+    <footer id="os-footer">
+        <span class="os-footer-status" id="os-footer-status"></span>
+        <span class="os-footer-badge" id="os-footer-badge"></span>
+    </footer>
+
+    <!-- Node context modal -->
+    <div id="node-modal" class="os-modal-backdrop" hidden>
+        <div class="os-modal" id="node-modal-content"></div>
+    </div>
+
+    <!-- Keypad modal -->
+    <div id="keypad-modal" class="os-modal-backdrop" hidden>
+        <div class="os-keypad">
+            <div class="os-keypad-title">Enter Remaining Quantity</div>
+            <div class="os-keypad-display" id="keypad-display">0</div>
+            <div class="os-keypad-grid">
+                <button type="button" data-key="1">1</button>
+                <button type="button" data-key="2">2</button>
+                <button type="button" data-key="3">3</button>
+                <button type="button" data-key="4">4</button>
+                <button type="button" data-key="5">5</button>
+                <button type="button" data-key="6">6</button>
+                <button type="button" data-key="7">7</button>
+                <button type="button" data-key="8">8</button>
+                <button type="button" data-key="9">9</button>
+                <button type="button" data-key="back">&#x232B;</button>
+                <button type="button" data-key="0">0</button>
+                <button type="button" data-key="00">00</button>
+            </div>
+            <div class="os-keypad-actions">
+                <button type="button" class="os-keypad-cancel" id="keypad-cancel">Cancel</button>
+                <button type="button" class="os-keypad-clear" id="keypad-clear">Clear</button>
+                <button type="button" class="os-keypad-ok" id="keypad-ok">OK</button>
             </div>
         </div>
     </div>
-    <script type="module" src="/static/operator-station/hmi.js"></script>
+
+    <!-- Toast container -->
+    <div id="os-toast"></div>
+
+    <script type="module" src="/static/operator-station/operator.js?v={{cacheBust}}"></script>
 </body>
 </html>

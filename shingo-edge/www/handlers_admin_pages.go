@@ -70,11 +70,30 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	var processStyles []store.Style
 	var processStations []store.OperatorStation
 	var processNodes []store.ProcessNode
+	stationNodeMap := map[int64][]string{}
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
 		processStyles, _ = db.ListStylesByProcess(activeProcess.ID)
 		processStations, _ = db.ListOperatorStationsByProcess(activeProcess.ID)
 		processNodes, _ = db.ListProcessNodesByProcess(activeProcess.ID)
+	}
+
+	// Derive station→nodes map and claimed-by index from already-fetched processNodes
+	stationNameMap := map[int64]string{}
+	for _, s := range processStations {
+		stationNameMap[s.ID] = s.Name
+	}
+	claimedByStation := map[string]interface{}{}
+	for _, n := range processNodes {
+		if n.OperatorStationID == nil {
+			continue
+		}
+		sid := *n.OperatorStationID
+		stationNodeMap[sid] = append(stationNodeMap[sid], n.CoreNodeName)
+		claimedByStation[n.CoreNodeName] = map[string]interface{}{
+			"id":   sid,
+			"name": stationNameMap[sid],
+		}
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
@@ -90,6 +109,8 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		"ProcessStyles":      processStyles,
 		"ProcessStations":    processStations,
 		"ProcessNodes":       processNodes,
+		"StationNodeMap":     stationNodeMap,
+		"ClaimedByStation":   claimedByStation,
 		"Anomalies":          anomalies,
 		"ReportingPointMap":  rpMap,
 	}

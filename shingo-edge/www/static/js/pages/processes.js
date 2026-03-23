@@ -1,5 +1,5 @@
 const activeProcessID = parseInt(document.getElementById('page-data').dataset.activeProcessId || '0', 10);
-const processNodes = Array.isArray(window.processNodes) ? window.processNodes : [];
+const claimedByStation = window.claimedByStation || {};
 
 function processURL() {
     return '/processes?process=' + activeProcessID;
@@ -399,16 +399,47 @@ async function deleteStyle(id) {
     }
 }
 
+// --- Operator Screens (Stations) ---
+
 function resetStationForm() {
     document.getElementById('station-id').value = '';
     document.getElementById('station-name').value = '';
     document.getElementById('station-note').value = '';
     document.getElementById('station-enabled').checked = true;
+    resetNodePicker([]);
+}
+
+function resetNodePicker(checkedNodes) {
+    var checked = new Set(checkedNodes || []);
+    var editingID = document.getElementById('station-id').value;
+    document.querySelectorAll('.station-node-cb').forEach(function(cb) {
+        var name = cb.value;
+        cb.checked = checked.has(name);
+        var claim = claimedByStation[name];
+        var ownerSpan = cb.closest('label').querySelector('.station-node-owner');
+        if (claim && String(claim.id) !== editingID) {
+            cb.disabled = true;
+            cb.closest('label').style.opacity = '0.5';
+            ownerSpan.textContent = '(' + claim.name + ')';
+        } else {
+            cb.disabled = false;
+            cb.closest('label').style.opacity = '';
+            ownerSpan.textContent = '';
+        }
+    });
+}
+
+function getPickedNodes() {
+    var nodes = [];
+    document.querySelectorAll('.station-node-cb:checked').forEach(function(cb) {
+        nodes.push(cb.value);
+    });
+    return nodes;
 }
 
 function openCreateStationModal() {
     resetStationForm();
-    document.getElementById('station-modal-title').textContent = 'Add Operator Station';
+    document.getElementById('station-modal-title').textContent = 'Add Operator Screen';
     ShingoEdge.showModal('station-modal');
 }
 
@@ -417,20 +448,27 @@ function closeStationModal() {
     resetStationForm();
 }
 
-function editStation(station) {
+async function editStation(station) {
     resetStationForm();
     document.getElementById('station-id').value = station.id;
     document.getElementById('station-name').value = station.name || '';
     document.getElementById('station-note').value = station.note || '';
     document.getElementById('station-enabled').checked = !!station.enabled;
+    // Load claimed nodes for this station
+    try {
+        var nodes = await ShingoEdge.api.get('/api/operator-stations/' + station.id + '/claimed-nodes');
+        resetNodePicker(Array.isArray(nodes) ? nodes : []);
+    } catch (_) {
+        resetNodePicker([]);
+    }
     showProcessTab('stations');
-    document.getElementById('station-modal-title').textContent = 'Edit Operator Station';
+    document.getElementById('station-modal-title').textContent = 'Edit Operator Screen';
     ShingoEdge.showModal('station-modal');
 }
 
 async function saveStation() {
-    const id = document.getElementById('station-id').value;
-    const payload = {
+    var id = document.getElementById('station-id').value;
+    var payload = {
         process_id: activeProcessID,
         name: document.getElementById('station-name').value.trim(),
         note: document.getElementById('station-note').value.trim(),
@@ -442,15 +480,22 @@ async function saveStation() {
         device_mode: 'fixed_hmi'
     };
     if (!payload.name) {
-        ShingoEdge.toast('Station name is required', 'warning');
+        ShingoEdge.toast('Screen name is required', 'warning');
         return;
     }
     try {
+        var stationID;
         if (id) {
             await ShingoEdge.api.put('/api/operator-stations/' + id, payload);
+            stationID = id;
         } else {
-            await ShingoEdge.api.post('/api/operator-stations', payload);
+            var res = await ShingoEdge.api.post('/api/operator-stations', payload);
+            stationID = res.id;
         }
+        // Save claimed nodes
+        await ShingoEdge.api.put('/api/operator-stations/' + stationID + '/claimed-nodes', {
+            nodes: getPickedNodes()
+        });
         closeStationModal();
         location.reload();
     } catch (e) {
@@ -468,81 +513,9 @@ async function moveStation(id, direction) {
 }
 
 async function deleteStation(id) {
-    if (!await ShingoEdge.confirm('Delete this operator station?')) return;
+    if (!await ShingoEdge.confirm('Delete this operator screen and its node assignments?')) return;
     try {
         await ShingoEdge.api.del('/api/operator-stations/' + id);
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-function resetNodeForm() {
-    document.getElementById('node-id').value = '';
-    document.getElementById('node-core-node').value = '';
-    document.getElementById('node-name').value = '';
-    document.getElementById('node-station-id').value = '';
-    document.getElementById('node-sequence').value = '0';
-    document.getElementById('node-enabled').checked = true;
-}
-
-function openCreateNodeModal() {
-    resetNodeForm();
-    document.getElementById('node-modal-title').textContent = 'Add Process Node';
-    ShingoEdge.showModal('node-modal');
-}
-
-function closeNodeModal() {
-    ShingoEdge.hideModal('node-modal');
-    resetNodeForm();
-}
-
-function editNode(node) {
-    resetNodeForm();
-    document.getElementById('node-id').value = node.id;
-    document.getElementById('node-station-id').value = node.operator_station_id || '';
-    document.getElementById('node-core-node').value = node.core_node_name || '';
-    document.getElementById('node-name').value = node.name || '';
-    document.getElementById('node-sequence').value = node.sequence || 0;
-    document.getElementById('node-enabled').checked = !!node.enabled;
-    showProcessTab('stations');
-    document.getElementById('node-modal-title').textContent = 'Edit Process Node';
-    ShingoEdge.showModal('node-modal');
-}
-
-async function saveNode() {
-    const id = document.getElementById('node-id').value;
-    const stationValue = document.getElementById('node-station-id').value;
-    const payload = {
-        process_id: activeProcessID,
-        operator_station_id: stationValue ? parseInt(stationValue, 10) : null,
-        core_node_name: document.getElementById('node-core-node').value.trim(),
-        code: '',
-        name: document.getElementById('node-name').value.trim(),
-        sequence: parseInt(document.getElementById('node-sequence').value, 10) || 0,
-        enabled: document.getElementById('node-enabled').checked
-    };
-    if (!payload.core_node_name) {
-        ShingoEdge.toast('Core node name is required', 'warning');
-        return;
-    }
-    try {
-        if (id) {
-            await ShingoEdge.api.put('/api/process-nodes/' + id, payload);
-        } else {
-            await ShingoEdge.api.post('/api/process-nodes', payload);
-        }
-        closeNodeModal();
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-async function deleteNode(id) {
-    if (!await ShingoEdge.confirm('Delete this process node?')) return;
-    try {
-        await ShingoEdge.api.del('/api/process-nodes/' + id);
         location.reload();
     } catch (e) {
         ShingoEdge.toast('Error: ' + e, 'error');

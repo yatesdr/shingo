@@ -4,6 +4,7 @@ type StationNodeView struct {
 	Node           ProcessNode              `json:"node"`
 	Runtime        *ProcessNodeRuntimeState `json:"runtime,omitempty"`
 	ActiveClaim    *StyleNodeClaim          `json:"active_claim,omitempty"`
+	TargetClaim    *StyleNodeClaim          `json:"target_claim,omitempty"`
 	ChangeoverTask *ChangeoverNodeTask      `json:"changeover_task,omitempty"`
 	Orders         []Order                  `json:"orders"`
 }
@@ -68,6 +69,9 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 		nodeView.Runtime = runtime
 		if process.ActiveStyleID != nil && node.CoreNodeName != "" {
 			nodeView.ActiveClaim, _ = db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName)
+		}
+		if process.TargetStyleID != nil && node.CoreNodeName != "" {
+			nodeView.TargetClaim, _ = db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName)
 		}
 		if nodeTask, ok := nodeTaskMap[node.ID]; ok {
 			taskCopy := nodeTask

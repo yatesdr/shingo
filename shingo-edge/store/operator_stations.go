@@ -214,3 +214,96 @@ func (db *DB) nextOperatorStationSequence(processID int64) (int, error) {
 func (db *DB) generateOperatorStationCode(processID int64, name string) (string, error) {
 	return generateUniqueCode(db, "operator_stations", "process_id", processID, slugName(name, "station"), "station")
 }
+
+func (db *DB) GetStationNodeNames(stationID int64) ([]string, error) {
+	rows, err := db.Query(`SELECT core_node_name FROM process_nodes
+		WHERE operator_station_id=? ORDER BY sequence, name`, stationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+// SetStationNodes syncs process_nodes for a station to match the given core node names.
+// Nodes with active orders are disabled rather than deleted to protect in-flight work.
+func (db *DB) SetStationNodes(stationID int64, nodeNames []string) error {
+	station, err := db.GetOperatorStation(stationID)
+	if err != nil {
+		return err
+	}
+
+	existing, err := db.ListProcessNodesByStation(stationID)
+	if err != nil {
+		return err
+	}
+
+	existingMap := map[string]ProcessNode{}
+	for _, n := range existing {
+		existingMap[n.CoreNodeName] = n
+	}
+
+	// Normalize input: trim and deduplicate, preserving order
+	clean := make([]string, 0, len(nodeNames))
+	desired := map[string]bool{}
+	for _, name := range nodeNames {
+		name = strings.TrimSpace(name)
+		if name != "" && !desired[name] {
+			desired[name] = true
+			clean = append(clean, name)
+		}
+	}
+
+	for i, name := range clean {
+		if _, exists := existingMap[name]; exists {
+			if _, err := db.Exec(`UPDATE process_nodes SET sequence=?, enabled=1, updated_at=datetime('now')
+				WHERE operator_station_id=? AND core_node_name=?`, i+1, stationID, name); err != nil {
+				return err
+			}
+			continue
+		}
+		id, err := db.CreateProcessNode(ProcessNodeInput{
+			ProcessID:         station.ProcessID,
+			OperatorStationID: &stationID,
+			CoreNodeName:      name,
+			Name:              name,
+			Sequence:          i + 1,
+			Enabled:           true,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := db.EnsureProcessNodeRuntime(id); err != nil {
+			return err
+		}
+	}
+
+	for _, n := range existing {
+		if desired[n.CoreNodeName] {
+			continue
+		}
+		active, err := db.ListActiveOrdersByProcessNode(n.ID)
+		if err != nil {
+			return err
+		}
+		if len(active) > 0 {
+			if _, err := db.Exec(`UPDATE process_nodes SET enabled=0, updated_at=datetime('now') WHERE id=?`, n.ID); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := db.DeleteProcessNode(n.ID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

@@ -43,7 +43,7 @@
                 <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem">
                     <button class="btn btn-sm btn-primary process-tab active" data-tab="general" onclick="showProcessTab('general')">General</button>
                     <button class="btn btn-sm process-tab" data-tab="claims" onclick="showProcessTab('claims')">Node Claims</button>
-                    <button class="btn btn-sm process-tab" data-tab="stations" onclick="showProcessTab('stations')">Stations</button>
+                    <button class="btn btn-sm process-tab" data-tab="stations" onclick="showProcessTab('stations')">Operator Screens</button>
                 </div>
             </div>
 
@@ -140,22 +140,17 @@
             </div>
 
             <div class="card-body process-tab-panel" id="process-tab-stations" style="display:none">
-                <datalist id="core-node-options">
-                    {{range $name, $_ := .CoreNodes}}<option value="{{$name}}"></option>{{end}}
-                </datalist>
 
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
-                    <div style="color:var(--text-muted)">Define process-owned control nodes once, then optionally delegate remote control of each node to an operator station.</div>
-                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
-                        <button class="btn" onclick="openCreateNodeModal()">Add Process Node</button>
-                        <button class="btn btn-primary" onclick="openCreateStationModal()">Add Operator Station</button>
-                    </div>
+                    <div style="color:var(--text-muted)">Each operator screen claims the physical core nodes in its area. Nodes are auto-managed when you save the screen configuration.</div>
+                    <button class="btn btn-primary" onclick="openCreateStationModal()">Add Operator Screen</button>
                 </div>
 
-                <table class="table" style="margin-bottom:1rem">
+                <table class="table">
                     <thead>
                         <tr>
-                            <th>Station</th>
+                            <th>Screen</th>
+                            <th>Claimed Nodes</th>
                             <th>Note</th>
                             <th>Health</th>
                             <th>Actions</th>
@@ -168,6 +163,7 @@
                                 <div>{{.Name}}</div>
                                 <div style="color:var(--text-muted);font-size:0.85rem">{{.Code}}</div>
                             </td>
+                            <td class="mono" style="font-size:0.85rem">{{if index $.StationNodeMap .ID}}{{join (index $.StationNodeMap .ID) ", "}}{{else}}<span style="color:var(--text-muted)">None</span>{{end}}</td>
                             <td>{{if .Note}}{{.Note}}{{else}}<span style="color:var(--text-muted)">-</span>{{end}}</td>
                             <td><span class="status-badge">{{.HealthStatus}}</span></td>
                             <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
@@ -179,35 +175,7 @@
                             </td>
                         </tr>
                         {{else}}
-                        <tr><td colspan="4" class="empty-cell">No operator stations configured</td></tr>
-                        {{end}}
-                    </tbody>
-                </table>
-
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Operator Station</th>
-                            <th>Core Node</th>
-                            <th>Name</th>
-                            <th>Enabled</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {{range .ProcessNodes}}
-                        <tr>
-                            <td>{{if .StationName}}{{.StationName}}{{else}}<span style="color:var(--text-muted)">Edge Only</span>{{end}}</td>
-                            <td class="mono">{{.CoreNodeName}}</td>
-                            <td>{{.Name}}</td>
-                            <td>{{if .Enabled}}Yes{{else}}No{{end}}</td>
-                            <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
-                                <button class="btn btn-sm" onclick='editNode({{json .}})'>Edit</button>
-                                <button class="btn btn-sm btn-danger" onclick="deleteNode({{.ID}})">Delete</button>
-                            </td>
-                        </tr>
-                        {{else}}
-                        <tr><td colspan="5" class="empty-cell">No process nodes configured</td></tr>
+                        <tr><td colspan="5" class="empty-cell">No operator screens configured</td></tr>
                         {{end}}
                     </tbody>
                 </table>
@@ -216,13 +184,13 @@
 
         </div>
         {{else}}
-        <div class="card"><div class="card-body"><p class="empty-cell">Create a process to begin building styles, counters, process nodes, and operator stations.</p></div></div>
+        <div class="card"><div class="card-body"><p class="empty-cell">Create a process to begin building styles, counters, and operator screens.</p></div></div>
         {{end}}
     </div>
 </div>
 
 <script>
-window.processNodes = {{json .ProcessNodes}};
+window.claimedByStation = {{json .ClaimedByStation}};
 </script>
 
 <div class="modal" id="process-modal" style="display:none">
@@ -391,7 +359,7 @@ window.processNodes = {{json .ProcessNodes}};
 <div class="modal" id="station-modal" style="display:none">
         <div class="modal-content" style="max-width:860px">
         <div class="modal-header">
-            <span id="station-modal-title">Add Operator Station</span>
+            <span id="station-modal-title">Add Operator Screen</span>
             <button class="btn btn-sm" onclick="closeStationModal()">&times;</button>
         </div>
         <div class="card-body">
@@ -407,41 +375,25 @@ window.processNodes = {{json .ProcessNodes}};
                 <input type="checkbox" id="station-enabled" checked>
                 <span>Enabled</span>
             </label>
+            <fieldset style="border:1px solid var(--border);border-radius:6px;padding:0.75rem 1rem;margin-top:1rem">
+                <legend style="font-weight:600;font-size:0.9rem;padding:0 0.5rem">Claimed Nodes</legend>
+                <div style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem">Select the physical core nodes this screen controls. Nodes claimed by another screen are shown grayed.</div>
+                <div id="station-node-picker" style="display:flex;flex-direction:column;gap:0.35rem;max-height:220px;overflow-y:auto">
+                    {{range $name, $_ := .CoreNodes}}
+                    <label style="display:flex;align-items:center;gap:0.5rem;padding:0.2rem 0" data-node="{{$name}}">
+                        <input type="checkbox" class="station-node-cb" value="{{$name}}">
+                        <span class="mono" style="font-size:0.9rem">{{$name}}</span>
+                        <span class="station-node-owner" style="color:var(--text-muted);font-size:0.8rem;margin-left:auto"></span>
+                    </label>
+                    {{else}}
+                    <div style="color:var(--text-muted);font-style:italic">No core nodes synced. Sync from the Config page first.</div>
+                    {{end}}
+                </div>
+            </fieldset>
         </div>
         <div class="modal-footer">
             <button class="btn" onclick="closeStationModal()">Cancel</button>
-            <button class="btn btn-primary" onclick="saveStation()">Save Station</button>
-        </div>
-    </div>
-</div>
-
-<div class="modal" id="node-modal" style="display:none">
-    <div class="modal-content" style="max-width:640px">
-        <div class="modal-header">
-            <span id="node-modal-title">Add Process Node</span>
-            <button class="btn btn-sm" onclick="closeNodeModal()">&times;</button>
-        </div>
-        <div class="card-body">
-            <input type="hidden" id="node-id">
-            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:0.75rem">
-                <label class="form-group" style="margin:0"><span>Operator Station</span>
-                    <select id="node-station-id" class="form-input">
-                        <option value="">-- Edge Only --</option>
-                        {{range .ProcessStations}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
-                    </select>
-                </label>
-                <label class="form-group" style="margin:0"><span>Core Node Name</span><input type="text" id="node-core-node" class="form-input" list="core-node-options"></label>
-                <label class="form-group" style="margin:0"><span>Name</span><input type="text" id="node-name" class="form-input" placeholder="Defaults to core node name"></label>
-                <label class="form-group" style="margin:0"><span>Sequence</span><input type="number" id="node-sequence" class="form-input" value="0"></label>
-            </div>
-            <label style="display:flex;align-items:center;gap:0.5rem;margin-top:0.75rem">
-                <input type="checkbox" id="node-enabled" checked>
-                <span>Enabled</span>
-            </label>
-        </div>
-        <div class="modal-footer">
-            <button class="btn" onclick="closeNodeModal()">Cancel</button>
-            <button class="btn btn-primary" onclick="saveNode()">Save Node</button>
+            <button class="btn btn-primary" onclick="saveStation()">Save</button>
         </div>
     </div>
 </div>

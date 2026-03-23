@@ -233,8 +233,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Put("/operator-stations/{id}", h.apiUpdateOperatorStation)
 			r.Post("/operator-stations/{id}/move", h.apiMoveOperatorStation)
 			r.Delete("/operator-stations/{id}", h.apiDeleteOperatorStation)
+			r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
+			r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
 
-			// Process nodes and style assignments
+			// Process nodes (auto-managed via station claimed nodes; CRUD kept for compatibility)
 			r.Get("/process-nodes", h.apiListConfiguredProcessNodes)
 			r.Get("/process-nodes/station/{stationID}", h.apiListConfiguredProcessNodesByStation)
 			r.Post("/process-nodes", h.apiCreateProcessNode)

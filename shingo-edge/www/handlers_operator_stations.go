@@ -13,7 +13,7 @@ func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.R
 		http.Error(w, "invalid station id", http.StatusBadRequest)
 		return
 	}
-	view, err := h.engine.DB().BuildOperatorStationView(id)
+	station, err := h.engine.DB().GetOperatorStation(id)
 	if err != nil {
 		http.Error(w, "station not found", http.StatusNotFound)
 		return
@@ -21,7 +21,7 @@ func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.R
 	_ = h.engine.DB().TouchOperatorStation(id, "online")
 	data := map[string]interface{}{
 		"Page":    "operator-display",
-		"Station": view.Station,
+		"Station": station,
 	}
 	h.renderTemplate(w, r, "operator-display.html", data)
 }
@@ -430,4 +430,38 @@ func (h *Handlers) apiSwitchOperatorStationToTarget(w http.ResponseWriter, r *ht
 		return
 	}
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
+}
+
+func (h *Handlers) apiGetStationClaimedNodes(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid station id")
+		return
+	}
+	names, err := h.engine.DB().GetStationNodeNames(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, names)
+}
+
+func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid station id")
+		return
+	}
+	var req struct {
+		Nodes []string `json:"nodes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.engine.DB().SetStationNodes(id, req.Nodes); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
 }
