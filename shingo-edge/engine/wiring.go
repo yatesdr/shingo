@@ -203,12 +203,38 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	if err != nil {
 		return
 	}
+
+	// Clear the failed order from runtime tracking
 	runtime, err := e.db.EnsureProcessNodeRuntime(*order.ProcessNodeID)
 	if err != nil {
 		return
 	}
+	// Clear active/staged order if it matches the failed one
+	var activeOrd, stagedOrd *int64
+	if runtime.ActiveOrderID != nil && *runtime.ActiveOrderID != order.ID {
+		activeOrd = runtime.ActiveOrderID
+	}
+	if runtime.StagedOrderID != nil && *runtime.StagedOrderID != order.ID {
+		stagedOrd = runtime.StagedOrderID
+	}
+	_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, activeOrd, stagedOrd)
 
-	// On failure, keep active claim but reset UOP to 0
-	_ = e.db.SetProcessNodeRuntime(*order.ProcessNodeID, runtime.ActiveClaimID, 0)
-	_ = node // used for findActiveClaim context
+	// If this order was part of a changeover, revert the node task state
+	changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID)
+	if err != nil {
+		return
+	}
+	nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, node.ID)
+	if err != nil {
+		return
+	}
+	// Revert to swap_required so operator can retry
+	if nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID {
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "swap_required")
+		log.Printf("changeover: staging order failed for node %s, reverted to swap_required", node.Name)
+	}
+	if nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID {
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "swap_required")
+		log.Printf("changeover: release order failed for node %s, reverted to swap_required", node.Name)
+	}
 }

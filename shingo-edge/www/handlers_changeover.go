@@ -15,6 +15,7 @@ type changeoverNodeView struct {
 	ToPayload       string `json:"to_payload"`
 	FromRole        string `json:"from_role"`
 	ToRole          string `json:"to_role"`
+	LastOrderError  string `json:"last_order_error,omitempty"`
 }
 
 func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +80,14 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 					if claim, err := db.GetStyleNodeClaim(*task.ToClaimID); err == nil {
 						view.ToPayload = claim.PayloadCode
 						view.ToRole = claim.Role
+					}
+				}
+				// Check linked orders for failures
+				for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
+					if orderID != nil {
+						if o, err := db.GetOrder(*orderID); err == nil && o.Status == "failed" {
+							view.LastOrderError = "Order " + o.UUID[:8] + " failed"
+						}
 					}
 				}
 				stationID := nodeStationMap[task.ProcessNodeID]

@@ -18,7 +18,9 @@
             <div style="color:var(--text-muted);font-size:0.9rem">Current style: {{if .CurrentStyle}}<strong>{{.CurrentStyle}}</strong>{{else}}None{{end}}</div>
         </div>
         {{if .ActiveChangeover}}
-        <button class="btn btn-danger btn-sm" onclick="cancelProcessChangeover()">Cancel Changeover</button>
+            {{if eq .ActiveChangeover.State "active"}}
+            <button class="btn btn-danger btn-sm" onclick="cancelProcessChangeover()">Cancel Changeover</button>
+            {{end}}
         {{else}}
         <div style="display:flex;align-items:flex-end;gap:0.75rem">
             <div class="form-group" style="margin:0">
@@ -49,32 +51,6 @@
             {{end}}
         </div>
 
-        {{define "nodeTaskRows"}}
-        {{range .}}
-        <tr>
-            <td class="mono">{{.NodeName}}</td>
-            <td>
-                <span class="status-badge">{{.Situation}}</span>
-                {{if ne .State .Situation}}<span class="status-badge" style="margin-left:0.25rem">{{.State}}</span>{{end}}
-            </td>
-            <td>{{if .FromPayload}}{{.FromPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.FromRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
-            <td>{{if .ToPayload}}{{.ToPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.ToRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
-            <td style="white-space:nowrap">
-                {{if and (ne .Situation "unchanged") (ne .State "switched") (ne .State "verified")}}
-                <button class="btn btn-sm" onclick="stageNode({{.ProcessNodeID}})">Stage</button>
-                <button class="btn btn-sm" onclick="emptyNode({{.ProcessNodeID}})">Release</button>
-                <button class="btn btn-sm" onclick="releaseNode({{.ProcessNodeID}})">Deliver</button>
-                <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Switch</button>
-                {{else if eq .Situation "unchanged"}}
-                <span style="color:var(--text-muted);font-size:0.85rem">No change needed</span>
-                {{else}}
-                <span style="color:var(--text-muted);font-size:0.85rem">Done</span>
-                {{end}}
-            </td>
-        </tr>
-        {{end}}
-        {{end}}
-
         {{if .CentralNodeTasks}}
         <table class="table" style="margin-bottom:1rem">
             <thead>
@@ -87,7 +63,39 @@
                 </tr>
             </thead>
             <tbody>
-                {{template "nodeTaskRows" .CentralNodeTasks}}
+                {{range .CentralNodeTasks}}
+                <tr>
+                    <td class="mono">{{.NodeName}}</td>
+                    <td>
+                        <span class="status-badge">{{.State}}</span>
+                        {{if .LastOrderError}}<span style="color:red;font-size:0.85rem;margin-left:0.5rem">{{.LastOrderError}}</span>{{end}}
+                    </td>
+                    <td>{{if .FromPayload}}{{.FromPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.FromRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
+                    <td>{{if .ToPayload}}{{.ToPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.ToRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
+                    <td style="white-space:nowrap">
+                        {{if eq .State "swap_required"}}
+                        <button class="btn btn-sm btn-primary" onclick="stageNode({{.ProcessNodeID}})">Stage New Material</button>
+                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
+                        {{else if eq .State "staging_requested"}}
+                        <span style="color:var(--text-muted);font-size:0.85rem">Staging in progress...</span>
+                        {{else if eq .State "staged"}}
+                        <button class="btn btn-sm btn-primary" onclick="emptyNode({{.ProcessNodeID}})">Release Old Material</button>
+                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
+                        {{else if eq .State "empty_requested"}}
+                        <span style="color:var(--text-muted);font-size:0.85rem">Releasing old material...</span>
+                        {{else if eq .State "line_cleared"}}
+                        <button class="btn btn-sm btn-primary" onclick="releaseNode({{.ProcessNodeID}})">Deliver New Material</button>
+                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
+                        {{else if eq .State "release_requested"}}
+                        <span style="color:var(--text-muted);font-size:0.85rem">Delivering new material...</span>
+                        {{else if or (eq .State "released") (eq .State "switched") (eq .State "verified")}}
+                        <span style="color:var(--text-muted);font-size:0.85rem">Complete</span>
+                        {{else if eq .State "unchanged"}}
+                        <span style="color:var(--text-muted);font-size:0.85rem">No change needed</span>
+                        {{end}}
+                    </td>
+                </tr>
+                {{end}}
             </tbody>
         </table>
         {{end}}
@@ -112,7 +120,39 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {{template "nodeTaskRows" (index $.NodeTaskMap .OperatorStationID)}}
+                    {{range index $.NodeTaskMap .OperatorStationID}}
+                    <tr>
+                        <td class="mono">{{.NodeName}}</td>
+                        <td>
+                            <span class="status-badge">{{.State}}</span>
+                            {{if .LastOrderError}}<span style="color:red;font-size:0.85rem;margin-left:0.5rem">{{.LastOrderError}}</span>{{end}}
+                        </td>
+                        <td>{{if .FromPayload}}{{.FromPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.FromRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
+                        <td>{{if .ToPayload}}{{.ToPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.ToRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
+                        <td style="white-space:nowrap">
+                            {{if eq .State "swap_required"}}
+                            <button class="btn btn-sm btn-primary" onclick="stageNode({{.ProcessNodeID}})">Stage New Material</button>
+                            <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
+                            {{else if eq .State "staging_requested"}}
+                            <span style="color:var(--text-muted);font-size:0.85rem">Staging in progress...</span>
+                            {{else if eq .State "staged"}}
+                            <button class="btn btn-sm btn-primary" onclick="emptyNode({{.ProcessNodeID}})">Release Old Material</button>
+                            <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
+                            {{else if eq .State "empty_requested"}}
+                            <span style="color:var(--text-muted);font-size:0.85rem">Releasing old material...</span>
+                            {{else if eq .State "line_cleared"}}
+                            <button class="btn btn-sm btn-primary" onclick="releaseNode({{.ProcessNodeID}})">Deliver New Material</button>
+                            <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
+                            {{else if eq .State "release_requested"}}
+                            <span style="color:var(--text-muted);font-size:0.85rem">Delivering new material...</span>
+                            {{else if or (eq .State "released") (eq .State "switched") (eq .State "verified")}}
+                            <span style="color:var(--text-muted);font-size:0.85rem">Complete</span>
+                            {{else if eq .State "unchanged"}}
+                            <span style="color:var(--text-muted);font-size:0.85rem">No change needed</span>
+                            {{end}}
+                        </td>
+                    </tr>
+                    {{end}}
                 </tbody>
             </table>
         </div>

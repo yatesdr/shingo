@@ -270,13 +270,16 @@ func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 	if err := e.db.SetActiveStyle(processID, &toStyleID); err != nil {
 		return err
 	}
-	if err := e.db.SetProcessProductionState(processID, "new_style_production"); err != nil {
+	if err := e.db.SetTargetStyle(processID, nil); err != nil {
+		return err
+	}
+	if err := e.db.SetProcessProductionState(processID, "active_production"); err != nil {
 		return err
 	}
 	if err := e.SyncProcessCounter(processID); err != nil {
 		return err
 	}
-	return e.tryCompleteProcessChangeover(processID)
+	return e.db.UpdateProcessChangeoverState(changeover.ID, "completed")
 }
 
 func (e *Engine) CancelProcessChangeover(processID int64) error {

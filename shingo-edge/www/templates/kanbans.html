@@ -21,6 +21,7 @@
                     <th>Process</th>
                     <th>Target</th>
                     <th>Status</th>
+                    <th>Created</th>
                     <th>ETA</th>
                     <th>Actions</th>
                 </tr>
@@ -33,6 +34,7 @@
                     <td>{{if .ProcessName}}{{.ProcessName}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
                     <td class="mono">{{.DeliveryNode}}{{if .StagingNode}} <span style="color:var(--text-muted);font-size:0.75rem">(stg: {{.StagingNode}})</span>{{end}}</td>
                     <td><span class="status-badge">{{.Status}}</span></td>
+                    <td>{{formatTime .CreatedAt}}</td>
                     <td>{{if .ETA}}{{.ETA}}{{else}}--{{end}}</td>
                     <td class="actions">
                         {{if eq .Status "delivered"}}
@@ -54,7 +56,7 @@
                                 {{end}}
                             {{end}}
                         {{end}}
-                        {{if and (not (eq .Status "confirmed")) (not (eq .Status "cancelled"))}}
+                        {{if and (not (eq .Status "confirmed")) (not (eq .Status "cancelled")) (not (eq .Status "failed"))}}
                             <div style="display:inline-block;position:relative">
                                 <button class="btn btn-sm" onclick="showRedirectDropdown({{.ID}}, this)">Redirect</button>
                             </div>
@@ -63,7 +65,7 @@
                     </td>
                 </tr>
                 {{else}}
-                <tr><td colspan="8" class="empty-cell">No active orders</td></tr>
+                <tr><td colspan="9" class="empty-cell">No active orders</td></tr>
                 {{end}}
             </tbody>
         </table>

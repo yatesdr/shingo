@@ -54,8 +54,9 @@ type Engine struct {
 	sendFn        func(*protocol.Envelope) error
 	kafkaReconnFn func() error
 
-	Events   *EventBus
-	stopChan chan struct{}
+	Events    *EventBus
+	stopChan  chan struct{}
+	startedAt time.Time
 }
 
 // Config holds the parameters needed to create an Engine.
@@ -118,7 +119,13 @@ func (e *Engine) Start() {
 	}
 	e.plcMgr.StartPolling()
 
+	e.startedAt = time.Now()
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)
+}
+
+// Uptime returns the number of seconds since the engine started.
+func (e *Engine) Uptime() int64 {
+	return int64(time.Since(e.startedAt).Seconds())
 }
 
 // Stop shuts down all subsystems gracefully.

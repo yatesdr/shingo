@@ -201,9 +201,13 @@ func main() {
 			eng.HandleOrderStatusSnapshots(items)
 		})
 		eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+		// Re-sync on registration ack only if we've been running for a while
+		// (startup already sends these; avoid triple-send at boot)
 		edgeHandler.SetRegisteredHandler(func() {
-			hb.RequestNodeSync()
-			hb.RequestCatalogSync()
+			if eng.Uptime() > 30 {
+				hb.RequestNodeSync()
+				hb.RequestCatalogSync()
+			}
 		})
 		edgeHandler.SetRegisterRequestHandler(func() {
 			hb.SendRegister()
