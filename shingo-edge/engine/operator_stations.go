@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store"
 )
@@ -95,24 +96,7 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 }
 
 func (e *Engine) ReleaseNodeEmpty(nodeID int64) (*store.Order, error) {
-	node, runtime, claim, err := e.loadActiveNode(nodeID)
-	if err != nil {
-		return nil, err
-	}
-	if claim == nil {
-		return nil, fmt.Errorf("node %s has no active claim for release", node.Name)
-	}
-	if claim.OutboundStaging == "" {
-		return nil, fmt.Errorf("node %s has no outbound staging configured", node.Name)
-	}
-	steps := BuildReleaseSteps(claim)
-	order, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", steps)
-	if err != nil {
-		return nil, err
-	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, runtime.StagedOrderID)
-	order, _ = e.db.GetOrder(order.ID)
-	return order, nil
+	return e.ReleaseNodePartial(nodeID, 1)
 }
 
 func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error) {
@@ -143,6 +127,52 @@ func (e *Engine) ConfirmNodeManifest(nodeID int64) error {
 	// Manifest confirmation is now core's domain. This is a no-op on edge
 	// but kept for API compatibility.
 	return nil
+}
+
+// FinalizeProduceNode locks the current UOP count as the manifest and creates
+// an ingest order to send the bin to storage. The node's UOP resets to 0 and
+// is ready for a new empty bin.
+func (e *Engine) FinalizeProduceNode(nodeID int64) (*store.Order, error) {
+	node, runtime, claim, err := e.loadActiveNode(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if claim == nil {
+		return nil, fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if claim.Role != "produce" {
+		return nil, fmt.Errorf("node %s is not a produce node", node.Name)
+	}
+	if runtime.RemainingUOP <= 0 {
+		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
+	}
+
+	// Create an ingest order with the current count as the manifest
+	manifest := []protocol.IngestManifestItem{
+		{
+			PartNumber:  claim.PayloadCode,
+			Quantity:    int64(runtime.RemainingUOP),
+			Description: claim.PayloadCode,
+		},
+	}
+	order, err := e.orderMgr.CreateIngestOrder(
+		&nodeID,
+		claim.PayloadCode,
+		"", // bin label resolved by core from node contents
+		node.CoreNodeName,
+		int64(runtime.RemainingUOP),
+		manifest,
+		e.cfg.Web.AutoConfirm,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Reset the node UOP to 0 — ready for next empty bin
+	_ = e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0)
+	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+
+	return order, nil
 }
 
 func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error) {
@@ -213,7 +243,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	}
 
 	for _, diff := range diffs {
-		// Find the matching process node (needed for node task FK)
+		// Find or create the matching process node
 		var processNodeID *int64
 		for i := range nodes {
 			if nodes[i].CoreNodeName == diff.CoreNodeName {
@@ -223,7 +253,14 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 			}
 		}
 		if processNodeID == nil {
-			continue // no process node for this claim — skip
+			// Auto-create process node for this claimed core node
+			res, err := tx.Exec(`INSERT INTO process_nodes (process_id, core_node_name, code, name) VALUES (?, ?, ?, ?)`,
+				processID, diff.CoreNodeName, diff.CoreNodeName, diff.CoreNodeName)
+			if err != nil {
+				return nil, fmt.Errorf("auto-create process node for %s: %w", diff.CoreNodeName, err)
+			}
+			id, _ := res.LastInsertId()
+			processNodeID = &id
 		}
 
 		// Map claim diff situation to node task state
@@ -467,10 +504,27 @@ func (e *Engine) ReleaseNodeIntoProduction(processID, nodeID int64) (*store.Orde
 		return nil, err
 	}
 
-	// Use claim-based staged delivery
+	// Use claim-based delivery — check if this is a restore (changeover-only) or new material
 	toClaim, err := e.db.GetStyleNodeClaimByNode(changeover.ToStyleID, node.CoreNodeName)
 	if err != nil {
 		return nil, fmt.Errorf("no claim for target style on node %s", node.Name)
+	}
+
+	// Changeover-only nodes: restore from outbound staging (where material was evacuated to)
+	if toClaim.Role == "changeover" && toClaim.OutboundStaging != "" {
+		steps := BuildRestoreSteps(toClaim)
+		if steps != nil {
+			order, err := e.orderMgr.CreateComplexOrder(&node.ID, 1, toClaim.CoreNodeName, steps)
+			if err != nil {
+				return nil, err
+			}
+			_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nodeTask.OldMaterialReleaseOrderID)
+			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "release_requested")
+			if changeoverTask != nil {
+				_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress")
+			}
+			return order, nil
+		}
 	}
 
 	if toClaim.InboundStaging != "" {
@@ -528,23 +582,27 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err == nil {
-		tasks, _ := e.db.ListChangeoverStationTasks(changeover.ID)
-		for _, stationTask := range tasks {
-			nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-			if err == nil {
-				_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "switched")
-				stationNodeTasks, _ := e.db.ListChangeoverNodeTasksByStation(changeover.ID, stationTask.OperatorStationID)
-				allDone := true
-				for _, stationNodeTask := range stationNodeTasks {
-					if stationNodeTask.State != "switched" && stationNodeTask.State != "unchanged" && stationNodeTask.State != "verified" {
-						allDone = false
-						break
+		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+		if err == nil {
+			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "switched")
+
+			// If this node belongs to an operator station, update that station task
+			if node.OperatorStationID != nil {
+				stationTask, stErr := e.db.GetChangeoverStationTaskByStation(changeover.ID, *node.OperatorStationID)
+				if stErr == nil {
+					stationNodeTasks, _ := e.db.ListChangeoverNodeTasksByStation(changeover.ID, stationTask.OperatorStationID)
+					allDone := true
+					for _, snt := range stationNodeTasks {
+						if snt.State != "switched" && snt.State != "unchanged" && snt.State != "verified" {
+							allDone = false
+							break
+						}
 					}
-				}
-				if allDone {
-					_ = e.db.UpdateChangeoverStationTaskState(stationTask.ID, "switched")
-				} else {
-					_ = e.db.UpdateChangeoverStationTaskState(stationTask.ID, "in_progress")
+					if allDone {
+						_ = e.db.UpdateChangeoverStationTaskState(stationTask.ID, "switched")
+					} else {
+						_ = e.db.UpdateChangeoverStationTaskState(stationTask.ID, "in_progress")
+					}
 				}
 			}
 		}

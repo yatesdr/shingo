@@ -212,7 +212,6 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	// IMPORTANT: Do NOT clear the failed order from runtime tracking.
 	// Keeping the order ID prevents auto-reorder from re-triggering in a loop.
 	// The operator must use the material page to manually clear and retry.
-	_ = node // context for changeover lookup below
 
 	// If this order was part of a changeover, mark node task as failed (requires manual retry)
 	changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID)

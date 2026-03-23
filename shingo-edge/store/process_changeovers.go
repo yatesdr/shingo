@@ -103,15 +103,6 @@ func (db *DB) GetActiveProcessChangeover(processID int64) (*ProcessChangeover, e
 	return &c, nil
 }
 
-func (db *DB) CreateProcessChangeover(processID int64, fromStyleID *int64, toStyleID int64, calledBy, notes string) (int64, error) {
-	res, err := db.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by, notes)
-		VALUES (?, ?, ?, 'active', ?, ?)`, processID, fromStyleID, toStyleID, calledBy, notes)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
 func (db *DB) UpdateProcessChangeoverState(id int64, state string) error {
 	completedAt := sql.NullString{}
 	if state == "completed" || state == "cancelled" {
@@ -120,16 +111,6 @@ func (db *DB) UpdateProcessChangeoverState(id int64, state string) error {
 	_, err := db.Exec(`UPDATE process_changeovers SET state=?, completed_at=CASE WHEN ? != '' THEN ? ELSE completed_at END, updated_at=datetime('now') WHERE id=?`,
 		state, completedAt.String, completedAt.String, id)
 	return err
-}
-
-func (db *DB) CreateChangeoverStationTask(changeoverID, stationID int64) (int64, error) {
-	res, err := db.Exec(`INSERT INTO changeover_station_tasks (
-		process_changeover_id, operator_station_id
-	) VALUES (?, ?)`, changeoverID, stationID)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
 }
 
 func (db *DB) ListChangeoverStationTasks(changeoverID int64) ([]ChangeoverStationTask, error) {
@@ -179,16 +160,6 @@ func (db *DB) GetChangeoverStationTaskByStation(changeoverID, stationID int64) (
 	return &t, nil
 }
 
-func (db *DB) CreateChangeoverNodeTask(changeoverID int64, processNodeID int64, fromClaimID, toClaimID *int64, situation, state string) (int64, error) {
-	res, err := db.Exec(`INSERT INTO changeover_node_tasks (
-		process_changeover_id, process_node_id, from_claim_id, to_claim_id, situation, state
-	) VALUES (?, ?, ?, ?, ?, ?)`, changeoverID, processNodeID, fromClaimID, toClaimID, situation, state)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
 func scanChangeoverNodeTask(scanner interface{ Scan(...interface{}) error }) (ChangeoverNodeTask, error) {
 	var t ChangeoverNodeTask
 	var updatedAt string
@@ -202,14 +173,21 @@ func scanChangeoverNodeTask(scanner interface{ Scan(...interface{}) error }) (Ch
 	return t, nil
 }
 
-func (db *DB) ListChangeoverNodeTasks(changeoverID int64) ([]ChangeoverNodeTask, error) {
-	rows, err := db.Query(`SELECT t.id, t.process_changeover_id, t.process_node_id,
+func (db *DB) listChangeoverNodeTasksQuery(changeoverID int64, extraWhere string, extraArgs ...interface{}) ([]ChangeoverNodeTask, error) {
+	query := `SELECT t.id, t.process_changeover_id, t.process_node_id,
 		t.from_claim_id, t.to_claim_id, t.situation, t.state,
 		t.next_material_order_id, t.old_material_release_order_id,
 		t.updated_at, COALESCE(n.name, '')
 		FROM changeover_node_tasks t
 		LEFT JOIN process_nodes n ON n.id = t.process_node_id
-		WHERE t.process_changeover_id=? ORDER BY n.sequence, n.name`, changeoverID)
+		WHERE t.process_changeover_id=?`
+	args := []interface{}{changeoverID}
+	if extraWhere != "" {
+		query += " AND " + extraWhere
+		args = append(args, extraArgs...)
+	}
+	query += " ORDER BY n.sequence, n.name"
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -225,27 +203,12 @@ func (db *DB) ListChangeoverNodeTasks(changeoverID int64) ([]ChangeoverNodeTask,
 	return out, rows.Err()
 }
 
+func (db *DB) ListChangeoverNodeTasks(changeoverID int64) ([]ChangeoverNodeTask, error) {
+	return db.listChangeoverNodeTasksQuery(changeoverID, "")
+}
+
 func (db *DB) ListChangeoverNodeTasksByStation(changeoverID, stationID int64) ([]ChangeoverNodeTask, error) {
-	rows, err := db.Query(`SELECT t.id, t.process_changeover_id, t.process_node_id,
-		t.from_claim_id, t.to_claim_id, t.situation, t.state,
-		t.next_material_order_id, t.old_material_release_order_id,
-		t.updated_at, COALESCE(n.name, '')
-		FROM changeover_node_tasks t
-		LEFT JOIN process_nodes n ON n.id = t.process_node_id
-		WHERE t.process_changeover_id=? AND n.operator_station_id=? ORDER BY n.sequence, n.name`, changeoverID, stationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ChangeoverNodeTask
-	for rows.Next() {
-		t, err := scanChangeoverNodeTask(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return db.listChangeoverNodeTasksQuery(changeoverID, "n.operator_station_id=?", stationID)
 }
 
 func (db *DB) GetChangeoverNodeTaskByNode(changeoverID, processNodeID int64) (*ChangeoverNodeTask, error) {

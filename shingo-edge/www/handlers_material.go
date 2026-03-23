@@ -2,42 +2,36 @@ package www
 
 import (
 	"net/http"
-	"strconv"
 
 	"shingoedge/store"
 )
 
+func buildStationViews(db *store.DB, activeProcess *store.Process) []store.OperatorStationView {
+	if activeProcess == nil {
+		return nil
+	}
+	stations, _ := db.ListOperatorStationsByProcess(activeProcess.ID)
+	var views []store.OperatorStationView
+	for _, station := range stations {
+		if view, err := db.BuildOperatorStationView(station.ID); err == nil {
+			views = append(views, *view)
+		}
+	}
+	return views
+}
+
 func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 	processes, _ := db.ListProcesses()
-
-	var activeProcess *store.Process
-	if processParam := r.URL.Query().Get("process"); processParam != "" {
-		if processID, err := strconv.ParseInt(processParam, 10, 64); err == nil {
-			for i := range processes {
-				if processes[i].ID == processID {
-					activeProcess = &processes[i]
-					break
-				}
-			}
-		}
-	}
-	if activeProcess == nil && len(processes) > 0 {
-		activeProcess = &processes[0]
-	}
+	activeProcess := resolveProcessFromQuery(r, processes)
 
 	var activeProcessID int64
-	var stationViews []store.OperatorStationView
 	var currentStyleName, targetStyleName string
+
+	stationViews := buildStationViews(db, activeProcess)
 
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
-		stations, _ := db.ListOperatorStationsByProcess(activeProcess.ID)
-		for _, station := range stations {
-			if view, err := db.BuildOperatorStationView(station.ID); err == nil {
-				stationViews = append(stationViews, *view)
-			}
-		}
 		if activeProcess.ActiveStyleID != nil {
 			if style, err := db.GetStyle(*activeProcess.ActiveStyleID); err == nil {
 				currentStyleName = style.Name
@@ -67,31 +61,9 @@ func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) handleMaterialPartial(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 	processes, _ := db.ListProcesses()
+	activeProcess := resolveProcessFromQuery(r, processes)
 
-	var activeProcess *store.Process
-	if processParam := r.URL.Query().Get("process"); processParam != "" {
-		if processID, err := strconv.ParseInt(processParam, 10, 64); err == nil {
-			for i := range processes {
-				if processes[i].ID == processID {
-					activeProcess = &processes[i]
-					break
-				}
-			}
-		}
-	}
-	if activeProcess == nil && len(processes) > 0 {
-		activeProcess = &processes[0]
-	}
-
-	var stationViews []store.OperatorStationView
-	if activeProcess != nil {
-		stations, _ := db.ListOperatorStationsByProcess(activeProcess.ID)
-		for _, station := range stations {
-			if view, err := db.BuildOperatorStationView(station.ID); err == nil {
-				stationViews = append(stationViews, *view)
-			}
-		}
-	}
+	stationViews := buildStationViews(db, activeProcess)
 
 	data := map[string]interface{}{
 		"StationViews": stationViews,

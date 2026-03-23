@@ -59,9 +59,14 @@
                     </td>
                     <td style="white-space:nowrap">
                         {{if .ActiveClaim}}
-                        <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Order material to this node">Request</button>
-                        <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/release-empty" hx-swap="none" title="Send current bin to outbound staging">Release</button>
-                        <button class="btn btn-sm" hx-post="/api/orders/store" hx-vals='{"process_node_id":{{.Node.ID}},"quantity":1}' hx-swap="none" title="Send current bin to storage">Store</button>
+                            {{if eq .ActiveClaim.Role "produce"}}
+                            <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Request empty bin">Request Empty</button>
+                            <button class="btn btn-sm btn-primary" hx-post="/api/process-nodes/{{.Node.ID}}/finalize" hx-swap="none" title="Finalize manifest count and release full bin to storage">Finalize &amp; Release</button>
+                            {{else}}
+                            <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Order material to this node">Request</button>
+                            <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/release-empty" hx-swap="none" title="Send current bin to outbound staging">Release</button>
+                            <button class="btn btn-sm" hx-post="/api/orders/store" hx-vals='{"process_node_id":{{.Node.ID}},"quantity":1}' hx-swap="none" title="Send current bin to storage">Store</button>
+                            {{end}}
                         {{end}}
                         {{if .Runtime}}{{if .Runtime.ActiveOrderID}}
                         <button class="btn btn-sm btn-danger" hx-post="/api/process-nodes/{{.Node.ID}}/clear-orders" hx-swap="none" title="Clear stuck/failed order references">Clear</button>

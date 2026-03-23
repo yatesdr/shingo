@@ -92,7 +92,7 @@ func (db *DB) GetStyleNodeClaimByNode(styleID int64, coreNodeName string) (*Styl
 }
 
 func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
-	if in.Role != "produce" {
+	if in.Role != "produce" && in.Role != "changeover" {
 		in.Role = "consume"
 	}
 	if in.SwapMode == "" {

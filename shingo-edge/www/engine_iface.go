@@ -33,6 +33,7 @@ type EngineAccess interface {
 	ReleaseNodeEmpty(nodeID int64) (*store.Order, error)
 	ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error)
 	ConfirmNodeManifest(nodeID int64) error
+	FinalizeProduceNode(nodeID int64) (*store.Order, error)
 	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error)
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error

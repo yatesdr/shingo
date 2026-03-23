@@ -166,6 +166,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/process-nodes/{id}/release-empty", h.apiReleaseNodeEmpty)
 		r.Post("/process-nodes/{id}/release-partial", h.apiReleaseNodePartial)
 		r.Post("/process-nodes/{id}/manifest/confirm", h.apiConfirmNodeManifest)
+		r.Post("/process-nodes/{id}/finalize", h.apiFinalizeProduceNode)
 		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)

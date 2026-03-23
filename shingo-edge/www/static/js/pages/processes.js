@@ -152,7 +152,7 @@ async function loadPayloadCatalog() {
     } catch (_) { _payloadCatalog = []; }
     var sel = document.getElementById('claims-add-payload');
     if (!sel) return;
-    sel.innerHTML = '<option value="">-- Select --</option>';
+    sel.innerHTML = '<option value="">-- Select --</option><option value="__empty__">Empty (clear node)</option>';
     _payloadCatalog.forEach(function(p) {
         var opt = document.createElement('option');
         opt.value = p.code;
@@ -180,7 +180,16 @@ async function loadClaims(styleID) {
         claims.forEach(function(c) {
             var tr = document.createElement('tr');
             tr.id = 'claim-row-' + c.id;
-            var wants = c.role === 'produce' ? 'Empty bin' : (c.payload_code || 'Unset');
+            var wants;
+            if (c.role === 'changeover') {
+                wants = 'Evacuate &amp; restore';
+            } else if (c.payload_code === '__empty__') {
+                wants = 'Empty (clear node)';
+            } else if (c.payload_code) {
+                wants = c.payload_code + (c.role === 'produce' ? ' (empty bin)' : '');
+            } else {
+                wants = 'Unset';
+            }
             var swapLabel = {'simple': 'Simple', 'single_robot': '1-Robot', 'two_robot': '2-Robot'}[c.swap_mode] || c.swap_mode || 'Simple';
             var flags = [];
             if (c.keep_staged) flags.push('staged');
@@ -191,7 +200,7 @@ async function loadClaims(styleID) {
             var claimJSON = ShingoEdge.escapeHtml(JSON.stringify(c));
             tr.innerHTML =
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.core_node_name) + '</td>' +
-                '<td><span class="status-badge">' + (c.role === 'produce' ? 'Produce' : 'Consume') + '</span>' + flagStr + '</td>' +
+                '<td><span class="status-badge">' + ({consume:'Consume',produce:'Produce',changeover:'Changeover'}[c.role] || c.role) + '</span>' + flagStr + '</td>' +
                 '<td>' + swapLabel + '</td>' +
                 '<td>' + ShingoEdge.escapeHtml(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.inbound_staging || '\u2014') + '</td>' +
@@ -284,8 +293,8 @@ async function saveClaim() {
     var capacity = parseInt(document.getElementById('claims-add-capacity').value, 10) || 0;
     var reorder = parseInt(document.getElementById('claims-add-reorder').value, 10) || 0;
 
-    if (role === 'consume' && !payloadCode) {
-        ShingoEdge.toast('Select a payload for consume nodes', 'warning');
+    if ((role === 'consume' || role === 'produce') && !payloadCode) {
+        ShingoEdge.toast('Select a payload', 'warning');
         return;
     }
     if (!validateClaimStaging()) {
@@ -299,7 +308,7 @@ async function saveClaim() {
             core_node_name: node,
             role: role,
             swap_mode: document.getElementById('claims-add-swap').value,
-            payload_code: role === 'produce' ? '' : payloadCode,
+            payload_code: role === 'changeover' ? '' : payloadCode,
             uop_capacity: capacity,
             reorder_point: reorder,
             auto_reorder: true,
@@ -325,10 +334,12 @@ async function removeClaim(id) {
 }
 
 function toggleClaimsAddPayload() {
-    var isProduce = document.getElementById('claims-add-role').value === 'produce';
-    document.getElementById('claims-add-payload-group').style.display = isProduce ? 'none' : '';
-    document.getElementById('claims-add-reorder-group').style.display = isProduce ? 'none' : '';
-    if (isProduce) {
+    var role = document.getElementById('claims-add-role').value;
+    var isChangeover = role === 'changeover';
+    // Changeover-only nodes don't need payload or UOP config
+    document.getElementById('claims-add-payload-group').style.display = isChangeover ? 'none' : '';
+    document.getElementById('claims-add-reorder-group').style.display = isChangeover ? 'none' : '';
+    if (isChangeover) {
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-capacity').value = '0';
         document.getElementById('claims-add-reorder').value = '0';

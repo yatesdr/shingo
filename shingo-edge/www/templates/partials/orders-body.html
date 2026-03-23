@@ -33,7 +33,7 @@
                 {{if eq .Status "pending"}}
                     <button class="btn btn-sm btn-primary" onclick="submitOrder({{.ID}})">Submit</button>
                 {{end}}
-                {{if and (not (eq .Status "confirmed")) (not (eq .Status "cancelled")) (not (eq .Status "failed"))}}
+                {{if and (ne .Status "confirmed") (ne .Status "cancelled") (ne .Status "failed")}}
                     <button class="btn btn-sm btn-danger" onclick="abortOrder({{.ID}})">Abort</button>
                 {{end}}
             </td>

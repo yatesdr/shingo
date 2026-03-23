@@ -259,6 +259,20 @@ func (h *Handlers) apiConfirmNodeManifest(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+func (h *Handlers) apiFinalizeProduceNode(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	order, err := h.engine.FinalizeProduceNode(id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, order, "refreshMaterial")
+}
+
 func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

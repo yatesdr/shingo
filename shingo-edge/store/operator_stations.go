@@ -134,22 +134,17 @@ func (db *DB) UpdateOperatorStation(id int64, in OperatorStationInput) error {
 	if in.DeviceMode == "" {
 		in.DeviceMode = "fixed_hmi"
 	}
-	if strings.TrimSpace(in.Code) == "" {
+	if strings.TrimSpace(in.Code) == "" || in.Sequence <= 0 {
 		existing, err := db.GetOperatorStation(id)
 		if err != nil {
 			return err
 		}
-		in.Code = existing.Code
+		if strings.TrimSpace(in.Code) == "" {
+			in.Code = existing.Code
+		}
 		if in.Sequence <= 0 {
 			in.Sequence = existing.Sequence
 		}
-	}
-	if in.Sequence <= 0 {
-		existing, err := db.GetOperatorStation(id)
-		if err != nil {
-			return err
-		}
-		in.Sequence = existing.Sequence
 	}
 	_, err := db.Exec(`UPDATE operator_stations SET
 		process_id=?, code=?, name=?, note=?, area_label=?, sequence=?, controller_node_id=?, device_mode=?, enabled=?, updated_at=datetime('now')
