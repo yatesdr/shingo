@@ -1,9 +1,6 @@
 package store
 
-import (
-	"log"
-	"time"
-)
+import "time"
 
 type PayloadCatalogEntry struct {
 	ID          int64     `json:"id"`
@@ -12,6 +9,16 @@ type PayloadCatalogEntry struct {
 	Description string    `json:"description"`
 	UOPCapacity int       `json:"uop_capacity"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func scanPayloadCatalogEntry(scanner interface{ Scan(...interface{}) error }) (*PayloadCatalogEntry, error) {
+	e := &PayloadCatalogEntry{}
+	var updatedAt string
+	if err := scanner.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &updatedAt); err != nil {
+		return nil, err
+	}
+	e.UpdatedAt = scanTime(updatedAt)
+	return e, nil
 }
 
 func (db *DB) UpsertPayloadCatalog(entry *PayloadCatalogEntry) error {
@@ -29,12 +36,10 @@ func (db *DB) ListPayloadCatalog() ([]*PayloadCatalogEntry, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
 	var entries []*PayloadCatalogEntry
 	for rows.Next() {
-		e := &PayloadCatalogEntry{}
-		if err := rows.Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.UpdatedAt); err != nil {
-			log.Printf("scan payload catalog row: %v", err)
+		e, err := scanPayloadCatalogEntry(rows)
+		if err != nil {
 			continue
 		}
 		entries = append(entries, e)
@@ -43,12 +48,5 @@ func (db *DB) ListPayloadCatalog() ([]*PayloadCatalogEntry, error) {
 }
 
 func (db *DB) GetPayloadCatalogByCode(code string) (*PayloadCatalogEntry, error) {
-	e := &PayloadCatalogEntry{}
-	err := db.QueryRow(`SELECT id, name, code, description, uop_capacity, updated_at FROM payload_catalog WHERE code=?`, code).
-		Scan(&e.ID, &e.Name, &e.Code, &e.Description, &e.UOPCapacity, &e.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return e, nil
+	return scanPayloadCatalogEntry(db.QueryRow(`SELECT id, name, code, description, uop_capacity, updated_at FROM payload_catalog WHERE code=?`, code))
 }
-

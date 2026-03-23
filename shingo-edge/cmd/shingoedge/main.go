@@ -151,7 +151,7 @@ func main() {
 	reporter.DebugLog = messaging.DebugLogFunc(dbg.Func("reporter"))
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		if delta, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
-			reporter.RecordDelta(delta.JobStyleID, delta.Delta)
+			reporter.RecordDelta(delta.StyleID, delta.Delta)
 		}
 	}, engine.EventCounterDelta)
 	reporter.Start()
@@ -201,6 +201,10 @@ func main() {
 			eng.HandleOrderStatusSnapshots(items)
 		})
 		eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+		edgeHandler.SetRegisteredHandler(func() {
+			hb.RequestNodeSync()
+			hb.RequestCatalogSync()
+		})
 		edgeHandler.SetRegisterRequestHandler(func() {
 			hb.SendRegister()
 			if err := eng.StartupReconcile(); err != nil {
@@ -234,6 +238,13 @@ func main() {
 	<-sigCh
 
 	log.Println("Shutting down...")
+
+	// Force exit on second signal
+	go func() {
+		<-sigCh
+		log.Println("Forced shutdown")
+		os.Exit(1)
+	}()
 
 	// Stop SSE event hub first so long-lived connections close
 	stopWeb()

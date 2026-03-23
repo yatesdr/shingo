@@ -2,10 +2,8 @@ package store
 
 import (
 	"database/sql"
-	"fmt"
 	"strings"
 	"time"
-	"unicode"
 )
 
 type OperatorStation struct {
@@ -17,9 +15,8 @@ type OperatorStation struct {
 	AreaLabel          string     `json:"area_label"`
 	Sequence           int        `json:"sequence"`
 	ControllerNodeID   string     `json:"controller_node_id"`
-	DeviceMode         string     `json:"device_mode"`
-	ExpectedClientType string     `json:"expected_client_type"`
-	Enabled            bool       `json:"enabled"`
+	DeviceMode string `json:"device_mode"`
+	Enabled    bool   `json:"enabled"`
 	HealthStatus       string     `json:"health_status"`
 	LastSeenAt         *time.Time `json:"last_seen_at,omitempty"`
 	CreatedAt          time.Time  `json:"created_at"`
@@ -52,18 +49,12 @@ func scanStations(rows rowScanner) ([]OperatorStation, error) {
 	return out, rows.Err()
 }
 
-type rowScanner interface {
-	Next() bool
-	Scan(...interface{}) error
-	Err() error
-}
-
 func scanStation(scanner interface{ Scan(...interface{}) error }) (OperatorStation, error) {
 	var s OperatorStation
 	var lastSeen, createdAt, updatedAt string
 	err := scanner.Scan(
 		&s.ID, &s.ProcessID, &s.Code, &s.Name, &s.Note, &s.AreaLabel, &s.Sequence,
-		&s.ControllerNodeID, &s.DeviceMode, &s.ExpectedClientType, &s.Enabled, &s.HealthStatus,
+		&s.ControllerNodeID, &s.DeviceMode, &s.Enabled, &s.HealthStatus,
 		&lastSeen, &createdAt, &updatedAt, &s.ProcessName,
 	)
 	if err != nil {
@@ -79,7 +70,7 @@ func scanStation(scanner interface{ Scan(...interface{}) error }) (OperatorStati
 }
 
 const stationSelect = `s.id, s.process_id, s.code, s.name, s.note, s.area_label, s.sequence,
-	s.controller_node_id, s.device_mode, s.expected_client_type, s.enabled, s.health_status,
+	s.controller_node_id, s.device_mode, s.enabled, s.health_status,
 	COALESCE(s.last_seen_at, ''), s.created_at, s.updated_at, COALESCE(p.name, '')`
 
 const stationJoin = `FROM operator_stations s
@@ -226,45 +217,5 @@ func (db *DB) nextOperatorStationSequence(processID int64) (int, error) {
 }
 
 func (db *DB) generateOperatorStationCode(processID int64, name string) (string, error) {
-	base := slugOperatorStationName(name)
-	for i := 1; i <= 9999; i++ {
-		candidate := base
-		if i > 1 {
-			candidate = fmt.Sprintf("%s-%d", base, i)
-		}
-		var exists int
-		err := db.QueryRow(`SELECT 1 FROM operator_stations WHERE process_id=? AND code=? LIMIT 1`, processID, candidate).Scan(&exists)
-		if err == sql.ErrNoRows {
-			return candidate, nil
-		}
-		if err != nil {
-			return "", err
-		}
-	}
-	return "", fmt.Errorf("could not generate unique station code")
-}
-
-func slugOperatorStationName(name string) string {
-	name = strings.TrimSpace(strings.ToLower(name))
-	if name == "" {
-		return "station"
-	}
-	var b strings.Builder
-	prevDash := false
-	for _, r := range name {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-			prevDash = false
-			continue
-		}
-		if !prevDash {
-			b.WriteByte('-')
-			prevDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "station"
-	}
-	return out
+	return generateUniqueCode(db, "operator_stations", "process_id", processID, slugName(name, "station"), "station")
 }

@@ -61,6 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_bins_node ON bins(node_id);
 CREATE INDEX IF NOT EXISTS idx_bins_status ON bins(status);
 CREATE INDEX IF NOT EXISTS idx_bins_payload_code ON bins(payload_code);
 CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = true;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bins_label_unique ON bins(label) WHERE label != '';
 
 CREATE TABLE IF NOT EXISTS orders (
     id              BIGSERIAL PRIMARY KEY,

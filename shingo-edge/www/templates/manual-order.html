@@ -21,8 +21,8 @@
             <label>Process Node</label>
             <select id="mo-node" class="form-input" onchange="autofillNodeDefaults()">
                 <option value="">-- Select --</option>
-                {{range .OpNodes}}
-                <option value="{{.ID}}" data-delivery="{{.DeliveryNode}}" data-staging="{{.StagingNode}}" data-outgoing="{{.OutgoingNode}}">{{.ProcessName}} / {{if .DelegatedStationName}}{{.DelegatedStationName}} / {{end}}{{.Name}}</option>
+                {{range .ProcessNodes}}
+                <option value="{{.ID}}" data-delivery="{{.DeliveryNode}}" data-staging="{{.StagingNode}}" data-outgoing="{{.OutgoingNode}}">{{.ProcessName}} / {{if .StationName}}{{.StationName}} / {{end}}{{.Name}}</option>
                 {{end}}
             </select>
         </div>

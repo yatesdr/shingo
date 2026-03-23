@@ -9,7 +9,7 @@ import (
 	"shingoedge/store"
 )
 
-// ProductionReporter accumulates production deltas by cat_id and periodically
+// ProductionReporter accumulates production deltas by style name and periodically
 // enqueues production.report messages via the outbox for reliable delivery.
 type ProductionReporter struct {
 	db        *store.DB
@@ -17,7 +17,7 @@ type ProductionReporter struct {
 	interval  time.Duration
 
 	mu          sync.Mutex
-	accumulator map[string]float64 // cat_id -> count
+	accumulator map[string]float64 // style name -> count
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -36,22 +36,20 @@ func NewProductionReporter(db *store.DB, stationID string) *ProductionReporter {
 	}
 }
 
-// RecordDelta adds a production delta for a given job style.
-// It looks up the style's cat_id; if empty, the delta is silently ignored.
+// RecordDelta adds a production delta for a given style.
+// It accumulates the delta keyed by the style's name.
 func (pr *ProductionReporter) RecordDelta(jobStyleID int64, delta int64) {
 	if delta <= 0 {
 		return
 	}
 	style, err := pr.db.GetStyle(jobStyleID)
-	if err != nil || style == nil || len(style.CatIDs) == 0 {
+	if err != nil || style == nil {
 		return
 	}
 	pr.mu.Lock()
-	for _, catID := range style.CatIDs {
-		pr.accumulator[catID] += float64(delta)
-	}
+	pr.accumulator[style.Name] += float64(delta)
 	pr.mu.Unlock()
-	pr.DebugLog.log("delta recorded: style=%d delta=%d cat_ids=%v", jobStyleID, delta, style.CatIDs)
+	pr.DebugLog.log("delta recorded: style=%d delta=%d name=%s", jobStyleID, delta, style.Name)
 }
 
 // Start begins the periodic flush loop.
@@ -120,7 +118,7 @@ func (pr *ProductionReporter) flush() {
 		log.Printf("ERROR: production_reporter: enqueue outbox failed, restoring deltas: %v", err)
 		pr.restoreSnapshot(snapshot)
 	} else {
-		pr.DebugLog.log("flush: enqueued %d cat_id entries", len(entries))
+		pr.DebugLog.log("flush: enqueued %d entries", len(entries))
 	}
 }
 

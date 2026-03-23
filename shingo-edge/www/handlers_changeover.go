@@ -7,6 +7,16 @@ import (
 	"shingoedge/store"
 )
 
+// changeoverNodeView enriches a ChangeoverNodeTask with claim details for display.
+type changeoverNodeView struct {
+	store.ChangeoverNodeTask
+	Situation       string `json:"situation"`
+	FromPayload     string `json:"from_payload"`
+	ToPayload       string `json:"to_payload"`
+	FromRole        string `json:"from_role"`
+	ToRole          string `json:"to_role"`
+}
+
 func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	db := h.engine.DB()
 	processes, _ := db.ListProcesses()
@@ -31,8 +41,8 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	var currentStyleName string
 	var activeChangeover *store.ProcessChangeover
 	var stationTasks []store.ChangeoverStationTask
-	nodeTaskMap := map[int64][]store.ChangeoverNodeTask{}
-	var centralNodeTasks []store.ChangeoverNodeTask
+	nodeTaskMap := map[int64][]changeoverNodeView{}
+	var centralNodeTasks []changeoverNodeView
 
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
@@ -46,11 +56,36 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		if activeChangeover != nil {
 			stationTasks, _ = db.ListChangeoverStationTasks(activeChangeover.ID)
 			allNodeTasks, _ := db.ListChangeoverNodeTasks(activeChangeover.ID)
+
+			// Build map of processNodeID → operatorStationID from process nodes
+			processNodes, _ := db.ListProcessNodesByProcess(activeProcess.ID)
+			nodeStationMap := make(map[int64]*int64, len(processNodes))
+			for i := range processNodes {
+				nodeStationMap[processNodes[i].ID] = processNodes[i].OperatorStationID
+			}
+
 			for _, task := range allNodeTasks {
-				if task.OperatorStationID != nil {
-					nodeTaskMap[*task.OperatorStationID] = append(nodeTaskMap[*task.OperatorStationID], task)
+				view := changeoverNodeView{
+					ChangeoverNodeTask: task,
+					Situation:          task.Situation,
+				}
+				if task.FromClaimID != nil {
+					if claim, err := db.GetStyleNodeClaim(*task.FromClaimID); err == nil {
+						view.FromPayload = claim.PayloadCode
+						view.FromRole = claim.Role
+					}
+				}
+				if task.ToClaimID != nil {
+					if claim, err := db.GetStyleNodeClaim(*task.ToClaimID); err == nil {
+						view.ToPayload = claim.PayloadCode
+						view.ToRole = claim.Role
+					}
+				}
+				stationID := nodeStationMap[task.ProcessNodeID]
+				if stationID != nil {
+					nodeTaskMap[*stationID] = append(nodeTaskMap[*stationID], view)
 				} else {
-					centralNodeTasks = append(centralNodeTasks, task)
+					centralNodeTasks = append(centralNodeTasks, view)
 				}
 			}
 		}

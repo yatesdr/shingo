@@ -3,7 +3,6 @@ package engine
 import (
 	"log"
 
-	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store"
 )
@@ -14,47 +13,88 @@ func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(func(evt Event) {
 		if delta, ok := evt.Payload.(CounterDeltaEvent); ok {
 			e.hourlyTracker.HandleDelta(delta)
+			e.handleCounterDelta(delta)
 		}
 	}, EventCounterDelta)
 
 	e.Events.SubscribeTypes(func(evt Event) {
 		if completed, ok := evt.Payload.(OrderCompletedEvent); ok {
-			e.handleOpNodeOrderCompleted(completed)
+			e.handleNodeOrderCompleted(completed)
 		}
 	}, EventOrderCompleted)
 
 	e.Events.SubscribeTypes(func(evt Event) {
 		if failed, ok := evt.Payload.(OrderFailedEvent); ok {
-			e.handleOpNodeOrderFailed(failed)
+			e.handleNodeOrderFailed(failed)
 		}
 	}, EventOrderFailed)
 }
 
-// scanProduceSlots is intentionally a no-op in the operator-station architecture.
-// Initial provisioning is now an explicit station or Edge operation on process nodes.
-func (e *Engine) scanProduceSlots() {}
+// handleCounterDelta processes a production counter tick:
+// - For consume nodes: decrement remaining UOP, trigger auto-reorder if at threshold
+// - For produce nodes: increment remaining UOP, trigger auto-relief if at capacity
+func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
+	if delta.ProcessID == 0 || delta.StyleID == 0 || delta.Delta <= 0 {
+		return
+	}
+	if delta.Anomaly == "reset" {
+		return
+	}
 
-func buildPickupStep(node, nodeGroup string) protocol.ComplexOrderStep {
-	if node != "" {
-		return protocol.ComplexOrderStep{Action: "pickup", Node: node}
+	nodes, err := e.db.ListProcessNodesByProcess(delta.ProcessID)
+	if err != nil {
+		return
 	}
-	if nodeGroup != "" {
-		return protocol.ComplexOrderStep{Action: "pickup", NodeGroup: nodeGroup}
+	for _, node := range nodes {
+		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
+		if err != nil || runtime == nil {
+			continue
+		}
+
+		// Look up active claim for this node
+		claim := e.findActiveClaim(&node)
+		if claim == nil {
+			continue
+		}
+		// Only process nodes with a claim matching this style
+		if claim.StyleID != delta.StyleID {
+			continue
+		}
+
+		switch claim.Role {
+		case "consume":
+			newRemaining := runtime.RemainingUOP - int(delta.Delta)
+			if newRemaining < 0 {
+				newRemaining = 0
+			}
+			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
+
+			// Auto-reorder if threshold reached and enabled
+			if claim.AutoReorder && newRemaining <= claim.ReorderPoint &&
+				runtime.ActiveOrderID == nil && newRemaining > 0 {
+				_, err := e.RequestNodeMaterial(node.ID, 1)
+				if err != nil {
+					log.Printf("auto-reorder for node %s: %v", node.Name, err)
+				}
+			}
+
+		case "produce":
+			newRemaining := runtime.RemainingUOP + int(delta.Delta)
+			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
+
+			// Auto-relief at capacity
+			if claim.AutoReorder && claim.UOPCapacity > 0 &&
+				newRemaining >= claim.UOPCapacity && runtime.ActiveOrderID == nil {
+				_, err := e.ReleaseNodeEmpty(node.ID)
+				if err != nil {
+					log.Printf("auto-relief for produce node %s: %v", node.Name, err)
+				}
+			}
+		}
 	}
-	return protocol.ComplexOrderStep{Action: "pickup"}
 }
 
-func buildDropoffStep(node, nodeGroup string) protocol.ComplexOrderStep {
-	if node != "" {
-		return protocol.ComplexOrderStep{Action: "dropoff", Node: node}
-	}
-	if nodeGroup != "" {
-		return protocol.ComplexOrderStep{Action: "dropoff", NodeGroup: nodeGroup}
-	}
-	return protocol.ComplexOrderStep{Action: "dropoff"}
-}
-
-func (e *Engine) handleOpNodeOrderCompleted(completed OrderCompletedEvent) {
+func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	if completed.ProcessNodeID == nil {
 		return
 	}
@@ -83,69 +123,92 @@ func (e *Engine) handleOpNodeOrderCompleted(completed OrderCompletedEvent) {
 	}
 
 	// Staged delivery during runout phase.
-	if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID &&
-		node.StagingNode != "" && order.DeliveryNode == node.StagingNode && runtime.StagedAssignmentID != nil {
-		assignment, err := e.db.GetProcessNodeAssignment(*runtime.StagedAssignmentID)
-		if err == nil {
-			_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
-				assignment.PayloadCode, "staged", runtime.RemainingUOP, runtime.ManifestStatus)
+	if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID {
+		if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
+			if toClaim.InboundStaging != "" && order.DeliveryNode == toClaim.InboundStaging {
+				claimID := toClaim.ID
+				_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, runtime.RemainingUOP)
+				_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staged")
+				return
+			}
 		}
-		if nodeTask != nil {
-			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staged")
-		}
-		return
 	}
 
 	// Empty line / clear access for tool change.
 	if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID &&
-		order.OrderType == orders.TypeMove && order.PickupNode == node.DeliveryNode && order.DeliveryNode == node.OutgoingNode {
-		_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
-			runtime.LoadedPayloadCode, "empty", 0, runtime.ManifestStatus)
-		if nodeTask != nil {
-			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared")
-		}
+		order.OrderType == orders.TypeMove {
+		_ = e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0)
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared")
 		return
 	}
 
 	// Release staged or replenished material into production.
-	if order.DeliveryNode == node.DeliveryNode {
-		if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID && runtime.StagedAssignmentID != nil {
-			assign, err := e.db.GetProcessNodeAssignment(*runtime.StagedAssignmentID)
-			if err == nil {
-				assignID := assign.ID
-				styleID := assign.StyleID
-				_ = e.db.SetProcessNodeRuntime(node.ID, &styleID, &assignID, nil, assign.PayloadCode, "active", assign.UOPCapacity, "pending_confirmation")
-				if nodeTask != nil {
-					_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
-				}
-				_ = e.tryCompleteProcessChangeover(node.ProcessID)
-				return
-			}
+	if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID {
+		if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
+			claimID := toClaim.ID
+			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
+			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
+			_ = e.tryCompleteProcessChangeover(node.ProcessID)
+			return
 		}
-		if runtime.ActiveAssignmentID != nil && order.OrderType == orders.TypeRetrieve {
-			assign, err := e.db.GetProcessNodeAssignment(*runtime.ActiveAssignmentID)
-			if err == nil {
-				_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
-					assign.PayloadCode, "active", assign.UOPCapacity, runtime.ManifestStatus)
-			}
+	}
+
+	// Normal replenishment completion — reset UOP from active claim
+	if order.OrderType == orders.TypeRetrieve || order.OrderType == orders.TypeComplex {
+		if claim := e.findActiveClaim(node); claim != nil {
+			claimID := claim.ID
+			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, claim.UOPCapacity)
+
+			// Keep-staged: immediately pre-populate inbound staging for next swap
+			e.maybePreStage(node, claim)
 		}
 	}
 }
 
-func (e *Engine) handleOpNodeOrderFailed(failed OrderFailedEvent) {
+// maybePreStage orders the next bin to inbound staging if the claim has
+// keep_staged enabled. This ensures the staging node always has material
+// ready for a fast swap.
+func (e *Engine) maybePreStage(node *store.ProcessNode, claim *store.StyleNodeClaim) {
+	if !claim.KeepStaged || claim.InboundStaging == "" {
+		return
+	}
+	steps := BuildStageSteps(claim)
+	if steps == nil {
+		return
+	}
+	nodeID := node.ID
+	order, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.InboundStaging, steps)
+	if err != nil {
+		log.Printf("keep-staged pre-stage for node %s: %v", node.Name, err)
+		return
+	}
+	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &order.ID)
+}
+
+// getChangeoverToStyleID returns the to_style_id of the active changeover for a process.
+func (e *Engine) getChangeoverToStyleID(processID int64) int64 {
+	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if err != nil {
+		return 0
+	}
+	return changeover.ToStyleID
+}
+
+func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	order, err := e.db.GetOrder(failed.OrderID)
 	if err != nil || order.ProcessNodeID == nil {
+		return
+	}
+	node, err := e.db.GetProcessNode(*order.ProcessNodeID)
+	if err != nil {
 		return
 	}
 	runtime, err := e.db.EnsureProcessNodeRuntime(*order.ProcessNodeID)
 	if err != nil {
 		return
 	}
-	assign, err := e.db.GetPreferredProcessNodeAssignment(*order.ProcessNodeID)
-	if err != nil {
-		log.Printf("order failed: process-node assignment lookup %d: %v", *order.ProcessNodeID, err)
-		return
-	}
-	_ = e.db.SetProcessNodeRuntime(*order.ProcessNodeID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
-		assign.PayloadCode, "empty", runtime.RemainingUOP, runtime.ManifestStatus)
+
+	// On failure, keep active claim but reset UOP to 0
+	_ = e.db.SetProcessNodeRuntime(*order.ProcessNodeID, runtime.ActiveClaimID, 0)
+	_ = node // used for findActiveClaim context
 }

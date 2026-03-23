@@ -33,10 +33,7 @@
                 <tr>
                     <th>Node</th>
                     <th>Current Material</th>
-                    <th>Status</th>
                     <th>Remaining</th>
-                    <th>Manifest</th>
-                    <th>Next Style</th>
                     <th>Active Orders</th>
                 </tr>
             </thead>
@@ -44,11 +41,8 @@
                 {{range .Nodes}}
                 <tr>
                     <td>{{.Node.Name}}</td>
-                    <td>{{if .Assignment}}{{if .Assignment.PayloadDescription}}{{.Assignment.PayloadDescription}}{{else}}{{.Assignment.PayloadCode}}{{end}}{{else}}<span style="color:var(--text-muted)">Unassigned</span>{{end}}</td>
-                    <td>{{if .Runtime}}<span class="status-badge">{{.Runtime.MaterialStatus}}</span>{{else}}<span style="color:var(--text-muted)">n/a</span>{{end}}</td>
+                    <td>{{if .ActiveClaim}}{{.ActiveClaim.PayloadCode}}{{else}}<span style="color:var(--text-muted)">Unassigned</span>{{end}}</td>
                     <td>{{if .Runtime}}{{.Runtime.RemainingUOP}}{{else}}--{{end}}</td>
-                    <td>{{if .Runtime}}{{.Runtime.ManifestStatus}}{{else}}--{{end}}</td>
-                    <td>{{if .NextStyle}}{{if .NextStyle.PayloadDescription}}{{.NextStyle.PayloadDescription}}{{else}}{{.NextStyle.PayloadCode}}{{end}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
                     <td>{{if .Orders}}{{range .Orders}}<div><code>{{.UUID}}</code> <span class="status-badge">{{.Status}}</span></div>{{end}}{{else}}<span style="color:var(--text-muted)">None</span>{{end}}</td>
                 </tr>
                 {{end}}

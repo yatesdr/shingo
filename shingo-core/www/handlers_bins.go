@@ -180,10 +180,7 @@ func (h *Handlers) handleBinCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i := 0; i < count; i++ {
-		binLabel := label
-		if count > 1 {
-			binLabel = label + fmt.Sprintf("%04d", i+1)
-		}
+		binLabel := label + fmt.Sprintf("%04d", i+1)
 		b := &store.Bin{
 			BinTypeID: binTypeID,
 			Label:     binLabel,

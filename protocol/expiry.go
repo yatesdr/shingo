@@ -38,6 +38,8 @@ var subjectTTLs = map[string]time.Duration{
 	SubjectNodeListResponse:    5 * time.Minute,
 	SubjectOrderStatusRequest:  5 * time.Minute,
 	SubjectOrderStatusResponse: 5 * time.Minute,
+	SubjectNodeStateRequest:    30 * time.Second,
+	SubjectNodeStateResponse:   30 * time.Second,
 }
 
 // FallbackTTL is used when no specific TTL is configured.

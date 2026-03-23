@@ -118,6 +118,26 @@ func (h *Heartbeater) RequestCatalogSync() {
 	h.sendCatalogRequest()
 }
 
+// RequestNodeState sends a node state request to core for the given node names.
+func (h *Heartbeater) RequestNodeState(nodes []string) {
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectNodeStateRequest,
+		protocol.Address{Role: protocol.RoleEdge, Station: h.stationID},
+		protocol.Address{Role: protocol.RoleCore},
+		&protocol.NodeStateRequest{Nodes: nodes},
+	)
+	if err != nil {
+		log.Printf("heartbeater: build node state request: %v", err)
+		return
+	}
+	h.sender.DebugLog = h.DebugLog
+	if err := h.sender.PublishEnvelope(env, "node state request"); err != nil {
+		log.Printf("heartbeater: send node state request failed: %v", err)
+	} else {
+		log.Printf("heartbeater: sent node.state_request (%d nodes)", len(nodes))
+	}
+}
+
 func (h *Heartbeater) sendCatalogRequest() {
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectCatalogPayloadsRequest,
@@ -167,6 +187,11 @@ func (h *Heartbeater) sendHeartbeat() {
 }
 
 func (h *Heartbeater) loop() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("heartbeater: panic in loop: %v", r)
+		}
+	}()
 	ticker := time.NewTicker(h.interval)
 	defer ticker.Stop()
 	tick := 0

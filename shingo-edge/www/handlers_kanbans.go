@@ -28,23 +28,16 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 
 	var activeOrders []store.Order
 	if activeProcessID > 0 {
-		activeOrders, _ = db.ListActiveOrdersByLine(activeProcessID)
+		activeOrders, _ = db.ListActiveOrdersByProcess(activeProcessID)
 	} else {
 		activeOrders, _ = db.ListActiveOrders()
 	}
 
-	knownNodes, _ := db.ListKnownNodes()
-
-	// Merge core-synced nodes into known nodes for redirect dropdown
+	// Core-synced nodes for redirect dropdown
 	coreNodes := h.engine.CoreNodes()
-	knownSet := make(map[string]bool, len(knownNodes))
-	for _, n := range knownNodes {
-		knownSet[n] = true
-	}
+	knownNodes := make([]string, 0, len(coreNodes))
 	for name := range coreNodes {
-		if !knownSet[name] {
-			knownNodes = append(knownNodes, name)
-		}
+		knownNodes = append(knownNodes, name)
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)

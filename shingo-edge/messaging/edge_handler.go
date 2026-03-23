@@ -17,6 +17,8 @@ type EdgeHandler struct {
 	orderMgr         *orders.Manager
 	onCoreNodes      func([]protocol.NodeInfo)
 	onPayloadCatalog func([]protocol.CatalogPayloadInfo)
+	onNodeState      func([]protocol.NodeStateEntry)
+	onRegistered     func()
 	onRegisterReq    func()
 	onOrderStatuses  func([]protocol.OrderStatusSnapshot)
 
@@ -42,6 +44,14 @@ func (h *EdgeHandler) SetOrderStatusHandler(fn func([]protocol.OrderStatusSnapsh
 	h.onOrderStatuses = fn
 }
 
+func (h *EdgeHandler) SetNodeStateHandler(fn func([]protocol.NodeStateEntry)) {
+	h.onNodeState = fn
+}
+
+func (h *EdgeHandler) SetRegisteredHandler(fn func()) {
+	h.onRegistered = fn
+}
+
 func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 	h.DebugLog.log("data subject=%s from=%s", p.Subject, env.Src.Station)
 	switch p.Subject {
@@ -52,6 +62,9 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
+		if h.onRegistered != nil {
+			h.onRegistered()
+		}
 	case protocol.SubjectEdgeHeartbeatAck:
 		var ack protocol.EdgeHeartbeatAck
 		if err := json.Unmarshal(p.Body, &ack); err != nil {
@@ -106,6 +119,16 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 		} else {
 			log.Printf("edge_handler: tag verify: uuid=%s match=false expected=%s detail=%s", resp.OrderUUID, resp.Expected, resp.Detail)
 		}
+	case protocol.SubjectNodeStateResponse:
+		var resp protocol.NodeStateResponse
+		if err := json.Unmarshal(p.Body, &resp); err != nil {
+			log.Printf("edge_handler: decode node state response: %v", err)
+			return
+		}
+		log.Printf("edge_handler: received node state (%d entries)", len(resp.Nodes))
+		if h.onNodeState != nil {
+			h.onNodeState(resp.Nodes)
+		}
 	case protocol.SubjectEdgeRegisterRequest:
 		var req protocol.EdgeRegisterRequest
 		if err := json.Unmarshal(p.Body, &req); err != nil {
@@ -122,7 +145,10 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			log.Printf("edge_handler: decode stale notification: %v", err)
 			return
 		}
-		log.Printf("edge_handler: WARNING: core marked this edge as stale: %s", stale.Message)
+		log.Printf("edge_handler: WARNING: core marked this edge as stale: %s — re-registering", stale.Message)
+		if h.onRegisterReq != nil {
+			h.onRegisterReq()
+		}
 	default:
 		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)
 	}

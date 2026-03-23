@@ -279,6 +279,117 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // --- TagSelect: type-to-filter PLC tag picker ---
+    // Usage: ShingoEdge.tagSelect(inputId, plcSelectId)
+    // When the PLC <select> changes, fetches tags from /api/plcs/all-tags/{plc}
+    // and shows a filterable dropdown below the input.
+    ShingoEdge.tagSelect = function(inputId, plcSelectId) {
+        var input = document.getElementById(inputId);
+        var plcSelect = document.getElementById(plcSelectId);
+        if (!input || !plcSelect) return;
+
+        var wrapper = document.createElement('div');
+        wrapper.className = 'tag-select';
+        input.parentNode.insertBefore(wrapper, input);
+        wrapper.appendChild(input);
+
+        var dropdown = document.createElement('div');
+        dropdown.className = 'tag-select-dropdown';
+        wrapper.appendChild(dropdown);
+
+        var allTags = [];
+        var highlighted = -1;
+
+        function render(filter) {
+            var lc = (filter || '').toLowerCase();
+            var matches = allTags.filter(function(t) {
+                return t.name.toLowerCase().indexOf(lc) >= 0;
+            });
+            dropdown.innerHTML = '';
+            if (matches.length === 0) {
+                var empty = document.createElement('div');
+                empty.className = 'tag-select-empty';
+                empty.textContent = allTags.length === 0 ? 'No tags available from PLC' : 'No matching tags';
+                dropdown.appendChild(empty);
+            } else {
+                matches.forEach(function(tag, idx) {
+                    var opt = document.createElement('div');
+                    opt.className = 'tag-select-option';
+                    opt.innerHTML = ShingoEdge.escapeHtml(tag.name) +
+                        (tag.type ? '<span class="tag-type">' + ShingoEdge.escapeHtml(tag.type) + '</span>' : '');
+                    opt.dataset.idx = idx;
+                    opt.addEventListener('mousedown', function(e) {
+                        e.preventDefault();
+                        input.value = tag.name;
+                        close();
+                    });
+                    dropdown.appendChild(opt);
+                });
+            }
+            highlighted = -1;
+        }
+
+        function open() {
+            render(input.value);
+            dropdown.classList.add('open');
+        }
+
+        function close() {
+            dropdown.classList.remove('open');
+            highlighted = -1;
+        }
+
+        function fetchTags() {
+            var plc = plcSelect.value;
+            allTags = [];
+            if (!plc) { close(); return; }
+            ShingoEdge.api.get('/api/plcs/all-tags/' + encodeURIComponent(plc))
+                .then(function(tags) {
+                    allTags = (tags || []).sort(function(a, b) {
+                        return a.name.localeCompare(b.name);
+                    });
+                    if (document.activeElement === input) open();
+                })
+                .catch(function() {
+                    allTags = [];
+                });
+        }
+
+        plcSelect.addEventListener('change', fetchTags);
+        input.addEventListener('focus', function() {
+            if (allTags.length > 0 || plcSelect.value) open();
+        });
+        input.addEventListener('input', function() { render(input.value); });
+        input.addEventListener('blur', function() {
+            setTimeout(close, 150);
+        });
+        input.addEventListener('keydown', function(e) {
+            var items = dropdown.querySelectorAll('.tag-select-option');
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                highlighted = Math.min(highlighted + 1, items.length - 1);
+                items.forEach(function(el, i) { el.classList.toggle('highlighted', i === highlighted); });
+                if (items[highlighted]) items[highlighted].scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                highlighted = Math.max(highlighted - 1, 0);
+                items.forEach(function(el, i) { el.classList.toggle('highlighted', i === highlighted); });
+                if (items[highlighted]) items[highlighted].scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'Enter' && highlighted >= 0 && items[highlighted]) {
+                e.preventDefault();
+                input.value = allTags.filter(function(t) {
+                    return t.name.toLowerCase().indexOf(input.value.toLowerCase()) >= 0;
+                })[highlighted].name;
+                close();
+            } else if (e.key === 'Escape') {
+                close();
+            }
+        });
+
+        // Fetch tags if PLC is already selected on page load
+        if (plcSelect.value) fetchTags();
+    };
+
     // Export
     window.ShingoEdge = ShingoEdge;
 })();

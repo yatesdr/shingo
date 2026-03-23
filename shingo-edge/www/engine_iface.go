@@ -29,20 +29,19 @@ type EngineAccess interface {
 	RequestCatalogSync()
 	RequestOrderStatusSync() error
 	StartupReconcile() error
-	RequestOpNodeMaterial(opNodeID int64, quantity int64) (*engine.OpNodeOrderResult, error)
-	ReleaseOpNodeEmpty(opNodeID int64) (*store.Order, error)
-	ReleaseOpNodePartial(opNodeID int64, qty int64) (*store.Order, error)
-	ConfirmOpNodeManifest(opNodeID int64) error
-	StartProcessChangeoverV2(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error)
-	AdvanceProcessChangeoverPhase(processID int64, phase string) error
+	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)
+	ReleaseNodeEmpty(nodeID int64) (*store.Order, error)
+	ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error)
+	ConfirmNodeManifest(nodeID int64) error
+	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error)
 	CompleteProcessProductionCutover(processID int64) error
-	CancelProcessChangeoverV2(processID int64) error
-	StageOpNodeChangeoverMaterial(processID, opNodeID int64) (*store.Order, error)
-	EmptyOpNodeForToolChange(processID, opNodeID int64, partialQty int64) (*store.Order, error)
-	ReleaseOpNodeIntoProduction(processID, opNodeID int64) (*store.Order, error)
-	SwitchOpNodeToTarget(processID, opNodeID int64) error
+	CancelProcessChangeover(processID int64) error
+	StageNodeChangeoverMaterial(processID, nodeID int64) (*store.Order, error)
+	EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*store.Order, error)
+	ReleaseNodeIntoProduction(processID, nodeID int64) (*store.Order, error)
+	SwitchNodeToTarget(processID, nodeID int64) error
 	SwitchOperatorStationToTarget(processID, stationID int64) error
-	SyncProcessCounterBinding(processID int64) error
+	SyncProcessCounter(processID int64) error
 
 	// WarLink tag management
 	EnsureTagPublished(rpID int64, plcName, tagName string)

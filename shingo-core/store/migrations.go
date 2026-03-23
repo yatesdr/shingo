@@ -281,6 +281,7 @@ func (db *DB) migrateBinsCommandCenter() {
 		db.Exec(fmt.Sprintf(`ALTER TABLE bins ADD COLUMN %s %s`, c.name, c.def))
 	}
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = true`)
+	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_bins_label_unique ON bins(label) WHERE label != ''`)
 }
 
 func (db *DB) migrateNodeTypes() error {

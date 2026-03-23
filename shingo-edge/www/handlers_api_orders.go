@@ -29,14 +29,9 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
 	}
-	if processNodeID != nil {
+	if processNodeID != nil && req.DeliveryNode == "" {
 		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil {
-			if req.DeliveryNode == "" {
-				req.DeliveryNode = node.DeliveryNode
-			}
-			if req.StagingNode == "" {
-				req.StagingNode = node.StagingNode
-			}
+			req.DeliveryNode = node.CoreNodeName
 		}
 	}
 
@@ -112,7 +107,7 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
 		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
-			req.PickupNode = node.DeliveryNode
+			req.PickupNode = node.CoreNodeName
 		}
 	}
 
@@ -149,7 +144,7 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
 		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
-			req.PickupNode = node.DeliveryNode
+			req.PickupNode = node.CoreNodeName
 		}
 	}
 
@@ -219,7 +214,7 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
 		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
-			req.PickupNode = node.DeliveryNode
+			req.PickupNode = node.CoreNodeName
 		}
 	}
 

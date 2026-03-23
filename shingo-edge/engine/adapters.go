@@ -11,9 +11,9 @@ func (e *plcEmitter) EmitCounterRead(rpID int64, plcName, tagName string, value 
 	}})
 }
 
-func (e *plcEmitter) EmitCounterDelta(rpID, lineID, jobStyleID, delta, newCount int64, anomaly string) {
+func (e *plcEmitter) EmitCounterDelta(rpID, processID, styleID, delta, newCount int64, anomaly string) {
 	e.bus.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
-		ReportingPointID: rpID, LineID: lineID, JobStyleID: jobStyleID, Delta: delta, NewCount: newCount, Anomaly: anomaly,
+		ReportingPointID: rpID, ProcessID: processID, StyleID: styleID, Delta: delta, NewCount: newCount, Anomaly: anomaly,
 	}})
 }
 

@@ -51,6 +51,9 @@ const (
 	SubjectCatalogPayloadsRequest  = "catalog.payloads_request"
 	SubjectCatalogPayloadsResponse = "catalog.payloads_response"
 
+	SubjectNodeStateRequest  = "node.state_request"
+	SubjectNodeStateResponse = "node.state_response"
+
 	SubjectOrderStatusRequest  = "order.status_request"
 	SubjectOrderStatusResponse = "order.status_response"
 )

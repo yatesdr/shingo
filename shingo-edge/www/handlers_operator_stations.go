@@ -197,82 +197,13 @@ func (h *Handlers) apiDeleteProcessNode(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiListProcessNodeAssignmentsByProcess(w http.ResponseWriter, r *http.Request) {
-	processID, err := parseID(r, "processID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid process id")
-		return
-	}
-	assignments, err := h.engine.DB().ListProcessNodeAssignmentsByProcess(processID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, assignments)
-}
-
-func (h *Handlers) apiListProcessNodeAssignmentsByNode(w http.ResponseWriter, r *http.Request) {
-	processNodeID, err := parseID(r, "opNodeID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid node id")
-		return
-	}
-	assignments, err := h.engine.DB().ListProcessNodeAssignmentsByNode(processNodeID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, assignments)
-}
-
-func (h *Handlers) apiListProcessNodeAssignmentsByStyle(w http.ResponseWriter, r *http.Request) {
-	styleID, err := parseID(r, "styleID")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid style id")
-		return
-	}
-	assignments, err := h.engine.DB().ListProcessNodeAssignmentsByStyle(styleID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, assignments)
-}
-
-func (h *Handlers) apiUpsertProcessNodeAssignment(w http.ResponseWriter, r *http.Request) {
-	var in store.ProcessNodeStyleAssignmentInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	id, err := h.engine.DB().UpsertProcessNodeAssignment(in)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, map[string]int64{"id": id})
-}
-
-func (h *Handlers) apiDeleteProcessNodeAssignment(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
-		return
-	}
-	if err := h.engine.DB().DeleteProcessNodeAssignment(id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-func (h *Handlers) apiRequestOpNodeMaterial(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiRequestNodeMaterial(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	result, err := h.engine.RequestOpNodeMaterial(id, 1)
+	result, err := h.engine.RequestNodeMaterial(id, 1)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -280,13 +211,13 @@ func (h *Handlers) apiRequestOpNodeMaterial(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, result)
 }
 
-func (h *Handlers) apiReleaseOpNodeEmpty(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiReleaseNodeEmpty(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.engine.ReleaseOpNodeEmpty(id)
+	order, err := h.engine.ReleaseNodeEmpty(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -294,7 +225,7 @@ func (h *Handlers) apiReleaseOpNodeEmpty(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, order)
 }
 
-func (h *Handlers) apiReleaseOpNodePartial(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
@@ -307,7 +238,7 @@ func (h *Handlers) apiReleaseOpNodePartial(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	order, err := h.engine.ReleaseOpNodePartial(id, req.Qty)
+	order, err := h.engine.ReleaseNodePartial(id, req.Qty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -315,20 +246,20 @@ func (h *Handlers) apiReleaseOpNodePartial(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, order)
 }
 
-func (h *Handlers) apiConfirmOpNodeManifest(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiConfirmNodeManifest(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.ConfirmOpNodeManifest(id); err != nil {
+	if err := h.engine.ConfirmNodeManifest(id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiStartProcessChangeoverV2(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiStartProcessChangeover(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
@@ -343,7 +274,7 @@ func (h *Handlers) apiStartProcessChangeoverV2(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	co, err := h.engine.StartProcessChangeoverV2(processID, req.ToStyleID, req.CalledBy, req.Notes)
+	co, err := h.engine.StartProcessChangeover(processID, req.ToStyleID, req.CalledBy, req.Notes)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -351,33 +282,13 @@ func (h *Handlers) apiStartProcessChangeoverV2(w http.ResponseWriter, r *http.Re
 	writeJSON(w, co)
 }
 
-func (h *Handlers) apiCancelProcessChangeoverV2(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	if err := h.engine.CancelProcessChangeoverV2(processID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-func (h *Handlers) apiAdvanceProcessChangeoverPhase(w http.ResponseWriter, r *http.Request) {
-	processID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid process id")
-		return
-	}
-	var req struct {
-		Phase string `json:"phase"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := h.engine.AdvanceProcessChangeoverPhase(processID, req.Phase); err != nil {
+	if err := h.engine.CancelProcessChangeover(processID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -397,7 +308,7 @@ func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r 
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
-func (h *Handlers) apiStageOpNodeChangeoverMaterial(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
@@ -408,7 +319,7 @@ func (h *Handlers) apiStageOpNodeChangeoverMaterial(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.engine.StageOpNodeChangeoverMaterial(processID, nodeID)
+	order, err := h.engine.StageNodeChangeoverMaterial(processID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -416,7 +327,7 @@ func (h *Handlers) apiStageOpNodeChangeoverMaterial(w http.ResponseWriter, r *ht
 	writeJSON(w, order)
 }
 
-func (h *Handlers) apiEmptyOpNodeForToolChange(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiEmptyNodeForToolChange(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
@@ -431,7 +342,7 @@ func (h *Handlers) apiEmptyOpNodeForToolChange(w http.ResponseWriter, r *http.Re
 		Qty int64 `json:"qty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	order, err := h.engine.EmptyOpNodeForToolChange(processID, nodeID, req.Qty)
+	order, err := h.engine.EmptyNodeForToolChange(processID, nodeID, req.Qty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -439,7 +350,7 @@ func (h *Handlers) apiEmptyOpNodeForToolChange(w http.ResponseWriter, r *http.Re
 	writeJSON(w, order)
 }
 
-func (h *Handlers) apiReleaseOpNodeIntoProduction(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiReleaseNodeIntoProduction(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
@@ -450,7 +361,7 @@ func (h *Handlers) apiReleaseOpNodeIntoProduction(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.engine.ReleaseOpNodeIntoProduction(processID, nodeID)
+	order, err := h.engine.ReleaseNodeIntoProduction(processID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -458,7 +369,7 @@ func (h *Handlers) apiReleaseOpNodeIntoProduction(w http.ResponseWriter, r *http
 	writeJSON(w, order)
 }
 
-func (h *Handlers) apiSwitchOpNodeToTarget(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiSwitchNodeToTarget(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
@@ -469,7 +380,7 @@ func (h *Handlers) apiSwitchOpNodeToTarget(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.SwitchOpNodeToTarget(processID, nodeID); err != nil {
+	if err := h.engine.SwitchNodeToTarget(processID, nodeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -159,15 +159,15 @@ func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 	if dateStr == "" {
 		dateStr = time.Now().Format("2006-01-02")
 	}
-	lineID, _ := strconv.ParseInt(r.URL.Query().Get("line_id"), 10, 64)
+	processID, _ := strconv.ParseInt(r.URL.Query().Get("process_id"), 10, 64)
 
-	if lineID == 0 {
+	if processID == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("{}"))
 		return
 	}
 
-	counts, err := h.engine.DB().HourlyCountTotals(lineID, dateStr)
+	counts, err := h.engine.DB().HourlyCountTotals(processID, dateStr)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

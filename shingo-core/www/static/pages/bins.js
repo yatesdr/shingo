@@ -61,10 +61,10 @@ function switchTab(name) {
     var panel = document.getElementById('bd-' + t);
     var btn = document.querySelector('.tab-btn[onclick*="' + t + '"]');
     if (t === name) {
-      if (panel) panel.style.display = '';
+      if (panel) { panel.classList.remove('hide'); panel.style.display = ''; }
       if (btn) btn.classList.add('active');
     } else {
-      if (panel) panel.style.display = 'none';
+      if (panel) { panel.classList.add('hide'); panel.style.display = 'none'; }
       if (btn) btn.classList.remove('active');
     }
   });
@@ -109,7 +109,7 @@ function renderContents(data) {
   if (data.manifest && data.manifest.items && data.manifest.items.length > 0) {
     html += '<table class="table-compact"><thead><tr><th>Cat ID</th><th>Qty</th><th>Notes</th></tr></thead><tbody>';
     data.manifest.items.forEach(function(item) {
-      html += '<tr><td><code>' + esc(item.cat_id) + '</code></td><td>' + item.quantity + '</td><td>' + esc(item.notes || '') + '</td></tr>';
+      html += '<tr><td><code>' + esc(item.catid) + '</code></td><td>' + item.qty + '</td><td>' + esc(item.notes || '') + '</td></tr>';
     });
     html += '</tbody></table>';
   } else {

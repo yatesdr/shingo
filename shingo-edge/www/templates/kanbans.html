@@ -19,7 +19,6 @@
                     <th>UUID</th>
                     <th>Type</th>
                     <th>Process</th>
-                    <th>Payload</th>
                     <th>Target</th>
                     <th>Status</th>
                     <th>ETA</th>
@@ -31,8 +30,7 @@
                 <tr data-order-id="{{.ID}}">
                     <td class="tag-name">{{printf "%.8s" .UUID}}</td>
                     <td>{{.OrderType}}</td>
-                    <td>{{if .LineName}}{{.LineName}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
-                    <td>{{.PayloadDesc}}</td>
+                    <td>{{if .ProcessName}}{{.ProcessName}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
                     <td class="mono">{{.DeliveryNode}}{{if .StagingNode}} <span style="color:var(--text-muted);font-size:0.75rem">(stg: {{.StagingNode}})</span>{{end}}</td>
                     <td><span class="status-badge">{{.Status}}</span></td>
                     <td>{{if .ETA}}{{.ETA}}{{else}}--{{end}}</td>

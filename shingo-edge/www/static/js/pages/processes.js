@@ -1,14 +1,5 @@
 const activeProcessID = parseInt(document.getElementById('page-data').dataset.activeProcessId || '0', 10);
 const processNodes = Array.isArray(window.processNodes) ? window.processNodes : [];
-const processStyles = Array.isArray(window.processStyles) ? window.processStyles : [];
-const processAssignments = Array.isArray(window.processAssignments) ? window.processAssignments : [];
-const defaultProcessFlow = [
-    { key: 'runout', kind: 'runout', label: 'Runout' },
-    { key: 'tool_change', kind: 'tool_change', label: 'Tool Change' },
-    { key: 'release', kind: 'release', label: 'Release' },
-    { key: 'cutover', kind: 'cutover', label: 'Start New Style' },
-    { key: 'verify', kind: 'verify', label: 'Verify' }
-];
 
 function processURL() {
     return '/processes?process=' + activeProcessID;
@@ -17,6 +8,10 @@ function processURL() {
 function resetProcessForm() {
     document.getElementById('new-process-name').value = '';
     document.getElementById('new-process-description').value = '';
+    var el = document.getElementById('new-process-counter-tag');
+    if (el) el.value = '';
+    var sel = document.getElementById('new-process-counter-plc');
+    if (sel) sel.selectedIndex = 0;
 }
 
 function openCreateProcessModal() {
@@ -40,124 +35,38 @@ function showProcessTab(tab) {
     });
 }
 
-function assignmentForNode(nodeID) {
-    return processAssignments.filter(function(assignment) {
-        return assignment.process_node_id === nodeID;
-    });
-}
-
-function styleNameByID(styleID) {
-    const style = processStyles.find(function(item) {
-        return item.id === styleID;
-    });
-    return style ? style.name : ('Style ' + styleID);
-}
-
-function nodeLabelByID(nodeID) {
-    const node = processNodes.find(function(item) {
-        return item.id === nodeID;
-    });
-    if (!node) return 'Unknown node';
-    return node.delegated_station_name ? (node.delegated_station_name + ' / ' + node.name) : node.name;
-}
-
-function renderNodeStyleCounts() {
-    processNodes.forEach(function(node) {
-        const el = document.getElementById('node-style-count-' + node.id);
-        if (!el) return;
-        const count = assignmentForNode(node.id).length;
-        el.textContent = count ? (count + ' style' + (count === 1 ? '' : 's')) : 'None';
-    });
-}
-
-function renderNodeAssignments() {
-    const filter = document.getElementById('station-assignment-node-filter');
-    const body = document.getElementById('node-assignments-body');
-    const summary = document.getElementById('node-assignment-summary');
-    if (!filter || !body || !summary) {
-        return;
-    }
-
-    const nodeID = parseInt(filter.value || '0', 10);
-    if (!nodeID) {
-        summary.textContent = 'Select a process node to manage its job-style-specific material behavior.';
-        body.innerHTML = '<tr><td colspan="7" class="empty-cell">Select a process node to view its style assignments</td></tr>';
-        return;
-    }
-
-    const rows = assignmentForNode(nodeID).slice().sort(function(a, b) {
-        return styleNameByID(a.style_id).localeCompare(styleNameByID(b.style_id));
-    });
-    summary.textContent = 'Style assignments for ' + nodeLabelByID(nodeID) + '.';
-    if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="7" class="empty-cell">No style assignments configured for this process node</td></tr>';
-        return;
-    }
-
-    body.innerHTML = rows.map(function(assignment) {
-        const payload = assignment.payload_description || assignment.payload_code || '-';
-        const changeover = assignment.changeover_policy || '-';
-        return '<tr>' +
-            '<td>' + ShingoEdge.escapeHtml(styleNameByID(assignment.style_id)) + '</td>' +
-            '<td>' + ShingoEdge.escapeHtml(payload) + '</td>' +
-            '<td>' + assignment.uop_capacity + '</td>' +
-            '<td>' + assignment.reorder_point + '</td>' +
-            '<td>' + ShingoEdge.escapeHtml(assignment.cycle_mode || 'simple') + '</td>' +
-            '<td>' + ShingoEdge.escapeHtml(changeover) + '</td>' +
-            '<td style="display:flex;gap:0.4rem;flex-wrap:wrap">' +
-            '<button class="btn btn-sm" onclick="editAssignmentByID(' + assignment.id + ')">Edit</button>' +
-            '<button class="btn btn-sm btn-danger" onclick="deleteAssignment(' + assignment.id + ')">Delete</button>' +
-            '</td>' +
-        '</tr>';
-    }).join('');
-}
-
-function focusNodeAssignments(nodeID) {
-    const filter = document.getElementById('station-assignment-node-filter');
-    if (filter) {
-        filter.value = String(nodeID);
-    }
-    showProcessTab('stations');
-    renderNodeAssignments();
-    const builder = document.getElementById('node-style-builder');
-    if (builder) {
-        builder.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-}
-
 async function createProcess() {
     const name = document.getElementById('new-process-name').value.trim();
     if (!name) {
         ShingoEdge.toast('Enter a process name', 'warning');
         return;
     }
+    const counterPLC = document.getElementById('new-process-counter-plc').value;
+    const counterTag = document.getElementById('new-process-counter-tag').value.trim();
     try {
         const res = await ShingoEdge.api.post('/api/processes', {
             name: name,
             description: document.getElementById('new-process-description').value.trim(),
             production_state: 'active_production',
-            cutover_mode: 'manual',
-            changeover_flow: defaultProcessFlow
+            counter_plc_name: counterPLC,
+            counter_tag_name: counterTag,
+            counter_enabled: !!(counterPLC && counterTag)
         });
+        // Auto-create a Default style and set it active
+        try {
+            const style = await ShingoEdge.api.post('/api/styles', {
+                name: 'Default',
+                description: 'Default style',
+                process_id: res.id
+            });
+            await ShingoEdge.api.put('/api/processes/' + res.id + '/active-style', {
+                style_id: style.id
+            });
+        } catch (_) { /* non-fatal */ }
         window.location = '/processes?process=' + res.id;
     } catch (e) {
         ShingoEdge.toast('Error: ' + e, 'error');
     }
-}
-
-function collectFlow() {
-    const rows = Array.from(document.querySelectorAll('#flow-editor .card-body')).map(function(row) {
-        return {
-            kind: row.querySelector('.flow-order').dataset.kind,
-            enabled: row.querySelector('.flow-enabled').checked,
-            label: row.querySelector('.flow-label').value.trim(),
-            order: parseInt(row.querySelector('.flow-order').value || '0', 10)
-        };
-    });
-    rows.sort(function(a, b) { return a.order - b.order; });
-    return rows.filter(function(step) { return step.enabled || step.kind === 'cutover'; }).map(function(step) {
-        return { key: step.kind, kind: step.kind, label: step.label || step.kind };
-    });
 }
 
 async function saveProcess() {
@@ -166,8 +75,9 @@ async function saveProcess() {
             name: document.getElementById('process-name').value.trim(),
             description: document.getElementById('process-description').value.trim(),
             production_state: document.getElementById('process-production-state').value,
-            cutover_mode: document.getElementById('process-cutover-mode').value,
-            changeover_flow: collectFlow()
+            counter_plc_name: document.getElementById('counter-plc') ? document.getElementById('counter-plc').value : '',
+            counter_tag_name: document.getElementById('counter-tag') ? document.getElementById('counter-tag').value.trim() : '',
+            counter_enabled: document.getElementById('counter-enabled') ? document.getElementById('counter-enabled').checked : false
         });
         ShingoEdge.toast('Process saved', 'success');
         location.reload();
@@ -186,43 +96,16 @@ async function deleteProcess(id) {
     }
 }
 
-async function setProcessActiveStyle(styleID) {
-    const value = styleID != null ? styleID : (document.getElementById('process-active-style').value || '');
-    try {
-        await ShingoEdge.api.put('/api/processes/' + activeProcessID + '/active-style', {
-            job_style_id: value ? parseInt(value, 10) : null
-        });
-        ShingoEdge.toast('Active style updated', 'success');
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-async function saveProcessCounter() {
-    try {
-        await ShingoEdge.api.put('/api/processes/' + activeProcessID + '/counter-binding', {
-            plc_name: document.getElementById('counter-plc').value,
-            tag_name: document.getElementById('counter-tag').value.trim(),
-            enabled: document.getElementById('counter-enabled').checked
-        });
-        ShingoEdge.toast('Process counter binding saved', 'success');
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
 
 function resetStyleForm() {
     document.getElementById('style-id').value = '';
     document.getElementById('style-name').value = '';
     document.getElementById('style-description').value = '';
-    document.getElementById('style-catids').value = '';
 }
 
 function openCreateStyleModal() {
     resetStyleForm();
-    document.getElementById('style-modal-title').textContent = 'Add Job Style';
+    document.getElementById('style-modal-title').textContent = 'Add Style';
     ShingoEdge.showModal('style-modal');
 }
 
@@ -236,10 +119,239 @@ function editStyle(style) {
     document.getElementById('style-id').value = style.id;
     document.getElementById('style-name').value = style.name || '';
     document.getElementById('style-description').value = style.description || '';
-    document.getElementById('style-catids').value = (style.cat_ids || []).join(', ');
-    showProcessTab('styles');
-    document.getElementById('style-modal-title').textContent = 'Edit Job Style';
+    document.getElementById('style-modal-title').textContent = 'Edit Style';
     ShingoEdge.showModal('style-modal');
+}
+
+// --- Node Claims tab ---
+
+var _payloadCatalog = [];
+var _claimsStyleID = 0;
+var _currentClaims = [];
+
+async function initClaimsTab() {
+    await loadPayloadCatalog();
+    var sel = document.getElementById('claims-style-selector');
+    if (sel && sel.value) {
+        _claimsStyleID = parseInt(sel.value, 10);
+        await loadClaims(_claimsStyleID);
+    }
+}
+
+function onClaimsStyleChanged() {
+    var sel = document.getElementById('claims-style-selector');
+    _claimsStyleID = parseInt(sel.value, 10) || 0;
+    loadClaims(_claimsStyleID);
+}
+
+async function loadPayloadCatalog() {
+    if (_payloadCatalog.length > 0) return;
+    try {
+        _payloadCatalog = await ShingoEdge.api.get('/api/payload-catalog');
+        if (!Array.isArray(_payloadCatalog)) _payloadCatalog = [];
+    } catch (_) { _payloadCatalog = []; }
+    var sel = document.getElementById('claims-add-payload');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- Select --</option>';
+    _payloadCatalog.forEach(function(p) {
+        var opt = document.createElement('option');
+        opt.value = p.code;
+        opt.textContent = p.code + (p.name ? ' \u2014 ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
+        opt.dataset.capacity = p.uop_capacity || 0;
+        sel.appendChild(opt);
+    });
+}
+
+async function loadClaims(styleID) {
+    var list = document.getElementById('claims-list');
+    list.innerHTML = '';
+    if (!styleID) return;
+    try {
+        var claims = await ShingoEdge.api.get('/api/styles/' + styleID + '/node-claims');
+        _currentClaims = Array.isArray(claims) ? claims : [];
+        if (!Array.isArray(claims) || claims.length === 0) {
+            list.innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">No node claims for this style. Use the form below to add claims.</div>';
+            return;
+        }
+        var table = document.createElement('table');
+        table.className = 'table';
+        table.innerHTML = '<thead><tr><th>Core Node</th><th>Role</th><th>Swap</th><th>Wants</th><th>Inbound</th><th>Outbound</th><th style="width:1%"></th></tr></thead>';
+        var tbody = document.createElement('tbody');
+        claims.forEach(function(c) {
+            var tr = document.createElement('tr');
+            tr.id = 'claim-row-' + c.id;
+            var wants = c.role === 'produce' ? 'Empty bin' : (c.payload_code || 'Unset');
+            var swapLabel = {'simple': 'Simple', 'single_robot': '1-Robot', 'two_robot': '2-Robot'}[c.swap_mode] || c.swap_mode || 'Simple';
+            var flags = [];
+            if (c.keep_staged) flags.push('staged');
+            if (c.evacuate_on_changeover) flags.push('evac');
+            if (c.auto_reorder) flags.push('auto');
+            var flagStr = flags.length ? ' <span style="color:var(--text-muted);font-size:0.75rem">' + flags.join(', ') + '</span>' : '';
+            // Store claim data for edit
+            var claimJSON = ShingoEdge.escapeHtml(JSON.stringify(c));
+            tr.innerHTML =
+                '<td class="mono">' + ShingoEdge.escapeHtml(c.core_node_name) + '</td>' +
+                '<td><span class="status-badge">' + (c.role === 'produce' ? 'Produce' : 'Consume') + '</span>' + flagStr + '</td>' +
+                '<td>' + swapLabel + '</td>' +
+                '<td>' + ShingoEdge.escapeHtml(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
+                '<td class="mono">' + ShingoEdge.escapeHtml(c.inbound_staging || '\u2014') + '</td>' +
+                '<td class="mono">' + ShingoEdge.escapeHtml(c.outbound_staging || '\u2014') + '</td>' +
+                '<td style="white-space:nowrap">' +
+                    '<button class="btn btn-sm" onclick=\'editClaim(' + JSON.stringify(c).replace(/'/g, "&#39;") + ')\'>Edit</button> ' +
+                    '<button class="btn btn-sm btn-danger" onclick="removeClaim(' + c.id + ')">Remove</button>' +
+                '</td>';
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        list.appendChild(table);
+    } catch (_) {}
+}
+
+function openClaimModal() {
+    if (!_claimsStyleID) { ShingoEdge.toast('Select a style first', 'warning'); return; }
+    document.getElementById('claims-edit-id').value = '';
+    // Mark already-claimed nodes as disabled with strikethrough
+    var sel = document.getElementById('claims-add-node');
+    var claimedNodes = _currentClaims.map(function(c) { return c.core_node_name; });
+    Array.from(sel.options).forEach(function(opt) {
+        if (!opt.value) return;
+        var claimed = claimedNodes.indexOf(opt.value) >= 0;
+        opt.disabled = claimed;
+        opt.style.textDecoration = claimed ? 'line-through' : '';
+        opt.style.color = claimed ? 'var(--text-muted)' : '';
+    });
+    sel.value = '';
+    sel.disabled = false;
+    document.getElementById('claims-add-role').value = 'consume';
+    document.getElementById('claims-add-swap').value = 'simple';
+    document.getElementById('claims-add-payload').selectedIndex = 0;
+    document.getElementById('claims-add-capacity').value = '0';
+    document.getElementById('claims-add-reorder').value = '0';
+    document.getElementById('claims-add-inbound').value = '';
+    document.getElementById('claims-add-outbound').value = '';
+    document.getElementById('claims-add-keep-staged').checked = false;
+    document.getElementById('claims-add-evacuate').checked = false;
+    document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
+    toggleClaimsAddPayload();
+    ShingoEdge.showModal('claim-modal');
+}
+
+function editClaim(claim) {
+    if (!_claimsStyleID) return;
+    document.getElementById('claims-edit-id').value = claim.id;
+    var sel = document.getElementById('claims-add-node');
+    Array.from(sel.options).forEach(function(opt) {
+        opt.disabled = false;
+        opt.style.textDecoration = '';
+        opt.style.color = '';
+    });
+    sel.value = claim.core_node_name;
+    sel.disabled = true; // can't change node on edit
+    document.getElementById('claims-add-role').value = claim.role || 'consume';
+    document.getElementById('claims-add-swap').value = claim.swap_mode || 'simple';
+    document.getElementById('claims-add-payload').value = claim.payload_code || '';
+    document.getElementById('claims-add-capacity').value = claim.uop_capacity || 0;
+    document.getElementById('claims-add-reorder').value = claim.reorder_point || 0;
+    document.getElementById('claims-add-inbound').value = claim.inbound_staging || '';
+    document.getElementById('claims-add-outbound').value = claim.outbound_staging || '';
+    document.getElementById('claims-add-keep-staged').checked = !!claim.keep_staged;
+    document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
+    document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
+    toggleClaimsAddPayload();
+    ShingoEdge.showModal('claim-modal');
+}
+
+function closeClaimModal() {
+    ShingoEdge.hideModal('claim-modal');
+    document.getElementById('claims-add-node').disabled = false;
+}
+
+function validateClaimStaging() {
+    var swap = document.getElementById('claims-add-swap').value;
+    var inbound = document.getElementById('claims-add-inbound').value;
+    var outbound = document.getElementById('claims-add-outbound').value;
+    var warn = document.getElementById('claims-staging-warning');
+    var needsStaging = swap === 'single_robot' || swap === 'two_robot';
+    if (warn) warn.style.display = (needsStaging && (!inbound || !outbound)) ? '' : 'none';
+    return !needsStaging || (!!inbound && !!outbound);
+}
+
+async function saveClaim() {
+    var node = document.getElementById('claims-add-node').value;
+    if (!node) { ShingoEdge.toast('Select a core node', 'warning'); return; }
+    var role = document.getElementById('claims-add-role').value;
+    var payloadCode = document.getElementById('claims-add-payload').value;
+    var capacity = parseInt(document.getElementById('claims-add-capacity').value, 10) || 0;
+    var reorder = parseInt(document.getElementById('claims-add-reorder').value, 10) || 0;
+
+    if (role === 'consume' && !payloadCode) {
+        ShingoEdge.toast('Select a payload for consume nodes', 'warning');
+        return;
+    }
+    if (!validateClaimStaging()) {
+        ShingoEdge.toast('Swap modes require both inbound and outbound staging', 'warning');
+        return;
+    }
+
+    try {
+        await ShingoEdge.api.post('/api/style-node-claims', {
+            style_id: _claimsStyleID,
+            core_node_name: node,
+            role: role,
+            swap_mode: document.getElementById('claims-add-swap').value,
+            payload_code: role === 'produce' ? '' : payloadCode,
+            uop_capacity: capacity,
+            reorder_point: reorder,
+            auto_reorder: true,
+            inbound_staging: document.getElementById('claims-add-inbound').value,
+            outbound_staging: document.getElementById('claims-add-outbound').value,
+            keep_staged: document.getElementById('claims-add-keep-staged').checked,
+            evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked
+        });
+        closeClaimModal();
+        await loadClaims(_claimsStyleID);
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
+async function removeClaim(id) {
+    try {
+        await ShingoEdge.api.del('/api/style-node-claims/' + id);
+        await loadClaims(_claimsStyleID);
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
+function toggleClaimsAddPayload() {
+    var isProduce = document.getElementById('claims-add-role').value === 'produce';
+    document.getElementById('claims-add-payload-group').style.display = isProduce ? 'none' : '';
+    document.getElementById('claims-add-reorder-group').style.display = isProduce ? 'none' : '';
+    if (isProduce) {
+        document.getElementById('claims-add-payload').value = '';
+        document.getElementById('claims-add-capacity').value = '0';
+        document.getElementById('claims-add-reorder').value = '0';
+    }
+}
+
+async function syncPayloadCatalog() {
+    try {
+        await ShingoEdge.api.post('/api/payload-catalog/sync');
+        _payloadCatalog = [];
+        await loadPayloadCatalog();
+        ShingoEdge.toast('Payload catalog synced', 'success');
+    } catch (e) {
+        ShingoEdge.toast('Sync failed: ' + e, 'error');
+    }
+}
+
+function autoFillClaimsCapacity() {
+    var sel = document.getElementById('claims-add-payload');
+    var opt = sel.options[sel.selectedIndex];
+    if (opt && opt.dataset.capacity) {
+        document.getElementById('claims-add-capacity').value = opt.dataset.capacity;
+    }
 }
 
 async function saveStyle() {
@@ -247,11 +359,7 @@ async function saveStyle() {
     const payload = {
         name: document.getElementById('style-name').value.trim(),
         description: document.getElementById('style-description').value.trim(),
-        cat_ids: document.getElementById('style-catids').value.split(',').map(function(v) { return v.trim(); }).filter(Boolean),
-        line_id: activeProcessID,
-        rp_plc_name: '',
-        rp_tag_name: '',
-        rp_enabled: false
+        process_id: activeProcessID
     };
     if (!payload.name) {
         ShingoEdge.toast('Enter a style name', 'warning');
@@ -362,19 +470,9 @@ function resetNodeForm() {
     document.getElementById('node-id').value = '';
     document.getElementById('node-core-node').value = '';
     document.getElementById('node-name').value = '';
-    document.getElementById('node-position-type').value = 'consume';
-    document.getElementById('node-delivery').value = '';
-    document.getElementById('node-staging').value = '';
-    document.getElementById('node-staging-group').value = '';
-    document.getElementById('node-secondary-staging').value = '';
-    document.getElementById('node-secondary-group').value = '';
-    document.getElementById('node-full-pickup').value = '';
-    document.getElementById('node-full-pickup-group').value = '';
-    document.getElementById('node-outgoing').value = '';
-    document.getElementById('node-outgoing-group').value = '';
     document.getElementById('node-station-id').value = '';
+    document.getElementById('node-sequence').value = '0';
     document.getElementById('node-enabled').checked = true;
-    setNodeAdvanced(false);
 }
 
 function openCreateNodeModal() {
@@ -388,36 +486,14 @@ function closeNodeModal() {
     resetNodeForm();
 }
 
-function setNodeAdvanced(open) {
-    var section = document.getElementById('node-advanced-fields');
-    if (!section) return;
-    section.style.display = open ? 'block' : 'none';
-}
-
-function toggleNodeAdvanced() {
-    var section = document.getElementById('node-advanced-fields');
-    if (!section) return;
-    setNodeAdvanced(section.style.display === 'none');
-}
-
 function editNode(node) {
     resetNodeForm();
     document.getElementById('node-id').value = node.id;
-    document.getElementById('node-station-id').value = node.delegated_station_id || '';
+    document.getElementById('node-station-id').value = node.operator_station_id || '';
     document.getElementById('node-core-node').value = node.core_node_name || '';
     document.getElementById('node-name').value = node.name || '';
-    document.getElementById('node-position-type').value = node.position_type || 'consume';
-    document.getElementById('node-delivery').value = node.delivery_node || '';
-    document.getElementById('node-staging').value = node.staging_node || '';
-    document.getElementById('node-staging-group').value = node.staging_node_group || '';
-    document.getElementById('node-secondary-staging').value = node.secondary_staging_node || '';
-    document.getElementById('node-secondary-group').value = node.secondary_node_group || '';
-    document.getElementById('node-full-pickup').value = node.full_pickup_node || '';
-    document.getElementById('node-full-pickup-group').value = node.full_pickup_node_group || '';
-    document.getElementById('node-outgoing').value = node.outgoing_node || '';
-    document.getElementById('node-outgoing-group').value = node.outgoing_node_group || '';
+    document.getElementById('node-sequence').value = node.sequence || 0;
     document.getElementById('node-enabled').checked = !!node.enabled;
-    setNodeAdvanced(!!(node.staging_node_group || node.secondary_staging_node || node.secondary_node_group || node.full_pickup_node || node.full_pickup_node_group || node.outgoing_node_group || (node.outgoing_node && node.outgoing_node !== node.core_node_name)));
     showProcessTab('stations');
     document.getElementById('node-modal-title').textContent = 'Edit Process Node';
     ShingoEdge.showModal('node-modal');
@@ -425,33 +501,18 @@ function editNode(node) {
 
 async function saveNode() {
     const id = document.getElementById('node-id').value;
-    const delegatedStationValue = document.getElementById('node-station-id').value;
+    const stationValue = document.getElementById('node-station-id').value;
     const payload = {
         process_id: activeProcessID,
-        delegated_station_id: delegatedStationValue ? parseInt(delegatedStationValue, 10) : null,
-        code: '',
+        operator_station_id: stationValue ? parseInt(stationValue, 10) : null,
         core_node_name: document.getElementById('node-core-node').value.trim(),
+        code: '',
         name: document.getElementById('node-name').value.trim(),
-        position_type: document.getElementById('node-position-type').value.trim() || 'consume',
-        sequence: 0,
-        delivery_node: document.getElementById('node-delivery').value.trim(),
-        staging_node: document.getElementById('node-staging').value.trim(),
-        staging_node_group: document.getElementById('node-staging-group').value.trim(),
-        secondary_staging_node: document.getElementById('node-secondary-staging').value.trim(),
-        secondary_node_group: document.getElementById('node-secondary-group').value.trim(),
-        full_pickup_node: document.getElementById('node-full-pickup').value.trim(),
-        full_pickup_node_group: document.getElementById('node-full-pickup-group').value.trim(),
-        outgoing_node: document.getElementById('node-outgoing').value.trim(),
-        outgoing_node_group: document.getElementById('node-outgoing-group').value.trim(),
-        allows_reorder: false,
-        allows_empty_release: false,
-        allows_partial_release: false,
-        allows_manifest_confirm: false,
-        allows_station_change: false,
+        sequence: parseInt(document.getElementById('node-sequence').value, 10) || 0,
         enabled: document.getElementById('node-enabled').checked
     };
-    if (!payload.core_node_name || !payload.delivery_node) {
-        ShingoEdge.toast('Core delegate node and delivery node are required', 'warning');
+    if (!payload.core_node_name) {
+        ShingoEdge.toast('Core node name is required', 'warning');
         return;
     }
     try {
@@ -477,138 +538,11 @@ async function deleteNode(id) {
     }
 }
 
-function resetAssignmentForm() {
-    document.getElementById('assignment-payload-code').value = '';
-    document.getElementById('assignment-payload-description').value = '';
-    document.getElementById('assignment-capacity').value = '0';
-    document.getElementById('assignment-reorder').value = '0';
-    document.getElementById('assignment-cycle-mode').value = 'simple';
-    document.getElementById('assignment-changeover-policy').value = 'manual_station_change';
-    document.getElementById('assignment-changeover-group').value = '';
-    document.getElementById('assignment-changeover-sequence').value = '0';
-    document.getElementById('assignment-auto-reorder').checked = true;
-    document.getElementById('assignment-retrieve-empty').checked = false;
-    document.getElementById('assignment-requires-manifest').checked = true;
-    document.getElementById('assignment-allows-partial').checked = true;
-}
-
-function openCreateAssignmentModal() {
-    resetAssignmentForm();
-    const filter = document.getElementById('station-assignment-node-filter');
-    if (filter && filter.value) {
-        document.getElementById('assignment-node-id').value = filter.value;
-    }
-    document.getElementById('assignment-modal-title').textContent = 'Add Assignment';
-    ShingoEdge.showModal('assignment-modal');
-}
-
-function closeAssignmentModal() {
-    ShingoEdge.hideModal('assignment-modal');
-    resetAssignmentForm();
-}
-
-function editAssignment(assignment) {
-    resetAssignmentForm();
-    document.getElementById('assignment-node-id').value = assignment.process_node_id;
-    document.getElementById('assignment-style-id').value = assignment.style_id;
-    document.getElementById('assignment-payload-code').value = assignment.payload_code || '';
-    document.getElementById('assignment-payload-description').value = assignment.payload_description || '';
-    document.getElementById('assignment-capacity').value = assignment.uop_capacity || 0;
-    document.getElementById('assignment-reorder').value = assignment.reorder_point || 0;
-    document.getElementById('assignment-cycle-mode').value = assignment.cycle_mode || 'simple';
-    document.getElementById('assignment-changeover-policy').value = assignment.changeover_policy || 'manual_station_change';
-    document.getElementById('assignment-changeover-group').value = assignment.changeover_group || '';
-    document.getElementById('assignment-changeover-sequence').value = assignment.changeover_sequence || 0;
-    document.getElementById('assignment-auto-reorder').checked = !!assignment.auto_reorder_enabled;
-    document.getElementById('assignment-retrieve-empty').checked = !!assignment.retrieve_empty;
-    document.getElementById('assignment-requires-manifest').checked = !!assignment.requires_manifest_confirmation;
-    document.getElementById('assignment-allows-partial').checked = !!assignment.allows_partial_return;
-    showProcessTab('stations');
-    const filter = document.getElementById('station-assignment-node-filter');
-    if (filter) {
-        filter.value = String(assignment.process_node_id);
-    }
-    document.getElementById('assignment-modal-title').textContent = 'Edit Assignment';
-    ShingoEdge.showModal('assignment-modal');
-}
-
-function editAssignmentByID(id) {
-    const assignment = processAssignments.find(function(item) {
-        return item.id === id;
-    });
-    if (!assignment) {
-        ShingoEdge.toast('Assignment not found', 'warning');
-        return;
-    }
-    editAssignment(assignment);
-}
-
-async function saveAssignment() {
-    try {
-        await ShingoEdge.api.post('/api/process-node-assignments', {
-            process_node_id: parseInt(document.getElementById('assignment-node-id').value, 10),
-            style_id: parseInt(document.getElementById('assignment-style-id').value, 10),
-            payload_code: document.getElementById('assignment-payload-code').value.trim(),
-            payload_description: document.getElementById('assignment-payload-description').value.trim(),
-            role: 'consume',
-            uop_capacity: parseInt(document.getElementById('assignment-capacity').value || '0', 10),
-            reorder_point: parseInt(document.getElementById('assignment-reorder').value || '0', 10),
-            auto_reorder_enabled: document.getElementById('assignment-auto-reorder').checked,
-            cycle_mode: document.getElementById('assignment-cycle-mode').value,
-            retrieve_empty: document.getElementById('assignment-retrieve-empty').checked,
-            requires_manifest_confirmation: document.getElementById('assignment-requires-manifest').checked,
-            allows_partial_return: document.getElementById('assignment-allows-partial').checked,
-            changeover_group: document.getElementById('assignment-changeover-group').value.trim(),
-            changeover_sequence: parseInt(document.getElementById('assignment-changeover-sequence').value || '0', 10),
-            changeover_policy: document.getElementById('assignment-changeover-policy').value
-        });
-        closeAssignmentModal();
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-async function deleteAssignment(id) {
-    if (!await ShingoEdge.confirm('Delete this assignment?')) return;
-    try {
-        await ShingoEdge.api.del('/api/process-node-assignments/' + id);
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-(function initFlowEditor() {
-    const flow = Array.isArray(window.processFlow) ? window.processFlow : [];
-    if (!flow.length) return;
-    const byKind = {};
-    flow.forEach(function(step, index) {
-        byKind[step.kind] = { order: index + 1, label: step.label || step.kind };
-    });
-    document.querySelectorAll('.flow-order').forEach(function(input, index) {
-        const kind = input.dataset.kind;
-        if (byKind[kind]) {
-            input.value = byKind[kind].order;
-            document.querySelector('.flow-enabled[data-kind="' + kind + '"]').checked = true;
-            document.querySelector('.flow-label[data-kind="' + kind + '"]').value = byKind[kind].label;
-        } else {
-            input.value = index + 1;
-            if (kind !== 'cutover') {
-                document.querySelector('.flow-enabled[data-kind="' + kind + '"]').checked = false;
-            }
-        }
-    });
+// Wire up tag-select pickers for PLC counter tag fields
+(function initTagSelects() {
+    ShingoEdge.tagSelect('counter-tag', 'counter-plc');
+    ShingoEdge.tagSelect('new-process-counter-tag', 'new-process-counter-plc');
 })();
 
-(function initStationsBuilder() {
-    renderNodeStyleCounts();
-    const filter = document.getElementById('station-assignment-node-filter');
-    if (!filter) {
-        return;
-    }
-    if (!filter.value && processNodes.length) {
-        filter.value = String(processNodes[0].id);
-    }
-    renderNodeAssignments();
-})();
+// Initialize Node Claims tab (load catalog + first style's claims)
+if (activeProcessID) initClaimsTab();

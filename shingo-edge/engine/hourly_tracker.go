@@ -32,7 +32,7 @@ func NewHourlyTracker(db *store.DB, timezone string) *HourlyTracker {
 // HandleDelta records a counter delta into the current date/hour bucket.
 // Reset anomaly deltas are skipped to avoid counting PLC reset artifacts as production.
 func (ht *HourlyTracker) HandleDelta(delta CounterDeltaEvent) {
-	if delta.LineID == 0 || delta.JobStyleID == 0 {
+	if delta.ProcessID == 0 || delta.StyleID == 0 {
 		return
 	}
 	if delta.Anomaly == "reset" {
@@ -43,7 +43,7 @@ func (ht *HourlyTracker) HandleDelta(delta CounterDeltaEvent) {
 	countDate := now.Format("2006-01-02")
 	hour := now.Hour()
 
-	if err := ht.db.UpsertHourlyCount(delta.LineID, delta.JobStyleID, countDate, hour, delta.Delta); err != nil {
+	if err := ht.db.UpsertHourlyCount(delta.ProcessID, delta.StyleID, countDate, hour, delta.Delta); err != nil {
 		log.Printf("hourly tracker upsert: %v", err)
 	}
 }

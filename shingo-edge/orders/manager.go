@@ -47,22 +47,31 @@ func (m *Manager) enqueueEnvelope(env *protocol.Envelope) error {
 	return m.sender.enqueue(env)
 }
 
-// lookupPayloadMeta returns description and payload code from the active process-node assignment.
-// If processNodeID is nil or the lookup fails, returns empty strings.
-// If payloadCode is already set, it is preserved.
+// lookupPayloadMeta returns description and payload code from the active style
+// node claim for the given process node. If processNodeID is nil or the lookup
+// fails, returns empty strings. If payloadCode is already set, it is preserved.
 func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (desc, code string) {
 	if processNodeID == nil {
 		return "", payloadCode
 	}
-	a, err := m.db.GetPreferredProcessNodeAssignment(*processNodeID)
+	node, err := m.db.GetProcessNode(*processNodeID)
 	if err != nil {
-		m.DebugLog.log("process-node assignment lookup failed: id=%d err=%v", *processNodeID, err)
+		m.DebugLog.log("process-node lookup failed: id=%d err=%v", *processNodeID, err)
+		return "", payloadCode
+	}
+	process, err := m.db.GetProcess(node.ProcessID)
+	if err != nil || process.ActiveStyleID == nil {
+		return "", payloadCode
+	}
+	claim, err := m.db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName)
+	if err != nil {
+		m.DebugLog.log("style-node-claim lookup failed: node=%s err=%v", node.CoreNodeName, err)
 		return "", payloadCode
 	}
 	if payloadCode == "" {
-		payloadCode = a.PayloadCode
+		payloadCode = claim.PayloadCode
 	}
-	return a.PayloadDescription, payloadCode
+	return claim.PayloadCode, payloadCode
 }
 
 // enqueueAndAutoSubmit enqueues a protocol envelope and transitions the order
@@ -367,10 +376,11 @@ func (m *Manager) SubmitOrder(orderID int64) error {
 		if order.FinalCount != nil {
 			finalCount = *order.FinalCount
 		}
+		desc, _ := m.lookupPayloadMeta(order.ProcessNodeID, "")
 		env, err := m.sender.build(protocol.TypeOrderStorageWaybill, &protocol.OrderStorageWaybill{
 			OrderUUID:   order.UUID,
 			OrderType:   TypeStore,
-			PayloadDesc: order.PayloadDesc,
+			PayloadDesc: desc,
 			PickupNode:  order.PickupNode,
 			FinalCount:  finalCount,
 		})

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"time"
 )
@@ -93,50 +92,48 @@ func (e *Engine) CleanupReportingPointTag(rpID int64, plcName, tagName string, m
 	}
 }
 
-func (e *Engine) SyncProcessCounterBinding(processID int64) error {
+func (e *Engine) SyncProcessCounter(processID int64) error {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		return err
 	}
-	binding, err := e.db.GetProcessCounterBinding(processID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil
-		}
-		return err
-	}
-	if binding.PLCName == "" || binding.TagName == "" {
+	if process.CounterPLCName == "" || process.CounterTagName == "" {
 		return nil
 	}
 	if process.ActiveStyleID == nil {
 		return nil
 	}
 
-	var oldPLC, oldTag string
-	var oldManaged bool
-	if binding.ReportingPointID != nil {
-		if rp, err := e.db.GetReportingPoint(*binding.ReportingPointID); err == nil {
-			oldPLC, oldTag, oldManaged = rp.PLCName, rp.TagName, rp.WarlinkManaged
-			if err := e.db.UpdateReportingPoint(rp.ID, binding.PLCName, binding.TagName, *process.ActiveStyleID, binding.Enabled); err != nil {
-				return err
-			}
-			e.ManageReportingPointTag(rp.ID, oldPLC, oldTag, oldManaged, binding.PLCName, binding.TagName)
-			rpID := rp.ID
-			return e.db.UpdateProcessCounterReportingPoint(processID, &rpID, oldManaged || e.plcMgr.IsTagPublished(binding.PLCName, binding.TagName))
+	// Find or create a reporting point for this process's counter tag + active style
+	rp, err := e.db.GetReportingPointByStyleID(*process.ActiveStyleID)
+	if err == nil && rp.PLCName == process.CounterPLCName && rp.TagName == process.CounterTagName {
+		// Already correct — just ensure enabled state matches
+		if rp.Enabled != process.CounterEnabled {
+			e.db.UpdateReportingPoint(rp.ID, rp.PLCName, rp.TagName, *process.ActiveStyleID, process.CounterEnabled)
 		}
+		return nil
 	}
 
-	rpID, err := e.db.CreateReportingPoint(binding.PLCName, binding.TagName, *process.ActiveStyleID)
+	// Check if there's an existing RP for this exact PLC tag
+	existingRP, _ := e.db.GetReportingPointByTag(process.CounterPLCName, process.CounterTagName)
+	if existingRP != nil {
+		// Update the existing RP to point to the new active style
+		oldPLC, oldTag, oldManaged := existingRP.PLCName, existingRP.TagName, existingRP.WarlinkManaged
+		if err := e.db.UpdateReportingPoint(existingRP.ID, process.CounterPLCName, process.CounterTagName, *process.ActiveStyleID, process.CounterEnabled); err != nil {
+			return err
+		}
+		e.ManageReportingPointTag(existingRP.ID, oldPLC, oldTag, oldManaged, process.CounterPLCName, process.CounterTagName)
+		return nil
+	}
+
+	// Create new RP
+	rpID, err := e.db.CreateReportingPoint(process.CounterPLCName, process.CounterTagName, *process.ActiveStyleID)
 	if err != nil {
 		return err
 	}
-	if !binding.Enabled {
-		_ = e.db.UpdateReportingPoint(rpID, binding.PLCName, binding.TagName, *process.ActiveStyleID, false)
+	if !process.CounterEnabled {
+		_ = e.db.UpdateReportingPoint(rpID, process.CounterPLCName, process.CounterTagName, *process.ActiveStyleID, false)
 	}
-	e.EnsureTagPublished(rpID, binding.PLCName, binding.TagName)
-	managed := false
-	if rp, err := e.db.GetReportingPoint(rpID); err == nil {
-		managed = rp.WarlinkManaged
-	}
-	return e.db.UpdateProcessCounterReportingPoint(processID, &rpID, managed)
+	e.EnsureTagPublished(rpID, process.CounterPLCName, process.CounterTagName)
+	return nil
 }

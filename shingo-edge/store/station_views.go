@@ -1,26 +1,22 @@
 package store
 
 type StationNodeView struct {
-	Node           ProcessNode                 `json:"node"`
-	Runtime        *ProcessNodeRuntimeState    `json:"runtime,omitempty"`
-	Assignment     *ProcessNodeStyleAssignment `json:"assignment,omitempty"`
-	NextStyle      *ProcessNodeStyleAssignment `json:"next_style,omitempty"`
-	ChangeoverTask *ChangeoverNodeTask         `json:"changeover_task,omitempty"`
-	Orders         []Order                     `json:"orders"`
+	Node           ProcessNode              `json:"node"`
+	Runtime        *ProcessNodeRuntimeState `json:"runtime,omitempty"`
+	ActiveClaim    *StyleNodeClaim          `json:"active_claim,omitempty"`
+	ChangeoverTask *ChangeoverNodeTask      `json:"changeover_task,omitempty"`
+	Orders         []Order                  `json:"orders"`
 }
 
 type OperatorStationView struct {
-	Station              OperatorStation        `json:"station"`
-	Process              Process                `json:"process"`
-	ProcessCounter       *ProcessCounterBinding `json:"process_counter,omitempty"`
-	CurrentStyle         *Style                 `json:"current_style,omitempty"`
-	TargetStyle          *Style                 `json:"target_style,omitempty"`
-	AvailableStyles      []Style                `json:"available_styles,omitempty"`
-	ActiveChangeover     *ProcessChangeover     `json:"active_changeover,omitempty"`
-	StationTask          *ChangeoverStationTask `json:"station_task,omitempty"`
-	PendingNodeChanges   int                    `json:"pending_node_changes"`
-	CompletedNodeChanges int                    `json:"completed_node_changes"`
-	Nodes                []StationNodeView      `json:"nodes"`
+	Station          OperatorStation        `json:"station"`
+	Process          Process                `json:"process"`
+	CurrentStyle     *Style                 `json:"current_style,omitempty"`
+	TargetStyle      *Style                 `json:"target_style,omitempty"`
+	AvailableStyles  []Style                `json:"available_styles,omitempty"`
+	ActiveChangeover *ProcessChangeover     `json:"active_changeover,omitempty"`
+	StationTask      *ChangeoverStationTask `json:"station_task,omitempty"`
+	Nodes            []StationNodeView      `json:"nodes"`
 }
 
 func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, error) {
@@ -37,7 +33,6 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 		Station: *station,
 		Process: *process,
 	}
-	view.ProcessCounter, _ = db.GetProcessCounterBinding(process.ID)
 	if process.ActiveStyleID != nil {
 		if s, err := db.GetStyle(*process.ActiveStyleID); err == nil {
 			view.CurrentStyle = s
@@ -65,24 +60,14 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 		nodeTasks, _ := db.ListChangeoverNodeTasksByStation(view.ActiveChangeover.ID, stationID)
 		for _, nodeTask := range nodeTasks {
 			nodeTaskMap[nodeTask.ProcessNodeID] = nodeTask
-			if isNodeTaskCompleteForPhase(nodeTask, view.StationTask.CurrentPhase) {
-				view.CompletedNodeChanges++
-			} else {
-				view.PendingNodeChanges++
-			}
 		}
 	}
 	for _, node := range nodes {
 		nodeView := StationNodeView{Node: node}
 		runtime, _ := db.EnsureProcessNodeRuntime(node.ID)
 		nodeView.Runtime = runtime
-		if runtime.ActiveAssignmentID != nil {
-			nodeView.Assignment, _ = db.GetProcessNodeAssignment(*runtime.ActiveAssignmentID)
-		} else if process.ActiveStyleID != nil {
-			nodeView.Assignment, _ = db.GetProcessNodeAssignmentForStyle(node.ID, *process.ActiveStyleID)
-		}
-		if process.TargetStyleID != nil {
-			nodeView.NextStyle, _ = db.GetProcessNodeAssignmentForStyle(node.ID, *process.TargetStyleID)
+		if process.ActiveStyleID != nil && node.CoreNodeName != "" {
+			nodeView.ActiveClaim, _ = db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName)
 		}
 		if nodeTask, ok := nodeTaskMap[node.ID]; ok {
 			taskCopy := nodeTask
@@ -94,28 +79,3 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 	return view, nil
 }
 
-func isNodeTaskCompleteForPhase(task ChangeoverNodeTask, phase string) bool {
-	switch phase {
-	case "runout":
-		return task.State == "unchanged" || task.State == "staged" || task.State == "line_cleared" || task.State == "released" || task.State == "switched" || task.State == "verified"
-	case "tool_change":
-		if task.OldMaterialReleaseRequired {
-			return task.State == "line_cleared" || task.State == "released" || task.State == "switched" || task.State == "verified"
-		}
-		return task.State == "unchanged" || task.State == "staged" || task.State == "released" || task.State == "switched" || task.State == "verified"
-	case "release":
-		if task.ToAssignmentID == nil {
-			return task.State == "unchanged" || task.State == "line_cleared" || task.State == "switched" || task.State == "verified"
-		}
-		return task.State == "released" || task.State == "switched" || task.State == "verified"
-	case "cutover":
-		if task.ToAssignmentID == nil {
-			return task.State == "unchanged" || task.State == "line_cleared" || task.State == "switched" || task.State == "verified"
-		}
-		return task.State == "released" || task.State == "switched" || task.State == "verified"
-	case "verify":
-		return task.State == "switched" || task.State == "verified" || task.State == "unchanged" || task.State == "released"
-	default:
-		return task.State == "switched" || task.State == "verified" || task.State == "unchanged"
-	}
-}

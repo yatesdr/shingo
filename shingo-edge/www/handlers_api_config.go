@@ -190,15 +190,15 @@ func (h *Handlers) apiListReportingPoints(w http.ResponseWriter, r *http.Request
 
 func (h *Handlers) apiCreateReportingPoint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PLCName    string `json:"plc_name"`
-		TagName    string `json:"tag_name"`
-		JobStyleID int64  `json:"job_style_id"`
+		PLCName string `json:"plc_name"`
+		TagName string `json:"tag_name"`
+		StyleID int64  `json:"style_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.engine.DB().CreateReportingPoint(req.PLCName, req.TagName, req.JobStyleID)
+	id, err := h.engine.DB().CreateReportingPoint(req.PLCName, req.TagName, req.StyleID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -217,10 +217,10 @@ func (h *Handlers) apiUpdateReportingPoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		PLCName    string `json:"plc_name"`
-		TagName    string `json:"tag_name"`
-		JobStyleID int64  `json:"job_style_id"`
-		Enabled    bool   `json:"enabled"`
+		PLCName string `json:"plc_name"`
+		TagName string `json:"tag_name"`
+		StyleID int64  `json:"style_id"`
+		Enabled bool   `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -229,7 +229,7 @@ func (h *Handlers) apiUpdateReportingPoint(w http.ResponseWriter, r *http.Reques
 
 	oldRP, _ := h.engine.DB().GetReportingPoint(id)
 
-	if err := h.engine.DB().UpdateReportingPoint(id, req.PLCName, req.TagName, req.JobStyleID, req.Enabled); err != nil {
+	if err := h.engine.DB().UpdateReportingPoint(id, req.PLCName, req.TagName, req.StyleID, req.Enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -277,40 +277,23 @@ func (h *Handlers) apiListStyles(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string   `json:"name"`
-		Description string   `json:"description"`
-		CatIDs      []string `json:"cat_ids"`
-		LineID      int64    `json:"line_id"`
-		RPPLCName   string   `json:"rp_plc_name"`
-		RPTagName   string   `json:"rp_tag_name"`
-		RPEnabled   bool     `json:"rp_enabled"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		ProcessID   int64  `json:"process_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.LineID == 0 {
-		writeError(w, http.StatusBadRequest, "line_id is required")
+	if req.ProcessID == 0 {
+		writeError(w, http.StatusBadRequest, "process_id is required")
 		return
 	}
-	id, err := h.engine.DB().CreateStyle(req.Name, req.Description, req.CatIDs, req.LineID)
+	id, err := h.engine.DB().CreateStyle(req.Name, req.Description, req.ProcessID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	if req.RPPLCName != "" && req.RPTagName != "" {
-		rpID, rpErr := h.engine.DB().CreateReportingPoint(req.RPPLCName, req.RPTagName, id)
-		if rpErr != nil {
-			log.Printf("failed to create RP for style %d: %v", id, rpErr)
-		} else {
-			if !req.RPEnabled {
-				h.engine.DB().UpdateReportingPoint(rpID, req.RPPLCName, req.RPTagName, id, false)
-			}
-			h.engine.EnsureTagPublished(rpID, req.RPPLCName, req.RPTagName)
-		}
-	}
-
 	h.requestBackup("style-created")
 	writeJSON(w, map[string]int64{"id": id})
 }
@@ -322,50 +305,22 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name        string   `json:"name"`
-		Description string   `json:"description"`
-		CatIDs      []string `json:"cat_ids"`
-		LineID      int64    `json:"line_id"`
-		RPPLCName   string   `json:"rp_plc_name"`
-		RPTagName   string   `json:"rp_tag_name"`
-		RPEnabled   bool     `json:"rp_enabled"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		ProcessID   int64  `json:"process_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.LineID == 0 {
-		writeError(w, http.StatusBadRequest, "line_id is required")
+	if req.ProcessID == 0 {
+		writeError(w, http.StatusBadRequest, "process_id is required")
 		return
 	}
-	if err := h.engine.DB().UpdateStyle(id, req.Name, req.Description, req.CatIDs, req.LineID); err != nil {
+	if err := h.engine.DB().UpdateStyle(id, req.Name, req.Description, req.ProcessID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	existingRP, _ := h.engine.DB().GetReportingPointByStyleID(id)
-
-	if req.RPPLCName != "" && req.RPTagName != "" {
-		if existingRP != nil {
-			oldPLC, oldTag := existingRP.PLCName, existingRP.TagName
-			h.engine.DB().UpdateReportingPoint(existingRP.ID, req.RPPLCName, req.RPTagName, id, req.RPEnabled)
-			h.engine.ManageReportingPointTag(existingRP.ID, oldPLC, oldTag, existingRP.WarlinkManaged, req.RPPLCName, req.RPTagName)
-		} else {
-			rpID, rpErr := h.engine.DB().CreateReportingPoint(req.RPPLCName, req.RPTagName, id)
-			if rpErr == nil {
-				if !req.RPEnabled {
-					h.engine.DB().UpdateReportingPoint(rpID, req.RPPLCName, req.RPTagName, id, false)
-				}
-				h.engine.EnsureTagPublished(rpID, req.RPPLCName, req.RPTagName)
-			} else {
-				log.Printf("create RP for style %d: %v", id, rpErr)
-			}
-		}
-	} else if existingRP != nil {
-		h.engine.CleanupReportingPointTag(existingRP.ID, existingRP.PLCName, existingRP.TagName, existingRP.WarlinkManaged)
-		h.engine.DB().DeleteReportingPoint(existingRP.ID)
-	}
-
 	h.requestBackup("style-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
@@ -381,99 +336,6 @@ func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("style-deleted")
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-// --- Nodes Admin ---
-
-func (h *Handlers) apiListNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.engine.DB().ListNodes()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, nodes)
-}
-
-func (h *Handlers) apiListProcessNodes(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ID")
-		return
-	}
-	nodes, err := h.engine.DB().ListNodesByProcess(id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, nodes)
-}
-
-func (h *Handlers) apiCreateNode(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		NodeID      string `json:"node_id"`
-		LineID      int64  `json:"line_id"`
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.NodeID == "" {
-		writeError(w, http.StatusBadRequest, "node_id is required")
-		return
-	}
-	if req.LineID == 0 {
-		writeError(w, http.StatusBadRequest, "line_id is required")
-		return
-	}
-	id, err := h.engine.DB().CreateNode(req.NodeID, req.LineID, req.Description)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.requestBackup("node-created")
-	writeJSON(w, map[string]int64{"id": id})
-}
-
-func (h *Handlers) apiUpdateNode(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ID")
-		return
-	}
-	var req struct {
-		NodeID      string `json:"node_id"`
-		LineID      int64  `json:"line_id"`
-		Description string `json:"description"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.LineID == 0 {
-		writeError(w, http.StatusBadRequest, "line_id is required")
-		return
-	}
-	if err := h.engine.DB().UpdateNode(id, req.NodeID, req.LineID, req.Description); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.requestBackup("node-updated")
-	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-func (h *Handlers) apiDeleteNode(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ID")
-		return
-	}
-	if err := h.engine.DB().DeleteNode(id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.requestBackup("node-deleted")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -520,11 +382,12 @@ func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name            string                  `json:"name"`
-		Description     string                  `json:"description"`
-		ProductionState string                  `json:"production_state"`
-		CutoverMode     string                  `json:"cutover_mode"`
-		ChangeoverFlow  []store.ProcessFlowStep `json:"changeover_flow"`
+		Name            string `json:"name"`
+		Description     string `json:"description"`
+		ProductionState string `json:"production_state"`
+		CounterPLCName  string `json:"counter_plc_name"`
+		CounterTagName  string `json:"counter_tag_name"`
+		CounterEnabled  bool   `json:"counter_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -534,7 +397,7 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	id, err := h.engine.DB().CreateProcess(req.Name, req.Description, req.ProductionState, req.CutoverMode, req.ChangeoverFlow)
+	id, err := h.engine.DB().CreateProcess(req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -550,17 +413,18 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name            string                  `json:"name"`
-		Description     string                  `json:"description"`
-		ProductionState string                  `json:"production_state"`
-		CutoverMode     string                  `json:"cutover_mode"`
-		ChangeoverFlow  []store.ProcessFlowStep `json:"changeover_flow"`
+		Name            string `json:"name"`
+		Description     string `json:"description"`
+		ProductionState string `json:"production_state"`
+		CounterPLCName  string `json:"counter_plc_name"`
+		CounterTagName  string `json:"counter_tag_name"`
+		CounterEnabled  bool   `json:"counter_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdateProcess(id, req.Name, req.Description, req.ProductionState, req.CutoverMode, req.ChangeoverFlow); err != nil {
+	if err := h.engine.DB().UpdateProcess(id, req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -589,69 +453,22 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		JobStyleID *int64 `json:"job_style_id"`
+		StyleID *int64 `json:"style_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().SetActiveStyle(id, req.JobStyleID); err != nil {
+	if err := h.engine.DB().SetActiveStyle(id, req.StyleID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.engine.SyncProcessCounterBinding(id); err != nil {
+	if err := h.engine.SyncProcessCounter(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.requestBackup("active-style-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
-}
-
-func (h *Handlers) apiGetProcessCounterBinding(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ID")
-		return
-	}
-	binding, err := h.engine.DB().GetProcessCounterBinding(id)
-	if err != nil {
-		writeJSON(w, map[string]interface{}{
-			"process_id": id,
-			"plc_name":   "",
-			"tag_name":   "",
-			"enabled":    false,
-		})
-		return
-	}
-	writeJSON(w, binding)
-}
-
-func (h *Handlers) apiUpsertProcessCounterBinding(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ID")
-		return
-	}
-	var req struct {
-		PLCName string `json:"plc_name"`
-		TagName string `json:"tag_name"`
-		Enabled bool   `json:"enabled"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	bindingID, err := h.engine.DB().UpsertProcessCounterBinding(id, req.PLCName, req.TagName, req.Enabled)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := h.engine.SyncProcessCounterBinding(id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.requestBackup("process-counter-binding-updated")
-	writeJSON(w, map[string]int64{"id": bindingID})
 }
 
 func (h *Handlers) apiListProcessStyles(w http.ResponseWriter, r *http.Request) {
@@ -668,18 +485,59 @@ func (h *Handlers) apiListProcessStyles(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, styles)
 }
 
-func (h *Handlers) apiGetStyleReportingPoint(w http.ResponseWriter, r *http.Request) {
+
+
+// --- Style Node Claims ---
+
+func (h *Handlers) apiListStyleNodeClaims(w http.ResponseWriter, r *http.Request) {
+	styleID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid style id")
+		return
+	}
+	claims, err := h.engine.DB().ListStyleNodeClaims(styleID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, claims)
+}
+
+func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Request) {
+	var in store.StyleNodeClaimInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if in.StyleID == 0 {
+		writeError(w, http.StatusBadRequest, "style_id is required")
+		return
+	}
+	if in.CoreNodeName == "" {
+		writeError(w, http.StatusBadRequest, "core_node_name is required")
+		return
+	}
+	id, err := h.engine.DB().UpsertStyleNodeClaim(in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.requestBackup("style-node-claim-updated")
+	writeJSON(w, map[string]int64{"id": id})
+}
+
+func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ID")
+		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	rp, err := h.engine.DB().GetReportingPointByStyleID(id)
-	if err != nil {
-		writeJSON(w, nil)
+	if err := h.engine.DB().DeleteStyleNodeClaim(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, rp)
+	h.requestBackup("style-node-claim-deleted")
+	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 // --- Config Admin ---

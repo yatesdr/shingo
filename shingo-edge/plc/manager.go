@@ -571,11 +571,11 @@ func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 	}
 
 	// Only emit delta for normal counts and resets (not jumps, which need operator confirmation)
-	if rp.JobStyleID == 0 {
-		return // no job style linked
+	if rp.StyleID == 0 {
+		return // no style linked
 	}
 	if anomaly != "jump" && delta > 0 {
-		m.emitter.EmitCounterDelta(rp.ID, rp.LineID, rp.JobStyleID, delta, newCount, anomaly)
+		m.emitter.EmitCounterDelta(rp.ID, rp.ProcessID, rp.StyleID, delta, newCount, anomaly)
 	}
 }
 

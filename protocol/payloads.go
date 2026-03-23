@@ -246,6 +246,27 @@ type TagVerifyResponse struct {
 	Detail    string `json:"detail,omitempty"`
 }
 
+// --- Node State ---
+
+// NodeStateRequest is sent by edge to query the occupancy state of specific nodes.
+type NodeStateRequest struct {
+	Nodes []string `json:"nodes"` // node names to query
+}
+
+// NodeStateEntry describes the occupancy state of a single node.
+type NodeStateEntry struct {
+	Name        string `json:"name"`
+	Occupied    bool   `json:"occupied"`     // has at least one bin
+	BinCount    int    `json:"bin_count"`     // number of bins at node
+	Claimed     bool   `json:"claimed"`       // any bin claimed by an active order
+	PayloadCode string `json:"payload_code,omitempty"` // payload of first bin (if occupied)
+}
+
+// NodeStateResponse carries the occupancy state for requested nodes.
+type NodeStateResponse struct {
+	Nodes []NodeStateEntry `json:"nodes"`
+}
+
 // --- Payload Catalog ---
 
 // CatalogPayloadsRequest is sent by edge to request the payload catalog.

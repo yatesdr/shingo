@@ -106,7 +106,9 @@ func (c *Client) Publish(topic string, payload []byte) error {
 	}
 
 	c.DebugLog.log("publish topic=%s len=%d", topic, len(payload))
-	return c.kafkaW.WriteMessages(context.Background(), kafkago.Message{
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return c.kafkaW.WriteMessages(ctx, kafkago.Message{
 		Topic: topic,
 		Value: payload,
 	})

@@ -15,8 +15,7 @@
     <div class="card-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
         <div>
             <strong>Process Changeover</strong>
-            <div style="color:var(--text-muted);font-size:0.9rem">Current style: {{if .CurrentStyle}}{{.CurrentStyle}}{{else}}None{{end}}</div>
-            {{if .ActiveProcess}}<div style="color:var(--text-muted);font-size:0.9rem">Production state: <strong>{{.ActiveProcess.ProductionState}}</strong></div>{{end}}
+            <div style="color:var(--text-muted);font-size:0.9rem">Current style: {{if .CurrentStyle}}<strong>{{.CurrentStyle}}</strong>{{else}}None{{end}}</div>
         </div>
         {{if .ActiveChangeover}}
         <button class="btn btn-danger btn-sm" onclick="cancelProcessChangeover()">Cancel Changeover</button>
@@ -31,123 +30,107 @@
                     {{end}}
                 </select>
             </div>
-            <button class="btn btn-primary" onclick="startProcessChangeover()">Start</button>
+            <button class="btn btn-primary" onclick="startProcessChangeover()">Start Changeover</button>
         </div>
         {{end}}
     </div>
+
+    {{if .ActiveChangeover}}
     <div class="card-body">
-        {{if .ActiveChangeover}}
-        <div style="margin-bottom:1rem">
-            <div><strong>{{.ActiveChangeover.FromStyleName}}</strong> -> <strong>{{.ActiveChangeover.ToStyleName}}</strong></div>
-            <div style="color:var(--text-muted);font-size:0.9rem">State: {{.ActiveChangeover.State}} | Phase: <strong>{{.ActiveChangeover.Phase}}</strong></div>
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
-                {{range .ActiveProcess.ChangeoverFlow}}
-                <span class="status-badge {{if eq $.ActiveChangeover.Phase .Kind}}status-connected{{end}}">{{.Label}}</span>
+        <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
+            <div><strong>{{.ActiveChangeover.FromStyleName}}</strong> &rarr; <strong>{{.ActiveChangeover.ToStyleName}}</strong></div>
+            <span class="status-badge">{{.ActiveChangeover.State}}</span>
+            {{if and .ActiveProcess.TargetStyleID .ActiveProcess.ActiveStyleID}}
+                {{if ne (deref .ActiveProcess.TargetStyleID) (deref .ActiveProcess.ActiveStyleID)}}
+                    <button class="btn btn-sm" onclick="completeCutover()">Complete Cutover</button>
                 {{end}}
-            </div>
-            <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
-                <button class="btn btn-sm btn-primary" onclick="advanceToNextPhase()">Advance To Next Step</button>
-                {{if and .ActiveProcess.TargetStyleID .ActiveProcess.ActiveStyleID}}
-                    {{if ne (deref .ActiveProcess.TargetStyleID) (deref .ActiveProcess.ActiveStyleID)}}
-                        <button class="btn btn-sm" onclick="completeCutover()">Start New Style Production</button>
-                    {{end}}
-                {{else if .ActiveProcess.TargetStyleID}}
-                    <button class="btn btn-sm" onclick="completeCutover()">Start New Style Production</button>
-                {{end}}
-            </div>
+            {{else if .ActiveProcess.TargetStyleID}}
+                <button class="btn btn-sm" onclick="completeCutover()">Complete Cutover</button>
+            {{end}}
         </div>
-        {{else}}
-        <p style="color:var(--text-muted)">No active process changeover.</p>
+
+        {{define "nodeTaskRows"}}
+        {{range .}}
+        <tr>
+            <td class="mono">{{.NodeName}}</td>
+            <td>
+                <span class="status-badge">{{.Situation}}</span>
+                {{if ne .State .Situation}}<span class="status-badge" style="margin-left:0.25rem">{{.State}}</span>{{end}}
+            </td>
+            <td>{{if .FromPayload}}{{.FromPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.FromRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
+            <td>{{if .ToPayload}}{{.ToPayload}} <span style="color:var(--text-muted);font-size:0.8rem">({{.ToRole}})</span>{{else}}<span style="color:var(--text-muted)">&mdash;</span>{{end}}</td>
+            <td style="white-space:nowrap">
+                {{if and (ne .Situation "unchanged") (ne .State "switched") (ne .State "verified")}}
+                <button class="btn btn-sm" onclick="stageNode({{.ProcessNodeID}})">Stage</button>
+                <button class="btn btn-sm" onclick="emptyNode({{.ProcessNodeID}})">Release</button>
+                <button class="btn btn-sm" onclick="releaseNode({{.ProcessNodeID}})">Deliver</button>
+                <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Switch</button>
+                {{else if eq .Situation "unchanged"}}
+                <span style="color:var(--text-muted);font-size:0.85rem">No change needed</span>
+                {{else}}
+                <span style="color:var(--text-muted);font-size:0.85rem">Done</span>
+                {{end}}
+            </td>
+        </tr>
         {{end}}
-    </div>
-</div>
+        {{end}}
 
-{{if .StationTasks}}
-{{range .StationTasks}}
-<div class="card" style="margin-top:1rem">
-    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap">
-        <div>
-            <strong>{{.StationName}}</strong>
-            <span style="margin-left:0.5rem" class="status-badge">{{.State}}</span>
-            <span style="margin-left:0.5rem;color:var(--text-muted)">Phase: {{.CurrentPhase}}</span>
+        {{if .CentralNodeTasks}}
+        <table class="table" style="margin-bottom:1rem">
+            <thead>
+                <tr>
+                    <th>Node</th>
+                    <th>Status</th>
+                    <th>From</th>
+                    <th>To</th>
+                    <th style="width:1%">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{template "nodeTaskRows" .CentralNodeTasks}}
+            </tbody>
+        </table>
+        {{end}}
+
+        {{range .StationTasks}}
+        <div style="border:1px solid var(--border);border-radius:6px;padding:0.75rem 1rem;margin-bottom:0.75rem">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem">
+                <div>
+                    <strong>{{.StationName}}</strong>
+                    <span class="status-badge" style="margin-left:0.5rem">{{.State}}</span>
+                </div>
+                <button class="btn btn-sm" onclick="switchStation({{.OperatorStationID}})">Complete Station</button>
+            </div>
+            <table class="table" style="margin:0">
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>Status</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th style="width:1%">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{template "nodeTaskRows" (index $.NodeTaskMap .OperatorStationID)}}
+                </tbody>
+            </table>
         </div>
-        <button class="btn btn-sm btn-primary" onclick="switchStation({{.OperatorStationID}})">Complete Station</button>
-    </div>
-    <div class="card-body">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Node</th>
-                    <th>State</th>
-                    <th>Release Required</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range index $.NodeTaskMap .OperatorStationID}}
-                <tr>
-                    <td>{{.NodeName}}</td>
-                    <td><span class="status-badge">{{.State}}</span></td>
-                    <td>{{if .OldMaterialReleaseRequired}}Yes{{else}}No{{end}}</td>
-                    <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
-                        <button class="btn btn-sm" onclick="stageNode({{.ProcessNodeID}})">Stage</button>
-                        <button class="btn btn-sm" onclick="emptyNode({{.ProcessNodeID}})">Empty</button>
-                        <button class="btn btn-sm" onclick="releaseNode({{.ProcessNodeID}})">Release</button>
-                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
-                    </td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
-    </div>
-</div>
-{{end}}
-{{end}}
+        {{end}}
 
-{{if .CentralNodeTasks}}
-<div class="card" style="margin-top:1rem">
-    <div class="card-header">
-        <strong>Edge Controlled Nodes</strong>
     </div>
+    {{else}}
     <div class="card-body">
-        <table class="table">
-            <thead>
-                <tr>
-                    <th>Node</th>
-                    <th>State</th>
-                    <th>Release Required</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .CentralNodeTasks}}
-                <tr>
-                    <td>{{.NodeName}}</td>
-                    <td><span class="status-badge">{{.State}}</span></td>
-                    <td>{{if .OldMaterialReleaseRequired}}Yes{{else}}No{{end}}</td>
-                    <td style="display:flex;gap:0.4rem;flex-wrap:wrap">
-                        <button class="btn btn-sm" onclick="stageNode({{.ProcessNodeID}})">Stage</button>
-                        <button class="btn btn-sm" onclick="emptyNode({{.ProcessNodeID}})">Empty</button>
-                        <button class="btn btn-sm" onclick="releaseNode({{.ProcessNodeID}})">Release</button>
-                        <button class="btn btn-sm" onclick="switchNode({{.ProcessNodeID}})">Force Switch</button>
-                    </td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
+        <p style="color:var(--text-muted)">No active changeover. Select a target style and click Start.</p>
     </div>
+    {{end}}
 </div>
-{{end}}
 
 {{else}}
 <div class="card"><div class="card-body"><p class="empty-cell">No processes configured</p></div></div>
 {{end}}
 
 <div id="page-data" data-process-id="{{.ActiveProcessID}}"></div>
-<script>
-window.changeoverFlow = {{if .ActiveProcess}}{{json .ActiveProcess.ChangeoverFlow}}{{else}}[]{{end}};
-window.changeoverPhase = {{if .ActiveChangeover}}{{json .ActiveChangeover.Phase}}{{else}}""{{end}};
-</script>
 <script src="/static/js/pages/changeover.js"></script>
 
 {{template "footer" .}}

@@ -9,10 +9,10 @@ import (
 
 type testEmitter struct{}
 
-func (testEmitter) EmitOrderCreated(orderID int64, orderUUID, orderType string, payloadID, opNodeID *int64) {}
-func (testEmitter) EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string, payloadID, opNodeID *int64) {
+func (testEmitter) EmitOrderCreated(orderID int64, orderUUID, orderType string, payloadID, processNodeID *int64) {}
+func (testEmitter) EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64) {
 }
-func (testEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType string, payloadID, opNodeID *int64) {}
+func (testEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType string, payloadID, processNodeID *int64) {}
 func (testEmitter) EmitOrderFailed(orderID int64, orderUUID, orderType, reason string)              {}
 
 func testManagerDB(t *testing.T) *store.DB {

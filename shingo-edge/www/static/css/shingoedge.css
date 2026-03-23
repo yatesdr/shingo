@@ -468,6 +468,53 @@ textarea.form-input {
     justify-content: flex-end;
 }
 
+/* === Tag Select (type-to-filter PLC tag picker) === */
+.tag-select {
+    position: relative;
+}
+.tag-select input.form-input {
+    width: 100%;
+}
+.tag-select-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.tag-select-dropdown.open { display: block; }
+.tag-select-option {
+    padding: 0.4rem 0.75rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.tag-select-option:hover,
+.tag-select-option.highlighted {
+    background: var(--primary);
+    color: #fff;
+}
+.tag-select-option .tag-type {
+    font-size: 0.75rem;
+    opacity: 0.6;
+}
+.tag-select-empty {
+    padding: 0.5rem 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-style: italic;
+}
+
 /* === Alerts === */
 .alert {
     padding: 0.75rem 1rem;

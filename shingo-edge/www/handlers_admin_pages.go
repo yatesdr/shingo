@@ -48,8 +48,6 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	processes, _ := db.ListProcesses()
 	styles, _ := db.ListStyles()
 	stations, _ := db.ListOperatorStations()
-	nodes, _ := db.ListProcessNodes()
-	assignments, _ := db.ListProcessNodeAssignmentsByProcess(0)
 	coreNodes := h.engine.CoreNodes()
 	plcNames := h.engine.PLCManager().PLCNames()
 
@@ -72,15 +70,11 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	var processStyles []store.Style
 	var processStations []store.OperatorStation
 	var processNodes []store.ProcessNode
-	var processAssignments []store.ProcessNodeStyleAssignment
-	var processCounter *store.ProcessCounterBinding
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
 		processStyles, _ = db.ListStylesByProcess(activeProcess.ID)
 		processStations, _ = db.ListOperatorStationsByProcess(activeProcess.ID)
 		processNodes, _ = db.ListProcessNodesByProcess(activeProcess.ID)
-		processAssignments, _ = db.ListProcessNodeAssignmentsByProcess(activeProcess.ID)
-		processCounter, _ = db.GetProcessCounterBinding(activeProcess.ID)
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
@@ -89,8 +83,6 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		"Processes":          processes,
 		"Styles":             styles,
 		"Stations":           stations,
-		"Nodes":              nodes,
-		"Assignments":        assignments,
 		"CoreNodes":          coreNodes,
 		"PLCNames":           plcNames,
 		"ActiveProcess":      activeProcess,
@@ -98,20 +90,10 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 		"ProcessStyles":      processStyles,
 		"ProcessStations":    processStations,
 		"ProcessNodes":       processNodes,
-		"ProcessAssignments": processAssignments,
-		"ProcessCounter":     processCounter,
 		"Anomalies":          anomalies,
 		"ReportingPointMap":  rpMap,
 	}
 	h.renderTemplate(w, r, "processes.html", data)
-}
-
-func (h *Handlers) handleSetup(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/config", http.StatusSeeOther)
-}
-
-func (h *Handlers) handleOperatorStationAdmin(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/processes", http.StatusSeeOther)
 }
 
 func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {

@@ -3,14 +3,12 @@ package engine
 import (
 	"database/sql"
 	"fmt"
-	"time"
 
-	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store"
 )
 
-type OpNodeOrderResult struct {
+type NodeOrderResult struct {
 	CycleMode     string       `json:"cycle_mode"`
 	Order         *store.Order `json:"order,omitempty"`
 	OrderA        *store.Order `json:"order_a,omitempty"`
@@ -18,101 +16,135 @@ type OpNodeOrderResult struct {
 	ProcessNodeID int64        `json:"process_node_id"`
 }
 
-func (e *Engine) RequestOpNodeMaterial(opNodeID int64, quantity int64) (*OpNodeOrderResult, error) {
-	node, runtime, assignment, err := e.loadActiveOpNode(opNodeID)
+func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderResult, error) {
+	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
-	if !node.AllowsReorder {
-		return nil, fmt.Errorf("node %s does not allow reorder", node.Name)
+	if claim == nil {
+		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
 	if quantity < 1 {
 		quantity = 1
 	}
 
-	switch assignment.CycleMode {
-	case "", "simple":
-		order, err := e.orderMgr.CreateRetrieveOrder(&opNodeID, assignment.RetrieveEmpty, quantity,
-			node.DeliveryNode, node.StagingNode, "standard", assignment.PayloadCode, e.cfg.Web.AutoConfirm)
+	return e.requestNodeFromClaim(node, runtime, claim, quantity)
+}
+
+// findActiveClaim looks up the style node claim for a process node based on
+// the process's active style and the node's core_node_name.
+func (e *Engine) findActiveClaim(node *store.ProcessNode) *store.StyleNodeClaim {
+	process, err := e.db.GetProcess(node.ProcessID)
+	if err != nil || process.ActiveStyleID == nil {
+		return nil
+	}
+	claim, err := e.db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName)
+	if err != nil {
+		return nil
+	}
+	return claim
+}
+
+// requestNodeFromClaim constructs orders using style_node_claims routing.
+func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim, quantity int64) (*NodeOrderResult, error) {
+	nodeID := node.ID
+
+	switch claim.SwapMode {
+	case "two_robot":
+		if claim.InboundStaging == "" || claim.OutboundStaging == "" {
+			return nil, fmt.Errorf("node %s: two-robot swap requires inbound and outbound staging nodes", node.Name)
+		}
+		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
+		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, claim.CoreNodeName, stepsA)
 		if err != nil {
 			return nil, err
 		}
-		_ = e.db.UpdateProcessNodeRuntimeOrders(opNodeID, &order.ID, nil)
-		_ = e.db.SetProcessNodeRuntime(opNodeID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID,
-			runtime.LoadedPayloadCode, "replenishing", runtime.RemainingUOP, runtime.ManifestStatus)
+		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, "", stepsB)
+		if err != nil {
+			return nil, err
+		}
+		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, &orderB.ID)
+		orderA, _ = e.db.GetOrder(orderA.ID)
+		orderB, _ = e.db.GetOrder(orderB.ID)
+		return &NodeOrderResult{CycleMode: "two_robot", OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+
+	case "single_robot":
+		if claim.InboundStaging == "" || claim.OutboundStaging == "" {
+			return nil, fmt.Errorf("node %s: single-robot swap requires inbound and outbound staging nodes", node.Name)
+		}
+		steps := BuildSingleSwapSteps(claim)
+		order, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, claim.CoreNodeName, steps)
+		if err != nil {
+			return nil, err
+		}
+		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
 		order, _ = e.db.GetOrder(order.ID)
-		return &OpNodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: opNodeID}, nil
-	case store.CycleModeSequential:
-		return e.requestOpNodeSequential(node, runtime, assignment, quantity)
-	case store.CycleModeSingleRobot:
-		return e.requestOpNodeSingleRobot(node, runtime, assignment, quantity)
-	case store.CycleModeTwoRobot:
-		return e.requestOpNodeTwoRobot(node, runtime, assignment, quantity)
-	default:
-		return nil, fmt.Errorf("unsupported cycle mode %q", assignment.CycleMode)
+		return &NodeOrderResult{CycleMode: "single_robot", Order: order, ProcessNodeID: nodeID}, nil
+
+	default: // "simple"
+		steps := BuildDeliverSteps(claim)
+		order, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, claim.CoreNodeName, steps)
+		if err != nil {
+			return nil, err
+		}
+		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+		order, _ = e.db.GetOrder(order.ID)
+		return &NodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: nodeID}, nil
 	}
 }
 
-func (e *Engine) ReleaseOpNodeEmpty(opNodeID int64) (*store.Order, error) {
-	node, runtime, _, err := e.loadActiveOpNode(opNodeID)
+func (e *Engine) ReleaseNodeEmpty(nodeID int64) (*store.Order, error) {
+	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
-	if !node.AllowsEmptyRelease {
-		return nil, fmt.Errorf("node %s does not allow empty release", node.Name)
+	if claim == nil {
+		return nil, fmt.Errorf("node %s has no active claim for release", node.Name)
 	}
-	returnNode := opNodeReturnNode(node)
-	if returnNode == "" {
-		return nil, fmt.Errorf("node %s has no return destination configured", node.Name)
+	if claim.OutboundStaging == "" {
+		return nil, fmt.Errorf("node %s has no outbound staging configured", node.Name)
 	}
-	order, err := e.orderMgr.CreateMoveOrder(&opNodeID, 1, node.DeliveryNode, returnNode)
+	steps := BuildReleaseSteps(claim)
+	order, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", steps)
 	if err != nil {
 		return nil, err
 	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(opNodeID, &order.ID, runtime.StagedOrderID)
+	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, runtime.StagedOrderID)
 	order, _ = e.db.GetOrder(order.ID)
 	return order, nil
 }
 
-func (e *Engine) ReleaseOpNodePartial(opNodeID int64, qty int64) (*store.Order, error) {
-	node, runtime, _, err := e.loadActiveOpNode(opNodeID)
+func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error) {
+	node, runtime, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
-	}
-	if !node.AllowsPartialRelease {
-		return nil, fmt.Errorf("node %s does not allow partial release", node.Name)
 	}
 	if qty < 1 {
 		return nil, fmt.Errorf("qty must be at least 1")
 	}
-	returnNode := opNodeReturnNode(node)
-	if returnNode == "" {
-		return nil, fmt.Errorf("node %s has no return destination configured", node.Name)
+	if claim == nil {
+		return nil, fmt.Errorf("node %s has no active claim for release", node.Name)
 	}
-	order, err := e.orderMgr.CreateMoveOrder(&opNodeID, qty, node.DeliveryNode, returnNode)
+	if claim.OutboundStaging == "" {
+		return nil, fmt.Errorf("node %s has no outbound staging configured", node.Name)
+	}
+	steps := BuildReleaseSteps(claim)
+	order, err := e.orderMgr.CreateComplexOrder(&nodeID, qty, "", steps)
 	if err != nil {
 		return nil, err
 	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(opNodeID, &order.ID, runtime.StagedOrderID)
+	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, runtime.StagedOrderID)
 	order, _ = e.db.GetOrder(order.ID)
 	return order, nil
 }
 
-func (e *Engine) ConfirmOpNodeManifest(opNodeID int64) error {
-	node, _, assignment, err := e.loadActiveOpNode(opNodeID)
-	if err != nil {
-		return err
-	}
-	if !node.AllowsManifestConfirm {
-		return fmt.Errorf("node %s does not allow manifest confirmation", node.Name)
-	}
-	if assignment != nil && !assignment.RequiresManifestConfirmation {
-		return nil
-	}
-	return e.db.UpdateProcessNodeManifestStatus(opNodeID, "confirmed")
+func (e *Engine) ConfirmNodeManifest(nodeID int64) error {
+	// Manifest confirmation is now core's domain. This is a no-op on edge
+	// but kept for API compatibility.
+	return nil
 }
 
-func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error) {
+func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error) {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		return nil, err
@@ -129,19 +161,34 @@ func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, 
 	if err != nil {
 		return nil, err
 	}
-	if style.LineID != processID {
+	if style.ProcessID != processID {
 		return nil, fmt.Errorf("target style %d does not belong to process %d", toStyleID, processID)
 	}
-	flow := store.SanitizeProcessFlow(process.ChangeoverFlow)
-	firstPhase := flow[0].Kind
+
+	// Pre-fetch all data before opening transaction (SQLite deadlock prevention)
+	stations, err := e.db.ListOperatorStationsByProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+	var fromClaims, toClaims []store.StyleNodeClaim
+	if process.ActiveStyleID != nil {
+		fromClaims, _ = e.db.ListStyleNodeClaims(*process.ActiveStyleID)
+	}
+	toClaims, _ = e.db.ListStyleNodeClaims(toStyleID)
+	diffs := DiffStyleClaims(fromClaims, toClaims)
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return nil, err
+	}
+
 	tx, err := e.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	res, err := tx.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, phase, called_by, notes)
-		VALUES (?, ?, ?, 'active', ?, ?, ?)`, processID, process.ActiveStyleID, toStyleID, firstPhase, calledBy, notes)
+	res, err := tx.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by, notes)
+		VALUES (?, ?, ?, 'active', ?, ?)`, processID, process.ActiveStyleID, toStyleID, calledBy, notes)
 	if err != nil {
 		return nil, err
 	}
@@ -149,73 +196,64 @@ func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(`UPDATE processes SET target_job_style_id=? WHERE id=?`, toStyleID, processID); err != nil {
+	if _, err := tx.Exec(`UPDATE processes SET target_style_id=? WHERE id=?`, toStyleID, processID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(`UPDATE processes SET production_state='changeover_active' WHERE id=?`, processID); err != nil {
 		return nil, err
 	}
 
-	stations, err := e.db.ListOperatorStationsByProcess(processID)
-	if err != nil {
-		return nil, err
-	}
-	stationTaskIDs := map[int64]int64{}
 	for _, station := range stations {
-		res, err := tx.Exec(`INSERT INTO changeover_station_tasks (
-			process_changeover_id, operator_station_id, state, current_phase, transition_mode, ready_for_local_change
-		) VALUES (?, ?, ?, ?, ?, ?)`, changeoverID, station.ID, deriveStationTaskState("waiting", firstPhase), firstPhase, "rolling_local", shouldStationBeReadyForPhase(firstPhase))
-		if err != nil {
+		if _, err := tx.Exec(`INSERT INTO changeover_station_tasks (
+			process_changeover_id, operator_station_id, state
+		) VALUES (?, ?, 'waiting')`, changeoverID, station.ID); err != nil {
 			return nil, err
 		}
-		taskID, err := res.LastInsertId()
-		if err != nil {
-			return nil, err
-		}
-		stationTaskIDs[station.ID] = taskID
 	}
-	nodes, err := e.db.ListProcessNodesByProcess(processID)
-	if err != nil {
-		return nil, err
-	}
-	for _, node := range nodes {
-		var fromAssignmentID *int64
-		if process.ActiveStyleID != nil {
-			if currentAssign, err := e.db.GetProcessNodeAssignmentForStyle(node.ID, *process.ActiveStyleID); err == nil {
-				fromAssignmentID = &currentAssign.ID
+
+	for _, diff := range diffs {
+		// Find the matching process node (needed for node task FK)
+		var processNodeID *int64
+		for i := range nodes {
+			if nodes[i].CoreNodeName == diff.CoreNodeName {
+				id := nodes[i].ID
+				processNodeID = &id
+				break
 			}
 		}
-		var toAssignmentID *int64
-		if nextAssign, err := e.db.GetProcessNodeAssignmentForStyle(node.ID, toStyleID); err == nil {
-			toAssignmentID = &nextAssign.ID
+		if processNodeID == nil {
+			continue // no process node for this claim — skip
 		}
+
+		// Map claim diff situation to node task state
 		state := "unchanged"
-		if toAssignmentID != nil || fromAssignmentID != nil {
+		switch diff.Situation {
+		case SituationSwap, SituationEvacuate, SituationDrop:
+			state = "swap_required"
+		case SituationAdd:
 			state = "swap_required"
 		}
+
+		var fromClaimID, toClaimID *int64
+		if diff.FromClaim != nil {
+			id := diff.FromClaim.ID
+			fromClaimID = &id
+		}
+		if diff.ToClaim != nil {
+			id := diff.ToClaim.ID
+			toClaimID = &id
+		}
+
 		if _, err := tx.Exec(`INSERT INTO changeover_node_tasks (
-			process_changeover_id, operator_station_id, process_node_id, from_assignment_id, to_assignment_id, state, old_material_release_required
-		) VALUES (?, ?, ?, ?, ?, ?, ?)`, changeoverID, node.DelegatedStationID, node.ID, fromAssignmentID, toAssignmentID, state, fromAssignmentID != nil); err != nil {
+			process_changeover_id, process_node_id, from_claim_id, to_claim_id, situation, state
+		) VALUES (?, ?, ?, ?, ?, ?)`, changeoverID, *processNodeID, fromClaimID, toClaimID, string(diff.Situation), state); err != nil {
 			return nil, err
 		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id) VALUES (?)`, node.ID); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id) VALUES (?)`, *processNodeID); err != nil {
 			return nil, err
-		}
-		runtime, err := scanTxProcessNodeRuntime(tx, node.ID)
-		if err != nil {
-			return nil, err
-		}
-		if toAssignmentID != nil {
-			if _, err := tx.Exec(`UPDATE process_node_runtime_states SET
-				effective_style_id=?, active_assignment_id=?, staged_assignment_id=?, loaded_payload_code=?,
-				material_status=?, remaining_uop=?, manifest_status=?, updated_at=datetime('now')
-				WHERE process_node_id=?`,
-				runtime.EffectiveStyleID, runtime.ActiveAssignmentID, toAssignmentID, runtime.LoadedPayloadCode,
-				runtime.MaterialStatus, runtime.RemainingUOP, runtime.ManifestStatus, node.ID); err != nil {
-				return nil, err
-			}
 		}
 	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -223,61 +261,10 @@ func (e *Engine) StartProcessChangeoverV2(processID, toStyleID int64, calledBy, 
 	return e.db.GetActiveProcessChangeover(processID)
 }
 
-func (e *Engine) AdvanceProcessChangeoverPhase(processID int64, phase string) error {
-	process, err := e.db.GetProcess(processID)
-	if err != nil {
-		return err
-	}
-	changeover, err := e.db.GetActiveProcessChangeover(processID)
-	if err != nil {
-		return err
-	}
-	if store.ProcessFlowIndex(process.ChangeoverFlow, phase) < 0 {
-		return fmt.Errorf("invalid changeover phase %q", phase)
-	}
-	if phase == changeover.Phase {
-		return nil
-	}
-	next := store.NextProcessFlowStep(process.ChangeoverFlow, changeover.Phase)
-	if next == nil || next.Kind != phase {
-		return fmt.Errorf("invalid phase transition from %s to %s", changeover.Phase, phase)
-	}
-	if changeover.Phase == "cutover" && (process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID) {
-		return fmt.Errorf("start new style production before advancing past cutover")
-	}
-	if err := e.validateChangeoverPhaseTransition(changeover.ID, phase); err != nil {
-		return err
-	}
-	if err := e.db.UpdateProcessChangeoverPhase(changeover.ID, phase); err != nil {
-		return err
-	}
-	if tasks, err := e.db.ListChangeoverStationTasks(changeover.ID); err == nil {
-		for _, task := range tasks {
-			_ = e.db.UpdateChangeoverStationTaskPhase(task.ID, phase)
-			ready := shouldStationBeReadyForPhase(phase)
-			_ = e.db.UpdateChangeoverStationTaskState(task.ID, deriveStationTaskState(task.State, phase), ready)
-		}
-	}
-	switch phase {
-	case "cutover":
-		_ = e.db.SetProcessProductionState(processID, "awaiting_cutover")
-	case "verify":
-		if process.ActiveStyleID != nil && changeover.ToStyleID == *process.ActiveStyleID {
-			_ = e.db.SetProcessProductionState(processID, "new_style_production")
-		}
-	default:
-		_ = e.db.SetProcessProductionState(processID, "changeover_active")
-	}
-	return nil
-}
-
 func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return err
-	}
-	if changeover.Phase != "cutover" && changeover.Phase != "verify" {
-		return fmt.Errorf("process is not in cutover")
 	}
 	toStyleID := changeover.ToStyleID
 	if err := e.db.SetActiveStyle(processID, &toStyleID); err != nil {
@@ -286,13 +273,13 @@ func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 	if err := e.db.SetProcessProductionState(processID, "new_style_production"); err != nil {
 		return err
 	}
-	if err := e.SyncProcessCounterBinding(processID); err != nil {
+	if err := e.SyncProcessCounter(processID); err != nil {
 		return err
 	}
 	return e.tryCompleteProcessChangeover(processID)
 }
 
-func (e *Engine) CancelProcessChangeoverV2(processID int64) error {
+func (e *Engine) CancelProcessChangeover(processID int64) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return err
@@ -306,15 +293,12 @@ func (e *Engine) CancelProcessChangeoverV2(processID int64) error {
 	return e.db.SetProcessProductionState(processID, "active_production")
 }
 
-func (e *Engine) StageOpNodeChangeoverMaterial(processID, opNodeID int64) (*store.Order, error) {
+func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*store.Order, error) {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return nil, err
 	}
-	if changeover.Phase != "runout" && changeover.Phase != "tool_change" {
-		return nil, fmt.Errorf("changeover staging is only available during runout or tool change")
-	}
-	node, runtime, _, err := e.loadActiveOpNode(opNodeID)
+	node, runtime, _, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -328,22 +312,36 @@ func (e *Engine) StageOpNodeChangeoverMaterial(processID, opNodeID int64) (*stor
 	if err := ensureNodeTaskCanRequestOrder(nodeTask.NextMaterialOrderID, "staging", e.db); err != nil {
 		return nil, err
 	}
-	if !canNodeTaskEnterPhase(nodeTask, "tool_change") {
-		return nil, fmt.Errorf("node %s is not ready for staging in phase %s", node.Name, changeover.Phase)
+	if isNodeTaskTerminal(nodeTask) {
+		return nil, fmt.Errorf("node %s changeover task is already complete", node.Name)
 	}
-	stagedAssignID := runtime.StagedAssignmentID
-	if stagedAssignID == nil {
-		return nil, fmt.Errorf("node has no staged assignment for the target style")
-	}
-	assign, err := e.db.GetProcessNodeAssignment(*stagedAssignID)
+
+	// Look up the to-claim from the changeover's target style
+	toClaim, err := e.db.GetStyleNodeClaimByNode(changeover.ToStyleID, node.CoreNodeName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no claim for target style on node %s", node.Name)
 	}
-	deliveryNode := node.StagingNode
-	if deliveryNode == "" {
-		deliveryNode = node.DeliveryNode
+
+	if toClaim.InboundStaging != "" {
+		steps := BuildStageSteps(toClaim)
+		if steps != nil {
+			order, err := e.orderMgr.CreateComplexOrder(&node.ID, 1, toClaim.InboundStaging, steps)
+			if err != nil {
+				return nil, err
+			}
+			_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, runtime.ActiveOrderID, &order.ID)
+			_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil)
+			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+			if changeoverTask != nil {
+				_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress")
+			}
+			return order, nil
+		}
 	}
-	order, err := e.orderMgr.CreateRetrieveOrder(&node.ID, assign.RetrieveEmpty, 1, deliveryNode, node.StagingNode, "standard", assign.PayloadCode, e.cfg.Web.AutoConfirm)
+
+	// Direct delivery if no staging configured
+	retrieveEmpty := toClaim.Role == "produce"
+	order, err := e.orderMgr.CreateRetrieveOrder(&node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm)
 	if err != nil {
 		return nil, err
 	}
@@ -351,20 +349,17 @@ func (e *Engine) StageOpNodeChangeoverMaterial(processID, opNodeID int64) (*stor
 	_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil)
 	_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
 	if changeoverTask != nil {
-		_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress", true)
+		_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress")
 	}
 	return order, nil
 }
 
-func (e *Engine) EmptyOpNodeForToolChange(processID, opNodeID int64, partialQty int64) (*store.Order, error) {
+func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*store.Order, error) {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return nil, err
 	}
-	if changeover.Phase != "tool_change" {
-		return nil, fmt.Errorf("line empty is only available during tool change")
-	}
-	node, _, _, err := e.loadActiveOpNode(opNodeID)
+	node, _, _, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -375,17 +370,34 @@ func (e *Engine) EmptyOpNodeForToolChange(processID, opNodeID int64, partialQty 
 	if err != nil {
 		return nil, err
 	}
-	if !canNodeTaskEnterPhase(nodeTask, "release") {
-		return nil, fmt.Errorf("node %s is not ready to clear for tool change", node.Name)
+	if isNodeTaskTerminal(nodeTask) {
+		return nil, fmt.Errorf("node %s changeover task is already complete", node.Name)
 	}
 	if err := ensureNodeTaskCanRequestOrder(nodeTask.OldMaterialReleaseOrderID, "line clear", e.db); err != nil {
 		return nil, err
 	}
+
+	// Use claim-based release
+	if fromClaim := e.findActiveClaim(node); fromClaim != nil && fromClaim.OutboundStaging != "" {
+		steps := BuildReleaseSteps(fromClaim)
+		order, err := e.orderMgr.CreateComplexOrder(&node.ID, 1, "", steps)
+		if err != nil {
+			return nil, err
+		}
+		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, nodeTask.NextMaterialOrderID, &order.ID)
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "empty_requested")
+		if changeoverTask != nil {
+			_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress")
+		}
+		return order, nil
+	}
+
+	// Fallback: simple release via move order
 	var order *store.Order
 	if partialQty > 0 {
-		order, err = e.ReleaseOpNodePartial(opNodeID, partialQty)
+		order, err = e.ReleaseNodePartial(nodeID, partialQty)
 	} else {
-		order, err = e.ReleaseOpNodeEmpty(opNodeID)
+		order, err = e.ReleaseNodeEmpty(nodeID)
 	}
 	if err != nil {
 		return nil, err
@@ -393,64 +405,63 @@ func (e *Engine) EmptyOpNodeForToolChange(processID, opNodeID int64, partialQty 
 	_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, nodeTask.NextMaterialOrderID, &order.ID)
 	_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "empty_requested")
 	if changeoverTask != nil {
-		_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress", true)
+		_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress")
 	}
 	return order, nil
 }
 
-func (e *Engine) ReleaseOpNodeIntoProduction(processID, opNodeID int64) (*store.Order, error) {
+func (e *Engine) ReleaseNodeIntoProduction(processID, nodeID int64) (*store.Order, error) {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return nil, err
 	}
-	if changeover.Phase != "release" && changeover.Phase != "cutover" && changeover.Phase != "verify" {
-		return nil, fmt.Errorf("release to production is only available during release, cutover, or verify")
-	}
-	node, runtime, _, err := e.loadActiveOpNode(opNodeID)
+	node, _, _, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
-	}
-	if runtime.StagedAssignmentID == nil {
-		return nil, fmt.Errorf("node has no staged assignment to release")
-	}
-	if node.DeliveryNode == "" {
-		return nil, fmt.Errorf("node %s has no configured delivery node", node.Name)
 	}
 	changeoverTask, nodeTask, err := e.loadChangeoverNodeTask(changeover.ID, node)
 	if err != nil {
 		return nil, err
 	}
-	if !canNodeTaskEnterPhase(nodeTask, "verify") {
-		return nil, fmt.Errorf("node %s is not ready to release into production", node.Name)
+	if isNodeTaskTerminal(nodeTask) {
+		return nil, fmt.Errorf("node %s changeover task is already complete", node.Name)
 	}
 	if err := ensureNodeTaskCanRequestOrder(nodeTask.NextMaterialOrderID, "release", e.db); err != nil {
 		return nil, err
 	}
-	if node.StagingNode == "" && node.StagingNodeGroup == "" {
-		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, nodeTask.NextMaterialOrderID, nodeTask.OldMaterialReleaseOrderID)
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
-		if changeoverTask != nil {
-			_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress", true)
-		}
-		return nil, nil
-	}
-	steps := []protocol.ComplexOrderStep{
-		buildPickupStep(node.StagingNode, node.StagingNodeGroup),
-		{Action: "dropoff", Node: node.DeliveryNode},
-	}
-	order, err := e.orderMgr.CreateComplexOrder(&node.ID, 1, node.DeliveryNode, steps)
+
+	// Use claim-based staged delivery
+	toClaim, err := e.db.GetStyleNodeClaimByNode(changeover.ToStyleID, node.CoreNodeName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no claim for target style on node %s", node.Name)
 	}
-	_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nodeTask.OldMaterialReleaseOrderID)
-	_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "release_requested")
+
+	if toClaim.InboundStaging != "" {
+		steps := BuildStagedDeliverSteps(toClaim)
+		if steps != nil {
+			order, err := e.orderMgr.CreateComplexOrder(&node.ID, 1, toClaim.CoreNodeName, steps)
+			if err != nil {
+				return nil, err
+			}
+			_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nodeTask.OldMaterialReleaseOrderID)
+			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "release_requested")
+			if changeoverTask != nil {
+				_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress")
+			}
+			return order, nil
+		}
+	}
+
+	// No staging — mark as released directly
+	_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, nodeTask.NextMaterialOrderID, nodeTask.OldMaterialReleaseOrderID)
+	_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
 	if changeoverTask != nil {
-		_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress", true)
+		_ = e.db.UpdateChangeoverStationTaskState(changeoverTask.ID, "in_progress")
 	}
-	return order, nil
+	return nil, nil
 }
 
-func (e *Engine) SwitchOpNodeToTarget(processID, opNodeID int64) error {
+func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	process, err := e.db.GetProcess(processID)
 	if err != nil {
 		return err
@@ -458,24 +469,23 @@ func (e *Engine) SwitchOpNodeToTarget(processID, opNodeID int64) error {
 	if process.TargetStyleID == nil {
 		return fmt.Errorf("process has no target style")
 	}
-	node, err := e.db.GetProcessNode(opNodeID)
+	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil {
 		return err
 	}
 	if node.ProcessID != processID {
 		return fmt.Errorf("node does not belong to process")
 	}
-	assign, err := e.db.GetProcessNodeAssignmentForStyle(opNodeID, *process.TargetStyleID)
+	claim, err := e.db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName)
 	if err != nil {
-		return fmt.Errorf("target style assignment not found for node")
+		return fmt.Errorf("target style claim not found for node")
 	}
-	assignID := assign.ID
-	styleID := assign.StyleID
-	status := "active"
-	if assign.UOPCapacity == 0 {
-		status = "empty"
+	claimID := claim.ID
+	uop := claim.UOPCapacity
+	if uop == 0 {
+		uop = 0 // explicit: empty node starts at 0
 	}
-	if err := e.db.SetProcessNodeRuntime(opNodeID, &styleID, &assignID, nil, assign.PayloadCode, status, assign.UOPCapacity, "pending_confirmation"); err != nil {
+	if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, uop); err != nil {
 		return err
 	}
 
@@ -483,7 +493,7 @@ func (e *Engine) SwitchOpNodeToTarget(processID, opNodeID int64) error {
 	if err == nil {
 		tasks, _ := e.db.ListChangeoverStationTasks(changeover.ID)
 		for _, stationTask := range tasks {
-			nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, opNodeID)
+			nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 			if err == nil {
 				_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "switched")
 				stationNodeTasks, _ := e.db.ListChangeoverNodeTasksByStation(changeover.ID, stationTask.OperatorStationID)
@@ -495,9 +505,9 @@ func (e *Engine) SwitchOpNodeToTarget(processID, opNodeID int64) error {
 					}
 				}
 				if allDone {
-					_ = e.db.UpdateChangeoverStationTaskState(stationTask.ID, "switched", false)
+					_ = e.db.UpdateChangeoverStationTaskState(stationTask.ID, "switched")
 				} else {
-					_ = e.db.UpdateChangeoverStationTaskState(stationTask.ID, "in_progress", true)
+					_ = e.db.UpdateChangeoverStationTaskState(stationTask.ID, "in_progress")
 				}
 			}
 		}
@@ -512,7 +522,7 @@ func (e *Engine) SwitchOperatorStationToTarget(processID, stationID int64) error
 		return err
 	}
 	for _, node := range nodes {
-		if err := e.SwitchOpNodeToTarget(processID, node.ID); err != nil {
+		if err := e.SwitchNodeToTarget(processID, node.ID); err != nil {
 			return err
 		}
 	}
@@ -529,9 +539,6 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 		return nil
 	}
 	if process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID {
-		return nil
-	}
-	if store.NextProcessFlowStep(process.ChangeoverFlow, changeover.Phase) != nil {
 		return nil
 	}
 	tasks, err := e.db.ListChangeoverStationTasks(changeover.ID)
@@ -553,7 +560,7 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 		return nil
 	}
 	for _, task := range tasks {
-		_ = e.db.UpdateChangeoverStationTaskState(task.ID, "switched", false)
+		_ = e.db.UpdateChangeoverStationTaskState(task.ID, "switched")
 	}
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
@@ -564,66 +571,8 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 	return e.db.UpdateProcessChangeoverState(changeover.ID, "completed")
 }
 
-func scanTxProcessNodeRuntime(tx *sql.Tx, processNodeID int64) (*store.ProcessNodeRuntimeState, error) {
-	var r store.ProcessNodeRuntimeState
-	var loadedAt, updatedAt sql.NullString
-	err := tx.QueryRow(`SELECT id, process_node_id, effective_style_id, active_assignment_id, staged_assignment_id,
-		loaded_payload_code, material_status, remaining_uop, manifest_status, active_order_id, staged_order_id,
-		loaded_bin_label, loaded_at, updated_at
-		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID).Scan(
-		&r.ID, &r.ProcessNodeID, &r.EffectiveStyleID, &r.ActiveAssignmentID, &r.StagedAssignmentID,
-		&r.LoadedPayloadCode, &r.MaterialStatus, &r.RemainingUOP, &r.ManifestStatus,
-		&r.ActiveOrderID, &r.StagedOrderID, &r.LoadedBinLabel, &loadedAt, &updatedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if loadedAt.Valid && loadedAt.String != "" {
-		t, err := time.ParseInLocation("2006-01-02 15:04:05", loadedAt.String, time.UTC)
-		if err == nil {
-			r.LoadedAt = &t
-		}
-	}
-	if updatedAt.Valid && updatedAt.String != "" {
-		if t, err := time.ParseInLocation("2006-01-02 15:04:05", updatedAt.String, time.UTC); err == nil {
-			r.UpdatedAt = t
-		}
-	}
-	return &r, nil
-}
-
-func shouldStationBeReadyForPhase(phase string) bool {
-	switch phase {
-	case "runout", "tool_change", "release", "cutover", "verify":
-		return true
-	default:
-		return false
-	}
-}
-
-func deriveStationTaskState(currentState, phase string) string {
-	if currentState == "switched" || currentState == "verified" {
-		return currentState
-	}
-	if phase == "runout" {
-		return "waiting"
-	}
-	return "in_progress"
-}
-
-func canNodeTaskEnterPhase(task *store.ChangeoverNodeTask, targetPhase string) bool {
-	switch targetPhase {
-	case "tool_change":
-		return task.State != "released" && task.State != "switched" && task.State != "verified"
-	case "release":
-		return task.State != "released" && task.State != "switched" && task.State != "verified"
-	case "cutover":
-		return task.State != "switched" && task.State != "verified"
-	case "verify":
-		return task.State != "released" && task.State != "switched" && task.State != "verified"
-	default:
-		return false
-	}
+func isNodeTaskTerminal(task *store.ChangeoverNodeTask) bool {
+	return task.State == "switched" || task.State == "verified" || task.State == "unchanged"
 }
 
 func ensureNodeTaskCanRequestOrder(orderID *int64, action string, db *store.DB) error {
@@ -642,8 +591,8 @@ func ensureNodeTaskCanRequestOrder(orderID *int64, action string, db *store.DB) 
 
 func (e *Engine) loadChangeoverNodeTask(changeoverID int64, node *store.ProcessNode) (*store.ChangeoverStationTask, *store.ChangeoverNodeTask, error) {
 	var changeoverTask *store.ChangeoverStationTask
-	if node.DelegatedStationID != nil {
-		task, err := e.db.GetChangeoverStationTaskByStation(changeoverID, *node.DelegatedStationID)
+	if node.OperatorStationID != nil {
+		task, err := e.db.GetChangeoverStationTaskByStation(changeoverID, *node.OperatorStationID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -656,191 +605,17 @@ func (e *Engine) loadChangeoverNodeTask(changeoverID int64, node *store.ProcessN
 	return changeoverTask, nodeTask, nil
 }
 
-func (e *Engine) validateChangeoverPhaseTransition(changeoverID int64, nextPhase string) error {
-	nodeTasks, err := e.db.ListChangeoverNodeTasks(changeoverID)
-	if err != nil {
-		return err
-	}
-	for _, nodeTask := range nodeTasks {
-		if !nodeTaskReadyForPhase(&nodeTask, nextPhase) {
-			return fmt.Errorf("node %s is not ready for phase %s; current state is %s", nodeTask.NodeName, nextPhase, nodeTask.State)
-		}
-	}
-	return nil
-}
-
-func nodeTaskReadyForPhase(task *store.ChangeoverNodeTask, nextPhase string) bool {
-	switch nextPhase {
-	case "tool_change":
-		if task.ToAssignmentID == nil {
-			return true
-		}
-		return isNodeStateAtLeast(task.State, "staged")
-	case "release":
-		if task.OldMaterialReleaseRequired {
-			return isNodeStateAtLeast(task.State, "line_cleared")
-		}
-		if task.ToAssignmentID == nil {
-			return true
-		}
-		return isNodeStateAtLeast(task.State, "staged")
-	case "verify":
-		if task.ToAssignmentID != nil {
-			return isNodeStateAtLeast(task.State, "released")
-		}
-		if task.OldMaterialReleaseRequired {
-			return isNodeStateAtLeast(task.State, "line_cleared")
-		}
-		return true
-	case "cutover":
-		if task.ToAssignmentID != nil {
-			return isNodeStateAtLeast(task.State, "released")
-		}
-		if task.OldMaterialReleaseRequired {
-			return isNodeStateAtLeast(task.State, "line_cleared")
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func isNodeStateAtLeast(state, min string) bool {
-	order := map[string]int{
-		"unchanged":         0,
-		"swap_required":     0,
-		"staging_requested": 1,
-		"staged":            2,
-		"empty_requested":   3,
-		"line_cleared":      4,
-		"release_requested": 5,
-		"released":          6,
-		"switched":          7,
-		"verified":          8,
-	}
-	return order[state] >= order[min]
-}
-
-func (e *Engine) loadActiveOpNode(opNodeID int64) (*store.ProcessNode, *store.ProcessNodeRuntimeState, *store.ProcessNodeStyleAssignment, error) {
-	node, err := e.db.GetProcessNode(opNodeID)
+// loadActiveNode returns the process node, its runtime state, and the active
+// style node claim (if any). The claim replaces the old assignment lookup.
+func (e *Engine) loadActiveNode(nodeID int64) (*store.ProcessNode, *store.ProcessNodeRuntimeState, *store.StyleNodeClaim, error) {
+	node, err := e.db.GetProcessNode(nodeID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	runtime, err := e.db.EnsureProcessNodeRuntime(opNodeID)
+	runtime, err := e.db.EnsureProcessNodeRuntime(nodeID)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if runtime.ActiveAssignmentID != nil {
-		assign, err := e.db.GetProcessNodeAssignment(*runtime.ActiveAssignmentID)
-		return node, runtime, assign, err
-	}
-	process, err := e.db.GetProcess(node.ProcessID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if process.ActiveStyleID == nil {
-		return nil, nil, nil, fmt.Errorf("process has no active style")
-	}
-	assign, err := e.db.GetProcessNodeAssignmentForStyle(opNodeID, *process.ActiveStyleID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	assignID := assign.ID
-	styleID := assign.StyleID
-	if runtime.MaterialStatus == "" || runtime.MaterialStatus == "empty" {
-		_ = e.db.SetProcessNodeRuntime(opNodeID, &styleID, &assignID, runtime.StagedAssignmentID, assign.PayloadCode, "empty", 0, runtime.ManifestStatus)
-		runtime, _ = e.db.GetProcessNodeRuntime(opNodeID)
-	}
-	return node, runtime, assign, nil
-}
-
-func (e *Engine) requestOpNodeSingleRobot(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, assignment *store.ProcessNodeStyleAssignment, quantity int64) (*OpNodeOrderResult, error) {
-	if node.FullPickupNode == "" || node.StagingNode == "" || opNodeReturnNode(node) == "" {
-		return nil, fmt.Errorf("node %s does not support single robot cycle with the simplified delegate configuration", node.Name)
-	}
-	steps := []protocol.ComplexOrderStep{
-		buildPickupStep(node.FullPickupNode, node.FullPickupNodeGroup),
-		buildDropoffStep(node.StagingNode, node.StagingNodeGroup),
-		{Action: "dropoff", Node: node.DeliveryNode},
-		{Action: "wait"},
-		{Action: "pickup", Node: node.DeliveryNode},
-		buildDropoffStep(node.SecondaryStagingNode, node.SecondaryNodeGroup),
-		buildPickupStep(node.StagingNode, node.StagingNodeGroup),
-		{Action: "dropoff", Node: node.DeliveryNode},
-		buildPickupStep(node.SecondaryStagingNode, node.SecondaryNodeGroup),
-		buildDropoffStep(opNodeReturnNode(node), ""),
-	}
-	order, err := e.orderMgr.CreateComplexOrder(&node.ID, quantity, node.DeliveryNode, steps)
-	if err != nil {
-		return nil, err
-	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, &order.ID, nil)
-	_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID, assignment.PayloadCode, "replenishing", runtime.RemainingUOP, runtime.ManifestStatus)
-	order, _ = e.db.GetOrder(order.ID)
-	return &OpNodeOrderResult{CycleMode: store.CycleModeSingleRobot, Order: order, ProcessNodeID: node.ID}, nil
-}
-
-func (e *Engine) requestOpNodeTwoRobot(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, assignment *store.ProcessNodeStyleAssignment, quantity int64) (*OpNodeOrderResult, error) {
-	if node.FullPickupNode == "" || node.StagingNode == "" || opNodeReturnNode(node) == "" {
-		return nil, fmt.Errorf("node %s does not support two robot cycle with the simplified delegate configuration", node.Name)
-	}
-	resupplySteps := []protocol.ComplexOrderStep{
-		buildPickupStep(node.FullPickupNode, node.FullPickupNodeGroup),
-		buildDropoffStep(node.StagingNode, node.StagingNodeGroup),
-		{Action: "wait"},
-		buildPickupStep(node.StagingNode, node.StagingNodeGroup),
-		{Action: "dropoff", Node: node.DeliveryNode},
-	}
-	a, err := e.orderMgr.CreateComplexOrder(&node.ID, quantity, node.DeliveryNode, resupplySteps)
-	if err != nil {
-		return nil, err
-	}
-	removalSteps := []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: node.DeliveryNode},
-		{Action: "wait"},
-		{Action: "pickup", Node: node.DeliveryNode},
-		buildDropoffStep(opNodeReturnNode(node), ""),
-	}
-	b, err := e.orderMgr.CreateComplexOrder(&node.ID, quantity, "", removalSteps)
-	if err != nil {
-		return nil, err
-	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, &a.ID, &b.ID)
-	_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID, assignment.PayloadCode, "replenishing", runtime.RemainingUOP, runtime.ManifestStatus)
-	a, _ = e.db.GetOrder(a.ID)
-	b, _ = e.db.GetOrder(b.ID)
-	return &OpNodeOrderResult{CycleMode: store.CycleModeTwoRobot, OrderA: a, OrderB: b, ProcessNodeID: node.ID}, nil
-}
-
-func (e *Engine) requestOpNodeSequential(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, assignment *store.ProcessNodeStyleAssignment, quantity int64) (*OpNodeOrderResult, error) {
-	if opNodeReturnNode(node) == "" {
-		return nil, fmt.Errorf("node %s has no return destination configured", node.Name)
-	}
-	steps := []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: node.DeliveryNode},
-		{Action: "wait"},
-		{Action: "pickup", Node: node.DeliveryNode},
-		buildDropoffStep(opNodeReturnNode(node), ""),
-	}
-	order, err := e.orderMgr.CreateComplexOrder(&node.ID, quantity, node.DeliveryNode, steps)
-	if err != nil {
-		return nil, err
-	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, &order.ID, nil)
-	_ = e.db.SetProcessNodeRuntime(node.ID, runtime.EffectiveStyleID, runtime.ActiveAssignmentID, runtime.StagedAssignmentID, assignment.PayloadCode, "replenishing", runtime.RemainingUOP, runtime.ManifestStatus)
-	order, _ = e.db.GetOrder(order.ID)
-	return &OpNodeOrderResult{CycleMode: store.CycleModeSequential, Order: order, ProcessNodeID: node.ID}, nil
-}
-
-func opNodeReturnNode(node *store.ProcessNode) string {
-	if node.OutgoingNode != "" {
-		return node.OutgoingNode
-	}
-	if node.CoreNodeName != "" {
-		return node.CoreNodeName
-	}
-	if node.StagingNode != "" {
-		return node.StagingNode
-	}
-	return node.DeliveryNode
+	claim := e.findActiveClaim(node)
+	return node, runtime, claim, nil
 }

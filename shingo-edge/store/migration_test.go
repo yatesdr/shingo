@@ -255,19 +255,31 @@ INSERT INTO op_node_style_assignments (id, op_node_id, style_id, payload_code, p
 		t.Fatalf("expected one migrated process node, count=%d", nodeCount)
 	}
 
-	var assignmentCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM process_node_style_assignments`).Scan(&assignmentCount); err != nil {
-		t.Fatalf("count process_node_style_assignments: %v", err)
+	// Verify process_node_style_assignments was dropped (replaced by style_node_claims)
+	var assignmentTableExists int
+	db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='process_node_style_assignments'`).Scan(&assignmentTableExists)
+	if assignmentTableExists != 0 {
+		t.Fatalf("expected process_node_style_assignments table to be dropped after migration")
 	}
-	if assignmentCount != 1 {
-		t.Fatalf("expected one migrated process node assignment, count=%d", assignmentCount)
+
+	// Verify process_nodes was stripped of old routing columns
+	hasPositionType, _ := db.tableHasColumn("process_nodes", "position_type")
+	if hasPositionType {
+		t.Fatalf("expected position_type column to be removed from process_nodes")
 	}
 
 	var delegationCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM operator_station_process_nodes`).Scan(&delegationCount); err != nil {
-		t.Fatalf("count operator_station_process_nodes: %v", err)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM process_nodes WHERE operator_station_id IS NOT NULL`).Scan(&delegationCount); err != nil {
+		t.Fatalf("count process_nodes with operator_station_id: %v", err)
 	}
 	if delegationCount != 1 {
 		t.Fatalf("expected one migrated station delegation, count=%d", delegationCount)
+	}
+
+	// Verify junction table was dropped during migration
+	var junctionExists int
+	db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='operator_station_process_nodes'`).Scan(&junctionExists)
+	if junctionExists != 0 {
+		t.Fatalf("expected operator_station_process_nodes junction table to be dropped after migration")
 	}
 }

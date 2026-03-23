@@ -118,9 +118,6 @@ func (e *Engine) Start() {
 	}
 	e.plcMgr.StartPolling()
 
-	// Scan produce slots for empty bin needs on startup
-	e.scanProduceSlots()
-
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)
 }
 

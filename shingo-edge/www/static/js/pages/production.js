@@ -151,9 +151,9 @@ renderProductionTable();
 // SSE: real-time counter updates
 ShingoEdge.createSSE('/events', {
     onCounterUpdate: function(data) {
-        if (data.line_id !== _activeLineID) return;
+        if (data.process_id !== _activeLineID) return;
         // If filtering by style, skip deltas from other styles
-        if (_filterStyleID && data.job_style_id !== _filterStyleID) return;
+        if (_filterStyleID && data.style_id !== _filterStyleID) return;
 
         var today = new Date();
         var todayStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');

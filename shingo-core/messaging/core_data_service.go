@@ -59,6 +59,13 @@ func (s *CoreDataService) Handle(env *protocol.Envelope, p *protocol.Data) {
 		s.handleTagVerifyRequest(env, &req)
 	case protocol.SubjectCatalogPayloadsRequest:
 		s.handleCatalogPayloadsRequest(env)
+	case protocol.SubjectNodeStateRequest:
+		var req protocol.NodeStateRequest
+		if err := json.Unmarshal(p.Body, &req); err != nil {
+			log.Printf("core_handler: decode node state request body: %v", err)
+			return
+		}
+		s.handleNodeStateRequest(env, &req)
 	case protocol.SubjectOrderStatusRequest:
 		var req protocol.OrderStatusRequest
 		if err := json.Unmarshal(p.Body, &req); err != nil {
@@ -196,6 +203,37 @@ func (s *CoreDataService) handleCatalogPayloadsRequest(env *protocol.Envelope) {
 	}
 	s.resp.replyData(env, protocol.SubjectCatalogPayloadsResponse, &protocol.CatalogPayloadsResponse{Payloads: infos})
 	log.Printf("core_handler: sent payload catalog (%d payloads) to %s", len(infos), env.Src.Station)
+}
+
+func (s *CoreDataService) handleNodeStateRequest(env *protocol.Envelope, req *protocol.NodeStateRequest) {
+	log.Printf("core_handler: node state request from %s: %d nodes", env.Src.Station, len(req.Nodes))
+	entries := make([]protocol.NodeStateEntry, 0, len(req.Nodes))
+	for _, name := range req.Nodes {
+		entry := protocol.NodeStateEntry{Name: name}
+		node, err := s.db.GetNodeByName(name)
+		if err != nil {
+			entries = append(entries, entry)
+			continue
+		}
+		bins, err := s.db.ListBinsByNode(node.ID)
+		if err != nil {
+			entries = append(entries, entry)
+			continue
+		}
+		entry.BinCount = len(bins)
+		entry.Occupied = len(bins) > 0
+		for _, b := range bins {
+			if entry.PayloadCode == "" {
+				entry.PayloadCode = b.PayloadCode
+			}
+			if b.ClaimedBy != nil {
+				entry.Claimed = true
+			}
+		}
+		entries = append(entries, entry)
+	}
+	s.resp.replyData(env, protocol.SubjectNodeStateResponse, &protocol.NodeStateResponse{Nodes: entries})
+	log.Printf("core_handler: sent node state (%d entries) to %s", len(entries), env.Src.Station)
 }
 
 func (s *CoreDataService) handleOrderStatusRequest(env *protocol.Envelope, req *protocol.OrderStatusRequest) {

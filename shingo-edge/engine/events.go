@@ -45,31 +45,31 @@ type Event struct {
 
 // CounterReadEvent is emitted on every PLC poll.
 type CounterReadEvent struct {
-	ReportingPointID int64
-	PLCName          string
-	TagName          string
-	Value            int64
+	ReportingPointID int64  `json:"reporting_point_id"`
+	PLCName          string `json:"plc_name"`
+	TagName          string `json:"tag_name"`
+	Value            int64  `json:"value"`
 }
 
 // CounterDeltaEvent is emitted when production count increases.
 type CounterDeltaEvent struct {
-	ReportingPointID int64
-	LineID           int64
-	JobStyleID       int64
-	Delta            int64
-	NewCount         int64
-	Anomaly          string // "reset" if from a PLC counter reset, "" for normal
+	ReportingPointID int64  `json:"reporting_point_id"`
+	ProcessID        int64  `json:"process_id"`
+	StyleID          int64  `json:"style_id"`
+	Delta            int64  `json:"delta"`
+	NewCount         int64  `json:"new_count"`
+	Anomaly          string `json:"anomaly"` // "reset" if from a PLC counter reset, "" for normal
 }
 
 // CounterAnomalyEvent is emitted for counter resets or jumps.
 type CounterAnomalyEvent struct {
-	ReportingPointID int64
-	SnapshotID       int64
-	PLCName          string
-	TagName          string
-	OldValue         int64
-	NewValue         int64
-	AnomalyType      string // "reset" or "jump"
+	ReportingPointID int64  `json:"reporting_point_id"`
+	SnapshotID       int64  `json:"snapshot_id"`
+	PLCName          string `json:"plc_name"`
+	TagName          string `json:"tag_name"`
+	OldValue         int64  `json:"old_value"`
+	NewValue         int64  `json:"new_value"`
+	AnomalyType      string `json:"anomaly_type"` // "reset" or "jump"
 }
 
 // OrderCreatedEvent is emitted when a new order is placed.
@@ -101,8 +101,8 @@ type OrderCompletedEvent struct {
 
 // PLCEvent is emitted for PLC connection state changes.
 type PLCEvent struct {
-	PLCName string
-	Error   string
+	PLCName string `json:"plc_name"`
+	Error   string `json:"error,omitempty"`
 }
 
 // PLCHealthAlertEvent is emitted when a PLC goes offline.

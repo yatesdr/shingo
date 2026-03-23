@@ -30,9 +30,7 @@ type Order struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 
 	// Joined fields
-	PayloadDesc     string `json:"payload_desc"`
-	PayloadCode     string `json:"payload_code"`
-	LineName        string `json:"line_name"`
+	ProcessName     string `json:"process_name"`
 	ProcessNodeName string `json:"process_node_name"`
 	StationName     string `json:"station_name"`
 }
@@ -51,18 +49,12 @@ const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id
 	o.delivery_node, o.staging_node, o.pickup_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.created_at, o.updated_at,
-	COALESCE(CASE WHEN sa.payload_description != '' THEN sa.payload_description ELSE aa.payload_description END, ''),
-	COALESCE(CASE WHEN sa.payload_code != '' THEN sa.payload_code ELSE aa.payload_code END, ''),
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
 
 const orderJoin = `FROM orders o
 	LEFT JOIN process_nodes n ON n.id = o.process_node_id
-	LEFT JOIN operator_station_process_nodes d ON d.process_node_id = n.id
-	LEFT JOIN operator_stations os ON os.id = d.operator_station_id
-	LEFT JOIN processes pl ON pl.id = n.process_id
-	LEFT JOIN process_node_runtime_states rs ON rs.process_node_id = n.id
-	LEFT JOIN process_node_style_assignments aa ON aa.id = rs.active_assignment_id
-	LEFT JOIN process_node_style_assignments sa ON sa.id = rs.staged_assignment_id`
+	LEFT JOIN operator_stations os ON os.id = n.operator_station_id
+	LEFT JOIN processes pl ON pl.id = n.process_id`
 
 func (db *DB) ListOrders() ([]Order, error) {
 	rows, err := db.Query(`SELECT ` + orderSelectCols + ` ` + orderJoin + ` ORDER BY o.created_at DESC`)
@@ -93,11 +85,11 @@ func (db *DB) CountActiveOrders() int {
 	return count
 }
 
-func (db *DB) ListActiveOrdersByLine(lineID int64) ([]Order, error) {
+func (db *DB) ListActiveOrdersByProcess(processID int64) ([]Order, error) {
 	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
 		WHERE o.status NOT IN ('confirmed', 'cancelled')
 		AND pl.id = ?
-		ORDER BY o.created_at DESC`, lineID)
+		ORDER BY o.created_at DESC`, processID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +107,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
-			&o.PayloadDesc, &o.PayloadCode, &o.LineName, &o.ProcessNodeName, &o.StationName); err != nil {
+			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 			return nil, err
 		}
 		if stagedExpireAt.Valid {
@@ -136,7 +128,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error 
 		&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
-		&o.PayloadDesc, &o.PayloadCode, &o.LineName, &o.ProcessNodeName, &o.StationName); err != nil {
+		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 		return err
 	}
 	if stagedExpireAt.Valid {
