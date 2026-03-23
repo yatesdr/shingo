@@ -175,7 +175,7 @@ async function loadClaims(styleID) {
         }
         var table = document.createElement('table');
         table.className = 'table';
-        table.innerHTML = '<thead><tr><th>Core Node</th><th>Role</th><th>Swap</th><th>Wants</th><th>Inbound</th><th>Outbound</th><th style="width:1%"></th></tr></thead>';
+        table.innerHTML = '<thead><tr><th>Core Node</th><th>Role</th><th>Swap</th><th>Wants</th><th>Inbound</th><th>Outbound</th><th>Source</th><th>Dest</th><th style="width:1%"></th></tr></thead>';
         var tbody = document.createElement('tbody');
         claims.forEach(function(c) {
             var tr = document.createElement('tr');
@@ -190,7 +190,7 @@ async function loadClaims(styleID) {
             } else {
                 wants = 'Unset';
             }
-            var swapLabel = {'simple': 'Simple', 'single_robot': '1-Robot', 'two_robot': '2-Robot'}[c.swap_mode] || c.swap_mode || 'Simple';
+            var swapLabel = {'simple': 'Simple', 'sequential': 'Sequential', 'single_robot': '1-Robot', 'two_robot': '2-Robot'}[c.swap_mode] || c.swap_mode || 'Simple';
             var flags = [];
             if (c.keep_staged) flags.push('staged');
             if (c.evacuate_on_changeover) flags.push('evac');
@@ -205,6 +205,8 @@ async function loadClaims(styleID) {
                 '<td>' + ShingoEdge.escapeHtml(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.inbound_staging || '\u2014') + '</td>' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.outbound_staging || '\u2014') + '</td>' +
+                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.inbound_source_node || c.inbound_source_node_group || '\u2014') + '</td>' +
+                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.outbound_source_node || c.outbound_source_node_group || '\u2014') + '</td>' +
                 '<td style="white-space:nowrap">' +
                     '<button class="btn btn-sm" onclick=\'editClaim(' + JSON.stringify(c).replace(/'/g, "&#39;") + ')\'>Edit</button> ' +
                     '<button class="btn btn-sm btn-danger" onclick="removeClaim(' + c.id + ')">Remove</button>' +
@@ -238,6 +240,10 @@ function openClaimModal() {
     document.getElementById('claims-add-reorder').value = '0';
     document.getElementById('claims-add-inbound').value = '';
     document.getElementById('claims-add-outbound').value = '';
+    document.getElementById('claims-add-inbound-source').value = '';
+    document.getElementById('claims-add-inbound-source-group').value = '';
+    document.getElementById('claims-add-outbound-source').value = '';
+    document.getElementById('claims-add-outbound-source-group').value = '';
     document.getElementById('claims-add-keep-staged').checked = false;
     document.getElementById('claims-add-evacuate').checked = false;
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
@@ -263,6 +269,10 @@ function editClaim(claim) {
     document.getElementById('claims-add-reorder').value = claim.reorder_point || 0;
     document.getElementById('claims-add-inbound').value = claim.inbound_staging || '';
     document.getElementById('claims-add-outbound').value = claim.outbound_staging || '';
+    document.getElementById('claims-add-inbound-source').value = claim.inbound_source_node || '';
+    document.getElementById('claims-add-inbound-source-group').value = claim.inbound_source_node_group || '';
+    document.getElementById('claims-add-outbound-source').value = claim.outbound_source_node || '';
+    document.getElementById('claims-add-outbound-source-group').value = claim.outbound_source_node_group || '';
     document.getElementById('claims-add-keep-staged').checked = !!claim.keep_staged;
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
@@ -280,9 +290,11 @@ function validateClaimStaging() {
     var inbound = document.getElementById('claims-add-inbound').value;
     var outbound = document.getElementById('claims-add-outbound').value;
     var warn = document.getElementById('claims-staging-warning');
-    var needsStaging = swap === 'single_robot' || swap === 'two_robot';
-    if (warn) warn.style.display = (needsStaging && (!inbound || !outbound)) ? '' : 'none';
-    return !needsStaging || (!!inbound && !!outbound);
+    var needsBoth = swap === 'single_robot';
+    var needsInbound = swap === 'two_robot';
+    var missing = (needsBoth && (!inbound || !outbound)) || (needsInbound && !inbound);
+    if (warn) warn.style.display = missing ? '' : 'none';
+    return !missing;
 }
 
 async function saveClaim() {
@@ -314,6 +326,10 @@ async function saveClaim() {
             auto_reorder: true,
             inbound_staging: document.getElementById('claims-add-inbound').value,
             outbound_staging: document.getElementById('claims-add-outbound').value,
+            inbound_source_node: document.getElementById('claims-add-inbound-source').value,
+            inbound_source_node_group: document.getElementById('claims-add-inbound-source-group').value,
+            outbound_source_node: document.getElementById('claims-add-outbound-source').value,
+            outbound_source_node_group: document.getElementById('claims-add-outbound-source-group').value,
             keep_staged: document.getElementById('claims-add-keep-staged').checked,
             evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked
         });

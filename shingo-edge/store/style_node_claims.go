@@ -6,41 +6,50 @@ import "time"
 // payload and role. For "consume" nodes the system delivers full bins; for
 // "produce" nodes the system delivers empty bins.
 type StyleNodeClaim struct {
-	ID                    int64     `json:"id"`
-	StyleID               int64     `json:"style_id"`
-	CoreNodeName          string    `json:"core_node_name"`
-	Role                  string    `json:"role"`     // "consume" or "produce"
-	SwapMode              string    `json:"swap_mode"` // "simple", "single_robot", "two_robot"
-	PayloadCode           string    `json:"payload_code"`
-	UOPCapacity           int       `json:"uop_capacity"`
-	ReorderPoint          int       `json:"reorder_point"`
-	AutoReorder           bool      `json:"auto_reorder"`
-	InboundStaging        string    `json:"inbound_staging"`
-	OutboundStaging       string    `json:"outbound_staging"`
-	KeepStaged            bool      `json:"keep_staged"`
-	EvacuateOnChangeover  bool      `json:"evacuate_on_changeover"`
-	Sequence              int       `json:"sequence"`
-	CreatedAt             time.Time `json:"created_at"`
+	ID                       int64     `json:"id"`
+	StyleID                  int64     `json:"style_id"`
+	CoreNodeName             string    `json:"core_node_name"`
+	Role                     string    `json:"role"`     // "consume" or "produce"
+	SwapMode                 string    `json:"swap_mode"` // "simple", "single_robot", "two_robot", "sequential"
+	PayloadCode              string    `json:"payload_code"`
+	UOPCapacity              int       `json:"uop_capacity"`
+	ReorderPoint             int       `json:"reorder_point"`
+	AutoReorder              bool      `json:"auto_reorder"`
+	InboundStaging           string    `json:"inbound_staging"`
+	OutboundStaging          string    `json:"outbound_staging"`
+	InboundSourceNode        string    `json:"inbound_source_node"`
+	InboundSourceNodeGroup   string    `json:"inbound_source_node_group"`
+	OutboundSourceNode       string    `json:"outbound_source_node"`
+	OutboundSourceNodeGroup  string    `json:"outbound_source_node_group"`
+	KeepStaged               bool      `json:"keep_staged"`
+	EvacuateOnChangeover     bool      `json:"evacuate_on_changeover"`
+	Sequence                 int       `json:"sequence"`
+	CreatedAt                time.Time `json:"created_at"`
 }
 
 type StyleNodeClaimInput struct {
-	StyleID              int64  `json:"style_id"`
-	CoreNodeName         string `json:"core_node_name"`
-	Role                 string `json:"role"`
-	SwapMode             string `json:"swap_mode"`
-	PayloadCode          string `json:"payload_code"`
-	UOPCapacity          int    `json:"uop_capacity"`
-	ReorderPoint         int    `json:"reorder_point"`
-	AutoReorder          bool   `json:"auto_reorder"`
-	InboundStaging       string `json:"inbound_staging"`
-	OutboundStaging      string `json:"outbound_staging"`
-	KeepStaged           bool   `json:"keep_staged"`
-	EvacuateOnChangeover bool   `json:"evacuate_on_changeover"`
-	Sequence             int    `json:"sequence"`
+	StyleID                 int64  `json:"style_id"`
+	CoreNodeName            string `json:"core_node_name"`
+	Role                    string `json:"role"`
+	SwapMode                string `json:"swap_mode"`
+	PayloadCode             string `json:"payload_code"`
+	UOPCapacity             int    `json:"uop_capacity"`
+	ReorderPoint            int    `json:"reorder_point"`
+	AutoReorder             bool   `json:"auto_reorder"`
+	InboundStaging          string `json:"inbound_staging"`
+	OutboundStaging         string `json:"outbound_staging"`
+	InboundSourceNode       string `json:"inbound_source_node"`
+	InboundSourceNodeGroup  string `json:"inbound_source_node_group"`
+	OutboundSourceNode      string `json:"outbound_source_node"`
+	OutboundSourceNodeGroup string `json:"outbound_source_node_group"`
+	KeepStaged              bool   `json:"keep_staged"`
+	EvacuateOnChangeover    bool   `json:"evacuate_on_changeover"`
+	Sequence                int    `json:"sequence"`
 }
 
 const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
+	inbound_source_node, inbound_source_node_group, outbound_source_node, outbound_source_node_group,
 	keep_staged, evacuate_on_changeover, sequence, created_at`
 
 func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleNodeClaim, error) {
@@ -48,6 +57,7 @@ func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleN
 	var createdAt string
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
+		&c.InboundSourceNode, &c.InboundSourceNodeGroup, &c.OutboundSourceNode, &c.OutboundSourceNodeGroup,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.Sequence, &createdAt); err != nil {
 		return c, err
 	}
@@ -104,10 +114,13 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 	if err == nil {
 		_, err = db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
 			uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
+			inbound_source_node=?, inbound_source_node_group=?, outbound_source_node=?, outbound_source_node_group=?,
 			keep_staged=?, evacuate_on_changeover=?, sequence=?
 			WHERE id=?`,
 			in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
-			in.InboundStaging, in.OutboundStaging, in.KeepStaged, in.EvacuateOnChangeover, in.Sequence, existingID)
+			in.InboundStaging, in.OutboundStaging,
+			in.InboundSourceNode, in.InboundSourceNodeGroup, in.OutboundSourceNode, in.OutboundSourceNodeGroup,
+			in.KeepStaged, in.EvacuateOnChangeover, in.Sequence, existingID)
 		return existingID, err
 	}
 	if in.Sequence <= 0 {
@@ -117,10 +130,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 	}
 	res, err := db.Exec(`INSERT INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
+		inbound_source_node, inbound_source_node_group, outbound_source_node, outbound_source_node_group,
 		keep_staged, evacuate_on_changeover, sequence)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
+		in.InboundSourceNode, in.InboundSourceNodeGroup, in.OutboundSourceNode, in.OutboundSourceNodeGroup,
 		in.KeepStaged, in.EvacuateOnChangeover, in.Sequence)
 	if err != nil {
 		return 0, err

@@ -332,6 +332,12 @@ func (db *DB) migrate() error {
 	db.Exec("UPDATE style_node_claims SET inbound_staging = staging_node WHERE staging_node != ''")
 	db.Exec("UPDATE style_node_claims SET outbound_staging = release_node WHERE release_node != ''")
 
+	// Source / destination routing on style_node_claims
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN inbound_source_node TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN inbound_source_node_group TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_source_node TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_source_node_group TEXT NOT NULL DEFAULT ''")
+
 	// Migrate queued → pending status
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 

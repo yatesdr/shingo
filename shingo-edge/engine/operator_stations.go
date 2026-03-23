@@ -52,9 +52,19 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 	nodeID := node.ID
 
 	switch claim.SwapMode {
+	case "sequential":
+		steps := BuildSequentialRemovalSteps(claim)
+		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, "", steps) // "" = removal, no UOP reset
+		if err != nil {
+			return nil, err
+		}
+		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, nil)
+		orderA, _ = e.db.GetOrder(orderA.ID)
+		return &NodeOrderResult{CycleMode: "sequential", Order: orderA, ProcessNodeID: nodeID}, nil
+
 	case "two_robot":
-		if claim.InboundStaging == "" || claim.OutboundStaging == "" {
-			return nil, fmt.Errorf("node %s: two-robot swap requires inbound and outbound staging nodes", node.Name)
+		if claim.InboundStaging == "" {
+			return nil, fmt.Errorf("node %s: two-robot swap requires inbound staging node", node.Name)
 		}
 		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
 		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, claim.CoreNodeName, stepsA)

@@ -1,5 +1,92 @@
 # Changelog
 
+## 2026-03-23 — Delivery Cycle Modes: Sequential, Single Robot, Two Robot
+
+Adds source/destination routing to `style_node_claims`, fixes single-robot and two-robot step sequences, and introduces sequential mode.
+
+### New Fields on `style_node_claims`
+
+Four columns for source/destination routing, separate from staging areas:
+
+```
+InboundSourceNode → InboundStaging → CoreNodeName → OutboundStaging → OutboundSourceNode
+  (where from)       (temp park)      (lineside)     (temp park)       (where to)
+```
+
+| Field | Purpose |
+|-------|---------|
+| `inbound_source_node` | Explicit pickup node for new material |
+| `inbound_source_node_group` | Node group for new material (Core resolves via FIFO/FAVL) |
+| `outbound_source_node` | Explicit dropoff node for old material |
+| `outbound_source_node_group` | Node group for old material (Core resolves) |
+
+Node = specific slot (Shingo doesn't control storage). Node group = Core picks best slot. Blank = Core global fallback by payloadCode. Fully backward compatible.
+
+### Step Sequences
+
+#### Sequential — two robots, staggered dispatch
+
+```
+Order A (Robot 1 — removal):             Order B (Robot 2 — backfill):
+┌─────────────────────────────────┐      ┌─────────────────────────────────┐
+│ 1. dropoff(CoreNodeName)        │      │ 1. pickup(InboundSource)        │
+│ 2. wait                         │      │ 2. dropoff(CoreNodeName)        │
+│ 3. pickup(CoreNodeName)         │      └─────────────────────────────────┘
+│ 4. dropoff(OutboundSource)      │────────▶ Order B auto-created when
+└─────────────────────────────────┘        Order A goes "in_transit"
+```
+
+Order A delivery_node = "" (removal, no UOP reset). Order B delivery_node = CoreNodeName (backfill, resets UOP).
+
+#### Single Robot — 10-step swap (was 7)
+
+```
+ 1. pickup(InboundSource)          — pick new from source
+ 2. dropoff(InboundStaging)        — park new at inbound staging
+ 3. dropoff(CoreNodeName)          — pre-position at lineside
+ 4. wait                           — operator releases
+ 5. pickup(CoreNodeName)           — pick up old from line
+ 6. dropoff(OutboundStaging)       — quick-park old nearby
+ 7. pickup(InboundStaging)         — grab new from staging
+ 8. dropoff(CoreNodeName)          — deliver new to line
+ 9. pickup(OutboundStaging)        — grab old from staging
+10. dropoff(OutboundSource)        — deliver old to final dest.
+```
+
+#### Two Robot — parallel swap
+
+```
+Order A (resupply):                      Order B (removal):
+┌─────────────────────────────────┐     ┌─────────────────────────────────┐
+│ 1. pickup(InboundSource)        │     │ 1. dropoff(CoreNodeName)        │
+│ 2. dropoff(InboundStaging)      │     │ 2. wait                         │
+│ 3. wait                         │     │ 3. pickup(CoreNodeName)         │
+│ 4. pickup(InboundStaging)       │     │ 4. dropoff(OutboundSource)      │
+│ 5. dropoff(CoreNodeName)        │     └─────────────────────────────────┘
+└─────────────────────────────────┘
+```
+
+Two-robot validation now only requires InboundStaging (not OutboundStaging) — removal robot goes direct to OutboundSource.
+
+### Other Changes
+
+- `buildStep` helper uses 3-tier resolution: explicit node → node group → empty (global fallback)
+- `BuildDeliverSteps` / `BuildReleaseSteps` use source routing instead of staging fields for pickup/dropoff
+- Sequential backfill wired via `EventOrderStatusChanged` → `handleSequentialBackfill` in `engine/wiring.go`
+- UI: "Sequential" added to swap mode dropdown, source/destination fields added to claim modal
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `store/schema.go` | 4 ALTER TABLE migrations for source routing columns |
+| `store/style_node_claims.go` | Struct + SQL updated for 4 new fields |
+| `engine/material_orders.go` | Step builders rewritten: buildStep helper, 10-step single, source routing on two-robot, sequential builders added |
+| `engine/operator_stations.go` | Sequential case added to `requestNodeFromClaim`, two-robot validation relaxed |
+| `engine/wiring.go` | `EventOrderStatusChanged` subscription + `handleSequentialBackfill` handler |
+| `www/templates/processes.html` | Sequential in dropdown, source/destination fieldset in claim modal |
+| `www/static/js/pages/processes.js` | Source fields wired in edit/save/display, validation updated |
+
 ## 2026-03-21 — Lifecycle, Messaging, and Recovery Hardening
 
 ### Core Reliability

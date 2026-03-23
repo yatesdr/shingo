@@ -28,6 +28,12 @@ func (e *Engine) wireEventHandlers() {
 			e.handleNodeOrderFailed(failed)
 		}
 	}, EventOrderFailed)
+
+	e.Events.SubscribeTypes(func(evt Event) {
+		if changed, ok := evt.Payload.(OrderStatusChangedEvent); ok {
+			e.handleSequentialBackfill(changed)
+		}
+	}, EventOrderStatusChanged)
 }
 
 // handleCounterDelta processes a production counter tick:
@@ -227,4 +233,48 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error")
 		log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
 	}
+}
+
+// handleSequentialBackfill watches for sequential Order A going in_transit
+// and auto-creates Order B (backfill) to deliver replacement material.
+func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
+	if changed.NewStatus != "in_transit" || changed.ProcessNodeID == nil {
+		return
+	}
+	order, err := e.db.GetOrder(changed.OrderID)
+	if err != nil || order.ProcessNodeID == nil {
+		return
+	}
+	node, err := e.db.GetProcessNode(*order.ProcessNodeID)
+	if err != nil {
+		return
+	}
+	runtime, err := e.db.EnsureProcessNodeRuntime(node.ID)
+	if err != nil {
+		return
+	}
+
+	// Only act on the active order (Order A) for this node
+	if runtime.ActiveOrderID == nil || *runtime.ActiveOrderID != order.ID {
+		return
+	}
+	// Don't create backfill if one already exists
+	if runtime.StagedOrderID != nil {
+		return
+	}
+
+	claim := e.findActiveClaim(node)
+	if claim == nil || claim.SwapMode != "sequential" {
+		return
+	}
+
+	steps := BuildSequentialBackfillSteps(claim)
+	nodeID := node.ID
+	orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.CoreNodeName, steps) // delivery_node = CoreNodeName → resets UOP
+	if err != nil {
+		log.Printf("sequential backfill for node %s: %v", node.Name, err)
+		return
+	}
+	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, runtime.ActiveOrderID, &orderB.ID)
+	log.Printf("sequential backfill: created Order B %d for node %s (Order A %d in_transit)", orderB.ID, node.Name, order.ID)
 }
