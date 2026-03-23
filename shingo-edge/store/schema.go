@@ -1,5 +1,7 @@
 package store
 
+import "strings"
+
 const schemaMigrations = `
 DROP TABLE IF EXISTS bom_entries;
 DROP TABLE IF EXISTS inventory;
@@ -34,8 +36,6 @@ CREATE TABLE IF NOT EXISTS styles (
     process_id  INTEGER REFERENCES processes(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    is_default  INTEGER NOT NULL DEFAULT 0,
-    active      INTEGER NOT NULL DEFAULT 1,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(process_id, name)
 );
@@ -108,6 +108,10 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox(sent_at) WHERE sent_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_order_history_order_id ON order_history(order_id);
+CREATE INDEX IF NOT EXISTS idx_counter_snapshots_anomaly ON counter_snapshots(anomaly, operator_confirmed)
+    WHERE anomaly IS NOT NULL AND operator_confirmed = 0;
+
 CREATE TABLE IF NOT EXISTS shifts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL DEFAULT '',
@@ -118,8 +122,8 @@ CREATE TABLE IF NOT EXISTS shifts (
 
 CREATE TABLE IF NOT EXISTS hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id   INTEGER NOT NULL,
-    style_id     INTEGER NOT NULL,
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
     count_date   TEXT NOT NULL,
     hour         INTEGER NOT NULL,
     delta        INTEGER NOT NULL DEFAULT 0,
@@ -232,6 +236,10 @@ CREATE TABLE IF NOT EXISTS changeover_node_tasks (
     updated_at                 TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(process_changeover_id, process_node_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_changeovers_process_id ON process_changeovers(process_id);
+CREATE INDEX IF NOT EXISTS idx_cst_changeover_id ON changeover_station_tasks(process_changeover_id);
+CREATE INDEX IF NOT EXISTS idx_cnt_changeover_id ON changeover_node_tasks(process_changeover_id);
 `
 
 func (db *DB) migrate() error {
@@ -259,8 +267,13 @@ func (db *DB) migrate() error {
 		return err
 	}
 
-	// styles: line_id → process_id, add is_default
+	// styles: line_id → process_id
 	if err := db.migrateStyleColumns(); err != nil {
+		return err
+	}
+
+	// styles: strip dead is_default and active columns
+	if err := db.stripDeadStyleColumns(); err != nil {
 		return err
 	}
 
@@ -271,6 +284,11 @@ func (db *DB) migrate() error {
 
 	// hourly_counts: line_id → process_id, job_style_id → style_id
 	if err := db.migrateHourlyCountColumns(); err != nil {
+		return err
+	}
+
+	// hourly_counts: add missing foreign keys
+	if err := db.migrateHourlyCountFKs(); err != nil {
 		return err
 	}
 
@@ -395,7 +413,7 @@ DROP TABLE processes_legacy;
 	return err
 }
 
-// migrateStyleColumns renames line_id → process_id, adds is_default
+// migrateStyleColumns renames line_id → process_id
 func (db *DB) migrateStyleColumns() error {
 	hasLineID, err := db.tableHasColumn("styles", "line_id")
 	if err != nil {
@@ -404,7 +422,6 @@ func (db *DB) migrateStyleColumns() error {
 	if !hasLineID {
 		// Fresh DB or already migrated — ensure process_id column
 		db.Exec("ALTER TABLE styles ADD COLUMN process_id INTEGER REFERENCES processes(id) ON DELETE CASCADE")
-		db.Exec("ALTER TABLE styles ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0")
 		return nil
 	}
 	// Has line_id — rebuild.
@@ -415,15 +432,37 @@ CREATE TABLE styles (
     process_id  INTEGER REFERENCES processes(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    is_default  INTEGER NOT NULL DEFAULT 0,
-    active      INTEGER NOT NULL DEFAULT 1,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(process_id, name)
 );
-INSERT INTO styles (id, process_id, name, description, is_default, active, created_at)
-SELECT id, line_id, name, description, 0, COALESCE(active, 1), created_at
+INSERT INTO styles (id, process_id, name, description, created_at)
+SELECT id, line_id, name, description, created_at
 FROM styles_legacy;
 DROP TABLE styles_legacy;
+`)
+	return err
+}
+
+// stripDeadStyleColumns removes unused is_default and active columns from styles.
+func (db *DB) stripDeadStyleColumns() error {
+	has, _ := db.tableHasColumn("styles", "is_default")
+	if !has {
+		return nil
+	}
+	_, err := db.Exec(`
+ALTER TABLE styles RENAME TO styles_strip;
+CREATE TABLE styles (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id  INTEGER REFERENCES processes(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(process_id, name)
+);
+INSERT INTO styles (id, process_id, name, description, created_at)
+SELECT id, process_id, name, description, created_at
+FROM styles_strip;
+DROP TABLE styles_strip;
 `)
 	return err
 }
@@ -465,8 +504,8 @@ func (db *DB) migrateHourlyCountColumns() error {
 ALTER TABLE hourly_counts RENAME TO hourly_counts_legacy;
 CREATE TABLE hourly_counts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id   INTEGER NOT NULL,
-    style_id     INTEGER NOT NULL,
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
     count_date   TEXT NOT NULL,
     hour         INTEGER NOT NULL,
     delta        INTEGER NOT NULL DEFAULT 0,
@@ -481,6 +520,39 @@ DROP TABLE hourly_counts_legacy;
 	return err
 }
 
+
+// migrateHourlyCountFKs adds foreign keys to hourly_counts if missing.
+func (db *DB) migrateHourlyCountFKs() error {
+	var tableSql string
+	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='hourly_counts'`).Scan(&tableSql)
+	if err != nil {
+		return nil // table doesn't exist yet, schema constant will create it
+	}
+	if strings.Contains(tableSql, "REFERENCES") {
+		return nil // already has FKs
+	}
+	// Prune orphans before adding FK constraints
+	db.Exec(`DELETE FROM hourly_counts WHERE process_id NOT IN (SELECT id FROM processes)`)
+	db.Exec(`DELETE FROM hourly_counts WHERE style_id NOT IN (SELECT id FROM styles)`)
+	_, err = db.Exec(`
+ALTER TABLE hourly_counts RENAME TO hourly_counts_nofk;
+CREATE TABLE hourly_counts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
+    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
+    count_date   TEXT NOT NULL,
+    hour         INTEGER NOT NULL,
+    delta        INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT DEFAULT (datetime('now')),
+    UNIQUE(process_id, style_id, count_date, hour)
+);
+INSERT INTO hourly_counts (id, process_id, style_id, count_date, hour, delta, updated_at)
+SELECT id, process_id, style_id, count_date, hour, delta, updated_at
+FROM hourly_counts_nofk;
+DROP TABLE hourly_counts_nofk;
+`)
+	return err
+}
 
 // migrateOperatorStationColumns removes parent_station_id and expected_client_type
 func (db *DB) migrateOperatorStationColumns() error {

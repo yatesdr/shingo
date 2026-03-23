@@ -212,66 +212,18 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		return nil, err
 	}
 
-	tx, err := e.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	res, err := tx.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by, notes)
-		VALUES (?, ?, ?, 'active', ?, ?)`, processID, process.ActiveStyleID, toStyleID, calledBy, notes)
-	if err != nil {
-		return nil, err
-	}
-	changeoverID, err := res.LastInsertId()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(`UPDATE processes SET target_style_id=? WHERE id=?`, toStyleID, processID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(`UPDATE processes SET production_state='changeover_active' WHERE id=?`, processID); err != nil {
-		return nil, err
+	stationIDs := make([]int64, len(stations))
+	for i := range stations {
+		stationIDs[i] = stations[i].ID
 	}
 
-	for _, station := range stations {
-		if _, err := tx.Exec(`INSERT INTO changeover_station_tasks (
-			process_changeover_id, operator_station_id, state
-		) VALUES (?, ?, 'waiting')`, changeoverID, station.ID); err != nil {
-			return nil, err
-		}
-	}
-
-	for _, diff := range diffs {
-		// Find or create the matching process node
-		var processNodeID *int64
-		for i := range nodes {
-			if nodes[i].CoreNodeName == diff.CoreNodeName {
-				id := nodes[i].ID
-				processNodeID = &id
-				break
-			}
-		}
-		if processNodeID == nil {
-			// Auto-create process node for this claimed core node
-			res, err := tx.Exec(`INSERT INTO process_nodes (process_id, core_node_name, code, name) VALUES (?, ?, ?, ?)`,
-				processID, diff.CoreNodeName, diff.CoreNodeName, diff.CoreNodeName)
-			if err != nil {
-				return nil, fmt.Errorf("auto-create process node for %s: %w", diff.CoreNodeName, err)
-			}
-			id, _ := res.LastInsertId()
-			processNodeID = &id
-		}
-
-		// Map claim diff situation to node task state
+	nodeTasks := make([]store.ChangeoverNodeTaskInput, len(diffs))
+	for i, diff := range diffs {
 		state := "unchanged"
 		switch diff.Situation {
-		case SituationSwap, SituationEvacuate, SituationDrop:
-			state = "swap_required"
-		case SituationAdd:
+		case SituationSwap, SituationEvacuate, SituationDrop, SituationAdd:
 			state = "swap_required"
 		}
-
 		var fromClaimID, toClaimID *int64
 		if diff.FromClaim != nil {
 			id := diff.FromClaim.ID
@@ -281,18 +233,17 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 			id := diff.ToClaim.ID
 			toClaimID = &id
 		}
-
-		if _, err := tx.Exec(`INSERT INTO changeover_node_tasks (
-			process_changeover_id, process_node_id, from_claim_id, to_claim_id, situation, state
-		) VALUES (?, ?, ?, ?, ?, ?)`, changeoverID, *processNodeID, fromClaimID, toClaimID, string(diff.Situation), state); err != nil {
-			return nil, err
-		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id) VALUES (?)`, *processNodeID); err != nil {
-			return nil, err
+		nodeTasks[i] = store.ChangeoverNodeTaskInput{
+			ProcessID:    processID,
+			CoreNodeName: diff.CoreNodeName,
+			FromClaimID:  fromClaimID,
+			ToClaimID:    toClaimID,
+			Situation:    string(diff.Situation),
+			State:        state,
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
+	if _, err := e.db.CreateChangeover(processID, process.ActiveStyleID, toStyleID, calledBy, notes, stationIDs, nodeTasks, nodes); err != nil {
 		return nil, err
 	}
 

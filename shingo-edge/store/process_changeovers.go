@@ -2,8 +2,92 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
+
+// ChangeoverNodeTaskInput holds pre-computed data for a single node task
+// to be created as part of a changeover transaction.
+type ChangeoverNodeTaskInput struct {
+	ProcessID    int64  // used for auto-creating process node
+	CoreNodeName string // matched against existing nodes or used for auto-create
+	FromClaimID  *int64
+	ToClaimID    *int64
+	Situation    string
+	State        string
+}
+
+// CreateChangeover atomically creates a changeover with its station and node tasks.
+// Returns the changeover ID.
+func (db *DB) CreateChangeover(processID int64, fromStyleID *int64, toStyleID int64, calledBy, notes string,
+	stationIDs []int64, nodeTasks []ChangeoverNodeTaskInput, existingNodes []ProcessNode) (int64, error) {
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`INSERT INTO process_changeovers (process_id, from_style_id, to_style_id, state, called_by, notes)
+		VALUES (?, ?, ?, 'active', ?, ?)`, processID, fromStyleID, toStyleID, calledBy, notes)
+	if err != nil {
+		return 0, err
+	}
+	changeoverID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`UPDATE processes SET target_style_id=? WHERE id=?`, toStyleID, processID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`UPDATE processes SET production_state='changeover_active' WHERE id=?`, processID); err != nil {
+		return 0, err
+	}
+
+	for _, sid := range stationIDs {
+		if _, err := tx.Exec(`INSERT INTO changeover_station_tasks (
+			process_changeover_id, operator_station_id, state
+		) VALUES (?, ?, 'waiting')`, changeoverID, sid); err != nil {
+			return 0, err
+		}
+	}
+
+	for _, nt := range nodeTasks {
+		// Find existing process node by core_node_name
+		var processNodeID *int64
+		for i := range existingNodes {
+			if existingNodes[i].CoreNodeName == nt.CoreNodeName {
+				id := existingNodes[i].ID
+				processNodeID = &id
+				break
+			}
+		}
+		if processNodeID == nil {
+			// Auto-create process node for this claimed core node
+			res, err := tx.Exec(`INSERT INTO process_nodes (process_id, core_node_name, code, name) VALUES (?, ?, ?, ?)`,
+				nt.ProcessID, nt.CoreNodeName, nt.CoreNodeName, nt.CoreNodeName)
+			if err != nil {
+				return 0, fmt.Errorf("auto-create process node for %s: %w", nt.CoreNodeName, err)
+			}
+			id, _ := res.LastInsertId()
+			processNodeID = &id
+		}
+
+		if _, err := tx.Exec(`INSERT INTO changeover_node_tasks (
+			process_changeover_id, process_node_id, from_claim_id, to_claim_id, situation, state
+		) VALUES (?, ?, ?, ?, ?, ?)`, changeoverID, *processNodeID, nt.FromClaimID, nt.ToClaimID, nt.Situation, nt.State); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id) VALUES (?)`, *processNodeID); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return changeoverID, nil
+}
 
 type ProcessChangeover struct {
 	ID          int64      `json:"id"`
