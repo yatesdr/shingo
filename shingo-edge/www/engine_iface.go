@@ -37,6 +37,7 @@ type EngineAccess interface {
 	FinalizeProduceNode(nodeID int64) (*store.Order, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64) error
+	RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order, error)
 	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error)
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error

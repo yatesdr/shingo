@@ -64,6 +64,53 @@ function viewBinContents(binState) {
 }
 </script>
 
+<!-- Request Empty Bin Modal -->
+<div class="modal" id="request-empty-modal" style="display:none">
+    <div class="modal-content" style="max-width:400px">
+        <div class="modal-header">
+            <span>Request Empty Bin</span>
+            <button class="btn btn-sm" onclick="ShingoEdge.hideModal('request-empty-modal')">&times;</button>
+        </div>
+        <div class="card-body">
+            <input type="hidden" id="re-node-id">
+            <div class="form-group">
+                <label>Request empty bin compatible with:</label>
+                <select id="re-payload" class="form-input"></select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="ShingoEdge.hideModal('request-empty-modal')">Cancel</button>
+            <button class="btn btn-primary" onclick="submitRequestEmpty()">Request</button>
+        </div>
+    </div>
+</div>
+<script>
+function openRequestEmptyModal(nodeID, allowedCodes) {
+    document.getElementById('re-node-id').value = nodeID;
+    var sel = document.getElementById('re-payload');
+    sel.innerHTML = '';
+    (allowedCodes || []).forEach(function(code) {
+        var opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = code;
+        sel.appendChild(opt);
+    });
+    ShingoEdge.showModal('request-empty-modal');
+}
+async function submitRequestEmpty() {
+    var nodeID = parseInt(document.getElementById('re-node-id').value, 10);
+    var payloadCode = document.getElementById('re-payload').value;
+    if (!payloadCode) { ShingoEdge.toast('Select a payload', 'warning'); return; }
+    try {
+        await ShingoEdge.api.post('/api/process-nodes/' + nodeID + '/request-empty', {payload_code: payloadCode});
+        ShingoEdge.hideModal('request-empty-modal');
+        ShingoEdge.toast('Empty bin requested', 'success');
+    } catch(e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+</script>
+
 <!-- Load Bin Modal (Bin Loader nodes) -->
 <div class="modal" id="load-bin-modal" style="display:none">
     <div class="modal-content" style="max-width:480px">

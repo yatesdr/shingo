@@ -81,13 +81,19 @@
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Request empty bin">Request Empty</button>
                             <button class="btn btn-sm btn-primary" hx-post="/api/process-nodes/{{.Node.ID}}/finalize" hx-swap="none" title="Finalize manifest count and release full bin to storage">Finalize &amp; Release</button>
                             {{else if eq .ActiveClaim.Role "bin_loader"}}
-                            {{if .BinState}}{{if .BinState.Manifest}}
+                            {{if not .BinState}}
+                            <button class="btn btn-sm" onclick='openRequestEmptyModal({{.Node.ID}}, {{json .ActiveClaim.AllowedPayloads}})' title="Request an empty bin">Request Empty</button>
+                            {{else if not .BinState.Occupied}}
+                            <button class="btn btn-sm" onclick='openRequestEmptyModal({{.Node.ID}}, {{json .ActiveClaim.AllowedPayloads}})' title="Request an empty bin">Request Empty</button>
+                            {{else}}
+                                {{if .BinState.Manifest}}
                             <button class="btn btn-sm" onclick='viewBinContents({{json .BinState}})' title="View bin contents">View</button>
-                            {{end}}{{end}}
+                                {{end}}
                             <button class="btn btn-sm btn-primary" onclick='openLoadBinModal({{.Node.ID}}, {{json .ActiveClaim.AllowedPayloads}}, {{.ActiveClaim.UOPCapacity}})' title="Load bin with payload manifest">Load Bin</button>
-                            {{if .Runtime}}{{if gt .Runtime.RemainingUOP 0}}
+                                {{if .Runtime}}{{if gt .Runtime.RemainingUOP 0}}
                             <button class="btn btn-sm btn-danger" hx-post="/api/process-nodes/{{.Node.ID}}/clear-bin" hx-swap="none" title="Clear bin manifest (fix mis-load)">Clear Bin</button>
-                            {{end}}{{end}}
+                                {{end}}{{end}}
+                            {{end}}
                             {{else}}
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Order material to this node">Request</button>
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/release-empty" hx-swap="none" title="Send current bin to outbound staging">Release</button>

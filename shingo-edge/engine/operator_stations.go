@@ -770,3 +770,63 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	_ = e.db.SetProcessNodeRuntime(nodeID, &claimID, 0)
 	return nil
 }
+
+// RequestEmptyBin requests an empty bin compatible with the given payload to be
+// delivered to a bin_loader node. Core queues the order if no empties are
+// immediately available. payloadCode determines bin type compatibility.
+func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order, error) {
+	node, runtime, claim, err := e.loadActiveNode(nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if claim == nil {
+		return nil, fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if claim.Role != "bin_loader" {
+		return nil, fmt.Errorf("node %s is not a bin_loader node", node.Name)
+	}
+	if runtime.ActiveOrderID != nil {
+		return nil, fmt.Errorf("node %s already has an active order", node.Name)
+	}
+
+	// Check that node doesn't already have a bin
+	if e.coreClient.Available() {
+		bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+		if len(bins) > 0 && bins[0].Occupied {
+			return nil, fmt.Errorf("node %s already has a bin", node.Name)
+		}
+	}
+
+	// Validate payload code against allowed list
+	if payloadCode == "" {
+		return nil, fmt.Errorf("no payload code specified")
+	}
+	if !slices.Contains(claim.AllowedPayloads(), payloadCode) {
+		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+	}
+
+	// Create retrieve order for an empty bin — Core queues if none available
+	order, err := e.orderMgr.CreateRetrieveOrder(
+		&nodeID, true, 1, node.CoreNodeName, "",
+		"standard", payloadCode, e.cfg.Web.AutoConfirm,
+	)
+	if err != nil {
+		return nil, err
+	}
+	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+	return order, nil
+}
+
+// tryAutoRequestEmpty attempts to auto-request an empty bin for a bin_loader node.
+// Fails silently on any error — the next trigger will retry.
+func (e *Engine) tryAutoRequestEmpty(node *store.ProcessNode, claim *store.StyleNodeClaim) {
+	if claim.AutoRequestPayload == "" {
+		return
+	}
+	order, err := e.RequestEmptyBin(node.ID, claim.AutoRequestPayload)
+	if err != nil {
+		log.Printf("bin_loader auto-request for node %s: %v", node.Name, err)
+		return
+	}
+	log.Printf("bin_loader auto-request: created order %d for node %s (payload %s)", order.ID, node.Name, claim.AutoRequestPayload)
+}

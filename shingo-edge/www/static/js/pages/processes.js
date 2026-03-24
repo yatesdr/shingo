@@ -275,6 +275,8 @@ function editClaim(claim) {
     toggleClaimsAddPayload();
     if (claim.role === 'bin_loader') {
         buildAllowedPayloadPicker(claim.allowed_payload_codes || []);
+        updateAutoRequestDropdown();
+        document.getElementById('claims-add-auto-request').value = claim.auto_request_payload || '';
     }
     ShingoEdge.showModal('claim-modal');
 }
@@ -336,6 +338,7 @@ async function saveClaim() {
         outbound_staging: document.getElementById('claims-add-outbound').value,
         inbound_source: document.getElementById('claims-add-inbound-source').value,
         outbound_source: document.getElementById('claims-add-outbound-source').value,
+        auto_request_payload: document.getElementById('claims-add-auto-request').value,
         keep_staged: document.getElementById('claims-add-keep-staged').checked,
         evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked
     };
@@ -399,12 +402,14 @@ function toggleClaimsAddPayload() {
     document.getElementById('claims-add-swap-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
     // Staging — not used by bin_loader or changeover
     document.getElementById('claims-staging-fieldset').style.display = (isChangeover || isBinLoader) ? 'none' : '';
-    // Source/Dest — bin_loader only uses outbound dest; changeover uses neither
+    // Source/Dest — bin_loader uses both inbound (empty source) and outbound (loaded dest)
     document.getElementById('claims-source-fieldset').style.display = isChangeover ? 'none' : '';
-    document.getElementById('claims-inbound-source-group').style.display = isBinLoader ? 'none' : '';
-    document.getElementById('claims-outbound-source-group').style.display = '';
+    document.getElementById('claims-inbound-source-group').style.display = (isChangeover) ? 'none' : '';
+    document.getElementById('claims-outbound-source-group').style.display = (isChangeover) ? 'none' : '';
     // Changeover fieldset — not used by bin_loader
     document.getElementById('claims-changeover-fieldset').style.display = isBinLoader ? 'none' : '';
+    // Auto-request fieldset — only for bin_loader
+    document.getElementById('claims-auto-request-fieldset').style.display = isBinLoader ? '' : 'none';
     if (isChangeover) {
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-capacity').value = '0';
@@ -446,6 +451,7 @@ function buildAllowedPayloadPicker(selected) {
         cb.className = 'allowed-payload-cb';
         cb.value = p.code;
         cb.checked = checkedSet.has(p.code);
+        cb.addEventListener('change', updateAutoRequestDropdown);
         label.appendChild(cb);
         var span = document.createElement('span');
         span.textContent = p.code + (p.name ? ' \u2014 ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
@@ -463,6 +469,20 @@ function getSelectedAllowedPayloads() {
         codes.push(cb.value);
     });
     return codes;
+}
+
+function updateAutoRequestDropdown() {
+    var sel = document.getElementById('claims-add-auto-request');
+    var current = sel.value;
+    sel.innerHTML = '<option value="">-- Disabled --</option>';
+    var selected = getSelectedAllowedPayloads();
+    selected.forEach(function(code) {
+        var opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = code;
+        if (code === current) opt.selected = true;
+        sel.appendChild(opt);
+    });
 }
 
 function autoFillClaimsCapacity() {

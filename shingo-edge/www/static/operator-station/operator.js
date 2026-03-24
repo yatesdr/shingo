@@ -231,14 +231,19 @@ function openModal(nodeID) {
     const entry = findNodeByID(nodeID);
     if (!entry) return;
 
-    // Bin loader: go straight to load form (has clear button built in)
+    // Bin loader: if bin present go to load form, if vacant show modal with request empty
     if (entry.active_claim && entry.active_claim.role === 'bin_loader') {
-        const claim = entry.active_claim;
-        const allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
-            ? claim.allowed_payload_codes
-            : (claim.payload_code ? [claim.payload_code] : []);
-        openLoadBin(entry.node.id, allowed, claim.uop_capacity || 0);
-        return;
+        const binState = entry.bin_state;
+        const hasBin = binState && binState.occupied;
+        if (hasBin) {
+            const claim = entry.active_claim;
+            const allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
+                ? claim.allowed_payload_codes
+                : (claim.payload_code ? [claim.payload_code] : []);
+            openLoadBin(entry.node.id, allowed, claim.uop_capacity || 0);
+            return;
+        }
+        // Vacant — fall through to modal with REQUEST EMPTY action
     }
     selectedNodeID = nodeID;
     renderModal(entry);
@@ -305,14 +310,26 @@ function renderModal(entry) {
 
     if (claim) {
         if (claim.role === 'bin_loader') {
-            _pendingLoadData = {
-                nodeID: entry.node.id,
-                allowed: (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
-                    ? claim.allowed_payload_codes
-                    : (claim.payload_code ? [claim.payload_code] : []),
-                capacity: claim.uop_capacity || 0
-            };
-            html += actionBtn('LOAD BIN', 'load-bin', true, 'load-bin');
+            const binState = entry.bin_state;
+            const hasBin = binState && binState.occupied;
+            const allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
+                ? claim.allowed_payload_codes
+                : (claim.payload_code ? [claim.payload_code] : []);
+
+            if (!hasBin) {
+                // Vacant node — offer request empty for each allowed payload
+                allowed.forEach(code => {
+                    html += actionBtn('REQUEST EMPTY: ' + code, 'request', true,
+                        '/api/process-nodes/' + entry.node.id + '/request-empty|' + code);
+                });
+            } else {
+                _pendingLoadData = {
+                    nodeID: entry.node.id,
+                    allowed: allowed,
+                    capacity: claim.uop_capacity || 0
+                };
+                html += actionBtn('LOAD BIN', 'load-bin', true, 'load-bin');
+            }
         } else {
             // Normal production actions
             html += actionBtn('REQUEST MATERIAL', 'request', true,
@@ -406,9 +423,16 @@ async function handleModalAction(evt) {
         return;
     }
 
-    // POST action
+    // POST action — supports url|body_json format for passing payload
     evt.currentTarget.disabled = true;
-    const ok = await postAction(action);
+    let url = action;
+    let body = undefined;
+    if (action.includes('|')) {
+        const parts = action.split('|');
+        url = parts[0];
+        body = { payload_code: parts[1] };
+    }
+    const ok = await postAction(url, body);
     if (ok) closeModal();
 }
 

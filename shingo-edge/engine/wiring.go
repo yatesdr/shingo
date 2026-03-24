@@ -166,6 +166,17 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		}
 	}
 
+	// Bin loader: move order completed — bin has been sent to destination, node is vacant
+	if order.OrderType == orders.TypeMove {
+		if claim := e.findActiveClaim(node); claim != nil && claim.Role == "bin_loader" {
+			claimID := claim.ID
+			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, 0)
+			_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil)
+			e.tryAutoRequestEmpty(node, claim)
+			return
+		}
+	}
+
 	// Normal replenishment completion — reset UOP from active claim
 	if order.OrderType == orders.TypeRetrieve || order.OrderType == orders.TypeComplex {
 		if claim := e.findActiveClaim(node); claim != nil {
