@@ -178,15 +178,6 @@ func (h *CoreHandler) HandleOrderIngest(env *protocol.Envelope, p *protocol.Orde
 	h.dispatcher.HandleOrderIngest(env, p)
 }
 
-func (h *CoreHandler) HandleBinLoad(env *protocol.Envelope, p *protocol.BinLoadRequest) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
-	log.Printf("core_handler: bin.load from %s: node=%s payload=%s items=%d", env.Src.Station, p.NodeName, p.PayloadCode, len(p.Manifest))
-	h.dbg("-> bin.load from=%s node=%s payload=%s", env.Src.Station, p.NodeName, p.PayloadCode)
-	h.dispatcher.HandleBinLoad(env, p)
-}
-
 func (h *CoreHandler) shouldProcessInbound(env *protocol.Envelope) bool {
 	if env == nil || env.ID == "" {
 		return true

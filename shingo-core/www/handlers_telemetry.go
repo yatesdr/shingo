@@ -1,10 +1,15 @@
 package www
 
 import (
+	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"shingocore/store"
 )
 
 // apiTelemetryNodeBins returns bin state for requested core nodes.
@@ -95,5 +100,110 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 	h.jsonOK(w, map[string]interface{}{
 		"uop_capacity": payload.UOPCapacity,
 		"items":        result,
+	})
+}
+
+// apiBinLoad sets the manifest on the bin at a node. Direct HTTP replacement
+// for bin loading — synchronous, returns updated bin state.
+// POST /api/telemetry/bin-load
+func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeName    string `json:"node_name"`
+		PayloadCode string `json:"payload_code"`
+		UOPCount    int64  `json:"uop_count"`
+		Manifest    []struct {
+			PartNumber  string `json:"part_number"`
+			Quantity    int64  `json:"quantity"`
+			Description string `json:"description,omitempty"`
+		} `json:"manifest"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.NodeName == "" {
+		h.jsonError(w, "node_name is required", http.StatusBadRequest)
+		return
+	}
+
+	db := h.engine.DB()
+	node, err := db.GetNodeByDotName(req.NodeName)
+	if err != nil {
+		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
+		return
+	}
+	bins, err := db.ListBinsByNode(node.ID)
+	if err != nil || len(bins) == 0 {
+		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
+		return
+	}
+	bin := bins[0]
+
+	manifest := store.BinManifest{Items: make([]store.ManifestEntry, len(req.Manifest))}
+	var totalQty int64
+	for i, item := range req.Manifest {
+		manifest.Items[i] = store.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
+		totalQty += item.Quantity
+	}
+	manifestJSON, _ := json.Marshal(manifest)
+
+	uop := req.UOPCount
+	if uop <= 0 {
+		uop = totalQty
+	}
+
+	if err := db.SetBinManifest(bin.ID, string(manifestJSON), req.PayloadCode, int(uop)); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := db.ConfirmBinManifest(bin.ID); err != nil {
+		log.Printf("telemetry: bin-load confirm manifest on bin %d: %v", bin.ID, err)
+	}
+
+	log.Printf("telemetry: bin-load bin=%d at node=%s payload=%s uop=%d", bin.ID, req.NodeName, req.PayloadCode, uop)
+	h.jsonOK(w, map[string]interface{}{
+		"status":        "ok",
+		"bin_id":        bin.ID,
+		"bin_label":     bin.Label,
+		"payload_code":  req.PayloadCode,
+		"uop_remaining": uop,
+	})
+}
+
+// apiBinClear clears the manifest on the bin at a node, resetting it to empty.
+// POST /api/telemetry/bin-clear
+func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeName string `json:"node_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.NodeName == "" {
+		h.jsonError(w, "node_name is required", http.StatusBadRequest)
+		return
+	}
+	db := h.engine.DB()
+	node, err := db.GetNodeByDotName(req.NodeName)
+	if err != nil {
+		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
+		return
+	}
+	bins, err := db.ListBinsByNode(node.ID)
+	if err != nil || len(bins) == 0 {
+		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
+		return
+	}
+	bin := bins[0]
+	if err := db.ClearBinManifest(bin.ID); err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("telemetry: bin-clear bin=%d at node=%s", bin.ID, req.NodeName)
+	h.jsonOK(w, map[string]interface{}{
+		"status":    "ok",
+		"bin_id":    bin.ID,
+		"bin_label": bin.Label,
 	})
 }

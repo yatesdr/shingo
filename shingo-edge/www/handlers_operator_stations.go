@@ -300,6 +300,19 @@ func (h *Handlers) apiLoadBin(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
+func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	if err := h.engine.ClearBin(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
 func (h *Handlers) apiPayloadManifest(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "code")
 	if code == "" {

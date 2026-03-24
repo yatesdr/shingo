@@ -166,10 +166,13 @@ function createNodeButton(entry) {
             className: 'os-node-remaining',
             textContent: binPayload ? binPayload : (remaining > 0 ? 'LOADED' : (binState && binState.occupied ? 'EMPTY' : 'NO BIN'))
         }));
-        btn.appendChild(el('span', {
-            className: 'os-node-payload',
-            textContent: binLabel || 'Bin Loader'
-        }));
+        if (binLabel) {
+            const labelEl = el('span', { className: 'os-node-payload', textContent: binLabel });
+            labelEl.style.cssText = 'font-size:14px;font-weight:600;color:#fff';
+            btn.appendChild(labelEl);
+        } else {
+            btn.appendChild(el('span', { className: 'os-node-payload', textContent: 'Bin Loader' }));
+        }
     } else {
         // Remaining count
         btn.appendChild(el('span', {
@@ -228,7 +231,7 @@ function openModal(nodeID) {
     const entry = findNodeByID(nodeID);
     if (!entry) return;
 
-    // Bin loader: skip the node modal, go straight to load form
+    // Bin loader: go straight to load form (has clear button built in)
     if (entry.active_claim && entry.active_claim.role === 'bin_loader') {
         const claim = entry.active_claim;
         const allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
@@ -302,7 +305,6 @@ function renderModal(entry) {
 
     if (claim) {
         if (claim.role === 'bin_loader') {
-            // Store load data on the module scope — can't embed JSON in data-action (escaping breaks it)
             _pendingLoadData = {
                 nodeID: entry.node.id,
                 allowed: (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
@@ -581,15 +583,18 @@ async function submitLoadBin() {
     const nodeID = loadBinState.nodeID;
     closeLoadBin();
     const ok = await postAction('/api/process-nodes/' + nodeID + '/load-bin', body);
-    if (ok) {
-        showToast('Bin loaded', 'success');
-        // Delay re-fetch to give Core time to process the bin.load via Kafka
-        setTimeout(loadView, 1500);
-    }
+    if (ok) showToast('Bin loaded', 'success');
 }
 
 document.getElementById('load-bin-cancel').addEventListener('click', closeLoadBin);
 document.getElementById('load-bin-submit').addEventListener('click', submitLoadBin);
+document.getElementById('load-bin-clear').addEventListener('click', async () => {
+    if (!loadBinState) return;
+    const nodeID = loadBinState.nodeID;
+    closeLoadBin();
+    const ok = await postAction('/api/process-nodes/' + nodeID + '/clear-bin');
+    if (ok) showToast('Bin cleared', 'success');
+});
 document.getElementById('load-bin-modal').addEventListener('click', evt => {
     if (evt.target === document.getElementById('load-bin-modal')) closeLoadBin();
 });

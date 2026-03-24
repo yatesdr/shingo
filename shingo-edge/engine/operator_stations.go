@@ -677,9 +677,9 @@ func (e *Engine) loadActiveNode(nodeID int64) (*store.ProcessNode, *store.Proces
 }
 
 // LoadBin marks a bin at a bin_loader node as loaded with the given manifest.
-// Sends a bin.load message to Core which sets the manifest on the existing
-// bin at that node. No transport order is created — the bin stays in place
-// until a downstream consume node pulls it.
+// Calls Core's HTTP API directly to set the manifest on the existing bin at
+// that node. No transport order is created — the bin stays in place until a
+// downstream consume node pulls it.
 func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -728,27 +728,44 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		}
 	}
 
-	// Send bin.load to Core — sets manifest on the bin at this node
-	env, err := protocol.NewEnvelope(protocol.TypeBinLoad,
-		protocol.Address{Role: protocol.RoleEdge, Station: e.cfg.StationID()},
-		protocol.Address{Role: protocol.RoleCore},
-		&protocol.BinLoadRequest{
-			NodeName:    node.CoreNodeName,
-			PayloadCode: payloadCode,
-			UOPCount:    uopCount,
-			Manifest:    manifest,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("build bin.load envelope: %w", err)
+	// Load bin via direct HTTP to Core — synchronous, immediate feedback
+	items := make([]ManifestItem, len(manifest))
+	for i, m := range manifest {
+		items[i] = ManifestItem{PartNumber: m.PartNumber, Quantity: m.Quantity, Description: m.Description}
 	}
-	if err := e.SendEnvelope(env); err != nil {
-		return fmt.Errorf("send bin.load: %w", err)
+	if _, err := e.coreClient.LoadBin(&BinLoadRequest{
+		NodeName:    node.CoreNodeName,
+		PayloadCode: payloadCode,
+		UOPCount:    uopCount,
+		Manifest:    items,
+	}); err != nil {
+		return fmt.Errorf("load bin: %w", err)
 	}
 
 	// Update edge-side runtime state
 	claimID := claim.ID
 	_ = e.db.SetProcessNodeRuntime(nodeID, &claimID, int(uopCount))
 
+	return nil
+}
+
+// ClearBin clears the manifest on the bin at a bin_loader node, resetting it
+// to empty. Used to fix mis-loads.
+func (e *Engine) ClearBin(nodeID int64) error {
+	node, _, claim, err := e.loadActiveNode(nodeID)
+	if err != nil {
+		return err
+	}
+	if claim == nil {
+		return fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if claim.Role != "bin_loader" {
+		return fmt.Errorf("node %s is not a bin_loader node", node.Name)
+	}
+	if err := e.coreClient.ClearBin(node.CoreNodeName); err != nil {
+		return fmt.Errorf("clear bin: %w", err)
+	}
+	claimID := claim.ID
+	_ = e.db.SetProcessNodeRuntime(nodeID, &claimID, 0)
 	return nil
 }

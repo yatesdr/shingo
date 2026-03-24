@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 
@@ -289,46 +288,6 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 	if result != nil && !result.Handled {
 		d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
 	}
-}
-
-// HandleBinLoad sets the manifest on the bin at a node without creating a transport order.
-// Used by source nodes where material is loaded by forklift outside Shingo tracking.
-func (d *Dispatcher) HandleBinLoad(env *protocol.Envelope, p *protocol.BinLoadRequest) {
-	d.dbg("bin.load: node=%s payload=%s items=%d", p.NodeName, p.PayloadCode, len(p.Manifest))
-
-	node, err := d.db.GetNodeByDotName(p.NodeName)
-	if err != nil {
-		log.Printf("dispatch: bin.load node %q not found: %v", p.NodeName, err)
-		return
-	}
-	bins, err := d.db.ListBinsByNode(node.ID)
-	if err != nil || len(bins) == 0 {
-		log.Printf("dispatch: bin.load no bin at node %s", p.NodeName)
-		return
-	}
-	bin := bins[0] // first (most recent) bin at this node
-
-	manifest := store.BinManifest{Items: make([]store.ManifestEntry, len(p.Manifest))}
-	var totalQty int64
-	for i, item := range p.Manifest {
-		manifest.Items[i] = store.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
-		totalQty += item.Quantity
-	}
-	manifestJSON, _ := json.Marshal(manifest)
-
-	uop := p.UOPCount
-	if uop <= 0 {
-		uop = totalQty // fall back to manifest sum
-	}
-
-	if err := d.db.SetBinManifest(bin.ID, string(manifestJSON), p.PayloadCode, int(uop)); err != nil {
-		log.Printf("dispatch: bin.load set manifest on bin %d: %v", bin.ID, err)
-		return
-	}
-	if err := d.db.ConfirmBinManifest(bin.ID); err != nil {
-		log.Printf("dispatch: bin.load confirm manifest on bin %d: %v", bin.ID, err)
-	}
-	d.dbg("bin.load: set manifest on bin=%d at node=%s, payload=%s, uop=%d", bin.ID, p.NodeName, p.PayloadCode, uop)
 }
 
 func (d *Dispatcher) failOrder(order *store.Order, env *protocol.Envelope, errorCode, detail string) {

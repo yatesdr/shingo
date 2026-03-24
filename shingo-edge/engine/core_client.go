@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -98,4 +99,79 @@ func (c *CoreClient) FetchNodeBins(nodeNames []string) ([]NodeBinInfo, error) {
 		return nil, fmt.Errorf("decode node bins: %w", err)
 	}
 	return result, nil
+}
+
+// BinLoadRequest is the request body for loading a bin via HTTP.
+type BinLoadRequest struct {
+	NodeName    string         `json:"node_name"`
+	PayloadCode string         `json:"payload_code"`
+	UOPCount    int64          `json:"uop_count"`
+	Manifest    []ManifestItem `json:"manifest"`
+}
+
+// BinLoadResponse is Core's response after loading a bin.
+type BinLoadResponse struct {
+	Status       string `json:"status"`
+	Detail       string `json:"detail,omitempty"`
+	BinID        int64  `json:"bin_id,omitempty"`
+	BinLabel     string `json:"bin_label,omitempty"`
+	PayloadCode  string `json:"payload_code,omitempty"`
+	UOPRemaining int    `json:"uop_remaining,omitempty"`
+}
+
+// LoadBin sets the manifest on the bin at a node via Core's HTTP API.
+// Unlike telemetry reads, this returns errors on failure since it is a write operation.
+func (c *CoreClient) LoadBin(req *BinLoadRequest) (*BinLoadResponse, error) {
+	if c.baseURL == "" {
+		return nil, fmt.Errorf("core API not configured")
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal bin-load request: %w", err)
+	}
+	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-load", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("bin-load request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	var result BinLoadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode bin-load response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK || result.Status == "error" {
+		detail := result.Detail
+		if detail == "" {
+			detail = fmt.Sprintf("core returned %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("%s", detail)
+	}
+	return &result, nil
+}
+
+// ClearBin clears the manifest on the bin at a node via Core's HTTP API.
+func (c *CoreClient) ClearBin(nodeName string) error {
+	if c.baseURL == "" {
+		return fmt.Errorf("core API not configured")
+	}
+	body, _ := json.Marshal(map[string]string{"node_name": nodeName})
+	resp, err := c.http.Post(c.baseURL+"/api/telemetry/bin-clear", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("bin-clear request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Status string `json:"status"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode bin-clear response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK || result.Status == "error" {
+		detail := result.Detail
+		if detail == "" {
+			detail = fmt.Sprintf("core returned %d", resp.StatusCode)
+		}
+		return fmt.Errorf("%s", detail)
+	}
+	return nil
 }
