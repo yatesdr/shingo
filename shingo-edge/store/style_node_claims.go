@@ -17,10 +17,8 @@ type StyleNodeClaim struct {
 	AutoReorder              bool      `json:"auto_reorder"`
 	InboundStaging           string    `json:"inbound_staging"`
 	OutboundStaging          string    `json:"outbound_staging"`
-	InboundSourceNode        string    `json:"inbound_source_node"`
-	InboundSourceNodeGroup   string    `json:"inbound_source_node_group"`
-	OutboundSourceNode       string    `json:"outbound_source_node"`
-	OutboundSourceNodeGroup  string    `json:"outbound_source_node_group"`
+	InboundSource            string    `json:"inbound_source"`
+	OutboundSource           string    `json:"outbound_source"`
 	KeepStaged               bool      `json:"keep_staged"`
 	EvacuateOnChangeover     bool      `json:"evacuate_on_changeover"`
 	Sequence                 int       `json:"sequence"`
@@ -38,10 +36,8 @@ type StyleNodeClaimInput struct {
 	AutoReorder             bool   `json:"auto_reorder"`
 	InboundStaging          string `json:"inbound_staging"`
 	OutboundStaging         string `json:"outbound_staging"`
-	InboundSourceNode       string `json:"inbound_source_node"`
-	InboundSourceNodeGroup  string `json:"inbound_source_node_group"`
-	OutboundSourceNode      string `json:"outbound_source_node"`
-	OutboundSourceNodeGroup string `json:"outbound_source_node_group"`
+	InboundSource           string `json:"inbound_source"`
+	OutboundSource          string `json:"outbound_source"`
 	KeepStaged              bool   `json:"keep_staged"`
 	EvacuateOnChangeover    bool   `json:"evacuate_on_changeover"`
 	Sequence                int    `json:"sequence"`
@@ -49,7 +45,7 @@ type StyleNodeClaimInput struct {
 
 const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
-	inbound_source_node, inbound_source_node_group, outbound_source_node, outbound_source_node_group,
+	inbound_source, outbound_source,
 	keep_staged, evacuate_on_changeover, sequence, created_at`
 
 func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleNodeClaim, error) {
@@ -57,7 +53,7 @@ func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleN
 	var createdAt string
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
-		&c.InboundSourceNode, &c.InboundSourceNodeGroup, &c.OutboundSourceNode, &c.OutboundSourceNodeGroup,
+		&c.InboundSource, &c.OutboundSource,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.Sequence, &createdAt); err != nil {
 		return c, err
 	}
@@ -114,12 +110,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 	if err == nil {
 		_, err = db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
 			uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
-			inbound_source_node=?, inbound_source_node_group=?, outbound_source_node=?, outbound_source_node_group=?,
+			inbound_source=?, outbound_source=?,
 			keep_staged=?, evacuate_on_changeover=?, sequence=?
 			WHERE id=?`,
 			in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
 			in.InboundStaging, in.OutboundStaging,
-			in.InboundSourceNode, in.InboundSourceNodeGroup, in.OutboundSourceNode, in.OutboundSourceNodeGroup,
+			in.InboundSource, in.OutboundSource,
 			in.KeepStaged, in.EvacuateOnChangeover, in.Sequence, existingID)
 		return existingID, err
 	}
@@ -130,12 +126,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 	}
 	res, err := db.Exec(`INSERT INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
-		inbound_source_node, inbound_source_node_group, outbound_source_node, outbound_source_node_group,
+		inbound_source, outbound_source,
 		keep_staged, evacuate_on_changeover, sequence)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
-		in.InboundSourceNode, in.InboundSourceNodeGroup, in.OutboundSourceNode, in.OutboundSourceNodeGroup,
+		in.InboundSource, in.OutboundSource,
 		in.KeepStaged, in.EvacuateOnChangeover, in.Sequence)
 	if err != nil {
 		return 0, err

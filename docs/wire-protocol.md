@@ -776,7 +776,7 @@ Submits a multi-step transport order. Used by material handling cycles (sequenti
   "quantity":     1,
   "priority":     0,
   "steps": [
-    {"action": "pickup",  "node_group": "STORAGE-A"},
+    {"action": "pickup",  "node": "STORAGE-A"},
     {"action": "dropoff", "node": "STG-001"},
     {"action": "wait"},
     {"action": "pickup",  "node": "STG-001"},
@@ -799,8 +799,7 @@ Submits a multi-step transport order. Used by material handling cycles (sequenti
 | Field | JSON Key | Type | Required | Description |
 |---|---|---|---|---|
 | Action | `action` | string | Yes | One of: `"pickup"`, `"dropoff"`, `"wait"`. |
-| Node | `node` | string | No | Exact node name for the step (used for dropoff to a specific location). |
-| Node Group | `node_group` | string | No | Synthetic parent node (used for pickup from storage where core resolves the specific slot). |
+| Node | `node` | string | No | Node or group name. Core auto-detects groups (NGRP) and resolves to a concrete slot. If omitted, Core uses global fallback via payload code. |
 
 Steps are executed in sequence. A `wait` step causes the robot to dwell at its current position until an `order.release` message is received.
 

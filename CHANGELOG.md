@@ -6,21 +6,19 @@ Adds source/destination routing to `style_node_claims`, fixes single-robot and t
 
 ### New Fields on `style_node_claims`
 
-Four columns for source/destination routing, separate from staging areas:
+Two columns for source/destination routing, separate from staging areas:
 
 ```
-InboundSourceNode → InboundStaging → CoreNodeName → OutboundStaging → OutboundSourceNode
-  (where from)       (temp park)      (lineside)     (temp park)       (where to)
+InboundSource → InboundStaging → CoreNodeName → OutboundStaging → OutboundSource
+ (where from)     (temp park)      (lineside)     (temp park)       (where to)
 ```
 
 | Field | Purpose |
 |-------|---------|
-| `inbound_source_node` | Explicit pickup node for new material |
-| `inbound_source_node_group` | Node group for new material (Core resolves via FIFO/FAVL) |
-| `outbound_source_node` | Explicit dropoff node for old material |
-| `outbound_source_node_group` | Node group for old material (Core resolves) |
+| `inbound_source` | Pickup node or group for new material (Core auto-detects groups) |
+| `outbound_source` | Dropoff node or group for old material (Core auto-detects groups) |
 
-Node = specific slot (Shingo doesn't control storage). Node group = Core picks best slot. Blank = Core global fallback by payloadCode. Fully backward compatible.
+Can be a specific node or a node group — Core auto-detects NGRP nodes and resolves via the group resolver. Blank = Core global fallback by payloadCode. Fully backward compatible.
 
 ### Step Sequences
 
@@ -70,17 +68,18 @@ Two-robot validation now only requires InboundStaging (not OutboundStaging) — 
 
 ### Other Changes
 
-- `buildStep` helper uses 3-tier resolution: explicit node → node group → empty (global fallback)
+- `buildStep` helper sends node name; Core auto-detects groups (no `node_group` on wire protocol)
 - `BuildDeliverSteps` / `BuildReleaseSteps` use source routing instead of staging fields for pickup/dropoff
 - Sequential backfill wired via `EventOrderStatusChanged` → `handleSequentialBackfill` in `engine/wiring.go`
 - UI: "Sequential" added to swap mode dropdown, source/destination fields added to claim modal
+- `NodeGroup` field removed from `ComplexOrderStep` wire protocol — Core auto-detects NGRP nodes
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `store/schema.go` | 4 ALTER TABLE migrations for source routing columns |
-| `store/style_node_claims.go` | Struct + SQL updated for 4 new fields |
+| `store/schema.go` | Migrations for source routing columns (collapsed to `inbound_source`, `outbound_source`) |
+| `store/style_node_claims.go` | Struct + SQL updated for 2 source fields |
 | `engine/material_orders.go` | Step builders rewritten: buildStep helper, 10-step single, source routing on two-robot, sequential builders added |
 | `engine/operator_stations.go` | Sequential case added to `requestNodeFromClaim`, two-robot validation relaxed |
 | `engine/wiring.go` | `EventOrderStatusChanged` subscription + `handleSequentialBackfill` handler |

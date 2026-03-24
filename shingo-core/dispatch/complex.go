@@ -199,35 +199,33 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 	return resolved, nil
 }
 
-// resolveStepNode resolves a single step's node, handling both direct and synthetic nodes.
+// resolveStepNode resolves a single step's node. If the node is a synthetic
+// group (NGRP), it is automatically resolved via the group resolver. If the
+// node is concrete, it is returned directly. If no node is provided, the
+// global fallback resolves via payload code.
 func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode string) (string, error) {
 	if step.Node != "" {
-		// Direct node: validate it exists
-		_, err := d.db.GetNodeByDotName(step.Node)
+		node, err := d.db.GetNodeByDotName(step.Node)
 		if err != nil {
 			return "", fmt.Errorf("node %q not found", step.Node)
 		}
-		return step.Node, nil
+		// Auto-detect group nodes and resolve to a concrete slot
+		if node.IsSynthetic && node.NodeTypeCode == "NGRP" && d.resolver != nil {
+			orderType := OrderTypeRetrieve
+			if step.Action == "dropoff" {
+				orderType = OrderTypeStore
+			}
+			result, err := d.resolver.Resolve(node, orderType, payloadCode, nil)
+			if err != nil {
+				return "", fmt.Errorf("cannot resolve group %s: %v", step.Node, err)
+			}
+			return result.Node.Name, nil
+		}
+		return node.Name, nil
 	}
-	if step.NodeGroup != "" && d.resolver != nil {
-		// Synthetic node group: resolve to concrete node
-		groupNode, err := d.db.GetNodeByDotName(step.NodeGroup)
-		if err != nil {
-			return "", fmt.Errorf("node group %q not found", step.NodeGroup)
-		}
-		orderType := OrderTypeRetrieve
-		if step.Action == "dropoff" {
-			orderType = OrderTypeStore
-		}
-		result, err := d.resolver.Resolve(groupNode, orderType, payloadCode, nil)
-		if err != nil {
-			return "", fmt.Errorf("cannot resolve %s: %v", step.NodeGroup, err)
-		}
-		return result.Node.Name, nil
-	}
-	// Global fallback: when Edge sends neither node nor node_group,
-	// resolve using the payload code — same approach simple orders use
-	// via FindSourceBinFIFO (retrieve) and FindStorageDestination (store).
+	// Global fallback: when Edge sends no node, resolve using the payload
+	// code — same approach simple orders use via FindSourceBinFIFO (retrieve)
+	// and FindStorageDestination (store).
 	if payloadCode != "" {
 		switch step.Action {
 		case "pickup":
@@ -250,7 +248,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			return node.Name, nil
 		}
 	}
-	return "", fmt.Errorf("step requires either node, node_group, or payload_code for resolution")
+	return "", fmt.Errorf("step requires either node or payload_code for resolution")
 }
 
 // extractEndpoints returns the pickup (first actionable) and delivery (last actionable) nodes.

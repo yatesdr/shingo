@@ -205,8 +205,8 @@ async function loadClaims(styleID) {
                 '<td>' + ShingoEdge.escapeHtml(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.inbound_staging || '\u2014') + '</td>' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.outbound_staging || '\u2014') + '</td>' +
-                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.inbound_source_node || c.inbound_source_node_group || '\u2014') + '</td>' +
-                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.outbound_source_node || c.outbound_source_node_group || '\u2014') + '</td>' +
+                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.inbound_source || '\u2014') + '</td>' +
+                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.outbound_source || '\u2014') + '</td>' +
                 '<td style="white-space:nowrap">' +
                     '<button class="btn btn-sm" onclick=\'editClaim(' + JSON.stringify(c).replace(/'/g, "&#39;") + ')\'>Edit</button> ' +
                     '<button class="btn btn-sm btn-danger" onclick="removeClaim(' + c.id + ')">Remove</button>' +
@@ -241,9 +241,7 @@ function openClaimModal() {
     document.getElementById('claims-add-inbound').value = '';
     document.getElementById('claims-add-outbound').value = '';
     document.getElementById('claims-add-inbound-source').value = '';
-    document.getElementById('claims-add-inbound-source-group').value = '';
     document.getElementById('claims-add-outbound-source').value = '';
-    document.getElementById('claims-add-outbound-source-group').value = '';
     document.getElementById('claims-add-keep-staged').checked = false;
     document.getElementById('claims-add-evacuate').checked = false;
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
@@ -269,10 +267,8 @@ function editClaim(claim) {
     document.getElementById('claims-add-reorder').value = claim.reorder_point || 0;
     document.getElementById('claims-add-inbound').value = claim.inbound_staging || '';
     document.getElementById('claims-add-outbound').value = claim.outbound_staging || '';
-    document.getElementById('claims-add-inbound-source').value = claim.inbound_source_node || '';
-    document.getElementById('claims-add-inbound-source-group').value = claim.inbound_source_node_group || '';
-    document.getElementById('claims-add-outbound-source').value = claim.outbound_source_node || '';
-    document.getElementById('claims-add-outbound-source-group').value = claim.outbound_source_node_group || '';
+    document.getElementById('claims-add-inbound-source').value = claim.inbound_source || '';
+    document.getElementById('claims-add-outbound-source').value = claim.outbound_source || '';
     document.getElementById('claims-add-keep-staged').checked = !!claim.keep_staged;
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
@@ -326,10 +322,8 @@ async function saveClaim() {
             auto_reorder: true,
             inbound_staging: document.getElementById('claims-add-inbound').value,
             outbound_staging: document.getElementById('claims-add-outbound').value,
-            inbound_source_node: document.getElementById('claims-add-inbound-source').value,
-            inbound_source_node_group: document.getElementById('claims-add-inbound-source-group').value,
-            outbound_source_node: document.getElementById('claims-add-outbound-source').value,
-            outbound_source_node_group: document.getElementById('claims-add-outbound-source-group').value,
+            inbound_source: document.getElementById('claims-add-inbound-source').value,
+            outbound_source: document.getElementById('claims-add-outbound-source').value,
             keep_staged: document.getElementById('claims-add-keep-staged').checked,
             evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked
         });

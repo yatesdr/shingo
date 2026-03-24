@@ -87,7 +87,7 @@ async function createOrder() {
             process_node_id: processNodeID || null,
             quantity: parseInt(document.getElementById('mo-qty').value) || 0,
             steps: [
-                {action: 'pickup', node_group: stagingNode},
+                {action: 'pickup', node: stagingNode},
                 {action: 'dropoff', node: stagingNode},
                 {action: 'wait'},
                 {action: 'pickup', node: stagingNode},

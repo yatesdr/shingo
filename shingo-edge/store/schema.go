@@ -194,10 +194,8 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     auto_reorder            INTEGER NOT NULL DEFAULT 1,
     inbound_staging         TEXT NOT NULL DEFAULT '',
     outbound_staging        TEXT NOT NULL DEFAULT '',
-    inbound_source_node     TEXT NOT NULL DEFAULT '',
-    inbound_source_node_group TEXT NOT NULL DEFAULT '',
-    outbound_source_node    TEXT NOT NULL DEFAULT '',
-    outbound_source_node_group TEXT NOT NULL DEFAULT '',
+    inbound_source          TEXT NOT NULL DEFAULT '',
+    outbound_source         TEXT NOT NULL DEFAULT '',
     keep_staged             INTEGER NOT NULL DEFAULT 0,
     evacuate_on_changeover  INTEGER NOT NULL DEFAULT 0,
     sequence                INTEGER NOT NULL DEFAULT 0,
@@ -336,11 +334,15 @@ func (db *DB) migrate() error {
 	db.Exec("UPDATE style_node_claims SET inbound_staging = staging_node WHERE staging_node != ''")
 	db.Exec("UPDATE style_node_claims SET outbound_staging = release_node WHERE release_node != ''")
 
-	// Source / destination routing on style_node_claims
+	// Source / destination routing on style_node_claims (collapsed from node/node_group pairs)
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN inbound_source_node TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN inbound_source_node_group TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_source_node TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_source_node_group TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN inbound_source TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_source TEXT NOT NULL DEFAULT ''")
+	db.Exec("UPDATE style_node_claims SET inbound_source = COALESCE(NULLIF(inbound_source_node, ''), inbound_source_node_group) WHERE inbound_source = ''")
+	db.Exec("UPDATE style_node_claims SET outbound_source = COALESCE(NULLIF(outbound_source_node, ''), outbound_source_node_group) WHERE outbound_source = ''")
 
 	// Migrate queued → pending status
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")

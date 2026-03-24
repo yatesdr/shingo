@@ -134,10 +134,11 @@ type OrderCancelled struct {
 // --- Complex order payloads ---
 
 // ComplexOrderStep describes a single step in a complex (multi-leg) order.
+// Node can be a concrete node name or a group node name — Core auto-detects
+// and resolves groups via the group resolver.
 type ComplexOrderStep struct {
-	Action    string `json:"action"`               // "pickup", "dropoff", "wait"
-	Node      string `json:"node,omitempty"`       // exact node (for dropoff to staging/production)
-	NodeGroup string `json:"node_group,omitempty"` // synthetic parent (for pickup from storage)
+	Action string `json:"action"`          // "pickup", "dropoff", "wait"
+	Node   string `json:"node,omitempty"`  // node or group name (Core auto-resolves groups)
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.
