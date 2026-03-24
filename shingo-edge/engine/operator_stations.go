@@ -746,6 +746,16 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	claimID := claim.ID
 	_ = e.db.SetProcessNodeRuntime(nodeID, &claimID, int(uopCount))
 
+	// If outbound destination is configured, move the loaded bin there
+	if claim.OutboundSource != "" {
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, node.CoreNodeName, claim.OutboundSource)
+		if err != nil {
+			log.Printf("bin_loader: move to outbound for node %s: %v", node.Name, err)
+		} else {
+			_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+		}
+	}
+
 	return nil
 }
 

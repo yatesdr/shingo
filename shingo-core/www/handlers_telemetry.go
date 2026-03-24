@@ -161,6 +161,9 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("telemetry: bin-load bin=%d at node=%s payload=%s uop=%d", bin.ID, req.NodeName, req.PayloadCode, uop)
+	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
+		"node_id": node.ID, "action": "loaded", "bin_id": bin.ID,
+	}))
 	h.jsonOK(w, map[string]interface{}{
 		"status":        "ok",
 		"bin_id":        bin.ID,
@@ -201,6 +204,9 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("telemetry: bin-clear bin=%d at node=%s", bin.ID, req.NodeName)
+	h.eventHub.Broadcast("bin-update", sseJSON(map[string]any{
+		"node_id": node.ID, "action": "cleared", "bin_id": bin.ID,
+	}))
 	h.jsonOK(w, map[string]interface{}{
 		"status":    "ok",
 		"bin_id":    bin.ID,

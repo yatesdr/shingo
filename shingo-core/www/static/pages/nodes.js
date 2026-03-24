@@ -361,15 +361,21 @@ function loadInventory(nodeID) {
         return;
       }
       countEl.textContent = items.length;
-      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin</th><th>Bin Status</th><th>Payload</th></tr></thead><tbody>';
-      items.forEach(function(item) {
-        var b = item.bin;
-        var p = item.payload;
-        var payloadInfo = p ? ('<span style="cursor:pointer;text-decoration:underline" onclick="expandPayloadManifest(' + p.id + ')">#' + p.id + ' ' + escapeHtml(p.payload_code) + '</span>') : '<span class="text-muted">empty</span>';
-        // Bin status badges
+      var html = '<table style="font-size:0.8rem"><thead><tr><th>Bin</th><th>Type</th><th>Status</th><th>Contents</th><th>UOP</th></tr></thead><tbody>';
+      items.forEach(function(b) {
         var binBadges = '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>';
         if (b.claimed_by) binBadges += ' <span class="badge badge-claimed">claimed</span>';
-        html += '<tr><td>' + escapeHtml(b.label || 'Bin #' + b.id) + '</td><td>' + binBadges + '</td><td>' + payloadInfo + '</td></tr>';
+        if (b.locked) binBadges += ' <span class="badge badge-locked">locked</span>';
+        var contents = b.payload_code
+          ? '<strong>' + escapeHtml(b.payload_code) + '</strong>' + (b.manifest_confirmed ? ' \u2714' : '')
+          : '<span class="text-muted">empty</span>';
+        html += '<tr>' +
+          '<td><strong>' + escapeHtml(b.label || 'Bin #' + b.id) + '</strong></td>' +
+          '<td>' + escapeHtml(b.bin_type_code || '-') + '</td>' +
+          '<td>' + binBadges + '</td>' +
+          '<td>' + contents + '</td>' +
+          '<td>' + (b.uop_remaining || 0) + '</td>' +
+          '</tr>';
       });
       html += '</tbody></table>';
       list.innerHTML = html;
@@ -1106,6 +1112,11 @@ function buildHierarchy() {
     wrapper.appendChild(grid);
   }
 }
+
+// Refresh when bins change (loaded, cleared, moved)
+window.onBinUpdate = function() {
+  location.reload();
+};
 
 document.addEventListener('DOMContentLoaded', function() {
   buildHierarchy();

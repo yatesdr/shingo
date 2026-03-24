@@ -359,10 +359,20 @@ function toggleClaimsAddPayload() {
     var role = document.getElementById('claims-add-role').value;
     var isChangeover = role === 'changeover';
     var isBinLoader = role === 'bin_loader';
-    // Changeover: no payload/UOP config. Source: multi-select payloads, no reorder.
+    // Payload & UOP
     document.getElementById('claims-add-payload-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
     document.getElementById('claims-add-allowed-group').style.display = isBinLoader ? '' : 'none';
     document.getElementById('claims-add-reorder-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
+    // Swap mode — not used by bin_loader or changeover
+    document.getElementById('claims-add-swap-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
+    // Staging — not used by bin_loader or changeover
+    document.getElementById('claims-staging-fieldset').style.display = (isChangeover || isBinLoader) ? 'none' : '';
+    // Source/Dest — bin_loader only uses outbound dest; changeover uses neither
+    document.getElementById('claims-source-fieldset').style.display = isChangeover ? 'none' : '';
+    document.getElementById('claims-inbound-source-group').style.display = isBinLoader ? 'none' : '';
+    document.getElementById('claims-outbound-source-group').style.display = '';
+    // Changeover fieldset — not used by bin_loader
+    document.getElementById('claims-changeover-fieldset').style.display = isBinLoader ? 'none' : '';
     if (isChangeover) {
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-capacity').value = '0';
@@ -371,6 +381,12 @@ function toggleClaimsAddPayload() {
     if (isBinLoader) {
         document.getElementById('claims-add-reorder').value = '0';
         document.getElementById('claims-add-payload').value = '';
+        document.getElementById('claims-add-swap').value = 'simple';
+        document.getElementById('claims-add-inbound').value = '';
+        document.getElementById('claims-add-outbound').value = '';
+        document.getElementById('claims-add-inbound-source').value = '';
+        document.getElementById('claims-add-keep-staged').checked = false;
+        document.getElementById('claims-add-evacuate').checked = false;
         buildAllowedPayloadPicker([]);
     }
 }
