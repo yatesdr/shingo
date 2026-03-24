@@ -23,4 +23,111 @@
     {{template "material-body" .}}
 </div>
 
+<!-- Load Bin Modal (Bin Loader nodes) -->
+<div class="modal" id="load-bin-modal" style="display:none">
+    <div class="modal-content" style="max-width:480px">
+        <div class="modal-header">
+            <span>Load Bin</span>
+            <button class="btn btn-sm" onclick="closeLoadBinModal()">&times;</button>
+        </div>
+        <div class="card-body">
+            <input type="hidden" id="rb-node-id">
+            <input type="hidden" id="rb-payload-code">
+            <div class="form-group" style="margin-bottom:0.75rem">
+                <label>Payload</label>
+                <select id="rb-payload" class="form-input" onchange="onLoadPayloadChanged()"></select>
+            </div>
+            <div id="rb-manifest-rows" style="margin-bottom:0.5rem"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeLoadBinModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitLoadBin()">Confirm Load</button>
+        </div>
+    </div>
+</div>
+<script>
+var _loadBinCatalog = null;
+async function ensureLoadBinCatalog() {
+    if (_loadBinCatalog) return _loadBinCatalog;
+    try { _loadBinCatalog = await ShingoEdge.api.get('/api/payload-catalog'); } catch(_) { _loadBinCatalog = []; }
+    if (!Array.isArray(_loadBinCatalog)) _loadBinCatalog = [];
+    return _loadBinCatalog;
+}
+async function openLoadBinModal(nodeID, allowedCodes, defaultCapacity) {
+    document.getElementById('rb-node-id').value = nodeID;
+    document.getElementById('rb-payload-code').value = '';
+    var catalog = await ensureLoadBinCatalog();
+    var sel = document.getElementById('rb-payload');
+    sel.innerHTML = '<option value="">-- Select payload --</option>';
+    (allowedCodes || []).forEach(function(code) {
+        var entry = catalog.find(function(p) { return p.code === code; });
+        var opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = code + (entry && entry.name ? ' \u2014 ' + entry.name : '');
+        sel.appendChild(opt);
+    });
+    document.getElementById('rb-manifest-rows').innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">Select a payload to see its manifest.</div>';
+    ShingoEdge.showModal('load-bin-modal');
+}
+async function onLoadPayloadChanged() {
+    var code = document.getElementById('rb-payload').value;
+    document.getElementById('rb-payload-code').value = code;
+    var rows = document.getElementById('rb-manifest-rows');
+    if (!code) {
+        rows.innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">Select a payload to see its manifest.</div>';
+        return;
+    }
+    rows.innerHTML = '<div style="color:var(--text-muted);padding:0.5rem 0">Loading manifest...</div>';
+    try {
+        var data = await ShingoEdge.api.get('/api/payload/' + encodeURIComponent(code) + '/manifest');
+        var items = (data && data.items) || [];
+        var uopCapacity = (data && data.uop_capacity) || 0;
+        rows.innerHTML = '';
+        if (items.length === 0) {
+            rows.innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">No manifest template for this payload.</div>';
+            return;
+        }
+        var uopRow = document.createElement('div');
+        uopRow.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.75rem;padding:0.5rem;border:2px solid var(--primary, #4a9);border-radius:4px';
+        uopRow.innerHTML = '<div style="font-weight:600">UOP Count</div>' +
+            '<input type="number" id="rb-uop-count" class="form-input" value="' + uopCapacity + '" style="text-align:center;font-weight:600">';
+        rows.appendChild(uopRow);
+        items.forEach(function(item) {
+            var row = document.createElement('div');
+            row.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px';
+            row.innerHTML =
+                '<div><div style="font-weight:500">' + ShingoEdge.escapeHtml(item.part_number) + '</div>' +
+                '<div style="color:var(--text-muted);font-size:0.85rem">' + ShingoEdge.escapeHtml(item.description || '') + '</div></div>' +
+                '<input type="number" class="form-input rb-manifest-qty" value="' + (item.quantity || 0) + '" ' +
+                    'data-part="' + ShingoEdge.escapeHtml(item.part_number) + '" data-desc="' + ShingoEdge.escapeHtml(item.description || '') + '" ' +
+                    'style="text-align:center">';
+            rows.appendChild(row);
+        });
+    } catch(e) {
+        rows.innerHTML = '<div style="color:var(--danger, red);padding:0.5rem 0">Failed to load manifest.</div>';
+    }
+}
+function closeLoadBinModal() {
+    ShingoEdge.hideModal('load-bin-modal');
+}
+async function submitLoadBin() {
+    var nodeID = parseInt(document.getElementById('rb-node-id').value, 10);
+    var payloadCode = document.getElementById('rb-payload-code').value;
+    if (!payloadCode) { ShingoEdge.toast('Select a payload first', 'warning'); return; }
+    var manifest = [];
+    document.querySelectorAll('.rb-manifest-qty').forEach(function(input) {
+        var qty = parseInt(input.value, 10) || 0;
+        if (qty > 0) manifest.push({part_number: input.dataset.part, quantity: qty, description: input.dataset.desc || ''});
+    });
+    if (manifest.length === 0) { ShingoEdge.toast('Enter at least one quantity', 'warning'); return; }
+    try {
+        var uopCount = parseInt((document.getElementById('rb-uop-count') || {}).value || '0', 10);
+        await ShingoEdge.api.post('/api/process-nodes/' + nodeID + '/load-bin', {payload_code: payloadCode, uop_count: uopCount, manifest: manifest});
+        closeLoadBinModal();
+        ShingoEdge.toast('Bin loaded', 'success');
+    } catch(e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+</script>
 {{template "footer" .}}

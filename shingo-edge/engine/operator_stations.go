@@ -675,3 +675,80 @@ func (e *Engine) loadActiveNode(nodeID int64) (*store.ProcessNode, *store.Proces
 	claim := e.findActiveClaim(node)
 	return node, runtime, claim, nil
 }
+
+// LoadBin marks a bin at a bin_loader node as loaded with the given manifest.
+// Sends a bin.load message to Core which sets the manifest on the existing
+// bin at that node. No transport order is created — the bin stays in place
+// until a downstream consume node pulls it.
+func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error {
+	node, _, claim, err := e.loadActiveNode(nodeID)
+	if err != nil {
+		return err
+	}
+	if claim == nil {
+		return fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if claim.Role != "bin_loader" {
+		return fmt.Errorf("node %s is not a bin_loader node", node.Name)
+	}
+	if len(manifest) == 0 {
+		return fmt.Errorf("manifest is empty")
+	}
+
+	// Check that a bin is actually at this node
+	if e.coreClient.Available() {
+		bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
+		if len(bins) == 0 || !bins[0].Occupied {
+			return fmt.Errorf("no bin at node %s — request an empty bin first", node.Name)
+		}
+	}
+
+	// Validate payload code against allowed list
+	allowed := claim.AllowedPayloads()
+	if payloadCode == "" && len(allowed) > 0 {
+		payloadCode = allowed[0]
+	}
+	if payloadCode == "" {
+		return fmt.Errorf("no payload code specified")
+	}
+	valid := false
+	for _, code := range allowed {
+		if code == payloadCode {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+	}
+
+	if uopCount <= 0 {
+		for _, item := range manifest {
+			uopCount += item.Quantity
+		}
+	}
+
+	// Send bin.load to Core — sets manifest on the bin at this node
+	env, err := protocol.NewEnvelope(protocol.TypeBinLoad,
+		protocol.Address{Role: protocol.RoleEdge, Station: e.cfg.StationID()},
+		protocol.Address{Role: protocol.RoleCore},
+		&protocol.BinLoadRequest{
+			NodeName:    node.CoreNodeName,
+			PayloadCode: payloadCode,
+			UOPCount:    uopCount,
+			Manifest:    manifest,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("build bin.load envelope: %w", err)
+	}
+	if err := e.SendEnvelope(env); err != nil {
+		return fmt.Errorf("send bin.load: %w", err)
+	}
+
+	// Update edge-side runtime state
+	claimID := claim.ID
+	_ = e.db.SetProcessNodeRuntime(nodeID, &claimID, int(uopCount))
+
+	return nil
+}

@@ -47,6 +47,7 @@ type Engine struct {
 	reconciliation *ReconciliationService
 	coreSync       *CoreSyncService
 
+	coreClient    *CoreClient
 	coreNodes     map[string]protocol.NodeInfo
 	coreNodesMu   sync.RWMutex
 	nodeSyncFn    func()
@@ -88,6 +89,7 @@ func New(c Config) *Engine {
 		Events:      NewEventBus(),
 		stopChan:    make(chan struct{}),
 	}
+	e.coreClient = NewCoreClient(c.AppConfig.CoreAPI)
 	e.reconciliation = newReconciliationService(e.db)
 	e.coreSync = newCoreSyncService(e)
 	return e
@@ -156,6 +158,9 @@ func (e *Engine) ApplyWarLinkConfig() {
 
 // DB returns the database handle.
 func (e *Engine) DB() *store.DB { return e.db }
+
+// CoreAPI returns the Core HTTP client for telemetry requests.
+func (e *Engine) CoreAPI() *CoreClient { return e.coreClient }
 
 // Config returns the app config.
 func (e *Engine) AppConfig() *config.Config { return e.cfg }

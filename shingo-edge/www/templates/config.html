@@ -21,6 +21,19 @@
 </div>
 
 <div class="card" style="margin-bottom:1rem">
+    <div class="card-header"><strong>Core API</strong></div>
+    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="margin:0;min-width:22rem;flex:1">
+            <label>Core URL</label>
+            <input type="text" id="core-api-url" class="form-input" value="{{.Config.CoreAPI}}" placeholder="http://192.168.1.10:8080">
+        </div>
+        <button class="btn btn-sm" onclick="testCoreAPI()">Test</button>
+        <span id="core-api-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
+        <button class="btn btn-primary" onclick="saveCoreAPI()">Save</button>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
     <div class="card-header"><strong>WarLink</strong></div>
     <div class="card-body" id="warlink-form">
         <div style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">

@@ -1,5 +1,13 @@
 package store
 
+// NodeBinState holds Core-side bin information fetched via telemetry.
+type NodeBinState struct {
+	BinLabel     string `json:"bin_label,omitempty"`
+	PayloadCode  string `json:"payload_code,omitempty"`
+	UOPRemaining int    `json:"uop_remaining"`
+	Occupied     bool   `json:"occupied"`
+}
+
 type StationNodeView struct {
 	Node           ProcessNode              `json:"node"`
 	Runtime        *ProcessNodeRuntimeState `json:"runtime,omitempty"`
@@ -7,6 +15,7 @@ type StationNodeView struct {
 	TargetClaim    *StyleNodeClaim          `json:"target_claim,omitempty"`
 	ChangeoverTask *ChangeoverNodeTask      `json:"changeover_task,omitempty"`
 	Orders         []Order                  `json:"orders"`
+	BinState       *NodeBinState            `json:"bin_state,omitempty"`
 }
 
 type OperatorStationView struct {

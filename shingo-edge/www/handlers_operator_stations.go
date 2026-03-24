@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
+	"shingo/protocol"
+	"shingoedge/engine"
 	"shingoedge/store"
 )
 
@@ -37,6 +41,7 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "station not found")
 		return
 	}
+	enrichSingleViewBinState(h.engine.CoreAPI(), view)
 	_ = h.engine.DB().TouchOperatorStation(id, "online")
 	writeJSON(w, view)
 }
@@ -271,6 +276,41 @@ func (h *Handlers) apiFinalizeProduceNode(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSONWithTrigger(w, r, order, "refreshMaterial")
+}
+
+func (h *Handlers) apiLoadBin(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	var req struct {
+		PayloadCode string                       `json:"payload_code"`
+		UOPCount    int64                        `json:"uop_count"`
+		Manifest    []protocol.IngestManifestItem `json:"manifest"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.engine.LoadBin(id, req.PayloadCode, req.UOPCount, req.Manifest); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
+func (h *Handlers) apiPayloadManifest(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+	if code == "" {
+		writeJSON(w, map[string]interface{}{"uop_capacity": 0, "items": []struct{}{}})
+		return
+	}
+	result, _ := h.engine.CoreAPI().FetchPayloadManifest(code)
+	if result == nil {
+		result = &engine.PayloadManifestResponse{}
+	}
+	writeJSON(w, result)
 }
 
 func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {

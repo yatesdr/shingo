@@ -28,6 +28,7 @@
                     <td>
                         <div class="mono">{{.Node.CoreNodeName}}</div>
                         <div style="color:var(--text-muted);font-size:0.85rem">{{.Node.Name}}</div>
+                        {{if .BinState}}{{if .BinState.BinLabel}}<div style="font-size:0.8rem;color:var(--text-muted)">Bin: {{.BinState.BinLabel}}</div>{{end}}{{end}}
                     </td>
                     <td>
                         {{if .ActiveClaim}}
@@ -62,6 +63,8 @@
                             {{if eq .ActiveClaim.Role "produce"}}
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Request empty bin">Request Empty</button>
                             <button class="btn btn-sm btn-primary" hx-post="/api/process-nodes/{{.Node.ID}}/finalize" hx-swap="none" title="Finalize manifest count and release full bin to storage">Finalize &amp; Release</button>
+                            {{else if eq .ActiveClaim.Role "bin_loader"}}
+                            <button class="btn btn-sm btn-primary" onclick='openLoadBinModal({{.Node.ID}}, {{json .ActiveClaim.AllowedPayloads}}, {{.ActiveClaim.UOPCapacity}})' title="Mark bin as loaded with manifest">Bin Loaded</button>
                             {{else}}
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Order material to this node">Request</button>
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/release-empty" hx-swap="none" title="Send current bin to outbound staging">Release</button>

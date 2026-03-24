@@ -19,6 +19,9 @@ const (
 	// Edge -> Core: origination
 	TypeOrderIngest = "order.ingest"
 
+	// Edge -> Core: bin state (no transport order)
+	TypeBinLoad = "bin.load"
+
 	// Core -> Edge (published on dispatch topic)
 	TypeOrderAck       = "order.ack"
 	TypeOrderWaybill   = "order.waybill"

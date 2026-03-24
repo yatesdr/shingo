@@ -280,6 +280,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                     <select id="claims-add-role" class="form-input" onchange="toggleClaimsAddPayload()">
                         <option value="consume">Consume</option>
                         <option value="produce">Produce</option>
+                        <option value="bin_loader">Bin Loader</option>
                         <option value="changeover">Changeover Only</option>
                     </select>
                 </div>
@@ -301,6 +302,12 @@ window.claimedByStation = {{json .ClaimedByStation}};
                     </select>
                     <button class="btn btn-sm" type="button" onclick="syncPayloadCatalog()" title="Sync payload catalog from core">Sync</button>
                 </div>
+            </div>
+            <div class="form-group" id="claims-add-allowed-group" style="display:none">
+                <label>Allowed Payloads</label>
+                <div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.3rem">Select which payloads can be loaded at this source node.</div>
+                <div id="claims-allowed-picker" style="display:flex;flex-direction:column;gap:0.3rem;max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:0.5rem"></div>
+                <button class="btn btn-sm" type="button" onclick="syncPayloadCatalog()" style="margin-top:0.5rem" title="Sync payload catalog from core">Sync Catalog</button>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem 1rem;margin-bottom:0.75rem">
                 <div class="form-group" style="margin:0">

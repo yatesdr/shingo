@@ -200,7 +200,7 @@ async function loadClaims(styleID) {
             var claimJSON = ShingoEdge.escapeHtml(JSON.stringify(c));
             tr.innerHTML =
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.core_node_name) + '</td>' +
-                '<td><span class="status-badge">' + ({consume:'Consume',produce:'Produce',changeover:'Changeover'}[c.role] || c.role) + '</span>' + flagStr + '</td>' +
+                '<td><span class="status-badge">' + ({consume:'Consume',produce:'Produce',bin_loader:'Bin Loader',changeover:'Changeover'}[c.role] || c.role) + '</span>' + flagStr + '</td>' +
                 '<td>' + swapLabel + '</td>' +
                 '<td>' + ShingoEdge.escapeHtml(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.inbound_staging || '\u2014') + '</td>' +
@@ -273,6 +273,9 @@ function editClaim(claim) {
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
     toggleClaimsAddPayload();
+    if (claim.role === 'bin_loader') {
+        buildAllowedPayloadPicker(claim.allowed_payload_codes || []);
+    }
     ShingoEdge.showModal('claim-modal');
 }
 
@@ -301,7 +304,15 @@ async function saveClaim() {
     var capacity = parseInt(document.getElementById('claims-add-capacity').value, 10) || 0;
     var reorder = parseInt(document.getElementById('claims-add-reorder').value, 10) || 0;
 
-    if ((role === 'consume' || role === 'produce') && !payloadCode) {
+    var allowedPayloadCodes = [];
+    if (role === 'bin_loader') {
+        allowedPayloadCodes = getSelectedAllowedPayloads();
+        if (allowedPayloadCodes.length === 0) {
+            ShingoEdge.toast('Select at least one allowed payload', 'warning');
+            return;
+        }
+        payloadCode = allowedPayloadCodes[0]; // primary = first selected
+    } else if ((role === 'consume' || role === 'produce') && !payloadCode) {
         ShingoEdge.toast('Select a payload', 'warning');
         return;
     }
@@ -316,7 +327,8 @@ async function saveClaim() {
             core_node_name: node,
             role: role,
             swap_mode: document.getElementById('claims-add-swap').value,
-            payload_code: role === 'changeover' ? '' : payloadCode,
+            payload_code: (role === 'changeover' || role === 'bin_loader') ? '' : payloadCode,
+            allowed_payload_codes: allowedPayloadCodes,
             uop_capacity: capacity,
             reorder_point: reorder,
             auto_reorder: true,
@@ -346,13 +358,20 @@ async function removeClaim(id) {
 function toggleClaimsAddPayload() {
     var role = document.getElementById('claims-add-role').value;
     var isChangeover = role === 'changeover';
-    // Changeover-only nodes don't need payload or UOP config
-    document.getElementById('claims-add-payload-group').style.display = isChangeover ? 'none' : '';
-    document.getElementById('claims-add-reorder-group').style.display = isChangeover ? 'none' : '';
+    var isBinLoader = role === 'bin_loader';
+    // Changeover: no payload/UOP config. Source: multi-select payloads, no reorder.
+    document.getElementById('claims-add-payload-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
+    document.getElementById('claims-add-allowed-group').style.display = isBinLoader ? '' : 'none';
+    document.getElementById('claims-add-reorder-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
     if (isChangeover) {
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-capacity').value = '0';
         document.getElementById('claims-add-reorder').value = '0';
+    }
+    if (isBinLoader) {
+        document.getElementById('claims-add-reorder').value = '0';
+        document.getElementById('claims-add-payload').value = '';
+        buildAllowedPayloadPicker([]);
     }
 }
 
@@ -365,6 +384,37 @@ async function syncPayloadCatalog() {
     } catch (e) {
         ShingoEdge.toast('Sync failed: ' + e, 'error');
     }
+}
+
+function buildAllowedPayloadPicker(selected) {
+    var picker = document.getElementById('claims-allowed-picker');
+    picker.innerHTML = '';
+    var checkedSet = new Set(selected || []);
+    _payloadCatalog.forEach(function(p) {
+        var label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:0.5rem;cursor:pointer';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'allowed-payload-cb';
+        cb.value = p.code;
+        cb.checked = checkedSet.has(p.code);
+        label.appendChild(cb);
+        var span = document.createElement('span');
+        span.textContent = p.code + (p.name ? ' \u2014 ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
+        label.appendChild(span);
+        picker.appendChild(label);
+    });
+    if (_payloadCatalog.length === 0) {
+        picker.innerHTML = '<div style="color:var(--text-muted);font-style:italic">No payloads in catalog. Sync from Core first.</div>';
+    }
+}
+
+function getSelectedAllowedPayloads() {
+    var codes = [];
+    document.querySelectorAll('.allowed-payload-cb:checked').forEach(function(cb) {
+        codes.push(cb.value);
+    });
+    return codes;
 }
 
 function autoFillClaimsCapacity() {

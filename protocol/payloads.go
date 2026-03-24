@@ -182,6 +182,26 @@ type IngestManifestItem struct {
 	Description string `json:"description,omitempty"`
 }
 
+// --- Bin state (no transport order) ---
+
+// BinLoadRequest tells Core to set the manifest on the bin currently at a node.
+// Used by bin_loader nodes where material is loaded by forklift outside Shingo tracking.
+// Core finds the bin at NodeName, sets the manifest, and confirms it in place.
+type BinLoadRequest struct {
+	NodeName    string               `json:"node_name"`
+	PayloadCode string               `json:"payload_code"`
+	UOPCount    int64                `json:"uop_count"`
+	Manifest    []IngestManifestItem `json:"manifest"`
+}
+
+// BinLoadAck is Core's reply confirming a bin.load was applied.
+type BinLoadAck struct {
+	NodeName string `json:"node_name"`
+	BinID    int64  `json:"bin_id"`
+	Status   string `json:"status"` // "ok" or "error"
+	Detail   string `json:"detail,omitempty"`
+}
+
 // --- Node list data schemas ---
 
 // NodeListRequest is sent by edge to request the core's node list.

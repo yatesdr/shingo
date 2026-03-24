@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     outbound_staging        TEXT NOT NULL DEFAULT '',
     inbound_source          TEXT NOT NULL DEFAULT '',
     outbound_source         TEXT NOT NULL DEFAULT '',
+    allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     keep_staged             INTEGER NOT NULL DEFAULT 0,
     evacuate_on_changeover  INTEGER NOT NULL DEFAULT 0,
     sequence                INTEGER NOT NULL DEFAULT 0,
@@ -343,6 +344,9 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN outbound_source TEXT NOT NULL DEFAULT ''")
 	db.Exec("UPDATE style_node_claims SET inbound_source = COALESCE(NULLIF(inbound_source_node, ''), inbound_source_node_group) WHERE inbound_source = ''")
 	db.Exec("UPDATE style_node_claims SET outbound_source = COALESCE(NULLIF(outbound_source_node, ''), outbound_source_node_group) WHERE outbound_source = ''")
+
+	// Allowed payload codes for source nodes
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''")
 
 	// Migrate queued → pending status
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")

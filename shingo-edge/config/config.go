@@ -21,6 +21,7 @@ type Config struct {
 
 	Timezone string `yaml:"timezone"` // IANA timezone for shift/hourly bucketing (e.g. "America/Chicago")
 
+	CoreAPI   string          `yaml:"core_api"` // Core HTTP base URL (e.g. "http://192.168.1.10:8080")
 	WarLink   WarLinkConfig   `yaml:"warlink"`
 	Web       WebConfig       `yaml:"web"`
 	Messaging MessagingConfig `yaml:"messaging"`

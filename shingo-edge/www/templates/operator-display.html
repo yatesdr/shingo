@@ -55,6 +55,21 @@
         </div>
     </div>
 
+    <!-- Bin load modal (Bin Loader nodes) -->
+    <div id="load-bin-modal" class="os-modal-backdrop" hidden>
+        <div class="os-modal" style="max-width:420px;padding:20px">
+            <div class="os-modal-header" style="margin-bottom:12px">
+                <div class="os-modal-node-name">Load Bin</div>
+                <div class="os-modal-payload" id="load-bin-payload" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px"></div>
+            </div>
+            <div id="load-bin-rows" style="margin-bottom:12px"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button type="button" class="os-action-btn close" style="font-size:16px;padding:12px 24px" id="load-bin-cancel">CANCEL</button>
+                <button type="button" class="os-action-btn request" style="font-size:16px;padding:12px 24px" id="load-bin-submit">CONFIRM LOAD</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast container -->
     <div id="os-toast"></div>
 

@@ -540,6 +540,55 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// --- Core API ---
+
+func (h *Handlers) apiUpdateCoreAPI(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CoreAPI string `json:"core_api"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cfg := h.engine.AppConfig()
+	cfg.Lock()
+	cfg.CoreAPI = req.CoreAPI
+	cfg.Unlock()
+	if err := cfg.Save(h.engine.ConfigPath()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) apiTestCoreAPI(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CoreAPI string `json:"core_api"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.CoreAPI == "" {
+		writeJSON(w, map[string]interface{}{"connected": false, "error": "no URL"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", req.CoreAPI+"/api/health", nil)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"connected": false, "error": err.Error()})
+		return
+	}
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"connected": false, "error": err.Error()})
+		return
+	}
+	resp.Body.Close()
+	writeJSON(w, map[string]interface{}{"connected": resp.StatusCode < 500})
+}
+
 // --- Config Admin ---
 
 func (h *Handlers) apiUpdateMessaging(w http.ResponseWriter, r *http.Request) {

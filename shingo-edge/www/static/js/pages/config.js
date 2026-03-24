@@ -267,5 +267,33 @@ async function changePassword() {
     }
 }
 
+// --- Core API ---
+
+async function saveCoreAPI() {
+    try {
+        await ShingoEdge.api.put('/api/config/core-api', {
+            core_api: document.getElementById('core-api-url').value.trim()
+        });
+        ShingoEdge.toast('Core API URL saved', 'success');
+    } catch (e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
+async function testCoreAPI() {
+    var status = document.getElementById('core-api-status');
+    var url = document.getElementById('core-api-url').value.trim();
+    if (!url) { status.textContent = 'Enter a URL'; return; }
+    status.textContent = 'Testing...';
+    try {
+        var res = await ShingoEdge.api.post('/api/config/core-api/test', { core_api: url });
+        status.textContent = res.connected ? 'Connected' : (res.error || 'Failed');
+        status.style.color = res.connected ? 'var(--success, green)' : 'var(--danger, red)';
+    } catch (e) {
+        status.textContent = String(e);
+        status.style.color = 'var(--danger, red)';
+    }
+}
+
 loadBackupStatus();
 loadBackups();

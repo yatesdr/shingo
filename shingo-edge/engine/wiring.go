@@ -68,6 +68,8 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		}
 
 		switch claim.Role {
+		case "bin_loader":
+			continue // bin_loader nodes are operator-driven, not counter-driven
 		case "consume":
 			newRemaining := runtime.RemainingUOP - int(delta.Delta)
 			if newRemaining < 0 {

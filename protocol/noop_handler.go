@@ -13,6 +13,7 @@ func (NoOpHandler) HandleOrderStorageWaybill(*Envelope, *OrderStorageWaybill) {}
 func (NoOpHandler) HandleComplexOrderRequest(*Envelope, *ComplexOrderRequest) {}
 func (NoOpHandler) HandleOrderRelease(*Envelope, *OrderRelease)               {}
 func (NoOpHandler) HandleOrderIngest(*Envelope, *OrderIngestRequest)          {}
+func (NoOpHandler) HandleBinLoad(*Envelope, *BinLoadRequest)                 {}
 func (NoOpHandler) HandleOrderAck(*Envelope, *OrderAck)                       {}
 func (NoOpHandler) HandleOrderWaybill(*Envelope, *OrderWaybill)               {}
 func (NoOpHandler) HandleOrderUpdate(*Envelope, *OrderUpdate)                 {}

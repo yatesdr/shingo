@@ -15,6 +15,7 @@ import (
 // The concrete *engine.Engine satisfies this interface.
 type EngineAccess interface {
 	DB() *store.DB
+	CoreAPI() *engine.CoreClient
 	AppConfig() *config.Config
 	ConfigPath() string
 	PLCManager() *plc.Manager
@@ -34,6 +35,7 @@ type EngineAccess interface {
 	ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error)
 	ConfirmNodeManifest(nodeID int64) error
 	FinalizeProduceNode(nodeID int64) (*store.Order, error)
+	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error)
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error

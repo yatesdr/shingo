@@ -167,6 +167,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/process-nodes/{id}/release-partial", h.apiReleaseNodePartial)
 		r.Post("/process-nodes/{id}/manifest/confirm", h.apiConfirmNodeManifest)
 		r.Post("/process-nodes/{id}/finalize", h.apiFinalizeProduceNode)
+		r.Post("/process-nodes/{id}/load-bin", h.apiLoadBin)
+		r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
 		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
@@ -254,6 +256,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Put("/shifts", h.apiSaveShifts)
 
 			// Config
+			r.Put("/config/core-api", h.apiUpdateCoreAPI)
+			r.Post("/config/core-api/test", h.apiTestCoreAPI)
 			r.Put("/config/messaging", h.apiUpdateMessaging)
 			r.Put("/config/station-id", h.apiUpdateStationID)
 			r.Post("/config/kafka/test", h.apiTestKafka)

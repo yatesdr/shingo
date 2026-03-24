@@ -28,6 +28,9 @@ type MessageHandler interface {
 	// Edge -> Core: origination
 	HandleOrderIngest(env *Envelope, p *OrderIngestRequest)
 
+	// Edge -> Core: bin state
+	HandleBinLoad(env *Envelope, p *BinLoadRequest)
+
 	// Core -> Edge
 	HandleOrderAck(env *Envelope, p *OrderAck)
 	HandleOrderWaybill(env *Envelope, p *OrderWaybill)
@@ -123,6 +126,8 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		decodeAndCall(ing.handler.HandleOrderRelease, &env, ing.dbg)
 	case TypeOrderIngest:
 		decodeAndCall(ing.handler.HandleOrderIngest, &env, ing.dbg)
+	case TypeBinLoad:
+		decodeAndCall(ing.handler.HandleBinLoad, &env, ing.dbg)
 	case TypeOrderAck:
 		decodeAndCall(ing.handler.HandleOrderAck, &env, ing.dbg)
 	case TypeOrderWaybill:

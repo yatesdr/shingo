@@ -157,23 +157,38 @@ function createNodeButton(entry) {
     const icon = statusIcon(entry);
     if (icon) btn.appendChild(el('span', { className: 'os-node-icon', textContent: icon }));
 
-    // Remaining count
-    btn.appendChild(el('span', {
-        className: 'os-node-remaining',
-        textContent: claim ? String(remaining) : '--'
-    }));
-
-    // Capacity
-    if (claim && capacity > 0) {
+    if (claim && claim.role === 'bin_loader') {
+        const binState = entry.bin_state;
+        const binLabel = binState && binState.bin_label ? binState.bin_label : '';
+        const binPayload = binState && binState.payload_code ? binState.payload_code : '';
+        // Bin loader: show what's loaded
         btn.appendChild(el('span', {
-            className: 'os-node-capacity',
-            textContent: '/ ' + capacity
+            className: 'os-node-remaining',
+            textContent: binPayload ? binPayload : (remaining > 0 ? 'LOADED' : (binState && binState.occupied ? 'EMPTY' : 'NO BIN'))
         }));
-    }
+        btn.appendChild(el('span', {
+            className: 'os-node-payload',
+            textContent: binLabel || 'Bin Loader'
+        }));
+    } else {
+        // Remaining count
+        btn.appendChild(el('span', {
+            className: 'os-node-remaining',
+            textContent: claim ? String(remaining) : '--'
+        }));
 
-    // Payload
-    const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
-    btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
+        // Capacity
+        if (claim && capacity > 0) {
+            btn.appendChild(el('span', {
+                className: 'os-node-capacity',
+                textContent: '/ ' + capacity
+            }));
+        }
+
+        // Payload
+        const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
+        btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
+    }
 
     btn.addEventListener('click', () => openModal(entry.node.id));
     return btn;
@@ -183,6 +198,9 @@ function nodeColorClass(entry) {
     const claim = entry.active_claim;
     if (!claim) return 'os-unclaimed';
     const remaining = entry.runtime ? entry.runtime.remaining_uop : 0;
+    if (claim.role === 'bin_loader') {
+        return remaining > 0 ? 'os-full' : 'os-empty';
+    }
     const capacity = claim.uop_capacity || 1;
     if (remaining <= 0) return 'os-empty';
     const pct = remaining / capacity;
@@ -209,6 +227,16 @@ function statusIcon(entry) {
 function openModal(nodeID) {
     const entry = findNodeByID(nodeID);
     if (!entry) return;
+
+    // Bin loader: skip the node modal, go straight to load form
+    if (entry.active_claim && entry.active_claim.role === 'bin_loader') {
+        const claim = entry.active_claim;
+        const allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
+            ? claim.allowed_payload_codes
+            : (claim.payload_code ? [claim.payload_code] : []);
+        openLoadBin(entry.node.id, allowed, claim.uop_capacity || 0);
+        return;
+    }
     selectedNodeID = nodeID;
     renderModal(entry);
     nodeModal.hidden = false;
@@ -232,13 +260,25 @@ function renderModal(entry) {
     // Header
     html += '<div class="os-modal-header">';
     html += '<div class="os-modal-node-name">' + esc(entry.node.name) + '</div>';
-    html += '<div class="os-modal-payload">' + esc(claim ? claim.payload_code || 'Unassigned' : 'No claim') + '</div>';
 
-    // Fill bar
-    html += '<div class="os-modal-fill-row">';
-    html += '<div class="os-modal-fill-bar"><div class="os-modal-fill-level" style="width:' + Math.round(pct * 100) + '%;background:' + fillColor(pct, remaining) + '"></div></div>';
-    html += '<div class="os-modal-fill-text">' + remaining + ' / ' + capacity + '</div>';
-    html += '</div>';
+    if (claim && claim.role === 'bin_loader') {
+        const binState = entry.bin_state;
+        const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
+        const binPayload = binState && binState.payload_code ? binState.payload_code : '';
+        html += '<div class="os-modal-payload">Bin: ' + esc(binLabel) + (binPayload ? ' \u2014 ' + esc(binPayload) : '') + '</div>';
+        html += '<div class="os-modal-fill-row">';
+        html += '<div class="os-modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UOP)' : 'EMPTY') + '</div>';
+        html += '</div>';
+    } else {
+        const binState = entry.bin_state;
+        const binLabel = binState && binState.bin_label ? ' \u2014 Bin: ' + esc(binState.bin_label) : '';
+        html += '<div class="os-modal-payload">' + esc(claim ? claim.payload_code || 'Unassigned' : 'No claim') + binLabel + '</div>';
+        // Fill bar
+        html += '<div class="os-modal-fill-row">';
+        html += '<div class="os-modal-fill-bar"><div class="os-modal-fill-level" style="width:' + Math.round(pct * 100) + '%;background:' + fillColor(pct, remaining) + '"></div></div>';
+        html += '<div class="os-modal-fill-text">' + remaining + ' / ' + capacity + '</div>';
+        html += '</div>';
+    }
 
     // Order status
     if (isReplenishing(entry)) {
@@ -261,17 +301,29 @@ function renderModal(entry) {
     html += '<div class="os-modal-actions">';
 
     if (claim) {
-        // Normal production actions
-        html += actionBtn('REQUEST MATERIAL', 'request', true,
-            '/api/process-nodes/' + entry.node.id + '/request');
-        html += actionBtn('RELEASE EMPTY', 'release-empty', true,
-            '/api/process-nodes/' + entry.node.id + '/release-empty');
-        html += actionBtn('RELEASE PARTIAL', 'release-partial', true,
-            'keypad:' + entry.node.id + ':' + remaining);
+        if (claim.role === 'bin_loader') {
+            // Store load data on the module scope — can't embed JSON in data-action (escaping breaks it)
+            _pendingLoadData = {
+                nodeID: entry.node.id,
+                allowed: (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
+                    ? claim.allowed_payload_codes
+                    : (claim.payload_code ? [claim.payload_code] : []),
+                capacity: claim.uop_capacity || 0
+            };
+            html += actionBtn('LOAD BIN', 'load-bin', true, 'load-bin');
+        } else {
+            // Normal production actions
+            html += actionBtn('REQUEST MATERIAL', 'request', true,
+                '/api/process-nodes/' + entry.node.id + '/request');
+            html += actionBtn('RELEASE EMPTY', 'release-empty', true,
+                '/api/process-nodes/' + entry.node.id + '/release-empty');
+            html += actionBtn('RELEASE PARTIAL', 'release-partial', true,
+                'keypad:' + entry.node.id + ':' + remaining);
 
-        if (claim.role === 'produce') {
-            html += actionBtn('FINALIZE', 'finalize', true,
-                '/api/process-nodes/' + entry.node.id + '/finalize');
+            if (claim.role === 'produce') {
+                html += actionBtn('FINALIZE', 'finalize', true,
+                    '/api/process-nodes/' + entry.node.id + '/finalize');
+            }
         }
 
         // Manifest confirmation
@@ -334,6 +386,14 @@ async function handleModalAction(evt) {
     if (!action) return;
 
     if (action === 'close') { closeModal(); return; }
+
+    if (action === 'load-bin' && _pendingLoadData) {
+        const data = _pendingLoadData;
+        _pendingLoadData = null;
+        closeModal();
+        openLoadBin(data.nodeID, data.allowed, data.capacity);
+        return;
+    }
 
     if (action.startsWith('keypad:')) {
         const parts = action.split(':');
@@ -418,7 +478,121 @@ document.getElementById('keypad-ok').addEventListener('click', async () => {
 });
 
 
-// ─── Footer ───
+// ─── Bin Load (Bin Loader nodes) ───
+
+let _pendingLoadData = null;
+let loadBinState = null;
+
+function openLoadBin(nodeID, allowedCodes, defaultCapacity) {
+    loadBinState = { nodeID, payloadCode: '' };
+    // Build payload picker buttons
+    const payloadEl = document.getElementById('load-bin-payload');
+    payloadEl.innerHTML = '';
+    const rows = document.getElementById('load-bin-rows');
+    rows.innerHTML = '<div style="color:#999;text-align:center;padding:12px">Select a payload above</div>';
+    (allowedCodes || []).forEach(code => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'os-action-btn';
+        btn.style.cssText = 'font-size:14px;padding:10px 20px;margin:0 6px 6px 0';
+        btn.textContent = code;
+        btn.dataset.code = code;
+        btn.addEventListener('click', () => selectLoadPayload(code));
+        payloadEl.appendChild(btn);
+    });
+    document.getElementById('load-bin-modal').hidden = false;
+}
+
+async function selectLoadPayload(code) {
+    if (!loadBinState) return;
+    loadBinState.payloadCode = code;
+    // Highlight selected
+    document.querySelectorAll('#load-bin-payload button').forEach(btn => {
+        btn.className = 'os-action-btn' + (btn.dataset.code === code ? ' request' : '');
+    });
+    // Fetch manifest template from Core
+    const rows = document.getElementById('load-bin-rows');
+    rows.innerHTML = '<div style="color:#999;text-align:center;padding:12px">Loading manifest...</div>';
+    try {
+        const res = await fetch('/api/payload/' + encodeURIComponent(code) + '/manifest');
+        const data = res.ok ? await res.json() : { uop_capacity: 0, items: [] };
+        const items = data.items || [];
+        const uopCapacity = data.uop_capacity || 0;
+        rows.innerHTML = '';
+        if (items.length === 0) {
+            rows.innerHTML = '<div style="color:#f66;padding:8px">No manifest template for this payload</div>';
+            return;
+        }
+        // UOP count field (from payload template, not sum of parts)
+        const uopRow = document.createElement('div');
+        uopRow.style.cssText = 'display:grid;grid-template-columns:1fr 100px;gap:8px;align-items:center;margin-bottom:12px;padding:10px;background:#1a2a1a;border-radius:4px;border:1px solid #2a4a2a';
+        uopRow.innerHTML =
+            '<div style="font-size:16px;font-weight:600;color:#fff">UOP Count</div>' +
+            '<input type="number" id="os-load-uop" value="' + uopCapacity + '" ' +
+                'style="width:100%;font-size:18px;padding:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;text-align:center;font-weight:600">';
+        rows.appendChild(uopRow);
+
+        items.forEach(item => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:8px;align-items:center;margin-bottom:8px;padding:8px;background:#1a1a1a;border-radius:4px';
+            row.innerHTML =
+                '<div>' +
+                    '<div style="font-size:15px;color:#fff">' + esc(item.part_number) + '</div>' +
+                    '<div style="font-size:12px;color:#999">' + esc(item.description || '') + '</div>' +
+                '</div>' +
+                '<input type="number" class="os-manifest-qty" value="' + (item.quantity || 0) + '" ' +
+                    'data-part="' + esc(item.part_number) + '" data-desc="' + esc(item.description || '') + '" ' +
+                    'style="width:100%;font-size:18px;padding:8px;border:1px solid #444;border-radius:4px;background:#222;color:#fff;text-align:center">';
+            rows.appendChild(row);
+        });
+    } catch (e) {
+        rows.innerHTML = '<div style="color:#f66;padding:8px">Failed to load manifest</div>';
+    }
+}
+
+function closeLoadBin() {
+    loadBinState = null;
+    document.getElementById('load-bin-modal').hidden = true;
+}
+
+async function submitLoadBin() {
+    if (!loadBinState || !loadBinState.payloadCode) {
+        showToast('Select a payload first', 'error');
+        return;
+    }
+    const manifest = [];
+    document.querySelectorAll('.os-manifest-qty').forEach(input => {
+        const qty = parseInt(input.value, 10) || 0;
+        if (qty > 0) {
+            manifest.push({
+                part_number: input.dataset.part,
+                quantity: qty,
+                description: input.dataset.desc || ''
+            });
+        }
+    });
+    if (manifest.length === 0) {
+        showToast('Enter at least one quantity', 'error');
+        return;
+    }
+    const uopEl = document.getElementById('os-load-uop');
+    const uopCount = uopEl ? parseInt(uopEl.value, 10) || 0 : 0;
+    const body = { payload_code: loadBinState.payloadCode, uop_count: uopCount, manifest };
+    const nodeID = loadBinState.nodeID;
+    closeLoadBin();
+    const ok = await postAction('/api/process-nodes/' + nodeID + '/load-bin', body);
+    if (ok) {
+        showToast('Bin loaded', 'success');
+        // Delay re-fetch to give Core time to process the bin.load via Kafka
+        setTimeout(loadView, 1500);
+    }
+}
+
+document.getElementById('load-bin-cancel').addEventListener('click', closeLoadBin);
+document.getElementById('load-bin-submit').addEventListener('click', submitLoadBin);
+document.getElementById('load-bin-modal').addEventListener('click', evt => {
+    if (evt.target === document.getElementById('load-bin-modal')) closeLoadBin();
+});
 
 // ─── Footer ───
 
