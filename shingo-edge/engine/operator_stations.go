@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"slices"
 
 	"shingo/protocol"
 	"shingoedge/orders"
@@ -534,9 +535,6 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	}
 	claimID := claim.ID
 	uop := claim.UOPCapacity
-	if uop == 0 {
-		uop = 0 // explicit: empty node starts at 0
-	}
 	if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, uop); err != nil {
 		return err
 	}
@@ -711,14 +709,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	if payloadCode == "" {
 		return fmt.Errorf("no payload code specified")
 	}
-	valid := false
-	for _, code := range allowed {
-		if code == payloadCode {
-			valid = true
-			break
-		}
-	}
-	if !valid {
+	if !slices.Contains(allowed, payloadCode) {
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 

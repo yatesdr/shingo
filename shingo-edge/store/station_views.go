@@ -2,10 +2,13 @@ package store
 
 // NodeBinState holds Core-side bin information fetched via telemetry.
 type NodeBinState struct {
-	BinLabel     string `json:"bin_label,omitempty"`
-	PayloadCode  string `json:"payload_code,omitempty"`
-	UOPRemaining int    `json:"uop_remaining"`
-	Occupied     bool   `json:"occupied"`
+	BinLabel          string  `json:"bin_label,omitempty"`
+	BinTypeCode       string  `json:"bin_type_code,omitempty"`
+	PayloadCode       string  `json:"payload_code,omitempty"`
+	UOPRemaining      int     `json:"uop_remaining"`
+	Manifest          *string `json:"manifest,omitempty"`
+	ManifestConfirmed bool    `json:"manifest_confirmed"`
+	Occupied          bool    `json:"occupied"`
 }
 
 type StationNodeView struct {

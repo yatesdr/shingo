@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-03-24 — Bin Loader Nodes, Core Telemetry API, NodeGroup Removal
+
+### Bin Loader Role
+
+New `bin_loader` claim role for nodes where forklifts load untracked material into existing bins. Operators select a payload from the claim's allowed list, confirm the manifest (from Core's payload template), set UOP count, and submit. The bin's manifest is set on Core via direct HTTP — no Kafka, immediate feedback.
+
+- **Allowed payload codes** on style_node_claims — multi-select in claim modal, restricts which payloads a loader accepts
+- **Load Bin** action on operator station and material page — payload picker, manifest from template, editable UOP
+- **Clear Bin** action — reset a mis-loaded bin to empty
+- **Move after load** — if outbound destination is configured, a move order auto-dispatches the loaded bin to storage
+- **Claim modal field gating** — bin_loader hides swap mode, staging, inbound source, reorder, changeover fields
+- **NGRP bulk claim creation** — selecting a group node expands to create claims for all direct physical children
+
+### Core Telemetry API
+
+New lightweight HTTP endpoints for Edge to fetch real-time state from Core, replacing Kafka for synchronous operations:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/telemetry/node-bins` | Bin state per node (label, type, payload, UOP, manifest, confirmed) |
+| `GET /api/telemetry/payload/{code}/manifest` | Payload manifest template + UOP capacity |
+| `GET /api/telemetry/node/{name}/children` | Physical children of an NGRP node |
+| `POST /api/telemetry/bin-load` | Set manifest on bin at node (was Kafka `bin.load`) |
+| `POST /api/telemetry/bin-clear` | Clear bin manifest at node |
+
+Edge `CoreClient` (`engine/core_client.go`) makes on-demand HTTP calls with 3s timeout. Graceful degradation — views render without bin data if Core is unreachable. Core API URL configured in Edge settings page.
+
+### Bin State Visibility
+
+- **Operator station tiles** show bin label (bold), loaded payload code, and EMPTY/LOADED/NO BIN status
+- **Material page** shows bin label, payload from Core, and actual UOP count for bin_loader nodes
+- **View Contents** modal on material page shows full bin manifest (part numbers, quantities), bin type, and confirmation status
+- **Core nodes page** refreshes via SSE on bin-load/clear events; inventory display enriched with bin type, contents, UOP, and lock/claim badges
+
+### NodeGroup Removal
+
+Removed `NodeGroup` field from wire protocol `ComplexOrderStep`. Core auto-detects NGRP nodes via `IsSynthetic + NodeTypeCode` and resolves them — same pattern simple orders already used. Collapsed 4 edge claim source columns (`inbound_source_node`, `inbound_source_node_group`, `outbound_source_node`, `outbound_source_node_group`) into 2 (`inbound_source`, `outbound_source`).
+
+### Code Quality
+
+- Removed `enrichSingleViewBinState` wrapper (inlined at call site)
+- `FetchNodeBins` error handling made consistent with other read methods (silent degradation)
+- `slices.Contains` replaces hand-rolled loop in `LoadBin`
+- Dead self-assignment removed from `SwitchNodeToTarget`
+- Node children endpoint uses `GetNodeByDotName` for dot-notation consistency
+- `bin.load` Kafka artifacts fully removed: `TypeBinLoad`, `BinLoadRequest`, `BinLoadAck`, `HandleBinLoad` from protocol, dispatcher, and core handler
+
 ## 2026-03-23 — Delivery Cycle Modes: Sequential, Single Robot, Two Robot
 
 Adds source/destination routing to `style_node_claims`, fixes single-robot and two-robot step sequences, and introduces sequential mode.

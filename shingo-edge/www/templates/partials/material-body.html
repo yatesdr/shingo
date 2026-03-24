@@ -28,23 +28,40 @@
                     <td>
                         <div class="mono">{{.Node.CoreNodeName}}</div>
                         <div style="color:var(--text-muted);font-size:0.85rem">{{.Node.Name}}</div>
-                        {{if .BinState}}{{if .BinState.BinLabel}}<div style="font-size:0.8rem;color:var(--text-muted)">Bin: {{.BinState.BinLabel}}</div>{{end}}{{end}}
+                        {{if .BinState}}{{if .BinState.BinLabel}}<div style="font-size:0.8rem;color:var(--text-muted)">Bin: <strong>{{.BinState.BinLabel}}</strong></div>{{end}}{{end}}
                     </td>
                     <td>
                         {{if .ActiveClaim}}
-                            <span class="status-badge">{{.ActiveClaim.Role}}</span>
-                            {{.ActiveClaim.PayloadCode}}
+                            {{if eq .ActiveClaim.Role "bin_loader"}}
+                                <span class="status-badge">Bin Loader</span>
+                                {{if .BinState}}{{if .BinState.PayloadCode}}
+                                    <strong>{{.BinState.PayloadCode}}</strong>
+                                {{else}}
+                                    <span style="color:var(--text-muted)">empty</span>
+                                {{end}}{{else}}
+                                    <span style="color:var(--text-muted)">empty</span>
+                                {{end}}
+                            {{else}}
+                                <span class="status-badge">{{.ActiveClaim.Role}}</span>
+                                {{.ActiveClaim.PayloadCode}}
+                            {{end}}
                         {{else}}
                             <span style="color:var(--text-muted)">No claim</span>
                         {{end}}
                     </td>
                     <td>
-                        {{if .Runtime}}
-                            <strong>{{.Runtime.RemainingUOP}}</strong>
-                            {{if .ActiveClaim}}/ {{.ActiveClaim.UOPCapacity}}{{end}}
-                        {{else}}
-                            --
-                        {{end}}
+                        {{if .ActiveClaim}}
+                            {{if eq .ActiveClaim.Role "bin_loader"}}
+                                {{if .Runtime}}
+                                    {{if gt .Runtime.RemainingUOP 0}}<strong>{{.Runtime.RemainingUOP}}</strong>{{else}}<span style="color:var(--text-muted)">0</span>{{end}}
+                                {{else}}--{{end}}
+                            {{else}}
+                                {{if .Runtime}}
+                                    <strong>{{.Runtime.RemainingUOP}}</strong>
+                                    {{if .ActiveClaim}}/ {{.ActiveClaim.UOPCapacity}}{{end}}
+                                {{else}}--{{end}}
+                            {{end}}
+                        {{else}}--{{end}}
                     </td>
                     <td>
                         {{if .Orders}}
@@ -64,7 +81,13 @@
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Request empty bin">Request Empty</button>
                             <button class="btn btn-sm btn-primary" hx-post="/api/process-nodes/{{.Node.ID}}/finalize" hx-swap="none" title="Finalize manifest count and release full bin to storage">Finalize &amp; Release</button>
                             {{else if eq .ActiveClaim.Role "bin_loader"}}
-                            <button class="btn btn-sm btn-primary" onclick='openLoadBinModal({{.Node.ID}}, {{json .ActiveClaim.AllowedPayloads}}, {{.ActiveClaim.UOPCapacity}})' title="Mark bin as loaded with manifest">Bin Loaded</button>
+                            {{if .BinState}}{{if .BinState.Manifest}}
+                            <button class="btn btn-sm" onclick='viewBinContents({{json .BinState}})' title="View bin contents">View</button>
+                            {{end}}{{end}}
+                            <button class="btn btn-sm btn-primary" onclick='openLoadBinModal({{.Node.ID}}, {{json .ActiveClaim.AllowedPayloads}}, {{.ActiveClaim.UOPCapacity}})' title="Load bin with payload manifest">Load Bin</button>
+                            {{if .Runtime}}{{if gt .Runtime.RemainingUOP 0}}
+                            <button class="btn btn-sm btn-danger" hx-post="/api/process-nodes/{{.Node.ID}}/clear-bin" hx-swap="none" title="Clear bin manifest (fix mis-load)">Clear Bin</button>
+                            {{end}}{{end}}
                             {{else}}
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Order material to this node">Request</button>
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/release-empty" hx-swap="none" title="Send current bin to outbound staging">Release</button>

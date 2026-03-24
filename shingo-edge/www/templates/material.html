@@ -23,6 +23,47 @@
     {{template "material-body" .}}
 </div>
 
+<!-- View Bin Contents Modal -->
+<div class="modal" id="view-bin-modal" style="display:none">
+    <div class="modal-content" style="max-width:480px">
+        <div class="modal-header">
+            <span id="view-bin-title">Bin Contents</span>
+            <button class="btn btn-sm" onclick="ShingoEdge.hideModal('view-bin-modal')">&times;</button>
+        </div>
+        <div class="card-body" id="view-bin-body"></div>
+        <div class="modal-footer">
+            <button class="btn" onclick="ShingoEdge.hideModal('view-bin-modal')">Close</button>
+        </div>
+    </div>
+</div>
+<script>
+function viewBinContents(binState) {
+    document.getElementById('view-bin-title').textContent = 'Bin: ' + (binState.bin_label || 'Unknown');
+    var body = document.getElementById('view-bin-body');
+    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem">';
+    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Payload</div><strong>' + ShingoEdge.escapeHtml(binState.payload_code || 'empty') + '</strong></div>';
+    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">UOP Remaining</div><strong>' + (binState.uop_remaining || 0) + '</strong></div>';
+    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Bin Type</div>' + ShingoEdge.escapeHtml(binState.bin_type_code || '-') + '</div>';
+    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Confirmed</div>' + (binState.manifest_confirmed ? 'Yes' : 'No') + '</div>';
+    html += '</div>';
+    if (binState.manifest) {
+        try {
+            var manifest = typeof binState.manifest === 'string' ? JSON.parse(binState.manifest) : binState.manifest;
+            var items = manifest.items || [];
+            if (items.length > 0) {
+                html += '<table class="table" style="font-size:0.85rem"><thead><tr><th>Part</th><th>Qty</th></tr></thead><tbody>';
+                items.forEach(function(item) {
+                    html += '<tr><td>' + ShingoEdge.escapeHtml(item.catid || item.part_number || '') + '</td><td>' + (item.qty || item.quantity || 0) + '</td></tr>';
+                });
+                html += '</tbody></table>';
+            }
+        } catch(e) {}
+    }
+    body.innerHTML = html;
+    ShingoEdge.showModal('view-bin-modal');
+}
+</script>
+
 <!-- Load Bin Modal (Bin Loader nodes) -->
 <div class="modal" id="load-bin-modal" style="display:none">
     <div class="modal-content" style="max-width:480px">

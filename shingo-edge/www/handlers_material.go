@@ -36,25 +36,19 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []store.OperatorStatio
 			name := views[i].Nodes[j].Node.CoreNodeName
 			if info, ok := binMap[name]; ok {
 				views[i].Nodes[j].BinState = &store.NodeBinState{
-					BinLabel:     info.BinLabel,
-					PayloadCode:  info.PayloadCode,
-					UOPRemaining: info.UOPRemaining,
-					Occupied:     info.Occupied,
+					BinLabel:          info.BinLabel,
+					BinTypeCode:       info.BinTypeCode,
+					PayloadCode:       info.PayloadCode,
+					UOPRemaining:      info.UOPRemaining,
+					Manifest:          info.Manifest,
+					ManifestConfirmed: info.ManifestConfirmed,
+					Occupied:          info.Occupied,
 				}
 			}
 		}
 	}
 }
 
-// enrichSingleViewBinState enriches a single station view.
-func enrichSingleViewBinState(coreAPI *engine.CoreClient, view *store.OperatorStationView) {
-	if view == nil {
-		return
-	}
-	views := []store.OperatorStationView{*view}
-	enrichViewBinState(coreAPI, views)
-	view.Nodes = views[0].Nodes
-}
 
 func buildStationViews(db *store.DB, activeProcess *store.Process) []store.OperatorStationView {
 	if activeProcess == nil {

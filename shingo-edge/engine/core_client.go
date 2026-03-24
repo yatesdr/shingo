@@ -11,11 +11,14 @@ import (
 
 // NodeBinInfo describes the bin state at a single core node.
 type NodeBinInfo struct {
-	NodeName    string `json:"node_name"`
-	BinLabel    string `json:"bin_label,omitempty"`
-	PayloadCode string `json:"payload_code,omitempty"`
-	UOPRemaining int   `json:"uop_remaining"`
-	Occupied    bool   `json:"occupied"`
+	NodeName          string  `json:"node_name"`
+	BinLabel          string  `json:"bin_label,omitempty"`
+	BinTypeCode       string  `json:"bin_type_code,omitempty"`
+	PayloadCode       string  `json:"payload_code,omitempty"`
+	UOPRemaining      int     `json:"uop_remaining"`
+	Manifest          *string `json:"manifest,omitempty"`
+	ManifestConfirmed bool    `json:"manifest_confirmed"`
+	Occupied          bool    `json:"occupied"`
 }
 
 // CoreClient makes lightweight HTTP requests to Core's telemetry API.
@@ -79,6 +82,33 @@ func (c *CoreClient) FetchPayloadManifest(payloadCode string) (*PayloadManifestR
 	return &result, nil
 }
 
+// NodeChildInfo describes a physical child node of an NGRP.
+type NodeChildInfo struct {
+	Name     string `json:"name"`
+	NodeType string `json:"node_type"`
+}
+
+// FetchNodeChildren returns the direct physical children of an NGRP node.
+// Returns nil if Core is unavailable or the node has no physical children.
+func (c *CoreClient) FetchNodeChildren(nodeName string) ([]NodeChildInfo, error) {
+	if c.baseURL == "" || nodeName == "" {
+		return nil, nil
+	}
+	resp, err := c.http.Get(c.baseURL + "/api/telemetry/node/" + nodeName + "/children")
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+	var result []NodeChildInfo
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, nil
+	}
+	return result, nil
+}
+
 // FetchNodeBins returns bin state for the given core node names.
 // Returns nil (no error) if Core is unavailable or unreachable.
 func (c *CoreClient) FetchNodeBins(nodeNames []string) ([]NodeBinInfo, error) {
@@ -92,11 +122,11 @@ func (c *CoreClient) FetchNodeBins(nodeNames []string) ([]NodeBinInfo, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("core returned %d", resp.StatusCode)
+		return nil, nil
 	}
 	var result []NodeBinInfo
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode node bins: %w", err)
+		return nil, nil
 	}
 	return result, nil
 }

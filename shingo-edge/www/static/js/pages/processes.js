@@ -321,26 +321,58 @@ async function saveClaim() {
         return;
     }
 
+    // Build the claim body
+    var claimBody = {
+        style_id: _claimsStyleID,
+        core_node_name: node,
+        role: role,
+        swap_mode: document.getElementById('claims-add-swap').value,
+        payload_code: (role === 'changeover' || role === 'bin_loader') ? '' : payloadCode,
+        allowed_payload_codes: allowedPayloadCodes,
+        uop_capacity: capacity,
+        reorder_point: reorder,
+        auto_reorder: true,
+        inbound_staging: document.getElementById('claims-add-inbound').value,
+        outbound_staging: document.getElementById('claims-add-outbound').value,
+        inbound_source: document.getElementById('claims-add-inbound-source').value,
+        outbound_source: document.getElementById('claims-add-outbound-source').value,
+        keep_staged: document.getElementById('claims-add-keep-staged').checked,
+        evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked
+    };
+
+    // Check if selected node is an NGRP — expand to physical children
+    var sel = document.getElementById('claims-add-node');
+    var selectedOpt = sel.options[sel.selectedIndex];
+    var nodeType = selectedOpt ? selectedOpt.dataset.type : '';
+    var nodeNames = [node];
+
+    if (nodeType === 'NGRP' && !document.getElementById('claims-edit-id').value) {
+        try {
+            var children = await ShingoEdge.api.get('/api/node/' + encodeURIComponent(node) + '/children');
+            if (Array.isArray(children) && children.length > 0) {
+                var childNames = children.map(function(c) { return c.name; });
+                if (!await ShingoEdge.confirm('Create ' + role + ' claims for ' + childNames.length + ' nodes under ' + node + '?\n\n' + childNames.join(', '))) {
+                    return;
+                }
+                nodeNames = childNames;
+            } else {
+                ShingoEdge.toast('No physical children found under ' + node, 'warning');
+                return;
+            }
+        } catch (e) {
+            ShingoEdge.toast('Error fetching children: ' + e, 'error');
+            return;
+        }
+    }
+
     try {
-        await ShingoEdge.api.post('/api/style-node-claims', {
-            style_id: _claimsStyleID,
-            core_node_name: node,
-            role: role,
-            swap_mode: document.getElementById('claims-add-swap').value,
-            payload_code: (role === 'changeover' || role === 'bin_loader') ? '' : payloadCode,
-            allowed_payload_codes: allowedPayloadCodes,
-            uop_capacity: capacity,
-            reorder_point: reorder,
-            auto_reorder: true,
-            inbound_staging: document.getElementById('claims-add-inbound').value,
-            outbound_staging: document.getElementById('claims-add-outbound').value,
-            inbound_source: document.getElementById('claims-add-inbound-source').value,
-            outbound_source: document.getElementById('claims-add-outbound-source').value,
-            keep_staged: document.getElementById('claims-add-keep-staged').checked,
-            evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked
-        });
+        for (var i = 0; i < nodeNames.length; i++) {
+            claimBody.core_node_name = nodeNames[i];
+            await ShingoEdge.api.post('/api/style-node-claims', claimBody);
+        }
         closeClaimModal();
         await loadClaims(_claimsStyleID);
+        if (nodeNames.length > 1) ShingoEdge.toast('Created ' + nodeNames.length + ' claims', 'success');
     } catch (e) {
         ShingoEdge.toast('Error: ' + e, 'error');
     }

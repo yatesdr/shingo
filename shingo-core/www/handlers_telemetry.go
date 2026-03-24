@@ -24,11 +24,14 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 	names := strings.Split(nodesParam, ",")
 
 	type nodeBinInfo struct {
-		NodeName     string `json:"node_name"`
-		BinLabel     string `json:"bin_label,omitempty"`
-		PayloadCode  string `json:"payload_code,omitempty"`
-		UOPRemaining int    `json:"uop_remaining"`
-		Occupied     bool   `json:"occupied"`
+		NodeName          string  `json:"node_name"`
+		BinLabel          string  `json:"bin_label,omitempty"`
+		BinTypeCode       string  `json:"bin_type_code,omitempty"`
+		PayloadCode       string  `json:"payload_code,omitempty"`
+		UOPRemaining      int     `json:"uop_remaining"`
+		Manifest          *string `json:"manifest,omitempty"`
+		ManifestConfirmed bool    `json:"manifest_confirmed"`
+		Occupied          bool    `json:"occupied"`
 	}
 
 	db := h.engine.DB()
@@ -52,8 +55,11 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		bin := bins[0]
 		entry.Occupied = true
 		entry.BinLabel = bin.Label
+		entry.BinTypeCode = bin.BinTypeCode
 		entry.PayloadCode = bin.PayloadCode
 		entry.UOPRemaining = bin.UOPRemaining
+		entry.Manifest = bin.Manifest
+		entry.ManifestConfirmed = bin.ManifestConfirmed
 		result = append(result, entry)
 	}
 	h.jsonOK(w, result)
@@ -101,6 +107,44 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		"uop_capacity": payload.UOPCapacity,
 		"items":        result,
 	})
+}
+
+// apiTelemetryNodeChildren returns the direct physical (non-synthetic) children of an NGRP node.
+// GET /api/telemetry/node/{name}/children
+func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		h.jsonOK(w, []struct{}{})
+		return
+	}
+	db := h.engine.DB()
+	node, err := db.GetNodeByDotName(name)
+	if err != nil {
+		h.jsonOK(w, []struct{}{})
+		return
+	}
+	children, err := db.ListChildNodes(node.ID)
+	if err != nil {
+		h.jsonOK(w, []struct{}{})
+		return
+	}
+	type childInfo struct {
+		Name     string `json:"name"`
+		NodeType string `json:"node_type"`
+	}
+	var result []childInfo
+	for _, c := range children {
+		if !c.IsSynthetic {
+			result = append(result, childInfo{
+				Name:     node.Name + "." + c.Name,
+				NodeType: c.NodeTypeCode,
+			})
+		}
+	}
+	if result == nil {
+		result = []childInfo{}
+	}
+	h.jsonOK(w, result)
 }
 
 // apiBinLoad sets the manifest on the bin at a node. Direct HTTP replacement

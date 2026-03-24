@@ -41,7 +41,9 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "station not found")
 		return
 	}
-	enrichSingleViewBinState(h.engine.CoreAPI(), view)
+	views := []store.OperatorStationView{*view}
+	enrichViewBinState(h.engine.CoreAPI(), views)
+	view.Nodes = views[0].Nodes
 	_ = h.engine.DB().TouchOperatorStation(id, "online")
 	writeJSON(w, view)
 }
@@ -313,6 +315,19 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
+func (h *Handlers) apiNodeChildren(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		writeJSON(w, []struct{}{})
+		return
+	}
+	children, _ := h.engine.CoreAPI().FetchNodeChildren(name)
+	if children == nil {
+		children = []engine.NodeChildInfo{}
+	}
+	writeJSON(w, children)
+}
+
 func (h *Handlers) apiPayloadManifest(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "code")
 	if code == "" {
@@ -321,7 +336,7 @@ func (h *Handlers) apiPayloadManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	result, _ := h.engine.CoreAPI().FetchPayloadManifest(code)
 	if result == nil {
-		result = &engine.PayloadManifestResponse{}
+		result = &engine.PayloadManifestResponse{Items: []engine.ManifestItem{}}
 	}
 	writeJSON(w, result)
 }
