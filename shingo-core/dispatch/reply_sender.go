@@ -58,6 +58,20 @@ func (s *ReplySender) SendAck(env *protocol.Envelope, orderUUID string, shingoOr
 	}
 }
 
+func (s *ReplySender) SendUpdate(env *protocol.Envelope, orderUUID, status, detail string) {
+	if err := s.SendReply(protocol.TypeOrderUpdate, "order.update", env.Src.Station, env.ID, &protocol.OrderUpdate{
+		OrderUUID: orderUUID,
+		Status:    status,
+		Detail:    detail,
+	}); err != nil {
+		log.Printf("dispatch: update reply for %s: %v", orderUUID, err)
+		return
+	}
+	if s.debug != nil {
+		s.debug("sendUpdate: uuid=%s status=%s", orderUUID, status)
+	}
+}
+
 func (s *ReplySender) SendError(env *protocol.Envelope, orderUUID, errorCode, detail string) {
 	if err := s.SendReply(protocol.TypeOrderError, "order.error", env.Src.Station, env.ID, &protocol.OrderError{
 		OrderUUID: orderUUID,

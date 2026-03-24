@@ -126,6 +126,25 @@ func (e *Engine) wireEventHandlers() {
 			e.RecordMovementTransactions(ev)
 		}
 	}, EventBinUpdated)
+
+	// Fulfillment scanner: trigger on events that may make bins available
+	triggerFulfillment := func(Event) {
+		if e.fulfillment != nil {
+			e.fulfillment.Trigger()
+			go e.fulfillment.RunOnce()
+		}
+	}
+	e.Events.SubscribeTypes(triggerFulfillment, EventBinUpdated)
+	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCompleted)
+	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCancelled)
+	e.Events.SubscribeTypes(triggerFulfillment, EventOrderFailed)
+
+	// Queued order: audit
+	e.Events.SubscribeTypes(func(evt Event) {
+		ev := evt.Payload.(OrderQueuedEvent)
+		e.logFn("engine: order %d queued for payload %s", ev.OrderID, ev.PayloadCode)
+		e.db.AppendAudit("order", ev.OrderID, "queued", "", fmt.Sprintf("payload=%s from %s", ev.PayloadCode, ev.StationID), "system")
+	}, EventOrderQueued)
 }
 
 func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {

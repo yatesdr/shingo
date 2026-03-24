@@ -66,6 +66,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		DeliveryNode: p.DeliveryNode,
 		Priority:     p.Priority,
 		PayloadDesc:  payloadDesc,
+		PayloadCode:  payloadCode,
 	}
 	if payloadCode != "" {
 		if _, err := s.db.GetPayloadByCode(payloadCode); err != nil {

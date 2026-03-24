@@ -114,6 +114,8 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 		return s.ForceTransition(order.ID, StatusInTransit, detail)
 	case StatusAcknowledged:
 		return s.ForceTransition(order.ID, StatusAcknowledged, detail)
+	case StatusQueued:
+		return s.ForceTransition(order.ID, StatusQueued, detail)
 	default:
 		return nil
 	}

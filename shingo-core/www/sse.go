@@ -161,6 +161,11 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 	}, engine.EventOrderCancelled)
 
 	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		ev := evt.Payload.(engine.OrderQueuedEvent)
+		h.Broadcast("order-update", sseJSON(map[string]any{"type": "queued", "order_id": ev.OrderID, "payload_code": ev.PayloadCode}))
+	}, engine.EventOrderQueued)
+
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
 		ev := evt.Payload.(engine.BinUpdatedEvent)
 		h.Broadcast("bin-update", sseJSON(map[string]any{"node_id": ev.NodeID, "action": ev.Action, "bin_id": ev.BinID, "actor": ev.Actor, "detail": ev.Detail}))
 	}, engine.EventBinUpdated)

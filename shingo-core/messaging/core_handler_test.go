@@ -52,6 +52,7 @@ func (noopEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, sourceNode,
 func (noopEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string)  {}
 func (noopEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason string)          {}
 func (noopEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string)                  {}
+func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)        {}
 
 func testDB(t *testing.T) *store.DB {
 	t.Helper()

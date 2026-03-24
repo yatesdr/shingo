@@ -42,6 +42,7 @@ type Engine struct {
 	debugLog       func(string, ...any)
 	reconciliation *ReconciliationService
 	recovery       *RecoveryService
+	fulfillment    *FulfillmentScanner
 	stopChan       chan struct{}
 	stopOnce       sync.Once
 	sceneSyncing   atomic.Bool
@@ -113,11 +114,20 @@ func (e *Engine) Start() {
 		e.tracker = tb.Tracker()
 	}
 
+	// Create fulfillment scanner for queued orders
+	e.fulfillment = newFulfillmentScanner(e.db, e.dispatcher, resolver, e.sendToEdge, e.logFn, e.debugLog)
+
 	// Wire event handlers
 	e.wireEventHandlers()
 
 	// Load active vendor orders into tracker
 	e.loadActiveOrders()
+
+	// Scan for any orders queued before restart
+	go e.fulfillment.RunOnce()
+
+	// Start periodic fulfillment sweep (60s safety net)
+	e.fulfillment.StartPeriodicSweep(60 * time.Second)
 
 	// Start tracker
 	if e.tracker != nil {

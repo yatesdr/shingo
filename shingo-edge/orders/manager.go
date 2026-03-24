@@ -442,6 +442,9 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 			return err
 		}
 		return m.TransitionOrder(order.ID, StatusInTransit, fmt.Sprintf("waybill %s, ETA %s", waybillID, eta))
+	case ReplyQueued:
+		// Order queued by Core — awaiting inventory
+		return m.TransitionOrder(order.ID, StatusQueued, statusDetail)
 	case ReplyUpdate:
 		// Status update with ETA only — don't touch waybill_id.
 		if eta != "" {

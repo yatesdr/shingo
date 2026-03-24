@@ -13,6 +13,7 @@ type PlanningResult struct {
 	SourceNode *store.Node
 	DestNode   *store.Node
 	Handled    bool
+	Queued     bool // order should be queued — inventory not available
 }
 
 type planningError struct {
@@ -104,11 +105,8 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 					s.dbg("retrieve: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
 					return s.planBuriedReshuffle(order, buriedErr)
 				}
-				return nil, &planningError{
-					Code:   "no_source",
-					Detail: fmt.Sprintf("no source in node group %s: %v", order.PickupNode, err),
-					Err:    err,
-				}
+				s.dbg("retrieve: no source in group %s for payload=%s, queuing order %d", order.PickupNode, payloadCode, order.ID)
+				return &PlanningResult{Queued: true}, nil
 			}
 			source = result.Bin
 			sourceNode, _ = s.db.GetNode(*source.NodeID)
@@ -119,11 +117,8 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 		var err error
 		source, err = s.db.FindSourceBinFIFO(payloadCode)
 		if err != nil {
-			return nil, &planningError{
-				Code:   "no_source",
-				Detail: fmt.Sprintf("no source bin found for payload %s", payloadCode),
-				Err:    err,
-			}
+			s.dbg("retrieve: no source bin for payload=%s, queuing order %d", payloadCode, order.ID)
+			return &PlanningResult{Queued: true}, nil
 		}
 		sourceNode, err = s.db.GetNode(*source.NodeID)
 		if err != nil {
@@ -159,11 +154,8 @@ func (s *PlanningService) planRetrieveEmpty(order *store.Order, payloadCode stri
 	}
 	bin, err := s.db.FindEmptyCompatibleBin(payloadCode, preferZone)
 	if err != nil {
-		return nil, &planningError{
-			Code:   "no_empty_bin",
-			Detail: fmt.Sprintf("no empty compatible bin for payload %s", payloadCode),
-			Err:    err,
-		}
+		s.dbg("retrieve_empty: no bin for payload=%s, queuing order %d", payloadCode, order.ID)
+		return &PlanningResult{Queued: true}, nil
 	}
 	s.dbg("retrieve_empty: found bin=%d label=%s at node=%s", bin.ID, bin.Label, bin.NodeName)
 	if err := s.db.ClaimBin(bin.ID, order.ID); err != nil {

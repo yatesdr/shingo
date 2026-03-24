@@ -79,7 +79,23 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	if result == nil || result.Handled {
 		return
 	}
+	if result.Queued {
+		d.queueOrder(order, env, payloadCode)
+		return
+	}
 	d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
+}
+
+func (d *Dispatcher) queueOrder(order *store.Order, env *protocol.Envelope, payloadCode string) {
+	if err := d.db.UpdateOrderStatus(order.ID, StatusQueued, "awaiting inventory"); err != nil {
+		log.Printf("dispatch: queue order %d: %v", order.ID, err)
+	}
+	if payloadCode != "" && order.PayloadCode == "" {
+		_ = d.db.UpdateOrderPayloadCode(order.ID, payloadCode)
+	}
+	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
+	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, env.Src.Station, payloadCode)
+	d.replies.SendUpdate(env, order.EdgeUUID, StatusQueued, "awaiting inventory")
 }
 
 func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope, sourceNode, destNode *store.Node) {

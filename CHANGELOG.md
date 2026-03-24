@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-03-24 — Queued Order Fulfillment
+
+### Queued Orders
+
+Orders that cannot be immediately fulfilled (no source bin, no empty bin available) are now **queued** instead of failed. Core holds them in a `queued` status and automatically fulfills them FIFO when matching inventory becomes available. This eliminates race conditions when multiple nodes compete for scarce bins and removes the need for operators to manually retry failed orders.
+
+**New status:** `queued` — first-class member of the order lifecycle. Applies to all retrieve and retrieve_empty orders, not just bin_loader nodes.
+
+```
+pending → sourcing → [found] → dispatched → in_transit → delivered → confirmed
+                   → [not found] → queued → [bin available] → dispatched → ...
+                   → [not found] → queued → [cancelled] → cancelled
+```
+
+### Fulfillment Scanner (Core)
+
+Event-driven scanner monitors queued orders and matches them to available inventory:
+
+- **Triggers:** bin arrival at storage, manifest clear, order completion/cancellation/failure (any event that frees a bin)
+- **Safety sweep:** 60-second periodic scan catches anything events missed
+- **Startup recovery:** scans queued orders on Core restart
+- **FIFO fairness:** oldest queued order for a matching payload gets fulfilled first
+- **Atomic claims:** `ClaimBin` prevents races between concurrent fulfillment attempts
+- **Node vacancy guard:** skips fulfillment if the delivery node already has an in-flight delivery
+- **Fleet failure recovery:** re-queues the order if fleet dispatch fails (transient, not permanent failure)
+- **Mutex-guarded:** only one scan runs at a time, events coalesced during scan
+
+### Payload Code Persistence
+
+`payload_code` column added to Core's orders table (migration v8). Persisted at order creation so the fulfillment scanner can match queued orders to compatible bins without re-resolving from the original request.
+
+### Edge Visibility
+
+- `StatusQueued` with valid transitions: `submitted → queued`, `queued → acknowledged/cancelled/failed`
+- Edge handler routes `OrderUpdate` with `status=queued` to proper status transition
+- Startup reconciliation handles `queued` status from Core
+- **Operator station:** bin_loader tiles show "AWAITING STOCK" in amber when a queued order is active
+- **Material page:** queued orders show in the orders column with queued status badge
+
+### Core Visibility
+
+- SSE `order-update` event with `type: "queued"` for live dashboard refresh
+- Amber CSS badge (`badge-queued`) in both light and dark themes
+- Queued orders visible in active orders list
+
+### Cancellation
+
+Operators can cancel queued orders from Edge. Core's existing cancel flow works — no vendor order to cancel, no bin to unclaim, status transitions to cancelled cleanly.
+
 ## 2026-03-24 — Bin Loader Nodes, Core Telemetry API, NodeGroup Removal
 
 ### Bin Loader Role

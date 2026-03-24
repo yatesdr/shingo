@@ -173,7 +173,11 @@ func (h *EdgeHandler) HandleOrderWaybill(env *protocol.Envelope, p *protocol.Ord
 func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.OrderUpdate) {
 	h.DebugLog.log("order_update uuid=%s status=%s", p.OrderUUID, p.Status)
 	log.Printf("edge_handler: order update: uuid=%s status=%s", p.OrderUUID, p.Status)
-	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, orders.ReplyUpdate, "", p.ETA, p.Detail); err != nil {
+	replyType := orders.ReplyUpdate
+	if p.Status == protocol.StatusQueued {
+		replyType = orders.ReplyQueued
+	}
+	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, replyType, "", p.ETA, p.Detail); err != nil {
 		log.Printf("edge_handler: handle update for %s: %v", p.OrderUUID, err)
 	}
 }

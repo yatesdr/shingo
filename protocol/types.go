@@ -74,6 +74,7 @@ const Version = 1
 const (
 	StatusPending      = "pending"
 	StatusSourcing     = "sourcing"
+	StatusQueued       = "queued"
 	StatusSubmitted    = "submitted"
 	StatusDispatched   = "dispatched"
 	StatusAcknowledged = "acknowledged"

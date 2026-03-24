@@ -161,11 +161,21 @@ function createNodeButton(entry) {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? binState.bin_label : '';
         const binPayload = binState && binState.payload_code ? binState.payload_code : '';
-        // Bin loader: show what's loaded
-        btn.appendChild(el('span', {
-            className: 'os-node-remaining',
-            textContent: binPayload ? binPayload : (remaining > 0 ? 'LOADED' : (binState && binState.occupied ? 'EMPTY' : 'NO BIN'))
-        }));
+        const hasQueued = (entry.orders || []).some(o => o.status === 'queued');
+        // Bin loader: show what's loaded or awaiting
+        let statusText;
+        if (hasQueued) {
+            statusText = 'AWAITING STOCK';
+        } else if (binPayload) {
+            statusText = binPayload;
+        } else if (remaining > 0) {
+            statusText = 'LOADED';
+        } else if (binState && binState.occupied) {
+            statusText = 'EMPTY';
+        } else {
+            statusText = 'NO BIN';
+        }
+        btn.appendChild(el('span', { className: 'os-node-remaining', textContent: statusText }));
         if (binLabel) {
             const labelEl = el('span', { className: 'os-node-payload', textContent: binLabel });
             labelEl.style.cssText = 'font-size:14px;font-weight:600;color:#fff';
@@ -202,6 +212,8 @@ function nodeColorClass(entry) {
     if (!claim) return 'os-unclaimed';
     const remaining = entry.runtime ? entry.runtime.remaining_uop : 0;
     if (claim.role === 'bin_loader') {
+        const hasQueued = entry.orders && entry.orders.some(o => o.status === 'queued');
+        if (hasQueued) return 'os-mid'; // amber for awaiting stock
         return remaining > 0 ? 'os-full' : 'os-empty';
     }
     const capacity = claim.uop_capacity || 1;

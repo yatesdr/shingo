@@ -14,6 +14,7 @@ const (
 // Order statuses aliased from protocol.
 const (
 	StatusPending      = protocol.StatusPending
+	StatusQueued       = protocol.StatusQueued
 	StatusSubmitted    = protocol.StatusSubmitted
 	StatusAcknowledged = protocol.StatusAcknowledged
 	StatusInTransit    = protocol.StatusInTransit
@@ -33,11 +34,13 @@ const (
 	ReplyError     = "error"
 	ReplyStaged    = "staged"
 	ReplyCancelled = "cancelled"
+	ReplyQueued    = "queued"
 )
 
 var validTransitions = map[string][]string{
 	StatusPending:      {StatusSubmitted, StatusCancelled, StatusFailed},
-	StatusSubmitted:    {StatusAcknowledged, StatusCancelled, StatusFailed},
+	StatusSubmitted:    {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed},
+	StatusQueued:       {StatusAcknowledged, StatusInTransit, StatusCancelled, StatusFailed},
 	StatusAcknowledged: {StatusInTransit, StatusCancelled, StatusFailed},
 	StatusInTransit:    {StatusDelivered, StatusStaged, StatusCancelled, StatusFailed},
 	StatusStaged:       {StatusInTransit, StatusCancelled, StatusFailed},

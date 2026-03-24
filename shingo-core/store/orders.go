@@ -29,6 +29,7 @@ type Order struct {
 	Sequence      int        `json:"sequence"`
 	StepsJSON     string     `json:"steps_json,omitempty"`
 	BinID         *int64     `json:"bin_id,omitempty"`
+	PayloadCode   string     `json:"payload_code"`
 }
 
 type OrderHistory struct {
@@ -39,7 +40,7 @@ type OrderHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id`
+const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
@@ -49,7 +50,7 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&o.Quantity,
 		&o.PickupNode, &o.DeliveryNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
-		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID)
+		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode)
 	if err != nil {
 		return nil, err
 	}
@@ -75,12 +76,12 @@ func scanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 func (db *DB) CreateOrder(o *Order) error {
-	id, err := db.insertID(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+	id, err := db.insertID(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
 		nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-		nullableInt64(o.BinID))
+		nullableInt64(o.BinID), o.PayloadCode)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}
@@ -339,4 +340,27 @@ func (db *DB) ListDispatchedVendorOrderIDs() ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// ListQueuedOrders returns all orders in "queued" status, oldest first (FIFO).
+func (db *DB) ListQueuedOrders() ([]*Order, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status = 'queued' ORDER BY created_at ASC`, orderSelectCols))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// UpdateOrderPayloadCode sets the payload_code on an order.
+func (db *DB) UpdateOrderPayloadCode(orderID int64, payloadCode string) error {
+	_, err := db.Exec(`UPDATE orders SET payload_code = $1, updated_at = NOW() WHERE id = $2`, payloadCode, orderID)
+	return err
+}
+
+// CountInFlightOrdersByDeliveryNode counts non-queued, non-terminal active orders targeting a delivery node.
+func (db *DB) CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed')`, deliveryNode).Scan(&count)
+	return count, err
 }

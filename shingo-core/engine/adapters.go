@@ -54,6 +54,15 @@ func (e *dispatchEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID 
 	}})
 }
 
+func (e *dispatchEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string) {
+	e.bus.Emit(Event{Type: EventOrderQueued, Payload: OrderQueuedEvent{
+		OrderID:     orderID,
+		EdgeUUID:    edgeUUID,
+		StationID:   stationID,
+		PayloadCode: payloadCode,
+	}})
+}
+
 // pollerEmitter bridges the fleet tracker's status change events to the EventBus.
 type pollerEmitter struct {
 	bus *EventBus

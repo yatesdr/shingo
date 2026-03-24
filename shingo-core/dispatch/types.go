@@ -13,6 +13,7 @@ const (
 const (
 	StatusPending      = protocol.StatusPending
 	StatusSourcing     = protocol.StatusSourcing
+	StatusQueued       = protocol.StatusQueued
 	StatusSubmitted    = protocol.StatusSubmitted
 	StatusDispatched   = protocol.StatusDispatched
 	StatusAcknowledged = protocol.StatusAcknowledged

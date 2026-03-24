@@ -81,6 +81,7 @@ func (db *DB) runVersionedMigrations() error {
 		{5, "backfill mission telemetry for completed orders", db.v5MissionTelemetryBackfill},
 		{6, "consolidate legacy migrations", db.v6LegacyConsolidation},
 		{7, "drop vestigial default_manifest_json from payloads", db.v7DropDefaultManifestJSON},
+		{8, "add payload_code column to orders", db.v8OrderPayloadCode},
 	}
 
 	for _, m := range migrations {
@@ -365,6 +366,15 @@ func (db *DB) migrateShallowLanes() {
 		db.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, laneID)
 		db.Exec(`DELETE FROM nodes WHERE id=$1`, laneID)
 	}
+}
+
+// v8OrderPayloadCode adds payload_code column to orders for queued order fulfillment.
+func (db *DB) v8OrderPayloadCode() error {
+	if !db.columnExists("orders", "payload_code") {
+		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''`)
+		return err
+	}
+	return nil
 }
 
 // v5MissionTelemetryBackfill creates summary rows for historical completed orders.

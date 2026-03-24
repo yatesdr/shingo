@@ -62,6 +62,7 @@ func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason string) {
 func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string) {
 	m.completed = append(m.completed, emitCompleted{orderID})
 }
+func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {}
 
 // --- Mock fleet backend ---
 

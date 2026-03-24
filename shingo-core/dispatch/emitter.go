@@ -7,4 +7,5 @@ type Emitter interface {
 	EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string)
 	EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason string)
 	EmitOrderCompleted(orderID int64, edgeUUID, stationID string)
+	EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)
 }

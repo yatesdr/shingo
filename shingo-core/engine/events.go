@@ -13,6 +13,7 @@ const (
 	EventOrderCompleted
 	EventOrderFailed
 	EventOrderCancelled
+	EventOrderQueued
 	EventBinUpdated
 	EventNodeUpdated
 	EventCorrectionApplied
@@ -73,6 +74,13 @@ type OrderCancelledEvent struct {
 	EdgeUUID string
 	StationID string
 	Reason   string
+}
+
+type OrderQueuedEvent struct {
+	OrderID     int64
+	EdgeUUID    string
+	StationID   string
+	PayloadCode string
 }
 
 type BinUpdatedEvent struct {
