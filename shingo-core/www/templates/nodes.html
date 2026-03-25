@@ -20,6 +20,16 @@
     <span class="text-muted" style="font-size:0.8rem" id="node-count">{{len .Nodes}} nodes</span>
   </div>
 
+  <div class="node-legend" style="display:flex;gap:1rem;align-items:center;font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem;flex-wrap:wrap;">
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch" style="width:12px;height:12px;border-radius:2px;background:var(--card-bg);border:1px solid var(--border);display:inline-block;"></span> Empty</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-has-payload" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Has Payload</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-empty-bin" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Empty Bin</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-staged" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Staged</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span class="legend-swatch tile-maintenance" style="width:12px;height:12px;border-radius:2px;display:inline-block;"></span> Maintenance</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:2px;border:2px solid #f97316;display:inline-block;"></span> Claimed</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:2px;border:2px solid #ef4444;display:inline-block;"></span> Disabled</span>
+  </div>
+
   {{if .Nodes}}
   <div id="nodes-drop-area">
   <div class="tile-grid" id="tile-grid">
