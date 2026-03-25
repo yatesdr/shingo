@@ -41,7 +41,7 @@ async function testBroker(button) {
     }
     status.textContent = 'Testing...';
     try {
-        const res = await ShingoEdge.api.post('/api/config/test-kafka', { broker: host + ':' + port });
+        const res = await ShingoEdge.api.post('/api/config/kafka/test', { broker: host + ':' + port });
         status.textContent = res.connected ? 'Connected' : (res.error || 'Failed');
     } catch (e) {
         status.textContent = String(e);
