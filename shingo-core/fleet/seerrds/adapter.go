@@ -42,14 +42,36 @@ func New(cfg Config) *Adapter {
 // --- fleet.Backend ---
 
 func (a *Adapter) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
-	rdsReq := &rds.SetJoinOrderRequest{
+	// Use block-based order with explicit binTasks (JackLoad/JackUnload)
+	// All robots in this deployment use jack load/unload operations
+	loadBlockID := req.OrderID + "_load"
+	unloadBlockID := req.OrderID + "_unload"
+
+	blocks := []rds.Block{
+		{
+			BlockID:    loadBlockID,
+			Location:   req.FromLoc,
+			BinTask:    "JackLoad", // Explicitly use JackLoad for pickup
+			Operation:  "",
+			GoodsID:    req.OrderID + "_goods",
+		},
+		{
+			BlockID:    unloadBlockID,
+			Location:   req.ToLoc,
+			BinTask:    "JackUnload", // Explicitly use JackUnload for dropoff
+			Operation:  "",
+			GoodsID:    req.OrderID + "_goods",
+		},
+	}
+
+	rdsReq := &rds.SetOrderRequest{
 		ID:         req.OrderID,
 		ExternalID: req.ExternalID,
-		FromLoc:    req.FromLoc,
-		ToLoc:      req.ToLoc,
+		Blocks:     blocks,
+		Complete:   true, // Complete order after both blocks
 		Priority:   req.Priority,
 	}
-	if err := a.client.CreateJoinOrder(rdsReq); err != nil {
+	if err := a.client.CreateOrder(rdsReq); err != nil {
 		return fleet.TransportOrderResult{}, err
 	}
 	return fleet.TransportOrderResult{VendorOrderID: req.OrderID}, nil

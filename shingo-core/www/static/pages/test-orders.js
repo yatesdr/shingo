@@ -257,7 +257,7 @@ async function sendReceipt() {
 // --- Kafka complex order ---
 function updateKafkaComplexFields() {
   var mode = document.getElementById('kc-cycle-mode').value;
-  document.getElementById('kc-pickup-wrap').style.display = '';
+  // kc-pickup-wrap doesn't exist in template - source-wrap is always visible
   document.getElementById('kc-staging1-wrap').style.display = (mode === 'two_robot' || mode === 'single_robot') ? '' : 'none';
   document.getElementById('kc-staging2-wrap').style.display = (mode === 'single_robot') ? '' : 'none';
 }
@@ -310,7 +310,7 @@ async function submitDirectOrder() {
 
 function updateComplexFields() {
   var mode = document.getElementById('cx-cycle-mode').value;
-  document.getElementById('cx-pickup-wrap').style.display = '';
+  // cx-pickup-wrap doesn't exist in template - source-wrap is always visible
   document.getElementById('cx-staging1-wrap').style.display = (mode === 'two_robot' || mode === 'single_robot') ? '' : 'none';
   document.getElementById('cx-staging2-wrap').style.display = (mode === 'single_robot') ? '' : 'none';
 }
