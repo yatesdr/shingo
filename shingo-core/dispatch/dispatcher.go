@@ -324,3 +324,6 @@ func (d *Dispatcher) unclaimOrder(orderID int64) {
 
 // LaneLock returns the dispatcher's lane lock for external use.
 func (d *Dispatcher) LaneLock() *LaneLock { return d.laneLock }
+
+// Lifecycle returns the dispatcher's lifecycle service for external use (e.g. auto-confirm).
+func (d *Dispatcher) Lifecycle() *LifecycleService { return d.lifecycle }

@@ -273,6 +273,43 @@ func (h *Handlers) apiDirectOrderSubmit(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// apiDirectOrderReceipt confirms delivery for a direct order (bypasses Kafka).
+func (h *Handlers) apiDirectOrderReceipt(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OrderUUID   string `json:"order_uuid"`
+		ReceiptType string `json:"receipt_type"`
+		FinalCount  int64  `json:"final_count"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.OrderUUID == "" {
+		h.jsonError(w, "order_uuid is required", http.StatusBadRequest)
+		return
+	}
+	if req.ReceiptType == "" {
+		req.ReceiptType = "full"
+	}
+
+	order, err := h.engine.DB().GetOrderByUUID(req.OrderUUID)
+	if err != nil {
+		h.jsonError(w, "order not found", http.StatusNotFound)
+		return
+	}
+
+	ok, err := h.engine.Dispatcher().Lifecycle().ConfirmReceipt(order, order.StationID, req.ReceiptType, req.FinalCount)
+	if err != nil {
+		h.jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		h.jsonError(w, "order already completed", http.StatusBadRequest)
+		return
+	}
+
+	h.jsonOK(w, map[string]string{"status": "confirmed", "order_uuid": req.OrderUUID})
+}
+
 func (h *Handlers) apiDirectOrdersList(w http.ResponseWriter, r *http.Request) {
 	orders, err := h.engine.DB().ListOrdersByStation("core-direct", 50)
 	if err != nil {

@@ -110,8 +110,8 @@ function renderOrdersTable(orders, containerId, isKafka) {
       if (isKafka && isActive) {
         html += '<button class="to-btn-sm to-btn-danger" onclick="cancelOrder(\'' + escapeHtml(o.edge_uuid) + '\')">Cancel</button>';
       }
-      if (isKafka && isDelivered) {
-        html += '<button class="to-btn-sm" onclick="openReceipt(\'' + escapeHtml(o.edge_uuid) + '\')">Receipt</button>';
+      if (isDelivered) {
+        html += '<button class="to-btn-sm" onclick="openReceipt(\'' + escapeHtml(o.edge_uuid) + '\',' + !isKafka + ')">Receipt</button>';
       }
       if (o.status === 'staged') {
         html += '<button class="to-btn-sm" style="border-color:#ff9800;color:#ff9800;" onclick="releaseComplexOrder(\'' + escapeHtml(o.edge_uuid) + '\')">Release</button>';
@@ -232,7 +232,10 @@ async function cancelOrder(uuid) {
   } catch(e) { alert('Error: ' + e); }
 }
 
-function openReceipt(uuid) {
+var receiptDirect = false;
+
+function openReceipt(uuid, isDirect) {
+  receiptDirect = !!isDirect;
   document.getElementById('receipt-uuid').value = uuid;
   document.getElementById('receipt-type').value = 'full';
   document.getElementById('receipt-count').value = '1';
@@ -245,12 +248,13 @@ async function sendReceipt() {
     receipt_type: document.getElementById('receipt-type').value,
     final_count: parseInt(document.getElementById('receipt-count').value) || 0
   };
+  var url = receiptDirect ? '/api/test-orders/direct/receipt' : '/api/test-orders/receipt';
   try {
-    var res = await fetch('/api/test-orders/receipt', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    var res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     var data = await res.json();
     if (!res.ok) { alert(data.error || 'Error'); return; }
     hideModal('receipt-modal');
-    refreshKafkaOrders();
+    if (receiptDirect) { refreshDirectOrders(); } else { refreshKafkaOrders(); }
   } catch(e) { alert('Error: ' + e); }
 }
 
@@ -462,33 +466,3 @@ function showToast(msg, type) {
   toast.textContent = msg;
   document.body.appendChild(toast);
   setTimeout(function() { toast.classList.add('to-toast-visible'); }, 10);
-  setTimeout(function() {
-    toast.classList.remove('to-toast-visible');
-    setTimeout(function() { toast.remove(); }, 300);
-  }, 6000);
-}
-
-// --- SSE ---
-var es = new EventSource('/events');
-es.addEventListener('order-update', function(e) {
-  refreshKafkaOrders();
-  refreshDirectOrders();
-  try {
-    var data = JSON.parse(e.data);
-    if (data.type === 'failed') {
-      showToast('Order #' + (data.order_id || '?') + ' failed: ' + (data.detail || 'unknown error'), 'error');
-    }
-  } catch(ex) {}
-});
-
-// --- Init ---
-document.addEventListener('DOMContentLoaded', function() {
-  updateKafkaFields();
-  updateKafkaComplexFields();
-  updateCmdFields();
-  updateComplexFields();
-  refreshKafkaOrders();
-  refreshDirectOrders();
-  refreshCommands();
-  if (authenticated) { loadRobots(); loadScenePoints(); }
-});
