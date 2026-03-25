@@ -151,7 +151,13 @@ func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW() WHERE id=$3`, status, detail, id); err != nil {
+	// Only persist detail into error_detail for terminal error statuses;
+	// clear it on normal transitions so the UI doesn't show stale error text.
+	errDetail := ""
+	if status == "failed" || status == "cancelled" {
+		errDetail = detail
+	}
+	if _, err := tx.Exec(`UPDATE orders SET status=$1, error_detail=$2, updated_at=NOW() WHERE id=$3`, status, errDetail, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, $2, $3)`, id, status, detail); err != nil {

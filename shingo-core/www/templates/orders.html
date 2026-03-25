@@ -14,7 +14,7 @@
         <tr><td><strong>UUID</strong></td><td>{{.Order.EdgeUUID}}</td></tr>
         <tr><td><strong>Station</strong></td><td>{{.Order.StationID}}</td></tr>
         <tr><td><strong>Type</strong></td><td>{{.Order.OrderType}}</td></tr>
-        <tr><td><strong>Payload</strong></td><td>{{if .Order.PayloadID}}BP#{{deref .Order.PayloadID}}{{else}}{{.Order.PayloadDesc}}{{end}}</td></tr>
+        <tr><td><strong>Payload</strong></td><td>{{.Order.PayloadDesc}}</td></tr>
         <tr><td><strong>Quantity</strong></td><td>{{.Order.Quantity}}</td></tr>
         <tr><td><strong>Status</strong></td><td><span class="badge badge-{{.Order.Status}}">{{.Order.Status}}</span></td></tr>
         <tr><td><strong>Vendor Order</strong></td><td>{{.Order.VendorOrderID}}{{if .Order.VendorOrderID}} <a href="/missions/{{.Order.ID}}" title="View mission telemetry, timeline, and robot tracking" style="font-size:.85em;margin-left:.5rem">View Mission</a>{{end}}</td></tr>
@@ -103,7 +103,7 @@
           <td style="font-family:monospace;font-size:0.75rem">{{.EdgeUUID}}</td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
-          <td>{{if .PayloadID}}BP#{{deref .PayloadID}}{{else}}{{.PayloadDesc}}{{end}}</td>
+          <td>{{.PayloadDesc}}</td>
           <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
           <td>{{.RobotID}}</td>
           <td>{{formatTime .CreatedAt}}</td>

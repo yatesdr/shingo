@@ -72,7 +72,7 @@
           <td><a href="/orders/detail?id={{.ID}}">{{.ID}}</a></td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
-          <td>{{if .PayloadID}}BP#{{deref .PayloadID}}{{else}}{{.PayloadDesc}}{{end}}</td>
+          <td>{{.PayloadDesc}}</td>
           <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
           <td>{{.RobotID}}</td>
           <td>{{formatTime .CreatedAt}}</td>

@@ -157,6 +157,8 @@ func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *st
 		if dbErr := d.db.UpdateOrderStatus(order.ID, StatusFailed, err.Error()); dbErr != nil {
 			log.Printf("dispatch: update order %d status to failed: %v", order.ID, dbErr)
 		}
+		d.unclaimOrder(order.ID)
+		d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, "fleet_failed", err.Error())
 		return "", err
 	}
 
