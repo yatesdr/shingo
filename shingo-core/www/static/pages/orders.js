@@ -108,7 +108,7 @@ function renderOrderModal(data) {
   // ── ROUTING ──
   h += '<div class="manifest-row">';
   h += '<div>';
-  h += field('Pickup', escapeHtml(o.pickup_node || '-') + (data.pickup_node && data.pickup_node.zone ? ' <span style="color:var(--text-muted)">(' + escapeHtml(data.pickup_node.zone) + ')</span>' : ''));
+  h += field('Source', escapeHtml(o.source_node || '-') + (data.source_node && data.source_node.zone ? ' <span style="color:var(--text-muted)">(' + escapeHtml(data.source_node.zone) + ')</span>' : ''));
   h += '</div><div>';
   h += field('Delivery', escapeHtml(o.delivery_node || '-') + (data.delivery_node && data.delivery_node.zone ? ' <span style="color:var(--text-muted)">(' + escapeHtml(data.delivery_node.zone) + ')</span>' : ''));
   h += '</div></div>';
@@ -210,13 +210,13 @@ function renderOrderModal(data) {
   // ── CHILD ORDERS / STEPS ──
   if (data.children && data.children.length > 0) {
     h += '<div class="manifest-section">Order Steps</div>';
-    h += '<table class="table-compact"><thead><tr><th>#</th><th>ID</th><th>Type</th><th>Status</th><th>Pickup</th><th>Delivery</th><th>Robot</th></tr></thead><tbody>';
+    h += '<table class="table-compact"><thead><tr><th>#</th><th>ID</th><th>Type</th><th>Status</th><th>Source</th><th>Delivery</th><th>Robot</th></tr></thead><tbody>';
     for (var i = 0; i < data.children.length; i++) {
       var c = data.children[i];
       h += '<tr style="cursor:pointer" onclick="openOrderModal(' + c.id + ')">';
       h += '<td>' + c.sequence + '</td><td>' + c.id + '</td><td>' + escapeHtml(c.order_type) + '</td>';
       h += '<td><span class="badge badge-' + c.status + '">' + escapeHtml(c.status) + '</span></td>';
-      h += '<td>' + escapeHtml(c.pickup_node) + '</td><td>' + escapeHtml(c.delivery_node) + '</td><td>' + escapeHtml(c.robot_id) + '</td></tr>';
+      h += '<td>' + escapeHtml(c.source_node) + '</td><td>' + escapeHtml(c.delivery_node) + '</td><td>' + escapeHtml(c.robot_id) + '</td></tr>';
     }
     h += '</tbody></table>';
   }
@@ -428,12 +428,12 @@ function submitSpotOrder() {
       if (!body.bin_label) { status.textContent = 'Bin is required'; status.style.color = 'var(--danger)'; return; }
       if (!body.delivery_node) { status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return; }
     } else {
-      if (t !== 'retrieve' && t !== 'retrieve_empty') body.pickup_node = document.getElementById('spot-pickup').value;
+      if (t !== 'retrieve' && t !== 'retrieve_empty') body.source_node = document.getElementById('spot-source').value;
       if (t !== 'store') body.delivery_node = document.getElementById('spot-delivery').value;
       if (t !== 'move') body.payload_code = document.getElementById('spot-payload').value;
 
-      if ((t === 'move' || t === 'store') && !body.pickup_node) {
-        status.textContent = 'Pickup node is required'; status.style.color = 'var(--danger)'; return;
+      if ((t === 'move' || t === 'store') && !body.source_node) {
+        status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return;
       }
       if ((t === 'move' || t === 'retrieve' || t === 'retrieve_empty') && !body.delivery_node) {
         status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return;
@@ -447,11 +447,11 @@ function submitSpotOrder() {
     }
   } else if (tab === 'staged') {
     body.order_type = 'staged';
-    body.pickup_node = document.getElementById('spot-staged-pickup').value;
+    body.source_node = document.getElementById('spot-staged-source').value;
     body.staging_node = document.getElementById('spot-staged-staging').value;
     body.delivery_node = document.getElementById('spot-staged-delivery').value;
     body.payload_code = document.getElementById('spot-staged-payload').value;
-    if (!body.pickup_node) { status.textContent = 'Pickup node is required'; status.style.color = 'var(--danger)'; return; }
+    if (!body.source_node) { status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.staging_node) { status.textContent = 'Staging node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.delivery_node) { status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return; }
   } else if (tab === 'swap') {

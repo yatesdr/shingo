@@ -69,7 +69,7 @@ Compares fleet-reported bin occupancy with ShinGo's tracked payloads. Flags disc
     "station_id": "plant-a.line-1",
     "order_type": "retrieve",
     "payload_type_code": "BIN-A",
-    "pickup_node": "STG-007",
+    "source_node": "STG-007",
     "delivery_node": "LSL-001",
     "status": "in_transit",
     "vendor_order_id": "sg-42-abc123",

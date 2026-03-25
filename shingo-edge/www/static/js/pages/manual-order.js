@@ -61,7 +61,7 @@ function updateOrderForm() {
     document.getElementById('mo-staging-group').style.display  = showStaging ? '' : 'none';
 
     document.getElementById('mo-delivery-label').textContent =
-        (t === 'complex') ? 'Production Node' : 'Delivery Node';
+        (t === 'complex') ? 'Core Node' : 'Delivery Node';
 
     // Clear hidden fields
     if (!showNode)    document.getElementById('mo-node').selectedIndex = 0;
@@ -123,7 +123,7 @@ async function createOrder() {
         process_node_id: processNodeID || null,
         quantity: qty,
         delivery_node: document.getElementById('mo-delivery').value,
-        pickup_node: document.getElementById('mo-pickup').value,
+        source_node: document.getElementById('mo-pickup').value,
         staging_node: document.getElementById('mo-staging').value || undefined
     };
     try {

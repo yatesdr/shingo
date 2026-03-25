@@ -95,17 +95,17 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 	var source *store.Bin
 	var sourceNode *store.Node
 
-	if order.PickupNode != "" && s.resolver != nil {
-		pickupNode, err := s.db.GetNodeByDotName(order.PickupNode)
-		if err == nil && pickupNode.IsSynthetic && pickupNode.NodeTypeCode == "NGRP" {
-			result, err := s.resolver.Resolve(pickupNode, OrderTypeRetrieve, payloadCode, nil)
+	if order.SourceNode != "" && s.resolver != nil {
+		sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
+		if err == nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" {
+			result, err := s.resolver.Resolve(sourceNode, OrderTypeRetrieve, payloadCode, nil)
 			if err != nil {
 				var buriedErr *BuriedError
 				if errors.As(err, &buriedErr) {
 					s.dbg("retrieve: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
 					return s.planBuriedReshuffle(order, buriedErr)
 				}
-				s.dbg("retrieve: no source in group %s for payload=%s, queuing order %d", order.PickupNode, payloadCode, order.ID)
+				s.dbg("retrieve: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
 				return &PlanningResult{Queued: true}, nil
 			}
 			source = result.Bin
@@ -134,9 +134,9 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 	if err := s.db.UpdateOrderBinID(order.ID, source.ID); err != nil {
 		log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
 	}
-	order.PickupNode = sourceNode.Name
-	if err := s.db.UpdateOrderPickupNode(order.ID, sourceNode.Name); err != nil {
-		log.Printf("dispatch: update order %d pickup_node: %v", order.ID, err)
+	order.SourceNode = sourceNode.Name
+	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
+		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
@@ -169,9 +169,9 @@ func (s *PlanningService) planRetrieveEmpty(order *store.Order, payloadCode stri
 	if err != nil {
 		return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
 	}
-	order.PickupNode = sourceNode.Name
-	if err := s.db.UpdateOrderPickupNode(order.ID, sourceNode.Name); err != nil {
-		log.Printf("dispatch: update order %d pickup_node: %v", order.ID, err)
+	order.SourceNode = sourceNode.Name
+	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
+		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
@@ -213,14 +213,14 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 	if err := s.db.UpdateOrderStatus(order.ID, StatusSourcing, "validating move"); err != nil {
 		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
 	}
-	if order.PickupNode == "" {
-		return nil, &planningError{Code: "missing_pickup", Detail: "move order requires pickup_node"}
+	if order.SourceNode == "" {
+		return nil, &planningError{Code: "missing_source", Detail: "move order requires source_node"}
 	}
-	pickupNode, err := s.db.GetNodeByDotName(order.PickupNode)
+	sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
 	if err != nil {
-		return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("pickup node %q not found", order.PickupNode), Err: err}
+		return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
 	}
-	bins, _ := s.db.ListBinsByNode(pickupNode.ID)
+	bins, _ := s.db.ListBinsByNode(sourceNode.ID)
 	binClaimed := false
 	for _, bin := range bins {
 		if bin.ClaimedBy != nil {
@@ -234,22 +234,22 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 			if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
 				log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
 			}
-			s.dbg("move: claimed bin=%d at %s", bin.ID, order.PickupNode)
+			s.dbg("move: claimed bin=%d at %s", bin.ID, order.SourceNode)
 			binClaimed = true
 			break
 		}
 	}
 	if !binClaimed && payloadCode != "" {
-		return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.PickupNode)}
+		return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
 	}
-	if err := s.db.UpdateOrderPickupNode(order.ID, pickupNode.Name); err != nil {
-		log.Printf("dispatch: update order %d pickup_node: %v", order.ID, err)
+	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
+		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
 	}
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
 	}
-	return &PlanningResult{SourceNode: pickupNode, DestNode: destNode}, nil
+	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
 
 func (s *PlanningService) planStore(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
@@ -267,23 +267,23 @@ func (s *PlanningService) planStore(order *store.Order, env *protocol.Envelope, 
 		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
 	}
 
-	var pickupNode *store.Node
-	if order.PickupNode != "" {
-		pickupNode, err = s.db.GetNodeByDotName(order.PickupNode)
+	var sourceNode *store.Node
+	if order.SourceNode != "" {
+		sourceNode, err = s.db.GetNodeByDotName(order.SourceNode)
 		if err != nil {
-			return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("pickup node %q not found", order.PickupNode), Err: err}
+			return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
 		}
 	} else if originalDeliveryNode != "" {
-		pickupNode, err = s.db.GetNodeByDotName(originalDeliveryNode)
+		sourceNode, err = s.db.GetNodeByDotName(originalDeliveryNode)
 		if err != nil {
 			return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("node %q not found", originalDeliveryNode), Err: err}
 		}
 	}
-	if pickupNode == nil {
-		return nil, &planningError{Code: "missing_pickup", Detail: "store order requires a pickup location"}
+	if sourceNode == nil {
+		return nil, &planningError{Code: "missing_source", Detail: "store order requires a source location"}
 	}
 	if order.BinID == nil {
-		bins, _ := s.db.ListBinsByNode(pickupNode.ID)
+		bins, _ := s.db.ListBinsByNode(sourceNode.ID)
 		for _, bin := range bins {
 			if bin.ClaimedBy == nil {
 				if err := s.db.ClaimBin(bin.ID, order.ID); err == nil {
@@ -291,14 +291,14 @@ func (s *PlanningService) planStore(order *store.Order, env *protocol.Envelope, 
 					if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
 						log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
 					}
-					s.dbg("store: claimed bin=%d at %s", bin.ID, pickupNode.Name)
+					s.dbg("store: claimed bin=%d at %s", bin.ID, sourceNode.Name)
 					break
 				}
 			}
 		}
 	}
-	if err := s.db.UpdateOrderPickupNode(order.ID, pickupNode.Name); err != nil {
-		log.Printf("dispatch: update order %d pickup_node: %v", order.ID, err)
+	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
+		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
 	}
-	return &PlanningResult{SourceNode: pickupNode, DestNode: destNode}, nil
+	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }

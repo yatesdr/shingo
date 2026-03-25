@@ -28,7 +28,7 @@ var _fieldDefs = {
         { id: 'payload_desc', label: 'Payload Description', type: 'text', value: '' },
         { id: 'quantity', label: 'Quantity', type: 'number', value: '1' },
         { id: 'delivery_node', label: 'Delivery Node', type: 'nodeselect', value: '' },
-        { id: 'pickup_node', label: 'Pickup Node', type: 'nodeselect', value: '' },
+        { id: 'source_node', label: 'Source Node', type: 'nodeselect', value: '' },
         { id: 'staging_node', label: 'Staging Node', type: 'nodeselect', value: '' },
         { id: 'load_type', label: 'Load Type', type: 'text', value: '' },
         { id: 'retrieve_empty', label: 'Retrieve Empty', type: 'checkbox', value: false }
@@ -49,7 +49,7 @@ var _fieldDefs = {
     'order.storage_waybill': [
         { id: 'order_uuid', label: 'Order UUID', type: 'orderselect', value: '' },
         { id: 'payload_desc', label: 'Payload Description', type: 'text', value: '' },
-        { id: 'pickup_node', label: 'Pickup Node', type: 'nodeselect', value: '' },
+        { id: 'source_node', label: 'Source Node', type: 'nodeselect', value: '' },
         { id: 'final_count', label: 'Final Count', type: 'number', value: '0' }
     ]
 };
@@ -113,7 +113,7 @@ function buildPayload() {
                 payload_desc: getFieldValue('payload_desc'),
                 quantity: getFieldValue('quantity'),
                 delivery_node: getFieldValue('delivery_node'),
-                pickup_node: getFieldValue('pickup_node'),
+                source_node: getFieldValue('source_node'),
                 staging_node: getFieldValue('staging_node'),
                 load_type: getFieldValue('load_type'),
                 retrieve_empty: getFieldValue('retrieve_empty')
@@ -125,7 +125,7 @@ function buildPayload() {
         case 'order.redirect':
             return { order_uuid: getFieldValue('order_uuid'), new_delivery_node: getFieldValue('new_delivery_node') };
         case 'order.storage_waybill':
-            return { order_uuid: getFieldValue('order_uuid'), payload_desc: getFieldValue('payload_desc'), pickup_node: getFieldValue('pickup_node'), final_count: getFieldValue('final_count') };
+            return { order_uuid: getFieldValue('order_uuid'), payload_desc: getFieldValue('payload_desc'), source_node: getFieldValue('source_node'), final_count: getFieldValue('final_count') };
         default:
             return {};
     }

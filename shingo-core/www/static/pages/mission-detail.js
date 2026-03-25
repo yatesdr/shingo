@@ -71,7 +71,7 @@
     html += '<div title="Transport order type (retrieve, store, move, etc.)"><strong>Type</strong><br>' + (o.order_type || '-') + '</div>';
     html += '<div title="Edge station that requested this order"><strong>Station</strong><br>' + (o.station_id || '-') + '</div>';
     html += '<div title="Robot vehicle ID assigned by the fleet"><strong>Robot</strong><br>' + (t.robot_id || o.robot_id || '-') + '</div>';
-    html += '<div title="Pickup node to delivery node"><strong>Route</strong><br>' + (o.pickup_node || '?') + ' &rarr; ' + (o.delivery_node || '?') + '</div>';
+    html += '<div title="Source node to delivery node"><strong>Route</strong><br>' + (o.source_node || '?') + ' &rarr; ' + (o.delivery_node || '?') + '</div>';
     html += '<div title="Current order status in Shingo"><strong>Status</strong><br>' + stateBadge(o.status) + '</div>';
     html += '<div title="Total time from order creation in Shingo to completion"><strong>Total Duration</strong><br>' + formatDuration(t.duration_ms) + '</div>';
     html += '<div title="Time measured by the fleet backend (RDS create to terminal)"><strong>Fleet Duration</strong><br>' + formatDuration(t.vendor_duration_ms) + '</div>';

@@ -268,7 +268,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		e.dispatcher.HandleChildOrderComplete(order)
 	}
 
-	if order.PickupNode == "" || order.DeliveryNode == "" {
+	if order.SourceNode == "" || order.DeliveryNode == "" {
 		return
 	}
 
@@ -278,7 +278,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 
-	sourceNode, _ := e.db.GetNodeByDotName(order.PickupNode)
+	sourceNode, _ := e.db.GetNodeByDotName(order.SourceNode)
 	sourceNodeID := int64(0)
 	if sourceNode != nil {
 		sourceNodeID = sourceNode.ID
@@ -324,7 +324,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 // maybeCreateReturnOrder creates a STORE order to return a bin to its origin
 // when an in-flight order is cancelled or fails. The bin is routed to the
-// root parent of the pickup node so the group resolver can pick the best slot.
+// root parent of the source node so the group resolver can pick the best slot.
 func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 	// Only act on orders that were in-flight with a bin
 	if order.BinID == nil {
@@ -349,21 +349,21 @@ func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 		return
 	}
 
-	if order.PickupNode == "" {
-		e.logFn("engine: order %d has no pickup node, cannot create return order", order.ID)
+	if order.SourceNode == "" {
+		e.logFn("engine: order %d has no source node, cannot create return order", order.ID)
 		return
 	}
 
-	// Resolve the pickup node and walk to its root parent
-	pickupNode, err := e.db.GetNodeByDotName(order.PickupNode)
+	// Resolve the source node and walk to its root parent
+	sourceNode, err := e.db.GetNodeByDotName(order.SourceNode)
 	if err != nil {
-		e.logFn("engine: resolve pickup node %q for return order: %v", order.PickupNode, err)
+		e.logFn("engine: resolve source node %q for return order: %v", order.SourceNode, err)
 		return
 	}
 
-	rootNode, err := e.db.GetRootNode(pickupNode.ID)
+	rootNode, err := e.db.GetRootNode(sourceNode.ID)
 	if err != nil {
-		e.logFn("engine: resolve root node for %q: %v", order.PickupNode, err)
+		e.logFn("engine: resolve root node for %q: %v", order.SourceNode, err)
 		return
 	}
 
@@ -371,7 +371,7 @@ func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 		StationID:   order.StationID,
 		OrderType:   dispatch.OrderTypeStore,
 		Status:      dispatch.StatusPending,
-		PickupNode:  order.DeliveryNode, // bin is at (or near) the original destination
+		SourceNode:  order.DeliveryNode, // bin is at (or near) the original destination
 		DeliveryNode: rootNode.Name,
 		BinID:       order.BinID,
 		PayloadDesc: "auto_return",
@@ -501,7 +501,7 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 		RobotID:       ev.RobotID,
 		StationID:     order.StationID,
 		OrderType:     order.OrderType,
-		PickupNode:    order.PickupNode,
+		SourceNode:    order.SourceNode,
 		DeliveryNode:  order.DeliveryNode,
 		TerminalState: ev.NewStatus,
 		CoreCreated:   &order.CreatedAt,

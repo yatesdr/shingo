@@ -54,8 +54,8 @@ func (d *Dispatcher) RegisterPlanner(orderType string, handler PlanningHandler) 
 // HandleOrderRequest processes a new order from ShinGo Edge.
 func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
 	stationID := env.Src.Station
-	d.dbg("order request: station=%s uuid=%s type=%s payload=%s delivery=%s pickup=%s",
-		stationID, p.OrderUUID, p.OrderType, p.PayloadCode, p.DeliveryNode, p.PickupNode)
+	d.dbg("order request: station=%s uuid=%s type=%s payload=%s delivery=%s source=%s",
+		stationID, p.OrderUUID, p.OrderType, p.PayloadCode, p.DeliveryNode, p.SourceNode)
 
 	order, payloadCode, lifecycleErr := d.lifecycle.CreateInboundOrder(stationID, p)
 	if lifecycleErr != nil {
@@ -266,7 +266,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 // HandleOrderStorageWaybill processes a storage waybill from ShinGo Edge.
 func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill) {
 	stationID := env.Src.Station
-	d.dbg("storage waybill: station=%s uuid=%s type=%s pickup=%s", stationID, p.OrderUUID, p.OrderType, p.PickupNode)
+	d.dbg("storage waybill: station=%s uuid=%s type=%s source=%s", stationID, p.OrderUUID, p.OrderType, p.SourceNode)
 
 	order, lifecycleErr := d.lifecycle.CreateStorageWaybillOrder(stationID, p)
 	if lifecycleErr != nil {
@@ -288,7 +288,7 @@ func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protoc
 func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.OrderIngestRequest) {
 	stationID := env.Src.Station
 	payloadCode := p.PayloadCode
-	d.dbg("ingest: station=%s uuid=%s payload=%s bin=%s pickup=%s", stationID, p.OrderUUID, payloadCode, p.BinLabel, p.PickupNode)
+	d.dbg("ingest: station=%s uuid=%s payload=%s bin=%s source=%s", stationID, p.OrderUUID, payloadCode, p.BinLabel, p.SourceNode)
 
 	order, payloadCode, lifecycleErr := d.lifecycle.CreateIngestStoreOrder(stationID, p)
 	if lifecycleErr != nil {

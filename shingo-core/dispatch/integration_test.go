@@ -76,8 +76,8 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 	if order.Status != StatusDispatched {
 		t.Errorf("status = %q, want %q", order.Status, StatusDispatched)
 	}
-	if order.PickupNode != storageNode.Name {
-		t.Errorf("pickup node = %q, want %q", order.PickupNode, storageNode.Name)
+	if order.SourceNode != storageNode.Name {
+		t.Errorf("source node = %q, want %q", order.SourceNode, storageNode.Name)
 	}
 	if order.DeliveryNode != lineNode.Name {
 		t.Errorf("delivery node = %q, want %q", order.DeliveryNode, lineNode.Name)
@@ -137,7 +137,7 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 		OrderUUID:    "move-uuid-1",
 		OrderType:    OrderTypeMove,
 		PayloadCode:  "PART-A",
-		PickupNode:   storageNode.Name,
+		SourceNode:   storageNode.Name,
 		DeliveryNode: lineNode.Name,
 		Quantity:     1.0,
 	})
@@ -187,7 +187,7 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 		OrderUUID:   "store-uuid-1",
 		OrderType:   OrderTypeStore,
 		PayloadCode: "PART-A",
-		PickupNode:  lineNode.Name,
+		SourceNode:  lineNode.Name,
 		Quantity:    1.0,
 	})
 
@@ -290,7 +290,7 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 		OrderUUID:    "redirect-uuid-1",
 		OrderType:    OrderTypeMove,
 		PayloadCode:  "PART-A",
-		PickupNode:   storageNode.Name,
+		SourceNode:   storageNode.Name,
 		DeliveryNode: lineNode.Name,
 		Quantity:     1.0,
 	})
@@ -385,8 +385,8 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 		t.Errorf("delivery node = %q, want %q (empty child)", order.DeliveryNode, child1.Name)
 	}
 	// Pickup should be source node (where the FIFO payload is)
-	if order.PickupNode != srcNode.Name {
-		t.Errorf("pickup node = %q, want %q", order.PickupNode, srcNode.Name)
+	if order.SourceNode != srcNode.Name {
+		t.Errorf("source node = %q, want %q", order.SourceNode, srcNode.Name)
 	}
 }
 
@@ -806,7 +806,7 @@ func TestHandleOrderIngest(t *testing.T) {
 		OrderUUID:   "uuid-ingest-1",
 		PayloadCode: bp.Code,
 		BinLabel:    "BIN-ING-1",
-		PickupNode:  "PRODUCE-1",
+		SourceNode:  "PRODUCE-1",
 		Quantity:    100,
 		Manifest: []protocol.IngestManifestItem{
 			{PartNumber: "PN-001", Quantity: 50, Description: "Bolt M8"},

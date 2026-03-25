@@ -32,6 +32,8 @@ func (db *DB) migrateRenames() error {
 		{"orders", "rds_order_id", "vendor_order_id"},
 		{"orders", "rds_state", "vendor_state"},
 		{"orders", "client_id", "station_id"},
+		{"orders", "pickup_node", "source_node"},
+		{"mission_telemetry", "pickup_node", "source_node"},
 		{"outbox", "event_type", "msg_type"},
 		{"outbox", "client_id", "station_id"},
 	}
@@ -381,10 +383,10 @@ func (db *DB) v8OrderPayloadCode() error {
 func (db *DB) v5MissionTelemetryBackfill() error {
 	db.Exec(`INSERT INTO mission_telemetry
 		(order_id, vendor_order_id, robot_id, station_id, order_type,
-		 pickup_node, delivery_node, terminal_state,
+		 source_node, delivery_node, terminal_state,
 		 core_created, core_completed, duration_ms)
 		SELECT o.id, o.vendor_order_id, o.robot_id, o.station_id, o.order_type,
-			o.pickup_node, o.delivery_node, o.vendor_state,
+			o.source_node, o.delivery_node, o.vendor_state,
 			o.created_at, COALESCE(o.completed_at, o.updated_at),
 			EXTRACT(EPOCH FROM (COALESCE(o.completed_at, o.updated_at) - o.created_at))::BIGINT * 1000
 		FROM orders o

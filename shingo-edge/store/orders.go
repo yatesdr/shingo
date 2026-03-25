@@ -17,7 +17,7 @@ type Order struct {
 	Quantity       int64      `json:"quantity"`
 	DeliveryNode   string     `json:"delivery_node"`
 	StagingNode    string     `json:"staging_node"`
-	PickupNode     string     `json:"pickup_node"`
+	SourceNode     string     `json:"source_node"`
 	LoadType       string     `json:"load_type"`
 	WaybillID      *string    `json:"waybill_id"`
 	ExternalRef    *string    `json:"external_ref"`
@@ -46,7 +46,7 @@ type OrderHistory struct {
 }
 
 const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
-	o.delivery_node, o.staging_node, o.pickup_node, o.load_type,
+	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
 	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
@@ -104,7 +104,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		var stagedExpireAt sql.NullString
 		var createdAt, updatedAt string
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
-			&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
+			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
@@ -125,7 +125,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error 
 	var stagedExpireAt sql.NullString
 	var createdAt, updatedAt string
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
-		&o.DeliveryNode, &o.StagingNode, &o.PickupNode, &o.LoadType,
+		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
 		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
@@ -156,11 +156,11 @@ func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
 	return o, nil
 }
 
-func (db *DB) CreateOrder(uuid, orderType string, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, pickupNode, loadType string, autoConfirm bool) (int64, error) {
+func (db *DB) CreateOrder(uuid, orderType string, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, pickup_node, load_type, auto_confirm)
+		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, pickupNode, loadType, autoConfirm)
+		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm)
 	if err != nil {
 		return 0, err
 	}

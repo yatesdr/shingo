@@ -31,7 +31,7 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *store.Order, plan *Reshuff
 		}
 
 		if step.FromNode != nil {
-			child.PickupNode = step.FromNode.Name
+			child.SourceNode = step.FromNode.Name
 		}
 		if step.ToNode != nil {
 			child.DeliveryNode = step.ToNode.Name
@@ -74,16 +74,16 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	}
 
 	// Dispatch the child to fleet
-	if next.PickupNode == "" || next.DeliveryNode == "" {
-		if err := d.db.UpdateOrderStatus(next.ID, StatusFailed, "missing pickup or delivery node"); err != nil {
+	if next.SourceNode == "" || next.DeliveryNode == "" {
+		if err := d.db.UpdateOrderStatus(next.ID, StatusFailed, "missing source or delivery node"); err != nil {
 			log.Printf("dispatch: update child order %d status to failed: %v", next.ID, err)
 		}
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
-	pickupNode, err := d.db.GetNodeByDotName(next.PickupNode)
+	sourceNode, err := d.db.GetNodeByDotName(next.SourceNode)
 	if err != nil {
-		if dbErr := d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("pickup node %q not found", next.PickupNode)); dbErr != nil {
+		if dbErr := d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("source node %q not found", next.SourceNode)); dbErr != nil {
 			log.Printf("dispatch: update child order %d status to failed: %v", next.ID, dbErr)
 		}
 		return d.AdvanceCompoundOrder(parentOrderID)
@@ -104,7 +104,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 
 	// Build a synthetic envelope for the child dispatch
 	env := d.syntheticEnvelope(next.StationID)
-	d.dispatchToFleet(next, env, pickupNode, destNode)
+	d.dispatchToFleet(next, env, sourceNode, destNode)
 	return nil
 }
 
@@ -163,10 +163,10 @@ func (d *Dispatcher) unlockLaneForCompound(parentOrderID int64) {
 		return
 	}
 	for _, child := range children {
-		if child.PickupNode != "" {
-			node, err := d.db.GetNodeByDotName(child.PickupNode)
-			if err == nil && node.ParentID != nil {
-				d.laneLock.Unlock(*node.ParentID)
+		if child.SourceNode != "" {
+			sourceNode, err := d.db.GetNodeByDotName(child.SourceNode)
+			if err == nil && sourceNode.ParentID != nil {
+				d.laneLock.Unlock(*sourceNode.ParentID)
 				return
 			}
 		}

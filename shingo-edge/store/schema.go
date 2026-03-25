@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS orders (
     quantity        INTEGER NOT NULL DEFAULT 0,
     delivery_node   TEXT NOT NULL DEFAULT '',
     staging_node    TEXT NOT NULL DEFAULT '',
-    pickup_node     TEXT NOT NULL DEFAULT '',
+    source_node     TEXT NOT NULL DEFAULT '',
     load_type       TEXT NOT NULL DEFAULT '',
     waybill_id      TEXT,
     external_ref    TEXT,
@@ -393,6 +393,9 @@ func (db *DB) migrate() error {
 			db.Exec("UPDATE styles SET process_id = (SELECT id FROM processes WHERE name = 'Line 1') WHERE process_id IS NULL")
 		}
 	}
+
+	// Rename pickup_node → source_node on orders (aligns with protocol SourceNode)
+	db.Exec("ALTER TABLE orders RENAME COLUMN pickup_node TO source_node")
 
 	return nil
 }
@@ -832,7 +835,7 @@ CREATE TABLE orders (
     quantity        INTEGER NOT NULL DEFAULT 0,
     delivery_node   TEXT NOT NULL DEFAULT '',
     staging_node    TEXT NOT NULL DEFAULT '',
-    pickup_node     TEXT NOT NULL DEFAULT '',
+    source_node     TEXT NOT NULL DEFAULT '',
     load_type       TEXT NOT NULL DEFAULT '',
     waybill_id      TEXT,
     external_ref    TEXT,
@@ -846,7 +849,7 @@ CREATE TABLE orders (
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 INSERT INTO orders (
-    id, uuid, order_type, status, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, pickup_node,
+    id, uuid, order_type, status, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node,
     load_type, waybill_id, external_ref, final_count, count_confirmed, eta, auto_confirm, created_at, updated_at,
     steps_json, staged_expire_at
 )

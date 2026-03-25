@@ -123,7 +123,7 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		History      []*store.OrderHistory    `json:"history,omitempty"`
 		Bin          *store.Bin               `json:"bin,omitempty"`
 		BinManifest  *store.BinManifest       `json:"bin_manifest,omitempty"`
-		PickupNode   *store.Node              `json:"pickup_node,omitempty"`
+		SourceNode   *store.Node              `json:"source_node,omitempty"`
 		DeliveryNode *store.Node              `json:"delivery_node,omitempty"`
 		Children     []*store.Order           `json:"children,omitempty"`
 		Parent       *store.Order             `json:"parent,omitempty"`
@@ -139,8 +139,8 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		result.Bin, _ = h.engine.DB().GetBin(*order.BinID)
 		result.BinManifest, _ = h.engine.DB().GetBinManifest(*order.BinID)
 	}
-	if order.PickupNode != "" {
-		result.PickupNode, _ = h.engine.DB().GetNodeByName(order.PickupNode)
+	if order.SourceNode != "" {
+		result.SourceNode, _ = h.engine.DB().GetNodeByName(order.SourceNode)
 	}
 	if order.DeliveryNode != "" {
 		result.DeliveryNode, _ = h.engine.DB().GetNodeByName(order.DeliveryNode)
@@ -208,7 +208,7 @@ func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OrderType     string `json:"order_type"`
-		PickupNode    string `json:"pickup_node"`
+		SourceNode    string `json:"source_node"`
 		DeliveryNode  string `json:"delivery_node"`
 		StagingNode   string `json:"staging_node"`
 		Priority      int    `json:"priority"`
@@ -235,7 +235,7 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 
 	switch req.OrderType {
 	case "staged":
-		h.submitSpotComplexOrder(w, req.PickupNode, req.StagingNode, req.DeliveryNode,
+		h.submitSpotComplexOrder(w, req.SourceNode, req.StagingNode, req.DeliveryNode,
 			req.PayloadCode, req.Description, req.Priority, orderUUID, src, dst)
 		return
 	case "send_to":
@@ -272,7 +272,7 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 				PayloadCode: req.PayloadCode,
 				PayloadDesc:   req.Description,
 				Quantity:      1,
-				PickupNode:    req.PickupNode,
+				SourceNode:    req.SourceNode,
 				DeliveryNode:  req.DeliveryNode,
 				Priority:      req.Priority,
 				RetrieveEmpty: retrieveEmpty,
@@ -304,7 +304,7 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 		PayloadCode: req.PayloadCode,
 		PayloadDesc:   req.Description,
 		Quantity:      1,
-		PickupNode:    req.PickupNode,
+		SourceNode:    req.SourceNode,
 		DeliveryNode:  req.DeliveryNode,
 		Priority:      req.Priority,
 		RetrieveEmpty: retrieveEmpty,
@@ -369,11 +369,11 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 }
 
 func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
-	pickupNode, stagingNode, deliveryNode, payloadCode, desc string,
+	sourceNode, stagingNode, deliveryNode, payloadCode, desc string,
 	priority int, orderUUID string, src, dst protocol.Address) {
 
-	if pickupNode == "" {
-		h.jsonError(w, "pickup node is required for staged orders", http.StatusBadRequest)
+	if sourceNode == "" {
+		h.jsonError(w, "source node is required for staged orders", http.StatusBadRequest)
 		return
 	}
 	if stagingNode == "" {
@@ -392,7 +392,7 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 		Quantity:      1,
 		Priority:      priority,
 		Steps: []protocol.ComplexOrderStep{
-			{Action: "pickup", Node: pickupNode},
+			{Action: "pickup", Node: sourceNode},
 			{Action: "dropoff", Node: stagingNode},
 			{Action: "wait"},
 			{Action: "pickup", Node: stagingNode},
@@ -465,7 +465,7 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		OrderType:    "move",
 		Status:       "pending",
 		Quantity:     1,
-		PickupNode:   sourceNode.Name,
+		SourceNode:   sourceNode.Name,
 		DeliveryNode: destNode.Name,
 		Priority:     priority,
 		PayloadDesc:  desc,
@@ -517,7 +517,7 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 		OrderUUID: storeUUID,
 		OrderType: "store",
 		Quantity:  1,
-		PickupNode: targetNode,
+		SourceNode: targetNode,
 		Priority:   priority,
 		PayloadDesc: desc,
 	}

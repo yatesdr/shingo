@@ -276,15 +276,15 @@ func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
 		OrderType:    OrderTypeMove,
 		PayloadCode:  "PART-A",
 		DeliveryNode: lineNode.Name,
-		PickupNode:   "",
+		SourceNode:   "",
 		Quantity:     1.0,
 	})
 
 	if len(emitter.failed) != 1 {
 		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
 	}
-	if emitter.failed[0].errorCode != "missing_pickup" {
-		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "missing_pickup")
+	if emitter.failed[0].errorCode != "missing_source" {
+		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "missing_source")
 	}
 }
 
@@ -300,7 +300,7 @@ func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 		OrderType:    OrderTypeMove,
 		PayloadCode:  "PART-A",
 		DeliveryNode: lineNode.Name,
-		PickupNode:   storageNode.Name,
+		SourceNode:   storageNode.Name,
 		Quantity:     1.0,
 	})
 
@@ -341,10 +341,10 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 
 	d, emitter := newTestDispatcher(t, db, &mockBackend{})
 	d.RegisterPlanner("custom_transfer", func(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
-		if err := db.UpdateOrderPickupNode(order.ID, storageNode.Name); err != nil {
-			t.Fatalf("update pickup node: %v", err)
+		if err := db.UpdateOrderSourceNode(order.ID, storageNode.Name); err != nil {
+			t.Fatalf("update source node: %v", err)
 		}
-		order.PickupNode = storageNode.Name
+		order.SourceNode = storageNode.Name
 		return &PlanningResult{
 			SourceNode: storageNode,
 			DestNode:   lineNode,
@@ -568,7 +568,7 @@ func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
-	order := &store.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, PickupNode: lineNode.Name}
+	order := &store.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, SourceNode: lineNode.Name}
 	db.CreateOrder(order)
 
 	d, _ := newTestDispatcher(t, db, &mockBackend{})

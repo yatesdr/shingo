@@ -327,12 +327,12 @@ func TestCompoundOrderCreation(t *testing.T) {
 		}
 	}
 
-	// Verify pickup/delivery nodes on child orders
+	// Verify source/delivery nodes on child orders
 	for _, child := range children {
 		if child.Sequence == 1 {
 			// Unbury: pickup from lane slot, delivery to shuffle slot
-			if child.PickupNode == "" {
-				t.Error("child seq 1 (unbury) has empty pickup node")
+			if child.SourceNode == "" {
+				t.Error("child seq 1 (unbury) has empty source node")
 			}
 			if child.DeliveryNode == "" {
 				t.Error("child seq 1 (unbury) has empty delivery node")
@@ -340,14 +340,14 @@ func TestCompoundOrderCreation(t *testing.T) {
 		}
 		if child.Sequence == 2 {
 			// Retrieve: pickup from target slot, delivery to parent's delivery
-			if child.PickupNode == "" {
-				t.Error("child seq 2 (retrieve) has empty pickup node")
+			if child.SourceNode == "" {
+				t.Error("child seq 2 (retrieve) has empty source node")
 			}
 		}
 		if child.Sequence == 3 {
 			// Restock: pickup from shuffle slot, delivery back to lane slot
-			if child.PickupNode == "" {
-				t.Error("child seq 3 (restock) has empty pickup node")
+			if child.SourceNode == "" {
+				t.Error("child seq 3 (restock) has empty source node")
 			}
 			if child.DeliveryNode == "" {
 				t.Error("child seq 3 (restock) has empty delivery node")
@@ -379,7 +379,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		Status:        StatusConfirmed,
 		ParentOrderID: &parentOrder.ID,
 		Sequence:      1,
-		PickupNode:    slots[0].Name,
+		SourceNode:    slots[0].Name,
 		DeliveryNode:  "GRP-TEST-DC-1",
 	}
 	if err := db.CreateOrder(child1); err != nil {
@@ -393,7 +393,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		Status:        StatusFailed,
 		ParentOrderID: &parentOrder.ID,
 		Sequence:      2,
-		PickupNode:    slots[1].Name,
+		SourceNode:    slots[1].Name,
 		DeliveryNode:  "LINE1-DEST",
 	}
 	if err := db.CreateOrder(child2); err != nil {
@@ -410,7 +410,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		Status:        StatusPending,
 		ParentOrderID: &parentOrder.ID,
 		Sequence:      3,
-		PickupNode:    slots[2].Name,
+		SourceNode:    slots[2].Name,
 		DeliveryNode:  slots[0].Name,
 	}
 	if err := db.CreateOrder(child3); err != nil {

@@ -132,17 +132,17 @@ func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 }
 
 // CreateStoreOrder creates a new store order (for returning payloads to warehouse).
-func (m *Manager) CreateStoreOrder(processNodeID *int64, quantity int64, pickupNode string) (*store.Order, error) {
+func (m *Manager) CreateStoreOrder(processNodeID *int64, quantity int64, sourceNode string) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeStore,
 		processNodeID, false,
-		quantity, "", "", pickupNode, "", false)
+		quantity, "", "", sourceNode, "", false)
 	if err != nil {
 		return nil, fmt.Errorf("create store order: %w", err)
 	}
 
-	m.DebugLog.log("create: type=%s id=%d uuid=%s pickup=%s", TypeStore, orderID, orderUUID, pickupNode)
+	m.DebugLog.log("create: type=%s id=%d uuid=%s source=%s", TypeStore, orderID, orderUUID, sourceNode)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeStore, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }
@@ -158,12 +158,12 @@ func (m *Manager) SubmitStoreOrder(orderID int64, finalCount int64) error {
 }
 
 // CreateMoveOrder creates a new move order (e.g., quality hold).
-func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, pickupNode, deliveryNode string) (*store.Order, error) {
+func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,
-		quantity, deliveryNode, "", pickupNode, "", false)
+		quantity, deliveryNode, "", sourceNode, "", false)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
 	}
@@ -177,11 +177,11 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, pickupNo
 		PayloadCode:  payloadCode,
 		Quantity:     quantity,
 		DeliveryNode: deliveryNode,
-		PickupNode:   pickupNode,
+		SourceNode:   sourceNode,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.log("create: type=%s id=%d uuid=%s pickup=%s delivery=%s", TypeMove, orderID, orderUUID, pickupNode, deliveryNode)
+	m.DebugLog.log("create: type=%s id=%d uuid=%s source=%s delivery=%s", TypeMove, orderID, orderUUID, sourceNode, deliveryNode)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }
@@ -226,12 +226,12 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 }
 
 // CreateIngestOrder creates a new ingest order for originating a payload on a bin at a produce station.
-func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel, pickupNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool) (*store.Order, error) {
+func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeIngest,
 		processNodeID, false,
-		quantity, "", "", pickupNode, "", autoConfirm)
+		quantity, "", "", sourceNode, "", autoConfirm)
 	if err != nil {
 		return nil, fmt.Errorf("create ingest order: %w", err)
 	}
@@ -240,7 +240,7 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 		OrderUUID:   orderUUID,
 		PayloadCode: payloadCode,
 		BinLabel:    binLabel,
-		PickupNode:  pickupNode,
+		SourceNode:  sourceNode,
 		Quantity:    quantity,
 		Manifest:    manifest,
 	})
@@ -381,7 +381,7 @@ func (m *Manager) SubmitOrder(orderID int64) error {
 			OrderUUID:   order.UUID,
 			OrderType:   TypeStore,
 			PayloadDesc: desc,
-			PickupNode:  order.PickupNode,
+			SourceNode:  order.SourceNode,
 			FinalCount:  finalCount,
 		})
 		if err != nil {

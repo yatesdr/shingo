@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-03-25 — Universal Node Naming Alignment
+
+### Transport Order Rename: pickup_node → source_node
+
+Aligns transport order vocabulary with Derek's architecture (`OrderAck.SourceNode` precedent). Renames `pickup_node` / `PickupNode` to `source_node` / `SourceNode` across the entire codebase — protocol payloads, database schemas, Go structs, handlers, dispatch/planning logic, UI, and documentation.
+
+- **Protocol**: `OrderRequest`, `OrderStorageWaybill`, `OrderIngestRequest`, `OrderStatusSnapshot` all use `source_node` (wire-breaking change — edge and core must deploy together)
+- **Database migrations**: SQLite `ALTER TABLE orders RENAME COLUMN pickup_node TO source_node`; PostgreSQL via `migrateRenames()` for both `orders` and `mission_telemetry`
+- **Store layer**: `Order.SourceNode`, `MissionTelemetry.SourceNode`, `UpdateOrderSourceNode()`
+- **Dispatch/Engine**: planning service, fulfillment scanner, compound/complex orders, wiring, recovery — all updated
+- **API handlers**: JSON tags and request structs on both edge and core
+
+### Complex Order Test Form: Consistent Field Names
+
+Renames complex order test handler fields to match style/cell config vocabulary:
+
+- `FullPickup` → `InboundSource` (`full_pickup` → `inbound_source`)
+- `StagingNode` → `InboundStaging` (`staging_node` → `inbound_staging`)
+- `StagingNode2` → `OutboundStaging` (`staging_node_2` → `outbound_staging`)
+- `OutgoingDest` → `OutboundDestination` (`outgoing_dest` → `outbound_destination`)
+
+### UI Label Updates
+
+- "Pickup Node" → "Source Node" across all order forms and detail views
+- "Full Source" → "Inbound Source", "Staging Area 1/2" → "Inbound/Outbound Staging"
+- "Outgoing Destination" → "Outbound Destination"
+- "Production Node" → "Core Node" (edge manual order form)
+
 ## 2026-03-24 — Queued Order Fulfillment
 
 ### Queued Orders

@@ -245,7 +245,7 @@ func (s *CoreDataService) handleOrderStatusRequest(env *protocol.Envelope, req *
 			snap.Found = true
 			snap.Status = order.Status
 			snap.StationID = order.StationID
-			snap.PickupNode = order.PickupNode
+			snap.SourceNode = order.SourceNode
 			snap.DeliveryNode = order.DeliveryNode
 			snap.VendorOrderID = order.VendorOrderID
 			snap.ErrorDetail = order.ErrorDetail

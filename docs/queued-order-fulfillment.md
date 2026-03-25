@@ -42,7 +42,7 @@ Applies to:
 - `planRetrieve` -- no source bin found (FIFO search fails, NGRP resolver fails)
 
 Does NOT apply to:
-- Node not found errors (bad delivery/pickup node -- config errors, should still fail)
+- Node not found errors (bad delivery/source node -- config errors, should still fail)
 - Claim failures (race condition on bin claim)
 
 ### 2. Dispatcher -- Handle Queued Result
@@ -89,7 +89,7 @@ File: `engine/fulfillment_scanner.go` (new)
       - retrieve: FindSourceBinFIFO(payloadCode) or resolve via NGRP if pickup node set
    c. If no bin found: skip (stays queued)
    d. ClaimBin(bin.ID, order.ID): if fails (race), skip
-   e. Update order: bin_id, pickup_node, status -> "sourcing"
+   e. Update order: bin_id, source_node, status -> "sourcing"
    f. Dispatch to fleet via DispatchDirect
    g. Send OrderAck + OrderWaybill to Edge
    h. If fleet dispatch fails: unclaim bin, set back to queued

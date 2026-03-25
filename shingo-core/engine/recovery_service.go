@@ -58,9 +58,9 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 	e.db.RecordRecoveryAction("reapply_completion", "order", order.ID, "reapplied confirmed completion side effects", actor)
 
 	sourceNodeID := int64(0)
-	if order.PickupNode != "" {
-		if sourceNode, err := e.db.GetNodeByDotName(order.PickupNode); err == nil {
-			sourceNodeID = sourceNode.ID
+	if order.SourceNode != "" {
+		if node, err := e.db.GetNodeByDotName(order.SourceNode); err == nil {
+			sourceNodeID = node.ID
 		}
 	}
 	if bin, err := e.db.GetBin(*order.BinID); err == nil {

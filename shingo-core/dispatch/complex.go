@@ -38,7 +38,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	}
 
 	// Determine pickup and delivery from first and last non-wait steps
-	pickupNode, deliveryNode := extractEndpoints(resolvedSteps)
+	sourceNode, deliveryNode := extractEndpoints(resolvedSteps)
 
 	// Create order record
 	order := &store.Order{
@@ -49,7 +49,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		Quantity:     p.Quantity,
 		Priority:     p.Priority,
 		PayloadDesc:  p.PayloadDesc,
-		PickupNode:   pickupNode,
+		SourceNode:   sourceNode,
 		DeliveryNode: deliveryNode,
 		StepsJSON:    string(stepsJSON),
 	}
@@ -120,8 +120,8 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	if err := d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID)); err != nil {
 		log.Printf("dispatch: update order %d status to dispatched: %v", order.ID, err)
 	}
-	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, pickupNode, deliveryNode)
-	d.sendAck(env, order.EdgeUUID, order.ID, pickupNode)
+	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode, deliveryNode)
+	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
 }
 
 // HandleOrderRelease processes a release request for a staged (dwelling) order.

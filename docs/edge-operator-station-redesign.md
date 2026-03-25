@@ -201,7 +201,7 @@ Fields:
 - `delivery_node`
 - `staging_node`
 - `secondary_staging_node` nullable
-- `full_pickup_node` nullable
+- `inbound_source_node` nullable
 - `outgoing_node` nullable
 - `node_group` nullable
 - `secondary_node_group` nullable

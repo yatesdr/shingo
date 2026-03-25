@@ -96,7 +96,7 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProcessNodeID int64  `json:"process_node_id"`
 		Quantity      int64  `json:"quantity"`
-		PickupNode    string `json:"pickup_node"`
+		SourceNode    string `json:"source_node"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -106,13 +106,13 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
-		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
-			req.PickupNode = node.CoreNodeName
+		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
+			req.SourceNode = node.CoreNodeName
 		}
 	}
 
 	order, err := h.engine.OrderManager().CreateStoreOrder(
-		processNodeID, req.Quantity, req.PickupNode,
+		processNodeID, req.Quantity, req.SourceNode,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -132,7 +132,7 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ProcessNodeID int64  `json:"process_node_id"`
 		Quantity      int64  `json:"quantity"`
-		PickupNode    string `json:"pickup_node"`
+		SourceNode    string `json:"source_node"`
 		DeliveryNode  string `json:"delivery_node"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -143,13 +143,13 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
-		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
-			req.PickupNode = node.CoreNodeName
+		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
+			req.SourceNode = node.CoreNodeName
 		}
 	}
 
 	order, err := h.engine.OrderManager().CreateMoveOrder(
-		processNodeID, req.Quantity, req.PickupNode, req.DeliveryNode,
+		processNodeID, req.Quantity, req.SourceNode, req.DeliveryNode,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -193,7 +193,7 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 		ProcessNodeID int64                         `json:"process_node_id"`
 		PayloadCode   string                        `json:"payload_code"`
 		BinLabel      string                        `json:"bin_label"`
-		PickupNode    string                        `json:"pickup_node"`
+		SourceNode    string                        `json:"source_node"`
 		Quantity      int64                         `json:"quantity"`
 		Manifest      []protocol.IngestManifestItem `json:"manifest"`
 	}
@@ -213,13 +213,13 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
-		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.PickupNode == "" {
-			req.PickupNode = node.CoreNodeName
+		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
+			req.SourceNode = node.CoreNodeName
 		}
 	}
 
 	order, err := h.engine.OrderManager().CreateIngestOrder(
-		processNodeID, req.PayloadCode, req.BinLabel, req.PickupNode,
+		processNodeID, req.PayloadCode, req.BinLabel, req.SourceNode,
 		req.Quantity, req.Manifest,
 		h.engine.AppConfig().Web.AutoConfirm,
 	)

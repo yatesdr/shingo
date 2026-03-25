@@ -14,7 +14,7 @@ type Order struct {
 	OrderType     string     `json:"order_type"`
 	Status        string     `json:"status"`
 	Quantity      int64      `json:"quantity"`
-	PickupNode    string     `json:"pickup_node"`
+	SourceNode    string     `json:"source_node"`
 	DeliveryNode  string     `json:"delivery_node"`
 	VendorOrderID string     `json:"vendor_order_id"`
 	VendorState   string     `json:"vendor_state"`
@@ -40,7 +40,7 @@ type OrderHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code`
+const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
@@ -48,7 +48,7 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 
 	err := row.Scan(&o.ID, &o.EdgeUUID, &o.StationID, &o.OrderType, &o.Status,
 		&o.Quantity,
-		&o.PickupNode, &o.DeliveryNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
+		&o.SourceNode, &o.DeliveryNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
 		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode)
 	if err != nil {
@@ -76,10 +76,10 @@ func scanOrders(rows *sql.Rows) ([]*Order, error) {
 }
 
 func (db *DB) CreateOrder(o *Order) error {
-	id, err := db.insertID(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
+	id, err := db.insertID(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
-		o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
+		o.SourceNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
 		nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
 		nullableInt64(o.BinID), o.PayloadCode)
 	if err != nil {
@@ -106,10 +106,10 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 	for _, c := range children {
 		o := c.Order
 		var id int64
-		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, pickup_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
-			o.PickupNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
+			o.SourceNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
 			nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
 			nullableInt64(o.BinID)).Scan(&id)
 		if err != nil {
@@ -166,9 +166,9 @@ func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID st
 	return err
 }
 
-func (db *DB) UpdateOrderPickupNode(id int64, pickupNode string) error {
-	_, err := db.Exec(`UPDATE orders SET pickup_node=$1, updated_at=NOW() WHERE id=$2`,
-		pickupNode, id)
+func (db *DB) UpdateOrderSourceNode(id int64, sourceNode string) error {
+	_, err := db.Exec(`UPDATE orders SET source_node=$1, updated_at=NOW() WHERE id=$2`,
+		sourceNode, id)
 	return err
 }
 

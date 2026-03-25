@@ -80,7 +80,7 @@
           '<td>' + m.order_id + '</td>' +
           '<td>' + (m.robot_id || '-') + '</td>' +
           '<td>' + (m.station_id || '-') + '</td>' +
-          '<td>' + (m.pickup_node || '?') + ' &rarr; ' + (m.delivery_node || '?') + '</td>' +
+          '<td>' + (m.source_node || '?') + ' &rarr; ' + (m.delivery_node || '?') + '</td>' +
           '<td><span class="badge ' + stateBadgeClass(m.terminal_state) + '">' + stateLabel(m.terminal_state) + '</span></td>' +
           '<td title="' + (m.duration_ms ? m.duration_ms + 'ms' : '') + '">' + formatDuration(m.duration_ms) + '</td>' +
           '<td title="' + formatAbsTime(m.core_completed) + '">' + timeAgo(m.core_completed) + '</td>';

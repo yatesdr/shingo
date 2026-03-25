@@ -34,7 +34,7 @@ type MissionTelemetry struct {
 	RobotID          string     `json:"robot_id"`
 	StationID        string     `json:"station_id"`
 	OrderType        string     `json:"order_type"`
-	PickupNode       string     `json:"pickup_node"`
+	SourceNode       string     `json:"source_node"`
 	DeliveryNode     string     `json:"delivery_node"`
 	TerminalState    string     `json:"terminal_state"`
 	VendorCreated    *time.Time `json:"vendor_created,omitempty"`
@@ -115,7 +115,7 @@ func (db *DB) ListMissionEvents(orderID int64) ([]*MissionEvent, error) {
 func (db *DB) UpsertMissionTelemetry(t *MissionTelemetry) error {
 	_, err := db.Exec(`INSERT INTO mission_telemetry
 		(order_id, vendor_order_id, robot_id, station_id, order_type,
-		 pickup_node, delivery_node, terminal_state,
+		 source_node, delivery_node, terminal_state,
 		 vendor_created, vendor_completed, core_created, core_completed,
 		 duration_ms, vendor_duration_ms,
 		 blocks_json, errors_json, warnings_json, notices_json)
@@ -128,7 +128,7 @@ func (db *DB) UpsertMissionTelemetry(t *MissionTelemetry) error {
 		 blocks_json=EXCLUDED.blocks_json, errors_json=EXCLUDED.errors_json,
 		 warnings_json=EXCLUDED.warnings_json, notices_json=EXCLUDED.notices_json`,
 		t.OrderID, t.VendorOrderID, t.RobotID, t.StationID, t.OrderType,
-		t.PickupNode, t.DeliveryNode, t.TerminalState,
+		t.SourceNode, t.DeliveryNode, t.TerminalState,
 		t.VendorCreated, t.VendorCompleted, t.CoreCreated, t.CoreCompleted,
 		t.DurationMS, t.VendorDurationMS,
 		t.BlocksJSON, t.ErrorsJSON, t.WarningsJSON, t.NoticesJSON)
@@ -140,7 +140,7 @@ func (db *DB) UpsertMissionTelemetry(t *MissionTelemetry) error {
 
 func (db *DB) GetMissionTelemetry(orderID int64) (*MissionTelemetry, error) {
 	row := db.QueryRow(`SELECT id, order_id, vendor_order_id, robot_id, station_id, order_type,
-		pickup_node, delivery_node, terminal_state,
+		source_node, delivery_node, terminal_state,
 		vendor_created, vendor_completed, core_created, core_completed,
 		duration_ms, vendor_duration_ms,
 		blocks_json, errors_json, warnings_json, notices_json, created_at
@@ -151,7 +151,7 @@ func (db *DB) GetMissionTelemetry(orderID int64) (*MissionTelemetry, error) {
 func scanMissionTelemetry(row interface{ Scan(...any) error }) (*MissionTelemetry, error) {
 	t := &MissionTelemetry{}
 	err := row.Scan(&t.ID, &t.OrderID, &t.VendorOrderID, &t.RobotID, &t.StationID, &t.OrderType,
-		&t.PickupNode, &t.DeliveryNode, &t.TerminalState,
+		&t.SourceNode, &t.DeliveryNode, &t.TerminalState,
 		&t.VendorCreated, &t.VendorCompleted, &t.CoreCreated, &t.CoreCompleted,
 		&t.DurationMS, &t.VendorDurationMS,
 		&t.BlocksJSON, &t.ErrorsJSON, &t.WarningsJSON, &t.NoticesJSON, &t.CreatedAt)
@@ -177,7 +177,7 @@ func (db *DB) ListMissions(f MissionFilter) ([]*MissionTelemetry, int, error) {
 	}
 
 	query := fmt.Sprintf(`SELECT id, order_id, vendor_order_id, robot_id, station_id, order_type,
-		pickup_node, delivery_node, terminal_state,
+		source_node, delivery_node, terminal_state,
 		vendor_created, vendor_completed, core_created, core_completed,
 		duration_ms, vendor_duration_ms,
 		blocks_json, errors_json, warnings_json, notices_json, created_at

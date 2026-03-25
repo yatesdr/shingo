@@ -124,7 +124,7 @@ A transport request to move a bin between nodes.
 | `station_id` | Which edge station requested this |
 | `order_type` | `retrieve`, `store`, or `move` |
 | `status` | Lifecycle state (see [Order Statuses](#order-statuses)) |
-| `pickup_node` | Source node name |
+| `source_node` | Source node name |
 | `delivery_node` | Destination node name |
 | `vendor_order_id` | Fleet backend's order ID |
 | `vendor_state` | Fleet backend's current state string |

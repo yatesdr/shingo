@@ -26,7 +26,7 @@ func TestRepairConfirmedOrderCompletion(t *testing.T) {
 		StationID:    "edge.1",
 		OrderType:    "retrieve",
 		Status:       "confirmed",
-		PickupNode:   origin.Name,
+		SourceNode:   origin.Name,
 		DeliveryNode: dest.Name,
 		BinID:        &bin.ID,
 	}
@@ -87,7 +87,7 @@ func TestReleaseTerminalBinClaimRejectsActiveOrder(t *testing.T) {
 		StationID:  "edge.1",
 		OrderType:  "retrieve",
 		Status:     "dispatched",
-		PickupNode: node.Name,
+		SourceNode: node.Name,
 		BinID:      &bin.ID,
 	}
 	if err := db.CreateOrder(order); err != nil {
@@ -122,7 +122,7 @@ func TestReleaseTerminalBinClaimAllowsCancelledOrder(t *testing.T) {
 		StationID:  "edge.1",
 		OrderType:  "retrieve",
 		Status:     "cancelled",
-		PickupNode: node.Name,
+		SourceNode: node.Name,
 		BinID:      &bin.ID,
 	}
 	if err := db.CreateOrder(order); err != nil {

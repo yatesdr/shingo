@@ -1,6 +1,7 @@
 package www
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -78,7 +79,7 @@ func (h *Handlers) apiTestScenePoints(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) apiTestOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OrderType       string  `json:"order_type"`
-		PickupNode      string  `json:"pickup_node"`
+		SourceNode      string  `json:"source_node"`
 		DeliveryNode    string  `json:"delivery_node"`
 		PayloadCode string  `json:"payload_code"`
 		Quantity        int64   `json:"quantity"`
@@ -111,7 +112,7 @@ func (h *Handlers) apiTestOrderSubmit(w http.ResponseWriter, r *http.Request) {
 		PayloadCode: req.PayloadCode,
 		Quantity:        req.Quantity,
 		DeliveryNode:    req.DeliveryNode,
-		PickupNode:      req.PickupNode,
+		SourceNode:      req.SourceNode,
 		Priority:        req.Priority,
 		PayloadDesc:     "test order from shingo core",
 	}
@@ -286,10 +287,10 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 	var req struct {
 		CycleMode    string `json:"cycle_mode"`
 		Location     string `json:"location"`
-		StagingNode  string `json:"staging_node"`
-		StagingNode2 string `json:"staging_node_2"`
-		FullPickup   string `json:"full_pickup"`
-		OutgoingDest string `json:"outgoing_dest"`
+		InboundStaging       string `json:"inbound_staging"`
+		OutboundStaging      string `json:"outbound_staging"`
+		InboundSource        string `json:"inbound_source"`
+		OutboundDestination  string `json:"outbound_destination"`
 		PayloadCode  string `json:"payload_code"`
 		Priority     int    `json:"priority"`
 	}
@@ -315,22 +316,22 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			{Action: "dropoff", Node: req.Location},
 			{Action: "wait"},
 			{Action: "pickup", Node: req.Location},
-			dropoffStep(req.OutgoingDest),
+			dropoffStep(req.OutboundDestination),
 		}
 		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority)
 		results = append(results, map[string]any{"role": "sequential", "order_uuid": uid})
 
 	case "two_robot":
-		if req.StagingNode == "" {
-			h.jsonError(w, "staging_node is required for two robot", http.StatusBadRequest)
+		if req.InboundStaging == "" {
+			h.jsonError(w, "inbound_staging is required for two robot", http.StatusBadRequest)
 			return
 		}
 		// Resupply
 		resupplySteps := []protocol.ComplexOrderStep{
-			pickupStepDirect(req.FullPickup),
-			{Action: "dropoff", Node: req.StagingNode},
+			pickupStepDirect(req.InboundSource),
+			{Action: "dropoff", Node: req.InboundStaging},
 			{Action: "wait"},
-			{Action: "pickup", Node: req.StagingNode},
+			{Action: "pickup", Node: req.InboundStaging},
 			{Action: "dropoff", Node: req.Location},
 		}
 		uid1 := h.dispatchComplex(src, dst, req.PayloadCode, resupplySteps, req.Priority)
@@ -341,27 +342,27 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			{Action: "dropoff", Node: req.Location},
 			{Action: "wait"},
 			{Action: "pickup", Node: req.Location},
-			dropoffStep(req.OutgoingDest),
+			dropoffStep(req.OutboundDestination),
 		}
 		uid2 := h.dispatchComplex(src, dst, req.PayloadCode, removalSteps, req.Priority)
 		results = append(results, map[string]any{"role": "removal", "order_uuid": uid2})
 
 	case "single_robot":
-		if req.StagingNode == "" || req.StagingNode2 == "" {
-			h.jsonError(w, "staging_node and staging_node_2 required for single robot", http.StatusBadRequest)
+		if req.InboundStaging == "" || req.OutboundStaging == "" {
+			h.jsonError(w, "inbound_staging and outbound_staging required for single robot", http.StatusBadRequest)
 			return
 		}
 		steps := []protocol.ComplexOrderStep{
-			pickupStepDirect(req.FullPickup),
-			{Action: "dropoff", Node: req.StagingNode},
+			pickupStepDirect(req.InboundSource),
+			{Action: "dropoff", Node: req.InboundStaging},
 			{Action: "dropoff", Node: req.Location},
 			{Action: "wait"},
 			{Action: "pickup", Node: req.Location},
-			{Action: "dropoff", Node: req.StagingNode2},
-			{Action: "pickup", Node: req.StagingNode},
+			{Action: "dropoff", Node: req.OutboundStaging},
+			{Action: "pickup", Node: req.InboundStaging},
 			{Action: "dropoff", Node: req.Location},
-			{Action: "pickup", Node: req.StagingNode2},
-			dropoffStep(req.OutgoingDest),
+			{Action: "pickup", Node: req.OutboundStaging},
+			dropoffStep(req.OutboundDestination),
 		}
 		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority)
 		results = append(results, map[string]any{"role": "single_robot", "order_uuid": uid})
@@ -390,6 +391,147 @@ func (h *Handlers) dispatchComplex(src, dst protocol.Address, payloadCode string
 	env, _ := protocol.NewEnvelope(protocol.TypeComplexOrderRequest, src, dst, complexReq)
 	h.engine.Dispatcher().HandleComplexOrderRequest(env, complexReq)
 	return orderUUID
+}
+
+// publishComplex builds a ComplexOrderRequest and publishes it over Kafka.
+func (h *Handlers) publishComplex(src, dst protocol.Address, payloadCode string, steps []protocol.ComplexOrderStep, priority int) (string, error) {
+	orderUUID := "test-" + uuid.New().String()[:8]
+
+	complexReq := &protocol.ComplexOrderRequest{
+		OrderUUID:   orderUUID,
+		PayloadCode: payloadCode,
+		PayloadDesc: "test complex order via kafka",
+		Quantity:    1,
+		Priority:    priority,
+		Steps:       steps,
+	}
+
+	env, err := protocol.NewEnvelope(protocol.TypeComplexOrderRequest, src, dst, complexReq)
+	if err != nil {
+		return "", fmt.Errorf("build envelope: %w", err)
+	}
+
+	data, err := env.Encode()
+	if err != nil {
+		return "", fmt.Errorf("encode envelope: %w", err)
+	}
+
+	topic := h.engine.AppConfig().Messaging.OrdersTopic
+	log.Printf("test-orders: publishing %s to %s: %s", env.Type, topic, string(data))
+
+	if err := h.engine.MsgClient().Publish(topic, data); err != nil {
+		return "", fmt.Errorf("publish failed: %w", err)
+	}
+
+	return orderUUID, nil
+}
+
+// apiKafkaComplexOrderSubmit builds complex order steps and publishes via Kafka.
+func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CycleMode    string `json:"cycle_mode"`
+		Location     string `json:"location"`
+		InboundStaging       string `json:"inbound_staging"`
+		OutboundStaging      string `json:"outbound_staging"`
+		InboundSource        string `json:"inbound_source"`
+		OutboundDestination  string `json:"outbound_destination"`
+		PayloadCode  string `json:"payload_code"`
+		Priority     int    `json:"priority"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.Location == "" {
+		h.jsonError(w, "location is required", http.StatusBadRequest)
+		return
+	}
+	if req.CycleMode == "" {
+		req.CycleMode = "sequential"
+	}
+
+	cfg := h.engine.AppConfig()
+	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-test"}
+	dst := protocol.Address{Role: protocol.RoleCore, Station: cfg.Messaging.StationID}
+
+	var results []map[string]any
+
+	switch req.CycleMode {
+	case "sequential":
+		steps := []protocol.ComplexOrderStep{
+			{Action: "dropoff", Node: req.Location},
+			{Action: "wait"},
+			{Action: "pickup", Node: req.Location},
+			dropoffStep(req.OutboundDestination),
+		}
+		uid, err := h.publishComplex(src, dst, req.PayloadCode, steps, req.Priority)
+		if err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		results = append(results, map[string]any{"role": "sequential", "order_uuid": uid})
+
+	case "two_robot":
+		if req.InboundStaging == "" {
+			h.jsonError(w, "inbound_staging is required for two robot", http.StatusBadRequest)
+			return
+		}
+		resupplySteps := []protocol.ComplexOrderStep{
+			pickupStepDirect(req.InboundSource),
+			{Action: "dropoff", Node: req.InboundStaging},
+			{Action: "wait"},
+			{Action: "pickup", Node: req.InboundStaging},
+			{Action: "dropoff", Node: req.Location},
+		}
+		uid1, err := h.publishComplex(src, dst, req.PayloadCode, resupplySteps, req.Priority)
+		if err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		results = append(results, map[string]any{"role": "resupply", "order_uuid": uid1})
+
+		removalSteps := []protocol.ComplexOrderStep{
+			{Action: "dropoff", Node: req.Location},
+			{Action: "wait"},
+			{Action: "pickup", Node: req.Location},
+			dropoffStep(req.OutboundDestination),
+		}
+		uid2, err := h.publishComplex(src, dst, req.PayloadCode, removalSteps, req.Priority)
+		if err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		results = append(results, map[string]any{"role": "removal", "order_uuid": uid2})
+
+	case "single_robot":
+		if req.InboundStaging == "" || req.OutboundStaging == "" {
+			h.jsonError(w, "inbound_staging and outbound_staging required for single robot", http.StatusBadRequest)
+			return
+		}
+		steps := []protocol.ComplexOrderStep{
+			pickupStepDirect(req.InboundSource),
+			{Action: "dropoff", Node: req.InboundStaging},
+			{Action: "dropoff", Node: req.Location},
+			{Action: "wait"},
+			{Action: "pickup", Node: req.Location},
+			{Action: "dropoff", Node: req.OutboundStaging},
+			{Action: "pickup", Node: req.InboundStaging},
+			{Action: "dropoff", Node: req.Location},
+			{Action: "pickup", Node: req.OutboundStaging},
+			dropoffStep(req.OutboundDestination),
+		}
+		uid, err := h.publishComplex(src, dst, req.PayloadCode, steps, req.Priority)
+		if err != nil {
+			h.jsonError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		results = append(results, map[string]any{"role": "single_robot", "order_uuid": uid})
+
+	default:
+		h.jsonError(w, "invalid cycle_mode", http.StatusBadRequest)
+		return
+	}
+
+	h.jsonOK(w, map[string]any{"cycle_mode": req.CycleMode, "orders": results})
 }
 
 // apiDirectOrderRelease releases a staged order directly through the dispatcher.

@@ -127,7 +127,7 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 		OrderType:     dispatch.OrderTypeMove,
 		Status:        dispatch.StatusDispatched,
 		Quantity:      1,
-		PickupNode:    line.Name,
+		SourceNode:    line.Name,
 		DeliveryNode:  line.Name,
 		VendorOrderID: "vendor-1",
 	}

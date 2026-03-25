@@ -62,7 +62,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 		OrderType:    p.OrderType,
 		Status:       StatusPending,
 		Quantity:     p.Quantity,
-		PickupNode:   p.PickupNode,
+		SourceNode:   p.SourceNode,
 		DeliveryNode: p.DeliveryNode,
 		Priority:     p.Priority,
 		PayloadDesc:  payloadDesc,
@@ -103,7 +103,7 @@ func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protoc
 		StationID:   stationID,
 		OrderType:   p.OrderType,
 		Status:      StatusPending,
-		PickupNode:  p.PickupNode,
+		SourceNode:  p.SourceNode,
 		PayloadDesc: p.PayloadDesc,
 	}
 	if err := s.db.CreateOrder(order); err != nil {
@@ -112,7 +112,7 @@ func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protoc
 	if err := s.db.UpdateOrderStatus(order.ID, StatusPending, "store order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
 	}
-	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, "", p.PickupNode)
+	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, "", p.SourceNode)
 	return order, nil
 }
 
@@ -150,7 +150,7 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 		OrderType:   OrderTypeStore,
 		Status:      StatusPending,
 		Quantity:    p.Quantity,
-		PickupNode:  p.PickupNode,
+		SourceNode:  p.SourceNode,
 		PayloadDesc: fmt.Sprintf("ingest %s bin %s", p.PayloadCode, p.BinLabel),
 		BinID:       &bin.ID,
 	}
@@ -212,10 +212,10 @@ func (s *LifecycleService) PrepareRedirect(order *store.Order, newDeliveryNode s
 		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
 	}
 	order.DeliveryNode = newDeliveryNode
-	if order.PickupNode == "" {
+	if order.SourceNode == "" {
 		return nil, nil, errors.New("no source node for redirect")
 	}
-	sourceNode, err := s.db.GetNodeByDotName(order.PickupNode)
+	sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
 	if err != nil {
 		return nil, nil, err
 	}

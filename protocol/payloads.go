@@ -51,7 +51,7 @@ type OrderRequest struct {
 	PayloadDesc   string `json:"payload_desc,omitempty"`
 	Quantity      int64  `json:"quantity"`
 	DeliveryNode  string `json:"delivery_node,omitempty"`
-	PickupNode    string `json:"pickup_node,omitempty"`
+	SourceNode    string `json:"source_node,omitempty"`
 	StagingNode   string `json:"staging_node,omitempty"`
 	LoadType      string `json:"load_type,omitempty"`
 	Priority      int    `json:"priority,omitempty"`
@@ -82,7 +82,7 @@ type OrderStorageWaybill struct {
 	OrderUUID   string `json:"order_uuid"`
 	OrderType   string `json:"order_type"`
 	PayloadDesc string `json:"payload_desc,omitempty"`
-	PickupNode  string `json:"pickup_node"`
+	SourceNode  string `json:"source_node"`
 	FinalCount  int64  `json:"final_count"`
 }
 
@@ -170,7 +170,7 @@ type OrderIngestRequest struct {
 	OrderUUID   string               `json:"order_uuid"`
 	PayloadCode string               `json:"payload_code"`
 	BinLabel    string               `json:"bin_label"`
-	PickupNode  string               `json:"pickup_node"`
+	SourceNode  string               `json:"source_node"`
 	Quantity    int64                `json:"quantity"`
 	Manifest    []IngestManifestItem `json:"manifest,omitempty"`
 }
@@ -298,7 +298,7 @@ type OrderStatusSnapshot struct {
 	Found         bool   `json:"found"`
 	Status        string `json:"status,omitempty"`
 	StationID     string `json:"station_id,omitempty"`
-	PickupNode    string `json:"pickup_node,omitempty"`
+	SourceNode    string `json:"source_node,omitempty"`
 	DeliveryNode  string `json:"delivery_node,omitempty"`
 	VendorOrderID string `json:"vendor_order_id,omitempty"`
 	ErrorDetail   string `json:"error_detail,omitempty"`
