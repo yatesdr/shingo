@@ -257,9 +257,22 @@ async function sendReceipt() {
 // --- Kafka complex order ---
 function updateKafkaComplexFields() {
   var mode = document.getElementById('kc-cycle-mode').value;
-  // kc-pickup-wrap doesn't exist in template - source-wrap is always visible
-  document.getElementById('kc-staging1-wrap').style.display = (mode === 'two_robot' || mode === 'single_robot') ? '' : 'none';
-  document.getElementById('kc-staging2-wrap').style.display = (mode === 'single_robot') ? '' : 'none';
+  var staging1Wrap = document.getElementById('kc-staging1-wrap');
+  var staging2Wrap = document.getElementById('kc-staging2-wrap');
+
+  if (mode === 'sequential') {
+    // Hide both staging fields
+    if (staging1Wrap) staging1Wrap.classList.add('hide');
+    if (staging2Wrap) staging2Wrap.classList.add('hide');
+  } else if (mode === 'two_robot') {
+    // Show staging1, hide staging2
+    if (staging1Wrap) staging1Wrap.classList.remove('hide');
+    if (staging2Wrap) staging2Wrap.classList.add('hide');
+  } else if (mode === 'single_robot') {
+    // Show both staging fields
+    if (staging1Wrap) staging1Wrap.classList.remove('hide');
+    if (staging2Wrap) staging2Wrap.classList.remove('hide');
+  }
 }
 
 async function submitKafkaComplexOrder() {
@@ -310,9 +323,22 @@ async function submitDirectOrder() {
 
 function updateComplexFields() {
   var mode = document.getElementById('cx-cycle-mode').value;
-  // cx-pickup-wrap doesn't exist in template - source-wrap is always visible
-  document.getElementById('cx-staging1-wrap').style.display = (mode === 'two_robot' || mode === 'single_robot') ? '' : 'none';
-  document.getElementById('cx-staging2-wrap').style.display = (mode === 'single_robot') ? '' : 'none';
+  var staging1Wrap = document.getElementById('cx-staging1-wrap');
+  var staging2Wrap = document.getElementById('cx-staging2-wrap');
+
+  if (mode === 'sequential') {
+    // Hide both staging fields
+    if (staging1Wrap) staging1Wrap.classList.add('hide');
+    if (staging2Wrap) staging2Wrap.classList.add('hide');
+  } else if (mode === 'two_robot') {
+    // Show staging1, hide staging2
+    if (staging1Wrap) staging1Wrap.classList.remove('hide');
+    if (staging2Wrap) staging2Wrap.classList.add('hide');
+  } else if (mode === 'single_robot') {
+    // Show both staging fields
+    if (staging1Wrap) staging1Wrap.classList.remove('hide');
+    if (staging2Wrap) staging2Wrap.classList.remove('hide');
+  }
 }
 
 async function submitComplexOrder() {
