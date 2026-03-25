@@ -18,7 +18,6 @@
     var merged = [];
     coreNodes.sort().forEach(function(n) {
         seen[n] = true;
-        // Find matching edge node for description
         var edge = edgeNodes.find(function(e){ return e.id === n; });
         merged.push({ id: n, desc: edge ? edge.desc : '', source: 'core' });
     });
@@ -44,37 +43,55 @@
     });
 })();
 
+// Field visibility per order type:
+//   move:     pickup, delivery
+//   retrieve: process node (optional), delivery, staging (optional)
+//   store:    process node (optional), pickup
+//   complex:  process node (optional), production (delivery label), staging
 function updateOrderForm() {
     var t = document.getElementById('mo-type').value;
-    document.getElementById('mo-delivery-group').style.display = (t === 'retrieve' || t === 'move' || t === 'complex') ? '' : 'none';
-    document.getElementById('mo-pickup-group').style.display = (t === 'store' || t === 'move') ? '' : 'none';
-    document.getElementById('mo-staging-group').style.display = (t === 'complex') ? '' : 'none';
-    // Update labels for complex mode
-    document.getElementById('mo-delivery-label').textContent = (t === 'complex') ? 'Production Node' : 'Delivery Node';
+    var showNode    = t !== 'move';
+    var showPickup  = t === 'move' || t === 'store';
+    var showDeliv   = t === 'move' || t === 'retrieve' || t === 'complex';
+    var showStaging = t === 'retrieve' || t === 'complex';
+
+    document.getElementById('mo-node-group').style.display    = showNode    ? '' : 'none';
+    document.getElementById('mo-pickup-group').style.display   = showPickup  ? '' : 'none';
+    document.getElementById('mo-delivery-group').style.display = showDeliv   ? '' : 'none';
+    document.getElementById('mo-staging-group').style.display  = showStaging ? '' : 'none';
+
+    document.getElementById('mo-delivery-label').textContent =
+        (t === 'complex') ? 'Production Node' : 'Delivery Node';
+
+    // Clear hidden fields
+    if (!showNode)    document.getElementById('mo-node').selectedIndex = 0;
+    if (!showPickup)  document.getElementById('mo-pickup').selectedIndex = 0;
+    if (!showDeliv)   document.getElementById('mo-delivery').selectedIndex = 0;
+    if (!showStaging) document.getElementById('mo-staging').selectedIndex = 0;
+
     autofillNodeDefaults();
 }
 
+// When a process node is selected, auto-fill the associated core node
+// into the primary target field for the current order type.
 function autofillNodeDefaults() {
     var sel = document.getElementById('mo-node');
     var opt = sel.options[sel.selectedIndex];
     if (!opt || !opt.value) return;
+    var coreNode = opt.dataset.coreNode || '';
+    if (!coreNode) return;
     var t = document.getElementById('mo-type').value;
     if (t === 'retrieve') {
-        document.getElementById('mo-delivery').value = opt.dataset.delivery || '';
-    } else if (t === 'move') {
-        document.getElementById('mo-delivery').value = '';
-        document.getElementById('mo-pickup').value = opt.dataset.delivery || '';
+        document.getElementById('mo-delivery').value = coreNode;
     } else if (t === 'store') {
-        document.getElementById('mo-pickup').value = opt.dataset.delivery || '';
-    } else if (t === 'complex') {
-        document.getElementById('mo-delivery').value = opt.dataset.delivery || '';
-        document.getElementById('mo-staging').value = opt.dataset.staging || '';
+        document.getElementById('mo-pickup').value = coreNode;
     }
 }
 
 async function createOrder() {
     var t = document.getElementById('mo-type').value;
     var processNodeID = parseInt(document.getElementById('mo-node').value) || 0;
+    var qty = parseInt(document.getElementById('mo-qty').value) || 1;
 
     if (t === 'complex') {
         var stagingNode = document.getElementById('mo-staging').value;
@@ -85,7 +102,7 @@ async function createOrder() {
         }
         var body = {
             process_node_id: processNodeID || null,
-            quantity: parseInt(document.getElementById('mo-qty').value) || 0,
+            quantity: qty,
             steps: [
                 {action: 'pickup', node: stagingNode},
                 {action: 'dropoff', node: stagingNode},
@@ -97,29 +114,31 @@ async function createOrder() {
         try {
             await ShingoEdge.api.post('/api/orders/complex', body);
             ShingoEdge.toast('Complex order created', 'success');
-            document.getElementById('mo-node').selectedIndex = 0;
-            document.getElementById('mo-qty').value = '1';
-            document.getElementById('mo-delivery').selectedIndex = 0;
-            document.getElementById('mo-staging').selectedIndex = 0;
+            resetForm();
         } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
         return;
     }
 
     var body = {
         process_node_id: processNodeID || null,
-        quantity: parseInt(document.getElementById('mo-qty').value) || 0,
+        quantity: qty,
         delivery_node: document.getElementById('mo-delivery').value,
-        pickup_node: document.getElementById('mo-pickup').value
+        pickup_node: document.getElementById('mo-pickup').value,
+        staging_node: document.getElementById('mo-staging').value || undefined
     };
     try {
         await ShingoEdge.api.post('/api/orders/' + t, body);
         ShingoEdge.toast('Order created', 'success');
-        // Reset form
-        document.getElementById('mo-node').selectedIndex = 0;
-        document.getElementById('mo-qty').value = '1';
-        document.getElementById('mo-delivery').selectedIndex = 0;
-        document.getElementById('mo-pickup').selectedIndex = 0;
+        resetForm();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+}
+
+function resetForm() {
+    document.getElementById('mo-node').selectedIndex = 0;
+    document.getElementById('mo-qty').value = '1';
+    document.getElementById('mo-pickup').selectedIndex = 0;
+    document.getElementById('mo-delivery').selectedIndex = 0;
+    document.getElementById('mo-staging').selectedIndex = 0;
 }
 
 async function syncNodes() {
@@ -143,11 +162,9 @@ ShingoEdge.createSSE('/events', {
         ['mo-pickup', 'mo-delivery', 'mo-staging'].forEach(function(selID) {
             var sel = document.getElementById(selID);
             var cur = sel.value;
-            // Remove core-sourced options, keep local-only
             Array.from(sel.options).forEach(function(o) {
                 if (o.dataset.source === 'core') o.remove();
             });
-            // Re-add core nodes at the top (after blank first option if any)
             var ref = sel.options[1] || null;
             nodes.sort().forEach(function(n) {
                 var opt = document.createElement('option');
@@ -160,3 +177,6 @@ ShingoEdge.createSSE('/events', {
         });
     }
 });
+
+// Apply initial visibility for default order type.
+updateOrderForm();

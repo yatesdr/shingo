@@ -11,18 +11,18 @@
         <div class="form-group">
             <label>Order Type</label>
             <select id="mo-type" class="form-input" onchange="updateOrderForm()">
+                <option value="move">Move</option>
                 <option value="retrieve">Retrieve</option>
                 <option value="store">Store</option>
-                <option value="move">Move</option>
                 <option value="complex">Complex (Dwell)</option>
             </select>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="mo-node-group" style="display:none">
             <label>Process Node</label>
             <select id="mo-node" class="form-input" onchange="autofillNodeDefaults()">
                 <option value="">-- Select --</option>
                 {{range .ProcessNodes}}
-                <option value="{{.ID}}" data-delivery="{{.DeliveryNode}}" data-staging="{{.StagingNode}}" data-outgoing="{{.OutgoingNode}}">{{.ProcessName}} / {{if .StationName}}{{.StationName}} / {{end}}{{.Name}}</option>
+                <option value="{{.ID}}" data-core-node="{{.CoreNodeName}}">{{.ProcessName}} / {{if .StationName}}{{.StationName}} / {{end}}{{.Name}}</option>
                 {{end}}
             </select>
         </div>
@@ -30,8 +30,8 @@
             <label>Quantity</label>
             <input type="number" id="mo-qty" class="form-input" value="1" min="1">
         </div>
-        <div class="form-group" id="mo-pickup-group" style="display:none">
-            <label id="mo-pickup-label">Pickup Node</label>
+        <div class="form-group" id="mo-pickup-group">
+            <label>Pickup Node</label>
             <select id="mo-pickup" class="form-input">
                 <option value="">-- Select --</option>
             </select>
