@@ -330,6 +330,15 @@ func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 	if order.BinID == nil {
 		return
 	}
+
+	// If the fleet never accepted the order (no vendor order ID), the bin
+	// never left its origin — no return needed. This prevents spurious
+	// auto_return orders when dispatch fails at the fleet API level.
+	if order.VendorOrderID == "" {
+		e.logFn("engine: order %d failed before fleet accepted it, skipping auto-return", order.ID)
+		return
+	}
+
 	switch order.Status {
 	case dispatch.StatusDispatched, dispatch.StatusInTransit, dispatch.StatusStaged,
 		dispatch.StatusFailed, dispatch.StatusCancelled:
