@@ -25,6 +25,7 @@ type mockEmitter struct {
 	failed     []emitFailed
 	cancelled  []emitCancelled
 	completed  []emitCompleted
+	queued     []emitQueued
 }
 
 type emitReceived struct {
@@ -46,6 +47,9 @@ type emitCancelled struct {
 type emitCompleted struct {
 	orderID int64
 }
+type emitQueued struct {
+	orderID int64
+}
 
 func (m *mockEmitter) EmitOrderReceived(orderID int64, _, _, _, payloadCode, _ string) {
 	m.received = append(m.received, emitReceived{orderID, payloadCode})
@@ -62,7 +66,9 @@ func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason string) {
 func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string) {
 	m.completed = append(m.completed, emitCompleted{orderID})
 }
-func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {}
+func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {
+	m.queued = append(m.queued, emitQueued{orderID})
+}
 
 // --- Mock fleet backend ---
 
@@ -234,12 +240,9 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
 
-	// Should fail because no available payloads exist
-	if len(emitter.failed) != 1 {
-		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
-	}
-	if emitter.failed[0].errorCode != "no_source" {
-		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "no_source")
+	// Should queue because no available payloads exist (queued fulfillment)
+	if len(emitter.queued) != 1 {
+		t.Fatalf("queued events = %d, want 1", len(emitter.queued))
 	}
 }
 
