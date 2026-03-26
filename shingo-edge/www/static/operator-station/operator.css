@@ -515,3 +515,46 @@ body {
 }
 .os-footer-badge.producing { background: #163826; color: var(--os-green-bright); }
 .os-footer-badge.changeover { background: #3d2810; color: var(--os-orange); }
+
+/* ===== Responsive: 7" screens (≤1024px wide) ===== */
+@media (max-width: 1024px) {
+    :root {
+        --os-header-h: 56px;
+        --os-footer-h: 32px;
+        --os-grid-gap: 8px;
+    }
+    .os-header-station { font-size: 18px; }
+    .os-header-info { font-size: 13px; }
+    .os-header-btn { padding: 8px 12px; font-size: 13px; min-height: 36px; border-radius: 8px; }
+    .os-health-badge { width: 10px; height: 10px; }
+    .os-header-right { gap: 6px; }
+
+    .os-node-name { font-size: 14px; top: 6px; left: 8px; }
+    .os-node-icon { font-size: 15px; top: 6px; right: 8px; }
+    .os-node-remaining { font-size: 36px; }
+    .os-node-capacity { font-size: 14px; }
+    .os-node-payload { font-size: 15px; bottom: 6px; left: 8px; right: 8px; }
+    .os-node-btn { padding: 8px 10px; border-radius: 10px; }
+
+    .os-modal { padding: 16px; border-radius: 14px; }
+    .os-modal-node-name { font-size: 20px; }
+    .os-modal-payload { font-size: 17px; }
+    .os-action-btn { padding: 12px 16px; font-size: 16px; min-height: 48px; border-radius: 10px; }
+
+    #os-footer { font-size: 12px; padding: 0 10px; }
+}
+
+/* ===== Responsive: very small screens (≤800px wide, e.g. 800x480) ===== */
+@media (max-width: 800px) {
+    :root {
+        --os-header-h: 48px;
+        --os-footer-h: 28px;
+        --os-grid-gap: 6px;
+    }
+    .os-header-station { font-size: 16px; }
+    .os-header-info { font-size: 11px; }
+    .os-header-btn { padding: 6px 10px; font-size: 12px; min-height: 32px; }
+    .os-node-remaining { font-size: 30px; }
+    .os-node-name { font-size: 12px; }
+    .os-node-payload { font-size: 13px; }
+}

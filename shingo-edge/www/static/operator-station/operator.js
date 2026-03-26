@@ -213,7 +213,22 @@ function claimedNodes() {
 }
 
 function gridDimensions() {
-    return { cols: 3, rows: 4 };
+    var count = claimedNodes().length || 1;
+    var w = window.innerWidth;
+
+    // Small screens (7" ~1024x600 or smaller): 2 columns max
+    // Medium screens (10" ~1280x800): 3 columns
+    // Large screens (15"+ ~1920x1080): 4+ columns
+    var cols;
+    if (w <= 1024) {
+        cols = Math.min(count, 2);
+    } else if (w <= 1400) {
+        cols = Math.min(count, 3);
+    } else {
+        cols = Math.min(count, 4);
+    }
+    var rows = Math.ceil(count / cols);
+    return { cols: cols, rows: rows };
 }
 
 function createNodeButton(entry) {
@@ -779,3 +794,6 @@ function fillColor(pct, remaining) {
 
 connectSSE();
 loadView();
+
+// Re-layout on resize (orientation change, window resize)
+window.addEventListener('resize', function() { if (view) renderGrid(); });
