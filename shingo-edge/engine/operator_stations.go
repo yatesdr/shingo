@@ -48,9 +48,43 @@ func (e *Engine) findActiveClaim(node *store.ProcessNode) *store.StyleNodeClaim 
 	return claim
 }
 
+// nodeIsOccupied checks Core's telemetry to see if a physical bin is at the node.
+// Returns true if occupied OR if Core is unreachable (safe default — assume bin present).
+func (e *Engine) nodeIsOccupied(coreNodeName string) bool {
+	if !e.coreClient.Available() {
+		log.Printf("[occupied-check] core API not configured, assuming occupied")
+		return true
+	}
+	bins, _ := e.coreClient.FetchNodeBins([]string{coreNodeName})
+	if len(bins) == 0 {
+		log.Printf("[occupied-check] node %s: no data from core, assuming occupied", coreNodeName)
+		return true
+	}
+	log.Printf("[occupied-check] node %s: occupied=%v bin_label=%q", coreNodeName, bins[0].Occupied, bins[0].BinLabel)
+	return bins[0].Occupied
+}
+
 // requestNodeFromClaim constructs orders using style_node_claims routing.
+// If the node is physically empty (no bin per Core telemetry), a simple move
+// order is created regardless of swap mode — there is nothing to swap out.
 func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim, quantity int64) (*NodeOrderResult, error) {
 	nodeID := node.ID
+
+	// If the node is not physically occupied, skip swap choreography and just deliver.
+	// This handles cases where a bin was removed manually (e.g. sent to quality hold).
+	if claim.SwapMode != "simple" && !e.nodeIsOccupied(claim.CoreNodeName) {
+		if claim.InboundSource == "" {
+			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
+		}
+		log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery", node.Name, claim.SwapMode)
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, claim.CoreNodeName)
+		if err != nil {
+			return nil, err
+		}
+		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+		order, _ = e.db.GetOrder(order.ID)
+		return &NodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: nodeID}, nil
+	}
 
 	switch claim.SwapMode {
 	case "sequential":
@@ -95,8 +129,10 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 		return &NodeOrderResult{CycleMode: "single_robot", Order: order, ProcessNodeID: nodeID}, nil
 
 	default: // "simple"
-		steps := BuildDeliverSteps(claim)
-		order, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, claim.CoreNodeName, steps)
+		if claim.InboundSource == "" {
+			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
+		}
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, claim.CoreNodeName)
 		if err != nil {
 			return nil, err
 		}

@@ -466,3 +466,33 @@ function showToast(msg, type) {
   toast.textContent = msg;
   document.body.appendChild(toast);
   setTimeout(function() { toast.classList.add('to-toast-visible'); }, 10);
+  setTimeout(function() {
+    toast.classList.remove('to-toast-visible');
+    setTimeout(function() { toast.remove(); }, 300);
+  }, 6000);
+}
+
+// --- SSE ---
+var es = new EventSource('/events');
+es.addEventListener('order-update', function(e) {
+  refreshKafkaOrders();
+  refreshDirectOrders();
+  try {
+    var data = JSON.parse(e.data);
+    if (data.type === 'failed') {
+      showToast('Order #' + (data.order_id || '?') + ' failed: ' + (data.detail || 'unknown error'), 'error');
+    }
+  } catch(ex) {}
+});
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', function() {
+  updateKafkaFields();
+  updateKafkaComplexFields();
+  updateCmdFields();
+  updateComplexFields();
+  refreshKafkaOrders();
+  refreshDirectOrders();
+  refreshCommands();
+  if (authenticated) { loadRobots(); loadScenePoints(); }
+});
