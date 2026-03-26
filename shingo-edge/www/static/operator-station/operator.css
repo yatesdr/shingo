@@ -107,6 +107,28 @@ body {
 .os-header-btn:active { opacity: 0.8; }
 .os-header-btn:disabled { opacity: 0.4; cursor: default; }
 .os-header-btn.refresh { background: #2d4060; }
+.os-header-btn.changeover { background: var(--os-orange); color: #000; }
+.os-header-btn.cutover { background: var(--os-green-bright); color: #000; }
+
+/* ===== Changeover Picker ===== */
+.os-co-picker-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center; z-index: 200;
+}
+.os-co-picker {
+    background: var(--os-surface, #1a1f2e); border-radius: 16px; padding: 24px;
+    min-width: 300px; max-width: 90vw; display: flex; flex-direction: column; gap: 12px;
+}
+.os-co-picker-title {
+    font-size: 18px; font-weight: 700; text-align: center; color: #fff; margin-bottom: 4px;
+}
+.os-co-picker-btn {
+    border: none; border-radius: 10px; padding: 14px 20px; font-size: 16px;
+    font-weight: 700; cursor: pointer; touch-action: manipulation;
+    background: var(--os-orange); color: #000; text-align: center;
+}
+.os-co-picker-btn:active { opacity: 0.8; }
+.os-co-picker-btn.cancel { background: #3a3f4e; color: #ccc; }
 
 /* ===== Grid ===== */
 
@@ -187,8 +209,9 @@ body {
     bottom: 8px;
     left: 12px;
     right: 12px;
-    font-size: 13px;
-    color: rgba(255,255,255,0.6);
+    font-size: 17px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.92);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -263,8 +286,9 @@ body {
 }
 
 .os-modal-payload {
-    font-size: 16px;
-    color: var(--os-text-muted);
+    font-size: 20px;
+    font-weight: 600;
+    color: #fff;
     margin-bottom: 10px;
 }
 

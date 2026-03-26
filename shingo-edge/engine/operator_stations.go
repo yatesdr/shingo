@@ -121,11 +121,10 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, erro
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim for release", node.Name)
 	}
-	if claim.OutboundStaging == "" {
-		return nil, fmt.Errorf("node %s has no outbound staging configured", node.Name)
+	if claim.OutboundDestination == "" {
+		return nil, fmt.Errorf("node %s has no outbound destination configured", node.Name)
 	}
-	steps := BuildReleaseSteps(claim)
-	order, err := e.orderMgr.CreateComplexOrder(&nodeID, qty, "", steps)
+	order, err := e.orderMgr.CreateMoveOrder(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination)
 	if err != nil {
 		return nil, err
 	}

@@ -98,7 +98,84 @@ function renderHeader() {
     });
     headerActions.appendChild(badge);
 
+    // Changeover / Cutover button
+    if (view.active_changeover) {
+        headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
+    } else {
+        headerActions.appendChild(headerBtn('CHANGEOVER', 'changeover', openChangeoverPicker));
+    }
+
     headerActions.appendChild(headerBtn('REFRESH', 'refresh', loadView));
+}
+
+// ─── Changeover Picker ───
+
+function openChangeoverPicker() {
+    const styles = view.available_styles || [];
+    const currentID = view.current_style ? view.current_style.id : null;
+    const others = styles.filter(s => s.id !== currentID);
+    if (others.length === 0) {
+        showToast('No other styles available', 'error');
+        return;
+    }
+
+    // Build a modal overlay with style buttons
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title', textContent: 'Change over to:' }));
+
+    for (const s of others) {
+        const btn = el('button', { className: 'os-co-picker-btn', textContent: s.name });
+        btn.addEventListener('click', () => {
+            overlay.remove();
+            startChangeover(s.id, s.name);
+        });
+        panel.appendChild(btn);
+    }
+
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
+async function startChangeover(toStyleID, styleName) {
+    const pid = view.process.id;
+    const ok = await postAction('/api/processes/' + pid + '/changeover/start', {
+        to_style_id: toStyleID,
+        called_by: view.station.name || 'operator',
+        notes: ''
+    });
+    if (ok) showToast('Changeover to ' + styleName + ' started', 'success');
+}
+
+async function confirmCutover() {
+    const pid = view.process.id;
+    // Simple confirmation via a picker-style modal
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    const co = view.active_changeover;
+    panel.appendChild(el('div', { className: 'os-co-picker-title',
+        textContent: 'Complete cutover to ' + (co.to_style_name || 'target') + '?' }));
+
+    const confirm = el('button', { className: 'os-co-picker-btn', textContent: 'CONFIRM CUTOVER' });
+    confirm.addEventListener('click', async () => {
+        overlay.remove();
+        const ok = await postAction('/api/processes/' + pid + '/changeover/cutover');
+        if (ok) showToast('Cutover complete', 'success');
+    });
+    panel.appendChild(confirm);
+
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 }
 
 function headerBtn(label, cls, onClick) {
