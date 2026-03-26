@@ -277,7 +277,7 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 </div>
                 <div class="form-group" style="margin:0">
                     <label>Role</label>
-                    <select id="claims-add-role" class="form-input" onchange="toggleClaimsAddPayload()">
+                    <select id="claims-add-role" class="form-input" onchange="toggleClaimsAddPayload(); validateClaimStaging()">
                         <option value="consume">Consume</option>
                         <option value="produce">Produce</option>
                         <option value="bin_loader">Bin Loader</option>
@@ -355,11 +355,17 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem 1rem">
                     <div class="form-group" style="margin:0" id="claims-inbound-source-group">
                         <label>Inbound Source</label>
-                        <input type="text" id="claims-add-inbound-source" class="form-input" placeholder="Node or group name">
+                        <select id="claims-add-inbound-source" class="form-input">
+                            <option value="">-- None --</option>
+                            {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
+                        </select>
                     </div>
                     <div class="form-group" style="margin:0" id="claims-outbound-destination-group">
                         <label>Outbound Destination</label>
-                        <input type="text" id="claims-add-outbound-destination" class="form-input" placeholder="Node or group name">
+                        <select id="claims-add-outbound-destination" class="form-input">
+                            <option value="">-- None --</option>
+                            {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}{{if eq $info.NodeType "NGRP"}} (group){{end}}</option>{{end}}
+                        </select>
                     </div>
                 </div>
             </fieldset>
@@ -433,4 +439,4 @@ window.claimedByStation = {{json .ClaimedByStation}};
 </div>
 
 <script src="/static/js/pages/processes.js"></script>
-{{template "footer" .}}
+{{template "foo

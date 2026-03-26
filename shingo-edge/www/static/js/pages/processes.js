@@ -246,6 +246,7 @@ function openClaimModal() {
     document.getElementById('claims-add-evacuate').checked = false;
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
     toggleClaimsAddPayload();
+    validateClaimStaging();
     ShingoEdge.showModal('claim-modal');
 }
 
@@ -273,6 +274,7 @@ function editClaim(claim) {
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
     toggleClaimsAddPayload();
+    validateClaimStaging();
     if (claim.role === 'bin_loader') {
         buildAllowedPayloadPicker(claim.allowed_payload_codes || []);
         updateAutoRequestDropdown();
@@ -288,13 +290,71 @@ function closeClaimModal() {
 
 function validateClaimStaging() {
     var swap = document.getElementById('claims-add-swap').value;
-    var inbound = document.getElementById('claims-add-inbound').value;
-    var outbound = document.getElementById('claims-add-outbound').value;
     var warn = document.getElementById('claims-staging-warning');
-    var needsBoth = swap === 'single_robot';
-    var needsInbound = swap === 'two_robot';
-    var missing = (needsBoth && (!inbound || !outbound)) || (needsInbound && !inbound);
+    var stagingFieldset = document.getElementById('claims-staging-fieldset');
+    var inboundSel = document.getElementById('claims-add-inbound');
+    var outboundSel = document.getElementById('claims-add-outbound');
+    var outboundDestGroup = document.getElementById('claims-outbound-destination-group');
+    var outboundDest = document.getElementById('claims-add-outbound-destination');
+    // Determine what each swap mode needs:
+    //   simple:       no staging, source + dest
+    //   sequential:   no staging, source + dest
+    //   single_robot: inbound + outbound staging, source + dest
+    //   two_robot:    inbound staging only, source + dest (no outbound staging/dest)
+    var usesStaging = swap === 'single_robot' || swap === 'two_robot';
+    var usesOutbound = swap === 'single_robot';
+    var isTwoRobot = swap === 'two_robot';
+
+    // Show/hide entire staging fieldset based on whether mode uses staging at all
+    // (toggleClaimsAddPayload hides it for changeover/bin_loader roles already,
+    //  so only touch it if the role allows staging)
+    var role = document.getElementById('claims-add-role').value;
+    var roleAllowsStaging = role !== 'changeover' && role !== 'bin_loader';
+    if (stagingFieldset && roleAllowsStaging) {
+        stagingFieldset.style.display = usesStaging ? '' : 'none';
+    }
+
+    // Outbound staging: only used by single_robot
+    if (outboundSel) {
+        if (isTwoRobot) {
+            outboundSel.value = '';
+            outboundSel.disabled = true;
+            outboundSel.style.opacity = '0.5';
+        } else {
+            outboundSel.disabled = false;
+            outboundSel.style.opacity = '';
+        }
+    }
+
+    // Outbound destination: used by all modes except hidden by role
+    // (two_robot still sends old bin to outbound destination via removal robot)
+    if (outboundDestGroup) {
+        outboundDestGroup.style.display = '';
+    }
+
+    // Clear keep-staged when staging not used
+    if (!usesStaging) {
+        var keepCb = document.getElementById('claims-add-keep-staged');
+        if (keepCb) keepCb.checked = false;
+    }
+
+    // Clear staging values when not used so they aren't saved
+    if (!usesStaging) {
+        if (inboundSel) inboundSel.value = '';
+        if (outboundSel) outboundSel.value = '';
+    }
+
+    // Validation warning for missing required staging
+    var inbound = inboundSel ? inboundSel.value : '';
+    var outbound = outboundSel ? outboundSel.value : '';
+    var missing = false;
+    if (swap === 'single_robot') {
+        missing = !inbound || !outbound;
+    } else if (swap === 'two_robot') {
+        missing = !inbound;
+    }
     if (warn) warn.style.display = missing ? '' : 'none';
+
     return !missing;
 }
 
@@ -657,4 +717,4 @@ async function deleteStation(id) {
 })();
 
 // Initialize Node Claims tab (load catalog + first style's claims)
-if (activeProcessID) initClaimsTab();
+if (
