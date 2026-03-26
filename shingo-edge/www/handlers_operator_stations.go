@@ -395,6 +395,7 @@ func (h *Handlers) apiStartProcessChangeover(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: co})
 	writeJSONWithTrigger(w, r, co, "refreshChangeover")
 }
 
@@ -408,6 +409,7 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "cancelled"}})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -421,6 +423,7 @@ func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "cutover-complete"}})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -440,6 +443,7 @@ func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "stage-material"}})
 	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 
@@ -463,6 +467,7 @@ func (h *Handlers) apiEmptyNodeForToolChange(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "empty-for-tool-change"}})
 	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 
@@ -482,6 +487,7 @@ func (h *Handlers) apiReleaseNodeIntoProduction(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "release-into-production"}})
 	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 
@@ -500,6 +506,7 @@ func (h *Handlers) apiSwitchNodeToTarget(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "switch-to-target"}})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -518,6 +525,7 @@ func (h *Handlers) apiSwitchOperatorStationToTarget(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "switch-station-to-target"}})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -552,5 +560,6 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "station-nodes-updated"}})
 	writeJSON(w, map[string]string{"status": "ok"})
 }

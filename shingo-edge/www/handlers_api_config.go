@@ -468,6 +468,7 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.requestBackup("active-style-updated")
+	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "active-style-changed"}})
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -523,6 +524,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	h.requestBackup("style-node-claim-updated")
+	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "node-claim-updated"}})
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -537,6 +539,7 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	h.requestBackup("style-node-claim-deleted")
+	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "node-claim-deleted"}})
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
