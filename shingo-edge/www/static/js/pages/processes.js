@@ -717,4 +717,4 @@ async function deleteStation(id) {
 })();
 
 // Initialize Node Claims tab (load catalog + first style's claims)
-if (
+if (activeProcessID) initClaimsTab();
