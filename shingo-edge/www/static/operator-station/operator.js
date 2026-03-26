@@ -213,22 +213,20 @@ function claimedNodes() {
 }
 
 function gridDimensions() {
-    var count = claimedNodes().length || 1;
     var w = window.innerWidth;
 
-    // Small screens (7" ~1024x600 or smaller): 2 columns max
-    // Medium screens (10" ~1280x800): 3 columns
-    // Large screens (15"+ ~1920x1080): 4+ columns
-    var cols;
+    // Fixed grid per screen size — tiles stay in their cell, empty cells stay empty.
+    // 7" (~1024x600 or smaller): 2×2
+    // 10" (~1280x800): 3×2
+    // Large (15"+): 4×2, expand rows if needed
     if (w <= 1024) {
-        cols = Math.min(count, 2);
+        return { cols: 2, rows: 2 };
     } else if (w <= 1400) {
-        cols = Math.min(count, 3);
+        return { cols: 3, rows: 2 };
     } else {
-        cols = Math.min(count, 4);
+        var count = claimedNodes().length || 1;
+        return { cols: 4, rows: Math.max(2, Math.ceil(count / 4)) };
     }
-    var rows = Math.ceil(count / cols);
-    return { cols: cols, rows: rows };
 }
 
 function createNodeButton(entry) {
