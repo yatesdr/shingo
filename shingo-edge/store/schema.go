@@ -195,7 +195,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     inbound_staging         TEXT NOT NULL DEFAULT '',
     outbound_staging        TEXT NOT NULL DEFAULT '',
     inbound_source          TEXT NOT NULL DEFAULT '',
-    outbound_source         TEXT NOT NULL DEFAULT '',
+    outbound_destination    TEXT NOT NULL DEFAULT '',
     allowed_payload_codes   TEXT NOT NULL DEFAULT '',
     auto_request_payload    TEXT NOT NULL DEFAULT '',
     keep_staged             INTEGER NOT NULL DEFAULT 0,
@@ -396,6 +396,9 @@ func (db *DB) migrate() error {
 
 	// Rename pickup_node → source_node on orders (aligns with protocol SourceNode)
 	db.Exec("ALTER TABLE orders RENAME COLUMN pickup_node TO source_node")
+
+	// Rename outbound_source → outbound_destination on style_node_claims (it's a dropoff destination, not a source)
+	db.Exec("ALTER TABLE style_node_claims RENAME COLUMN outbound_source TO outbound_destination")
 
 	return nil
 }

@@ -6,13 +6,23 @@ import (
 )
 
 // StyleNodeClaim declares that a style needs a specific core node with a given
-// payload and role. For "consume" nodes the system delivers full bins; for
-// "produce" nodes the system delivers empty bins.
+// payload and role. Four roles are supported:
+//   - "consume": system delivers full bins and removes empties
+//   - "produce": system delivers empty bins and removes filled ones
+//   - "bin_loader": operator loads manifest via HTTP; system delivers/moves bins on request
+//   - "changeover": temporary role during style transitions (evacuate and restore material)
+//
+// Routing fields follow a directional convention:
+//
+//	InboundSource → InboundStaging → CoreNodeName → OutboundStaging → OutboundDestination
+//
+// InboundSource is where inbound material is picked up FROM.
+// OutboundDestination is where outbound material is dropped off TO.
 type StyleNodeClaim struct {
 	ID                       int64     `json:"id"`
 	StyleID                  int64     `json:"style_id"`
 	CoreNodeName             string    `json:"core_node_name"`
-	Role                     string    `json:"role"`     // "consume" or "produce"
+	Role                     string    `json:"role"`     // "consume", "produce", "bin_loader", or "changeover"
 	SwapMode                 string    `json:"swap_mode"` // "simple", "single_robot", "two_robot", "sequential"
 	PayloadCode              string    `json:"payload_code"`
 	UOPCapacity              int       `json:"uop_capacity"`
@@ -21,7 +31,7 @@ type StyleNodeClaim struct {
 	InboundStaging           string    `json:"inbound_staging"`
 	OutboundStaging          string    `json:"outbound_staging"`
 	InboundSource            string    `json:"inbound_source"`
-	OutboundSource           string    `json:"outbound_source"`
+	OutboundDestination           string    `json:"outbound_destination"`
 	AllowedPayloadCodes      []string  `json:"allowed_payload_codes"`
 	AutoRequestPayload       string    `json:"auto_request_payload"`
 	KeepStaged               bool      `json:"keep_staged"`
@@ -55,7 +65,7 @@ type StyleNodeClaimInput struct {
 	InboundStaging          string `json:"inbound_staging"`
 	OutboundStaging         string `json:"outbound_staging"`
 	InboundSource           string `json:"inbound_source"`
-	OutboundSource          string `json:"outbound_source"`
+	OutboundDestination          string `json:"outbound_destination"`
 	AllowedPayloadCodes     []string `json:"allowed_payload_codes"`
 	AutoRequestPayload      string   `json:"auto_request_payload"`
 	KeepStaged              bool     `json:"keep_staged"`
@@ -65,7 +75,7 @@ type StyleNodeClaimInput struct {
 
 const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
-	inbound_source, outbound_source, allowed_payload_codes, auto_request_payload,
+	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 	keep_staged, evacuate_on_changeover, sequence, created_at`
 
 func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleNodeClaim, error) {
@@ -73,7 +83,7 @@ func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleN
 	var createdAt, allowedJSON string
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
-		&c.InboundSource, &c.OutboundSource, &allowedJSON, &c.AutoRequestPayload,
+		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.Sequence, &createdAt); err != nil {
 		return c, err
 	}
@@ -134,12 +144,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 		allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 		_, err = db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
 			uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
-			inbound_source=?, outbound_source=?, allowed_payload_codes=?, auto_request_payload=?,
+			inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
 			keep_staged=?, evacuate_on_changeover=?, sequence=?
 			WHERE id=?`,
 			in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
 			in.InboundStaging, in.OutboundStaging,
-			in.InboundSource, in.OutboundSource, allowedJSON, in.AutoRequestPayload,
+			in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 			in.KeepStaged, in.EvacuateOnChangeover, in.Sequence, existingID)
 		return existingID, err
 	}
@@ -151,12 +161,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
 	res, err := db.Exec(`INSERT INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
-		inbound_source, outbound_source, allowed_payload_codes, auto_request_payload,
+		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, sequence)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
-		in.InboundSource, in.OutboundSource, allowedJSON, in.AutoRequestPayload,
+		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		in.KeepStaged, in.EvacuateOnChangeover, in.Sequence)
 	if err != nil {
 		return 0, err

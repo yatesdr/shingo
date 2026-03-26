@@ -21,6 +21,10 @@ Renames complex order test handler fields to match style/cell config vocabulary:
 - `StagingNode2` → `OutboundStaging` (`staging_node_2` → `outbound_staging`)
 - `OutgoingDest` → `OutboundDestination` (`outgoing_dest` → `outbound_destination`)
 
+### Claim Field Rename: outbound_source → outbound_destination
+
+The `outbound_source` field on `style_node_claims` was a misnomer — it's a dropoff destination (where outbound material goes TO), not a source. Every usage in `material_orders.go` is `buildStep("dropoff", claim.OutboundDestination)`. Renamed across Go structs, SQL, HTML, JS, and added SQLite migration.
+
 ### UI Label Updates
 
 - "Pickup Node" → "Source Node" across all order forms and detail views
@@ -113,7 +117,7 @@ Edge `CoreClient` (`engine/core_client.go`) makes on-demand HTTP calls with 3s t
 
 ### NodeGroup Removal
 
-Removed `NodeGroup` field from wire protocol `ComplexOrderStep`. Core auto-detects NGRP nodes via `IsSynthetic + NodeTypeCode` and resolves them — same pattern simple orders already used. Collapsed 4 edge claim source columns (`inbound_source_node`, `inbound_source_node_group`, `outbound_source_node`, `outbound_source_node_group`) into 2 (`inbound_source`, `outbound_source`).
+Removed `NodeGroup` field from wire protocol `ComplexOrderStep`. Core auto-detects NGRP nodes via `IsSynthetic + NodeTypeCode` and resolves them — same pattern simple orders already used. Collapsed 4 edge claim source columns (`inbound_source_node`, `inbound_source_node_group`, `outbound_source_node`, `outbound_source_node_group`) into 2 (`inbound_source`, `outbound_destination`).
 
 ### Code Quality
 
@@ -133,14 +137,14 @@ Adds source/destination routing to `style_node_claims`, fixes single-robot and t
 Two columns for source/destination routing, separate from staging areas:
 
 ```
-InboundSource → InboundStaging → CoreNodeName → OutboundStaging → OutboundSource
+InboundSource → InboundStaging → CoreNodeName → OutboundStaging → OutboundDestination
  (where from)     (temp park)      (lineside)     (temp park)       (where to)
 ```
 
 | Field | Purpose |
 |-------|---------|
 | `inbound_source` | Pickup node or group for new material (Core auto-detects groups) |
-| `outbound_source` | Dropoff node or group for old material (Core auto-detects groups) |
+| `outbound_destination` | Dropoff node or group for old material (Core auto-detects groups) |
 
 Can be a specific node or a node group — Core auto-detects NGRP nodes and resolves via the group resolver. Blank = Core global fallback by payloadCode. Fully backward compatible.
 
@@ -154,7 +158,7 @@ Order A (Robot 1 — removal):             Order B (Robot 2 — backfill):
 │ 1. dropoff(CoreNodeName)        │      │ 1. pickup(InboundSource)        │
 │ 2. wait                         │      │ 2. dropoff(CoreNodeName)        │
 │ 3. pickup(CoreNodeName)         │      └─────────────────────────────────┘
-│ 4. dropoff(OutboundSource)      │────────▶ Order B auto-created when
+│ 4. dropoff(OutboundDestination)      │────────▶ Order B auto-created when
 └─────────────────────────────────┘        Order A goes "in_transit"
 ```
 
@@ -172,7 +176,7 @@ Order A delivery_node = "" (removal, no UOP reset). Order B delivery_node = Core
  7. pickup(InboundStaging)         — grab new from staging
  8. dropoff(CoreNodeName)          — deliver new to line
  9. pickup(OutboundStaging)        — grab old from staging
-10. dropoff(OutboundSource)        — deliver old to final dest.
+10. dropoff(OutboundDestination)        — deliver old to final dest.
 ```
 
 #### Two Robot — parallel swap
@@ -183,12 +187,12 @@ Order A (resupply):                      Order B (removal):
 │ 1. pickup(InboundSource)        │     │ 1. dropoff(CoreNodeName)        │
 │ 2. dropoff(InboundStaging)      │     │ 2. wait                         │
 │ 3. wait                         │     │ 3. pickup(CoreNodeName)         │
-│ 4. pickup(InboundStaging)       │     │ 4. dropoff(OutboundSource)      │
+│ 4. pickup(InboundStaging)       │     │ 4. dropoff(OutboundDestination)      │
 │ 5. dropoff(CoreNodeName)        │     └─────────────────────────────────┘
 └─────────────────────────────────┘
 ```
 
-Two-robot validation now only requires InboundStaging (not OutboundStaging) — removal robot goes direct to OutboundSource.
+Two-robot validation now only requires InboundStaging (not OutboundStaging) — removal robot goes direct to OutboundDestination.
 
 ### Other Changes
 
@@ -202,7 +206,7 @@ Two-robot validation now only requires InboundStaging (not OutboundStaging) — 
 
 | File | Change |
 |------|--------|
-| `store/schema.go` | Migrations for source routing columns (collapsed to `inbound_source`, `outbound_source`) |
+| `store/schema.go` | Migrations for source routing columns (collapsed to `inbound_source`, `outbound_destination`) |
 | `store/style_node_claims.go` | Struct + SQL updated for 2 source fields |
 | `engine/material_orders.go` | Step builders rewritten: buildStep helper, 10-step single, source routing on two-robot, sequential builders added |
 | `engine/operator_stations.go` | Sequential case added to `requestNodeFromClaim`, two-robot validation relaxed |

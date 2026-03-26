@@ -35,7 +35,7 @@ func BuildDeliverSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep 
 func BuildReleaseSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: claim.CoreNodeName},
-		buildStep("dropoff", claim.OutboundSource),
+		buildStep("dropoff", claim.OutboundDestination),
 	}
 }
 
@@ -74,7 +74,7 @@ func BuildStagedDeliverSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrde
 //  7. pickup(InboundStaging)     — grab new from staging
 //  8. dropoff(CoreNodeName)      — deliver new to line
 //  9. pickup(OutboundStaging)    — grab old from staging
-// 10. dropoff(OutboundSource)    — deliver old to final destination
+// 10. dropoff(OutboundDestination)    — deliver old to final destination
 func BuildSingleSwapSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	if claim.InboundStaging == "" || claim.OutboundStaging == "" {
 		return nil
@@ -89,7 +89,7 @@ func BuildSingleSwapSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderSt
 		{Action: "pickup", Node: claim.InboundStaging},                             // 7
 		{Action: "dropoff", Node: claim.CoreNodeName},                              // 8
 		{Action: "pickup", Node: claim.OutboundStaging},                            // 9
-		buildStep("dropoff", claim.OutboundSource), // 10
+		buildStep("dropoff", claim.OutboundDestination), // 10
 	}
 }
 
@@ -117,7 +117,7 @@ func BuildTwoRobotSwapSteps(claim *store.StyleNodeClaim) (orderA, orderB []proto
 		{Action: "dropoff", Node: claim.CoreNodeName},                                  // pre-position
 		{Action: "wait"},                                                                // wait for release signal
 		{Action: "pickup", Node: claim.CoreNodeName},                                   // remove old from production
-		buildStep("dropoff", claim.OutboundSource),  // deliver to destination
+		buildStep("dropoff", claim.OutboundDestination),  // deliver to destination
 	}
 	return orderA, orderB
 }
@@ -127,13 +127,13 @@ func BuildTwoRobotSwapSteps(claim *store.StyleNodeClaim) (orderA, orderB []proto
 //  1. dropoff(CoreNodeName)    — pre-position at lineside
 //  2. wait                     — operator releases
 //  3. pickup(CoreNodeName)     — pick up old from line
-//  4. dropoff(OutboundSource)  — deliver old to destination
+//  4. dropoff(OutboundDestination)  — deliver old to destination
 func BuildSequentialRemovalSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "dropoff", Node: claim.CoreNodeName},                                  // 1
 		{Action: "wait"},                                                                // 2
 		{Action: "pickup", Node: claim.CoreNodeName},                                   // 3
-		buildStep("dropoff", claim.OutboundSource),  // 4
+		buildStep("dropoff", claim.OutboundDestination),  // 4
 	}
 }
 

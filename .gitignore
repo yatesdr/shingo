@@ -71,6 +71,7 @@ shingo-debug*.log
 # Planning docs and reference PDFs
 payload-plan.md
 API_Docs.pdf
+docs/order-patterns-review.md
 
 # AI agent config
 CLAUDE.md

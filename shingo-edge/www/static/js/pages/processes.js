@@ -206,7 +206,7 @@ async function loadClaims(styleID) {
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.inbound_staging || '\u2014') + '</td>' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.outbound_staging || '\u2014') + '</td>' +
                 '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.inbound_source || '\u2014') + '</td>' +
-                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.outbound_source || '\u2014') + '</td>' +
+                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.outbound_destination || '\u2014') + '</td>' +
                 '<td style="white-space:nowrap">' +
                     '<button class="btn btn-sm" onclick=\'editClaim(' + JSON.stringify(c).replace(/'/g, "&#39;") + ')\'>Edit</button> ' +
                     '<button class="btn btn-sm btn-danger" onclick="removeClaim(' + c.id + ')">Remove</button>' +
@@ -241,7 +241,7 @@ function openClaimModal() {
     document.getElementById('claims-add-inbound').value = '';
     document.getElementById('claims-add-outbound').value = '';
     document.getElementById('claims-add-inbound-source').value = '';
-    document.getElementById('claims-add-outbound-source').value = '';
+    document.getElementById('claims-add-outbound-destination').value = '';
     document.getElementById('claims-add-keep-staged').checked = false;
     document.getElementById('claims-add-evacuate').checked = false;
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
@@ -268,7 +268,7 @@ function editClaim(claim) {
     document.getElementById('claims-add-inbound').value = claim.inbound_staging || '';
     document.getElementById('claims-add-outbound').value = claim.outbound_staging || '';
     document.getElementById('claims-add-inbound-source').value = claim.inbound_source || '';
-    document.getElementById('claims-add-outbound-source').value = claim.outbound_source || '';
+    document.getElementById('claims-add-outbound-destination').value = claim.outbound_destination || '';
     document.getElementById('claims-add-keep-staged').checked = !!claim.keep_staged;
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
@@ -337,7 +337,7 @@ async function saveClaim() {
         inbound_staging: document.getElementById('claims-add-inbound').value,
         outbound_staging: document.getElementById('claims-add-outbound').value,
         inbound_source: document.getElementById('claims-add-inbound-source').value,
-        outbound_source: document.getElementById('claims-add-outbound-source').value,
+        outbound_destination: document.getElementById('claims-add-outbound-destination').value,
         auto_request_payload: document.getElementById('claims-add-auto-request').value,
         keep_staged: document.getElementById('claims-add-keep-staged').checked,
         evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked
@@ -405,7 +405,7 @@ function toggleClaimsAddPayload() {
     // Source/Dest — bin_loader uses both inbound (empty source) and outbound (loaded dest)
     document.getElementById('claims-source-fieldset').style.display = isChangeover ? 'none' : '';
     document.getElementById('claims-inbound-source-group').style.display = (isChangeover) ? 'none' : '';
-    document.getElementById('claims-outbound-source-group').style.display = (isChangeover) ? 'none' : '';
+    document.getElementById('claims-outbound-destination-group').style.display = (isChangeover) ? 'none' : '';
     // Changeover fieldset — not used by bin_loader
     document.getElementById('claims-changeover-fieldset').style.display = isBinLoader ? 'none' : '';
     // Auto-request fieldset — only for bin_loader
