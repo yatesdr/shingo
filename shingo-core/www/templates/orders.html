@@ -69,7 +69,8 @@
       <a href="/orders?status=pending" class="btn btn-sm {{if eq .FilterStatus "pending"}}btn-primary{{end}}">Pending</a>
       <a href="/orders?status=dispatched" class="btn btn-sm {{if eq .FilterStatus "dispatched"}}btn-primary{{end}}">Dispatched</a>
       <a href="/orders?status=in_transit" class="btn btn-sm {{if eq .FilterStatus "in_transit"}}btn-primary{{end}}">In Transit</a>
-      <a href="/orders?status=completed" class="btn btn-sm {{if eq .FilterStatus "completed"}}btn-primary{{end}}">Completed</a>
+      <a href="/orders?status=delivered" class="btn btn-sm {{if eq .FilterStatus "delivered"}}btn-primary{{end}}">Delivered</a>
+      <a href="/orders?status=confirmed" class="btn btn-sm {{if eq .FilterStatus "confirmed"}}btn-primary{{end}}">Confirmed</a>
       <a href="/orders?status=failed" class="btn btn-sm {{if eq .FilterStatus "failed"}}btn-primary{{end}}">Failed</a>
       <a href="/orders?status=reshuffling" class="btn btn-sm {{if eq .FilterStatus "reshuffling"}}btn-primary{{end}}">Reshuffling</a>
     </div>

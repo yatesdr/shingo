@@ -29,7 +29,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]any{
 		"Page":          "orders",
-		"Orders":        orders,
+		"Orders":       orders,
 		"FilterStatus": status,
 	}
 	h.render(w, r, "orders.html", data)
