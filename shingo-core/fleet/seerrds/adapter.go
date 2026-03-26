@@ -108,7 +108,7 @@ func (a *Adapter) IsTerminalState(vendorState string) bool {
 func (a *Adapter) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
 	blocks := make([]rds.Block, len(req.Blocks))
 	for i, b := range req.Blocks {
-		blocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location}
+		blocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location, BinTask: b.BinTask}
 	}
 	rdsReq := &rds.SetOrderRequest{
 		ID:         req.OrderID,
@@ -126,7 +126,7 @@ func (a *Adapter) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.Transpo
 func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
 	rdsBlocks := make([]rds.Block, len(blocks))
 	for i, b := range blocks {
-		rdsBlocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location}
+		rdsBlocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location, BinTask: b.BinTask}
 	}
 	return a.client.AddBlocks(vendorOrderID, rdsBlocks, true)
 }

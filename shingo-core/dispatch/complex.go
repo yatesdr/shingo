@@ -293,9 +293,18 @@ func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int) 
 		if s.Action == "wait" {
 			continue
 		}
+		// Map action to bin task for SEER RDS
+		var binTask string
+		switch s.Action {
+		case "pickup":
+			binTask = "JackLoad"
+		case "dropoff":
+			binTask = "JackUnload"
+		}
 		blocks = append(blocks, fleet.OrderBlock{
 			BlockID:  fmt.Sprintf("%s-b%d", vendorOrderID, blockOffset+i+1),
 			Location: s.Node,
+			BinTask:  binTask,
 		})
 	}
 	return blocks

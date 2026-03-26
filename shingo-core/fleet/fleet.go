@@ -60,6 +60,7 @@ type TransportOrderResult struct {
 type OrderBlock struct {
 	BlockID  string
 	Location string
+	BinTask  string // e.g., "JackLoad", "JackUnload" for SEER RDS
 }
 
 // StagedOrderRequest contains parameters for creating an incremental (incomplete) order.
