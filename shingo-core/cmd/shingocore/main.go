@@ -196,8 +196,9 @@ func main() {
 
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+		Addr:        addr,
+		Handler:     handler,
+		IdleTimeout: 120 * time.Second,
 	}
 
 	go func() {

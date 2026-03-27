@@ -76,17 +76,22 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Compress(5))
 
-	// Static files
-	staticSub, _ := fs.Sub(staticFS, "static")
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
-
-	// SSE
+	// SSE — must be outside compression middleware. Compression buffers
+	// defeat streaming flushes and cause stale connection buildup when
+	// navigating between pages.
 	r.Get("/events", hub.SSEHandler)
 
-	// --- Public pages ---
-	r.Get("/", h.handleDashboard)
+	// Everything else gets compressed
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Compress(5))
+
+		// Static files
+		staticSub, _ := fs.Sub(staticFS, "static")
+		r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+
+		// --- Public pages ---
+		r.Get("/", h.handleDashboard)
 	r.Get("/login", h.handleLoginPage)
 	r.Post("/login", h.handleLogin)
 	r.Get("/logout", h.handleLogout)
@@ -254,7 +259,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Post("/bins/create", h.handleBinCreate)
 		r.Post("/bins/delete", h.handleBinDelete)
 
-	})
+		})
+	}) // end compression group (wraps all routes except SSE)
 
 	stopFn := func() {
 		hub.Stop()
