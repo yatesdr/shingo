@@ -246,14 +246,14 @@ function renderOrderModal(data) {
 }
 
 // SSE auto-refresh for open modal
-window.onOrderUpdate = function(e) {
+window.onOrderUpdate = debounce(function(e) {
   try {
     var data = JSON.parse(e.data);
     if (_orderModalID && data && data.order_id === _orderModalID) {
       openOrderModal(_orderModalID);
     }
   } catch(err) {}
-};
+}, 500);
 
 // --- Spot order modal ---
 var _spotNodesLoaded = false;

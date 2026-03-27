@@ -90,6 +90,17 @@ func (e *Engine) GetCachedRobotStatus(vehicleID string) (fleet.RobotStatus, bool
 	return r, ok
 }
 
+// GetAllCachedRobots returns a snapshot of all cached robot statuses.
+func (e *Engine) GetAllCachedRobots() []fleet.RobotStatus {
+	e.robotsMu.RLock()
+	defer e.robotsMu.RUnlock()
+	robots := make([]fleet.RobotStatus, 0, len(e.robotsCache))
+	for _, r := range e.robotsCache {
+		robots = append(robots, r)
+	}
+	return robots
+}
+
 func (e *Engine) Start() {
 	// Create emitter adapters
 	de := &dispatchEmitter{bus: e.Events}

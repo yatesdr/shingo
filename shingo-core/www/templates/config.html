@@ -45,6 +45,20 @@
             </select>
           </div>
         </div>
+        <div class="grid grid-3" style="margin-top: 0.5rem;">
+          <div class="form-group">
+            <label>Max Open Conns</label>
+            <input type="number" name="pg_max_open_conns" value="{{.Config.Database.Postgres.MaxOpenConns}}" placeholder="25">
+          </div>
+          <div class="form-group">
+            <label>Max Idle Conns</label>
+            <input type="number" name="pg_max_idle_conns" value="{{.Config.Database.Postgres.MaxIdleConns}}" placeholder="10">
+          </div>
+          <div class="form-group">
+            <label>Conn Max Lifetime</label>
+            <input type="text" name="pg_conn_max_lifetime" value="{{.Config.Database.Postgres.ConnMaxLifetime}}" placeholder="5m">
+          </div>
+        </div>
       </div>
 
       <button type="submit" class="btn btn-primary btn-sm">Save</button>

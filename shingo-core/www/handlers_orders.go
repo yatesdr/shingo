@@ -22,7 +22,13 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	orders, err := h.engine.DB().ListOrders(status, limit)
+	var orders []*store.Order
+	var err error
+	if status == "" {
+		orders, err = h.engine.DB().ListActiveOrders()
+	} else {
+		orders, err = h.engine.DB().ListOrders(status, limit)
+	}
 	if err != nil {
 		log.Printf("orders page: list orders: %v", err)
 	}
@@ -160,15 +166,8 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if order.RobotID != "" {
-		if rl, ok := h.engine.Fleet().(fleet.RobotLister); ok {
-			if robots, err := rl.GetRobotsStatus(); err == nil {
-				for i := range robots {
-					if robots[i].VehicleID == order.RobotID {
-						result.Robot = &robots[i]
-						break
-					}
-				}
-			}
+		if rs, ok := h.engine.GetCachedRobotStatus(order.RobotID); ok {
+			result.Robot = &rs
 		}
 	}
 

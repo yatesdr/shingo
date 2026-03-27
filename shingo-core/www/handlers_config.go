@@ -40,6 +40,15 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 			cfg.Database.Postgres.Password = v
 		}
 		cfg.Database.Postgres.SSLMode = r.FormValue("pg_sslmode")
+		if v, err := strconv.Atoi(r.FormValue("pg_max_open_conns")); err == nil && v > 0 {
+			cfg.Database.Postgres.MaxOpenConns = v
+		}
+		if v, err := strconv.Atoi(r.FormValue("pg_max_idle_conns")); err == nil && v > 0 {
+			cfg.Database.Postgres.MaxIdleConns = v
+		}
+		if d, err := time.ParseDuration(r.FormValue("pg_conn_max_lifetime")); err == nil && d > 0 {
+			cfg.Database.Postgres.ConnMaxLifetime = d
+		}
 	case "general", "fleet":
 		if v := r.FormValue("fleet_base_url"); v != "" || r.Form.Has("fleet_base_url") {
 			cfg.RDS.BaseURL = v

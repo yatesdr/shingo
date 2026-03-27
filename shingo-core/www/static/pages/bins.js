@@ -530,12 +530,12 @@ function ccSummary() {
 }
 
 // ===== SSE =====
-window.onBinUpdate = function(e) {
+window.onBinUpdate = debounce(function(e) {
   var data = JSON.parse(e.data);
   if (currentBinId && currentBinId === data.bin_id) {
     openBinDetail(currentBinId);
   }
-};
+}, 500);
 
 // ===== HELPERS =====
 function esc(s) { return escapeHtml(s); }

@@ -1,40 +1,22 @@
 package www
 
 import (
-	"log"
 	"net/http"
 
 	"shingocore/fleet"
 )
 
 func (h *Handlers) handleRobots(w http.ResponseWriter, r *http.Request) {
-	var robots []fleet.RobotStatus
-	if rl, ok := h.engine.Fleet().(fleet.RobotLister); ok {
-		var err error
-		robots, err = rl.GetRobotsStatus()
-		if err != nil {
-			log.Printf("robots: fleet error: %v", err)
-		}
-	}
+	robots := h.engine.GetAllCachedRobots()
 	data := map[string]any{
-		"Page":          "robots",
+		"Page":   "robots",
 		"Robots": robots,
 	}
 	h.render(w, r, "robots.html", data)
 }
 
 func (h *Handlers) apiRobotsStatus(w http.ResponseWriter, r *http.Request) {
-	rl, ok := h.engine.Fleet().(fleet.RobotLister)
-	if !ok {
-		h.jsonOK(w, []any{})
-		return
-	}
-	robots, err := rl.GetRobotsStatus()
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonOK(w, robots)
+	h.jsonOK(w, h.engine.GetAllCachedRobots())
 }
 
 func (h *Handlers) apiRobotSetAvailability(w http.ResponseWriter, r *http.Request) {

@@ -28,12 +28,15 @@ type DatabaseConfig struct {
 }
 
 type PostgresConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Database string `yaml:"database"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	SSLMode  string `yaml:"sslmode"`
+	Host            string        `yaml:"host"`
+	Port            int           `yaml:"port"`
+	Database        string        `yaml:"database"`
+	User            string        `yaml:"user"`
+	Password        string        `yaml:"password"`
+	SSLMode         string        `yaml:"sslmode"`
+	MaxOpenConns    int           `yaml:"max_open_conns"`
+	MaxIdleConns    int           `yaml:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
 }
 
 type RDSConfig struct {

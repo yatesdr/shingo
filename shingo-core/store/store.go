@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"shingocore/config"
 
@@ -46,6 +47,24 @@ func Open(cfg *config.DatabaseConfig) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+
+	// Connection pool limits — defaults if not set in config
+	maxOpen := cfg.Postgres.MaxOpenConns
+	if maxOpen <= 0 {
+		maxOpen = 25
+	}
+	maxIdle := cfg.Postgres.MaxIdleConns
+	if maxIdle <= 0 {
+		maxIdle = 10
+	}
+	maxLife := cfg.Postgres.ConnMaxLifetime
+	if maxLife <= 0 {
+		maxLife = 5 * time.Minute
+	}
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
+	sqlDB.SetConnMaxLifetime(maxLife)
+
 	db := &DB{DB: sqlDB}
 	if err := db.migrate(); err != nil {
 		sqlDB.Close()

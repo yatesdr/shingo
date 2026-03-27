@@ -1,5 +1,17 @@
 // --- Shared utilities ---
 
+// Debounce: delays execution until `ms` milliseconds after the last call.
+// Used to prevent SSE event bursts from saturating the browser main thread.
+function debounce(fn, ms) {
+  var timer;
+  return function() {
+    var args = arguments;
+    var self = this;
+    clearTimeout(timer);
+    timer = setTimeout(function() { fn.apply(self, args); }, ms);
+  };
+}
+
 // HTML escape (replaces per-page esc/escapeHtml)
 function escapeHtml(s) {
   if (!s) return '';
@@ -158,7 +170,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
 
-    es.addEventListener('robot-update', function(e) {
+    es.addEventListener('robot-update', debounce(function(e) {
       var robots = JSON.parse(e.data);
       var grid = document.getElementById('robot-grid');
       if (!grid) return;
@@ -258,7 +270,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (typeof filterRobots === 'function') {
         filterRobots();
       }
-    });
+    }, 2000));
 
     es.addEventListener('cms-transaction', function(e) {
       if (typeof window.cmsAppendRows === 'function') {
