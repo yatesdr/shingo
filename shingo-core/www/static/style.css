@@ -110,8 +110,9 @@ tr:hover { background: #f8f9fa; }
 /* Forms */
 .form-group { margin-bottom: 0.75rem; }
 label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem; }
-input[type="text"], input[type="password"], input[type="number"], select, textarea {
+input[type="text"], input[type="password"], input[type="number"], input[type="date"], select, textarea {
   width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 0.3rem; font-size: 0.9rem;
+  background: var(--surface); color: var(--text);
 }
 textarea { resize: vertical; min-height: 60px; }
 
@@ -328,6 +329,7 @@ textarea { resize: vertical; min-height: 60px; }
   border-radius: 0.3rem;
   font-size: 0.85rem;
   width: auto;
+  background: var(--surface); color: var(--text);
 }
 .filter-bar input { max-width: 200px; }
 
@@ -499,20 +501,6 @@ textarea { resize: vertical; min-height: 60px; }
 [data-theme="dark"] .accordion-toggle:hover { background: #252c35; }
 [data-theme="dark"] .ep-item:hover { background: #252c35; }
 
-[data-theme="dark"] input[type="text"],
-[data-theme="dark"] input[type="password"],
-[data-theme="dark"] input[type="number"],
-[data-theme="dark"] select,
-[data-theme="dark"] textarea {
-  background: var(--surface);
-  color: var(--text);
-  border-color: var(--border);
-}
-[data-theme="dark"] .filter-bar input,
-[data-theme="dark"] .filter-bar select {
-  background: var(--surface);
-  color: var(--text);
-}
 
 [data-theme="dark"] .btn-primary:hover { background: #4090e0; }
 [data-theme="dark"] .btn-danger:hover { background: #da3633; }
