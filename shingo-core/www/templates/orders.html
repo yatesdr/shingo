@@ -65,7 +65,8 @@
   <div class="flex flex-between mb-1">
     <h1 style="font-size:1.3rem">Orders</h1>
     <div class="flex gap-1">
-      <a href="/orders" class="btn btn-sm {{if not .FilterStatus}}btn-primary{{end}}">All</a>
+      <a href="/orders?status=all" class="btn btn-sm {{if eq .FilterStatus "all"}}btn-primary{{end}}">All</a>
+      <a href="/orders" class="btn btn-sm {{if not .FilterStatus}}btn-primary{{end}}">Active</a>
       <a href="/orders?status=pending" class="btn btn-sm {{if eq .FilterStatus "pending"}}btn-primary{{end}}">Pending</a>
       <a href="/orders?status=dispatched" class="btn btn-sm {{if eq .FilterStatus "dispatched"}}btn-primary{{end}}">Dispatched</a>
       <a href="/orders?status=in_transit" class="btn btn-sm {{if eq .FilterStatus "in_transit"}}btn-primary{{end}}">In Transit</a>

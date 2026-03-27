@@ -24,9 +24,12 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 
 	var orders []*store.Order
 	var err error
-	if status == "" {
+	switch {
+	case status == "":
 		orders, err = h.engine.DB().ListActiveOrders()
-	} else {
+	case status == "all":
+		orders, err = h.engine.DB().ListOrders("", limit)
+	default:
 		orders, err = h.engine.DB().ListOrders(status, limit)
 	}
 	if err != nil {
