@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-03-26 — Performance, SSE Stability & UI Polish
+
+### Performance
+
+- **Connection pool limits**: Added `MaxOpenConns` (25), `MaxIdleConns` (10), `ConnMaxLifetime` (5m) to PostgreSQL config with sane defaults. Configurable via web UI on the Config page.
+- **Cached robot lookups**: Order enrichment and robots handlers now use the in-memory robot cache instead of per-request fleet API calls. Eliminates N+1 HTTP round-trips when opening order detail modals.
+- **SSE debounce**: Client-side debounce on robot-update (2s), order-update (500ms), and bin-update (500ms) event handlers to prevent DOM rebuild bursts from freezing the browser during high-frequency fleet telemetry.
+- **Active orders default**: Orders page now defaults to active orders only (`ListActiveOrders`) instead of the last 100 of any status, reducing initial query size.
+
+### SSE Stability
+
+- **Compression exclusion**: Moved SSE `/events` endpoint outside Chi's `middleware.Compress` group. The compression layer was buffering streaming flushes, preventing the server from detecting client disconnects promptly. This caused goroutine buildup and page hang-ups on rapid navigation.
+- **Client-side cleanup**: Added `beforeunload` listener to close the EventSource when navigating between pages. Browsers limit HTTP/1.1 to 6 connections per origin — without explicit cleanup, stale SSE connections consumed slots and blocked new page loads.
+- **Server IdleTimeout**: Added 120s `IdleTimeout` to `http.Server` as a safety net for orphaned keep-alive connections. `WriteTimeout` intentionally left unset since SSE connections are long-lived writes.
+
+### Bug Fixes
+
+- **Complex order bin tasks**: Orders now specify `JackLoad`/`JackUnload` bin tasks when creating fleet blocks. Previously robots navigated to locations without actually picking up or dropping off bins.
+- **Script loading order**: Moved `app.js` before the content block in `layout.html` so the `debounce` utility is defined before page-specific scripts that reference it.
+- **Orders tab fixes**: Added dedicated "Active" tab; "All" tab now passes `?status=all` to show all orders instead of returning active-only after the default change.
+- **Delivered vs Confirmed**: Split the "Completed" tab into Delivered (amber — robot dropped off, awaiting confirmation) and Confirmed (green — operator receipted, terminal state).
+- **Fleet Explorer template**: Fixed missing closing `>` on a `<div>` tag in `rds_explorer.html` that caused a template rendering error.
+- **Truncated files restored**: Fixed `test-orders.js`, `processes.js`, and `processes.html` footer that were truncated by a previous editing session.
+
+### UI/UX
+
+- **Dashboard tooltips**: Styled hover tooltips on all dashboard stat cards explaining each metric (Active Orders, Total Nodes, Fleet Manager, Messaging, Database, Polling Orders, Completion Anomalies, Pending Outbox).
+- **Config page defaults**: Connection pool fields now display effective defaults (25/10/5m0s) instead of showing zeros when unconfigured.
+- **Light mode form inputs**: Added explicit `background`/`color` using CSS variables to all form elements. The `color-scheme: light dark` meta tag was causing browsers to render dark form controls in light mode. Removed now-redundant dark theme overrides.
+- **Responsive operator grid**: Auto-scaling grid columns for 7", 10", and larger displays. Fixed tile dimensions so they don't stretch to fill the screen.
+- **Changeover buttons**: Added CHANGEOVER/CUTOVER controls to operator HMI header with style picker overlay.
+- **SSE for config changes**: Backend now broadcasts SSE events for changeover and material config changes, eliminating manual page refreshes.
+- **Dark theme fixes**: Distinct duration bar colors for dispatched vs in-transit, source/dest converted to dropdowns, swap mode field visibility logic corrected.
+
 ## 2026-03-25 — Universal Node Naming Alignment
 
 ### Transport Order Rename: pickup_node → source_node
