@@ -3,47 +3,47 @@
   <h1 class="mb-2">Dashboard</h1>
 
   <div class="grid grid-6 mb-1">
-    <div class="card stat">
+    <div class="card stat" data-tip="Orders currently being processed — includes pending, dispatched, in-transit, and awaiting confirmation.">
       <div class="value">{{.TotalOrders}}</div>
       <div class="label">Active Orders</div>
     </div>
-    <div class="card stat">
+    <div class="card stat" data-tip="Registered storage locations, stations, and waypoints in the node graph.">
       <div class="value">{{.TotalNodes}}</div>
       <div class="label">Total Nodes</div>
     </div>
-    <div class="card stat">
+    <div class="card stat" data-tip="Connection to the robot fleet controller. Required for dispatching and tracking robot missions.">
       <div class="value">
         <span id="fleet-status" class="health {{if .FleetOK}}health-ok{{else}}health-fail{{end}}"></span>
         {{if .FleetOK}}OK{{else}}Down{{end}}
       </div>
       <div class="label">Fleet Manager ({{.FleetName}})</div>
     </div>
-    <div class="card stat">
+    <div class="card stat" data-tip="Connection to the message broker linking Core and Edge stations. Handles order acknowledgments and status sync.">
       <div class="value">
         <span id="msg-status" class="health {{if .MessagingOK}}health-ok{{else}}health-fail{{end}}"></span>
         {{if .MessagingOK}}OK{{else}}Down{{end}}
       </div>
       <div class="label">Messaging</div>
     </div>
-    <div class="card stat">
+    <div class="card stat" data-tip="PostgreSQL connection status.">
       <div class="value">
         <span id="db-status" class="health {{if .DatabaseOK}}health-ok{{else}}health-fail{{end}}"></span>
         {{if .DatabaseOK}}OK{{else}}Down{{end}}
       </div>
       <div class="label">Database</div>
     </div>
-    <div class="card stat">
+    <div class="card stat" data-tip="Orders actively being polled against the fleet manager for real-time status updates.">
       <div class="value">{{.PollerActive}}</div>
       <div class="label">Polling Orders</div>
     </div>
   </div>
   {{if .Recon}}
   <div class="grid grid-6 mb-1">
-    <div class="card stat">
+    <div class="card stat" data-tip="State mismatches — e.g. terminal orders still holding bin locks, or confirmed orders missing completion timestamps. Investigate if non-zero.">
       <div class="value">{{.Recon.CompletionAnomalies}}</div>
       <div class="label">Completion Anomalies</div>
     </div>
-    <div class="card stat">
+    <div class="card stat" data-tip="Queued messages awaiting delivery to Edge stations. Clears automatically. Stale entries may indicate a messaging issue.">
       <div class="value">{{.Recon.OutboxPending}}</div>
       <div class="label">Pending Outbox</div>
     </div>

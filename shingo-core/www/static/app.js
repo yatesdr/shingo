@@ -292,5 +292,11 @@ document.addEventListener('DOMContentLoaded', function() {
     };
   }
 
+  // Close SSE connection when navigating away so the browser
+  // releases the HTTP/1.1 connection slot immediately.
+  window.addEventListener('beforeunload', function() {
+    if (es) es.close();
+  });
+
   connect();
 })();
