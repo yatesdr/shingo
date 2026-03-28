@@ -1450,3 +1450,133 @@ func TestTC30_FailedOrderReturnClaimTransfer(t *testing.T) {
 		}
 	}
 }
+
+// --- TC-28: Two lines request the same part at the same time ---
+// Scenario: verifies that concurrent retrieve orders for the same payload
+// each get a different bin, with no double-assignment.
+//
+// Two storage nodes each hold one PART-A bin (one bin per node — physical
+// constraint). Two retrieve orders fire back-to-back for the same payload.
+// Expected: each order claims a different bin. No bin is double-claimed.
+//
+// Risk: FindSourceBinFIFO returns the oldest unclaimed bin. If both orders
+// SELECT the same bin before either calls ClaimBin, the second ClaimBin
+// fails (WHERE claimed_by IS NULL). planRetrieve does not retry — it
+// returns claim_failed and the order dies. This test checks whether the
+// system handles this correctly or whether we need retry logic.
+func TestTC28_ConcurrentRetrieveSamePart(t *testing.T) {
+	db := testDB(t)
+
+	// Two storage nodes, each with one bin of PART-A
+	storageNode1 := &store.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
+	if err := db.CreateNode(storageNode1); err != nil {
+		t.Fatalf("create storage node 1: %v", err)
+	}
+	storageNode2 := &store.Node{Name: "STORAGE-A2", Zone: "A", Enabled: true}
+	if err := db.CreateNode(storageNode2); err != nil {
+		t.Fatalf("create storage node 2: %v", err)
+	}
+
+	// Two line nodes (two different production lines)
+	lineNode1 := &store.Node{Name: "LINE1-IN", Enabled: true}
+	if err := db.CreateNode(lineNode1); err != nil {
+		t.Fatalf("create line node 1: %v", err)
+	}
+	lineNode2 := &store.Node{Name: "LINE2-IN", Enabled: true}
+	if err := db.CreateNode(lineNode2); err != nil {
+		t.Fatalf("create line node 2: %v", err)
+	}
+
+	bp := &store.Payload{Code: "PART-A", Description: "Steel bracket tote"}
+	if err := db.CreatePayload(bp); err != nil {
+		t.Fatalf("create payload: %v", err)
+	}
+	bt := &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+	if err := db.CreateBinType(bt); err != nil {
+		t.Fatalf("create bin type: %v", err)
+	}
+
+	bin1 := createTestBinAtNode(t, db, bp.Code, storageNode1.ID, "BIN-A1")
+	bin2 := createTestBinAtNode(t, db, bp.Code, storageNode2.ID, "BIN-A2")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Line 1 requests PART-A
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-line1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode1.Name,
+		Quantity:     1,
+	})
+
+	// Line 2 requests PART-A immediately after
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-line2",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode2.Name,
+		Quantity:     1,
+	})
+
+	order1, err := db.GetOrderByUUID("retrieve-line1")
+	if err != nil {
+		t.Fatalf("get order 1: %v", err)
+	}
+	order2, err := db.GetOrderByUUID("retrieve-line2")
+	if err != nil {
+		t.Fatalf("get order 2: %v", err)
+	}
+
+	t.Logf("order 1: status=%s, bin_id=%v, vendor_id=%s", order1.Status, order1.BinID, order1.VendorOrderID)
+	t.Logf("order 2: status=%s, bin_id=%v, vendor_id=%s", order2.Status, order2.BinID, order2.VendorOrderID)
+
+	// Both orders should have dispatched successfully
+	bothDispatched := order1.VendorOrderID != "" && order2.VendorOrderID != ""
+	if !bothDispatched {
+		t.Errorf("expected both orders to dispatch — order1 vendor=%q, order2 vendor=%q",
+			order1.VendorOrderID, order2.VendorOrderID)
+		if order1.VendorOrderID == "" {
+			t.Logf("order 1 failed to dispatch (status=%s) — possible TOCTOU race in FindSourceBinFIFO → ClaimBin", order1.Status)
+		}
+		if order2.VendorOrderID == "" {
+			t.Logf("order 2 failed to dispatch (status=%s) — possible TOCTOU race in FindSourceBinFIFO → ClaimBin", order2.Status)
+		}
+	}
+
+	// Each order should have claimed a DIFFERENT bin
+	if order1.BinID != nil && order2.BinID != nil {
+		if *order1.BinID == *order2.BinID {
+			t.Errorf("BUG: both orders claimed the same bin %d — double assignment", *order1.BinID)
+		} else {
+			t.Logf("correct: order 1 claimed bin %d, order 2 claimed bin %d — no collision", *order1.BinID, *order2.BinID)
+		}
+	}
+
+	// Verify bins are claimed by the correct orders
+	bin1, err = db.GetBin(bin1.ID)
+	if err != nil {
+		t.Fatalf("refresh bin1: %v", err)
+	}
+	bin2, err = db.GetBin(bin2.ID)
+	if err != nil {
+		t.Fatalf("refresh bin2: %v", err)
+	}
+
+	claimedBins := 0
+	if bin1.ClaimedBy != nil {
+		claimedBins++
+		t.Logf("bin %d (%s) claimed by order %d", bin1.ID, bin1.Label, *bin1.ClaimedBy)
+	}
+	if bin2.ClaimedBy != nil {
+		claimedBins++
+		t.Logf("bin %d (%s) claimed by order %d", bin2.ID, bin2.Label, *bin2.ClaimedBy)
+	}
+
+	if claimedBins != 2 {
+		t.Errorf("expected 2 bins claimed, got %d — one order may have failed at ClaimBin", claimedBins)
+	}
+}

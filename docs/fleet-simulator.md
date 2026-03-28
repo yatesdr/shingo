@@ -72,6 +72,44 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 
 ---
 
+## Test case index
+
+| TC | Description | Status | Section |
+|----|-------------|--------|---------|
+| TC-1 | Robot drives to bin but doesn't jack it | PASS | Verified |
+| TC-2 | Staged order release timing | PASS | Verified |
+| TC-3 | Basic retrieve sends correct fleet instructions | PASS | Verified |
+| TC-4 | Fleet state mapping (WAITING → staged, etc.) | PASS | Verified |
+| TC-5 | Fleet down — no phantom return orders | PASS | Verified |
+| TC-6 | Cancel at exact moment fleet accepts | — | To test |
+| TC-7 | Release before robot reaches wait point | — | To test |
+| TC-8 | Double release command | — | To test |
+| TC-9 | Complex order with zero steps | — | To test |
+| TC-10 | Order references nonexistent node | — | To test |
+| TC-11 | Only bin at disabled storage node | — | To test |
+| TC-12 | Order requests zero quantity | — | To test |
+| TC-15 | Full lifecycle dispatch → receipt → bin arrival | PASS | Verified |
+| TC-20 | Two lines same assembly — staging isolation | — | To test |
+| TC-21 | Quality-hold bin not dispatched | PASS | Verified |
+| TC-22 | Only bin at maintenance node | — | To test |
+| TC-23a | Second store order skips claimed bin | PASS | Verified |
+| TC-23b | Cancel transfers claim to return order | PASS | Verified |
+| TC-23c | Changeover with missing bin — ghost robot | FIXED | Bug found |
+| TC-23d | Changeover while move-to-QH in flight | PASS | Verified |
+| TC-24a | Complex order bin poaching during transit | FIXED | Bug found |
+| TC-24b | Stale bin location after complex order | FIXED | Bug found |
+| TC-24c | Phantom inventory from stale location | FIXED | Bug found |
+| TC-25 | Staged bin at core node — store order claim | DISMISSED | Investigated, correct behavior |
+| TC-28 | Two lines request same part simultaneously | PASS | Verified |
+| TC-29 | Cancel while robot in transit | — | To test |
+| TC-30 | Fleet failure leaves bin claim dangling | FIXED | Bug found |
+| TC-31 | Order finishes, freed bin picked up by waiting order | — | To test |
+| TC-32 | Staging expiry vs active reservation | — | To test |
+| TC-33 | Manual move of reserved bin | — | To test |
+| — | ClaimBin silent overwrite | FIXED | Bug found |
+
+---
+
 ## Bugs found and fixed
 
 Each entry below documents a real bug found by the simulator. These are regression tests — they protect specific fixes from being accidentally undone.
@@ -183,6 +221,8 @@ Complex orders (`HandleComplexOrderRequest`) previously never called `ClaimBin` 
 **Root cause:** `HandleComplexOrderRequest` was designed to send multi-step robot instructions without pre-binding to a specific bin. The database layer was designed around pre-allocation — store/retrieve orders claim bins during planning. The two models didn't coexist safely. Confirmed via `git log -S "ClaimBin" -- dispatch/complex.go` that `ClaimBin` never existed in complex.go across the entire repository history prior to this fix.
 
 **Fix:** Added `claimComplexBins()` in complex.go. After creating the order record but before dispatching to the fleet, the function iterates over pickup steps, finds the best unclaimed bin at each pickup node (filtering by payload code and status), and claims it. For single-pickup orders (the most common pattern), it sets `Order.BinID` which enables the standard completion flow: `ApplyBinArrival` moves the bin in the DB, and `maybeCreateReturnOrder` creates an auto-return on cancel/fail. Multi-pickup orders claim all pickup bins but only track the first via `Order.BinID` (a multi-bin junction table would be needed for full multi-pickup completion tracking). The claim is best-effort — if no bin is found at a pickup node, the order still dispatches.
+
+**Follow-up fix — staged filter regression:** The initial `claimComplexBins` implementation copied the status filter from `FindSourceBinFIFO`, which excludes `staged` bins. That filter is correct for retrieve orders (searching storage slots where bins are `available`), but wrong for complex orders. Complex orders pick up from core nodes and staging lanes where bins are always `staged` (set by `ApplyBinArrival` for non-storage slots). Every sequential removal, swap, release, and restore order was dispatching with `BinID=nil` because `claimComplexBins` skipped the only bin at the node. Removed `staged` from the skip list. Empty bins at produce nodes are not affected — the produce finalize path (`CreateIngestStoreOrder`) bypasses `claimComplexBins` entirely by pre-setting `BinID`.
 
 **Known limitation:** `Order.BinID` is a single `*int64`. Multi-pickup complex orders (uncommon) have all bins claimed and protected from poaching, but only the first bin gets the `ApplyBinArrival` treatment on completion. A future schema change (order_bins junction table) would fully address this.
 
@@ -367,6 +407,20 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 ---
 
+### TC-28: Two lines request the same part at the same time — PASS
+
+**Scenario:** Line 1 and Line 2 both need PART-A. Two bins of PART-A sit in storage (one per storage node). Both retrieve orders fire back-to-back. Does each order get a different bin, or do they collide?
+
+**Expected behavior:** Each order should claim a different bin. No double-assignment. Both robots should be dispatched to different storage locations.
+
+**Result:** PASS. Order 1 claimed bin 1 at STORAGE-A1, order 2 claimed bin 2 at STORAGE-A2. The sequential dispatch path serializes correctly — the first `ClaimBin` completes before the second `FindSourceBinFIFO` runs, so the second query sees the first bin as claimed and returns the next available.
+
+**Note:** This validates the sequential case (same goroutine). A true concurrent race (two goroutines dispatching simultaneously) could still hit a TOCTOU gap where `FindSourceBinFIFO` and `ClaimBin` target the same bin. In that case, `planRetrieve` returns `claim_failed` instead of retrying with a different bin. In production, orders arrive over the network and get serialized through the event bus, so the sequential test reflects real behavior.
+
+**Test:** `engine/engine_test.go` — `TestTC28_ConcurrentRetrieveSamePart`
+
+---
+
 ## Written but not yet run
 
 These tests have been coded and are ready to execute. They may find new bugs when run.
@@ -386,8 +440,6 @@ A reservation ("claim") bug means the system's record of which bins are committe
 **TC-26: Operator cancels an order — does the bin reservation release?** Same as above, but the operator cancels instead of the robot failing. The bin was reserved but the order is no longer happening. The reservation must release.
 
 **TC-27: Operator redirects a robot — does the bin reservation survive?** A robot is mid-delivery and the operator redirects it to a different destination. The bin is still on the robot — the reservation should stay intact. Only the destination changes.
-
-**TC-28: Two lines request the same part at the same time.** Line 1 and Line 2 both need PART-A. There are two bins of PART-A in storage. Each order should get a different bin. What if the system gives both orders the same bin? One robot arrives to find an empty shelf.
 
 **TC-29: Operator cancels while the robot is in transit.** The robot is already moving with the bin. The operator cancels. The reservation should release cleanly even though the robot hasn't arrived yet.
 

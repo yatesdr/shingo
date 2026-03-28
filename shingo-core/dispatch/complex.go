@@ -347,9 +347,15 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 			if payloadCode != "" && bin.PayloadCode != payloadCode {
 				continue
 			}
-			// Skip bins that are not available for dispatch
+			// Skip bins that are not available for dispatch.
+			// NOTE: "staged" is intentionally NOT excluded here. Complex orders
+			// pick up from core nodes and staging lanes where bins are always
+			// staged (set by ApplyBinArrival for non-storage slots). Excluding
+			// staged would prevent claiming any bin at a production node.
+			// Contrast with FindSourceBinFIFO which correctly excludes staged
+			// because it only searches storage slots where available is expected.
 			switch bin.Status {
-			case "staged", "maintenance", "flagged", "retired", "quality_hold":
+			case "maintenance", "flagged", "retired", "quality_hold":
 				continue
 			}
 			if err := d.db.ClaimBin(bin.ID, order.ID); err != nil {
