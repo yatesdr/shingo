@@ -213,15 +213,15 @@ func (db *DB) ListAvailableBins() ([]*Bin, error) {
 
 
 // ClaimBin marks a bin as claimed by an order to prevent double-dispatch.
-// Fails if the bin is locked.
+// Fails if the bin is locked or already claimed by another order.
 func (db *DB) ClaimBin(binID, orderID int64) error {
-	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=NOW() WHERE id=$2 AND locked=false`, orderID, binID)
+	res, err := db.Exec(`UPDATE bins SET claimed_by=$1, updated_at=NOW() WHERE id=$2 AND locked=false AND claimed_by IS NULL`, orderID, binID)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("bin %d is locked or does not exist", binID)
+		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}
 	return nil
 }
