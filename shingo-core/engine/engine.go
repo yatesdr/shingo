@@ -165,6 +165,9 @@ func (e *Engine) Start() {
 
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() { close(e.stopChan) })
+	if e.fulfillment != nil {
+		e.fulfillment.Stop()
+	}
 	if e.tracker != nil {
 		e.tracker.Stop()
 	}
@@ -203,13 +206,15 @@ func (e *Engine) checkConnectionStatus() {
 	}
 
 	// Messaging
-	if e.msgClient.IsConnected() {
-		if e.msgConnected.CompareAndSwap(false, true) {
-			e.Events.Emit(Event{Type: EventMessagingConnected, Payload: ConnectionEvent{Detail: "messaging connected"}})
-		}
-	} else {
-		if e.msgConnected.CompareAndSwap(true, false) {
-			e.Events.Emit(Event{Type: EventMessagingDisconnected, Payload: ConnectionEvent{Detail: "messaging disconnected"}})
+	if e.msgClient != nil {
+		if e.msgClient.IsConnected() {
+			if e.msgConnected.CompareAndSwap(false, true) {
+				e.Events.Emit(Event{Type: EventMessagingConnected, Payload: ConnectionEvent{Detail: "messaging connected"}})
+			}
+		} else {
+			if e.msgConnected.CompareAndSwap(true, false) {
+				e.Events.Emit(Event{Type: EventMessagingDisconnected, Payload: ConnectionEvent{Detail: "messaging disconnected"}})
+			}
 		}
 	}
 
