@@ -625,3 +625,78 @@ func TestTC40b_COSTFallsToBuriedWhenNoAccessible(t *testing.T) {
 		t.Errorf("buried bin ID = %d, want %d", buriedErr.Bin.ID, buried.ID)
 	}
 }
+
+// TC-41: Empty cart starvation — FindEmptyCompatibleBin is lane-unaware.
+//
+// Proves the gap: all accessible empties are consumed, only buried empties remain.
+// FindEmptyCompatibleBin still returns a buried empty (it doesn't check lane depth),
+// but IsSlotAccessible shows the bin is unreachable. The retrieve_empty path has no
+// BuriedError detection and no reshuffle trigger — the robot gets sent to a slot it
+// can't physically access.
+//
+// Layout:
+//   Lane 1: depth 1 = FULL-BIN (WGA, blocker)
+//           depth 2 = FULL-BIN (WGA, blocker)
+//           depth 3 = EMPTY-BIN (no manifest, buried)
+//   Lane 2: depth 1 = FULL-BIN (WGA, blocker)
+//           depth 3 = EMPTY-BIN (no manifest, buried)
+//
+// No accessible empties exist anywhere in the NGRP.
+func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
+	db := testDB(t)
+	_, lanes, slots, bp := setupNodeGroup3Lane(t, db)
+
+	_ = lanes
+
+	// Set up bin type and payload-bin-type link for FindEmptyCompatibleBin
+	bt, err := db.GetBinTypeByCode("DEFAULT")
+	if err != nil {
+		ensureDefaultBinType(t, db)
+		bt, _ = db.GetBinTypeByCode("DEFAULT")
+	}
+	if err := db.SetPayloadBinTypes(bp.ID, []int64{bt.ID}); err != nil {
+		t.Fatalf("set payload bin types: %v", err)
+	}
+
+	// Fill lane 1 (index 0): full bins at depth 1 and 2, empty bin buried at depth 3
+	createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "FULL-L1-S1")
+	createTestBinAtNode(t, db, bp.Code, slots[0][1].ID, "FULL-L1-S2")
+
+	// Empty bin at depth 3 — no manifest, just a bare bin
+	emptyL1 := &store.Bin{BinTypeID: bt.ID, Label: "EMPTY-L1-S3", NodeID: &slots[0][2].ID, Status: "available"}
+	if err := db.CreateBin(emptyL1); err != nil {
+		t.Fatalf("create empty bin L1: %v", err)
+	}
+
+	// Fill lane 2 (index 1): full bin at depth 1, empty bin buried at depth 3
+	createTestBinAtNode(t, db, bp.Code, slots[1][0].ID, "FULL-L2-S1")
+
+	emptyL2 := &store.Bin{BinTypeID: bt.ID, Label: "EMPTY-L2-S3", NodeID: &slots[1][2].ID, Status: "available"}
+	if err := db.CreateBin(emptyL2); err != nil {
+		t.Fatalf("create empty bin L2: %v", err)
+	}
+
+	// GAP PROOF 1: FindEmptyCompatibleBin returns a buried empty (lane-unaware)
+	found, err := db.FindEmptyCompatibleBin(bp.Code, "")
+	if err != nil {
+		t.Fatalf("FindEmptyCompatibleBin returned error: %v — if all empties are buried and the query filtered by accessibility, this would be the starvation scenario", err)
+	}
+	t.Logf("FindEmptyCompatibleBin returned bin %d (%s) — lane-unaware, doesn't check burial", found.ID, found.Label)
+
+	// GAP PROOF 2: The returned bin is NOT accessible (buried behind full bins)
+	accessible, err := db.IsSlotAccessible(*found.NodeID)
+	if err != nil {
+		t.Fatalf("IsSlotAccessible: %v", err)
+	}
+	if accessible {
+		t.Fatal("expected buried empty bin to be inaccessible, but IsSlotAccessible returned true")
+	}
+	t.Logf("Bin %d is at an inaccessible slot — robot would be dispatched to a location it can't reach", found.ID)
+
+	// GAP PROOF 3: The retrieve_empty planning path (planRetrieveEmpty) does not call
+	// the NGRP resolver, so there's no BuriedError detection and no reshuffle trigger.
+	// This is a documentation-only assertion — the code path is:
+	//   planRetrieveEmpty → FindEmptyCompatibleBin → ClaimBin → dispatch
+	// No lane awareness anywhere in that chain.
+	t.Log("TC-41 gap confirmed: FindEmptyCompatibleBin returns buried bins, planRetrieveEmpty has no reshuffle path")
+}

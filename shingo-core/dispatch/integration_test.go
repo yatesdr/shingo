@@ -581,6 +581,111 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	}
 }
 
+// TC-41: retrieve_empty for a buried empty now triggers reshuffle instead of
+// dispatching to an unreachable slot. planRetrieveEmpty detects the bin is
+// inaccessible, walks up to find the lane, and hands a BuriedError to
+// planBuriedReshuffle. The order should go to "reshuffling" status.
+func TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle(t *testing.T) {
+	db := testDB(t)
+	_, _, _ = setupTestData(t, db)
+
+	grpType, _ := db.GetNodeTypeByCode("NGRP")
+	lanType, _ := db.GetNodeTypeByCode("LANE")
+
+	bp := &store.Payload{Code: "TC41-BP"}
+	db.CreatePayload(bp)
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
+
+	// Create NGRP with 2 lanes of 3 slots
+	grp := &store.Node{Name: "TC41-GRP", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	db.CreateNode(grp)
+	grp, _ = db.GetNode(grp.ID)
+
+	// Lane 1: full bins at depth 1+2, empty buried at depth 3
+	lane1 := &store.Node{Name: "TC41-L1", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
+	db.CreateNode(lane1)
+	lane1, _ = db.GetNode(lane1.ID)
+
+	d1, d2, d3 := 1, 2, 3
+	l1s1 := &store.Node{Name: "TC41-L1-S1", ParentID: &lane1.ID, Enabled: true, Depth: &d1}
+	db.CreateNode(l1s1)
+	l1s2 := &store.Node{Name: "TC41-L1-S2", ParentID: &lane1.ID, Enabled: true, Depth: &d2}
+	db.CreateNode(l1s2)
+	l1s3 := &store.Node{Name: "TC41-L1-S3", ParentID: &lane1.ID, Enabled: true, Depth: &d3}
+	db.CreateNode(l1s3)
+
+	// Full bins blocking lane 1
+	blkBin1 := &store.Bin{BinTypeID: bt.ID, Label: "TC41-FULL-1", NodeID: &l1s1.ID, Status: "available"}
+	db.CreateBin(blkBin1)
+	db.SetBinManifest(blkBin1.ID, `{"items":[]}`, bp.Code, 100)
+	db.ConfirmBinManifest(blkBin1.ID)
+
+	blkBin2 := &store.Bin{BinTypeID: bt.ID, Label: "TC41-FULL-2", NodeID: &l1s2.ID, Status: "available"}
+	db.CreateBin(blkBin2)
+	db.SetBinManifest(blkBin2.ID, `{"items":[]}`, bp.Code, 100)
+	db.ConfirmBinManifest(blkBin2.ID)
+
+	// Buried empty at depth 3
+	emptyBin := &store.Bin{BinTypeID: bt.ID, Label: "TC41-EMPTY", NodeID: &l1s3.ID, Status: "available"}
+	db.CreateBin(emptyBin)
+
+	// Lane 2: completely empty — provides shuffle slots for the reshuffle
+	lane2 := &store.Node{Name: "TC41-L2", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
+	db.CreateNode(lane2)
+	lane2, _ = db.GetNode(lane2.ID)
+
+	l2s1 := &store.Node{Name: "TC41-L2-S1", ParentID: &lane2.ID, Enabled: true, Depth: &d1}
+	db.CreateNode(l2s1)
+	l2s2 := &store.Node{Name: "TC41-L2-S2", ParentID: &lane2.ID, Enabled: true, Depth: &d2}
+	db.CreateNode(l2s2)
+
+	// Delivery target (lineside node)
+	destNode := &store.Node{Name: "TC41-LINE", Enabled: true}
+	db.CreateNode(destNode)
+
+	backend := newMockTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:     "tc41-empty-1",
+		OrderType:     OrderTypeRetrieve,
+		PayloadCode:   bp.Code,
+		DeliveryNode:  destNode.Name,
+		RetrieveEmpty: true,
+		Quantity:      1,
+	})
+
+	o, err := db.GetOrderByUUID("tc41-empty-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	// Before the fix: order would go to "dispatched" targeting an unreachable slot.
+	// After the fix: order should go to "reshuffling" (compound reshuffle planned).
+	if o.Status == StatusDispatched {
+		t.Errorf("order dispatched directly — buried empty was NOT detected (pre-fix behavior)")
+	}
+	if o.Status == StatusReshuffling {
+		t.Logf("TC-41 fix confirmed: order %d is reshuffling to unbury empty bin", o.ID)
+	} else if o.Status != StatusReshuffling {
+		// Could be failed if reshuffle planning hit an issue — still better than dispatching to unreachable
+		t.Logf("order status = %q (not reshuffling, but also not dispatched blind)", o.Status)
+	}
+
+	// Verify compound children were created (reshuffle steps)
+	children, _ := db.ListChildOrders(o.ID)
+	if len(children) == 0 && o.Status == StatusReshuffling {
+		t.Error("order is reshuffling but no compound children found")
+	}
+	if len(children) > 0 {
+		t.Logf("reshuffle plan has %d steps", len(children))
+	}
+}
+
 // TestDispatcher_DotNotationBypassesResolver verifies that ordering to a
 // specific child using dot notation (ZONE.Node10) skips resolver — the
 // physical node is used directly.

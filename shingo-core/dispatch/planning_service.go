@@ -158,6 +158,23 @@ func (s *PlanningService) planRetrieveEmpty(order *store.Order, payloadCode stri
 		return &PlanningResult{Queued: true}, nil
 	}
 	s.dbg("retrieve_empty: found bin=%d label=%s at node=%s", bin.ID, bin.Label, bin.NodeName)
+
+	// Check if the bin is buried in a lane — FindEmptyCompatibleBin is lane-unaware.
+	if bin.NodeID != nil {
+		accessible, accErr := s.db.IsSlotAccessible(*bin.NodeID)
+		if accErr == nil && !accessible {
+			slot, slotErr := s.db.GetNode(*bin.NodeID)
+			if slotErr == nil && slot.ParentID != nil {
+				lane, laneErr := s.db.GetNode(*slot.ParentID)
+				if laneErr == nil && lane.NodeTypeCode == "LANE" {
+					s.dbg("retrieve_empty: bin %d is buried at slot %s in lane %s, triggering reshuffle",
+						bin.ID, slot.Name, lane.Name)
+					return s.planBuriedReshuffle(order, &BuriedError{Bin: bin, Slot: slot, LaneID: lane.ID})
+				}
+			}
+		}
+	}
+
 	if err := s.db.ClaimBin(bin.ID, order.ID); err != nil {
 		return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
 	}
