@@ -190,17 +190,15 @@ Complex orders (`HandleComplexOrderRequest`) previously never called `ClaimBin` 
 
 ---
 
-### TC-25: Staged bin at core node can be poached by store order
+### TC-25: Staged bin at core node — store order claim (DISMISSED)
 
-After a retrieve delivers a bin to a lineside core node, `ApplyBinArrival` sets `status='staged'` and `claimed_by=NULL`. The bin is physically in use by the operator, but the database marks it as unclaimed. A store order targeting that core node as its source can claim the staged bin because `planStore` only checks `claimed_by`, not `status`. The `staged` status protects against `FindSourceBinFIFO` (retrieve orders) but not against `planStore` or `ClaimBin`.
+Investigated whether `planStore`/`planMove` could "poach" a staged bin at a lineside core node. Originally flagged as a gap because these planners only check `claimed_by`, not `status`.
 
-**Root cause:** `planStore` iterates `ListBinsByNode` and only filters by `ClaimedBy == nil`. `ClaimBin` only checks `locked=false AND claimed_by IS NULL`. Neither checks `bin.Status`. A staged bin at a lineside node is unclaimed and unlocked, so it passes both checks.
+**Dismissed:** Physical constraint — a core node holds exactly one bin. After a retrieve delivers a bin (staged, unclaimed), the only bin at that node IS the bin the operator wants to act on. Store and move orders targeting a core node as source SHOULD claim the staged bin — that's how the operator releases it (store-back to storage, quality hold move, partial release). Filtering out staged bins would break these legitimate operator workflows.
 
-**Production risk:** During a changeover, a store order could claim a bin that the operator is actively using at the line. The robot would be dispatched to pull the bin off the production station.
+The `staged` status correctly protects against `FindSourceBinFIFO` (retrieve orders don't pull from lineside), while remaining visible to `planStore`/`planMove` (operator-initiated releases). This is working as intended.
 
-**Status:** Not yet fixed. Test is skipped (`t.Skip`) until a fix is implemented.
-
-**Test:** `engine/engine_test.go` — `TestTC25_StagedBinPoachingAtCoreNode`
+**Test:** `engine/engine_test.go` — `TestTC25_StoreOrderClaimsStagedBinAtCoreNode` (positive assertion that store order correctly claims staged bin)
 
 ---
 
@@ -383,7 +381,7 @@ These scenarios haven't been tested yet. Each one describes something that could
 
 A reservation ("claim") bug means the system's record of which bins are committed to which orders doesn't match reality. These are the most dangerous because they can cause robots to arrive at empty locations or bins to become permanently stuck.
 
-**TC-25: Robot breaks down mid-delivery — does the bin reservation release?** A robot is carrying a bin and breaks down. The fleet marks the order as failed. The bin claim should be automatically released so the system knows that bin is available for a new attempt. If it doesn't release, the system thinks a robot is still coming for it and no one else can use it.
+**Robot breaks down mid-delivery — does the bin reservation release?** A robot is carrying a bin and breaks down. The fleet marks the order as failed. The bin claim should be automatically released so the system knows that bin is available for a new attempt. If it doesn't release, the system thinks a robot is still coming for it and no one else can use it.
 
 **TC-26: Operator cancels an order — does the bin reservation release?** Same as above, but the operator cancels instead of the robot failing. The bin was reserved but the order is no longer happening. The reservation must release.
 

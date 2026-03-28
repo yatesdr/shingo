@@ -1131,17 +1131,21 @@ func TestTC24c_PhantomInventoryRetrieve(t *testing.T) {
 	}
 }
 
-// --- TC-25: Staged bin at core node can be poached by store order ---
-// Regression: after a retrieve delivers a bin to a lineside core node,
-// ApplyBinArrival sets status='staged' and claimed_by=NULL. A subsequent
-// store order targeting that core node as its source can claim the staged
-// bin because planStore only checks claimed_by, not status.
+// --- TC-25: Store order correctly claims staged bin at core node ---
+// Investigated and DISMISSED as a false positive. Original concern was that
+// planStore/planMove could "poach" a staged bin at a lineside core node.
 //
-// Setup: retrieve delivers bin to line (confirmed). Bin is now staged and
-// unclaimed at line. A store order targets line as source.
-// Expected: store order should NOT claim a staged bin that's in use.
-func TestTC25_StagedBinPoachingAtCoreNode(t *testing.T) {
-	t.Skip("TC-25: known gap — planStore does not filter by status, staged bins at core nodes can be poached. Remove skip when fix is implemented.")
+// Analysis: physical constraint — a core node holds exactly ONE bin. After a
+// retrieve delivers a bin (staged, unclaimed), the only bin at that node IS
+// the bin the operator wants to act on. Store and move orders targeting a
+// core node as source SHOULD claim the staged bin — that's how the operator
+// releases it (store-back, quality hold move, partial release, etc.).
+// Filtering out staged bins would break these legitimate operator workflows.
+//
+// Setup: retrieve delivers bin to line. Bin is staged and unclaimed.
+// A store order targets line as source (operator releasing the bin).
+// Expected: store order SHOULD claim the staged bin — correct behavior.
+func TestTC25_StoreOrderClaimsStagedBinAtCoreNode(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STAGED-25")
@@ -1178,9 +1182,6 @@ func TestTC25_StagedBinPoachingAtCoreNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get bin after delivery: %v", err)
 	}
-	t.Logf("bin %d after delivery: node_id=%v, status=%s, claimed_by=%v",
-		bin.ID, bin.NodeID, bin.Status, bin.ClaimedBy)
-
 	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
 		t.Fatalf("bin should be at line node after delivery")
 	}
@@ -1191,26 +1192,27 @@ func TestTC25_StagedBinPoachingAtCoreNode(t *testing.T) {
 		t.Fatalf("bin should be unclaimed after ApplyBinArrival, got claimed_by=%d", *bin.ClaimedBy)
 	}
 
-	// Store order targets line node as source — operator wants to send bin back
+	// Store order targets line node as source — operator releasing the bin
+	// (e.g. store-back, quality hold, partial release). This SHOULD succeed.
 	d.HandleOrderStorageWaybill(env, &protocol.OrderStorageWaybill{
-		OrderUUID:  "store-poach-25",
+		OrderUUID:  "store-release-25",
 		OrderType:  dispatch.OrderTypeStore,
 		SourceNode: lineNode.Name,
 	})
 
-	storeOrder, err := db.GetOrderByUUID("store-poach-25")
+	storeOrder, err := db.GetOrderByUUID("store-release-25")
 	if err != nil {
 		t.Fatalf("get store order: %v", err)
 	}
 
-	// KEY CHECK: did the store order claim the staged bin?
-	if storeOrder.BinID != nil && *storeOrder.BinID == bin.ID {
-		t.Errorf("BUG CONFIRMED: store order %d claimed staged bin %d (status=%s) at core node %s. "+
-			"planStore does not check bin status — a bin actively in use by the operator can be poached.",
-			storeOrder.ID, bin.ID, bin.Status, lineNode.Name)
+	// KEY CHECK: store order SHOULD claim the staged bin — it's the only bin
+	// at the node and the operator is intentionally releasing it.
+	if storeOrder.BinID == nil || *storeOrder.BinID != bin.ID {
+		t.Errorf("store order should have claimed staged bin %d at %s, got bin_id=%v (status=%s)",
+			bin.ID, lineNode.Name, storeOrder.BinID, storeOrder.Status)
 	} else {
-		t.Logf("store order correctly did not claim staged bin (status=%s, store_status=%s)",
-			bin.Status, storeOrder.Status)
+		t.Logf("store order %d correctly claimed staged bin %d at %s for operator release",
+			storeOrder.ID, bin.ID, lineNode.Name)
 	}
 }
 
