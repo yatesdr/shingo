@@ -26,7 +26,8 @@ func (e *BuriedError) Unwrap() error { return ErrBuried }
 
 // Retrieval algorithm codes.
 const (
-	RetrieveFIFO = "FIFO" // oldest loaded/created timestamp, buried-bin reshuffle
+	RetrieveFIFO = "FIFO" // strict FIFO: globally oldest bin, proactive reshuffle when buried is older
+	RetrieveCOST = "COST" // cost-optimized: oldest accessible bin, reshuffle only when none accessible
 	RetrieveFAVL = "FAVL" // first available unclaimed bin, no reshuffle
 )
 
@@ -64,6 +65,8 @@ func (r *GroupResolver) ResolveRetrieve(group *store.Node, payloadCode string) (
 	switch algo {
 	case RetrieveFAVL:
 		return r.resolveRetrieveFAVL(group, payloadCode)
+	case RetrieveCOST:
+		return r.resolveRetrieveCOST(group, payloadCode)
 	default:
 		return r.resolveRetrieveFIFO(group, payloadCode)
 	}
@@ -114,6 +117,114 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, payloadCode strin
 			bins, err := r.DB.ListBinsByNode(child.ID)
 			if err != nil {
 				r.dbg("FIFO: ListBinsByNode node=%s: %v", child.Name, err)
+				continue
+			}
+			for _, b := range bins {
+				if !isBinAvailableForRetrieve(b, payloadCode) {
+					continue
+				}
+				bTime := b.CreatedAt
+				if b.LoadedAt != nil {
+					bTime = *b.LoadedAt
+				}
+				if bestBin == nil || bTime.Before(bestTime) {
+					bestBin = b
+					bestTime = bTime
+					bestNode = child
+				}
+			}
+		}
+	}
+
+	// Phase 2: Scan for the oldest buried bin across all lanes
+	var oldestBuried *store.Bin
+	var oldestBuriedSlot *store.Node
+	var oldestBuriedLaneID int64
+	var oldestBuriedTime time.Time
+
+	for _, child := range children {
+		if !child.Enabled || child.NodeTypeCode != "LANE" {
+			continue
+		}
+		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
+			continue
+		}
+		buried, slot, err := r.DB.FindOldestBuriedBin(child.ID, payloadCode)
+		if err != nil || buried == nil {
+			continue
+		}
+		bTime := buried.CreatedAt
+		if buried.LoadedAt != nil {
+			bTime = *buried.LoadedAt
+		}
+		if oldestBuried == nil || bTime.Before(oldestBuriedTime) {
+			oldestBuried = buried
+			oldestBuriedSlot = slot
+			oldestBuriedLaneID = child.ID
+			oldestBuriedTime = bTime
+		}
+	}
+
+	// Phase 3: If a buried bin is older than the best accessible, trigger reshuffle
+	if oldestBuried != nil && (bestBin == nil || oldestBuriedTime.Before(bestTime)) {
+		r.dbg("FIFO: buried bin %d (%s) is older than best accessible bin, triggering reshuffle in lane %d",
+			oldestBuried.ID, oldestBuriedTime.Format(time.RFC3339), oldestBuriedLaneID)
+		return nil, &BuriedError{Bin: oldestBuried, Slot: oldestBuriedSlot, LaneID: oldestBuriedLaneID}
+	}
+
+	if bestBin != nil {
+		return &ResolveResult{Node: bestNode, Bin: bestBin}, nil
+	}
+
+	return nil, fmt.Errorf("no bin of requested payload in node group %s", group.Name)
+}
+
+// resolveRetrieveCOST picks the oldest accessible bin by timestamp, with buried-bin reshuffle
+// only when no accessible bins exist. This is the cost-optimized retrieval strategy.
+func (r *GroupResolver) resolveRetrieveCOST(group *store.Node, payloadCode string) (*ResolveResult, error) {
+	children, err := r.DB.ListChildNodes(group.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
+	}
+
+	var bestBin *store.Bin
+	var bestNode *store.Node
+	var bestTime time.Time
+
+	for _, child := range children {
+		if !child.Enabled {
+			continue
+		}
+
+		if child.NodeTypeCode == "LANE" {
+			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
+				continue
+			}
+
+			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
+			if err != nil {
+				r.dbg("COST: FindSourceBinInLane lane=%s: %v", child.Name, err)
+				continue
+			}
+
+			bTime := b.CreatedAt
+			if b.LoadedAt != nil {
+				bTime = *b.LoadedAt
+			}
+
+			if bestBin == nil || bTime.Before(bestTime) {
+				bestBin = b
+				bestTime = bTime
+				slot, err := r.DB.GetNode(*b.NodeID)
+				if err != nil {
+					r.dbg("COST: GetNode for bin %d slot: %v", b.ID, err)
+				}
+				bestNode = slot
+			}
+		} else if !child.IsSynthetic {
+			bins, err := r.DB.ListBinsByNode(child.ID)
+			if err != nil {
+				r.dbg("COST: ListBinsByNode node=%s: %v", child.Name, err)
 				continue
 			}
 			for _, b := range bins {

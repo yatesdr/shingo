@@ -35,7 +35,7 @@ Run all simulator tests:
 
 ```
 cd shingo-core
-go test -v -run "TestSimulator|TestClaimBin|TestTC2[0-9]|TestTC30" ./engine/ ./dispatch/ -timeout 120s
+go test -v -run "TestSimulator|TestClaimBin|TestTC[2-4][0-9]" ./engine/ ./dispatch/ -timeout 120s
 ```
 
 Run a specific test:
@@ -106,6 +106,16 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-31 | Order finishes, freed bin picked up by waiting order | — | To test |
 | TC-32 | Staging expiry vs active reservation | — | To test |
 | TC-33 | Manual move of reserved bin | — | To test |
+| TC-34 | Complex order dispatches to node with no bin | — | To test |
+| TC-35 | planMove dispatches robot with no bin | — | To test |
+| TC-36 | Retrieve claim failure leaves order stranded | — | To test |
+| TC-37 | Staging expiry strips status from claimed bin | — | To test |
+| TC-38 | Multi-pickup complex order leaves secondary bins stranded | — | To test |
+| TC-39 | Cross-line poaching of producer empty bins | — | To test |
+| TC-40a | FIFO mode — buried older than accessible triggers reshuffle (Cube #7) | — | To test |
+| TC-40b | COST mode — oldest accessible returned, buried ignored (Cube #7) | — | To test |
+| TC-41 | Empty cart starvation — no accessible empties (Cube #6) | — | To test |
+| TC-42 | Reshuffle restore preserves random lane layout (Cube #2) | — | To test |
 | — | ClaimBin silent overwrite | FIXED | Bug found |
 
 ---
@@ -445,7 +455,29 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 **TC-32: Bin sits at staging too long — what happens to the reservation?** A bin has been at a staging area past its expiry time. The system releases the staging status. But if that bin was reserved by an active order, does the reservation also get cleaned up? Or is it left dangling?
 
+**TC-37: Staging expiry strips status from actively-claimed bin.** A bin is delivered to a lineside node (status `staged`, `claimed_by` set on the delivery receipt order). The node has a staging TTL of 5 minutes. 5 minutes pass. `ReleaseExpiredStagedBins` flips status to `available` without checking `claimed_by`. The bin is now `available` but still claimed — a contradictory state. Staging expiry should either skip bins with active claims, or the claim check should prevent downstream confusion. The bin should remain `staged` while actively claimed. Production risk: UI display confusion — `NodeTileState` would show `Staged: false, Claimed: true`. Not a double-dispatch risk (claim still protects), but could mislead operators or monitoring dashboards.
+
 **TC-33: Operator manually moves a reserved bin.** An operator requests a manual move on a bin that is reserved by an active order. Should the system block the move? Release the reservation? Allow both and hope for the best?
+
+**TC-34: Complex order dispatches robot to node with no bin.** A complex order (sequential removal) targets a lineside node where the bin was already moved by a prior manual move order. `claimComplexBins` finds no unclaimed bin, but the order still dispatches to the fleet. Robot arrives at an empty node. The order should fail at the planning stage with a "no bin available" error, same as `planStore` does. No robot should be dispatched. Same class of bug as TC-23c, but in the complex order path rather than the store path. Production risk: ghost robot during changeover or manual operations.
+
+**TC-35: planMove dispatches robot with no bin.** A move order targets a lineside node with no bins, and no `payloadCode` is specified. `planMove` skips the bin-finding loop entirely (empty node, no payload filter) and dispatches with `BinID=nil`. The order should fail with a "no available bin" error, matching `planStore`'s guard. Same ghost robot class as TC-23c and TC-34. Lower likelihood since move orders typically specify a payload, but the code path exists.
+
+**TC-36: Retrieve claim failure leaves order stranded in sourcing.** Two orders target the same bin. Order A claims it. Order B's `ClaimBin` fails with `claim_failed`. The order stays in `sourcing` status indefinitely — no event triggers the fulfillment scanner to retry. The order should be queued (status `queued`) so the fulfillment scanner retries when a bin becomes available. Alternatively, `claim_failed` should trigger a re-attempt with the next available bin. Production risk: order stuck in sourcing forever, invisible to operators until they notice a bin never arrives, requires manual database intervention to clear.
+
+**TC-38: Multi-pickup complex order leaves secondary bins stranded.** A complex order has two pickup steps at different nodes. Both bins are claimed via `claimComplexBins`. Order completes. `ApplyBinArrival` moves the first bin (tracked by `Order.BinID`). The second bin stays claimed at its original node — never moved, never unclaimed. All claimed bins should be moved and unclaimed on order completion. A junction table (`order_bins`) would be needed to track multiple bin associations. Production risk: uncommon today (multi-pickup orders are rare), but the stranded bin becomes invisible to the system. No other order can claim it. It's permanently reserved by a completed order until manual database intervention.
+
+### NGRP lane behavior (from Shingo Cube observations)
+
+Scenarios first observed in the Shingo Cube simulation.
+
+**TC-40a: FIFO mode — buried bin older than accessible triggers reshuffle.** A 3-lane NGRP has bins with staggered `loaded_at` timestamps. The oldest bin is buried at depth 2 in Lane 3 behind a blocker. Newer accessible bins sit at the front of Lanes 1 and 2. A retrieve order fires with `retrieve_algorithm = FIFO`. Expected behavior: `resolveRetrieveFIFO` compares the oldest accessible bin's timestamp against the buried bin, finds the buried bin is older, and returns a `BuriedError` triggering a reshuffle. The fleet should receive a compound reshuffle order, not a direct retrieve. Production risk: without this, FIFO drift accumulates silently — parts with shelf-life or lot-tracking requirements get served out of order.
+
+**TC-40b: COST mode — oldest accessible returned, older buried bin ignored.** Same 3-lane NGRP layout as TC-40a (oldest bin buried, newer bins accessible). A retrieve order fires with `retrieve_algorithm = COST`. Expected behavior: `resolveRetrieveCOST` returns the oldest accessible bin without scanning buried bins. No reshuffle triggered. The fleet should receive a direct retrieve to the accessible bin's storage slot. This validates the preserved cost-optimized behavior under its new name.
+
+**TC-41: Empty cart starvation — all accessible empties consumed, buried empties unreachable.** LKND storage scatters empties across lanes where they get buried behind full bins. All accessible empties are consumed through normal retrieves. A press drops a full bin and needs an empty pickup. `FindEmptyCompatibleBin` returns nil — no accessible empty exists. Expected behavior: the system detects buried empties exist and triggers a reshuffle to unbury the shallowest one (fewest blockers). Production risk: press starvation. The empties are physically in the grid but unreachable. Manual intervention is the only current recovery.
+
+**TC-42: Reshuffle restore order preserves random lane layout.** A lane has bins in random age order (not sorted by `loaded_at`). A reshuffle unburries a target bin, moving blockers to shuffle slots, then restocks them. Current `PlanReshuffle` restores blockers to their original slots — the lane stays in the same random order. Expected behavior: blockers should be sorted by `loaded_at` before restore, oldest toward the lane face, newest toward the back. Each reshuffle leaves the lane in better FIFO shape, reducing future reshuffle frequency. The Cube measured 3-4x fewer reshuffles on lanes using sorted restore over a simulated shift. Production risk: without sorted restore, the same lanes trigger repeated expensive reshuffles because older bins stay buried in the same positions.
 
 ### Timing and race conditions
 
@@ -472,6 +504,8 @@ A reservation ("claim") bug means the system's record of which bins are committe
 **TC-22: The only available bin is in the maintenance area.** Similar to quality hold, but the bin is physically at a maintenance node. The system should skip it.
 
 **TC-31: One order finishes and frees a bin — does the next order pick it up?** Order A completes and releases its bin. Order B has been waiting because there was no inventory. Does the fulfillment scanner detect the newly available bin and dispatch Order B automatically?
+
+**TC-39: Cross-line poaching of producer empty bins.** Producer Line A clears a bin (manifest cleared, `payload_code = ''`, `status = 'available'`). The empty bin sits at Line A's lineside node. Before Line A's operator requests a replacement empty, Line B's auto-reorder for an empty bin fires. `FindEmptyCompatibleBin` finds Line A's empty bin (no node-type filter, no ownership check). Line B's order claims it. Robot takes Line A's empty to Line B. Line A is starved for empties. Empties at lineside nodes should be invisible to cross-line `retrieve_empty` orders. `FindEmptyCompatibleBin` should exclude bins at lineside/production nodes, or producer nodes should have an affinity model for their own empties. Production risk: producer starvation. A busy floor with multiple producer lines sharing compatible bin types will see this regularly during peak periods. The zone preference mitigates it partially but does not prevent cross-zone fallback poaching.
 
 ### Fleet behavior edge cases
 

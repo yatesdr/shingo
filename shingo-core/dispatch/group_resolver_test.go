@@ -389,3 +389,239 @@ func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
 	_ = result
 	_ = slots
 }
+
+// setBinLoadedAt sets the loaded_at timestamp on a bin via direct SQL.
+func setBinLoadedAt(t *testing.T, db *store.DB, binID int64, loadedAt time.Time) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE bins SET loaded_at=$1 WHERE id=$2`, loadedAt, binID)
+	if err != nil {
+		t.Fatalf("set loaded_at for bin %d: %v", binID, err)
+	}
+}
+
+// setupNodeGroup3Lane creates an NGRP with 3 lanes of 3 slots each.
+func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store.Node, slots [][]*store.Node, bp *store.Payload) {
+	t.Helper()
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("get NGRP node type: %v", err)
+	}
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	if err != nil {
+		t.Fatalf("get LANE node type: %v", err)
+	}
+
+	bp = &store.Payload{Code: "WGA"}
+	if err := db.CreatePayload(bp); err != nil {
+		t.Fatalf("create payload: %v", err)
+	}
+
+	grp = &store.Node{Name: "GRP-3L", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	if err := db.CreateNode(grp); err != nil {
+		t.Fatalf("create NGRP node: %v", err)
+	}
+	grp, _ = db.GetNode(grp.ID)
+
+	lanes = make([]*store.Node, 3)
+	slots = make([][]*store.Node, 3)
+	for i := 0; i < 3; i++ {
+		lane := &store.Node{
+			Name: fmt.Sprintf("GRP-3L-L%d", i+1), IsSynthetic: true,
+			NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true,
+		}
+		if err := db.CreateNode(lane); err != nil {
+			t.Fatalf("create lane %d: %v", i, err)
+		}
+		lane, _ = db.GetNode(lane.ID)
+		lanes[i] = lane
+
+		slots[i] = make([]*store.Node, 3)
+		for d := 1; d <= 3; d++ {
+			depth := d
+			slot := &store.Node{
+				Name:     fmt.Sprintf("GRP-3L-L%d-S%d", i+1, d),
+				ParentID: &lane.ID, Enabled: true, Depth: &depth,
+			}
+			if err := db.CreateNode(slot); err != nil {
+				t.Fatalf("create slot L%d-S%d: %v", i+1, d, err)
+			}
+			slots[i][d-1] = slot
+		}
+	}
+	return
+}
+
+// TC-40a: FIFO mode — buried bin older than accessible triggers reshuffle.
+//
+// Layout:
+//   Lane 1: depth 1 = BIN-NEW  (WGA, T+2s, accessible)
+//   Lane 2: depth 1 = BIN-MID  (WGA, T+1s, accessible)
+//   Lane 3: depth 1 = BLK-1    (BLK, blocker)
+//           depth 2 = BLK-2    (BLK, blocker)
+//           depth 3 = BIN-OLD  (WGA, T,     buried ← oldest)
+//
+// Strict FIFO must return BuriedError for BIN-OLD, not the accessible BIN-MID.
+func TestTC40a_FIFOBuriedOlderThanAccessible(t *testing.T) {
+	db := testDB(t)
+	grp, lanes, slots, bp := setupNodeGroup3Lane(t, db)
+
+	_ = lanes // used implicitly via slots
+
+	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+
+	// Create blocker payload
+	blkPayload := &store.Payload{Code: "BLK"}
+	if err := db.CreatePayload(blkPayload); err != nil {
+		t.Fatalf("create blocker payload: %v", err)
+	}
+
+	baseTime := time.Now().Add(-1 * time.Hour)
+
+	// BIN-OLD: buried at lane 3, depth 3 — oldest (T)
+	binOld := createTestBinAtNode(t, db, bp.Code, slots[2][2].ID, "BIN-OLD")
+	setBinLoadedAt(t, db, binOld.ID, baseTime)
+
+	// BLK-1: blocker at lane 3, depth 1
+	createTestBinAtNode(t, db, blkPayload.Code, slots[2][0].ID, "BLK-1")
+
+	// BLK-2: blocker at lane 3, depth 2
+	createTestBinAtNode(t, db, blkPayload.Code, slots[2][1].ID, "BLK-2")
+
+	// BIN-MID: accessible at lane 2, depth 1 — middle age (T+1s)
+	binMid := createTestBinAtNode(t, db, bp.Code, slots[1][0].ID, "BIN-MID")
+	setBinLoadedAt(t, db, binMid.ID, baseTime.Add(1*time.Second))
+
+	// BIN-NEW: accessible at lane 1, depth 1 — newest (T+2s)
+	binNew := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-NEW")
+	setBinLoadedAt(t, db, binNew.ID, baseTime.Add(2*time.Second))
+
+	_, err := gr.ResolveRetrieve(grp, bp.Code)
+	if err == nil {
+		t.Fatal("expected BuriedError for oldest buried bin, got nil")
+	}
+
+	var buriedErr *BuriedError
+	if !errors.As(err, &buriedErr) {
+		t.Fatalf("expected *BuriedError, got %T: %v", err, err)
+	}
+	if buriedErr.Bin.ID != binOld.ID {
+		t.Errorf("buried bin ID = %d, want %d (BIN-OLD is the globally oldest)", buriedErr.Bin.ID, binOld.ID)
+	}
+}
+
+// TC-40a regression guard: when buried bin is newer than accessible, return accessible (no reshuffle).
+func TestTC40a_FIFOAccessibleOlderThanBuried(t *testing.T) {
+	db := testDB(t)
+	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
+
+	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+
+	blkPayload := &store.Payload{Code: "BLK"}
+	if err := db.CreatePayload(blkPayload); err != nil {
+		t.Fatalf("create blocker payload: %v", err)
+	}
+
+	baseTime := time.Now().Add(-1 * time.Hour)
+
+	// BIN-OLD-ACC: accessible at lane 1, depth 1 — oldest (T)
+	binOldAcc := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-OLD-ACC")
+	setBinLoadedAt(t, db, binOldAcc.ID, baseTime)
+
+	// BIN-NEW-BUR: buried at lane 3, depth 3 — newer (T+5s)
+	binNewBur := createTestBinAtNode(t, db, bp.Code, slots[2][2].ID, "BIN-NEW-BUR")
+	setBinLoadedAt(t, db, binNewBur.ID, baseTime.Add(5*time.Second))
+
+	// Blocker in lane 3
+	createTestBinAtNode(t, db, blkPayload.Code, slots[2][0].ID, "BLK-1")
+
+	result, err := gr.ResolveRetrieve(grp, bp.Code)
+	if err != nil {
+		t.Fatalf("expected accessible result, got error: %v", err)
+	}
+	if result.Bin.ID != binOldAcc.ID {
+		t.Errorf("bin ID = %d, want %d (accessible bin is older, no reshuffle needed)", result.Bin.ID, binOldAcc.ID)
+	}
+}
+
+// TC-40b: COST mode — oldest accessible returned, older buried bin ignored.
+//
+// Same layout as TC-40a but with retrieve_algorithm=COST.
+// Should return BIN-MID (oldest accessible), NOT trigger BuriedError for BIN-OLD.
+func TestTC40b_COSTIgnoresBuriedWhenAccessible(t *testing.T) {
+	db := testDB(t)
+	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
+
+	// Set group to COST mode
+	if err := db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"); err != nil {
+		t.Fatalf("set retrieve_algorithm: %v", err)
+	}
+
+	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+
+	blkPayload := &store.Payload{Code: "BLK"}
+	if err := db.CreatePayload(blkPayload); err != nil {
+		t.Fatalf("create blocker payload: %v", err)
+	}
+
+	baseTime := time.Now().Add(-1 * time.Hour)
+
+	// BIN-OLD: buried at lane 3, depth 3 — oldest (T)
+	binOld := createTestBinAtNode(t, db, bp.Code, slots[2][2].ID, "BIN-OLD")
+	setBinLoadedAt(t, db, binOld.ID, baseTime)
+
+	// Blockers in lane 3
+	createTestBinAtNode(t, db, blkPayload.Code, slots[2][0].ID, "BLK-1")
+	createTestBinAtNode(t, db, blkPayload.Code, slots[2][1].ID, "BLK-2")
+
+	// BIN-MID: accessible at lane 2, depth 1 — (T+1s)
+	binMid := createTestBinAtNode(t, db, bp.Code, slots[1][0].ID, "BIN-MID")
+	setBinLoadedAt(t, db, binMid.ID, baseTime.Add(1*time.Second))
+
+	// BIN-NEW: accessible at lane 1, depth 1 — (T+2s)
+	binNew := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-NEW")
+	setBinLoadedAt(t, db, binNew.ID, baseTime.Add(2*time.Second))
+
+	result, err := gr.ResolveRetrieve(grp, bp.Code)
+	if err != nil {
+		t.Fatalf("COST mode should return accessible bin, got error: %v", err)
+	}
+	if result.Bin.ID != binMid.ID {
+		t.Errorf("bin ID = %d, want %d (COST returns oldest accessible = BIN-MID)", result.Bin.ID, binMid.ID)
+	}
+	_ = binOld
+	_ = binNew
+}
+
+// TC-40b edge: COST mode falls back to buried when no accessible bins exist.
+func TestTC40b_COSTFallsToBuriedWhenNoAccessible(t *testing.T) {
+	db := testDB(t)
+	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
+
+	if err := db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"); err != nil {
+		t.Fatalf("set retrieve_algorithm: %v", err)
+	}
+
+	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
+
+	blkPayload := &store.Payload{Code: "BLK"}
+	if err := db.CreatePayload(blkPayload); err != nil {
+		t.Fatalf("create blocker payload: %v", err)
+	}
+
+	// Only buried bins, no accessible
+	buried := createTestBinAtNode(t, db, bp.Code, slots[0][2].ID, "BIN-BURIED")
+	createTestBinAtNode(t, db, blkPayload.Code, slots[0][0].ID, "BLK-FRONT")
+
+	_, err := gr.ResolveRetrieve(grp, bp.Code)
+	if err == nil {
+		t.Fatal("expected BuriedError when no accessible bins exist in COST mode")
+	}
+
+	var buriedErr *BuriedError
+	if !errors.As(err, &buriedErr) {
+		t.Fatalf("expected *BuriedError, got %T: %v", err, err)
+	}
+	if buriedErr.Bin.ID != buried.ID {
+		t.Errorf("buried bin ID = %d, want %d", buriedErr.Bin.ID, buried.ID)
+	}
+}
