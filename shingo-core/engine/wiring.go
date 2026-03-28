@@ -209,6 +209,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusFailed, "fleet order failed"); err != nil {
 				e.logFn("engine: update order %d status to failed: %v", order.ID, err)
 			}
+			e.db.UnclaimOrderBins(order.ID)
 			e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
 				OrderID:   order.ID,
 				EdgeUUID:  order.EdgeUUID,

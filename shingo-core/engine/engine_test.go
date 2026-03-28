@@ -892,3 +892,238 @@ func TestTC23d_ChangeoverWhileMoveInFlight(t *testing.T) {
 		}
 	}
 }
+
+// --- TC-21: Only available bin is in quality hold ---
+// Scenario: verifies that the system does not dispatch a bin in quality hold.
+//
+// A line requests a part. The only bin of that part in the warehouse is in
+// quality hold (flagged for inspection). The system should not dispatch it.
+// The order should be queued, not failed — so the fulfillment scanner can
+// pick it up later when inventory frees up.
+func TestTC21_QualityHoldBinNotDispatched(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	// Create a single bin at storage, then put it in quality hold
+	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-QH")
+	if err := db.UpdateBinStatus(bin.ID, "quality_hold"); err != nil {
+		t.Fatalf("set bin to quality_hold: %v", err)
+	}
+	bin, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("refresh bin: %v", err)
+	}
+	if bin.Status != "quality_hold" {
+		t.Fatalf("bin status = %q, want quality_hold", bin.Status)
+	}
+	t.Logf("bin %d (%s) is in quality_hold at %s", bin.ID, bin.Label, storageNode.Name)
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Request a retrieve for this payload — only bin is in quality hold
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-qh-21",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	})
+
+	order, err := db.GetOrderByUUID("retrieve-qh-21")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	t.Logf("order status: %s, bin_id: %v, vendor_order_id: %s", order.Status, order.BinID, order.VendorOrderID)
+
+	// The order should NOT be dispatched — no eligible bin exists
+	if order.Status == dispatch.StatusDispatched {
+		t.Errorf("BUG: order was dispatched despite the only bin being in quality_hold")
+	}
+
+	// The order should be queued (waiting for inventory), not failed
+	if order.Status == dispatch.StatusQueued {
+		t.Logf("order correctly queued — waiting for inventory to free up")
+	} else if order.Status == dispatch.StatusFailed {
+		t.Errorf("order failed instead of being queued — operator gets an error instead of a wait")
+	} else {
+		t.Logf("order status is %q (not queued or dispatched)", order.Status)
+	}
+
+	// No robot should have been sent
+	if sim.OrderCount() != 0 {
+		t.Errorf("BUG: simulator has %d orders — a robot was dispatched for a quality_hold bin", sim.OrderCount())
+	} else {
+		t.Logf("no fleet orders — no robot dispatched (correct)")
+	}
+
+	// The bin should NOT be claimed
+	bin, err = db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("get bin after order: %v", err)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("BUG: quality_hold bin was claimed by order %d", *bin.ClaimedBy)
+	} else {
+		t.Logf("quality_hold bin correctly not claimed")
+	}
+
+	// The bin should still be in quality_hold status (not changed by the dispatch attempt)
+	if bin.Status != "quality_hold" {
+		t.Errorf("bin status changed to %q — quality_hold should be preserved", bin.Status)
+	}
+}
+
+// --- TC-30: Failed order creates a return — does the return inherit the reservation? ---
+// Scenario: verifies that when a fleet-reported failure triggers an auto-return
+// order, the bin claim transfers cleanly from the failed order to the return order.
+//
+// A retrieve order is dispatched and the fleet accepts it. The robot starts
+// moving (RUNNING). Then the fleet reports the order as FAILED (robot broke
+// down mid-delivery). The system should:
+// 1. Mark the original order as failed
+// 2. Release the original order's bin claim
+// 3. Create an auto-return order to send the bin back to storage
+// 4. Claim the bin for the return order
+//
+// The bug risk: the fleet-reported failure path (handleVendorStatusChange)
+// does NOT call UnclaimOrderBins before emitting EventOrderFailed. The
+// EventOrderFailed handler calls maybeCreateReturnOrder, which tries to
+// ClaimBin for the return order. But with the ClaimBin fix (AND claimed_by
+// IS NULL), this will fail because the bin is still claimed by the original
+// order. The return order gets created but can't claim its bin.
+func TestTC30_FailedOrderReturnClaimTransfer(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC30")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Step 1: Dispatch a retrieve order
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-tc30",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	})
+
+	order, err := db.GetOrderByUUID("retrieve-tc30")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != dispatch.StatusDispatched {
+		t.Fatalf("order status = %q, want dispatched", order.Status)
+	}
+	if order.BinID == nil {
+		t.Fatal("order should have a bin claimed")
+	}
+	t.Logf("order %d dispatched, bin %d claimed, vendor_id=%s", order.ID, *order.BinID, order.VendorOrderID)
+
+	// Verify bin is claimed by the original order
+	bin, err = db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin: %v", err)
+	}
+	if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
+		t.Fatalf("bin claimed_by = %v, want %d", bin.ClaimedBy, order.ID)
+	}
+
+	// Step 2: Robot starts moving
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+
+	order, err = db.GetOrderByUUID("retrieve-tc30")
+	if err != nil {
+		t.Fatalf("get order after RUNNING: %v", err)
+	}
+	if order.Status != "in_transit" {
+		t.Fatalf("after RUNNING: status = %q, want in_transit", order.Status)
+	}
+
+	// Step 3: Fleet reports FAILED (robot broke down)
+	sim.DriveState(order.VendorOrderID, "FAILED")
+
+	// Give the synchronous event chain a moment to complete
+	order, err = db.GetOrderByUUID("retrieve-tc30")
+	if err != nil {
+		t.Fatalf("get order after FAILED: %v", err)
+	}
+	if order.Status != dispatch.StatusFailed {
+		t.Fatalf("after FAILED: status = %q, want failed", order.Status)
+	}
+	t.Logf("original order %d is now failed", order.ID)
+
+	// Step 4: Check bin claim state — was it released by the failure handler?
+	bin, err = db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin after failure: %v", err)
+	}
+	if bin.ClaimedBy != nil && *bin.ClaimedBy == order.ID {
+		t.Errorf("BUG: bin %d still claimed by failed order %d — fleet-reported failure path does not release bin claims",
+			bin.ID, order.ID)
+	} else if bin.ClaimedBy != nil {
+		t.Logf("bin %d claimed by order %d (should be the return order)", bin.ID, *bin.ClaimedBy)
+	} else {
+		t.Logf("bin %d claim released (claimed_by=nil)", bin.ID)
+	}
+
+	// Step 5: Check if a return order was created
+	// The return order should have PayloadDesc = "auto_return" and OrderType = "store"
+	// We can find it by looking for orders other than the original
+	allOrders, err := db.ListOrdersByStation(order.StationID, 50)
+	if err != nil {
+		t.Fatalf("list orders: %v", err)
+	}
+
+	var returnOrder *store.Order
+	for _, o := range allOrders {
+		if o.ID != order.ID && o.PayloadDesc == "auto_return" {
+			returnOrder = o
+			break
+		}
+	}
+
+	if returnOrder == nil {
+		t.Logf("no auto-return order was created")
+		// This might be OK or might be a bug depending on the guards
+	} else {
+		t.Logf("return order %d created: type=%s, status=%s, bin_id=%v, source=%s, dest=%s",
+			returnOrder.ID, returnOrder.OrderType, returnOrder.Status,
+			returnOrder.BinID, returnOrder.SourceNode, returnOrder.DeliveryNode)
+
+		// The return order should have the bin
+		if returnOrder.BinID == nil || *returnOrder.BinID != *order.BinID {
+			t.Errorf("return order bin_id = %v, want %d (same bin as failed order)", returnOrder.BinID, *order.BinID)
+		}
+
+		// KEY CHECK: the bin should be claimed by the RETURN order, not the original
+		bin, err = db.GetBin(*order.BinID)
+		if err != nil {
+			t.Fatalf("get bin for final check: %v", err)
+		}
+
+		if bin.ClaimedBy == nil {
+			t.Errorf("BUG: bin %d is unclaimed — return order %d exists but couldn't claim the bin (likely because original claim wasn't released first)",
+				bin.ID, returnOrder.ID)
+		} else if *bin.ClaimedBy == returnOrder.ID {
+			t.Logf("bin %d correctly claimed by return order %d", bin.ID, returnOrder.ID)
+		} else if *bin.ClaimedBy == order.ID {
+			t.Errorf("BUG: bin %d still claimed by failed order %d — return order %d could not take over the claim",
+				bin.ID, order.ID, returnOrder.ID)
+		} else {
+			t.Errorf("bin %d claimed by unexpected order %d (not original %d or return %d)",
+				bin.ID, *bin.ClaimedBy, order.ID, returnOrder.ID)
+		}
+
+		// The return order should not be in a failed state
+		if returnOrder.Status == dispatch.StatusFailed {
+			t.Errorf("return order %d is failed — bin may be stranded", returnOrder.ID)
+		}
+	}
+}
