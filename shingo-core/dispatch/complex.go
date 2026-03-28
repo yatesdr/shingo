@@ -64,6 +64,11 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	}
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
 
+	// Claim bins at pickup nodes so they are protected from poaching
+	// while the robot is en route. This closes the gap where complex orders
+	// bypassed the ClaimBin call that simple orders make during planning.
+	d.claimComplexBins(order, resolvedSteps, payloadCode)
+
 	// Split steps at the first "wait" action
 	preWait, hasWait := splitAtWait(resolvedSteps)
 
@@ -308,4 +313,70 @@ func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int) 
 		})
 	}
 	return blocks
+}
+
+// claimComplexBins resolves and claims bins for pickup steps in a complex order.
+// For single-pickup orders (the most common pattern), it sets Order.BinID so
+// that the normal completion flow — ApplyBinArrival (moves bin to delivery
+// node in the DB) and maybeCreateReturnOrder (auto-return on cancel/fail) —
+// works correctly.
+//
+// The claim is best-effort: if no unclaimed bin matching the payload is found
+// at a pickup node, the order still dispatches (same as prior behavior).
+// Multi-pickup orders set BinID to the first claimed bin and log an advisory.
+func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, payloadCode string) {
+	var claimed []int64
+	for _, s := range steps {
+		if s.Action != "pickup" {
+			continue
+		}
+		node, err := d.db.GetNodeByDotName(s.Node)
+		if err != nil {
+			d.dbg("complex: cannot resolve pickup node %s for claiming: %v", s.Node, err)
+			continue
+		}
+		bins, err := d.db.ListBinsByNode(node.ID)
+		if err != nil {
+			d.dbg("complex: cannot list bins at %s for claiming: %v", s.Node, err)
+			continue
+		}
+		for _, bin := range bins {
+			if bin.ClaimedBy != nil {
+				continue
+			}
+			if payloadCode != "" && bin.PayloadCode != payloadCode {
+				continue
+			}
+			// Skip bins that are not available for dispatch
+			switch bin.Status {
+			case "staged", "maintenance", "flagged", "retired", "quality_hold":
+				continue
+			}
+			if err := d.db.ClaimBin(bin.ID, order.ID); err != nil {
+				continue
+			}
+			d.dbg("complex: claimed bin %d (%s) at %s for order %d",
+				bin.ID, bin.Label, s.Node, order.ID)
+			d.db.AppendAudit("bin", bin.ID, "claimed",
+				"", fmt.Sprintf("complex order %d pickup at %s", order.ID, s.Node), "system")
+			claimed = append(claimed, bin.ID)
+			break
+		}
+	}
+
+	if len(claimed) == 0 {
+		d.dbg("complex: no bins claimed for order %d — pickup nodes may have no available bins", order.ID)
+		return
+	}
+
+	// Set Order.BinID to the first claimed bin. This enables the standard
+	// completion path in wiring.go (ApplyBinArrival, auto-return on cancel).
+	order.BinID = &claimed[0]
+	if err := d.db.UpdateOrderBinID(order.ID, claimed[0]); err != nil {
+		log.Printf("dispatch: update complex order %d bin_id: %v", order.ID, err)
+	}
+	if len(claimed) > 1 {
+		log.Printf("dispatch: complex order %d has %d pickups — Order.BinID tracks first bin %d only",
+			order.ID, len(claimed), claimed[0])
+	}
 }

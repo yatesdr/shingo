@@ -35,7 +35,7 @@ Run all simulator tests:
 
 ```
 cd shingo-core
-go test -v -run "TestSimulator|TestClaimBin|TestTC23" ./engine/ ./dispatch/ -timeout 120s
+go test -v -run "TestSimulator|TestClaimBin|TestTC2[0-9]|TestTC30" ./engine/ ./dispatch/ -timeout 120s
 ```
 
 Run a specific test:
@@ -135,6 +135,72 @@ if order.BinID == nil {
 **Status:** Fixed. The 3rd store order now fails with `"no available bin at LINE1-IN"` and no robot is dispatched.
 
 **Test:** `engine/engine_test.go` — `TestTC23c_ChangeoverWithMissingBin`
+
+---
+
+### TC-30: Fleet-reported failure leaves bin claim dangling
+
+**Scenario:** A retrieve order is dispatched and the robot starts moving (RUNNING). The fleet reports the order as FAILED (robot broke down, obstacle, etc). The system marks the order as failed and tries to create a return order. But the original order's bin claim is never released. The return order can't claim the bin because it's still locked to the dead order.
+
+**Expected behavior:** When the fleet reports a failure, the system should release the bin claim (same as it does for cancellation), then create the return order which re-claims the bin.
+
+**Result:** BUG FOUND. The `handleVendorStatusChange` handler in wiring.go called `UnclaimOrderBins` for `StatusCancelled` (line 223) but not for `StatusFailed`. The cancellation path was correct; the failure path was missing the same cleanup step. The bin stayed claimed by the failed order, and `maybeCreateReturnOrder` couldn't re-claim it for the return.
+
+**Root cause:** Asymmetry between the cancel and failure handlers in the same function. The cancel case had `UnclaimOrderBins` added at some point, but the failure case was never updated to match.
+
+```go
+// Before: failure case did NOT unclaim bins
+case dispatch.StatusFailed:
+    e.db.UpdateOrderStatus(order.ID, dispatch.StatusFailed, "fleet order failed")
+    // missing: e.db.UnclaimOrderBins(order.ID)
+    e.Events.Emit(Event{Type: EventOrderFailed, ...})
+
+// After: failure case now unclaims, matching the cancel case
+case dispatch.StatusFailed:
+    e.db.UpdateOrderStatus(order.ID, dispatch.StatusFailed, "fleet order failed")
+    e.db.UnclaimOrderBins(order.ID)  // ← ADDED
+    e.Events.Emit(Event{Type: EventOrderFailed, ...})
+```
+
+**Production risk:** Any time a robot fails mid-delivery (breakdown, obstacle, emergency stop), the bin it was carrying becomes permanently stuck. No other order can claim it, and the auto-return mechanism can't work. The bin effectively disappears from the system's available inventory until someone manually intervenes in the database. This is most likely during peak hours when robots are more likely to encounter obstacles.
+
+**Status:** Fixed. The failure handler now calls `UnclaimOrderBins` before emitting the failure event, matching the cancel handler's behavior.
+
+**Test:** `engine/engine_test.go` — `TestTC30_FailedOrderReturnClaimTransfer`
+
+---
+
+### TC-24 cluster: Complex order bin claiming — three related bugs (FIXED)
+
+Complex orders (`HandleComplexOrderRequest`) previously never called `ClaimBin` when dispatching. The bin's `claimed_by` field stayed NULL and its location never updated, even while a robot was physically carrying it. This produced three distinct bugs, all now fixed.
+
+**TC-24a: Bin poaching during transit.** A complex order picks up a bin from storage. Robot is in transit (RUNNING). A store order targets the same storage node. Previously, `planStore` would find the bin with `claimed_by=NULL` and claim it for a second robot. Two orders would reference the same physical bin.
+
+**TC-24b: Stale bin location after completion.** A complex order moves a bin from storage to line. Order completes (FINISHED). Previously, the bin was physically at the line but the database still showed it at storage because `ApplyBinArrival` was skipped when `order.BinID` was nil.
+
+**TC-24c: Phantom inventory retrieval.** After TC-24b's stale location, a retrieve order asks for that payload. Previously, `FindSourceBinFIFO` would find the phantom bin (still listed at storage, unclaimed, status=available) and dispatch a robot to an empty storage slot.
+
+**Root cause:** `HandleComplexOrderRequest` was designed to send multi-step robot instructions without pre-binding to a specific bin. The database layer was designed around pre-allocation — store/retrieve orders claim bins during planning. The two models didn't coexist safely. Confirmed via `git log -S "ClaimBin" -- dispatch/complex.go` that `ClaimBin` never existed in complex.go across the entire repository history prior to this fix.
+
+**Fix:** Added `claimComplexBins()` in complex.go. After creating the order record but before dispatching to the fleet, the function iterates over pickup steps, finds the best unclaimed bin at each pickup node (filtering by payload code and status), and claims it. For single-pickup orders (the most common pattern), it sets `Order.BinID` which enables the standard completion flow: `ApplyBinArrival` moves the bin in the DB, and `maybeCreateReturnOrder` creates an auto-return on cancel/fail. Multi-pickup orders claim all pickup bins but only track the first via `Order.BinID` (a multi-bin junction table would be needed for full multi-pickup completion tracking). The claim is best-effort — if no bin is found at a pickup node, the order still dispatches.
+
+**Known limitation:** `Order.BinID` is a single `*int64`. Multi-pickup complex orders (uncommon) have all bins claimed and protected from poaching, but only the first bin gets the `ApplyBinArrival` treatment on completion. A future schema change (order_bins junction table) would fully address this.
+
+**Tests:** `engine/engine_test.go` — `TestTC24_ComplexOrderBinPoaching`, `TestTC24b_StaleBinLocationAfterComplexOrder`, `TestTC24c_PhantomInventoryRetrieve`
+
+---
+
+### TC-25: Staged bin at core node can be poached by store order
+
+After a retrieve delivers a bin to a lineside core node, `ApplyBinArrival` sets `status='staged'` and `claimed_by=NULL`. The bin is physically in use by the operator, but the database marks it as unclaimed. A store order targeting that core node as its source can claim the staged bin because `planStore` only checks `claimed_by`, not `status`. The `staged` status protects against `FindSourceBinFIFO` (retrieve orders) but not against `planStore` or `ClaimBin`.
+
+**Root cause:** `planStore` iterates `ListBinsByNode` and only filters by `ClaimedBy == nil`. `ClaimBin` only checks `locked=false AND claimed_by IS NULL`. Neither checks `bin.Status`. A staged bin at a lineside node is unclaimed and unlocked, so it passes both checks.
+
+**Production risk:** During a changeover, a store order could claim a bin that the operator is actively using at the line. The robot would be dispatched to pull the bin off the production station.
+
+**Status:** Not yet fixed. Test is skipped (`t.Skip`) until a fix is implemented.
+
+**Test:** `engine/engine_test.go` — `TestTC25_StagedBinPoachingAtCoreNode`
 
 ---
 
@@ -255,33 +321,57 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 ---
 
-## Written but not yet run
+### TC-21: Only available bin is in quality hold — PASS
 
-These tests have been coded and are ready to execute. They may find new bugs when run.
+**Scenario:** A line requests a part. The only bin of that part in the warehouse is in quality hold (flagged for inspection). Should the system dispatch a held bin?
+
+**Expected behavior:** The system should not dispatch a quality-hold bin. The order should be queued (not failed) so the fulfillment scanner can retry when inventory frees up.
+
+**Result:** PASS. `FindSourceBinFIFO` correctly filters out bins with `status = 'quality_hold'`. The order is queued with no bin assigned, no robot dispatched. The bin remains untouched at its node.
+
+**Test:** `engine/engine_test.go` — `TestTC21_QualityHoldBinNotDispatched`
 
 ---
 
-### TC-23a: Operator tries to move a staged bin while its order is still active
+### TC-23a: Second store order doesn't steal a claimed bin — PASS
 
-**Scenario:** A bin at the line is claimed by an active staged order (robot waiting). The operator submits a store order to move it. The system should skip the claimed bin and not steal it from the staged order.
+**Scenario:** A bin at the line is claimed by an active store order (robot moving it to QH). The operator submits another store order at the same line. The system should skip the claimed bin and pick a different one.
+
+**Expected behavior:** The second store order claims one of the other unclaimed bins. The first order's bin claim stays intact.
+
+**Result:** PASS. The second order claimed a different bin. The first order's bin was correctly protected by its `claimed_by` value.
 
 **Test:** `engine/engine_test.go` — `TestTC23a_MoveClaimedStagedBin`
 
 ---
 
-### TC-23b: Cancel staged order, then move the freed bin
+### TC-23b: Cancel transfers claim to return order, second store picks different bin — PASS
 
-**Scenario:** Operator cancels a staged order first. The claim should release. The subsequent store order should be able to claim and move the now-free bin. The other 2 bins on the line should be unaffected.
+**Scenario:** Operator cancels an in-flight store order. The system unclaims the bin, then auto-creates a return order that immediately re-claims it. The operator then submits another store order.
+
+**Expected behavior:** The bin transfers from the cancelled order to the return order (never truly free). The subsequent store order claims a different bin.
+
+**Result:** PASS. Bin claim correctly transferred from cancelled order 1 → return order 2. The third store order claimed a different bin and did not steal from the return order.
 
 **Test:** `engine/engine_test.go` — `TestTC23b_CancelThenMoveBin`
 
 ---
 
-### TC-23d: Changeover while move-to-quality-hold is still in flight
+### TC-23d: Changeover while move-to-quality-hold is still in flight — PASS
 
-**Scenario:** Operator sends one bin to quality hold (robot in transit, bin claimed). Before that robot arrives, changeover begins. The changeover store orders should skip the in-flight bin and only claim the 2 unclaimed bins. After the QH order completes, everything should be clean — no double claims.
+**Scenario:** Operator sends one bin to quality hold (robot in transit, bin claimed). Before that robot arrives, changeover begins with 2 more store orders. The changeover orders should skip the in-flight bin and only claim the 2 unclaimed bins.
+
+**Expected behavior:** Each of the 3 orders claims a different bin. No double claims. After QH order completes, all bins are in a clean state.
+
+**Result:** PASS. The changeover orders correctly skipped the in-flight bin and claimed the other 2. No overlapping claims detected.
 
 **Test:** `engine/engine_test.go` — `TestTC23d_ChangeoverWhileMoveInFlight`
+
+---
+
+## Written but not yet run
+
+These tests have been coded and are ready to execute. They may find new bugs when run.
 
 ---
 
@@ -302,8 +392,6 @@ A reservation ("claim") bug means the system's record of which bins are committe
 **TC-28: Two lines request the same part at the same time.** Line 1 and Line 2 both need PART-A. There are two bins of PART-A in storage. Each order should get a different bin. What if the system gives both orders the same bin? One robot arrives to find an empty shelf.
 
 **TC-29: Operator cancels while the robot is in transit.** The robot is already moving with the bin. The operator cancels. The reservation should release cleanly even though the robot hasn't arrived yet.
-
-**TC-30: Failed order creates a return — does the return inherit the reservation?** An order fails and the system automatically creates a return order to send the bin back. The return order should not inherit the original claim. The original claim should already be gone because the failure handler released it.
 
 **TC-32: Bin sits at staging too long — what happens to the reservation?** A bin has been at a staging area past its expiry time. The system releases the staging status. But if that bin was reserved by an active order, does the reservation also get cleaned up? Or is it left dangling?
 
@@ -331,11 +419,9 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 **TC-20: Two lines run the same assembly — does one line steal from the other's staging?** Line 1 and Line 2 both assemble the same product. Line 1 has a bin staged and waiting. Line 2 requests the same part. Will the system try to pull from Line 1's staging area? It shouldn't — those bins are committed to active orders on Line 1.
 
-**TC-21: The only available bin is in quality hold.** A line requests a part. There's one bin of that part in the warehouse, but it's in quality hold (flagged for inspection). The system should not dispatch a held bin. It should report no inventory available and let the fulfillment scanner retry when inventory frees up.
-
 **TC-22: The only available bin is in the maintenance area.** Similar to quality hold, but the bin is physically at a maintenance node. The system should skip it.
 
-**TC-24: One order finishes and frees a bin — does the next order pick it up?** Order A completes and releases its bin. Order B has been waiting because there was no inventory. Does the fulfillment scanner detect the newly available bin and dispatch Order B automatically?
+**TC-31: One order finishes and frees a bin — does the next order pick it up?** Order A completes and releases its bin. Order B has been waiting because there was no inventory. Does the fulfillment scanner detect the newly available bin and dispatch Order B automatically?
 
 ### Fleet behavior edge cases
 
@@ -392,7 +478,7 @@ The key detail: the robot finishing (FINISHED) does not move the bin. The Edge s
 | `fleet/simulator/transitions.go` | State transition helpers. DriveState, DriveFullLifecycle, DriveSimpleLifecycle, DriveToFailed, DriveToStopped. |
 | `fleet/simulator/inspector.go` | Read-only query methods. GetOrder, GetOrderByIndex, OrderCount, BlocksForOrder. Used by tests to inspect what the "fleet" received. |
 | `fleet/simulator/options.go` | Fault injection. WithCreateFailure (fleet rejects orders), WithPingFailure (fleet health check fails). |
-| `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-23 cluster, ClaimBin. Uses real Engine + real DB + simulator. |
+| `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-21, TC-23 cluster, TC-24 cluster, TC-30, ClaimBin. Uses real Engine + real DB + simulator. |
 | `dispatch/fleet_simulator_test.go` | Dispatcher-level tests (scenario). TC-1, TC-3, TC-4, TC-5. Tests the outbound path only (what gets sent to the fleet). |
 
 ---
