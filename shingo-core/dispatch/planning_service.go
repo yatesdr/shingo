@@ -297,6 +297,9 @@ func (s *PlanningService) planStore(order *store.Order, env *protocol.Envelope, 
 			}
 		}
 	}
+	if order.BinID == nil {
+		return nil, &planningError{Code: "no_bin", Detail: fmt.Sprintf("no available bin at %s", sourceNode.Name)}
+	}
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
 	}

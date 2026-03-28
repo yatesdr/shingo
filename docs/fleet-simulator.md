@@ -35,7 +35,7 @@ Run all simulator tests:
 
 ```
 cd shingo-core
-go test -v -run "TestSimulator|TestClaimBin" ./engine/ ./dispatch/ -timeout 120s
+go test -v -run "TestSimulator|TestClaimBin|TestTC23" ./engine/ ./dispatch/ -timeout 120s
 ```
 
 Run a specific test:
@@ -50,23 +50,97 @@ If Docker isn't running, database tests skip automatically (they won't fail your
 
 ## How to read this document
 
-Each test case in this document follows the same format so you can quickly find what you need:
+This document has two kinds of test results, organized into separate sections:
+
+**Bugs found and fixed** are regression tests. Each one documents a real bug that the simulator found in the codebase. The entry explains what went wrong, shows the root cause, and describes the fix. The test exists to make sure that specific bug never comes back. If a regression test fails, it means someone reintroduced a bug that was already fixed — that's a high-priority problem.
+
+**Verified scenarios** are scenario tests. Each one explores a "what if" situation that could happen on the floor. The test passed, meaning the system handles that situation correctly today. These tests exist to catch future regressions — if one starts failing after a code change, it means something broke that was previously working.
+
+**Written but not yet run** are tests that have been coded but haven't been executed yet. They explore specific scenarios and may find new bugs when run.
+
+Each test case entry follows the same format:
 
 - **Scenario** describes the situation in plain language — what's happening on the floor and what could go wrong. You don't need to read code to understand the risk.
-- **Expected behavior** explains what the system is supposed to do. This is the "right answer" — if the system doesn't do this, something is broken.
+- **Expected behavior** explains what the system is supposed to do. This is the "right answer."
 - **Result** tells you whether the test passed, and if a bug was found, what happened and how it was fixed.
-- **Code snippets** (where included) show the key lines from the test. These are optional reading — they're there for anyone who wants to trace the exact check, but the scenario and result tell the full story without them.
-- **Test** at the bottom of each entry gives the file name and test function, so a developer can find and run the specific test.
-
-Test cases marked "PASS" are green — the system handles that scenario correctly. Cases marked "BUG FOUND AND FIXED" had a real problem that has been corrected and is now covered by a regression test so it can't come back silently.
+- **Root cause** (bugs only) explains why the bug existed — what the code was doing wrong.
+- **Production risk** (bugs only) explains who this affects on the floor and under what conditions.
+- **Code snippets** (where included) show the key lines from the test or fix. Optional reading — the scenario and result tell the full story without them.
+- **Test** at the bottom gives the file name and test function, so a developer can find and run the specific test.
 
 The "Scenarios to test next" section at the end is a prioritized catalog of situations we haven't tested yet. These are written the same way (scenario + expected behavior) so they can be turned into tests as the project continues.
 
 ---
 
-## Tested scenarios
+## Bugs found and fixed
 
-Each entry below describes a scenario that could happen on the factory floor, what the system should do, and what we found when we tested it. Scenarios are tested before they become problems in production.
+Each entry below documents a real bug found by the simulator. These are regression tests — they protect specific fixes from being accidentally undone.
+
+---
+
+### ClaimBin: Two orders claim the same bin — silent overwrite
+
+**Scenario:** Two production lines both need the same part at roughly the same time. Both orders query for available bins and find the same one. The first order claims it. Then the second order claims the same bin. What happens to the first order's reservation?
+
+**Expected behavior:** The second claim should be rejected. The bin is already reserved by the first order. The second order should get an error and look for a different bin.
+
+**Result:** BUG FOUND. The second claim silently succeeded. The bin's reservation was overwritten from order 100 to order 200 with no error. The first order still thought it had a bin reserved, but that bin was now committed to the second order. When the first order's robot arrived, the bin could already be gone.
+
+**Root cause:** The database query that claims a bin checked if the bin was locked, but never checked if it was already claimed by another order.
+
+```sql
+-- Before (broken): silently overwrites existing claims
+UPDATE bins SET claimed_by=$1 WHERE id=$2 AND locked=false
+
+-- After (fixed): rejects claim if bin is already reserved
+UPDATE bins SET claimed_by=$1 WHERE id=$2 AND locked=false AND claimed_by IS NULL
+```
+
+**Production risk:** Under normal load, this race window is narrow because the system filters out already-claimed bins before attempting to claim. But with multiple lines requesting parts simultaneously, two orders can both find the same bin in the gap between one order's search and its claim. This is more likely during shift starts or when inventory is low.
+
+**Status:** Fixed. The second claim now returns an error: `"bin 1 is locked, already claimed, or does not exist"`.
+
+**Test:** `engine/engine_test.go` — `TestClaimBin_SilentOverwrite`
+
+---
+
+### TC-23c: Changeover with one bin already gone — ghost robot dispatched
+
+**Scenario:** A production line has 3 bins in operation. The operator moves one bin to quality hold (via a completed move order — the bin is physically gone from the line). Then the operator initiates changeover, which submits store orders to clear all bins from the line. But only 2 bins remain at the line node. What happens to the 3rd store order?
+
+**Expected behavior:** The system should find only 2 unclaimed bins at the line. Two store orders should claim and dispatch normally. The 3rd store order should fail cleanly — "no available bin" — and not send a robot.
+
+**Result:** BUG FOUND. The 3rd store order dispatched a real robot to the line with no bin assigned (`BinID=nil`). The fleet received a transport order (`sg-3-40cb32bb`) and would send a robot to LINE1-IN to pick up nothing. The order showed as "dispatched" with a valid vendor order ID but no bin.
+
+**Root cause:** The store order planning function (`planStore`) searches for unclaimed bins at the source node. If the loop finds nothing, the code continued to dispatch without checking whether a bin was actually claimed. There was no guard after the bin-finding loop.
+
+```go
+// Before (broken): falls through to dispatch even if no bin was found
+for _, bin := range bins {
+    if bin.ClaimedBy == nil {
+        // try to claim...
+    }
+}
+// no check here — dispatches with BinID=nil
+
+// After (fixed): fails the order if no bin is available
+if order.BinID == nil {
+    return nil, &planningError{Code: "no_bin",
+        Detail: fmt.Sprintf("no available bin at %s", sourceNode.Name)}
+}
+```
+
+**Production risk:** This happens during any changeover where the operator clears a line that isn't fully stocked, or when a bin was already moved away for quality or other reasons before changeover starts. The ghost robot arrives at the line, finds nothing, and occupies a fleet slot while the operator wonders why a robot showed up. On a busy floor with limited robots, that's a wasted trip during the time-critical changeover window.
+
+**Status:** Fixed. The 3rd store order now fails with `"no available bin at LINE1-IN"` and no robot is dispatched.
+
+**Test:** `engine/engine_test.go` — `TestTC23c_ChangeoverWithMissingBin`
+
+---
+
+## Verified scenarios
+
+Each entry below is a scenario test that passed. The system handles these situations correctly. These tests guard against future regressions.
 
 ---
 
@@ -92,7 +166,7 @@ for _, b := range blocks {
 
 ---
 
-### TC-2: Robot is waiting at staging but the release doesn't go through — PASS (after fix)
+### TC-2: Robot is waiting at staging but the release doesn't go through — PASS
 
 **Scenario:** A cycle order: robot picks up from storage, drops off at the line staging area, and waits for the operator. When the operator is done, they release the order and the robot continues — picks up from staging and returns to storage. But what if the release command gets rejected because the system doesn't realize the robot is actually waiting?
 
@@ -125,7 +199,7 @@ assert(len(view.Blocks) == 4 && view.Complete == true)
 
 ---
 
-### TC-4: System misinterprets what the robot is doing — PASS (after fix)
+### TC-4: System misinterprets what the robot is doing — PASS
 
 **Scenario:** The fleet reports that a robot is in state "WAITING." The system needs to translate that into a Shingo status. What if the translation is wrong? If WAITING maps to the wrong status, the system won't know the robot is at the staging point, and operator releases will be rejected.
 
@@ -181,29 +255,33 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 ---
 
-### ClaimBin: Two orders claim the same bin — BUG FOUND AND FIXED
+## Written but not yet run
 
-**Scenario:** Two production lines both need the same part at roughly the same time. Both orders query for available bins and find the same one. The first order claims it. Then the second order claims the same bin. What happens to the first order's reservation?
+These tests have been coded and are ready to execute. They may find new bugs when run.
 
-**Expected behavior:** The second claim should be rejected. The bin is already reserved by the first order. The second order should get an error and look for a different bin.
+---
 
-**Result:** BUG FOUND. The second claim silently succeeded. The bin's reservation was overwritten from order 100 to order 200 with no error. The first order still thought it had a bin reserved, but that bin was now committed to the second order. When the first order's robot arrived, the bin could already be gone.
+### TC-23a: Operator tries to move a staged bin while its order is still active
 
-**Root cause:** The database query that claims a bin checked if the bin was locked, but never checked if it was already claimed by another order.
+**Scenario:** A bin at the line is claimed by an active staged order (robot waiting). The operator submits a store order to move it. The system should skip the claimed bin and not steal it from the staged order.
 
-```sql
--- Before (broken): silently overwrites existing claims
-UPDATE bins SET claimed_by=$1 WHERE id=$2 AND locked=false
+**Test:** `engine/engine_test.go` — `TestTC23a_MoveClaimedStagedBin`
 
--- After (fixed): rejects claim if bin is already reserved
-UPDATE bins SET claimed_by=$1 WHERE id=$2 AND locked=false AND claimed_by IS NULL
-```
+---
 
-**Production risk:** Under normal load, this race window is narrow because the system filters out already-claimed bins before attempting to claim. But with multiple lines requesting parts simultaneously, two orders can both find the same bin in the gap between one order's search and its claim. This is more likely during shift starts or when inventory is low.
+### TC-23b: Cancel staged order, then move the freed bin
 
-**Status:** Fixed. The second claim now returns an error: `"bin 1 is locked, already claimed, or does not exist"`.
+**Scenario:** Operator cancels a staged order first. The claim should release. The subsequent store order should be able to claim and move the now-free bin. The other 2 bins on the line should be unaffected.
 
-**Test:** `engine/engine_test.go` — `TestClaimBin_SilentOverwrite`
+**Test:** `engine/engine_test.go` — `TestTC23b_CancelThenMoveBin`
+
+---
+
+### TC-23d: Changeover while move-to-quality-hold is still in flight
+
+**Scenario:** Operator sends one bin to quality hold (robot in transit, bin claimed). Before that robot arrives, changeover begins. The changeover store orders should skip the in-flight bin and only claim the 2 unclaimed bins. After the QH order completes, everything should be clean — no double claims.
+
+**Test:** `engine/engine_test.go` — `TestTC23d_ChangeoverWhileMoveInFlight`
 
 ---
 
@@ -256,8 +334,6 @@ A reservation ("claim") bug means the system's record of which bins are committe
 **TC-21: The only available bin is in quality hold.** A line requests a part. There's one bin of that part in the warehouse, but it's in quality hold (flagged for inspection). The system should not dispatch a held bin. It should report no inventory available and let the fulfillment scanner retry when inventory frees up.
 
 **TC-22: The only available bin is in the maintenance area.** Similar to quality hold, but the bin is physically at a maintenance node. The system should skip it.
-
-**TC-23: Operator manually moves a staged bin.** A bin is sitting at a staging area, waiting for a robot to pick it up as part of an active order. An operator manually moves that bin somewhere else. What happens to the order that was expecting it?
 
 **TC-24: One order finishes and frees a bin — does the next order pick it up?** Order A completes and releases its bin. Order B has been waiting because there was no inventory. Does the fulfillment scanner detect the newly available bin and dispatch Order B automatically?
 
@@ -316,8 +392,8 @@ The key detail: the robot finishing (FINISHED) does not move the bin. The Edge s
 | `fleet/simulator/transitions.go` | State transition helpers. DriveState, DriveFullLifecycle, DriveSimpleLifecycle, DriveToFailed, DriveToStopped. |
 | `fleet/simulator/inspector.go` | Read-only query methods. GetOrder, GetOrderByIndex, OrderCount, BlocksForOrder. Used by tests to inspect what the "fleet" received. |
 | `fleet/simulator/options.go` | Fault injection. WithCreateFailure (fleet rejects orders), WithPingFailure (fleet health check fails). |
-| `engine/engine_test.go` | Engine-level tests. TC-15 (full lifecycle), TC-2 (staged release), ClaimBin overwrite test. Uses real Engine + real DB + simulator. |
-| `dispatch/fleet_simulator_test.go` | Dispatcher-level tests. TC-1, TC-3, TC-4, TC-5. Tests the outbound path only (what gets sent to the fleet). |
+| `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-23 cluster, ClaimBin. Uses real Engine + real DB + simulator. |
+| `dispatch/fleet_simulator_test.go` | Dispatcher-level tests (scenario). TC-1, TC-3, TC-4, TC-5. Tests the outbound path only (what gets sent to the fleet). |
 
 ---
 

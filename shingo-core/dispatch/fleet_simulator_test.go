@@ -18,6 +18,7 @@ import (
 // =============================================================================
 
 // TC-1: Complex order blocks must include JackLoad/JackUnload bin tasks.
+// Scenario: verifies every fleet block includes a bin task (JackLoad/JackUnload).
 //
 // Bug: 2026-03-26 — stepsToBlocks() was creating OrderBlocks without BinTask,
 // causing robots to navigate to locations without actually jacking bins.
@@ -87,6 +88,7 @@ func TestSimulator_ComplexOrderBinTasks(t *testing.T) {
 
 // TC-2: Staged complex order — pre-wait blocks sent initially,
 // post-wait blocks appended on release.
+// Scenario: verifies dispatcher-level staged order block structure.
 //
 // Complex orders with a "wait" step are dispatched as staged (incomplete)
 // orders. When the robot reaches the wait point, Edge sends a release
@@ -169,8 +171,9 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 	}
 }
 
-// TC-3: Simple retrieve — verifies the full dispatch path creates the right
-// fleet request with JackLoad at source and JackUnload at destination.
+// TC-3: Simple retrieve.
+// Scenario: verifies the full dispatch path creates the right fleet request
+// with JackLoad at source and JackUnload at destination.
 func TestSimulator_SimpleRetrieveOrder(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -227,6 +230,7 @@ func TestSimulator_SimpleRetrieveOrder(t *testing.T) {
 }
 
 // TC-4: Simulator state mapping matches RDS adapter mapping.
+// Scenario: verifies simulator state mapping is identical to the real RDS adapter.
 //
 // Ensures the simulator's MapState matches the real SEER RDS adapter
 // exactly, so state transitions emitted in tests are realistic.
@@ -260,6 +264,8 @@ func TestSimulator_StateMapping(t *testing.T) {
 }
 
 // TC-5: Fleet creation failure causes order to fail with no vendor order ID.
+// Scenario: verifies that fleet rejection results in a clean failed order
+// with no phantom return orders.
 //
 // Bug: maybeCreateReturnOrder was creating spurious return orders for orders
 // that failed before the fleet accepted them (empty VendorOrderID).
