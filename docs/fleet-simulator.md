@@ -100,6 +100,8 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-24b | Stale bin location after complex order | FIXED | Bug found |
 | TC-24c | Phantom inventory from stale location | FIXED | Bug found |
 | TC-25 | Staged bin at core node — store order claim | DISMISSED | Investigated, correct behavior |
+| TC-26 | Operator cancels — bin reservation release | ~COVERED | See TC-23b |
+| TC-27 | Redirect preserves bin reservation | ~COVERED | See Redirect mid-transit |
 | TC-28 | Two lines request same part simultaneously | PASS | Verified |
 | TC-29 | Cancel while robot in transit | — | To test |
 | TC-30 | Fleet failure leaves bin claim dangling | FIXED | Bug found |
@@ -114,9 +116,12 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | — | Dispatch stress — 20 concurrent orders, 10 bins | PASS | Verified |
 | — | Redirect mid-transit — claim intact | PASS | Verified |
 | — | Fulfillment scanner — queue to dispatch round-trip | PASS | Verified |
-| TC-40a | Buried bin reshuffle via engine pipeline | PASS | Verified |
 | TC-38 | Multi-pickup complex order leaves secondary bins stranded | — | To test |
 | TC-39 | Cross-line poaching of producer empty bins | — | To test |
+| TC-16 | Fleet reports an unknown state | — | To test |
+| TC-17 | Fleet reports the same state twice | — | To test |
+| TC-18 | Fleet reports states out of order | — | To test |
+| TC-19 | Robot completes a very short trip | — | To test |
 | TC-40a | FIFO mode — buried older than accessible triggers reshuffle (Cube #7) | PASS | Verified |
 | TC-40b | COST mode — oldest accessible returned, buried ignored (Cube #7) | PASS | Verified |
 | TC-41 | Empty cart starvation — no accessible empties (Cube #6) | PASS | Verified |
@@ -595,6 +600,30 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 ---
 
+### TC-40b: COST mode — oldest accessible returned, buried ignored — PASS
+
+**Scenario:** Same 3-lane NGRP layout as TC-40a (oldest bin buried at depth 3 behind two blockers, newer accessible bins at the front of other lanes). A retrieve order fires with `retrieve_algorithm = COST`.
+
+**Expected behavior:** `resolveRetrieveCOST` should return the oldest accessible bin without scanning buried bins. No reshuffle triggered. The fleet should receive a direct retrieve to the accessible bin's storage slot. This validates the cost-optimized behavior that avoids unnecessary reshuffles.
+
+**Result:** PASS. Two sub-tests verified: (1) when accessible bins exist, COST mode returns the oldest accessible bin (BIN-MID at T+1s) and ignores the buried older bin (BIN-OLD at T). No `BuriedError` raised. (2) When no accessible bins exist at all (only buried bins behind blockers), COST mode falls back to returning a `BuriedError` for the buried bin, which triggers a reshuffle — the same behavior as FIFO mode in this degenerate case.
+
+**Tests:** `dispatch/group_resolver_test.go` — `TestTC40b_COSTIgnoresBuriedWhenAccessible`, `TestTC40b_COSTFallsToBuriedWhenNoAccessible`
+
+---
+
+### TC-41: Empty cart starvation — no accessible empties — PASS
+
+**Scenario:** All accessible empty bins in an NGRP have been consumed through normal retrieves. Only buried empties remain (behind full bins at deeper lane depths). A press drops a full bin and needs an empty pickup. `FindEmptyCompatibleBin` looks for an empty bin, but every matching empty is physically unreachable.
+
+**Expected behavior:** The system should detect that the empty is buried and trigger a reshuffle to unbury the shallowest one (fewest blockers), rather than dispatching a robot to an inaccessible slot.
+
+**Result:** PASS. Two complementary tests verified: (1) Unit level (`group_resolver_test.go`): confirms the gap — `FindEmptyCompatibleBin` is lane-unaware and returns a buried empty, but `IsSlotAccessible` correctly reports it as unreachable. This documents the pre-fix behavior where a robot would be sent to a slot it can't physically access. (2) Integration level (`integration_test.go`): after the fix, the `retrieve_empty` path with buried empties creates a reshuffle compound order (status `reshuffling` with compound children) instead of dispatching directly to the unreachable slot.
+
+**Tests:** `dispatch/group_resolver_test.go` — `TestTC41_EmptyStarvation_BuriedEmptiesUnreachable`; `dispatch/integration_test.go` — `TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle`
+
+---
+
 ## Written but not yet run
 
 No untested test code is currently pending. The scenarios below in "Scenarios to test next" describe situations that haven't been coded yet.
@@ -609,13 +638,13 @@ These scenarios haven't been tested yet. Each one describes something that could
 
 A reservation ("claim") bug means the system's record of which bins are committed to which orders doesn't match reality. These are the most dangerous because they can cause robots to arrive at empty locations or bins to become permanently stuck.
 
-**Robot breaks down mid-delivery — does the bin reservation release?** A robot is carrying a bin and breaks down. The fleet marks the order as failed. The bin claim should be automatically released so the system knows that bin is available for a new attempt. If it doesn't release, the system thinks a robot is still coming for it and no one else can use it.
+**Robot breaks down mid-delivery — does the bin reservation release?** DONE — TC-30 found and fixed this bug. See Bugs found and fixed section.
 
-**TC-26: Operator cancels an order — does the bin reservation release?** Same as above, but the operator cancels instead of the robot failing. The bin was reserved but the order is no longer happening. The reservation must release.
+**TC-26: Operator cancels an order — does the bin reservation release?** Largely covered by TC-23b (cancel transfers claim to return order). Remaining gap: a standalone cancel with no return order — verify the claim is released without transfer. Low priority since the cancel handler calls `UnclaimOrderBins` unconditionally.
 
-**TC-27: Operator redirects a robot — does the bin reservation survive?** A robot is mid-delivery and the operator redirects it to a different destination. The bin is still on the robot — the reservation should stay intact. Only the destination changes.
+**TC-27: Operator redirects a robot — does the bin reservation survive?** DONE — verified in "Redirect mid-transit" test. Bin claim survives redirect.
 
-**TC-29: Operator cancels while the robot is in transit.** The robot is already moving with the bin. The operator cancels. The reservation should release cleanly even though the robot hasn't arrived yet.
+**TC-29: Operator cancels while the robot is in transit.** The robot is already moving with the bin. The operator cancels. The reservation should release cleanly even though the robot hasn't arrived yet. Partially covered by TC-23b (cancel with robot in flight), but TC-29 would test the cancel → return → re-claim chain with the robot at RUNNING state specifically.
 
 **TC-32: Bin sits at staging too long — what happens to the reservation?** A bin has been at a staging area past its expiry time. The system releases the staging status. But if that bin was reserved by an active order, does the reservation also get cleaned up? Or is it left dangling?
 
@@ -636,6 +665,8 @@ Scenarios first observed in the Shingo Cube simulation.
 **TC-40a: FIFO mode — buried bin older than accessible triggers reshuffle.** DONE — promoted to verified (TestBuriedBin_ReshuffleViaEngine).
 
 **TC-40b: COST mode — oldest accessible returned, buried ignored.** DONE — promoted to verified (TestTC40b_COSTIgnoresBuriedWhenAccessible, TestTC40b_COSTFallsToBuriedWhenNoAccessible in `dispatch/group_resolver_test.go`).
+
+**TC-41: Empty cart starvation — no accessible empties.** DONE — promoted to verified (TestTC41_EmptyStarvation_BuriedEmptiesUnreachable in `dispatch/group_resolver_test.go`, TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle in `dispatch/integration_test.go`).
 
 ### Timing and race conditions
 
