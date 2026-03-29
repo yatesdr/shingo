@@ -302,7 +302,7 @@ func (db *DB) ReleaseStagedBin(binID int64) error {
 // ReleaseExpiredStagedBins releases staged bins whose expiry has passed.
 // Returns the number of bins released.
 func (db *DB) ReleaseExpiredStagedBins() (int, error) {
-	result, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW()`)
+	result, err := db.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW()`)
 	if err != nil {
 		return 0, err
 	}

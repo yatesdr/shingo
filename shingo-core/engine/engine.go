@@ -185,6 +185,15 @@ func (e *Engine) MsgClient() *messaging.Client           { return e.msgClient }
 func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
 func (e *Engine) Recovery() *RecoveryService             { return e.recovery }
 
+// RunFulfillmentScan runs one pass of the fulfillment scanner and returns the
+// number of orders processed. For testing.
+func (e *Engine) RunFulfillmentScan() int {
+	if e.fulfillment == nil {
+		return 0
+	}
+	return e.fulfillment.RunOnce()
+}
+
 func (e *Engine) checkConnectionStatus() {
 	// Fleet
 	if err := e.fleet.Ping(); err == nil {

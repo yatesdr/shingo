@@ -44,6 +44,11 @@ type PlanningService struct {
 	advanceCompound func(parentOrderID int64) error
 
 	handlers map[string]PlanningHandler
+
+	// postFindHook is called after a bin lookup succeeds but before the claim.
+	// Nil by default ( no-op in production. Set via SetPostFindHook for tests
+	// to widen the the TOCTOU race window for deterministic concurrent testing.
+	postFindHook func()
 }
 
 func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, debug func(string, ...any), createCompound func(*store.Order, *ReshufflePlan) error, advanceCompound func(int64) error) *PlanningService {
@@ -127,6 +132,9 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 	}
 
 	s.dbg("retrieve: FIFO source bin=%d payload=%s node=%s", source.ID, payloadCode, sourceNode.Name)
+	if s.postFindHook != nil {
+		s.postFindHook()
+	}
 	if err := s.db.ClaimBin(source.ID, order.ID); err != nil {
 		return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
 	}
@@ -175,6 +183,9 @@ func (s *PlanningService) planRetrieveEmpty(order *store.Order, payloadCode stri
 		}
 	}
 
+	if s.postFindHook != nil {
+		s.postFindHook()
+	}
 	if err := s.db.ClaimBin(bin.ID, order.ID); err != nil {
 		return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
 	}

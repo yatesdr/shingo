@@ -330,6 +330,12 @@ func (d *Dispatcher) unclaimOrder(orderID int64) {
 	d.db.UnclaimOrderBins(orderID)
 }
 
+// SetPostFindHook installs a test-only hook called between Find and Claim in
+// the planning service. Used for deterministic concurrency testing.
+func (d *Dispatcher) SetPostFindHook(fn func()) {
+	d.planner.postFindHook = fn
+}
+
 // LaneLock returns the dispatcher's lane lock for external use.
 func (d *Dispatcher) LaneLock() *LaneLock { return d.laneLock }
 

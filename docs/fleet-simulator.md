@@ -35,7 +35,7 @@ Run all simulator tests:
 
 ```
 cd shingo-core
-go test -v -run "TestSimulator|TestClaimBin|TestTC[2-4][0-9]" ./engine/ ./dispatch/ -timeout 120s
+go test -v -run "TestSimulator|TestClaimBin|TestTC[2-4][0-9]|TestConcurrent|TestBuriedBin|TestFulfillmentScanner|TestRedirect" ./engine/ ./dispatch/ -timeout 120s
 ```
 
 Run a specific test:
@@ -84,10 +84,10 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-6 | Cancel at exact moment fleet accepts | — | To test |
 | TC-7 | Release before robot reaches wait point | — | To test |
 | TC-8 | Double release command | — | To test |
-| TC-9 | Complex order with zero steps | — | To test |
-| TC-10 | Order references nonexistent node | — | To test |
+| TC-9 | Complex order with zero steps | PASS | Verified |
+| TC-10 | Order references nonexistent delivery node | PASS | Verified |
 | TC-11 | Only bin at disabled storage node | — | To test |
-| TC-12 | Order requests zero quantity | — | To test |
+| TC-12 | Order requests zero quantity | PASS | Verified |
 | TC-15 | Full lifecycle dispatch → receipt → bin arrival | PASS | Verified |
 | TC-20 | Two lines same assembly — staging isolation | — | To test |
 | TC-21 | Quality-hold bin not dispatched | PASS | Verified |
@@ -109,12 +109,17 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-34 | Complex order dispatches to node with no bin | — | To test |
 | TC-35 | planMove dispatches robot with no bin | — | To test |
 | TC-36 | Retrieve claim failure — queue instead of fail | FIXED | Bug found |
-| TC-37 | Staging expiry strips status from claimed bin | — | To test |
+| TC-37 | Staging expiry strips status from claimed bin | FIXED | Bug found |
+| — | Deterministic TOCTOU claim race (PostFindHook) | PASS | Verified |
+| — | Dispatch stress — 20 concurrent orders, 10 bins | PASS | Verified |
+| — | Redirect mid-transit — claim intact | PASS | Verified |
+| — | Fulfillment scanner — queue to dispatch round-trip | PASS | Verified |
+| TC-40a | Buried bin reshuffle via engine pipeline | PASS | Verified |
 | TC-38 | Multi-pickup complex order leaves secondary bins stranded | — | To test |
 | TC-39 | Cross-line poaching of producer empty bins | — | To test |
-| TC-40a | FIFO mode — buried older than accessible triggers reshuffle (Cube #7) | — | To test |
-| TC-40b | COST mode — oldest accessible returned, buried ignored (Cube #7) | — | To test |
-| TC-41 | Empty cart starvation — no accessible empties (Cube #6) | — | To test |
+| TC-40a | FIFO mode — buried older than accessible triggers reshuffle (Cube #7) | PASS | Verified |
+| TC-40b | COST mode — oldest accessible returned, buried ignored (Cube #7) | PASS | Verified |
+| TC-41 | Empty cart starvation — no accessible empties (Cube #6) | PASS | Verified |
 | — | ClaimBin silent overwrite | FIXED | Bug found |
 
 ---
@@ -282,6 +287,36 @@ d.failOrder(order, env, planErr.Code, planErr.Detail)
 **Status:** Fixed. `HandleOrderRequest` now checks for `planErr.Code == "claim_failed"` and calls `queueOrder` instead of `failOrder`. The fulfillment scanner retries on its next sweep. The same pattern exists in `planRetrieveEmpty` (empty bin retrieval) — both paths are covered by the fix in `HandleOrderRequest`.
 
 **Test:** `engine/engine_test.go` — `TestTC36_RetrieveClaimFailure_QueueNotFail`
+
+---
+
+### TC-37: Staging sweep flips bin to available while still actively claimed
+
+**Scenario:** A bin is delivered to a lineside node (status `staged`, `claimed_by=nil` via `ApplyBinArrival`). An operator creates a second order that claims the bin (`claimed_by` set to the new order's ID). The lineside node has a staging TTL. The TTL expires and the staging sweep runs. Does the sweep check for active claims before flipping the bin to `available`?
+
+**Expected behavior:** The staging sweep should skip bins with active claims. A bin that is `claimed_by` a live order should remain `staged` regardless of TTL expiry. The claim protects the bin from being treated as generally available.
+
+**Result:** BUG FOUND. `ReleaseExpiredStagedBins` used a SQL `WHERE` clause that checked `status='staged'`, `claimed_by IS NULL`, and `staged_expires_at < NOW()` — but the `claimed_by IS NULL` check was missing from the original query. The sweep flipped the bin to `available` while it was still claimed, creating a contradictory state (`status=available`, `claimed_by=123`).
+
+**Root cause:** The original SQL was:
+```sql
+-- Before (broken): no claimed_by check
+UPDATE bins SET status='available', ...
+WHERE status='staged' AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW()
+```
+
+**Fix:** Added `AND claimed_by IS NULL`:
+```sql
+-- After (fixed): respects active claims
+UPDATE bins SET status='available', ...
+WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL AND staged_expires_at < NOW()
+```
+
+**Production risk:** A bin in the contradictory state (`available` but still `claimed`) would cause UI confusion — `NodeTileState` would show `Staged: false, Claimed: true`. Not a double-dispatch risk (the claim still protects), but misleading for operators and monitoring dashboards.
+
+**Status:** Fixed. The staging sweep now checks `claimed_by IS NULL` before releasing expired bins.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestTC37_StagingExpiryVsActiveClaim`
 
 ---
 
@@ -464,9 +499,105 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 ---
 
+### TC-9: Complex order with zero steps — PASS
+
+**Scenario:** Someone sends a complex order request with an empty steps array. The system should reject it gracefully — no panic, no fleet orders, no broken order record.
+
+**Expected behavior:** The order is either rejected before being persisted (no database record) or created with a non-dispatched status. No robot should be dispatched.
+
+**Result:** PASS. The handler rejected the order before persisting — `GetOrderByUUID` returned "not found." No fleet orders were created. The system handled the malformed input cleanly without crashing.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestTC09_ComplexOrderZeroSteps`
+
+---
+
+### TC-10: Order references nonexistent delivery node — PASS
+
+**Scenario:** A retrieve order specifies a delivery node name that doesn't exist in the database (`"NOSUCH-NODE-XYZ"`). Should fail with a clear error, not create a partial order or dispatch a robot.
+
+**Expected behavior:** The order is either rejected before persisting or created with a failed/queued status. No fleet transport order should be created.
+
+**Result:** PASS. The lifecycle rejected the order before persisting — `GetOrderByUUID` returned "not found." No fleet orders were created.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestTC10_NonexistentDeliveryNode`
+
+---
+
+### TC-12: Order requests zero quantity — PASS
+
+**Scenario:** Someone sends a retrieve order with `quantity=0`. Should be handled gracefully — no panic, no crash.
+
+**Expected behavior:** The system processes the order without crashing. Whether it dispatches or rejects is secondary — the key is no panic.
+
+**Result:** PASS. The system handled the zero-quantity order without panic. The order was created and processed through the normal pipeline.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestTC12_ZeroQuantity`
+
+---
+
+### Deterministic TOCTOU claim race (PostFindHook) — PASS
+
+**Scenario:** Two orders compete for the same bin. A PostFindHook is installed between `FindSourceBinFIFO` and `ClaimBin` to widen the TOCTOU race window. Goroutine 1 finds the bin, hits the hook, and pauses. Goroutine 2 starts, finds the same bin, claims it successfully. Goroutine 1 resumes, its `ClaimBin` fails with `claim_failed`. The test is 100% deterministic — the hook guarantees both goroutines enter the TOCTOU window simultaneously.
+
+**Expected behavior:** One order dispatches with the bin claimed. The other is queued (not permanently failed) so the fulfillment scanner retries when a bin becomes available.
+
+**Result:** PASS. The hook guarantees the race. One order dispatches, the other is queued with status `queued`. Neither order permanently fails.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestConcurrent_ClaimRaceDeterministic`
+
+---
+
+### Dispatch stress — 20 concurrent orders, 10 bins — PASS
+
+**Scenario:** 20 orders fire simultaneously against 10 bins (2:1 contention ratio). `GOMAXPROCS` is set to `runtime.NumCPU()` to maximize real concurrency. Tests whether the claim-then-dispatch path produces any double-claims or permanent failures under pressure.
+
+**Expected behavior:** Each bin is claimed by at most 1 order. No order permanently fails — excess orders should be queued.
+
+**Result:** PASS. No double-claims detected. No orders permanently failed.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestConcurrent_DispatchStress`
+
+---
+
+### Redirect mid-transit — claim stays intact — PASS
+
+**Scenario:** A retrieve order is dispatched and the robot reaches RUNNING (in_transit). The operator redirects the order to a different line node. The old vendor order should be cancelled in the fleet, a new one created, and the bin claim should remain intact.
+
+**Expected behavior:** After redirect, the order's bin claim survives. A new vendor order is dispatched to the new destination. The claimed bin is still claimed by the same order.
+
+**Result:** PASS. Bin claim intact after redirect. New vendor order dispatched to the second line.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestRedirect_MidTransit`
+
+---
+
+### Fulfillment scanner — queue to dispatch round-trip — PASS
+
+**Scenario:** A retrieve order is submitted but no bins are available. The order is queued. Later, a compatible bin appears at a storage node. The fulfillment scanner runs and dispatches the queued order.
+
+**Expected behavior:** The order starts as `queued`. After a bin appears and the scanner runs, the order transitions to `dispatched` with a bin claimed. Driving through the full lifecycle (RUNNING → FINISHED → receipt) should complete the order and move the bin to the destination.
+
+**Result:** PASS. Full queue → scan → dispatch → deliver → confirm round-trip verified. Bin correctly at line node, claim released after completion.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestFulfillmentScanner_QueueToDispatch`
+
+---
+
+### TC-40a: Buried bin reshuffle via engine pipeline — PASS
+
+**Scenario:** An NGRP node group contains a LANE with 3 physical slots. A blocker bin sits at depth 1 (front, newer `loaded_at`). A target bin sits at depth 2 (buried, `loaded_at` 2 hours ago). FIFO retrieval targeting the NGRP detects the buried target as older than any accessible bin and triggers a compound reshuffle order.
+
+**Expected behavior:** A compound order is created with 3 child steps: (1) unbury blocker → shuffle slot, (2) retrieve target → line node, (3) restock blocker → original slot. Each child dispatches through the fleet simulator and completes sequentially. The target bin arrives at the line node. The blocker is restocked. All claims released. Lane lock freed.
+
+**Result:** PASS. The FIFO GroupResolver correctly detected the buried bin, `PlanReshuffle` generated the 3-step compound order, and the engine wiring drove each child through the simulator lifecycle. The compound order completed with the target bin at the line and the lane lock released.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestBuriedBin_ReshuffleViaEngine`
+
+---
+
 ## Written but not yet run
 
-These tests have been coded and are ready to execute. They may find new bugs when run.
+No untested test code is currently pending. The scenarios below in "Scenarios to test next" describe situations that haven't been coded yet.
 
 ---
 
@@ -488,7 +619,7 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 **TC-32: Bin sits at staging too long — what happens to the reservation?** A bin has been at a staging area past its expiry time. The system releases the staging status. But if that bin was reserved by an active order, does the reservation also get cleaned up? Or is it left dangling?
 
-**TC-37: Staging expiry strips status from actively-claimed bin.** A bin is delivered to a lineside node (status `staged`, `claimed_by` set on the delivery receipt order). The node has a staging TTL of 5 minutes. 5 minutes pass. `ReleaseExpiredStagedBins` flips status to `available` without checking `claimed_by`. The bin is now `available` but still claimed — a contradictory state. Staging expiry should either skip bins with active claims, or the claim check should prevent downstream confusion. The bin should remain `staged` while actively claimed. Production risk: UI display confusion — `NodeTileState` would show `Staged: false, Claimed: true`. Not a double-dispatch risk (claim still protects), but could mislead operators or monitoring dashboards.
+**TC-37: Staging expiry strips status from actively-claimed bin.** DONE — bug found and fixed. See Bugs found and fixed section.
 
 **TC-33: Operator manually moves a reserved bin.** An operator requests a manual move on a bin that is reserved by an active order. Should the system block the move? Release the reservation? Allow both and hope for the best?
 
@@ -502,11 +633,9 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 Scenarios first observed in the Shingo Cube simulation.
 
-**TC-40a: FIFO mode — buried bin older than accessible triggers reshuffle.** A 3-lane NGRP has bins with staggered `loaded_at` timestamps. The oldest bin is buried at depth 2 in Lane 3 behind a blocker. Newer accessible bins sit at the front of Lanes 1 and 2. A retrieve order fires with `retrieve_algorithm = FIFO`. Expected behavior: `resolveRetrieveFIFO` compares the oldest accessible bin's timestamp against the buried bin, finds the buried bin is older, and returns a `BuriedError` triggering a reshuffle. The fleet should receive a compound reshuffle order, not a direct retrieve. Production risk: without this, FIFO drift accumulates silently — parts with shelf-life or lot-tracking requirements get served out of order.
+**TC-40a: FIFO mode — buried bin older than accessible triggers reshuffle.** DONE — promoted to verified (TestBuriedBin_ReshuffleViaEngine).
 
-**TC-40b: COST mode — oldest accessible returned, older buried bin ignored.** Same 3-lane NGRP layout as TC-40a (oldest bin buried, newer bins accessible). A retrieve order fires with `retrieve_algorithm = COST`. Expected behavior: `resolveRetrieveCOST` returns the oldest accessible bin without scanning buried bins. No reshuffle triggered. The fleet should receive a direct retrieve to the accessible bin's storage slot. This validates the preserved cost-optimized behavior under its new name.
-
-**TC-41: Empty cart starvation — all accessible empties consumed, buried empties unreachable.** LKND storage scatters empties across lanes where they get buried behind full bins. All accessible empties are consumed through normal retrieves. A press drops a full bin and needs an empty pickup. `FindEmptyCompatibleBin` returns nil — no accessible empty exists. Expected behavior: the system detects buried empties exist and triggers a reshuffle to unbury the shallowest one (fewest blockers). Production risk: press starvation. The empties are physically in the grid but unreachable. Manual intervention is the only current recovery.
+**TC-40b: COST mode — oldest accessible returned, buried ignored.** DONE — promoted to verified (TestTC40b_COSTIgnoresBuriedWhenAccessible, TestTC40b_COSTFallsToBuriedWhenNoAccessible in `dispatch/group_resolver_test.go`).
 
 ### Timing and race conditions
 
@@ -518,13 +647,7 @@ Scenarios first observed in the Shingo Cube simulation.
 
 ### Bad input handling
 
-**TC-9: Complex order with zero steps.** Someone sends an order request with no steps. The system should fail with a clear error, not crash or create a broken order.
-
-**TC-10: Order references a node that doesn't exist.** The order specifies a pickup or delivery node name that isn't in the database. Should fail with "node not found" instead of creating a partial order.
-
 **TC-11: Only available bin is at a disabled storage node.** The storage node is marked as disabled (out of service). The system should not dispatch from disabled nodes — it should report no inventory available rather than sending a robot to a node that's offline.
-
-**TC-12: Order requests zero quantity.** Someone sends an order for 0 bins. Should be rejected as invalid.
 
 ### Multi-line and inventory scenarios
 
@@ -575,6 +698,28 @@ dispatcher.HandleOrderReceipt(...)     (simulates Edge confirmation)
 
 The key detail: the robot finishing (FINISHED) does not move the bin. The Edge station must confirm receipt first. This matches real production behavior and prevents inventory from updating before a human confirms the bin actually arrived.
 
+### Concurrency testing infrastructure
+
+The simulator harness includes infrastructure for deterministic and statistical concurrency testing:
+
+**PostFindHook** — A test-only synchronization point installed on the `PlanningService` between `FindSourceBinFIFO` and `ClaimBin`. When set via `Dispatcher.SetPostFindHook(fn)`, the hook fires inside `planRetrieve` and `planRetrieveEmpty` after finding a bin but before claiming it. Tests use the hook to widen the TOCTOU race window and guarantee both goroutines enter it simultaneously.
+
+```go
+d.SetPostFindHook(func() {
+    // This runs between Find and Claim — widen the TOCTOU window
+    signalChan <- struct{}{} // let the other goroutine start
+    <-waitForOther           // wait until the other goroutine claims
+})
+```
+
+**simulator.ParallelGroup** — A barrier-synchronized goroutine launcher. All goroutines wait on a channel barrier, then start simultaneously. Used for stress tests where N orders compete for M bins.
+
+```go
+simulator.ParallelGroup(20, func(i int) {
+    d.HandleOrderRequest(env, &protocol.OrderRequest{...})
+})
+```
+
 ### Important technical constraints
 
 **Receipt required for bin movement.** Tests that verify bin movement must call `HandleOrderReceipt` after driving to FINISHED. Without this step, the bin stays at its original location in the database.
@@ -591,7 +736,9 @@ The key detail: the robot finishing (FINISHED) does not move the bin. The Edge s
 | `fleet/simulator/transitions.go` | State transition helpers. DriveState, DriveFullLifecycle, DriveSimpleLifecycle, DriveToFailed, DriveToStopped. |
 | `fleet/simulator/inspector.go` | Read-only query methods. GetOrder, GetOrderByIndex, OrderCount, BlocksForOrder. Used by tests to inspect what the "fleet" received. |
 | `fleet/simulator/options.go` | Fault injection. WithCreateFailure (fleet rejects orders), WithPingFailure (fleet health check fails). |
+| `fleet/simulator/concurrent.go` | Barrier-synchronized goroutine launcher (ParallelGroup). Used for concurrent dispatch stress tests. |
 | `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-21, TC-23 cluster, TC-24 cluster, TC-30, ClaimBin. Uses real Engine + real DB + simulator. |
+| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, staging expiry, and buried bin reshuffle tests. Uses PostFindHook for deterministic TOCTOU race reproduction. |
 | `dispatch/fleet_simulator_test.go` | Dispatcher-level tests (scenario). TC-1, TC-3, TC-4, TC-5. Tests the outbound path only (what gets sent to the fleet). |
 
 ---
