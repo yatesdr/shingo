@@ -73,6 +73,14 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 		} else {
 			log.Printf("dispatch: plan order %s (%s): %s", p.OrderUUID, p.OrderType, planErr.Detail)
 		}
+		// claim_failed is transient: bins exist but were claimed by a concurrent
+		// order in the TOCTOU gap between FindSourceBinFIFO and ClaimBin. Queue
+		// the order so the fulfillment scanner retries when a bin frees up.
+		if planErr.Code == "claim_failed" {
+			d.dbg("dispatch: claim_failed for order %s — queuing for retry", p.OrderUUID)
+			d.queueOrder(order, env, payloadCode)
+			return
+		}
 		d.failOrder(order, env, planErr.Code, planErr.Detail)
 		return
 	}

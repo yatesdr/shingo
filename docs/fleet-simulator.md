@@ -108,7 +108,7 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-33 | Manual move of reserved bin | — | To test |
 | TC-34 | Complex order dispatches to node with no bin | — | To test |
 | TC-35 | planMove dispatches robot with no bin | — | To test |
-| TC-36 | Retrieve claim failure leaves order stranded | — | To test |
+| TC-36 | Retrieve claim failure — queue instead of fail | FIXED | Bug found |
 | TC-37 | Staging expiry strips status from claimed bin | — | To test |
 | TC-38 | Multi-pickup complex order leaves secondary bins stranded | — | To test |
 | TC-39 | Cross-line poaching of producer empty bins | — | To test |
@@ -248,6 +248,40 @@ Investigated whether `planStore`/`planMove` could "poach" a staged bin at a line
 The `staged` status correctly protects against `FindSourceBinFIFO` (retrieve orders don't pull from lineside), while remaining visible to `planStore`/`planMove` (operator-initiated releases). This is working as intended.
 
 **Test:** `engine/engine_test.go` — `TestTC25_StoreOrderClaimsStagedBinAtCoreNode` (positive assertion that store order correctly claims staged bin)
+
+---
+
+### TC-36: Retrieve claim failure — order permanently failed instead of queued
+
+**Scenario:** Two retrieve orders for the same payload fire nearly simultaneously. Both call `FindSourceBinFIFO` and find the same unclaimed bin. Order A calls `ClaimBin` first and succeeds. Order B calls `ClaimBin` and gets rejected — "bin is locked, already claimed, or does not exist." This is the classic TOCTOU (time-of-check-time-of-use) gap between the `SELECT` in `FindSourceBinFIFO` and the `UPDATE ... WHERE claimed_by IS NULL` in `ClaimBin`.
+
+**Expected behavior:** The second order should be queued (status `queued`) so the fulfillment scanner retries when a bin becomes available — exactly like when `FindSourceBinFIFO` finds no bins at all. `claim_failed` is a transient condition: bins of the right payload DO exist, one was just claimed by a concurrent order.
+
+**Result:** BUG FOUND. `planRetrieve` returned `planningError{Code: "claim_failed"}`, which `HandleOrderRequest` passed directly to `failOrder`. The order was permanently set to `StatusFailed` with an `order.error` message sent to Edge. The operator would see a failure and need to manually resubmit.
+
+**Root cause:** `HandleOrderRequest` treated all `planningError` results the same — permanent failure. The distinction between permanent errors (`node_error`, `no_storage`) and transient errors (`claim_failed`) was not made at the dispatch level.
+
+```go
+// Before (broken): all planning errors permanently fail the order
+result, planErr := d.planner.Plan(order, env, payloadCode)
+if planErr != nil {
+    d.failOrder(order, env, planErr.Code, planErr.Detail)
+    return
+}
+
+// After (fixed): claim_failed is transient — queue for retry
+if planErr.Code == "claim_failed" {
+    d.queueOrder(order, env, payloadCode)
+    return
+}
+d.failOrder(order, env, planErr.Code, planErr.Detail)
+```
+
+**Production risk:** Any time two production lines request the same part simultaneously, or a line and the fulfillment scanner compete for the same bin, one order dies permanently. More likely during shift starts when multiple lines kick off at once, or when the fulfillment scanner's retry coincides with a new order from Edge. The operator gets a failure notification, resubmits, and the second attempt usually succeeds — but the failed order leaves a confusing audit trail and the operator loses trust in the system.
+
+**Status:** Fixed. `HandleOrderRequest` now checks for `planErr.Code == "claim_failed"` and calls `queueOrder` instead of `failOrder`. The fulfillment scanner retries on its next sweep. The same pattern exists in `planRetrieveEmpty` (empty bin retrieval) — both paths are covered by the fix in `HandleOrderRequest`.
+
+**Test:** `engine/engine_test.go` — `TestTC36_RetrieveClaimFailure_QueueNotFail`
 
 ---
 
@@ -461,8 +495,6 @@ A reservation ("claim") bug means the system's record of which bins are committe
 **TC-34: Complex order dispatches robot to node with no bin.** A complex order (sequential removal) targets a lineside node where the bin was already moved by a prior manual move order. `claimComplexBins` finds no unclaimed bin, but the order still dispatches to the fleet. Robot arrives at an empty node. The order should fail at the planning stage with a "no bin available" error, same as `planStore` does. No robot should be dispatched. Same class of bug as TC-23c, but in the complex order path rather than the store path. Production risk: ghost robot during changeover or manual operations.
 
 **TC-35: planMove dispatches robot with no bin.** A move order targets a lineside node with no bins, and no `payloadCode` is specified. `planMove` skips the bin-finding loop entirely (empty node, no payload filter) and dispatches with `BinID=nil`. The order should fail with a "no available bin" error, matching `planStore`'s guard. Same ghost robot class as TC-23c and TC-34. Lower likelihood since move orders typically specify a payload, but the code path exists.
-
-**TC-36: Retrieve claim failure leaves order stranded in sourcing.** Two orders target the same bin. Order A claims it. Order B's `ClaimBin` fails with `claim_failed`. The order stays in `sourcing` status indefinitely — no event triggers the fulfillment scanner to retry. The order should be queued (status `queued`) so the fulfillment scanner retries when a bin becomes available. Alternatively, `claim_failed` should trigger a re-attempt with the next available bin. Production risk: order stuck in sourcing forever, invisible to operators until they notice a bin never arrives, requires manual database intervention to clear.
 
 **TC-38: Multi-pickup complex order leaves secondary bins stranded.** A complex order has two pickup steps at different nodes. Both bins are claimed via `claimComplexBins`. Order completes. `ApplyBinArrival` moves the first bin (tracked by `Order.BinID`). The second bin stays claimed at its original node — never moved, never unclaimed. All claimed bins should be moved and unclaimed on order completion. A junction table (`order_bins`) would be needed to track multiple bin associations. Production risk: uncommon today (multi-pickup orders are rare), but the stranded bin becomes invisible to the system. No other order can claim it. It's permanently reserved by a completed order until manual database intervention.
 

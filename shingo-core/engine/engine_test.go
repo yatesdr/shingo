@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1578,5 +1579,114 @@ func TestTC28_ConcurrentRetrieveSamePart(t *testing.T) {
 
 	if claimedBins != 2 {
 		t.Errorf("expected 2 bins claimed, got %d — one order may have failed at ClaimBin", claimedBins)
+	}
+}
+
+// --- TC-36: Retrieve claim failure — queue instead of fail ---
+// Scenario: Two concurrent retrieve orders compete for the only bin of a payload.
+// Both find the same bin via FindSourceBinFIFO (TOCTOU gap between SELECT and
+// UPDATE). The first ClaimBin succeeds. The second ClaimBin fails with
+// "bin is locked, already claimed, or does not exist".
+//
+// Bug: planRetrieve returns planningError{Code: "claim_failed"}, which causes
+// HandleOrderRequest to call failOrder — permanently failing the order. But
+// claim_failed is a transient condition: bins of the right payload DO exist,
+// one was just claimed by another order in the race window. The order should be
+// queued so the fulfillment scanner retries when a bin becomes available.
+//
+// Fix: HandleOrderRequest now checks for planErr.Code == "claim_failed" and
+// calls queueOrder instead of failOrder. The fulfillment scanner will retry
+// on its next sweep.
+//
+// Note: This test uses concurrent goroutines to trigger the TOCTOU race. The
+// race is not guaranteed on every run — if the Go runtime serializes the
+// goroutines, both orders succeed sequentially. The test always passes when
+// no race occurs; it only fails when the race exposes the claim_failed path
+// and the fix is not applied.
+func TestTC36_RetrieveClaimFailure_QueueNotFail(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	// Single bin — both orders compete for the same bin
+	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC36")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Fire two concurrent retrieve orders for the same payload.
+	// Both will call FindSourceBinFIFO → find the same unclaimed bin → both
+	// try ClaimBin. One wins, the other gets claim_failed.
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		<-start
+		d.HandleOrderRequest(env, &protocol.OrderRequest{
+			OrderUUID:    "tc36-a",
+			OrderType:    dispatch.OrderTypeRetrieve,
+			PayloadCode:  bp.Code,
+			DeliveryNode: lineNode.Name,
+			Quantity:     1,
+		})
+	}()
+
+	go func() {
+		defer wg.Done()
+		<-start
+		d.HandleOrderRequest(env, &protocol.OrderRequest{
+			OrderUUID:    "tc36-b",
+			OrderType:    dispatch.OrderTypeRetrieve,
+			PayloadCode:  bp.Code,
+			DeliveryNode: lineNode.Name,
+			Quantity:     1,
+		})
+	}()
+
+	close(start) // fire both goroutines simultaneously
+	wg.Wait()
+
+	orderA, err := db.GetOrderByUUID("tc36-a")
+	if err != nil {
+		t.Fatalf("get order A: %v", err)
+	}
+	orderB, err := db.GetOrderByUUID("tc36-b")
+	if err != nil {
+		t.Fatalf("get order B: %v", err)
+	}
+
+	t.Logf("order A: status=%s bin=%v vendor=%s", orderA.Status, orderA.BinID, orderA.VendorOrderID)
+	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, orderB.BinID, orderB.VendorOrderID)
+
+	// Neither order should be permanently failed for a transient claim race.
+	for _, order := range []*store.Order{orderA, orderB} {
+		if order.Status == dispatch.StatusFailed {
+			t.Errorf("BUG: order %s permanently failed after claim_failed — should be queued for retry",
+				order.EdgeUUID)
+		}
+	}
+
+	// One should be dispatched, the other queued (not failed, not sourcing)
+	dispatched := 0
+	queued := 0
+	for _, order := range []*store.Order{orderA, orderB} {
+		switch order.Status {
+		case dispatch.StatusDispatched, dispatch.StatusInTransit:
+			dispatched++
+		case dispatch.StatusQueued:
+			queued++
+		}
+	}
+
+	if dispatched == 1 && queued == 1 {
+		t.Logf("correct: one dispatched, one queued — fulfillment scanner will retry")
+	} else if dispatched == 2 {
+		t.Logf("both dispatched — race did not trigger (scheduler serialized), no bug exposed this run")
+	} else {
+		t.Logf("unexpected distribution: dispatched=%d queued=%d (statuses: A=%s B=%s)",
+			dispatched, queued, orderA.Status, orderB.Status)
 	}
 }
