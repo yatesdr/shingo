@@ -153,6 +153,28 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 	d.unlockLaneForCompound(parentOrderID)
 }
 
+// cancelCompoundChildren cancels all non-terminal children of a compound order.
+// Unlike HandleChildOrderFailure (which only cancels pending/sourcing children),
+// this method also cancels in-flight children (dispatched, in_transit, staged)
+// and their fleet orders. Called when an operator cancels a compound parent directly.
+func (d *Dispatcher) cancelCompoundChildren(parent *store.Order, stationID, reason string) {
+	children, err := d.db.ListChildOrders(parent.ID)
+	if err != nil {
+		log.Printf("dispatch: cancel compound children for order %d: %v", parent.ID, err)
+		return
+	}
+
+	cancelReason := fmt.Sprintf("parent order cancelled: %s", reason)
+	for _, child := range children {
+		if child.Status == StatusCancelled || child.Status == StatusConfirmed || child.Status == StatusFailed {
+			continue
+		}
+		d.lifecycle.CancelOrder(child, stationID, cancelReason)
+	}
+
+	d.unlockLaneForCompound(parent.ID)
+}
+
 // unlockLaneForCompound finds and unlocks the lane associated with a compound order's children.
 func (d *Dispatcher) unlockLaneForCompound(parentOrderID int64) {
 	if d.laneLock == nil {

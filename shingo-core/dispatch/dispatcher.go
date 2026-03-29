@@ -211,6 +211,13 @@ func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.Order
 		return
 	}
 
+	// If this is a compound parent, cascade cancellation to all children
+	// before cancelling the parent. This ensures in-flight children have
+	// their fleet orders cancelled, bins unclaimed, and the lane lock released.
+	if order.Status == StatusReshuffling {
+		d.cancelCompoundChildren(order, stationID, p.Reason)
+	}
+
 	d.lifecycle.CancelOrder(order, stationID, p.Reason)
 	d.replies.SendCancelled(env, p.OrderUUID, p.Reason)
 }

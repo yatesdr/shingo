@@ -35,7 +35,7 @@ Run all simulator tests:
 
 ```
 cd shingo-core
-go test -v -run "TestSimulator|TestClaimBin|TestTC[2-4][0-9]|TestConcurrent|TestBuriedBin|TestFulfillmentScanner|TestRedirect" ./engine/ ./dispatch/ -timeout 120s
+go test -v -run "TestSimulator|TestClaimBin|TestTC[0-9]|TestConcurrent|TestBuriedBin|TestFulfillmentScanner|TestRedirect|TestComplexOrder|TestCompound|TestLaneLock" ./engine/ ./dispatch/ -timeout 120s
 ```
 
 Run a specific test:
@@ -55,8 +55,6 @@ This document has two kinds of test results, organized into separate sections:
 **Bugs found and fixed** are regression tests. Each one documents a real bug that the simulator found in the codebase. The entry explains what went wrong, shows the root cause, and describes the fix. The test exists to make sure that specific bug never comes back. If a regression test fails, it means someone reintroduced a bug that was already fixed — that's a high-priority problem.
 
 **Verified scenarios** are scenario tests. Each one explores a "what if" situation that could happen on the floor. The test passed, meaning the system handles that situation correctly today. These tests exist to catch future regressions — if one starts failing after a code change, it means something broke that was previously working.
-
-**Written but not yet run** are tests that have been coded but haven't been executed yet. They explore specific scenarios and may find new bugs when run.
 
 Each test case entry follows the same format:
 
@@ -89,6 +87,10 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-11 | Only bin at disabled storage node | — | To test |
 | TC-12 | Order requests zero quantity | PASS | Verified |
 | TC-15 | Full lifecycle dispatch → receipt → bin arrival | PASS | Verified |
+| TC-16 | Fleet reports an unknown state | — | To test |
+| TC-17 | Fleet reports the same state twice | — | To test |
+| TC-18 | Fleet reports states out of order | — | To test |
+| TC-19 | Robot completes a very short trip | — | To test |
 | TC-20 | Two lines same assembly — staging isolation | — | To test |
 | TC-21 | Quality-hold bin not dispatched | PASS | Verified |
 | TC-22 | Only bin at maintenance node | — | To test |
@@ -99,33 +101,42 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-24a | Complex order bin poaching during transit | FIXED | Bug found |
 | TC-24b | Stale bin location after complex order | FIXED | Bug found |
 | TC-24c | Phantom inventory from stale location | FIXED | Bug found |
-| TC-25 | Staged bin at core node — store order claim | DISMISSED | Investigated, correct behavior |
-| TC-26 | Operator cancels — bin reservation release | ~COVERED | See TC-23b |
-| TC-27 | Redirect preserves bin reservation | ~COVERED | See Redirect mid-transit |
+| TC-25 | Staged bin at core node — store order claim | DISMISSED | Verified (correct behavior) |
+| TC-26 | Operator cancels — bin reservation release | ~COVERED | See TC-23b (gap remains) |
+| TC-27 | Redirect preserves bin reservation | COVERED | See Redirect mid-transit |
 | TC-28 | Two lines request same part simultaneously | PASS | Verified |
 | TC-29 | Cancel while robot in transit | — | To test |
 | TC-30 | Fleet failure leaves bin claim dangling | FIXED | Bug found |
 | TC-31 | Order finishes, freed bin picked up by waiting order | — | To test |
 | TC-32 | Staging expiry vs active reservation | — | To test |
 | TC-33 | Manual move of reserved bin | — | To test |
-| TC-34 | Complex order dispatches to node with no bin | — | To test |
+| TC-34 | Complex order dispatches to node with no bin | ~COVERED | See TC-49 (gap remains) |
 | TC-35 | planMove dispatches robot with no bin | — | To test |
 | TC-36 | Retrieve claim failure — queue instead of fail | FIXED | Bug found |
 | TC-37 | Staging expiry strips status from claimed bin | FIXED | Bug found |
+| TC-38 | Multi-pickup complex order leaves secondary bins stranded | — | To test |
+| TC-39 | Cross-line poaching of producer empty bins | — | To test |
+| TC-40a | FIFO mode — buried older than accessible triggers reshuffle | PASS | Verified |
+| TC-40b | COST mode — oldest accessible returned, buried ignored | PASS | Verified |
+| TC-41 | Empty cart starvation — no accessible empties | PASS | Verified |
+| TC-42 | Complex order cancel mid-transit — auto-return | PASS | Verified |
+| TC-43 | Complex order fleet failure mid-transit — auto-return | PASS | Verified |
+| TC-44 | Compound child failure mid-reshuffle — blocker stranding | PASS | Verified |
+| TC-45 | Two-robot swap full lifecycle (5-step compound) | PASS | Verified |
+| TC-46 | Cancel parent compound while child in-flight | FIXED | Bug found + Verified |
+| TC-47 | Empty post-wait release — no post-wait steps | PASS | Verified |
+| TC-48 | Complex order redirect — StepsJSON stale after redirect | PASS | Verified (documents known issue) |
+| TC-49 | Ghost robot — claimComplexBins finds no bin at pickup | PASS | Verified (documents behavior) |
+| TC-50 | Concurrent complex orders same node — double claim race | PASS | Verified |
+| TC-51 | AdvanceCompoundOrder skips failed children — premature completion | PASS | Verified (documents risk) |
+| TC-52 | Lane lock contention — second reshuffle queued correctly | PASS | Verified |
+| TC-53 | ApplyBinArrival status for compound restock children | PASS | Verified |
+| TC-54 | Staging TTL expiry during compound order execution | PASS | Verified |
+| — | ClaimBin silent overwrite | FIXED | Bug found |
 | — | Deterministic TOCTOU claim race (PostFindHook) | PASS | Verified |
 | — | Dispatch stress — 20 concurrent orders, 10 bins | PASS | Verified |
 | — | Redirect mid-transit — claim intact | PASS | Verified |
 | — | Fulfillment scanner — queue to dispatch round-trip | PASS | Verified |
-| TC-38 | Multi-pickup complex order leaves secondary bins stranded | — | To test |
-| TC-39 | Cross-line poaching of producer empty bins | — | To test |
-| TC-16 | Fleet reports an unknown state | — | To test |
-| TC-17 | Fleet reports the same state twice | — | To test |
-| TC-18 | Fleet reports states out of order | — | To test |
-| TC-19 | Robot completes a very short trip | — | To test |
-| TC-40a | FIFO mode — buried older than accessible triggers reshuffle (Cube #7) | PASS | Verified |
-| TC-40b | COST mode — oldest accessible returned, buried ignored (Cube #7) | PASS | Verified |
-| TC-41 | Empty cart starvation — no accessible empties (Cube #6) | PASS | Verified |
-| — | ClaimBin silent overwrite | FIXED | Bug found |
 
 ---
 
@@ -322,6 +333,29 @@ WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL A
 **Status:** Fixed. The staging sweep now checks `claimed_by IS NULL` before releasing expired bins.
 
 **Test:** `engine/engine_concurrent_test.go` — `TestTC37_StagingExpiryVsActiveClaim`
+
+---
+
+### TC-46: Cancel parent compound order leaves orphan robots, stuck bins, and locked lane
+
+**Scenario:** A reshuffle compound order is in progress — 3 children (unbury, retrieve, restock). Child 1 is dispatched and its robot is in transit (RUNNING). Child 2 is dispatched but waiting for fleet pickup. Child 3 is pending. The operator cancels the parent order directly.
+
+**Expected behavior:** All children should be cancelled (including their fleet orders). Lane lock released. All bin claims freed.
+
+**Result:** BUG FOUND. `HandleOrderCancel` called `lifecycle.CancelOrder` on the parent only. It never cascaded to children. Three problems:
+1. In-flight children kept their fleet orders active — orphan robots continued moving with no order tracking them
+2. Bin claims on children were never released — bins permanently stuck as `claimed_by` pointing to cancelled child orders
+3. Lane lock was never released — no future reshuffles could run on that lane until server restart
+
+**Root cause:** `HandleOrderCancel` was written for simple (non-compound) orders. It calls `lifecycle.CancelOrder` which cancels the fleet order, unclaims bins, and updates status — but only for the single order passed to it. There was no check for whether the cancelled order was a compound parent with children. The failure path (`HandleChildOrderFailure`) existed for child-initiated failures but was never called from the parent cancel path.
+
+**Fix:** Added `cancelCompoundChildren` in `compound.go`. `HandleOrderCancel` now checks if the order being cancelled is a compound parent (`StatusReshuffling`). If so, it iterates all non-terminal children and calls `lifecycle.CancelOrder` on each one (cancelling their fleet orders and unclaiming their bins), then unlocks the lane, before cancelling the parent.
+
+**Production risk:** Any time an operator cancels a reshuffle — lane jammed, wrong bin targeted, shift change — the entire NGRP lane becomes permanently unusable. Bins claimed by the orphaned children can't be retrieved by new orders. The only recovery is manual database intervention or a server restart to clear the in-memory lane lock. On a busy floor this would cascade: operators can't get parts from that lane, production stops, manual workarounds needed.
+
+**Status:** Fixed.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestCompound_CancelParentWhileChildInFlight`
 
 ---
 
@@ -624,9 +658,183 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 ---
 
-## Written but not yet run
+## Verified scenarios — complex and compound orders
 
-No untested test code is currently pending. The scenarios below in "Scenarios to test next" describe situations that haven't been coded yet.
+These tests target the complex order and compound reshuffle code paths — sequential removal, one-robot swap, and two-robot swap patterns. All 13 tests pass. TC-46 found and fixed a real bug (documented in the Bugs section above).
+
+---
+
+### TC-42: Complex order cancel mid-transit — auto-return
+
+**Scenario:** A complex order (pickup → dropoff → wait → pickup → dropoff) is dispatched. The robot is RUNNING (in transit). The operator cancels the order. The bin was claimed via `claimComplexBins` and is physically on the robot.
+
+**Expected behavior:** Order cancelled. Bin claim released. An auto-return order is created (via `maybeCreateReturnOrder`) to bring the bin back to its origin. The return order re-claims the bin. No bin is permanently stranded.
+
+**Why this matters:** This is the first test exercising the cancel → auto-return path for `OrderTypeComplex` specifically. The existing cancel tests (TC-23b) only cover simple orders. If `maybeCreateReturnOrder` doesn't fire correctly for complex orders, bins get stranded on the floor.
+
+**Result:** PASS. Auto-return order created. Bin claim transferred. No stranding.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_CancelMidTransit`
+
+---
+
+### TC-43: Complex order fleet failure mid-transit — auto-return
+
+**Scenario:** A complex order (pickup → dropoff, no wait) is dispatched. Robot starts RUNNING, then fleet reports FAILED (breakdown, obstacle). The engine's failure handler fires.
+
+**Expected behavior:** Order marked failed. Bin claim released (fixed in TC-30). Auto-return order created. Same recovery as cancel, but triggered by fleet status rather than operator action.
+
+**Result:** PASS. Failure handler correctly releases claim and creates auto-return.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_FleetFailureMidTransit`
+
+---
+
+### TC-44: Compound child failure mid-reshuffle — blocker stranding
+
+**Scenario:** A 3-step reshuffle is in progress (unbury blocker → retrieve target → restock blocker). Step 1 completes successfully — the blocker bin moves from its lane slot to the shuffle slot. Step 2 (retrieve target) fails — robot breaks down mid-transit.
+
+**Expected behavior:** `HandleChildOrderFailure` cancels remaining children, fails the parent, and releases the lane lock. The blocker bin is now physically at the shuffle slot (moved by completed step 1), unclaimed, and accessible for manual recovery or a new reshuffle. The target bin remains at its original slot, unclaimed. No bins permanently stuck.
+
+**Why this matters:** This is the most dangerous failure mode for reshuffles. After partial completion, bins are in temporary positions that aren't their normal home. If claims aren't released or the lane lock isn't freed, recovery is impossible without database intervention.
+
+**Result:** PASS. Parent failed, lane lock released, all bins unclaimed and accessible for recovery.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestCompound_ChildFailureMidReshuffle_BlockerStranding`
+
+---
+
+### TC-45: Two-robot swap full lifecycle (5-step compound)
+
+**Scenario:** An NGRP lane has 3 bins: target at depth 3 (oldest), blocker-2 at depth 2, blocker-1 at depth 1 (newest). FIFO retrieval detects the buried target and triggers a 5-step compound reshuffle: (1) unbury blocker-1 → shuffle-1, (2) unbury blocker-2 → shuffle-2, (3) retrieve target → line, (4) restock blocker-2 → depth 2, (5) restock blocker-1 → depth 1.
+
+**Expected behavior:** All 5 children created and dispatched sequentially via `AdvanceCompoundOrder`. Target arrives at line node. Both blockers restocked to their original positions (deepest-first restocking). All claims released. Lane lock freed. Parent order confirmed.
+
+**Why this matters:** The existing reshuffle test (`TestBuriedBin_ReshuffleViaEngine`) only exercises 3 steps (1 blocker). This test validates the full two-robot swap pattern with 2 blockers and 5 sequential steps — the most complex compound order pattern used in production.
+
+**Result:** PASS. All 5 children complete sequentially. Target at line, blockers restocked, lane lock freed.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestCompound_TwoRobotSwap_FullLifecycle`
+
+---
+
+### TC-46: Cancel parent compound while child in-flight — FIXED
+
+Bug found and fixed. Full writeup in the Bugs found and fixed section above.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestCompound_CancelParentWhileChildInFlight`
+
+---
+
+### TC-47: Empty post-wait release — no post-wait steps
+
+**Scenario:** A complex order has steps `[pickup, dropoff, wait]` with nothing after the wait. The order is dispatched, the robot delivers to lineside, and the order enters DWELLING/staged status. Edge sends an `OrderRelease`. `HandleOrderRelease` parses `StepsJSON`, calls `splitPostWait`, gets an empty post-wait slice, and calls `ReleaseOrder(vendorOrderID, nil)`.
+
+**Expected behavior:** No panic, no error. The fleet receives a release with empty blocks, which signals completion. The order transitions cleanly.
+
+**Why this matters:** Edge could send a wait-only complex order if they want dwell behavior without a return trip. The release path must handle the empty post-wait slice gracefully.
+
+**Result:** PASS. No panic. Release with empty blocks completes cleanly.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_EmptyPostWaitRelease`
+
+---
+
+### TC-48: Complex order redirect doesn't update StepsJSON
+
+**Scenario:** A complex order with a wait phase (`pickup A → dropoff B → wait → pickup B → dropoff C`) is dispatched and enters staged/dwelling status. The operator sends a redirect changing the delivery from node C to node D. `HandleOrderRedirect` updates `DeliveryNode` in the DB via `PrepareRedirect`, but `StepsJSON` still contains `"dropoff C"` in the post-wait steps.
+
+**Expected behavior (documenting bug):** When `HandleOrderRelease` fires, it reads `StepsJSON` and builds fleet blocks from the stored steps — which still reference node C. The fleet routes the robot to the old destination, not the redirected one.
+
+**Why this matters:** In production, operators redirect orders when lineside demand shifts. If the redirect doesn't update `StepsJSON`, the post-wait phase sends the robot to the wrong node. This test documents the bug so it can be fixed before complex orders with wait+redirect are used.
+
+**Result:** PASS. Test confirms StepsJSON is stale after redirect — documenting the known issue for future fix.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_RedirectStaleStepsJSON`
+
+---
+
+### TC-49: Ghost robot — claimComplexBins finds no bin at pickup
+
+**Scenario:** A complex order specifies a pickup at a node that has no bins matching the payload (or all bins are already claimed). `claimComplexBins` is best-effort — it logs a warning but lets the order dispatch with `BinID=nil`. The robot travels to the node and finds nothing.
+
+**Expected behavior:** The order dispatches (ghost robot). When the fleet reports FAILED (robot can't find a bin), the order is marked failed. No auto-return is created because `maybeCreateReturnOrder` guards on `BinID != nil`. The failure is clean but wasteful — a robot trip was wasted.
+
+**Why this matters:** In production, bin counts at nodes can change between order submission and dispatch. If a bin is grabbed by another order or manually removed, `claimComplexBins` silently fails and a ghost robot is dispatched. This should be considered for a pre-dispatch validation check.
+
+**Result:** PASS. Ghost robot dispatches, fleet reports FAILED, order fails cleanly with no auto-return. Documents the behavior for future hardening.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_GhostRobotNoBin`
+
+---
+
+### TC-50: Concurrent complex orders same node — double claim race
+
+**Scenario:** Two complex orders are submitted simultaneously, both picking up from the same storage node that has only one available bin. `claimComplexBins` runs for both sequentially (same goroutine in current architecture). The first order claims the bin; the second finds no unclaimed bins.
+
+**Expected behavior:** Exactly one order claims the bin. The other dispatches with `BinID=nil` (ghost robot). No double-claim occurs because `ClaimBin` uses an atomic update.
+
+**Why this matters:** In production, concurrent retrieve requests targeting the same NGRP are common. The claim mechanism must be race-safe. If two orders both get `BinID` pointing to the same bin, both robots arrive expecting the same bin.
+
+**Result:** PASS. First order claims the bin. Second dispatches with `BinID=nil`. No double-claim.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_ConcurrentSameNodeDoubleClaimRace`
+
+---
+
+### TC-51: AdvanceCompoundOrder skips failed children — premature completion
+
+**Scenario:** A 3-step compound order where child 2 has an invalid source node (empty string, simulating data corruption). `AdvanceCompoundOrder` dispatches child 1, which completes. When advancing to child 2, lines 77-98 in `compound.go` detect the missing source/delivery, mark child 2 as failed, and recursively call `AdvanceCompoundOrder`. This skips to child 3.
+
+**Expected behavior (documenting risk):** If child 2 was the retrieve step and child 3 is the restock, the parent may "complete" even though the target bin was never retrieved. The parent reaches `StatusConfirmed` with a failed child — data inconsistency.
+
+**Why this matters:** If a compound child's data is corrupted (race condition, DB error), the current code silently skips it and proceeds. The parent should probably fail if any child fails, but the current recursive skip behavior may mask the issue.
+
+**Result:** PASS. Confirms the skip behavior exists — parent completes despite failed child. Documents the risk for future review.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestCompound_AdvanceSkipsFailedChild_PrematureCompletion`
+
+---
+
+### TC-52: Lane lock contention — second reshuffle blocked
+
+**Scenario:** A retrieve order triggers a reshuffle on a lane. While the reshuffle is active (lane locked), a second retrieve order targets the same NGRP. The planning service detects the lane lock at line 212 of `planning_service.go` and returns a `lane_locked` `planningError`.
+
+**Expected behavior:** The `lane_locked` error goes through `queueOrder`. The second order is marked QUEUED and will be retried by the fulfillment scanner when the lane unlocks. Verified correct — no operator resubmission needed.
+
+**Why this matters:** In production, multiple operators may request bins from the same NGRP simultaneously. This test confirms the system handles it correctly — the second order waits for the reshuffle to complete rather than failing permanently.
+
+**Result:** PASS. Second order queued correctly via `queueOrder`. No permanent failure.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestLaneLock_Contention_SecondReshuffleBlocked`
+
+---
+
+### TC-53: ApplyBinArrival status for compound restock children
+
+**Scenario:** A compound restock child delivers a blocker bin back to its storage slot (a child node of a LANE). When `handleOrderCompleted` calls `ApplyBinArrival`, it checks if the destination is a storage slot (parent type LANE). If so, it sets `status='available'` instead of `staged`.
+
+**Expected behavior:** After restock, the blocker bin at the storage slot should have `status='available'`, `claimed_by=NULL`, and be visible to `FindSourceBinFIFO` queries. If it were marked `staged`, it would be invisible to FIFO and effectively orphaned.
+
+**Why this matters:** This is a critical correctness check for the restock phase of reshuffles. If `ApplyBinArrival` doesn't correctly detect the storage slot, restocked blockers become invisible bins — they exist in the DB but can't be retrieved.
+
+**Result:** PASS. Bin status correctly set to `available` at storage slot. Visible to `FindSourceBinFIFO`.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestCompound_RestockChild_BinStatusAvailable`
+
+---
+
+### TC-54: Staging TTL expiry during compound order execution
+
+**Scenario:** During a compound reshuffle, child 1 (unbury blocker) completes and delivers the blocker to a shuffle slot (non-storage node). `ApplyBinArrival` marks it as `staged` with a TTL. If the reshuffle takes longer than the TTL (e.g., robot breakdown delays child 2), the staging sweep runs and flips the blocker bin to `available`.
+
+**Expected behavior:** The restock child (child 3) should still work correctly even if the bin's status changed from `staged` to `available` due to TTL expiry. The bin is still physically at the shuffle slot and should still be claimable by the restock child.
+
+**Why this matters:** Compound reshuffles can take several minutes (robot travel time, queuing). If the staging TTL is shorter than the reshuffle duration, the sweep silently changes bin status mid-operation. This test verifies the restock child is resilient to this status change.
+
+**Result:** PASS. Restock child completes normally despite TTL-driven status change. Bin correctly restocked.
+
+**Test:** `engine/engine_concurrent_test.go` — `TestCompound_StagingTTLExpiryDuringReshuffle`
 
 ---
 
@@ -638,35 +846,19 @@ These scenarios haven't been tested yet. Each one describes something that could
 
 A reservation ("claim") bug means the system's record of which bins are committed to which orders doesn't match reality. These are the most dangerous because they can cause robots to arrive at empty locations or bins to become permanently stuck.
 
-**Robot breaks down mid-delivery — does the bin reservation release?** DONE — TC-30 found and fixed this bug. See Bugs found and fixed section.
-
 **TC-26: Operator cancels an order — does the bin reservation release?** Largely covered by TC-23b (cancel transfers claim to return order). Remaining gap: a standalone cancel with no return order — verify the claim is released without transfer. Low priority since the cancel handler calls `UnclaimOrderBins` unconditionally.
-
-**TC-27: Operator redirects a robot — does the bin reservation survive?** DONE — verified in "Redirect mid-transit" test. Bin claim survives redirect.
 
 **TC-29: Operator cancels while the robot is in transit.** The robot is already moving with the bin. The operator cancels. The reservation should release cleanly even though the robot hasn't arrived yet. Partially covered by TC-23b (cancel with robot in flight), but TC-29 would test the cancel → return → re-claim chain with the robot at RUNNING state specifically.
 
 **TC-32: Bin sits at staging too long — what happens to the reservation?** A bin has been at a staging area past its expiry time. The system releases the staging status. But if that bin was reserved by an active order, does the reservation also get cleaned up? Or is it left dangling?
 
-**TC-37: Staging expiry strips status from actively-claimed bin.** DONE — bug found and fixed. See Bugs found and fixed section.
-
 **TC-33: Operator manually moves a reserved bin.** An operator requests a manual move on a bin that is reserved by an active order. Should the system block the move? Release the reservation? Allow both and hope for the best?
 
-**TC-34: Complex order dispatches robot to node with no bin.** A complex order (sequential removal) targets a lineside node where the bin was already moved by a prior manual move order. `claimComplexBins` finds no unclaimed bin, but the order still dispatches to the fleet. Robot arrives at an empty node. The order should fail at the planning stage with a "no bin available" error, same as `planStore` does. No robot should be dispatched. Same class of bug as TC-23c, but in the complex order path rather than the store path. Production risk: ghost robot during changeover or manual operations.
+**TC-34: Complex order dispatches robot to node with no bin.** Partially covered by TC-49, which documents that `claimComplexBins` is best-effort and lets ghost robots dispatch. The remaining gap: the order should fail at the planning stage with a "no bin available" error (same as `planStore` does) rather than dispatching a ghost robot. Same class of bug as TC-23c, but in the complex order path rather than the store path. Production risk: ghost robot during changeover or manual operations.
 
 **TC-35: planMove dispatches robot with no bin.** A move order targets a lineside node with no bins, and no `payloadCode` is specified. `planMove` skips the bin-finding loop entirely (empty node, no payload filter) and dispatches with `BinID=nil`. The order should fail with a "no available bin" error, matching `planStore`'s guard. Same ghost robot class as TC-23c and TC-34. Lower likelihood since move orders typically specify a payload, but the code path exists.
 
 **TC-38: Multi-pickup complex order leaves secondary bins stranded.** A complex order has two pickup steps at different nodes. Both bins are claimed via `claimComplexBins`. Order completes. `ApplyBinArrival` moves the first bin (tracked by `Order.BinID`). The second bin stays claimed at its original node — never moved, never unclaimed. All claimed bins should be moved and unclaimed on order completion. A junction table (`order_bins`) would be needed to track multiple bin associations. Production risk: uncommon today (multi-pickup orders are rare), but the stranded bin becomes invisible to the system. No other order can claim it. It's permanently reserved by a completed order until manual database intervention.
-
-### NGRP lane behavior (from Shingo Cube observations)
-
-Scenarios first observed in the Shingo Cube simulation.
-
-**TC-40a: FIFO mode — buried bin older than accessible triggers reshuffle.** DONE — promoted to verified (TestBuriedBin_ReshuffleViaEngine).
-
-**TC-40b: COST mode — oldest accessible returned, buried ignored.** DONE — promoted to verified (TestTC40b_COSTIgnoresBuriedWhenAccessible, TestTC40b_COSTFallsToBuriedWhenNoAccessible in `dispatch/group_resolver_test.go`).
-
-**TC-41: Empty cart starvation — no accessible empties.** DONE — promoted to verified (TestTC41_EmptyStarvation_BuriedEmptiesUnreachable in `dispatch/group_resolver_test.go`, TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle in `dispatch/integration_test.go`).
 
 ### Timing and race conditions
 
@@ -769,7 +961,7 @@ simulator.ParallelGroup(20, func(i int) {
 | `fleet/simulator/options.go` | Fault injection. WithCreateFailure (fleet rejects orders), WithPingFailure (fleet health check fails). |
 | `fleet/simulator/concurrent.go` | Barrier-synchronized goroutine launcher (ParallelGroup). Used for concurrent dispatch stress tests. |
 | `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-21, TC-23 cluster, TC-24 cluster, TC-30, ClaimBin. Uses real Engine + real DB + simulator. |
-| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, staging expiry, and buried bin reshuffle tests. Uses PostFindHook for deterministic TOCTOU race reproduction. |
+| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, staging expiry, buried bin reshuffle, and complex/compound order tests (TC-42 through TC-54). Uses PostFindHook for deterministic TOCTOU race reproduction. |
 | `dispatch/fleet_simulator_test.go` | Dispatcher-level tests (scenario). TC-1, TC-3, TC-4, TC-5. Tests the outbound path only (what gets sent to the fleet). |
 
 ---
