@@ -355,7 +355,7 @@ WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL A
 
 **Status:** Fixed.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestCompound_CancelParentWhileChildInFlight`
+**Test:** `engine/engine_compound_test.go` — `TestCompound_CancelParentWhileChildInFlight`
 
 ---
 
@@ -630,7 +630,7 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 **Result:** PASS. The FIFO GroupResolver correctly detected the buried bin, `PlanReshuffle` generated the 3-step compound order, and the engine wiring drove each child through the simulator lifecycle. The compound order completed with the target bin at the line and the lane lock released.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestBuriedBin_ReshuffleViaEngine`
+**Test:** `engine/engine_compound_test.go` — `TestBuriedBin_ReshuffleViaEngine`
 
 ---
 
@@ -674,7 +674,7 @@ These tests target the complex order and compound reshuffle code paths — seque
 
 **Result:** PASS. Auto-return order created. Bin claim transferred. No stranding.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_CancelMidTransit`
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_CancelMidTransit`
 
 ---
 
@@ -686,7 +686,7 @@ These tests target the complex order and compound reshuffle code paths — seque
 
 **Result:** PASS. Failure handler correctly releases claim and creates auto-return.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_FleetFailureMidTransit`
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_FleetFailureMidTransit`
 
 ---
 
@@ -700,7 +700,7 @@ These tests target the complex order and compound reshuffle code paths — seque
 
 **Result:** PASS. Parent failed, lane lock released, all bins unclaimed and accessible for recovery.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestCompound_ChildFailureMidReshuffle_BlockerStranding`
+**Test:** `engine/engine_compound_test.go` — `TestCompound_ChildFailureMidReshuffle_BlockerStranding`
 
 ---
 
@@ -714,7 +714,7 @@ These tests target the complex order and compound reshuffle code paths — seque
 
 **Result:** PASS. All 5 children complete sequentially. Target at line, blockers restocked, lane lock freed.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestCompound_TwoRobotSwap_FullLifecycle`
+**Test:** `engine/engine_compound_test.go` — `TestCompound_TwoRobotSwap_FullLifecycle`
 
 ---
 
@@ -722,7 +722,7 @@ These tests target the complex order and compound reshuffle code paths — seque
 
 Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestCompound_CancelParentWhileChildInFlight`
+**Test:** `engine/engine_compound_test.go` — `TestCompound_CancelParentWhileChildInFlight`
 
 ---
 
@@ -736,7 +736,7 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 **Result:** PASS. No panic. Release with empty blocks completes cleanly.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_EmptyPostWaitRelease`
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_EmptyPostWaitRelease`
 
 ---
 
@@ -750,7 +750,7 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 **Result:** PASS. Test confirms StepsJSON is stale after redirect — documenting the known issue for future fix.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_RedirectStaleStepsJSON`
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_RedirectStaleStepsJSON`
 
 ---
 
@@ -764,7 +764,7 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 **Result:** PASS. Ghost robot dispatches, fleet reports FAILED, order fails cleanly with no auto-return. Documents the behavior for future hardening.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_GhostRobotNoBin`
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_GhostRobotNoBin`
 
 ---
 
@@ -778,7 +778,7 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 **Result:** PASS. First order claims the bin. Second dispatches with `BinID=nil`. No double-claim.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_ConcurrentSameNodeDoubleClaimRace`
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_ConcurrentSameNodeDoubleClaimRace`
 
 ---
 
@@ -792,7 +792,7 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 **Result:** PASS. Confirms the skip behavior exists — parent completes despite failed child. Documents the risk for future review.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestCompound_AdvanceSkipsFailedChild_PrematureCompletion`
+**Test:** `engine/engine_compound_test.go` — `TestCompound_AdvanceSkipsFailedChild_PrematureCompletion`
 
 ---
 
@@ -806,7 +806,7 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 **Result:** PASS. Second order queued correctly via `queueOrder`. No permanent failure.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestLaneLock_Contention_SecondReshuffleBlocked`
+**Test:** `engine/engine_compound_test.go` — `TestLaneLock_Contention_SecondReshuffleBlocked`
 
 ---
 
@@ -820,7 +820,7 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 **Result:** PASS. Bin status correctly set to `available` at storage slot. Visible to `FindSourceBinFIFO`.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestCompound_RestockChild_BinStatusAvailable`
+**Test:** `engine/engine_compound_test.go` — `TestCompound_RestockChild_BinStatusAvailable`
 
 ---
 
@@ -834,7 +834,7 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 **Result:** PASS. Restock child completes normally despite TTL-driven status change. Bin correctly restocked.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestCompound_StagingTTLExpiryDuringReshuffle`
+**Test:** `engine/engine_compound_test.go` — `TestCompound_StagingTTLExpiryDuringReshuffle`
 
 ---
 
@@ -949,20 +949,54 @@ simulator.ParallelGroup(20, func(i int) {
 
 **State changes fire events automatically.** When the simulator is wired into an Engine via `newTestEngine`, calling `DriveState` automatically fires events through the engine pipeline. Tests don't need to manually emit events.
 
-**Each test gets a fresh database.** Every test function spins up its own Postgres container, so tests cannot interfere with each other. Container startup takes about 1-2 seconds.
+**Each test gets a fresh database.** All tests share a single Postgres container (started once per process via `sync.Once`), but each test gets its own `CREATE DATABASE`. This gives full isolation without the overhead of 90+ containers. The shared infrastructure lives in `internal/testdb/`.
 
 ### Files
 
+```
+shingo-core/
+├── internal/
+│   └── testdb/
+│       ├── testdb.go              # Open, SetupStandardData, CreateBinAtNode, Envelope
+│       └── compound.go            # CompoundScenario, CompoundConfig, SetupCompound
+├── engine/
+│   ├── engine_test.go             # 16 foundational tests (harness helpers removed)
+│   ├── engine_concurrent_test.go  # Concurrency + general tests (~400 lines)
+│   ├── engine_compound_test.go    # 8 compound reshuffle tests (~600 lines)
+│   └── engine_complex_test.go     # 6 complex order tests (~500 lines)
+├── dispatch/
+│   ├── dispatcher_test.go         # 18 tests, helpers removed (~550 lines)
+│   ├── reshuffle_test.go          # 6 tests, setup uses testdb helpers (~350 lines)
+│   ├── group_resolver_test.go     # 15 tests, helpers removed (~650 lines)
+│   ├── integration_test.go        # 13 tests (~950 lines, unchanged)
+│   └── fleet_simulator_test.go    # 5 tests (~315 lines, unchanged)
+└── fleet/
+    └── simulator/
+        ├── simulator.go           # Fake fleet backend, TrackingBackend impl
+        ├── transitions.go         # DriveState, DriveFullLifecycle, etc.
+        ├── inspector.go           # GetOrder, HasOrder, FindOrderByLocation, etc.
+        ├── options.go             # Fault injection (WithCreateFailure, WithPingFailure)
+        └── concurrent.go          # ParallelGroup barrier launcher
+```
+
 | File | What it does |
 |------|-------------|
+| `internal/testdb/testdb.go` | Shared test infrastructure. Container reuse via `sync.Once`, per-test `CREATE DATABASE`, standard data setup, bin creation helpers. |
+| `internal/testdb/compound.go` | Compound scenario builder. `SetupCompound` creates full NGRP → LANE → slots → shuffle → line → bins layout from a `CompoundConfig`. |
 | `fleet/simulator/simulator.go` | The fake fleet backend. Stores orders and blocks in memory. Implements TrackingBackend so the Engine can wire it up automatically. |
 | `fleet/simulator/transitions.go` | State transition helpers. DriveState, DriveFullLifecycle, DriveSimpleLifecycle, DriveToFailed, DriveToStopped. |
-| `fleet/simulator/inspector.go` | Read-only query methods. GetOrder, GetOrderByIndex, OrderCount, BlocksForOrder. Used by tests to inspect what the "fleet" received. |
+| `fleet/simulator/inspector.go` | Read-only query methods. GetOrder, GetOrderByIndex, OrderCount, BlocksForOrder, HasOrder, FindOrderByLocation. Used by tests to inspect what the "fleet" received. |
 | `fleet/simulator/options.go` | Fault injection. WithCreateFailure (fleet rejects orders), WithPingFailure (fleet health check fails). |
 | `fleet/simulator/concurrent.go` | Barrier-synchronized goroutine launcher (ParallelGroup). Used for concurrent dispatch stress tests. |
 | `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-21, TC-23 cluster, TC-24 cluster, TC-30, ClaimBin. Uses real Engine + real DB + simulator. |
-| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, staging expiry, buried bin reshuffle, and complex/compound order tests (TC-42 through TC-54). Uses PostFindHook for deterministic TOCTOU race reproduction. |
-| `dispatch/fleet_simulator_test.go` | Dispatcher-level tests (scenario). TC-1, TC-3, TC-4, TC-5. Tests the outbound path only (what gets sent to the fleet). |
+| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, and staging expiry tests. TC-09, TC-10, TC-12, claim race, dispatch stress, redirect, fulfillment scanner, TC-37. Uses PostFindHook for deterministic TOCTOU race reproduction. |
+| `engine/engine_complex_test.go` | Complex order lifecycle tests. TC-42, TC-43, TC-47, TC-48, TC-49, TC-50. |
+| `engine/engine_compound_test.go` | Compound reshuffle order tests. TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54. |
+| `dispatch/dispatcher_test.go` | Dispatcher-level tests. 18 tests, helper bodies replaced with thin wrappers to `testdb`. |
+| `dispatch/reshuffle_test.go` | Reshuffle planning tests. 6 tests, setup uses `testdb` helpers. |
+| `dispatch/group_resolver_test.go` | Group resolver tests. 15 tests, `createTestBinAtNode` wrapper to `testdb`. |
+| `dispatch/integration_test.go` | Integration tests. 13 tests, unchanged. |
+| `dispatch/fleet_simulator_test.go` | Dispatcher-level scenario tests (TC-1, TC-3, TC-4, TC-5). Tests the outbound path only (what gets sent to the fleet). |
 
 ---
 

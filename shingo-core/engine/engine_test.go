@@ -1,125 +1,36 @@
 package engine
 
 import (
-	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// --- Test helpers ---
+// --- Test helpers (thin wrappers delegating to internal/testdb) ---
 
 func testDB(t *testing.T) *store.DB {
-	t.Helper()
-	ctx := context.Background()
-	defer func() {
-		if r := recover(); r != nil {
-			msg := fmt.Sprint(r)
-			if strings.Contains(strings.ToLower(msg), "docker") {
-				t.Skipf("skipping integration test: %s", msg)
-			}
-			panic(r)
-		}
-	}()
-
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
-		postgres.WithDatabase("shingocore_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "docker") {
-			t.Skipf("skipping integration test: %v", err)
-		}
-		t.Fatalf("start postgres container: %v", err)
-	}
-	t.Cleanup(func() { pgContainer.Terminate(ctx) })
-
-	host, _ := pgContainer.Host(ctx)
-	port, _ := pgContainer.MappedPort(ctx, "5432")
-
-	db, err := store.Open(&config.DatabaseConfig{
-		Postgres: config.PostgresConfig{
-			Host:     host,
-			Port:     port.Int(),
-			Database: "shingocore_test",
-			User:     "test",
-			Password: "test",
-			SSLMode:  "disable",
-		},
-	})
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return testdb.Open(t)
 }
 
 func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNode *store.Node, bp *store.Payload) {
 	t.Helper()
-	storageNode = &store.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
-	if err := db.CreateNode(storageNode); err != nil {
-		t.Fatalf("create storage node: %v", err)
-	}
-	lineNode = &store.Node{Name: "LINE1-IN", Enabled: true}
-	if err := db.CreateNode(lineNode); err != nil {
-		t.Fatalf("create line node: %v", err)
-	}
-	bp = &store.Payload{Code: "PART-A", Description: "Steel bracket tote"}
-	if err := db.CreatePayload(bp); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
-	bt := &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("create bin type: %v", err)
-	}
-	return
+	sd := testdb.SetupStandardData(t, db)
+	return sd.StorageNode, sd.LineNode, sd.Payload
 }
 
 func createTestBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *store.Bin {
-	t.Helper()
-	bt, err := db.GetBinTypeByCode("DEFAULT")
-	if err != nil {
-		t.Fatalf("get bin type: %v", err)
-	}
-	bin := &store.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin %s: %v", label, err)
-	}
-	if err := db.SetBinManifest(bin.ID, `{"items":[]}`, payloadCode, 100); err != nil {
-		t.Fatalf("set manifest for bin %s: %v", label, err)
-	}
-	if err := db.ConfirmBinManifest(bin.ID); err != nil {
-		t.Fatalf("confirm manifest for bin %s: %v", label, err)
-	}
-	got, err := db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin %s after setup: %v", label, err)
-	}
-	return got
+	return testdb.CreateBinAtNode(t, db, payloadCode, nodeID, label)
 }
 
 func testEnvelope() *protocol.Envelope {
-	return &protocol.Envelope{
-		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-1"},
-		Dst: protocol.Address{Role: protocol.RoleCore},
-	}
+	return testdb.Envelope()
 }
 
 // newTestEngine constructs a real Engine wired to the test database and simulator.

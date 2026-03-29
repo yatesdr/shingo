@@ -1,20 +1,13 @@
 package dispatch
 
 import (
-	"context"
 	"fmt"
-	"strings"
 	"testing"
-	"time"
 
 	"shingo/protocol"
-	"shingocore/config"
 	"shingocore/fleet"
+	"shingocore/internal/testdb"
 	"shingocore/store"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // --- Mock emitter ---
@@ -95,79 +88,18 @@ func (m *mockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlo
 	return fmt.Errorf("mock: not connected")
 }
 
-// --- Test helpers ---
+// --- Test helpers (thin wrappers delegating to internal/testdb) ---
 
 func testDB(t *testing.T) *store.DB {
-	t.Helper()
-	ctx := context.Background()
-	defer func() {
-		if r := recover(); r != nil {
-			msg := fmt.Sprint(r)
-			if strings.Contains(strings.ToLower(msg), "docker") {
-				t.Skipf("skipping integration test: %s", msg)
-			}
-			panic(r)
-		}
-	}()
-
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
-		postgres.WithDatabase("shingocore_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "docker") {
-			t.Skipf("skipping integration test: %v", err)
-		}
-		t.Fatalf("start postgres container: %v", err)
-	}
-	t.Cleanup(func() { pgContainer.Terminate(ctx) })
-
-	host, _ := pgContainer.Host(ctx)
-	port, _ := pgContainer.MappedPort(ctx, "5432")
-
-	db, err := store.Open(&config.DatabaseConfig{
-		Postgres: config.PostgresConfig{
-			Host:     host,
-			Port:     port.Int(),
-			Database: "shingocore_test",
-			User:     "test",
-			Password: "test",
-			SSLMode:  "disable",
-		},
-	})
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
+	return testdb.Open(t)
 }
 
 func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNode *store.Node, bp *store.Payload) {
 	t.Helper()
-	storageNode = &store.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
-	if err := db.CreateNode(storageNode); err != nil {
-		t.Fatalf("create storage node: %v", err)
-	}
-	lineNode = &store.Node{Name: "LINE1-IN", Enabled: true}
-	if err := db.CreateNode(lineNode); err != nil {
-		t.Fatalf("create line node: %v", err)
-	}
-	bp = &store.Payload{Code: "PART-A", Description: "Steel bracket tote"}
-	if err := db.CreatePayload(bp); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
-	// Create a default bin type used by test bins
-	bt := &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("create bin type: %v", err)
-	}
-	return
+	sd := testdb.SetupStandardData(t, db)
+	return sd.StorageNode, sd.LineNode, sd.Payload
 }
+
 
 func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
 	db := testDB(t)
@@ -211,10 +143,7 @@ func newTestDispatcher(t *testing.T, db *store.DB, backend fleet.Backend) (*Disp
 }
 
 func testEnvelope() *protocol.Envelope {
-	return &protocol.Envelope{
-		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-1"},
-		Dst: protocol.Address{Role: protocol.RoleCore},
-	}
+	return testdb.Envelope()
 }
 
 // --- Tests ---

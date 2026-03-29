@@ -76,3 +76,5 @@ docs/order-patterns
 # AI agent config
 CLAUDE.md
 AGENTS.md
+.claude/
+**/.claude/

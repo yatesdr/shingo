@@ -6,40 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"shingocore/internal/testdb"
 	"shingocore/store"
 )
 
-// createTestBinAtNode creates a bin at the given node with a manifest matching the payload code.
-func ensureDefaultBinType(t *testing.T, db *store.DB) {
-	t.Helper()
-	_, err := db.GetBinTypeByCode("DEFAULT")
-	if err != nil {
-		bt := &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-		if err := db.CreateBinType(bt); err != nil {
-			t.Fatalf("create default bin type: %v", err)
-		}
-	}
-}
-
 func createTestBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *store.Bin {
-	t.Helper()
-	ensureDefaultBinType(t, db)
-	bt, _ := db.GetBinTypeByCode("DEFAULT")
-	bin := &store.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin %s: %v", label, err)
-	}
-	if err := db.SetBinManifest(bin.ID, `{"items":[]}`, payloadCode, 100); err != nil {
-		t.Fatalf("set manifest for bin %s: %v", label, err)
-	}
-	if err := db.ConfirmBinManifest(bin.ID); err != nil {
-		t.Fatalf("confirm manifest for bin %s: %v", label, err)
-	}
-	got, err := db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin %s after setup: %v", label, err)
-	}
-	return got
+	return testdb.CreateBinAtNode(t, db, payloadCode, nodeID, label)
 }
 
 func setupNodeGroup(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store.Node, slots [][]*store.Node, bp *store.Payload) {
@@ -651,8 +623,10 @@ func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
 	// Set up bin type and payload-bin-type link for FindEmptyCompatibleBin
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
-		ensureDefaultBinType(t, db)
-		bt, _ = db.GetBinTypeByCode("DEFAULT")
+		bt = &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+		if err := db.CreateBinType(bt); err != nil {
+			t.Fatalf("create default bin type: %v", err)
+		}
 	}
 	if err := db.SetPayloadBinTypes(bp.ID, []int64{bt.ID}); err != nil {
 		t.Fatalf("set payload bin types: %v", err)

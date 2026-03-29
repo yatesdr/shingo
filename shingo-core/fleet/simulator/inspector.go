@@ -115,5 +115,32 @@ func orderToView(o *simulatedOrder) *OrderView {
 	return v
 }
 
+// HasOrder returns true if a fleet order with the given vendor order ID exists.
+// Useful for quick existence checks in test assertions without inspecting the full OrderView.
+func (s *SimulatorBackend) HasOrder(vendorOrderID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.orders[vendorOrderID]
+	return ok
+}
+
+// FindOrderByLocation returns all orders that contain a block at the given
+// location (node name). This is useful for compound/complex tests that need
+// to verify which fleet orders reference a particular storage or line node.
+func (s *SimulatorBackend) FindOrderByLocation(location string) []*OrderView {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var results []*OrderView
+	for _, order := range s.orders {
+		for _, b := range order.blocks {
+			if b.location == location {
+				results = append(results, orderToView(order))
+				break
+			}
+		}
+	}
+	return results
+}
+
 // Compile-time check: SimulatorBackend must not expose internal state as pointers.
 var _ = sync.RWMutex{} // referenced by receiver type
