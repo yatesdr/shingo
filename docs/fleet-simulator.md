@@ -115,7 +115,6 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-40a | FIFO mode — buried older than accessible triggers reshuffle (Cube #7) | — | To test |
 | TC-40b | COST mode — oldest accessible returned, buried ignored (Cube #7) | — | To test |
 | TC-41 | Empty cart starvation — no accessible empties (Cube #6) | — | To test |
-| TC-42 | Reshuffle restore preserves random lane layout (Cube #2) | — | To test |
 | — | ClaimBin silent overwrite | FIXED | Bug found |
 
 ---
@@ -476,8 +475,6 @@ Scenarios first observed in the Shingo Cube simulation.
 **TC-40b: COST mode — oldest accessible returned, older buried bin ignored.** Same 3-lane NGRP layout as TC-40a (oldest bin buried, newer bins accessible). A retrieve order fires with `retrieve_algorithm = COST`. Expected behavior: `resolveRetrieveCOST` returns the oldest accessible bin without scanning buried bins. No reshuffle triggered. The fleet should receive a direct retrieve to the accessible bin's storage slot. This validates the preserved cost-optimized behavior under its new name.
 
 **TC-41: Empty cart starvation — all accessible empties consumed, buried empties unreachable.** LKND storage scatters empties across lanes where they get buried behind full bins. All accessible empties are consumed through normal retrieves. A press drops a full bin and needs an empty pickup. `FindEmptyCompatibleBin` returns nil — no accessible empty exists. Expected behavior: the system detects buried empties exist and triggers a reshuffle to unbury the shallowest one (fewest blockers). Production risk: press starvation. The empties are physically in the grid but unreachable. Manual intervention is the only current recovery.
-
-**TC-42: Reshuffle restore order preserves random lane layout.** A lane has bins in random age order (not sorted by `loaded_at`). A reshuffle unburries a target bin, moving blockers to shuffle slots, then restocks them. Current `PlanReshuffle` restores blockers to their original slots — the lane stays in the same random order. Expected behavior: blockers should be sorted by `loaded_at` before restore, oldest toward the lane face, newest toward the back. Each reshuffle leaves the lane in better FIFO shape, reducing future reshuffle frequency. The Cube measured 3-4x fewer reshuffles on lanes using sorted restore over a simulated shift. Production risk: without sorted restore, the same lanes trigger repeated expensive reshuffles because older bins stay buried in the same positions.
 
 ### Timing and race conditions
 
