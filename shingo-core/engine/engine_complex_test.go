@@ -511,3 +511,763 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 		t.Errorf("order2 status = %q, want dispatched", order2.Status)
 	}
 }
+
+// =============================================================================
+// Production Cycle Pattern Tests (TC-55 through TC-60)
+//
+// Six tests exercising the production cycle patterns from
+// shingo-edge/engine/material_orders.go through the Core engine pipeline.
+// Each test verifies block construction, bin claiming, wait/release lifecycle,
+// and bin movement for a real-world order flow.
+// =============================================================================
+
+// setupProductionNodes extends setupTestData with three additional nodes needed
+// by production cycle patterns: INBOUND-STAGING, OUTBOUND-STAGING, OUTBOUND-DEST.
+func setupProductionNodes(t *testing.T, db *store.DB) (
+	storageNode, lineNode *store.Node,
+	inboundStaging, outboundStaging, outboundDest *store.Node,
+	bp *store.Payload,
+) {
+	t.Helper()
+	storageNode, lineNode, bp = setupTestData(t, db)
+
+	inboundStaging = &store.Node{Name: "INBOUND-STAGING", Enabled: true}
+	if err := db.CreateNode(inboundStaging); err != nil {
+		t.Fatalf("create inbound staging node: %v", err)
+	}
+	outboundStaging = &store.Node{Name: "OUTBOUND-STAGING", Enabled: true}
+	if err := db.CreateNode(outboundStaging); err != nil {
+		t.Fatalf("create outbound staging node: %v", err)
+	}
+	outboundDest = &store.Node{Name: "OUTBOUND-DEST", Enabled: true}
+	if err := db.CreateNode(outboundDest); err != nil {
+		t.Fatalf("create outbound dest node: %v", err)
+	}
+	return
+}
+
+// driveToConfirmed advances an order through the full lifecycle:
+// RUNNING → FINISHED → receipt → confirmed.
+func driveToConfirmed(t *testing.T, sim *simulator.SimulatorBackend, d *dispatch.Dispatcher, db *store.DB, orderUUID string) *store.Order {
+	t.Helper()
+	order, err := db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		t.Fatalf("get order %s: %v", orderUUID, err)
+	}
+	if order.VendorOrderID == "" {
+		t.Fatalf("order %s has no vendor order ID", orderUUID)
+	}
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+	d.HandleOrderReceipt(testEnvelope(), &protocol.OrderReceipt{
+		OrderUUID:   orderUUID,
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+	order, err = db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		t.Fatalf("get order %s after confirmation: %v", orderUUID, err)
+	}
+	return order
+}
+
+// --- TC-55: Sequential Backfill (Order B) — simplest, no wait ---
+//
+// Pattern from BuildSequentialBackfillSteps:
+//
+//	pickup(InboundSource) → dropoff(CoreNode)
+//
+// No wait step. Dispatches as complete immediately. The robot picks up
+// a bin from storage and drops it at the line.
+//
+// Expected: Bin claimed at storage, 2 blocks (JackLoad + JackUnload), complete.
+// After lifecycle: order confirmed, bin at line, unclaimed.
+func TestComplexOrder_SequentialBackfill(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, _, _, _, bp := setupProductionNodes(t, db)
+	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-SEQBF")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "seq-backfill-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: storageNode.Name},
+			{Action: "dropoff", Node: lineNode.Name},
+		},
+	})
+
+	order, err := db.GetOrderByUUID("seq-backfill-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != dispatch.StatusDispatched {
+		t.Fatalf("status = %q, want dispatched", order.Status)
+	}
+
+	// Bin claimed at storage (first step is pickup)
+	if order.BinID == nil {
+		t.Fatal("expected BinID to be set — claimComplexBins should claim at pickup node")
+	}
+	bin, _ = db.GetBin(bin.ID)
+	if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
+		t.Fatalf("bin should be claimed by order %d, got claimed_by=%v", order.ID, bin.ClaimedBy)
+	}
+
+	// No staged orders — dispatched as complete immediately
+	if sim.StagedOrderCount() != 0 {
+		t.Fatalf("staged orders = %d, want 0 (no wait step)", sim.StagedOrderCount())
+	}
+
+	// 2 blocks: storage/JackLoad, line/JackUnload
+	view := sim.GetOrder(order.VendorOrderID)
+	if view == nil {
+		t.Fatal("simulator should have the order")
+	}
+	if len(view.Blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(view.Blocks))
+	}
+	if view.Blocks[0].Location != storageNode.Name || view.Blocks[0].BinTask != "JackLoad" {
+		t.Errorf("block 0: location=%q task=%q, want %q/JackLoad", view.Blocks[0].Location, view.Blocks[0].BinTask, storageNode.Name)
+	}
+	if view.Blocks[1].Location != lineNode.Name || view.Blocks[1].BinTask != "JackUnload" {
+		t.Errorf("block 1: location=%q task=%q, want %q/JackUnload", view.Blocks[1].Location, view.Blocks[1].BinTask, lineNode.Name)
+	}
+	if !view.Complete {
+		t.Error("order should be complete (no wait step)")
+	}
+
+	// Drive through full lifecycle
+	order = driveToConfirmed(t, sim, d, db, "seq-backfill-1")
+	if order.Status != dispatch.StatusConfirmed {
+		t.Fatalf("status = %q, want confirmed", order.Status)
+	}
+
+	// Bin moved to line, unclaimed
+	bin, _ = db.GetBin(bin.ID)
+	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
+		t.Errorf("bin node = %v, want %d (line)", bin.NodeID, lineNode.ID)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v, want nil (claim released)", bin.ClaimedBy)
+	}
+}
+
+// --- TC-56: Sequential Removal (Order A) — wait/release lifecycle ---
+//
+// Pattern from BuildSequentialRemovalSteps:
+//
+//	dropoff(CoreNode) → wait → pickup(CoreNode) → dropoff(OutboundDest)
+//
+// Robot navigates empty to line, waits for operator, picks up old bin, delivers
+// to outbound destination. First step is dropoff, but claimComplexBins iterates
+// ALL steps (including post-wait) and finds the pickup(lineNode) step, claiming
+// the bin there.
+//
+// Expected: 1 pre-wait block, staged order. After release: 3 total blocks.
+// After completion: bin at outbound dest.
+func TestComplexOrder_SequentialRemoval(t *testing.T) {
+	db := testDB(t)
+	_, lineNode, _, _, outboundDest, bp := setupProductionNodes(t, db)
+	_ = createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-SEQR")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "seq-removal-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "dropoff", Node: lineNode.Name},
+			{Action: "wait"},
+			{Action: "pickup", Node: lineNode.Name},
+			{Action: "dropoff", Node: outboundDest.Name},
+		},
+	})
+
+	order, err := db.GetOrderByUUID("seq-removal-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != dispatch.StatusDispatched {
+		t.Fatalf("status = %q, want dispatched", order.Status)
+	}
+
+	// Bin claimed — claimComplexBins iterates ALL steps including post-wait
+	if order.BinID == nil {
+		t.Fatal("expected BinID set — claimComplexBins finds post-wait pickup step")
+	}
+
+	// 1 pre-wait block, staged
+	if sim.StagedOrderCount() != 1 {
+		t.Fatalf("staged orders = %d, want 1", sim.StagedOrderCount())
+	}
+	view := sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 1 {
+		t.Fatalf("pre-wait blocks = %d, want 1", len(view.Blocks))
+	}
+	if view.Blocks[0].Location != lineNode.Name || view.Blocks[0].BinTask != "JackUnload" {
+		t.Errorf("block 0: location=%q task=%q, want %q/JackUnload", view.Blocks[0].Location, view.Blocks[0].BinTask, lineNode.Name)
+	}
+	if view.Complete {
+		t.Error("order should NOT be complete (has wait step)")
+	}
+
+	// Drive to staged
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "WAITING")
+	order, _ = db.GetOrderByUUID("seq-removal-1")
+	if order.Status != dispatch.StatusStaged {
+		t.Fatalf("after WAITING: status = %q, want staged", order.Status)
+	}
+
+	// Release — appends 2 post-wait blocks
+	d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: "seq-removal-1"})
+
+	// After release: 3 total blocks
+	view = sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 3 {
+		t.Fatalf("total blocks after release = %d, want 3", len(view.Blocks))
+	}
+	if !view.Complete {
+		t.Error("order should be complete after release")
+	}
+
+	// Post-wait blocks: line/JackLoad, dest/JackUnload
+	if view.Blocks[1].Location != lineNode.Name || view.Blocks[1].BinTask != "JackLoad" {
+		t.Errorf("block 1: location=%q task=%q, want %q/JackLoad", view.Blocks[1].Location, view.Blocks[1].BinTask, lineNode.Name)
+	}
+	if view.Blocks[2].Location != outboundDest.Name || view.Blocks[2].BinTask != "JackUnload" {
+		t.Errorf("block 2: location=%q task=%q, want %q/JackUnload", view.Blocks[2].Location, view.Blocks[2].BinTask, outboundDest.Name)
+	}
+
+	// Drive to completion
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+	order, _ = db.GetOrderByUUID("seq-removal-1")
+	if order.Status != "delivered" {
+		t.Fatalf("after FINISHED: status = %q, want delivered", order.Status)
+	}
+}
+
+// --- TC-57: Two-Robot Swap Resupply (Order A) ---
+//
+// Pattern from BuildTwoRobotSwapSteps orderA:
+//
+//	pickup(Source) → dropoff(InboundStaging) → wait
+//	→ pickup(InboundStaging) → dropoff(CoreNode)
+//
+// Expected: 2 pre-wait blocks, bin claimed at storage, staged order.
+// After release: 4 total blocks. After completion: bin at line.
+func TestComplexOrder_TwoRobotSwap_Resupply(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, inboundStaging, _, _, bp := setupProductionNodes(t, db)
+	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-2RA")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "tworobot-resupply-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: storageNode.Name},
+			{Action: "dropoff", Node: inboundStaging.Name},
+			{Action: "wait"},
+			{Action: "pickup", Node: inboundStaging.Name},
+			{Action: "dropoff", Node: lineNode.Name},
+		},
+	})
+
+	order, err := db.GetOrderByUUID("tworobot-resupply-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != dispatch.StatusDispatched {
+		t.Fatalf("status = %q, want dispatched", order.Status)
+	}
+
+	// Bin claimed at storage (first step is pickup)
+	if order.BinID == nil {
+		t.Fatal("expected BinID — first step is pickup at storage")
+	}
+	bin, _ = db.GetBin(bin.ID)
+	if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
+		t.Fatalf("bin claimed_by = %v, want order %d", bin.ClaimedBy, order.ID)
+	}
+
+	// Staged with 2 pre-wait blocks
+	if sim.StagedOrderCount() != 1 {
+		t.Fatalf("staged orders = %d, want 1", sim.StagedOrderCount())
+	}
+	view := sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 2 {
+		t.Fatalf("pre-wait blocks = %d, want 2", len(view.Blocks))
+	}
+	if view.Blocks[0].Location != storageNode.Name || view.Blocks[0].BinTask != "JackLoad" {
+		t.Errorf("block 0: location=%q task=%q, want %q/JackLoad", view.Blocks[0].Location, view.Blocks[0].BinTask, storageNode.Name)
+	}
+	if view.Blocks[1].Location != inboundStaging.Name || view.Blocks[1].BinTask != "JackUnload" {
+		t.Errorf("block 1: location=%q task=%q, want %q/JackUnload", view.Blocks[1].Location, view.Blocks[1].BinTask, inboundStaging.Name)
+	}
+	if view.Complete {
+		t.Error("order should not be complete")
+	}
+
+	// Drive to staged
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "WAITING")
+	order, _ = db.GetOrderByUUID("tworobot-resupply-1")
+	if order.Status != dispatch.StatusStaged {
+		t.Fatalf("after WAITING: status = %q, want staged", order.Status)
+	}
+
+	// Release — adds 2 post-wait blocks
+	d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: "tworobot-resupply-1"})
+
+	view = sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 4 {
+		t.Fatalf("total blocks after release = %d, want 4", len(view.Blocks))
+	}
+	if !view.Complete {
+		t.Error("order should be complete after release")
+	}
+
+	// Post-wait blocks: inboundStaging/JackLoad, line/JackUnload
+	if view.Blocks[2].Location != inboundStaging.Name || view.Blocks[2].BinTask != "JackLoad" {
+		t.Errorf("block 2: location=%q task=%q, want %q/JackLoad", view.Blocks[2].Location, view.Blocks[2].BinTask, inboundStaging.Name)
+	}
+	if view.Blocks[3].Location != lineNode.Name || view.Blocks[3].BinTask != "JackUnload" {
+		t.Errorf("block 3: location=%q task=%q, want %q/JackUnload", view.Blocks[3].Location, view.Blocks[3].BinTask, lineNode.Name)
+	}
+
+	// Complete
+	order = driveToConfirmed(t, sim, d, db, "tworobot-resupply-1")
+	if order.Status != dispatch.StatusConfirmed {
+		t.Fatalf("status = %q, want confirmed", order.Status)
+	}
+
+	// Bin moved to line, unclaimed
+	bin, _ = db.GetBin(bin.ID)
+	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
+		t.Errorf("bin node = %v, want %d (line)", bin.NodeID, lineNode.ID)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v, want nil", bin.ClaimedBy)
+	}
+}
+
+// --- TC-58: Two-Robot Swap Removal (Order B) ---
+//
+// Pattern from BuildTwoRobotSwapSteps orderB:
+//
+//	dropoff(CoreNode) → wait → pickup(CoreNode) → dropoff(OutboundDest)
+//
+// Same structure as sequential removal but in the two-robot context.
+// claimComplexBins finds the post-wait pickup and claims the bin.
+//
+// Expected: 1 pre-wait block, staged. After release: 3 blocks.
+// After completion: bin at outbound dest.
+func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
+	db := testDB(t)
+	_, lineNode, _, _, outboundDest, bp := setupProductionNodes(t, db)
+	_ = createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-2RB")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "tworobot-removal-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "dropoff", Node: lineNode.Name},
+			{Action: "wait"},
+			{Action: "pickup", Node: lineNode.Name},
+			{Action: "dropoff", Node: outboundDest.Name},
+		},
+	})
+
+	order, err := db.GetOrderByUUID("tworobot-removal-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != dispatch.StatusDispatched {
+		t.Fatalf("status = %q, want dispatched", order.Status)
+	}
+
+	// Bin claimed — claimComplexBins iterates ALL steps including post-wait
+	if order.BinID == nil {
+		t.Fatal("expected BinID set — claimComplexBins finds post-wait pickup step")
+	}
+
+	// 1 pre-wait block, staged
+	if sim.StagedOrderCount() != 1 {
+		t.Fatalf("staged orders = %d, want 1", sim.StagedOrderCount())
+	}
+	view := sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 1 {
+		t.Fatalf("pre-wait blocks = %d, want 1", len(view.Blocks))
+	}
+	if view.Blocks[0].Location != lineNode.Name || view.Blocks[0].BinTask != "JackUnload" {
+		t.Errorf("block 0: location=%q task=%q, want %q/JackUnload", view.Blocks[0].Location, view.Blocks[0].BinTask, lineNode.Name)
+	}
+
+	// Drive to staged, release
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "WAITING")
+	d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: "tworobot-removal-1"})
+
+	// 3 total blocks after release
+	view = sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 3 {
+		t.Fatalf("total blocks = %d, want 3", len(view.Blocks))
+	}
+	if !view.Complete {
+		t.Error("order should be complete after release")
+	}
+
+	// Block structure: line/JackUnload, line/JackLoad, dest/JackUnload
+	if view.Blocks[1].Location != lineNode.Name || view.Blocks[1].BinTask != "JackLoad" {
+		t.Errorf("block 1: location=%q task=%q, want %q/JackLoad", view.Blocks[1].Location, view.Blocks[1].BinTask, lineNode.Name)
+	}
+	if view.Blocks[2].Location != outboundDest.Name || view.Blocks[2].BinTask != "JackUnload" {
+		t.Errorf("block 2: location=%q task=%q, want %q/JackUnload", view.Blocks[2].Location, view.Blocks[2].BinTask, outboundDest.Name)
+	}
+
+	// Complete — BinID is set, so ApplyBinArrival moves bin to outboundDest
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+		OrderUUID:   "tworobot-removal-1",
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+	order, _ = db.GetOrderByUUID("tworobot-removal-1")
+	if order.Status != dispatch.StatusConfirmed {
+		t.Fatalf("after receipt: status = %q, want confirmed", order.Status)
+	}
+
+	// Bin moved to outboundDest (unclaimed)
+	bin, _ := db.GetBin(*order.BinID)
+	if bin.NodeID == nil || *bin.NodeID != outboundDest.ID {
+		t.Errorf("bin node = %v, want %d (outboundDest)", bin.NodeID, outboundDest.ID)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v, want nil (claim released)", bin.ClaimedBy)
+	}
+}
+
+// --- TC-59: Staging + Deliver Separation ---
+//
+// Two independent orders used during changeover.
+// Stage:  pickup(storage) → dropoff(inboundStaging)  — no wait
+// Deliver: pickup(inboundStaging) → dropoff(lineNode) — no wait
+//
+// Expected: Stage order completes, bin at inboundStaging, status=staged.
+// Deliver order claims the staged bin and delivers it to lineNode.
+func TestComplexOrder_StagingAndDeliver(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, inboundStaging, _, _, bp := setupProductionNodes(t, db)
+	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STAGE")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// --- Stage order ---
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "stage-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: storageNode.Name},
+			{Action: "dropoff", Node: inboundStaging.Name},
+		},
+	})
+
+	stageOrder, err := db.GetOrderByUUID("stage-1")
+	if err != nil {
+		t.Fatalf("get stage order: %v", err)
+	}
+	if stageOrder.Status != dispatch.StatusDispatched {
+		t.Fatalf("stage order status = %q, want dispatched", stageOrder.Status)
+	}
+	if stageOrder.BinID == nil {
+		t.Fatal("stage order should have claimed bin at storage")
+	}
+
+	// Complete stage order
+	stageOrder = driveToConfirmed(t, sim, d, db, "stage-1")
+	if stageOrder.Status != dispatch.StatusConfirmed {
+		t.Fatalf("stage order status = %q, want confirmed", stageOrder.Status)
+	}
+
+	// Bin at inbound staging, unclaimed, status=staged
+	bin, _ = db.GetBin(bin.ID)
+	if bin.NodeID == nil || *bin.NodeID != inboundStaging.ID {
+		t.Fatalf("bin node = %v, want %d (inbound staging)", bin.NodeID, inboundStaging.ID)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v, want nil (claim released)", bin.ClaimedBy)
+	}
+	if bin.Status != "staged" {
+		t.Errorf("bin status = %q, want staged", bin.Status)
+	}
+
+	// --- Deliver order ---
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "deliver-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: inboundStaging.Name},
+			{Action: "dropoff", Node: lineNode.Name},
+		},
+	})
+
+	deliverOrder, err := db.GetOrderByUUID("deliver-1")
+	if err != nil {
+		t.Fatalf("get deliver order: %v", err)
+	}
+	if deliverOrder.Status != dispatch.StatusDispatched {
+		t.Fatalf("deliver order status = %q, want dispatched", deliverOrder.Status)
+	}
+
+	// Deliver order claims the staged bin at inbound staging
+	if deliverOrder.BinID == nil {
+		t.Fatal("deliver order should have claimed the staged bin at inbound staging")
+	}
+	if *deliverOrder.BinID != bin.ID {
+		t.Errorf("deliver order bin_id = %d, want %d (the staged bin)", *deliverOrder.BinID, bin.ID)
+	}
+
+	// Two independent vendor orders
+	if sim.OrderCount() != 2 {
+		t.Errorf("simulator orders = %d, want 2 (stage + deliver)", sim.OrderCount())
+	}
+
+	// Complete deliver order
+	deliverOrder = driveToConfirmed(t, sim, d, db, "deliver-1")
+	if deliverOrder.Status != dispatch.StatusConfirmed {
+		t.Fatalf("deliver order status = %q, want confirmed", deliverOrder.Status)
+	}
+
+	// Bin at line node, unclaimed
+	bin, _ = db.GetBin(bin.ID)
+	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
+		t.Errorf("bin node = %v, want %d (line)", bin.NodeID, lineNode.ID)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v, want nil", bin.ClaimedBy)
+	}
+}
+
+// --- TC-60: Single-Robot 10-Step Swap ---
+//
+// Pattern from BuildSingleSwapSteps — the most complex production pattern:
+//
+//	pickup(source) → dropoff(inStaging) → dropoff(line) → wait
+//	→ pickup(line) → dropoff(outStaging) → pickup(inStaging)
+//	→ dropoff(line) → pickup(outStaging) → dropoff(outDest)
+//
+// One robot swaps two bins in a single trip. It stages the new bin at inbound
+// staging, pre-positions at line, waits for the operator, swaps old for new,
+// then delivers the old bin to outbound destination.
+//
+// This test exposes TWO defects in multi-bin complex order handling:
+//
+//  1. WRONG DESTINATION: extractEndpoints sets DeliveryNode to the last
+//     actionable step (outboundDest, step 10). But newBin actually delivers at
+//     step 8 (lineNode). ApplyBinArrival moves BinID to DeliveryNode blindly —
+//     the new bin the line needs ends up at outboundDest.
+//
+//  2. ORPHANED CLAIM: claimComplexBins claims oldBin at the step 5 pickup
+//     (lineNode), but Order.BinID only tracks newBin. On completion,
+//     handleOrderCompleted calls ApplyBinArrival for BinID only. There is
+//     no UnclaimOrderBins call on the success path — that only exists on
+//     failure/cancel paths. oldBin stays claimed by the completed order
+//     permanently. No other order can touch it.
+//
+// Root cause: Order.BinID is *int64 (single bin). The completion path
+// (handleOrderCompleted → ApplyBinArrival) processes exactly one bin.
+// Multi-pickup orders need a junction table (order_bins) and per-step
+// bin tracking. The system's own ListOrderCompletionAnomalies query
+// detects "terminal orders still claiming bins."
+//
+// Expected: 3 pre-wait blocks, staged order. After release: 9 total blocks.
+// Both defects asserted with t.Errorf (test documents the problems).
+func TestComplexOrder_SingleRobotSwap(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, inboundStaging, outboundStaging, outboundDest, bp := setupProductionNodes(t, db)
+
+	// Two bins: new material at storage, old material at line
+	newBin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-SINGLE-NEW")
+	oldBin := createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-SINGLE-OLD")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "single-swap-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: storageNode.Name},       // 1
+			{Action: "dropoff", Node: inboundStaging.Name},   // 2
+			{Action: "dropoff", Node: lineNode.Name},         // 3
+			{Action: "wait"},                                 // 4
+			{Action: "pickup", Node: lineNode.Name},          // 5
+			{Action: "dropoff", Node: outboundStaging.Name},  // 6
+			{Action: "pickup", Node: inboundStaging.Name},    // 7
+			{Action: "dropoff", Node: lineNode.Name},         // 8
+			{Action: "pickup", Node: outboundStaging.Name},   // 9
+			{Action: "dropoff", Node: outboundDest.Name},     // 10
+		},
+	})
+
+	order, err := db.GetOrderByUUID("single-swap-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != dispatch.StatusDispatched {
+		t.Fatalf("status = %q, want dispatched", order.Status)
+	}
+
+	// New bin at storage claimed (BinID = first claimed bin)
+	if order.BinID == nil {
+		t.Fatal("expected BinID — first pickup is at storage")
+	}
+	newBin, _ = db.GetBin(newBin.ID)
+	if newBin.ClaimedBy == nil || *newBin.ClaimedBy != order.ID {
+		t.Fatalf("new bin claimed_by = %v, want order %d", newBin.ClaimedBy, order.ID)
+	}
+
+	// Old bin at line also claimed (pickup at lineNode is step 5)
+	oldBin, _ = db.GetBin(oldBin.ID)
+	if oldBin.ClaimedBy == nil {
+		t.Log("NOTE: old bin was not claimed — claimComplexBins may not have found it")
+	} else if *oldBin.ClaimedBy != order.ID {
+		t.Errorf("old bin claimed_by = %d, want order %d", *oldBin.ClaimedBy, order.ID)
+	}
+
+	// 3 pre-wait blocks, staged
+	if sim.StagedOrderCount() != 1 {
+		t.Fatalf("staged orders = %d, want 1", sim.StagedOrderCount())
+	}
+	view := sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 3 {
+		t.Fatalf("pre-wait blocks = %d, want 3", len(view.Blocks))
+	}
+	if view.Complete {
+		t.Error("order should not be complete")
+	}
+
+	// Verify pre-wait block locations and tasks
+	wantPre := []struct{ loc, task string }{
+		{storageNode.Name, "JackLoad"},
+		{inboundStaging.Name, "JackUnload"},
+		{lineNode.Name, "JackUnload"},
+	}
+	for i, w := range wantPre {
+		if view.Blocks[i].Location != w.loc || view.Blocks[i].BinTask != w.task {
+			t.Errorf("pre-wait block %d: got %q/%q, want %q/%q", i, view.Blocks[i].Location, view.Blocks[i].BinTask, w.loc, w.task)
+		}
+	}
+
+	// Drive to staged, release
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "WAITING")
+	d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: "single-swap-1"})
+
+	// After release: 9 total blocks (3 pre-wait + 6 post-wait)
+	view = sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 9 {
+		t.Fatalf("total blocks after release = %d, want 9", len(view.Blocks))
+	}
+	if !view.Complete {
+		t.Error("order should be complete after release")
+	}
+
+	// Verify all 9 block locations and tasks in order
+	wantAll := []struct{ loc, task string }{
+		{storageNode.Name, "JackLoad"},       // 1: pickup new
+		{inboundStaging.Name, "JackUnload"},  // 2: stage new
+		{lineNode.Name, "JackUnload"},        // 3: pre-position at line
+		// wait
+		{lineNode.Name, "JackLoad"},          // 5: pickup old from line
+		{outboundStaging.Name, "JackUnload"}, // 6: park old
+		{inboundStaging.Name, "JackLoad"},    // 7: grab new from staging
+		{lineNode.Name, "JackUnload"},        // 8: deliver new to line
+		{outboundStaging.Name, "JackLoad"},   // 9: grab old from staging
+		{outboundDest.Name, "JackUnload"},    // 10: deliver old to dest
+	}
+	for i, w := range wantAll {
+		if view.Blocks[i].Location != w.loc || view.Blocks[i].BinTask != w.task {
+			t.Errorf("block %d: got %q/%q, want %q/%q", i, view.Blocks[i].Location, view.Blocks[i].BinTask, w.loc, w.task)
+		}
+	}
+
+	// Complete the order
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+		OrderUUID:   "single-swap-1",
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+	order, _ = db.GetOrderByUUID("single-swap-1")
+	if order.Status != dispatch.StatusConfirmed {
+		t.Fatalf("status = %q, want confirmed", order.Status)
+	}
+
+	// Defect 1: newBin at wrong destination.
+	// extractEndpoints sets DeliveryNode to the last actionable step (outboundDest, step 10).
+	// But newBin actually delivers at step 8 (lineNode). ApplyBinArrival moves BinID to
+	// DeliveryNode blindly — the new bin the line needs ends up at outboundDest.
+	newBin, _ = db.GetBin(newBin.ID)
+	if newBin.NodeID == nil {
+		t.Error("new bin has no node after completion")
+	} else if *newBin.NodeID != lineNode.ID {
+		t.Errorf("DEFECT: new bin at node %d, want %d (lineNode) — extractEndpoints sets DeliveryNode to last step (outboundDest), ApplyBinArrival moves BinID there",
+			*newBin.NodeID, lineNode.ID)
+	}
+	if newBin.ClaimedBy != nil {
+		t.Errorf("new bin claimed_by = %v, want nil (claim released)", newBin.ClaimedBy)
+	}
+
+	// Defect 2: oldBin claim orphaned after completion.
+	// claimComplexBins claimed oldBin at the step-5 pickup (lineNode), but
+	// Order.BinID only tracks newBin. handleOrderCompleted calls
+	// ApplyBinArrival(BinID) and returns — there is no UnclaimOrderBins
+	// call on the success path (only on failure/cancel). The old bin stays
+	// claimed by the completed order permanently. No other order can touch it.
+	// The system's own ListOrderCompletionAnomalies query detects this.
+	oldBin, _ = db.GetBin(oldBin.ID)
+	t.Logf("old bin final state: node=%v claimed_by=%v status=%s",
+		oldBin.NodeID, oldBin.ClaimedBy, oldBin.Status)
+	if oldBin.ClaimedBy != nil {
+		t.Errorf("DEFECT: old bin still claimed by order %d after completion — BinID only tracks one bin, no UnclaimOrderBins on success path",
+			*oldBin.ClaimedBy)
+	}
+	if oldBin.NodeID == nil || *oldBin.NodeID != lineNode.ID {
+		t.Errorf("DEFECT: old bin at node %v, want %d (lineNode) — never moved, ApplyBinArrival only processes BinID",
+			oldBin.NodeID, lineNode.ID)
+	}
+}

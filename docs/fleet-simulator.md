@@ -132,6 +132,12 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-52 | Lane lock contention — second reshuffle queued correctly | PASS | Verified |
 | TC-53 | ApplyBinArrival status for compound restock children | PASS | Verified |
 | TC-54 | Staging TTL expiry during compound order execution | PASS | Verified |
+| TC-55 | Sequential Backfill — simplest complex order lifecycle | PASS | Verified |
+| TC-56 | Sequential Removal — wait/release with post-wait bin claim | PASS | Verified |
+| TC-57 | Two-Robot Swap Resupply — 2 pre-wait blocks, staging wait | PASS | Verified |
+| TC-58 | Two-Robot Swap Removal — dropoff-first pre-wait, full lifecycle | PASS | Verified |
+| TC-59 | Staging + Deliver separation — two independent orders | PASS | Verified |
+| TC-60 | Single-robot 10-step swap — wrong dest + orphaned claim | FAIL | Bug found (OPEN) |
 | — | ClaimBin silent overwrite | FIXED | Bug found |
 | — | Deterministic TOCTOU claim race (PostFindHook) | PASS | Verified |
 | — | Dispatch stress — 20 concurrent orders, 10 bins | PASS | Verified |
@@ -356,6 +362,28 @@ WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL A
 **Status:** Fixed.
 
 **Test:** `engine/engine_compound_test.go` — `TestCompound_CancelParentWhileChildInFlight`
+
+---
+
+### TC-60: Single-robot 10-step swap — wrong destination and orphaned claim
+
+**Scenario:** A single-robot swap moves two bins in one trip: new material from storage to the line, old material from the line to outbound destination. The 10-step sequence has two pickup steps at different nodes. `claimComplexBins` claims both bins (iterates all pickup steps), but `Order.BinID` is `*int64` — it can only track the first claimed bin (the new bin at storage). The second bin (old bin at line) is claimed but invisible to the completion path.
+
+**Expected behavior:** New bin at lineNode. Old bin at outboundDest. Both unclaimed.
+
+**Result:** BUG FOUND (OPEN). Two defects:
+
+1. **Wrong destination:** `extractEndpoints` iterates all steps and sets `DeliveryNode` to the last one (outboundDest, step 10). But `newBin` (the `BinID` bin) actually delivers at step 8 (lineNode). `handleOrderCompleted` calls `ApplyBinArrival(*order.BinID, destNode.ID)` — moving the new bin the line needs to outboundDest instead of lineNode.
+
+2. **Orphaned claim:** `claimComplexBins` claims `oldBin` at the step-5 pickup (lineNode), but `Order.BinID` only tracks `newBin`. On completion, `handleOrderCompleted` calls `ApplyBinArrival` for `BinID` and returns. There is no `UnclaimOrderBins` call on the success path — that only exists on failure/cancel paths. `oldBin` stays claimed by the completed order permanently. No other order can touch it.
+
+**Root cause:** `Order.BinID` is `*int64` (single bin). The completion path (`handleOrderCompleted` → `ApplyBinArrival`) processes exactly one bin. Multi-pickup orders need a junction table (`order_bins`) and per-step bin tracking. The system's own `ListOrderCompletionAnomalies` query detects "terminal orders still claiming bins."
+
+**Production risk:** Any multi-pickup complex order (single-robot swap is the primary pattern) triggers both defects. The new bin the line needs ends up at the wrong location. The old bin becomes permanently stuck — no retrieve, store, or move order can claim it. Recovery requires database intervention. This blocks adoption of the single-robot swap pattern in production.
+
+**Status:** OPEN. Test documents both defects with `t.Errorf` assertions.
+
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_SingleRobotSwap`
 
 ---
 
@@ -660,7 +688,7 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 ## Verified scenarios — complex and compound orders
 
-These tests target the complex order and compound reshuffle code paths — sequential removal, one-robot swap, and two-robot swap patterns. All 13 tests pass. TC-46 found and fixed a real bug (documented in the Bugs section above).
+These tests target the complex order and compound reshuffle code paths — sequential removal, one-robot swap, and two-robot swap patterns. 18 of 19 tests pass. TC-46 found and fixed a real bug (documented in the Bugs section above). TC-60 found two open defects in multi-bin complex order handling (documented in the Bugs section below).
 
 ---
 
@@ -838,6 +866,70 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 ---
 
+### TC-55: Sequential Backfill — simplest complex order lifecycle — PASS
+
+**Scenario:** `pickup(storage) → dropoff(line)`. No wait. The simplest possible complex order — still goes through StepsJSON, claimComplexBins, stepsToBlocks. One bin at storage, delivered to line.
+
+**Expected behavior:** Bin claimed at storage. 2 blocks (JackLoad/JackUnload), complete=true. After full lifecycle: bin at line, unclaimed.
+
+**Result:** PASS. Full end-to-end lifecycle through the complex order path.
+
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_SequentialBackfill`
+
+---
+
+### TC-56: Sequential Removal — wait/release with post-wait bin claiming — PASS
+
+**Scenario:** `dropoff(line) → wait → pickup(line) → dropoff(outboundDest)`. Robot navigates empty to line, waits for operator, picks up old bin, delivers to outbound destination. First step is dropoff — tests whether `claimComplexBins` finds bins at post-wait pickup steps.
+
+**Expected behavior:** `claimComplexBins` iterates ALL steps including post-wait, finds the pickup at lineNode, claims oldBin. 1 pre-wait block, staged. After release: 3 blocks. After completion: bin at outboundDest.
+
+**Why this matters:** Confirms bin claiming works for dropoff-first orders where the pickup is after the wait. The claim happens at dispatch time, protecting the bin for the entire order lifecycle.
+
+**Result:** PASS.
+
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_SequentialRemoval`
+
+---
+
+### TC-57: Two-Robot Swap Resupply — 2 pre-wait blocks, staging wait — PASS
+
+**Scenario:** `pickup(storage) → dropoff(inboundStaging) → wait → pickup(inboundStaging) → dropoff(line)`. Resupply robot picks up new material, stages at inbound staging, waits for line to clear, then delivers.
+
+**Expected behavior:** Bin claimed at storage. 2 pre-wait blocks, staged. After release: 4 total blocks. After full lifecycle: bin at line, unclaimed.
+
+**Result:** PASS. All 4 block locations and bin tasks verified in order.
+
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_TwoRobotSwap_Resupply`
+
+---
+
+### TC-58: Two-Robot Swap Removal — dropoff-first pre-wait, full lifecycle — PASS
+
+**Scenario:** `dropoff(line) → wait → pickup(line) → dropoff(outboundDest)`. Same structure as sequential removal but in the two-robot context. Robot pre-positions at line, waits for operator, picks up old bin, delivers to outbound destination.
+
+**Expected behavior:** 1 pre-wait block, staged. Bin claimed via post-wait pickup. After release: 3 blocks. After full lifecycle including receipt: bin at outboundDest, unclaimed.
+
+**Result:** PASS. Full lifecycle including `HandleOrderReceipt` → `ApplyBinArrival`.
+
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_TwoRobotSwap_Removal`
+
+---
+
+### TC-59: Staging + Deliver separation — two independent orders — PASS
+
+**Scenario:** Two independent orders. Stage: `pickup(storage) → dropoff(inboundStaging)`. Deliver: `pickup(inboundStaging) → dropoff(line)`. Stage completes first, bin at inboundStaging with status=staged. Deliver claims the staged bin and delivers to line.
+
+**Expected behavior:** Stage order completes: bin at inboundStaging, unclaimed, bin status=staged. Deliver order claims the staged bin (`claimComplexBins` allows "staged" bins at production nodes). After deliver completes: bin at line, unclaimed.
+
+**Why this matters:** Confirms `claimComplexBins` includes "staged" bins in its search — unlike `FindSourceBinFIFO` which excludes them. Staged bins at storage slots are invisible to retrieves, but staged bins at production/staging nodes must be visible to complex orders.
+
+**Result:** PASS. Two independent vendor orders, bin flows correctly through both.
+
+**Test:** `engine/engine_complex_test.go` — `TestComplexOrder_StagingAndDeliver`
+
+---
+
 ## Scenarios to test next
 
 These scenarios haven't been tested yet. Each one describes something that could go wrong on the floor and what the system should do about it.
@@ -858,7 +950,7 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 **TC-35: planMove dispatches robot with no bin.** A move order targets a lineside node with no bins, and no `payloadCode` is specified. `planMove` skips the bin-finding loop entirely (empty node, no payload filter) and dispatches with `BinID=nil`. The order should fail with a "no available bin" error, matching `planStore`'s guard. Same ghost robot class as TC-23c and TC-34. Lower likelihood since move orders typically specify a payload, but the code path exists.
 
-**TC-38: Multi-pickup complex order leaves secondary bins stranded.** A complex order has two pickup steps at different nodes. Both bins are claimed via `claimComplexBins`. Order completes. `ApplyBinArrival` moves the first bin (tracked by `Order.BinID`). The second bin stays claimed at its original node — never moved, never unclaimed. All claimed bins should be moved and unclaimed on order completion. A junction table (`order_bins`) would be needed to track multiple bin associations. Production risk: uncommon today (multi-pickup orders are rare), but the stranded bin becomes invisible to the system. No other order can claim it. It's permanently reserved by a completed order until manual database intervention.
+**TC-38: Multi-pickup complex order leaves secondary bins stranded.** **Confirmed by TC-60.** The single-robot swap test (`TestComplexOrder_SingleRobotSwap`) exposes two defects: wrong destination (`extractEndpoints` sets `DeliveryNode` to the last actionable step, `ApplyBinArrival` moves `BinID` bin there blindly) and orphaned claim (no `UnclaimOrderBins` on the success path). Remaining gap: remediation approach — either a junction table (`order_bins`) with per-step bin tracking, or splitting multi-pickup orders into sequential single-bin orders at dispatch time.
 
 ### Timing and race conditions
 
@@ -990,7 +1082,7 @@ shingo-core/
 | `fleet/simulator/concurrent.go` | Barrier-synchronized goroutine launcher (ParallelGroup). Used for concurrent dispatch stress tests. |
 | `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-21, TC-23 cluster, TC-24 cluster, TC-30, ClaimBin. Uses real Engine + real DB + simulator. |
 | `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, and staging expiry tests. TC-09, TC-10, TC-12, claim race, dispatch stress, redirect, fulfillment scanner, TC-37. Uses PostFindHook for deterministic TOCTOU race reproduction. |
-| `engine/engine_complex_test.go` | Complex order lifecycle tests. TC-42, TC-43, TC-47, TC-48, TC-49, TC-50. |
+| `engine/engine_complex_test.go` | Complex order lifecycle + production cycle pattern tests. TC-42, TC-43, TC-47, TC-48, TC-49, TC-50, TC-55, TC-56, TC-57, TC-58, TC-59, TC-60. |
 | `engine/engine_compound_test.go` | Compound reshuffle order tests. TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54. |
 | `dispatch/dispatcher_test.go` | Dispatcher-level tests. 18 tests, helper bodies replaced with thin wrappers to `testdb`. |
 | `dispatch/reshuffle_test.go` | Reshuffle planning tests. 6 tests, setup uses `testdb` helpers. |
