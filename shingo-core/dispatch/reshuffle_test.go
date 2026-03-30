@@ -467,3 +467,151 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		t.Error("lane lock is still held after child failure, want released")
 	}
 }
+
+// TestHandleChildOrderFailure_InFlightSibling verifies that HandleChildOrderFailure
+// cancels ALL remaining non-terminal children — including in-flight ones (dispatched,
+// in_transit, staged) — not just pending/sourcing ones. This was Bug 2: the original
+// implementation only cancelled StatusPending/StatusSourcing siblings, leaving
+// in-flight children as orphan robots with claimed bins.
+func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
+	db := testDB(t)
+	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
+
+	// Create parent order
+	parentOrder := &store.Order{
+		EdgeUUID:  "uuid-inflight-parent",
+		StationID: "line-1",
+		OrderType: OrderTypeRetrieve,
+		Status:    StatusReshuffling,
+	}
+	if err := db.CreateOrder(parentOrder); err != nil {
+		t.Fatalf("create parent order: %v", err)
+	}
+
+	// Child 1: already confirmed (done)
+	child1 := &store.Order{
+		EdgeUUID:      "uuid-inflight-step-1",
+		StationID:     "line-1",
+		OrderType:     OrderTypeMove,
+		Status:        StatusConfirmed,
+		ParentOrderID: &parentOrder.ID,
+		Sequence:      1,
+		SourceNode:    slots[0].Name,
+		DeliveryNode:  "GRP-TEST-DC-1",
+	}
+	if err := db.CreateOrder(child1); err != nil {
+		t.Fatalf("create child1: %v", err)
+	}
+
+	// Child 2: the one that fails
+	child2 := &store.Order{
+		EdgeUUID:      "uuid-inflight-step-2",
+		StationID:     "line-1",
+		OrderType:     OrderTypeMove,
+		Status:        StatusFailed,
+		ParentOrderID: &parentOrder.ID,
+		Sequence:      2,
+		SourceNode:    slots[1].Name,
+		DeliveryNode:  "LINE1-DEST",
+	}
+	if err := db.CreateOrder(child2); err != nil {
+		t.Fatalf("create child2: %v", err)
+	}
+
+	// Child 3: IN-FLIGHT (in_transit) — the key test case.
+	// Old code would skip this, leaving orphan robot and claimed bin.
+	binC3 := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-C3-INFLIGHT")
+	child3 := &store.Order{
+		EdgeUUID:      "uuid-inflight-step-3",
+		StationID:     "line-1",
+		OrderType:     OrderTypeMove,
+		Status:        StatusInTransit,
+		VendorOrderID: "vendor-inflight-step-3",
+		ParentOrderID: &parentOrder.ID,
+		Sequence:      3,
+		SourceNode:    slots[2].Name,
+		DeliveryNode:  slots[0].Name,
+		BinID:         &binC3.ID,
+	}
+	if err := db.CreateOrder(child3); err != nil {
+		t.Fatalf("create child3: %v", err)
+	}
+	db.ClaimBin(binC3.ID, child3.ID)
+
+	// Child 4: still pending — should also be cancelled
+	binC4 := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-C4-PENDING")
+	child4 := &store.Order{
+		EdgeUUID:      "uuid-inflight-step-4",
+		StationID:     "line-1",
+		OrderType:     OrderTypeMove,
+		Status:        StatusPending,
+		ParentOrderID: &parentOrder.ID,
+		Sequence:      4,
+		SourceNode:    slots[0].Name,
+		DeliveryNode:  slots[1].Name,
+		BinID:         &binC4.ID,
+	}
+	if err := db.CreateOrder(child4); err != nil {
+		t.Fatalf("create child4: %v", err)
+	}
+	db.ClaimBin(binC4.ID, child4.ID)
+
+	// Lock the lane
+	d, _ := newTestDispatcher(t, db, &mockBackend{})
+	d.laneLock.TryLock(lane.ID, parentOrder.ID)
+
+	// Handle child 2 failure
+	d.HandleChildOrderFailure(parentOrder.ID, child2.ID)
+
+	// VERIFY: child 3 (in_transit) MUST be cancelled, not left as orphan
+	child3Got, err := db.GetOrder(child3.ID)
+	if err != nil {
+		t.Fatalf("get child3: %v", err)
+	}
+	if child3Got.Status != StatusCancelled {
+		t.Errorf("BUG: child3 (in_transit) status = %q, want cancelled — in-flight sibling left as orphan robot", child3Got.Status)
+	}
+
+	// VERIFY: child 4 (pending) also cancelled
+	child4Got, err := db.GetOrder(child4.ID)
+	if err != nil {
+		t.Fatalf("get child4: %v", err)
+	}
+	if child4Got.Status != StatusCancelled {
+		t.Errorf("child4 (pending) status = %q, want cancelled", child4Got.Status)
+	}
+
+	// VERIFY: child 1 (confirmed) untouched
+	child1Got, _ := db.GetOrder(child1.ID)
+	if child1Got.Status != StatusConfirmed {
+		t.Errorf("child1 (confirmed) status = %q, want confirmed (terminal — should not be touched)", child1Got.Status)
+	}
+
+	// VERIFY: bins unclaimed
+	for _, bc := range []struct {
+		name string
+		id   int64
+	}{
+		{"binC3", binC3.ID},
+		{"binC4", binC4.ID},
+	} {
+		bin, err := db.GetBin(bc.id)
+		if err != nil {
+			t.Fatalf("get %s: %v", bc.name, err)
+		}
+		if bin.ClaimedBy != nil {
+			t.Errorf("BUG: %s still claimed by %d after sibling failure — bin permanently stuck", bc.name, *bin.ClaimedBy)
+		}
+	}
+
+	// VERIFY: parent failed
+	parentGot, _ := db.GetOrder(parentOrder.ID)
+	if parentGot.Status != StatusFailed {
+		t.Errorf("parent status = %q, want failed", parentGot.Status)
+	}
+
+	// VERIFY: lane lock released
+	if d.laneLock.IsLocked(lane.ID) {
+		t.Error("lane lock is still held after compound failure — prevents retry")
+	}
+}

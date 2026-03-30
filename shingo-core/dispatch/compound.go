@@ -117,32 +117,35 @@ func (d *Dispatcher) HandleChildOrderComplete(childOrder *store.Order) {
 }
 
 // HandleChildOrderFailure handles failure of a child in a compound order.
-// Cancels remaining children and fails the parent.
+// Cancels ALL remaining non-terminal children (including in-flight ones)
+// and fails the parent. Uses lifecycle.CancelOrder to ensure fleet orders
+// are cancelled and bins are unclaimed — same approach as cancelCompoundChildren.
 func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) {
 	log.Printf("dispatch: child order %d failed in compound %d, cancelling remaining", childOrderID, parentOrderID)
 
-	// Cancel remaining pending children
+	// Cancel remaining non-terminal children (including in-flight)
 	children, err := d.db.ListChildOrders(parentOrderID)
 	if err != nil {
 		return
 	}
-	for _, child := range children {
-		if child.ID == childOrderID {
-			continue
-		}
-		if child.Status == StatusPending || child.Status == StatusSourcing {
-			if err := d.db.UpdateOrderStatus(child.ID, StatusCancelled, "parent reshuffle failed"); err != nil {
-				log.Printf("dispatch: cancel child order %d: %v", child.ID, err)
-			}
-			d.unclaimOrder(child.ID)
-		}
-	}
 
-	// Fail the parent
 	parent, err := d.db.GetOrder(parentOrderID)
 	if err != nil {
 		return
 	}
+
+	cancelReason := fmt.Sprintf("sibling order %d failed during reshuffle", childOrderID)
+	for _, child := range children {
+		if child.ID == childOrderID {
+			continue
+		}
+		if child.Status == StatusCancelled || child.Status == StatusConfirmed || child.Status == StatusFailed {
+			continue
+		}
+		d.lifecycle.CancelOrder(child, parent.StationID, cancelReason)
+	}
+
+	// Fail the parent
 	if err := d.db.UpdateOrderStatus(parentOrderID, StatusFailed, fmt.Sprintf("child order %d failed", childOrderID)); err != nil {
 		log.Printf("dispatch: update compound order %d status to failed: %v", parentOrderID, err)
 	}

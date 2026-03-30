@@ -381,7 +381,7 @@ func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 		StationID:   order.StationID,
 		OrderType:   dispatch.OrderTypeStore,
 		Status:      dispatch.StatusPending,
-		SourceNode:  order.DeliveryNode, // bin is at (or near) the original destination
+		SourceNode:  order.SourceNode, // bin is still at origin — ApplyBinArrival never fires on failed/cancelled orders. If real-time tracking is added, revisit this assumption.
 		DeliveryNode: rootNode.Name,
 		BinID:       order.BinID,
 		PayloadDesc: "auto_return",

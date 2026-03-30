@@ -1514,6 +1514,76 @@ func TestTC28_ConcurrentRetrieveSamePart(t *testing.T) {
 // goroutines, both orders succeed sequentially. The test always passes when
 // no race occurs; it only fails when the race exposes the claim_failed path
 // and the fix is not applied.
+// TestMaybeCreateReturnOrder_SourceNode verifies that auto-return orders use the
+// original order's SourceNode (where the bin actually is in the DB), not DeliveryNode
+// (where the bin was headed but never reached). This was Bug 1: maybeCreateReturnOrder
+// used order.DeliveryNode for SourceNode, sending the recovery robot to the wrong node.
+//
+// This test isolates the bug without relying on TC-42's round-trip symmetry
+// (where SourceNode == DeliveryNode masks the defect).
+func TestMaybeCreateReturnOrder_SourceNode(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RETSRC")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Dispatch a retrieve order: storage → line
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "ret-src-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	})
+
+	order, err := db.GetOrderByUUID("ret-src-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.SourceNode != storageNode.Name {
+		t.Fatalf("order SourceNode = %q, want %q (storage)", order.SourceNode, storageNode.Name)
+	}
+	if order.DeliveryNode != lineNode.Name {
+		t.Fatalf("order DeliveryNode = %q, want %q (line)", order.DeliveryNode, lineNode.Name)
+	}
+
+	// Robot starts moving then fails mid-transit
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FAILED")
+
+	// Find auto-return order
+	allOrders, _ := db.ListOrders("", 50)
+	var returnOrder *store.Order
+	for _, o := range allOrders {
+		if o.PayloadDesc == "auto_return" {
+			returnOrder = o
+			break
+		}
+	}
+	if returnOrder == nil {
+		t.Fatalf("no auto-return order created after fleet failure")
+	}
+
+	// KEY CHECK: return order SourceNode must be the original order's SourceNode
+	// (storage, where the bin IS), NOT DeliveryNode (line, where the bin never reached)
+	if returnOrder.SourceNode != order.SourceNode {
+		t.Errorf("BUG: return order SourceNode = %q, want %q (order.SourceNode = storage where bin actually is). "+
+			"maybeCreateReturnOrder used order.DeliveryNode which is WRONG for mid-transit failures — "+
+			"recovery robot goes to line to pick up a bin that's still at storage",
+			returnOrder.SourceNode, order.SourceNode)
+	}
+
+	// Verify bin re-claimed by return order
+	bin, _ = db.GetBin(bin.ID)
+	if bin.ClaimedBy == nil || *bin.ClaimedBy != returnOrder.ID {
+		t.Errorf("bin claimed_by = %v, want %d (return order)", bin.ClaimedBy, returnOrder.ID)
+	}
+}
+
 func TestTC36_RetrieveClaimFailure_QueueNotFail(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)

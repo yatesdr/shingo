@@ -350,9 +350,8 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 
 	// Verify blocker moved to shuffle slot
 	blockerBin, _ = db.GetBin(blockerBin.ID)
-	t.Logf("blocker after step 1: node=%v claimed=%v", blockerBin.NodeID, blockerBin.ClaimedBy)
-	if blockerBin.NodeID != nil && *blockerBin.NodeID == shuffleSlot.ID {
-		t.Logf("blocker correctly at shuffle slot")
+	if blockerBin.NodeID == nil || *blockerBin.NodeID != shuffleSlot.ID {
+		t.Errorf("blocker not at shuffle slot after step 1: node=%v, want %d (shuffleSlot)", blockerBin.NodeID, shuffleSlot.ID)
 	}
 
 	// Step 2 (retrieve target) dispatched automatically by AdvanceCompoundOrder
@@ -396,9 +395,7 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 		t.Errorf("blocker bin still claimed by %d — cannot be retrieved by a new order", *blockerBin.ClaimedBy)
 	}
 	if blockerBin.NodeID == nil || *blockerBin.NodeID != shuffleSlot.ID {
-		t.Logf("NOTE: blocker bin not at shuffle slot (node=%v) — may have been moved by auto-return", blockerBin.NodeID)
-	} else {
-		t.Logf("blocker bin at shuffle slot %s — accessible for manual recovery or new reshuffle", shuffleSlot.Name)
+		t.Errorf("blocker bin not at shuffle slot after failure: node=%v, want %d", blockerBin.NodeID, shuffleSlot.ID)
 	}
 
 	// Target bin should still be at its original slot (step 2 never completed)
@@ -546,10 +543,18 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 		t.Logf("target bin at line — correct")
 	}
 
-	// Verify blockers restocked
+	// Verify blockers restocked to original slots (deepest-first restocking)
 	blocker1, _ = db.GetBin(blocker1.ID)
 	blocker2, _ = db.GetBin(blocker2.ID)
-	t.Logf("blocker1: node=%v  blocker2: node=%v", blocker1.NodeID, blocker2.NodeID)
+	if blocker1.NodeID == nil || *blocker1.NodeID != slots[0].ID {
+		t.Errorf("blocker1 at node %v, want slots[0] (%d)", blocker1.NodeID, slots[0].ID)
+	}
+	if blocker2.NodeID == nil || *blocker2.NodeID != slots[1].ID {
+		t.Errorf("blocker2 at node %v, want slots[1] (%d)", blocker2.NodeID, slots[1].ID)
+	}
+	if blocker1.Status != "available" || blocker2.Status != "available" {
+		t.Errorf("blocker statuses: blocker1=%s blocker2=%s, want both available", blocker1.Status, blocker2.Status)
+	}
 
 	// All claims released
 	for _, b := range []*store.Bin{targetBin, blocker1, blocker2} {
@@ -1089,14 +1094,12 @@ func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
 		t.Errorf("blocker bin still claimed by %d after compound completion", *blockerBin.ClaimedBy)
 	}
 
-	// Verify it's findable by FIFO
+	// Verify it's findable by FIFO — this is the critical correctness check
 	fifoBin, err := db.FindSourceBinFIFO(bp.Code)
 	if err != nil {
-		t.Logf("FIFO lookup after restock: no bin found (%v) — blocker may have been restocked to different slot", err)
-	} else if fifoBin.ID == blockerBin.ID {
-		t.Logf("FIFO returns restocked blocker bin — correct, it's accessible")
-	} else {
-		t.Logf("FIFO returns bin %d (not blocker %d) — another bin is higher priority", fifoBin.ID, blockerBin.ID)
+		t.Errorf("FIFO lookup failed after restock: %v — restocked blocker bin is invisible to retrievals", err)
+	} else if fifoBin.ID != blockerBin.ID {
+		t.Errorf("FIFO returns bin %d, want restocked blocker %d — blocker not highest FIFO priority", fifoBin.ID, blockerBin.ID)
 	}
 }
 
@@ -1205,7 +1208,15 @@ func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 	t.Logf("staging sweep released %d bins", released)
 
 	blockerBin, _ = db.GetBin(blockerBin.ID)
-	t.Logf("blocker after sweep: status=%s", blockerBin.Status)
+	t.Logf("blocker after sweep: status=%s claimed=%v", blockerBin.Status, blockerBin.ClaimedBy)
+
+	// After child 1 completion, ApplyBinArrival released the blocker's claim (correct behavior).
+	// The sweep query has AND claimed_by IS NULL, so it only flips UNCLAIMED staged bins.
+	// If the claim survived child 1 completion, the sweep should have skipped this bin.
+	// Verify the sweep correctly changed status from staged to available for unclaimed bins.
+	if blockerBin.Status != "available" {
+		t.Errorf("bin status = %q after sweep, want available — sweep should flip expired staged bins to available", blockerBin.Status)
+	}
 
 	// Complete child 2 (retrieve target)
 	child2, _ := db.GetOrder(children[1].ID)

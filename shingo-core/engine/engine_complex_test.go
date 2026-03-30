@@ -250,22 +250,32 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 		OrderUUID: "cx-empty-wait-1",
 	})
 
+	// Empty release completes the fleet order. Drive it through to receipt
+	// so ApplyBinArrival fires and moves the bin to lineNode.
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+		OrderUUID:   "cx-empty-wait-1",
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+
 	// Verify no panic and order transitions correctly
 	order, _ = db.GetOrderByUUID("cx-empty-wait-1")
-	t.Logf("order after empty release: status=%s", order.Status)
-
-	// The fleet should have received a ReleaseOrder with empty blocks,
-	// which signals "no more blocks" — effectively completing the order
-	if order.Status == dispatch.StatusStaged {
-		t.Logf("NOTE: order still staged after empty release — fleet may not have transitioned it yet")
-	} else {
-		t.Logf("order transitioned to %s after empty release", order.Status)
+	if order.Status != dispatch.StatusConfirmed {
+		t.Errorf("order status = %q, want confirmed", order.Status)
 	}
 
-	// Verify no orphan bins
+	// Bin should be at lineNode (the dropoff destination), unclaimed
 	bin, _ = db.GetBin(bin.ID)
-	t.Logf("bin after release: node=%v claimed=%v status=%s", bin.NodeID, bin.ClaimedBy, bin.Status)
+	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
+		t.Errorf("bin node = %v, want %d (lineNode)", bin.NodeID, lineNode.ID)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v, want nil (claim released after completion)", bin.ClaimedBy)
+	}
 }
+
 
 // --- Test: Complex order redirect doesn't update StepsJSON (TC-48) ---
 //
@@ -497,10 +507,8 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	}
 	if hasBin > 1 {
 		t.Errorf("BUG: both orders claimed a bin — double claim! order1.bin=%v order2.bin=%v", order1.BinID, order2.BinID)
-	} else if hasBin == 1 {
-		t.Logf("correct: exactly one order claimed the bin, other dispatched as ghost")
-	} else {
-		t.Logf("NOTE: neither order claimed the bin — possible if both raced and lost")
+	} else if hasBin != 1 {
+		t.Errorf("BUG: neither order claimed the bin — sequential dispatch must produce exactly one winner, got %d", hasBin)
 	}
 
 	// Both orders should be dispatched regardless
@@ -749,12 +757,19 @@ func TestComplexOrder_SequentialRemoval(t *testing.T) {
 		t.Errorf("block 2: location=%q task=%q, want %q/JackUnload", view.Blocks[2].Location, view.Blocks[2].BinTask, outboundDest.Name)
 	}
 
-	// Drive to completion
-	sim.DriveState(order.VendorOrderID, "RUNNING")
-	sim.DriveState(order.VendorOrderID, "FINISHED")
-	order, _ = db.GetOrderByUUID("seq-removal-1")
-	if order.Status != "delivered" {
-		t.Fatalf("after FINISHED: status = %q, want delivered", order.Status)
+	// Drive to confirmed — full lifecycle including receipt
+	order = driveToConfirmed(t, sim, d, db, "seq-removal-1")
+	if order.Status != dispatch.StatusConfirmed {
+		t.Fatalf("after receipt: status = %q, want confirmed", order.Status)
+	}
+
+	// Bin moved to outboundDest (single pickup — extractEndpoints correct)
+	bin, _ := db.GetBin(*order.BinID)
+	if bin.NodeID == nil || *bin.NodeID != outboundDest.ID {
+		t.Errorf("bin node = %v, want %d (outboundDest)", bin.NodeID, outboundDest.ID)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %v, want nil (claim released)", bin.ClaimedBy)
 	}
 }
 
