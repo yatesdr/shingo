@@ -335,6 +335,7 @@ func (d *Dispatcher) failOrder(order *store.Order, env *protocol.Envelope, error
 
 func (d *Dispatcher) unclaimOrder(orderID int64) {
 	d.db.UnclaimOrderBins(orderID)
+	d.db.DeleteOrderBins(orderID)
 }
 
 // SetPostFindHook installs a test-only hook called between Find and Claim in

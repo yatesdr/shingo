@@ -84,6 +84,7 @@ func (db *DB) runVersionedMigrations() error {
 		{6, "consolidate legacy migrations", db.v6LegacyConsolidation},
 		{7, "drop vestigial default_manifest_json from payloads", db.v7DropDefaultManifestJSON},
 		{8, "add payload_code column to orders", db.v8OrderPayloadCode},
+		{9, "create order_bins junction table for multi-bin complex orders", db.v9OrderBins},
 	}
 
 	for _, m := range migrations {
@@ -376,6 +377,31 @@ func (db *DB) v8OrderPayloadCode() error {
 		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''`)
 		return err
 	}
+	return nil
+}
+
+// v9OrderBins creates the order_bins junction table for multi-bin complex order tracking.
+// Single-bin orders continue using Order.BinID. Multi-pickup complex orders record
+// per-bin destinations so handleOrderCompleted can move each bin to the correct node.
+func (db *DB) v9OrderBins() error {
+	if db.tableExists("order_bins") {
+		return nil
+	}
+	_, err := db.Exec(`CREATE TABLE order_bins (
+		id          BIGSERIAL PRIMARY KEY,
+		order_id    BIGINT NOT NULL REFERENCES orders(id),
+		bin_id      BIGINT NOT NULL REFERENCES bins(id),
+		step_index  INT NOT NULL,
+		action      TEXT NOT NULL,
+		node_name   TEXT NOT NULL,
+		dest_node   TEXT NOT NULL DEFAULT '',
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`)
+	if err != nil {
+		return fmt.Errorf("create order_bins table: %w", err)
+	}
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_order_bins_order ON order_bins(order_id)`)
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_order_bins_bin ON order_bins(bin_id)`)
 	return nil
 }
 

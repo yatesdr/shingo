@@ -210,6 +210,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 				e.logFn("engine: update order %d status to failed: %v", order.ID, err)
 			}
 			e.db.UnclaimOrderBins(order.ID)
+			e.db.DeleteOrderBins(order.ID)
 			e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
 				OrderID:   order.ID,
 				EdgeUUID:  order.EdgeUUID,
@@ -222,6 +223,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 				e.logFn("engine: update order %d status to cancelled: %v", order.ID, err)
 			}
 			e.db.UnclaimOrderBins(order.ID)
+			e.db.DeleteOrderBins(order.ID)
 			e.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
 				OrderID:   order.ID,
 				EdgeUUID:  order.EdgeUUID,
@@ -273,6 +275,21 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 
+	// Check for multi-bin junction table rows (populated by claimComplexBins
+	// for orders with 2+ pickup steps). If present, each bin has a per-step
+	// destination — use the junction table path instead of the legacy single-bin path.
+	orderBins, _ := e.db.ListOrderBins(order.ID)
+	if len(orderBins) > 0 {
+		e.handleMultiBinCompleted(order, orderBins)
+		return
+	}
+
+	// Legacy single-bin path: move one bin to Order.DeliveryNode.
+	// Used by simple orders and single-pickup complex orders.
+	if order.BinID == nil {
+		return
+	}
+
 	destNode, err := e.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		e.logFn("engine: dest node %s not found for completion: %v", order.DeliveryNode, err)
@@ -285,53 +302,110 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		sourceNodeID = sourceNode.ID
 	}
 
-	// Bin-centric: move the bin and unclaim
-	if order.BinID != nil {
-		// Mark bins staged at lineside nodes to prevent poaching.
-		// Storage slots (children of LANEs) keep available status.
-		isStorageSlot := false
-		if destNode.ParentID != nil {
-			if parent, err := e.db.GetNode(*destNode.ParentID); err == nil && parent.NodeTypeCode == "LANE" {
-				isStorageSlot = true
-			}
-		}
-		var expiresAt *time.Time
-		if !isStorageSlot {
-			expiresAt = e.resolveStagingExpiry(destNode)
-		}
+	staged, expiresAt := e.resolveNodeStaging(destNode)
 
-		if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, !isStorageSlot, expiresAt); err != nil {
-			e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
-			return
-		}
-
-		// Emit bin contents changed
-		bin, binErr := e.db.GetBin(*order.BinID)
-		if binErr != nil {
-			e.logFn("engine: get bin %d for completion event: %v", *order.BinID, binErr)
-		}
-		if bin != nil {
-			e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
-				Action:      "moved",
-				BinID:       bin.ID,
-				PayloadCode: bin.PayloadCode,
-				FromNodeID:  sourceNodeID,
-				ToNodeID:    destNode.ID,
-				NodeID:      destNode.ID,
-			}})
-		}
-	}
-}
-
-// maybeCreateReturnOrder creates a STORE order to return a bin to its origin
-// when an in-flight order is cancelled or fails. The bin is routed to the
-// root parent of the source node so the group resolver can pick the best slot.
-func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
-	// Only act on orders that were in-flight with a bin
-	if order.BinID == nil {
+	if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
+		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
 	}
 
+	// Emit bin contents changed
+	bin, binErr := e.db.GetBin(*order.BinID)
+	if binErr != nil {
+		e.logFn("engine: get bin %d for completion event: %v", *order.BinID, binErr)
+	}
+	if bin != nil {
+		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
+			Action:      "moved",
+			BinID:       bin.ID,
+			PayloadCode: bin.PayloadCode,
+			FromNodeID:  sourceNodeID,
+			ToNodeID:    destNode.ID,
+			NodeID:      destNode.ID,
+		}})
+	}
+}
+
+// handleMultiBinCompleted processes completion for orders with multiple claimed bins.
+// Each bin is moved to its per-step destination (from the order_bins junction table)
+// in a single atomic transaction.
+func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.OrderBin) {
+	var instructions []store.BinArrivalInstruction
+
+	for _, ob := range orderBins {
+		if ob.DestNode == "" {
+			e.logFn("engine: order %d bin %d has no dest_node in order_bins — skipping", order.ID, ob.BinID)
+			continue
+		}
+		destNode, err := e.db.GetNodeByDotName(ob.DestNode)
+		if err != nil {
+			e.logFn("engine: order %d bin %d dest node %q not found: %v", order.ID, ob.BinID, ob.DestNode, err)
+			continue
+		}
+
+		staged, expiresAt := e.resolveNodeStaging(destNode)
+		instructions = append(instructions, store.BinArrivalInstruction{
+			BinID:     ob.BinID,
+			ToNodeID:  destNode.ID,
+			Staged:    staged,
+			ExpiresAt: expiresAt,
+		})
+	}
+
+	if len(instructions) == 0 {
+		e.logFn("engine: order %d multi-bin completion: no valid instructions", order.ID)
+		return
+	}
+
+	if err := e.db.ApplyMultiBinArrival(instructions); err != nil {
+		e.logFn("engine: multi-bin arrival for order %d: %v", order.ID, err)
+		return
+	}
+
+	// Emit BinUpdatedEvent for each bin
+	for _, inst := range instructions {
+		bin, err := e.db.GetBin(inst.BinID)
+		if err != nil {
+			e.logFn("engine: get bin %d for multi-bin event: %v", inst.BinID, err)
+			continue
+		}
+		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
+			Action:      "moved",
+			BinID:       bin.ID,
+			PayloadCode: bin.PayloadCode,
+			ToNodeID:    inst.ToNodeID,
+			NodeID:      inst.ToNodeID,
+		}})
+	}
+
+	// Clean up junction table rows after successful completion
+	e.db.DeleteOrderBins(order.ID)
+
+	e.logFn("engine: order %d multi-bin completion: %d bins moved", order.ID, len(instructions))
+}
+
+// resolveNodeStaging determines if a destination node should receive bins
+// as "staged" (lineside nodes) or "available" (storage slots under LANEs).
+func (e *Engine) resolveNodeStaging(destNode *store.Node) (staged bool, expiresAt *time.Time) {
+	isStorageSlot := false
+	if destNode.ParentID != nil {
+		if parent, err := e.db.GetNode(*destNode.ParentID); err == nil && parent.NodeTypeCode == "LANE" {
+			isStorageSlot = true
+		}
+	}
+	if !isStorageSlot {
+		expiresAt = e.resolveStagingExpiry(destNode)
+	}
+	return !isStorageSlot, expiresAt
+}
+
+// maybeCreateReturnOrder creates STORE orders to return bins to their origins
+// when an in-flight order is cancelled or fails. Each bin is routed to the
+// root parent of its pickup node so the group resolver can pick the best slot.
+//
+// For multi-bin orders (junction table populated), a separate return order is
+// created for each bin. For single-bin orders, the legacy path creates one.
+func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 	// If the fleet never accepted the order (no vendor order ID), the bin
 	// never left its origin — no return needed. This prevents spurious
 	// auto_return orders when dispatch fails at the fleet API level.
@@ -359,46 +433,75 @@ func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 		return
 	}
 
+	// Multi-bin path: check junction table first.
+	// Each bin gets its own return order with SourceNode set to the bin's
+	// original pickup node (ob.NodeName), not the order's global SourceNode.
+	//
+	// INVARIANT: bins are still at their original pickup positions from the
+	// DB's perspective because ApplyBinArrival never fires on cancelled/failed
+	// orders. If partial-completion tracking (per-block receipts) is added
+	// later, this assumption breaks and bins may be at intermediate positions.
+	// Revisit this function if that feature is implemented.
+	orderBins, _ := e.db.ListOrderBins(order.ID)
+	if len(orderBins) > 0 {
+		for _, ob := range orderBins {
+			e.createSingleReturnOrder(order, ob.BinID, ob.NodeName, reason)
+		}
+		e.db.DeleteOrderBins(order.ID)
+		return
+	}
+
+	// Legacy single-bin path
+	if order.BinID == nil {
+		return
+	}
 	if order.SourceNode == "" {
 		e.logFn("engine: order %d has no source node, cannot create return order", order.ID)
 		return
 	}
+	e.createSingleReturnOrder(order, *order.BinID, order.SourceNode, reason)
+}
 
-	// Resolve the source node and walk to its root parent
-	sourceNode, err := e.db.GetNodeByDotName(order.SourceNode)
+// createSingleReturnOrder creates one STORE order to return a specific bin
+// from its current location (sourceNodeName) to the root parent of that node.
+func (e *Engine) createSingleReturnOrder(order *store.Order, binID int64, sourceNodeName, reason string) {
+	sourceNode, err := e.db.GetNodeByDotName(sourceNodeName)
 	if err != nil {
-		e.logFn("engine: resolve source node %q for return order: %v", order.SourceNode, err)
+		e.logFn("engine: resolve source node %q for return order: %v", sourceNodeName, err)
 		return
 	}
 
 	rootNode, err := e.db.GetRootNode(sourceNode.ID)
 	if err != nil {
-		e.logFn("engine: resolve root node for %q: %v", order.SourceNode, err)
+		e.logFn("engine: resolve root node for %q: %v", sourceNodeName, err)
 		return
 	}
 
 	returnOrder := &store.Order{
-		StationID:   order.StationID,
-		OrderType:   dispatch.OrderTypeStore,
-		Status:      dispatch.StatusPending,
-		SourceNode:  order.SourceNode, // bin is still at origin — ApplyBinArrival never fires on failed/cancelled orders. If real-time tracking is added, revisit this assumption.
+		StationID:    order.StationID,
+		OrderType:    dispatch.OrderTypeStore,
+		Status:       dispatch.StatusPending,
+		SourceNode:   sourceNodeName, // bin is still at origin — ApplyBinArrival never fires on failed/cancelled orders
 		DeliveryNode: rootNode.Name,
-		BinID:       order.BinID,
-		PayloadDesc: "auto_return",
+		BinID:        &binID,
+		PayloadDesc:  "auto_return",
 	}
 
 	if err := e.db.CreateOrder(returnOrder); err != nil {
-		e.logFn("engine: create return order for order %d: %v", order.ID, err)
+		e.logFn("engine: create return order for order %d bin %d: %v", order.ID, binID, err)
 		return
 	}
 
-	// Claim the bin for the return order
-	if err := e.db.ClaimBin(*order.BinID, returnOrder.ID); err != nil {
-		e.logFn("engine: claim bin %d for return order %d: %v", *order.BinID, returnOrder.ID, err)
+	// Claim the bin for the return order. The bin was already unclaimed by
+	// UnclaimOrderBins on the cancel/fail path, so claimed_by IS NULL.
+	if err := e.db.ClaimBin(binID, returnOrder.ID); err != nil {
+		e.logFn("engine: claim bin %d for return order %d: %v", binID, returnOrder.ID, err)
 	}
 
-	e.logFn("engine: created return order %d (store to %s) for %s order %d", returnOrder.ID, rootNode.Name, reason, order.ID)
-	e.db.AppendAudit("order", returnOrder.ID, "auto_return", "", fmt.Sprintf("returning bin from %s order %d", reason, order.ID), "system")
+	e.logFn("engine: created return order %d (store %s to %s) for %s order %d bin %d",
+		returnOrder.ID, sourceNodeName, rootNode.Name, reason, order.ID, binID)
+	e.db.AppendAudit("order", returnOrder.ID, "auto_return", "",
+		fmt.Sprintf("returning bin %d from %s order %d", binID, reason, order.ID), "system")
 
 	e.Events.Emit(Event{Type: EventOrderReceived, Payload: OrderReceivedEvent{
 		OrderID:      returnOrder.ID,

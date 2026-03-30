@@ -177,6 +177,7 @@ func (s *LifecycleService) CancelOrder(order *store.Order, stationID, reason str
 		}
 	}
 	s.db.UnclaimOrderBins(order.ID)
+	s.db.DeleteOrderBins(order.ID)
 	if err := s.db.UpdateOrderStatus(order.ID, StatusCancelled, reason); err != nil {
 		log.Printf("dispatch: update order %d status to cancelled: %v", order.ID, err)
 	}

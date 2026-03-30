@@ -86,8 +86,9 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 		}
 	}
 
-	// Unclaim any bins held by this order
+	// Unclaim any bins held by this order and clean up junction table
 	e.db.UnclaimOrderBins(orderID)
+	e.db.DeleteOrderBins(orderID)
 
 	detail := "cancelled by " + actor
 	if err := e.db.UpdateOrderStatus(orderID, "cancelled", detail); err != nil {

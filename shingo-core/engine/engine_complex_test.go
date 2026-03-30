@@ -1104,28 +1104,23 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 // staging, pre-positions at line, waits for the operator, swaps old for new,
 // then delivers the old bin to outbound destination.
 //
-// This test exposes TWO defects in multi-bin complex order handling:
+// This test validates the order_bins junction table fix for multi-bin
+// complex orders. Two bins are tracked:
+//   - newBin: storage → inStaging → lineNode (final dest, step 8)
+//   - oldBin: lineNode → outStaging → outboundDest (final dest, step 10)
 //
-//  1. WRONG DESTINATION: extractEndpoints sets DeliveryNode to the last
-//     actionable step (outboundDest, step 10). But newBin actually delivers at
-//     step 8 (lineNode). ApplyBinArrival moves BinID to DeliveryNode blindly —
-//     the new bin the line needs ends up at outboundDest.
+// The fix:
+//   - claimComplexBins populates order_bins with per-bin destinations computed
+//     by resolvePerBinDestinations (bin flow simulation through the step list)
+//   - handleMultiBinCompleted moves each bin to its per-step destination via
+//     ApplyMultiBinArrival (single atomic transaction)
+//   - Both bins are unclaimed on the success path
 //
-//  2. ORPHANED CLAIM: claimComplexBins claims oldBin at the step 5 pickup
-//     (lineNode), but Order.BinID only tracks newBin. On completion,
-//     handleOrderCompleted calls ApplyBinArrival for BinID only. There is
-//     no UnclaimOrderBins call on the success path — that only exists on
-//     failure/cancel paths. oldBin stays claimed by the completed order
-//     permanently. No other order can touch it.
-//
-// Root cause: Order.BinID is *int64 (single bin). The completion path
-// (handleOrderCompleted → ApplyBinArrival) processes exactly one bin.
-// Multi-pickup orders need a junction table (order_bins) and per-step
-// bin tracking. The system's own ListOrderCompletionAnomalies query
-// detects "terminal orders still claiming bins."
+// Previously failed (OPEN defect) because Order.BinID is *int64 (single bin)
+// and handleOrderCompleted only processed one bin via ApplyBinArrival.
 //
 // Expected: 3 pre-wait blocks, staged order. After release: 9 total blocks.
-// Both defects asserted with t.Errorf (test documents the problems).
+// Both bins at correct destinations, both unclaimed.
 func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, inboundStaging, outboundStaging, outboundDest, bp := setupProductionNodes(t, db)
@@ -1252,37 +1247,33 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 		t.Fatalf("status = %q, want confirmed", order.Status)
 	}
 
-	// Defect 1: newBin at wrong destination.
-	// extractEndpoints sets DeliveryNode to the last actionable step (outboundDest, step 10).
-	// But newBin actually delivers at step 8 (lineNode). ApplyBinArrival moves BinID to
-	// DeliveryNode blindly — the new bin the line needs ends up at outboundDest.
+	// Fixed Defect 1: newBin should be at lineNode (step 8 destination).
+	// The order_bins junction table records per-bin destinations computed by
+	// resolvePerBinDestinations. handleMultiBinCompleted moves each bin to
+	// its correct destination instead of using Order.DeliveryNode.
 	newBin, _ = db.GetBin(newBin.ID)
 	if newBin.NodeID == nil {
 		t.Error("new bin has no node after completion")
 	} else if *newBin.NodeID != lineNode.ID {
-		t.Errorf("DEFECT: new bin at node %d, want %d (lineNode) — extractEndpoints sets DeliveryNode to last step (outboundDest), ApplyBinArrival moves BinID there",
+		t.Errorf("new bin at node %d, want %d (lineNode) — per-bin destination from order_bins junction table",
 			*newBin.NodeID, lineNode.ID)
 	}
 	if newBin.ClaimedBy != nil {
-		t.Errorf("new bin claimed_by = %v, want nil (claim released)", newBin.ClaimedBy)
+		t.Errorf("new bin claimed_by = %v, want nil (claim released by ApplyMultiBinArrival)", newBin.ClaimedBy)
 	}
 
-	// Defect 2: oldBin claim orphaned after completion.
-	// claimComplexBins claimed oldBin at the step-5 pickup (lineNode), but
-	// Order.BinID only tracks newBin. handleOrderCompleted calls
-	// ApplyBinArrival(BinID) and returns — there is no UnclaimOrderBins
-	// call on the success path (only on failure/cancel). The old bin stays
-	// claimed by the completed order permanently. No other order can touch it.
-	// The system's own ListOrderCompletionAnomalies query detects this.
+	// Fixed Defect 2: oldBin should be at outboundDest (step 10 destination)
+	// and unclaimed. The junction table tracks both bins; ApplyMultiBinArrival
+	// moves all bins and unclaims them in one transaction.
 	oldBin, _ = db.GetBin(oldBin.ID)
 	t.Logf("old bin final state: node=%v claimed_by=%v status=%s",
 		oldBin.NodeID, oldBin.ClaimedBy, oldBin.Status)
 	if oldBin.ClaimedBy != nil {
-		t.Errorf("DEFECT: old bin still claimed by order %d after completion — BinID only tracks one bin, no UnclaimOrderBins on success path",
+		t.Errorf("old bin still claimed by order %d after completion — expected unclaimed",
 			*oldBin.ClaimedBy)
 	}
-	if oldBin.NodeID == nil || *oldBin.NodeID != lineNode.ID {
-		t.Errorf("DEFECT: old bin at node %v, want %d (lineNode) — never moved, ApplyBinArrival only processes BinID",
-			oldBin.NodeID, lineNode.ID)
+	if oldBin.NodeID == nil || *oldBin.NodeID != outboundDest.ID {
+		t.Errorf("old bin at node %v, want %d (outboundDest) — per-bin destination from order_bins junction table",
+			oldBin.NodeID, outboundDest.ID)
 	}
 }

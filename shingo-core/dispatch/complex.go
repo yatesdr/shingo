@@ -315,18 +315,32 @@ func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int) 
 	return blocks
 }
 
+// claimedBin records which bin was claimed at which pickup step.
+type claimedBin struct {
+	binID     int64
+	stepIndex int
+	nodeName  string
+}
+
 // claimComplexBins resolves and claims bins for pickup steps in a complex order.
 // For single-pickup orders (the most common pattern), it sets Order.BinID so
 // that the normal completion flow — ApplyBinArrival (moves bin to delivery
 // node in the DB) and maybeCreateReturnOrder (auto-return on cancel/fail) —
 // works correctly.
 //
+// For multi-pickup orders, per-bin destinations are computed via
+// resolvePerBinDestinations and recorded in the order_bins junction table.
+// handleOrderCompleted uses these rows to move each bin to its correct
+// destination instead of blindly using Order.DeliveryNode.
+//
 // The claim is best-effort: if no unclaimed bin matching the payload is found
 // at a pickup node, the order still dispatches (same as prior behavior).
-// Multi-pickup orders set BinID to the first claimed bin and log an advisory.
+//
+// Compound order children (ParentOrderID != nil) never populate the junction
+// table — each child is a single-bin order handled by the legacy path.
 func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, payloadCode string) {
-	var claimed []int64
-	for _, s := range steps {
+	var claimed []claimedBin
+	for i, s := range steps {
 		if s.Action != "pickup" {
 			continue
 		}
@@ -365,7 +379,7 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 				bin.ID, bin.Label, s.Node, order.ID)
 			d.db.AppendAudit("bin", bin.ID, "claimed",
 				"", fmt.Sprintf("complex order %d pickup at %s", order.ID, s.Node), "system")
-			claimed = append(claimed, bin.ID)
+			claimed = append(claimed, claimedBin{binID: bin.ID, stepIndex: i, nodeName: s.Node})
 			break
 		}
 	}
@@ -376,13 +390,83 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 	}
 
 	// Set Order.BinID to the first claimed bin. This enables the standard
-	// completion path in wiring.go (ApplyBinArrival, auto-return on cancel).
-	order.BinID = &claimed[0]
-	if err := d.db.UpdateOrderBinID(order.ID, claimed[0]); err != nil {
+	// single-bin completion path in wiring.go for simple complex orders.
+	order.BinID = &claimed[0].binID
+	if err := d.db.UpdateOrderBinID(order.ID, claimed[0].binID); err != nil {
 		log.Printf("dispatch: update complex order %d bin_id: %v", order.ID, err)
 	}
-	if len(claimed) > 1 {
-		log.Printf("dispatch: complex order %d has %d pickups — Order.BinID tracks first bin %d only",
-			order.ID, len(claimed), claimed[0])
+
+	// Multi-bin: populate the order_bins junction table with per-bin destinations.
+	// Compound children never use this — each child is a single-bin order.
+	if len(claimed) > 1 && order.ParentOrderID == nil {
+		// Build the claimedBins map for destination resolution: pickupNode → binID
+		claimedMap := make(map[string]int64, len(claimed))
+		for _, c := range claimed {
+			claimedMap[c.nodeName] = c.binID
+		}
+
+		destinations := resolvePerBinDestinations(steps, claimedMap)
+
+		for _, c := range claimed {
+			destNode := destinations[c.binID]
+			if err := d.db.InsertOrderBin(order.ID, c.binID, c.stepIndex, "pickup", c.nodeName, destNode); err != nil {
+				log.Printf("dispatch: insert order_bin for order %d bin %d: %v", order.ID, c.binID, err)
+			}
+		}
+
+		log.Printf("dispatch: complex order %d has %d pickups — per-bin destinations recorded in order_bins",
+			order.ID, len(claimed))
+	} else if len(claimed) > 1 {
+		log.Printf("dispatch: complex order %d has %d pickups — Order.BinID tracks first bin %d only (compound child, no junction table)",
+			order.ID, len(claimed), claimed[0].binID)
 	}
+}
+
+// resolvePerBinDestinations simulates the step sequence to determine where each
+// claimed bin ends up after all pickups and dropoffs complete. The bin identity
+// is tracked by location: a pickup at node X grabs whichever bin was last
+// dropped there.
+//
+// Returns a map of binID → final destination node name.
+//
+// Edge cases handled:
+//   - Empty robot dropoff (pre-positioning): carrying == 0, dropoff is a no-op
+//   - Ghost pickup (no bin at node): carrying stays 0
+//   - Bin re-pickup: a bin dropped at staging then picked up again gets a new dest
+func resolvePerBinDestinations(steps []resolvedStep, claimedBins map[string]int64) map[int64]string {
+	// Which bin the robot is currently carrying (0 = empty)
+	var carrying int64
+
+	// Which bin is sitting at which node after being dropped
+	binAtNode := make(map[string]int64, len(claimedBins))
+	for nodeName, binID := range claimedBins {
+		binAtNode[nodeName] = binID
+	}
+
+	// Last known dropoff destination per bin
+	dest := make(map[int64]string, len(claimedBins))
+
+	for _, step := range steps {
+		switch step.Action {
+		case "pickup":
+			if binID, ok := binAtNode[step.Node]; ok {
+				carrying = binID
+				delete(binAtNode, step.Node) // bin leaves this node
+			}
+			// If no bin at this node, robot picks up nothing (ghost/pre-position)
+
+		case "dropoff":
+			if carrying != 0 {
+				dest[carrying] = step.Node       // update final dest
+				binAtNode[step.Node] = carrying  // bin is now at this node
+				carrying = 0
+			}
+			// If robot is empty, this is a pre-position drive (no-op for bin tracking)
+
+		case "wait":
+			// No bin movement
+		}
+	}
+
+	return dest
 }
