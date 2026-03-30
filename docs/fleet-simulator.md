@@ -138,7 +138,7 @@ The **Scenarios to test next** section is a prioritized backlog of untested situ
 | TC-58 | Two-Robot Swap Removal — dropoff-first pre-wait, full lifecycle | PASS | Verified |
 | TC-59 | Staging + Deliver separation — two independent orders | PASS | Verified |
 | TC-60 | Single-robot 10-step swap — multi-bin junction table fix | PASS | Bug found + FIXED |
-| TC-61 | Queued order fulfilled after changeover starts — wrong payload | — | To test |
+| TC-61 | Queued order fulfilled after changeover starts — wrong payload | FIXED | Bug found (Edge) |
 | — | ClaimBin silent overwrite | FIXED | Bug found |
 | — | Deterministic TOCTOU claim race (PostFindHook) | PASS | Verified |
 | — | Dispatch stress — 20 concurrent orders, 10 bins | PASS | Verified |
@@ -457,6 +457,44 @@ for _, child := range children {
 **Status:** FIXED. Both defects resolved by `order_bins` junction table. 6 unit tests for `resolvePerBinDestinations` (swap, re-staging, ghost pickup, empty dropoff, same-node conflict). TC-60 passes with both bins at correct destinations and unclaimed.
 
 **Test:** `engine/engine_complex_test.go` — `TestComplexOrder_SingleRobotSwap`
+
+---
+
+### TC-61: Queued order fulfilled after changeover starts — wrong payload delivered to evacuating node
+
+**Scenario:** A production line runs Style A with a consume node at LINE1-IN. A retrieve order for PART-A (Style A's payload) is submitted, but no bins are available in storage — the order goes to `queued`. The operator then initiates changeover from Style A to Style B. Edge sets `production_state = changeover_active` and begins evacuating old material from LINE1-IN. Later, a PART-A bin is returned to storage by an unrelated order. The fulfillment scanner runs on Core, finds the PART-A bin, and fulfills the queued order — dispatching a robot to deliver old-payload material to a node that is mid-evacuation.
+
+**Expected behavior:** The queued order should be cancelled when changeover starts on its delivery node, so the fulfillment scanner never dispatches old-payload material to a mid-evacuation node.
+
+**Result:** BUG FOUND AND FIXED. The fulfillment scanner has no awareness of changeover state. `ListQueuedOrders()` returns all queued orders with no station/process/changeover filter. `tryFulfill` checks `status == queued` and `CountInFlightOrdersByDeliveryNode` (which explicitly excludes `queued` from its count), then calls `FindSourceBinFIFO` — none of these check production state. Edge's auto-reorder guard (`wiring.go:80-84`) blocks *new* order creation during changeover, but the queued order was created *before* changeover started and bypasses that guard entirely.
+
+**Root cause:** `StartProcessChangeover` created the changeover record and changeover node tasks but never cancelled pre-existing orders on affected nodes. `CancelProcessChangeover` correctly aborted changeover-managed orders on cancellation, but the start path had no equivalent cleanup.
+
+```go
+// CancelProcessChangeover (already correct): aborts orders on cancel
+for _, task := range nodeTasks {
+    for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
+        if orderID == nil { continue }
+        order, _ := e.db.GetOrder(*orderID)
+        if !orders.IsTerminal(order.Status) {
+            e.orderMgr.AbortOrder(order.ID)
+        }
+    }
+}
+
+// StartProcessChangeover (was missing): no abort at start
+// After creating changeover record, returned without cleaning up
+```
+
+**Fix:** Added order abortion to `StartProcessChangeover` (`shingo-edge/engine/operator_stations.go`). After creating the changeover record, the function iterates all process nodes, checks runtime state for active/staged order references, and aborts non-terminal orders via `orderMgr.AbortOrder`. The abort enqueues an `OrderCancel` to Core before the local transition, guaranteeing Core receives the cancellation. Runtime order references are cleared. This mirrors `CancelProcessChangeover`'s abort pattern but runs at start instead of cancellation.
+
+**Note:** This fix is on Edge, not Core. The fleet simulator tests Core dispatch behavior. A simulator test for this scenario would require Edge simulation (documented in the "Future: Edge simulation" section). The fix prevents the problem at the source — Edge cancels the stale queued order before Core's fulfillment scanner can dispatch it.
+
+**Production risk:** Any changeover on a line with queued orders. More likely when inventory is low (orders queue because nothing is available) and a changeover is initiated (shift change, product mix change). Three failure modes without the fix: (1) wrong material delivered to a node that just changed over — potential quality incident; (2) stale delivery node — `ApplyBinArrival` places a PART-A bin at a node now expecting PART-B; (3) wasted robot trip during the changeover window when robots are needed for evacuation/restock.
+
+**Status:** Fixed. `StartProcessChangeover` now aborts pre-existing orders on affected nodes before returning.
+
+**Test:** `shingo-edge/engine/operator_stations.go` — `StartProcessChangeover` (unit test coverage requires Edge simulation, see Architecture reference)
 
 ---
 
@@ -1026,8 +1064,6 @@ A reservation ("claim") bug means the system's record of which bins are committe
 **TC-35: planMove dispatches robot with no bin.** A move order targets a lineside node with no bins, and no `payloadCode` is specified. `planMove` skips the bin-finding loop entirely (empty node, no payload filter) and dispatches with `BinID=nil`. The order should fail with a "no available bin" error, matching `planStore`'s guard. Same ghost robot class as TC-23c and TC-34. Lower likelihood since move orders typically specify a payload, but the code path exists.
 
 **TC-38: Multi-pickup complex order leaves secondary bins stranded.** **Fixed by TC-60.** The single-robot swap test (`TestComplexOrder_SingleRobotSwap`) exposed two defects: wrong destination and orphaned claim. Both fixed via `order_bins` junction table (migration v9) with per-step bin tracking. `resolvePerBinDestinations` simulates bin flow, `handleMultiBinCompleted` moves all bins atomically, and `DeleteOrderBins` cleans up on all paths. See TC-60 bug writeup for full details.
-
-**TC-61: Queued order fulfilled after changeover starts — wrong payload delivered to evacuating node.** A production line runs Style A with a consume node at LINE1-IN. A retrieve order for PART-A (Style A's payload) is submitted, but no bins are available in storage — the order goes to `queued`. The operator then initiates changeover from Style A to Style B. Edge sets `production_state = changeover_active` and begins evacuating old material from LINE1-IN. Later, a PART-A bin is returned to storage by an unrelated order. The fulfillment scanner runs, finds the PART-A bin, and fulfills the queued order — dispatching a robot to deliver old-payload material to a node that is mid-evacuation. **The fulfillment scanner has no awareness of changeover state.** `ListQueuedOrders()` returns all queued orders with no station/process/changeover filter. `tryFulfill` checks `status == queued` and `CountInFlightOrdersByDeliveryNode` (which explicitly excludes `queued` from its count), then calls `FindSourceBinFIFO` — none of these check production state. Edge's auto-reorder guard (`wiring.go:80-84`) blocks *new* order creation during changeover, but the queued order was created *before* changeover started and bypasses that guard entirely. Three production risks: (1) wrong material delivered to a node that just changed over — potential quality incident if the operator doesn't catch it; (2) stale delivery node — if changeover completes before the robot arrives, `ApplyBinArrival` places a PART-A bin at a node now expecting PART-B; (3) wasted robot trip during the changeover window when robots are needed for evacuation/restock. Most likely when inventory is low (orders queue because nothing is available) and a changeover is initiated (shift change, product mix change). Expected behavior: the queued order should be cancelled or suspended when changeover starts on its delivery node, or the fulfillment scanner should skip queued orders whose `delivery_node` belongs to a station with an active changeover.
 
 ### Timing and race conditions
 
