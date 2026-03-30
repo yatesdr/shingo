@@ -132,7 +132,7 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 	// Bins with manifests should be excluded
 	db.UnclaimBin(binA.ID)
 	db.SetBinManifest(binA.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(binA.ID)
+	db.ConfirmBinManifest(binA.ID, "")
 
 	found5, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-a")
 	if err != nil {

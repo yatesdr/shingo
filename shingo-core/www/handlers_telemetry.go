@@ -200,7 +200,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := db.ConfirmBinManifest(bin.ID); err != nil {
+	if err := db.ConfirmBinManifest(bin.ID, ""); err != nil {
 		log.Printf("telemetry: bin-load confirm manifest on bin %d: %v", bin.ID, err)
 	}
 

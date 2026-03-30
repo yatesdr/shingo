@@ -162,7 +162,7 @@ func (h *Handlers) apiConfirmManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DB().ConfirmBinManifest(req.ID); err != nil {
+	if err := h.engine.DB().ConfirmBinManifest(req.ID, ""); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

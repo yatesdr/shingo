@@ -156,7 +156,7 @@ func SetupCompound(t *testing.T, db *store.DB, cfg CompoundConfig) *CompoundScen
 	if err := db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100); err != nil {
 		t.Fatalf("set target bin manifest: %v", err)
 	}
-	if err := db.ConfirmBinManifest(targetBin.ID); err != nil {
+	if err := db.ConfirmBinManifest(targetBin.ID, ""); err != nil {
 		t.Fatalf("confirm target bin manifest: %v", err)
 	}
 	// Backdate target to make it the oldest
@@ -183,7 +183,7 @@ func SetupCompound(t *testing.T, db *store.DB, cfg CompoundConfig) *CompoundScen
 		if err := db.SetBinManifest(blk.ID, `{"items":[]}`, bp.Code, 50); err != nil {
 			t.Fatalf("set blocker bin manifest: %v", err)
 		}
-		if err := db.ConfirmBinManifest(blk.ID); err != nil {
+		if err := db.ConfirmBinManifest(blk.ID, ""); err != nil {
 			t.Fatalf("confirm blocker bin manifest: %v", err)
 		}
 

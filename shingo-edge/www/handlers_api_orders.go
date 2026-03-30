@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"shingo/protocol"
 )
@@ -218,10 +219,12 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	producedAt := time.Now().UTC().Format(time.RFC3339)
 	order, err := h.engine.OrderManager().CreateIngestOrder(
 		processNodeID, req.PayloadCode, req.BinLabel, req.SourceNode,
 		req.Quantity, req.Manifest,
 		h.engine.AppConfig().Web.AutoConfirm,
+		producedAt,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

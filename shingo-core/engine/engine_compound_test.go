@@ -105,7 +105,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	if err := db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100); err != nil {
 		t.Fatalf("set target manifest: %v", err)
 	}
-	if err := db.ConfirmBinManifest(targetBin.ID); err != nil {
+	if err := db.ConfirmBinManifest(targetBin.ID, ""); err != nil {
 		t.Fatalf("confirm target: %v", err)
 	}
 	// Make target clearly older so FIFO prefers it over the accessible blocker
@@ -124,7 +124,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	if err := db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50); err != nil {
 		t.Fatalf("set blocker manifest: %v", err)
 	}
-	if err := db.ConfirmBinManifest(blockerBin.ID); err != nil {
+	if err := db.ConfirmBinManifest(blockerBin.ID, ""); err != nil {
 		t.Fatalf("confirm blocker: %v", err)
 	}
 
@@ -296,14 +296,14 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-STRAND-TARGET", NodeID: &slot2.ID, Status: "available"}
 	db.CreateBin(targetBin)
 	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID)
+	db.ConfirmBinManifest(targetBin.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
 
 	// Blocker at depth 1 (front, newer)
 	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-STRAND-BLOCKER", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(blockerBin)
 	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID)
+	db.ConfirmBinManifest(blockerBin.ID, "")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -462,21 +462,21 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SWAP-TARGET", NodeID: &slots[2].ID, Status: "available"}
 	db.CreateBin(targetBin)
 	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID)
+	db.ConfirmBinManifest(targetBin.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '3 hours' WHERE id = $1`, targetBin.ID)
 
 	// Blocker 2 at depth 2
 	blocker2 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SWAP-BLK2", NodeID: &slots[1].ID, Status: "available"}
 	db.CreateBin(blocker2)
 	db.SetBinManifest(blocker2.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blocker2.ID)
+	db.ConfirmBinManifest(blocker2.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '1 hour' WHERE id = $1`, blocker2.ID)
 
 	// Blocker 1 at depth 1 (newest)
 	blocker1 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SWAP-BLK1", NodeID: &slots[0].ID, Status: "available"}
 	db.CreateBin(blocker1)
 	db.SetBinManifest(blocker1.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blocker1.ID)
+	db.ConfirmBinManifest(blocker1.ID, "")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -613,13 +613,13 @@ func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-PCANCEL-TARGET", NodeID: &slot2.ID, Status: "available"}
 	db.CreateBin(targetBin)
 	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID)
+	db.ConfirmBinManifest(targetBin.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
 
 	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-PCANCEL-BLK", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(blockerBin)
 	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID)
+	db.ConfirmBinManifest(blockerBin.ID, "")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -749,14 +749,14 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SKIP-TARGET", NodeID: &slot2.ID, Status: "available"}
 	db.CreateBin(targetBin)
 	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID)
+	db.ConfirmBinManifest(targetBin.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
 
 	// Blocker at depth 1
 	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SKIP-BLK", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(blockerBin)
 	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID)
+	db.ConfirmBinManifest(blockerBin.ID, "")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -909,21 +909,21 @@ func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 	targetBin1 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-LOCK-T1", NodeID: &slot3.ID, Status: "available"}
 	db.CreateBin(targetBin1)
 	db.SetBinManifest(targetBin1.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin1.ID)
+	db.ConfirmBinManifest(targetBin1.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '3 hours' WHERE id = $1`, targetBin1.ID)
 
 	// Blocker at depth 2
 	blocker2 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-LOCK-BLK2", NodeID: &slot2.ID, Status: "available"}
 	db.CreateBin(blocker2)
 	db.SetBinManifest(blocker2.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blocker2.ID)
+	db.ConfirmBinManifest(blocker2.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '1 hour' WHERE id = $1`, blocker2.ID)
 
 	// Blocker at depth 1
 	blocker1 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-LOCK-BLK1", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(blocker1)
 	db.SetBinManifest(blocker1.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blocker1.ID)
+	db.ConfirmBinManifest(blocker1.ID, "")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -1025,14 +1025,14 @@ func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
 	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-RESTOCK-TARGET", NodeID: &slot2.ID, Status: "available"}
 	db.CreateBin(targetBin)
 	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID)
+	db.ConfirmBinManifest(targetBin.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
 
 	// Blocker at depth 1
 	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-RESTOCK-BLK", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(blockerBin)
 	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID)
+	db.ConfirmBinManifest(blockerBin.ID, "")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -1146,14 +1146,14 @@ func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-TTL-TARGET", NodeID: &slot2.ID, Status: "available"}
 	db.CreateBin(targetBin)
 	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID)
+	db.ConfirmBinManifest(targetBin.ID, "")
 	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
 
 	// Blocker at depth 1
 	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-TTL-BLK", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(blockerBin)
 	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID)
+	db.ConfirmBinManifest(blockerBin.ID, "")
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)

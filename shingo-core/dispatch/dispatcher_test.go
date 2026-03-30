@@ -357,7 +357,7 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db.CreateBin(bin)
 
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 	db.ClaimBin(bin.ID, order.ID)
 
 	d, _ := newTestDispatcher(t, db, &mockBackend{})
@@ -533,10 +533,10 @@ func TestFIFOPayloadSourceSelection(t *testing.T) {
 
 	// Older available bin at storageNode
 	db.SetBinManifest(bin1.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin1.ID)
+	db.ConfirmBinManifest(bin1.ID, "")
 	// Newer available bin at s2
 	db.SetBinManifest(bin2.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin2.ID)
+	db.ConfirmBinManifest(bin2.ID, "")
 
 	// FIFO should select oldest (bin1) first
 	source, err := db.FindSourceBinFIFO("PART-A")

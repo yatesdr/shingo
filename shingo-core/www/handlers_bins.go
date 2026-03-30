@@ -350,7 +350,7 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 		if b.Manifest == nil {
 			return fmt.Errorf("bin has no manifest to confirm")
 		}
-		if err := db.ConfirmBinManifest(b.ID); err != nil {
+		if err := db.ConfirmBinManifest(b.ID, ""); err != nil {
 			return err
 		}
 		db.AppendAudit("bin", b.ID, "confirmed", "unconfirmed", "confirmed", "ui")

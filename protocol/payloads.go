@@ -173,6 +173,7 @@ type OrderIngestRequest struct {
 	SourceNode  string               `json:"source_node"`
 	Quantity    int64                `json:"quantity"`
 	Manifest    []IngestManifestItem `json:"manifest,omitempty"`
+	ProducedAt  string               `json:"produced_at,omitempty"` // RFC3339 timestamp from Edge at cell completion
 }
 
 // IngestManifestItem describes a single item in an ingest manifest.

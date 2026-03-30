@@ -116,9 +116,9 @@ func TestLaneQueries(t *testing.T) {
 	db.CreateBin(binBack)
 
 	db.SetBinManifest(binFront.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(binFront.ID)
+	db.ConfirmBinManifest(binFront.ID, "")
 	db.SetBinManifest(binBack.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(binBack.ID)
+	db.ConfirmBinManifest(binBack.ID, "")
 
 	// ListLaneSlots: should return slots ordered by depth ascending
 	slots, err := db.ListLaneSlots(lanNode.ID)

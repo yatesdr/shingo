@@ -47,7 +47,7 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 		t.Fatalf("create bin: %v", err)
 	}
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	backend := newMockTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
@@ -125,7 +125,7 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 	bin := &store.Bin{BinTypeID: 1, Label: "BIN-MOV-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	backend := newMockTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
@@ -175,7 +175,7 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 	bin := &store.Bin{BinTypeID: 1, Label: "BIN-STO-1", NodeID: &lineNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	backend := newMockTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
@@ -218,7 +218,7 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 	bin := &store.Bin{BinTypeID: 1, Label: "BIN-CAN-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	backend := newMockTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
@@ -278,7 +278,7 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 	bin := &store.Bin{BinTypeID: 1, Label: "BIN-RED-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	backend := newMockTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
@@ -345,7 +345,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	srcBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-SRC", NodeID: &srcNode.ID, Status: "available"}
 	db.CreateBin(srcBin)
 	db.SetBinManifest(srcBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(srcBin.ID)
+	db.ConfirmBinManifest(srcBin.ID, "")
 
 	// Create dispatcher with resolver
 	backend := newMockTrackingBackend()
@@ -431,11 +431,11 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	db.CreateBin(binA2)
 	db.CreateBin(binB1)
 	db.SetBinManifest(binA1.ID, `{"items":[]}`, bpA.Code, 100)
-	db.ConfirmBinManifest(binA1.ID)
+	db.ConfirmBinManifest(binA1.ID, "")
 	db.SetBinManifest(binA2.ID, `{"items":[]}`, bpA.Code, 100)
-	db.ConfirmBinManifest(binA2.ID)
+	db.ConfirmBinManifest(binA2.ID, "")
 	db.SetBinManifest(binB1.ID, `{"items":[]}`, bpB.Code, 100)
-	db.ConfirmBinManifest(binB1.ID)
+	db.ConfirmBinManifest(binB1.ID, "")
 
 	backend := newMockTrackingBackend()
 	emitter := &mockEmitter{}
@@ -619,12 +619,12 @@ func TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle(t *testing.T) {
 	blkBin1 := &store.Bin{BinTypeID: bt.ID, Label: "TC41-FULL-1", NodeID: &l1s1.ID, Status: "available"}
 	db.CreateBin(blkBin1)
 	db.SetBinManifest(blkBin1.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(blkBin1.ID)
+	db.ConfirmBinManifest(blkBin1.ID, "")
 
 	blkBin2 := &store.Bin{BinTypeID: bt.ID, Label: "TC41-FULL-2", NodeID: &l1s2.ID, Status: "available"}
 	db.CreateBin(blkBin2)
 	db.SetBinManifest(blkBin2.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(blkBin2.ID)
+	db.ConfirmBinManifest(blkBin2.ID, "")
 
 	// Buried empty at depth 3
 	emptyBin := &store.Bin{BinTypeID: bt.ID, Label: "TC41-EMPTY", NodeID: &l1s3.ID, Status: "available"}
@@ -706,7 +706,7 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 	bin := &store.Bin{BinTypeID: 1, Label: "DOT-BIN-1", NodeID: &srcNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	backend := newMockTrackingBackend()
 	emitter := &mockEmitter{}
@@ -746,7 +746,7 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 	bin := &store.Bin{BinTypeID: 1, Label: "BIN-FF-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	// Use mockBackend (returns errors for all fleet ops)
 	d, emitter := newTestDispatcher(t, db, &mockBackend{})
@@ -796,12 +796,12 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 	bin1 := &store.Bin{BinTypeID: 1, Label: "BIN-PRI-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin1)
 	db.SetBinManifest(bin1.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin1.ID)
+	db.ConfirmBinManifest(bin1.ID, "")
 
 	bin2 := &store.Bin{BinTypeID: 1, Label: "BIN-PRI-2", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin2)
 	db.SetBinManifest(bin2.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin2.ID)
+	db.ConfirmBinManifest(bin2.ID, "")
 
 	backend := newMockTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
@@ -848,7 +848,7 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 	bin := &store.Bin{BinTypeID: 1, Label: "BIN-BT-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	backend := newMockTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)

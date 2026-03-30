@@ -213,7 +213,7 @@ func CreateBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int6
 	if err := db.SetBinManifest(bin.ID, `{"items":[]}`, payloadCode, 100); err != nil {
 		t.Fatalf("set manifest for bin %s: %v", label, err)
 	}
-	if err := db.ConfirmBinManifest(bin.ID); err != nil {
+	if err := db.ConfirmBinManifest(bin.ID, ""); err != nil {
 		t.Fatalf("confirm manifest for bin %s: %v", label, err)
 	}
 	got, err := db.GetBin(bin.ID)

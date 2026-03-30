@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBinTypeCRUD(t *testing.T) {
 	db := testDB(t)
@@ -386,7 +389,7 @@ func TestBinManifestLifecycle(t *testing.T) {
 	if err := db.SetBinManifest(bin.ID, manifestJSON, bp.Code, 100); err != nil {
 		t.Fatalf("set manifest: %v", err)
 	}
-	db.ConfirmBinManifest(bin.ID)
+	db.ConfirmBinManifest(bin.ID, "")
 
 	// Verify bin has manifest
 	got, _ := db.GetBin(bin.ID)
@@ -429,12 +432,12 @@ func TestBinManifestLifecycle(t *testing.T) {
 	bin2 := &Bin{BinTypeID: bt.ID, Label: "CY-002", NodeID: &node1.ID, Status: "available"}
 	db.CreateBin(bin2)
 	db.SetBinManifest(bin2.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(bin2.ID)
+	db.ConfirmBinManifest(bin2.ID, "")
 
 	bin3 := &Bin{BinTypeID: bt.ID, Label: "CY-003", NodeID: &node1.ID, Status: "available"}
 	db.CreateBin(bin3)
 	db.SetBinManifest(bin3.ID, `{"items":[]}`, bp.Code, 75)
-	db.ConfirmBinManifest(bin3.ID)
+	db.ConfirmBinManifest(bin3.ID, "")
 
 	fifo, err := db.FindSourceBinFIFO("CRATE-Y")
 	if err != nil {
@@ -576,5 +579,87 @@ func TestNodePayloadAssignment(t *testing.T) {
 	bps3, _ := db.ListPayloadsForNode(node.ID)
 	if len(bps3) != 2 {
 		t.Errorf("payloads after set = %d, want 2", len(bps3))
+	}
+}
+
+// TestConfirmBinManifest_ProducedAt verifies that ConfirmBinManifest uses the
+// Edge-provided producedAt timestamp for loaded_at instead of server time,
+// and that FIFO ordering respects it. This ensures audit-grade lot dating:
+// the timestamp reflects when the operator finalized the bin at the cell,
+// not when Core processed the message.
+func TestConfirmBinManifest_ProducedAt(t *testing.T) {
+	db := testDB(t)
+
+	node := &Node{Name: "STORAGE-PA", Enabled: true}
+	db.CreateNode(node)
+	bt := &BinType{Code: "DEFAULT-PA"}
+	db.CreateBinType(bt)
+	bp := &Payload{Code: "PART-PA", UOPCapacity: 50}
+	db.CreatePayload(bp)
+
+	// --- Test 1: explicit producedAt is written to loaded_at ---
+	bin1 := &Bin{BinTypeID: bt.ID, Label: "PA-001", NodeID: &node.ID, Status: "available"}
+	db.CreateBin(bin1)
+	db.SetBinManifest(bin1.ID, `{"items":[]}`, bp.Code, 50)
+
+	// Use a timestamp 2 hours in the past to simulate Edge-stamped time
+	edgeTime := time.Now().UTC().Add(-2 * time.Hour)
+	producedAt := edgeTime.Format(time.RFC3339)
+
+	if err := db.ConfirmBinManifest(bin1.ID, producedAt); err != nil {
+		t.Fatalf("ConfirmBinManifest with producedAt: %v", err)
+	}
+
+	got1, _ := db.GetBin(bin1.ID)
+	if got1.LoadedAt == nil {
+		t.Fatal("loaded_at should not be nil after ConfirmBinManifest")
+	}
+	// loaded_at should be close to the Edge timestamp, not server time
+	drift := got1.LoadedAt.Sub(edgeTime).Abs()
+	if drift > 2*time.Second {
+		t.Errorf("loaded_at drift from producedAt = %v (want <2s); loaded_at=%v, producedAt=%v",
+			drift, got1.LoadedAt.UTC(), edgeTime)
+	}
+
+	// --- Test 2: empty producedAt falls back to server time ---
+	bin2 := &Bin{BinTypeID: bt.ID, Label: "PA-002", NodeID: &node.ID, Status: "available"}
+	db.CreateBin(bin2)
+	db.SetBinManifest(bin2.ID, `{"items":[]}`, bp.Code, 50)
+
+	before := time.Now().UTC()
+	if err := db.ConfirmBinManifest(bin2.ID, ""); err != nil {
+		t.Fatalf("ConfirmBinManifest with empty producedAt: %v", err)
+	}
+	after := time.Now().UTC()
+
+	got2, _ := db.GetBin(bin2.ID)
+	if got2.LoadedAt == nil {
+		t.Fatal("loaded_at should not be nil for empty producedAt fallback")
+	}
+	if got2.LoadedAt.Before(before.Add(-time.Second)) || got2.LoadedAt.After(after.Add(time.Second)) {
+		t.Errorf("loaded_at fallback not near server time: loaded_at=%v, window=[%v, %v]",
+			got2.LoadedAt.UTC(), before, after)
+	}
+
+	// --- Test 3: FIFO ordering respects producedAt ---
+	// bin1 has loaded_at = 2 hours ago (Edge time)
+	// bin2 has loaded_at = now (server time)
+	// FIFO should return bin1 first (older)
+	fifo, err := db.FindSourceBinFIFO(bp.Code)
+	if err != nil {
+		t.Fatalf("FindSourceBinFIFO: %v", err)
+	}
+	if fifo.ID != bin1.ID {
+		t.Errorf("FIFO should return bin1 (older producedAt) first: got bin %d, want %d", fifo.ID, bin1.ID)
+	}
+
+	// Claim bin1 and verify FIFO falls through to bin2
+	db.ClaimBin(bin1.ID, 999)
+	fifo2, err := db.FindSourceBinFIFO(bp.Code)
+	if err != nil {
+		t.Fatalf("FindSourceBinFIFO after claim: %v", err)
+	}
+	if fifo2.ID != bin2.ID {
+		t.Errorf("FIFO after claiming bin1: got bin %d, want %d", fifo2.ID, bin2.ID)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"time"
 
 	"shingo/protocol"
 	"shingoedge/orders"
@@ -201,6 +202,7 @@ func (e *Engine) FinalizeProduceNode(nodeID int64) (*store.Order, error) {
 			Description: claim.PayloadCode,
 		},
 	}
+	producedAt := time.Now().UTC().Format(time.RFC3339)
 	order, err := e.orderMgr.CreateIngestOrder(
 		&nodeID,
 		claim.PayloadCode,
@@ -209,6 +211,7 @@ func (e *Engine) FinalizeProduceNode(nodeID int64) (*store.Order, error) {
 		int64(runtime.RemainingUOP),
 		manifest,
 		e.cfg.Web.AutoConfirm,
+		producedAt,
 	)
 	if err != nil {
 		return nil, err

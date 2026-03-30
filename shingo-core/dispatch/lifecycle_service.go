@@ -139,11 +139,14 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 			return nil, "", lifecycleErr("internal_error", err.Error(), err)
 		}
 	}
-	if err := s.db.ConfirmBinManifest(bin.ID); err != nil {
+	if err := s.db.ConfirmBinManifest(bin.ID, p.ProducedAt); err != nil {
 		log.Printf("dispatch: confirm bin %d manifest: %v", bin.ID, err)
 	}
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	s.dbg("ingest: set manifest on bin=%d, payload=%s, loaded_at=%s", bin.ID, p.PayloadCode, now)
+	loadedAt := p.ProducedAt
+	if loadedAt == "" {
+		loadedAt = time.Now().UTC().Format("2006-01-02 15:04:05")
+	}
+	s.dbg("ingest: set manifest on bin=%d, payload=%s, loaded_at=%s", bin.ID, p.PayloadCode, loadedAt)
 	order := &store.Order{
 		EdgeUUID:    p.OrderUUID,
 		StationID:   stationID,

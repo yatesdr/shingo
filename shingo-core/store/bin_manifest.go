@@ -27,10 +27,15 @@ func (db *DB) SetBinManifest(binID int64, manifestJSON string, payloadCode strin
 }
 
 // ConfirmBinManifest marks a bin's manifest as confirmed by an operator.
-func (db *DB) ConfirmBinManifest(binID int64) error {
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+// producedAt is the Edge-side timestamp (RFC3339) of when the operator finalized the bin.
+// If empty, falls back to the current server time.
+func (db *DB) ConfirmBinManifest(binID int64, producedAt string) error {
+	ts := producedAt
+	if ts == "" {
+		ts = time.Now().UTC().Format("2006-01-02 15:04:05")
+	}
 	_, err := db.Exec(`UPDATE bins SET manifest_confirmed=true, loaded_at=$1, updated_at=NOW() WHERE id=$2`,
-		now, binID)
+		ts, binID)
 	return err
 }
 
