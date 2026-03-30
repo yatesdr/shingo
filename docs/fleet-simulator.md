@@ -1,35 +1,33 @@
 # Fleet Simulator
 
-A testing tool for the Shingo warehouse dispatch system. The simulator replaces the real SEER RDS fleet server with a fake version that runs entirely in software, so you can test the full order lifecycle (dispatch, robot movement, bin arrival, claim release) without robots, RDS, Kafka, or Edge hardware.
-
-This document is written for anyone who needs to understand what the simulator tests, what it found, and how to use it. You don't need to be a software developer to follow along.
+The fleet simulator is a test harness for the Shingo dispatch system. It replaces the SEER RDS fleet server with an in-memory stub, enabling end-to-end testing of the full order lifecycle — dispatch, robot movement, bin arrival, claim release — without robots, RDS, Kafka, or Edge hardware.
 
 ---
 
 ## How it works
 
-When Shingo Core sends an order to the fleet, it normally goes to the SEER RDS server which controls the physical robots. The simulator intercepts that communication and pretends to be RDS. It accepts orders, records what blocks and bin tasks were sent, and lets you manually advance the robot through its stages (created, running, waiting, finished).
+In production, the dispatcher sends transport orders to the SEER RDS server, which controls physical robots. The simulator intercepts those calls and records what was sent. It accepts orders, stores the instruction blocks, and exposes methods to drive a simulated robot through its state transitions (`created → running → waiting → finished`).
 
-The test database is a real Postgres database running inside Docker on your machine. Everything the dispatcher writes (orders, bin claims, status changes) goes into this real database, so the tests verify actual database behavior, not mocked-up responses.
+The test database is a real Postgres instance running in Docker. Everything the dispatcher writes — orders, bin claims, status changes — goes into a real database, so tests verify actual database behavior rather than mocked responses.
 
 ```
-Your test code  ──▶  Dispatcher (real production code)  ──▶  Simulator (fake fleet)
-       │                        │                                    │
-       │                        ▼                                    │
-       │                 Real Postgres DB                            │
-       │                  (via Docker)                               │
-       ▼                                                             ▼
-  Checks database                                            Records what the
-  for correct state                                          "fleet" received
+Test code  ──▶  Dispatcher (real production code)  ──▶  Simulator (fake fleet)
+     │                        │                                    │
+     │                        ▼                                    │
+     │                 Real Postgres DB                            │
+     │                  (via Docker)                               │
+     ▼                                                             ▼
+Asserts database state                                    Records what the
+                                                          "fleet" received
 ```
 
-The dispatcher doesn't know it's not talking to real robots. The simulator just records what it gets. Your test code sets up the scenario, triggers the actions, and checks the results.
+The dispatcher is unaware it is connected to a simulator rather than the real fleet. Test code sets up a scenario, drives the robot through state transitions, and asserts the resulting database state.
 
 ---
 
 ## Running the tests
 
-Docker Desktop must be running. The tests spin up a temporary Postgres container automatically. First run pulls the image (one time), after that it's cached. The container is torn down when the test finishes.
+Docker Desktop must be running. Tests spin up a temporary Postgres container automatically (image is pulled once, then cached). The container is torn down when the test process exits.
 
 Run all simulator tests:
 
@@ -44,29 +42,29 @@ Run a specific test:
 go test -v -run TestSimulator_FullLifecycle ./engine/ -timeout 60s
 ```
 
-If Docker isn't running, database tests skip automatically (they won't fail your build). Pure logic tests like state mapping always run.
+If Docker is not running, database-dependent tests are skipped automatically — they will not fail the build. Pure logic tests (e.g., state mapping) always run.
 
 ---
 
 ## How to read this document
 
-This document has two kinds of test results, organized into separate sections:
+Test results are organized into two sections:
 
-**Bugs found and fixed** are regression tests. Each one documents a real bug that the simulator found in the codebase. The entry explains what went wrong, shows the root cause, and describes the fix. The test exists to make sure that specific bug never comes back. If a regression test fails, it means someone reintroduced a bug that was already fixed — that's a high-priority problem.
+**Bugs found and fixed** — regression tests documenting real bugs discovered by the simulator. Each entry explains the failure scenario, root cause, and fix. These tests ensure the bug is not reintroduced. A failing regression test is high priority.
 
-**Verified scenarios** are scenario tests. Each one explores a "what if" situation that could happen on the floor. The test passed, meaning the system handles that situation correctly today. These tests exist to catch future regressions — if one starts failing after a code change, it means something broke that was previously working.
+**Verified scenarios** — scenario tests that explore edge cases and failure modes the system should handle. These tests passed, confirming correct behavior today. They guard against future regressions.
 
-Each test case entry follows the same format:
+Each test case follows this format:
 
-- **Scenario** describes the situation in plain language — what's happening on the floor and what could go wrong. You don't need to read code to understand the risk.
-- **Expected behavior** explains what the system is supposed to do. This is the "right answer."
-- **Result** tells you whether the test passed, and if a bug was found, what happened and how it was fixed.
-- **Root cause** (bugs only) explains why the bug existed — what the code was doing wrong.
-- **Production risk** (bugs only) explains who this affects on the floor and under what conditions.
-- **Code snippets** (where included) show the key lines from the test or fix. Optional reading — the scenario and result tell the full story without them.
-- **Test** at the bottom gives the file name and test function, so a developer can find and run the specific test.
+- **Scenario** — the situation in plain language, with enough context to understand the risk without reading code.
+- **Expected behavior** — what the system should do.
+- **Result** — pass/fail, and for bugs, what went wrong and how it was fixed.
+- **Root cause** (bugs only) — why the bug existed.
+- **Production risk** (bugs only) — who this affects on the floor and under what conditions.
+- **Code snippets** (optional) — key lines from the test or fix.
+- **Test** — file name and function for locating and running the test.
 
-The "Scenarios to test next" section at the end is a prioritized catalog of situations we haven't tested yet. These are written the same way (scenario + expected behavior) so they can be turned into tests as the project continues.
+The **Scenarios to test next** section is a prioritized backlog of untested situations, written in the same format so they can be turned into tests directly.
 
 ---
 
@@ -140,6 +138,7 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-58 | Two-Robot Swap Removal — dropoff-first pre-wait, full lifecycle | PASS | Verified |
 | TC-59 | Staging + Deliver separation — two independent orders | PASS | Verified |
 | TC-60 | Single-robot 10-step swap — multi-bin junction table fix | PASS | Bug found + FIXED |
+| TC-61 | Queued order fulfilled after changeover starts — wrong payload | — | To test |
 | — | ClaimBin silent overwrite | FIXED | Bug found |
 | — | Deterministic TOCTOU claim race (PostFindHook) | PASS | Verified |
 | — | Dispatch stress — 20 concurrent orders, 10 bins | PASS | Verified |
@@ -1027,6 +1026,8 @@ A reservation ("claim") bug means the system's record of which bins are committe
 **TC-35: planMove dispatches robot with no bin.** A move order targets a lineside node with no bins, and no `payloadCode` is specified. `planMove` skips the bin-finding loop entirely (empty node, no payload filter) and dispatches with `BinID=nil`. The order should fail with a "no available bin" error, matching `planStore`'s guard. Same ghost robot class as TC-23c and TC-34. Lower likelihood since move orders typically specify a payload, but the code path exists.
 
 **TC-38: Multi-pickup complex order leaves secondary bins stranded.** **Fixed by TC-60.** The single-robot swap test (`TestComplexOrder_SingleRobotSwap`) exposed two defects: wrong destination and orphaned claim. Both fixed via `order_bins` junction table (migration v9) with per-step bin tracking. `resolvePerBinDestinations` simulates bin flow, `handleMultiBinCompleted` moves all bins atomically, and `DeleteOrderBins` cleans up on all paths. See TC-60 bug writeup for full details.
+
+**TC-61: Queued order fulfilled after changeover starts — wrong payload delivered to evacuating node.** A production line runs Style A with a consume node at LINE1-IN. A retrieve order for PART-A (Style A's payload) is submitted, but no bins are available in storage — the order goes to `queued`. The operator then initiates changeover from Style A to Style B. Edge sets `production_state = changeover_active` and begins evacuating old material from LINE1-IN. Later, a PART-A bin is returned to storage by an unrelated order. The fulfillment scanner runs, finds the PART-A bin, and fulfills the queued order — dispatching a robot to deliver old-payload material to a node that is mid-evacuation. **The fulfillment scanner has no awareness of changeover state.** `ListQueuedOrders()` returns all queued orders with no station/process/changeover filter. `tryFulfill` checks `status == queued` and `CountInFlightOrdersByDeliveryNode` (which explicitly excludes `queued` from its count), then calls `FindSourceBinFIFO` — none of these check production state. Edge's auto-reorder guard (`wiring.go:80-84`) blocks *new* order creation during changeover, but the queued order was created *before* changeover started and bypasses that guard entirely. Three production risks: (1) wrong material delivered to a node that just changed over — potential quality incident if the operator doesn't catch it; (2) stale delivery node — if changeover completes before the robot arrives, `ApplyBinArrival` places a PART-A bin at a node now expecting PART-B; (3) wasted robot trip during the changeover window when robots are needed for evacuation/restock. Most likely when inventory is low (orders queue because nothing is available) and a changeover is initiated (shift change, product mix change). Expected behavior: the queued order should be cancelled or suspended when changeover starts on its delivery node, or the fulfillment scanner should skip queued orders whose `delivery_node` belongs to a station with an active changeover.
 
 ### Timing and race conditions
 
