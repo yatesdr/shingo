@@ -441,21 +441,21 @@ for _, child := range children {
 
 ### TC-60: Single-robot 10-step swap — multi-bin junction table fix
 
-**Scenario:** A single-robot swap moves two bins in one trip: new material from storage to the line, old material from the line to outbound destination. The 10-step sequence has two pickup steps at different nodes. `claimComplexBins` claims both bins and populates the `order_bins` junction table with per-bin destinations computed by `resolvePerBinDestinations` (bin flow simulation through the step list).
+**Scenario:** A single-robot swap moves two bins in one trip: new material from storage to the line, old material from the line to outbound destination. The 10-step sequence has two pickup steps at different nodes. `claimComplexBins` claims both bins (iterates all pickup steps), but `Order.BinID` is `*int64` — it can only track the first claimed bin (the new bin at storage). The second bin (old bin at line) is claimed but invisible to the completion path.
 
-**Expected behavior:** New bin at lineNode (step 8 destination). Old bin at outboundDest (step 10 destination). Both unclaimed.
+**Expected behavior:** New bin at lineNode. Old bin at outboundDest. Both unclaimed.
 
-**Result:** PASS. Both defects fixed by the `order_bins` junction table:
+**Result:** BUG FOUND AND FIXED. Two defects resolved via `order_bins` junction table (migration v9):
 
-1. **Wrong destination (FIXED):** `handleMultiBinCompleted` reads per-bin destinations from `order_bins` instead of using `Order.DeliveryNode`. Each bin moves to its correct final position via `ApplyMultiBinArrival` (single atomic transaction).
+1. **Wrong destination (fixed):** `resolvePerBinDestinations` now simulates bin flow through the step sequence to compute where each bin ends up. `handleMultiBinCompleted` moves all bins to their per-step destinations via `ApplyMultiBinArrival` (single atomic transaction).
 
-2. **Orphaned claim (FIXED):** `ApplyMultiBinArrival` unclaims all bins in the same transaction. The junction table is cleaned up after successful completion.
+2. **Orphaned claim (fixed):** `claimComplexBins` populates the `order_bins` junction table for multi-pickup orders. `DeleteOrderBins` added to all 5 `UnclaimOrderBins` call sites. Junction table cleaned up on success, cancel, and failure paths.
 
-**Root cause (resolved):** Added `order_bins` junction table (migration v9) with columns: `order_id`, `bin_id`, `step_index`, `action`, `node_name`, `dest_node`. `resolvePerBinDestinations` simulates the step sequence to track bin locations by position — a pickup at node X grabs whichever bin was last dropped there. The final dropoff per bin is its `dest_node`.
+**Root cause:** `Order.BinID` is `*int64` (single bin). The completion path (`handleOrderCompleted` → `ApplyBinArrival`) processes exactly one bin. Multi-pickup orders need a junction table (`order_bins`) and per-step bin tracking.
 
-**Files changed:** `store/migrations.go` (v9), `store/order_bins.go` (new), `dispatch/complex.go` (resolvePerBinDestinations + claimComplexBins), `engine/wiring.go` (handleMultiBinCompleted + resolveNodeStaging + createSingleReturnOrder), `dispatch/dispatcher.go`, `dispatch/lifecycle_service.go`, `engine/orders.go`.
+**Production risk:** Any multi-pickup complex order (single-robot swap is the primary pattern) triggered both defects prior to the fix. Now resolved — the single-robot swap pattern is safe for production use.
 
-**Status:** FIXED.
+**Status:** FIXED. Both defects resolved by `order_bins` junction table. 6 unit tests for `resolvePerBinDestinations` (swap, re-staging, ghost pickup, empty dropoff, same-node conflict). TC-60 passes with both bins at correct destinations and unclaimed.
 
 **Test:** `engine/engine_complex_test.go` — `TestComplexOrder_SingleRobotSwap`
 
@@ -762,7 +762,7 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 ## Verified scenarios — complex and compound orders
 
-These tests target the complex order and compound reshuffle code paths — sequential removal, one-robot swap, and two-robot swap patterns. All 19 tests pass. TC-46 found and fixed a real bug (documented in the Bugs section above). TC-60 found and fixed two defects in multi-bin complex order handling via the order_bins junction table (documented in the Bugs section below).
+These tests target the complex order and compound reshuffle code paths — sequential removal, one-robot swap, and two-robot swap patterns. All 19 tests pass. TC-46 found and fixed a real bug (documented in the Bugs section above). TC-60 found and fixed two defects in multi-bin complex order handling via the order_bins junction table (documented in the Bugs section above).
 
 ---
 
@@ -1026,7 +1026,7 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 **TC-35: planMove dispatches robot with no bin.** A move order targets a lineside node with no bins, and no `payloadCode` is specified. `planMove` skips the bin-finding loop entirely (empty node, no payload filter) and dispatches with `BinID=nil`. The order should fail with a "no available bin" error, matching `planStore`'s guard. Same ghost robot class as TC-23c and TC-34. Lower likelihood since move orders typically specify a payload, but the code path exists.
 
-**TC-38: Multi-pickup complex order leaves secondary bins stranded.** **Confirmed by TC-60.** The single-robot swap test (`TestComplexOrder_SingleRobotSwap`) exposes two defects: wrong destination (`extractEndpoints` sets `DeliveryNode` to the last actionable step, `ApplyBinArrival` moves `BinID` bin there blindly) and orphaned claim (no `UnclaimOrderBins` on the success path). Remaining gap: remediation approach — either a junction table (`order_bins`) with per-step bin tracking, or splitting multi-pickup orders into sequential single-bin orders at dispatch time.
+**TC-38: Multi-pickup complex order leaves secondary bins stranded.** **Fixed by TC-60.** The single-robot swap test (`TestComplexOrder_SingleRobotSwap`) exposed two defects: wrong destination and orphaned claim. Both fixed via `order_bins` junction table (migration v9) with per-step bin tracking. `resolvePerBinDestinations` simulates bin flow, `handleMultiBinCompleted` moves all bins atomically, and `DeleteOrderBins` cleans up on all paths. See TC-60 bug writeup for full details.
 
 ### Timing and race conditions
 
@@ -1052,4 +1052,126 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 ### Fleet behavior edge cases
 
-**TC-16: Fleet reports an unknown state.** The fleet sends a stat
+**TC-16: Fleet reports an unknown state.** The fleet sends a state string that the system doesn't recognize. Should map to a safe default status, not crash the event pipeline.
+
+**TC-17: Fleet reports the same state twice.** The fleet says the robot is RUNNING, then says RUNNING again. The system should treat this as a no-op — no duplicate events, no double database updates.
+
+**TC-18: Fleet reports states out of order.** The fleet says FINISHED before it ever said RUNNING. This can happen if a status poll is missed. The system should handle it gracefully and end up in the correct final state.
+
+**TC-19: Robot completes a very short trip.** The fleet goes through CREATED → RUNNING → FINISHED in rapid succession (robot was right next to the destination). All three state changes should be processed correctly despite the speed.
+
+---
+
+## Architecture reference
+
+This section describes how the simulation harness is built, for anyone who needs to add new tests or modify the simulator.
+
+### The simulation harness
+
+The engine test harness (`newTestEngine`) creates a real Shingo Engine connected to the simulator instead of RDS. When you call `sim.DriveState()` to advance a simulated robot, the following chain fires automatically:
+
+```
+sim.DriveState("RUNNING")
+    → Simulator emits OrderStatusChanged event
+    → Engine's EventBus delivers event to handleVendorStatusChange
+    → Handler updates order status in database
+    → Handler notifies Edge (writes to outbox table, goes nowhere in tests)
+
+sim.DriveState("FINISHED")
+    → Same chain → status becomes "delivered"
+
+dispatcher.HandleOrderReceipt(...)     (simulates Edge confirmation)
+    → ConfirmReceipt → EventOrderCompleted
+    → handleOrderCompleted → ApplyBinArrival
+    → Bin moves to destination node in database
+    → Bin claim released
+```
+
+The key detail: the robot finishing (FINISHED) does not move the bin. The Edge station must confirm receipt first. This matches real production behavior and prevents inventory from updating before a human confirms the bin actually arrived.
+
+### Concurrency testing infrastructure
+
+The simulator harness includes infrastructure for deterministic and statistical concurrency testing:
+
+**PostFindHook** — A test-only synchronization point installed on the `PlanningService` between `FindSourceBinFIFO` and `ClaimBin`. When set via `Dispatcher.SetPostFindHook(fn)`, the hook fires inside `planRetrieve` and `planRetrieveEmpty` after finding a bin but before claiming it. Tests use the hook to widen the TOCTOU race window and guarantee both goroutines enter it simultaneously.
+
+```go
+d.SetPostFindHook(func() {
+    // This runs between Find and Claim — widen the TOCTOU window
+    signalChan <- struct{}{} // let the other goroutine start
+    <-waitForOther           // wait until the other goroutine claims
+})
+```
+
+**simulator.ParallelGroup** — A barrier-synchronized goroutine launcher. All goroutines wait on a channel barrier, then start simultaneously. Used for stress tests where N orders compete for M bins.
+
+```go
+simulator.ParallelGroup(20, func(i int) {
+    d.HandleOrderRequest(env, &protocol.OrderRequest{...})
+})
+```
+
+### Important technical constraints
+
+**Receipt required for bin movement.** Tests that verify bin movement must call `HandleOrderReceipt` after driving to FINISHED. Without this step, the bin stays at its original location in the database.
+
+**State changes fire events automatically.** When the simulator is wired into an Engine via `newTestEngine`, calling `DriveState` automatically fires events through the engine pipeline. Tests don't need to manually emit events.
+
+**Each test gets a fresh database.** All tests share a single Postgres container (started once per process via `sync.Once`), but each test gets its own `CREATE DATABASE`. This gives full isolation without the overhead of 90+ containers. The shared infrastructure lives in `internal/testdb/`.
+
+### Files
+
+```
+shingo-core/
+├── internal/
+│   └── testdb/
+│       ├── testdb.go              # Open, SetupStandardData, CreateBinAtNode, Envelope
+│       └── compound.go            # CompoundScenario, CompoundConfig, SetupCompound
+├── engine/
+│   ├── engine_test.go             # 16 foundational tests (harness helpers removed)
+│   ├── engine_concurrent_test.go  # Concurrency + general tests (~400 lines)
+│   ├── engine_compound_test.go    # 8 compound reshuffle tests (~650 lines)
+│   └── engine_complex_test.go     # 12 complex order tests (~600 lines)
+├── dispatch/
+│   ├── dispatcher_test.go         # 18 tests, helpers removed (~550 lines)
+│   ├── reshuffle_test.go          # 6 tests, setup uses testdb helpers (~350 lines)
+│   ├── group_resolver_test.go     # 15 tests, helpers removed (~650 lines)
+│   ├── integration_test.go        # 13 tests (~950 lines, unchanged)
+│   └── fleet_simulator_test.go    # 5 tests (~315 lines, unchanged)
+└── fleet/
+    └── simulator/
+        ├── simulator.go           # Fake fleet backend, TrackingBackend impl
+        ├── transitions.go         # DriveState, DriveFullLifecycle, etc.
+        ├── inspector.go           # GetOrder, HasOrder, FindOrderByLocation, etc.
+        ├── options.go             # Fault injection (WithCreateFailure, WithPingFailure)
+        └── concurrent.go          # ParallelGroup barrier launcher
+```
+
+| File | What it does |
+|------|-------------|
+| `internal/testdb/testdb.go` | Shared test infrastructure. Container reuse via `sync.Once`, per-test `CREATE DATABASE`, standard data setup, bin creation helpers. |
+| `internal/testdb/compound.go` | Compound scenario builder. `SetupCompound` creates full NGRP → LANE → slots → shuffle → line → bins layout from a `CompoundConfig`. |
+| `fleet/simulator/simulator.go` | The fake fleet backend. Stores orders and blocks in memory. Implements TrackingBackend so the Engine can wire it up automatically. |
+| `fleet/simulator/transitions.go` | State transition helpers. DriveState, DriveFullLifecycle, DriveSimpleLifecycle, DriveToFailed, DriveToStopped. |
+| `fleet/simulator/inspector.go` | Read-only query methods. GetOrder, GetOrderByIndex, OrderCount, BlocksForOrder, HasOrder, FindOrderByLocation. Used by tests to inspect what the "fleet" received. |
+| `fleet/simulator/options.go` | Fault injection. WithCreateFailure (fleet rejects orders), WithPingFailure (fleet health check fails). |
+| `fleet/simulator/concurrent.go` | Barrier-synchronized goroutine launcher (ParallelGroup). Used for concurrent dispatch stress tests. |
+| `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-21, TC-23 cluster, TC-24 cluster, TC-30, ClaimBin. Uses real Engine + real DB + simulator. |
+| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, and staging expiry tests. TC-09, TC-10, TC-12, claim race, dispatch stress, redirect, fulfillment scanner, TC-37. Uses PostFindHook for deterministic TOCTOU race reproduction. |
+| `engine/engine_complex_test.go` | Complex order lifecycle + production cycle pattern tests. TC-42, TC-43, TC-47, TC-48, TC-49, TC-50, TC-55, TC-56, TC-57, TC-58, TC-59, TC-60. Strengthened with SourceNode, bin position, and lifecycle assertions. |
+| `engine/engine_compound_test.go` | Compound reshuffle order tests. TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54. |
+| `dispatch/dispatcher_test.go` | Dispatcher-level tests. 18 tests, helper bodies replaced with thin wrappers to `testdb`. |
+| `dispatch/reshuffle_test.go` | Reshuffle planning tests. 6 tests, setup uses `testdb` helpers. |
+| `dispatch/group_resolver_test.go` | Group resolver tests. 15 tests, `createTestBinAtNode` wrapper to `testdb`. |
+| `dispatch/integration_test.go` | Integration tests. 13 tests, unchanged. |
+| `dispatch/fleet_simulator_test.go` | Dispatcher-level scenario tests (TC-1, TC-3, TC-4, TC-5). Tests the outbound path only (what gets sent to the fleet). |
+
+---
+
+## Future: Edge simulation
+
+The current simulator replaces the fleet (RDS). A future addition would simulate the Edge station as well, allowing tests to verify the full round-trip: Core dispatches → robot moves → Edge detects arrival → Edge sends receipt → Core completes order.
+
+Today, tests simulate Edge by manually calling `HandleOrderReceipt` on the dispatcher. A dedicated Edge simulator would make this more realistic by modeling the Edge's state machine (order tracking, receipt generation, staged order release timing).
+
+This is not yet built. The current approach (manual receipt calls) is sufficient for testing Core's behavior. Edge simulation would be valuable when testing timing-dependent scenarios like "what happens if the Edge receipt arrives before the fleet reports FINISHED."
