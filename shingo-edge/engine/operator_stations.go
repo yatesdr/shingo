@@ -296,6 +296,33 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		return nil, err
 	}
 
+	// Abort pre-existing orders on affected nodes.
+	//
+	// When changeover starts, nodes may have queued or in-flight orders
+	// created for the old style. Without cancellation, the fulfillment scanner
+	// could dispatch old-payload material to a node being evacuated.
+	// This mirrors CancelProcessChangeover's abort logic but runs at start
+	// instead of cancellation.
+	for _, node := range nodes {
+		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
+		if err != nil || runtime == nil {
+			continue
+		}
+		for _, orderID := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
+			if orderID == nil {
+				continue
+			}
+			order, err := e.db.GetOrder(*orderID)
+			if err != nil || orders.IsTerminal(order.Status) {
+				continue
+			}
+			if err := e.orderMgr.AbortOrder(order.ID); err != nil {
+				log.Printf("changeover: abort pre-existing order %s on node %s: %v", order.UUID, node.Name, err)
+			}
+		}
+		_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil)
+	}
+
 	return e.db.GetActiveProcessChangeover(processID)
 }
 
