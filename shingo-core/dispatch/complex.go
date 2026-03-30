@@ -67,7 +67,10 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// Claim bins at pickup nodes so they are protected from poaching
 	// while the robot is en route. This closes the gap where complex orders
 	// bypassed the ClaimBin call that simple orders make during planning.
-	d.claimComplexBins(order, resolvedSteps, payloadCode)
+	if err := d.claimComplexBins(order, resolvedSteps, payloadCode); err != nil {
+		d.failOrder(order, env, "no_bin", err.Error())
+		return
+	}
 
 	// Split steps at the first "wait" action
 	preWait, hasWait := splitAtWait(resolvedSteps)
@@ -338,7 +341,7 @@ type claimedBin struct {
 //
 // Compound order children (ParentOrderID != nil) never populate the junction
 // table — each child is a single-bin order handled by the legacy path.
-func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, payloadCode string) {
+func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, payloadCode string) error {
 	var claimed []claimedBin
 	for i, s := range steps {
 		if s.Action != "pickup" {
@@ -385,8 +388,7 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 	}
 
 	if len(claimed) == 0 {
-		d.dbg("complex: no bins claimed for order %d — pickup nodes may have no available bins", order.ID)
-		return
+		return &planningError{Code: "no_bin", Detail: fmt.Sprintf("no available bin at pickup node(s) for order %d", order.ID)}
 	}
 
 	// Set Order.BinID to the first claimed bin. This enables the standard
@@ -420,6 +422,7 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 		log.Printf("dispatch: complex order %d has %d pickups — Order.BinID tracks first bin %d only (compound child, no junction table)",
 			order.ID, len(claimed), claimed[0].binID)
 	}
+	return nil
 }
 
 // resolvePerBinDestinations simulates the step sequence to determine where each

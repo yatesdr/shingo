@@ -374,20 +374,16 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 
 // --- Test: Ghost robot — claimComplexBins finds no bin (TC-49) ---
 //
-// OBSERVATIONAL TEST: This test always passes. It uses t.Logf (not t.Errorf)
-// to document the ghost-robot dispatch path. When a bin-required guard is
-// added to claimComplexBins, convert the Logf calls to assertions.
-//
 // Scenario: A complex order specifies a pickup at a node, but the node
 // has no bins matching the payload (or all bins are already claimed).
-// claimComplexBins is best-effort and logs a warning but lets the order
-// dispatch anyway — with BinID=nil.
+// claimComplexBins returns a planningError with code "no_bin", and the
+// order is failed at the planning stage — no robot is dispatched.
 //
-// Expected: The order dispatches to fleet (ghost robot). When the robot
-// arrives at the empty node, it will fail. The test verifies that:
-// 1. Order dispatches with BinID=nil
-// 2. No auto-return is created (BinID=nil guard in maybeCreateReturnOrder)
-// 3. The failure path still marks the order failed cleanly
+// Expected:
+// 1. Order status = failed
+// 2. BinID = nil
+// 3. No vendor order created (no fleet interaction)
+// 4. No auto-return order created
 func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
@@ -417,45 +413,37 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 		t.Fatalf("get order: %v", err)
 	}
 
-	// Key check: order dispatched but with no bin
+	// Order should fail at planning — no bin available
+	if order.Status != dispatch.StatusFailed {
+		t.Fatalf("status = %q, want failed (no bin at pickup should fail at planning)", order.Status)
+	}
 	if order.BinID != nil {
 		t.Errorf("expected BinID=nil (no bin at pickup), got %d", *order.BinID)
-	} else {
-		t.Logf("CONFIRMED: order dispatched with BinID=nil — ghost robot will be sent to empty node")
 	}
 
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("status = %q, want dispatched", order.Status)
-	}
-
-	// Robot arrives, can't find bin, fleet reports FAILED
-	sim.DriveState(order.VendorOrderID, "RUNNING")
-	sim.DriveState(order.VendorOrderID, "FAILED")
-
-	order, _ = db.GetOrderByUUID("cx-ghost-1")
-	if order.Status != dispatch.StatusFailed {
-		t.Errorf("order status = %q after fleet failure, want failed", order.Status)
+	// No vendor order should be created — robot never dispatched
+	if order.VendorOrderID != "" {
+		t.Errorf("expected no vendor order, got %q — ghost robot was dispatched", order.VendorOrderID)
 	}
 
 	// No auto-return should be created (BinID=nil)
 	allOrders, _ := db.ListOrders("", 50)
 	for _, o := range allOrders {
 		if o.PayloadDesc == "auto_return" {
-			t.Errorf("BUG: auto-return order created for ghost robot (no bin!) — order %d", o.ID)
+			t.Errorf("auto-return order created for failed planning (no bin) — order %d", o.ID)
 		}
 	}
-	t.Logf("ghost robot failure handled cleanly — no spurious auto-return")
 }
 
 // --- Test: Concurrent complex orders targeting same node — double claim race (TC-50) ---
 //
-// Scenario: Two complex orders are submitted simultaneously, both picking up
+// Scenario: Two complex orders are submitted sequentially, both picking up
 // from the same storage node that has only one available bin.
 // claimComplexBins runs for both orders in sequence. The first should claim
-// the bin; the second should get no bin (ghost robot).
+// the bin; the second should fail at planning with "no_bin".
 //
-// Expected: Only one order claims the bin. The second dispatches with
-// BinID=nil. No double-claim occurs (bin.ClaimedBy can only reference one order).
+// Expected: First order claims the bin and dispatches. Second order fails
+// at planning — no ghost robot. No double-claim occurs.
 func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -491,32 +479,26 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 	order1, _ := db.GetOrderByUUID("cx-race-1")
 	order2, _ := db.GetOrderByUUID("cx-race-2")
 
-	// Check which order got the bin
-	bin, _ = db.GetBin(bin.ID)
-	t.Logf("bin claimed by: %v", bin.ClaimedBy)
-	t.Logf("order1: status=%s bin=%v", order1.Status, order1.BinID)
-	t.Logf("order2: status=%s bin=%v", order2.Status, order2.BinID)
-
-	// Exactly one order should have the bin
-	hasBin := 0
-	if order1.BinID != nil {
-		hasBin++
+	// First order should have claimed the bin and dispatched
+	if order1.BinID == nil {
+		t.Fatalf("order1 should have claimed the bin")
 	}
-	if order2.BinID != nil {
-		hasBin++
-	}
-	if hasBin > 1 {
-		t.Errorf("BUG: both orders claimed a bin — double claim! order1.bin=%v order2.bin=%v", order1.BinID, order2.BinID)
-	} else if hasBin != 1 {
-		t.Errorf("BUG: neither order claimed the bin — sequential dispatch must produce exactly one winner, got %d", hasBin)
-	}
-
-	// Both orders should be dispatched regardless
 	if order1.Status != dispatch.StatusDispatched {
 		t.Errorf("order1 status = %q, want dispatched", order1.Status)
 	}
-	if order2.Status != dispatch.StatusDispatched {
-		t.Errorf("order2 status = %q, want dispatched", order2.Status)
+
+	// Second order should fail at planning — no bin available
+	if order2.Status != dispatch.StatusFailed {
+		t.Errorf("order2 status = %q, want failed (no bin available after first order claimed it)", order2.Status)
+	}
+	if order2.BinID != nil {
+		t.Errorf("order2 should have BinID=nil, got %d", *order2.BinID)
+	}
+
+	// No double-claim — bin belongs to order1 only
+	bin, _ = db.GetBin(bin.ID)
+	if bin.ClaimedBy == nil || *bin.ClaimedBy != order1.ID {
+		t.Errorf("bin claimed by %v, want order %d", bin.ClaimedBy, order1.ID)
 	}
 }
 

@@ -126,8 +126,8 @@ The "Scenarios to test next" section at the end is a prioritized catalog of situ
 | TC-46 | Cancel parent compound while child in-flight | FIXED | Bug found + Verified |
 | TC-47 | Empty post-wait release — full lifecycle verification | PASS | Verified |
 | TC-48 | Complex order redirect — StepsJSON stale after redirect | PASS | Verified (documents known issue) |
-| TC-49 | Ghost robot — claimComplexBins finds no bin at pickup | PASS | Verified (documents behavior) |
-| TC-50 | Concurrent complex orders same node — double claim race | PASS | Verified |
+| TC-49 | Ghost robot — claimComplexBins finds no bin at pickup | FIXED | Bug found + Verified |
+| TC-50 | Concurrent complex orders same node — double claim race | FIXED | Bug found + Verified |
 | TC-51 | AdvanceCompoundOrder skips failed children — premature completion | PASS | Verified (documents risk) |
 | TC-52 | Lane lock contention — second reshuffle queued correctly | PASS | Verified |
 | TC-53 | ApplyBinArrival status for compound restock children | PASS | Verified |
@@ -860,13 +860,13 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 ### TC-49: Ghost robot — claimComplexBins finds no bin at pickup
 
-**Scenario:** A complex order specifies a pickup at a node that has no bins matching the payload (or all bins are already claimed). `claimComplexBins` is best-effort — it logs a warning but lets the order dispatch with `BinID=nil`. The robot travels to the node and finds nothing.
+**Scenario:** A complex order specifies a pickup at a node that has no bins matching the payload (or all bins are already claimed).
 
-**Expected behavior:** The order dispatches (ghost robot). When the fleet reports FAILED (robot can't find a bin), the order is marked failed. No auto-return is created because `maybeCreateReturnOrder` guards on `BinID != nil`. The failure is clean but wasteful — a robot trip was wasted.
+**Bug:** `claimComplexBins` was best-effort — it logged a warning but let the order dispatch with `BinID=nil`, sending a ghost robot to an empty node. Same class of bug as TC-23c but in the complex order path.
 
-**Why this matters:** In production, bin counts at nodes can change between order submission and dispatch. If a bin is grabbed by another order or manually removed, `claimComplexBins` silently fails and a ghost robot is dispatched. This should be considered for a pre-dispatch validation check.
+**Fix:** `claimComplexBins` now returns a `planningError{Code: "no_bin"}` when zero bins are claimed. `HandleComplexOrderRequest` calls `failOrder` and returns before dispatching to fleet. This aligns complex orders with `planStore`'s pre-dispatch validation.
 
-**Result:** PASS. Ghost robot dispatches, fleet reports FAILED, order fails cleanly with no auto-return. Documents the behavior for future hardening.
+**Result:** FIXED. Order fails at planning with status=failed, no vendor order created, no ghost robot.
 
 **Test:** `engine/engine_complex_test.go` — `TestComplexOrder_GhostRobotNoBin`
 
@@ -874,13 +874,13 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 ### TC-50: Concurrent complex orders same node — double claim race
 
-**Scenario:** Two complex orders are submitted simultaneously, both picking up from the same storage node that has only one available bin. `claimComplexBins` runs for both sequentially (same goroutine in current architecture). The first order claims the bin; the second finds no unclaimed bins.
+**Scenario:** Two complex orders are submitted sequentially, both picking up from the same storage node that has only one available bin. `claimComplexBins` runs for both sequentially (same goroutine in current architecture). The first order claims the bin; the second finds no unclaimed bins.
 
-**Expected behavior:** Exactly one order claims the bin. The other dispatches with `BinID=nil` (ghost robot). No double-claim occurs because `ClaimBin` uses an atomic update.
+**Expected behavior:** First order claims the bin and dispatches. Second order fails at planning with "no_bin" error — no ghost robot dispatched. No double-claim occurs because `ClaimBin` uses an atomic update.
 
 **Why this matters:** In production, concurrent retrieve requests targeting the same NGRP are common. The claim mechanism must be race-safe. If two orders both get `BinID` pointing to the same bin, both robots arrive expecting the same bin.
 
-**Result:** PASS. First order claims the bin. Second dispatches with `BinID=nil`. No double-claim. Strengthened: `hasBin==0` (neither order claimed) is now a hard failure, not just a log message.
+**Result:** FIXED (was PASS/observational). First order claims and dispatches. Second fails at planning with status=failed. No double-claim.
 
 **Test:** `engine/engine_complex_test.go` — `TestComplexOrder_ConcurrentSameNodeDoubleClaimRace`
 
@@ -1022,7 +1022,7 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 **TC-33: Operator manually moves a reserved bin.** An operator requests a manual move on a bin that is reserved by an active order. Should the system block the move? Release the reservation? Allow both and hope for the best?
 
-**TC-34: Complex order dispatches robot to node with no bin.** Partially covered by TC-49, which documents that `claimComplexBins` is best-effort and lets ghost robots dispatch. The remaining gap: the order should fail at the planning stage with a "no bin available" error (same as `planStore` does) rather than dispatching a ghost robot. Same class of bug as TC-23c, but in the complex order path rather than the store path. Production risk: ghost robot during changeover or manual operations.
+**TC-34: Complex order dispatches robot to node with no bin.** **Fixed by TC-49.** `claimComplexBins` now returns a `planningError` when zero bins are claimed, failing the order before fleet dispatch. No ghost robot dispatched.
 
 **TC-35: planMove dispatches robot with no bin.** A move order targets a lineside node with no bins, and no `payloadCode` is specified. `planMove` skips the bin-finding loop entirely (empty node, no payload filter) and dispatches with `BinID=nil`. The order should fail with a "no available bin" error, matching `planStore`'s guard. Same ghost robot class as TC-23c and TC-34. Lower likelihood since move orders typically specify a payload, but the code path exists.
 
