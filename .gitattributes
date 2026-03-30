@@ -1,0 +1,29 @@
+# Default: auto-detect text files, normalize to LF
+*          text=auto eol=lf
+
+# Go
+*.go       text eol=lf
+go.mod     text eol=lf
+go.sum     text eol=lf
+
+# Web templates and assets
+*.html     text eol=lf
+*.css      text eol=lf
+*.js       text eol=lf
+*.svg      text eol=lf
+
+# Config and docs
+*.yaml     text eol=lf
+*.yml      text eol=lf
+*.md       text eol=lf
+*.json     text eol=lf
+
+# Shell scripts (must be LF to execute on Linux)
+*.sh       text eol=lf
+Makefile   text eol=lf
+
+# Binary — don't touch
+*.ico      binary
+*.png      binary
+*.jpg      binary
+*.exe      binary
