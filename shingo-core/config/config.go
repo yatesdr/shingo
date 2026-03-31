@@ -19,8 +19,9 @@ type Config struct {
 }
 
 type StagingConfig struct {
-	TTL           time.Duration `yaml:"ttl"`            // default 2h
-	SweepInterval time.Duration `yaml:"sweep_interval"` // default 5m
+	TTL                 time.Duration `yaml:"ttl"`                  // default 2h
+	SweepInterval       time.Duration `yaml:"sweep_interval"`       // default 5m
+	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
 }
 
 type DatabaseConfig struct {
@@ -88,8 +89,9 @@ func Defaults() *Config {
 			SessionSecret: "change-me-in-production",
 		},
 		Staging: StagingConfig{
-			TTL:           0, // 0 = never auto-unstage; override per node group via staging_ttl property
-			SweepInterval: 5 * time.Minute,
+			TTL:                  0,                    // 0 = never auto-unstage; override per node group via staging_ttl property
+			SweepInterval:        5 * time.Minute,
+			AutoConfirmDelivered: 5 * time.Minute, // auto-confirm delivered orders after 5 minutes if no receipt from Edge
 		},
 		Messaging: MessagingConfig{
 			Kafka: KafkaConfig{

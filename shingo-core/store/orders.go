@@ -190,10 +190,7 @@ func (db *DB) CompleteOrder(id int64) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE orders SET status='confirmed', completed_at=NOW(), updated_at=NOW() WHERE id=$1`, id); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'confirmed', 'order confirmed')`, id); err != nil {
+	if _, err := tx.Exec(`UPDATE orders SET completed_at=NOW(), updated_at=NOW() WHERE id=$1`, id); err != nil {
 		return err
 	}
 	return tx.Commit()

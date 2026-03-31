@@ -160,8 +160,8 @@ func (e *Engine) Start() {
 	// Start staged bin expiry sweep
 	go e.stagedBinSweepLoop()
 
-	// Start periodic reconciliation logging
-	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval)
+	// Start periodic reconciliation logging and auto-confirm
+	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
 
 	e.logFn("engine: started")
 }

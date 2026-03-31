@@ -323,7 +323,14 @@ func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stag
 }
 
 func (m *Manager) handleDelivered(order *store.Order, statusDetail string, stagedExpireAt *time.Time) error {
-	return m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, m.ConfirmDelivery)
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt); err != nil {
+		return err
+	}
+	if order.AutoConfirm {
+		m.DebugLog.log("auto-confirm: id=%d uuid=%s qty=%d", order.ID, order.UUID, order.Quantity)
+		return m.ConfirmDelivery(order.ID, order.Quantity)
+	}
+	return nil
 }
 
 // TransitionOrder moves an order to a new status with validation.

@@ -525,3 +525,72 @@ func (h *testHandler) HandleData(env *Envelope, p *Data) {
 	h.dataCalled = true
 	h.dataPayload = *p
 }
+
+func TestIsTerminal(t *testing.T) {
+	for _, s := range []string{StatusConfirmed, StatusCancelled, StatusFailed} {
+		if !IsTerminal(s) {
+			t.Errorf("IsTerminal(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{StatusPending, StatusDelivered, StatusInTransit, StatusStaged, StatusQueued} {
+		if IsTerminal(s) {
+			t.Errorf("IsTerminal(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestValidForwardTransitions(t *testing.T) {
+	tests := []struct{ from, to string }{
+		{StatusPending, StatusSubmitted},
+		{StatusPending, StatusSourcing},
+		{StatusSubmitted, StatusAcknowledged},
+		{StatusAcknowledged, StatusInTransit},
+		{StatusInTransit, StatusDelivered},
+		{StatusInTransit, StatusStaged},
+		{StatusStaged, StatusInTransit},
+		{StatusDelivered, StatusConfirmed},
+		{StatusDelivered, StatusCancelled},
+		{StatusQueued, StatusInTransit},
+		{StatusDispatched, StatusInTransit},
+		{StatusSourcing, StatusQueued},
+	}
+	for _, tt := range tests {
+		if !IsValidTransition(tt.from, tt.to) {
+			t.Errorf("IsValidTransition(%q, %q) = false, want true", tt.from, tt.to)
+		}
+	}
+}
+
+func TestInvalidBackwardTransitions(t *testing.T) {
+	tests := []struct{ from, to string }{
+		{StatusDelivered, StatusInTransit},
+		{StatusInTransit, StatusAcknowledged},
+		{StatusAcknowledged, StatusSubmitted},
+		{StatusConfirmed, StatusDelivered},
+		{StatusCancelled, StatusPending},
+	}
+	for _, tt := range tests {
+		if IsValidTransition(tt.from, tt.to) {
+			t.Errorf("IsValidTransition(%q, %q) = true, want false", tt.from, tt.to)
+		}
+	}
+}
+
+func TestTerminalStatesCannotTransition(t *testing.T) {
+	for _, from := range []string{StatusConfirmed, StatusCancelled, StatusFailed} {
+		for _, to := range []string{StatusPending, StatusDelivered, StatusConfirmed} {
+			if IsValidTransition(from, to) {
+				t.Errorf("IsValidTransition(%q, %q) = true, want false (terminal state)", from, to)
+			}
+		}
+	}
+}
+
+func TestUnknownStatusNotValidTransition(t *testing.T) {
+	if IsValidTransition("unknown", StatusDelivered) {
+		t.Error("expected unknown 'from' status to be invalid")
+	}
+	if IsValidTransition(StatusPending, "unknown") {
+		t.Error("expected unknown 'to' status to be invalid")
+	}
+}
