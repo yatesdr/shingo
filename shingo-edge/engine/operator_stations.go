@@ -297,30 +297,8 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	}
 
 	// Abort pre-existing orders on affected nodes.
-	//
-	// When changeover starts, nodes may have queued or in-flight orders
-	// created for the old style. Without cancellation, the fulfillment scanner
-	// could dispatch old-payload material to a node being evacuated.
-	// This mirrors CancelProcessChangeover's abort logic but runs at start
-	// instead of cancellation.
 	for _, node := range nodes {
-		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
-		if err != nil || runtime == nil {
-			continue
-		}
-		for _, orderID := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
-			if orderID == nil {
-				continue
-			}
-			order, err := e.db.GetOrder(*orderID)
-			if err != nil || orders.IsTerminal(order.Status) {
-				continue
-			}
-			if err := e.orderMgr.AbortOrder(order.ID); err != nil {
-				log.Printf("changeover: abort pre-existing order %s on node %s: %v", order.UUID, node.Name, err)
-			}
-		}
-		_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil)
+		e.AbortNodeOrders(node.ID)
 	}
 
 	return e.db.GetActiveProcessChangeover(processID)
@@ -690,6 +668,58 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 	return e.db.UpdateProcessChangeoverState(changeover.ID, "completed")
 }
 
+// CanAcceptOrders reports whether a process node can accept new orders.
+// Returns false with a human-readable reason if the node is unavailable.
+// Consolidates all availability checks: active/staged order, changeover.
+func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
+	// Check changeover first — applies regardless of runtime state.
+	node, err := e.db.GetProcessNode(nodeID)
+	if err == nil {
+		if _, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
+			return false, "changeover in progress"
+		}
+	}
+	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
+	if err != nil || runtime == nil {
+		return true, "" // no runtime state = available
+	}
+	for _, orderID := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
+		if orderID == nil {
+			continue
+		}
+		order, err := e.db.GetOrder(*orderID)
+		if err == nil && !orders.IsTerminal(order.Status) {
+			if orderID == runtime.ActiveOrderID {
+				return false, "active order in progress"
+			}
+			return false, "staged order in progress"
+		}
+	}
+	return true, ""
+}
+
+// AbortNodeOrders cancels all non-terminal orders tracked in a node's
+// runtime state and clears the runtime order references.
+func (e *Engine) AbortNodeOrders(nodeID int64) {
+	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
+	if err != nil || runtime == nil {
+		return
+	}
+	for _, orderID := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
+		if orderID == nil {
+			continue
+		}
+		order, err := e.db.GetOrder(*orderID)
+		if err != nil || orders.IsTerminal(order.Status) {
+			continue
+		}
+		if err := e.orderMgr.AbortOrder(order.ID); err != nil {
+			log.Printf("abort node orders: order %s on node %d: %v", order.UUID, nodeID, err)
+		}
+	}
+	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil)
+}
+
 func isNodeTaskTerminal(task *store.ChangeoverNodeTask) bool {
 	return task.State == "switched" || task.State == "verified" || task.State == "unchanged"
 }
@@ -840,7 +870,7 @@ func (e *Engine) ClearBin(nodeID int64) error {
 // delivered to a bin_loader node. Core queues the order if no empties are
 // immediately available. payloadCode determines bin type compatibility.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order, error) {
-	node, runtime, claim, err := e.loadActiveNode(nodeID)
+	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -850,8 +880,8 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order
 	if claim.Role != "bin_loader" {
 		return nil, fmt.Errorf("node %s is not a bin_loader node", node.Name)
 	}
-	if runtime.ActiveOrderID != nil {
-		return nil, fmt.Errorf("node %s already has an active order", node.Name)
+	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
+		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
 	}
 
 	// Check that node doesn't already have a bin

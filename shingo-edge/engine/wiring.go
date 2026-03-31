@@ -77,11 +77,9 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			}
 			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
 
-			// Auto-reorder if threshold reached, enabled, and no changeover active
-			if claim.AutoReorder && newRemaining <= claim.ReorderPoint &&
-				runtime.ActiveOrderID == nil && newRemaining > 0 {
-				// Don't auto-reorder during an active changeover — changeover owns material movement
-				if _, coErr := e.db.GetActiveProcessChangeover(delta.ProcessID); coErr != nil {
+			// Auto-reorder if threshold reached, enabled, and node can accept orders
+			if claim.AutoReorder && newRemaining <= claim.ReorderPoint && newRemaining > 0 {
+				if ok, _ := e.CanAcceptOrders(node.ID); ok {
 					_, err := e.RequestNodeMaterial(node.ID, 1)
 					if err != nil {
 						log.Printf("auto-reorder for node %s: %v", node.Name, err)
@@ -93,10 +91,10 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			newRemaining := runtime.RemainingUOP + int(delta.Delta)
 			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
 
-			// Auto-relief at capacity (skip during active changeover)
+			// Auto-relief at capacity (skip if node can't accept orders)
 			if claim.AutoReorder && claim.UOPCapacity > 0 &&
-				newRemaining >= claim.UOPCapacity && runtime.ActiveOrderID == nil {
-				if _, coErr := e.db.GetActiveProcessChangeover(delta.ProcessID); coErr != nil {
+				newRemaining >= claim.UOPCapacity {
+				if ok, _ := e.CanAcceptOrders(node.ID); ok {
 					_, err := e.ReleaseNodeEmpty(node.ID)
 					if err != nil {
 						log.Printf("auto-relief for produce node %s: %v", node.Name, err)

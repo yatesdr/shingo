@@ -494,7 +494,7 @@ for _, task := range nodeTasks {
 
 **Status:** Fixed. `StartProcessChangeover` now aborts pre-existing orders on affected nodes before returning.
 
-**Test:** `shingo-edge/engine/operator_stations.go` — `StartProcessChangeover` (unit test coverage requires Edge simulation, see Architecture reference)
+**Test:** `shingo-edge/engine/operator_stations_test.go` — `TestCanAcceptOrders` (7 subtests: no orders, no runtime, active order, staged order, terminal order, changeover active, changeover completed). `shingo-edge/engine/operator_stations.go` — `StartProcessChangeover` uses `AbortNodeOrders`; auto-reorder/auto-relief guards in `wiring.go` use `CanAcceptOrders`.
 
 ---
 
