@@ -1,7 +1,6 @@
 package dispatch
 
 import (
-	"fmt"
 	"testing"
 
 	"shingo/protocol"
@@ -63,31 +62,6 @@ func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {
 	m.queued = append(m.queued, emitQueued{orderID})
 }
 
-// --- Mock fleet backend ---
-
-type mockBackend struct{}
-
-func (m *mockBackend) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
-	return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
-}
-func (m *mockBackend) CancelOrder(vendorOrderID string) error {
-	return fmt.Errorf("mock: not connected")
-}
-func (m *mockBackend) SetOrderPriority(vendorOrderID string, priority int) error {
-	return fmt.Errorf("mock: not connected")
-}
-func (m *mockBackend) Ping() error                             { return fmt.Errorf("mock: not connected") }
-func (m *mockBackend) Name() string                            { return "mock" }
-func (m *mockBackend) MapState(vendorState string) string      { return "dispatched" }
-func (m *mockBackend) IsTerminalState(vendorState string) bool { return false }
-func (m *mockBackend) Reconfigure(cfg fleet.ReconfigureParams) {}
-func (m *mockBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
-	return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
-}
-func (m *mockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
-	return fmt.Errorf("mock: not connected")
-}
-
 // --- Test helpers (thin wrappers delegating to internal/testdb) ---
 
 func testDB(t *testing.T) *store.DB {
@@ -121,7 +95,7 @@ func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
 	}
 
 	emitter := &mockEmitter{}
-	d := NewDispatcher(db, &mockBackend{}, emitter, "core", "dispatch", nil)
+	d := NewDispatcher(db, testdb.NewFailingBackend(), emitter, "core", "dispatch", nil)
 	env := &protocol.Envelope{Src: protocol.Address{Role: protocol.RoleEdge, Station: order.StationID}}
 
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -153,7 +127,7 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 	_, lineNode, _ := setupTestData(t, db)
 
 	// No fleet backend needed since it should fail before dispatch
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
@@ -179,7 +153,7 @@ func TestHandleOrderRequest_Retrieve_InvalidDeliveryNode(t *testing.T) {
 	db := testDB(t)
 	setupTestData(t, db)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
@@ -200,7 +174,7 @@ func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
@@ -224,7 +198,7 @@ func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
@@ -249,7 +223,7 @@ func TestHandleOrderRequest_UnknownType(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
@@ -271,7 +245,7 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	d.RegisterPlanner("custom_transfer", func(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 		if err := db.UpdateOrderSourceNode(order.ID, storageNode.Name); err != nil {
 			t.Fatalf("update source node: %v", err)
@@ -306,7 +280,7 @@ func TestHandleOrderRequest_UnknownStyle(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
-	d, _ := newTestDispatcher(t, db, &mockBackend{})
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
@@ -326,7 +300,7 @@ func TestHandleOrderCancel(t *testing.T) {
 	order := &store.Order{EdgeUUID: "uuid-cancel", StationID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: "uuid-cancel", Reason: "operator cancelled"})
@@ -360,7 +334,7 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db.ConfirmBinManifest(bin.ID, "")
 	db.ClaimBin(bin.ID, order.ID)
 
-	d, _ := newTestDispatcher(t, db, &mockBackend{})
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderCancel(env, &protocol.OrderCancel{OrderUUID: "uuid-unclaim", Reason: "test"})
@@ -378,7 +352,7 @@ func TestHandleOrderReceipt(t *testing.T) {
 	order := &store.Order{EdgeUUID: "uuid-receipt", StationID: "line-1", Status: StatusDelivered}
 	db.CreateOrder(order)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{OrderUUID: "uuid-receipt", ReceiptType: "confirmed", FinalCount: 50})
@@ -400,7 +374,7 @@ func TestHandleOrderCancel_RejectsWrongStation(t *testing.T) {
 	order := &store.Order{EdgeUUID: "uuid-owned", StationID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	// Attempt cancel from a different station
 	env := &protocol.Envelope{
@@ -426,7 +400,7 @@ func TestHandleOrderCancel_AllowsCoreRole(t *testing.T) {
 	order := &store.Order{EdgeUUID: "uuid-core-cancel", StationID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	// Core-role sender should bypass ownership check
 	env := &protocol.Envelope{
@@ -451,7 +425,7 @@ func TestHandleOrderCancel_DuplicateCancelledOrderIgnored(t *testing.T) {
 	order := &store.Order{EdgeUUID: "uuid-cancel-dupe", StationID: "edge-1", Status: StatusCancelled}
 	db.CreateOrder(order)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge-1"},
@@ -478,7 +452,7 @@ func TestHandleOrderReceipt_RejectsWrongStation(t *testing.T) {
 	order := &store.Order{EdgeUUID: "uuid-receipt-own", StationID: "line-1", Status: StatusDelivered}
 	db.CreateOrder(order)
 
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-2"},
@@ -503,7 +477,7 @@ func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 	order := &store.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, SourceNode: lineNode.Name}
 	db.CreateOrder(order)
 
-	d, _ := newTestDispatcher(t, db, &mockBackend{})
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "line-2"},

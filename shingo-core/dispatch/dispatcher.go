@@ -194,20 +194,31 @@ func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *store.Order) 
 	return env.Src.Station == order.StationID
 }
 
+// getOwnedOrder fetches an order by UUID and checks ownership. Returns the
+// order and true on success, or nil and false if the order was not found or
+// the sender does not own it (with appropriate logging in both cases).
+// Callers handle the false case with their own error response.
+func (d *Dispatcher) getOwnedOrder(env *protocol.Envelope, orderUUID string) (*store.Order, bool) {
+	order, err := d.db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		log.Printf("dispatch: order %s not found: %v", orderUUID, err)
+		return nil, false
+	}
+	if !d.checkOwnership(env, order) {
+		log.Printf("dispatch: station %s does not own order %s (owner: %s)", env.Src.Station, orderUUID, order.StationID)
+		return nil, false
+	}
+	return order, true
+}
+
 // HandleOrderCancel processes a cancellation request from ShinGo Edge.
 func (d *Dispatcher) HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel) {
 	stationID := env.Src.Station
 	d.dbg("cancel request: station=%s uuid=%s reason=%s", stationID, p.OrderUUID, p.Reason)
 
-	order, err := d.db.GetOrderByUUID(p.OrderUUID)
-	if err != nil {
-		log.Printf("dispatch: cancel order %s not found: %v", p.OrderUUID, err)
-		return
-	}
-
-	if !d.checkOwnership(env, order) {
-		log.Printf("dispatch: cancel rejected — station %s does not own order %s (owner: %s)", stationID, p.OrderUUID, order.StationID)
-		d.replies.SendError(env, p.OrderUUID, "forbidden", "station does not own this order")
+	order, ok := d.getOwnedOrder(env, p.OrderUUID)
+	if !ok {
+		d.replies.SendError(env, p.OrderUUID, "not_found", "order not found or access denied")
 		return
 	}
 	if order.Status == StatusCancelled {
@@ -231,13 +242,8 @@ func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.Orde
 	stationID := env.Src.Station
 	d.dbg("delivery receipt: station=%s uuid=%s type=%s count=%d", stationID, p.OrderUUID, p.ReceiptType, p.FinalCount)
 
-	order, err := d.db.GetOrderByUUID(p.OrderUUID)
-	if err != nil {
-		log.Printf("dispatch: delivery receipt order %s not found: %v", p.OrderUUID, err)
-		return
-	}
-	if !d.checkOwnership(env, order) {
-		log.Printf("dispatch: receipt rejected — station %s does not own order %s (owner: %s)", stationID, p.OrderUUID, order.StationID)
+	order, ok := d.getOwnedOrder(env, p.OrderUUID)
+	if !ok {
 		return
 	}
 	if _, err := d.lifecycle.ConfirmReceipt(order, stationID, p.ReceiptType, p.FinalCount); err != nil {
@@ -249,15 +255,9 @@ func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.Orde
 func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.OrderRedirect) {
 	d.dbg("redirect: uuid=%s new_dest=%s", p.OrderUUID, p.NewDeliveryNode)
 
-	order, err := d.db.GetOrderByUUID(p.OrderUUID)
-	if err != nil {
-		log.Printf("dispatch: redirect order %s not found: %v", p.OrderUUID, err)
-		return
-	}
-
-	if !d.checkOwnership(env, order) {
-		log.Printf("dispatch: redirect rejected — station %s does not own order %s (owner: %s)", env.Src.Station, p.OrderUUID, order.StationID)
-		d.replies.SendError(env, p.OrderUUID, "forbidden", "station does not own this order")
+	order, ok := d.getOwnedOrder(env, p.OrderUUID)
+	if !ok {
+		d.replies.SendError(env, p.OrderUUID, "not_found", "order not found or access denied")
 		return
 	}
 	sourceNode, newDest, err := d.lifecycle.PrepareRedirect(order, p.NewDeliveryNode)

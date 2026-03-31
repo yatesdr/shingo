@@ -4,17 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	"shingocore/fleet"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 )
-
-// --- Mock fleet backend that succeeds ---
-
-type mockSuccessBackend struct{ mockBackend }
-
-func (m *mockSuccessBackend) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
-	return fleet.TransportOrderResult{VendorOrderID: "vendor-" + req.OrderID}, nil
-}
 
 // --- Helper: setup node group with direct children for shuffle ---
 
@@ -284,7 +276,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 	}
 
 	// Create dispatcher with success backend
-	d, _ := newTestDispatcher(t, db, &mockSuccessBackend{})
+	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// Create compound order
 	if err := d.CreateCompoundOrder(parentOrder, plan); err != nil {
@@ -421,7 +413,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 	db.ClaimBin(binC3.ID, child3.ID)
 
 	// Lock the lane to verify it gets released
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	d.laneLock.TryLock(lane.ID, parentOrder.ID)
 
 	// Handle child 2 failure
@@ -557,7 +549,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	db.ClaimBin(binC4.ID, child4.ID)
 
 	// Lock the lane
-	d, _ := newTestDispatcher(t, db, &mockBackend{})
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	d.laneLock.TryLock(lane.ID, parentOrder.ID)
 
 	// Handle child 2 failure

@@ -137,15 +137,9 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	stationID := env.Src.Station
 	d.dbg("order release: station=%s uuid=%s", stationID, p.OrderUUID)
 
-	order, err := d.db.GetOrderByUUID(p.OrderUUID)
-	if err != nil {
-		log.Printf("dispatch: release order %s not found: %v", p.OrderUUID, err)
-		d.sendError(env, p.OrderUUID, "not_found", "order not found")
-		return
-	}
-
-	if !d.checkOwnership(env, order) {
-		d.sendError(env, p.OrderUUID, "forbidden", "station does not own this order")
+	order, ok := d.getOwnedOrder(env, p.OrderUUID)
+	if !ok {
+		d.sendError(env, p.OrderUUID, "not_found", "order not found or access denied")
 		return
 	}
 

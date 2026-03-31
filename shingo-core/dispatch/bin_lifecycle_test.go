@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 )
 
@@ -31,7 +32,7 @@ func TestFullDepletion_ClearsManifest(t *testing.T) {
 		t.Fatal("bin should have payload_code before depletion")
 	}
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
 	// Build an envelope with remaining_uop=0 (fully depleted)
@@ -83,7 +84,7 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 	db.SetBinManifest(bin.ID, manifest, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
 	// remaining_uop=42 — partial consumption
@@ -239,7 +240,7 @@ func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
 	db.SetBinManifest(binStaging.ID, `{"items":[{"catid":"NEW","qty":200}]}`, bp.Code, 200)
 	db.ConfirmBinManifest(binStaging.ID, "")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
 	zero := 0

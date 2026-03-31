@@ -1,12 +1,13 @@
 package engine
 
 import (
-	"fmt"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 )
 
@@ -32,103 +33,15 @@ import (
 func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	db := testDB(t)
 
-	// Node types are seeded by migrations
-	grpType, err := db.GetNodeTypeByCode("NGRP")
-	if err != nil {
-		t.Fatalf("get NGRP node type: %v (migrations should seed this)", err)
-	}
-	lanType, err := db.GetNodeTypeByCode("LANE")
-	if err != nil {
-		t.Fatalf("get LANE node type: %v (migrations should seed this)", err)
-	}
-
-	bp := &store.Payload{Code: "PART-BURIED", Description: "Buried bin test payload"}
-	if err := db.CreatePayload(bp); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
-	bt := &store.BinType{Code: "DEFAULT-BR", Description: "Buried test bin type"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("create bin type: %v", err)
-	}
-
-	// NGRP (node group)
-	grp := &store.Node{Name: "GRP-BURIED", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	if err := db.CreateNode(grp); err != nil {
-		t.Fatalf("create NGRP: %v", err)
-	}
-
-	// LANE under NGRP
-	lane := &store.Node{
-		Name: "GRP-BURIED-L1", NodeTypeID: &lanType.ID,
-		ParentID: &grp.ID, Enabled: true, IsSynthetic: true,
-	}
-	if err := db.CreateNode(lane); err != nil {
-		t.Fatalf("create LANE: %v", err)
-	}
-
-	// 3 physical slot nodes at depth 1, 2, 3
-	var slots [3]*store.Node
-	for i := 0; i < 3; i++ {
-		depth := i + 1
-		slot := &store.Node{
-			Name:     fmt.Sprintf("GRP-BURIED-L1-S%d", depth),
-			ParentID: &lane.ID, Enabled: true, Depth: &depth,
-		}
-		if err := db.CreateNode(slot); err != nil {
-			t.Fatalf("create slot %d: %v", depth, err)
-		}
-		slots[i] = slot
-	}
-
-	// Shuffle slot (direct physical child of NGRP, empty — for temp storage during reshuffle)
-	shuffleSlot := &store.Node{
-		Name: "GRP-BURIED-SHUF", ParentID: &grp.ID, Enabled: true,
-	}
-	if err := db.CreateNode(shuffleSlot); err != nil {
-		t.Fatalf("create shuffle slot: %v", err)
-	}
-
-	// Line node (delivery destination for the retrieve)
-	lineNode := &store.Node{Name: "LINE-BURIED-IN", Enabled: true}
-	if err := db.CreateNode(lineNode); err != nil {
-		t.Fatalf("create line node: %v", err)
-	}
-
-	// TARGET bin at depth 2 (older — loaded_at 2 hours ago)
-	targetBin := &store.Bin{
-		BinTypeID: bt.ID, Label: "BIN-TARGET",
-		NodeID: &slots[1].ID, Status: "available",
-	}
-	if err := db.CreateBin(targetBin); err != nil {
-		t.Fatalf("create target bin: %v", err)
-	}
-	if err := db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100); err != nil {
-		t.Fatalf("set target manifest: %v", err)
-	}
-	if err := db.ConfirmBinManifest(targetBin.ID, ""); err != nil {
-		t.Fatalf("confirm target: %v", err)
-	}
-	// Make target clearly older so FIFO prefers it over the accessible blocker
-	if _, err := db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID); err != nil {
-		t.Fatalf("set target loaded_at: %v", err)
-	}
-
-	// BLOCKER bin at depth 1 (newer — loaded_at = NOW, blocks access to target)
-	blockerBin := &store.Bin{
-		BinTypeID: bt.ID, Label: "BIN-BLOCKER",
-		NodeID: &slots[0].ID, Status: "available",
-	}
-	if err := db.CreateBin(blockerBin); err != nil {
-		t.Fatalf("create blocker bin: %v", err)
-	}
-	if err := db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50); err != nil {
-		t.Fatalf("set blocker manifest: %v", err)
-	}
-	if err := db.ConfirmBinManifest(blockerBin.ID, ""); err != nil {
-		t.Fatalf("confirm blocker: %v", err)
-	}
-
-	t.Logf("setup: target=%d at depth 2 (2h old), blocker=%d at depth 1 (new)", targetBin.ID, blockerBin.ID)
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
+		Prefix:     "BURIED",
+		NumSlots:   3,
+		TargetSlot: 2,
+		TargetAge:  2 * time.Hour,
+	})
+	grp, lane := sc.Grp, sc.Lane
+	lineNode, bp := sc.LineNode, sc.Payload
+	targetBin, blockerBin := sc.TargetBin, sc.Blockers[0]
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -256,54 +169,11 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	db := testDB(t)
 
-	grpType, err := db.GetNodeTypeByCode("NGRP")
-	if err != nil {
-		t.Fatalf("get NGRP: %v", err)
-	}
-	lanType, err := db.GetNodeTypeByCode("LANE")
-	if err != nil {
-		t.Fatalf("get LANE: %v", err)
-	}
-
-	bp := &store.Payload{Code: "PART-STRAND", Description: "Stranding test"}
-	if err := db.CreatePayload(bp); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
-	bt := &store.BinType{Code: "DEFAULT-ST", Description: "Stranding bin type"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("create bin type: %v", err)
-	}
-
-	// NGRP → LANE → 2 slots
-	grp := &store.Node{Name: "GRP-STRAND", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(grp)
-	lane := &store.Node{Name: "GRP-STRAND-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(lane)
-
-	depth1, depth2 := 1, 2
-	slot1 := &store.Node{Name: "GRP-STRAND-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth1}
-	db.CreateNode(slot1)
-	slot2 := &store.Node{Name: "GRP-STRAND-L1-S2", ParentID: &lane.ID, Enabled: true, Depth: &depth2}
-	db.CreateNode(slot2)
-
-	shuffleSlot := &store.Node{Name: "GRP-STRAND-SHUF", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuffleSlot)
-
-	lineNode := &store.Node{Name: "LINE-STRAND", Enabled: true}
-	db.CreateNode(lineNode)
-
-	// Target at depth 2 (buried, older)
-	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-STRAND-TARGET", NodeID: &slot2.ID, Status: "available"}
-	db.CreateBin(targetBin)
-	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
-
-	// Blocker at depth 1 (front, newer)
-	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-STRAND-BLOCKER", NodeID: &slot1.ID, Status: "available"}
-	db.CreateBin(blockerBin)
-	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID, "")
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "STRAND"})
+	grp, lane := sc.Grp, sc.Lane
+	lineNode, bp := sc.LineNode, sc.Payload
+	targetBin, blockerBin := sc.TargetBin, sc.Blockers[0]
+	shuffleSlot := sc.ShuffleSlots[0]
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -424,59 +294,18 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 	db := testDB(t)
 
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
-
-	bp := &store.Payload{Code: "PART-SWAP", Description: "Swap test payload"}
-	db.CreatePayload(bp)
-	bt := &store.BinType{Code: "DEFAULT-SW", Description: "Swap bin type"}
-	db.CreateBinType(bt)
-
-	// NGRP → LANE → 3 slots
-	grp := &store.Node{Name: "GRP-SWAP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(grp)
-	lane := &store.Node{Name: "GRP-SWAP-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(lane)
-
-	depths := [3]int{1, 2, 3}
-	var slots [3]*store.Node
-	for i := 0; i < 3; i++ {
-		s := &store.Node{
-			Name:     fmt.Sprintf("GRP-SWAP-L1-S%d", depths[i]),
-			ParentID: &lane.ID, Enabled: true, Depth: &depths[i],
-		}
-		db.CreateNode(s)
-		slots[i] = s
-	}
-
-	// Two shuffle slots
-	shuf1 := &store.Node{Name: "GRP-SWAP-SHUF1", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuf1)
-	shuf2 := &store.Node{Name: "GRP-SWAP-SHUF2", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuf2)
-
-	lineNode := &store.Node{Name: "LINE-SWAP", Enabled: true}
-	db.CreateNode(lineNode)
-
-	// Target at depth 3 (oldest — 3 hours ago)
-	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SWAP-TARGET", NodeID: &slots[2].ID, Status: "available"}
-	db.CreateBin(targetBin)
-	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '3 hours' WHERE id = $1`, targetBin.ID)
-
-	// Blocker 2 at depth 2
-	blocker2 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SWAP-BLK2", NodeID: &slots[1].ID, Status: "available"}
-	db.CreateBin(blocker2)
-	db.SetBinManifest(blocker2.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blocker2.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '1 hour' WHERE id = $1`, blocker2.ID)
-
-	// Blocker 1 at depth 1 (newest)
-	blocker1 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SWAP-BLK1", NodeID: &slots[0].ID, Status: "available"}
-	db.CreateBin(blocker1)
-	db.SetBinManifest(blocker1.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blocker1.ID, "")
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
+		Prefix:      "SWAP",
+		NumSlots:    3,
+		NumShuffles: 2,
+		TargetAge:   3 * time.Hour,
+		BlockerAges: map[int]time.Duration{2: 1 * time.Hour},
+	})
+	grp, lane := sc.Grp, sc.Lane
+	slots := sc.Slots
+	lineNode, bp := sc.LineNode, sc.Payload
+	targetBin := sc.TargetBin
+	blocker1, blocker2 := sc.Blockers[0], sc.Blockers[1]
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -585,41 +414,10 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 	db := testDB(t)
 
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
-
-	bp := &store.Payload{Code: "PART-PCANCEL", Description: "Parent cancel test"}
-	db.CreatePayload(bp)
-	bt := &store.BinType{Code: "DEFAULT-PC", Description: "Parent cancel bin type"}
-	db.CreateBinType(bt)
-
-	grp := &store.Node{Name: "GRP-PCANCEL", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(grp)
-	lane := &store.Node{Name: "GRP-PCANCEL-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(lane)
-
-	depth1, depth2 := 1, 2
-	slot1 := &store.Node{Name: "GRP-PCANCEL-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth1}
-	db.CreateNode(slot1)
-	slot2 := &store.Node{Name: "GRP-PCANCEL-L1-S2", ParentID: &lane.ID, Enabled: true, Depth: &depth2}
-	db.CreateNode(slot2)
-
-	shuffleSlot := &store.Node{Name: "GRP-PCANCEL-SHUF", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuffleSlot)
-
-	lineNode := &store.Node{Name: "LINE-PCANCEL", Enabled: true}
-	db.CreateNode(lineNode)
-
-	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-PCANCEL-TARGET", NodeID: &slot2.ID, Status: "available"}
-	db.CreateBin(targetBin)
-	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
-
-	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-PCANCEL-BLK", NodeID: &slot1.ID, Status: "available"}
-	db.CreateBin(blockerBin)
-	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID, "")
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "PCANCEL"})
+	grp, lane := sc.Grp, sc.Lane
+	lineNode, bp := sc.LineNode, sc.Payload
+	targetBin, blockerBin := sc.TargetBin, sc.Blockers[0]
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -720,43 +518,10 @@ func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 	db := testDB(t)
 
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
-
-	bp := &store.Payload{Code: "PART-SKIP", Description: "Skip test"}
-	db.CreatePayload(bp)
-	bt := &store.BinType{Code: "DEFAULT-SK", Description: "Skip bin type"}
-	db.CreateBinType(bt)
-
-	grp := &store.Node{Name: "GRP-SKIP", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(grp)
-	lane := &store.Node{Name: "GRP-SKIP-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(lane)
-
-	depth1, depth2 := 1, 2
-	slot1 := &store.Node{Name: "GRP-SKIP-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth1}
-	db.CreateNode(slot1)
-	slot2 := &store.Node{Name: "GRP-SKIP-L1-S2", ParentID: &lane.ID, Enabled: true, Depth: &depth2}
-	db.CreateNode(slot2)
-
-	shuffleSlot := &store.Node{Name: "GRP-SKIP-SHUF", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuffleSlot)
-
-	lineNode := &store.Node{Name: "LINE-SKIP", Enabled: true}
-	db.CreateNode(lineNode)
-
-	// Target at depth 2 (buried)
-	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SKIP-TARGET", NodeID: &slot2.ID, Status: "available"}
-	db.CreateBin(targetBin)
-	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
-
-	// Blocker at depth 1
-	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-SKIP-BLK", NodeID: &slot1.ID, Status: "available"}
-	db.CreateBin(blockerBin)
-	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID, "")
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "SKIP"})
+	grp := sc.Grp
+	lineNode, bp := sc.LineNode, sc.Payload
+	blockerBin := sc.Blockers[0]
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -876,54 +641,15 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 	db := testDB(t)
 
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
-
-	bp := &store.Payload{Code: "PART-LOCK", Description: "Lane lock test"}
-	db.CreatePayload(bp)
-	bt := &store.BinType{Code: "DEFAULT-LK", Description: "Lock bin type"}
-	db.CreateBinType(bt)
-
-	grp := &store.Node{Name: "GRP-LOCK", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(grp)
-	lane := &store.Node{Name: "GRP-LOCK-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(lane)
-
-	depth1, depth2, depth3 := 1, 2, 3
-	slot1 := &store.Node{Name: "GRP-LOCK-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth1}
-	db.CreateNode(slot1)
-	slot2 := &store.Node{Name: "GRP-LOCK-L1-S2", ParentID: &lane.ID, Enabled: true, Depth: &depth2}
-	db.CreateNode(slot2)
-	slot3 := &store.Node{Name: "GRP-LOCK-L1-S3", ParentID: &lane.ID, Enabled: true, Depth: &depth3}
-	db.CreateNode(slot3)
-
-	shuffleSlot1 := &store.Node{Name: "GRP-LOCK-SHUF1", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuffleSlot1)
-	shuffleSlot2 := &store.Node{Name: "GRP-LOCK-SHUF2", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuffleSlot2)
-
-	lineNode := &store.Node{Name: "LINE-LOCK", Enabled: true}
-	db.CreateNode(lineNode)
-
-	// Bin at depth 3 (buried under 2 blockers) — first target
-	targetBin1 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-LOCK-T1", NodeID: &slot3.ID, Status: "available"}
-	db.CreateBin(targetBin1)
-	db.SetBinManifest(targetBin1.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin1.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '3 hours' WHERE id = $1`, targetBin1.ID)
-
-	// Blocker at depth 2
-	blocker2 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-LOCK-BLK2", NodeID: &slot2.ID, Status: "available"}
-	db.CreateBin(blocker2)
-	db.SetBinManifest(blocker2.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blocker2.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '1 hour' WHERE id = $1`, blocker2.ID)
-
-	// Blocker at depth 1
-	blocker1 := &store.Bin{BinTypeID: bt.ID, Label: "BIN-LOCK-BLK1", NodeID: &slot1.ID, Status: "available"}
-	db.CreateBin(blocker1)
-	db.SetBinManifest(blocker1.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blocker1.ID, "")
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
+		Prefix:      "LOCK",
+		NumSlots:    3,
+		NumShuffles: 2,
+		TargetAge:   3 * time.Hour,
+		BlockerAges: map[int]time.Duration{2: 1 * time.Hour},
+	})
+	grp, lane := sc.Grp, sc.Lane
+	lineNode, bp := sc.LineNode, sc.Payload
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -996,43 +722,10 @@ func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
 	db := testDB(t)
 
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
-
-	bp := &store.Payload{Code: "PART-RESTOCK", Description: "Restock status test"}
-	db.CreatePayload(bp)
-	bt := &store.BinType{Code: "DEFAULT-RS", Description: "Restock bin type"}
-	db.CreateBinType(bt)
-
-	grp := &store.Node{Name: "GRP-RESTOCK", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(grp)
-	lane := &store.Node{Name: "GRP-RESTOCK-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(lane)
-
-	depth1, depth2 := 1, 2
-	slot1 := &store.Node{Name: "GRP-RESTOCK-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth1}
-	db.CreateNode(slot1)
-	slot2 := &store.Node{Name: "GRP-RESTOCK-L1-S2", ParentID: &lane.ID, Enabled: true, Depth: &depth2}
-	db.CreateNode(slot2)
-
-	shuffleSlot := &store.Node{Name: "GRP-RESTOCK-SHUF", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuffleSlot)
-
-	lineNode := &store.Node{Name: "LINE-RESTOCK", Enabled: true}
-	db.CreateNode(lineNode)
-
-	// Target at depth 2 (buried)
-	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-RESTOCK-TARGET", NodeID: &slot2.ID, Status: "available"}
-	db.CreateBin(targetBin)
-	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
-
-	// Blocker at depth 1
-	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-RESTOCK-BLK", NodeID: &slot1.ID, Status: "available"}
-	db.CreateBin(blockerBin)
-	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID, "")
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "RESTOCK"})
+	grp := sc.Grp
+	lineNode, bp := sc.LineNode, sc.Payload
+	blockerBin := sc.Blockers[0]
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
@@ -1117,43 +810,10 @@ func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
 func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 	db := testDB(t)
 
-	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	lanType, _ := db.GetNodeTypeByCode("LANE")
-
-	bp := &store.Payload{Code: "PART-TTL", Description: "TTL test"}
-	db.CreatePayload(bp)
-	bt := &store.BinType{Code: "DEFAULT-TL", Description: "TTL bin type"}
-	db.CreateBinType(bt)
-
-	grp := &store.Node{Name: "GRP-TTL", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(grp)
-	lane := &store.Node{Name: "GRP-TTL-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	db.CreateNode(lane)
-
-	depth1, depth2 := 1, 2
-	slot1 := &store.Node{Name: "GRP-TTL-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth1}
-	db.CreateNode(slot1)
-	slot2 := &store.Node{Name: "GRP-TTL-L1-S2", ParentID: &lane.ID, Enabled: true, Depth: &depth2}
-	db.CreateNode(slot2)
-
-	shuffleSlot := &store.Node{Name: "GRP-TTL-SHUF", ParentID: &grp.ID, Enabled: true}
-	db.CreateNode(shuffleSlot)
-
-	lineNode := &store.Node{Name: "LINE-TTL", Enabled: true}
-	db.CreateNode(lineNode)
-
-	// Target at depth 2 (buried)
-	targetBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-TTL-TARGET", NodeID: &slot2.ID, Status: "available"}
-	db.CreateBin(targetBin)
-	db.SetBinManifest(targetBin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(targetBin.ID, "")
-	db.Exec(`UPDATE bins SET loaded_at = NOW() - interval '2 hours' WHERE id = $1`, targetBin.ID)
-
-	// Blocker at depth 1
-	blockerBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-TTL-BLK", NodeID: &slot1.ID, Status: "available"}
-	db.CreateBin(blockerBin)
-	db.SetBinManifest(blockerBin.ID, `{"items":[]}`, bp.Code, 50)
-	db.ConfirmBinManifest(blockerBin.ID, "")
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "TTL"})
+	grp, lane := sc.Grp, sc.Lane
+	lineNode, bp := sc.LineNode, sc.Payload
+	blockerBin := sc.Blockers[0]
 
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)

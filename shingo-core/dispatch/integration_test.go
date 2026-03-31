@@ -4,64 +4,18 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingocore/fleet"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 )
-
-// mockTrackingBackend implements fleet.TrackingBackend for testing
-type mockTrackingBackend struct {
-	*mockBackend
-	orders map[string]fleet.TransportOrderResult
-}
-
-func (m *mockTrackingBackend) InitTracker(emitter fleet.TrackerEmitter, resolver fleet.OrderIDResolver) {
-	// no-op for tests
-}
-
-func (m *mockTrackingBackend) Tracker() fleet.OrderTracker {
-	return nil
-}
-
-func (m *mockTrackingBackend) CreateTransportOrder(req fleet.TransportOrderRequest) (fleet.TransportOrderResult, error) {
-	result := fleet.TransportOrderResult{
-		VendorOrderID: req.OrderID,
-	}
-	m.orders[req.OrderID] = result
-	return result, nil
-}
-
-func (m *mockTrackingBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
-	result := fleet.TransportOrderResult{
-		VendorOrderID: req.OrderID,
-	}
-	m.orders[req.OrderID] = result
-	return result, nil
-}
-
-func (m *mockTrackingBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
-	return nil
-}
-
-func newMockTrackingBackend() *mockTrackingBackend {
-	return &mockTrackingBackend{
-		mockBackend: &mockBackend{},
-		orders:      make(map[string]fleet.TransportOrderResult),
-	}
-}
 
 func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin at the storage node with a manifest
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-RET-1", NodeID: &storageNode.ID, Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
-	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID, "")
+	bin := testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RET-1")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
 
 	env := testEnvelope()
@@ -134,12 +88,9 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin at storage node with a manifest
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-MOV-1", NodeID: &storageNode.ID, Status: "available"}
-	db.CreateBin(bin)
-	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID, "")
+	testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-MOV-1")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
 
 	env := testEnvelope()
@@ -184,12 +135,9 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin at line-side with a manifest
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-STO-1", NodeID: &lineNode.ID, Status: "available"}
-	db.CreateBin(bin)
-	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
-	db.ConfirmBinManifest(bin.ID, "")
+	testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-STO-1")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
 
 	env := testEnvelope()
@@ -232,7 +180,7 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
 
 	env := testEnvelope()
@@ -292,7 +240,7 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
 	env := testEnvelope()
@@ -360,7 +308,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	db.ConfirmBinManifest(srcBin.ID, "")
 
 	// Create dispatcher with resolver
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
 	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
@@ -449,7 +397,7 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	db.SetBinManifest(binB1.ID, `{"items":[]}`, bpB.Code, 100)
 	db.ConfirmBinManifest(binB1.ID, "")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
 	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
@@ -561,7 +509,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	emptyBin := &store.Bin{BinTypeID: bt.ID, Label: "EMPTY-BIN-1", NodeID: &srcNode.ID, Status: "available"}
 	db.CreateBin(emptyBin)
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
 	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
@@ -656,7 +604,7 @@ func TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle(t *testing.T) {
 	destNode := &store.Node{Name: "TC41-LINE", Enabled: true}
 	db.CreateNode(destNode)
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
 	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock()}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
@@ -720,7 +668,7 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
 	resolver := &DefaultResolver{DB: db}
 	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
@@ -761,7 +709,7 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 	db.ConfirmBinManifest(bin.ID, "")
 
 	// Use mockBackend (returns errors for all fleet ops)
-	d, emitter := newTestDispatcher(t, db, &mockBackend{})
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 
@@ -815,7 +763,7 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 	db.SetBinManifest(bin2.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin2.ID, "")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
 	env := testEnvelope()
@@ -862,7 +810,7 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)
 
 	env := testEnvelope()
@@ -915,7 +863,7 @@ func TestHandleOrderIngest(t *testing.T) {
 	// Also create a storage node for the store destination
 	_ = storageNode
 
-	backend := newMockTrackingBackend()
+	backend := testdb.NewTrackingBackend()
 	d, emitter := newTestDispatcher(t, db, backend)
 
 	env := testEnvelope()

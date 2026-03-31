@@ -1268,17 +1268,18 @@ shingo-core/
 ├── internal/
 │   └── testdb/
 │       ├── testdb.go              # Open, SetupStandardData, CreateBinAtNode, Envelope
-│       └── compound.go            # CompoundScenario, CompoundConfig, SetupCompound
+│       ├── compound.go            # CompoundScenario, CompoundConfig, SetupCompound
+│       └── mock_backend.go        # MockBackend (NewFailingBackend/NewSuccessBackend), MockTrackingBackend
 ├── engine/
 │   ├── engine_test.go             # 16 foundational tests (harness helpers removed)
 │   ├── engine_concurrent_test.go  # Concurrency + general tests (~400 lines)
-│   ├── engine_compound_test.go    # 8 compound reshuffle tests (~650 lines)
+│   ├── engine_compound_test.go    # 8 compound reshuffle tests (uses SetupCompound for setup)
 │   └── engine_complex_test.go     # 12 complex order tests (~600 lines)
 ├── dispatch/
-│   ├── dispatcher_test.go         # 18 tests, helpers removed (~550 lines)
-│   ├── reshuffle_test.go          # 6 tests, setup uses testdb helpers (~350 lines)
+│   ├── dispatcher_test.go         # 18 tests, uses testdb.NewFailingBackend
+│   ├── reshuffle_test.go          # 6 tests, uses testdb.NewSuccessBackend/NewFailingBackend
 │   ├── group_resolver_test.go     # 15 tests, helpers removed (~650 lines)
-│   ├── integration_test.go        # 13 tests (~950 lines, unchanged)
+│   ├── integration_test.go        # 13 tests, uses testdb.NewTrackingBackend/CreateBinAtNode
 │   └── fleet_simulator_test.go    # 5 tests (~315 lines, unchanged)
 └── fleet/
     └── simulator/
@@ -1292,6 +1293,7 @@ shingo-core/
 | File | What it does |
 |------|-------------|
 | `internal/testdb/testdb.go` | Shared test infrastructure. Container reuse via `sync.Once`, per-test `CREATE DATABASE`, standard data setup, bin creation helpers. |
+| `internal/testdb/mock_backend.go` | Shared mock fleet backends. `NewFailingBackend()` (all ops error), `NewSuccessBackend()` (records orders), `NewTrackingBackend()` (satisfies `fleet.TrackingBackend`). Eliminates duplicate mock implementations across test files. |
 | `internal/testdb/compound.go` | Compound scenario builder. `SetupCompound` creates full NGRP → LANE → slots → shuffle → line → bins layout from a `CompoundConfig`. |
 | `fleet/simulator/simulator.go` | The fake fleet backend. Stores orders and blocks in memory. Implements TrackingBackend so the Engine can wire it up automatically. |
 | `fleet/simulator/transitions.go` | State transition helpers. DriveState, DriveFullLifecycle, DriveSimpleLifecycle, DriveToFailed, DriveToStopped. |
@@ -1301,11 +1303,11 @@ shingo-core/
 | `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-21, TC-23 cluster, TC-24 cluster, TC-30, ClaimBin. Uses real Engine + real DB + simulator. |
 | `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, and staging expiry tests. TC-09, TC-10, TC-12, claim race, dispatch stress, redirect, fulfillment scanner, TC-37. Uses PostFindHook for deterministic TOCTOU race reproduction. |
 | `engine/engine_complex_test.go` | Complex order lifecycle + production cycle pattern tests. TC-42, TC-43, TC-47, TC-48, TC-49, TC-50, TC-55, TC-56, TC-57, TC-58, TC-59, TC-60. Strengthened with SourceNode, bin position, and lifecycle assertions. |
-| `engine/engine_compound_test.go` | Compound reshuffle order tests. TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54. |
-| `dispatch/dispatcher_test.go` | Dispatcher-level tests. 18 tests, helper bodies replaced with thin wrappers to `testdb`. |
-| `dispatch/reshuffle_test.go` | Reshuffle planning tests. 6 tests, setup uses `testdb` helpers. |
+| `engine/engine_compound_test.go` | Compound reshuffle order tests. TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54. All 8 tests use `testdb.SetupCompound()` for setup, reducing ~400 lines of boilerplate. |
+| `dispatch/dispatcher_test.go` | Dispatcher-level tests. 18 tests, uses shared `testdb.NewFailingBackend()` instead of inline mock. |
+| `dispatch/reshuffle_test.go` | Reshuffle planning tests. 6 tests, uses `testdb.NewSuccessBackend()` and `testdb.NewFailingBackend()`. |
 | `dispatch/group_resolver_test.go` | Group resolver tests. 15 tests, `createTestBinAtNode` wrapper to `testdb`. |
-| `dispatch/integration_test.go` | Integration tests. 13 tests, unchanged. |
+| `dispatch/integration_test.go` | Integration tests. 13 tests, uses `testdb.NewTrackingBackend()` and `testdb.CreateBinAtNode()` for bin setup. |
 | `dispatch/fleet_simulator_test.go` | Dispatcher-level scenario tests (TC-1, TC-3, TC-4, TC-5). Tests the outbound path only (what gets sent to the fleet). |
 | `dispatch/bin_lifecycle_test.go` | Bin lifecycle integration tests (TC-64a–c). Full depletion, partial consumption, concurrent retrieve_empty race. |
 | `dispatch/planning_test.go` | `extractRemainingUOP` unit tests (TC-65). Nil, empty, missing, zero, positive, malformed JSON. |
