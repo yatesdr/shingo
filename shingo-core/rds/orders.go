@@ -118,9 +118,14 @@ func (c *Client) SetLabel(id, label string) error {
 }
 
 // AddBlocks appends blocks to an existing incremental order.
-func (c *Client) AddBlocks(id string, blocks []Block, complete bool) error {
+// vehicle pins the order to a specific robot; empty string lets RDS choose.
+func (c *Client) AddBlocks(id string, blocks []Block, complete bool, vehicle ...string) error {
+	var v string
+	if len(vehicle) > 0 {
+		v = vehicle[0]
+	}
 	var resp Response
-	if err := c.post("/addBlocks", &AddBlocksRequest{ID: id, Blocks: blocks, Complete: complete}, &resp); err != nil {
+	if err := c.post("/addBlocks", &AddBlocksRequest{ID: id, Blocks: blocks, Complete: complete, Vehicle: v}, &resp); err != nil {
 		return err
 	}
 	return checkResponse(&resp)

@@ -72,6 +72,7 @@ type AddBlocksRequest struct {
 	ID       string  `json:"id"`
 	Blocks   []Block `json:"blocks"`
 	Complete bool    `json:"complete"`
+	Vehicle  string  `json:"vehicle,omitempty"`
 }
 
 // --- Order responses ---

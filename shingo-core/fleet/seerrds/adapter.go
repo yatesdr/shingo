@@ -3,6 +3,7 @@ package seerrds
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"shingocore/fleet"
@@ -128,7 +129,16 @@ func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) 
 	for i, b := range blocks {
 		rdsBlocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location, BinTask: b.BinTask}
 	}
-	return a.client.AddBlocks(vendorOrderID, rdsBlocks, true)
+
+	// Pin the vehicle that's already assigned to the staged order so RDS
+	// doesn't re-dispatch to a different robot when adding post-wait blocks.
+	var vehicle string
+	if detail, err := a.client.GetOrderDetails(vendorOrderID); err == nil && detail.Vehicle != "" {
+		vehicle = detail.Vehicle
+		log.Printf("adapter: release pinning vehicle %s for order %s", vehicle, vendorOrderID)
+	}
+
+	return a.client.AddBlocks(vendorOrderID, rdsBlocks, true, vehicle)
 }
 
 func (a *Adapter) Reconfigure(cfg fleet.ReconfigureParams) {
