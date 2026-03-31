@@ -76,7 +76,8 @@ func TestOrderCRUD(t *testing.T) {
 		t.Errorf("getByVendorID ID = %d, want %d", got5.ID, o.ID)
 	}
 
-	// Complete
+	// Confirm + Complete (status and completed_at are separate concerns)
+	db.UpdateOrderStatus(o.ID, "confirmed", "order fulfilled")
 	db.CompleteOrder(o.ID)
 	got6, _ := db.GetOrder(o.ID)
 	if got6.Status != "confirmed" {

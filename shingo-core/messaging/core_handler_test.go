@@ -283,7 +283,7 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list order history: %v", err)
 	}
-	if len(history) != 2 {
-		t.Fatalf("expected 2 history rows after replayed receipt, got %d", len(history))
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history row after replayed receipt (deduped), got %d", len(history))
 	}
 }
