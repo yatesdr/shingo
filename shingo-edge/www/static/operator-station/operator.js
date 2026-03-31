@@ -407,7 +407,9 @@ function renderModal(entry) {
     }
     html += '</div>'; // close header
 
-    // Actions
+    // Actions — state machine: only show the next step in the cycle.
+    // Consume cycle: IDLE → REQUEST MATERIAL → (robot stages) → RELEASE → (robot drops) → CONFIRM
+    // Produce cycle: same but FINALIZE instead of REQUEST MATERIAL when node has parts.
     html += '<div class="os-modal-actions">';
 
     if (claim) {
@@ -419,7 +421,6 @@ function renderModal(entry) {
                 : (claim.payload_code ? [claim.payload_code] : []);
 
             if (!hasBin) {
-                // Vacant node — offer request empty for each allowed payload
                 allowed.forEach(code => {
                     html += actionBtn('REQUEST EMPTY: ' + code, 'request', true,
                         '/api/process-nodes/' + entry.node.id + '/request-empty|' + code);
@@ -433,26 +434,39 @@ function renderModal(entry) {
                 html += actionBtn('LOAD BIN', 'load-bin', true, 'load-bin');
             }
         } else {
-            // Normal production actions
-            html += actionBtn('REQUEST MATERIAL', 'request', true,
-                '/api/process-nodes/' + entry.node.id + '/request');
-            html += actionBtn('RELEASE EMPTY', 'release-empty', true,
-                '/api/process-nodes/' + entry.node.id + '/release-empty');
-            html += actionBtn('RELEASE PARTIAL', 'release-partial', true,
-                'keypad:' + entry.node.id + ':' + remaining);
+            // Determine order state for this node
+            const orders = entry.orders || [];
+            const active = orders.filter(o => o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+            const staged = active.find(o => o.status === 'staged');
+            const delivered = active.find(o => o.status === 'delivered');
+            const inFlight = active.find(o => !staged && !delivered);
 
-            if (claim.role === 'produce') {
-                html += actionBtn('FINALIZE', 'finalize', true,
-                    '/api/process-nodes/' + entry.node.id + '/finalize');
+            if (staged) {
+                // Staged — robot waiting, operator must release
+                html += actionBtn('RELEASE', 'request', true,
+                    '/api/orders/' + staged.id + '/release');
+            } else if (delivered && delivered.order_type === 'retrieve') {
+                // Delivered — bin dropped, operator confirms
+                html += actionBtn('CONFIRM', 'request', true,
+                    '/api/process-nodes/' + entry.node.id + '/manifest/confirm');
+            } else if (inFlight) {
+                // Robot working — nothing to do
+                html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
+            } else {
+                // Idle — primary action depends on role
+                if (claim.role === 'produce' && remaining > 0) {
+                    html += actionBtn('FINALIZE', 'finalize', true,
+                        '/api/process-nodes/' + entry.node.id + '/finalize');
+                } else {
+                    html += actionBtn('REQUEST MATERIAL', 'request', true,
+                        '/api/process-nodes/' + entry.node.id + '/request');
+                }
+                // Secondary actions (always available when idle)
+                html += actionBtn('RELEASE EMPTY', 'release-empty', true,
+                    '/api/process-nodes/' + entry.node.id + '/release-empty');
+                html += actionBtn('RELEASE PARTIAL', 'release-partial', true,
+                    'keypad:' + entry.node.id + ':' + remaining);
             }
-        }
-
-        // Manifest confirmation
-        const orders = entry.orders || [];
-        const hasUnconfirmedDelivery = orders.some(o => o.status === 'delivered' && o.order_type === 'retrieve');
-        if (hasUnconfirmedDelivery) {
-            html += actionBtn('CONFIRM MANIFEST', 'confirm-manifest', true,
-                '/api/process-nodes/' + entry.node.id + '/manifest/confirm');
         }
     }
 
