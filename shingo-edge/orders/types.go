@@ -37,29 +37,12 @@ const (
 	ReplyQueued    = "queued"
 )
 
-var validTransitions = map[string][]string{
-	StatusPending:      {StatusSubmitted, StatusCancelled, StatusFailed},
-	StatusSubmitted:    {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed},
-	StatusQueued:       {StatusAcknowledged, StatusInTransit, StatusCancelled, StatusFailed},
-	StatusAcknowledged: {StatusInTransit, StatusCancelled, StatusFailed},
-	StatusInTransit:    {StatusDelivered, StatusStaged, StatusCancelled, StatusFailed},
-	StatusStaged:       {StatusInTransit, StatusCancelled, StatusFailed},
-	StatusDelivered:    {StatusConfirmed, StatusCancelled, StatusFailed},
-}
-
+// IsValidTransition delegates to the canonical state machine in protocol.
 func IsValidTransition(from, to string) bool {
-	allowed, ok := validTransitions[from]
-	if !ok {
-		return false
-	}
-	for _, s := range allowed {
-		if s == to {
-			return true
-		}
-	}
-	return false
+	return protocol.IsValidTransition(from, to)
 }
 
+// IsTerminal delegates to the canonical definition in protocol.
 func IsTerminal(status string) bool {
-	return status == StatusConfirmed || status == StatusCancelled || status == StatusFailed
+	return protocol.IsTerminal(status)
 }

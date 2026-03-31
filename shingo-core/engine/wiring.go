@@ -210,9 +210,6 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		case dispatch.StatusDelivered:
 			e.handleOrderDelivered(order)
 		case dispatch.StatusFailed:
-			if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusFailed, "fleet order failed"); err != nil {
-				e.logFn("engine: update order %d status to failed: %v", order.ID, err)
-			}
 			e.db.UnclaimOrderBins(order.ID)
 			e.db.DeleteOrderBins(order.ID)
 			e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
@@ -223,10 +220,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 				Detail:    "fleet order failed",
 			}})
 		case dispatch.StatusCancelled:
-			previousStatus := order.Status // capture before status update
-			if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusCancelled, "fleet order stopped"); err != nil {
-				e.logFn("engine: update order %d status to cancelled: %v", order.ID, err)
-			}
+			previousStatus := order.Status // captured at top of function before status update
 			e.db.UnclaimOrderBins(order.ID)
 			e.db.DeleteOrderBins(order.ID)
 			e.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
@@ -241,10 +235,6 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 }
 
 func (e *Engine) handleOrderDelivered(order *store.Order) {
-	if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusDelivered, "payload delivered"); err != nil {
-		e.logFn("engine: update order %d status to delivered: %v", order.ID, err)
-	}
-
 	// Resolve staged expiry for the delivered message
 	var stagedExpireAt *time.Time
 	if order.DeliveryNode != "" {

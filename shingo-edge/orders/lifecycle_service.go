@@ -72,18 +72,11 @@ func (s *LifecycleService) applyTransition(order *store.Order, newStatus, detail
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *store.Order, statusDetail string, stagedExpireAt *time.Time, autoConfirm func(orderID int64, finalCount int64) error) error {
+func (s *LifecycleService) HandleDelivered(order *store.Order, statusDetail string, stagedExpireAt *time.Time) error {
 	if stagedExpireAt != nil {
 		s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt)
 	}
-	if err := s.Transition(order.ID, StatusDelivered, statusDetail); err != nil {
-		return err
-	}
-	if order.AutoConfirm {
-		s.debug.log("auto-confirm: id=%d uuid=%s qty=%d", order.ID, order.UUID, order.Quantity)
-		return autoConfirm(order.ID, order.Quantity)
-	}
-	return nil
+	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }
 
 func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot) error {

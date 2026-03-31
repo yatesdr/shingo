@@ -1,5 +1,7 @@
 package protocol
 
+import "slices"
+
 // Message type constants for the unified protocol.
 const (
 	// Generic data channel
@@ -85,3 +87,35 @@ const (
 	StatusFailed       = "failed"
 	StatusCancelled    = "cancelled"
 )
+
+// IsTerminal returns true if the status is a terminal state (no further transitions).
+func IsTerminal(status string) bool {
+	return status == StatusConfirmed || status == StatusCancelled || status == StatusFailed
+}
+
+// validTransitions defines the canonical state machine for order status transitions.
+// Edge uses a subset (no sourcing/dispatched); Core uses the full set.
+var validTransitions = map[string][]string{
+	StatusPending:      {StatusSourcing, StatusSubmitted, StatusCancelled, StatusFailed},
+	StatusSourcing:     {StatusQueued, StatusSubmitted, StatusCancelled, StatusFailed},
+	StatusSubmitted:    {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed},
+	StatusQueued:       {StatusAcknowledged, StatusInTransit, StatusCancelled, StatusFailed},
+	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusCancelled, StatusFailed},
+	StatusDispatched:   {StatusInTransit, StatusDelivered, StatusCancelled, StatusFailed},
+	StatusInTransit:    {StatusDelivered, StatusStaged, StatusCancelled, StatusFailed},
+	StatusStaged:       {StatusInTransit, StatusDelivered, StatusCancelled, StatusFailed},
+	StatusDelivered:    {StatusConfirmed, StatusCancelled, StatusFailed},
+}
+
+// IsValidTransition returns true if transitioning from -> to is a valid state change.
+// Terminal states cannot transition.
+func IsValidTransition(from, to string) bool {
+	if IsTerminal(from) {
+		return false
+	}
+	allowed, ok := validTransitions[from]
+	if !ok {
+		return false
+	}
+	return slices.Contains(allowed, to)
+}

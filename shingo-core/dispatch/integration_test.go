@@ -54,7 +54,9 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 		t.Fatal("vendor order ID should be set")
 	}
 
-	// Phase 2: Simulate delivery receipt
+	// Phase 2: Simulate fleet delivery, then confirm receipt
+	db.UpdateOrderStatus(order.ID, StatusDelivered, "fleet delivered")
+
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID:   "retrieve-uuid-1",
 		ReceiptType: "confirmed",
@@ -117,7 +119,9 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 		t.Errorf("status = %q, want %q", order.Status, StatusDispatched)
 	}
 
-	// Phase 2: Simulate delivery receipt
+	// Phase 2: Simulate fleet delivery, then confirm receipt
+	db.UpdateOrderStatus(order.ID, StatusDelivered, "fleet delivered")
+
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
 		OrderUUID:   "move-uuid-1",
 		ReceiptType: "confirmed",
