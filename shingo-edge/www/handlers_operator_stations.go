@@ -272,12 +272,12 @@ func (h *Handlers) apiFinalizeProduceNode(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.engine.FinalizeProduceNode(id)
+	result, err := h.engine.FinalizeProduceNode(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSONWithTrigger(w, r, order, "refreshMaterial")
+	writeJSONWithTrigger(w, r, result, "refreshMaterial")
 }
 
 func (h *Handlers) apiLoadBin(w http.ResponseWriter, r *http.Request) {

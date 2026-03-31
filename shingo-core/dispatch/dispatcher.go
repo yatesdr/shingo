@@ -8,6 +8,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/fleet"
+	"shingocore/service"
 	"shingocore/store"
 )
 
@@ -22,10 +23,12 @@ type Dispatcher struct {
 	lifecycle     *LifecycleService
 	replies       *ReplySender
 	planner       *PlanningService
+	binManifest   *service.BinManifestService
 	DebugLog      func(string, ...any)
 }
 
 func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, stationID, dispatchTopic string, resolver NodeResolver) *Dispatcher {
+	binManifest := service.NewBinManifestService(db)
 	d := &Dispatcher{
 		db:            db,
 		backend:       backend,
@@ -34,10 +37,11 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 		laneLock:      NewLaneLock(),
 		stationID:     stationID,
 		dispatchTopic: dispatchTopic,
+		binManifest:   binManifest,
 	}
-	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, d.dbg)
+	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)
-	d.planner = newPlanningService(db, resolver, d.laneLock, d.dbg, d.CreateCompoundOrder, d.AdvanceCompoundOrder)
+	d.planner = newPlanningService(db, resolver, d.laneLock, binManifest, d.dbg, d.CreateCompoundOrder, d.AdvanceCompoundOrder)
 	return d
 }
 

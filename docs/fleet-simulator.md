@@ -144,6 +144,34 @@ The **Scenarios to test next** section is a prioritized backlog of untested situ
 | — | Dispatch stress — 20 concurrent orders, 10 bins | PASS | Verified |
 | — | Redirect mid-transit — claim intact | PASS | Verified |
 | — | Fulfillment scanner — queue to dispatch round-trip | PASS | Verified |
+| TC-62a | ClearForReuse nulls manifest and makes bin visible to FindEmpty | PASS | Verified |
+| TC-62b | SyncUOP preserves manifest and payload while updating count | PASS | Verified |
+| TC-62c | ClearAndClaim atomically clears manifest + claims in one UPDATE | PASS | Verified |
+| TC-62d | ClearAndClaim rejects already-claimed bin | PASS | Verified |
+| TC-62e | ClearAndClaim rejects locked bin | PASS | Verified |
+| TC-62f | SyncUOPAndClaim updates count + claims atomically | PASS | Verified |
+| TC-62g | SetForProduction sets manifest, payload, UOP | PASS | Verified |
+| TC-62h | Confirm marks manifest as confirmed | PASS | Verified |
+| TC-63a | ClaimForDispatch nil → plain claim (no manifest change) | PASS | Verified |
+| TC-63b | ClaimForDispatch zero → ClearAndClaim (full depletion) | PASS | Verified |
+| TC-63c | ClaimForDispatch positive → SyncUOPAndClaim (partial) | PASS | Verified |
+| TC-64a | Full depletion (remainingUOP=0) clears manifest on dispatch | PASS | Verified |
+| TC-64b | Partial consumption (remainingUOP=42) syncs UOP, preserves manifest | PASS | Verified |
+| TC-64c | Concurrent retrieve_empty cannot steal bin during clear+claim | PASS | Verified |
+| TC-65 | extractRemainingUOP: nil envelope, empty payload, missing field, zero, positive, malformed | PASS | Verified |
+| TC-66a | Produce simple — FinalizeProduceNode creates ingest order, resets UOP to 0 | PASS | Verified (Edge) |
+| TC-66b | Produce sequential — ingest + complex removal order created | PASS | Verified (Edge) |
+| TC-66c | Produce single_robot — 10-step complex swap order created | PASS | Verified (Edge) |
+| TC-66d | Produce two_robot — two coordinated complex orders, both tracked in runtime | PASS | Verified (Edge) |
+| TC-66e | Produce finalize rejects zero UOP (nothing to finalize) | PASS | Verified (Edge) |
+| TC-66f | Produce finalize rejects consume-role node | PASS | Verified (Edge) |
+| TC-67a | Ingest completion resets produce UOP to 0 and clears order tracking | PASS | Verified (Edge) |
+| TC-67b | Retrieve completion resets produce UOP to 0 (empty bin received) | PASS | Verified (Edge) |
+| TC-67c | Retrieve completion resets consume UOP to capacity (full bin received) | PASS | Verified (Edge) |
+| TC-67d | Counter delta increments produce UOP (counting UP) | PASS | Verified (Edge) |
+| TC-67e | Counter delta decrements consume UOP (counting DOWN) | PASS | Verified (Edge) |
+| TC-67f | Counter delta floors consume UOP at zero (never negative) | PASS | Verified (Edge) |
+| TC-67g | Bin loader move completion resets runtime state | PASS | Verified (Edge) |
 
 ---
 
@@ -1099,6 +1127,82 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 ---
 
+## Verified scenarios — bin lifecycle and produce nodes
+
+These tests cover the BinManifestService, the remainingUOP protocol extension, and the produce node swap mode choreography. They verify the fixes for ghost bins (bins never cleared after consumption), partial UOP sync, and the new produce node automation.
+
+Core tests use PostgreSQL 16 via testcontainers (same as the fleet simulator tests). Edge tests use SQLite in a temp directory — no Docker required.
+
+---
+
+### BinManifestService — centralized manifest mutations (TC-62)
+
+**Scenario:** All bin manifest mutations (clear, sync UOP, set for production, confirm) now flow through a single `BinManifestService` instead of scattered `db.SetBinManifest` / `db.ClearBinManifest` calls. The service also provides atomic `ClearAndClaim` and `SyncUOPAndClaim` operations that close the TOCTOU race window between clearing a bin's manifest and claiming it for dispatch.
+
+**Expected behavior:** Each operation mutates exactly the fields it should and nothing else. Atomic operations succeed or fail as a unit — no partial state. Claims are rejected if the bin is already claimed or locked.
+
+**Result:** PASS. 12 unit tests in `service/bin_manifest_test.go`.
+
+**Test:** `shingocore/service/bin_manifest_test.go` — `TestBinManifestService_*`
+
+---
+
+### ClaimForDispatch routing — remainingUOP protocol (TC-63, TC-64, TC-65)
+
+**Scenario:** Edge sends `remaining_uop` on move orders to tell Core the bin's consumption state. Three cases: nil (legacy, no sync), zero (fully depleted — clear manifest), positive (partial consumption — sync UOP count). The dispatcher extracts this from the envelope and routes through `ClaimForDispatch`.
+
+**Expected behavior:** nil → plain `ClaimBin` (no manifest change). Zero → `ClearAndClaim` (atomic clear + claim, bin becomes visible to `FindEmptyCompatibleBin`). Positive → `SyncUOPAndClaim` (UOP updated, manifest preserved, bin claimed).
+
+**Result:** PASS. 4 integration tests in `dispatch/bin_lifecycle_test.go`, 7 unit tests for `extractRemainingUOP` in `dispatch/planning_test.go`.
+
+**Bug found and fixed:** `DecrementBinUOP` was dead code — never called by any path. Removed. The new `SyncUOPAndClaim` replaces it with an atomic operation.
+
+**Bug found and fixed:** `tryAutoRequestEmpty` was incorrectly called on produce node ingest completion. This function is bin_loader-only — it calls `RequestEmptyBin` which gates on `role == "bin_loader"`. Removed the call; produce nodes don't auto-request after ingest because simple mode still has the filled bin at the node, and swap modes already have complex orders in flight.
+
+**Test:** `shingocore/dispatch/bin_lifecycle_test.go` — `TestFullDepletion_ClearsManifest`, `TestPartialConsumption_SyncsUOP`, `TestConcurrentRetrieveEmpty_GhostBin`; `shingocore/dispatch/planning_test.go` — `TestExtractRemainingUOP_*`
+
+---
+
+### Produce swap mode finalization (TC-66)
+
+**Scenario:** Produce nodes fill empty bins. When the operator finalizes a bin (locks the UOP count), the system must manifest the bin at Core via an ingest order, then dispatch the appropriate swap choreography based on the claim's swap mode.
+
+**Expected behavior:** All four swap modes create an ingest order first, then:
+
+- **Simple** — bare ingest, no swap. Runtime UOP resets to 0.
+- **Sequential** — ingest + complex removal order. Backfill auto-created by wiring when removal goes in_transit (same as consume).
+- **Single_robot** — ingest + 10-step all-in-one complex swap order.
+- **Two_robot** — ingest + two coordinated complex orders (OrderA for fetch-and-stage, OrderB for remove-filled). Both tracked in runtime.
+
+Finalization is rejected if UOP is zero (nothing to finalize) or the node's role is not `produce`.
+
+**Result:** PASS. 7 tests in `engine/produce_swap_test.go`.
+
+**Test:** `shingoedge/engine/produce_swap_test.go` — `TestProduceSimple_FinalizeIngest`, `TestProduceSequential_RemovalThenBackfill`, `TestProduceSingleRobot_TenStepSwap`, `TestProduceTwoRobot_BothOrdersCreated`, `TestProduceFinalize_RejectsZeroUOP`, `TestProduceFinalize_RejectsConsumeNode`
+
+---
+
+### Edge wiring — event-driven state transitions (TC-67)
+
+**Scenario:** The Edge engine's event handlers manage UOP tracking and order lifecycle state for process nodes. Different order types and node roles trigger different reset behavior.
+
+**Expected behavior:**
+
+- Ingest completion (produce): UOP → 0, order IDs cleared. No auto-request (bin still at node in simple mode; swap orders already in flight for other modes).
+- Retrieve/complex completion (produce): UOP → 0 (empty bin received, starts counting from zero).
+- Retrieve/complex completion (consume): UOP → capacity (full bin received).
+- Counter delta (produce): UOP increments (counting UP toward capacity).
+- Counter delta (consume): UOP decrements (counting DOWN from capacity), floored at zero.
+- Bin loader move completion: UOP → 0, order tracking cleared, auto-request for next empty.
+
+**Bug found and fixed:** Produce UOP reset was using `claim.UOPCapacity` for all roles. Produce nodes receiving an empty bin should reset to 0, not capacity. Fixed with `if claim.Role == "produce" { resetUOP = 0 }`.
+
+**Result:** PASS. 7 tests in `engine/wiring_test.go`.
+
+**Test:** `shingoedge/engine/wiring_test.go` — `TestWiring_*`
+
+---
+
 ## Architecture reference
 
 This section describes how the simulation harness is built, for anyone who needs to add new tests or modify the simulator.
@@ -1202,6 +1306,16 @@ shingo-core/
 | `dispatch/group_resolver_test.go` | Group resolver tests. 15 tests, `createTestBinAtNode` wrapper to `testdb`. |
 | `dispatch/integration_test.go` | Integration tests. 13 tests, unchanged. |
 | `dispatch/fleet_simulator_test.go` | Dispatcher-level scenario tests (TC-1, TC-3, TC-4, TC-5). Tests the outbound path only (what gets sent to the fleet). |
+| `dispatch/bin_lifecycle_test.go` | Bin lifecycle integration tests (TC-64a–c). Full depletion, partial consumption, concurrent retrieve_empty race. |
+| `dispatch/planning_test.go` | `extractRemainingUOP` unit tests (TC-65). Nil, empty, missing, zero, positive, malformed JSON. |
+| `service/bin_manifest_test.go` | BinManifestService unit tests (TC-62a–h). All manifest mutations, atomic clear+claim, lock rejection. |
+
+Edge test files (in `shingo-edge/`, SQLite-based — no Docker required):
+
+| File | What it does |
+|------|-------------|
+| `engine/produce_swap_test.go` | Produce swap mode tests (TC-66a–f). All four swap modes, rejection guards. Includes `seedProduceNode` and `testEngine` helpers. |
+| `engine/wiring_test.go` | Edge wiring event handler tests (TC-67a–g). Ingest/retrieve completion, counter delta, UOP reset, bin_loader move completion. |
 
 ---
 

@@ -91,11 +91,11 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			newRemaining := runtime.RemainingUOP + int(delta.Delta)
 			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
 
-			// Auto-relief at capacity (skip if node can't accept orders)
+			// Auto-relief at capacity: finalize the produce node (manifest + swap)
 			if claim.AutoReorder && claim.UOPCapacity > 0 &&
 				newRemaining >= claim.UOPCapacity {
 				if ok, _ := e.CanAcceptOrders(node.ID); ok {
-					_, err := e.ReleaseNodeEmpty(node.ID)
+					_, err := e.FinalizeProduceNode(node.ID)
 					if err != nil {
 						log.Printf("auto-relief for produce node %s: %v", node.Name, err)
 					}
@@ -175,11 +175,31 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		}
 	}
 
+	// Produce node ingest completion — Core now knows the bin's manifest.
+	// Reset UOP to 0 and clear order tracking. No auto-request here:
+	// simple mode still has the filled bin at the node (can't deliver an
+	// empty until it's removed), and swap modes already have complex orders
+	// in flight that handle the exchange.
+	if order.OrderType == orders.TypeIngest {
+		if claim := e.findActiveClaim(node); claim != nil && claim.Role == "produce" {
+			claimID := claim.ID
+			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, 0)
+			_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil)
+			return
+		}
+	}
+
 	// Normal replenishment completion — reset UOP from active claim
 	if order.OrderType == orders.TypeRetrieve || order.OrderType == orders.TypeComplex {
 		if claim := e.findActiveClaim(node); claim != nil {
 			claimID := claim.ID
-			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, claim.UOPCapacity)
+			// Produce nodes receive an empty bin → UOP starts at 0.
+			// Consume nodes receive a full bin → UOP starts at capacity.
+			resetUOP := claim.UOPCapacity
+			if claim.Role == "produce" {
+				resetUOP = 0
+			}
+			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, resetUOP)
 
 			// Keep-staged: immediately pre-populate inbound staging for next swap
 			e.maybePreStage(node, claim)

@@ -1,11 +1,13 @@
 package dispatch
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 
 	"shingo/protocol"
+	"shingocore/service"
 	"shingocore/store"
 )
 
@@ -35,10 +37,11 @@ func (e *planningError) Error() string {
 type PlanningHandler func(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError)
 
 type PlanningService struct {
-	db       *store.DB
-	resolver NodeResolver
-	laneLock *LaneLock
-	debug    func(string, ...any)
+	db          *store.DB
+	resolver    NodeResolver
+	laneLock    *LaneLock
+	binManifest *service.BinManifestService
+	debug       func(string, ...any)
 
 	createCompound  func(parentOrder *store.Order, plan *ReshufflePlan) error
 	advanceCompound func(parentOrderID int64) error
@@ -51,11 +54,12 @@ type PlanningService struct {
 	postFindHook func()
 }
 
-func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, debug func(string, ...any), createCompound func(*store.Order, *ReshufflePlan) error, advanceCompound func(int64) error) *PlanningService {
+func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, binManifest *service.BinManifestService, debug func(string, ...any), createCompound func(*store.Order, *ReshufflePlan) error, advanceCompound func(int64) error) *PlanningService {
 	s := &PlanningService{
 		db:              db,
 		resolver:        resolver,
 		laneLock:        laneLock,
+		binManifest:     binManifest,
 		debug:           debug,
 		createCompound:  createCompound,
 		advanceCompound: advanceCompound,
@@ -65,6 +69,26 @@ func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock,
 	s.Register(OrderTypeMove, s.planMove)
 	s.Register(OrderTypeStore, s.planStore)
 	return s
+}
+
+// extractRemainingUOP parses the envelope payload to extract the remaining_uop
+// field from an OrderRequest. Returns nil if the field is absent or unparseable.
+func extractRemainingUOP(env *protocol.Envelope) *int {
+	if env == nil || len(env.Payload) == 0 {
+		return nil
+	}
+	// Decode the Data wrapper first, then the body
+	var data protocol.Data
+	if err := json.Unmarshal(env.Payload, &data); err != nil {
+		return nil
+	}
+	var partial struct {
+		RemainingUOP *int `json:"remaining_uop,omitempty"`
+	}
+	if err := json.Unmarshal(data.Body, &partial); err != nil {
+		return nil
+	}
+	return partial.RemainingUOP
 }
 
 func (s *PlanningService) dbg(format string, args ...any) {
@@ -135,7 +159,8 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 	if s.postFindHook != nil {
 		s.postFindHook()
 	}
-	if err := s.db.ClaimBin(source.ID, order.ID); err != nil {
+	remainingUOP := extractRemainingUOP(env)
+	if err := s.binManifest.ClaimForDispatch(source.ID, order.ID, remainingUOP); err != nil {
 		return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
 	}
 	order.BinID = &source.ID
@@ -186,7 +211,9 @@ func (s *PlanningService) planRetrieveEmpty(order *store.Order, payloadCode stri
 	if s.postFindHook != nil {
 		s.postFindHook()
 	}
-	if err := s.db.ClaimBin(bin.ID, order.ID); err != nil {
+	// retrieve_empty always does a plain claim — no manifest change needed
+	// (the bin is already empty).
+	if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
 		return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
 	}
 	order.BinID = &bin.ID
@@ -250,6 +277,7 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 	}
 	bins, _ := s.db.ListBinsByNode(sourceNode.ID)
 	binClaimed := false
+	remainingUOP := extractRemainingUOP(env)
 	for _, bin := range bins {
 		if bin.ClaimedBy != nil {
 			continue
@@ -257,12 +285,12 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 		if payloadCode != "" && bin.PayloadCode != payloadCode {
 			continue
 		}
-		if err := s.db.ClaimBin(bin.ID, order.ID); err == nil {
+		if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err == nil {
 			order.BinID = &bin.ID
 			if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
 				log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
 			}
-			s.dbg("move: claimed bin=%d at %s", bin.ID, order.SourceNode)
+			s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", bin.ID, order.SourceNode, remainingUOP)
 			binClaimed = true
 			break
 		}
@@ -314,7 +342,8 @@ func (s *PlanningService) planStore(order *store.Order, env *protocol.Envelope, 
 		bins, _ := s.db.ListBinsByNode(sourceNode.ID)
 		for _, bin := range bins {
 			if bin.ClaimedBy == nil {
-				if err := s.db.ClaimBin(bin.ID, order.ID); err == nil {
+				// Store orders: plain claim, no manifest change.
+				if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, nil); err == nil {
 					order.BinID = &bin.ID
 					if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
 						log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)

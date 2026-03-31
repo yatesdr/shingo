@@ -34,7 +34,7 @@ type EngineAccess interface {
 	ReleaseNodeEmpty(nodeID int64) (*store.Order, error)
 	ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error)
 	ConfirmNodeManifest(nodeID int64) error
-	FinalizeProduceNode(nodeID int64) (*store.Order, error)
+	FinalizeProduceNode(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64) error
 	RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order, error)

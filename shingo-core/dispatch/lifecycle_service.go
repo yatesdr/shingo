@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/fleet"
+	"shingocore/service"
 	"shingocore/store"
 )
 
@@ -33,15 +34,16 @@ func lifecycleErr(code, detail string, err error) *lifecycleError {
 }
 
 type LifecycleService struct {
-	db       *store.DB
-	backend  fleet.Backend
-	emitter  Emitter
-	resolver NodeResolver
-	debug    func(string, ...any)
+	db          *store.DB
+	backend     fleet.Backend
+	emitter     Emitter
+	resolver    NodeResolver
+	binManifest *service.BinManifestService
+	debug       func(string, ...any)
 }
 
-func newLifecycleService(db *store.DB, backend fleet.Backend, emitter Emitter, resolver NodeResolver, debug func(string, ...any)) *LifecycleService {
-	return &LifecycleService{db: db, backend: backend, emitter: emitter, resolver: resolver, debug: debug}
+func newLifecycleService(db *store.DB, backend fleet.Backend, emitter Emitter, resolver NodeResolver, binManifest *service.BinManifestService, debug func(string, ...any)) *LifecycleService {
+	return &LifecycleService{db: db, backend: backend, emitter: emitter, resolver: resolver, binManifest: binManifest, debug: debug}
 }
 
 func (s *LifecycleService) dbg(format string, args ...any) {
@@ -131,15 +133,21 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 			manifest.Items[i] = store.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
 		}
 		manifestJSON, _ := json.Marshal(manifest)
-		if err := s.db.SetBinManifest(bin.ID, string(manifestJSON), p.PayloadCode, tmpl.UOPCapacity); err != nil {
+		if err := s.binManifest.SetForProduction(bin.ID, string(manifestJSON), p.PayloadCode, tmpl.UOPCapacity); err != nil {
 			return nil, "", lifecycleErr("internal_error", err.Error(), err)
 		}
 	} else {
+		// NOTE: SetBinManifestFromTemplate is a store-level convenience that
+		// resolves the payload template and builds manifest JSON internally.
+		// It bypasses BinManifestService intentionally — template resolution
+		// is a data concern, not a lifecycle concern. If audit logging on this
+		// path becomes a requirement, add a SetFromTemplate wrapper to the
+		// service layer.
 		if err := s.db.SetBinManifestFromTemplate(bin.ID, p.PayloadCode, 0); err != nil {
 			return nil, "", lifecycleErr("internal_error", err.Error(), err)
 		}
 	}
-	if err := s.db.ConfirmBinManifest(bin.ID, p.ProducedAt); err != nil {
+	if err := s.binManifest.Confirm(bin.ID, p.ProducedAt); err != nil {
 		log.Printf("dispatch: confirm bin %d manifest: %v", bin.ID, err)
 	}
 	loadedAt := p.ProducedAt

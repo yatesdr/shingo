@@ -186,6 +186,38 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 	return m.db.GetOrder(orderID)
 }
 
+// CreateMoveOrderWithUOP creates a move order and threads remainingUOP into the
+// protocol envelope so Core can atomically clear/sync the bin manifest on claim.
+// Existing callers of CreateMoveOrder are unchanged (it passes nil).
+func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int) (*store.Order, error) {
+	orderUUID := uuid.New().String()
+
+	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
+		processNodeID, false,
+		quantity, deliveryNode, "", sourceNode, "", false)
+	if err != nil {
+		return nil, fmt.Errorf("create move order: %w", err)
+	}
+
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
+
+	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
+		OrderUUID:    orderUUID,
+		OrderType:    TypeMove,
+		PayloadDesc:  payloadDesc,
+		PayloadCode:  payloadCode,
+		Quantity:     quantity,
+		DeliveryNode: deliveryNode,
+		SourceNode:   sourceNode,
+		RemainingUOP: remainingUOP,
+	})
+	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
+
+	m.DebugLog.log("create: type=%s id=%d uuid=%s source=%s delivery=%s remainingUOP=%v", TypeMove, orderID, orderUUID, sourceNode, deliveryNode, remainingUOP)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, processNodeID)
+	return m.db.GetOrder(orderID)
+}
+
 // CreateComplexOrder creates a new multi-step complex order and enqueues it to the outbox.
 // deliveryNode is stored on the order for downstream logic (e.g., handleOrderCompleted
 // uses it to determine which payload to reset on completion).

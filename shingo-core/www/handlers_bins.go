@@ -340,7 +340,7 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 
 	case "clear":
 		oldCode := b.PayloadCode
-		if err := db.ClearBinManifest(b.ID); err != nil {
+		if err := h.engine.BinManifest().ClearForReuse(b.ID); err != nil {
 			return err
 		}
 		db.AppendAudit("bin", b.ID, "cleared", oldCode, "", "ui")
@@ -350,7 +350,7 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 		if b.Manifest == nil {
 			return fmt.Errorf("bin has no manifest to confirm")
 		}
-		if err := db.ConfirmBinManifest(b.ID, ""); err != nil {
+		if err := h.engine.BinManifest().Confirm(b.ID, ""); err != nil {
 			return err
 		}
 		db.AppendAudit("bin", b.ID, "confirmed", "unconfirmed", "confirmed", "ui")

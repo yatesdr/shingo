@@ -56,6 +56,8 @@ type OrderRequest struct {
 	LoadType      string `json:"load_type,omitempty"`
 	Priority      int    `json:"priority,omitempty"`
 	RetrieveEmpty bool   `json:"retrieve_empty,omitempty"`
+	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
+	RemainingUOP *int `json:"remaining_uop,omitempty"`
 }
 
 // OrderCancel cancels an existing order.
@@ -149,6 +151,8 @@ type ComplexOrderRequest struct {
 	Quantity    int64              `json:"quantity"`
 	Priority    int                `json:"priority,omitempty"`
 	Steps       []ComplexOrderStep `json:"steps"`
+	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
+	RemainingUOP *int `json:"remaining_uop,omitempty"`
 }
 
 // OrderRelease signals that a staged (dwelling) order should resume.

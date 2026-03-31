@@ -196,11 +196,11 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		uop = totalQty
 	}
 
-	if err := db.SetBinManifest(bin.ID, string(manifestJSON), req.PayloadCode, int(uop)); err != nil {
+	if err := h.engine.BinManifest().SetForProduction(bin.ID, string(manifestJSON), req.PayloadCode, int(uop)); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := db.ConfirmBinManifest(bin.ID, ""); err != nil {
+	if err := h.engine.BinManifest().Confirm(bin.ID, ""); err != nil {
 		log.Printf("telemetry: bin-load confirm manifest on bin %d: %v", bin.ID, err)
 	}
 
@@ -243,7 +243,7 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bin := bins[0]
-	if err := db.ClearBinManifest(bin.ID); err != nil {
+	if err := h.engine.BinManifest().ClearForReuse(bin.ID); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

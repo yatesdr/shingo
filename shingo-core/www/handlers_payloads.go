@@ -162,7 +162,7 @@ func (h *Handlers) apiConfirmManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DB().ConfirmBinManifest(req.ID, ""); err != nil {
+	if err := h.engine.BinManifest().Confirm(req.ID, ""); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -229,7 +229,7 @@ func (h *Handlers) apiSetBinManifest(w http.ResponseWriter, r *http.Request) {
 
 	manifest := store.BinManifest{Items: req.Items}
 	manifestJSON, _ := json.Marshal(manifest)
-	if err := h.engine.DB().SetBinManifest(req.BinID, string(manifestJSON), req.PayloadCode, req.UOPRemaining); err != nil {
+	if err := h.engine.BinManifest().SetForProduction(req.BinID, string(manifestJSON), req.PayloadCode, req.UOPRemaining); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -245,7 +245,7 @@ func (h *Handlers) apiClearBinManifest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DB().ClearBinManifest(req.BinID); err != nil {
+	if err := h.engine.BinManifest().ClearForReuse(req.BinID); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

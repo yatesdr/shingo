@@ -117,13 +117,6 @@ func (db *DB) FindStorageDestination(payloadCode string) (*Node, error) {
 	return scanNode(row)
 }
 
-// DecrementBinUOP reduces the uop_remaining on a bin.
-func (db *DB) DecrementBinUOP(binID int64, delta int) error {
-	_, err := db.Exec(`UPDATE bins SET uop_remaining = MAX(0, uop_remaining - $1), updated_at=NOW() WHERE id=$2`,
-		delta, binID)
-	return err
-}
-
 // SetBinManifestFromTemplate sets a bin's manifest from a payload template's
 // manifest items and marks it as confirmed.
 func (db *DB) SetBinManifestFromTemplate(binID int64, payloadCode string, uopCapacity int) error {

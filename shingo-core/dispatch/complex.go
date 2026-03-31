@@ -67,7 +67,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	// Claim bins at pickup nodes so they are protected from poaching
 	// while the robot is en route. This closes the gap where complex orders
 	// bypassed the ClaimBin call that simple orders make during planning.
-	if err := d.claimComplexBins(order, resolvedSteps, payloadCode); err != nil {
+	if err := d.claimComplexBins(order, resolvedSteps, payloadCode, p.RemainingUOP); err != nil {
 		d.failOrder(order, env, "no_bin", err.Error())
 		return
 	}
@@ -341,7 +341,12 @@ type claimedBin struct {
 //
 // Compound order children (ParentOrderID != nil) never populate the junction
 // table — each child is a single-bin order handled by the legacy path.
-func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, payloadCode string) error {
+func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, payloadCode string, remainingUOP *int) error {
+	// Determine the process node name from the order's source metadata.
+	// Only the outgoing bin at the process node gets remainingUOP applied;
+	// all other pickups (e.g. storage pickups) use a plain claim.
+	processNode := order.SourceNode
+
 	var claimed []claimedBin
 	for i, s := range steps {
 		if s.Action != "pickup" {
@@ -375,7 +380,13 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 			case "maintenance", "flagged", "retired", "quality_hold":
 				continue
 			}
-			if err := d.db.ClaimBin(bin.ID, order.ID); err != nil {
+			// Only apply remainingUOP at the process node (outgoing bin).
+			// Storage pickups and other steps get a plain claim (nil).
+			var stepUOP *int
+			if s.Node == processNode {
+				stepUOP = remainingUOP
+			}
+			if err := d.binManifest.ClaimForDispatch(bin.ID, order.ID, stepUOP); err != nil {
 				continue
 			}
 			d.dbg("complex: claimed bin %d (%s) at %s for order %d",

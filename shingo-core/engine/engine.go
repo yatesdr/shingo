@@ -13,6 +13,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/messaging"
+	"shingocore/service"
 	"shingocore/store"
 )
 
@@ -43,6 +44,7 @@ type Engine struct {
 	reconciliation *ReconciliationService
 	recovery       *RecoveryService
 	fulfillment    *FulfillmentScanner
+	binManifest    *service.BinManifestService
 	stopChan       chan struct{}
 	stopOnce       sync.Once
 	sceneSyncing   atomic.Bool
@@ -72,6 +74,7 @@ func New(c Config) *Engine {
 	}
 	e.reconciliation = newReconciliationService(e.db, e.logFn)
 	e.recovery = newRecoveryService(e)
+	e.binManifest = service.NewBinManifestService(e.db)
 	return e
 }
 
@@ -184,6 +187,7 @@ func (e *Engine) Fleet() fleet.Backend                   { return e.fleet }
 func (e *Engine) MsgClient() *messaging.Client           { return e.msgClient }
 func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
 func (e *Engine) Recovery() *RecoveryService             { return e.recovery }
+func (e *Engine) BinManifest() *service.BinManifestService { return e.binManifest }
 
 // RunFulfillmentScan runs one pass of the fulfillment scanner and returns the
 // number of orders processed. For testing.
