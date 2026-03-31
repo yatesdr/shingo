@@ -29,12 +29,12 @@ func (db *DB) ListStationsForNode(nodeID int64) ([]string, error) {
 	return stations, rows.Err()
 }
 
-// ListNodesForStation returns nodes directly assigned to a station.
-// Includes top-level nodes and non-synthetic direct children of NGRP node groups.
+// ListNodesForStation returns nodes directly assigned to a station, plus NGRP
+// node group parents whose children are assigned to the station.
 func (db *DB) ListNodesForStation(stationID string) ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT %s %s
-		WHERE n.id IN (
+		WHERE (n.id IN (
 			SELECT ns.node_id FROM node_stations ns WHERE ns.station_id = $1
 		)
 		AND (n.parent_id IS NULL
@@ -42,7 +42,14 @@ func (db *DB) ListNodesForStation(stationID string) ([]*Node, error) {
 		         SELECT 1 FROM nodes p
 		         JOIN node_types pt ON pt.id = p.node_type_id
 		         WHERE p.id = n.parent_id AND pt.code = 'NGRP'
-		     )))
+		     ))))
+		OR (EXISTS (
+		    SELECT 1 FROM node_types nt WHERE nt.id = n.node_type_id AND nt.code = 'NGRP'
+		    AND EXISTS (
+		        SELECT 1 FROM nodes c JOIN node_stations cs ON cs.node_id = c.id
+		        WHERE c.parent_id = n.id AND cs.station_id = $1
+		    )
+		)))
 		ORDER BY n.name`, nodeSelectCols, nodeFromClause), stationID)
 	if err != nil {
 		return nil, err

@@ -89,7 +89,11 @@ func (e *Engine) wireEventHandlers() {
 		e.logFn("engine: order %d cancelled: %s", ev.OrderID, ev.Reason)
 		e.db.AppendAudit("order", ev.OrderID, "cancelled", "", ev.Reason, "system")
 
-		if order, err := e.db.GetOrder(ev.OrderID); err == nil {
+		// Skip auto-return for orders that were already delivered/confirmed.
+		// The bin is at the destination, not at the pickup node.
+		if ev.PreviousStatus == dispatch.StatusDelivered || ev.PreviousStatus == dispatch.StatusConfirmed {
+			e.logFn("engine: order %d was %s before cancel, skipping auto-return (bin at destination)", ev.OrderID, ev.PreviousStatus)
+		} else if order, err := e.db.GetOrder(ev.OrderID); err == nil {
 			e.maybeCreateReturnOrder(order, "cancelled")
 		}
 	}, EventOrderCancelled)
@@ -219,16 +223,18 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 				Detail:    "fleet order failed",
 			}})
 		case dispatch.StatusCancelled:
+			previousStatus := order.Status // capture before status update
 			if err := e.db.UpdateOrderStatus(order.ID, dispatch.StatusCancelled, "fleet order stopped"); err != nil {
 				e.logFn("engine: update order %d status to cancelled: %v", order.ID, err)
 			}
 			e.db.UnclaimOrderBins(order.ID)
 			e.db.DeleteOrderBins(order.ID)
 			e.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
-				OrderID:   order.ID,
-				EdgeUUID:  order.EdgeUUID,
-				StationID: order.StationID,
-				Reason:    "fleet order stopped",
+				OrderID:        order.ID,
+				EdgeUUID:       order.EdgeUUID,
+				StationID:      order.StationID,
+				Reason:         "fleet order stopped",
+				PreviousStatus: previousStatus,
 			}})
 		}
 	}

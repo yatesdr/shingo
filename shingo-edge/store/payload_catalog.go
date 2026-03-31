@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 type PayloadCatalogEntry struct {
 	ID          int64     `json:"id"`
@@ -49,4 +53,21 @@ func (db *DB) ListPayloadCatalog() ([]*PayloadCatalogEntry, error) {
 
 func (db *DB) GetPayloadCatalogByCode(code string) (*PayloadCatalogEntry, error) {
 	return scanPayloadCatalogEntry(db.QueryRow(`SELECT id, name, code, description, uop_capacity, updated_at FROM payload_catalog WHERE code=?`, code))
+}
+
+// DeleteStalePayloadCatalogEntries removes local catalog entries whose IDs are not in activeIDs.
+// If activeIDs is empty, no entries are removed (safety: an empty list would delete all entries).
+func (db *DB) DeleteStalePayloadCatalogEntries(activeIDs []int64) error {
+	if len(activeIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(activeIDs))
+	args := make([]any, len(activeIDs))
+	for i, id := range activeIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf("DELETE FROM payload_catalog WHERE id NOT IN (%s)", strings.Join(placeholders, ","))
+	_, err := db.Exec(query, args...)
+	return err
 }

@@ -70,10 +70,11 @@ type OrderFailedEvent struct {
 }
 
 type OrderCancelledEvent struct {
-	OrderID  int64
-	EdgeUUID string
-	StationID string
-	Reason   string
+	OrderID        int64
+	EdgeUUID       string
+	StationID      string
+	Reason         string
+	PreviousStatus string // status before cancellation — used to skip auto-return for delivered/confirmed orders
 }
 
 type OrderQueuedEvent struct {

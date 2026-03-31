@@ -227,8 +227,10 @@ func (e *Engine) RequestCatalogSync() {
 	}
 }
 
-// HandlePayloadCatalog upserts payload catalog entries received from core.
+// HandlePayloadCatalog upserts payload catalog entries received from core and
+// prunes any local entries that no longer exist in core's response.
 func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
+	ids := make([]int64, 0, len(entries))
 	for _, b := range entries {
 		entry := &store.PayloadCatalogEntry{
 			ID: b.ID, Name: b.Name, Code: b.Code,
@@ -238,6 +240,10 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 		if err := e.db.UpsertPayloadCatalog(entry); err != nil {
 			log.Printf("engine: upsert payload catalog entry %s: %v", b.Name, err)
 		}
+		ids = append(ids, b.ID)
+	}
+	if err := e.db.DeleteStalePayloadCatalogEntries(ids); err != nil {
+		log.Printf("engine: prune stale payload catalog: %v", err)
 	}
 	e.logFn("engine: updated payload catalog (%d entries)", len(entries))
 }

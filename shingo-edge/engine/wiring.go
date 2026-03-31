@@ -146,8 +146,10 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	}
 
 	// Empty line / clear access for tool change.
+	// EmptyNodeForToolChange creates either a move order (simple fallback) or a
+	// complex order (claim-based release with outbound staging). Accept both.
 	if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID &&
-		order.OrderType == orders.TypeMove {
+		(order.OrderType == orders.TypeMove || order.OrderType == orders.TypeComplex) {
 		_ = e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0)
 		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared")
 		return
@@ -159,7 +161,6 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 			claimID := toClaim.ID
 			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
 			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
-			_ = e.tryCompleteProcessChangeover(node.ProcessID)
 			return
 		}
 	}

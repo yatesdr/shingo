@@ -252,8 +252,10 @@ window.onOrderUpdate = debounce(function(e) {
     if (_orderModalID && data && data.order_id === _orderModalID) {
       openOrderModal(_orderModalID);
     }
+    // Refresh order list to reflect status changes
+    location.reload();
   } catch(err) {}
-}, 500);
+}, 2000);
 
 // --- Spot order modal ---
 var _spotNodesLoaded = false;

@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 
+	"shingocore/dispatch"
 	"shingocore/store"
 
 	"github.com/google/uuid"
@@ -79,6 +80,13 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 		return fmt.Errorf("order not found")
 	}
 
+	// Reject terminal statuses — order is already done and cannot be terminated.
+	switch order.Status {
+	case dispatch.StatusDelivered, dispatch.StatusConfirmed,
+		dispatch.StatusCancelled, dispatch.StatusFailed:
+		return fmt.Errorf("cannot terminate order in status %q", order.Status)
+	}
+
 	// Cancel vendor order if active
 	if order.VendorOrderID != "" {
 		if err := e.fleet.CancelOrder(order.VendorOrderID); err != nil {
@@ -91,17 +99,19 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 	e.db.DeleteOrderBins(orderID)
 
 	detail := "cancelled by " + actor
-	if err := e.db.UpdateOrderStatus(orderID, "cancelled", detail); err != nil {
+	previousStatus := order.Status // capture before overwriting
+	if err := e.db.UpdateOrderStatus(orderID, dispatch.StatusCancelled, detail); err != nil {
 		return fmt.Errorf("update status: %w", err)
 	}
 
 	e.Events.Emit(Event{
 		Type: EventOrderCancelled,
 		Payload: OrderCancelledEvent{
-			OrderID:   order.ID,
-			EdgeUUID:  order.EdgeUUID,
-			StationID: order.StationID,
-			Reason:    detail,
+			OrderID:        order.ID,
+			EdgeUUID:       order.EdgeUUID,
+			StationID:      order.StationID,
+			Reason:         detail,
+			PreviousStatus: previousStatus,
 		},
 	})
 

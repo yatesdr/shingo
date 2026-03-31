@@ -192,13 +192,17 @@ func (s *LifecycleService) CancelOrder(order *store.Order, stationID, reason str
 	if err := s.db.UpdateOrderStatus(order.ID, StatusCancelled, reason); err != nil {
 		log.Printf("dispatch: update order %d status to cancelled: %v", order.ID, err)
 	}
-	s.emitter.EmitOrderCancelled(order.ID, order.EdgeUUID, stationID, reason)
+	s.emitter.EmitOrderCancelled(order.ID, order.EdgeUUID, stationID, reason, order.Status)
 }
 
 func (s *LifecycleService) ConfirmReceipt(order *store.Order, stationID, receiptType string, finalCount int64) (bool, error) {
 	if order.CompletedAt != nil {
 		s.dbg("delivery receipt: uuid=%s already completed at %s", order.EdgeUUID, order.CompletedAt.UTC().Format(time.RFC3339))
 		return false, nil
+	}
+	switch order.Status {
+	case StatusCancelled, StatusFailed:
+		return false, fmt.Errorf("cannot confirm receipt for order in status %q", order.Status)
 	}
 	if err := s.db.UpdateOrderStatus(order.ID, StatusConfirmed, fmt.Sprintf("receipt: %s, count: %d", receiptType, finalCount)); err != nil {
 		log.Printf("dispatch: update order %d status to confirmed: %v", order.ID, err)

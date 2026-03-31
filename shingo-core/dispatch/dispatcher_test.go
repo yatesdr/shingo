@@ -52,7 +52,7 @@ func (m *mockEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, _, _ str
 func (m *mockEmitter) EmitOrderFailed(orderID int64, _, _, errorCode, _ string) {
 	m.failed = append(m.failed, emitFailed{orderID, errorCode})
 }
-func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason string) {
+func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason, _ string) {
 	m.cancelled = append(m.cancelled, emitCancelled{orderID, reason})
 }
 func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string) {

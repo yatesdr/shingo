@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"database/sql"
 	"testing"
 
 	"shingoedge/orders"
@@ -320,5 +321,61 @@ func TestWiring_MoveCompletion_BinLoader(t *testing.T) {
 	}
 	if runtime.ActiveOrderID != nil {
 		t.Error("ActiveOrderID should be nil after bin_loader move completion")
+	}
+}
+
+// TestHandlePayloadCatalog_PruneDeletedEntries verifies that when edge receives a
+// payload catalog from core, entries that no longer exist in core's response
+// are pruned from the local catalog. This prevents stale deleted payloads from
+// appearing in edge's UI after a sync.
+func TestHandlePayloadCatalog_PruneDeletedEntries(t *testing.T) {
+	db := testEngineDB(t)
+
+	// Seed local catalog with two entries as if they were previously synced from core
+	if err := db.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+		ID: 1, Name: "PART-A", Code: "PART-A", Description: "Part A", UOPCapacity: 100,
+	}); err != nil {
+		t.Fatalf("seed PART-A: %v", err)
+	}
+	if err := db.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+		ID: 2, Name: "PART-B", Code: "PART-B", Description: "Part B", UOPCapacity: 50,
+	}); err != nil {
+		t.Fatalf("seed PART-B: %v", err)
+	}
+
+	// Simulate core responding with only PART-A (PART-B was deleted in core)
+	if err := db.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+		ID: 1, Name: "PART-A", Code: "PART-A", Description: "Part A", UOPCapacity: 100,
+	}); err != nil {
+		t.Fatalf("upsert active PART-A: %v", err)
+	}
+
+	// Prune entries not in core's active set
+	activeIDs := []int64{1}
+	if err := db.DeleteStalePayloadCatalogEntries(activeIDs); err != nil {
+		t.Fatalf("prune stale entries: %v", err)
+	}
+
+	// Verify PART-A still exists
+	entryA, err := db.GetPayloadCatalogByCode("PART-A")
+	if err != nil {
+		t.Fatalf("PART-A should still exist: %v", err)
+	}
+	if entryA.Code != "PART-A" {
+		t.Errorf("PART-A code = %q, want PART-A", entryA.Code)
+	}
+
+	// Verify PART-B was pruned (deleted in core, should be removed locally)
+	entryB, err := db.GetPayloadCatalogByCode("PART-B")
+	if entryB == nil && err == sql.ErrNoRows {
+		// good - entry was pruned
+	} else if entryB != nil {
+		t.Errorf("PART-B should have been pruned from local catalog after core sync (core deleted it)")
+	}
+
+	// Verify only one entry remains
+	entries, _ := db.ListPayloadCatalog()
+	if len(entries) != 1 {
+		t.Errorf("catalog entries = %d, want 1 (only PART-A)", len(entries))
 	}
 }

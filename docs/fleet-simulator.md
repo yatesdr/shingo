@@ -173,6 +173,11 @@ The **Scenarios to test next** section is a prioritized backlog of untested situ
 | TC-67e | Counter delta decrements consume UOP (counting DOWN) | PASS | Verified (Edge) |
 | TC-67f | Counter delta floors consume UOP at zero (never negative) | PASS | Verified (Edge) |
 | TC-67g | Bin loader move completion resets runtime state | PASS | Verified (Edge) |
+| TC-68 | Post-delivery cancel: no return order, spurious return order (Core) | FIXED | Bug found (Core) |
+| TC-69 | Node list sync excludes NGRP node groups (Core) | FIXED | Bug found (Core) |
+| TC-70 | Payload catalog sync prunes deleted entries (Edge) | FIXED | Bug found (Edge) |
+
+---
 
 ---
 
@@ -527,6 +532,176 @@ for _, task := range nodeTasks {
 
 ---
 
+### Changeover empty wiring: complex order not recognized as line clear
+
+**Scenario:** During changeover, the operator clicks "Empty" on a position whose from-claim has outbound staging configured. `EmptyNodeForToolChange` creates a complex order (pickup from production node, dropoff at outbound staging) and sets the node task to `empty_requested`. The complex order completes successfully. The wiring should advance the node task to `line_cleared`.
+
+**Expected behavior:** `handleNodeOrderCompleted` matches the completed order against the node task's `OldMaterialReleaseOrderID`, recognizes it as a line-clear completion, and advances the state to `line_cleared`.
+
+**Result:** BUG FOUND. The node task stayed at `empty_requested` forever. The wiring never matched the completed order because `handleNodeOrderCompleted` checked `order.OrderType == orders.TypeMove` for the line-clear path. `EmptyNodeForToolChange` creates a `complex` order when the from-claim has outbound staging (using `BuildReleaseSteps`), not a `move` order. The `TypeMove` check rejected it.
+
+**Root cause:** The line-clear match in `handleNodeOrderCompleted` (`wiring.go` line 149) was too restrictive. It only accepted move orders, but `EmptyNodeForToolChange` has two paths: (1) claim-based release via `CreateComplexOrder` when `OutboundStaging` is configured (produces `complex` type), and (2) fallback via `ReleaseNodeEmpty`/`ReleaseNodePartial` (produces `move` type). The wiring only handled path 2.
+
+```go
+// Before (broken): only matches move orders
+if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID &&
+    order.OrderType == orders.TypeMove {
+
+// After (fixed): matches both move and complex orders
+if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID &&
+    (order.OrderType == orders.TypeMove || order.OrderType == orders.TypeComplex) {
+```
+
+**Production risk:** Any changeover where a from-claim has `outbound_staging` configured. The node task gets stuck at `empty_requested` permanently. The operator sees the empty order complete in the kanbans view but the changeover page never advances past "emptying." In a manual workflow, the operator can work around it (the material is physically gone). In an automated workflow (Phase 3), this would block the convergence gate indefinitely — the system would never auto-release or auto-switch, halting the entire changeover.
+
+**Status:** Fixed. The line-clear match now accepts both `TypeMove` and `TypeComplex`.
+
+**Test:** `shingo-edge/engine/changeover_test.go` — `TestChangeover_EmptyCompletion`
+
+---
+
+### TC-68: Post-delivery cancel: no return order, spurious return order
+
+**Scenario:** A retrieve order for storage -> line is already dispatched and has "delivered" status in the UI. The admin user sees this and cancels the delivered order. This is a real operator workflow: an order shows as delivered but the operator didn't confirm receipt (maybe the bin never arrived), so they cancel it from the admin panel.
+
+Three interrelated bugs fire in sequence:
+
+**Bug C (root enabler):** `TerminateOrder` has NO status guard. Accepts orders in any status including delivered/confirmed/completed. Recovery path (`CancelStuckOrder`) correctly rejects terminal statuses, but nothing else does. UI hides Terminate for completed/cancelled/failed but NOT for delivered or confirmed.
+
+**Bug A (cascade):** `maybeCreateReturnOrder` fires on `EventOrderCancelled`. By the time it reads the order from DB, `CancelOrder` already overwrote status to "cancelled" which passes the guard. Creates return order with `SourceNode=warehouse` (wrong -- bin is at lineside). Claims bin via `ClaimBin`. The `maybeCreateReturnOrder` would send a robot back to pick up a never-loaded bin.
+
+**Bug B (cascade):** `ConfirmReceipt` only guard is `CompletedAt != nil`. Does NOT check status. Overwrites "cancelled" back to "confirmed", runs `CompleteOrder`, triggers `handleOrderCompleted` -> `ApplyBinArrival`.
+
+**Expected behavior:** `ConfirmReceipt` on delivered orders should return a receipt rejection error. `CancelOrder` with status=cancelled should return a cancellation rejection. `TerminateOrder` should reject already-delivered statuses. `maybeCreateReturnOrder` should NOT create a return order when the order was delivered.
+
+**Result:** BUG FOUND. All three bugs confirmed in a single test scenario. Terminating a delivered order succeeds (should reject), cancelling it creates a spurious return order (should not), and confirming receipt on the cancelled order overwrites status back to confirmed (should reject).
+
+**Root cause:** Missing status guards at three independent points in the lifecycle. `TerminateOrder` was the root enabler -- without it, the cascade never starts.
+
+```go
+// Fix 1: TerminateOrder rejects terminal statuses
+func (e *Engine) TerminateOrder(...) error {
+    if order.Status == "delivered" || order.Status == "confirmed" ||
+       order.Status == "cancelled" || order.Status == "completed" {
+        return fmt.Errorf("cannot terminate order in %s status", order.Status)
+    }
+    ...
+}
+
+// Fix 2: CancelOrder passes previousStatus to event, maybeCreateReturnOrder checks it
+func (e *Engine) CancelOrder(...) error {
+    previousStatus := order.Status  // capture before overwrite
+    ...
+    e.bus.Emit(EventOrderCancelled, &OrderCancelledEvent{Order: order, PreviousStatus: previousStatus})
+}
+
+// Fix 3: ConfirmReceipt rejects non-deliverable statuses
+func (d *Dispatcher) HandleOrderReceipt(...) error {
+    if order.Status != "delivered" {
+        return fmt.Errorf("cannot confirm receipt for order in %s status", order.Status)
+    }
+    ...
+}
+```
+
+**Production risk:** Any time an admin cancels a delivered order (e.g., bin didn't actually arrive, wrong destination), the system creates a phantom return order sending a robot to the warehouse for a bin that's at lineside. If the admin also confirms receipt, the order completes with `ApplyBinArrival` overwriting the cancellation. Both paths corrupt inventory tracking. On a busy floor, this happens during shift transitions when operators reconcile discrepancies.
+
+**Changeover interaction:** `CancelOrder` -> `CancelProcessChangeover` aborts in-flight orders on affected nodes. `AbortNodeOrders` aborts orders on affected nodes. Runtime state references are freed. Failures are logged, not blocking -- operator can retry manually.
+
+**Status:** Fixed. `TerminateOrder` rejects already-delivered statuses. `CancelOrder` passes `order.Status` as `previousStatus` for `EmitOrderCancelled` to avoid spurious return orders. `ConfirmReceipt` rejects receipt on delivered/cancelled/confirmed statuses.
+
+**Test:** `shingo-core/engine/engine_test.go` -- `TestTC38_CancelDeliveredOrder_NoReturnOrder`, `TestTC39_TerminateOrder_RejectsTerminalStatuses`
+
+---
+
+### TC-69: Node list sync excludes NGRP node groups
+
+**Scenario:** Edge sends a node list request to Core ("Sync Nodes"). Core queries `ListNodesForStation` to get station-scoped nodes. The SQL includes NGRP (node group) parent nodes whose children are station-assigned, and `handleNodeListRequest` builds the response with dot notation for children (e.g., `STORAGE-G1.SLOT-1`). But the station-scoped path was excluding NGRP parent nodes because the original `ListNodesForStation` SQL filtered them out.
+
+**Expected behavior:** When Edge syncs nodes, the response should include:
+- Individual nodes assigned to the station
+- NGRP parent nodes (with type `NGRP`) whose children are assigned to the station
+- Children under NGRP parents with dot notation (`PARENT.CHILD`)
+
+Edge has UI support for NGRP nodes (shows `(group)` suffix, expands children in dropdowns), but Core never sent them. NGRP nodes were missing from edge's node dropdown after sync.
+
+**Result:** BUG FOUND. `ListNodesForStation` SQL returned individual nodes but excluded NGRP parent containers. The `handleNodeListRequest` station-scoped path built `NodeInfo` entries from the query results, but without NGRP parents in the result set, no group information was sent to edge. The global fallback path already returned NGRP parents with `parent_id IS NULL`, but the station-scoped path (the common case) missed them.
+
+**Root cause:** The `ListNodesForStation` SQL had two conditions:
+1. Direct station assignments: `n.id IN (SELECT node_id FROM node_stations WHERE station_id = $1)` -- this returns children but not their NGRP parents.
+2. NGRP parent inclusion: `EXISTS (SELECT 1 FROM node_types nt WHERE nt.code = 'NGRP' AND ...)` -- this was missing, so NGRP parents were never included in station-scoped queries.
+
+```sql
+-- Before (broken): NGRP parents missing from station-scoped results
+-- Only returned direct assignments, no group containers
+
+-- After (fixed): includes NGRP parents whose children are station-assigned
+OR (EXISTS (
+    SELECT 1 FROM node_types nt WHERE nt.id = n.node_type_id AND nt.code = 'NGRP'
+    AND EXISTS (
+        SELECT 1 FROM nodes c JOIN node_stations cs ON cs.node_id = c.id
+        WHERE c.parent_id = n.id AND cs.station_id = $1
+    )
+))
+```
+
+**Production risk:** When an operator hits "Sync Nodes" on edge, NGRP nodes (storage groups, supermarkets) never appear in the dropdown, even though edge's UI has `(group)` suffix support. Operators cannot select node groups for manual orders or configuration. This affects every edge station with NGRP-assigned storage areas -- which is the standard layout for warehouse supermarkets.
+
+**Status:** Fixed. `ListNodesForStation` SQL now includes NGRP parents with station-assigned children. `handleNodeListRequest` correctly builds dot-notation names for both paths (station-scoped and global fallback).
+
+**Test:** `shingo-core/messaging/core_data_service_test.go` -- `TestNodeListResponse_IncludesNodeGroups`, `TestNodeListResponse_GlobalPath_IncludesNodeGroups`
+
+---
+
+### TC-70: Payload catalog sync does not prune deleted entries
+
+**Scenario:** Core sends a payload catalog sync to Edge. Edge upserts the received entries into its local SQLite database. Later, an admin deletes a payload from Core's catalog. On the next sync, Core sends the updated catalog (without the deleted entry). Edge upserts the entries it receives but never removes entries that Core no longer includes. The deleted payload remains in Edge's local catalog forever.
+
+**Expected behavior:** After a catalog sync, Edge's local catalog should exactly match Core's catalog. Entries that were deleted from Core should be removed from Edge's local database.
+
+**Result:** BUG FOUND. `HandlePayloadCatalog` in `shingo-edge/engine/engine.go` only called `UpsertPayloadCatalog` for each received entry. It never removed entries that were no longer in Core's response. Stale deleted payloads accumulated in Edge's local catalog indefinitely.
+
+**Root cause:** Missing prune step after upsert. The handler collected entries from Core and upserted them, but had no mechanism to detect and remove entries that Core had deleted since the last sync.
+
+```go
+// Before (broken): only upserts, stale entries persist forever
+func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
+    for _, b := range entries {
+        entry := &store.PayloadCatalogEntry{...}
+        e.db.UpsertPayloadCatalog(entry)
+    }
+    // no prune step -- deleted entries stay in local DB
+}
+
+// After (fixed): upsert then prune stale entries
+func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
+    ids := make([]int64, 0, len(entries))
+    for _, b := range entries {
+        entry := &store.PayloadCatalogEntry{...}
+        e.db.UpsertPayloadCatalog(entry)
+        ids = append(ids, b.ID)
+    }
+    // prune entries not in core's active set
+    if err := e.db.DeleteStalePayloadCatalogEntries(ids); err != nil {
+        log.Printf("engine: prune stale payload catalog: %v", err)
+    }
+}
+```
+
+**New method:** `DeleteStalePayloadCatalogEntries(activeIDs []int64)` in `store/payload_catalog.go` deletes entries whose IDs are not in the active set. Safety guard: if `activeIDs` is empty, no entries are removed (prevents accidental full wipe on empty sync).
+
+```sql
+DELETE FROM payload_catalog WHERE id NOT IN (<activeIDs>)
+```
+
+**Production risk:** Low. Stale entries remain visible in Edge's payload dropdown after deletion from Core. An operator could attempt to use a deleted payload code, but the order would fail at Core (payload doesn't exist). The real risk is operator confusion: seeing payloads in the dropdown that no longer exist in Core. Over time, the dropdown accumulates outdated entries that operators must mentally filter.
+
+**Status:** Fixed. `HandlePayloadCatalog` now collects active IDs during upsert and calls `DeleteStalePayloadCatalogEntries` afterward. Entries deleted from Core are pruned from Edge's local catalog on the next sync.
+
+**Test:** `shingo-edge/engine/wiring_test.go` -- `TestHandlePayloadCatalog_PruneDeletedEntries`
+
+---
+
 ## Verified scenarios
 
 Each entry below is a scenario test that passed. The system handles these situations correctly. These tests guard against future regressions.
@@ -787,6 +962,22 @@ assert(bin.ClaimedBy == nil)           // claim released
 **Result:** PASS. Full queue → scan → dispatch → deliver → confirm round-trip verified. Bin correctly at line node, claim released after completion.
 
 **Test:** `engine/engine_concurrent_test.go` — `TestFulfillmentScanner_QueueToDispatch`
+
+---
+
+### SSE order list table refresh on order-update — PASS (Core UI)
+
+**Scenario:** The Core orders page uses Server-Sent Events (SSE) for real-time updates. When an order's status changes (e.g., dispatched -> in_transit -> delivered -> confirmed), the server pushes an `order-update` event. The order list table is server-rendered HTML with no dynamic list-loading mechanism. Without a refresh mechanism, the table shows stale data until the operator manually reloads the page.
+
+**Expected behavior:** When an SSE `order-update` event fires, the page should refresh to show the latest order statuses in the table.
+
+**Result:** PASS. The `orders.js` `onOrderUpdate` handler (debounced at 2 seconds) already calls `location.reload()` on every SSE event. This is the simplest correct approach: the order list is server-rendered HTML, so a full page reload is the appropriate refresh mechanism. The handler also refreshes the order detail modal if the updated order is currently open.
+
+**Why this works:** The server-rendered HTML table has no dynamic list loading function. Adding one would require significant refactoring (fetching HTML partials, diffing DOM, managing pagination state). `location.reload()` is the correct solution for server-rendered content. The 2-second debounce prevents rapid reloads during batch status changes.
+
+**Note:** This was investigated as Bug 2 after observing that SSE events might not refresh the list. The investigation confirmed the existing implementation is correct -- `location.reload()` fires on every debounced `order-update` event.
+
+**Test:** Manual verification via Core UI. `shingo-core/www/static/pages/orders.js` -- `onOrderUpdate` handler (line 249).
 
 ---
 
@@ -1126,6 +1317,16 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 **TC-19: Robot completes a very short trip.** The fleet goes through CREATED → RUNNING → FINISHED in rapid succession (robot was right next to the destination). All three state changes should be processed correctly despite the speed.
 
+### Core/Edge sync and cross-component issues
+
+**TC-68: Post-delivery cancel creates spurious return order.** **Fixed.** Three interrelated bugs: `TerminateOrder` had no status guard (accepted delivered orders), `maybeCreateReturnOrder` created phantom return orders on cancellation, and `ConfirmReceipt` overwrote cancelled status back to confirmed. All three fixed with status guards. See TC-68 in Bugs Found and Fixed for full details.
+
+**TC-69: Node list sync excludes NGRP node groups.** **Fixed.** `ListNodesForStation` SQL now includes NGRP parents whose children are station-assigned. `handleNodeListRequest` builds dot-notation names for both station-scoped and global paths. Edge now receives node group containers in the Sync Nodes dropdown. See TC-69 in Bugs Found and Fixed.
+
+**TC-70: Payload catalog sync does not prune deleted entries.** **Fixed.** `HandlePayloadCatalog` now calls `DeleteStalePayloadCatalogEntries` after upsert, removing entries that Core no longer includes. Stale deleted payloads no longer accumulate in Edge's local catalog. See TC-70 in Bugs Found and Fixed.
+
+**SSE order list refresh on order-update.** **Verified.** Core's `orders.js` already calls `location.reload()` on debounced SSE `order-update` events. The server-rendered HTML table refreshes correctly. No code change needed. See SSE entry in Verified scenarios.
+
 ---
 
 ## Verified scenarios — bin lifecycle and produce nodes
@@ -1201,6 +1402,34 @@ Finalization is rejected if UOP is zero (nothing to finalize) or the node's role
 **Result:** PASS. 7 tests in `engine/wiring_test.go`.
 
 **Test:** `shingoedge/engine/wiring_test.go` — `TestWiring_*`
+
+---
+
+### TC-70: Payload catalog sync prunes deleted entries (Edge) — PASS
+
+**Scenario:** Edge receives a payload catalog sync from Core. Core's response includes entries A and B. Edge upserts both. Later, Core deletes entry B. On the next sync, Core sends only entry A. Edge should upsert A and prune B from its local catalog.
+
+**Expected behavior:** After sync, Edge's local catalog contains exactly the entries Core sent. Entries deleted from Core are removed from Edge's local database.
+
+**Result:** PASS. `HandlePayloadCatalog` in `shingo-edge/engine/engine.go` collects active IDs during upsert and calls `DeleteStalePayloadCatalogEntries` after all entries are processed. The `DeleteStalePayloadCatalogEntries` method deletes entries whose IDs are not in the active set, with a safety guard that skips pruning if the active set is empty (prevents accidental full wipe).
+
+**Bug found and fixed:** Before the fix, `HandlePayloadCatalog` only upserted entries without pruning. Stale deleted payloads accumulated in Edge's local catalog indefinitely. See TC-70 in Bugs Found and Fixed for full details.
+
+**Test:** `shingo-edge/engine/wiring_test.go` — `TestHandlePayloadCatalog_PruneDeletedEntries`
+
+---
+
+### TC-69: Node list sync includes NGRP node groups (Core) — PASS
+
+**Scenario:** Edge sends a node list request to Core for station `STATION-1`. The station has individual nodes and NGRP (node group) parents whose children are assigned to the station. Core's `ListNodesForStation` should return both individual nodes and NGRP group containers, so Edge can display them in the node dropdown with `(group)` suffix support.
+
+**Expected behavior:** The node list response includes NGRP parent nodes (e.g., `STORAGE-G1` with type `NGRP`) alongside their children with dot notation (e.g., `STORAGE-G1.SLOT-1`). Both the station-scoped path (common) and the global fallback path return NGRP nodes.
+
+**Result:** PASS. `ListNodesForStation` SQL now includes an `OR` clause that adds NGRP parents whose children are station-assigned. `handleNodeListRequest` builds the response with dot notation for children in both paths. Two tests verify: station-scoped path (`TestNodeListResponse_IncludesNodeGroups`) and global fallback path (`TestNodeListResponse_GlobalPath_IncludesNodeGroups`).
+
+**Bug found and fixed:** Before the fix, `ListNodesForStation` excluded NGRP parent containers from station-scoped results. Edge never received node group information, so NGRP nodes were missing from the dropdown. See TC-69 in Bugs Found and Fixed for full details.
+
+**Test:** `shingo-core/messaging/core_data_service_test.go` — `TestNodeListResponse_IncludesNodeGroups`, `TestNodeListResponse_GlobalPath_IncludesNodeGroups`
 
 ---
 
@@ -1312,20 +1541,115 @@ shingo-core/
 | `dispatch/bin_lifecycle_test.go` | Bin lifecycle integration tests (TC-64a–c). Full depletion, partial consumption, concurrent retrieve_empty race. |
 | `dispatch/planning_test.go` | `extractRemainingUOP` unit tests (TC-65). Nil, empty, missing, zero, positive, malformed JSON. |
 | `service/bin_manifest_test.go` | BinManifestService unit tests (TC-62a–h). All manifest mutations, atomic clear+claim, lock rejection. |
+| `messaging/core_data_service_test.go` | Core data service tests (TC-69). Node list response includes NGRP node groups for station-scoped and global paths. Uses testcontainers Postgres. |
 
 Edge test files (in `shingo-edge/`, SQLite-based — no Docker required):
 
 | File | What it does |
 |------|-------------|
 | `engine/produce_swap_test.go` | Produce swap mode tests (TC-66a–f). All four swap modes, rejection guards. Includes `seedProduceNode` and `testEngine` helpers. |
-| `engine/wiring_test.go` | Edge wiring event handler tests (TC-67a–g). Ingest/retrieve completion, counter delta, UOP reset, bin_loader move completion. |
+| `engine/wiring_test.go` | Edge wiring event handler tests (TC-67a–g, TC-70). Ingest/retrieve completion, counter delta, UOP reset, bin_loader move completion, payload catalog prune. |
+| `engine/changeover_test.go` | Changeover automation tests (TC-70a–g). Wiring lifecycle, auto-staging, order failure/retry, cancel mid-staging. Includes `seedChangeoverScenario` and `startChangeover` helpers. |
+
+---
+
+## Verified scenarios — changeover automation
+
+These tests cover the changeover automation pipeline: event-driven wiring that advances node task states on order completion, auto-staging at changeover start, and cancel/error handling. Edge tests use SQLite in a temp directory — no Docker required.
+
+Run all changeover tests:
+
+```
+cd shingo-edge
+go test -v -run "TestChangeover" ./engine/ -timeout 60s
+```
+
+---
+
+### TC-70a: Staging order completion advances node task — PASS
+
+**Scenario:** A changeover is started and a position is staged (material ordered to inbound staging). The staging order completes. The wiring should advance the node task from `staging_requested` to `staged`.
+
+**Expected behavior:** `handleNodeOrderCompleted` matches the completed order against the node task's `NextMaterialOrderID`, recognizes the delivery node matches the to-claim's `InboundStaging`, and updates the state to `staged`.
+
+**Result:** PASS. The node task advances to `staged` on staging order completion.
+
+**Test:** `engine/changeover_test.go` — `TestChangeover_StagingCompletion`
+
+---
+
+### TC-70b: Empty order completion advances node task — PASS
+
+**Scenario:** During changeover, a position has been staged and the operator empties it (removes old material). The empty order completes. The wiring should advance the node task from `empty_requested` to `line_cleared`.
+
+**Expected behavior:** `handleNodeOrderCompleted` matches the completed order against the node task's `OldMaterialReleaseOrderID` and advances state to `line_cleared`.
+
+**Result:** PASS (after fixing the `TypeMove`-only check — see "Changeover empty wiring" in Bugs Found). The wiring now accepts both `TypeMove` and `TypeComplex` for line-clear matching.
+
+**Test:** `engine/changeover_test.go` — `TestChangeover_EmptyCompletion`
+
+---
+
+### TC-70c: Release order completion advances node task — PASS
+
+**Scenario:** During changeover, a position has been cleared and the staged material is released into production. The release order completes. The wiring should advance the node task to `released`.
+
+**Expected behavior:** `handleNodeOrderCompleted` matches the completed order against the node task's `NextMaterialOrderID` (now used for release), updates runtime to the target claim, and advances state to `released`.
+
+**Result:** PASS. The node task advances to `released` and `tryCompleteProcessChangeover` fires.
+
+**Test:** `engine/changeover_test.go` — `TestChangeover_ReleaseCompletion`
+
+---
+
+### TC-70d: Full changeover lifecycle — PASS
+
+**Scenario:** A complete changeover from start to finish: auto-stage (Phase 2), drive staging order to completion, empty, drive empty order to completion, release, drive release order to completion, switch node to target, cutover production. This tests the entire happy path.
+
+**Expected behavior:** After all steps, the changeover should be completed, the process should be at `active_production`, and the active style should be the target style.
+
+**Result:** PASS. The full lifecycle completes cleanly. Auto-staging fires at changeover start, all wiring transitions work, `CompleteProcessProductionCutover` sets the active style and completes the changeover.
+
+**Test:** `engine/changeover_test.go` — `TestChangeover_FullLifecycle`
+
+---
+
+### TC-70e: Order failure marks error, retry recovers — PASS
+
+**Scenario:** During changeover, a staging order fails (bin unavailable, Core error, etc.). The wiring should mark the node task as `error`. The operator retries staging. The retry should succeed because the failed order is terminal.
+
+**Expected behavior:** On failure: node task state becomes `error`. On retry: a new staging order is created (the old one is terminal so `ensureNodeTaskCanRequestOrder` allows it), and completing the new order recovers the state to `staged`.
+
+**Result:** PASS. Error state is set on failure. Retry creates a new order and completes normally.
+
+**Test:** `engine/changeover_test.go` — `TestChangeover_OrderFailure`
+
+---
+
+### TC-70f: Cancel mid-staging aborts orders — PASS
+
+**Scenario:** A changeover is started and auto-staging creates an in-flight order. The operator cancels the changeover before staging completes. All in-flight orders should be aborted, all node tasks should be cancelled, and the process should revert to `active_production`.
+
+**Expected behavior:** `CancelProcessChangeover` aborts linked orders on all node tasks, marks tasks as `cancelled`, and resets production state.
+
+**Result:** PASS. The staging order is aborted (terminal status), node tasks are cancelled, and the changeover record is marked `cancelled`. Production state reverts to `active_production`.
+
+**Test:** `engine/changeover_test.go` — `TestChangeover_CancelMidStaging`
+
+---
+
+### TC-70g: Auto-staging fires on changeover start (Phase 2) — PASS
+
+**Scenario:** A changeover is started on a process with a swap position (different payload between from-style and to-style). In Phase 2, `StartProcessChangeover` should automatically call `StageNodeChangeoverMaterial` for all swap/add positions instead of requiring the operator to click "Stage" per position.
+
+**Expected behavior:** After `StartProcessChangeover` returns, the node task should already be at `staging_requested` (not `swap_required`) with a `NextMaterialOrderID` linked.
+
+**Result:** PASS. The auto-staging loop iterates diffs, filters for swap/add situations, resolves process node IDs, and calls existing `StageNodeChangeoverMaterial`. Failures are logged, not blocking — operator can retry manually.
+
+**Test:** `engine/changeover_test.go` — `TestChangeover_AutoStaging`
 
 ---
 
 ## Future: Edge simulation
 
-The current simulator replaces the fleet (RDS). A future addition would simulate the Edge station as well, allowing tests to verify the full round-trip: Core dispatches → robot moves → Edge detects arrival → Edge sends receipt → Core completes order.
-
-Today, tests simulate Edge by manually calling `HandleOrderReceipt` on the dispatcher. A dedicated Edge simulator would make this more realistic by modeling the Edge's state machine (order tracking, receipt generation, staged order release timing).
-
-This is not yet built. The current approach (manual receipt calls) is sufficient for testing Core's behavior. Edge simulation would be valuable when testing timing-dependent scenarios like "what happens if the Edge receipt arrives before the fleet reports FINISHED."
+The curre

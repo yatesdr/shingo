@@ -37,12 +37,13 @@ func (e *dispatchEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, er
 	}})
 }
 
-func (e *dispatchEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason string) {
+func (e *dispatchEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string) {
 	e.bus.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
-		OrderID:  orderID,
-		EdgeUUID: edgeUUID,
-		StationID: stationID,
-		Reason:   reason,
+		OrderID:        orderID,
+		EdgeUUID:       edgeUUID,
+		StationID:      stationID,
+		Reason:         reason,
+		PreviousStatus: previousStatus,
 	}})
 }
 
