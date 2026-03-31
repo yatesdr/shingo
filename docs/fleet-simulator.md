@@ -158,6 +158,7 @@ The **Scenarios to test next** section is a prioritized backlog of untested situ
 | TC-64a | Full depletion (remainingUOP=0) clears manifest on dispatch | PASS | Verified |
 | TC-64b | Partial consumption (remainingUOP=42) syncs UOP, preserves manifest | PASS | Verified |
 | TC-64c | Concurrent retrieve_empty cannot steal bin during clear+claim | PASS | Verified |
+| TC-64d | Concurrent ClaimForDispatch race — one ClearAndClaim, one SyncUOPAndClaim, exactly one wins | PASS | Verified |
 | TC-65 | extractRemainingUOP: nil envelope, empty payload, missing field, zero, positive, malformed | PASS | Verified |
 | TC-66a | Produce simple — FinalizeProduceNode creates ingest order, resets UOP to 0 | PASS | Verified (Edge) |
 | TC-66b | Produce sequential — ingest + complex removal order created | PASS | Verified (Edge) |

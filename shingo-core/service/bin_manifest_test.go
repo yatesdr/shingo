@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"shingocore/internal/testdb"
@@ -414,5 +415,76 @@ func TestBinManifestService_ClearAndClaim_FailsIfLocked(t *testing.T) {
 	got, _ := db.GetBin(bin.ID)
 	if got.ClaimedBy != nil {
 		t.Errorf("ClaimedBy = %v, want nil (locked bin should not be claimable)", got.ClaimedBy)
+	}
+}
+
+// TestBinManifestService_ClaimForDispatch_ConcurrentRace verifies that when two
+// goroutines race ClaimForDispatch on the same bin with different remainingUOP
+// values (one ClearAndClaim, one SyncUOPAndClaim), exactly one wins and the bin
+// ends up in the correct state for the winner's operation.
+func TestBinManifestService_ClaimForDispatch_ConcurrentRace(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	// Create a bin with a manifest
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-RACE-1", "PART-A", 100)
+	order1 := createTestOrder(t, db, sd.LineNode.ID)
+	order2 := createTestOrder(t, db, sd.LineNode.ID)
+
+	originalPayloadCode := bin.PayloadCode
+
+	// Goroutine 1: ClearAndClaim (remainingUOP=0, clears manifest)
+	// Goroutine 2: SyncUOPAndClaim (remainingUOP=42, preserves manifest)
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		zero := 0
+		errs[0] = svc.ClaimForDispatch(bin.ID, order1.ID, &zero)
+	}()
+	go func() {
+		defer wg.Done()
+		partial := 42
+		errs[1] = svc.ClaimForDispatch(bin.ID, order2.ID, &partial)
+	}()
+	wg.Wait()
+
+	// Exactly one should succeed
+	successCount := 0
+	for _, err := range errs {
+		if err == nil {
+			successCount++
+		}
+	}
+	if successCount != 1 {
+		t.Errorf("expected exactly 1 successful claim, got %d (errs: %v)", successCount, errs)
+	}
+
+	// Verify bin is in a consistent state
+	got, _ := db.GetBin(bin.ID)
+	if got.ClaimedBy == nil {
+		t.Fatal("bin should be claimed by the winner")
+	}
+
+	// Verify manifest state matches the winner's operation
+	if errs[0] == nil {
+		// ClearAndClaim won: manifest should be cleared
+		if got.PayloadCode != "" {
+			t.Errorf("ClearAndClaim won but PayloadCode = %q, want empty", got.PayloadCode)
+		}
+		if got.UOPRemaining != 0 {
+			t.Errorf("ClearAndClaim won but UOPRemaining = %d, want 0", got.UOPRemaining)
+		}
+	} else {
+		// SyncUOPAndClaim won: manifest preserved, UOP=42
+		if got.PayloadCode != originalPayloadCode {
+			t.Errorf("SyncUOPAndClaim won but PayloadCode = %q, want %q", got.PayloadCode, originalPayloadCode)
+		}
+		if got.UOPRemaining != 42 {
+			t.Errorf("SyncUOPAndClaim won but UOPRemaining = %d, want 42", got.UOPRemaining)
+		}
 	}
 }

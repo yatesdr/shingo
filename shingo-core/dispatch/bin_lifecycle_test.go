@@ -134,10 +134,11 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 	}
 }
 
-// TestConcurrentRetrieveEmpty_GhostBin verifies that when a bin's manifest is
-// cleared atomically with claiming (via ClearAndClaim), a concurrent
-// retrieve_empty cannot steal the bin during the clear-claim window.
-func TestConcurrentRetrieveEmpty_GhostBin(t *testing.T) {
+// TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap verifies that when two
+// retrieve_empty orders race for two available bins, each order claims a
+// different bin with no double-claims. This tests concurrent claim distribution
+// rather than the ghost-bin TOCTOU (which ClearAndClaim's atomic SQL prevents).
+func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 	db := testDB(t)
 	_, _, _ = setupTestData(t, db)
 

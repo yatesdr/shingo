@@ -30,6 +30,18 @@ func (m *mockTrackingBackend) CreateTransportOrder(req fleet.TransportOrderReque
 	return result, nil
 }
 
+func (m *mockTrackingBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
+	result := fleet.TransportOrderResult{
+		VendorOrderID: req.OrderID,
+	}
+	m.orders[req.OrderID] = result
+	return result, nil
+}
+
+func (m *mockTrackingBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
+	return nil
+}
+
 func newMockTrackingBackend() *mockTrackingBackend {
 	return &mockTrackingBackend{
 		mockBackend: &mockBackend{},

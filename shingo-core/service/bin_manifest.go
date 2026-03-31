@@ -1,7 +1,6 @@
 package service
 
 import (
-	"database/sql"
 	"fmt"
 
 	"shingocore/store"
@@ -111,8 +110,3 @@ func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP
 	return s.db.ClaimBin(binID, orderID)
 }
 
-// Exec exposes the underlying DB Exec for ad-hoc queries.
-// Needed because store.DB embeds *sql.DB.
-func (s *BinManifestService) Exec(query string, args ...any) (sql.Result, error) {
-	return s.db.Exec(query, args...)
-}

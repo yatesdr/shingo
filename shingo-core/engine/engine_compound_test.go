@@ -677,9 +677,9 @@ func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 		c, _ = db.GetOrder(c.ID)
 		t.Logf("  child %d (seq %d): status=%s vendor=%s", c.ID, c.Sequence, c.Status, c.VendorOrderID)
 
-		// Children with vendor orders should ideally be cancelled too
+		// Children with vendor orders must be cancelled (cancelCompoundChildren fix)
 		if c.VendorOrderID != "" && c.Status != dispatch.StatusCancelled {
-			t.Logf("  WARNING: child %d has fleet order %s but status=%s (not cancelled) — orphan robot risk",
+			t.Errorf("BUG: child %d has fleet order %s but status=%s (not cancelled) — orphan robot risk",
 				c.ID, c.VendorOrderID, c.Status)
 		}
 	}

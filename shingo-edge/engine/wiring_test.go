@@ -87,48 +87,69 @@ func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
 	}
 }
 
-// TestWiring_RetrieveCompletion_ConsumeResetsToCapacity verifies that when a
-// retrieve/complex order completes for a consume node, UOP resets to the
-// claim's UOPCapacity (full bin received).
-func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
-	db := testEngineDB(t)
+// consumeNodeConfig holds the configurable parameters for seedConsumeNode.
+type consumeNodeConfig struct {
+	Prefix       string // unique prefix for names (e.g. "CONSUME", "DELTA-CON")
+	PayloadCode  string
+	UOPCapacity  int
+	InitialUOP   int
+}
 
-	// Create consume-role process/node/claim
-	processID, err := db.CreateProcess("CONSUME-PROC", "consume test", "active_production", "", "", false)
+// seedConsumeNode creates a consume-role process, node, style, claim, and runtime.
+// Returns processID, nodeID, styleID, claimID.
+func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (processID, nodeID, styleID, claimID int64) {
+	t.Helper()
+	prefix := cfg.Prefix
+	if prefix == "" {
+		prefix = "CONSUME"
+	}
+
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err = db.CreateProcessNode(store.ProcessNodeInput{
 		ProcessID:    processID,
-		CoreNodeName: "CONSUME-NODE",
-		Code:         "CN1",
-		Name:         "Consume Node",
+		CoreNodeName: prefix + "-NODE",
+		Code:         prefix[:3],
+		Name:         prefix + " Node",
 		Sequence:     1,
 		Enabled:      true,
 	})
 	if err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	styleID, err := db.CreateStyle("CONSUME-STYLE", "consume style", processID)
+	styleID, err = db.CreateStyle(prefix+"-STYLE", prefix+" style", processID)
 	if err != nil {
 		t.Fatalf("create style: %v", err)
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
 		StyleID:      styleID,
-		CoreNodeName: "CONSUME-NODE",
+		CoreNodeName: prefix + "-NODE",
 		Role:         "consume",
 		SwapMode:     "simple",
-		PayloadCode:  "PART-X",
-		UOPCapacity:  200,
+		PayloadCode:  cfg.PayloadCode,
+		UOPCapacity:  cfg.UOPCapacity,
 	})
 	if err != nil {
 		t.Fatalf("upsert claim: %v", err)
 	}
 
 	db.EnsureProcessNodeRuntime(nodeID)
-	db.SetProcessNodeRuntime(nodeID, &claimID, 10) // nearly depleted
+	db.SetProcessNodeRuntime(nodeID, &claimID, cfg.InitialUOP)
+	return processID, nodeID, styleID, claimID
+}
+
+// TestWiring_RetrieveCompletion_ConsumeResetsToCapacity verifies that when a
+// retrieve/complex order completes for a consume node, UOP resets to the
+// claim's UOPCapacity (full bin received).
+func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "CONSUME", PayloadCode: "PART-X", UOPCapacity: 200, InitialUOP: 10,
+	})
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -157,6 +178,7 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 	if runtime.RemainingUOP != 200 {
 		t.Errorf("RemainingUOP = %d, want 200 (consume node UOPCapacity)", runtime.RemainingUOP)
 	}
+	_ = processID
 }
 
 // TestWiring_CounterDelta_ProduceIncrementsUOP verifies that counter delta
@@ -187,42 +209,9 @@ func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
 // events decrement UOP for consume nodes (counting DOWN from capacity).
 func TestWiring_CounterDelta_ConsumeDecrementsUOP(t *testing.T) {
 	db := testEngineDB(t)
-
-	processID, err := db.CreateProcess("DELTA-CONSUME", "delta consume", "active_production", "", "", false)
-	if err != nil {
-		t.Fatalf("create process: %v", err)
-	}
-	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
-		ProcessID:    processID,
-		CoreNodeName: "DELTA-CON-NODE",
-		Code:         "DCN",
-		Name:         "Delta Consume",
-		Sequence:     1,
-		Enabled:      true,
+	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "DELTA-CON", PayloadCode: "PART-Y", UOPCapacity: 100, InitialUOP: 80,
 	})
-	if err != nil {
-		t.Fatalf("create node: %v", err)
-	}
-	styleID, err := db.CreateStyle("DELTA-CON-STYLE", "delta consume style", processID)
-	if err != nil {
-		t.Fatalf("create style: %v", err)
-	}
-	db.SetActiveStyle(processID, &styleID)
-
-	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
-		StyleID:      styleID,
-		CoreNodeName: "DELTA-CON-NODE",
-		Role:         "consume",
-		SwapMode:     "simple",
-		PayloadCode:  "PART-Y",
-		UOPCapacity:  100,
-	})
-	if err != nil {
-		t.Fatalf("upsert claim: %v", err)
-	}
-
-	db.EnsureProcessNodeRuntime(nodeID)
-	db.SetProcessNodeRuntime(nodeID, &claimID, 80)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -243,42 +232,9 @@ func TestWiring_CounterDelta_ConsumeDecrementsUOP(t *testing.T) {
 // never goes negative when delta exceeds remaining.
 func TestWiring_CounterDelta_ConsumeFloorsAtZero(t *testing.T) {
 	db := testEngineDB(t)
-
-	processID, err := db.CreateProcess("FLOOR-PROC", "floor test", "active_production", "", "", false)
-	if err != nil {
-		t.Fatalf("create process: %v", err)
-	}
-	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
-		ProcessID:    processID,
-		CoreNodeName: "FLOOR-NODE",
-		Code:         "FN1",
-		Name:         "Floor Node",
-		Sequence:     1,
-		Enabled:      true,
+	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "FLOOR", PayloadCode: "PART-Z", UOPCapacity: 50, InitialUOP: 2,
 	})
-	if err != nil {
-		t.Fatalf("create node: %v", err)
-	}
-	styleID, err := db.CreateStyle("FLOOR-STYLE", "floor style", processID)
-	if err != nil {
-		t.Fatalf("create style: %v", err)
-	}
-	db.SetActiveStyle(processID, &styleID)
-
-	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
-		StyleID:      styleID,
-		CoreNodeName: "FLOOR-NODE",
-		Role:         "consume",
-		SwapMode:     "simple",
-		PayloadCode:  "PART-Z",
-		UOPCapacity:  50,
-	})
-	if err != nil {
-		t.Fatalf("upsert claim: %v", err)
-	}
-
-	db.EnsureProcessNodeRuntime(nodeID)
-	db.SetProcessNodeRuntime(nodeID, &claimID, 2) // only 2 remaining
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
