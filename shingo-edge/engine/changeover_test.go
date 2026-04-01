@@ -1005,20 +1005,20 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 		t.Fatalf("after Order A: expected staged, got %s", task.State)
 	}
 
-	// Order B completion (evac-only) → line_cleared (not released — Order B has no delivery steps)
+	// Order B completion (evac) — Order A already completed, so both are done → released
 	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
 	markOrderTerminal(db, orderB.ID)
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "line_cleared" {
-		t.Fatalf("after Order B: expected line_cleared, got %s", task.State)
+	if task.State != "released" {
+		t.Fatalf("after Order B (Order A already done): expected released, got %s", task.State)
 	}
 
-	// Verify runtime UOP zeroed (old material evacuated, no new delivery yet)
+	// Verify runtime switched to new claim with full UOP
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("expected UOP=0 after evac-only Order B, got %d", runtime.RemainingUOP)
+	if runtime.RemainingUOP != 200 {
+		t.Errorf("expected UOP=200, got %d", runtime.RemainingUOP)
 	}
 }
 
@@ -1049,7 +1049,7 @@ func TestChangeover_KeepStagedSplit(t *testing.T) {
 		t.Fatal("expected both Order A (deliver) and Order B (evac) for keep-staged split")
 	}
 
-	// Order A → staged, Order B (evac-only) → line_cleared
+	// Order A → staged, Order B (evac) — Order A already done so both complete → released
 	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
 	markOrderTerminal(db, orderA.ID)
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
@@ -1064,8 +1064,8 @@ func TestChangeover_KeepStagedSplit(t *testing.T) {
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "line_cleared" {
-		t.Fatalf("after Order B: expected line_cleared, got %s", task.State)
+	if task.State != "released" {
+		t.Fatalf("after Order B (Order A already done): expected released, got %s", task.State)
 	}
 }
 
