@@ -26,6 +26,7 @@ import (
 // Why this matters: Operators cancel orders regularly. If the cancel path doesn't
 // release the claim and create a return, the bin becomes invisible to the system.
 func TestComplexOrder_CancelMidTransit(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CXCANCEL")
@@ -127,6 +128,7 @@ func TestComplexOrder_CancelMidTransit(t *testing.T) {
 // Expected: Order marked failed. Bin claim released. Auto-return created.
 // Same recovery path as cancel, but triggered by fleet rather than operator.
 func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CXFAIL")
@@ -201,6 +203,7 @@ func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 // transition to in_transit and the fleet should mark it complete (no more
 // blocks). No panic, no error.
 func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-EPWAIT")
@@ -334,40 +337,27 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 		t.Fatalf("update to staged: %v", err)
 	}
 
-	// Redirect delivery from storageNode to newDest
-	d.HandleOrderRedirect(env, &protocol.OrderRedirect{
-		OrderUUID:       "cx-redir-1",
-		NewDeliveryNode: newDest.Name,
-	})
-
-	// Re-fetch order
-	order, _ = db.GetOrderByUUID("cx-redir-1")
-	t.Logf("order after redirect: delivery=%s status=%s", order.DeliveryNode, order.Status)
-
-	// Check if DeliveryNode was updated
-	if order.DeliveryNode != newDest.Name {
-		t.Logf("NOTE: DeliveryNode not updated to %s (got %s) — redirect may have been rejected for staged orders", newDest.Name, order.DeliveryNode)
+	// Simulate redirect: update DeliveryNode directly (PrepareRedirect does this).
+	// StepsJSON still has storageNode as the last dropoff — this is the TC-48 bug surface.
+	if err := db.UpdateOrderDeliveryNode(order.ID, newDest.Name); err != nil {
+		t.Fatalf("update delivery node: %v", err)
 	}
 
-	// Key check: StepsJSON still has old destination
-	t.Logf("StepsJSON after redirect: %s", order.StepsJSON)
+	// Release — HandleOrderRelease should patch the segment with the new DeliveryNode
+	d.HandleOrderRelease(env, &protocol.OrderRelease{
+		OrderUUID: "cx-redir-1",
+	})
 
-	// If order is back to staged, try releasing
-	if order.Status == dispatch.StatusStaged || order.Status == dispatch.StatusSourcing {
-		// If redirect put it back to sourcing, it will re-dispatch. Otherwise release.
-		if order.Status == dispatch.StatusStaged {
-			d.HandleOrderRelease(env, &protocol.OrderRelease{
-				OrderUUID: "cx-redir-1",
-			})
+	// Verify the fleet order blocks reference the new destination
+	order, _ = db.GetOrderByUUID("cx-redir-1")
+	if order.VendorOrderID != "" {
+		view := sim.GetOrder(order.VendorOrderID)
+		if view == nil {
+			t.Fatal("simulator should have the post-release order")
 		}
-
-		order, _ = db.GetOrderByUUID("cx-redir-1")
-		t.Logf("order after release: status=%s delivery=%s", order.Status, order.DeliveryNode)
-
-		// BUG CHECK: The post-wait blocks are built from StepsJSON which still
-		// references the old destination. The fleet will route to the wrong node.
-		if order.StepsJSON != "" {
-			t.Logf("POTENTIAL BUG: StepsJSON not updated after redirect — post-wait fleet blocks use old destination")
+		lastBlock := view.Blocks[len(view.Blocks)-1]
+		if lastBlock.Location != newDest.Name {
+			t.Errorf("last fleet block location = %s, want %s — post-wait blocks not patched for redirect", lastBlock.Location, newDest.Name)
 		}
 	}
 }
@@ -385,6 +375,7 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 // 3. No vendor order created (no fleet interaction)
 // 4. No auto-return order created
 func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
 
@@ -573,6 +564,7 @@ func driveToConfirmed(t *testing.T, sim *simulator.SimulatorBackend, d *dispatch
 // Expected: Bin claimed at storage, 2 blocks (JackLoad + JackUnload), complete.
 // After lifecycle: order confirmed, bin at line, unclaimed.
 func TestComplexOrder_SequentialBackfill(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _, _, _, bp := setupProductionNodes(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-SEQBF")
@@ -662,6 +654,7 @@ func TestComplexOrder_SequentialBackfill(t *testing.T) {
 // Expected: 1 pre-wait block, staged order. After release: 3 total blocks.
 // After completion: bin at outbound dest.
 func TestComplexOrder_SequentialRemoval(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _, _, outboundDest, bp := setupProductionNodes(t, db)
 	_ = createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-SEQR")
@@ -765,6 +758,7 @@ func TestComplexOrder_SequentialRemoval(t *testing.T) {
 // Expected: 2 pre-wait blocks, bin claimed at storage, staged order.
 // After release: 4 total blocks. After completion: bin at line.
 func TestComplexOrder_TwoRobotSwap_Resupply(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, inboundStaging, _, _, bp := setupProductionNodes(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-2RA")
@@ -877,6 +871,7 @@ func TestComplexOrder_TwoRobotSwap_Resupply(t *testing.T) {
 // Expected: 1 pre-wait block, staged. After release: 3 blocks.
 // After completion: bin at outbound dest.
 func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _, _, outboundDest, bp := setupProductionNodes(t, db)
 	_ = createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-2RB")
@@ -977,6 +972,7 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 // Expected: Stage order completes, bin at inboundStaging, status=staged.
 // Deliver order claims the staged bin and delivers it to lineNode.
 func TestComplexOrder_StagingAndDeliver(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, inboundStaging, _, _, bp := setupProductionNodes(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STAGE")
@@ -1104,6 +1100,7 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 // Expected: 3 pre-wait blocks, staged order. After release: 9 total blocks.
 // Both bins at correct destinations, both unclaimed.
 func TestComplexOrder_SingleRobotSwap(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, inboundStaging, outboundStaging, outboundDest, bp := setupProductionNodes(t, db)
 
@@ -1283,6 +1280,7 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 // =============================================================================
 
 func TestComplexOrder_DoubleWait(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 

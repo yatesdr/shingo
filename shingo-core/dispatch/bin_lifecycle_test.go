@@ -14,6 +14,7 @@ import (
 // remaining_uop=0 (fully depleted bin), the manifest is atomically cleared
 // and the bin is claimed in a single operation.
 func TestFullDepletion_ClearsManifest(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
 
@@ -72,6 +73,7 @@ func TestFullDepletion_ClearsManifest(t *testing.T) {
 // remaining_uop>0 (partially consumed bin), the UOP is synced to the bin
 // record while preserving the manifest and payload_code.
 func TestPartialConsumption_SyncsUOP(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
 
@@ -220,6 +222,7 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 // order with multiple pickups, only the pickup at the process node gets
 // remainingUOP applied. Other pickups (storage, staging) get plain claims.
 func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 

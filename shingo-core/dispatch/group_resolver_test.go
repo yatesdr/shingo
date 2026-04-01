@@ -71,6 +71,7 @@ func setupNodeGroup(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store
 }
 
 func TestGroupResolveRetrieve_AccessibleFIFO(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
@@ -98,6 +99,7 @@ func TestGroupResolveRetrieve_AccessibleFIFO(t *testing.T) {
 }
 
 func TestGroupResolveRetrieve_BuriedFails(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
@@ -130,6 +132,7 @@ func TestGroupResolveRetrieve_BuriedFails(t *testing.T) {
 }
 
 func TestGroupResolveStore_BackToFront(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
@@ -148,6 +151,7 @@ func TestGroupResolveStore_BackToFront(t *testing.T) {
 }
 
 func TestGroupResolveStore_Consolidation(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, lanes, slots, bp := setupNodeGroup(t, db)
 
@@ -169,6 +173,7 @@ func TestGroupResolveStore_Consolidation(t *testing.T) {
 }
 
 func TestGroupResolveStore_FullLane(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, lanes, slots, bp := setupNodeGroup(t, db)
 
@@ -192,6 +197,7 @@ func TestGroupResolveStore_FullLane(t *testing.T) {
 }
 
 func TestGroupResolveRetrieve_LockedLaneSkipped(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, lanes, slots, bp := setupNodeGroup(t, db)
 
@@ -218,6 +224,7 @@ func TestGroupResolveRetrieve_LockedLaneSkipped(t *testing.T) {
 }
 
 func TestNodeGroupResolveRetrieve_DirectChildren(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	grpType, err := db.GetNodeTypeByCode("NGRP")
@@ -255,6 +262,7 @@ func TestNodeGroupResolveRetrieve_DirectChildren(t *testing.T) {
 }
 
 func TestNodeGroupResolveRetrieve_Mixed(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
@@ -282,6 +290,7 @@ func TestNodeGroupResolveRetrieve_Mixed(t *testing.T) {
 }
 
 func TestNodeGroupResolveStore_DirectChildren(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
@@ -309,6 +318,7 @@ func TestNodeGroupResolveStore_DirectChildren(t *testing.T) {
 }
 
 func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
@@ -434,6 +444,7 @@ func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *store.Node, lanes []*
 //
 // Strict FIFO must return BuriedError for BIN-OLD, not the accessible BIN-MID.
 func TestTC40a_FIFOBuriedOlderThanAccessible(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, lanes, slots, bp := setupNodeGroup3Lane(t, db)
 
@@ -483,6 +494,7 @@ func TestTC40a_FIFOBuriedOlderThanAccessible(t *testing.T) {
 
 // TC-40a regression guard: when buried bin is newer than accessible, return accessible (no reshuffle).
 func TestTC40a_FIFOAccessibleOlderThanBuried(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
 
@@ -520,6 +532,7 @@ func TestTC40a_FIFOAccessibleOlderThanBuried(t *testing.T) {
 // Same layout as TC-40a but with retrieve_algorithm=COST.
 // Should return BIN-MID (oldest accessible), NOT trigger BuriedError for BIN-OLD.
 func TestTC40b_COSTIgnoresBuriedWhenAccessible(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
 
@@ -566,6 +579,7 @@ func TestTC40b_COSTIgnoresBuriedWhenAccessible(t *testing.T) {
 
 // TC-40b edge: COST mode falls back to buried when no accessible bins exist.
 func TestTC40b_COSTFallsToBuriedWhenNoAccessible(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
 
@@ -615,6 +629,7 @@ func TestTC40b_COSTFallsToBuriedWhenNoAccessible(t *testing.T) {
 //
 // No accessible empties exist anywhere in the NGRP.
 func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lanes, slots, bp := setupNodeGroup3Lane(t, db)
 

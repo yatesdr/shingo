@@ -31,6 +31,7 @@ import (
 // Drives each child through the fleet simulator lifecycle, verifying that the
 // compound order advances correctly and the target bin arrives at the line.
 func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
@@ -167,6 +168,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 // lock should be released so a retry can proceed. The target bin should still
 // be at its original slot (step 2 never completed), unclaimed.
 func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "STRAND"})
@@ -292,6 +294,7 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 // - Target arrives at line, blockers restocked to original positions
 // - All claims released, lane lock freed, parent completed
 func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
@@ -412,6 +415,7 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 // unclaimed. The child's fleet order should be cancelled (or at minimum,
 // the order record is marked cancelled).
 func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "PCANCEL"})
@@ -551,10 +555,6 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 		t.Fatalf("expected >= 3 children, got %d", len(children))
 	}
 
-	for i, c := range children {
-		t.Logf("child %d: seq=%d src=%s dest=%s", i, c.Sequence, c.SourceNode, c.DeliveryNode)
-	}
-
 	// Complete child 1 (unbury blocker)
 	child1, _ := db.GetOrder(children[0].ID)
 	if child1.VendorOrderID == "" {
@@ -566,66 +566,33 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 		OrderUUID: child1.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
 	})
 
-	// Now manually break child 2 by clearing its source node
-	// This simulates a data corruption or race condition
+	// Break child 2 by clearing its source node (simulates data corruption / race)
 	child2, _ := db.GetOrder(children[1].ID)
 	if child2.VendorOrderID != "" {
-		// Child 2 already dispatched — too late to break it
-		t.Logf("child 2 already dispatched (vendor=%s) — skipping synthetic break, completing normally", child2.VendorOrderID)
-
-		// Complete remaining children normally and verify
-		for i := 1; i < len(children); i++ {
-			child, _ := db.GetOrder(children[i].ID)
-			if child.VendorOrderID == "" || child.Status == dispatch.StatusFailed {
-				continue
-			}
-			sim.DriveState(child.VendorOrderID, "RUNNING")
-			sim.DriveState(child.VendorOrderID, "FINISHED")
-			d.HandleOrderReceipt(env, &protocol.OrderReceipt{
-				OrderUUID: child.EdgeUUID, ReceiptType: "confirmed", FinalCount: 1,
-			})
-		}
-	} else {
-		// Child 2 not yet dispatched — break its source node
-		db.Exec(`UPDATE orders SET source_node = '' WHERE id = $1`, child2.ID)
-
-		// Advance again — this should detect the broken child and skip it
-		d.AdvanceCompoundOrder(order.ID)
-
-		// Check what happened
-		child2, _ = db.GetOrder(child2.ID)
-		t.Logf("child 2 after advance: status=%s", child2.Status)
-
-		if child2.Status == dispatch.StatusFailed {
-			t.Logf("child 2 correctly failed due to missing source node")
-		}
+		t.Skip("child 2 already dispatched before we could break it — cannot reproduce race in this run")
 	}
+	db.Exec(`UPDATE orders SET source_node = '' WHERE id = $1`, child2.ID)
+	d.AdvanceCompoundOrder(order.ID)
 
-	// Final state check
+	// Parent must NOT be confirmed if any child failed
 	order, _ = db.GetOrderByUUID("skip-reshuffle-1")
-	t.Logf("parent final: status=%s", order.Status)
-
 	children, _ = db.ListChildOrders(order.ID)
 	failedCount := 0
-	completedCount := 0
 	for _, c := range children {
 		c, _ = db.GetOrder(c.ID)
-		t.Logf("  child %d (seq %d): status=%s", c.ID, c.Sequence, c.Status)
 		if c.Status == dispatch.StatusFailed {
 			failedCount++
 		}
-		if c.Status == dispatch.StatusConfirmed {
-			completedCount++
-		}
 	}
-
 	if failedCount > 0 && order.Status == dispatch.StatusConfirmed {
-		t.Errorf("POTENTIAL BUG: parent completed (confirmed) despite %d failed children — data may be inconsistent", failedCount)
+		t.Errorf("parent confirmed despite %d failed children — data inconsistent", failedCount)
 	}
 
-	// Check blocker bin location — is it stranded?
+	// Blocker bin should not be stranded without a claim
 	blockerBin, _ = db.GetBin(blockerBin.ID)
-	t.Logf("blocker final: node=%v claimed=%v", blockerBin.NodeID, blockerBin.ClaimedBy)
+	if blockerBin.ClaimedBy == nil {
+		t.Errorf("blocker bin %d stranded (unclaimed) after partial reshuffle failure", blockerBin.ID)
+	}
 }
 
 // --- Test: Lane lock contention — second reshuffle blocked (TC-52) ---
@@ -639,6 +606,7 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 // This means the second order FAILS rather than being retried when the
 // lane unlocks. This test documents that behavior and whether it's correct.
 func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
@@ -720,6 +688,7 @@ func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 // Expected: After compound restock, the bin at the storage slot should have
 // status='available', claimed_by=NULL, and be visible to FIFO queries.
 func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "RESTOCK"})
@@ -808,6 +777,7 @@ func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
 // status changed from staged to available. The bin should still be at the
 // shuffle slot and claimable. This test verifies no silent failure occurs.
 func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "TTL"})

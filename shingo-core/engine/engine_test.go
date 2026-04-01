@@ -59,6 +59,7 @@ func newTestEngine(t *testing.T, db *store.DB, sim *simulator.SimulatorBackend) 
 // Dispatches a retrieve order, drives RUNNING → FINISHED, simulates Edge receipt
 // confirmation. Verifies complete lifecycle: bin moved + claim released.
 func TestSimulator_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-LC")
@@ -142,6 +143,7 @@ func TestSimulator_FullLifecycle(t *testing.T) {
 // Then sends HandleOrderRelease and verifies post-wait blocks are appended and the
 // order completes through the full lifecycle.
 func TestSimulator_StagedComplexOrderRelease(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC2")
@@ -266,6 +268,7 @@ func TestSimulator_StagedComplexOrderRelease(t *testing.T) {
 // This test expects the second ClaimBin to FAIL (return an error), proving
 // the bug exists when it doesn't.
 func TestClaimBin_SilentOverwrite(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-CLAIM")
@@ -347,6 +350,7 @@ func setupThreeBinLine(t *testing.T, db *store.DB) (bins [3]*store.Bin, storageN
 // in transit to move it). The operator creates another store order at the same
 // line. The second order should skip the claimed bin and only take unclaimed ones.
 func TestTC23a_MoveClaimedStagedBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, lineNode, _ := setupThreeBinLine(t, db)
 
@@ -425,6 +429,7 @@ func TestTC23a_MoveClaimedStagedBin(t *testing.T) {
 // order to the return order. A subsequent store order should claim one of
 // the OTHER unclaimed bins, not the one held by the return order.
 func TestTC23b_CancelThenMoveBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	bins, _, lineNode, _ := setupThreeBinLine(t, db)
 
@@ -541,6 +546,7 @@ func TestTC23b_CancelThenMoveBin(t *testing.T) {
 //    or dispatch a robot with no bin?
 // 3. Are the remaining 2 bins handled cleanly?
 func TestTC23c_ChangeoverWithMissingBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	bins, _, lineNode, _ := setupThreeBinLine(t, db)
 
@@ -659,6 +665,7 @@ func TestTC23c_ChangeoverWithMissingBin(t *testing.T) {
 // 2. Do the changeover orders correctly claim only the 2 unclaimed bins?
 // 3. Does the in-flight QH order complete correctly after changeover starts?
 func TestTC23d_ChangeoverWhileMoveInFlight(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	bins, _, lineNode, _ := setupThreeBinLine(t, db)
 
@@ -786,6 +793,7 @@ func TestTC23d_ChangeoverWhileMoveInFlight(t *testing.T) {
 // Expected (current behavior): store order claims the same bin — BUG.
 // Expected (fixed): store order fails or picks a different bin.
 func TestTC24_ComplexOrderBinPoaching(t *testing.T) {
+	t.Parallel()
 	// TC-24a: complex orders now claim bins at dispatch, preventing poaching.
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -872,6 +880,7 @@ func TestTC24_ComplexOrderBinPoaching(t *testing.T) {
 // (FINISHED). Check: does the bin's node_id in the DB reflect the line node?
 // Expected (current behavior): bin still shows storage node — BUG.
 func TestTC24b_StaleBinLocationAfterComplexOrder(t *testing.T) {
+	t.Parallel()
 	// TC-24b: complex orders now set BinID, so ApplyBinArrival fires on
 	// completion and moves the bin to the delivery node in the DB.
 	db := testDB(t)
@@ -961,6 +970,7 @@ func TestTC24b_StaleBinLocationAfterComplexOrder(t *testing.T) {
 // (it's still listed there in the DB) and dispatch a robot to an empty slot.
 // Expected (current behavior): robot dispatched to empty node — BUG.
 func TestTC24c_PhantomInventoryRetrieve(t *testing.T) {
+	t.Parallel()
 	// TC-24c: with the bin claimed and BinID set, ApplyBinArrival runs on
 	// completion, moving the bin to the line node. A subsequent retrieve
 	// targeting storage will NOT find a phantom bin at the old location.
@@ -1058,6 +1068,7 @@ func TestTC24c_PhantomInventoryRetrieve(t *testing.T) {
 // A store order targets line as source (operator releasing the bin).
 // Expected: store order SHOULD claim the staged bin — correct behavior.
 func TestTC25_StoreOrderClaimsStagedBinAtCoreNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STAGED-25")
@@ -1136,6 +1147,7 @@ func TestTC25_StoreOrderClaimsStagedBinAtCoreNode(t *testing.T) {
 // The order should be queued, not failed — so the fulfillment scanner can
 // pick it up later when inventory frees up.
 func TestTC21_QualityHoldBinNotDispatched(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -1231,6 +1243,7 @@ func TestTC21_QualityHoldBinNotDispatched(t *testing.T) {
 // IS NULL), this will fail because the bin is still claimed by the original
 // order. The return order gets created but can't claim its bin.
 func TestTC30_FailedOrderReturnClaimTransfer(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC30")
@@ -1522,6 +1535,7 @@ func TestTC28_ConcurrentRetrieveSamePart(t *testing.T) {
 // This test isolates the bug without relying on TC-42's round-trip symmetry
 // (where SourceNode == DeliveryNode masks the defect).
 func TestMaybeCreateReturnOrder_SourceNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RETSRC")
@@ -1690,6 +1704,7 @@ func TestTC36_RetrieveClaimFailure_QueueNotFail(t *testing.T) {
 // warehouse. Return order can't dispatch. Bin is permanently locked. Team can't release
 // lineside or run new orders against that bin.
 func TestTC38_CancelDeliveredOrder_NoReturnOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC38")
@@ -1805,6 +1820,7 @@ func TestTC38_CancelDeliveredOrder_NoReturnOrder(t *testing.T) {
 // This is the root enabler for the TC-38 incident. If TerminateOrder rejected terminal
 // statuses, the spurious return order and receipt-on-cancelled bugs wouldn't trigger.
 func TestTC39_TerminateOrder_RejectsTerminalStatuses(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC39")

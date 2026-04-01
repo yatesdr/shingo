@@ -7,6 +7,7 @@ import "testing"
 // is the core risk surface of the order_bins junction table feature.
 
 func TestResolvePerBinDestinations_SinglePickupDropoff(t *testing.T) {
+	t.Parallel()
 	// Simplest case: one bin, pickup then dropoff.
 	steps := []resolvedStep{
 		{Action: "pickup", Node: "storage.A1"},
@@ -22,6 +23,7 @@ func TestResolvePerBinDestinations_SinglePickupDropoff(t *testing.T) {
 }
 
 func TestResolvePerBinDestinations_SwapPattern(t *testing.T) {
+	t.Parallel()
 	// Full 10-step swap: two bins, multiple pickups and dropoffs.
 	// This is the TC-60 production pattern.
 	//
@@ -55,6 +57,7 @@ func TestResolvePerBinDestinations_SwapPattern(t *testing.T) {
 }
 
 func TestResolvePerBinDestinations_ReStaging(t *testing.T) {
+	t.Parallel()
 	// Bin is picked up, dropped at staging, picked up again, dropped at final dest.
 	// The dest should update to the final dropoff, not the intermediate staging.
 	steps := []resolvedStep{
@@ -73,6 +76,7 @@ func TestResolvePerBinDestinations_ReStaging(t *testing.T) {
 }
 
 func TestResolvePerBinDestinations_EmptyDropoff(t *testing.T) {
+	t.Parallel()
 	// Robot drops bin at staging, then drives empty to another node (dropoff with no bin).
 	// The empty dropoff should not create a destination entry for a non-existent bin.
 	steps := []resolvedStep{
@@ -90,6 +94,7 @@ func TestResolvePerBinDestinations_EmptyDropoff(t *testing.T) {
 }
 
 func TestResolvePerBinDestinations_GhostPickup(t *testing.T) {
+	t.Parallel()
 	// Pickup at a node with no bin (ghost robot dispatch). The robot arrives
 	// but there's nothing to pick up. Algorithm handles this via the binAtNode
 	// lookup — no entry means carrying stays 0.
@@ -114,6 +119,7 @@ func TestResolvePerBinDestinations_GhostPickup(t *testing.T) {
 }
 
 func TestResolvePerBinDestinations_MultiplePickupsSameNode(t *testing.T) {
+	t.Parallel()
 	// Two separate pickups from the same node (different times, after re-stocking).
 	// The second pickup grabs the bin that was most recently dropped there.
 	steps := []resolvedStep{

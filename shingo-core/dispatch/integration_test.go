@@ -9,6 +9,7 @@ import (
 )
 
 func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -86,6 +87,7 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 }
 
 func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -135,6 +137,7 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 }
 
 func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -175,6 +178,7 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 }
 
 func TestDispatcher_CancelOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -231,6 +235,7 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 }
 
 func TestDispatcher_RedirectOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -273,6 +278,7 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 }
 
 func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 
@@ -358,6 +364,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 // to the same synthetic NGRP resolve to different physical children and that
 // in-flight awareness prevents double-booking of the same slot.
 func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, _ = setupTestData(t, db)
 
@@ -482,6 +489,7 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 // TestDispatcher_RetrieveEmptyToSyntheticNGRP verifies empty bin delivery
 // to a synthetic node group uses store resolution (finds empty slots).
 func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, _ = setupTestData(t, db)
 
@@ -550,6 +558,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 // inaccessible, walks up to find the lane, and hands a BuriedError to
 // planBuriedReshuffle. The order should go to "reshuffling" status.
 func TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, _ = setupTestData(t, db)
 
@@ -654,6 +663,7 @@ func TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle(t *testing.T) {
 // specific child using dot notation (ZONE.Node10) skips resolver — the
 // physical node is used directly.
 func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 
@@ -703,6 +713,7 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 }
 
 func TestDispatcher_FleetFailure(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -753,6 +764,7 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 }
 
 func TestDispatcher_PriorityHandling(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -805,6 +817,7 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 }
 
 func TestHandleRetrieve_BinTracking(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -850,6 +863,7 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 }
 
 func TestHandleOrderIngest(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 

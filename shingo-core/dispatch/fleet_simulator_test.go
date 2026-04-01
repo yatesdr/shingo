@@ -24,6 +24,7 @@ import (
 // causing robots to navigate to locations without actually jacking bins.
 // This test would have caught it in CI.
 func TestSimulator_ComplexOrderBinTasks(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 
@@ -94,6 +95,7 @@ func TestSimulator_ComplexOrderBinTasks(t *testing.T) {
 // orders. When the robot reaches the wait point, Edge sends a release
 // and the remaining blocks are appended.
 func TestSimulator_StagedComplexOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC2")
@@ -182,6 +184,7 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 // Scenario: verifies the full dispatch path creates the right fleet request
 // with JackLoad at source and JackUnload at destination.
 func TestSimulator_SimpleRetrieveOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC3")
@@ -242,6 +245,7 @@ func TestSimulator_SimpleRetrieveOrder(t *testing.T) {
 // Ensures the simulator's MapState matches the real SEER RDS adapter
 // exactly, so state transitions emitted in tests are realistic.
 func TestSimulator_StateMapping(t *testing.T) {
+	t.Parallel()
 	sim := simulator.New()
 
 	tests := []struct {
@@ -277,6 +281,7 @@ func TestSimulator_StateMapping(t *testing.T) {
 // Bug: maybeCreateReturnOrder was creating spurious return orders for orders
 // that failed before the fleet accepted them (empty VendorOrderID).
 func TestSimulator_FleetFailure_NoVendorOrderID(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC5")

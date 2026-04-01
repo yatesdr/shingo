@@ -55,7 +55,33 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *store.Order, plan *Reshuff
 func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	next, err := d.db.GetNextChildOrder(parentOrderID)
 	if err != nil {
-		// No more children — compound order is complete
+		// No more pending children — check if any failed before confirming
+		children, listErr := d.db.ListChildOrders(parentOrderID)
+		if listErr != nil {
+			log.Printf("dispatch: list children for compound %d: %v", parentOrderID, listErr)
+		}
+		hasFailed := false
+		for _, c := range children {
+			if c.Status == StatusFailed {
+				hasFailed = true
+				break
+			}
+		}
+
+		if hasFailed {
+			log.Printf("dispatch: compound order %d has failed children — marking parent failed", parentOrderID)
+			if err := d.db.UpdateOrderStatus(parentOrderID, StatusFailed, "reshuffle failed: child order failed"); err != nil {
+				log.Printf("dispatch: update compound order %d status to failed: %v", parentOrderID, err)
+			}
+			d.unlockLaneForCompound(parentOrderID)
+			parent, pErr := d.db.GetOrder(parentOrderID)
+			if pErr == nil {
+				d.emitter.EmitOrderCompleted(parentOrderID, parent.EdgeUUID, parent.StationID)
+			}
+			return nil
+		}
+
+		// All children succeeded — compound order is complete
 		if err := d.db.UpdateOrderStatus(parentOrderID, StatusConfirmed, "reshuffle complete"); err != nil {
 			log.Printf("dispatch: update compound order %d status to confirmed: %v", parentOrderID, err)
 		}

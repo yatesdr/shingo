@@ -76,6 +76,7 @@ func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNod
 
 
 func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
@@ -123,6 +124,7 @@ func testEnvelope() *protocol.Envelope {
 // --- Tests ---
 
 func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
@@ -150,6 +152,7 @@ func TestHandleOrderRequest_Retrieve_NoSource(t *testing.T) {
 }
 
 func TestHandleOrderRequest_Retrieve_InvalidDeliveryNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 
@@ -171,6 +174,7 @@ func TestHandleOrderRequest_Retrieve_InvalidDeliveryNode(t *testing.T) {
 }
 
 func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
@@ -195,6 +199,7 @@ func TestHandleOrderRequest_Move_MissingPickup(t *testing.T) {
 }
 
 func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 
@@ -220,6 +225,7 @@ func TestHandleOrderRequest_Move_NoPayloadAtPickup(t *testing.T) {
 }
 
 func TestHandleOrderRequest_UnknownType(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
@@ -242,6 +248,7 @@ func TestHandleOrderRequest_UnknownType(t *testing.T) {
 }
 
 func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 
@@ -277,6 +284,7 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 }
 
 func TestHandleOrderRequest_UnknownStyle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
@@ -295,6 +303,7 @@ func TestHandleOrderRequest_UnknownStyle(t *testing.T) {
 }
 
 func TestHandleOrderCancel(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	order := &store.Order{EdgeUUID: "uuid-cancel", StationID: "line-1", Status: StatusPending}
@@ -320,6 +329,7 @@ func TestHandleOrderCancel(t *testing.T) {
 }
 
 func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 
@@ -347,6 +357,7 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 }
 
 func TestHandleOrderReceipt(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	order := &store.Order{EdgeUUID: "uuid-receipt", StationID: "line-1", Status: StatusDelivered}
@@ -369,6 +380,7 @@ func TestHandleOrderReceipt(t *testing.T) {
 }
 
 func TestHandleOrderCancel_RejectsWrongStation(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	order := &store.Order{EdgeUUID: "uuid-owned", StationID: "line-1", Status: StatusPending}
@@ -395,6 +407,7 @@ func TestHandleOrderCancel_RejectsWrongStation(t *testing.T) {
 }
 
 func TestHandleOrderCancel_AllowsCoreRole(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	order := &store.Order{EdgeUUID: "uuid-core-cancel", StationID: "line-1", Status: StatusPending}
@@ -420,6 +433,7 @@ func TestHandleOrderCancel_AllowsCoreRole(t *testing.T) {
 }
 
 func TestHandleOrderCancel_DuplicateCancelledOrderIgnored(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	order := &store.Order{EdgeUUID: "uuid-cancel-dupe", StationID: "edge-1", Status: StatusCancelled}
@@ -447,6 +461,7 @@ func TestHandleOrderCancel_DuplicateCancelledOrderIgnored(t *testing.T) {
 }
 
 func TestHandleOrderReceipt_RejectsWrongStation(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	order := &store.Order{EdgeUUID: "uuid-receipt-own", StationID: "line-1", Status: StatusDelivered}
@@ -471,6 +486,7 @@ func TestHandleOrderReceipt_RejectsWrongStation(t *testing.T) {
 }
 
 func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
@@ -492,6 +508,7 @@ func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 }
 
 func TestFIFOPayloadSourceSelection(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 
@@ -523,6 +540,7 @@ func TestFIFOPayloadSourceSelection(t *testing.T) {
 }
 
 func TestStatusConstants(t *testing.T) {
+	t.Parallel()
 	// Verify all plan-defined statuses exist
 	statuses := []string{
 		StatusPending, StatusSourcing, StatusSubmitted, StatusDispatched,
@@ -542,6 +560,7 @@ func TestStatusConstants(t *testing.T) {
 }
 
 func TestOrderTypeConstants(t *testing.T) {
+	t.Parallel()
 	if OrderTypeRetrieve != "retrieve" {
 		t.Errorf("OrderTypeRetrieve = %q", OrderTypeRetrieve)
 	}

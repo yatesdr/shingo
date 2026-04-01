@@ -9,6 +9,7 @@ import (
 
 // TestExtractRemainingUOP_NilEnvelope verifies that a nil envelope returns nil.
 func TestExtractRemainingUOP_NilEnvelope(t *testing.T) {
+	t.Parallel()
 	got := extractRemainingUOP(nil)
 	if got != nil {
 		t.Errorf("expected nil, got %v", *got)
@@ -17,6 +18,7 @@ func TestExtractRemainingUOP_NilEnvelope(t *testing.T) {
 
 // TestExtractRemainingUOP_EmptyPayload verifies that an empty payload returns nil.
 func TestExtractRemainingUOP_EmptyPayload(t *testing.T) {
+	t.Parallel()
 	env := &protocol.Envelope{}
 	got := extractRemainingUOP(env)
 	if got != nil {
@@ -26,6 +28,7 @@ func TestExtractRemainingUOP_EmptyPayload(t *testing.T) {
 
 // TestExtractRemainingUOP_NoField verifies that an envelope without remaining_uop returns nil.
 func TestExtractRemainingUOP_NoField(t *testing.T) {
+	t.Parallel()
 	body, _ := json.Marshal(&protocol.OrderRequest{
 		OrderUUID: "test",
 		OrderType: "move",
@@ -42,6 +45,7 @@ func TestExtractRemainingUOP_NoField(t *testing.T) {
 
 // TestExtractRemainingUOP_Zero verifies extraction of remaining_uop=0 (full depletion).
 func TestExtractRemainingUOP_Zero(t *testing.T) {
+	t.Parallel()
 	zero := 0
 	body, _ := json.Marshal(&protocol.OrderRequest{
 		OrderUUID:    "test-zero",
@@ -63,6 +67,7 @@ func TestExtractRemainingUOP_Zero(t *testing.T) {
 
 // TestExtractRemainingUOP_Positive verifies extraction of remaining_uop>0 (partial consumption).
 func TestExtractRemainingUOP_Positive(t *testing.T) {
+	t.Parallel()
 	partial := 42
 	body, _ := json.Marshal(&protocol.OrderRequest{
 		OrderUUID:    "test-partial",
@@ -84,6 +89,7 @@ func TestExtractRemainingUOP_Positive(t *testing.T) {
 
 // TestExtractRemainingUOP_MalformedJSON verifies that malformed JSON returns nil gracefully.
 func TestExtractRemainingUOP_MalformedJSON(t *testing.T) {
+	t.Parallel()
 	env := &protocol.Envelope{Payload: []byte(`{invalid`)}
 	got := extractRemainingUOP(env)
 	if got != nil {

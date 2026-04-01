@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"shingo/protocol"
 	"shingocore/dispatch"
@@ -50,12 +51,24 @@ func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
 	g2Done := make(chan struct{})
 	var hookCalled atomic.Int32
 
+	timeout := time.After(10 * time.Second)
+
 	d.SetPostFindHook(func() {
 		// Only synchronize on the FIRST call (G1's Find).
 		// Subsequent calls (G2's Find) pass through without blocking.
 		if hookCalled.Add(1) == 1 {
-			g1Found <- struct{}{} // signal: G1 found the bin, pausing before Claim
-			<-g2Done              // wait for G2 to claim first
+			select {
+			case g1Found <- struct{}{}: // signal: G1 found the bin, pausing before Claim
+			case <-timeout:
+				t.Error("timeout: G1 blocked sending g1Found signal")
+				return
+			}
+			select {
+			case <-g2Done: // wait for G2 to claim first
+			case <-timeout:
+				t.Error("timeout: G1 blocked waiting for g2Done")
+				return
+			}
 		}
 	})
 
@@ -78,7 +91,12 @@ func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
 	// Goroutine 2: waits for G1 to find the bin, then dispatches and claims it.
 	go func() {
 		defer wg.Done()
-		<-g1Found // wait for G1's hook signal
+		select {
+		case <-g1Found: // wait for G1's hook signal
+		case <-timeout:
+			t.Error("timeout: G2 blocked waiting for g1Found")
+			return
+		}
 		d.HandleOrderRequest(testEnvelope(), &protocol.OrderRequest{
 			OrderUUID:    "race-order-1",
 			OrderType:    dispatch.OrderTypeRetrieve,
@@ -86,7 +104,12 @@ func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
 			DeliveryNode: lineNode.Name,
 			Quantity:     1,
 		})
-		g2Done <- struct{}{} // let G1 resume its Claim
+		select {
+		case g2Done <- struct{}{}: // let G1 resume its Claim
+		case <-timeout:
+			t.Error("timeout: G2 blocked sending g2Done signal")
+			return
+		}
 	}()
 
 	wg.Wait()
@@ -194,6 +217,7 @@ func TestConcurrent_DispatchStress(t *testing.T) {
 // Scenario: Edge sends a complex order request with no steps.
 // Expected: order fails gracefully, no panic, no fleet orders.
 func TestTC09_ComplexOrderZeroSteps(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 
@@ -234,6 +258,7 @@ func TestTC09_ComplexOrderZeroSteps(t *testing.T) {
 // Scenario: Retrieve order with DeliveryNode that doesn't exist in the database.
 // Expected: order fails with clear error, no fleet orders.
 func TestTC10_NonexistentDeliveryNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC10")
@@ -271,6 +296,7 @@ func TestTC10_NonexistentDeliveryNode(t *testing.T) {
 // Scenario: Retrieve order with quantity=0.
 // Expected: system handles gracefully — no panic.
 func TestTC12_ZeroQuantity(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC12")
@@ -303,6 +329,7 @@ func TestTC12_ZeroQuantity(t *testing.T) {
 // Scenario: Dispatch retrieve, drive to RUNNING (in_transit), redirect to different line.
 // Expected: old vendor order cancelled, new one dispatched, bin claim intact.
 func TestRedirect_MidTransit(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode1, bp := setupTestData(t, db)
 
@@ -385,6 +412,7 @@ func TestRedirect_MidTransit(t *testing.T) {
 // --- Fulfillment scanner: queued order dispatched when bin becomes available ---
 // Scenario: Order queued (no bins). Bin appears. Scanner picks it up and dispatches.
 func TestFulfillmentScanner_QueueToDispatch(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	// NO bins created — order should queue
@@ -480,6 +508,7 @@ func TestFulfillmentScanner_QueueToDispatch(t *testing.T) {
 // without checking claimed_by.
 // Expected: sweep should skip bins with active claims.
 func TestTC37_StagingExpiryVsActiveClaim(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC37")

@@ -58,6 +58,7 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *store.Nod
 // --- Tests ---
 
 func TestPlanReshuffle_SingleBlocker(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 
@@ -112,6 +113,7 @@ func TestPlanReshuffle_SingleBlocker(t *testing.T) {
 }
 
 func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 
@@ -181,6 +183,7 @@ func TestPlanReshuffle_MultipleBlockers(t *testing.T) {
 }
 
 func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, lane, slots, shuffleSlots, bp := setupNodeGroupWithShuffle(t, db)
 
@@ -204,6 +207,7 @@ func TestPlanReshuffle_NoShuffleSlots(t *testing.T) {
 }
 
 func TestLaneLock_PreventsConcurrent(t *testing.T) {
+	t.Parallel()
 	ll := NewLaneLock()
 
 	var laneID int64 = 42
@@ -243,6 +247,7 @@ func TestLaneLock_PreventsConcurrent(t *testing.T) {
 }
 
 func TestCompoundOrderCreation(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	grp, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 
@@ -349,6 +354,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 }
 
 func TestHandleChildOrderFailure(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 
@@ -466,6 +472,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 // implementation only cancelled StatusPending/StatusSourcing siblings, leaving
 // in-flight children as orphan robots with claimed bins.
 func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 

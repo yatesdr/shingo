@@ -167,6 +167,22 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
+	// Patch: if the order was redirected while staged, DeliveryNode reflects the
+	// new destination but StepsJSON still has the original dropoff node. Replace
+	// the last dropoff in the segment with the current DeliveryNode so fleet
+	// blocks route to the correct destination.
+	if order.DeliveryNode != "" {
+		for i := len(segment) - 1; i >= 0; i-- {
+			if segment[i].Action == "dropoff" {
+				if segment[i].Node != order.DeliveryNode {
+					d.dbg("complex release: patching segment dropoff %s -> %s (redirect)", segment[i].Node, order.DeliveryNode)
+					segment[i].Node = order.DeliveryNode
+				}
+				break
+			}
+		}
+	}
+
 	blocks := stepsToBlocks(order.VendorOrderID, segment, blockOffset)
 	complete := !moreWaits
 
