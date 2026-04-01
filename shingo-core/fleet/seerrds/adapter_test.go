@@ -49,7 +49,7 @@ func TestReleaseOrder_PinsVehicle(t *testing.T) {
 	err := adapter.ReleaseOrder("sg-42-abc", []fleet.OrderBlock{
 		{BlockID: "sg-42-abc-b3", Location: "LINE-01", BinTask: "JackLoad"},
 		{BlockID: "sg-42-abc-b4", Location: "OUTBOUND-STG", BinTask: "JackUnload"},
-	})
+	}, true)
 	if err != nil {
 		t.Fatalf("ReleaseOrder: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestReleaseOrder_NoVehicleFallback(t *testing.T) {
 
 	err := adapter.ReleaseOrder("sg-99-missing", []fleet.OrderBlock{
 		{BlockID: "sg-99-missing-b2", Location: "DEST", BinTask: "JackUnload"},
-	})
+	}, true)
 	if err != nil {
 		t.Fatalf("ReleaseOrder: %v", err)
 	}

@@ -1259,3 +1259,199 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 			oldBin.NodeID, outboundDest.ID)
 	}
 }
+
+// =============================================================================
+// TC-DW: Double-wait complex order — Phase 3 evacuate flow prerequisite
+//
+// This test verifies that a complex order with TWO wait steps is handled
+// correctly by the Core dispatcher. The evacuate changeover flow requires:
+//
+//   pickup(Storage) → dropoff(Line) → wait₁ → pickup(Line) → dropoff(Storage) → wait₂ → pickup(Storage) → dropoff(Line)
+//
+// Expected lifecycle:
+//   1. Dispatch: 2 pre-wait blocks (pickup Storage, dropoff Line), order staged
+//   2. Drive RUNNING → WAITING: status "staged"
+//   3. First release: appends 2 blocks (pickup Line, dropoff Storage), order
+//      remains staged (second wait still ahead)
+//   4. Drive RUNNING → WAITING: status "staged" again
+//   5. Second release: appends 2 blocks (pickup Storage, dropoff Line), order
+//      marked complete
+//   6. Drive RUNNING → FINISHED: order "delivered"
+//
+// If this test FAILS, the dispatcher's wait-splitting logic only handles a
+// single wait and Phase 3 evacuate orders cannot ship safely.
+// =============================================================================
+
+func TestComplexOrder_DoubleWait(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	// Need bins at both nodes for claimComplexBins:
+	//   - step 0: pickup(storage) → needs bin at storage
+	//   - step 3: pickup(line) → needs bin at line
+	//   - step 6: pickup(storage) → needs second bin at storage
+	_ = createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-DW-S1")
+	_ = createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-DW-S2")
+	_ = createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-DW-L1")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Submit double-wait complex order:
+	//   pickup(storage) → dropoff(line) → wait → pickup(line) → dropoff(storage) → wait → pickup(storage) → dropoff(line)
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "double-wait-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: storageNode.Name},
+			{Action: "dropoff", Node: lineNode.Name},
+			{Action: "wait"},
+			{Action: "pickup", Node: lineNode.Name},
+			{Action: "dropoff", Node: storageNode.Name},
+			{Action: "wait"},
+			{Action: "pickup", Node: storageNode.Name},
+			{Action: "dropoff", Node: lineNode.Name},
+		},
+	})
+
+	order, err := db.GetOrderByUUID("double-wait-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != dispatch.StatusDispatched {
+		t.Fatalf("initial status = %q, want %q", order.Status, dispatch.StatusDispatched)
+	}
+
+	// ── Phase 1: Pre-wait blocks ──────────────────────────────────────────
+	// Only blocks before the first wait should be sent to the fleet.
+	if sim.StagedOrderCount() != 1 {
+		t.Fatalf("staged orders = %d, want 1", sim.StagedOrderCount())
+	}
+	view := sim.GetOrder(order.VendorOrderID)
+	if view == nil {
+		t.Fatal("simulator should have the order")
+	}
+	if len(view.Blocks) != 2 {
+		t.Fatalf("pre-wait blocks = %d, want 2 (pickup + dropoff before wait₁)", len(view.Blocks))
+	}
+	if view.Complete {
+		t.Fatal("order should NOT be complete (has 2 wait steps remaining)")
+	}
+	if view.Blocks[0].Location != storageNode.Name || view.Blocks[0].BinTask != "JackLoad" {
+		t.Errorf("block 0: got %s/%s, want %s/JackLoad", view.Blocks[0].Location, view.Blocks[0].BinTask, storageNode.Name)
+	}
+	if view.Blocks[1].Location != lineNode.Name || view.Blocks[1].BinTask != "JackUnload" {
+		t.Errorf("block 1: got %s/%s, want %s/JackUnload", view.Blocks[1].Location, view.Blocks[1].BinTask, lineNode.Name)
+	}
+
+	// ── Phase 2: Drive to first WAITING ───────────────────────────────────
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	order, _ = db.GetOrderByUUID("double-wait-1")
+	if order.Status != dispatch.StatusInTransit {
+		t.Fatalf("after RUNNING: status = %q, want %q", order.Status, dispatch.StatusInTransit)
+	}
+
+	sim.DriveState(order.VendorOrderID, "WAITING")
+	order, _ = db.GetOrderByUUID("double-wait-1")
+	if order.Status != dispatch.StatusStaged {
+		t.Fatalf("after first WAITING: status = %q, want %q", order.Status, dispatch.StatusStaged)
+	}
+
+	// ── Phase 3: First release (wait₁) ───────────────────────────────────
+	// Should append ONLY the 2 blocks between wait₁ and wait₂.
+	// The order must remain staged (not complete) because wait₂ is still ahead.
+	d.HandleOrderRelease(env, &protocol.OrderRelease{
+		OrderUUID: "double-wait-1",
+	})
+
+	view = sim.GetOrder(order.VendorOrderID)
+
+	// CRITICAL ASSERTION: After first release, we expect 4 blocks total
+	// (2 pre-wait₁ + 2 between wait₁ and wait₂), NOT 6 (all blocks).
+	// If this fails with 6 blocks, splitPostWait is dumping all remaining
+	// steps and the second wait is never honored.
+	if len(view.Blocks) != 4 {
+		t.Fatalf("BUG: blocks after first release = %d, want 4 (2 pre-wait + 2 mid-wait)\n"+
+			"If you see 6 blocks, splitPostWait returns ALL steps after the first\n"+
+			"wait and stepsToBlocks skips the second wait action, producing 4\n"+
+			"post-wait blocks instead of 2. The second wait is never honored.\n"+
+			"Fix: splitPostWait must stop at the next wait, and ReleaseOrder\n"+
+			"must support partial release (complete=false when more waits remain).",
+			len(view.Blocks))
+	}
+	if view.Complete {
+		t.Fatal("BUG: order marked complete after first release — second wait not honored.\n" +
+			"ReleaseOrder always sets complete=true. For double-wait, the first\n" +
+			"release must keep complete=false so the robot can enter WAITING again.")
+	}
+
+	// After first release, the order status should transition but must return
+	// to a releasable state when the robot hits the second wait.
+	order, _ = db.GetOrderByUUID("double-wait-1")
+	if order.Status != dispatch.StatusInTransit {
+		t.Fatalf("after first release: status = %q, want %q", order.Status, dispatch.StatusInTransit)
+	}
+
+	// ── Phase 4: Drive to second WAITING ──────────────────────────────────
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "WAITING")
+
+	order, _ = db.GetOrderByUUID("double-wait-1")
+	if order.Status != dispatch.StatusStaged {
+		t.Fatalf("BUG: after second WAITING: status = %q, want %q\n"+
+			"The dispatcher set in_transit after first release and the robot\n"+
+			"never enters WAITING again because ReleaseOrder already sent all\n"+
+			"blocks. If status is still in_transit, the fleet ran straight\n"+
+			"through without stopping.",
+			order.Status, dispatch.StatusStaged)
+	}
+
+	// ── Phase 5: Second release (wait₂) ──────────────────────────────────
+	// Should append the final 2 blocks and mark the order complete.
+	d.HandleOrderRelease(env, &protocol.OrderRelease{
+		OrderUUID: "double-wait-1",
+	})
+
+	view = sim.GetOrder(order.VendorOrderID)
+	if len(view.Blocks) != 6 {
+		t.Fatalf("blocks after second release = %d, want 6 (2+2+2)", len(view.Blocks))
+	}
+	if !view.Complete {
+		t.Fatal("order should be complete after second release — no more waits")
+	}
+
+	// Verify block sequence: each pair is (pickup, dropoff) at alternating nodes
+	expectedBlocks := []struct {
+		location string
+		binTask  string
+	}{
+		{storageNode.Name, "JackLoad"},
+		{lineNode.Name, "JackUnload"},
+		{lineNode.Name, "JackLoad"},
+		{storageNode.Name, "JackUnload"},
+		{storageNode.Name, "JackLoad"},
+		{lineNode.Name, "JackUnload"},
+	}
+	for i, exp := range expectedBlocks {
+		if i >= len(view.Blocks) {
+			break
+		}
+		if view.Blocks[i].Location != exp.location || view.Blocks[i].BinTask != exp.binTask {
+			t.Errorf("block %d: got %s/%s, want %s/%s",
+				i, view.Blocks[i].Location, view.Blocks[i].BinTask, exp.location, exp.binTask)
+		}
+	}
+
+	// ── Phase 6: Drive to completion ──────────────────────────────────────
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+
+	order, _ = db.GetOrderByUUID("double-wait-1")
+	if order.Status != dispatch.StatusDelivered {
+		t.Fatalf("after FINISHED: status = %q, want %q", order.Status, dispatch.StatusDelivered)
+	}
+	t.Log("double-wait complex order completed successfully — Phase 3 evacuate flow is unblocked")
+}

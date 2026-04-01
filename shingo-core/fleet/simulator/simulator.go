@@ -131,8 +131,10 @@ func (s *SimulatorBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (flee
 	return fleet.TransportOrderResult{VendorOrderID: vendorID}, nil
 }
 
-// ReleaseOrder appends additional blocks and marks the order as complete.
-func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
+// ReleaseOrder appends additional blocks to a staged order. When complete is
+// true the order is marked finished; when false it stays staged so the robot
+// can dwell at the next wait point (multi-wait complex orders).
+func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -147,7 +149,7 @@ func (s *SimulatorBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.Ord
 			binTask:  b.BinTask,
 		})
 	}
-	order.complete = true
+	order.complete = complete
 	return nil
 }
 

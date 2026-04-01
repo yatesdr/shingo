@@ -379,3 +379,252 @@ func TestHandlePayloadCatalog_PruneDeletedEntries(t *testing.T) {
 		t.Errorf("catalog entries = %d, want 1 (only PART-A)", len(entries))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// A/B cycling helpers + tests
+// ---------------------------------------------------------------------------
+
+// seedABPair creates a process with two consume nodes (A and B) paired via
+// PairedCoreNode. Returns processID, nodeAID, nodeBID, styleID, claimAID, claimBID.
+func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
+	t.Helper()
+
+	processID, err := db.CreateProcess("AB-PROC", "a/b cycling test", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	nodeAID, err = db.CreateProcessNode(store.ProcessNodeInput{
+		ProcessID:    processID,
+		CoreNodeName: "AB-NODE-A",
+		Code:         "ABA",
+		Name:         "AB Node A",
+		Sequence:     1,
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatalf("create node A: %v", err)
+	}
+	nodeBID, err = db.CreateProcessNode(store.ProcessNodeInput{
+		ProcessID:    processID,
+		CoreNodeName: "AB-NODE-B",
+		Code:         "ABB",
+		Name:         "AB Node B",
+		Sequence:     2,
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatalf("create node B: %v", err)
+	}
+
+	styleID, err = db.CreateStyle("AB-STYLE", "a/b style", processID)
+	if err != nil {
+		t.Fatalf("create style: %v", err)
+	}
+	db.SetActiveStyle(processID, &styleID)
+
+	claimAID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID:        styleID,
+		CoreNodeName:   "AB-NODE-A",
+		Role:           "consume",
+		SwapMode:       "simple",
+		PayloadCode:    "PART-AB",
+		UOPCapacity:    100,
+		ReorderPoint:   10,
+		AutoReorder:    true,
+		PairedCoreNode: "AB-NODE-B",
+	})
+	if err != nil {
+		t.Fatalf("upsert claim A: %v", err)
+	}
+	claimBID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID:        styleID,
+		CoreNodeName:   "AB-NODE-B",
+		Role:           "consume",
+		SwapMode:       "simple",
+		PayloadCode:    "PART-AB",
+		UOPCapacity:    100,
+		ReorderPoint:   10,
+		AutoReorder:    true,
+		PairedCoreNode: "AB-NODE-A",
+	})
+	if err != nil {
+		t.Fatalf("upsert claim B: %v", err)
+	}
+
+	db.EnsureProcessNodeRuntime(nodeAID)
+	db.EnsureProcessNodeRuntime(nodeBID)
+	db.SetProcessNodeRuntime(nodeAID, &claimAID, 80)
+	db.SetProcessNodeRuntime(nodeBID, &claimBID, 80)
+
+	// Node A starts as active pull, Node B starts as inactive
+	db.SetActivePull(nodeAID, true)
+	db.SetActivePull(nodeBID, false)
+
+	return
+}
+
+// TestWiring_ABCycling_ActiveNodeDecrements verifies that counter delta only
+// decrements the active-pull node in an A/B pair.
+func TestWiring_ABCycling_ActiveNodeDecrements(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Send a delta — only Node A (active) should decrement
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     5,
+	})
+
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+
+	if rtA.RemainingUOP != 75 {
+		t.Errorf("Node A RemainingUOP = %d, want 75 (80 - 5)", rtA.RemainingUOP)
+	}
+	if rtB.RemainingUOP != 80 {
+		t.Errorf("Node B RemainingUOP = %d, want 80 (inactive, should not decrement)", rtB.RemainingUOP)
+	}
+}
+
+// TestWiring_ABCycling_InactiveNodeSkipped verifies that the inactive side of
+// an A/B pair is NOT decremented by counter deltas.
+func TestWiring_ABCycling_InactiveNodeSkipped(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
+
+	// Flip: B active, A inactive
+	db.SetActivePull(nodeAID, false)
+	db.SetActivePull(nodeBID, true)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     10,
+	})
+
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+
+	if rtA.RemainingUOP != 80 {
+		t.Errorf("Node A RemainingUOP = %d, want 80 (inactive, should not decrement)", rtA.RemainingUOP)
+	}
+	if rtB.RemainingUOP != 70 {
+		t.Errorf("Node B RemainingUOP = %d, want 70 (80 - 10)", rtB.RemainingUOP)
+	}
+}
+
+// TestWiring_ABCycling_FallthroughBothInactive verifies that when NEITHER A
+// nor B has active_pull=true, the fallthrough logic still decrements one of
+// them (the "count to lineside storage" safety net).
+func TestWiring_ABCycling_FallthroughBothInactive(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
+
+	// Set both inactive — shouldn't happen normally, but defensive
+	db.SetActivePull(nodeAID, false)
+	db.SetActivePull(nodeBID, false)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     7,
+	})
+
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+
+	// One of them should have been decremented as fallback
+	totalRemaining := rtA.RemainingUOP + rtB.RemainingUOP
+	if totalRemaining != 153 { // 80 + 80 - 7 = 153
+		t.Errorf("total remaining = %d, want 153 (one node decremented by 7 as fallthrough)", totalRemaining)
+	}
+}
+
+// TestWiring_FlipABNode_SwitchesActivePull verifies that FlipABNode correctly
+// sets active_pull=true on the target and active_pull=false on the partner.
+func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeAID, nodeBID, _, _, _ := seedABPair(t, db)
+
+	eng := testEngine(t, db)
+
+	// Initially A=active, B=inactive. Flip to B.
+	if err := eng.FlipABNode(nodeBID); err != nil {
+		t.Fatalf("FlipABNode to B: %v", err)
+	}
+
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+
+	if rtA.ActivePull {
+		t.Error("Node A should be inactive after flip to B")
+	}
+	if !rtB.ActivePull {
+		t.Error("Node B should be active after flip to B")
+	}
+
+	// Flip back to A
+	if err := eng.FlipABNode(nodeAID); err != nil {
+		t.Fatalf("FlipABNode to A: %v", err)
+	}
+
+	rtA, _ = db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ = db.GetProcessNodeRuntime(nodeBID)
+
+	if !rtA.ActivePull {
+		t.Error("Node A should be active after flip back to A")
+	}
+	if rtB.ActivePull {
+		t.Error("Node B should be inactive after flip back to A")
+	}
+}
+
+// TestWiring_FlipABNode_RejectsUnpairedNode verifies that FlipABNode returns
+// an error when called on a node without PairedCoreNode.
+func TestWiring_FlipABNode_RejectsUnpairedNode(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "NOPAIR", PayloadCode: "PART-NP", UOPCapacity: 100, InitialUOP: 50,
+	})
+
+	eng := testEngine(t, db)
+
+	err := eng.FlipABNode(nodeID)
+	if err == nil {
+		t.Fatal("FlipABNode should reject a node without PairedCoreNode")
+	}
+}
+
+// TestWiring_ABCycling_UnpairedNodeAlwaysDecrements verifies that unpaired
+// consume nodes (PairedCoreNode="") always decrement regardless of active_pull,
+// maintaining backward compatibility.
+func TestWiring_ABCycling_UnpairedNodeAlwaysDecrements(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "UNPAIR", PayloadCode: "PART-UP", UOPCapacity: 100, InitialUOP: 60,
+	})
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     4,
+	})
+
+	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	if runtime.RemainingUOP != 56 {
+		t.Errorf("RemainingUOP = %d, want 56 (unpaired node always decrements)", runtime.RemainingUOP)
+	}
+}

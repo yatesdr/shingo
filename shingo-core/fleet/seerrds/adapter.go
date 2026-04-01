@@ -124,7 +124,7 @@ func (a *Adapter) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.Transpo
 	return fleet.TransportOrderResult{VendorOrderID: req.OrderID}, nil
 }
 
-func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
+func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
 	rdsBlocks := make([]rds.Block, len(blocks))
 	for i, b := range blocks {
 		rdsBlocks[i] = rds.Block{BlockID: b.BlockID, Location: b.Location, BinTask: b.BinTask}
@@ -138,7 +138,7 @@ func (a *Adapter) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) 
 		log.Printf("adapter: release pinning vehicle %s for order %s", vehicle, vendorOrderID)
 	}
 
-	return a.client.AddBlocks(vendorOrderID, rdsBlocks, true, vehicle)
+	return a.client.AddBlocks(vendorOrderID, rdsBlocks, complete, vehicle)
 }
 
 func (a *Adapter) Reconfigure(cfg fleet.ReconfigureParams) {

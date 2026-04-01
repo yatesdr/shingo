@@ -115,6 +115,9 @@ func (e *Engine) Start() {
 	// Wire the event chain
 	e.wireEventHandlers()
 
+	// Reconcile any in-progress changeover against order statuses
+	e.restoreChangeoverState()
+
 	// Start WarLink poller and counter polling
 	if e.cfg.WarLink.Enabled {
 		e.plcMgr.StartWarLinkPoller()

@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     remaining_uop      INTEGER NOT NULL DEFAULT 0,
     active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    active_pull        INTEGER NOT NULL DEFAULT 1,
     updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -200,6 +201,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     auto_request_payload    TEXT NOT NULL DEFAULT '',
     keep_staged             INTEGER NOT NULL DEFAULT 0,
     evacuate_on_changeover  INTEGER NOT NULL DEFAULT 0,
+    paired_core_node        TEXT NOT NULL DEFAULT '',
     sequence                INTEGER NOT NULL DEFAULT 0,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(style_id, core_node_name)
@@ -399,6 +401,10 @@ func (db *DB) migrate() error {
 
 	// Rename outbound_source → outbound_destination on style_node_claims (it's a dropoff destination, not a source)
 	db.Exec("ALTER TABLE style_node_claims RENAME COLUMN outbound_source TO outbound_destination")
+
+	// A/B node cycling: paired_core_node on claims, active_pull on runtime
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN paired_core_node TEXT NOT NULL DEFAULT ''")
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_pull INTEGER NOT NULL DEFAULT 1")
 
 	return nil
 }

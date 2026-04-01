@@ -79,7 +79,7 @@ func (m *MockBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.Tra
 	return result, nil
 }
 
-func (m *MockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
+func (m *MockBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
 	if m.fail {
 		return fmt.Errorf("mock: not connected")
 	}

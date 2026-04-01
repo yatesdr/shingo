@@ -148,3 +148,83 @@ func BuildSequentialBackfillSteps(claim *store.StyleNodeClaim) []protocol.Comple
 		{Action: "dropoff", Node: claim.CoreNodeName},                              // 2
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Changeover step builders (Phase 3: orders-up-front with operator gates)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// These builders construct the complex-order step sequences for changeover
+// flows. All orders for a node are created at changeover start; the operator
+// controls flow by releasing wait steps.
+
+// BuildSwapChangeoverSteps builds Robot B's complex order for a swap changeover
+// (no tool clearance). Single wait point. Robot pre-positions at core, waits for
+// operator "ready", then evacuates old → delivers new → clears old to final.
+func BuildSwapChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+	return []protocol.ComplexOrderStep{
+		{Action: "dropoff", Node: fromClaim.CoreNodeName},    // pre-position
+		{Action: "wait"},                                      // "ready"
+		{Action: "pickup", Node: fromClaim.CoreNodeName},     // evacuate old
+		{Action: "dropoff", Node: fromClaim.OutboundStaging}, // park old
+		{Action: "pickup", Node: toClaim.InboundStaging},     // grab new
+		{Action: "dropoff", Node: toClaim.CoreNodeName},      // deliver new
+		{Action: "pickup", Node: fromClaim.OutboundStaging},  // grab old
+		buildStep("dropoff", fromClaim.OutboundDestination),  // clear old to final
+	}
+}
+
+// BuildEvacuateChangeoverSteps builds Robot B's complex order for an evacuate
+// changeover (tool clearance needed). Two wait points — "ready" and "tooling done".
+func BuildEvacuateChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+	return []protocol.ComplexOrderStep{
+		{Action: "dropoff", Node: fromClaim.CoreNodeName},    // pre-position
+		{Action: "wait"},                                      // "ready"
+		{Action: "pickup", Node: fromClaim.CoreNodeName},     // evacuate old
+		{Action: "dropoff", Node: fromClaim.OutboundStaging}, // park old
+		{Action: "wait"},                                      // "tooling done"
+		{Action: "pickup", Node: toClaim.InboundStaging},     // grab new
+		{Action: "dropoff", Node: toClaim.CoreNodeName},      // deliver new
+		{Action: "pickup", Node: fromClaim.OutboundStaging},  // grab old
+		buildStep("dropoff", fromClaim.OutboundDestination),  // clear old to final
+	}
+}
+
+// BuildKeepStagedEvacSteps builds Robot B's complex order for keep-staged
+// changeovers. Simpler than swap/evacuate — no outbound staging hop, goes
+// straight to final destination after evacuation.
+func BuildKeepStagedEvacSteps(fromClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+	return []protocol.ComplexOrderStep{
+		{Action: "dropoff", Node: fromClaim.CoreNodeName},   // pre-position
+		{Action: "wait"},                                     // "ready"
+		{Action: "pickup", Node: fromClaim.CoreNodeName},    // evacuate old
+		buildStep("dropoff", fromClaim.OutboundDestination), // straight to final
+	}
+}
+
+// BuildKeepStagedDeliverSteps builds Robot A's complex order for keep-staged
+// changeovers (split mode — two robots). Stages new material then waits for
+// operator release to deliver.
+func BuildKeepStagedDeliverSteps(toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+	return []protocol.ComplexOrderStep{
+		buildStep("pickup", toClaim.InboundSource),        // grab new
+		{Action: "dropoff", Node: toClaim.InboundStaging}, // stage new
+		{Action: "wait"},                                   // "ready"
+		{Action: "pickup", Node: toClaim.InboundStaging},  // grab new
+		{Action: "dropoff", Node: toClaim.CoreNodeName},   // deliver to line
+	}
+}
+
+// BuildKeepStagedCombinedSteps builds Robot A's complex order for keep-staged
+// changeovers (combined mode — single robot). Clears the keep-staged bin, stages
+// new material, waits, then delivers.
+func BuildKeepStagedCombinedSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+	return []protocol.ComplexOrderStep{
+		{Action: "pickup", Node: toClaim.InboundStaging},  // grab keep-staged bin
+		buildStep("dropoff", fromClaim.InboundSource),     // return to market/source
+		buildStep("pickup", toClaim.InboundSource),        // grab changeover material
+		{Action: "dropoff", Node: toClaim.InboundStaging}, // stage new
+		{Action: "wait"},                                   // "ready"
+		{Action: "pickup", Node: toClaim.InboundStaging},  // grab new
+		{Action: "dropoff", Node: toClaim.CoreNodeName},   // deliver to line
+	}
+}

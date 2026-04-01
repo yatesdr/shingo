@@ -29,8 +29,10 @@ type Backend interface {
 	// CreateStagedOrder creates an incremental (incomplete) order for multi-step transport.
 	CreateStagedOrder(req StagedOrderRequest) (TransportOrderResult, error)
 
-	// ReleaseOrder appends blocks to an incomplete order and marks it complete.
-	ReleaseOrder(vendorOrderID string, blocks []OrderBlock) error
+	// ReleaseOrder appends blocks to a staged order. When complete is true the
+	// order is marked finished (no more blocks will follow). When complete is
+	// false the order stays staged so the robot can dwell at the next wait point.
+	ReleaseOrder(vendorOrderID string, blocks []OrderBlock, complete bool) error
 
 	// Reconfigure applies configuration changes at runtime.
 	Reconfigure(cfg ReconfigureParams)

@@ -85,6 +85,7 @@ func (db *DB) runVersionedMigrations() error {
 		{7, "drop vestigial default_manifest_json from payloads", db.v7DropDefaultManifestJSON},
 		{8, "add payload_code column to orders", db.v8OrderPayloadCode},
 		{9, "create order_bins junction table for multi-bin complex orders", db.v9OrderBins},
+		{10, "add wait_index column to orders for multi-wait complex orders", db.v10OrderWaitIndex},
 	}
 
 	for _, m := range migrations {
@@ -419,5 +420,16 @@ func (db *DB) v5MissionTelemetryBackfill() error {
 		WHERE o.status IN ('confirmed', 'delivered', 'failed', 'cancelled')
 		AND o.vendor_order_id != ''
 		AND NOT EXISTS (SELECT 1 FROM mission_telemetry mt WHERE mt.order_id = o.id)`)
+	return nil
+}
+
+// v10OrderWaitIndex adds wait_index column to orders for multi-wait complex orders.
+// Tracks how many wait segments have been released so HandleOrderRelease knows
+// which segment to emit next.
+func (db *DB) v10OrderWaitIndex() error {
+	if !db.columnExists("orders", "wait_index") {
+		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN wait_index INTEGER NOT NULL DEFAULT 0`)
+		return err
+	}
 	return nil
 }

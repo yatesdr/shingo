@@ -419,7 +419,291 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		e.AbortNodeOrders(node.ID)
 	}
 
+	// Retrieve the changeover we just created so we can link node tasks.
+	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Phase 3: create ALL robot orders up front with embedded wait steps.
+	// Operator controls flow by releasing waits, not by triggering individual orders.
+	for _, diff := range diffs {
+		if diff.Situation == SituationUnchanged {
+			continue
+		}
+		node := findNodeByCoreName(nodes, diff.CoreNodeName)
+		if node == nil {
+			continue
+		}
+		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, node.ID)
+		if err != nil {
+			log.Printf("changeover: cannot find node task for %s: %v", diff.CoreNodeName, err)
+			continue
+		}
+		if err := e.createChangeoverOrders(changeover, nodeTask, node, diff); err != nil {
+			log.Printf("changeover: auto-create orders for %s (%s): %v — operator must handle manually",
+				diff.CoreNodeName, diff.Situation, err)
+		}
+	}
+
 	return e.db.GetActiveProcessChangeover(processID)
+}
+
+// createChangeoverOrders creates the appropriate robot orders for a single node
+// based on its changeover situation. For swap/evacuate nodes, two orders are
+// created: Order A (staging to inbound staging) and Order B (complex swap/evacuate
+// with wait steps). For add/drop situations, only one order is needed.
+func (e *Engine) createChangeoverOrders(
+	changeover *store.ProcessChangeover,
+	nodeTask *store.ChangeoverNodeTask,
+	node *store.ProcessNode,
+	diff ChangeoverNodeDiff,
+) error {
+	nodeID := node.ID
+
+	switch diff.Situation {
+	case SituationSwap:
+		if diff.FromClaim == nil || diff.ToClaim == nil {
+			return fmt.Errorf("swap requires both from and to claims")
+		}
+		if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
+			// Missing staging config — fall back to simple staging order (manual flow)
+			return e.createFallbackStagingOrder(changeover, nodeTask, node, diff.ToClaim)
+		}
+
+		// Keep-staged: the old style's staging area has a pre-staged bin that
+		// must be cleared before new material can be staged there.
+		if diff.FromClaim.KeepStaged {
+			return e.createKeepStagedChangeoverOrders(nodeTask, node, diff)
+		}
+
+		// Order A: Robot A stages new material to inbound staging
+		stageSteps := BuildStageSteps(diff.ToClaim)
+		if stageSteps == nil {
+			return fmt.Errorf("cannot build staging steps for node %s", node.Name)
+		}
+		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, diff.ToClaim.InboundStaging, stageSteps)
+		if err != nil {
+			return fmt.Errorf("create staging order: %w", err)
+		}
+		// Order B: Robot B runs swap with 1 wait
+		swapSteps := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim)
+		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", swapSteps)
+		if err != nil {
+			return fmt.Errorf("create swap order: %w", err)
+		}
+		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID)
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+		log.Printf("changeover: swap node %s — Order A=%d (staging), Order B=%d (swap w/ wait)", node.Name, orderA.ID, orderB.ID)
+
+	case SituationEvacuate:
+		if diff.FromClaim == nil || diff.ToClaim == nil {
+			return fmt.Errorf("evacuate requires both from and to claims")
+		}
+		if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
+			return e.createFallbackStagingOrder(changeover, nodeTask, node, diff.ToClaim)
+		}
+
+		// Keep-staged evacuate: same as keep-staged swap but with evacuation
+		// wait steps. Route through the same keep-staged handler.
+		if diff.FromClaim.KeepStaged {
+			return e.createKeepStagedChangeoverOrders(nodeTask, node, diff)
+		}
+
+		// Order A: Robot A stages new material
+		stageSteps := BuildStageSteps(diff.ToClaim)
+		if stageSteps == nil {
+			return fmt.Errorf("cannot build staging steps for node %s", node.Name)
+		}
+		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, diff.ToClaim.InboundStaging, stageSteps)
+		if err != nil {
+			return fmt.Errorf("create staging order: %w", err)
+		}
+		// Order B: Robot B runs evacuate with 2 waits
+		evacSteps := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim)
+		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", evacSteps)
+		if err != nil {
+			return fmt.Errorf("create evacuate order: %w", err)
+		}
+		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID)
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+		log.Printf("changeover: evacuate node %s — Order A=%d (staging), Order B=%d (evacuate w/ 2 waits)", node.Name, orderA.ID, orderB.ID)
+
+	case SituationAdd:
+		if diff.ToClaim == nil {
+			return fmt.Errorf("add requires to claim")
+		}
+		// Only staging order needed — no old material to evacuate
+		return e.createFallbackStagingOrder(changeover, nodeTask, node, diff.ToClaim)
+
+	case SituationDrop:
+		if diff.FromClaim == nil {
+			return fmt.Errorf("drop requires from claim")
+		}
+		if diff.FromClaim.OutboundStaging == "" {
+			// No outbound staging — operator must handle manually
+			return nil
+		}
+		// Only evacuation order needed — no new material coming
+		releaseSteps := BuildReleaseSteps(diff.FromClaim)
+		if releaseSteps == nil {
+			return nil
+		}
+		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", releaseSteps)
+		if err != nil {
+			return fmt.Errorf("create release order: %w", err)
+		}
+		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, nil, &orderB.ID)
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "empty_requested")
+		log.Printf("changeover: drop node %s — Order B=%d (evacuation)", node.Name, orderB.ID)
+	}
+
+	return nil
+}
+
+// createFallbackStagingOrder creates a simple staging order (Phase 1 behavior)
+// when the full orders-up-front flow cannot be used (e.g., missing staging config).
+func (e *Engine) createFallbackStagingOrder(
+	changeover *store.ProcessChangeover,
+	nodeTask *store.ChangeoverNodeTask,
+	node *store.ProcessNode,
+	toClaim *store.StyleNodeClaim,
+) error {
+	nodeID := node.ID
+	if toClaim.InboundStaging != "" {
+		steps := BuildStageSteps(toClaim)
+		if steps != nil {
+			order, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, toClaim.InboundStaging, steps)
+			if err != nil {
+				return err
+			}
+			_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil)
+			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+			return nil
+		}
+	}
+	// Direct delivery fallback
+	retrieveEmpty := toClaim.Role == "produce"
+	order, err := e.orderMgr.CreateRetrieveOrder(&nodeID, retrieveEmpty, 1, toClaim.CoreNodeName, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm)
+	if err != nil {
+		return err
+	}
+	_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil)
+	_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+	return nil
+}
+
+// createKeepStagedChangeoverOrders handles swap/evacuate changeovers where the
+// old style had keep_staged enabled. The staging area has a pre-staged bin from
+// the old style that must be cleared before new material can stage there.
+//
+// Split mode (two robots):
+//   Order A — BuildKeepStagedDeliverSteps(toClaim): fetch new, stage, wait, deliver (1 wait)
+//   Order B — BuildKeepStagedEvacSteps(fromClaim): pre-position, wait, evacuate old to final (1 wait)
+//   The old staged bin at InboundStaging is NOT automatically cleared by these
+//   orders — it must be handled separately (e.g., operator clears it, or the
+//   staging area can hold multiple bins).
+//
+// Combined mode (single robot):
+//   Order A — BuildKeepStagedCombinedSteps(fromClaim, toClaim): clears old staged
+//   bin back to source, fetches new, stages, waits, delivers (1 wait). One order
+//   handles everything. No Order B needed for the staging — but we still need
+//   Order B for line evacuation (BuildKeepStagedEvacSteps).
+//
+// The choice between split and combined is based on the from-claim's SwapMode.
+func (e *Engine) createKeepStagedChangeoverOrders(
+	nodeTask *store.ChangeoverNodeTask,
+	node *store.ProcessNode,
+	diff ChangeoverNodeDiff,
+) error {
+	nodeID := node.ID
+	fromClaim := diff.FromClaim
+	toClaim := diff.ToClaim
+
+	switch fromClaim.SwapMode {
+	case "two_robot":
+		// Split: two robots work in parallel
+		// Order A: fetch new → stage → wait → deliver
+		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)
+		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, toClaim.InboundStaging, deliverSteps)
+		if err != nil {
+			return fmt.Errorf("create keep-staged deliver order: %w", err)
+		}
+		// Order B: pre-position → wait → evacuate old → clear to final
+		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
+		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", evacSteps)
+		if err != nil {
+			return fmt.Errorf("create keep-staged evac order: %w", err)
+		}
+		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID)
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+		log.Printf("changeover: keep-staged split node %s — Order A=%d (deliver w/ wait), Order B=%d (evac w/ wait)", node.Name, orderA.ID, orderB.ID)
+
+	default:
+		// Combined: single robot handles clearing old staged bin + staging new + delivery
+		// Order A: clear old staged → fetch new → stage → wait → deliver
+		combinedSteps := BuildKeepStagedCombinedSteps(fromClaim, toClaim)
+		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, toClaim.InboundStaging, combinedSteps)
+		if err != nil {
+			return fmt.Errorf("create keep-staged combined order: %w", err)
+		}
+		// Order B: evacuate old material from the line node
+		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
+		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", evacSteps)
+		if err != nil {
+			return fmt.Errorf("create keep-staged evac order: %w", err)
+		}
+		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID)
+		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+		log.Printf("changeover: keep-staged combined node %s — Order A=%d (combined w/ wait), Order B=%d (evac w/ wait)", node.Name, orderA.ID, orderB.ID)
+	}
+
+	return nil
+}
+
+// findNodeByCoreName finds a process node by its CoreNodeName.
+func findNodeByCoreName(nodes []store.ProcessNode, coreName string) *store.ProcessNode {
+	for i := range nodes {
+		if nodes[i].CoreNodeName == coreName {
+			return &nodes[i]
+		}
+	}
+	return nil
+}
+
+// ReleaseChangeoverWait releases all evacuation orders that are currently staged
+// (waiting at a wait step). Called once per operator gate:
+//   - First call releases the "ready" wait on all nodes
+//   - For evacuate nodes, orders stage again at the second wait, and the second
+//     call releases "tooling done"
+func (e *Engine) ReleaseChangeoverWait(processID int64) error {
+	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if err != nil {
+		return err
+	}
+	tasks, err := e.db.ListChangeoverNodeTasks(changeover.ID)
+	if err != nil {
+		return err
+	}
+
+	for _, task := range tasks {
+		if task.Situation == "unchanged" {
+			continue
+		}
+		if task.OldMaterialReleaseOrderID == nil {
+			continue
+		}
+		order, err := e.db.GetOrder(*task.OldMaterialReleaseOrderID)
+		if err != nil {
+			continue
+		}
+		if order.Status == orders.StatusStaged {
+			if err := e.orderMgr.ReleaseOrder(order.ID); err != nil {
+				log.Printf("release changeover wait node %s: %v", task.NodeName, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
@@ -444,6 +728,17 @@ func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 }
 
 func (e *Engine) CancelProcessChangeover(processID int64) error {
+	return e.cancelProcessChangeoverInternal(processID, nil)
+}
+
+// CancelProcessChangeoverRedirect cancels the active changeover and immediately
+// starts a new one to a different target style. If nextStyleID is nil, behaves
+// identically to CancelProcessChangeover (plain revert).
+func (e *Engine) CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error {
+	return e.cancelProcessChangeoverInternal(processID, nextStyleID)
+}
+
+func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *int64) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return err
@@ -487,7 +782,18 @@ func (e *Engine) CancelProcessChangeover(processID int64) error {
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}
-	return e.db.SetProcessProductionState(processID, "active_production")
+	if err := e.db.SetProcessProductionState(processID, "active_production"); err != nil {
+		return err
+	}
+
+	// Redirect — start new changeover immediately to a different target style
+	if nextStyleID != nil && *nextStyleID != 0 {
+		_, err := e.StartProcessChangeover(processID, *nextStyleID,
+			"changeover-redirect", "redirected from cancelled changeover")
+		return err
+	}
+
+	return nil
 }
 
 func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*store.Order, error) {
@@ -836,6 +1142,67 @@ func (e *Engine) AbortNodeOrders(nodeID int64) {
 		}
 	}
 	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil)
+}
+
+// FlipABNode switches the active pull point to the specified node and deactivates
+// its paired partner. Used for A/B cycling — operator (or PLC bit) decides when
+// to start pulling from the other side. Triggers auto-reorder on the depleted node
+// if the depleted node's UOP is at or below its reorder point.
+func (e *Engine) FlipABNode(nodeID int64) error {
+	node, err := e.db.GetProcessNode(nodeID)
+	if err != nil {
+		return fmt.Errorf("node not found: %w", err)
+	}
+
+	claim := e.findActiveClaim(node)
+	if claim == nil {
+		return fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if claim.PairedCoreNode == "" {
+		return fmt.Errorf("node %s is not part of an A/B pair", node.Name)
+	}
+
+	// Find the paired node
+	process, err := e.db.GetProcess(node.ProcessID)
+	if err != nil {
+		return err
+	}
+	nodes, err := e.db.ListProcessNodesByProcess(node.ProcessID)
+	if err != nil {
+		return err
+	}
+	var pairedNode *store.ProcessNode
+	for i := range nodes {
+		if nodes[i].CoreNodeName == claim.PairedCoreNode {
+			pairedNode = &nodes[i]
+			break
+		}
+	}
+	if pairedNode == nil {
+		return fmt.Errorf("paired node %s not found", claim.PairedCoreNode)
+	}
+
+	// Activate this node, deactivate the partner
+	_ = e.db.SetActivePull(nodeID, true)
+	_ = e.db.SetActivePull(pairedNode.ID, false)
+
+	log.Printf("A/B flip: node %s now active, node %s inactive", node.Name, pairedNode.Name)
+
+	// Trigger auto-reorder on the depleted partner if needed
+	if process.ActiveStyleID != nil {
+		pairedClaim, _ := e.db.GetStyleNodeClaimByNode(*process.ActiveStyleID, pairedNode.CoreNodeName)
+		pairedRuntime, _ := e.db.GetProcessNodeRuntime(pairedNode.ID)
+		if pairedClaim != nil && pairedRuntime != nil &&
+			pairedClaim.AutoReorder && pairedRuntime.RemainingUOP <= pairedClaim.ReorderPoint {
+			if ok, _ := e.CanAcceptOrders(pairedNode.ID); ok {
+				if _, err := e.RequestNodeMaterial(pairedNode.ID, 1); err != nil {
+					log.Printf("A/B flip auto-reorder for depleted node %s: %v", pairedNode.Name, err)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func isNodeTaskTerminal(task *store.ChangeoverNodeTask) bool {

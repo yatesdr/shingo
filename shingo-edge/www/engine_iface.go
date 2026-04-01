@@ -41,12 +41,15 @@ type EngineAccess interface {
 	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error)
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error
+	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
+	ReleaseChangeoverWait(processID int64) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*store.Order, error)
 	EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*store.Order, error)
 	ReleaseNodeIntoProduction(processID, nodeID int64) (*store.Order, error)
 	SwitchNodeToTarget(processID, nodeID int64) error
 	SwitchOperatorStationToTarget(processID, stationID int64) error
 	SyncProcessCounter(processID int64) error
+	FlipABNode(nodeID int64) error
 
 	// WarLink tag management
 	EnsureTagPublished(rpID int64, plcName, tagName string)

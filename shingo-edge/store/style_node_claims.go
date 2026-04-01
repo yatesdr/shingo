@@ -36,6 +36,7 @@ type StyleNodeClaim struct {
 	AutoRequestPayload       string    `json:"auto_request_payload"`
 	KeepStaged               bool      `json:"keep_staged"`
 	EvacuateOnChangeover     bool      `json:"evacuate_on_changeover"`
+	PairedCoreNode           string    `json:"paired_core_node"` // A/B cycling: names the alternate node
 	Sequence                 int       `json:"sequence"`
 	CreatedAt                time.Time `json:"created_at"`
 }
@@ -70,13 +71,14 @@ type StyleNodeClaimInput struct {
 	AutoRequestPayload      string   `json:"auto_request_payload"`
 	KeepStaged              bool     `json:"keep_staged"`
 	EvacuateOnChangeover    bool     `json:"evacuate_on_changeover"`
+	PairedCoreNode          string   `json:"paired_core_node"`
 	Sequence                int      `json:"sequence"`
 }
 
 const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
-	keep_staged, evacuate_on_changeover, sequence, created_at`
+	keep_staged, evacuate_on_changeover, paired_core_node, sequence, created_at`
 
 func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleNodeClaim, error) {
 	var c StyleNodeClaim
@@ -84,7 +86,7 @@ func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleN
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
-		&c.KeepStaged, &c.EvacuateOnChangeover, &c.Sequence, &createdAt); err != nil {
+		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.Sequence, &createdAt); err != nil {
 		return c, err
 	}
 	c.CreatedAt = scanTime(createdAt)
@@ -145,12 +147,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 		_, err = db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
 			uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
 			inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
-			keep_staged=?, evacuate_on_changeover=?, sequence=?
+			keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, sequence=?
 			WHERE id=?`,
 			in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
 			in.InboundStaging, in.OutboundStaging,
 			in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-			in.KeepStaged, in.EvacuateOnChangeover, in.Sequence, existingID)
+			in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.Sequence, existingID)
 		return existingID, err
 	}
 	if in.Sequence <= 0 {
@@ -162,12 +164,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 	res, err := db.Exec(`INSERT INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
-		keep_staged, evacuate_on_changeover, sequence)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		keep_staged, evacuate_on_changeover, paired_core_node, sequence)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-		in.KeepStaged, in.EvacuateOnChangeover, in.Sequence)
+		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.Sequence)
 	if err != nil {
 		return 0, err
 	}

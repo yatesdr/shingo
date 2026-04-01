@@ -51,6 +51,12 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	if err != nil {
 		return
 	}
+	// A/B fallthrough tracking: if all paired consume nodes are inactive,
+	// decrement the first one found as a safety net ("count to lineside storage").
+	var pairedFallbackNode *store.ProcessNode
+	var pairedFallbackRuntime *store.ProcessNodeRuntimeState
+	pairedConsumeHandled := false
+
 	for _, node := range nodes {
 		runtime, err := e.db.GetProcessNodeRuntime(node.ID)
 		if err != nil || runtime == nil {
@@ -71,6 +77,21 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		case "bin_loader":
 			continue // bin_loader nodes are operator-driven, not counter-driven
 		case "consume":
+			// A/B cycling: if this node is part of an A/B pair, only decrement
+			// the active-pull side. The inactive side holds staged material.
+			if claim.PairedCoreNode != "" && !runtime.ActivePull {
+				// Remember first inactive paired node as fallback
+				if pairedFallbackNode == nil {
+					nodeCopy := node
+					pairedFallbackNode = &nodeCopy
+					pairedFallbackRuntime = runtime
+				}
+				continue
+			}
+			if claim.PairedCoreNode != "" {
+				pairedConsumeHandled = true
+			}
+
 			newRemaining := runtime.RemainingUOP - int(delta.Delta)
 			if newRemaining < 0 {
 				newRemaining = 0
@@ -102,6 +123,19 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 				}
 			}
 		}
+	}
+
+	// A/B fallthrough: if no paired consume node was active but we found
+	// an inactive paired node, decrement it as a safety net. This covers
+	// the "count to lineside storage" case when neither A nor B is active.
+	if !pairedConsumeHandled && pairedFallbackNode != nil && pairedFallbackRuntime != nil {
+		log.Printf("A/B fallthrough: no active-pull node for process %d, decrementing fallback node %s",
+			delta.ProcessID, pairedFallbackNode.Name)
+		newRemaining := pairedFallbackRuntime.RemainingUOP - int(delta.Delta)
+		if newRemaining < 0 {
+			newRemaining = 0
+		}
+		_ = e.db.UpdateProcessNodeUOP(pairedFallbackNode.ID, newRemaining)
 	}
 }
 
@@ -145,11 +179,25 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		}
 	}
 
-	// Empty line / clear access for tool change.
-	// EmptyNodeForToolChange creates either a move order (simple fallback) or a
-	// complex order (claim-based release with outbound staging). Accept both.
+	// Order B completion (OldMaterialReleaseOrderID).
+	// Phase 3 swap/evacuate: Order B runs the full swap/evacuate complex order
+	// with wait steps — when it completes, both evacuation AND delivery are done,
+	// so the node goes straight to "released".
+	// Manual path / drop: Order B is a simple release/move — only evacuation,
+	// so the node goes to "line_cleared" (operator still needs to release new material).
 	if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID &&
 		(order.OrderType == orders.TypeMove || order.OrderType == orders.TypeComplex) {
+		if (nodeTask.Situation == "swap" || nodeTask.Situation == "evacuate") && order.OrderType == orders.TypeComplex {
+			// Phase 3: Order B is a complex order with wait steps — it ran the full
+			// swap/evacuate (evacuation + delivery in one order). Node goes to "released".
+			if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
+				claimID := toClaim.ID
+				_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
+				_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
+				return
+			}
+		}
+		// Manual path or drop: simple move order — only evacuation done, line cleared.
 		_ = e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0)
 		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared")
 		return

@@ -116,7 +116,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 			return
 		}
 		// Mark complete immediately (no more blocks)
-		if err := d.backend.ReleaseOrder(vendorOrderID, nil); err != nil {
+		if err := d.backend.ReleaseOrder(vendorOrderID, nil, true); err != nil {
 			log.Printf("dispatch: fleet mark complete failed: %v", err)
 		}
 	}
@@ -133,6 +133,10 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 }
 
 // HandleOrderRelease processes a release request for a staged (dwelling) order.
+// Multi-wait support: the order's WaitIndex tracks how many wait points have
+// been consumed. Each release emits only the next segment (steps between
+// consecutive waits) and increments the index. The fleet order stays staged
+// (complete=false) until the final segment is released.
 func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.OrderRelease) {
 	stationID := env.Src.Station
 	d.dbg("order release: station=%s uuid=%s", stationID, p.OrderUUID)
@@ -148,28 +152,44 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	// Parse stored steps to find post-wait blocks
+	// Parse stored steps
 	var steps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {
 		d.sendError(env, p.OrderUUID, "internal_error", "failed to parse stored steps")
 		return
 	}
 
-	preWait, postWait := splitPostWait(steps)
-	blocks := stepsToBlocks(order.VendorOrderID, postWait, len(preWait)+1)
+	// Extract the next segment: steps after wait N up to wait N+1 (or end).
+	segment, moreWaits, blockOffset := splitSegment(steps, order.WaitIndex)
+	if segment == nil {
+		d.sendError(env, p.OrderUUID, "invalid_state",
+			fmt.Sprintf("wait_index %d exceeds number of waits in order", order.WaitIndex))
+		return
+	}
 
-	d.dbg("complex release: order=%d vendor=%s adding %d blocks", order.ID, order.VendorOrderID, len(blocks))
+	blocks := stepsToBlocks(order.VendorOrderID, segment, blockOffset)
+	complete := !moreWaits
 
-	if err := d.backend.ReleaseOrder(order.VendorOrderID, blocks); err != nil {
+	d.dbg("complex release: order=%d vendor=%s wait_index=%d adding %d blocks complete=%v",
+		order.ID, order.VendorOrderID, order.WaitIndex, len(blocks), complete)
+
+	if err := d.backend.ReleaseOrder(order.VendorOrderID, blocks, complete); err != nil {
 		log.Printf("dispatch: fleet release order failed: %v", err)
 		d.sendError(env, p.OrderUUID, "fleet_failed", err.Error())
 		return
 	}
 
-	if err := d.db.UpdateOrderStatus(order.ID, StatusInTransit, "released from staging"); err != nil {
+	// Advance wait index so the next release picks up the right segment.
+	newWaitIndex := order.WaitIndex + 1
+	if err := d.db.UpdateOrderWaitIndex(order.ID, newWaitIndex); err != nil {
+		log.Printf("dispatch: update order %d wait_index to %d: %v", order.ID, newWaitIndex, err)
+	}
+
+	if err := d.db.UpdateOrderStatus(order.ID, StatusInTransit, fmt.Sprintf("released from staging (wait %d)", order.WaitIndex)); err != nil {
 		log.Printf("dispatch: update order %d status to in_transit: %v", order.ID, err)
 	}
-	log.Printf("dispatch: complex order %d released with %d additional blocks", order.ID, len(blocks))
+	log.Printf("dispatch: complex order %d released with %d additional blocks (wait %d, complete=%v)",
+		order.ID, len(blocks), order.WaitIndex, complete)
 }
 
 // resolvedStep is a step with concrete node names after resolution.
@@ -276,14 +296,62 @@ func splitAtWait(steps []resolvedStep) (preWait []resolvedStep, hasWait bool) {
 	return steps, false
 }
 
-// splitPostWait returns steps before and after the first "wait".
-func splitPostWait(steps []resolvedStep) (preWait, postWait []resolvedStep) {
+// splitSegment extracts the next segment of steps to release for a given
+// waitIndex. It skips past the first (waitIndex+1) wait actions, then returns
+// steps up to the next wait (or end of list). Returns the segment, whether
+// more waits remain after it, and the block offset (total non-wait steps
+// before this segment) for correct block ID numbering.
+//
+// Example for steps: [pickup, dropoff, wait, pickup, dropoff, wait, pickup, dropoff]
+//
+//	waitIndex=0 → segment=[pickup, dropoff] after wait₀, moreWaits=true, offset=2+1
+//	waitIndex=1 → segment=[pickup, dropoff] after wait₁, moreWaits=false, offset=4+2
+func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, moreWaits bool, blockOffset int) {
+	// Find the start: skip past (waitIndex+1) wait actions.
+	// waitIndex=0 means we want steps after the 1st wait.
+	waitsSeen := 0
+	startIdx := 0
+	found := false
 	for i, s := range steps {
 		if s.Action == "wait" {
-			return steps[:i], steps[i+1:]
+			waitsSeen++
+			if waitsSeen == waitIndex+1 {
+				startIdx = i + 1
+				found = true
+				break
+			}
 		}
 	}
-	return steps, nil
+
+	// Guard: if waitIndex exceeds the number of waits in the step list,
+	// return an empty segment. This prevents a stale or duplicate release
+	// from silently replaying the entire order.
+	if !found {
+		return nil, false, 0
+	}
+
+	// Count non-wait steps before startIdx for block offset.
+	blockOffset = 0
+	for i := 0; i < startIdx; i++ {
+		if steps[i].Action != "wait" {
+			blockOffset++
+		}
+	}
+	// Add 1 for the wait action itself (matches original stepsToBlocks offset convention).
+	blockOffset += waitsSeen
+
+	// Find the end: next wait after startIdx, or end of steps.
+	endIdx := len(steps)
+	for i := startIdx; i < len(steps); i++ {
+		if steps[i].Action == "wait" {
+			endIdx = i
+			moreWaits = true
+			break
+		}
+	}
+
+	segment = steps[startIdx:endIdx]
+	return
 }
 
 // stepsToBlocks converts resolved steps to fleet OrderBlocks.

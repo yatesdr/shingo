@@ -40,7 +40,7 @@ func (m *countingBackend) Reconfigure(cfg fleet.ReconfigureParams) {}
 func (m *countingBackend) CreateStagedOrder(req fleet.StagedOrderRequest) (fleet.TransportOrderResult, error) {
 	return fleet.TransportOrderResult{}, fmt.Errorf("mock: not connected")
 }
-func (m *countingBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock) error {
+func (m *countingBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.OrderBlock, complete bool) error {
 	return nil
 }
 

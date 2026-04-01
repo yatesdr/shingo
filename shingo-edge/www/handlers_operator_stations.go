@@ -405,11 +405,43 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
+
+	// Parse optional next_style_id for cancel-as-redirect
+	var req struct {
+		NextStyleID *int64 `json:"next_style_id,omitempty"`
+	}
+	// Body is optional — plain cancel has no body
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if req.NextStyleID != nil {
+		if err := h.engine.CancelProcessChangeoverRedirect(processID, req.NextStyleID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "redirected"}})
+		writeJSONWithTrigger(w, r, map[string]string{"status": "ok", "action": "redirected"}, "refreshChangeover")
+		return
+	}
+
 	if err := h.engine.CancelProcessChangeover(processID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "cancelled"}})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
+}
+
+func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	if err := h.engine.ReleaseChangeoverWait(processID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "wait-released"}})
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
@@ -562,4 +594,17 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 	}
 	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "station-nodes-updated"}})
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) apiFlipABNode(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	if err := h.engine.FlipABNode(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }

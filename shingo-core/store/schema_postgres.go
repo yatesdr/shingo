@@ -84,7 +84,9 @@ CREATE TABLE IF NOT EXISTS orders (
     completed_at    TIMESTAMPTZ,
     parent_order_id BIGINT REFERENCES orders(id),
     sequence        INTEGER NOT NULL DEFAULT 0,
-    bin_id          BIGINT REFERENCES bins(id)
+    bin_id          BIGINT REFERENCES bins(id),
+    payload_code    TEXT NOT NULL DEFAULT '',
+    wait_index      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);

@@ -30,6 +30,7 @@ type Order struct {
 	StepsJSON     string     `json:"steps_json,omitempty"`
 	BinID         *int64     `json:"bin_id,omitempty"`
 	PayloadCode   string     `json:"payload_code"`
+	WaitIndex     int        `json:"wait_index"`
 }
 
 type OrderHistory struct {
@@ -40,7 +41,7 @@ type OrderHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code`
+const orderSelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index`
 
 func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 	var o Order
@@ -50,7 +51,7 @@ func scanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
-		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode)
+		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +165,14 @@ func (db *DB) UpdateOrderStatus(id int64, status, detail string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// UpdateOrderWaitIndex increments the wait_index for a complex order after
+// releasing one wait segment. This tracks how many wait points have been consumed.
+func (db *DB) UpdateOrderWaitIndex(id int64, waitIndex int) error {
+	_, err := db.Exec(`UPDATE orders SET wait_index=$1, updated_at=NOW() WHERE id=$2`,
+		waitIndex, id)
+	return err
 }
 
 func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID string) error {
