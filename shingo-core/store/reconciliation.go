@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 const criticalOutboxAge = 5 * time.Minute
 const stuckOrderAge = 30 * time.Minute
@@ -191,7 +194,48 @@ func (db *DB) ListReconciliationAnomalies() ([]*ReconciliationAnomaly, error) {
 			ObservedAt:        observedAt,
 		})
 	}
-	return anomalies, rows.Err()
+
+	// Detect bins with speculative manifest but no active claiming order.
+	// This is informational only — manifest represents physical reality and
+	// should NOT be cleared. The detection surfaces these bins for review.
+	rows, err = db.Query(`
+		SELECT b.id, b.label, b.status, b.claimed_by,
+		       COALESCE(o.status, 'no_order') AS order_status
+		FROM bins b
+		LEFT JOIN orders o ON o.id = b.claimed_by
+		WHERE b.manifest IS NOT NULL
+		  AND (b.claimed_by IS NULL
+		       OR o.status IN ('confirmed', 'failed', 'cancelled'))
+		ORDER BY b.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var binID int64
+		var label, binStatus string
+		var claimedBy *int64
+		var orderStatus string
+		if err := rows.Scan(&binID, &label, &binStatus, &claimedBy, &orderStatus); err != nil {
+			return nil, err
+		}
+		anomalies = append(anomalies, &ReconciliationAnomaly{
+			Category:          "bin_manifest",
+			Severity:          "info",
+			Issue:             "manifest_without_active_order",
+			RecommendedAction: "review_manifest",
+			BinID:             &binID,
+			BinStatus:         binStatus,
+			OrderID:           claimedBy,
+			OrderStatus:       orderStatus,
+			Detail:            fmt.Sprintf("bin %s has manifest but no active claiming order (claimed_by=%v, order_status=%s)", label, claimedBy, orderStatus),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return anomalies, nil
 }
 
 func (db *DB) GetReconciliationSummary() (*ReconciliationSummary, error) {
@@ -238,4 +282,24 @@ func (db *DB) GetReconciliationSummary() (*ReconciliationSummary, error) {
 	}
 
 	return summary, nil
+}
+
+// ReleaseOrphanedClaims finds bins still claimed by terminal orders and releases them.
+// This is the defense-in-depth sweep that catches any claims that leaked past the
+// atomic status transitions (e.g. due to a process crash mid-transaction).
+// Returns the number of claims released.
+func (db *DB) ReleaseOrphanedClaims() (int, error) {
+	result, err := db.Exec(`
+		UPDATE bins
+		SET claimed_by = NULL, updated_at = NOW()
+		WHERE claimed_by IS NOT NULL
+		  AND claimed_by IN (
+		    SELECT id FROM orders
+		    WHERE status IN ('confirmed', 'failed', 'cancelled')
+		  )`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
 }

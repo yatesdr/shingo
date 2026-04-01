@@ -530,10 +530,14 @@ func (e *Engine) stagedBinSweepLoop() {
 			count, err := e.db.ReleaseExpiredStagedBins()
 			if err != nil {
 				e.logFn("engine: staged bin sweep error: %v", err)
-				continue
-			}
-			if count > 0 {
+			} else if count > 0 {
 				e.logFn("engine: released %d expired staged bins", count)
+			}
+			orphaned, err := e.db.ReleaseOrphanedClaims()
+			if err != nil {
+				e.logFn("engine: orphan claim sweep error: %v", err)
+			} else if orphaned > 0 {
+				e.logFn("engine: released %d orphaned bin claims from terminal orders", orphaned)
 			}
 		}
 	}

@@ -101,24 +101,24 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 
 	// Dispatch the child to fleet
 	if next.SourceNode == "" || next.DeliveryNode == "" {
-		if err := d.db.UpdateOrderStatus(next.ID, StatusFailed, "missing source or delivery node"); err != nil {
-			log.Printf("dispatch: update child order %d status to failed: %v", next.ID, err)
+		if err := d.db.FailOrderAtomic(next.ID, "missing source or delivery node"); err != nil {
+			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, err)
 		}
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
 	sourceNode, err := d.db.GetNodeByDotName(next.SourceNode)
 	if err != nil {
-		if dbErr := d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("source node %q not found", next.SourceNode)); dbErr != nil {
-			log.Printf("dispatch: update child order %d status to failed: %v", next.ID, dbErr)
+		if dbErr := d.db.FailOrderAtomic(next.ID, fmt.Sprintf("source node %q not found", next.SourceNode)); dbErr != nil {
+			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 		}
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
 	destNode, err := d.db.GetNodeByDotName(next.DeliveryNode)
 	if err != nil {
-		if dbErr := d.db.UpdateOrderStatus(next.ID, StatusFailed, fmt.Sprintf("delivery node %q not found", next.DeliveryNode)); dbErr != nil {
-			log.Printf("dispatch: update child order %d status to failed: %v", next.ID, dbErr)
+		if dbErr := d.db.FailOrderAtomic(next.ID, fmt.Sprintf("delivery node %q not found", next.DeliveryNode)); dbErr != nil {
+			log.Printf("dispatch: atomic fail child order %d: %v", next.ID, dbErr)
 		}
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}

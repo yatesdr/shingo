@@ -1886,5 +1886,178 @@ func TestTC39_TerminateOrder_RejectsTerminalStatuses(t *testing.T) {
 		}
 	} else {
 		t.Logf("correct: TerminateOrder rejected terminal status %q: %v", order.Status, err)
+		}
 	}
+
+// TC-80: Orphaned bin claim after terminal order — reconciliation detects and sweep fixes.
+//
+// Simulates the production bug where a bin (Core_Testing30001) shows as "claimed"
+// on the Nodes and Bins pages but has no visible active orders. Root cause:
+// UpdateOrderStatus(failed) and UnclaimOrderBins are separate SQL statements.
+// If unclaim fails silently (connection drop, deadlock), the bin stays claimed
+// forever by a terminal order.
+//
+// The fix adds FailOrderAtomic / CancelOrderAtomic that wrap status + unclaim
+// in a single transaction. This test verifies:
+//   1. Reconciliation anomalies detect orphaned claims
+//   2. ReleaseOrphanedClaims sweep fixes them
+//   3. FailOrderAtomic prevents the leak in the first place
+func TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC80")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Step 1: Dispatch a retrieve order
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-tc80",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	})
+
+	order, err := db.GetOrderByUUID("retrieve-tc80")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.BinID == nil {
+		t.Fatal("order should have a bin claimed")
+	}
+	t.Logf("order %d dispatched, bin %d claimed", order.ID, *order.BinID)
+
+	// Verify bin is claimed
+	bin, err = db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin: %v", err)
+	}
+	if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
+		t.Fatalf("bin claimed_by = %v, want %d", bin.ClaimedBy, order.ID)
+	}
+
+	// Step 2: Simulate the pre-fix bug — manually set order to failed
+	// WITHOUT releasing the claim (simulates UnclaimOrderBins failing silently)
+	_, err = db.Exec(`UPDATE orders SET status='failed', error_detail='simulated partial failure', updated_at=NOW() WHERE id=$1`, order.ID)
+	if err != nil {
+		t.Fatalf("manual fail order: %v", err)
+	}
+	// Bin should still be claimed (the bug state)
+	bin, err = db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin after manual fail: %v", err)
+	}
+	if bin.ClaimedBy == nil {
+		t.Fatal("bin should still be claimed (simulating leaked claim)")
+	}
+	t.Logf("simulated bug: order %d is failed but bin %d still claimed_by %d", order.ID, bin.ID, *bin.ClaimedBy)
+
+	// Step 3: Verify reconciliation detects the anomaly
+	anomalies, err := db.ListOrderCompletionAnomalies()
+	if err != nil {
+		t.Fatalf("list anomalies: %v", err)
+	}
+	found := false
+	for _, a := range anomalies {
+		if a.OrderID == order.ID && a.Issue == "terminal_order_still_claims_bin" {
+			found = true
+			t.Logf("reconciliation detected: order %d issue=%s bin_id=%v", a.OrderID, a.Issue, a.BinID)
+			break
+		}
+	}
+	if !found {
+		t.Error("reconciliation did NOT detect terminal_order_still_claims_bin anomaly")
+	}
+
+	// Step 4: Verify full anomaly list includes it via ListReconciliationAnomalies
+	reconAnomalies, err := db.ListReconciliationAnomalies()
+	if err != nil {
+		t.Fatalf("list recon anomalies: %v", err)
+	}
+	foundRecon := false
+	for _, a := range reconAnomalies {
+		if a.Issue == "terminal_order_still_claims_bin" && a.OrderID != nil && *a.OrderID == order.ID {
+			foundRecon = true
+			t.Logf("full reconciliation: category=%s severity=%s action=%s",
+				a.Category, a.Severity, a.RecommendedAction)
+			break
+		}
+	}
+	if !foundRecon {
+		t.Error("ListReconciliationAnomalies did NOT detect terminal_order_still_claims_bin")
+	}
+
+	// Step 5: Run the orphan claim sweep
+	released, err := db.ReleaseOrphanedClaims()
+	if err != nil {
+		t.Fatalf("release orphaned claims: %v", err)
+	}
+	if released != 1 {
+		t.Errorf("expected 1 orphaned claim released, got %d", released)
+	}
+
+	// Step 6: Verify bin is now unclaimed
+	bin, err = db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin after sweep: %v", err)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by = %d after sweep, expected NULL", *bin.ClaimedBy)
+	}
+	t.Logf("sweep released orphaned claim — bin %d now unclaimed", bin.ID)
+
+	// Step 7: Verify anomalies no longer detect it
+	anomaliesAfter, err := db.ListOrderCompletionAnomalies()
+	if err != nil {
+		t.Fatalf("list anomalies after sweep: %v", err)
+	}
+	for _, a := range anomaliesAfter {
+		if a.OrderID == order.ID && a.Issue == "terminal_order_still_claims_bin" {
+			t.Error("anomaly still present after sweep")
+		}
+	}
+	t.Logf("anomalies after sweep: %d (should not include order %d)", len(anomaliesAfter), order.ID)
+
+	// Step 8: Verify FailOrderAtomic prevents the leak entirely
+	bin2 := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC80b")
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-tc80b",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	})
+
+	order2, err := db.GetOrderByUUID("retrieve-tc80b")
+	if err != nil {
+		t.Fatalf("get order2: %v", err)
+	}
+	t.Logf("order2 %d dispatched, bin2 %d claimed", order2.ID, bin2.ID)
+
+	// Fail atomically
+	if err := db.FailOrderAtomic(order2.ID, "atomic failure test"); err != nil {
+		t.Fatalf("FailOrderAtomic: %v", err)
+	}
+
+	// Verify order is failed AND bin is unclaimed in one shot
+	order2, err = db.GetOrderByUUID("retrieve-tc80b")
+	if err != nil {
+		t.Fatalf("get order2 after atomic fail: %v", err)
+	}
+	if order2.Status != dispatch.StatusFailed {
+		t.Errorf("order2 status = %q, want failed", order2.Status)
+	}
+
+	bin2, err = db.GetBin(bin2.ID)
+	if err != nil {
+		t.Fatalf("get bin2 after atomic fail: %v", err)
+	}
+	if bin2.ClaimedBy != nil {
+		t.Errorf("bin2 claimed_by = %d after FailOrderAtomic, expected NULL", *bin2.ClaimedBy)
+	}
+	t.Logf("FailOrderAtomic: order %d failed, bin %d unclaimed — no leak possible", order2.ID, bin2.ID)
 }

@@ -2,18 +2,18 @@
 
 ## Overview
 
-Bin claiming protects bins from being dispatched by multiple orders simultaneously. The system uses atomic SQL updates (`claimed_by IS NULL` guard) to reserve bins during planning. The staging sweep (`ReleaseExpiredStagedBins`) flips bins from `staged` to `available` after TTL expiry. Bugs in this area cause double-dispatches (two robots sent to the same bin), phantom robots (dispatched with no bin), and permanently stuck inventory (claims never released).
+Bin claiming protects bins from being dispatched by multiple orders simultaneously. The system uses atomic SQL updates (`claimed_by IS NULL` guard) to reserve bins during planning. The staging sweep (`ReleaseExpiredStagedBins`) flips bins from `staged` to `available` after TTL expiry. The orphan claim sweep (`ReleaseOrphanedClaims`) catches leaked claims from non-atomic terminal transitions. Bugs in this area cause double-dispatches (two robots sent to the same bin), phantom robots (dispatched with no bin), and permanently stuck inventory (claims never released).
 
 ## Test files
 
-- `engine/engine_test.go` — claiming, staging, quality hold (TC-13, 21, 23 cluster, 25, 28, 30, 36, 37)
+- `engine/engine_test.go` — claiming, staging, quality hold (TC-13, 21, 23 cluster, 25, 28, 30, 36, 37, 80)
 - `engine/engine_concurrent_test.go` — staging expiry vs active claim (TC-37)
 
 Run this domain's tests:
 
 ```bash
 cd shingo-core
-go test -v -run "TestClaimBin|TestTC21|TestTC23|TestTC25|TestTC28|TestTC30|TestTC36|TestTC37" ./engine/ -timeout 60s
+go test -v -run "TestClaimBin|TestTC21|TestTC23|TestTC25|TestTC28|TestTC30|TestTC36|TestTC37|TestTC80" ./engine/ -timeout 60s
 ```
 
 ## Index
@@ -30,6 +30,7 @@ go test -v -run "TestClaimBin|TestTC21|TestTC23|TestTC25|TestTC28|TestTC30|TestT
 | TC-30 | Fleet failure leaves bin claim dangling | FIXED |
 | TC-36 | Retrieve claim failure — queue instead of fail | FIXED |
 | TC-37 | Staging expiry strips status from claimed bin | FIXED |
+| TC-80 | Orphaned bin claim — reconciliation detects + sweep fixes | FIXED |
 
 ## Bugs found and fixed
 
@@ -152,6 +153,46 @@ WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL A
 **Status:** Fixed. The staging sweep now checks `claimed_by IS NULL` before releasing expired bins.
 
 **Test:** `engine/engine_concurrent_test.go` — `TestTC37_StagingExpiryVsActiveClaim`
+
+---
+
+### TC-80: Orphaned bin claim after terminal order — reconciliation detects + sweep fixes
+
+**Scenario:** A bin (`Core_Testing30001` in production) shows as "claimed" on the Nodes page and Bins page but has no visible active orders. The reconciliation page is a web stub — it shows no anomalies even though the data is corrupted.
+
+**Expected behavior:** The reconciliation system should detect bins claimed by terminal (failed/cancelled/confirmed) orders. The periodic sweep should release those claims. The reconciliation page should display the anomalies.
+
+**Result:** BUG FOUND (production). `UpdateOrderStatus(failed)` and `UnclaimOrderBins` are separate SQL statements executed sequentially. If unclaim fails silently (connection drop, deadlock, process crash mid-handler), the order transitions to terminal status but the bin's `claimed_by` field still points to the dead order. The orphaned claim makes the bin invisible to dispatch (`FindSourceBinFIFO` skips claimed bins) and permanently stuck.
+
+**Root cause:** `UnclaimOrderBins` silently discards errors (`db.Exec(...)` return value ignored). The event handler pattern (`func(evt Event)` — no return value) means errors can't propagate. The handler succeeds for status update but silently loses the unclaim:
+
+```go
+// Before (broken): two separate statements — unclaim can fail silently
+if err := d.db.UpdateOrderStatus(order.ID, StatusFailed, detail); err != nil { ... }
+d.db.UnclaimOrderBins(order.ID)  // error discarded
+d.db.DeleteOrderBins(order.ID)   // error discarded
+
+// After (fixed): single atomic transaction
+func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
+    tx, err := db.Begin()
+    // UPDATE orders SET status='failed'
+    // INSERT INTO order_history
+    // UPDATE bins SET claimed_by=NULL WHERE claimed_by=$1
+    // DELETE FROM order_bins WHERE order_id=$1
+    return tx.Commit()
+}
+```
+
+Three-layer fix:
+1. **Atomic transitions** (`FailOrderAtomic`, `CancelOrderAtomic`) — status + unclaim + cleanup in one transaction. 9 call sites swapped. Removes the possibility of partial failure.
+2. **Orphan claim sweep** (`ReleaseOrphanedClaims`) — defense-in-depth periodic sweep that finds bins claimed by terminal orders and releases them. Wired into existing `stagedBinSweepLoop` in `engine/engine.go`.
+3. **Reconciliation detection** — `ListOrderCompletionAnomalies` already detected `terminal_order_still_claims_bin`. Added `ReleaseOrphanedClaims` to the sweep loop so anomalies auto-heal. Added `manifest_without_active_order` detection for info-level review.
+
+**Production risk:** Any non-atomic terminal transition on a busy floor can leak claims. A leaked claim makes the bin invisible to FIFO retrieval — operators can't get parts from that bin, and the UI shows it as "claimed" with no associated order. Recovery requires manual SQL intervention. On a busy floor with limited bins, this silently reduces available inventory.
+
+**Status:** Fixed. Reconciliation page will show the anomaly, and the periodic sweep auto-heals it.
+
+**Test:** `engine/engine_test.go` — `TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes`
 
 ## Verified scenarios
 

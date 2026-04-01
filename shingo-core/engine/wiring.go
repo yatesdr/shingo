@@ -210,8 +210,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		case dispatch.StatusDelivered:
 			e.handleOrderDelivered(order)
 		case dispatch.StatusFailed:
-			e.db.UnclaimOrderBins(order.ID)
-			e.db.DeleteOrderBins(order.ID)
+			if err := e.db.FailOrderAtomic(order.ID, "fleet order failed"); err != nil {
+				e.logFn("engine: atomic fail order %d: %v", order.ID, err)
+			}
 			e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
 				OrderID:   order.ID,
 				EdgeUUID:  order.EdgeUUID,
@@ -221,8 +222,9 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 			}})
 		case dispatch.StatusCancelled:
 			previousStatus := order.Status // captured at top of function before status update
-			e.db.UnclaimOrderBins(order.ID)
-			e.db.DeleteOrderBins(order.ID)
+			if err := e.db.CancelOrderAtomic(order.ID, "fleet order stopped"); err != nil {
+				e.logFn("engine: atomic cancel order %d: %v", order.ID, err)
+			}
 			e.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
 				OrderID:        order.ID,
 				EdgeUUID:       order.EdgeUUID,

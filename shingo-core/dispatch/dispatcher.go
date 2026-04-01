@@ -166,10 +166,9 @@ func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *st
 
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
 		log.Printf("dispatch: fleet create order failed: %v", err)
-		if dbErr := d.db.UpdateOrderStatus(order.ID, StatusFailed, err.Error()); dbErr != nil {
-			log.Printf("dispatch: update order %d status to failed: %v", order.ID, dbErr)
+		if dbErr := d.db.FailOrderAtomic(order.ID, err.Error()); dbErr != nil {
+			log.Printf("dispatch: atomic fail order %d: %v", order.ID, dbErr)
 		}
-		d.unclaimOrder(order.ID)
 		d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, "fleet_failed", err.Error())
 		return "", err
 	}
@@ -329,17 +328,11 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 
 func (d *Dispatcher) failOrder(order *store.Order, env *protocol.Envelope, errorCode, detail string) {
 	stationID := env.Src.Station
-	if err := d.db.UpdateOrderStatus(order.ID, StatusFailed, detail); err != nil {
-		log.Printf("dispatch: update order %d status to failed: %v", order.ID, err)
+	if err := d.db.FailOrderAtomic(order.ID, detail); err != nil {
+		log.Printf("dispatch: atomic fail order %d: %v", order.ID, err)
 	}
-	d.unclaimOrder(order.ID)
 	d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, stationID, errorCode, detail)
 	d.sendError(env, order.EdgeUUID, errorCode, detail)
-}
-
-func (d *Dispatcher) unclaimOrder(orderID int64) {
-	d.db.UnclaimOrderBins(orderID)
-	d.db.DeleteOrderBins(orderID)
 }
 
 // SetPostFindHook installs a test-only hook called between Find and Claim in

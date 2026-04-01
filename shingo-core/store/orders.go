@@ -370,6 +370,54 @@ func (db *DB) UpdateOrderPayloadCode(orderID int64, payloadCode string) error {
 	return err
 }
 
+// FailOrderAtomic transitions an order to "failed" and releases all bin claims
+// in a single transaction. This prevents the leak where UpdateOrderStatus succeeds
+// but UnclaimOrderBins fails silently, leaving bins permanently claimed by a
+// terminal order.
+func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE orders SET status='failed', error_detail=$1, updated_at=NOW() WHERE id=$2`, detail, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'failed', $2)`, orderID, detail); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CancelOrderAtomic transitions an order to "cancelled" and releases all bin claims
+// in a single transaction. Same rationale as FailOrderAtomic.
+func (db *DB) CancelOrderAtomic(orderID int64, detail string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE orders SET status='cancelled', error_detail=$1, updated_at=NOW() WHERE id=$2`, detail, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'cancelled', $2)`, orderID, detail); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // CountInFlightOrdersByDeliveryNode counts non-queued, non-terminal active orders targeting a delivery node.
 func (db *DB) CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error) {
 	var count int

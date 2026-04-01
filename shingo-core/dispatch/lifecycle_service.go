@@ -187,10 +187,8 @@ func (s *LifecycleService) CancelOrder(order *store.Order, stationID, reason str
 			s.dbg("cancel fleet ok: vendor_id=%s", order.VendorOrderID)
 		}
 	}
-	s.db.UnclaimOrderBins(order.ID)
-	s.db.DeleteOrderBins(order.ID)
-	if err := s.db.UpdateOrderStatus(order.ID, StatusCancelled, reason); err != nil {
-		log.Printf("dispatch: update order %d status to cancelled: %v", order.ID, err)
+	if err := s.db.CancelOrderAtomic(order.ID, reason); err != nil {
+		log.Printf("dispatch: atomic cancel order %d: %v", order.ID, err)
 	}
 	s.emitter.EmitOrderCancelled(order.ID, order.EdgeUUID, stationID, reason, order.Status)
 }
