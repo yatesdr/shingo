@@ -370,9 +370,15 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 	}
 	var fromClaims, toClaims []store.StyleNodeClaim
 	if process.ActiveStyleID != nil {
-		fromClaims, _ = e.db.ListStyleNodeClaims(*process.ActiveStyleID)
+		fromClaims, err = e.db.ListStyleNodeClaims(*process.ActiveStyleID)
+		if err != nil {
+			return nil, fmt.Errorf("list from-style claims: %w", err)
+		}
 	}
-	toClaims, _ = e.db.ListStyleNodeClaims(toStyleID)
+	toClaims, err = e.db.ListStyleNodeClaims(toStyleID)
+	if err != nil {
+		return nil, fmt.Errorf("list to-style claims: %w", err)
+	}
 	diffs := DiffStyleClaims(fromClaims, toClaims)
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
@@ -414,9 +420,15 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		return nil, err
 	}
 
-	// Abort pre-existing orders on affected nodes.
-	for _, node := range nodes {
-		e.AbortNodeOrders(node.ID)
+	// Abort pre-existing orders on affected nodes (not unchanged ones).
+	for _, diff := range diffs {
+		if diff.Situation == SituationUnchanged {
+			continue
+		}
+		node := findNodeByCoreName(nodes, diff.CoreNodeName)
+		if node != nil {
+			e.AbortNodeOrders(node.ID)
+		}
 	}
 
 	// Retrieve the changeover we just created so we can link node tasks.
@@ -443,6 +455,7 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		if err := e.createChangeoverOrders(changeover, nodeTask, node, diff); err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): %v — operator must handle manually",
 				diff.CoreNodeName, diff.Situation, err)
+			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error")
 		}
 	}
 

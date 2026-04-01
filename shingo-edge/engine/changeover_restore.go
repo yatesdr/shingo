@@ -31,11 +31,11 @@ func (e *Engine) restoreChangeoverState() {
 		}
 
 		restored := 0
-		for _, task := range tasks {
-			if task.Situation == "unchanged" {
+		for i := range tasks {
+			if tasks[i].Situation == "unchanged" {
 				continue
 			}
-			if e.reconcileNodeTask(&task) {
+			if e.reconcileNodeTask(&tasks[i], changeover.ToStyleID) {
 				restored++
 			}
 		}
@@ -52,8 +52,14 @@ func (e *Engine) restoreChangeoverState() {
 // reconcileNodeTask checks linked orders for a changeover node task and
 // advances the node task state if orders completed while Edge was down.
 // Returns true if any state advancement was made.
-func (e *Engine) reconcileNodeTask(task *store.ChangeoverNodeTask) bool {
+func (e *Engine) reconcileNodeTask(task *store.ChangeoverNodeTask, toStyleID int64) bool {
 	advanced := false
+
+	// Resolve CoreNodeName from process node for claim lookups.
+	coreNodeName := ""
+	if node, err := e.db.GetProcessNode(task.ProcessNodeID); err == nil {
+		coreNodeName = node.CoreNodeName
+	}
 
 	// Check staging/delivery order (NextMaterialOrderID)
 	if task.NextMaterialOrderID != nil {
@@ -61,6 +67,12 @@ func (e *Engine) reconcileNodeTask(task *store.ChangeoverNodeTask) bool {
 			if orders.IsTerminal(order.Status) {
 				switch task.State {
 				case "staging_requested":
+					if toStyleID > 0 && coreNodeName != "" {
+						if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, coreNodeName); err == nil {
+							claimID := toClaim.ID
+							_ = e.db.SetProcessNodeRuntime(task.ProcessNodeID, &claimID, 0)
+						}
+					}
 					_ = e.db.UpdateChangeoverNodeTaskState(task.ID, "staged")
 					advanced = true
 				case "release_requested":

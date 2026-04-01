@@ -1005,20 +1005,20 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 		t.Fatalf("after Order A: expected staged, got %s", task.State)
 	}
 
-	// Order B completion (evac) → released
+	// Order B completion (evac-only) → line_cleared (not released — Order B has no delivery steps)
 	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
 	markOrderTerminal(db, orderB.ID)
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "released" {
-		t.Fatalf("after Order B: expected released, got %s", task.State)
+	if task.State != "line_cleared" {
+		t.Fatalf("after Order B: expected line_cleared, got %s", task.State)
 	}
 
-	// Verify runtime switched to new claim
+	// Verify runtime UOP zeroed (old material evacuated, no new delivery yet)
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 200 {
-		t.Errorf("expected UOP=200, got %d", runtime.RemainingUOP)
+	if runtime.RemainingUOP != 0 {
+		t.Errorf("expected UOP=0 after evac-only Order B, got %d", runtime.RemainingUOP)
 	}
 }
 
@@ -1049,7 +1049,7 @@ func TestChangeover_KeepStagedSplit(t *testing.T) {
 		t.Fatal("expected both Order A (deliver) and Order B (evac) for keep-staged split")
 	}
 
-	// Order A → staged, Order B → released
+	// Order A → staged, Order B (evac-only) → line_cleared
 	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
 	markOrderTerminal(db, orderA.ID)
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
@@ -1064,8 +1064,8 @@ func TestChangeover_KeepStagedSplit(t *testing.T) {
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "released" {
-		t.Fatalf("after Order B: expected released, got %s", task.State)
+	if task.State != "line_cleared" {
+		t.Fatalf("after Order B: expected line_cleared, got %s", task.State)
 	}
 }
 

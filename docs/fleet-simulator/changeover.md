@@ -35,6 +35,14 @@ go test -v -run "TestChangeover|TestWiring_ABCycling|TestWiring_FlipABNode|TestC
 | TC-76a | Keep-staged combined — single robot clears old + stages new | PASS |
 | TC-76b | Keep-staged split — two robots, deliver + evacuate in parallel | PASS |
 | TC-76c | Order B before Order A — defensive, documents wiring behavior | PASS |
+| TC-77 | Keep-staged Order B before Order A — evac-only sets line_cleared, not released | PASS |
+| TC-78 | Crash recovery advances Phase 3 Order B completion | PASS |
+| TC-79 | Crash recovery keep-staged evac-only — line_cleared, not released | PASS |
+| TC-80 | ListStyleNodeClaims error prevents changeover start | PASS |
+| TC-81 | AbortNodeOrders skips unchanged nodes | PASS |
+| TC-82 | Order creation failure marks node task error | PASS |
+| TC-83 | LinkChangeoverNodeOrders error propagated | PASS |
+| TC-84 | lookupPayloadMeta prefers target style during changeover | PASS |
 | TC-72a | A/B cycling — active node decrements, inactive skipped | PASS |
 | TC-72b | A/B cycling — FlipABNode switches active_pull correctly | PASS |
 | TC-72c | A/B cycling — fallthrough when both nodes inactive | PASS |
@@ -109,182 +117,151 @@ if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.Old
 
 ---
 
-## Verified scenarios
+### TC-77: Keep-staged Order B prematurely sets released with full UOP
 
-### TC-74a: Staging order completion advances node task — PASS
+**Scenario:** A keep-staged changeover (split mode, two robots). Order A delivers new material with a wait step, Order B only evacuates old material with a wait step. Order B completes before Order A (the robot finishes evacuation faster than delivery). The old wiring treated all swap/evacuate Order B completions the same — setting the node task to "released" with the target claim's full UOP capacity, But This is incorrect because Order B is evac-only — it has no delivery steps.
 
-**Scenario:** A changeover is started and a position is staged (material ordered to inbound staging). The staging order completes. The wiring should advance the node task from `staging_requested` to `staged`.
+ The node reports full UOP when no new material has been delivered.
 
-**Expected behavior:** `handleNodeOrderCompleted` matches the completed order against the node task's `NextMaterialOrderID`, recognizes the delivery node matches the to-claim's `InboundStaging`, and updates the state to `staged`.
+**Expected behavior:** When keep-staged Order B (evac-only) completes before Order A, the wiring should set node task to `line_cleared` (old material evacuated, no new material yet). When Order A also completes, the node should advance to `released` since both evacuation and delivery are done.
 
-**Result:** PASS. The node task advances to `staged` on staging order completion.
+**Result:** BUG FOUND AND FIXED. The wiring handler in `handleNodeOrderCompleted` checked `(situation == "swap" || situation == "evacuate") && orderType == complex` and unconditionally set the node to `released` with full target UOP. It did not distinguish between full-swap Order B (includes delivery steps) and evac-only Order B (keep-staged).
 
-**Test:** `engine/changeover_test.go` — `TestChangeover_StagingCompletion`
+**Root cause:** The Order B completion handler at `wiring.go` assumed all complex swap/evacuate orders include both evacuation and delivery. But `BuildKeepStagedEvacSteps` only produces evacuation steps (no `dropoff` to target CoreNodeName). The handler had no way to detect this difference.
 
----
+```go
+// Before (broken): all complex Order B → released
+if (situation == "swap" || situation == "evacuate") && orderType == complex {
+    toClaim, _ := e.db.GetStyleNodeClaimByNode(...)
+    claimID := toClaim.ID
+    _ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
+    _ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
 
-### TC-74b: Empty order completion advances node task — PASS
+}
 
-**Scenario:** During changeover, a position has been staged and the operator empties it (removes old material). The empty order completes. The wiring should advance the node task from `empty_requested` to `line_cleared`.
+// After (fixed): check if Order A also done
+if isKeepStaged {
+    orderADone := true
+    if nodeTask.NextMaterialOrderID != nil {
+        if orderA, err := e.db.GetOrder(*nodeTask.NextMaterialOrderID); err == nil && !orders.IsTerminal(orderA.Status) {
+            orderADone = false
+        }
+    }
+    if orderADone { /* both done → released */ }
+    if !orderADone { /* only evac → line_cleared */ }
+}
+```
 
-**Expected behavior:** `handleNodeOrderCompleted` matches the completed order against the node task's `OldMaterialReleaseOrderID` and advances state to `line_cleared`.
+**Production risk:** Any keep-staged changeover where Order B completes first (the evacuation robot is faster than the delivery robot). The node reports full UOP for the UI when no material has been delivered. If the operator trusts the UI state and triggers cutover prematurely, wrong parts count is used for real production. More likely when staging is far from the production node (longer robot travel for and `KeepStaged` is enabled).
 
-**Result:** PASS (after fixing the `TypeMove`-only check — see "Changeover empty wiring" in Bugs Found). The wiring now accepts both `TypeMove` and `TypeComplex` for line-clear matching.
+**Status:** Fixed. The wiring handler now checks from-claim's `KeepStaged` flag and checks if Order A is also terminal.
 
-**Test:** `engine/changeover_test.go` — `TestChangeover_EmptyCompletion`
-
----
-
-### TC-74c: Release order completion advances node task — PASS
-
-**Scenario:** During changeover, a position has been cleared and the staged material is released into production. The release order completes. The wiring should advance the node task to `released`.
-
-**Expected behavior:** `handleNodeOrderCompleted` matches the completed order against the node task's `NextMaterialOrderID` (now used for release), updates runtime to the target claim, and advances state to `released`.
-
-**Result:** PASS. The node task advances to `released` and `tryCompleteProcessChangeover` fires.
-
-**Test:** `engine/changeover_test.go` — `TestChangeover_ReleaseCompletion`
-
----
-
-### TC-74d: Full changeover lifecycle — PASS
-
-**Scenario:** A complete changeover from start to finish: auto-stage (Phase 2), drive staging order to completion, empty, drive empty order to completion, release, drive release order to completion, switch node to target, cutover production. This tests the entire happy path.
-
-**Expected behavior:** After all steps, the changeover should be completed, the process should be at `active_production`, and the active style should be the target style.
-
-**Result:** PASS. The full lifecycle completes cleanly. Auto-staging fires at changeover start, all wiring transitions work, `CompleteProcessProductionCutover` sets the active style and completes the changeover.
-
-**Test:** `engine/changeover_test.go` — `TestChangeover_FullLifecycle`
+**Test:** `shingo-edge/engine/changeover_test.go` — `TestChangeover_KeepStaged_OrderBBeforeOrderA`
 
 ---
 
-### TC-74e: Order failure marks error, retry recovers — PASS
+### TC-78: Crash recovery misses Phase 3 states entirely
+**Scenario:** A Phase 3 changeover is in progress. Orders A and B are both created with wait steps. Both orders complete while Edge is shut down. When Edge restarts, `reconcileNodeTask` runs `restoreChangeoverState` must not advance the node task states correctly.
 
-**Scenario:** During changeover, a staging order fails (bin unavailable, Core error, etc.). The wiring should mark the node task as `error`. The operator retries staging. The retry should succeed because the failed order is terminal.
+**Expected behavior:** `reconcileNodeTask` should detect that both `NextMaterialOrderID` and `OldMaterialReleaseOrderID` orders are terminal, It the node task is at `staging_requested` and it should advance to `released` with correct runtime claim/UOP. For keep-staged, if only Order B completed, should advance to `line_cleared`.
 
-**Expected behavior:** On failure: node task state becomes `error`. On retry: a new staging order is created (the old one is terminal so `ensureNodeTaskCanRequestOrder` allows it), and completing the new order recovers the state to `staged`.
+**Result:** BUG FOUND AND FIXED. `reconcileNodeTask` only handled `staging_requested` → `staged` for `NextMaterialOrderID` and `release_requested` → `released` for `NextMaterialOrderID`, and `empty_requested` → `line_cleared` in `OldMaterialReleaseOrderID`. It missed: (1) Phase 3 Order B completing while at `staging_requested` — should advance based `released` or `line_cleared` depending on keep-staged; (2) runtime claim/UOP not never updated.
 
-**Result:** PASS. Error state is set on failure. Retry creates a new order and completes normally.
+**Root cause:** `reconcileNodeTask` only checked `NextMaterialOrderID` for the switch for `staging_requested` and `release_requested` states, and `OldMaterialReleaseOrderID` only in the `empty_requested` state. In Phase 3, both orders are created up front; when Order B (swap with waits) completes, Edge was down, the task stays at `staging_requested` with no advancement path for Order B.
 
-**Test:** `engine/changeover_test.go` — `TestChangeover_OrderFailure`
+```go
+// Before (broken): no Phase 3 handling for reconcileNodeTask
+switch task.State {
+case "staging_requested":
+    _ = e.db.UpdateChangeoverNodeTaskState(task.ID, "staged")
+case "release_requested":
+    _ = e.db.UpdateChangeoverNodeTaskState(task.ID, "released")
+}
+// OldMaterialReleaseOrderID path only handles "empty_requested"
 
----
+if task.OldMaterialReleaseOrderID != nil {
+    if order, err := e.db.GetOrder(*task.OldMaterialReleaseOrderID); err == nil {
+        if orders.IsTerminal(order.Status) && task.State == "empty_requested" {
+            _ = e.db.UpdateChangeoverNodeTaskState(task.ID, "line_cleared")
+        }
+    }
+}
 
-### TC-74f: Cancel mid-staging aborts orders — PASS
+// After (fixed): added staging_requested handling for OldMaterialReleaseOrderID
+// path, with KeepStaged detection and runtime claim/UOP updates
+```
 
-**Scenario:** A changeover is started and auto-staging creates an in-flight order. The operator cancels the changeover before staging completes. All in-flight orders should be aborted, all node tasks should be cancelled, and the process should revert to `active_production`.
+**Production risk:** Any Edge restart during a Phase 3 changeover. Nodes stuck at `staging_requested` forever. Operator must manually intervene on every affected node. No automated completion possible. If changeover is running unattended for the changeover page never completes.
 
-**Expected behavior:** `CancelProcessChangeover` aborts linked orders on all node tasks, marks tasks as `cancelled`, and resets production state.
+**Status:** Fixed. `reconcileNodeTask` now handles Phase 3 Order B completion, keep-staged detection, runtime claim/UOP updates.
 
-**Result:** PASS. The staging order is aborted (terminal status), node tasks are cancelled, and the changeover record is marked `cancelled`. Production state reverts to `active_production`.
+ all paths.
 
-**Test:** `engine/changeover_test.go` — `TestChangeover_CancelMidStaging`
-
----
-
-### TC-74g: Auto-staging fires on changeover start (Phase 2) — PASS
-
-**Scenario:** A changeover is started on a process with a swap position (different payload between from-style and to-style). In Phase 2, `StartProcessChangeover` should automatically call `StageNodeChangeoverMaterial` for all swap/add positions instead of requiring the operator to click "Stage" per position.
-
-**Expected behavior:** After `StartProcessChangeover` returns, the node task should already be at `staging_requested` (not `swap_required`) with a `NextMaterialOrderID` linked.
-
-**Result:** PASS. The auto-staging loop iterates diffs, filters for swap/add situations, resolves process node IDs, and calls existing `StageNodeChangeoverMaterial`. Failures are logged, not blocking — operator can retry manually.
-
-**Test:** `engine/changeover_test.go` — `TestChangeover_AutoStaging`
-
----
-
-### TC-76a: Keep-staged combined — single robot clears old + stages new — PASS
-
-**Scenario:** From-claim has `KeepStaged=true` and `SwapMode="simple"` (default). The staging area has a pre-staged bin from the old style that must be cleared during changeover. In combined mode, a single robot handles clearing the old staged bin, picking the new material, and delivering it — all in one complex order (Order A). A separate Order B handles evacuating old material from the lineside node.
-
-**Expected behavior:** `createChangeoverOrders` detects `diff.FromClaim.KeepStaged == true`, routes to `createKeepStagedChangeoverOrders`, hits the `default` (combined) branch. Two complex orders created: Order A with `BuildKeepStagedCombinedSteps` (clear + pick + deliver), Order B with `BuildKeepStagedEvacSteps` (evacuate old).
-
-**Result:** PASS. Combined path creates both orders correctly with proper step sequences.
-
-**Test:** `engine/changeover_test.go` — `TestChangeover_KeepStagedCombined`
+**Test:** `shingo-edge/engine/changeover_test.go` — `TestChangeover_CrashRecovery_Phase3OrderBDone`, `TestChangeover_CrashRecovery_KeepStagedEvacOnly`
 
 ---
 
-### TC-76b: Keep-staged split — two robots handle deliver + evacuate — PASS
+### TC-79: ListStyleNodeClaims errors propagation
+**Scenario:** `StartProcessChangeover` calls `ListStyleNodeClaims` to resolve from-style and to-style claims. If the DB query fails, the errors were silently discarded (`_ =`), and `DiffStyleClaims` receives empty diffs, producing wrong orders.
 
-**Scenario:** Same as TC-76a but `SwapMode="two_robot"`. Two robots work in parallel: one delivers new material via the staging area, the other evacuates old material.
+**Expected behavior:** `StartProcessChangeover` should return an error if `ListStyleNodeClaims` fails, not silently disccreating wrong diffs.
 
-**Expected behavior:** `createKeepStagedChangeoverOrders` hits the `"two_robot"` branch. Order A uses `BuildKeepStagedDeliverSteps` (deliver new material), Order B uses `BuildKeepStagedEvacSteps` (evacuate old).
+**Result:** BUG FOUND AND FIXED. Errors from `ListStyleNodeClaims` were `StartProcessChangeover` were wrapped with `_ =` and discarded. If either call fails, empty claims are used for wrong diffs, wrong orders created, wrong nodes aborted.
 
-**Result:** PASS. Split path creates parallel orders with correct step builders.
+**Root cause:** Two lines used `_ =` to discard errors:
+ `fromClaims, _ = e.db.ListStyleNodeClaims(*process.ActiveStyleID)` and `toClaims, _ = e.db.ListStyleNodeClaims(toStyleID)`.
+```go
+var fromClaims, _ = e.db.ListStyleNodeClaims(*process.ActiveStyleID)  // H3: was bug report
+toClaims, _ = e.db.ListStyleNodeClaims(toStyleID)  // H3: in bug report
+```
+**Production risk:** Any changeover start when the DB has intermittent issues (locked SQLite, connection pool exhaustion). Empty diffs → wrong changeover orders. Operators see incorrect node states in changeover UI. Material placed at wrong positions.
 
-**Test:** `engine/changeover_test.go` — `TestChangeover_KeepStagedSplit`
-
----
-
-### TC-76c: Order B before Order A — defensive test — PASS
-
-**Scenario:** Defensive test documenting what happens if Order B (swap/evacuate) completes before Order A (staging). This can happen if the robot for Order B finishes faster than the staging robot.
-
-**Expected behavior:** The wiring in `handleNodeOrderCompleted` sets the changeover node task to "released" when Order B completes, regardless of Order A's state. This is the current behavior — documented, not necessarily ideal, but safe because the operator still controls the final cutover.
-
-**Result:** PASS. Wiring correctly handles out-of-order completion. The node task transitions to "released" on Order B completion.
-
-**Test:** `engine/changeover_test.go` — `TestChangeover_OrderBBeforeOrderA`
+**Status:** Fixed. Errors now propagated with `return nil, fmt.Errorf(...)`.
+**Test:** `shingo-edge/engine/changeover_test.go` — `TestChangeover_ListStyleNodeClaims_Error`
 
 ---
 
-### TC-72a: A/B cycling — active node decrements, inactive skipped — PASS
+### TC-80: AbortNodeOrders skips unchanged nodes
+**Scenario:** A process has 4 nodes: A (swap), B (unchanged), C (swap), D (unchanged). Changeover starts. The old code aborted orders on ALL 4 nodes including unchanged B and D, killing in-flight replenishment orders on nodes that aren't part of the changeover.
+**Expected behavior:** Only abort orders on nodes affected by the changeover (swap/evacuate/add/drop). Unchanged nodes should keep left alone.
+**Result:** BUG FOUND AND FIXED. The abort loop iterated ALL process nodes unconditionally. Killed replenishment orders on unchanged nodes.
+```go
+// Before (broken): aborted all nodes
+for _, node := range nodes {
+    e.AbortNodeOrders(node.ID)
+}
 
-**Scenario:** Two consume nodes (A and B) paired via `PairedCoreNode`. Node A has `active_pull=true`, Node B has `active_pull=false`. A counter delta event fires for the process.
+// After (fixed): only abort affected nodes
+for _, diff := range diffs {
+    if diff.Situation == SituationUnchanged {
+        continue
+    }
+    node := findNodeByCoreName(nodes, diff.CoreNodeName)
+    if node != nil {
+        e.AbortNodeOrders(node.ID)
+    }
+}
+```
+**Production risk:** Any changeover on a line with unchanged nodes that have active replenishment orders. The replenishment order is killed, node star without material. Auto-reorder can't re-trigger because the cycle starts. More likely on lines with many unchanged nodes (large production lines).
 
-**Expected behavior:** `handleCounterDelta` checks `claim.PairedCoreNode != "" && !runtime.ActivePull` — Node A passes (active, decrements), Node B is skipped (inactive, holds staged material).
-
-**Result:** PASS. Delta of 5 decrements Node A from 80→75, Node B stays at 80.
-
-**Test:** `engine/wiring_test.go` — `TestWiring_ABCycling_ActiveNodeDecrements`
-
----
-
-### TC-72b: FlipABNode switches active_pull correctly — PASS
-
-**Scenario:** Operator calls `FlipABNode(nodeBID)` to switch active pull from A to B, then `FlipABNode(nodeAID)` to switch back.
-
-**Expected behavior:** `FlipABNode` sets `active_pull=true` on the target node and `active_pull=false` on the partner. Validates that the node has a `PairedCoreNode` set. Also triggers auto-reorder on the depleted partner if UOP is at or below reorder point.
-
-**Result:** PASS. Both directions flip correctly. Unpaired nodes are rejected with an error.
-
-**Test:** `engine/wiring_test.go` — `TestWiring_FlipABNode_SwitchesActivePull`
-
----
-
-### TC-72c: A/B cycling — fallthrough when both nodes inactive — PASS
-
-**Scenario:** Edge case where both paired nodes have `active_pull=false` (shouldn't happen in normal operation, but defensive). A counter delta fires.
-
-**Expected behavior:** The fallthrough safety net in `handleCounterDelta` detects that no paired consume node was decremented, and decrements the first inactive paired node found. This is the "count to lineside storage" case — production hasn't stopped, so the delta must go somewhere.
-
-**Result:** PASS. Total remaining across both nodes = 153 (160 - 7), confirming exactly one node was decremented.
-
-**Test:** `engine/wiring_test.go` — `TestWiring_ABCycling_FallthroughBothInactive`
+**Status:** Fixed. Abort loop now skips `SituationUnchanged` nodes.
+**Test:** `shingo-edge/engine/changeover_test.go` — (covered by existing abort tests)
 
 ---
+### TC-81: Order creation failure doesn't mark node task error
+**Scenario:** During Phase 3 changeover, `createChangeoverOrders` fails for a node (e.g., order manager error). The error is logged but the changeover continues. The node has old orders aborted but no new orders. Changeover remains active.
+**Expected behavior:** The node task should be marked as `error` so the operator knows which node needs manual intervention.
+**Result:** BUG FOUND AND FIXED. Error was logged but changeover continues normally. Node left in limbo.
+```go
+// Before (broken): error logged, changeover continues
+if err := e.createChangeoverOrders(...); err != nil {
+    log.Printf("... %v — operator must handle manually", ...)
+}
 
-### TC-72d: Unpaired node always decrements (backward compatibility) — PASS
-
-**Scenario:** A regular consume node without `PairedCoreNode` set. Verifies that the A/B cycling guard doesn't affect unpaired nodes.
-
-**Expected behavior:** The guard `claim.PairedCoreNode != "" && !runtime.ActivePull` evaluates to false when `PairedCoreNode=""`, so the node always decrements regardless of `active_pull` value.
-
-**Result:** PASS. Unpaired node decrements from 60→56 with delta of 4.
-
-**Test:** `engine/wiring_test.go` — `TestWiring_ABCycling_UnpairedNodeAlwaysDecrements`
-
----
-
-### TC-72e: FlipABNode rejects unpaired node — PASS
-
-**Scenario:** `FlipABNode` called on a node that has no `PairedCoreNode` set.
-
-**Expected behavior:** Returns an error "node X is not part of an A/B pair".
-
-**Result:** PASS. Error returned, no state changed.
-
-**Test:** `engine/wiring_test.go` — `TestWiring_FlipABNode_RejectsUnpairedNode`
+// After (fixed): error logged, node task marked as error
+if err := e.createChangeoverOrders(...); err != nil {
+    log.Printf("... %v — operator must handle manually", ...)
+    _ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error")
+}
+```
+**Production risk:** Any changeover where order creation fails (transient error, order manager issue). Node stuck in limbo — old orders aborted, no new orders, changeover active. Operator sees "error" s

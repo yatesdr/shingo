@@ -50,6 +50,8 @@ func (m *Manager) enqueueEnvelope(env *protocol.Envelope) error {
 // lookupPayloadMeta returns description and payload code from the active style
 // node claim for the given process node. If processNodeID is nil or the lookup
 // fails, returns empty strings. If payloadCode is already set, it is preserved.
+// During changeover, prefers the target style over the active style so that
+// newly created orders resolve the correct (new) payload.
 func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (desc, code string) {
 	if processNodeID == nil {
 		return "", payloadCode
@@ -63,7 +65,15 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 	if err != nil || process.ActiveStyleID == nil {
 		return "", payloadCode
 	}
-	claim, err := m.db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName)
+	// During changeover, prefer the target style for payload resolution.
+	// Orders created during changeover are typically for the new style's material.
+	styleID := *process.ActiveStyleID
+	if process.TargetStyleID != nil {
+		if _, err := m.db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName); err == nil {
+			styleID = *process.TargetStyleID
+		}
+	}
+	claim, err := m.db.GetStyleNodeClaimByNode(styleID, node.CoreNodeName)
 	if err != nil {
 		m.DebugLog.log("style-node-claim lookup failed: node=%s err=%v", node.CoreNodeName, err)
 		return "", payloadCode

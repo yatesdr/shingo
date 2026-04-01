@@ -175,7 +175,7 @@ async function loadClaims(styleID) {
         }
         var table = document.createElement('table');
         table.className = 'table';
-        table.innerHTML = '<thead><tr><th>Core Node</th><th>Role</th><th>Swap</th><th>Wants</th><th>Inbound</th><th>Outbound</th><th>Source</th><th>Dest</th><th style="width:1%"></th></tr></thead>';
+        table.innerHTML = '<thead><tr><th>Core Node</th><th>Role</th><th>Swap</th><th>Wants</th><th>Inbound</th><th>Outbound</th><th>Source</th><th>Dest</th><th>A/B Pair</th><th style="width:1%"></th></tr></thead>';
         var tbody = document.createElement('tbody');
         claims.forEach(function(c) {
             var tr = document.createElement('tr');
@@ -207,6 +207,7 @@ async function loadClaims(styleID) {
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.outbound_staging || '\u2014') + '</td>' +
                 '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.inbound_source || '\u2014') + '</td>' +
                 '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.outbound_destination || '\u2014') + '</td>' +
+                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.paired_core_node || '\u2014') + '</td>' +
                 '<td style="white-space:nowrap">' +
                     '<button class="btn btn-sm" onclick=\'editClaim(' + JSON.stringify(c).replace(/'/g, "&#39;") + ')\'>Edit</button> ' +
                     '<button class="btn btn-sm btn-danger" onclick="removeClaim(' + c.id + ')">Remove</button>' +
@@ -244,6 +245,7 @@ function openClaimModal() {
     document.getElementById('claims-add-outbound-destination').value = '';
     document.getElementById('claims-add-keep-staged').checked = false;
     document.getElementById('claims-add-evacuate').checked = false;
+    document.getElementById('claims-add-paired-node').value = '';
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
     toggleClaimsAddPayload();
     validateClaimStaging();
@@ -272,6 +274,7 @@ function editClaim(claim) {
     document.getElementById('claims-add-outbound-destination').value = claim.outbound_destination || '';
     document.getElementById('claims-add-keep-staged').checked = !!claim.keep_staged;
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
+    document.getElementById('claims-add-paired-node').value = claim.paired_core_node || '';
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
     toggleClaimsAddPayload();
     validateClaimStaging();
@@ -400,7 +403,8 @@ async function saveClaim() {
         outbound_destination: document.getElementById('claims-add-outbound-destination').value,
         auto_request_payload: document.getElementById('claims-add-auto-request').value,
         keep_staged: document.getElementById('claims-add-keep-staged').checked,
-        evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked
+        evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked,
+        paired_core_node: document.getElementById('claims-add-paired-node').value
     };
 
     // Check if selected node is an NGRP — expand to physical children
@@ -468,6 +472,12 @@ function toggleClaimsAddPayload() {
     document.getElementById('claims-outbound-destination-group').style.display = (isChangeover) ? 'none' : '';
     // Changeover fieldset — not used by bin_loader
     document.getElementById('claims-changeover-fieldset').style.display = isBinLoader ? 'none' : '';
+    // A/B cycling fieldset — consume and produce roles
+    var showAB = role === 'consume' || role === 'produce';
+    document.getElementById('claims-ab-fieldset').style.display = showAB ? '' : 'none';
+    if (!showAB) {
+        document.getElementById('claims-add-paired-node').value = '';
+    }
     // Auto-request fieldset — only for bin_loader
     document.getElementById('claims-auto-request-fieldset').style.display = isBinLoader ? '' : 'none';
     if (isChangeover) {
@@ -484,6 +494,7 @@ function toggleClaimsAddPayload() {
         document.getElementById('claims-add-inbound-source').value = '';
         document.getElementById('claims-add-keep-staged').checked = false;
         document.getElementById('claims-add-evacuate').checked = false;
+        document.getElementById('claims-add-paired-node').value = '';
         buildAllowedPayloadPicker([]);
     }
 }

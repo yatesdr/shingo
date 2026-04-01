@@ -188,8 +188,39 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID &&
 		(order.OrderType == orders.TypeMove || order.OrderType == orders.TypeComplex) {
 		if (nodeTask.Situation == "swap" || nodeTask.Situation == "evacuate") && order.OrderType == orders.TypeComplex {
-			// Phase 3: Order B is a complex order with wait steps — it ran the full
-			// swap/evacuate (evacuation + delivery in one order). Node goes to "released".
+			// Phase 3: Order B is a complex order with wait steps. In regular swap/evacuate,
+			// Order B includes both evacuation and delivery — node goes to "released".
+			// In keep-staged changeovers, Order B only evacuates (no delivery steps) —
+			// node goes to "line_cleared" and Order A handles delivery separately.
+			isKeepStaged := false
+			if nodeTask.FromClaimID != nil {
+				if fromClaim, err := e.db.GetStyleNodeClaim(*nodeTask.FromClaimID); err == nil {
+					isKeepStaged = fromClaim.KeepStaged
+				}
+			}
+			if isKeepStaged {
+				// Keep-staged: Order B only evacuated old material, no delivery.
+				// If Order A (delivery) also completed, node is fully transitioned -> "released".
+				// Otherwise just old material cleared -> "line_cleared".
+				orderADone := true
+				if nodeTask.NextMaterialOrderID != nil {
+					if orderA, err := e.db.GetOrder(*nodeTask.NextMaterialOrderID); err == nil && !orders.IsTerminal(orderA.Status) {
+						orderADone = false
+					}
+				}
+				if orderADone {
+					if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
+						claimID := toClaim.ID
+						_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
+						_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
+						return
+					}
+				}
+				_ = e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0)
+				_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared")
+				return
+			}
+			// Regular swap/evacuate: Order B did evacuation + delivery in one order.
 			if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
 				claimID := toClaim.ID
 				_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
