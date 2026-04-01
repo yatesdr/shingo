@@ -1241,6 +1241,15 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 		t.Errorf("new bin claimed_by = %v, want nil (claim released by ApplyMultiBinArrival)", newBin.ClaimedBy)
 	}
 
+	// Fixed Defect 3: newBin at lineside must be "available", not "staged".
+	// resolveNodeStaging used to mark ALL lineside bins as staged, but for
+	// operator-released swap orders (WaitIndex > 0) the operator already
+	// confirmed by releasing the wait. Staging would leave bins permanently
+	// stuck with no unstage mechanism.
+	if newBin.Status != "available" {
+		t.Errorf("new bin status = %q, want available (operator confirmed by releasing wait)", newBin.Status)
+	}
+
 	// Fixed Defect 2: oldBin should be at outboundDest (step 10 destination)
 	// and unclaimed. The junction table tracks both bins; ApplyMultiBinArrival
 	// moves all bins and unclaims them in one transaction.
@@ -1254,6 +1263,9 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 	if oldBin.NodeID == nil || *oldBin.NodeID != outboundDest.ID {
 		t.Errorf("old bin at node %v, want %d (outboundDest) — per-bin destination from order_bins junction table",
 			oldBin.NodeID, outboundDest.ID)
+	}
+	if oldBin.Status != "available" {
+		t.Errorf("old bin status = %q, want available (swap order with released wait)", oldBin.Status)
 	}
 }
 

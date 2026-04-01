@@ -302,6 +302,12 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
 
+	// Complex orders with operator-released waits: operator already confirmed.
+	if order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0 {
+		staged = false
+		expiresAt = nil
+	}
+
 	if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
 		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
@@ -330,6 +336,12 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.OrderBin) {
 	var instructions []store.BinArrivalInstruction
 
+	// Complex orders with operator-released waits (WaitIndex > 0) have already
+	// been confirmed by the operator. Don't stage bins — the "robot waiting for
+	// operator" phase is over. This prevents bins from being permanently stuck
+	// as staged after swap orders complete with no mechanism to unstage them.
+	operatorConfirmed := order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0
+
 	for _, ob := range orderBins {
 		if ob.DestNode == "" {
 			e.logFn("engine: order %d bin %d has no dest_node in order_bins — skipping", order.ID, ob.BinID)
@@ -342,6 +354,10 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 		}
 
 		staged, expiresAt := e.resolveNodeStaging(destNode)
+		if operatorConfirmed {
+			staged = false
+			expiresAt = nil
+		}
 		instructions = append(instructions, store.BinArrivalInstruction{
 			BinID:     ob.BinID,
 			ToNodeID:  destNode.ID,

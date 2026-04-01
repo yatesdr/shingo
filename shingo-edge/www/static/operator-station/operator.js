@@ -445,7 +445,7 @@ function renderModal(entry) {
                 // Staged — robot waiting, operator must release
                 html += actionBtn('RELEASE', 'request', true,
                     '/api/orders/' + staged.id + '/release');
-            } else if (delivered && delivered.order_type === 'retrieve') {
+            } else if (delivered && (delivered.order_type === 'retrieve' || delivered.order_type === 'complex')) {
                 // Delivered — bin dropped, operator confirms
                 html += actionBtn('CONFIRM', 'request', true,
                     '/api/process-nodes/' + entry.node.id + '/manifest/confirm');
