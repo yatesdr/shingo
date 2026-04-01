@@ -75,7 +75,11 @@ func DiffStyleClaims(fromClaims, toClaims []store.StyleNodeClaim) []ChangeoverNo
 		case from != nil && to == nil:
 			situation = SituationDrop
 		case to != nil && to.PayloadCode == "__empty__":
-			situation = SituationDrop // explicitly clear the node
+			if from != nil && from.PayloadCode == "__empty__" {
+				situation = SituationUnchanged // both empty → nothing to do
+			} else {
+				situation = SituationDrop // explicitly clear the node
+			}
 		case from != nil && from.PayloadCode == "__empty__":
 			situation = SituationAdd // node was empty, now needs material
 		case (from != nil && from.Role == "changeover") || (to != nil && to.Role == "changeover"):

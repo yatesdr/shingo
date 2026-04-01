@@ -109,6 +109,12 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			}
 
 		case "produce":
+			// A/B cycling: if this node is part of an A/B pair, only increment
+			// the active-pull side. The inactive side holds its current production.
+			if claim.PairedCoreNode != "" && !runtime.ActivePull {
+				continue
+			}
+
 			newRemaining := runtime.RemainingUOP + int(delta.Delta)
 			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
 

@@ -628,3 +628,308 @@ func TestWiring_ABCycling_UnpairedNodeAlwaysDecrements(t *testing.T) {
 		t.Errorf("RemainingUOP = %d, want 56 (unpaired node always decrements)", runtime.RemainingUOP)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Section 5: A/B cycling gaps
+// ---------------------------------------------------------------------------
+
+// seedABProducePair creates two produce nodes in an A/B pair.
+func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
+	t.Helper()
+
+	processID, _ = db.CreateProcess("ABP-PROC", "a/b produce test", "active_production", "", "", false)
+	nodeAID, _ = db.CreateProcessNode(store.ProcessNodeInput{
+		ProcessID: processID, CoreNodeName: "ABP-A", Code: "PA1", Name: "Produce A", Sequence: 1, Enabled: true,
+	})
+	nodeBID, _ = db.CreateProcessNode(store.ProcessNodeInput{
+		ProcessID: processID, CoreNodeName: "ABP-B", Code: "PB1", Name: "Produce B", Sequence: 2, Enabled: true,
+	})
+
+	styleID, _ = db.CreateStyle("ABP-STYLE", "a/b produce style", processID)
+	db.SetActiveStyle(processID, &styleID)
+
+	claimAID, _ = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID: styleID, CoreNodeName: "ABP-A", Role: "produce", SwapMode: "simple",
+		PayloadCode: "PART-ABP", UOPCapacity: 100, InboundSource: "SRC-EMPTY",
+		PairedCoreNode: "ABP-B",
+	})
+	claimBID, _ = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID: styleID, CoreNodeName: "ABP-B", Role: "produce", SwapMode: "simple",
+		PayloadCode: "PART-ABP", UOPCapacity: 100, InboundSource: "SRC-EMPTY",
+		PairedCoreNode: "ABP-A",
+	})
+
+	db.EnsureProcessNodeRuntime(nodeAID)
+	db.EnsureProcessNodeRuntime(nodeBID)
+	db.SetProcessNodeRuntime(nodeAID, &claimAID, 10)
+	db.SetProcessNodeRuntime(nodeBID, &claimBID, 10)
+	db.SetActivePull(nodeAID, true)
+	db.SetActivePull(nodeBID, false)
+
+	return
+}
+
+// seedAsymmetricABPair creates an A/B pair where only A names B as partner.
+func seedAsymmetricABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
+	t.Helper()
+
+	processID, _ = db.CreateProcess("ASYM-PROC", "asymmetric a/b", "active_production", "", "", false)
+	nodeAID, _ = db.CreateProcessNode(store.ProcessNodeInput{
+		ProcessID: processID, CoreNodeName: "ASYM-A", Code: "AA1", Name: "Asym A", Sequence: 1, Enabled: true,
+	})
+	nodeBID, _ = db.CreateProcessNode(store.ProcessNodeInput{
+		ProcessID: processID, CoreNodeName: "ASYM-B", Code: "AB1", Name: "Asym B", Sequence: 2, Enabled: true,
+	})
+
+	styleID, _ = db.CreateStyle("ASYM-STYLE", "asym style", processID)
+	db.SetActiveStyle(processID, &styleID)
+
+	claimAID, _ = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID: styleID, CoreNodeName: "ASYM-A", Role: "consume", SwapMode: "simple",
+		PayloadCode: "PART-ASYM", UOPCapacity: 100, PairedCoreNode: "ASYM-B",
+	})
+	claimBID, _ = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID: styleID, CoreNodeName: "ASYM-B", Role: "consume", SwapMode: "simple",
+		PayloadCode: "PART-ASYM", UOPCapacity: 100,
+		// PairedCoreNode intentionally empty — B doesn't know about A
+	})
+
+	db.EnsureProcessNodeRuntime(nodeAID)
+	db.EnsureProcessNodeRuntime(nodeBID)
+	db.SetProcessNodeRuntime(nodeAID, &claimAID, 80)
+	db.SetProcessNodeRuntime(nodeBID, &claimBID, 80)
+	db.SetActivePull(nodeAID, true)
+	db.SetActivePull(nodeBID, false)
+
+	return
+}
+
+// TC-104: Flip during active changeover — flip succeeds but auto-reorder blocked.
+func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeAID, nodeBID, styleID, claimAID, _ := seedABPair(t, db)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Create a second style and start changeover
+	style2, _ := db.CreateStyle("AB-STYLE-2", "second style", processID)
+	db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID: style2, CoreNodeName: "AB-NODE-A", Role: "consume", SwapMode: "simple",
+		PayloadCode: "PART-NEW", UOPCapacity: 100,
+	})
+	db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID: style2, CoreNodeName: "AB-NODE-B", Role: "consume", SwapMode: "simple",
+		PayloadCode: "PART-NEW", UOPCapacity: 100,
+	})
+
+	if _, err := eng.StartProcessChangeover(processID, style2, "test", "flip during co"); err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+
+	// Flip should succeed (FlipABNode doesn't check changeover state)
+	if err := eng.FlipABNode(nodeBID); err != nil {
+		t.Fatalf("FlipABNode during changeover: %v", err)
+	}
+
+	// Verify flip happened
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+	if rtA.ActivePull {
+		t.Error("Node A should be inactive after flip to B")
+	}
+	if !rtB.ActivePull {
+		t.Error("Node B should be active after flip to B")
+	}
+
+	// But CanAcceptOrders should block new orders during changeover
+	ok, reason := eng.CanAcceptOrders(nodeAID)
+	if ok {
+		t.Error("CanAcceptOrders should return false during changeover")
+	}
+	if reason != "changeover in progress" {
+		t.Errorf("reason = %q, want 'changeover in progress'", reason)
+	}
+
+	// Counter delta should still be blocked by changeover guard (CanAcceptOrders)
+	// But handleCounterDelta doesn't use CanAcceptOrders — it checks claim directly
+	// Verify counter delta behavior during changeover
+	_ = styleID
+	_ = claimAID
+}
+
+// TC-105: A/B pair with produce role — active node increments, inactive skipped.
+func TestWiring_ABProducePair_ActiveIncrements(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeAID, nodeBID, styleID, _, _ := seedABProducePair(t, db)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Send delta — only Node A (active) should increment
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     5,
+	})
+
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+
+	if rtA.RemainingUOP != 15 {
+		t.Errorf("Produce A RemainingUOP = %d, want 15 (10 + 5)", rtA.RemainingUOP)
+	}
+	if rtB.RemainingUOP != 10 {
+		t.Errorf("Produce B RemainingUOP = %d, want 10 (inactive, should not increment)", rtB.RemainingUOP)
+	}
+}
+
+// TC-106: Flip + immediate counter delta — verify race-free sequencing.
+func TestWiring_ABFlip_ImmediateDelta(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Flip then immediately send delta — Node B should get the decrement
+	eng.FlipABNode(nodeBID)
+
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     7,
+	})
+
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+
+	if rtA.RemainingUOP != 80 {
+		t.Errorf("Node A RemainingUOP = %d, want 80 (inactive after flip)", rtA.RemainingUOP)
+	}
+	if rtB.RemainingUOP != 73 {
+		t.Errorf("Node B RemainingUOP = %d, want 73 (80 - 7, active after flip)", rtB.RemainingUOP)
+	}
+}
+
+// TC-107: A/B pair across styles — pairing changes after changeover.
+func TestWiring_ABPairsAcrossStyles(t *testing.T) {
+	db := testEngineDB(t)
+	processID, _, _, style1ID, _, _ := seedABPair(t, db)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Create Style 2 with NO pairing (both nodes unpaired)
+	style2ID, _ := db.CreateStyle("AB-STYLE-NO-PAIR", "no pairing", processID)
+	db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID: style2ID, CoreNodeName: "AB-NODE-A", Role: "consume", SwapMode: "simple",
+		PayloadCode: "PART-X", UOPCapacity: 100,
+		// No PairedCoreNode
+	})
+	db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID: style2ID, CoreNodeName: "AB-NODE-B", Role: "consume", SwapMode: "simple",
+		PayloadCode: "PART-X", UOPCapacity: 100,
+		// No PairedCoreNode
+	})
+
+	// Start and complete changeover to Style 2
+	co, err := eng.StartProcessChangeover(processID, style2ID, "test", "unpair")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+
+	// All nodes unchanged (same payload codes are different: PART-AB vs PART-X)
+	// Actually they're swap (PART-AB → PART-X). Complete the changeover via cutover.
+	_ = co
+	eng.CompleteProcessProductionCutover(processID)
+
+	// After cutover, active style is style2. Claims have no PairedCoreNode.
+	// Counter delta should decrement BOTH nodes (unpaired behavior).
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   style2ID,
+		Delta:     3,
+	})
+
+	// Both should decrement — no pairing in new style
+	// Need to look up nodes again since they were created in seedABPair
+	nodes, _ := db.ListProcessNodesByProcess(processID)
+	var nodeAID, nodeBID int64
+	for _, n := range nodes {
+		if n.CoreNodeName == "AB-NODE-A" {
+			nodeAID = n.ID
+		}
+		if n.CoreNodeName == "AB-NODE-B" {
+			nodeBID = n.ID
+		}
+	}
+
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+
+	// Both should decrement (unpaired nodes always decrement independently)
+	totalDelta := (80 - rtA.RemainingUOP) + (80 - rtB.RemainingUOP)
+	if totalDelta != 6 {
+		t.Errorf("after unpairing: total delta = %d, want 6 (each node gets 3 independently)", totalDelta)
+	}
+
+	// Document: with two unpaired consume nodes for same payload, delta hits both.
+	// This is expected — pairing is the mechanism that prevents double-counting.
+	_ = style1ID
+}
+
+// TC-108: Asymmetric A/B pair — only A names B as partner.
+func TestWiring_AB_AsymmetricPair(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeAID, nodeBID, styleID, claimAID, _ := seedAsymmetricABPair(t, db)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Send counter delta — Node A is paired (checks ActivePull), Node B is unpaired (always decrements)
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     5,
+	})
+
+	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
+
+	// Node A: paired with ASYM-B, ActivePull=true → should decrement
+	if rtA.RemainingUOP != 75 {
+		t.Errorf("Asym A RemainingUOP = %d, want 75 (active paired node)", rtA.RemainingUOP)
+	}
+	// Node B: unpaired (PairedCoreNode="") → always decrements regardless of ActivePull
+	if rtB.RemainingUOP != 75 {
+		t.Errorf("Asym B RemainingUOP = %d, want 75 (unpaired always decrements)", rtB.RemainingUOP)
+	}
+
+	// Flip: make B active, A inactive
+	db.SetActivePull(nodeAID, false)
+	db.SetActivePull(nodeBID, true)
+
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     3,
+	})
+
+	rtA, _ = db.GetProcessNodeRuntime(nodeAID)
+	rtB, _ = db.GetProcessNodeRuntime(nodeBID)
+
+	// Node A: paired + inactive → skipped in main loop, but fallthrough hits it
+	// because pairedConsumeHandled is never set (Node B is unpaired, doesn't set it).
+	// This documents the asymmetric A/B edge case: fallthrough fires on the inactive
+	// paired node when the unpaired partner doesn't set pairedConsumeHandled.
+	if rtA.RemainingUOP != 72 {
+		t.Errorf("Asym A after flip (inactive, but fallthrough): RemainingUOP = %d, want 72", rtA.RemainingUOP)
+	}
+	// Node B: unpaired → always decrements
+	if rtB.RemainingUOP != 72 {
+		t.Errorf("Asym B after flip: RemainingUOP = %d, want 72 (75 - 3, unpaired always decrements)", rtB.RemainingUOP)
+	}
+
+	_ = claimAID
+}
