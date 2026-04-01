@@ -36,6 +36,13 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderStatusChanged)
 }
 
+// isInactivePairedNode reports whether a node is part of an A/B pair and is
+// not the active-pull side. Both consume and produce branches skip processing
+// for the inactive half to avoid double-counting.
+func isInactivePairedNode(claim *store.StyleNodeClaim, runtime *store.ProcessNodeRuntimeState) bool {
+	return claim.PairedCoreNode != "" && !runtime.ActivePull
+}
+
 // handleCounterDelta processes a production counter tick:
 // - For consume nodes: decrement remaining UOP, trigger auto-reorder if at threshold
 // - For produce nodes: increment remaining UOP, trigger auto-relief if at capacity
@@ -77,9 +84,9 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		case "bin_loader":
 			continue // bin_loader nodes are operator-driven, not counter-driven
 		case "consume":
-			// A/B cycling: if this node is part of an A/B pair, only decrement
-			// the active-pull side. The inactive side holds staged material.
-			if claim.PairedCoreNode != "" && !runtime.ActivePull {
+			// A/B cycling: only decrement the active-pull side.
+			// The inactive side holds staged material.
+			if isInactivePairedNode(claim, runtime) {
 				// Remember first inactive paired node as fallback
 				if pairedFallbackNode == nil {
 					nodeCopy := node
@@ -96,7 +103,9 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			if newRemaining < 0 {
 				newRemaining = 0
 			}
-			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
+			if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+				log.Printf("update UOP for node %d: %v", node.ID, err)
+			}
 
 			// Auto-reorder if threshold reached, enabled, and node can accept orders
 			if claim.AutoReorder && newRemaining <= claim.ReorderPoint && newRemaining > 0 {
@@ -109,14 +118,16 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			}
 
 		case "produce":
-			// A/B cycling: if this node is part of an A/B pair, only increment
-			// the active-pull side. The inactive side holds its current production.
-			if claim.PairedCoreNode != "" && !runtime.ActivePull {
+			// A/B cycling: only increment the active-pull side.
+			// The inactive side holds its current production.
+			if isInactivePairedNode(claim, runtime) {
 				continue
 			}
 
 			newRemaining := runtime.RemainingUOP + int(delta.Delta)
-			_ = e.db.UpdateProcessNodeUOP(node.ID, newRemaining)
+			if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+				log.Printf("update UOP for node %d: %v", node.ID, err)
+			}
 
 			// Auto-relief at capacity: finalize the produce node (manifest + swap)
 			if claim.AutoReorder && claim.UOPCapacity > 0 &&
@@ -141,7 +152,9 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		if newRemaining < 0 {
 			newRemaining = 0
 		}
-		_ = e.db.UpdateProcessNodeUOP(pairedFallbackNode.ID, newRemaining)
+		if err := e.db.UpdateProcessNodeUOP(pairedFallbackNode.ID, newRemaining); err != nil {
+			log.Printf("update UOP for node %d: %v", pairedFallbackNode.ID, err)
+		}
 	}
 }
 
@@ -163,8 +176,10 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	}
 
 	var changeoverID *int64
+	var toStyleID int64
 	if changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
 		changeoverID = &changeover.ID
+		toStyleID = changeover.ToStyleID
 	}
 	var nodeTask *store.ChangeoverNodeTask
 	if changeoverID != nil {
@@ -175,11 +190,15 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 
 	// Staged delivery during runout phase.
 	if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID {
-		if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
+		if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil {
 			if toClaim.InboundStaging != "" && order.DeliveryNode == toClaim.InboundStaging {
 				claimID := toClaim.ID
-				_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, runtime.RemainingUOP)
-				_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staged")
+				if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, runtime.RemainingUOP); err != nil {
+					log.Printf("set runtime for node %d: %v", node.ID, err)
+				}
+				if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staged"); err != nil {
+					log.Printf("update node task %d to staged: %v", nodeTask.ID, err)
+				}
 				return
 			}
 		}
@@ -215,37 +234,57 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 					}
 				}
 				if orderADone {
-					if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
+					if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil {
 						claimID := toClaim.ID
-						_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
-						_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
+						if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+							log.Printf("set runtime for node %d: %v", node.ID, err)
+						}
+						if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
+							log.Printf("update node task %d to released: %v", nodeTask.ID, err)
+						}
 						return
 					}
 				}
-				_ = e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0)
-				_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared")
+				if err := e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0); err != nil {
+					log.Printf("set runtime for node %d: %v", node.ID, err)
+				}
+				if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared"); err != nil {
+					log.Printf("update node task %d to line_cleared: %v", nodeTask.ID, err)
+				}
 				return
 			}
 			// Regular swap/evacuate: Order B did evacuation + delivery in one order.
-			if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
+			if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil {
 				claimID := toClaim.ID
-				_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
-				_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
+				if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+					log.Printf("set runtime for node %d: %v", node.ID, err)
+				}
+				if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
+					log.Printf("update node task %d to released: %v", nodeTask.ID, err)
+				}
 				return
 			}
 		}
 		// Manual path or drop: simple move order — only evacuation done, line cleared.
-		_ = e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0)
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared")
+		if err := e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0); err != nil {
+			log.Printf("set runtime for node %d: %v", node.ID, err)
+		}
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared"); err != nil {
+			log.Printf("update node task %d to line_cleared: %v", nodeTask.ID, err)
+		}
 		return
 	}
 
 	// Release staged or replenished material into production.
 	if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID {
-		if toClaim, err := e.db.GetStyleNodeClaimByNode(e.getChangeoverToStyleID(node.ProcessID), node.CoreNodeName); err == nil {
+		if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil {
 			claimID := toClaim.ID
-			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity)
-			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released")
+			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+				log.Printf("set runtime for node %d: %v", node.ID, err)
+			}
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
+				log.Printf("update node task %d to released: %v", nodeTask.ID, err)
+			}
 			return
 		}
 	}
@@ -254,8 +293,12 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	if order.OrderType == orders.TypeMove {
 		if claim := e.findActiveClaim(node); claim != nil && claim.Role == "bin_loader" {
 			claimID := claim.ID
-			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, 0)
-			_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil)
+			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, 0); err != nil {
+				log.Printf("set runtime for node %d: %v", node.ID, err)
+			}
+			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
+				log.Printf("update runtime orders for node %d: %v", node.ID, err)
+			}
 			e.tryAutoRequestEmpty(node, claim)
 			return
 		}
@@ -269,8 +312,12 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	if order.OrderType == orders.TypeIngest {
 		if claim := e.findActiveClaim(node); claim != nil && claim.Role == "produce" {
 			claimID := claim.ID
-			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, 0)
-			_ = e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil)
+			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, 0); err != nil {
+				log.Printf("set runtime for node %d: %v", node.ID, err)
+			}
+			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
+				log.Printf("update runtime orders for node %d: %v", node.ID, err)
+			}
 			return
 		}
 	}
@@ -285,7 +332,9 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 			if claim.Role == "produce" {
 				resetUOP = 0
 			}
-			_ = e.db.SetProcessNodeRuntime(node.ID, &claimID, resetUOP)
+			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, resetUOP); err != nil {
+				log.Printf("set runtime for node %d: %v", node.ID, err)
+			}
 
 			// Keep-staged: immediately pre-populate inbound staging for next swap
 			e.maybePreStage(node, claim)
@@ -310,16 +359,9 @@ func (e *Engine) maybePreStage(node *store.ProcessNode, claim *store.StyleNodeCl
 		log.Printf("keep-staged pre-stage for node %s: %v", node.Name, err)
 		return
 	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &order.ID)
-}
-
-// getChangeoverToStyleID returns the to_style_id of the active changeover for a process.
-func (e *Engine) getChangeoverToStyleID(processID int64) int64 {
-	changeover, err := e.db.GetActiveProcessChangeover(processID)
-	if err != nil {
-		return 0
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &order.ID); err != nil {
+		log.Printf("update runtime orders for node %d: %v", nodeID, err)
 	}
-	return changeover.ToStyleID
 }
 
 func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
@@ -347,7 +389,9 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	}
 	if (nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID) ||
 		(nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID) {
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error")
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
+			log.Printf("update node task %d to error: %v", nodeTask.ID, err)
+		}
 		log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
 	}
 }
@@ -392,6 +436,8 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		log.Printf("sequential backfill for node %s: %v", node.Name, err)
 		return
 	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, runtime.ActiveOrderID, &orderB.ID)
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, runtime.ActiveOrderID, &orderB.ID); err != nil {
+		log.Printf("update runtime orders for node %d: %v", nodeID, err)
+	}
 	log.Printf("sequential backfill: created Order B %d for node %s (Order A %d in_transit)", orderB.ID, node.Name, order.ID)
 }
