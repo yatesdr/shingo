@@ -36,7 +36,7 @@ go test -v -run "TestComplexOrder|TestCompound|TestBuriedBin|TestLaneLock|TestTC
 | TC-45 | Two-robot swap full lifecycle (5-step compound) | PASS |
 | TC-46 | Cancel parent compound while child in-flight | FIXED |
 | TC-47 | Empty post-wait release — full lifecycle verification | PASS |
-| TC-48 | Complex order redirect — StepsJSON stale after redirect | PASS |
+| TC-48 | Complex order redirect — StepsJSON stale after redirect | FIXED |
 | TC-49 | Ghost robot — claimComplexBins finds no bin at pickup | FIXED |
 | TC-50 | Concurrent complex orders same node — double claim race | FIXED |
 | TC-51 | AdvanceCompoundOrder skips failed children — premature completion | PASS |
@@ -267,15 +267,13 @@ Bug found and fixed. Full writeup in the Bugs found and fixed section above.
 
 ---
 
-### TC-48: Complex order redirect doesn't update StepsJSON
+### TC-48: Complex order redirect — StepsJSON stale after redirect
 
 **Scenario:** A complex order with a wait phase (`pickup A → dropoff B → wait → pickup B → dropoff C`) is dispatched and enters staged/dwelling status. The operator sends a redirect changing the delivery from node C to node D. `HandleOrderRedirect` updates `DeliveryNode` in the DB via `PrepareRedirect`, but `StepsJSON` still contains `"dropoff C"` in the post-wait steps.
 
-**Expected behavior (documenting bug):** When `HandleOrderRelease` fires, it reads `StepsJSON` and builds fleet blocks from the stored steps — which still reference node C. The fleet routes the robot to the old destination, not the redirected one.
+**Fix:** `HandleOrderRelease` now patches the last dropoff in the released segment to match `DeliveryNode` — but only on the **final** segment (`!moreWaits`). For multi-wait orders (e.g., TC-DW double-wait), intermediate segments have legitimate dropoffs that differ from the final destination and must not be patched. StepsJSON stays untouched; only the in-memory copy is corrected before building fleet blocks.
 
-**Why this matters:** In production, operators redirect orders when lineside demand shifts. If the redirect doesn't update `StepsJSON`, the post-wait phase sends the robot to the wrong node. This test documents the bug so it can be fixed before complex orders with wait+redirect are used.
-
-**Result:** PASS. Test confirms StepsJSON is stale after redirect — documenting the known issue for future fix.
+**Result:** FIXED. Post-wait fleet blocks now route to the redirected destination. Multi-wait orders are unaffected.
 
 **Test:** `engine/engine_complex_test.go` — `TestComplexOrder_RedirectStaleStepsJSON`
 

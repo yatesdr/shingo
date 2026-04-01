@@ -170,8 +170,10 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	// Patch: if the order was redirected while staged, DeliveryNode reflects the
 	// new destination but StepsJSON still has the original dropoff node. Replace
 	// the last dropoff in the segment with the current DeliveryNode so fleet
-	// blocks route to the correct destination.
-	if order.DeliveryNode != "" {
+	// blocks route to the correct destination. Only patch the final segment
+	// (!moreWaits) — intermediate segments have legitimate dropoffs that differ
+	// from the final destination.
+	if order.DeliveryNode != "" && !moreWaits {
 		for i := len(segment) - 1; i >= 0; i-- {
 			if segment[i].Action == "dropoff" {
 				if segment[i].Node != order.DeliveryNode {
