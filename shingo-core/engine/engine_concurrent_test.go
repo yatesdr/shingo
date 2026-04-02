@@ -442,17 +442,15 @@ func TestFulfillmentScanner_QueueToDispatch(t *testing.T) {
 	}
 	t.Logf("order queued (no bins available) — correct")
 
-	// Now add a bin
+	// Now add a bin — this fires EventBinUpdated, which triggers an async
+	// fulfillment scan via the engine's event wiring. The explicit scan below
+	// acts as a safety net in case the goroutine hasn't run yet.
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-FULFILL")
 
-	// Trigger fulfillment scanner
-	count := eng.RunFulfillmentScan()
-	t.Logf("fulfillment scan processed %d orders", count)
-	if count == 0 {
-		t.Fatal("fulfillment scanner should have processed at least 1 order")
-	}
+	eng.RunFulfillmentScan()
 
-	// Verify order now dispatched
+	// Verify order now dispatched (may have been fulfilled by the event-driven
+	// scan or by the explicit one above — either way is correct).
 	order, err = db.GetOrderByUUID("fulfill-1")
 	if err != nil {
 		t.Fatalf("get order after scan: %v", err)
