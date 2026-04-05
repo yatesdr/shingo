@@ -446,8 +446,19 @@ function renderModal(entry) {
                 html += actionBtn('RELEASE', 'request', true,
                     '/api/orders/' + staged.id + '/release');
             } else if (delivered && (delivered.order_type === 'retrieve' || delivered.order_type === 'complex')) {
-                // Delivered — bin dropped, operator confirms
-                html += actionBtn('CONFIRM', 'request', true,
+                // Delivered — bin dropped, operator confirms with manifest summary
+                var confirmLabel = 'CONFIRM';
+                var binState = entry.bin_state;
+                if (binState && binState.manifest) {
+                    try {
+                        var mf = JSON.parse(binState.manifest);
+                        if (Array.isArray(mf) && mf.length > 0) {
+                            var totalQty = mf.reduce(function(sum, item) { return sum + (item.quantity || 0); }, 0);
+                            confirmLabel = 'CONFIRM: ' + mf.length + (mf.length === 1 ? ' part' : ' parts') + ', qty ' + totalQty;
+                        }
+                    } catch(e) { /* manifest not parseable, use default label */ }
+                }
+                html += actionBtn(confirmLabel, 'request', true,
                     '/api/process-nodes/' + entry.node.id + '/manifest/confirm');
             } else if (inFlight) {
                 // Robot working — nothing to do
@@ -461,11 +472,8 @@ function renderModal(entry) {
                     html += actionBtn('REQUEST MATERIAL', 'request', true,
                         '/api/process-nodes/' + entry.node.id + '/request');
                 }
-                // Secondary actions (always available when idle)
-                html += actionBtn('RELEASE EMPTY', 'release-empty', true,
-                    '/api/process-nodes/' + entry.node.id + '/release-empty');
-                html += actionBtn('RELEASE PARTIAL', 'release-partial', true,
-                    'keypad:' + entry.node.id + ':' + remaining);
+                // RELEASE EMPTY and RELEASE PARTIAL removed from operator HMI.
+                // Backend endpoints remain for internal use (changeover, supervisor).
             }
         }
     }
