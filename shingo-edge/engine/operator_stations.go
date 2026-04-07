@@ -178,8 +178,10 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, erro
 }
 
 func (e *Engine) ConfirmNodeManifest(nodeID int64) error {
-	// Manifest confirmation is now core's domain. This is a no-op on edge
-	// but kept for API compatibility.
+	// DEPRECATED: Manifest confirmation moved to ConfirmDelivery (order-level).
+	// The operator HMI now calls /api/confirm-delivery/{orderID} directly.
+	// This endpoint is kept for backward compatibility with older HMI clients.
+	log.Printf("engine: ConfirmNodeManifest called for node %d — this endpoint is deprecated, use ConfirmDelivery", nodeID)
 	return nil
 }
 

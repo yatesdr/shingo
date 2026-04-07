@@ -121,8 +121,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	r.Handle("/favicon.ico", faviconHandler)
 	r.Handle("/static/favicon.ico", faviconHandler)
 
-	// Static files (no auth)
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(StaticFS()))))
+	// Static files (no auth) — no-cache to force revalidation after deploys.
+	// Files are embedded at compile time, so they only change when the binary
+	// is updated. Browsers will revalidate on each load but use cache if
+	// the content hasn't changed.
+	r.Handle("/static/*", http.StripPrefix("/static/",
+		noCacheMiddleware(http.FileServer(http.FS(StaticFS()))),
+	))
 
 	// SSE (no auth — shop floor)
 	r.Get("/events", h.eventHub.HandleSSE)
@@ -286,6 +291,15 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	return r, func() {
 		h.eventHub.Stop()
 	}
+}
+
+// noCacheMiddleware wraps a handler with Cache-Control headers that force
+// browser revalidation. Used for embedded static assets that change on deploy.
+func noCacheMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (h *Handlers) adminMiddleware(next http.Handler) http.Handler {

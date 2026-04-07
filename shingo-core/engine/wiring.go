@@ -83,11 +83,29 @@ func (e *Engine) wireEventHandlers() {
 		e.handleOrderCompleted(ev)
 	}, EventOrderCompleted)
 
-	// When an order is cancelled, audit it and auto-return bins
+	// When an order is cancelled, audit it, notify edge, and auto-return bins
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderCancelledEvent)
 		e.logFn("engine: order %d cancelled: %s", ev.OrderID, ev.Reason)
 		e.db.AppendAudit("order", ev.OrderID, "cancelled", "", ev.Reason, "system")
+
+		// Notify ShinGo Edge so it can transition the order locally.
+		// The dispatcher path (edge-initiated cancel) sends its own reply via
+		// ReplySender.SendCancelled, but engine-initiated cancellations (web UI
+		// terminate, fleet status change, recovery) go through this event handler.
+		// The edge handler (HandleOrderCancelled) is idempotent — a duplicate
+		// cancellation for an already-cancelled order is harmless.
+		if ev.StationID != "" {
+			if err := e.sendToEdge(protocol.TypeOrderCancelled, ev.StationID,
+				&protocol.OrderCancelled{
+					OrderUUID: ev.EdgeUUID,
+					Reason:    ev.Reason,
+				}); err != nil {
+				e.logFn("engine: cancel notification to edge: %v", err)
+			} else {
+				e.dbg("cancel notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
+			}
+		}
 
 		// Skip auto-return for orders that were already delivered/confirmed.
 		// The bin is at the destination, not at the pickup node.

@@ -445,8 +445,8 @@ function renderModal(entry) {
                 // Staged — robot waiting, operator must release
                 html += actionBtn('RELEASE', 'request', true,
                     '/api/orders/' + staged.id + '/release');
-            } else if (delivered && (delivered.order_type === 'retrieve' || delivered.order_type === 'complex')) {
-                // Delivered — bin dropped, operator confirms with manifest summary
+            } else if (delivered) {
+                // Delivered — bin dropped, operator confirms delivery
                 var confirmLabel = 'CONFIRM';
                 var binState = entry.bin_state;
                 if (binState && binState.manifest) {
@@ -459,7 +459,7 @@ function renderModal(entry) {
                     } catch(e) { /* manifest not parseable, use default label */ }
                 }
                 html += actionBtn(confirmLabel, 'request', true,
-                    '/api/process-nodes/' + entry.node.id + '/manifest/confirm');
+                    '/api/confirm-delivery/' + delivered.id);
             } else if (inFlight) {
                 // Robot working — nothing to do
                 html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
