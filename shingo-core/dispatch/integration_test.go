@@ -923,3 +923,198 @@ func TestHandleOrderIngest(t *testing.T) {
 		t.Errorf("order BinID = %v, want %d", order.BinID, bin.ID)
 	}
 }
+
+// TestDispatcher_MoveOrder_NGRPSource verifies that a move order with an NGRP
+// (supermarket group) as the source node correctly resolves to a concrete slot,
+// claims the bin, and dispatches. This is the bug scenario from "request material"
+// where the node is empty — the edge creates a move order from the supermarket
+// NGRP, and planMove must resolve through the group resolver rather than doing
+// a raw ListBinsByNode on the synthetic node (which returns nothing).
+func TestDispatcher_MoveOrder_NGRPSource(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	// Use SetupCompound to create a full NGRP → LANE → slots layout with
+	// a single slot and one bin. NumSlots=1 means no blockers — the target
+	// bin is accessible at the front of the lane.
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
+		Prefix:   "MVNGRP",
+		NumSlots: 1, // single slot, target bin at front (not buried)
+	})
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+
+	// The resolver needs to be set up for NGRP resolution to work.
+	// newTestDispatcher creates a dispatcher with resolver=nil; we need one.
+	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	d2 := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+
+	env := testEnvelope()
+
+	// Submit a move order with SourceNode = NGRP name (the supermarket group).
+	// This is what the edge sends when requestNodeFromClaim detects an empty
+	// lineside node and downgrades to a simple delivery.
+	d2.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "move-ngrp-1",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name,       // NGRP — the bug scenario
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1.0,
+	})
+
+	// Verify the order was dispatched (not failed)
+	order, err := db.GetOrderByUUID("move-ngrp-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != StatusDispatched {
+		t.Fatalf("status = %q, want %q (order likely failed due to NGRP resolution)", order.Status, StatusDispatched)
+	}
+
+	// Verify the bin was claimed
+	if order.BinID == nil {
+		t.Fatal("BinID should be set — planMove must claim a bin via NGRP resolver")
+	}
+	if *order.BinID != sc.TargetBin.ID {
+		t.Errorf("BinID = %d, want %d (target bin in the NGRP lane)", *order.BinID, sc.TargetBin.ID)
+	}
+
+	// Verify the source node was resolved to the concrete slot, not the NGRP
+	if order.SourceNode == sc.Grp.Name {
+		t.Errorf("SourceNode = %q (still NGRP name), should be resolved to concrete slot %q", order.SourceNode, sc.Slots[0].Name)
+	}
+	if order.SourceNode != sc.Slots[0].Name {
+		t.Errorf("SourceNode = %q, want %q", order.SourceNode, sc.Slots[0].Name)
+	}
+
+	// Verify fleet got the right dispatch
+	if len(backend.Orders()) != 1 {
+		t.Fatalf("fleet orders = %d, want 1", len(backend.Orders()))
+	}
+}
+
+// TestDispatcher_MoveOrder_NGRPSource_NoBin verifies that a move order with an
+// NGRP source and no available bins gets queued rather than silently dispatching
+// without a bin claim.
+func TestDispatcher_MoveOrder_NGRPSource_NoBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	grpType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("get NGRP type: %v", err)
+	}
+	lanType, err := db.GetNodeTypeByCode("LANE")
+	if err != nil {
+		t.Fatalf("get LANE type: %v", err)
+	}
+	bp := &store.Payload{Code: "PART-MVEMPTY", Description: "test"}
+	if err := db.CreatePayload(bp); err != nil {
+		t.Fatalf("create payload: %v", err)
+	}
+
+	// Create NGRP with an empty lane (no bins)
+	grp := &store.Node{Name: "GRP-MVEMPTY", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
+	if err := db.CreateNode(grp); err != nil {
+		t.Fatalf("create NGRP: %v", err)
+	}
+	lane := &store.Node{Name: "GRP-MVEMPTY-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
+	if err := db.CreateNode(lane); err != nil {
+		t.Fatalf("create lane: %v", err)
+	}
+	depth := 1
+	slot := &store.Node{Name: "GRP-MVEMPTY-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth}
+	if err := db.CreateNode(slot); err != nil {
+		t.Fatalf("create slot: %v", err)
+	}
+	lineNode := &store.Node{Name: "LINE-MVEMPTY", Enabled: true}
+	if err := db.CreateNode(lineNode); err != nil {
+		t.Fatalf("create line: %v", err)
+	}
+
+	backend := testdb.NewTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock(), DebugLog: nil}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "move-empty-ngrp-1",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  bp.Code,
+		SourceNode:   grp.Name,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1.0,
+	})
+
+	order, err := db.GetOrderByUUID("move-empty-ngrp-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	// Should be queued, not failed or dispatched with nil BinID
+	if order.Status != StatusQueued {
+		t.Errorf("status = %q, want %q (empty NGRP should queue, not fail or dispatch without bin)", order.Status, StatusQueued)
+	}
+
+	// Fleet should NOT have received any dispatch
+	if len(backend.Orders()) != 0 {
+		t.Errorf("fleet orders = %d, want 0 (no bin available, should not dispatch)", len(backend.Orders()))
+	}
+}
+
+// TestDispatcher_MoveOrder_NGRPSource_BuriedBin verifies that a move order
+// with an NGRP source where the only matching bin is buried behind blockers
+// triggers the reshuffle path (planBuriedReshuffle) rather than silently
+// dispatching without a bin claim.
+func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	// SetupCompound with NumSlots=2 (default) creates:
+	//   Slot 1 (depth 1, front) — blocker bin
+	//   Slot 2 (depth 2, back)  — target bin (oldest, the one we want)
+	// The target bin is buried behind the blocker, so the resolver returns
+	// a BuriedError, which planMove should delegate to planBuriedReshuffle.
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
+		Prefix: "MVBURY",
+	})
+
+	backend := testdb.NewTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db, LaneLock: NewLaneLock(), DebugLog: nil}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "move-buried-1",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name, // NGRP — target bin is buried
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1.0,
+	})
+
+	order, err := db.GetOrderByUUID("move-buried-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	// The order should trigger a compound reshuffle — status = "reshuffling"
+	if order.Status != StatusReshuffling {
+		t.Errorf("status = %q, want %q (buried bin should trigger reshuffle)", order.Status, StatusReshuffling)
+	}
+
+	// BinID should NOT be set yet — the reshuffle must complete first
+	// before the actual bin can be claimed and moved.
+	// (The compound order children handle the individual moves.)
+
+	// Fleet should have received dispatch(es) for the compound children
+	if len(backend.Orders()) == 0 {
+		t.Error("fleet orders = 0, want >= 1 (compound reshuffle children should be dispatched)")
+	}
+}

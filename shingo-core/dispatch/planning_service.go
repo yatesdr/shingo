@@ -275,29 +275,82 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 	if err != nil {
 		return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
 	}
-	bins, _ := s.db.ListBinsByNode(sourceNode.ID)
-	binClaimed := false
-	remainingUOP := extractRemainingUOP(env)
-	for _, bin := range bins {
-		if bin.ClaimedBy != nil {
-			continue
+
+	// If the source is a synthetic NGRP (supermarket group), resolve to a
+	// concrete bin within the group. Without this, ListBinsByNode on the NGRP
+	// returns zero bins (they live at child slots, not on the NGRP itself),
+	// causing the order to dispatch without a bin claim. On completion the
+	// bin's DB location would never update — it'd still show the old slot.
+	//
+	// We reuse OrderTypeRetrieve semantics: finding the best bin in an NGRP
+	// for a move-from-supermarket is the same operation as a retrieve.
+	if sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" && s.resolver != nil {
+		result, rErr := s.resolver.Resolve(sourceNode, OrderTypeRetrieve, payloadCode, nil)
+		if rErr != nil {
+			var buriedErr *BuriedError
+			if errors.As(rErr, &buriedErr) {
+				s.dbg("move: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
+				return s.planBuriedReshuffle(order, buriedErr)
+			}
+			s.dbg("move: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
+			return &PlanningResult{Queued: true}, nil
 		}
-		if payloadCode != "" && bin.PayloadCode != payloadCode {
-			continue
-		}
-		if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err == nil {
-			order.BinID = &bin.ID
-			if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
+		if result.Bin != nil {
+			remainingUOP := extractRemainingUOP(env)
+			if err := s.binManifest.ClaimForDispatch(result.Bin.ID, order.ID, remainingUOP); err != nil {
+				return nil, &planningError{Code: "claim_failed", Detail: err.Error(), Err: err}
+			}
+			order.BinID = &result.Bin.ID
+			if err := s.db.UpdateOrderBinID(order.ID, result.Bin.ID); err != nil {
 				log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
 			}
-			s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", bin.ID, order.SourceNode, remainingUOP)
-			binClaimed = true
-			break
+			// Update sourceNode to the resolved concrete slot so that
+			// SourceNode in the DB reflects the actual pickup location,
+			// not the NGRP name. This is critical for handleOrderCompleted.
+			concreteNode, cErr := s.db.GetNode(*result.Bin.NodeID)
+			if cErr != nil {
+				return nil, &planningError{Code: "node_error", Detail: fmt.Sprintf("resolve slot for bin %d: %v", result.Bin.ID, cErr), Err: cErr}
+			}
+			sourceNode = concreteNode
+			s.dbg("move: NGRP resolved bin=%d at %s (remainingUOP=%v)", result.Bin.ID, sourceNode.Name, remainingUOP)
+		} else {
+			// Resolver returned a node but no specific bin — queue and retry.
+			s.dbg("move: NGRP resolved node %s but no bin, queuing order %d", result.Node.Name, order.ID)
+			return &PlanningResult{Queued: true}, nil
+		}
+	} else {
+		// Concrete source node: claim a bin directly at the node.
+		bins, _ := s.db.ListBinsByNode(sourceNode.ID)
+		binClaimed := false
+		remainingUOP := extractRemainingUOP(env)
+		for _, bin := range bins {
+			if bin.ClaimedBy != nil {
+				continue
+			}
+			if payloadCode != "" && bin.PayloadCode != payloadCode {
+				continue
+			}
+			if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err == nil {
+				order.BinID = &bin.ID
+				if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
+					log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
+				}
+				s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", bin.ID, order.SourceNode, remainingUOP)
+				binClaimed = true
+				break
+			}
+		}
+		if !binClaimed {
+			if payloadCode != "" {
+				return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
+			}
+			// Safety net: a move order without a claimed bin would silently
+			// dispatch to the fleet, but handleOrderCompleted would skip the
+			// bin arrival update (BinID == nil). Fail loudly instead.
+			return nil, &planningError{Code: "no_bin", Detail: fmt.Sprintf("no unclaimed bin at %s for move order %d", order.SourceNode, order.ID)}
 		}
 	}
-	if !binClaimed && payloadCode != "" {
-		return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
-	}
+
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
 	}
