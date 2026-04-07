@@ -1,10 +1,10 @@
 (function() {
   // Tab switching
   window.switchDiagTab = function(tab) {
-    document.getElementById('tab-debug').style.display = tab === 'debug' ? '' : 'none';
-    document.getElementById('tab-cms').style.display = tab === 'cms' ? '' : 'none';
-    document.getElementById('tab-recon').style.display = tab === 'recon' ? '' : 'none';
-    document.getElementById('tab-recovery').style.display = tab === 'recovery' ? '' : 'none';
+    document.getElementById('tab-debug').style.display = tab === 'debug' ? 'block' : 'none';
+    document.getElementById('tab-cms').style.display = tab === 'cms' ? 'block' : 'none';
+    document.getElementById('tab-recon').style.display = tab === 'recon' ? 'block' : 'none';
+    document.getElementById('tab-recovery').style.display = tab === 'recovery' ? 'block' : 'none';
     var tabs = document.querySelectorAll('.diag-tab');
     tabs.forEach(function(t) { t.classList.remove('active'); });
     if (tab === 'debug') tabs[0].classList.add('active');
