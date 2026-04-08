@@ -58,6 +58,8 @@ const (
 
 	SubjectOrderStatusRequest  = "order.status_request"
 	SubjectOrderStatusResponse = "order.status_response"
+
+	SubjectNodeStructureChanged = "node.structure_changed"
 )
 
 // Roles for Address.Role.

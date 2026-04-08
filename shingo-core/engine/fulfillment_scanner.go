@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -169,7 +170,16 @@ func (s *FulfillmentScanner) tryFulfill(order *store.Order) bool {
 			sourceNode, pErr := s.db.GetNodeByDotName(order.SourceNode)
 			if pErr == nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" && s.resolver != nil {
 				result, rErr := s.resolver.Resolve(sourceNode, dispatch.OrderTypeRetrieve, payloadCode, nil)
-				if rErr == nil {
+				if rErr != nil {
+					var structErr *dispatch.StructuralError
+					if errors.As(rErr, &structErr) {
+						s.db.FailOrderAtomic(order.ID, structErr.Error())
+						s.logFn("fulfillment: order %d terminated — structural: %s",
+							order.ID, structErr.Error())
+						return false
+					}
+					// Transient: fall through to FindSourceBinFIFO
+				} else {
 					bin = result.Bin
 				}
 			}

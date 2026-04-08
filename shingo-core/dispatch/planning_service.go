@@ -34,6 +34,13 @@ func (e *planningError) Error() string {
 	return e.Detail
 }
 
+func (e *planningError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 type PlanningHandler func(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError)
 
 type PlanningService struct {
@@ -133,6 +140,16 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 				if errors.As(err, &buriedErr) {
 					s.dbg("retrieve: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
 					return s.planBuriedReshuffle(order, buriedErr)
+				}
+				var structErr *StructuralError
+				if errors.As(err, &structErr) {
+					s.dbg("retrieve: STRUCTURAL failure in group %s: %s",
+						order.SourceNode, structErr.Reason)
+					return nil, &planningError{
+						Code:   "structural",
+						Detail: structErr.Error(),
+						Err:    structErr,
+					}
 				}
 				s.dbg("retrieve: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
 				return &PlanningResult{Queued: true}, nil
@@ -291,6 +308,11 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 			if errors.As(rErr, &buriedErr) {
 				s.dbg("move: bin %d buried in lane %d, planning reshuffle", buriedErr.Bin.ID, buriedErr.LaneID)
 				return s.planBuriedReshuffle(order, buriedErr)
+			}
+			var structErr *StructuralError
+			if errors.As(rErr, &structErr) {
+				s.dbg("move: STRUCTURAL failure in group %s: %s (falling through to FIFO)",
+					order.SourceNode, structErr.Reason)
 			}
 			s.dbg("move: no source in group %s for payload=%s, queuing order %d", order.SourceNode, payloadCode, order.ID)
 			return &PlanningResult{Queued: true}, nil

@@ -1,9 +1,12 @@
 package www
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
+	"shingo/protocol"
 	"shingocore/engine"
 )
 
@@ -63,6 +66,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 		NodeID   int64  `json:"node_id"`
 		ParentID *int64 `json:"parent_id"`
 		Position int    `json:"position"`
+		Force    bool   `json:"force"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
@@ -96,6 +100,53 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		parentIsGroup = parent.NodeTypeCode == "NGRP"
+	}
+
+	// --- Reparent guard: check for orders that would break ---
+	// NOTE: TOCTOU — a new order could arrive between this check and the
+	// reparent below. Acceptable for rare, operator-initiated actions.
+	if node.ParentID != nil {
+		oldParent, gpErr := h.engine.DB().GetNode(*node.ParentID)
+		if gpErr == nil && oldParent.NodeTypeCode == "NGRP" {
+			blocked, bErr := h.engine.DB().ListActiveOrdersBySourceRef(
+				[]string{oldParent.Name})
+			if bErr != nil {
+				h.jsonError(w, "failed to check active orders: "+bErr.Error(),
+					http.StatusInternalServerError)
+				return
+			}
+			if len(blocked) > 0 {
+				if !req.Force {
+					orderIDs := make([]int64, len(blocked))
+					for i, o := range blocked {
+						orderIDs[i] = o.ID
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusConflict)
+					json.NewEncoder(w).Encode(map[string]any{
+						"error": fmt.Sprintf(
+							"cannot reparent: %d active order(s) reference group %q as source",
+							len(blocked), oldParent.Name),
+						"order_ids": orderIDs,
+					})
+					return
+				}
+				// Force mode: fail blocked orders terminally
+				for _, order := range blocked {
+					_ = h.engine.DB().FailOrderAtomic(order.ID,
+						fmt.Sprintf("source group %q restructured "+
+							"(node %s reparented)", oldParent.Name, node.Name))
+					h.engine.Events.Emit(engine.Event{
+						Type: engine.EventOrderFailed,
+						Payload: engine.OrderFailedEvent{
+							OrderID:   order.ID,
+							ErrorCode: "group_restructured",
+							Detail:    "source group restructured (node reparented)",
+						},
+					})
+				}
+			}
+		}
 	}
 
 	// Track old parent for reindexing
@@ -132,6 +183,29 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: req.NodeID, NodeName: node.Name, Action: "reparented",
 	}})
+
+	// Notify Edge of structural change when old or new parent is an NGRP
+	if node.ParentID != nil || parentIsGroup {
+		oldWasNGRP := false
+		if node.ParentID != nil {
+			if op, e := h.engine.DB().GetNode(*node.ParentID); e == nil {
+				oldWasNGRP = op.NodeTypeCode == "NGRP"
+			}
+		}
+		if oldWasNGRP || parentIsGroup {
+			h.engine.SendDataToEdge(
+				protocol.SubjectNodeStructureChanged,
+				protocol.StationBroadcast,
+				&protocol.NodeStructureChanged{
+					NodeID:      req.NodeID,
+					NodeName:    node.Name,
+					OldParentID: node.ParentID,
+					NewParentID: req.ParentID,
+					Action:      "reparented",
+				},
+			)
+		}
+	}
 
 	h.jsonSuccess(w)
 }
@@ -197,10 +271,58 @@ func (h *Handlers) apiGetGroupLayout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID int64 `json:"id"`
+		ID    int64 `json:"id"`
+		Force bool  `json:"force"`
 	}
 	if !h.parseJSON(w, r, &req) {
 		return
+	}
+
+	// Look up the group so we can check its type and name
+	group, err := h.engine.DB().GetNode(req.ID)
+	if err != nil {
+		h.jsonError(w, "group not found", http.StatusNotFound)
+		return
+	}
+
+	// Guard: only NGRP names can appear as source_node references.
+	// LANEs and other types don't need the order check.
+	if group.NodeTypeCode == "NGRP" {
+		blocked, bErr := h.engine.DB().ListActiveOrdersBySourceRef([]string{group.Name})
+		if bErr != nil {
+			h.jsonError(w, "failed to check active orders: "+bErr.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+		if len(blocked) > 0 {
+			if !req.Force {
+				orderIDs := make([]int64, len(blocked))
+				for i, o := range blocked {
+					orderIDs[i] = o.ID
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]any{
+					"error": fmt.Sprintf(
+						"cannot delete group: %d active order(s) reference %q as source",
+						len(blocked), group.Name),
+					"order_ids": orderIDs,
+				})
+				return
+			}
+			for _, order := range blocked {
+				_ = h.engine.DB().FailOrderAtomic(order.ID,
+					fmt.Sprintf("source group %q deleted", group.Name))
+				h.engine.Events.Emit(engine.Event{
+					Type: engine.EventOrderFailed,
+					Payload: engine.OrderFailedEvent{
+						OrderID:   order.ID,
+						ErrorCode: "group_deleted",
+						Detail:    "source group deleted",
+					},
+				})
+			}
+		}
 	}
 
 	if err := h.engine.DB().DeleteNodeGroup(req.ID); err != nil {
@@ -211,6 +333,19 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: req.ID, Action: "deleted",
 	}})
+
+	// Notify Edge of group deletion
+	if group.NodeTypeCode == "NGRP" {
+		h.engine.SendDataToEdge(
+			protocol.SubjectNodeStructureChanged,
+			protocol.StationBroadcast,
+			&protocol.NodeStructureChanged{
+				NodeID:   group.ID,
+				NodeName: group.Name,
+				Action:   "group_deleted",
+			},
+		)
+	}
 
 	h.jsonSuccess(w)
 }

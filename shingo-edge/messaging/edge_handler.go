@@ -14,13 +14,14 @@ import (
 type EdgeHandler struct {
 	protocol.NoOpHandler
 
-	orderMgr         *orders.Manager
-	onCoreNodes      func([]protocol.NodeInfo)
-	onPayloadCatalog func([]protocol.CatalogPayloadInfo)
-	onNodeState      func([]protocol.NodeStateEntry)
-	onRegistered     func()
-	onRegisterReq    func()
-	onOrderStatuses  func([]protocol.OrderStatusSnapshot)
+	orderMgr               *orders.Manager
+	onCoreNodes            func([]protocol.NodeInfo)
+	onPayloadCatalog       func([]protocol.CatalogPayloadInfo)
+	onNodeState            func([]protocol.NodeStateEntry)
+	onRegistered           func()
+	onRegisterReq          func()
+	onOrderStatuses        func([]protocol.OrderStatusSnapshot)
+	onNodeStructureChanged func()
 
 	DebugLog DebugLogFunc
 }
@@ -50,6 +51,13 @@ func (h *EdgeHandler) SetNodeStateHandler(fn func([]protocol.NodeStateEntry)) {
 
 func (h *EdgeHandler) SetRegisteredHandler(fn func()) {
 	h.onRegistered = fn
+}
+
+// SetNodeStructureChangedHandler sets a callback for when core notifies of
+// a node group structural change (reparent or deletion). Typically triggers
+// a node list refresh.
+func (h *EdgeHandler) SetNodeStructureChangedHandler(fn func()) {
+	h.onNodeStructureChanged = fn
 }
 
 func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
@@ -148,6 +156,17 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 		log.Printf("edge_handler: WARNING: core marked this edge as stale: %s — re-registering", stale.Message)
 		if h.onRegisterReq != nil {
 			h.onRegisterReq()
+		}
+	case protocol.SubjectNodeStructureChanged:
+		var changed protocol.NodeStructureChanged
+		if err := json.Unmarshal(p.Body, &changed); err != nil {
+			log.Printf("edge_handler: decode node structure changed: %v", err)
+			return
+		}
+		log.Printf("edge_handler: node structure changed: node=%s action=%s — refreshing node cache",
+			changed.NodeName, changed.Action)
+		if h.onNodeStructureChanged != nil {
+			h.onNodeStructureChanged()
 		}
 	default:
 		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)

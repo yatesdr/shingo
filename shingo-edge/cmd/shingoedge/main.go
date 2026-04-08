@@ -215,6 +215,9 @@ func main() {
 				log.Printf("startup reconcile after register request: %v", err)
 			}
 		})
+		edgeHandler.SetNodeStructureChangedHandler(func() {
+			hb.RequestNodeSync()
+		})
 
 		if err := eng.StartupReconcile(); err != nil {
 			log.Printf("initial startup reconcile: %v", err)

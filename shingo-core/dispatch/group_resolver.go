@@ -11,6 +11,19 @@ import (
 // ErrBuried indicates the target bin exists but is blocked by shallower bins.
 var ErrBuried = errors.New("bin is buried")
 
+// StructuralError indicates a permanent resolution failure — the group
+// structure cannot satisfy the request regardless of inventory changes.
+type StructuralError struct {
+	Group   string
+	Payload string
+	Reason  string
+}
+
+func (e *StructuralError) Error() string {
+	return fmt.Sprintf("structural: %s (group=%s, payload=%s)",
+		e.Reason, e.Group, e.Payload)
+}
+
 // BuriedError provides detail about a buried bin for reshuffle planning.
 type BuriedError struct {
 	Bin    *store.Bin
@@ -176,7 +189,7 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, payloadCode strin
 		return &ResolveResult{Node: bestNode, Bin: bestBin}, nil
 	}
 
-	return nil, fmt.Errorf("no bin of requested payload in node group %s", group.Name)
+	return nil, r.classifyEmptyGroup(group, children, payloadCode)
 }
 
 // resolveRetrieveCOST picks the oldest accessible bin by timestamp, with buried-bin reshuffle
@@ -259,7 +272,7 @@ func (r *GroupResolver) resolveRetrieveCOST(group *store.Node, payloadCode strin
 		}
 	}
 
-	return nil, fmt.Errorf("no bin of requested payload in node group %s", group.Name)
+	return nil, r.classifyEmptyGroup(group, children, payloadCode)
 }
 
 // resolveRetrieveFAVL returns the first available unclaimed bin — no timestamp comparison, no reshuffle.
@@ -304,7 +317,71 @@ func (r *GroupResolver) resolveRetrieveFAVL(group *store.Node, payloadCode strin
 		}
 	}
 
-	return nil, fmt.Errorf("no bin of requested payload in node group %s", group.Name)
+	return nil, r.classifyEmptyGroup(group, children, payloadCode)
+}
+
+// classifyEmptyGroup determines whether a group resolution failure is
+// structural (permanent) or transient (inventory may arrive).
+//
+// Intentionally looser than the resolution loop. The loop skips lanes for
+// multiple reasons (locked, full, buried, payload mismatch). This helper
+// only checks structural capability — not whether bins are available now.
+// A false "transient" is safer than a false "structural".
+//
+// On any DB error during classification, returns transient.
+func (r *GroupResolver) classifyEmptyGroup(
+	group *store.Node, children []*store.Node, payloadCode string,
+) error {
+	hasEnabled := false
+	for _, child := range children {
+		if child.Enabled {
+			hasEnabled = true
+			break
+		}
+	}
+	if !hasEnabled {
+		return &StructuralError{
+			Group: group.Name, Payload: payloadCode,
+			Reason: "group has no enabled child nodes",
+		}
+	}
+
+	if payloadCode != "" {
+		hasCapable := false
+		for _, child := range children {
+			if !child.Enabled {
+				continue
+			}
+			payloads, err := r.DB.GetEffectivePayloads(child.ID)
+			if err != nil {
+				r.dbg("classifyEmptyGroup: GetEffectivePayloads(%d) error: %v, "+
+					"defaulting to transient", child.ID, err)
+				return fmt.Errorf("no bin of requested payload in node group %s",
+					group.Name)
+			}
+			if len(payloads) == 0 {
+				hasCapable = true
+				break
+			}
+			for _, p := range payloads {
+				if p.Code == payloadCode {
+					hasCapable = true
+					break
+				}
+			}
+			if hasCapable {
+				break
+			}
+		}
+		if !hasCapable {
+			return &StructuralError{
+				Group: group.Name, Payload: payloadCode,
+				Reason: "no child node accepts this payload type",
+			}
+		}
+	}
+
+	return fmt.Errorf("no bin of requested payload in node group %s", group.Name)
 }
 
 // ResolveStore finds the best slot for storing a bin in a node group.

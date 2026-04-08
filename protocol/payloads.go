@@ -313,3 +313,13 @@ type OrderStatusSnapshot struct {
 type OrderStatusResponse struct {
 	Orders []OrderStatusSnapshot `json:"orders"`
 }
+
+// NodeStructureChanged is sent Core→Edge when a node group's structure changes
+// (reparent or group deletion). Edge uses this to refresh its node cache.
+type NodeStructureChanged struct {
+	NodeID      int64  `json:"node_id"`
+	NodeName    string `json:"node_name"`
+	OldParentID *int64 `json:"old_parent_id,omitempty"`
+	NewParentID *int64 `json:"new_parent_id,omitempty"`
+	Action      string `json:"action"` // "reparented" or "group_deleted"
+}

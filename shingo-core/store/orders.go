@@ -354,6 +354,29 @@ func (db *DB) ListDispatchedVendorOrderIDs() ([]string, error) {
 	return ids, rows.Err()
 }
 
+// ListActiveOrdersBySourceRef returns orders in pre-dispatch states (pending,
+// sourcing, queued) whose source_node matches any of the provided names.
+// Used by reparent/delete guards to detect orders that would break.
+func (db *DB) ListActiveOrdersBySourceRef(names []string) ([]*Order, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(names))
+	args := make([]any, len(names))
+	for i, n := range names {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = n
+	}
+	q := fmt.Sprintf(`SELECT %s FROM orders WHERE source_node IN (%s) AND status IN ('pending', 'sourcing', 'queued') ORDER BY created_at ASC`,
+		orderSelectCols, strings.Join(placeholders, ","))
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
 // ListQueuedOrders returns all orders in "queued" status, oldest first (FIFO).
 func (db *DB) ListQueuedOrders() ([]*Order, error) {
 	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status = 'queued' ORDER BY created_at ASC`, orderSelectCols))
