@@ -88,6 +88,7 @@ func (db *DB) runVersionedMigrations() error {
 		{10, "add wait_index column to orders for multi-wait complex orders", db.v10OrderWaitIndex},
 		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", db.v11FixPayloadBinTypesFK},
 		{12, "fix payload_manifest FK to reference payloads instead of blueprints", db.v12FixPayloadManifestFK},
+		{13, "fix node_payloads FK to reference payloads instead of blueprints", db.v13FixNodePayloadsFK},
 	}
 
 	for _, m := range migrations {
@@ -448,6 +449,12 @@ func (db *DB) v11FixPayloadBinTypesFK() error {
 // Same root cause as v11 — stale FK referencing blueprints instead of payloads.
 func (db *DB) v12FixPayloadManifestFK() error {
 	return fixPayloadFK(db, "payload_manifest", "payload_manifest_payload_id_fkey")
+}
+
+// v13FixNodePayloadsFK fixes node_payloads.payload_id foreign key.
+// Same root cause as v11/v12 — stale FK referencing blueprints instead of payloads.
+func (db *DB) v13FixNodePayloadsFK() error {
+	return fixPayloadFK(db, "node_payloads", "node_payloads_payload_id_fkey")
 }
 
 // fixPayloadFK checks if a payload_id FK already references payloads (no-op on fresh DBs)
