@@ -87,6 +87,7 @@ func (db *DB) runVersionedMigrations() error {
 		{9, "create order_bins junction table for multi-bin complex orders", db.v9OrderBins},
 		{10, "add wait_index column to orders for multi-wait complex orders", db.v10OrderWaitIndex},
 		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", db.v11FixPayloadBinTypesFK},
+		{12, "fix payload_manifest FK to reference payloads instead of blueprints", db.v12FixPayloadManifestFK},
 	}
 
 	for _, m := range migrations {
@@ -440,20 +441,31 @@ func (db *DB) v10OrderWaitIndex() error {
 // to payloads. CREATE TABLE IF NOT EXISTS preserved the stale FK, so inserts
 // fail with FK violations. Drop and recreate the constraint pointing to payloads.
 func (db *DB) v11FixPayloadBinTypesFK() error {
-	// Check if the FK already references payloads (fixed or fresh DB)
+	return fixPayloadFK(db, "payload_bin_types", "payload_bin_types_payload_id_fkey")
+}
+
+// v12FixPayloadManifestFK fixes payload_manifest.payload_id foreign key.
+// Same root cause as v11 — stale FK referencing blueprints instead of payloads.
+func (db *DB) v12FixPayloadManifestFK() error {
+	return fixPayloadFK(db, "payload_manifest", "payload_manifest_payload_id_fkey")
+}
+
+// fixPayloadFK checks if a payload_id FK already references payloads (no-op on fresh DBs)
+// and recreates it if it still points to the old blueprints table.
+func fixPayloadFK(db *DB, table, constraintName string) error {
 	var refTable string
 	db.QueryRow(`
 		SELECT cc.table_name
 		FROM information_schema.table_constraints tc
 		JOIN information_schema.referential_constraints rc ON rc.constraint_name = tc.constraint_name
 		JOIN information_schema.constraint_column_usage cc ON cc.constraint_name = rc.unique_constraint_name
-		WHERE tc.constraint_name = 'payload_bin_types_payload_id_fkey'
-	`).Scan(&refTable)
+		WHERE tc.constraint_name = $1
+	`, constraintName).Scan(&refTable)
 	if refTable == "payloads" {
 		return nil
 	}
-	db.Exec(`ALTER TABLE payload_bin_types DROP CONSTRAINT payload_bin_types_payload_id_fkey`)
-	_, err := db.Exec(`ALTER TABLE payload_bin_types ADD CONSTRAINT payload_bin_types_payload_id_fkey
-		FOREIGN KEY (payload_id) REFERENCES payloads(id) ON DELETE CASCADE`)
+	db.Exec(`ALTER TABLE `+table+` DROP CONSTRAINT `+constraintName)
+	_, err := db.Exec(`ALTER TABLE `+table+` ADD CONSTRAINT `+constraintName+
+		` FOREIGN KEY (payload_id) REFERENCES payloads(id) ON DELETE CASCADE`)
 	return err
 }
