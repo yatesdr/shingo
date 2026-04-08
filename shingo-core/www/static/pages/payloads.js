@@ -85,7 +85,7 @@ function openEditPayloadModal(btn) {
       return r.json();
     })
     .then(function(resp) {
-      var items = resp.data || resp || [];
+      var items = (resp && resp.data) || resp || [];
       var container = document.getElementById('ple-manifest-rows');
       container.innerHTML = '';
       if (items && items.length > 0) {
@@ -106,7 +106,7 @@ function openEditPayloadModal(btn) {
       return r.json();
     })
     .then(function(resp) {
-      var ids = resp.data || resp || [];
+      var ids = (resp && resp.data) || resp || [];
       var sel = document.getElementById('ple-bin-types');
       for (var i = 0; i < sel.options.length; i++) {
         sel.options[i].selected = ids.indexOf(parseInt(sel.options[i].value)) >= 0;
