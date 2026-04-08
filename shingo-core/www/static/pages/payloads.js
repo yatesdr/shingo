@@ -54,6 +54,7 @@ function submitPLCreate(e) {
     bin_type_ids: getSelectedBinTypes('plc-bin-types'),
     manifest: collectManifestRows('plc-manifest-rows')
   };
+  console.log('Creating payload:', JSON.stringify(body));
   fetch('/api/payloads/templates/create', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -61,10 +62,10 @@ function submitPLCreate(e) {
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.error) { alert(data.error); return; }
+    if (data.error) { alert('Save failed: ' + data.error); return; }
     location.href = '/payloads';
   })
-  .catch(function(err) { alert('Error: ' + err); });
+  .catch(function(err) { alert('Save error: ' + err); });
   return false;
 }
 
@@ -79,7 +80,10 @@ function openEditPayloadModal(btn) {
   showModal('pl-edit-modal');
 
   fetch('/api/payloads/templates/manifest?id=' + plId)
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
     .then(function(resp) {
       var items = resp.data || resp || [];
       var container = document.getElementById('ple-manifest-rows');
@@ -90,12 +94,17 @@ function openEditPayloadModal(btn) {
         });
       }
     })
-    .catch(function() {
-      document.getElementById('ple-manifest-rows').innerHTML = '<span class="text-muted" style="font-size:0.8rem">Error loading manifest</span>';
+    .catch(function(err) {
+      console.error('Manifest load failed:', err);
+      document.getElementById('ple-manifest-rows').innerHTML =
+        '<span class="text-muted" style="font-size:0.8rem">No manifest items (load failed: ' + err.message + ')</span>';
     });
 
   fetch('/api/payloads/templates/bin-types?id=' + plId)
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
     .then(function(resp) {
       var ids = resp.data || resp || [];
       var sel = document.getElementById('ple-bin-types');
@@ -103,7 +112,9 @@ function openEditPayloadModal(btn) {
         sel.options[i].selected = ids.indexOf(parseInt(sel.options[i].value)) >= 0;
       }
     })
-    .catch(function() {});
+    .catch(function(err) {
+      console.error('Bin types load failed:', err);
+    });
 }
 function closePLEditModal() {
   hideModal('pl-edit-modal');
@@ -119,6 +130,7 @@ function submitPLEdit(e) {
     bin_type_ids: getSelectedBinTypes('ple-bin-types'),
     manifest: collectManifestRows('ple-manifest-rows')
   };
+  console.log('Saving payload:', JSON.stringify(body));
   fetch('/api/payloads/templates/update', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -126,10 +138,10 @@ function submitPLEdit(e) {
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.error) { alert(data.error); return; }
+    if (data.error) { alert('Save failed: ' + data.error); return; }
     location.href = '/payloads';
   })
-  .catch(function(err) { alert('Error: ' + err); });
+  .catch(function(err) { alert('Save error: ' + err); });
   return false;
 }
 

@@ -100,7 +100,10 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(req.BinTypeIDs) > 0 {
-		h.engine.DB().SetPayloadBinTypes(p.ID, req.BinTypeIDs)
+		if err := h.engine.DB().SetPayloadBinTypes(p.ID, req.BinTypeIDs); err != nil {
+			h.jsonError(w, "bin types: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	if len(req.Manifest) > 0 {
 		var items []*store.PayloadManifestItem
@@ -110,7 +113,10 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 				Quantity:   it.Quantity,
 			})
 		}
-		h.engine.DB().ReplacePayloadManifest(p.ID, items)
+		if err := h.engine.DB().ReplacePayloadManifest(p.ID, items); err != nil {
+			h.jsonError(w, "manifest: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	h.jsonOK(w, p)
@@ -147,7 +153,10 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	h.engine.DB().SetPayloadBinTypes(p.ID, req.BinTypeIDs)
+	if err := h.engine.DB().SetPayloadBinTypes(p.ID, req.BinTypeIDs); err != nil {
+		h.jsonError(w, "bin types: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	var items []*store.PayloadManifestItem
 	for _, it := range req.Manifest {
@@ -156,7 +165,10 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 			Quantity:   it.Quantity,
 		})
 	}
-	h.engine.DB().ReplacePayloadManifest(p.ID, items)
+	if err := h.engine.DB().ReplacePayloadManifest(p.ID, items); err != nil {
+		h.jsonError(w, "manifest: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	h.jsonSuccess(w)
 }
