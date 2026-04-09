@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -115,8 +116,10 @@ func (c *CoreClient) FetchNodeBins(nodeNames []string) ([]NodeBinInfo, error) {
 	if c.baseURL == "" || len(nodeNames) == 0 {
 		return nil, nil
 	}
-	url := c.baseURL + "/api/telemetry/node-bins?nodes=" + strings.Join(nodeNames, ",")
-	resp, err := c.http.Get(url)
+	params := url.Values{}
+	params.Set("nodes", strings.Join(nodeNames, ","))
+	reqURL := c.baseURL + "/api/telemetry/node-bins?" + params.Encode()
+	resp, err := c.http.Get(reqURL)
 	if err != nil {
 		return nil, nil // Core unreachable — graceful degradation
 	}
