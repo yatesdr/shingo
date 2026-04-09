@@ -304,6 +304,23 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		}
 	}
 
+	// Bin loader: retrieve_empty completed — empty bin delivered, awaiting operator load.
+	// Must be handled before the generic TypeRetrieve handler which assumes consume role
+	// and sets UOP = capacity.
+	if order.OrderType == orders.TypeRetrieve {
+		if claim := e.findActiveClaim(node); claim != nil && claim.Role == "bin_loader" {
+			claimID := claim.ID
+			// UOP = 0: the bin is empty, waiting for operator to load it
+			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, 0); err != nil {
+				log.Printf("set runtime for bin_loader node %d: %v", node.ID, err)
+			}
+			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
+				log.Printf("update runtime orders for bin_loader node %d: %v", node.ID, err)
+			}
+			return
+		}
+	}
+
 	// Produce node ingest completion — Core now knows the bin's manifest.
 	// Reset UOP to 0 and clear order tracking. No auto-request here:
 	// simple mode still has the filled bin at the node (can't deliver an

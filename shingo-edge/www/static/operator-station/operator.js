@@ -58,6 +58,9 @@ function scheduleRefresh() {
     refreshTimer = setTimeout(async () => {
         refreshTimer = null;
         await loadView();
+        // Follow-up refresh gives Core time to process receipt + ApplyBinArrival
+        // after auto-confirm. Without this, bin_state may be stale.
+        setTimeout(() => scheduleRefresh(), 2000);
     }, 500);
 }
 
@@ -420,7 +423,18 @@ function renderModal(entry) {
                 ? claim.allowed_payload_codes
                 : (claim.payload_code ? [claim.payload_code] : []);
 
-            if (!hasBin) {
+            // State machine: delivered → confirm, in-flight → wait, no bin → request, has bin → load
+            const activeOrders = (entry.orders || []).filter(o => o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+            const delivered = activeOrders.find(o => o.status === 'delivered');
+            const inFlight = !delivered && activeOrders.find(o => o.status !== 'delivered' && o.status !== 'queued');
+
+            if (delivered) {
+                // Bin delivered but not yet confirmed — operator must confirm
+                html += actionBtn('CONFIRM DELIVERY', 'request', true,
+                    '/api/confirm-delivery/' + delivered.id);
+            } else if (inFlight) {
+                html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
+            } else if (!hasBin) {
                 allowed.forEach(code => {
                     html += actionBtn('REQUEST EMPTY: ' + code, 'request', true,
                         '/api/process-nodes/' + entry.node.id + '/request-empty|' + code);
