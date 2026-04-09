@@ -74,6 +74,13 @@ func New(c Config) *Engine {
 		robotsCache: make(map[string]fleet.RobotStatus),
 	}
 	e.reconciliation = newReconciliationService(e.db, e.logFn)
+	e.reconciliation.onOrderCompleted = func(orderID int64, edgeUUID, stationID string) {
+		e.handleOrderCompleted(OrderCompletedEvent{
+			OrderID:   orderID,
+			EdgeUUID:  edgeUUID,
+			StationID: stationID,
+		})
+	}
 	e.recovery = newRecoveryService(e)
 	e.binManifest = service.NewBinManifestService(e.db)
 	return e

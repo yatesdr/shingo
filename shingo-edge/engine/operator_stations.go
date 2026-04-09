@@ -1400,10 +1400,12 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order
 		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
-	// Create retrieve order for an empty bin — Core queues if none available
+	// Create retrieve order for an empty bin — Core queues if none available.
+	// Use claim-level auto_confirm if set, otherwise fall back to global config.
+	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, node.CoreNodeName, "",
-		"standard", payloadCode, e.cfg.Web.AutoConfirm,
+		"standard", payloadCode, autoConfirm,
 	)
 	if err != nil {
 		return nil, err

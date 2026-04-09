@@ -37,6 +37,7 @@ type StyleNodeClaim struct {
 	KeepStaged               bool      `json:"keep_staged"`
 	EvacuateOnChangeover     bool      `json:"evacuate_on_changeover"`
 	PairedCoreNode           string    `json:"paired_core_node"` // A/B cycling: names the alternate node
+	AutoConfirm              bool      `json:"auto_confirm"`     // bin_loader: auto-confirm delivery without operator acknowledgement
 	Sequence                 int       `json:"sequence"`
 	CreatedAt                time.Time `json:"created_at"`
 }
@@ -72,13 +73,14 @@ type StyleNodeClaimInput struct {
 	KeepStaged              bool     `json:"keep_staged"`
 	EvacuateOnChangeover    bool     `json:"evacuate_on_changeover"`
 	PairedCoreNode          string   `json:"paired_core_node"`
+	AutoConfirm             bool     `json:"auto_confirm"`
 	Sequence                int      `json:"sequence"`
 }
 
 const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
-	keep_staged, evacuate_on_changeover, paired_core_node, sequence, created_at`
+	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence, created_at`
 
 func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleNodeClaim, error) {
 	var c StyleNodeClaim
@@ -86,7 +88,7 @@ func scanStyleNodeClaim(scanner interface{ Scan(...interface{}) error }) (StyleN
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
 		&c.UOPCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
-		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.Sequence, &createdAt); err != nil {
+		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence, &createdAt); err != nil {
 		return c, err
 	}
 	c.CreatedAt = scanTime(createdAt)
@@ -147,12 +149,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 		_, err = db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
 			uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
 			inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
-			keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, sequence=?
+			keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, auto_confirm=?, sequence=?
 			WHERE id=?`,
 			in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
 			in.InboundStaging, in.OutboundStaging,
 			in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-			in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.Sequence, existingID)
+			in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence, existingID)
 		return existingID, err
 	}
 	if in.Sequence <= 0 {
@@ -164,12 +166,12 @@ func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
 	res, err := db.Exec(`INSERT INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
-		keep_staged, evacuate_on_changeover, paired_core_node, sequence)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.Sequence)
+		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence)
 	if err != nil {
 		return 0, err
 	}

@@ -202,6 +202,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     keep_staged             INTEGER NOT NULL DEFAULT 0,
     evacuate_on_changeover  INTEGER NOT NULL DEFAULT 0,
     paired_core_node        TEXT NOT NULL DEFAULT '',
+    auto_confirm            INTEGER NOT NULL DEFAULT 0,
     sequence                INTEGER NOT NULL DEFAULT 0,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(style_id, core_node_name)
@@ -404,6 +405,9 @@ func (db *DB) migrate() error {
 
 	// A/B node cycling: paired_core_node on claims, active_pull on runtime
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN paired_core_node TEXT NOT NULL DEFAULT ''")
+
+	// Claim-level auto-confirm: allows bin_loader claims to auto-confirm delivery
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_confirm INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_pull INTEGER NOT NULL DEFAULT 1")
 
 	return nil

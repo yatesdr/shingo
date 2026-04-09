@@ -246,6 +246,7 @@ function openClaimModal() {
     document.getElementById('claims-add-keep-staged').checked = false;
     document.getElementById('claims-add-evacuate').checked = false;
     document.getElementById('claims-add-paired-node').value = '';
+    document.getElementById('claims-add-auto-confirm').checked = false;
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
     toggleClaimsAddPayload();
     validateClaimStaging();
@@ -275,6 +276,7 @@ function editClaim(claim) {
     document.getElementById('claims-add-keep-staged').checked = !!claim.keep_staged;
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
     document.getElementById('claims-add-paired-node').value = claim.paired_core_node || '';
+    document.getElementById('claims-add-auto-confirm').checked = !!claim.auto_confirm;
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
     toggleClaimsAddPayload();
     validateClaimStaging();
@@ -404,7 +406,8 @@ async function saveClaim() {
         auto_request_payload: document.getElementById('claims-add-auto-request').value,
         keep_staged: document.getElementById('claims-add-keep-staged').checked,
         evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked,
-        paired_core_node: document.getElementById('claims-add-paired-node').value
+        paired_core_node: document.getElementById('claims-add-paired-node').value,
+        auto_confirm: document.getElementById('claims-add-auto-confirm').checked
     };
 
     // Check if selected node is an NGRP — expand to physical children

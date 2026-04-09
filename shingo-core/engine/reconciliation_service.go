@@ -8,8 +8,9 @@ import (
 )
 
 type ReconciliationService struct {
-	db    *store.DB
-	logFn LogFunc
+	db               *store.DB
+	logFn            LogFunc
+	onOrderCompleted func(orderID int64, edgeUUID, stationID string) // called after auto-confirm to trigger bin movement
 }
 
 func newReconciliationService(db *store.DB, logFn LogFunc) *ReconciliationService {
@@ -124,6 +125,11 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 		s.logFn("engine: auto-confirmed stuck delivered order %d (uuid=%s)", order.ID, order.EdgeUUID)
 		s.db.RecordRecoveryAction("auto_confirm_delivered", "order", order.ID,
 			fmt.Sprintf("auto-confirmed delivered order after %s timeout", timeout), "system")
+		// Trigger bin movement — without this, ApplyBinArrival never runs
+		// and the bin stays at its source node instead of moving to the destination.
+		if s.onOrderCompleted != nil {
+			s.onOrderCompleted(order.ID, order.EdgeUUID, order.StationID)
+		}
 		confirmed++
 	}
 
