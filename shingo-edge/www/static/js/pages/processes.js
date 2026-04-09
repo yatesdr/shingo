@@ -262,7 +262,7 @@ function editClaim(claim) {
         opt.style.color = '';
     });
     sel.value = claim.core_node_name;
-    sel.disabled = true; // can't change node on edit
+    sel.disabled = false; // allow changing node on edit
     document.getElementById('claims-add-role').value = claim.role || 'consume';
     document.getElementById('claims-add-swap').value = claim.swap_mode || 'simple';
     document.getElementById('claims-add-payload').value = claim.payload_code || '';
@@ -485,7 +485,9 @@ function toggleClaimsAddPayload() {
         document.getElementById('claims-add-capacity').value = '0';
         document.getElementById('claims-add-reorder').value = '0';
     }
-    if (isBinLoader) {
+    // Only reset bin_loader fields when creating a new claim (not editing)
+    var isEditing = !!document.getElementById('claims-edit-id').value;
+    if (isBinLoader && !isEditing) {
         document.getElementById('claims-add-reorder').value = '0';
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-swap').value = 'simple';
