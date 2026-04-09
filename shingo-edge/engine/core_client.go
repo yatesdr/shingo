@@ -67,8 +67,8 @@ func (c *CoreClient) FetchPayloadManifest(payloadCode string) (*PayloadManifestR
 	if c.baseURL == "" || payloadCode == "" {
 		return nil, nil
 	}
-	url := c.baseURL + "/api/telemetry/payload/" + payloadCode + "/manifest"
-	resp, err := c.http.Get(url)
+	reqURL := c.baseURL + "/api/telemetry/payload/" + url.PathEscape(payloadCode) + "/manifest"
+	resp, err := c.http.Get(reqURL)
 	if err != nil {
 		return nil, nil
 	}
@@ -95,7 +95,7 @@ func (c *CoreClient) FetchNodeChildren(nodeName string) ([]NodeChildInfo, error)
 	if c.baseURL == "" || nodeName == "" {
 		return nil, nil
 	}
-	resp, err := c.http.Get(c.baseURL + "/api/telemetry/node/" + nodeName + "/children")
+	resp, err := c.http.Get(c.baseURL + "/api/telemetry/node/" + url.PathEscape(nodeName) + "/children")
 	if err != nil {
 		return nil, nil
 	}
