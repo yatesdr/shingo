@@ -659,7 +659,7 @@ function openLoadBin(nodeID, allowedCodes, defaultCapacity) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'os-action-btn';
-        btn.style.cssText = 'font-size:14px;padding:10px 20px;margin:0 6px 6px 0';
+        btn.style.cssText = 'font-size:14px;padding:10px 20px;margin:0 6px 6px 0;background:var(--os-gray)';
         btn.textContent = code;
         btn.dataset.code = code;
         btn.addEventListener('click', () => selectLoadPayload(code));
