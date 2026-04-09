@@ -59,8 +59,9 @@ function scheduleRefresh() {
         refreshTimer = null;
         await loadView();
         // Follow-up refresh gives Core time to process receipt + ApplyBinArrival
-        // after auto-confirm. Without this, bin_state may be stale.
-        setTimeout(() => scheduleRefresh(), 2000);
+        // after auto-confirm. With the retrieve_empty staging exemption in Core,
+        // bins are available immediately, but this covers any remaining latency.
+        setTimeout(() => scheduleRefresh(), 3000);
     }, 500);
 }
 

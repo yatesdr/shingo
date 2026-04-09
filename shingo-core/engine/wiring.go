@@ -326,6 +326,14 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		expiresAt = nil
 	}
 
+	// Retrieve-empty orders deliver to an operator station (bin_loader) where the
+	// operator is physically present and ready to load. Staging adds unnecessary
+	// delay — mark the bin available immediately.
+	if order.PayloadDesc == "retrieve_empty" {
+		staged = false
+		expiresAt = nil
+	}
+
 	if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
 		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
