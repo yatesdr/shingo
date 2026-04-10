@@ -202,7 +202,7 @@ func (s *LifecycleService) ConfirmReceipt(order *store.Order, stationID, receipt
 		return false, fmt.Errorf("cannot confirm receipt for order in status %q (expected delivered)", order.Status)
 	}
 	if err := s.db.UpdateOrderStatus(order.ID, StatusConfirmed, fmt.Sprintf("receipt: %s, count: %d", receiptType, finalCount)); err != nil {
-		log.Printf("dispatch: update order %d status to confirmed: %v", order.ID, err)
+		return false, fmt.Errorf("update order %d status to confirmed: %w", order.ID, err)
 	}
 	if err := s.db.CompleteOrder(order.ID); err != nil {
 		return false, err

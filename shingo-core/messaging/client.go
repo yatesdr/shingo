@@ -108,7 +108,9 @@ func (c *Client) Publish(topic string, payload []byte) error {
 	}
 
 	c.dbg("publish: topic=%s size=%d", topic, len(payload))
-	return c.kafka.writer.WriteMessages(context.Background(), kafka.Message{
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return c.kafka.writer.WriteMessages(ctx, kafka.Message{
 		Topic: topic,
 		Value: payload,
 	})
