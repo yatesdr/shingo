@@ -17,6 +17,9 @@ import (
 	"shingocore/config"
 	"shingocore/store"
 
+	"database/sql"
+	_ "github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -83,24 +86,14 @@ func Open(t *testing.T) *store.DB {
 	// Create a fresh database for this test
 	dbName := fmt.Sprintf("test_%s_%d", sanitize(t.Name()), rand.Intn(100000))
 
-	adminDB, err := store.Open(&config.DatabaseConfig{
-		Postgres: config.PostgresConfig{
-			Host:     containerHost,
-			Port:     containerPort,
-			Database: "postgres",
-			User:     "test",
-			Password: "test",
-			SSLMode:  "disable",
-		},
-	})
+	adminDB, err := sql.Open("pgx", fmt.Sprintf("host=%s port=%d dbname=postgres user=test password=test sslmode=disable", containerHost, containerPort))
 	if err != nil {
-		t.Fatalf("open admin db: %v", err)
+		t.Fatalf("open admin connection: %v", err)
 	}
+	defer adminDB.Close()
 	if _, err := adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
-		adminDB.Close()
 		t.Fatalf("create test database %s: %v", dbName, err)
 	}
-	adminDB.Close()
 
 	db, err := store.Open(&config.DatabaseConfig{
 		Postgres: config.PostgresConfig{
@@ -120,16 +113,7 @@ func Open(t *testing.T) *store.DB {
 		db.Close()
 		// Best-effort drop — the container dies at process exit anyway.
 		// Use a fresh connection to avoid "database is being accessed" errors.
-		cleanup, err := store.Open(&config.DatabaseConfig{
-			Postgres: config.PostgresConfig{
-				Host:     containerHost,
-				Port:     containerPort,
-				Database: "postgres",
-				User:     "test",
-				Password: "test",
-				SSLMode:  "disable",
-			},
-		})
+		cleanup, err := sql.Open("pgx", fmt.Sprintf("host=%s port=%d dbname=postgres user=test password=test sslmode=disable", containerHost, containerPort))
 		if err == nil {
 			cleanup.Exec(fmt.Sprintf(
 				"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='%s' AND pid <> pg_backend_pid()", dbName))
