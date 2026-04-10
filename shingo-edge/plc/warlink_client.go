@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -98,7 +99,7 @@ func (c *httpWarlinkClient) ListPLCs(ctx context.Context) ([]WarlinkPLC, error) 
 }
 
 func (c *httpWarlinkClient) ListTags(ctx context.Context, plcName string) (map[string]WarlinkTag, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/"+plcName+"/tags", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/"+url.PathEscape(plcName)+"/tags", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +119,7 @@ func (c *httpWarlinkClient) ListTags(ctx context.Context, plcName string) (map[s
 }
 
 func (c *httpWarlinkClient) ListAllTags(ctx context.Context, plcName string) ([]WarlinkTagInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/"+plcName+"/all-tags", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/"+url.PathEscape(plcName)+"/all-tags", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +145,7 @@ func (c *httpWarlinkClient) SetTagPublishing(ctx context.Context, plcName, tagNa
 	}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, "PATCH", c.baseURL+"/"+plcName+"/tags/"+tagName, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.baseURL+"/"+url.PathEscape(plcName)+"/tags/"+url.PathEscape(tagName), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
