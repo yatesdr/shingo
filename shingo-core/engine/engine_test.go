@@ -2181,4 +2181,6 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 	}})
 
 	// Verify order was audited (the cancel handler logs audit regardless)
-	// If we get here 
+	// If we get here without panic, the guard is working
+	t.Logf("cancel with empty EdgeUUID processed without error — guard is working")
+}
