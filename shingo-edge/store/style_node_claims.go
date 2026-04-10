@@ -2,15 +2,22 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
 // StyleNodeClaim declares that a style needs a specific core node with a given
-// payload and role. Four roles are supported:
+// payload and role. Three roles are supported:
 //   - "consume": system delivers full bins and removes empties
 //   - "produce": system delivers empty bins and removes filled ones
-//   - "bin_loader": operator loads manifest via HTTP; system delivers/moves bins on request
 //   - "changeover": temporary role during style transitions (evacuate and restore material)
+//
+// SwapMode controls the choreography:
+//   - "simple": PLC-driven reorder at threshold
+//   - "sequential": backfill while current bin is in transit
+//   - "single_robot": inbound + outbound staging for single-robot swap
+//   - "two_robot": dual-robot swap with inbound staging
+//   - "manual_swap": operator-driven forklift swap with multi-order queue
 //
 // Routing fields follow a directional convention:
 //
@@ -22,8 +29,8 @@ type StyleNodeClaim struct {
 	ID                       int64     `json:"id"`
 	StyleID                  int64     `json:"style_id"`
 	CoreNodeName             string    `json:"core_node_name"`
-	Role                     string    `json:"role"`     // "consume", "produce", "bin_loader", or "changeover"
-	SwapMode                 string    `json:"swap_mode"` // "simple", "single_robot", "two_robot", "sequential"
+	Role                     string    `json:"role"`      // "consume", "produce", or "changeover"
+	SwapMode                 string    `json:"swap_mode"`  // "simple", "single_robot", "two_robot", "sequential", "manual_swap"
 	PayloadCode              string    `json:"payload_code"`
 	UOPCapacity              int       `json:"uop_capacity"`
 	ReorderPoint             int       `json:"reorder_point"`
@@ -37,7 +44,7 @@ type StyleNodeClaim struct {
 	KeepStaged               bool      `json:"keep_staged"`
 	EvacuateOnChangeover     bool      `json:"evacuate_on_changeover"`
 	PairedCoreNode           string    `json:"paired_core_node"` // A/B cycling: names the alternate node
-	AutoConfirm              bool      `json:"auto_confirm"`     // bin_loader: auto-confirm delivery without operator acknowledgement
+	AutoConfirm              bool      `json:"auto_confirm"`     // manual_swap: auto-confirm delivery without operator acknowledgement
 	Sequence                 int       `json:"sequence"`
 	CreatedAt                time.Time `json:"created_at"`
 }
@@ -135,11 +142,20 @@ func (db *DB) GetStyleNodeClaimByNode(styleID int64, coreNodeName string) (*Styl
 }
 
 func (db *DB) UpsertStyleNodeClaim(in StyleNodeClaimInput) (int64, error) {
-	if in.Role != "produce" && in.Role != "changeover" && in.Role != "bin_loader" {
+	if in.Role != "produce" && in.Role != "changeover" {
 		in.Role = "consume"
 	}
 	if in.SwapMode == "" {
 		in.SwapMode = "simple"
+	}
+	// manual_swap claims require OutboundDestination — without it the post-swap
+	// bin has nowhere to go and the node deadlocks.
+	if in.SwapMode == "manual_swap" && in.OutboundDestination == "" {
+		return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")
+	}
+	// manual_swap claims must auto-confirm delivery (operator action IS the acknowledgement).
+	if in.SwapMode == "manual_swap" {
+		in.AutoConfirm = true
 	}
 	var existingID int64
 	err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,

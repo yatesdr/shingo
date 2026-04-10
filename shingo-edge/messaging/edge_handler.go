@@ -22,6 +22,7 @@ type EdgeHandler struct {
 	onRegisterReq          func()
 	onOrderStatuses        func([]protocol.OrderStatusSnapshot)
 	onNodeStructureChanged func()
+	onDemandSignal         func(*protocol.DemandSignal)
 
 	DebugLog DebugLogFunc
 }
@@ -58,6 +59,11 @@ func (h *EdgeHandler) SetRegisteredHandler(fn func()) {
 // a node list refresh.
 func (h *EdgeHandler) SetNodeStructureChangedHandler(fn func()) {
 	h.onNodeStructureChanged = fn
+}
+
+// SetDemandSignalHandler sets a callback for when core sends a kanban demand signal.
+func (h *EdgeHandler) SetDemandSignalHandler(fn func(*protocol.DemandSignal)) {
+	h.onDemandSignal = fn
 }
 
 func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
@@ -167,6 +173,17 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			changed.NodeName, changed.Action)
 		if h.onNodeStructureChanged != nil {
 			h.onNodeStructureChanged()
+		}
+	case protocol.SubjectDemandSignal:
+		var signal protocol.DemandSignal
+		if err := json.Unmarshal(p.Body, &signal); err != nil {
+			log.Printf("edge_handler: decode demand signal: %v", err)
+			return
+		}
+		log.Printf("edge_handler: demand signal: node=%s payload=%s role=%s reason=%s",
+			signal.CoreNodeName, signal.PayloadCode, signal.Role, signal.Reason)
+		if h.onDemandSignal != nil {
+			h.onDemandSignal(&signal)
 		}
 	default:
 		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)

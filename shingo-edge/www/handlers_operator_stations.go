@@ -323,6 +323,27 @@ func (h *Handlers) apiRequestEmptyBin(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, order, "refreshMaterial")
 }
 
+func (h *Handlers) apiRequestFullBin(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	var req struct {
+		PayloadCode string `json:"payload_code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	order, err := h.engine.RequestFullBin(id, req.PayloadCode)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, order, "refreshMaterial")
+}
+
 func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

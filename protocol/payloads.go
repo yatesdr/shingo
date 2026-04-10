@@ -323,3 +323,27 @@ type NodeStructureChanged struct {
 	NewParentID *int64 `json:"new_parent_id,omitempty"`
 	Action      string `json:"action"` // "reparented" or "group_deleted"
 }
+
+// ClaimSyncEntry represents a single manual_swap claim's config for the demand registry.
+type ClaimSyncEntry struct {
+	CoreNodeName        string   `json:"core_node_name"`
+	Role                string   `json:"role"`                  // "produce" or "consume"
+	AllowedPayloadCodes []string `json:"allowed_payload_codes"` // payloads this node accepts
+	OutboundDestination string   `json:"outbound_destination"`
+}
+
+// ClaimSync is sent by Edge to Core on startup and claim changes.
+// Core uses this to build its demand registry for kanban wiring.
+type ClaimSync struct {
+	StationID string           `json:"station_id"`
+	Claims    []ClaimSyncEntry `json:"claims"`
+}
+
+// DemandSignal is sent by Core to Edge when a kanban event fires.
+// Edge creates an order for the specified payload at the specified node.
+type DemandSignal struct {
+	CoreNodeName string `json:"core_node_name"` // delivery node for the order
+	PayloadCode  string `json:"payload_code"`   // which payload to request
+	Role         string `json:"role"`            // "produce" or "consume" — determines order type
+	Reason       string `json:"reason"`          // human-readable trigger (e.g., "empty bin returned to storage")
+}

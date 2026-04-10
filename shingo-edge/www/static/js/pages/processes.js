@@ -190,7 +190,7 @@ async function loadClaims(styleID) {
             } else {
                 wants = 'Unset';
             }
-            var swapLabel = {'simple': 'Simple', 'sequential': 'Sequential', 'single_robot': '1-Robot', 'two_robot': '2-Robot'}[c.swap_mode] || c.swap_mode || 'Simple';
+            var swapLabel = {'simple': 'Simple', 'sequential': 'Sequential', 'single_robot': '1-Robot', 'two_robot': '2-Robot', 'manual_swap': 'Manual Swap'}[c.swap_mode] || c.swap_mode || 'Simple';
             var flags = [];
             if (c.keep_staged) flags.push('staged');
             if (c.evacuate_on_changeover) flags.push('evac');
@@ -200,7 +200,7 @@ async function loadClaims(styleID) {
             var claimJSON = ShingoEdge.escapeHtml(JSON.stringify(c));
             tr.innerHTML =
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.core_node_name) + '</td>' +
-                '<td><span class="status-badge">' + ({consume:'Consume',produce:'Produce',bin_loader:'Bin Loader',changeover:'Changeover'}[c.role] || c.role) + '</span>' + flagStr + '</td>' +
+                '<td><span class="status-badge">' + ({consume:'Consume',produce:'Produce',changeover:'Changeover'}[c.role] || c.role) + '</span>' + flagStr + '</td>' +
                 '<td>' + swapLabel + '</td>' +
                 '<td>' + ShingoEdge.escapeHtml(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.inbound_staging || '\u2014') + '</td>' +
@@ -280,7 +280,7 @@ function editClaim(claim) {
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
     toggleClaimsAddPayload();
     validateClaimStaging();
-    if (claim.role === 'bin_loader') {
+    if (claim.swap_mode === 'manual_swap') {
         buildAllowedPayloadPicker(claim.allowed_payload_codes || []);
         updateAutoRequestDropdown();
         document.getElementById('claims-add-auto-request').value = claim.auto_request_payload || '';
@@ -311,10 +311,11 @@ function validateClaimStaging() {
     var isTwoRobot = swap === 'two_robot';
 
     // Show/hide entire staging fieldset based on whether mode uses staging at all
-    // (toggleClaimsAddPayload hides it for changeover/bin_loader roles already,
+    // (toggleClaimsAddPayload hides it for changeover and manual_swap already,
     //  so only touch it if the role allows staging)
     var role = document.getElementById('claims-add-role').value;
-    var roleAllowsStaging = role !== 'changeover' && role !== 'bin_loader';
+    var swapMode = document.getElementById('claims-add-swap').value;
+    var roleAllowsStaging = role !== 'changeover' && swapMode !== 'manual_swap';
     if (stagingFieldset && roleAllowsStaging) {
         stagingFieldset.style.display = usesStaging ? '' : 'none';
     }
@@ -371,8 +372,9 @@ async function saveClaim() {
     var capacity = parseInt(document.getElementById('claims-add-capacity').value, 10) || 0;
     var reorder = parseInt(document.getElementById('claims-add-reorder').value, 10) || 0;
 
+    var swap = document.getElementById('claims-add-swap').value;
     var allowedPayloadCodes = [];
-    if (role === 'bin_loader') {
+    if (swap === 'manual_swap') {
         allowedPayloadCodes = getSelectedAllowedPayloads();
         if (allowedPayloadCodes.length === 0) {
             ShingoEdge.toast('Select at least one allowed payload', 'warning');
@@ -394,7 +396,7 @@ async function saveClaim() {
         core_node_name: node,
         role: role,
         swap_mode: document.getElementById('claims-add-swap').value,
-        payload_code: (role === 'changeover' || role === 'bin_loader') ? '' : payloadCode,
+        payload_code: (role === 'changeover' || swap === 'manual_swap') ? '' : payloadCode,
         allowed_payload_codes: allowedPayloadCodes,
         uop_capacity: capacity,
         reorder_point: reorder,
@@ -459,41 +461,43 @@ async function removeClaim(id) {
 
 function toggleClaimsAddPayload() {
     var role = document.getElementById('claims-add-role').value;
+    var swap = document.getElementById('claims-add-swap').value;
     var isChangeover = role === 'changeover';
-    var isBinLoader = role === 'bin_loader';
-    // Payload & UOP
-    document.getElementById('claims-add-payload-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
-    document.getElementById('claims-add-allowed-group').style.display = isBinLoader ? '' : 'none';
-    document.getElementById('claims-add-reorder-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
-    // Swap mode — not used by bin_loader or changeover
-    document.getElementById('claims-add-swap-group').style.display = (isChangeover || isBinLoader) ? 'none' : '';
-    // Staging — not used by bin_loader or changeover
-    document.getElementById('claims-staging-fieldset').style.display = (isChangeover || isBinLoader) ? 'none' : '';
-    // Source/Dest — bin_loader uses both inbound (empty source) and outbound (loaded dest)
+    var isManualSwap = swap === 'manual_swap';
+    // Payload & UOP — manual_swap uses AllowedPayloadCodes, not single PayloadCode
+    document.getElementById('claims-add-payload-group').style.display = (isChangeover || isManualSwap) ? 'none' : '';
+    document.getElementById('claims-add-allowed-group').style.display = isManualSwap ? '' : 'none';
+    document.getElementById('claims-add-reorder-group').style.display = (isChangeover || isManualSwap) ? 'none' : '';
+    // Staging — not used by manual_swap or changeover
+    document.getElementById('claims-staging-fieldset').style.display = (isChangeover || isManualSwap) ? 'none' : '';
+    // Swap mode dropdown — always visible (not hidden for changeover either, let them see it)
+    document.getElementById('claims-add-swap-group').style.display = isChangeover ? 'none' : '';
+    // Source/Dest — manual_swap uses both inbound (empty source) and outbound (loaded dest)
     document.getElementById('claims-source-fieldset').style.display = isChangeover ? 'none' : '';
     document.getElementById('claims-inbound-source-group').style.display = (isChangeover) ? 'none' : '';
     document.getElementById('claims-outbound-destination-group').style.display = (isChangeover) ? 'none' : '';
-    // Changeover fieldset — not used by bin_loader
-    document.getElementById('claims-changeover-fieldset').style.display = isBinLoader ? 'none' : '';
-    // A/B cycling fieldset — consume and produce roles
-    var showAB = role === 'consume' || role === 'produce';
+    // Changeover fieldset — not used by manual_swap
+    document.getElementById('claims-changeover-fieldset').style.display = isManualSwap ? 'none' : '';
+    // A/B cycling fieldset — consume and produce roles, but not manual_swap
+    var showAB = (role === 'consume' || role === 'produce') && !isManualSwap;
     document.getElementById('claims-ab-fieldset').style.display = showAB ? '' : 'none';
     if (!showAB) {
         document.getElementById('claims-add-paired-node').value = '';
     }
-    // Auto-request fieldset — only for bin_loader
-    document.getElementById('claims-auto-request-fieldset').style.display = isBinLoader ? '' : 'none';
+    // Auto-request fieldset — show for manual_swap (all-payload) or standard (single dropdown)
+    document.getElementById('claims-auto-request-fieldset').style.display = isManualSwap ? '' : 'none';
+    document.getElementById('claims-auto-request-manual-swap').style.display = isManualSwap ? '' : 'none';
+    document.getElementById('claims-auto-request-standard').style.display = isManualSwap ? 'none' : '';
     if (isChangeover) {
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-capacity').value = '0';
         document.getElementById('claims-add-reorder').value = '0';
     }
-    // Only reset bin_loader fields when creating a new claim (not editing)
+    // Only reset manual_swap fields when creating a new claim (not editing)
     var isEditing = !!document.getElementById('claims-edit-id').value;
-    if (isBinLoader && !isEditing) {
+    if (isManualSwap && !isEditing) {
         document.getElementById('claims-add-reorder').value = '0';
         document.getElementById('claims-add-payload').value = '';
-        document.getElementById('claims-add-swap').value = 'simple';
         document.getElementById('claims-add-inbound').value = '';
         document.getElementById('claims-add-outbound').value = '';
         document.getElementById('claims-add-inbound-source').value = '';

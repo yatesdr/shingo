@@ -29,7 +29,7 @@ func TestConfirmDeliveryDoesNotTransitionWhenReceiptEnqueueFails(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false)
+	orderID, err := db.CreateOrder("uuid-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestAbortOrderDoesNotTransitionWhenCancelEnqueueFails(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-abort", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false)
+	orderID, err := db.CreateOrder("uuid-abort", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestRedirectOrderDoesNotPersistWhenRedirectEnqueueFails(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
-	orderID, err := db.CreateOrder("uuid-redirect", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false)
+	orderID, err := db.CreateOrder("uuid-redirect", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

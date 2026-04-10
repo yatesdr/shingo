@@ -26,6 +26,7 @@ type Order struct {
 	ETA            *string    `json:"eta"`
 	AutoConfirm    bool       `json:"auto_confirm"`
 	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
+	PayloadCode    string     `json:"payload_code"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 
@@ -48,7 +49,7 @@ type OrderHistory struct {
 const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.created_at, o.updated_at,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.payload_code, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
 
 const orderJoin = `FROM orders o
@@ -106,7 +107,7 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &o.PayloadCode, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 			return nil, err
 		}
@@ -127,7 +128,7 @@ func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error 
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &createdAt, &updatedAt,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &o.PayloadCode, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 		return err
 	}
@@ -156,11 +157,11 @@ func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
 	return o, nil
 }
 
-func (db *DB) CreateOrder(uuid, orderType string, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool) (int64, error) {
+func (db *DB) CreateOrder(uuid, orderType string, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm)
+		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm, payload_code)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
 	if err != nil {
 		return 0, err
 	}

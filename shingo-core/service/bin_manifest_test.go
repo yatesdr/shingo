@@ -2,7 +2,9 @@ package service
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"shingocore/internal/testdb"
@@ -39,11 +41,14 @@ func createTestBin(t *testing.T, db *store.DB, nodeID int64, label, payloadCode 
 	return got
 }
 
+var testOrderSeq int64
+
 func createTestOrder(t *testing.T, db *store.DB, nodeID int64) *store.Order {
 	t.Helper()
+	seq := atomic.AddInt64(&testOrderSeq, 1)
 	node, _ := db.GetNode(nodeID)
 	order := &store.Order{
-		EdgeUUID:     "test-order-" + t.Name(),
+		EdgeUUID:     fmt.Sprintf("test-order-%s-%d", t.Name(), seq),
 		StationID:    "test",
 		OrderType:    "move",
 		Status:       "pending",

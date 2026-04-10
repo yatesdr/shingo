@@ -142,6 +142,18 @@ func (s *FulfillmentScanner) tryFulfill(order *store.Order) bool {
 		}
 	}
 
+	// Check delivery node isn't already occupied by a bin. Without this,
+	// a race exists: order A confirmed → operator unloads → scanner sees
+	// 0 in-flight → dispatches order B → robot arrives while the outbound
+	// bin from order A is still physically on the node.
+	if order.DeliveryNode != "" {
+		if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil {
+			if count, err := s.db.CountBinsByNode(destNode.ID); err == nil && count > 0 {
+				return false
+			}
+		}
+	}
+
 	payloadCode := order.PayloadCode
 	if payloadCode == "" {
 		return false

@@ -81,8 +81,6 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		}
 
 		switch claim.Role {
-		case "bin_loader":
-			continue // bin_loader nodes are operator-driven, not counter-driven
 		case "consume":
 			// A/B cycling: only decrement the active-pull side.
 			// The inactive side holds staged material.
@@ -289,9 +287,10 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		}
 	}
 
-	// Bin loader: move order completed — bin has been sent to destination, node is vacant
+	// Manual swap: move order completed — bin has been sent to destination, node is vacant.
+	// Triggers tryAutoRequest to queue the next bin delivery.
 	if order.OrderType == orders.TypeMove {
-		if claim := e.findActiveClaim(node); claim != nil && claim.Role == "bin_loader" {
+		if claim := e.findActiveClaim(node); claim != nil && claim.SwapMode == "manual_swap" {
 			claimID := claim.ID
 			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, 0); err != nil {
 				log.Printf("set runtime for node %d: %v", node.ID, err)
@@ -299,24 +298,7 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
 				log.Printf("update runtime orders for node %d: %v", node.ID, err)
 			}
-			e.tryAutoRequestEmpty(node, claim)
-			return
-		}
-	}
-
-	// Bin loader: retrieve_empty completed — empty bin delivered, awaiting operator load.
-	// Must be handled before the generic TypeRetrieve handler which assumes consume role
-	// and sets UOP = capacity.
-	if order.OrderType == orders.TypeRetrieve {
-		if claim := e.findActiveClaim(node); claim != nil && claim.Role == "bin_loader" {
-			claimID := claim.ID
-			// UOP = 0: the bin is empty, waiting for operator to load it
-			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, 0); err != nil {
-				log.Printf("set runtime for bin_loader node %d: %v", node.ID, err)
-			}
-			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
-				log.Printf("update runtime orders for bin_loader node %d: %v", node.ID, err)
-			}
+			e.tryAutoRequest(node, claim)
 			return
 		}
 	}
@@ -351,6 +333,17 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 			}
 			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, resetUOP); err != nil {
 				log.Printf("set runtime for node %d: %v", node.ID, err)
+			}
+
+			// manual_swap nodes: clear order slots so CanAcceptOrders and the
+			// multi-order queue don't see stale IDs. Standard consume/produce
+			// nodes manage order slots via complex order progression.
+			// Note: TypeRetrieve and TypeIngest are mutually exclusive — manual_swap
+			// nodes use TypeRetrieve only, never TypeIngest.
+			if claim.SwapMode == "manual_swap" {
+				if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
+					log.Printf("update runtime orders for node %d: %v", node.ID, err)
+				}
 			}
 
 			// Keep-staged: immediately pre-populate inbound staging for next swap

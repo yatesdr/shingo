@@ -73,6 +73,13 @@ func (s *CoreDataService) Handle(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		s.handleOrderStatusRequest(env, &req)
+	case protocol.SubjectClaimSync:
+		var sync protocol.ClaimSync
+		if err := json.Unmarshal(p.Body, &sync); err != nil {
+			log.Printf("core_handler: decode claim sync body: %v", err)
+			return
+		}
+		s.handleClaimSync(env, &sync)
 	default:
 		log.Printf("core_handler: unhandled data subject: %s", p.Subject)
 	}
@@ -253,4 +260,32 @@ func (s *CoreDataService) handleOrderStatusRequest(env *protocol.Envelope, req *
 		resp.Orders = append(resp.Orders, snap)
 	}
 	s.resp.replyData(env, protocol.SubjectOrderStatusResponse, resp)
+}
+
+func (s *CoreDataService) handleClaimSync(env *protocol.Envelope, sync *protocol.ClaimSync) {
+	stationID := sync.StationID
+	if stationID == "" {
+		stationID = env.Src.Station
+	}
+	log.Printf("core_handler: claim sync from %s: %d claims", stationID, len(sync.Claims))
+
+	// Convert protocol entries to store entries
+	var entries []store.DemandRegistryEntry
+	for _, c := range sync.Claims {
+		for _, pc := range c.AllowedPayloadCodes {
+			entries = append(entries, store.DemandRegistryEntry{
+				StationID:    stationID,
+				CoreNodeName: c.CoreNodeName,
+				Role:         c.Role,
+				PayloadCode:  pc,
+				OutboundDest: c.OutboundDestination,
+			})
+		}
+	}
+
+	if err := s.db.SyncDemandRegistry(stationID, entries); err != nil {
+		log.Printf("core_handler: sync demand registry for %s: %v", stationID, err)
+		return
+	}
+	log.Printf("core_handler: demand registry updated for %s: %d entries", stationID, len(entries))
 }

@@ -40,7 +40,7 @@ func (s *BinManifestService) SyncUOP(binID int64, remaining int) error {
 }
 
 // SetForProduction sets a bin's manifest and UOP from a payload template.
-// Used when a produce node finalizes a bin or a bin_loader loads a bin.
+// Used when a produce node finalizes a bin or a manual_swap node loads a bin.
 func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payloadCode string, uop int) error {
 	if err := s.db.SetBinManifest(binID, manifestJSON, payloadCode, uop); err != nil {
 		return fmt.Errorf("set manifest bin %d: %w", binID, err)

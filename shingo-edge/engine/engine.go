@@ -118,6 +118,11 @@ func (e *Engine) Start() {
 	// Reconcile any in-progress changeover against order statuses
 	e.restoreChangeoverState()
 
+	// NOTE: StartupSweepManualSwap is NOT called here because sendFn
+	// is not wired yet (Start runs before SetSendFunc in main.go).
+	// It is called from the SetRegisteredHandler callback after
+	// registration ack confirms Core connectivity.
+
 	// Start WarLink poller and counter polling
 	if e.cfg.WarLink.Enabled {
 		e.plcMgr.StartWarLinkPoller()

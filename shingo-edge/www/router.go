@@ -175,6 +175,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/process-nodes/{id}/load-bin", h.apiLoadBin)
 		r.Post("/process-nodes/{id}/clear-bin", h.apiClearBin)
 		r.Post("/process-nodes/{id}/request-empty", h.apiRequestEmptyBin)
+		r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
 		r.Get("/node/{name}/children", h.apiNodeChildren)
 		r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
 		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)

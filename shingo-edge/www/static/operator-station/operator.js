@@ -92,7 +92,7 @@ function findNodeByID(id) {
 function renderHeader() {
     const style = view.current_style ? view.current_style.name : 'No Style';
     const target = view.target_style ? (' \u2192 ' + view.target_style.name) : '';
-    headerInfo.textContent = view.process.name + ' \u2014 ' + style + target;
+    headerInfo.textContent = view.process.name + ' - ' + style + target;
 
     headerActions.innerHTML = '';
 
@@ -202,6 +202,19 @@ function renderGrid() {
         return;
     }
 
+    // Single manual_swap node: render payload board instead of grid
+    const manualSwapNodes = nodes.filter(function(n) {
+        return n.active_claim && n.active_claim.swap_mode === 'manual_swap';
+    });
+    if (manualSwapNodes.length === 1 && nodes.length === 1) {
+        grid.classList.add('os-board-mode');
+        grid.style.removeProperty('--os-cols');
+        grid.style.removeProperty('--os-rows');
+        renderPayloadBoard(manualSwapNodes[0]);
+        return;
+    }
+
+    grid.classList.remove('os-board-mode');
     const { cols, rows } = gridDimensions();
     grid.style.setProperty('--os-cols', cols);
     grid.style.setProperty('--os-rows', rows);
@@ -209,6 +222,133 @@ function renderGrid() {
     for (const entry of nodes) {
         grid.appendChild(createNodeButton(entry));
     }
+}
+
+// ─── Payload Board (single manual_swap node) ───
+
+function renderPayloadBoard(entry) {
+    const claim = entry.active_claim;
+    const runtime = entry.runtime || {};
+    const remaining = runtime.remaining_uop != null ? runtime.remaining_uop : 0;
+    const binState = entry.bin_state;
+    const hasBin = binState && binState.occupied;
+    const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
+    const binPayload = binState && binState.payload_code ? binState.payload_code : '';
+    const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
+
+    // Node info bar
+    var infoBar = el('div', { className: 'os-board-header' });
+    infoBar.innerHTML =
+        '<div>' +
+            '<div style="font-size:24px;font-weight:700;color:#fff">' + esc(entry.node.name) + ' - ' + roleLabel + '</div>' +
+            '<div style="font-size:13px;color:#888;margin-top:4px">Manual Swap | ' +
+                (claim.allowed_payload_codes ? claim.allowed_payload_codes.length : 0) + ' payloads configured</div>' +
+        '</div>' +
+        '<div style="text-align:right">' +
+            '<div style="font-size:16px;font-weight:600;color:#fff">Bin: ' + esc(binLabel) + '</div>' +
+            (binPayload ? '<div style="font-size:13px;color:#888">' + esc(binPayload) + ' | UOP: ' + remaining + '</div>' : '') +
+            '<div style="display:inline-block;font-size:12px;font-weight:700;padding:4px 12px;border-radius:4px;margin-top:4px;' +
+                (hasBin ? (remaining > 0 ? 'background:#1a3a1a;color:#6f6' : 'background:#3a1a1a;color:#f88') : 'background:#2a2a1a;color:#ff6') + '">' +
+                (hasBin ? (remaining > 0 ? 'LOADED' : 'EMPTY') : 'AWAITING BIN') +
+            '</div>' +
+        '</div>';
+    grid.appendChild(infoBar);
+
+    // Build payload cards
+    var allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
+        ? claim.allowed_payload_codes
+        : (claim.payload_code ? [claim.payload_code] : []);
+
+    var activeOrders = (entry.orders || []).filter(function(o) {
+        return o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed';
+    });
+    var hasDemand = activeOrders.length > 0;
+
+    // Card container
+    var cardGrid = el('div', { className: 'os-board-cards' });
+    var cols = allowed.length <= 3 ? allowed.length : (allowed.length <= 6 ? 3 : 4);
+    cardGrid.style.setProperty('--os-board-cols', cols);
+
+    var queuePos = 1;
+    allowed.forEach(function(code) {
+        var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
+        var isActive = payloadOrders.length > 0 || (hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+        var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
+        var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
+        var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });
+
+        var card = el('div', { className: 'os-board-card' });
+
+        // Card state class
+        if (payloadDelivered) {
+            card.classList.add('os-board-delivered');
+        } else if (payloadInTransit) {
+            card.classList.add('os-board-transit');
+        } else if (isActive) {
+            card.classList.add('os-board-queued');
+        } else {
+            card.classList.add('os-board-nodemand');
+        }
+
+        // Payload code
+        card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
+
+        // Status tag
+        var statusText, statusClass;
+        if (payloadDelivered) {
+            statusText = 'DELIVERED'; statusClass = 'os-board-tag-delivered';
+        } else if (payloadInTransit) {
+            statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit';
+        } else if (payloadQueued) {
+            statusText = 'QUEUED'; statusClass = 'os-board-tag-queued';
+        } else {
+            statusText = 'NO DEMAND'; statusClass = 'os-board-tag-nodemand';
+        }
+        var tag = el('span', { className: 'os-board-tag ' + statusClass, textContent: statusText });
+        card.appendChild(tag);
+
+        // Detail text
+        var detailText = '';
+        if (payloadDelivered) {
+            detailText = 'Tap to ' + (claim.role === 'produce' ? 'load' : 'unload');
+        } else if (payloadInTransit) {
+            detailText = 'Robot en route';
+        } else if (payloadQueued) {
+            detailText = 'Waiting for robot';
+        } else {
+            detailText = 'No kanban signal';
+        }
+        card.appendChild(el('div', { className: 'os-board-detail', textContent: detailText }));
+
+        // Queue position badge
+        if (isActive) {
+            var badge = el('span', { className: 'os-board-pos', textContent: String(queuePos) });
+            if (payloadDelivered) badge.classList.add('os-board-pos-delivered');
+            else if (payloadInTransit) badge.classList.add('os-board-pos-transit');
+            else badge.classList.add('os-board-pos-queued');
+            card.appendChild(badge);
+            queuePos++;
+        }
+
+        // Click handler: only delivered cards are interactive
+        if (payloadDelivered) {
+            card.style.cursor = 'pointer';
+            card.addEventListener('click', function() {
+                openLoadBin(entry.node.id, [code], claim.uop_capacity || 0);
+            });
+        }
+
+        cardGrid.appendChild(card);
+    });
+
+    if (allowed.length === 0) {
+        cardGrid.appendChild(el('div', {
+            style: 'color:#666;font-style:italic;padding:24px;text-align:center;grid-column:1/-1',
+            textContent: 'No payloads configured'
+        }));
+    }
+
+    grid.appendChild(cardGrid);
 }
 
 function claimedNodes() {
@@ -251,12 +391,12 @@ function createNodeButton(entry) {
     const icon = statusIcon(entry);
     if (icon) btn.appendChild(el('span', { className: 'os-node-icon', textContent: icon }));
 
-    if (claim && claim.role === 'bin_loader') {
+    if (claim && claim.swap_mode === 'manual_swap') {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? binState.bin_label : '';
         const binPayload = binState && binState.payload_code ? binState.payload_code : '';
         const hasQueued = (entry.orders || []).some(o => o.status === 'queued');
-        // Bin loader: show what's loaded or awaiting
+        // Manual swap: show what's loaded or awaiting
         let statusText;
         if (hasQueued) {
             statusText = 'AWAITING STOCK';
@@ -275,7 +415,7 @@ function createNodeButton(entry) {
             labelEl.style.cssText = 'font-size:14px;font-weight:600;color:#fff';
             btn.appendChild(labelEl);
         } else {
-            btn.appendChild(el('span', { className: 'os-node-payload', textContent: 'Bin Loader' }));
+            btn.appendChild(el('span', { className: 'os-node-payload', textContent: 'Manual Swap' }));
         }
     } else {
         // Remaining count
@@ -305,7 +445,7 @@ function nodeColorClass(entry) {
     const claim = entry.active_claim;
     if (!claim) return 'os-unclaimed';
     const remaining = entry.runtime ? entry.runtime.remaining_uop : 0;
-    if (claim.role === 'bin_loader') {
+    if (claim.swap_mode === 'manual_swap') {
         const hasQueued = entry.orders && entry.orders.some(o => o.status === 'queued');
         if (hasQueued) return 'os-mid'; // amber for awaiting stock
         return remaining > 0 ? 'os-full' : 'os-empty';
@@ -325,9 +465,9 @@ function isReplenishing(entry) {
 
 function statusIcon(entry) {
     if (entry.changeover_task && entry.changeover_task.state !== 'switched' && entry.changeover_task.state !== 'verified') {
-        return '\u{1F527}'; // wrench
+        return '[CO]'; // changeover
     }
-    if (isReplenishing(entry)) return '\u{1F504}'; // counterclockwise arrows
+    if (isReplenishing(entry)) return '[REP]'; // replenishing
     return null;
 }
 
@@ -337,20 +477,8 @@ function openModal(nodeID) {
     const entry = findNodeByID(nodeID);
     if (!entry) return;
 
-    // Bin loader: if bin present go to load form, if vacant show modal with request empty
-    if (entry.active_claim && entry.active_claim.role === 'bin_loader') {
-        const binState = entry.bin_state;
-        const hasBin = binState && binState.occupied;
-        if (hasBin) {
-            const claim = entry.active_claim;
-            const allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
-                ? claim.allowed_payload_codes
-                : (claim.payload_code ? [claim.payload_code] : []);
-            openLoadBin(entry.node.id, allowed, claim.uop_capacity || 0);
-            return;
-        }
-        // Vacant — fall through to modal with REQUEST EMPTY action
-    }
+    // Manual swap: always show the demand queue modal
+    // (no longer shortcuts to load form — the queue IS the primary view)
     selectedNodeID = nodeID;
     renderModal(entry);
     nodeModal.hidden = false;
@@ -375,17 +503,18 @@ function renderModal(entry) {
     html += '<div class="os-modal-header">';
     html += '<div class="os-modal-node-name">' + esc(entry.node.name) + '</div>';
 
-    if (claim && claim.role === 'bin_loader') {
+    if (claim && claim.swap_mode === 'manual_swap') {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
         const binPayload = binState && binState.payload_code ? binState.payload_code : '';
-        html += '<div class="os-modal-payload">Bin: ' + esc(binLabel) + (binPayload ? ' \u2014 ' + esc(binPayload) : '') + '</div>';
+        const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
+        html += '<div class="os-modal-payload">' + roleLabel + ' - Bin: ' + esc(binLabel) + (binPayload ? ' (' + esc(binPayload) + ')' : '') + '</div>';
         html += '<div class="os-modal-fill-row">';
         html += '<div class="os-modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UOP)' : 'EMPTY') + '</div>';
         html += '</div>';
     } else {
         const binState = entry.bin_state;
-        const binLabel = binState && binState.bin_label ? ' \u2014 Bin: ' + esc(binState.bin_label) : '';
+        const binLabel = binState && binState.bin_label ? ' - Bin: ' + esc(binState.bin_label) : '';
         html += '<div class="os-modal-payload">' + esc(claim ? claim.payload_code || 'Unassigned' : 'No claim') + binLabel + '</div>';
         // Fill bar
         html += '<div class="os-modal-fill-row">';
@@ -400,14 +529,14 @@ function renderModal(entry) {
         const statusText = activeOrders.length > 0
             ? activeOrders.map(o => o.order_type + ': ' + o.status).join(', ')
             : 'Order in progress';
-        html += '<div class="os-modal-status">\u{1F504} ' + esc(statusText) + '</div>';
+        html += '<div class="os-modal-status">[REP] ' + esc(statusText) + '</div>';
     } else {
         html += '<div class="os-modal-status">No active orders</div>';
     }
 
     // Changeover info
     if (task) {
-        html += '<div class="os-modal-co-info">\u{1F527} Changeover: ' + esc(task.situation) + ' \u2014 ' + esc(task.state) + '</div>';
+        html += '<div class="os-modal-co-info">[CO] Changeover: ' + esc(task.situation) + ' - ' + esc(task.state) + '</div>';
     }
     html += '</div>'; // close header
 
@@ -417,36 +546,115 @@ function renderModal(entry) {
     html += '<div class="os-modal-actions">';
 
     if (claim) {
-        if (claim.role === 'bin_loader') {
+        if (claim.swap_mode === 'manual_swap') {
+            // ─── Demand Queue Cards ───
             const binState = entry.bin_state;
             const hasBin = binState && binState.occupied;
             const allowed = (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0)
                 ? claim.allowed_payload_codes
                 : (claim.payload_code ? [claim.payload_code] : []);
 
-            // State machine: delivered → confirm, in-flight → wait, no bin → request, has bin → load
-            const activeOrders = (entry.orders || []).filter(o => o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+            const activeOrders = (entry.orders || []).filter(o =>
+                o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+            const hasDemand = activeOrders.length > 0;
             const delivered = activeOrders.find(o => o.status === 'delivered');
-            const inFlight = !delivered && activeOrders.find(o => o.status !== 'delivered' && o.status !== 'queued');
+            const inTransit = activeOrders.find(o => o.status === 'in_transit' || o.status === 'acknowledged');
+            const queued = activeOrders.filter(o => o.status === 'queued' || o.status === 'pending');
 
+            // Demand queue section
+            html += '<div class="os-demand-queue">';
+            html += '<div style="font-size:13px;color:#999;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">';
+            html += claim.role === 'produce' ? 'Load Queue' : 'Unload Queue';
+            html += '</div>';
+
+            // Order status summary
             if (delivered) {
-                // Bin delivered but not yet confirmed — operator must confirm
+                html += '<div style="background:#1a3a1a;border:1px solid #2a5a2a;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:8px">';
+                html += '<span style="font-size:14px;font-weight:700;color:#6f6">[READY]</span>';
+                html += '<span style="color:#6f6;font-weight:600">Bin delivered - ready for ' + (claim.role === 'produce' ? 'loading' : 'unloading') + '</span>';
+                html += '</div>';
+            } else if (inTransit) {
+                html += '<div style="background:#2a2a1a;border:1px solid #5a5a2a;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:8px">';
+                html += '<span style="font-size:14px;font-weight:700;color:#ff6">[IN TRANSIT]</span>';
+                html += '<span style="color:#ff6;font-weight:600">Robot in transit</span>';
+                html += '</div>';
+            }
+            if (queued.length > 0) {
+                html += '<div style="color:#999;font-size:12px;margin-bottom:10px">' + queued.length + ' order' + (queued.length > 1 ? 's' : '') + ' queued</div>';
+            }
+
+            // Payload cards — each allowed payload as a demand card with per-payload status
+            var queuePos = 1;
+            allowed.forEach(function(code) {
+                // Match orders to this specific payload (fall back to any-demand for legacy orders without payload_code)
+                var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
+                var isActive = payloadOrders.length > 0 || (hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+                var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
+                var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
+                var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });
+
+                var cardBg, cardBorder, cardOpacity, cardCursor;
+                if (payloadDelivered) {
+                    cardBg = '#1a3a1a'; cardBorder = '#2a5a2a'; cardOpacity = '1'; cardCursor = 'pointer';
+                } else if (payloadInTransit) {
+                    cardBg = '#2a2a1a'; cardBorder = '#5a5a2a'; cardOpacity = '1'; cardCursor = 'default';
+                } else if (isActive) {
+                    cardBg = '#1a2a4a'; cardBorder = '#3a5a8a'; cardOpacity = '1'; cardCursor = 'default';
+                } else {
+                    cardBg = '#1a1a1a'; cardBorder = '#333'; cardOpacity = '0.5'; cardCursor = 'default';
+                }
+                var cardStyle = 'background:' + cardBg + ';border:1px solid ' + cardBorder + ';opacity:' + cardOpacity + ';cursor:' + cardCursor;
+                html += '<div class="os-demand-card" style="border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;' + cardStyle + '"';
+                // Only delivered cards are interactive — kanban drives demand, operator acts on delivery
+                if (payloadDelivered) {
+                    html += ' data-action="demand-card:' + esc(code) + '"';
+                }
+                html += '>';
+
+                // Left side: queue position + payload code
+                html += '<div style="display:flex;align-items:center;gap:12px">';
+                if (isActive) {
+                    html += '<span style="background:' + (payloadDelivered ? '#2a5a2a' : payloadInTransit ? '#5a5a2a' : '#3a5a8a') + ';color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">' + queuePos + '</span>';
+                    queuePos++;
+                } else {
+                    html += '<span style="width:28px"></span>';
+                }
+                html += '<span style="font-size:18px;font-weight:600;color:' + (isActive ? '#fff' : '#666') + '">' + esc(code) + '</span>';
+                html += '</div>';
+
+                // Right side: per-payload status indicator
+                html += '<div style="font-size:12px;color:' + (payloadDelivered ? '#6f6' : payloadInTransit ? '#ff6' : isActive ? '#8af' : '#555') + '">';
+                if (payloadDelivered) {
+                    html += 'DELIVERED';
+                } else if (payloadInTransit) {
+                    html += 'IN TRANSIT';
+                } else if (payloadQueued) {
+                    html += 'QUEUED';
+                } else if (isActive) {
+                    html += 'active demand';
+                } else {
+                    html += 'no demand';
+                }
+                html += '</div>';
+                html += '</div>';
+            });
+
+            if (allowed.length === 0) {
+                html += '<div style="color:#666;font-style:italic;padding:12px">No payloads configured</div>';
+            }
+
+            html += '</div>'; // close demand queue
+
+            // Action buttons
+            if (delivered) {
                 html += actionBtn('CONFIRM DELIVERY', 'request', true,
                     '/api/confirm-delivery/' + delivered.id);
-            } else if (inFlight) {
-                html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
-            } else if (!hasBin) {
-                allowed.forEach(code => {
-                    html += actionBtn('REQUEST EMPTY: ' + code, 'request', true,
-                        '/api/process-nodes/' + entry.node.id + '/request-empty|' + code);
-                });
-            } else {
-                _pendingLoadData = {
-                    nodeID: entry.node.id,
-                    allowed: allowed,
-                    capacity: claim.uop_capacity || 0
-                };
-                html += actionBtn('LOAD BIN', 'load-bin', true, 'load-bin');
+            }
+
+            // CLEAR BIN — available when bin is loaded (for unloader ClearBin or mis-load fix)
+            if (hasBin && remaining > 0) {
+                html += actionBtn('CLEAR BIN', 'empty-tools', true,
+                    '/api/process-nodes/' + entry.node.id + '/clear-bin');
             }
         } else {
             // Determine order state for this node
@@ -553,6 +761,19 @@ async function handleModalAction(evt) {
         return;
     }
 
+    // Demand card tapped — only delivered cards are interactive (kanban drives demand)
+    if (action.startsWith('demand-card:')) {
+        const code = action.split(':')[1];
+        const entry = selectedNodeID ? findNodeByID(selectedNodeID) : null;
+        if (!entry) return;
+        const claim = entry.active_claim;
+
+        // Delivered card → open load form for this specific payload
+        closeModal();
+        openLoadBin(entry.node.id, [code], claim ? claim.uop_capacity || 0 : 0);
+        return;
+    }
+
     if (action.startsWith('keypad:')) {
         const parts = action.split(':');
         const nodeID = parseInt(parts[1], 10);
@@ -643,7 +864,7 @@ document.getElementById('keypad-ok').addEventListener('click', async () => {
 });
 
 
-// ─── Bin Load (Bin Loader nodes) ───
+// ─── Bin Load (Manual Swap nodes) ───
 
 let _pendingLoadData = null;
 let loadBinState = null;

@@ -60,6 +60,10 @@ const (
 	SubjectOrderStatusResponse = "order.status_response"
 
 	SubjectNodeStructureChanged = "node.structure_changed"
+
+	// Kanban demand wiring (Phase 2)
+	SubjectClaimSync   = "claim.sync"    // Edge -> Core: manual_swap claim config
+	SubjectDemandSignal = "demand.signal" // Core -> Edge: kanban demand trigger
 )
 
 // Roles for Address.Role.

@@ -208,6 +208,17 @@ func main() {
 				hb.RequestNodeSync()
 				hb.RequestCatalogSync()
 			}
+			// Sync manual_swap claims to Core's demand registry, then sweep
+			// to create initial orders for any payloads missing demand.
+			// On re-registration (uptime > 30), only ClaimSync — the sweep
+			// is unnecessary because tryAutoRequest dedup would no-op, and
+			// repeated delete+insert on demand_registry is churn on flaky links.
+			go func() {
+				eng.SendClaimSync()
+				if eng.Uptime() <= 30 {
+					eng.StartupSweepManualSwap()
+				}
+			}()
 		})
 		edgeHandler.SetRegisterRequestHandler(func() {
 			hb.SendRegister()
@@ -217,6 +228,9 @@ func main() {
 		})
 		edgeHandler.SetNodeStructureChangedHandler(func() {
 			hb.RequestNodeSync()
+		})
+		edgeHandler.SetDemandSignalHandler(func(signal *protocol.DemandSignal) {
+			go eng.HandleDemandSignal(signal)
 		})
 
 		if err := eng.StartupReconcile(); err != nil {

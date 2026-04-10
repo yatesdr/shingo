@@ -113,14 +113,14 @@ func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *pro
 func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, payloadCode string, autoConfirm bool) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
+
 	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
 		processNodeID, retrieveEmpty,
-		quantity, deliveryNode, stagingNode, "", loadType, autoConfirm)
+		quantity, deliveryNode, stagingNode, "", loadType, autoConfirm, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
-
-	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:     orderUUID,
@@ -147,7 +147,7 @@ func (m *Manager) CreateStoreOrder(processNodeID *int64, quantity int64, sourceN
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeStore,
 		processNodeID, false,
-		quantity, "", "", sourceNode, "", false)
+		quantity, "", "", sourceNode, "", false, "")
 	if err != nil {
 		return nil, fmt.Errorf("create store order: %w", err)
 	}
@@ -171,14 +171,14 @@ func (m *Manager) SubmitStoreOrder(orderID int64, finalCount int64) error {
 func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
+
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,
-		quantity, deliveryNode, "", sourceNode, "", false)
+		quantity, deliveryNode, "", sourceNode, "", false, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
 	}
-
-	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:    orderUUID,
@@ -202,14 +202,14 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
+
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,
-		quantity, deliveryNode, "", sourceNode, "", false)
+		quantity, deliveryNode, "", sourceNode, "", false, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
 	}
-
-	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
 
 	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
 		OrderUUID:    orderUUID,
@@ -239,9 +239,11 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 		return nil, fmt.Errorf("marshal steps: %w", err)
 	}
 
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
+
 	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
 		processNodeID, false,
-		quantity, deliveryNode, "", "", "", false)
+		quantity, deliveryNode, "", "", "", false, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create complex order: %w", err)
 	}
@@ -249,8 +251,6 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 	if err := m.db.UpdateOrderStepsJSON(orderID, string(stepsJSON)); err != nil {
 		return nil, fmt.Errorf("store steps: %w", err)
 	}
-
-	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
 
 	env, envErr := m.sender.build(protocol.TypeComplexOrderRequest, &protocol.ComplexOrderRequest{
 		OrderUUID:   orderUUID,
@@ -274,7 +274,7 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeIngest,
 		processNodeID, false,
-		quantity, "", "", sourceNode, "", autoConfirm)
+		quantity, "", "", sourceNode, "", autoConfirm, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create ingest order: %w", err)
 	}

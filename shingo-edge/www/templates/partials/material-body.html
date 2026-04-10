@@ -32,8 +32,8 @@
                     </td>
                     <td>
                         {{if .ActiveClaim}}
-                            {{if eq .ActiveClaim.Role "bin_loader"}}
-                                <span class="status-badge">Bin Loader</span>
+                            {{if eq .ActiveClaim.SwapMode "manual_swap"}}
+                                <span class="status-badge">Manual Swap</span>
                                 {{if .BinState}}{{if .BinState.PayloadCode}}
                                     <strong>{{.BinState.PayloadCode}}</strong>
                                 {{else}}
@@ -51,7 +51,7 @@
                     </td>
                     <td>
                         {{if .ActiveClaim}}
-                            {{if eq .ActiveClaim.Role "bin_loader"}}
+                            {{if eq .ActiveClaim.SwapMode "manual_swap"}}
                                 {{if .Runtime}}
                                     {{if gt .Runtime.RemainingUOP 0}}<strong>{{.Runtime.RemainingUOP}}</strong>{{else}}<span style="color:var(--text-muted)">0</span>{{end}}
                                 {{else}}--{{end}}
@@ -80,7 +80,7 @@
                             {{if eq .ActiveClaim.Role "produce"}}
                             <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Request empty bin">Request Empty</button>
                             <button class="btn btn-sm btn-primary" hx-post="/api/process-nodes/{{.Node.ID}}/finalize" hx-swap="none" title="Finalize manifest count and release full bin to storage">Finalize &amp; Release</button>
-                            {{else if eq .ActiveClaim.Role "bin_loader"}}
+                            {{else if eq .ActiveClaim.SwapMode "manual_swap"}}
                             {{if not .BinState}}
                             <button class="btn btn-sm" onclick='openRequestEmptyModal({{.Node.ID}}, {{json .ActiveClaim.AllowedPayloads}})' title="Request an empty bin">Request Empty</button>
                             {{else if not .BinState.Occupied}}

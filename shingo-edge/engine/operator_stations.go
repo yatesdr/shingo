@@ -1110,6 +1110,10 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 // CanAcceptOrders reports whether a process node can accept new orders.
 // Returns false with a human-readable reason if the node is unavailable.
 // Consolidates all availability checks: active/staged order, changeover.
+//
+// For manual_swap nodes, the serial order constraint (ActiveOrderID/StagedOrderID)
+// is skipped — manual_swap uses a multi-order queue where multiple non-terminal
+// orders are allowed simultaneously. The changeover check still applies.
 func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	// Check changeover first — applies regardless of runtime state.
 	node, err := e.db.GetProcessNode(nodeID)
@@ -1122,6 +1126,14 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	if err != nil || runtime == nil {
 		return true, "" // no runtime state = available
 	}
+
+	// manual_swap nodes use a multi-order queue — skip the serial order constraint.
+	if runtime.ActiveClaimID != nil {
+		if claim, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID); err == nil && claim.SwapMode == "manual_swap" {
+			return true, ""
+		}
+	}
+
 	for _, orderID := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
 		if orderID == nil {
 			continue
@@ -1269,10 +1281,10 @@ func (e *Engine) loadActiveNode(nodeID int64) (*store.ProcessNode, *store.Proces
 	return node, runtime, claim, nil
 }
 
-// LoadBin marks a bin at a bin_loader node as loaded with the given manifest.
+// LoadBin marks a bin at a manual_swap node as loaded with the given manifest.
 // Calls Core's HTTP API directly to set the manifest on the existing bin at
 // that node. No transport order is created — the bin stays in place until a
-// downstream consume node pulls it.
+// move order sends it to OutboundDestination.
 func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -1281,8 +1293,8 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	if claim == nil {
 		return fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	if claim.Role != "bin_loader" {
-		return fmt.Errorf("node %s is not a bin_loader node", node.Name)
+	if claim.SwapMode != "manual_swap" {
+		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
 	if len(manifest) == 0 {
 		return fmt.Errorf("manifest is empty")
@@ -1306,6 +1318,31 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	}
 	if !slices.Contains(allowed, payloadCode) {
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+	}
+
+	// Server-side demand guard: require an active order matching this payload.
+	// Prevents API bypass of the HMI demand check that protects storage capacity.
+	activeOrders, err := e.db.ListActiveOrdersByProcessNode(nodeID)
+	if err != nil {
+		return fmt.Errorf("check demand at node %s: %w", node.Name, err)
+	}
+	if len(activeOrders) == 0 {
+		return fmt.Errorf("no active demand at node %s — cannot load without a pending order", node.Name)
+	}
+	// Per-payload demand check: if orders carry payload_code, verify a match.
+	hasPayloadMatch := false
+	hasLegacy := false
+	for _, o := range activeOrders {
+		if o.PayloadCode == payloadCode {
+			hasPayloadMatch = true
+			break
+		}
+		if o.PayloadCode == "" {
+			hasLegacy = true
+		}
+	}
+	if !hasPayloadMatch && !hasLegacy {
+		return fmt.Errorf("no active demand for payload %q at node %s", payloadCode, node.Name)
 	}
 
 	if uopCount <= 0 {
@@ -1336,7 +1373,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	if claim.OutboundDestination != "" {
 		order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, node.CoreNodeName, claim.OutboundDestination)
 		if err != nil {
-			log.Printf("bin_loader: move to outbound for node %s: %v", node.Name, err)
+			log.Printf("manual_swap: move to outbound for node %s: %v", node.Name, err)
 		} else {
 			_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
 		}
@@ -1345,8 +1382,8 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	return nil
 }
 
-// ClearBin clears the manifest on the bin at a bin_loader node, resetting it
-// to empty. Used to fix mis-loads.
+// ClearBin clears the manifest on the bin at a manual_swap node, resetting it
+// to empty. Used by unloaders after physical removal and for fixing mis-loads.
 func (e *Engine) ClearBin(nodeID int64) error {
 	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
@@ -1355,8 +1392,8 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	if claim == nil {
 		return fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	if claim.Role != "bin_loader" {
-		return fmt.Errorf("node %s is not a bin_loader node", node.Name)
+	if claim.SwapMode != "manual_swap" {
+		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
 	if err := e.coreClient.ClearBin(node.CoreNodeName); err != nil {
 		return fmt.Errorf("clear bin: %w", err)
@@ -1367,7 +1404,7 @@ func (e *Engine) ClearBin(nodeID int64) error {
 }
 
 // RequestEmptyBin requests an empty bin compatible with the given payload to be
-// delivered to a bin_loader node. Core queues the order if no empties are
+// delivered to a manual_swap produce node. Core queues the order if no empties are
 // immediately available. payloadCode determines bin type compatibility.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order, error) {
 	node, _, claim, err := e.loadActiveNode(nodeID)
@@ -1377,8 +1414,11 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	if claim.Role != "bin_loader" {
-		return nil, fmt.Errorf("node %s is not a bin_loader node", node.Name)
+	if claim.SwapMode != "manual_swap" {
+		return nil, fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	}
+	if claim.Role != "produce" {
+		return nil, fmt.Errorf("node %s: only produce nodes request empty bins", node.Name)
 	}
 	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
@@ -1414,16 +1454,261 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order
 	return order, nil
 }
 
-// tryAutoRequestEmpty attempts to auto-request an empty bin for a bin_loader node.
-// Fails silently on any error — the next trigger will retry.
-func (e *Engine) tryAutoRequestEmpty(node *store.ProcessNode, claim *store.StyleNodeClaim) {
-	if claim.AutoRequestPayload == "" {
-		return
-	}
-	order, err := e.RequestEmptyBin(node.ID, claim.AutoRequestPayload)
+// RequestFullBin requests a full bin of the given payload to be delivered to a
+// manual_swap consume node. Core queues the order if no full bins of that
+// payload are available. Unlike RequestEmptyBin, this does NOT check node occupancy
+// — the unloader expects full bins to arrive.
+func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*store.Order, error) {
+	node, _, claim, err := e.loadActiveNode(nodeID)
 	if err != nil {
-		log.Printf("bin_loader auto-request for node %s: %v", node.Name, err)
+		return nil, err
+	}
+	if claim == nil {
+		return nil, fmt.Errorf("node %s has no active claim", node.Name)
+	}
+	if claim.SwapMode != "manual_swap" {
+		return nil, fmt.Errorf("node %s is not a manual_swap node", node.Name)
+	}
+	if claim.Role != "consume" {
+		return nil, fmt.Errorf("node %s: only consume nodes request full bins", node.Name)
+	}
+	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
+		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
+	}
+
+	// Validate payload code against allowed list
+	if payloadCode == "" {
+		return nil, fmt.Errorf("no payload code specified")
+	}
+	if !slices.Contains(claim.AllowedPayloads(), payloadCode) {
+		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
+	}
+
+	// Create retrieve order for a full bin — Core queues if none available.
+	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	order, err := e.orderMgr.CreateRetrieveOrder(
+		&nodeID, false, 1, node.CoreNodeName, "",
+		"standard", payloadCode, autoConfirm,
+	)
+	if err != nil {
+		return nil, err
+	}
+	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+	return order, nil
+}
+
+// HandleDemandSignal processes a kanban demand signal from Core. It finds
+// the local manual_swap node matching the signal's CoreNodeName and triggers
+// tryAutoRequest to create orders for the demanded payload if none exist.
+func (e *Engine) HandleDemandSignal(signal *protocol.DemandSignal) {
+	processes, err := e.db.ListProcesses()
+	if err != nil {
+		log.Printf("demand signal: list processes: %v", err)
 		return
 	}
-	log.Printf("bin_loader auto-request: created order %d for node %s (payload %s)", order.ID, node.Name, claim.AutoRequestPayload)
+
+	for _, proc := range processes {
+		if proc.ActiveStyleID == nil {
+			continue
+		}
+		claims, err := e.db.ListStyleNodeClaims(*proc.ActiveStyleID)
+		if err != nil {
+			continue
+		}
+		for _, claim := range claims {
+			if claim.SwapMode != "manual_swap" || claim.CoreNodeName != signal.CoreNodeName {
+				continue
+			}
+			nodes, err := e.db.ListProcessNodesByProcess(proc.ID)
+			if err != nil {
+				continue
+			}
+			for _, node := range nodes {
+				if node.CoreNodeName != claim.CoreNodeName {
+					continue
+				}
+				claimCopy := claim
+				e.tryAutoRequest(&node, &claimCopy)
+				log.Printf("demand signal: triggered auto-request for node %s (payload %s, role %s)",
+					node.Name, signal.PayloadCode, signal.Role)
+				return // found the matching node, done
+			}
+		}
+	}
+	log.Printf("demand signal: no matching manual_swap node for %s", signal.CoreNodeName)
+}
+
+// SendClaimSync builds a ClaimSync message from all manual_swap claims across
+// all active processes and sends it to Core. Core uses this to populate its
+// demand registry for kanban wiring.
+//
+// Called on startup (after registration ack) and when claim configs change.
+func (e *Engine) SendClaimSync() {
+	stationID := e.cfg.StationID()
+	processes, err := e.db.ListProcesses()
+	if err != nil {
+		log.Printf("claim sync: list processes: %v", err)
+		return
+	}
+
+	var claims []protocol.ClaimSyncEntry
+	for _, proc := range processes {
+		if proc.ActiveStyleID == nil {
+			continue
+		}
+		nodeClaims, err := e.db.ListStyleNodeClaims(*proc.ActiveStyleID)
+		if err != nil {
+			log.Printf("claim sync: list claims for style %d: %v", *proc.ActiveStyleID, err)
+			continue
+		}
+		for _, c := range nodeClaims {
+			if c.SwapMode != "manual_swap" {
+				continue
+			}
+			payloads := c.AllowedPayloads()
+			if len(payloads) == 0 {
+				continue
+			}
+			claims = append(claims, protocol.ClaimSyncEntry{
+				CoreNodeName:        c.CoreNodeName,
+				Role:                c.Role,
+				AllowedPayloadCodes: payloads,
+				OutboundDestination: c.OutboundDestination,
+			})
+		}
+	}
+
+	sync := &protocol.ClaimSync{
+		StationID: stationID,
+		Claims:    claims,
+	}
+
+	env, err := protocol.NewDataEnvelope(
+		protocol.SubjectClaimSync,
+		protocol.Address{Role: protocol.RoleEdge, Station: stationID},
+		protocol.Address{Role: protocol.RoleCore},
+		sync,
+	)
+	if err != nil {
+		log.Printf("claim sync: build envelope: %v", err)
+		return
+	}
+	if err := e.SendEnvelope(env); err != nil {
+		log.Printf("claim sync: send: %v", err)
+		return
+	}
+	log.Printf("claim sync: sent %d claims to core", len(claims))
+}
+
+// StartupSweepManualSwap iterates all manual_swap claims and ensures orders
+// exist for every allowed payload. This kick-starts the kanban loop after a
+// restart — tryAutoRequest is purely event-driven and won't fire until an
+// order completes, so without this sweep, a freshly restarted Edge would have
+// no active demand at manual_swap nodes.
+//
+// Called from the SetRegisteredHandler callback (after SendClaimSync) so that
+// sendFn is wired and Core registration is confirmed.
+func (e *Engine) StartupSweepManualSwap() {
+	processes, err := e.db.ListProcesses()
+	if err != nil {
+		log.Printf("startup sweep: list processes: %v", err)
+		return
+	}
+	var swept int
+	for _, proc := range processes {
+		if proc.ActiveStyleID == nil {
+			continue
+		}
+		claims, err := e.db.ListStyleNodeClaims(*proc.ActiveStyleID)
+		if err != nil {
+			log.Printf("startup sweep: list claims for style %d: %v", *proc.ActiveStyleID, err)
+			continue
+		}
+		for _, claim := range claims {
+			if claim.SwapMode != "manual_swap" {
+				continue
+			}
+			nodes, err := e.db.ListProcessNodesByProcess(proc.ID)
+			if err != nil {
+				log.Printf("startup sweep: list nodes for process %d: %v", proc.ID, err)
+				break
+			}
+			for _, node := range nodes {
+				if node.CoreNodeName != claim.CoreNodeName {
+					continue
+				}
+				claimCopy := claim // avoid loop variable capture
+				e.tryAutoRequest(&node, &claimCopy)
+				swept++
+			}
+		}
+	}
+	if swept > 0 {
+		log.Printf("startup sweep: checked %d manual_swap node(s)", swept)
+	}
+}
+
+// tryAutoRequest creates orders for all allowed payloads that don't already have
+// a pending order at this node. Role-aware: produce (loader) requests empties,
+// consume (unloader) requests fulls. Fails silently on any error — the next
+// trigger will retry.
+//
+// The check+create is wrapped in BEGIN IMMEDIATE to prevent two concurrent
+// goroutines from both seeing "no existing orders" and creating duplicates.
+func (e *Engine) tryAutoRequest(node *store.ProcessNode, claim *store.StyleNodeClaim) {
+	payloads := claim.AllowedPayloads()
+	if len(payloads) == 0 {
+		return
+	}
+
+	// BEGIN IMMEDIATE serializes concurrent access at the SQLite level.
+	// If another goroutine holds a write lock, this blocks until it's done.
+	if _, err := e.db.Exec("BEGIN IMMEDIATE"); err != nil {
+		log.Printf("manual_swap auto-request: begin tx for node %s: %v", node.Name, err)
+		return
+	}
+	defer e.db.Exec("ROLLBACK") // no-op if committed
+
+	// Check which payloads already have active (non-terminal) orders at this node.
+	existing, _ := e.db.ListActiveOrdersByProcessNode(node.ID)
+
+	// Build a set of payloads that already have pending orders.
+	existingPayloads := make(map[string]bool)
+	for _, o := range existing {
+		if o.PayloadCode != "" {
+			existingPayloads[o.PayloadCode] = true
+		}
+	}
+
+	// If orders exist but none carry payload_code (legacy), skip all to avoid
+	// blind duplicates. Once all orders carry payload_code, this falls through
+	// to the per-payload check below.
+	if len(existing) > 0 && len(existingPayloads) == 0 {
+		e.db.Exec("COMMIT")
+		return
+	}
+
+	var created int
+	for _, pc := range payloads {
+		if existingPayloads[pc] {
+			continue // already have an order for this payload
+		}
+		var order *store.Order
+		var err error
+		if claim.Role == "consume" {
+			order, err = e.RequestFullBin(node.ID, pc)
+		} else {
+			order, err = e.RequestEmptyBin(node.ID, pc)
+		}
+		if err != nil {
+			log.Printf("manual_swap auto-request for node %s payload %s: %v", node.Name, pc, err)
+			continue
+		}
+		created++
+		log.Printf("manual_swap auto-request: created order %d for node %s (payload %s, role %s)",
+			order.ID, node.Name, pc, claim.Role)
+	}
+	if created > 0 {
+		e.db.Exec("COMMIT")
+	}
 }

@@ -19,7 +19,7 @@ func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
 
 	// Create an ingest order as if FinalizeProduceNode had been called
 	orderID, err := db.CreateOrder("uuid-ingest-1", orders.TypeIngest,
-		&nodeID, false, 1, "", "", "PRODUCE-NODE", "", true)
+		&nodeID, false, 1, "", "", "PRODUCE-NODE", "", true, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
 
 	// Create a retrieve order (empty bin delivery to produce node)
 	orderID, err := db.CreateOrder("uuid-retrieve-prod", orders.TypeRetrieve,
-		&nodeID, false, 1, "PRODUCE-NODE", "", "", "", false)
+		&nodeID, false, 1, "PRODUCE-NODE", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 
 	// Create a retrieve order (full bin delivery to consume node)
 	orderID, err := db.CreateOrder("uuid-retrieve-con", orders.TypeRetrieve,
-		&nodeID, false, 1, "CONSUME-NODE", "", "", "", false)
+		&nodeID, false, 1, "CONSUME-NODE", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -252,12 +252,12 @@ func TestWiring_CounterDelta_ConsumeFloorsAtZero(t *testing.T) {
 	}
 }
 
-// TestWiring_MoveCompletion_BinLoader verifies that when a move order completes
-// for a bin_loader node, runtime resets UOP to 0 and clears order tracking.
-func TestWiring_MoveCompletion_BinLoader(t *testing.T) {
+// TestWiring_MoveCompletion_ManualSwap verifies that when a move order completes
+// for a manual_swap node, runtime resets UOP to 0 and clears order tracking.
+func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("BL-PROC", "bin loader test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("BL-PROC", "manual swap test", "active_production", "", "", false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -265,26 +265,27 @@ func TestWiring_MoveCompletion_BinLoader(t *testing.T) {
 		ProcessID:    processID,
 		CoreNodeName: "BL-NODE",
 		Code:         "BL1",
-		Name:         "Bin Loader",
+		Name:         "Bin Swap Loader",
 		Sequence:     1,
 		Enabled:      true,
 	})
 	if err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	styleID, err := db.CreateStyle("BL-STYLE", "bin loader style", processID)
+	styleID, err := db.CreateStyle("BL-STYLE", "manual swap style", processID)
 	if err != nil {
 		t.Fatalf("create style: %v", err)
 	}
 	db.SetActiveStyle(processID, &styleID)
 
 	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
-		StyleID:      styleID,
-		CoreNodeName: "BL-NODE",
-		Role:         "bin_loader",
-		SwapMode:     "simple",
-		PayloadCode:  "PART-BL",
-		UOPCapacity:  100,
+		StyleID:             styleID,
+		CoreNodeName:        "BL-NODE",
+		Role:                "produce",
+		SwapMode:            "manual_swap",
+		PayloadCode:         "PART-BL",
+		UOPCapacity:         100,
+		OutboundDestination: "STORAGE-NODE",
 	})
 	if err != nil {
 		t.Fatalf("upsert claim: %v", err)
@@ -295,7 +296,7 @@ func TestWiring_MoveCompletion_BinLoader(t *testing.T) {
 
 	// Create a move order
 	orderID, err := db.CreateOrder("uuid-move-bl", orders.TypeMove,
-		&nodeID, false, 1, "DEST-NODE", "", "BL-NODE", "", false)
+		&nodeID, false, 1, "DEST-NODE", "", "BL-NODE", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -317,10 +318,10 @@ func TestWiring_MoveCompletion_BinLoader(t *testing.T) {
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after bin_loader move completion", runtime.RemainingUOP)
+		t.Errorf("RemainingUOP = %d, want 0 after manual_swap move completion", runtime.RemainingUOP)
 	}
 	if runtime.ActiveOrderID != nil {
-		t.Error("ActiveOrderID should be nil after bin_loader move completion")
+		t.Error("ActiveOrderID should be nil after manual_swap move completion")
 	}
 }
 

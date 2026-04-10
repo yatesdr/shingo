@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS orders (
     auto_confirm    INTEGER NOT NULL DEFAULT 0,
     steps_json      TEXT NOT NULL DEFAULT '',
     staged_expire_at TEXT,
+    payload_code    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -349,7 +350,7 @@ func (db *DB) migrate() error {
 	db.Exec("UPDATE style_node_claims SET inbound_source = COALESCE(NULLIF(inbound_source_node, ''), inbound_source_node_group) WHERE inbound_source = ''")
 	db.Exec("UPDATE style_node_claims SET outbound_source = COALESCE(NULLIF(outbound_source_node, ''), outbound_source_node_group) WHERE outbound_source = ''")
 
-	// Allowed payload codes and auto-request for bin_loader nodes
+	// Allowed payload codes and auto-request for manual_swap nodes
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_request_payload TEXT NOT NULL DEFAULT ''")
 
@@ -406,9 +407,20 @@ func (db *DB) migrate() error {
 	// A/B node cycling: paired_core_node on claims, active_pull on runtime
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN paired_core_node TEXT NOT NULL DEFAULT ''")
 
-	// Claim-level auto-confirm: allows bin_loader claims to auto-confirm delivery
+	// Claim-level auto-confirm: allows manual_swap claims to auto-confirm delivery
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_confirm INTEGER NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_pull INTEGER NOT NULL DEFAULT 1")
+
+	// Bin loader/unloader mode: "loader" (default) or "unloader"
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN mode TEXT NOT NULL DEFAULT 'loader'")
+
+	// v15: Convert bin_loader role to produce/consume with manual_swap.
+	// The mode column stays as a harmless vestige — code no longer reads it.
+	db.Exec(`UPDATE style_node_claims SET role = 'produce', swap_mode = 'manual_swap' WHERE role = 'bin_loader' AND (mode = 'loader' OR mode = '')`)
+	db.Exec(`UPDATE style_node_claims SET role = 'consume', swap_mode = 'manual_swap' WHERE role = 'bin_loader' AND mode = 'unloader'`)
+
+	// v16: Add payload_code to orders for per-payload demand mapping.
+	db.Exec("ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''")
 
 	return nil
 }

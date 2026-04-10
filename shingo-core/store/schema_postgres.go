@@ -348,4 +348,16 @@ CREATE TABLE IF NOT EXISTS mission_telemetry (
 CREATE INDEX IF NOT EXISTS idx_mission_telemetry_station ON mission_telemetry(station_id);
 CREATE INDEX IF NOT EXISTS idx_mission_telemetry_robot ON mission_telemetry(robot_id);
 CREATE INDEX IF NOT EXISTS idx_mission_telemetry_completed ON mission_telemetry(core_completed);
+
+CREATE TABLE IF NOT EXISTS demand_registry (
+    id               BIGSERIAL PRIMARY KEY,
+    station_id       TEXT NOT NULL,
+    core_node_name   TEXT NOT NULL,
+    role             TEXT NOT NULL,
+    payload_code     TEXT NOT NULL,
+    outbound_dest    TEXT NOT NULL DEFAULT '',
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(station_id, core_node_name, payload_code)
+);
+CREATE INDEX IF NOT EXISTS idx_demand_registry_payload ON demand_registry(payload_code);
 `
