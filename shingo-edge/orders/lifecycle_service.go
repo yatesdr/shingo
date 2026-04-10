@@ -25,6 +25,9 @@ func (s *LifecycleService) Transition(orderID int64, newStatus, detail string) e
 		return fmt.Errorf("get order: %w", err)
 	}
 	if !IsValidTransition(order.Status, newStatus) {
+		if order.Status == newStatus || IsTerminal(order.Status) {
+			return nil // idempotent: already in target state or terminal
+		}
 		return fmt.Errorf("invalid transition from %s to %s", order.Status, newStatus)
 	}
 	if order.OrderType == TypeStore && newStatus == StatusSubmitted && !order.CountConfirmed {

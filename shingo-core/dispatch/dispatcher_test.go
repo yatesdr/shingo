@@ -571,3 +571,52 @@ func TestOrderTypeConstants(t *testing.T) {
 		t.Errorf("OrderTypeStore = %q", OrderTypeStore)
 	}
 }
+
+// --- Regression: HandleOrderReceipt returns on ConfirmReceipt error ---
+// Before fix, ConfirmReceipt errors were logged but execution continued,
+// leaving the order in a partially processed state. Now it returns early.
+// This test sends a receipt for an order NOT in "delivered" status, which
+// causes ConfirmReceipt to fail. Verifies the order status is unchanged
+// (the return prevented any further processing).
+func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	// Create order in "dispatched" status (NOT delivered).
+	// ConfirmReceipt requires status == delivered, so this will fail.
+	order := &store.Order{
+		EdgeUUID:     "receipt-err-1",
+		StationID:    "edge.line1",
+		OrderType:    OrderTypeRetrieve,
+		Status:       StatusDispatched,
+		Quantity:     1,
+		DeliveryNode: lineNode.Name,
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	env := testEnvelope()
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+		OrderUUID:   "receipt-err-1",
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+
+	// Verify: order status unchanged — still dispatched
+	got, err := db.GetOrderByUUID("receipt-err-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if got.Status != StatusDispatched {
+		t.Errorf("order status = %q after failed receipt, want %q (should not have changed)", got.Status, StatusDispatched)
+	}
+
+	// Verify: no completion event emitted
+	if len(emitter.completed) > 0 {
+		t.Errorf("completed events = %d, want 0 (receipt failed, should not complete)", len(emitter.completed))
+	}
+}

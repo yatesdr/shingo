@@ -2061,3 +2061,124 @@ func TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes(t *testing.T) 
 	}
 	t.Logf("FailOrderAtomic: order %d failed, bin %d unclaimed — no leak possible", order2.ID, bin2.ID)
 }
+
+// --- Regression: Bug 1+2 — Bin moves to destination on DELIVERED, not CONFIRMED ---
+// Verifies that after fleet reports FINISHED (order transitions to delivered),
+// the bin's node_id is already at the delivery node — NOT still at source.
+// Prior to fix, bin only moved on confirmed (after Edge round-trip), leaving
+// telemetry stale during the delivery→confirmation window.
+func TestRegression_BinMovesOnDelivered(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REGR-DELIVER")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+
+	env := testEnvelope()
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "regr-deliver-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	})
+
+	order, err := db.GetOrderByUUID("regr-deliver-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	// Drive to FINISHED — fleet physically delivered the bin
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+
+	order, err = db.GetOrderByUUID("regr-deliver-1")
+	if err != nil {
+		t.Fatalf("get order after FINISHED: %v", err)
+	}
+	if order.Status != "delivered" {
+		t.Fatalf("after FINISHED: status = %q, want delivered", order.Status)
+	}
+
+	// KEY ASSERTION: bin should already be at the line node BEFORE confirmation
+	bin, err := db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin after delivery: %v", err)
+	}
+	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
+		t.Errorf("bin node after DELIVERED = %v, want %d (line node) — bin should move on delivery, not confirmation", bin.NodeID, lineNode.ID)
+	}
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin claimed_by after DELIVERED = %v, want nil", bin.ClaimedBy)
+	}
+
+	// Confirmation should still work (idempotent — bin already there)
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+		OrderUUID:   "regr-deliver-1",
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+
+	order, err = db.GetOrderByUUID("regr-deliver-1")
+	if err != nil {
+		t.Fatalf("get order after receipt: %v", err)
+	}
+	if order.Status != "confirmed" {
+		t.Fatalf("after receipt: status = %q, want confirmed", order.Status)
+	}
+
+	// Bin still at line node after confirmation
+	bin, err = db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin after confirmation: %v", err)
+	}
+	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
+		t.Errorf("bin node after CONFIRMED = %v, want %d", bin.NodeID, lineNode.ID)
+	}
+}
+
+// --- Regression: Bug 4 — Cancel with empty EdgeUUID does not notify Edge ---
+// Auto-return orders created by Core have no EdgeUUID. When cancelled, the
+// cancel handler must not send OrderCancelled to Edge with an empty UUID.
+// This test verifies that cancelling an order with empty EdgeUUID does not
+// panic or produce protocol errors.
+func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+
+	// Create a real bin for the auto-return order to reference
+	bin := createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-REGR-CANCEL")
+
+	// Create an order with empty EdgeUUID (simulates auto-return order)
+	autoReturn := &store.Order{
+		EdgeUUID:     "",
+		StationID:    "line-1",
+		OrderType:    dispatch.OrderTypeStore,
+		Status:       dispatch.StatusPending,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: storageNode.Name,
+		BinID:        &bin.ID,
+		PayloadDesc:  "auto_return",
+	}
+	if err := db.CreateOrder(autoReturn); err != nil {
+		t.Fatalf("create auto-return order: %v", err)
+	}
+
+	// Cancel via event — should NOT panic or attempt to send empty UUID to Edge
+	eng.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
+		OrderID:        autoReturn.ID,
+		EdgeUUID:       "",
+		StationID:      "line-1",
+		Reason:         "test cancel",
+		PreviousStatus: dispatch.StatusPending,
+	}})
+
+	// Verify order was audited (the cancel handler logs audit regardless)
+	// If we get here 

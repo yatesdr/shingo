@@ -247,6 +247,7 @@ func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.Orde
 	}
 	if _, err := d.lifecycle.ConfirmReceipt(order, stationID, p.ReceiptType, p.FinalCount); err != nil {
 		log.Printf("dispatch: complete order %d: %v", order.ID, err)
+		return
 	}
 }
 

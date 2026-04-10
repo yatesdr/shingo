@@ -95,7 +95,7 @@ func (e *Engine) wireEventHandlers() {
 		// terminate, fleet status change, recovery) go through this event handler.
 		// The edge handler (HandleOrderCancelled) is idempotent — a duplicate
 		// cancellation for an already-cancelled order is harmless.
-		if ev.StationID != "" {
+		if ev.StationID != "" && ev.EdgeUUID != "" {
 			if err := e.sendToEdge(protocol.TypeOrderCancelled, ev.StationID,
 				&protocol.OrderCancelled{
 					OrderUUID: ev.EdgeUUID,
@@ -279,9 +279,134 @@ func (e *Engine) handleOrderDelivered(order *store.Order) {
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}
+
+	// Move the bin to its destination NOW — the robot has physically completed
+	// the delivery. Waiting for Edge confirmation (the old path) left a window
+	// where telemetry reported the bin at the source node, causing stale
+	// occupancy checks and blocking subsequent orders.
+	e.applyBinArrivalForOrder(order)
 }
 
-// handleOrderCompleted moves payloads from source to dest after ShinGo Edge confirms physical receipt.
+// applyBinArrivalForOrder moves the order's bin(s) to the delivery node.
+// Called from handleOrderDelivered (on fleet FINISHED) so that telemetry
+// is accurate immediately. handleOrderCompleted still runs on confirmation
+// but is idempotent — it skips the bin move if already at the destination.
+func (e *Engine) applyBinArrivalForOrder(order *store.Order) {
+	if order.SourceNode == "" || order.DeliveryNode == "" {
+		return
+	}
+
+	// Multi-bin path
+	orderBins, _ := e.db.ListOrderBins(order.ID)
+	if len(orderBins) > 0 {
+		e.applyMultiBinArrivalForOrder(order, orderBins)
+		return
+	}
+
+	// Single-bin path
+	if order.BinID == nil {
+		return
+	}
+
+	destNode, err := e.db.GetNodeByDotName(order.DeliveryNode)
+	if err != nil {
+		e.logFn("engine: dest node %s not found for delivery arrival: %v", order.DeliveryNode, err)
+		return
+	}
+
+	sourceNode, _ := e.db.GetNodeByDotName(order.SourceNode)
+	sourceNodeID := int64(0)
+	if sourceNode != nil {
+		sourceNodeID = sourceNode.ID
+	}
+
+	staged, expiresAt := e.resolveNodeStaging(destNode)
+
+	if order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0 {
+		staged = false
+		expiresAt = nil
+	}
+	if order.PayloadDesc == "retrieve_empty" {
+		staged = false
+		expiresAt = nil
+	}
+
+	if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
+		e.logFn("engine: apply bin arrival on delivery for order %d bin %d: %v", order.ID, *order.BinID, err)
+		return
+	}
+
+	bin, binErr := e.db.GetBin(*order.BinID)
+	if binErr != nil {
+		e.logFn("engine: get bin %d for delivery arrival event: %v", *order.BinID, binErr)
+	}
+	if bin != nil {
+		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
+			Action:      "moved",
+			BinID:       bin.ID,
+			PayloadCode: bin.PayloadCode,
+			FromNodeID:  sourceNodeID,
+			ToNodeID:    destNode.ID,
+			NodeID:      destNode.ID,
+		}})
+	}
+}
+
+// applyMultiBinArrivalForOrder handles the multi-bin case at delivery time.
+func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*store.OrderBin) {
+	var instructions []store.BinArrivalInstruction
+	operatorConfirmed := order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0
+
+	for _, ob := range orderBins {
+		if ob.DestNode == "" {
+			continue
+		}
+		destNode, err := e.db.GetNodeByDotName(ob.DestNode)
+		if err != nil {
+			e.logFn("engine: order %d bin %d dest node %q not found on delivery: %v", order.ID, ob.BinID, ob.DestNode, err)
+			continue
+		}
+		staged, expiresAt := e.resolveNodeStaging(destNode)
+		if operatorConfirmed {
+			staged = false
+			expiresAt = nil
+		}
+		instructions = append(instructions, store.BinArrivalInstruction{
+			BinID:     ob.BinID,
+			ToNodeID:  destNode.ID,
+			Staged:    staged,
+			ExpiresAt: expiresAt,
+		})
+	}
+
+	if len(instructions) == 0 {
+		return
+	}
+
+	if err := e.db.ApplyMultiBinArrival(instructions); err != nil {
+		e.logFn("engine: multi-bin delivery arrival for order %d: %v", order.ID, err)
+		return
+	}
+
+	for _, inst := range instructions {
+		bin, err := e.db.GetBin(inst.BinID)
+		if err != nil {
+			continue
+		}
+		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
+			Action:      "moved",
+			BinID:       bin.ID,
+			PayloadCode: bin.PayloadCode,
+			ToNodeID:    inst.ToNodeID,
+			NodeID:      inst.ToNodeID,
+		}})
+	}
+}
+
+// handleOrderCompleted runs when Edge confirms receipt. Bin movement already
+// happened in handleOrderDelivered, so this is mostly paperwork (compound
+// order advancement, cleanup). The bin arrival call is kept as an idempotent
+// safety net — if the bin is already at dest, ApplyBinArrival is a no-op.
 func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	order, err := e.db.GetOrder(ev.OrderID)
 	if err != nil {
@@ -307,18 +432,29 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 
-	// Legacy single-bin path: move one bin to Order.DeliveryNode.
-	// Used by simple orders and single-pickup complex orders.
+	// Legacy single-bin path: idempotent safety net — bin should already be at
+	// dest from handleOrderDelivered, but re-apply in case delivery arrival failed.
 	if order.BinID == nil {
 		return
 	}
 
+	// Skip if bin is already at the destination (normal case after delivery arrival)
+	bin, err := e.db.GetBin(*order.BinID)
+	if err != nil {
+		e.logFn("engine: get bin %d for completion: %v", *order.BinID, err)
+		return
+	}
 	destNode, err := e.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		e.logFn("engine: dest node %s not found for completion: %v", order.DeliveryNode, err)
 		return
 	}
+	if bin.NodeID != nil && *bin.NodeID == destNode.ID {
+		e.dbg("completion: bin %d already at dest %s — skipping arrival", *order.BinID, order.DeliveryNode)
+		return
+	}
 
+	// Bin not yet at destination — apply arrival as safety net
 	sourceNode, _ := e.db.GetNodeByDotName(order.SourceNode)
 	sourceNodeID := int64(0)
 	if sourceNode != nil {
@@ -327,15 +463,10 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
 
-	// Complex orders with operator-released waits: operator already confirmed.
 	if order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0 {
 		staged = false
 		expiresAt = nil
 	}
-
-	// Retrieve-empty orders deliver to an operator station (manual_swap) where the
-	// operator is physically present and ready to load. Staging adds unnecessary
-	// delay — mark the bin available immediately.
 	if order.PayloadDesc == "retrieve_empty" {
 		staged = false
 		expiresAt = nil
@@ -347,15 +478,15 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	}
 
 	// Emit bin contents changed
-	bin, binErr := e.db.GetBin(*order.BinID)
+	updatedBin, binErr := e.db.GetBin(*order.BinID)
 	if binErr != nil {
 		e.logFn("engine: get bin %d for completion event: %v", *order.BinID, binErr)
 	}
-	if bin != nil {
+	if updatedBin != nil {
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
 			Action:      "moved",
-			BinID:       bin.ID,
-			PayloadCode: bin.PayloadCode,
+			BinID:       updatedBin.ID,
+			PayloadCode: updatedBin.PayloadCode,
 			FromNodeID:  sourceNodeID,
 			ToNodeID:    destNode.ID,
 			NodeID:      destNode.ID,
@@ -365,14 +496,11 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 // handleMultiBinCompleted processes completion for orders with multiple claimed bins.
 // Each bin is moved to its per-step destination (from the order_bins junction table)
-// in a single atomic transaction.
+// in a single atomic transaction. Idempotent — skips bins already at their destination
+// (normal case when applyMultiBinArrivalForOrder already ran at delivery time).
 func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.OrderBin) {
 	var instructions []store.BinArrivalInstruction
 
-	// Complex orders with operator-released waits (WaitIndex > 0) have already
-	// been confirmed by the operator. Don't stage bins — the "robot waiting for
-	// operator" phase is over. This prevents bins from being permanently stuck
-	// as staged after swap orders complete with no mechanism to unstage them.
 	operatorConfirmed := order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0
 
 	for _, ob := range orderBins {
@@ -383,6 +511,13 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 		destNode, err := e.db.GetNodeByDotName(ob.DestNode)
 		if err != nil {
 			e.logFn("engine: order %d bin %d dest node %q not found: %v", order.ID, ob.BinID, ob.DestNode, err)
+			continue
+		}
+
+		// Idempotency: skip bins already at destination (moved by delivery arrival)
+		bin, err := e.db.GetBin(ob.BinID)
+		if err == nil && bin.NodeID != nil && *bin.NodeID == destNode.ID {
+			e.dbg("multi-bin completion: bin %d already at dest %s — skipping", ob.BinID, ob.DestNode)
 			continue
 		}
 
@@ -399,8 +534,11 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 		})
 	}
 
+	// Clean up junction table rows regardless of whether bins needed moving
+	defer e.db.DeleteOrderBins(order.ID)
+
 	if len(instructions) == 0 {
-		e.logFn("engine: order %d multi-bin completion: no valid instructions", order.ID)
+		e.dbg("multi-bin completion: order %d all bins already at dest — skipping arrival", order.ID)
 		return
 	}
 
@@ -409,7 +547,7 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 		return
 	}
 
-	// Emit BinUpdatedEvent for each bin
+	// Emit BinUpdatedEvent only for bins that actually moved
 	for _, inst := range instructions {
 		bin, err := e.db.GetBin(inst.BinID)
 		if err != nil {
@@ -424,9 +562,6 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 			NodeID:      inst.ToNodeID,
 		}})
 	}
-
-	// Clean up junction table rows after successful completion
-	e.db.DeleteOrderBins(order.ID)
 
 	e.logFn("engine: order %d multi-bin completion: %d bins moved", order.ID, len(instructions))
 }
