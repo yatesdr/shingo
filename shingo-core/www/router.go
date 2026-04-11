@@ -38,29 +38,20 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	base := template.New("").Funcs(templateFuncs())
 	base = template.Must(base.ParseFS(templateFS, "templates/layout.html", "templates/partials/*.html"))
 
-	pages := []string{
-		"templates/dashboard.html",
-		"templates/nodes.html",
-		"templates/orders.html",
-		"templates/diagnostics.html",
-		"templates/login.html",
-		"templates/config.html",
-		"templates/rds_explorer.html",
-		"templates/robots.html",
-		"templates/payloads.html",
-		"templates/bins.html",
-		"templates/demand.html",
-		"templates/test-orders.html",
-		"templates/missions.html",
-		"templates/mission-detail.html",
-		"templates/inventory.html",
+	// Discover page templates via fs.Glob — new templates are picked up
+	// automatically without code changes. Layout is the base, not a page.
+	pages, err := fs.Glob(templateFS, "templates/*.html")
+	if err != nil {
+		log.Fatalf("glob templates: %v", err)
 	}
 	tmpls := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
+		name := p[len("templates/"):]
+		if name == "layout.html" {
+			continue // layout is the base template, not a page
+		}
 		clone := template.Must(base.Clone())
 		clone = template.Must(clone.ParseFS(templateFS, p))
-		// Key is the filename without path: "dashboard.html"
-		name := p[len("templates/"):]
 		tmpls[name] = clone
 	}
 

@@ -62,7 +62,7 @@ func PlanReshuffle(db *store.DB, target *store.Bin, targetSlot *store.Node, lane
 	}
 
 	// Find shuffle slots
-	shuffleSlots, err := FindShuffleSlots(db, groupID, len(blockers))
+	shuffleSlots, err := findShuffleSlots(db, groupID, len(blockers))
 	if err != nil {
 		return nil, fmt.Errorf("find shuffle slots: %w", err)
 	}
@@ -112,10 +112,10 @@ func PlanReshuffle(db *store.DB, target *store.Bin, targetSlot *store.Node, lane
 	return plan, nil
 }
 
-// FindShuffleSlots locates empty accessible slots for temporary shuffle storage.
+// findShuffleSlots locates empty accessible slots for temporary shuffle storage.
 // Pass 1: direct physical children of the group (always accessible).
 // Pass 2: accessible empty slots in regular lanes.
-func FindShuffleSlots(db *store.DB, groupID int64, count int) ([]*store.Node, error) {
+func findShuffleSlots(db *store.DB, groupID int64, count int) ([]*store.Node, error) {
 	children, err := db.ListChildNodes(groupID)
 	if err != nil {
 		return nil, err

@@ -172,3 +172,26 @@ func TestRegression_ValidTransitionsStillWork(t *testing.T) {
 		t.Errorf("submitted→delivered should fail, got nil")
 	}
 }
+
+// Verify failed→failed is idempotent (last uncovered terminal state)
+func TestRegression_FailedToFailedIdempotent(t *testing.T) {
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge.station")
+
+	orderID, err := db.CreateOrder("uuid-failed-1", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := db.UpdateOrderStatus(orderID, StatusFailed); err != nil {
+		t.Fatalf("set failed: %v", err)
+	}
+
+	if err := mgr.lifecycle.Transition(orderID, StatusFailed, "duplicate fail"); err != nil {
+		t.Errorf("failed→failed should be nil, got: %v", err)
+	}
+
+	// Also verify failed→confirmed is nil (terminal→terminal)
+	if err := mgr.lifecycle.Transition(orderID, StatusConfirmed, "late confirm"); err != nil {
+		t.Errorf("failed→confirmed should be nil (terminal→terminal), got: %v", err)
+	}
+}

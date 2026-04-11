@@ -24,15 +24,24 @@ import (
 
 var Version = "dev"
 
-func main() {
+// coreFlags holds parsed command-line flags.
+type coreFlags struct {
+	configPath string
+	resetDB    bool
+	fileFilter []string // nil = no file; empty = all subsystems; populated = specific
+}
+
+// parseFlags handles the custom --log-debug stripping and standard flag parsing.
+// Exits on --help or --version.
+func parseFlags() coreFlags {
 	// Strip --log-debug / -log-debug from os.Args before flag.Parse,
 	// because flag.String always requires a value argument but we want
 	// bare --log-debug (no value) to mean "all subsystems".
-	var fileFilter []string // nil = no file output
+	var fileFilter []string
 	var filteredArgs []string
 	for _, arg := range os.Args[1:] {
 		if arg == "--log-debug" || arg == "-log-debug" {
-			fileFilter = []string{} // empty = all subsystems
+			fileFilter = []string{}
 			continue
 		}
 		if strings.HasPrefix(arg, "--log-debug=") || strings.HasPrefix(arg, "-log-debug=") {
@@ -51,43 +60,48 @@ func main() {
 	flag.Parse()
 
 	if *showHelp {
-		fmt.Println("Usage: shingocore [options]")
-		fmt.Println()
-		fmt.Println("Options:")
-		fmt.Println("  --config PATH         config file path (default: shingocore.yaml)")
-		fmt.Println("  --reset-db            wipe database before starting (requires confirmation)")
-		fmt.Println("  --version             show version")
-		fmt.Println("  --log-debug[=FILTER]  enable debug log to shingo-debug.log")
-		fmt.Println("                        FILTER: comma-separated subsystems (default: all)")
-		fmt.Println("  --help                show this help")
-		fmt.Println()
-		fmt.Println("Debug subsystems:")
-		fmt.Println("  rds           Fleet manager (Seer RDS) HTTP requests/responses")
-		fmt.Println("  kafka         Kafka connect, publish, subscribe, receive")
-		fmt.Println("  dispatch      Order lifecycle: request routing, fleet dispatch")
-		fmt.Println("  protocol      Protocol envelope decode/encode")
-		fmt.Println("  outbox        Outbox drain cycles and delivery")
-		fmt.Println("  core_handler  Inbound message handler dispatch")
-		fmt.Println("  engine        Engine wiring, vendor status changes")
-		fmt.Println()
-		fmt.Println("Examples:")
-		fmt.Println("  shingocore --log-debug              # all subsystems to file")
-		fmt.Println("  shingocore --log-debug=rds           # only RDS to file")
-		fmt.Println("  shingocore --log-debug=rds,dispatch  # RDS + dispatch to file")
+		printUsage()
+		os.Exit(0)
+	}
+	if *showVersion {
+		fmt.Println("shingocore", Version)
 		os.Exit(0)
 	}
 
-	if *showVersion {
-		fmt.Println("shingocore", Version)
-		return
-	}
+	return coreFlags{configPath: *configPath, resetDB: *resetDB, fileFilter: fileFilter}
+}
 
+func printUsage() {
+	fmt.Println("Usage: shingocore [options]")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  --config PATH         config file path (default: shingocore.yaml)")
+	fmt.Println("  --reset-db            wipe database before starting (requires confirmation)")
+	fmt.Println("  --version             show version")
+	fmt.Println("  --log-debug[=FILTER]  enable debug log to shingo-debug.log")
+	fmt.Println("                        FILTER: comma-separated subsystems (default: all)")
+	fmt.Println("  --help                show this help")
+	fmt.Println()
+	fmt.Println("Debug subsystems:")
+	fmt.Println("  rds           Fleet manager (Seer RDS) HTTP requests/responses")
+	fmt.Println("  kafka         Kafka connect, publish, subscribe, receive")
+	fmt.Println("  dispatch      Order lifecycle: request routing, fleet dispatch")
+	fmt.Println("  protocol      Protocol envelope decode/encode")
+	fmt.Println("  outbox        Outbox drain cycles and delivery")
+	fmt.Println("  core_handler  Inbound message handler dispatch")
+	fmt.Println("  engine        Engine wiring, vendor status changes")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  shingocore --log-debug              # all subsystems to file")
+	fmt.Println("  shingocore --log-debug=rds           # only RDS to file")
+	fmt.Println("  shingocore --log-debug=rds,dispatch  # RDS + dispatch to file")
+}
+
+func mustInitDebugLog(fileFilter []string) *debuglog.Logger {
 	dbg, err := debuglog.New(1000, fileFilter)
 	if err != nil {
 		log.Fatalf("debug log: %v", err)
 	}
-	defer dbg.Close()
-
 	if dbg.FileEnabled() {
 		if fileFilter != nil && len(fileFilter) > 0 {
 			log.Printf("shingocore: debug log enabled (file: shingo-debug.log, subsystems: %s)", strings.Join(fileFilter, ","))
@@ -95,35 +109,85 @@ func main() {
 			log.Printf("shingocore: debug log enabled (file: shingo-debug.log, all subsystems)")
 		}
 	}
+	return dbg
+}
 
-	cfg, err := config.Load(*configPath)
+func mustLoadConfig(path string) *config.Config {
+	cfg, err := config.Load(path)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	return cfg
+}
 
-	// Reset database if requested
-	if *resetDB {
-		fmt.Fprintf(os.Stderr, "WARNING: This will permanently delete all data in the database.\n")
-		fmt.Fprintf(os.Stderr, "Type 'yes' to confirm: ")
-		var answer string
-		fmt.Scanln(&answer)
-		if answer != "yes" {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			os.Exit(1)
-		}
-		if err := store.ResetDatabase(&cfg.Database); err != nil {
-			log.Fatalf("reset database: %v", err)
-		}
-		log.Printf("shingocore: database reset complete")
+func maybeResetDB(resetDB bool, cfg *config.Config) {
+	if !resetDB {
+		return
 	}
+	fmt.Fprintf(os.Stderr, "WARNING: This will permanently delete all data in the database.\n")
+	fmt.Fprintf(os.Stderr, "Type 'yes' to confirm: ")
+	var answer string
+	fmt.Scanln(&answer)
+	if answer != "yes" {
+		fmt.Fprintln(os.Stderr, "Aborted.")
+		os.Exit(1)
+	}
+	if err := store.ResetDatabase(&cfg.Database); err != nil {
+		log.Fatalf("reset database: %v", err)
+	}
+	log.Printf("shingocore: database reset complete")
+}
 
-	// Database
+func mustOpenDatabase(cfg *config.Config) *store.DB {
 	db, err := store.Open(&cfg.Database)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
-	defer db.Close()
 	log.Printf("shingocore: database open (postgres)")
+	return db
+}
+
+func startHTTPServer(addr string, handler http.Handler) *http.Server {
+	srv := &http.Server{
+		Addr:        addr,
+		Handler:     handler,
+		IdleTimeout: 120 * time.Second,
+	}
+	go func() {
+		log.Printf("shingocore: web server listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("web server: %v", err)
+		}
+	}()
+	return srv
+}
+
+func awaitShutdown(srv *http.Server, stopWeb func()) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	log.Printf("shingocore: shutting down...")
+	stopWeb()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(ctx)
+
+	log.Printf("shingocore: stopped")
+}
+
+func main() {
+	flags := parseFlags()
+
+	dbg := mustInitDebugLog(flags.fileFilter)
+	defer dbg.Close()
+
+	cfg := mustLoadConfig(flags.configPath)
+	maybeResetDB(flags.resetDB, cfg)
+
+	db := mustOpenDatabase(cfg)
+	defer db.Close()
 
 	// Fleet backend (Seer RDS adapter)
 	fleetAdapter := seerrds.New(seerrds.Config{
@@ -154,7 +218,7 @@ func main() {
 	// Engine
 	eng := engine.New(engine.Config{
 		AppConfig:  cfg,
-		ConfigPath: *configPath,
+		ConfigPath: flags.configPath,
 		DB:         db,
 		Fleet:      fleetAdapter,
 		MsgClient:  msgClient,
@@ -163,7 +227,6 @@ func main() {
 	eng.Start()
 	defer eng.Stop()
 
-	// Inject debug log into dispatcher
 	eng.Dispatcher().DebugLog = dbg.Func("dispatch")
 
 	// Protocol ingestor (inbound from ShinGo Edge)
@@ -193,34 +256,10 @@ func main() {
 
 	// Web server
 	handler, stopWeb := www.NewRouter(eng, dbg)
-
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
-	srv := &http.Server{
-		Addr:        addr,
-		Handler:     handler,
-		IdleTimeout: 120 * time.Second,
-	}
-
-	go func() {
-		log.Printf("shingocore: web server listening on %s", addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("web server: %v", err)
-		}
-	}()
+	srv := startHTTPServer(addr, handler)
 
 	log.Printf("shingocore: ready")
 
-	// Wait for shutdown signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-
-	log.Printf("shingocore: shutting down...")
-	stopWeb()
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	srv.Shutdown(shutdownCtx)
-
-	log.Printf("shingocore: stopped")
+	awaitShutdown(srv, stopWeb)
 }

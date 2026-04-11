@@ -229,36 +229,48 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		}
 	}
 
-	// Handle terminal states
-	if e.fleet.IsTerminalState(ev.NewStatus) {
-		switch newStatus {
-		case dispatch.StatusDelivered:
-			e.handleOrderDelivered(order)
-		case dispatch.StatusFailed:
-			if err := e.db.FailOrderAtomic(order.ID, "fleet order failed"); err != nil {
-				e.logFn("engine: atomic fail order %d: %v", order.ID, err)
-			}
-			e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
-				OrderID:   order.ID,
-				EdgeUUID:  order.EdgeUUID,
-				StationID: order.StationID,
-				ErrorCode: "fleet_failed",
-				Detail:    "fleet order failed",
-			}})
-		case dispatch.StatusCancelled:
-			previousStatus := order.Status // captured at top of function before status update
-			if err := e.db.CancelOrderAtomic(order.ID, "fleet order stopped"); err != nil {
-				e.logFn("engine: atomic cancel order %d: %v", order.ID, err)
-			}
-			e.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
-				OrderID:        order.ID,
-				EdgeUUID:       order.EdgeUUID,
-				StationID:      order.StationID,
-				Reason:         "fleet order stopped",
-				PreviousStatus: previousStatus,
-			}})
-		}
+	// Non-terminal states are fully handled above — exit early.
+	if !e.fleet.IsTerminalState(ev.NewStatus) {
+		return
 	}
+
+	switch newStatus {
+	case dispatch.StatusDelivered:
+		e.handleOrderDelivered(order)
+	case dispatch.StatusFailed:
+		e.handleFleetOrderFailed(order)
+	case dispatch.StatusCancelled:
+		e.handleFleetOrderCancelled(order)
+	}
+}
+
+func (e *Engine) handleFleetOrderFailed(order *store.Order) {
+	if err := e.db.FailOrderAtomic(order.ID, "fleet order failed"); err != nil {
+		e.logFn("engine: atomic fail order %d: %v", order.ID, err)
+	}
+	e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
+		OrderID:   order.ID,
+		EdgeUUID:  order.EdgeUUID,
+		StationID: order.StationID,
+		ErrorCode: "fleet_failed",
+		Detail:    "fleet order failed",
+	}})
+}
+
+func (e *Engine) handleFleetOrderCancelled(order *store.Order) {
+	// order.Status is the in-memory value loaded before UpdateOrderStatus ran,
+	// so it reflects the status prior to the cancellation update.
+	previousStatus := order.Status
+	if err := e.db.CancelOrderAtomic(order.ID, "fleet order stopped"); err != nil {
+		e.logFn("engine: atomic cancel order %d: %v", order.ID, err)
+	}
+	e.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
+		OrderID:        order.ID,
+		EdgeUUID:       order.EdgeUUID,
+		StationID:      order.StationID,
+		Reason:         "fleet order stopped",
+		PreviousStatus: previousStatus,
+	}})
 }
 
 func (e *Engine) handleOrderDelivered(order *store.Order) {

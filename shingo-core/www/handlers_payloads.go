@@ -1,7 +1,6 @@
 package www
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -197,59 +196,6 @@ func (h *Handlers) apiPayloadsByNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonOK(w, bins)
-}
-
-// apiBinManifest returns the parsed manifest for a bin.
-func (h *Handlers) apiBinManifest(w http.ResponseWriter, r *http.Request) {
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		h.jsonError(w, "invalid id", http.StatusBadRequest)
-		return
-	}
-	manifest, err := h.engine.DB().GetBinManifest(id)
-	if err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonOK(w, manifest)
-}
-
-// apiSetBinManifest updates a bin's manifest from JSON.
-func (h *Handlers) apiSetBinManifest(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		BinID       int64              `json:"bin_id"`
-		PayloadCode string             `json:"payload_code"`
-		UOPRemaining int               `json:"uop_remaining"`
-		Items       []store.ManifestEntry `json:"items"`
-	}
-	if !h.parseJSON(w, r, &req) {
-		return
-	}
-
-	manifest := store.BinManifest{Items: req.Items}
-	manifestJSON, _ := json.Marshal(manifest)
-	if err := h.engine.BinManifest().SetForProduction(req.BinID, string(manifestJSON), req.PayloadCode, req.UOPRemaining); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonSuccess(w)
-}
-
-// apiClearBinManifest empties a bin's manifest.
-func (h *Handlers) apiClearBinManifest(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		BinID int64 `json:"bin_id"`
-	}
-	if !h.parseJSON(w, r, &req) {
-		return
-	}
-
-	if err := h.engine.BinManifest().ClearForReuse(req.BinID); err != nil {
-		h.jsonError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiBulkRegisterBins(w http.ResponseWriter, r *http.Request) {

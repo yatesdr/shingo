@@ -236,226 +236,292 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
+// binActionFunc is the handler signature for individual bin actions.
+type binActionFunc func(b *store.Bin, params json.RawMessage) error
+
 func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.RawMessage) error {
-	db := h.engine.DB()
-	oldStatus := b.Status
-
-	switch action {
-	case "activate":
-		if err := db.UpdateBinStatus(b.ID, "available"); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "status", oldStatus, "available", "ui")
-		h.emitBinUpdate(b, "status_changed", "")
-
-	case "flag":
-		if err := db.UpdateBinStatus(b.ID, "flagged"); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "status", oldStatus, "flagged", "ui")
-		h.emitBinUpdate(b, "status_changed", "")
-
-	case "quality_hold":
-		var p struct {
-			Reason string `json:"reason"`
-			Actor  string `json:"actor"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
-			return fmt.Errorf("invalid params: %w", err)
-		}
-		if err := db.UpdateBinStatus(b.ID, "quality_hold"); err != nil {
-			return err
-		}
-		actor := h.resolveActor(p.Actor)
-		db.AppendAudit("bin", b.ID, "status", oldStatus, "quality_hold", actor)
-		if p.Reason != "" {
-			db.AddBinNote(b.ID, "hold", p.Reason, actor)
-		}
-		h.emitBinUpdate(b, "status_changed", "")
-
-	case "maintenance":
-		if err := db.UpdateBinStatus(b.ID, "maintenance"); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "status", oldStatus, "maintenance", "ui")
-		h.emitBinUpdate(b, "status_changed", "")
-
-	case "retire":
-		if err := db.UpdateBinStatus(b.ID, "retired"); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "status", oldStatus, "retired", "ui")
-		h.emitBinUpdate(b, "status_changed", "")
-
-	case "release":
-		if err := db.ReleaseStagedBin(b.ID); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "status", "staged", "available", "ui")
-		h.emitBinUpdate(b, "status_changed", "")
-
-	case "lock":
-		var p struct {
-			Actor string `json:"actor"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
-			return fmt.Errorf("invalid params: %w", err)
-		}
-		actor := h.resolveActor(p.Actor)
-		if actor == "" {
-			return fmt.Errorf("actor is required for lock")
-		}
-		if err := db.LockBin(b.ID, actor); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "locked", "", actor, actor)
-		h.emitBinUpdate(b, "locked", actor)
-
-	case "unlock":
-		if err := db.UnlockBin(b.ID); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "unlocked", b.LockedBy, "", "ui")
-		h.emitBinUpdate(b, "unlocked", "")
-
-	case "load_payload":
-		var p struct {
-			PayloadCode string `json:"payload_code"`
-			UOPOverride int    `json:"uop_override"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
-			return fmt.Errorf("invalid params: %w", err)
-		}
-		if p.PayloadCode == "" {
-			return fmt.Errorf("payload_code is required")
-		}
-		if _, err := db.GetPayloadByCode(p.PayloadCode); err != nil {
-			return fmt.Errorf("payload template %q not found", p.PayloadCode)
-		}
-		if err := db.SetBinManifestFromTemplate(b.ID, p.PayloadCode, p.UOPOverride); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "loaded", "", p.PayloadCode, "ui")
-		h.emitBinUpdate(b, "loaded", p.PayloadCode)
-
-	case "clear":
-		oldCode := b.PayloadCode
-		if err := h.engine.BinManifest().ClearForReuse(b.ID); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "cleared", oldCode, "", "ui")
-		h.emitBinUpdate(b, "cleared", "")
-
-	case "confirm_manifest":
-		if b.Manifest == nil {
-			return fmt.Errorf("bin has no manifest to confirm")
-		}
-		if err := h.engine.BinManifest().Confirm(b.ID, ""); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "confirmed", "unconfirmed", "confirmed", "ui")
-		h.emitBinUpdate(b, "loaded", "")
-
-	case "unconfirm_manifest":
-		if err := db.UnconfirmBinManifest(b.ID); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "unconfirmed", "confirmed", "unconfirmed", "ui")
-		h.emitBinUpdate(b, "loaded", "")
-
-	case "move":
-		var p struct {
-			NodeID int64 `json:"node_id"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
-			return fmt.Errorf("invalid params: %w", err)
-		}
-		if p.NodeID == 0 {
-			return fmt.Errorf("node_id is required")
-		}
-		destNode, err := db.GetNode(p.NodeID)
-		if err != nil {
-			return fmt.Errorf("node not found")
-		}
-		if err := db.MoveBin(b.ID, p.NodeID); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "moved", b.NodeName, destNode.Name, "ui")
-		h.engine.Events.Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
-			BinID:       b.ID,
-			NodeID:      p.NodeID,
-			Action:      "moved",
-			PayloadCode: b.PayloadCode,
-			FromNodeID:  derefInt64(b.NodeID),
-			ToNodeID:    p.NodeID,
-		}})
-
-	case "record_count":
-		var p struct {
-			ActualUOP int    `json:"actual_uop"`
-			Actor     string `json:"actor"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
-			return fmt.Errorf("invalid params: %w", err)
-		}
-		actor := h.resolveActor(p.Actor)
-		expected := b.UOPRemaining
-		if err := db.RecordBinCount(b.ID, p.ActualUOP, actor); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "counted", strconv.Itoa(expected), strconv.Itoa(p.ActualUOP), actor)
-		if expected != p.ActualUOP {
-			db.AddBinNote(b.ID, "count", fmt.Sprintf("Cycle count discrepancy: expected %d, actual %d (%+d)", expected, p.ActualUOP, p.ActualUOP-expected), actor)
-		}
-		h.emitBinUpdate(b, "counted", "")
-
-	case "add_note":
-		var p struct {
-			NoteType string `json:"note_type"`
-			Message  string `json:"message"`
-			Actor    string `json:"actor"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
-			return fmt.Errorf("invalid params: %w", err)
-		}
-		if p.Message == "" {
-			return fmt.Errorf("message is required")
-		}
-		actor := h.resolveActor(p.Actor)
-		noteType := p.NoteType
-		if noteType == "" {
-			noteType = "general"
-		}
-		return db.AddBinNote(b.ID, noteType, p.Message, actor)
-
-	case "update":
-		var p struct {
-			Label       *string `json:"label"`
-			Description *string `json:"description"`
-			BinTypeID   *int64  `json:"bin_type_id"`
-		}
-		if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
-			return fmt.Errorf("invalid params: %w", err)
-		}
-		if p.Label != nil {
-			b.Label = *p.Label
-		}
-		if p.Description != nil {
-			b.Description = *p.Description
-		}
-		if p.BinTypeID != nil {
-			b.BinTypeID = *p.BinTypeID
-		}
-		if err := db.UpdateBin(b); err != nil {
-			return err
-		}
-		db.AppendAudit("bin", b.ID, "updated", "", "", "ui")
-		h.emitBinUpdate(b, "status_changed", "")
-
-	default:
+	actions := map[string]binActionFunc{
+		"activate":           h.binActivate,
+		"flag":               h.binFlag,
+		"quality_hold":       h.binQualityHold,
+		"maintenance":        h.binMaintenance,
+		"retire":             h.binRetire,
+		"release":            h.binRelease,
+		"lock":               h.binLock,
+		"unlock":             h.binUnlock,
+		"load_payload":       h.binLoadPayload,
+		"clear":              h.binClear,
+		"confirm_manifest":   h.binConfirmManifest,
+		"unconfirm_manifest": h.binUnconfirmManifest,
+		"move":               h.binMove,
+		"record_count":       h.binRecordCount,
+		"add_note":           h.binAddNote,
+		"update":             h.binUpdate,
+	}
+	fn, ok := actions[action]
+	if !ok {
 		return fmt.Errorf("unknown action: %s", action)
 	}
+	return fn(b, params)
+}
 
+// --- Bin action handlers (bound method values used by executeBinAction) ---
+
+func (h *Handlers) binActivate(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	if err := db.UpdateBinStatus(b.ID, "available"); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "status", b.Status, "available", "ui")
+	h.emitBinUpdate(b, "status_changed", "")
+	return nil
+}
+
+func (h *Handlers) binFlag(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	if err := db.UpdateBinStatus(b.ID, "flagged"); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "status", b.Status, "flagged", "ui")
+	h.emitBinUpdate(b, "status_changed", "")
+	return nil
+}
+
+func (h *Handlers) binQualityHold(b *store.Bin, params json.RawMessage) error {
+	db := h.engine.DB()
+	var p struct {
+		Reason string `json:"reason"`
+		Actor  string `json:"actor"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	if err := db.UpdateBinStatus(b.ID, "quality_hold"); err != nil {
+		return err
+	}
+	actor := h.resolveActor(p.Actor)
+	db.AppendAudit("bin", b.ID, "status", b.Status, "quality_hold", actor)
+	if p.Reason != "" {
+		db.AddBinNote(b.ID, "hold", p.Reason, actor)
+	}
+	h.emitBinUpdate(b, "status_changed", "")
+	return nil
+}
+
+func (h *Handlers) binMaintenance(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	if err := db.UpdateBinStatus(b.ID, "maintenance"); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "status", b.Status, "maintenance", "ui")
+	h.emitBinUpdate(b, "status_changed", "")
+	return nil
+}
+
+func (h *Handlers) binRetire(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	if err := db.UpdateBinStatus(b.ID, "retired"); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "status", b.Status, "retired", "ui")
+	h.emitBinUpdate(b, "status_changed", "")
+	return nil
+}
+
+func (h *Handlers) binRelease(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	if err := db.ReleaseStagedBin(b.ID); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "status", "staged", "available", "ui")
+	h.emitBinUpdate(b, "status_changed", "")
+	return nil
+}
+
+func (h *Handlers) binLock(b *store.Bin, params json.RawMessage) error {
+	db := h.engine.DB()
+	var p struct {
+		Actor string `json:"actor"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	actor := h.resolveActor(p.Actor)
+	if actor == "" {
+		return fmt.Errorf("actor is required for lock")
+	}
+	if err := db.LockBin(b.ID, actor); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "locked", "", actor, actor)
+	h.emitBinUpdate(b, "locked", actor)
+	return nil
+}
+
+func (h *Handlers) binUnlock(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	if err := db.UnlockBin(b.ID); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "unlocked", b.LockedBy, "", "ui")
+	h.emitBinUpdate(b, "unlocked", "")
+	return nil
+}
+
+func (h *Handlers) binLoadPayload(b *store.Bin, params json.RawMessage) error {
+	db := h.engine.DB()
+	var p struct {
+		PayloadCode string `json:"payload_code"`
+		UOPOverride int    `json:"uop_override"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	if p.PayloadCode == "" {
+		return fmt.Errorf("payload_code is required")
+	}
+	if _, err := db.GetPayloadByCode(p.PayloadCode); err != nil {
+		return fmt.Errorf("payload template %q not found", p.PayloadCode)
+	}
+	if err := db.SetBinManifestFromTemplate(b.ID, p.PayloadCode, p.UOPOverride); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "loaded", "", p.PayloadCode, "ui")
+	h.emitBinUpdate(b, "loaded", p.PayloadCode)
+	return nil
+}
+
+func (h *Handlers) binClear(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	oldCode := b.PayloadCode
+	if err := h.engine.BinManifest().ClearForReuse(b.ID); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "cleared", oldCode, "", "ui")
+	h.emitBinUpdate(b, "cleared", "")
+	return nil
+}
+
+func (h *Handlers) binConfirmManifest(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	if b.Manifest == nil {
+		return fmt.Errorf("bin has no manifest to confirm")
+	}
+	if err := h.engine.BinManifest().Confirm(b.ID, ""); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "confirmed", "unconfirmed", "confirmed", "ui")
+	h.emitBinUpdate(b, "loaded", "")
+	return nil
+}
+
+func (h *Handlers) binUnconfirmManifest(b *store.Bin, _ json.RawMessage) error {
+	db := h.engine.DB()
+	if err := db.UnconfirmBinManifest(b.ID); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "unconfirmed", "confirmed", "unconfirmed", "ui")
+	h.emitBinUpdate(b, "loaded", "")
+	return nil
+}
+
+func (h *Handlers) binMove(b *store.Bin, params json.RawMessage) error {
+	db := h.engine.DB()
+	var p struct {
+		NodeID int64 `json:"node_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	if p.NodeID == 0 {
+		return fmt.Errorf("node_id is required")
+	}
+	destNode, err := db.GetNode(p.NodeID)
+	if err != nil {
+		return fmt.Errorf("node not found")
+	}
+	if err := db.MoveBin(b.ID, p.NodeID); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "moved", b.NodeName, destNode.Name, "ui")
+	h.engine.Events.Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
+		BinID:       b.ID,
+		NodeID:      p.NodeID,
+		Action:      "moved",
+		PayloadCode: b.PayloadCode,
+		FromNodeID:  derefInt64(b.NodeID),
+		ToNodeID:    p.NodeID,
+	}})
+	return nil
+}
+
+func (h *Handlers) binRecordCount(b *store.Bin, params json.RawMessage) error {
+	db := h.engine.DB()
+	var p struct {
+		ActualUOP int    `json:"actual_uop"`
+		Actor     string `json:"actor"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	actor := h.resolveActor(p.Actor)
+	expected := b.UOPRemaining
+	if err := db.RecordBinCount(b.ID, p.ActualUOP, actor); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "counted", strconv.Itoa(expected), strconv.Itoa(p.ActualUOP), actor)
+	if expected != p.ActualUOP {
+		db.AddBinNote(b.ID, "count", fmt.Sprintf("Cycle count discrepancy: expected %d, actual %d (%+d)", expected, p.ActualUOP, p.ActualUOP-expected), actor)
+	}
+	h.emitBinUpdate(b, "counted", "")
+	return nil
+}
+
+func (h *Handlers) binAddNote(b *store.Bin, params json.RawMessage) error {
+	db := h.engine.DB()
+	var p struct {
+		NoteType string `json:"note_type"`
+		Message  string `json:"message"`
+		Actor    string `json:"actor"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	if p.Message == "" {
+		return fmt.Errorf("message is required")
+	}
+	actor := h.resolveActor(p.Actor)
+	noteType := p.NoteType
+	if noteType == "" {
+		noteType = "general"
+	}
+	return db.AddBinNote(b.ID, noteType, p.Message, actor)
+}
+
+func (h *Handlers) binUpdate(b *store.Bin, params json.RawMessage) error {
+	db := h.engine.DB()
+	var p struct {
+		Label       *string `json:"label"`
+		Description *string `json:"description"`
+		BinTypeID   *int64  `json:"bin_type_id"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
+		return fmt.Errorf("invalid params: %w", err)
+	}
+	if p.Label != nil {
+		b.Label = *p.Label
+	}
+	if p.Description != nil {
+		b.Description = *p.Description
+	}
+	if p.BinTypeID != nil {
+		b.BinTypeID = *p.BinTypeID
+	}
+	if err := db.UpdateBin(b); err != nil {
+		return err
+	}
+	db.AppendAudit("bin", b.ID, "updated", "", "", "ui")
+	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 

@@ -156,200 +156,276 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	}
 }
 
-func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
+// orderCompletionCtx holds shared lookups for order completion handling.
+// Loaded once by loadOrderCompletionCtx and passed to each handler.
+type orderCompletionCtx struct {
+	order     *store.Order
+	node      *store.ProcessNode
+	runtime   *store.ProcessNodeRuntimeState
+	toStyleID int64
+	nodeTask  *store.ChangeoverNodeTask // nil when no active changeover
+}
+
+// loadOrderCompletionCtx fetches the order, node, runtime, and changeover context.
+// Returns nil if any required lookup fails (order, node, runtime).
+// nodeTask may be nil when no active changeover exists — callers must check.
+func (e *Engine) loadOrderCompletionCtx(completed OrderCompletedEvent) *orderCompletionCtx {
 	if completed.ProcessNodeID == nil {
-		return
+		return nil
 	}
 	order, err := e.db.GetOrder(completed.OrderID)
 	if err != nil {
-		return
+		return nil
 	}
 	node, err := e.db.GetProcessNode(*completed.ProcessNodeID)
 	if err != nil {
-		return
+		return nil
 	}
 	runtime, err := e.db.EnsureProcessNodeRuntime(node.ID)
 	if err != nil {
-		return
+		return nil
 	}
 
-	var changeoverID *int64
-	var toStyleID int64
+	ctx := &orderCompletionCtx{order: order, node: node, runtime: runtime}
+
 	if changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
-		changeoverID = &changeover.ID
-		toStyleID = changeover.ToStyleID
-	}
-	var nodeTask *store.ChangeoverNodeTask
-	if changeoverID != nil {
-		if t, err := e.db.GetChangeoverNodeTaskByNode(*changeoverID, node.ID); err == nil {
-			nodeTask = t
+		ctx.toStyleID = changeover.ToStyleID
+		if t, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, node.ID); err == nil {
+			ctx.nodeTask = t
 		}
 	}
+	return ctx
+}
 
-	// Staged delivery during runout phase.
-	if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID {
-		if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil {
-			if toClaim.InboundStaging != "" && order.DeliveryNode == toClaim.InboundStaging {
-				claimID := toClaim.ID
-				if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, runtime.RemainingUOP); err != nil {
-					log.Printf("set runtime for node %d: %v", node.ID, err)
-				}
-				if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staged"); err != nil {
-					log.Printf("update node task %d to staged: %v", nodeTask.ID, err)
-				}
-				return
-			}
-		}
-	}
-
-	// Order B completion (OldMaterialReleaseOrderID).
-	// Phase 3 swap/evacuate: Order B runs the full swap/evacuate complex order
-	// with wait steps — when it completes, both evacuation AND delivery are done,
-	// so the node goes straight to "released".
-	// Manual path / drop: Order B is a simple release/move — only evacuation,
-	// so the node goes to "line_cleared" (operator still needs to release new material).
-	if nodeTask != nil && nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID &&
-		(order.OrderType == orders.TypeMove || order.OrderType == orders.TypeComplex) {
-		if (nodeTask.Situation == "swap" || nodeTask.Situation == "evacuate") && order.OrderType == orders.TypeComplex {
-			// Phase 3: Order B is a complex order with wait steps. In regular swap/evacuate,
-			// Order B includes both evacuation and delivery — node goes to "released".
-			// In keep-staged changeovers, Order B only evacuates (no delivery steps) —
-			// node goes to "line_cleared" and Order A handles delivery separately.
-			isKeepStaged := false
-			if nodeTask.FromClaimID != nil {
-				if fromClaim, err := e.db.GetStyleNodeClaim(*nodeTask.FromClaimID); err == nil {
-					isKeepStaged = fromClaim.KeepStaged
-				}
-			}
-			if isKeepStaged {
-				// Keep-staged: Order B only evacuated old material, no delivery.
-				// If Order A (delivery) also completed, node is fully transitioned -> "released".
-				// Otherwise just old material cleared -> "line_cleared".
-				orderADone := true
-				if nodeTask.NextMaterialOrderID != nil {
-					if orderA, err := e.db.GetOrder(*nodeTask.NextMaterialOrderID); err == nil && !orders.IsTerminal(orderA.Status) {
-						orderADone = false
-					}
-				}
-				if orderADone {
-					if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil {
-						claimID := toClaim.ID
-						if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
-							log.Printf("set runtime for node %d: %v", node.ID, err)
-						}
-						if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
-							log.Printf("update node task %d to released: %v", nodeTask.ID, err)
-						}
-						return
-					}
-				}
-				if err := e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0); err != nil {
-					log.Printf("set runtime for node %d: %v", node.ID, err)
-				}
-				if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared"); err != nil {
-					log.Printf("update node task %d to line_cleared: %v", nodeTask.ID, err)
-				}
-				return
-			}
-			// Regular swap/evacuate: Order B did evacuation + delivery in one order.
-			if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil {
-				claimID := toClaim.ID
-				if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
-					log.Printf("set runtime for node %d: %v", node.ID, err)
-				}
-				if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
-					log.Printf("update node task %d to released: %v", nodeTask.ID, err)
-				}
-				return
-			}
-		}
-		// Manual path or drop: simple move order — only evacuation done, line cleared.
-		if err := e.db.SetProcessNodeRuntime(node.ID, runtime.ActiveClaimID, 0); err != nil {
-			log.Printf("set runtime for node %d: %v", node.ID, err)
-		}
-		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared"); err != nil {
-			log.Printf("update node task %d to line_cleared: %v", nodeTask.ID, err)
-		}
+func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
+	ctx := e.loadOrderCompletionCtx(completed)
+	if ctx == nil {
 		return
 	}
 
-	// Release staged or replenished material into production.
-	if nodeTask != nil && nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID {
-		if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, node.CoreNodeName); err == nil {
+	if e.handleStagedDelivery(ctx) {
+		return
+	}
+	if e.handleOrderBCompletion(ctx) {
+		return
+	}
+	if e.handleChangeoverRelease(ctx) {
+		return
+	}
+	if e.handleManualSwapCompletion(ctx) {
+		return
+	}
+	if e.handleProduceIngestCompletion(ctx) {
+		return
+	}
+	e.handleNormalReplenishment(ctx)
+}
+
+// handleStagedDelivery handles Order A delivering to inbound staging during runout.
+// Returns true if this order matched the staged delivery path.
+func (e *Engine) handleStagedDelivery(ctx *orderCompletionCtx) bool {
+	if ctx.nodeTask == nil || ctx.nodeTask.NextMaterialOrderID == nil || *ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
+		return false
+	}
+	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
+	if err != nil || toClaim.InboundStaging == "" || ctx.order.DeliveryNode != toClaim.InboundStaging {
+		return false
+	}
+	claimID := toClaim.ID
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, ctx.runtime.RemainingUOP); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "staged"); err != nil {
+		log.Printf("update node task %d to staged: %v", ctx.nodeTask.ID, err)
+	}
+	return true
+}
+
+// handleOrderBCompletion handles Order B (OldMaterialReleaseOrderID) completing.
+// Phase 3 swap/evacuate: complex Order B does evacuation + delivery → "released".
+// Keep-staged: complex Order B only evacuates → "line_cleared" or "released" if Order A also done.
+// Manual/drop: simple move Order B → "line_cleared".
+func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
+	if ctx.nodeTask == nil || ctx.nodeTask.OldMaterialReleaseOrderID == nil || *ctx.nodeTask.OldMaterialReleaseOrderID != ctx.order.ID {
+		return false
+	}
+	if ctx.order.OrderType != orders.TypeMove && ctx.order.OrderType != orders.TypeComplex {
+		return false
+	}
+
+	// Complex Order B in swap/evacuate situations
+	if (ctx.nodeTask.Situation == "swap" || ctx.nodeTask.Situation == "evacuate") && ctx.order.OrderType == orders.TypeComplex {
+		return e.handleComplexOrderBCompletion(ctx)
+	}
+
+	// Manual path or drop: simple move order — only evacuation done, line cleared.
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, ctx.runtime.ActiveClaimID, 0); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "line_cleared"); err != nil {
+		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
+	}
+	return true
+}
+
+// handleComplexOrderBCompletion handles complex Order B in swap/evacuate changeovers.
+// Regular: evacuation + delivery in one order → "released".
+// Keep-staged: only evacuates → depends on whether Order A (delivery) also completed.
+func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
+	isKeepStaged := false
+	if ctx.nodeTask.FromClaimID != nil {
+		if fromClaim, err := e.db.GetStyleNodeClaim(*ctx.nodeTask.FromClaimID); err == nil {
+			isKeepStaged = fromClaim.KeepStaged
+		}
+	}
+
+	if isKeepStaged {
+		return e.handleKeepStagedOrderBCompletion(ctx)
+	}
+
+	// Regular swap/evacuate: Order B did evacuation + delivery in one order.
+	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
+	if err != nil {
+		return true // matched the path but claim lookup failed
+	}
+	claimID := toClaim.ID
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
+		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
+	}
+	return true
+}
+
+// handleKeepStagedOrderBCompletion handles keep-staged changeovers where Order B
+// only evacuated old material (no delivery steps).
+// If Order A (delivery) also completed → "released". Otherwise → "line_cleared".
+func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool {
+	orderADone := true
+	if ctx.nodeTask.NextMaterialOrderID != nil {
+		if orderA, err := e.db.GetOrder(*ctx.nodeTask.NextMaterialOrderID); err == nil && !orders.IsTerminal(orderA.Status) {
+			orderADone = false
+		}
+	}
+
+	if orderADone {
+		if toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName); err == nil {
 			claimID := toClaim.ID
-			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
-				log.Printf("set runtime for node %d: %v", node.ID, err)
+			if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+				log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 			}
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
-				log.Printf("update node task %d to released: %v", nodeTask.ID, err)
+			if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
+				log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 			}
-			return
+			return true
 		}
 	}
 
-	// Manual swap: move order completed — bin has been sent to destination, node is vacant.
-	// Triggers tryAutoRequest to queue the next bin delivery.
-	if order.OrderType == orders.TypeMove {
-		if claim := e.findActiveClaim(node); claim != nil && claim.SwapMode == "manual_swap" {
-			claimID := claim.ID
-			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, 0); err != nil {
-				log.Printf("set runtime for node %d: %v", node.ID, err)
-			}
-			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
-				log.Printf("update runtime orders for node %d: %v", node.ID, err)
-			}
-			e.tryAutoRequest(node, claim)
-			return
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, ctx.runtime.ActiveClaimID, 0); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "line_cleared"); err != nil {
+		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
+	}
+	return true
+}
+
+// handleChangeoverRelease handles Order A completing to release staged/replenished
+// material into production during a changeover (non-staging delivery path).
+func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
+	if ctx.nodeTask == nil || ctx.nodeTask.NextMaterialOrderID == nil || *ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
+		return false
+	}
+	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
+	if err != nil {
+		return false
+	}
+	claimID := toClaim.ID
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
+		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
+	}
+	return true
+}
+
+// handleManualSwapCompletion handles a move order completing for manual_swap nodes.
+// The bin has been sent to destination, node is vacant — triggers tryAutoRequest.
+func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
+	if ctx.order.OrderType != orders.TypeMove {
+		return false
+	}
+	claim := e.findActiveClaim(ctx.node)
+	if claim == nil || claim.SwapMode != "manual_swap" {
+		return false
+	}
+	claimID := claim.ID
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, 0); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
+		log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
+	}
+	e.tryAutoRequest(ctx.node, claim)
+	return true
+}
+
+// handleProduceIngestCompletion handles ingest order completing for produce nodes.
+// Core now knows the bin's manifest. Reset UOP to 0 and clear order tracking.
+// No auto-request here: simple mode still has the filled bin at the node,
+// and swap modes already have complex orders in flight.
+func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
+	if ctx.order.OrderType != orders.TypeIngest {
+		return false
+	}
+	claim := e.findActiveClaim(ctx.node)
+	if claim == nil || claim.Role != "produce" {
+		return false
+	}
+	claimID := claim.ID
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, 0); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
+		log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
+	}
+	return true
+}
+
+// handleNormalReplenishment handles standard retrieve/complex order completion.
+// Resets UOP from the active claim (capacity for consume, 0 for produce).
+func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
+	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
+		return
+	}
+	claim := e.findActiveClaim(ctx.node)
+	if claim == nil {
+		return
+	}
+	claimID := claim.ID
+	// Produce nodes receive an empty bin → UOP starts at 0.
+	// Consume nodes receive a full bin → UOP starts at capacity.
+	resetUOP := claim.UOPCapacity
+	if claim.Role == "produce" {
+		resetUOP = 0
+	}
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+
+	// manual_swap nodes: clear order slots so CanAcceptOrders and the
+	// multi-order queue don't see stale IDs. Standard consume/produce
+	// nodes manage order slots via complex order progression.
+	if claim.SwapMode == "manual_swap" {
+		if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
+			log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 		}
 	}
 
-	// Produce node ingest completion — Core now knows the bin's manifest.
-	// Reset UOP to 0 and clear order tracking. No auto-request here:
-	// simple mode still has the filled bin at the node (can't deliver an
-	// empty until it's removed), and swap modes already have complex orders
-	// in flight that handle the exchange.
-	if order.OrderType == orders.TypeIngest {
-		if claim := e.findActiveClaim(node); claim != nil && claim.Role == "produce" {
-			claimID := claim.ID
-			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, 0); err != nil {
-				log.Printf("set runtime for node %d: %v", node.ID, err)
-			}
-			if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
-				log.Printf("update runtime orders for node %d: %v", node.ID, err)
-			}
-			return
-		}
-	}
-
-	// Normal replenishment completion — reset UOP from active claim
-	if order.OrderType == orders.TypeRetrieve || order.OrderType == orders.TypeComplex {
-		if claim := e.findActiveClaim(node); claim != nil {
-			claimID := claim.ID
-			// Produce nodes receive an empty bin → UOP starts at 0.
-			// Consume nodes receive a full bin → UOP starts at capacity.
-			resetUOP := claim.UOPCapacity
-			if claim.Role == "produce" {
-				resetUOP = 0
-			}
-			if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, resetUOP); err != nil {
-				log.Printf("set runtime for node %d: %v", node.ID, err)
-			}
-
-			// manual_swap nodes: clear order slots so CanAcceptOrders and the
-			// multi-order queue don't see stale IDs. Standard consume/produce
-			// nodes manage order slots via complex order progression.
-			// Note: TypeRetrieve and TypeIngest are mutually exclusive — manual_swap
-			// nodes use TypeRetrieve only, never TypeIngest.
-			if claim.SwapMode == "manual_swap" {
-				if err := e.db.UpdateProcessNodeRuntimeOrders(node.ID, nil, nil); err != nil {
-					log.Printf("update runtime orders for node %d: %v", node.ID, err)
-				}
-			}
-
-			// Keep-staged: immediately pre-populate inbound staging for next swap
-			e.maybePreStage(node, claim)
-		}
-	}
+	// Keep-staged: immediately pre-populate inbound staging for next swap
+	e.maybePreStage(ctx.node, claim)
 }
 
 // maybePreStage orders the next bin to inbound staging if the claim has

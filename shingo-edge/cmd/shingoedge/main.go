@@ -24,17 +24,25 @@ import (
 	"shingoedge/www"
 )
 
-func main() {
-	// Strip --log-debug / -log-debug from os.Args before flag.Parse,
-	// so bare --log-debug (no value) and --log-debug=FILTER both work.
-	var fileFilter []string // nil = no file; []string{} = all; populated = specific
+// edgeFlags holds parsed command-line flags.
+type edgeFlags struct {
+	configPath  string
+	port        int
+	restoreMode bool
+	debugFlag   bool
+	fileFilter  []string // nil = no file; empty = all subsystems; populated = specific
+}
+
+// parseFlags handles the custom --log-debug stripping and standard flag parsing.
+func parseFlags() edgeFlags {
+	var fileFilter []string
 	debugFlag := false
 	var filteredArgs []string
 	for _, arg := range os.Args[1:] {
 		switch {
 		case arg == "--log-debug" || arg == "-log-debug":
 			debugFlag = true
-			fileFilter = []string{} // all subsystems
+			fileFilter = []string{}
 		case strings.HasPrefix(arg, "--log-debug=") || strings.HasPrefix(arg, "-log-debug="):
 			debugFlag = true
 			val := arg[strings.Index(arg, "=")+1:]
@@ -62,198 +70,132 @@ func main() {
 	}
 	flag.Parse()
 
-	if debugFlag {
-		log.SetFlags(log.LstdFlags | log.Lshortfile)
+	return edgeFlags{
+		configPath:  *configPath,
+		port:        *port,
+		restoreMode: *restoreMode,
+		debugFlag:   debugFlag,
+		fileFilter:  fileFilter,
 	}
+}
 
-	if *restoreMode {
-		if err := runInteractiveRestore(*configPath); err != nil {
-			log.Fatalf("interactive restore: %v", err)
-		}
-	}
-
-	if err := backup.ApplyPendingRestore(*configPath, log.Printf); err != nil {
-		log.Fatalf("apply pending restore: %v", err)
-	}
-
-	// Create debug logger (ring buffer always active; file only with --log-debug)
+func mustInitDebugLog(fileFilter []string) *debuglog.Logger {
 	dbg, err := debuglog.New(1000, fileFilter)
 	if err != nil {
 		log.Fatalf("debug log: %v", err)
 	}
-	defer dbg.Close()
+	return dbg
+}
 
-	// Load config
-	cfg, err := config.Load(*configPath)
+func mustLoadConfig(path string, portOverride int) *config.Config {
+	cfg, err := config.Load(path)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-
-	if *port > 0 {
-		cfg.Web.Port = *port
+	if portOverride > 0 {
+		cfg.Web.Port = portOverride
 	}
+	return cfg
+}
 
-	// Open database
-	db, err := store.Open(cfg.DatabasePath)
+func mustOpenDatabase(path string) *store.DB {
+	db, err := store.Open(path)
 	if err != nil {
 		log.Fatalf("open database: %v", err)
 	}
-	defer db.Close()
+	return db
+}
 
-	// Create and start engine
-	eng := engine.New(engine.Config{
-		AppConfig:   cfg,
-		ConfigPath:  *configPath,
-		DB:          db,
-		LogFunc:     log.Printf,
-		DebugLogger: dbg,
-	})
-	eng.Start()
-	defer eng.Stop()
-
-	backupSvc := backup.NewService(db, cfg, *configPath, "dev", log.Printf)
-	backupSvc.Start()
-	defer backupSvc.Stop()
-
-	// Ensure Kafka GroupID is set (unique per edge so each gets all messages)
-	if cfg.Messaging.Kafka.GroupID == "" {
-		cfg.Messaging.Kafka.GroupID = cfg.KafkaGroupID()
-	}
-
-	// Set up messaging
-	msgClient := messaging.NewClient(&cfg.Messaging)
-	msgClient.DebugLog = messaging.DebugLogFunc(dbg.Func("kafka"))
-	if cfg.Messaging.SigningKey != "" {
-		msgClient.SigningKey = []byte(cfg.Messaging.SigningKey)
-		log.Printf("shingoedge: envelope signing enabled")
-	}
-	defer msgClient.Close()
-
-	// Wire send function and reconnect unconditionally — they self-gate on connection state
-	dataSender := messaging.NewDataSender(msgClient, cfg.Messaging.OrdersTopic, nil)
-	dataSender.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
-	eng.SetSendFunc(func(env *protocol.Envelope) error {
-		return dataSender.PublishEnvelope(env, "core data sync")
-	})
-	eng.SetKafkaReconnectFunc(msgClient.Reconnect)
-
-	// Start outbox drainer unconditionally — it checks IsConnected() each cycle
-	// and skips when Kafka is unavailable, but messages still accumulate in the
-	// outbox and will drain once the connection is established.
-	drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
-	drainer.DebugLog = messaging.DebugLogFunc(dbg.Func("outbox"))
-	drainer.Start()
-	defer drainer.Stop()
-
-	// Production reporter uses the outbox for delivery — always start it
-	stationID := cfg.StationID()
-	reporter := messaging.NewProductionReporter(db, stationID)
-	reporter.DebugLog = messaging.DebugLogFunc(dbg.Func("reporter"))
-	eng.Events.SubscribeTypes(func(evt engine.Event) {
-		if delta, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
-			reporter.RecordDelta(delta.StyleID, delta.Delta)
-		}
-	}, engine.EventCounterDelta)
-	reporter.Start()
-	defer reporter.Stop()
-
-	// Connect to Kafka — if unavailable, the outbox drainer and reporter still
-	// run (they self-gate). Subscription and heartbeat require a live connection.
-	if err := msgClient.Connect(); err != nil {
-		log.Printf("messaging connect: %v (outbox drainer active, will drain when connected)", err)
-	} else {
-		// Protocol ingestor (inbound from ShinGo Core)
-		edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(nodes []protocol.NodeInfo) {
-			eng.SetCoreNodes(nodes)
-		})
-		edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
-		ingestor := protocol.NewIngestor(edgeHandler, func(hdr *protocol.RawHeader) bool {
-			return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
-		})
-		ingestor.DebugLog = dbg.Func("protocol")
-		if cfg.Messaging.SigningKey != "" {
-			ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
-		}
-		if err := msgClient.Subscribe(cfg.Messaging.DispatchTopic, func(data []byte) {
-			ingestor.HandleRaw(data)
-		}); err != nil {
-			log.Printf("protocol ingestor subscribe: %v", err)
-		} else {
-			log.Printf("protocol ingestor listening on %s (station=%s)", cfg.Messaging.DispatchTopic, stationID)
-		}
-
-		// Heartbeater (registration + periodic heartbeat)
-		hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
-			return db.CountActiveOrders()
-		})
-		hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
-		hb.Start()
-		defer hb.Stop()
-
-		// Wire node sync so edge UI can trigger a re-request
-		eng.SetNodeSyncFunc(hb.RequestNodeSync)
-
-		// Wire payload catalog sync
-		edgeHandler.SetPayloadCatalogHandler(func(entries []protocol.CatalogPayloadInfo) {
-			eng.HandlePayloadCatalog(entries)
-		})
-		edgeHandler.SetOrderStatusHandler(func(items []protocol.OrderStatusSnapshot) {
-			eng.HandleOrderStatusSnapshots(items)
-		})
-		eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
-		// Re-sync on registration ack only if we've been running for a while
-		// (startup already sends these; avoid triple-send at boot)
-		edgeHandler.SetRegisteredHandler(func() {
-			if eng.Uptime() > 30 {
-				hb.RequestNodeSync()
-				hb.RequestCatalogSync()
-			}
-			// Sync manual_swap claims to Core's demand registry, then sweep
-			// to create initial orders for any payloads missing demand.
-			// On re-registration (uptime > 30), only ClaimSync — the sweep
-			// is unnecessary because tryAutoRequest dedup would no-op, and
-			// repeated delete+insert on demand_registry is churn on flaky links.
-			go func() {
-				eng.SendClaimSync()
-				if eng.Uptime() <= 30 {
-					eng.StartupSweepManualSwap()
-				}
-			}()
-		})
-		edgeHandler.SetRegisterRequestHandler(func() {
-			hb.SendRegister()
-			if err := eng.StartupReconcile(); err != nil {
-				log.Printf("startup reconcile after register request: %v", err)
-			}
-		})
-		edgeHandler.SetNodeStructureChangedHandler(func() {
-			hb.RequestNodeSync()
-		})
-		edgeHandler.SetDemandSignalHandler(func(signal *protocol.DemandSignal) {
-			go eng.HandleDemandSignal(signal)
-		})
-
-		if err := eng.StartupReconcile(); err != nil {
-			log.Printf("initial startup reconcile: %v", err)
-		}
-	}
-
-	// Set up HTTP server
-	router, stopWeb := www.NewRouter(eng, dbg, backupSvc)
-	defer stopWeb()
-
-	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
-	server := &http.Server{Addr: addr, Handler: router}
-
-	// Start HTTP server
+func startHTTPServer(addr string, handler http.Handler) *http.Server {
+	srv := &http.Server{Addr: addr, Handler: handler}
 	go func() {
 		log.Printf("ShinGo Edge listening on %s", addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
+	return srv
+}
 
-	// Wait for shutdown signal
+// setupKafkaSubscribers wires protocol ingestor, heartbeater, and all handler
+// callbacks that require a live Kafka connection. Called only when Connect succeeds.
+func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID string, db *store.DB) {
+	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(nodes []protocol.NodeInfo) {
+		eng.SetCoreNodes(nodes)
+	})
+	edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
+	ingestor := protocol.NewIngestor(edgeHandler, func(hdr *protocol.RawHeader) bool {
+		return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
+	})
+	ingestor.DebugLog = dbg.Func("protocol")
+	if cfg.Messaging.SigningKey != "" {
+		ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
+	}
+	if err := msgClient.Subscribe(cfg.Messaging.DispatchTopic, func(data []byte) {
+		ingestor.HandleRaw(data)
+	}); err != nil {
+		log.Printf("protocol ingestor subscribe: %v", err)
+	} else {
+		log.Printf("protocol ingestor listening on %s (station=%s)", cfg.Messaging.DispatchTopic, stationID)
+	}
+
+	// Heartbeater (registration + periodic heartbeat)
+	hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
+		return db.CountActiveOrders()
+	})
+	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
+	hb.Start()
+	// Note: hb.Stop() is not deferred here — it lives for the process lifetime
+	// and is cleaned up by the Kafka client close.
+
+	eng.SetNodeSyncFunc(hb.RequestNodeSync)
+
+	edgeHandler.SetPayloadCatalogHandler(func(entries []protocol.CatalogPayloadInfo) {
+		eng.HandlePayloadCatalog(entries)
+	})
+	edgeHandler.SetOrderStatusHandler(func(items []protocol.OrderStatusSnapshot) {
+		eng.HandleOrderStatusSnapshots(items)
+	})
+	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
+
+	// Re-sync on registration ack only if we've been running for a while
+	// (startup already sends these; avoid triple-send at boot)
+	edgeHandler.SetRegisteredHandler(func() {
+		if eng.Uptime() > 30 {
+			hb.RequestNodeSync()
+			hb.RequestCatalogSync()
+		}
+		// Sync manual_swap claims to Core's demand registry, then sweep
+		// to create initial orders for any payloads missing demand.
+		// On re-registration (uptime > 30), only ClaimSync — the sweep
+		// is unnecessary because tryAutoRequest dedup would no-op, and
+		// repeated delete+insert on demand_registry is churn on flaky links.
+		go func() {
+			eng.SendClaimSync()
+			if eng.Uptime() <= 30 {
+				eng.StartupSweepManualSwap()
+			}
+		}()
+	})
+	edgeHandler.SetRegisterRequestHandler(func() {
+		hb.SendRegister()
+		if err := eng.StartupReconcile(); err != nil {
+			log.Printf("startup reconcile after register request: %v", err)
+		}
+	})
+	edgeHandler.SetNodeStructureChangedHandler(func() {
+		hb.RequestNodeSync()
+	})
+	edgeHandler.SetDemandSignalHandler(func(signal *protocol.DemandSignal) {
+		go eng.HandleDemandSignal(signal)
+	})
+
+	if err := eng.StartupReconcile(); err != nil {
+		log.Printf("initial startup reconcile: %v", err)
+	}
+}
+
+func awaitShutdown(srv *http.Server, stopWeb func()) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
@@ -273,9 +215,101 @@ func main() {
 	// Graceful HTTP shutdown with 10s deadline
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("http server shutdown: %v", err)
 	}
+}
+
+func main() {
+	flags := parseFlags()
+
+	if flags.debugFlag {
+		log.SetFlags(log.LstdFlags | log.Lshortfile)
+	}
+
+	if flags.restoreMode {
+		if err := runInteractiveRestore(flags.configPath); err != nil {
+			log.Fatalf("interactive restore: %v", err)
+		}
+	}
+	if err := backup.ApplyPendingRestore(flags.configPath, log.Printf); err != nil {
+		log.Fatalf("apply pending restore: %v", err)
+	}
+
+	dbg := mustInitDebugLog(flags.fileFilter)
+	defer dbg.Close()
+
+	cfg := mustLoadConfig(flags.configPath, flags.port)
+
+	db := mustOpenDatabase(cfg.DatabasePath)
+	defer db.Close()
+
+	// Engine
+	eng := engine.New(engine.Config{
+		AppConfig:   cfg,
+		ConfigPath:  flags.configPath,
+		DB:          db,
+		LogFunc:     log.Printf,
+		DebugLogger: dbg,
+	})
+	eng.Start()
+	defer eng.Stop()
+
+	backupSvc := backup.NewService(db, cfg, flags.configPath, "dev", log.Printf)
+	backupSvc.Start()
+	defer backupSvc.Stop()
+
+	// Messaging
+	if cfg.Messaging.Kafka.GroupID == "" {
+		cfg.Messaging.Kafka.GroupID = cfg.KafkaGroupID()
+	}
+	msgClient := messaging.NewClient(&cfg.Messaging)
+	msgClient.DebugLog = messaging.DebugLogFunc(dbg.Func("kafka"))
+	if cfg.Messaging.SigningKey != "" {
+		msgClient.SigningKey = []byte(cfg.Messaging.SigningKey)
+		log.Printf("shingoedge: envelope signing enabled")
+	}
+	defer msgClient.Close()
+
+	// Wire send function and reconnect unconditionally — they self-gate on connection state
+	dataSender := messaging.NewDataSender(msgClient, cfg.Messaging.OrdersTopic, nil)
+	dataSender.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
+	eng.SetSendFunc(func(env *protocol.Envelope) error {
+		return dataSender.PublishEnvelope(env, "core data sync")
+	})
+	eng.SetKafkaReconnectFunc(msgClient.Reconnect)
+
+	// Outbox drainer — runs unconditionally, self-gates on connection state
+	drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
+	drainer.DebugLog = messaging.DebugLogFunc(dbg.Func("outbox"))
+	drainer.Start()
+	defer drainer.Stop()
+
+	// Production reporter
+	stationID := cfg.StationID()
+	reporter := messaging.NewProductionReporter(db, stationID)
+	reporter.DebugLog = messaging.DebugLogFunc(dbg.Func("reporter"))
+	eng.Events.SubscribeTypes(func(evt engine.Event) {
+		if delta, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
+			reporter.RecordDelta(delta.StyleID, delta.Delta)
+		}
+	}, engine.EventCounterDelta)
+	reporter.Start()
+	defer reporter.Stop()
+
+	// Connect to Kafka — subscription and heartbeat require a live connection
+	if err := msgClient.Connect(); err != nil {
+		log.Printf("messaging connect: %v (outbox drainer active, will drain when connected)", err)
+	} else {
+		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, db)
+	}
+
+	// HTTP server
+	router, stopWeb := www.NewRouter(eng, dbg, backupSvc)
+	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
+	srv := startHTTPServer(addr, router)
+
+	awaitShutdown(srv, stopWeb)
 }
 
 func runInteractiveRestore(configPath string) error {

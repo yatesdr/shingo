@@ -2141,10 +2141,10 @@ func TestRegression_BinMovesOnDelivered(t *testing.T) {
 }
 
 // --- Regression: Bug 4 — Cancel with empty EdgeUUID does not notify Edge ---
-// Auto-return orders created by Core have no EdgeUUID. When cancelled, the
-// cancel handler must not send OrderCancelled to Edge with an empty UUID.
-// This test verifies that cancelling an order with empty EdgeUUID does not
-// panic or produce protocol errors.
+// Auto-return orders created by Core have no EdgeUUID and are never dispatched
+// to the fleet, so cancellation is engine-internal (recovery/timeout) and
+// emits EventOrderCancelled directly — not through handleVendorStatusChange.
+// The guard at wiring.go:98 prevents sendToEdge with an empty UUID.
 func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -2171,7 +2171,7 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 		t.Fatalf("create auto-return order: %v", err)
 	}
 
-	// Cancel via event — should NOT panic or attempt to send empty UUID to Edge
+	// Cancel via event — should NOT send to Edge or panic
 	eng.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
 		OrderID:        autoReturn.ID,
 		EdgeUUID:       "",
@@ -2180,7 +2180,196 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 		PreviousStatus: dispatch.StatusPending,
 	}})
 
-	// Verify order was audited (the cancel handler logs audit regardless)
-	// If we get here without panic, the guard is working
-	t.Logf("cancel with empty EdgeUUID processed without error — guard is working")
+	// Assertion 1: No cancel message in outbox (Edge was NOT notified)
+	var outboxCount int
+	err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = 'order_cancelled'`).Scan(&outboxCount)
+	if err != nil {
+		t.Fatalf("query outbox: %v", err)
+	}
+	if outboxCount != 0 {
+		t.Errorf("outbox has %d order_cancelled messages, want 0 — empty EdgeUUID should skip Edge notification", outboxCount)
+	}
+
+	// Assertion 2: No auto-return order was created (payload_desc=auto_return prevents loops,
+	// but verify it didn't slip through)
+	var returnCount int
+	err = db.QueryRow(`SELECT COUNT(*) FROM orders WHERE payload_desc = 'auto_return' AND source_node = $1`, storageNode.Name).Scan(&returnCount)
+	if err != nil {
+		t.Fatalf("query return orders: %v", err)
+	}
+	if returnCount != 0 {
+		t.Errorf("auto-return order was created for an already-return order — loop guard may be broken")
+	}
+}
+
+// --- Regression: Multi-bin order moves ALL bins on DELIVERED ---
+// Verifies that when a complex order has multiple claimed bins (order_bins junction
+// rows), ALL bins move to their destinations on fleet FINISHED — not just one.
+// The single-bin path is already covered by TestRegression_BinMovesOnDelivered.
+func TestRegression_MultiBinMovesOnDelivered(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, inboundStaging, outboundStaging, outboundDest, bp := setupProductionNodes(t, db)
+
+	// Two bins: new material at storage, old material at line
+	newBin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REGR-MB-NEW")
+	oldBin := createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-REGR-MB-OLD")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "regr-multibin-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: storageNode.Name},
+			{Action: "dropoff", Node: inboundStaging.Name},
+			{Action: "dropoff", Node: lineNode.Name},
+			{Action: "wait"},
+			{Action: "pickup", Node: lineNode.Name},
+			{Action: "dropoff", Node: outboundStaging.Name},
+			{Action: "pickup", Node: inboundStaging.Name},
+			{Action: "dropoff", Node: lineNode.Name},
+			{Action: "pickup", Node: outboundStaging.Name},
+			{Action: "dropoff", Node: outboundDest.Name},
+		},
+	})
+
+	order, err := db.GetOrderByUUID("regr-multibin-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	// Verify junction table was populated (multi-bin path)
+	orderBins, err := db.ListOrderBins(order.ID)
+	if err != nil {
+		t.Fatalf("list order bins: %v", err)
+	}
+	if len(orderBins) < 2 {
+		t.Fatalf("expected >= 2 order_bins rows, got %d", len(orderBins))
+	}
+
+	// Drive to FINISHED — fleet physically delivered
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+
+	order, err = db.GetOrderByUUID("regr-multibin-1")
+	if err != nil {
+		t.Fatalf("get order after FINISHED: %v", err)
+	}
+	if order.Status != "delivered" {
+		t.Fatalf("after FINISHED: status = %q, want delivered", order.Status)
+	}
+
+	// KEY ASSERTION: both bins should have moved to their resolved destinations.
+	// Step simulation: newBin (storage→inbound→line), oldBin (line→outbound-staging→outbound-dest)
+	// Final destinations: newBin → lineNode, oldBin → outboundDest.
+	newBinAfter, err := db.GetBin(newBin.ID)
+	if err != nil {
+		t.Fatalf("get newBin after delivery: %v", err)
+	}
+	if newBinAfter.NodeID == nil || *newBinAfter.NodeID != lineNode.ID {
+		t.Fatalf("newBin after DELIVERED at node %v, want %d (lineNode)", newBinAfter.NodeID, lineNode.ID)
+	}
+
+	oldBinAfter, err := db.GetBin(oldBin.ID)
+	if err != nil {
+		t.Fatalf("get oldBin after delivery: %v", err)
+	}
+	if oldBinAfter.NodeID == nil || *oldBinAfter.NodeID != outboundDest.ID {
+		t.Fatalf("oldBin after DELIVERED at node %v, want %d (outboundDest)", oldBinAfter.NodeID, outboundDest.ID)
+	}
+
+	// Both bins should be unclaimed after delivery
+	if newBinAfter.ClaimedBy != nil {
+		t.Errorf("newBin claimed_by = %v after DELIVERED, want nil", newBinAfter.ClaimedBy)
+	}
+	if oldBinAfter.ClaimedBy != nil {
+		t.Errorf("oldBin claimed_by = %v after DELIVERED, want nil", oldBinAfter.ClaimedBy)
+	}
+
+	// Confirmation should work (idempotent — bins already at destinations)
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+		OrderUUID:   "regr-multibin-1",
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+
+	order, err = db.GetOrderByUUID("regr-multibin-1")
+	if err != nil {
+		t.Fatalf("get order after receipt: %v", err)
+	}
+	if order.Status != "confirmed" {
+		t.Fatalf("after receipt: status = %q, want confirmed", order.Status)
+	}
+
+	// Verify junction table was cleaned up on completion
+	orderBinsAfter, _ := db.ListOrderBins(order.ID)
+	if len(orderBinsAfter) != 0 {
+		t.Errorf("order_bins rows after confirmation = %d, want 0 (should be cleaned up)", len(orderBinsAfter))
+	}
+}
+
+// --- Regression: handleOrderCompleted is idempotent for single-bin ---
+// Verifies that calling handleOrderCompleted (confirmation) after bins already
+// moved on delivery does NOT move them again or cause errors.
+func TestRegression_CompletionIdempotentAfterDelivery(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REGR-IDEMP")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "regr-idemp-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	})
+
+	order, err := db.GetOrderByUUID("regr-idemp-1")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+
+	// Drive to FINISHED — bin moves to line node
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FINISHED")
+
+	binAfterDelivery, err := db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin after delivery: %v", err)
+	}
+
+	// Record the bin state after delivery — confirmation must not change it
+	nodeAfterDelivery := *binAfterDelivery.NodeID
+
+	// Confirm — handleOrderCompleted runs but should be idempotent
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+		OrderUUID:   "regr-idemp-1",
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+
+	binAfterConfirm, err := db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin after confirmation: %v", err)
+	}
+
+	// Bin should still be at the same node — no double-move
+	if binAfterConfirm.NodeID == nil || *binAfterConfirm.NodeID != nodeAfterDelivery {
+		t.Errorf("bin moved during confirmation: was at %d, now at %v — completion should be idempotent",
+			nodeAfterDelivery, binAfterConfirm.NodeID)
+	}
+	if binAfterConfirm.ClaimedBy != nil {
+		t.Errorf("bin still claimed after confirmation: %v", binAfterConfirm.ClaimedBy)
+	}
 }
