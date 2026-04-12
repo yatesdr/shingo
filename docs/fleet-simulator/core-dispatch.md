@@ -36,6 +36,13 @@ go test -v -run "TestSimulator|TestTC09|TestTC10|TestTC12|TestTC38|TestTC39|Test
 | TC-14b | HandleChildOrderFailure leaves in-flight siblings orphaned | FIXED |
 | TC-68 | Post-delivery cancel: no return order, spurious return order | FIXED |
 | TC-69 | Node list sync excludes NGRP node groups | FIXED |
+| TC-90 | First robot assignment persists robot ID + waybill sent | PASS |
+| TC-91 | Case D regression: empty RobotID does not clobber existing | PASS |
+| TC-92 | Robot reassignment: different non-empty RobotID updates | PASS |
+| TC-93 | Idempotent no-write: same status + same robot = no DB change | PASS |
+| TC-94 | Option C dedup: single UpdateOrderVendor on Case A | PASS |
+| TC-95 | Narrow write: idempotent path uses UpdateOrderRobotID only | PASS |
+
 
 ## Bugs found and fixed
 
@@ -348,3 +355,81 @@ assert(bin.ClaimedBy == nil)           // claim released
 **Result:** PASS. The system handled the zero-quantity order without panic. The order was created and processed through the normal pipeline.
 
 **Test:** `engine/engine_concurrent_test.go` — `TestTC12_ZeroQuantity`
+
+### TC-90: First robot assignment persists robot ID and sends waybill â€” PASS
+
+**Scenario:** A retrieve order is dispatched. The fleet reports RUNNING with a real robot ID (AMB-42). This is Case A from the Option C analysis: new robot ID + status change.
+
+**Expected behavior:** The order status transitions to in_transit. The 
+obot_id column is set to AMB-42. A waybill message is enqueued in the outbox for the edge station.
+
+**Result:** PASS. Option C sends the waybill on first assignment and uses a single UpdateOrderVendor call with effectiveRobotID to persist the robot ID.
+
+**Test:** engine/wiring_vendor_robot_test.go â€” TestVendorStatus_RobotID_FirstAssignment
+
+---
+
+### TC-91: Case D regression â€” empty RobotID does not clobber existing â€” PASS
+
+**Scenario:** A robot is assigned on RUNNING (robot_id = AMB-42). Then a FINISHED event arrives with an empty RobotID, which is what happens when using DriveState instead of DriveStateWithRobot. Before the Option C fix, UpdateOrderVendor at line 209 would write 
+obot_id =  to the database, clobbering the existing assignment.
+
+**Expected behavior:** The 
+obot_id column preserves AMB-42 despite the empty event field.
+
+**Result:** PASS. The effectiveRobotID pattern preserves the existing robot ID when the event carries an empty string.
+
+**Test:** engine/wiring_vendor_robot_test.go â€” TestVendorStatus_RobotID_CaseD_NoClobber
+
+---
+
+### TC-92: Robot reassignment â€” different non-empty RobotID updates â€” PASS
+
+**Scenario:** Robot AMB-42 is assigned on RUNNING. Then a WAITING event arrives with robot AMB-99 (reassignment mid-mission).
+
+**Expected behavior:** The 
+obot_id column updates to AMB-99.
+
+**Result:** PASS. effectiveRobotID prefers the event's robot ID when non-empty, so reassignment works correctly.
+
+**Test:** engine/wiring_vendor_robot_test.go â€” TestVendorStatus_RobotID_Reassignment
+
+---
+
+### TC-93: Idempotent no-write â€” same status + same robot = no DB change â€” PASS
+
+**Scenario:** RUNNING with AMB-42 is driven twice. Same mapped status, same robot ID.
+
+**Expected behavior:** No database write on the second event. The updated_at column should not change.
+
+**Result:** PASS. The idempotent guard returns early when 
+ewStatus == order.Status && effectiveRobotID == order.RobotID.
+
+**Test:** engine/wiring_vendor_robot_test.go â€” TestVendorStatus_RobotID_IdempotentNoChange
+
+---
+
+### TC-94: Option C dedup â€” single UpdateOrderVendor on Case A â€” PASS
+
+**Scenario:** First robot assignment + status change (Case A). Before Option C, this path produced two UpdateOrderVendor calls. Option C eliminates the first DB write (waybill-only) and uses a single UpdateOrderVendor on the status-change path.
+
+**Expected behavior:** endor_state = RUNNING, 
+obot_id = AMB-42, endor_order_id unchanged. Single write verified by checking all columns are correct.
+
+**Result:** PASS.
+
+**Test:** engine/wiring_vendor_robot_test.go â€” TestVendorStatus_RobotID_OptionC_SingleWrite
+
+---
+
+### TC-95: Narrow write â€” idempotent path uses UpdateOrderRobotID only â€” PASS
+
+**Scenario:** RUNNING is driven twice, first with AMB-42 then with AMB-99. Same mapped status (in_transit) but different robot ID. The idempotent path should use the narrow UpdateOrderRobotID method (only touches 
+obot_id + updated_at), not the broad UpdateOrderVendor.
+
+**Expected behavior:** 
+obot_id updates to AMB-99. endor_state and endor_order_id remain unchanged.
+
+**Result:** PASS. The narrow write method preserves all other columns.
+
+**Test:** engine/wiring_vendor_robot_test.go â€” TestVendorStatus_RobotID_NarrowWrite_SameStatusNewRobot

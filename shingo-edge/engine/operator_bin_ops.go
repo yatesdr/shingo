@@ -14,7 +14,7 @@ import (
 // that node. No transport order is created — the bin stays in place until a
 // move order sends it to OutboundDestination.
 func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error {
-	node, _, claim, err := e.loadActiveNode(nodeID)
+	node, _, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,9 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 
 	// Update edge-side runtime state
 	claimID := claim.ID
-	_ = e.db.SetProcessNodeRuntime(nodeID, &claimID, int(uopCount))
+	if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, int(uopCount)); err != nil {
+		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
+		}
 
 	// If outbound destination is configured, move the loaded bin there
 	if claim.OutboundDestination != "" {
@@ -103,7 +105,9 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		if err != nil {
 			log.Printf("manual_swap: move to outbound for node %s: %v", node.Name, err)
 		} else {
-			_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+			if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+		}
 		}
 	}
 
@@ -113,7 +117,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 // ClearBin clears the manifest on the bin at a manual_swap node, resetting it
 // to empty. Used by unloaders after physical removal and for fixing mis-loads.
 func (e *Engine) ClearBin(nodeID int64) error {
-	node, _, claim, err := e.loadActiveNode(nodeID)
+	node, _, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return err
 	}
@@ -127,7 +131,9 @@ func (e *Engine) ClearBin(nodeID int64) error {
 		return fmt.Errorf("clear bin: %w", err)
 	}
 	claimID := claim.ID
-	_ = e.db.SetProcessNodeRuntime(nodeID, &claimID, 0)
+	if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, 0); err != nil {
+		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
+		}
 	return nil
 }
 
@@ -135,7 +141,7 @@ func (e *Engine) ClearBin(nodeID int64) error {
 // delivered to a manual_swap produce node. Core queues the order if no empties are
 // immediately available. payloadCode determines bin type compatibility.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order, error) {
-	node, _, claim, err := e.loadActiveNode(nodeID)
+	node, _, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +184,9 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order
 	if err != nil {
 		return nil, err
 	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+		}
 	return order, nil
 }
 
@@ -187,7 +195,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order
 // payload are available. Unlike RequestEmptyBin, this does NOT check node occupancy
 // — the unloader expects full bins to arrive.
 func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*store.Order, error) {
-	node, _, claim, err := e.loadActiveNode(nodeID)
+	node, _, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -221,6 +229,8 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*store.Order,
 	if err != nil {
 		return nil, err
 	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+		}
 	return order, nil
 }

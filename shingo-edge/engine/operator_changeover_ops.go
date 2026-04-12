@@ -112,6 +112,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	}, nil
 }
 
+// Error handling policy: log and continue. Do not add early returns without understanding the caller contract. See 2567plandiscussion.md.
 func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error) {
 	plan, err := e.planChangeover(processID, toStyleID)
 	if err != nil {
@@ -158,7 +159,9 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 		if err := e.createChangeoverOrders(changeover, nodeTask, node, diff); err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): %v — operator must handle manually",
 				diff.CoreNodeName, diff.Situation, err)
-			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error")
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
+				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
+			}
 		}
 	}
 
@@ -208,8 +211,12 @@ func (e *Engine) createChangeoverOrders(
 		if err != nil {
 			return fmt.Errorf("create swap order: %w", err)
 		}
-		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID)
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID); err != nil {
+			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
+		}
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
+			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
+		}
 		log.Printf("changeover: swap node %s — Order A=%d (staging), Order B=%d (swap w/ wait)", node.Name, orderA.ID, orderB.ID)
 
 	case SituationEvacuate:
@@ -241,8 +248,12 @@ func (e *Engine) createChangeoverOrders(
 		if err != nil {
 			return fmt.Errorf("create evacuate order: %w", err)
 		}
-		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID)
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID); err != nil {
+			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
+		}
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
+			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
+		}
 		log.Printf("changeover: evacuate node %s — Order A=%d (staging), Order B=%d (evacuate w/ 2 waits)", node.Name, orderA.ID, orderB.ID)
 
 	case SituationAdd:
@@ -269,8 +280,12 @@ func (e *Engine) createChangeoverOrders(
 		if err != nil {
 			return fmt.Errorf("create release order: %w", err)
 		}
-		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, nil, &orderB.ID)
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "empty_requested")
+		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, nil, &orderB.ID); err != nil {
+			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
+		}
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "empty_requested"); err != nil {
+			log.Printf("changeover: update node task %d state to empty_requested: %v", nodeTask.ID, err)
+		}
 		log.Printf("changeover: drop node %s — Order B=%d (evacuation)", node.Name, orderB.ID)
 	}
 
@@ -293,8 +308,12 @@ func (e *Engine) createFallbackStagingOrder(
 			if err != nil {
 				return err
 			}
-			_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil)
-			_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+			if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil); err != nil {
+			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
+		}
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
+			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
+		}
 			return nil
 		}
 	}
@@ -304,8 +323,12 @@ func (e *Engine) createFallbackStagingOrder(
 	if err != nil {
 		return err
 	}
-	_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil)
-	_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+	if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil); err != nil {
+			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
+		}
+	if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
+			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
+		}
 	return nil
 }
 
@@ -349,8 +372,12 @@ func (e *Engine) createKeepStagedChangeoverOrders(
 		if err != nil {
 			return fmt.Errorf("create keep-staged evac order: %w", err)
 		}
-		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID)
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID); err != nil {
+			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
+		}
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
+			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
+		}
 		log.Printf("changeover: keep-staged split node %s — Order A=%d (deliver w/ wait), Order B=%d (evac w/ wait)", node.Name, orderA.ID, orderB.ID)
 
 	default:
@@ -367,8 +394,12 @@ func (e *Engine) createKeepStagedChangeoverOrders(
 		if err != nil {
 			return fmt.Errorf("create keep-staged evac order: %w", err)
 		}
-		_ = e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID)
-		_ = e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested")
+		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID); err != nil {
+			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
+		}
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
+			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
+		}
 		log.Printf("changeover: keep-staged combined node %s — Order A=%d (combined w/ wait), Order B=%d (evac w/ wait)", node.Name, orderA.ID, orderB.ID)
 	}
 
@@ -478,7 +509,9 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 			}
 		}
 		// Mark node task as cancelled
-		_ = e.db.UpdateChangeoverNodeTaskState(task.ID, "cancelled")
+		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "cancelled"); err != nil {
+			log.Printf("changeover: update node task %d state to cancelled: %v", task.ID, err)
+		}
 	}
 
 	// Clear runtime order references for affected nodes
@@ -487,7 +520,9 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		if err != nil || runtime == nil {
 			continue
 		}
-		_ = e.db.UpdateProcessNodeRuntimeOrders(task.ProcessNodeID, nil, nil)
+		if err := e.db.UpdateProcessNodeRuntimeOrders(task.ProcessNodeID, nil, nil); err != nil {
+			log.Printf("changeover: update runtime orders for node %d: %v", task.ProcessNodeID, err)
+		}
 	}
 
 	if err := e.db.UpdateProcessChangeoverState(changeover.ID, "cancelled"); err != nil {
@@ -541,7 +576,9 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 		return nil
 	}
 	for _, task := range tasks {
-		_ = e.db.UpdateChangeoverStationTaskState(task.ID, "switched")
+		if err := e.db.UpdateChangeoverStationTaskState(task.ID, "switched"); err != nil {
+			log.Printf("changeover: update station task state: %v", err)
+		}
 	}
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err

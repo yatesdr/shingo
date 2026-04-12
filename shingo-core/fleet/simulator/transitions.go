@@ -48,6 +48,41 @@ func (s *SimulatorBackend) DriveState(vendorOrderID, newState string) (oldState,
 	return
 }
 
+
+
+// DriveStateWithRobot transitions a simulated order to a new vendor state with a
+// robot ID, simulating the real fleet backend's behavior where every status event
+// carries the vehicle identifier. The robot ID flows through effectiveRobotID in
+// handleVendorStatusChange, exercising the robot persistence, preservation, and
+// clobber-prevention paths that DriveState (which passes robotID=") cannot test.
+//
+// Returns empty strings if the order is not found.
+func (s *SimulatorBackend) DriveStateWithRobot(vendorOrderID, newState, robotID string) (oldState, mappedStatus string) {
+	var emitter fleet.TrackerEmitter
+	var resolver fleet.OrderIDResolver
+
+	s.mu.Lock()
+	order, ok := s.orders[vendorOrderID]
+	if !ok {
+		s.mu.Unlock()
+		return "", ""
+	}
+	oldState = order.state
+	order.state = newState
+	mappedStatus = mapStateInternal(newState)
+	emitter = s.emitter
+	resolver = s.resolver
+	s.mu.Unlock()
+
+	// Emit outside the lock. Only emit on actual state changes.
+	if emitter != nil && resolver != nil && oldState != newState {
+		if orderID, err := resolver.ResolveVendorOrderID(vendorOrderID); err == nil {
+			emitter.EmitOrderStatusChanged(orderID, vendorOrderID, oldState, newState, robotID, "", nil)
+		}
+	}
+
+	return
+}
 // DriveFullLifecycle advances a simulated order through the standard
 // CREATED → RUNNING → WAITING → FINISHED lifecycle and returns the
 // sequence of state transitions. Tests iterate over these and emit

@@ -49,19 +49,20 @@ func dispatchRetrieveOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simula
 }
 
 // TC-VS-1: RUNNING state updates order to in_transit and assigns robot ID.
+// Updated to use DriveStateWithRobot for full robot ID coverage.
 func TestVendorStatus_RunningUpdatesStatus(t *testing.T) {
 	t.Parallel()
 	db, _, sim, order, _, _ := dispatchRetrieveOrder(t)
 
-	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-01")
 
 	got, _ := db.GetOrderByUUID("vs-order-1")
 	if got.Status != "in_transit" {
 		t.Errorf("status after RUNNING: got %q, want %q", got.Status, "in_transit")
 	}
-	// Note: the simulator emits OrderStatusChangedEvent with RobotID="" so
-	// the robot_id field is NOT populated by this path. In production, the
-	// fleet backend provides a real robot ID. Tested here: status only.
+	if got.RobotID != "AMB-01" {
+		t.Errorf("robot_id after RUNNING: got %q, want %q", got.RobotID, "AMB-01")
+	}
 }
 
 // TC-VS-2: Idempotent status — driving same state twice doesn't error.

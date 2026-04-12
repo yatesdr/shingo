@@ -132,7 +132,9 @@ func (e *Engine) SyncProcessCounter(processID int64) error {
 		return err
 	}
 	if !process.CounterEnabled {
-		_ = e.db.UpdateReportingPoint(rpID, process.CounterPLCName, process.CounterTagName, *process.ActiveStyleID, false)
+		if err := e.db.UpdateReportingPoint(rpID, process.CounterPLCName, process.CounterTagName, *process.ActiveStyleID, false); err != nil {
+			e.logFn("warlink: update reporting point for process %d: %v", process.ID, err)
+		}
 	}
 	e.EnsureTagPublished(rpID, process.CounterPLCName, process.CounterTagName)
 	return nil

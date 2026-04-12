@@ -59,7 +59,7 @@ A reservation ("claim") bug means the system's record of which bins are committe
 
 **TC-16: Fleet reports an unknown state.** The fleet sends a state string that the system doesn't recognize. Should map to a safe default status, not crash the event pipeline.
 
-**TC-17: Fleet reports the same state twice.** The fleet says the robot is RUNNING, then says RUNNING again. The system should treat this as a no-op — no duplicate events, no double database updates.
+**TC-17: Fleet reports the same state twice.** COVERED - see TC-93 (in core-dispatch.md). Robot ID idempotent no-write test covers same-status-same-robot deduplication. TC-VS-2 covers status-only idempotency.
 
 **TC-18: Fleet reports states out of order.** The fleet says FINISHED before it ever said RUNNING. This can happen if a status poll is missed. The system should handle it gracefully and end up in the correct final state.
 

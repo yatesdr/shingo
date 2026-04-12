@@ -71,7 +71,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		}
 
 		// Look up active claim for this node
-		claim := e.findActiveClaim(&node)
+		claim := findActiveClaim(e.db, &node)
 		if claim == nil {
 			continue
 		}
@@ -357,7 +357,7 @@ func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
 	if ctx.order.OrderType != orders.TypeMove {
 		return false
 	}
-	claim := e.findActiveClaim(ctx.node)
+	claim := findActiveClaim(e.db, ctx.node)
 	if claim == nil || claim.SwapMode != "manual_swap" {
 		return false
 	}
@@ -380,7 +380,7 @@ func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
 	if ctx.order.OrderType != orders.TypeIngest {
 		return false
 	}
-	claim := e.findActiveClaim(ctx.node)
+	claim := findActiveClaim(e.db, ctx.node)
 	if claim == nil || claim.Role != "produce" {
 		return false
 	}
@@ -400,7 +400,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
 		return
 	}
-	claim := e.findActiveClaim(ctx.node)
+	claim := findActiveClaim(e.db, ctx.node)
 	if claim == nil {
 		return
 	}
@@ -510,7 +510,7 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 		return
 	}
 
-	claim := e.findActiveClaim(node)
+	claim := findActiveClaim(e.db, node)
 	if claim == nil || claim.SwapMode != "sequential" {
 		return
 	}

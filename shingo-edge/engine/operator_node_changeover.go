@@ -25,14 +25,14 @@ func (e *Engine) loadChangeoverNodeCtx(processID, nodeID int64) (*changeoverNode
 	if err != nil {
 		return nil, err
 	}
-	node, runtime, _, err := e.loadActiveNode(nodeID)
+	node, runtime, _, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	if node.ProcessID != processID {
 		return nil, fmt.Errorf("node does not belong to process")
 	}
-	stationTask, nodeTask, err := e.loadChangeoverNodeTask(changeover.ID, node)
+	stationTask, nodeTask, err := loadChangeoverNodeTask(e.db, changeover.ID, node)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +130,7 @@ func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int6
 	}
 
 	// Use claim-based release
-	if fromClaim := e.findActiveClaim(ctx.node); fromClaim != nil && fromClaim.OutboundStaging != "" {
+	if fromClaim := findActiveClaim(e.db, ctx.node); fromClaim != nil && fromClaim.OutboundStaging != "" {
 		steps := BuildReleaseSteps(fromClaim)
 		order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, "", steps)
 		if err != nil {

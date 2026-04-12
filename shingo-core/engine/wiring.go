@@ -183,12 +183,14 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		return
 	}
 
-	// Update robot ID if we got one
-	if ev.RobotID != "" && order.RobotID == "" {
-		if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, ev.RobotID); err != nil {
-			e.logFn("engine: update order %d vendor (robot): %v", order.ID, err)
-		}
+	// Compute effective robot ID (handles Case D: preserves existing robot when event has empty robotID)
+	effectiveRobotID := order.RobotID
+	if ev.RobotID != "" {
+		effectiveRobotID = ev.RobotID
+	}
 
+	// First robot assignment: send waybill only (no DB write here - Option C)
+	if ev.RobotID != "" && order.RobotID == "" {
 		if err := e.sendToEdge(protocol.TypeOrderWaybill, order.StationID, &protocol.OrderWaybill{
 			OrderUUID: order.EdgeUUID,
 			WaybillID: order.VendorOrderID,
@@ -200,13 +202,19 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 
 	newStatus := e.fleet.MapState(ev.NewStatus)
 	if newStatus == order.Status {
+		// Idempotent path: status unchanged, check if robot ID changed
+		if effectiveRobotID != order.RobotID {
+			if err := e.db.UpdateOrderRobotID(order.ID, effectiveRobotID); err != nil {
+				e.logFn("engine: update order %d robot: %v", order.ID, err)
+			}
+		}
 		return
 	}
 
 	if err := e.db.UpdateOrderStatus(order.ID, newStatus, fmt.Sprintf("fleet: %s -> %s", ev.OldStatus, ev.NewStatus)); err != nil {
 		e.logFn("engine: update order %d status to %s: %v", order.ID, newStatus, err)
 	}
-	if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, ev.RobotID); err != nil {
+	if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, effectiveRobotID); err != nil {
 		e.logFn("engine: update order %d vendor state: %v", order.ID, err)
 	}
 

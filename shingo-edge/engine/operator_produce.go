@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"shingo/protocol"
@@ -15,7 +16,7 @@ import (
 // two_robot modes first set the manifest via ingest metadata, then dispatch
 // complex orders using the same step builders as consume.
 func (e *Engine) FinalizeProduceNode(nodeID int64) (*NodeOrderResult, error) {
-	node, runtime, claim, err := e.loadActiveNode(nodeID)
+	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -73,8 +74,12 @@ func (e *Engine) finalizeProduceSimple(node *store.ProcessNode, runtime *store.P
 	}
 
 	// Reset the node UOP to 0 — ready for next empty bin
-	_ = e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0)
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
+	if err := e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0); err != nil {
+		log.Printf("produce: set runtime for node %d: %v", nodeID, err)
+		}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
+		}
 
 	return &NodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: nodeID}, nil
 }
@@ -101,9 +106,18 @@ func (e *Engine) finalizeProduceSequential(node *store.ProcessNode, runtime *sto
 	}
 
 	// Reset UOP and track the complex order
-	_ = e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0)
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, nil)
-	orderA, _ = e.db.GetOrder(orderA.ID)
+	if err := e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0); err != nil {
+		log.Printf("produce: set runtime for node %d: %v", nodeID, err)
+		}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, nil); err != nil {
+		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
+		}
+		refreshedA, err := e.db.GetOrder(orderA.ID)
+		if err != nil {
+			log.Printf("produce: re-read order %d after runtime update: %v", orderA.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", orderA.ID, err)
+		}
+		orderA = refreshedA
 	return &NodeOrderResult{CycleMode: "sequential", Order: orderA, ProcessNodeID: nodeID}, nil
 }
 
@@ -128,9 +142,18 @@ func (e *Engine) finalizeProduceSingleRobot(node *store.ProcessNode, runtime *st
 		return nil, err
 	}
 
-	_ = e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0)
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
-	order, _ = e.db.GetOrder(order.ID)
+	if err := e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0); err != nil {
+		log.Printf("produce: set runtime for node %d: %v", nodeID, err)
+		}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
+		}
+		refreshed, err := e.db.GetOrder(order.ID)
+		if err != nil {
+			log.Printf("produce: re-read order %d after runtime update: %v", order.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", order.ID, err)
+		}
+		order = refreshed
 	return &NodeOrderResult{CycleMode: "single_robot", Order: order, ProcessNodeID: nodeID}, nil
 }
 
@@ -160,9 +183,23 @@ func (e *Engine) finalizeProduceTwoRobot(node *store.ProcessNode, runtime *store
 		return nil, err
 	}
 
-	_ = e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0)
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, &orderB.ID)
-	orderA, _ = e.db.GetOrder(orderA.ID)
-	orderB, _ = e.db.GetOrder(orderB.ID)
+	if err := e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0); err != nil {
+		log.Printf("produce: set runtime for node %d: %v", nodeID, err)
+		}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, &orderB.ID); err != nil {
+		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
+		}
+		refreshedA, err := e.db.GetOrder(orderA.ID)
+		if err != nil {
+			log.Printf("produce: re-read order %d after runtime update: %v", orderA.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", orderA.ID, err)
+		}
+		orderA = refreshedA
+	refreshedB, err := e.db.GetOrder(orderB.ID)
+	if err != nil {
+		log.Printf("produce: re-read order %d after runtime update: %v", orderB.ID, err)
+		return nil, fmt.Errorf("re-read order %d: %w", orderB.ID, err)
+	}
+	orderB = refreshedB
 	return &NodeOrderResult{CycleMode: "two_robot", OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
 }

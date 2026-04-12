@@ -447,3 +447,8 @@ func (db *DB) CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error
 	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed')`, deliveryNode).Scan(&count)
 	return count, err
 }
+
+func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {
+	_, err := db.Exec(`UPDATE orders SET robot_id=$1, updated_at=NOW() WHERE id=$2`, robotID, id)
+	return err
+}

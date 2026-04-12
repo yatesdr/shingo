@@ -17,7 +17,7 @@ func (e *Engine) FlipABNode(nodeID int64) error {
 		return fmt.Errorf("node not found: %w", err)
 	}
 
-	claim := e.findActiveClaim(node)
+	claim := findActiveClaim(e.db, node)
 	if claim == nil {
 		return fmt.Errorf("node %s has no active claim", node.Name)
 	}
@@ -46,8 +46,12 @@ func (e *Engine) FlipABNode(nodeID int64) error {
 	}
 
 	// Activate this node, deactivate the partner
-	_ = e.db.SetActivePull(nodeID, true)
-	_ = e.db.SetActivePull(pairedNode.ID, false)
+	if err := e.db.SetActivePull(nodeID, true); err != nil {
+		log.Printf("ab_cycling: set active pull for node %d: %v", nodeID, err)
+		}
+	if err := e.db.SetActivePull(pairedNode.ID, false); err != nil {
+		log.Printf("ab_cycling: set active pull for node %d: %v", pairedNode.ID, err)
+		}
 
 	log.Printf("A/B flip: node %s now active, node %s inactive", node.Name, pairedNode.Name)
 

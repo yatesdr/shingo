@@ -45,7 +45,9 @@ func (e *Engine) restoreChangeoverState() {
 		}
 
 		// Check if changeover can be completed (all orders terminal, all nodes done)
-		_ = e.tryCompleteProcessChangeover(process.ID)
+		if err := e.tryCompleteProcessChangeover(process.ID); err != nil {
+			log.Printf("changeover: complete process changeover for %d: %v", process.ID, err)
+		}
 	}
 }
 
@@ -70,13 +72,19 @@ func (e *Engine) reconcileNodeTask(task *store.ChangeoverNodeTask, toStyleID int
 					if toStyleID > 0 && coreNodeName != "" {
 						if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, coreNodeName); err == nil {
 							claimID := toClaim.ID
-							_ = e.db.SetProcessNodeRuntime(task.ProcessNodeID, &claimID, 0)
+							if err := e.db.SetProcessNodeRuntime(task.ProcessNodeID, &claimID, 0); err != nil {
+				log.Printf("changeover: set runtime for node %d: %v", task.ProcessNodeID, err)
+				}
 						}
 					}
-					_ = e.db.UpdateChangeoverNodeTaskState(task.ID, "staged")
+					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "staged"); err != nil {
+				log.Printf("changeover: update node task %d to staged: %v", task.ID, err)
+				}
 					advanced = true
 				case "release_requested":
-					_ = e.db.UpdateChangeoverNodeTaskState(task.ID, "released")
+					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "released"); err != nil {
+				log.Printf("changeover: update node task %d to released: %v", task.ID, err)
+				}
 					advanced = true
 				}
 			}
@@ -87,7 +95,9 @@ func (e *Engine) reconcileNodeTask(task *store.ChangeoverNodeTask, toStyleID int
 	if task.OldMaterialReleaseOrderID != nil {
 		if order, err := e.db.GetOrder(*task.OldMaterialReleaseOrderID); err == nil {
 			if orders.IsTerminal(order.Status) && task.State == "empty_requested" {
-				_ = e.db.UpdateChangeoverNodeTaskState(task.ID, "line_cleared")
+				if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "line_cleared"); err != nil {
+				log.Printf("changeover: update node task %d to line_cleared: %v", task.ID, err)
+				}
 				advanced = true
 			}
 		}

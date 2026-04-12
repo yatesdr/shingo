@@ -67,6 +67,19 @@ func TestOrderCRUD(t *testing.T) {
 		t.Errorf("RobotID = %q, want %q", got4.RobotID, "AMB-01")
 	}
 
+	// UpdateOrderRobotID (narrow write - only touches robot_id)
+	db.UpdateOrderRobotID(o.ID, "AMB-99")
+	got4b, _ := db.GetOrder(o.ID)
+	if got4b.RobotID != "AMB-99" {
+		t.Errorf("RobotID after UpdateOrderRobotID = %q, want %q", got4b.RobotID, "AMB-99")
+	}
+	if got4b.VendorOrderID != "rds-123" {
+		t.Errorf("VendorOrderID should be unchanged after UpdateOrderRobotID, got %q", got4b.VendorOrderID)
+	}
+	if got4b.VendorState != "RUNNING" {
+		t.Errorf("VendorState should be unchanged after UpdateOrderRobotID, got %q", got4b.VendorState)
+	}
+
 	// GetByVendorID
 	got5, err := db.GetOrderByVendorID("rds-123")
 	if err != nil {

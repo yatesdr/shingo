@@ -223,17 +223,26 @@ func (s *FulfillmentScanner) tryFulfill(order *store.Order) bool {
 		return false
 	}
 
+	// Error handling policy: log and continue. Do not add early returns without understanding the caller contract. See 2567plandiscussion.md.
 	// Update order with bin and source
-	_ = s.db.UpdateOrderBinID(order.ID, bin.ID)
-	_ = s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name)
-	_ = s.db.UpdateOrderStatus(order.ID, protocol.StatusSourcing, "bin found, dispatching")
+	if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
+		s.logFn("fulfillment: update bin_id for order %d: %v", order.ID, err)
+	}
+	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
+		s.logFn("fulfillment: update source_node for order %d: %v", order.ID, err)
+	}
+	if err := s.db.UpdateOrderStatus(order.ID, protocol.StatusSourcing, "bin found, dispatching"); err != nil {
+		s.logFn("fulfillment: update status to sourcing for order %d: %v", order.ID, err)
+	}
 
 	// Resolve destination
 	destNode, err := s.db.GetNodeByDotName(order.DeliveryNode)
 	if err != nil {
 		s.logFn("fulfillment: dest node %q not found for order %d: %v", order.DeliveryNode, order.ID, err)
 		s.db.UnclaimOrderBins(order.ID)
-		_ = s.db.UpdateOrderStatus(order.ID, protocol.StatusQueued, "awaiting inventory")
+		if err := s.db.UpdateOrderStatus(order.ID, protocol.StatusQueued, "awaiting inventory"); err != nil {
+			s.logFn("fulfillment: update status to queued for order %d: %v", order.ID, err)
+		}
 		return false
 	}
 
@@ -244,7 +253,9 @@ func (s *FulfillmentScanner) tryFulfill(order *store.Order) bool {
 	if err != nil {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
 		s.db.UnclaimOrderBins(order.ID)
-		_ = s.db.UpdateOrderStatus(order.ID, protocol.StatusQueued, "fleet unavailable, re-queued")
+		if err := s.db.UpdateOrderStatus(order.ID, protocol.StatusQueued, "fleet unavailable, re-queued"); err != nil {
+			s.logFn("fulfillment: update status to queued for order %d: %v", order.ID, err)
+		}
 		return false
 	}
 
@@ -253,15 +264,19 @@ func (s *FulfillmentScanner) tryFulfill(order *store.Order) bool {
 
 	// Notify Edge: ack + waybill
 	if order.StationID != "" {
-		_ = s.sendToEdge(protocol.TypeOrderAck, order.StationID, &protocol.OrderAck{
+		if err := s.sendToEdge(protocol.TypeOrderAck, order.StationID, &protocol.OrderAck{
 			OrderUUID:     order.EdgeUUID,
 			ShingoOrderID: order.ID,
 			SourceNode:    sourceNode.Name,
-		})
-		_ = s.sendToEdge(protocol.TypeOrderWaybill, order.StationID, &protocol.OrderWaybill{
+		}); err != nil {
+			s.logFn("fulfillment: ack for order %d: %v", order.ID, err)
+		}
+		if err := s.sendToEdge(protocol.TypeOrderWaybill, order.StationID, &protocol.OrderWaybill{
 			OrderUUID: order.EdgeUUID,
 			WaybillID: vendorOrderID,
-		})
+		}); err != nil {
+			s.logFn("fulfillment: waybill for order %d: %v", order.ID, err)
+		}
 	}
 
 	return true

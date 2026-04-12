@@ -17,7 +17,7 @@ type NodeOrderResult struct {
 }
 
 func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderResult, error) {
-	node, runtime, claim, err := e.loadActiveNode(nodeID)
+	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -33,18 +33,6 @@ func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderRe
 
 // findActiveClaim looks up the style node claim for a process node based on
 // the process's active style and the node's core_node_name.
-func (e *Engine) findActiveClaim(node *store.ProcessNode) *store.StyleNodeClaim {
-	process, err := e.db.GetProcess(node.ProcessID)
-	if err != nil || process.ActiveStyleID == nil {
-		return nil
-	}
-	claim, err := e.db.GetStyleNodeClaimByNode(*process.ActiveStyleID, node.CoreNodeName)
-	if err != nil {
-		return nil
-	}
-	return claim
-}
-
 // nodeIsOccupied checks Core's telemetry to see if a physical bin is at the node.
 // Returns true if occupied OR if Core is unreachable (safe default — assume bin present).
 func (e *Engine) nodeIsOccupied(coreNodeName string) bool {
@@ -78,8 +66,15 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 		if err != nil {
 			return nil, err
 		}
-		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
-		order, _ = e.db.GetOrder(order.ID)
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
+		}
+		refreshed, err := e.db.GetOrder(order.ID)
+		if err != nil {
+			e.logFn("station: re-read order %d after runtime update: %v", order.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", order.ID, err)
+		}
+		order = refreshed
 		return &NodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: nodeID}, nil
 	}
 
@@ -90,8 +85,15 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 		if err != nil {
 			return nil, err
 		}
-		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, nil)
-		orderA, _ = e.db.GetOrder(orderA.ID)
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, nil); err != nil {
+			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
+		}
+		refreshedA, err := e.db.GetOrder(orderA.ID)
+		if err != nil {
+			e.logFn("station: re-read order %d after runtime update: %v", orderA.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", orderA.ID, err)
+		}
+		orderA = refreshedA
 		return &NodeOrderResult{CycleMode: "sequential", Order: orderA, ProcessNodeID: nodeID}, nil
 
 	case "two_robot":
@@ -107,9 +109,21 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 		if err != nil {
 			return nil, err
 		}
-		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, &orderB.ID)
-		orderA, _ = e.db.GetOrder(orderA.ID)
-		orderB, _ = e.db.GetOrder(orderB.ID)
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, &orderB.ID); err != nil {
+			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
+		}
+		refreshedA, err := e.db.GetOrder(orderA.ID)
+		if err != nil {
+			e.logFn("station: re-read order %d after runtime update: %v", orderA.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", orderA.ID, err)
+		}
+		orderA = refreshedA
+		refreshedB, err := e.db.GetOrder(orderB.ID)
+		if err != nil {
+			e.logFn("station: re-read order %d after runtime update: %v", orderB.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", orderB.ID, err)
+		}
+		orderB = refreshedB
 		return &NodeOrderResult{CycleMode: "two_robot", OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
 
 	case "single_robot":
@@ -121,8 +135,15 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 		if err != nil {
 			return nil, err
 		}
-		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
-		order, _ = e.db.GetOrder(order.ID)
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
+		}
+		refreshed, err := e.db.GetOrder(order.ID)
+		if err != nil {
+			e.logFn("station: re-read order %d after runtime update: %v", order.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", order.ID, err)
+		}
+		order = refreshed
 		return &NodeOrderResult{CycleMode: "single_robot", Order: order, ProcessNodeID: nodeID}, nil
 
 	default: // "simple"
@@ -133,8 +154,15 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 		if err != nil {
 			return nil, err
 		}
-		_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil)
-		order, _ = e.db.GetOrder(order.ID)
+		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
+			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
+		}
+		refreshed, err := e.db.GetOrder(order.ID)
+		if err != nil {
+			e.logFn("station: re-read order %d after runtime update: %v", order.ID, err)
+			return nil, fmt.Errorf("re-read order %d: %w", order.ID, err)
+		}
+		order = refreshed
 		return &NodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: nodeID}, nil
 	}
 }
@@ -144,7 +172,7 @@ func (e *Engine) ReleaseNodeEmpty(nodeID int64) (*store.Order, error) {
 }
 
 func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error) {
-	node, runtime, claim, err := e.loadActiveNode(nodeID)
+	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -168,8 +196,15 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, erro
 	if err != nil {
 		return nil, err
 	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, runtime.StagedOrderID)
-	order, _ = e.db.GetOrder(order.ID)
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, runtime.StagedOrderID); err != nil {
+		e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
+	}
+	refreshed, err := e.db.GetOrder(order.ID)
+	if err != nil {
+		e.logFn("station: re-read order %d after runtime update: %v", order.ID, err)
+		return order, nil
+	}
+	order = refreshed
 	return order, nil
 }
 
@@ -242,36 +277,8 @@ func (e *Engine) AbortNodeOrders(nodeID int64) {
 			log.Printf("abort node orders: order %s on node %d: %v", order.UUID, nodeID, err)
 		}
 	}
-	_ = e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil)
-}
-
-func (e *Engine) loadChangeoverNodeTask(changeoverID int64, node *store.ProcessNode) (*store.ChangeoverStationTask, *store.ChangeoverNodeTask, error) {
-	var changeoverTask *store.ChangeoverStationTask
-	if node.OperatorStationID != nil {
-		task, err := e.db.GetChangeoverStationTaskByStation(changeoverID, *node.OperatorStationID)
-		if err != nil {
-			return nil, nil, err
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil); err != nil {
+			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
 		}
-		changeoverTask = task
-	}
-	nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeoverID, node.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return changeoverTask, nodeTask, nil
 }
 
-// loadActiveNode returns the process node, its runtime state, and the active
-// style node claim (if any). The claim replaces the old assignment lookup.
-func (e *Engine) loadActiveNode(nodeID int64) (*store.ProcessNode, *store.ProcessNodeRuntimeState, *store.StyleNodeClaim, error) {
-	node, err := e.db.GetProcessNode(nodeID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	runtime, err := e.db.EnsureProcessNodeRuntime(nodeID)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	claim := e.findActiveClaim(node)
-	return node, runtime, claim, nil
-}
