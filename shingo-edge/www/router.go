@@ -31,7 +31,20 @@ type Handlers struct {
 	debugLog *debuglog.Logger
 }
 
-// NewRouter creates the chi router and returns it along with a stop function.
+// NewRouter registers all HTTP endpoints for shingo-edge.
+//
+// To find a handler: grep for the URL path → handler func name → handlers_*.go.
+//
+// Route layout:
+//   /events                — SSE stream (shop floor live updates)
+//   /                      — Public pages (material, kanbans, production, changeover, operator HMI)
+//   /login, /logout        — Authentication
+//   /config, /processes, …  — Admin-only pages (adminMiddleware)
+//   /api/* (public)        — Shop floor actions (confirm, request, release, changeover, orders)
+//   /api/* (admin)         — Setup mutations (PLCs, processes, styles, stations, config, backups)
+//
+// Auth boundary: h.adminMiddleware. Public = shop floor operator access (no login).
+// Handlers live in handlers_*.go files grouped by domain.
 func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Service) (http.Handler, func()) {
 	h := &Handlers{
 		engine:   eng,
@@ -129,10 +142,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		noCacheMiddleware(http.FileServer(http.FS(StaticFS()))),
 	))
 
-	// SSE (no auth — shop floor)
+	// ── SSE (no auth — shop floor) ─────────────────────────
 	r.Get("/events", h.eventHub.HandleSSE)
 
-	// Public pages (shop floor — no auth required)
+	// ── Public pages (shop floor — no auth) ─────────────────
 	r.Get("/", h.handleMaterial)
 	r.Get("/material", h.handleMaterial)
 	r.Get("/kanbans", h.handleKanbans)
@@ -145,12 +158,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	// Operator station HMI views are public (shop floor monitors)
 	r.Get("/operator/station/{id}", h.handleOperatorStationDisplay)
 
-	// Login/logout
+	// ── Login/logout ────────────────────────────────────────
 	r.Get("/login", h.handleLoginPage)
 	r.Post("/login", h.handleLogin)
 	r.Post("/logout", h.handleLogout)
 
-	// Admin-only pages
+	// ── Admin pages (auth required) ─────────────────────────
 	r.Group(func(r chi.Router) {
 		r.Use(h.adminMiddleware)
 		r.Get("/config", h.handleConfig)
@@ -160,13 +173,20 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Get("/diagnostics", h.handleDiagnostics)
 	})
 
-	// API endpoints (mixed: some public for shop floor, some admin-only)
+	// ── API routes ──────────────────────────────────────────
 	r.Route("/api", func(r chi.Router) {
-		// Public API (shop floor actions)
+
+		// ── Public API (shop floor actions, no auth) ────────
+
+		// Delivery confirmation & anomalies
 		r.Post("/confirm-delivery/{orderID}", h.apiConfirmDelivery)
 		r.Post("/confirm-anomaly/{snapshotID}", h.apiConfirmAnomaly)
 		r.Post("/dismiss-anomaly/{snapshotID}", h.apiDismissAnomaly)
+
+		// Operator station views
 		r.Get("/operator-stations/{id}/view", h.apiGetOperatorStationView)
+
+		// Process node operations (material request, release, produce, bin ops)
 		r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)
 		r.Post("/process-nodes/{id}/release-empty", h.apiReleaseNodeEmpty)
 		r.Post("/process-nodes/{id}/release-partial", h.apiReleaseNodePartial)
@@ -176,10 +196,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/process-nodes/{id}/clear-bin", h.apiClearBin)
 		r.Post("/process-nodes/{id}/request-empty", h.apiRequestEmptyBin)
 		r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
-		r.Get("/node/{name}/children", h.apiNodeChildren)
-		r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
 		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 		r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
+
+		// Changeover lifecycle
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 		r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
@@ -189,6 +209,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/processes/{id}/changeover/switch-station/{stationID}", h.apiSwitchOperatorStationToTarget)
 		r.Post("/processes/{id}/changeover/switch-node/{nodeID}", h.apiSwitchNodeToTarget)
 		r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
+
+		// Orders (create, lifecycle, manual)
 		r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
 		r.Post("/orders/store", h.apiCreateStoreOrder)
 		r.Post("/orders/move", h.apiCreateMoveOrder)
@@ -201,11 +223,15 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/orders/{orderID}/redirect", h.apiRedirectOrder)
 		r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
 		r.Get("/orders/active", h.apiGetActiveOrders)
+
+		// Lookups
+		r.Get("/node/{name}/children", h.apiNodeChildren)
+		r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
 		r.Get("/hourly-counts", h.apiGetHourlyCounts)
 		r.Get("/core-nodes", h.apiGetCoreNodes)
 		r.Get("/payload-catalog", h.apiListPayloadCatalog)
 
-		// Admin API (setup mutations)
+		// ── Admin API (auth required) ───────────────────────
 		r.Group(func(r chi.Router) {
 			r.Use(h.adminMiddleware)
 
@@ -231,7 +257,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
 			r.Get("/processes/{id}/styles", h.apiListProcessStyles)
 
-			// Styles
+			// Styles & node claims
 			r.Get("/styles", h.apiListStyles)
 			r.Post("/styles", h.apiCreateStyle)
 			r.Put("/styles/{id}", h.apiUpdateStyle)
@@ -249,24 +275,22 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
 			r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
 
-			// Process nodes (auto-managed via station claimed nodes; CRUD kept for compatibility)
+			// Process nodes
 			r.Get("/process-nodes", h.apiListConfiguredProcessNodes)
 			r.Get("/process-nodes/station/{stationID}", h.apiListConfiguredProcessNodesByStation)
 			r.Post("/process-nodes", h.apiCreateProcessNode)
 			r.Put("/process-nodes/{id}", h.apiUpdateProcessNode)
 			r.Delete("/process-nodes/{id}", h.apiDeleteProcessNode)
 
-			// Core nodes
+			// Sync (core nodes, payload catalog)
 			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
-
-			// Payload catalog
 			r.Post("/payload-catalog/sync", h.apiSyncPayloadCatalog)
 
 			// Shifts
 			r.Get("/shifts", h.apiListShifts)
 			r.Put("/shifts", h.apiSaveShifts)
 
-			// Config
+			// Config & backups
 			r.Put("/config/core-api", h.apiUpdateCoreAPI)
 			r.Post("/config/core-api/test", h.apiTestCoreAPI)
 			r.Put("/config/messaging", h.apiUpdateMessaging)
@@ -281,11 +305,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/backups/run", h.apiRunBackup)
 			r.Post("/backups/restore", h.apiStageBackupRestore)
 
-			// Manual message
+			// Diagnostics & manual tools
 			r.Post("/manual-message", h.apiSendManualMessage)
 			r.Post("/diagnostics/outbox/replay", h.apiReplayOutbox)
 			r.Post("/diagnostics/orders/sync", h.apiRequestOrderStatusSync)
-
 		})
 	})
 
