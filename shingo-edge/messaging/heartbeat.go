@@ -84,7 +84,7 @@ func (h *Heartbeater) sendRegister() {
 		log.Printf("heartbeater: send register failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent edge.register (station=%s)", h.stationID)
-		h.DebugLog.log("register sent station=%s", h.stationID)
+		h.DebugLog.Log("register sent station=%s", h.stationID)
 	}
 }
 
@@ -104,7 +104,7 @@ func (h *Heartbeater) sendNodeListRequest() {
 		log.Printf("heartbeater: send node list request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent node.list_request (station=%s)", h.stationID)
-		h.DebugLog.log("node_list_request sent station=%s", h.stationID)
+		h.DebugLog.Log("node_list_request sent station=%s", h.stationID)
 	}
 }
 
@@ -154,7 +154,7 @@ func (h *Heartbeater) sendCatalogRequest() {
 		log.Printf("heartbeater: send catalog request failed after retries: %v", err)
 	} else {
 		log.Printf("heartbeater: sent catalog.payloads_request (station=%s)", h.stationID)
-		h.DebugLog.log("catalog_request sent station=%s", h.stationID)
+		h.DebugLog.Log("catalog_request sent station=%s", h.stationID)
 	}
 }
 
@@ -182,7 +182,7 @@ func (h *Heartbeater) sendHeartbeat() {
 	if err := h.sender.PublishEnvelope(env, "heartbeat"); err != nil {
 		log.Printf("heartbeater: send heartbeat failed after retries: %v", err)
 	} else {
-		h.DebugLog.log("heartbeat sent uptime=%ds orders=%d", uptime, activeOrders)
+		h.DebugLog.Log("heartbeat sent uptime=%ds orders=%d", uptime, activeOrders)
 	}
 }
 

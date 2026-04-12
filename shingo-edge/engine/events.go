@@ -1,9 +1,8 @@
 package engine
 
 import (
-	"time"
-
 	"shingo/protocol"
+	"shingo/protocol/eventbus"
 )
 
 // EventType identifies the kind of event emitted by the Engine.
@@ -37,11 +36,7 @@ const (
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
-type Event struct {
-	Type      EventType
-	Timestamp time.Time
-	Payload   interface{}
-}
+type Event = eventbus.Event[EventType]
 
 // CounterReadEvent is emitted on every PLC poll.
 type CounterReadEvent struct {

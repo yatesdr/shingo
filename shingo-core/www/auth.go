@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/gorilla/sessions"
-	"golang.org/x/crypto/bcrypt"
 
+	"shingo/protocol/auth"
 	"shingocore/store"
 )
 
@@ -25,14 +25,6 @@ func newSessionStore(secret string) *sessions.CookieStore {
 	return s
 }
 
-func hashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(hash), err
-}
-
-func checkPassword(hash, password string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
-}
 
 func (h *Handlers) isAuthenticated(r *http.Request) bool {
 	session, err := h.sessions.Get(r, sessionName)
@@ -73,7 +65,7 @@ func (h *Handlers) ensureDefaultAdmin(db *store.DB) {
 	if err != nil || exists {
 		return
 	}
-	hash, err := hashPassword("admin")
+	hash, err := auth.HashPassword("admin")
 	if err != nil {
 		return
 	}
@@ -97,7 +89,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	user, err := h.engine.DB().GetAdminUser(username)
-	if err != nil || !checkPassword(user.PasswordHash, password) {
+	if err != nil || !auth.CheckPassword(user.PasswordHash, password) {
 		data := map[string]any{
 			"Page":  "login",
 			"Error": "Invalid username or password",

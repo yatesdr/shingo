@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"shingo/protocol/auth"
 	"shingoedge/store"
 )
 
@@ -135,7 +136,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	exists, _ := db.AdminUserExists()
 	if !exists {
-		hash, err := hashPassword(password)
+		hash, err := auth.HashPassword(password)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -150,7 +151,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := db.GetAdminUser(username)
-	if err != nil || !checkPassword(password, user.PasswordHash) {
+	if err != nil || !auth.CheckPassword(user.PasswordHash, password) {
 		h.renderTemplate(w, r, "login.html", map[string]interface{}{
 			"Page":  "login",
 			"Error": "Invalid username or password",
@@ -159,10 +160,4 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.sessions.setUser(w, r, username)
-	http.Redirect(w, r, "/config", http.StatusSeeOther)
-}
-
-func (h *Handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
-	h.sessions.clear(w, r)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
+	http.Redirect(w,

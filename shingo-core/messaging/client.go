@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 	"github.com/segmentio/kafka-go"
 
 	"shingo/protocol"
+	"shingo/protocol/backoff"
 	"shingocore/config"
 )
 
@@ -178,11 +178,7 @@ func (c *Client) Subscribe(topic string, handler MessageHandler) error {
 // readLoop reads messages from Kafka, reconnecting on errors with
 // exponential backoff (500ms base, capped at 5s, with ±20% jitter).
 func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHandler) {
-	const (
-		baseBackoff = 500 * time.Millisecond
-		maxBackoff  = 5 * time.Second
-	)
-	backoff := baseBackoff
+	bo := backoff.New(500*time.Millisecond, 5*time.Second)
 
 	for {
 		msg, err := reader.ReadMessage(context.Background())
@@ -193,7 +189,7 @@ func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHan
 			default:
 			}
 
-			jittered := time.Duration(float64(backoff) * (0.8 + 0.4*rand.Float64()))
+			jittered := bo.Next()
 			log.Printf("kafka read error: topic=%s: %v, reconnecting in %v", topic, err, jittered.Round(time.Millisecond))
 			c.dbg("read error: topic=%s error=%v backoff=%v", topic, err, jittered.Round(time.Millisecond))
 
@@ -218,14 +214,11 @@ func (c *Client) readLoop(topic string, reader *kafka.Reader, handler MessageHan
 			}
 			c.mu.Unlock()
 
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
+			bo.Reset()
 			continue
 		}
 
-		backoff = baseBackoff
+		bo.Reset()
 		c.dbg("received: topic=%s size=%d", msg.Topic, len(msg.Value))
 		func() {
 			defer func() {

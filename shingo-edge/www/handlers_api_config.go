@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingo/protocol"
+	"shingo/protocol/auth"
 	"shingoedge/store"
 )
 
@@ -703,12 +704,12 @@ func (h *Handlers) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !checkPassword(req.OldPassword, user.PasswordHash) {
+	if !auth.CheckPassword(user.PasswordHash, req.OldPassword) {
 		writeError(w, http.StatusBadRequest, "current password is incorrect")
 		return
 	}
 
-	hash, err := hashPassword(req.NewPassword)
+	hash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to hash password")
 		return

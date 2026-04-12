@@ -6,30 +6,20 @@ import (
 	"sync"
 	"time"
 
+	"shingo/protocol"
 	"shingo/protocol/debuglog"
+	"shingo/protocol/types"
 	"shingoedge/config"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/store"
-
-	"shingo/protocol"
 )
 
 // LogFunc is the logging callback signature.
 type LogFunc func(format string, args ...any)
 
-// DebugLogFunc is a nil-safe debug logging function. Call Log() on it
-// directly — a nil DebugLogFunc is safe and does nothing.
-// Defined in the engine package to avoid import cycles; subsystem packages
-// that cannot import engine define their own equivalent (same signature).
-type DebugLogFunc func(format string, args ...any)
-
-// Log calls the debug log function if non-nil. Safe to call on a nil receiver.
-func (fn DebugLogFunc) Log(format string, args ...any) {
-	if fn != nil {
-		fn(format, args...)
-	}
-}
+// DebugLogFunc is a nil-safe debug logging function.
+type DebugLogFunc = types.DebugLogFunc
 
 // Engine centralizes all business logic and orchestrates subsystems.
 type Engine struct {

@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/gorilla/sessions"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const sessionName = "shingoedge_session"
@@ -58,18 +57,4 @@ func (s *sessionStore) setUser(w http.ResponseWriter, r *http.Request, username 
 func (s *sessionStore) clear(w http.ResponseWriter, r *http.Request) {
 	sess := s.get(r)
 	delete(sess.Values, "username")
-	sess.Options.MaxAge = -1
-	sess.Save(r, w)
-}
-
-func checkPassword(password, hash string) bool {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
-}
-
-func hashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return "", err
-	}
-	return string(hash), nil
-}
+	sess.Optio

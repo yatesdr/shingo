@@ -4,24 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"sync"
 	"time"
 
 	kafkago "github.com/segmentio/kafka-go"
 
 	"shingo/protocol"
+	"shingo/protocol/backoff"
+	"shingo/protocol/types"
 	"shingoedge/config"
 )
 
 // DebugLogFunc is a nil-safe debug logging function.
-type DebugLogFunc func(format string, args ...any)
-
-func (fn DebugLogFunc) log(format string, args ...any) {
-	if fn != nil {
-		fn(format, args...)
-	}
-}
+type DebugLogFunc = types.DebugLogFunc
 
 // Client is the Kafka messaging client.
 type Client struct {
@@ -57,7 +52,7 @@ func (c *Client) Connect() error {
 		Balancer:     &kafkago.LeastBytes{},
 		RequiredAcks: kafkago.RequireOne,
 	}
-	c.DebugLog.log("connected to brokers %v", c.cfg.Kafka.Brokers)
+	c.DebugLog.Log("connected to brokers %v", c.cfg.Kafka.Brokers)
 	return nil
 }
 
@@ -83,7 +78,7 @@ func (c *Client) Reconnect() error {
 	}
 
 	log.Printf("kafka writer reconnected to %v", c.cfg.Kafka.Brokers)
-	c.DebugLog.log("reconnected to brokers %v", c.cfg.Kafka.Brokers)
+	c.DebugLog.Log("reconnected to brokers %v", c.cfg.Kafka.Brokers)
 	return nil
 }
 
@@ -105,7 +100,7 @@ func (c *Client) Publish(topic string, payload []byte) error {
 		payload = signed
 	}
 
-	c.DebugLog.log("publish topic=%s len=%d", topic, len(payload))
+	c.DebugLog.Log("publish topic=%s len=%d", topic, len(payload))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return c.kafkaW.WriteMessages(ctx, kafkago.Message{
@@ -138,7 +133,7 @@ func (c *Client) Subscribe(topic string, handler func(payload []byte)) error {
 		Topic:   topic,
 		GroupID: c.cfg.Kafka.GroupID,
 	})
-	c.DebugLog.log("subscribed to topic=%s group=%s", topic, c.cfg.Kafka.GroupID)
+	c.DebugLog.Log("subscribed to topic=%s group=%s", topic, c.cfg.Kafka.GroupID)
 	go c.readLoop(topic, handler)
 	return nil
 }
@@ -146,11 +141,7 @@ func (c *Client) Subscribe(topic string, handler func(payload []byte)) error {
 // readLoop reads messages from Kafka, reconnecting on errors with
 // exponential backoff (500ms base, capped at 5s, with ±20% jitter).
 func (c *Client) readLoop(topic string, handler func(payload []byte)) {
-	const (
-		baseBackoff = 500 * time.Millisecond
-		maxBackoff  = 5 * time.Second
-	)
-	backoff := baseBackoff
+	bo := backoff.New(500*time.Millisecond, 5*time.Second)
 
 	for {
 		c.mu.RLock()
@@ -170,8 +161,7 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 			default:
 			}
 
-			// Add ±20% jitter to avoid thundering herd
-			jittered := time.Duration(float64(backoff) * (0.8 + 0.4*rand.Float64()))
+			jittered := bo.Next()
 			log.Printf("kafka read error: %v, reconnecting in %v", err, jittered.Round(time.Millisecond))
 
 			timer := time.NewTimer(jittered)
@@ -193,19 +183,13 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 				GroupID: c.cfg.Kafka.GroupID,
 			})
 			c.mu.Unlock()
-			c.DebugLog.log("reader reconnected for topic=%s", topic)
-
-			// Increase backoff for next failure
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
+			c.DebugLog.Log("reader reconnected for topic=%s", topic)
 			continue
 		}
 
 		// Reset backoff on successful read
-		backoff = baseBackoff
-		c.DebugLog.log("recv topic=%s len=%d", topic, len(msg.Value))
+		bo.Reset()
+		c.DebugLog.Log("recv topic=%s len=%d", topic, len(msg.Value))
 		handler(msg.Value)
 	}
 }

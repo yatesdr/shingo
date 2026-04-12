@@ -49,7 +49,7 @@ func (pr *ProductionReporter) RecordDelta(jobStyleID int64, delta int64) {
 	pr.mu.Lock()
 	pr.accumulator[style.Name] += float64(delta)
 	pr.mu.Unlock()
-	pr.DebugLog.log("delta recorded: style=%d delta=%d name=%s", jobStyleID, delta, style.Name)
+	pr.DebugLog.Log("delta recorded: style=%d delta=%d name=%s", jobStyleID, delta, style.Name)
 }
 
 // Start begins the periodic flush loop.
@@ -118,7 +118,7 @@ func (pr *ProductionReporter) flush() {
 		log.Printf("ERROR: production_reporter: enqueue outbox failed, restoring deltas: %v", err)
 		pr.restoreSnapshot(snapshot)
 	} else {
-		pr.DebugLog.log("flush: enqueued %d entries", len(entries))
+		pr.DebugLog.Log("flush: enqueued %d entries", len(entries))
 	}
 }
 

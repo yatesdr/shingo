@@ -34,23 +34,7 @@ type coreFlags struct {
 // parseFlags handles the custom --log-debug stripping and standard flag parsing.
 // Exits on --help or --version.
 func parseFlags() coreFlags {
-	// Strip --log-debug / -log-debug from os.Args before flag.Parse,
-	// because flag.String always requires a value argument but we want
-	// bare --log-debug (no value) to mean "all subsystems".
-	var fileFilter []string
-	var filteredArgs []string
-	for _, arg := range os.Args[1:] {
-		if arg == "--log-debug" || arg == "-log-debug" {
-			fileFilter = []string{}
-			continue
-		}
-		if strings.HasPrefix(arg, "--log-debug=") || strings.HasPrefix(arg, "-log-debug=") {
-			val := arg[strings.Index(arg, "=")+1:]
-			fileFilter = strings.Split(val, ",")
-			continue
-		}
-		filteredArgs = append(filteredArgs, arg)
-	}
+	filteredArgs, fileFilter := debuglog.ParseDebugFlag(os.Args[1:])
 	os.Args = append(os.Args[:1], filteredArgs...)
 
 	showVersion := flag.Bool("version", false, "print version and exit")

@@ -7,19 +7,14 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/types"
 	"shingoedge/store"
 
 	"github.com/google/uuid"
 )
 
 // DebugLogFunc is a nil-safe debug logging function.
-type DebugLogFunc func(format string, args ...any)
-
-func (fn DebugLogFunc) log(format string, args ...any) {
-	if fn != nil {
-		fn(format, args...)
-	}
-}
+type DebugLogFunc = types.DebugLogFunc
 
 // Manager handles the order lifecycle state machine.
 type Manager struct {
@@ -58,7 +53,7 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 	}
 	node, err := m.db.GetProcessNode(*processNodeID)
 	if err != nil {
-		m.DebugLog.log("process-node lookup failed: id=%d err=%v", *processNodeID, err)
+		m.DebugLog.Log("process-node lookup failed: id=%d err=%v", *processNodeID, err)
 		return "", payloadCode
 	}
 	process, err := m.db.GetProcess(node.ProcessID)
@@ -75,7 +70,7 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 	}
 	claim, err := m.db.GetStyleNodeClaimByNode(styleID, node.CoreNodeName)
 	if err != nil {
-		m.DebugLog.log("style-node-claim lookup failed: node=%s err=%v", node.CoreNodeName, err)
+		m.DebugLog.Log("style-node-claim lookup failed: node=%s err=%v", node.CoreNodeName, err)
 		return "", payloadCode
 	}
 	if payloadCode == "" {
@@ -95,12 +90,12 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *protocol.Envelope, envErr error) {
 	if envErr != nil {
 		log.Printf("ERROR: build envelope for order %s: %v (order stays pending)", orderUUID, envErr)
-		m.DebugLog.log("enqueue failed: order %s envelope build error: %v", orderUUID, envErr)
+		m.DebugLog.Log("enqueue failed: order %s envelope build error: %v", orderUUID, envErr)
 		return
 	}
 	if err := m.enqueueEnvelope(env); err != nil {
 		log.Printf("ERROR: enqueue order %s: %v (order stays pending)", orderUUID, err)
-		m.DebugLog.log("enqueue failed: order %s outbox write error: %v", orderUUID, err)
+		m.DebugLog.Log("enqueue failed: order %s outbox write error: %v", orderUUID, err)
 		return
 	}
 	if err := m.TransitionOrder(orderID, StatusSubmitted, "auto-submitted at creation"); err != nil {
@@ -135,7 +130,7 @@ func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.log("create: type=%s id=%d uuid=%s delivery=%s", TypeRetrieve, orderID, orderUUID, deliveryNode)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s delivery=%s", TypeRetrieve, orderID, orderUUID, deliveryNode)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeRetrieve, nil, processNodeID)
 
 	return m.db.GetOrder(orderID)
@@ -152,7 +147,7 @@ func (m *Manager) CreateStoreOrder(processNodeID *int64, quantity int64, sourceN
 		return nil, fmt.Errorf("create store order: %w", err)
 	}
 
-	m.DebugLog.log("create: type=%s id=%d uuid=%s source=%s", TypeStore, orderID, orderUUID, sourceNode)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s", TypeStore, orderID, orderUUID, sourceNode)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeStore, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }
@@ -191,7 +186,7 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.log("create: type=%s id=%d uuid=%s source=%s delivery=%s", TypeMove, orderID, orderUUID, sourceNode, deliveryNode)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s delivery=%s", TypeMove, orderID, orderUUID, sourceNode, deliveryNode)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }
@@ -223,7 +218,7 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.log("create: type=%s id=%d uuid=%s source=%s delivery=%s remainingUOP=%v", TypeMove, orderID, orderUUID, sourceNode, deliveryNode, remainingUOP)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s delivery=%s remainingUOP=%v", TypeMove, orderID, orderUUID, sourceNode, deliveryNode, remainingUOP)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, processNodeID)
 	return m.db.GetOrder(orderID)
 }
@@ -261,7 +256,7 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.log("create: type=%s id=%d uuid=%s steps=%d", TypeComplex, orderID, orderUUID, len(steps))
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s steps=%d", TypeComplex, orderID, orderUUID, len(steps))
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeComplex, nil, processNodeID)
 
 	return m.db.GetOrder(orderID)
@@ -290,7 +285,7 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 
-	m.DebugLog.log("create: type=%s id=%d uuid=%s payload=%s bin=%s", TypeIngest, orderID, orderUUID, payloadCode, binLabel)
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s payload=%s bin=%s", TypeIngest, orderID, orderUUID, payloadCode, binLabel)
 	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeIngest, nil, processNodeID)
 
 	return m.db.GetOrder(orderID)
@@ -319,7 +314,7 @@ func (m *Manager) ReleaseOrder(orderID int64) error {
 		return fmt.Errorf("transition to in_transit: %w", err)
 	}
 
-	m.DebugLog.log("release: id=%d uuid=%s", orderID, order.UUID)
+	m.DebugLog.Log("release: id=%d uuid=%s", orderID, order.UUID)
 	return nil
 }
 
@@ -337,7 +332,7 @@ func (m *Manager) handleDelivered(order *store.Order, statusDetail string, stage
 		return err
 	}
 	if order.AutoConfirm {
-		m.DebugLog.log("auto-confirm: id=%d uuid=%s qty=%d", order.ID, order.UUID, order.Quantity)
+		m.DebugLog.Log("auto-confirm: id=%d uuid=%s qty=%d", order.ID, order.UUID, order.Quantity)
 		return m.ConfirmDelivery(order.ID, order.Quantity)
 	}
 	return nil
@@ -354,7 +349,7 @@ func (m *Manager) TransitionOrder(orderID int64, newStatus, detail string) error
 // is guaranteed to receive the cancellation — preventing a robot from
 // continuing to execute a cancelled order on the floor.
 func (m *Manager) AbortOrder(orderID int64) error {
-	m.DebugLog.log("abort: id=%d", orderID)
+	m.DebugLog.Log("abort: id=%d", orderID)
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -385,7 +380,7 @@ func (m *Manager) AbortOrder(orderID int64) error {
 // The envelope is built and enqueued before updating the local DB so that
 // Core receives the redirect. If enqueue fails, the error is returned.
 func (m *Manager) RedirectOrder(orderID int64, newDeliveryNode string) (*store.Order, error) {
-	m.DebugLog.log("redirect: id=%d new_delivery=%s", orderID, newDeliveryNode)
+	m.DebugLog.Log("redirect: id=%d new_delivery=%s", orderID, newDeliveryNode)
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return nil, fmt.Errorf("get order: %w", err)
@@ -418,7 +413,7 @@ func (m *Manager) SubmitOrder(orderID int64) error {
 		return err
 	}
 
-	m.DebugLog.log("submit: id=%d uuid=%s type=%s", orderID, order.UUID, order.OrderType)
+	m.DebugLog.Log("submit: id=%d uuid=%s type=%s", orderID, order.UUID, order.OrderType)
 
 	// For store orders, build and enqueue the waybill BEFORE transitioning.
 	// If enqueue fails, the order stays pending so the operator can retry.
@@ -457,7 +452,7 @@ func (m *Manager) ConfirmDelivery(orderID int64, finalCount int64) error {
 		return fmt.Errorf("order must be in delivered status to confirm, got %s", order.Status)
 	}
 
-	m.DebugLog.log("confirm: id=%d uuid=%s count=%d", orderID, order.UUID, finalCount)
+	m.DebugLog.Log("confirm: id=%d uuid=%s count=%d", orderID, order.UUID, finalCount)
 
 	if err := m.db.UpdateOrderFinalCount(orderID, finalCount, true); err != nil {
 		return err
@@ -479,7 +474,7 @@ func (m *Manager) ConfirmDelivery(orderID int64, finalCount int64) error {
 
 // HandleDispatchReply processes an inbound reply from central dispatch.
 func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, statusDetail string) error {
-	m.DebugLog.log("dispatch reply: uuid=%s type=%s", orderUUID, replyType)
+	m.DebugLog.Log("dispatch reply: uuid=%s type=%s", orderUUID, replyType)
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)

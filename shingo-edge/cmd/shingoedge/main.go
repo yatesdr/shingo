@@ -35,26 +35,8 @@ type edgeFlags struct {
 
 // parseFlags handles the custom --log-debug stripping and standard flag parsing.
 func parseFlags() edgeFlags {
-	var fileFilter []string
-	debugFlag := false
-	var filteredArgs []string
-	for _, arg := range os.Args[1:] {
-		switch {
-		case arg == "--log-debug" || arg == "-log-debug":
-			debugFlag = true
-			fileFilter = []string{}
-		case strings.HasPrefix(arg, "--log-debug=") || strings.HasPrefix(arg, "-log-debug="):
-			debugFlag = true
-			val := arg[strings.Index(arg, "=")+1:]
-			if val == "" {
-				fileFilter = []string{}
-			} else {
-				fileFilter = strings.Split(val, ",")
-			}
-		default:
-			filteredArgs = append(filteredArgs, arg)
-		}
-	}
+	filteredArgs, fileFilter := debuglog.ParseDebugFlag(os.Args[1:])
+	debugFlag := fileFilter != nil
 	os.Args = append(os.Args[:1], filteredArgs...)
 
 	configPath := flag.String("config", "shingoedge.yaml", "path to config file")

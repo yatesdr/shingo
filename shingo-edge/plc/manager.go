@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"shingo/protocol/types"
 	"shingoedge/config"
 	"shingoedge/store"
 )
@@ -50,13 +51,7 @@ type ManagedPLC struct {
 }
 
 // DebugLogFunc is a nil-safe debug logging function.
-type DebugLogFunc func(format string, args ...any)
-
-func (fn DebugLogFunc) log(format string, args ...any) {
-	if fn != nil {
-		fn(format, args...)
-	}
-}
+type DebugLogFunc = types.DebugLogFunc
 
 // Manager manages PLC data via WarLink HTTP polling or SSE and counter polling.
 type Manager struct {
@@ -185,7 +180,7 @@ func (m *Manager) warlinkPollLoop() {
 	defer ticker.Stop()
 
 	// Do an immediate first poll
-	m.DebugLog.log("warlink poll loop started (mode=poll)")
+	m.DebugLog.Log("warlink poll loop started (mode=poll)")
 	m.warlinkPollTick()
 
 	for {
@@ -216,7 +211,7 @@ func (m *Manager) warlinkPollTick() {
 		m.mu.Unlock()
 		if wasConnected {
 			log.Printf("WarLink connection lost: %v", err)
-			m.DebugLog.log("warlink disconnected: %v", err)
+			m.DebugLog.Log("warlink disconnected: %v", err)
 			m.emitter.EmitWarLinkDisconnected(err)
 		}
 		return
@@ -229,7 +224,7 @@ func (m *Manager) warlinkPollTick() {
 	m.mu.Unlock()
 	if wasDisconnected {
 		log.Printf("WarLink connected: %s", m.baseURL())
-		m.DebugLog.log("warlink connected: %s", m.baseURL())
+		m.DebugLog.Log("warlink connected: %s", m.baseURL())
 	}
 
 	// Track which PLCs we've seen this tick for status transitions
@@ -276,14 +271,14 @@ func (m *Manager) warlinkPollTick() {
 
 		// Emit connection transitions
 		if effectiveStatus == "Connected" && oldStatus != "Connected" {
-			m.DebugLog.log("plc connected: %s", p.Name)
+			m.DebugLog.Log("plc connected: %s", p.Name)
 			m.emitter.EmitPLCConnected(p.Name)
 		} else if effectiveStatus != "Connected" && oldStatus == "Connected" {
 			var emitErr error
 			if effectiveErr != "" {
 				emitErr = fmt.Errorf("%s", effectiveErr)
 			}
-			m.DebugLog.log("plc disconnected: %s err=%v", p.Name, emitErr)
+			m.DebugLog.Log("plc disconnected: %s err=%v", p.Name, emitErr)
 			m.emitter.EmitPLCDisconnected(p.Name, emitErr)
 		}
 
@@ -532,7 +527,7 @@ func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 	}
 	val, err := m.ReadTag(rp.PLCName, rp.TagName)
 	if err != nil {
-		m.DebugLog.log("tag read error: %s/%s rp=%d: %v", rp.PLCName, rp.TagName, rp.ID, err)
+		m.DebugLog.Log("tag read error: %s/%s rp=%d: %v", rp.PLCName, rp.TagName, rp.ID, err)
 		log.Printf("read tag %s/%s (rp %d): %v", rp.PLCName, rp.TagName, rp.ID, err)
 		m.emitter.EmitCounterReadError(rp.ID, rp.PLCName, rp.TagName, err.Error())
 		return
@@ -550,7 +545,7 @@ func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
 		return
 	}
 
-	m.DebugLog.log("counter delta: rp=%d %s/%s last=%d new=%d delta=%d anomaly=%s",
+	m.DebugLog.Log("counter delta: rp=%d %s/%s last=%d new=%d delta=%d anomaly=%s",
 		rp.ID, rp.PLCName, rp.TagName, rp.LastCount, newCount, delta, anomaly)
 
 	// Record snapshot

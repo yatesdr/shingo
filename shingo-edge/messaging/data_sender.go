@@ -46,6 +46,6 @@ func (s *DataSender) Send(subject string, src, dst protocol.Address, payload any
 	if err := s.PublishEnvelope(env, label); err != nil {
 		return fmt.Errorf("publish %s: %w", label, err)
 	}
-	s.DebugLog.log("%s sent", label)
+	s.DebugLog.Log("%s sent", label)
 	return nil
 }
