@@ -160,4 +160,10 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.sessions.setUser(w, r, username)
-	http.Redirect(w,
+	http.Redirect(w, r, "/config", http.StatusSeeOther)
+}
+
+func (h *Handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
+	h.sessions.clear(w, r)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}

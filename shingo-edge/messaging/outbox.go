@@ -55,4 +55,6 @@ func NewOutboxDrainer(db *store.DB, client *Client, cfg *config.MessagingConfig)
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
-	drainer := outbox.NewDrainer(store, c
+	drainer := outbox.NewDrainer(store, client, cfg.OrdersTopic, interval, 50)
+	return drainer
+}

@@ -50,9 +50,9 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus, detail stri
 func (s *LifecycleService) applyTransition(order *store.Order, newStatus, detail string, forced bool) error {
 	oldStatus := order.Status
 	if forced {
-		s.debug.log("force transition: id=%d uuid=%s %s->%s", order.ID, order.UUID, oldStatus, newStatus)
+		s.debug.Log("force transition: id=%d uuid=%s %s->%s", order.ID, order.UUID, oldStatus, newStatus)
 	} else {
-		s.debug.log("transition: id=%d uuid=%s %s->%s", order.ID, order.UUID, oldStatus, newStatus)
+		s.debug.Log("transition: id=%d uuid=%s %s->%s", order.ID, order.UUID, oldStatus, newStatus)
 	}
 	if err := s.db.UpdateOrderStatus(order.ID, newStatus); err != nil {
 		return fmt.Errorf("update order status: %w", err)

@@ -57,4 +57,7 @@ func (s *sessionStore) setUser(w http.ResponseWriter, r *http.Request, username 
 func (s *sessionStore) clear(w http.ResponseWriter, r *http.Request) {
 	sess := s.get(r)
 	delete(sess.Values, "username")
-	sess.Optio
+	sess.Options.MaxAge = -1
+	sess.Save(r, w)
+}
+

@@ -52,4 +52,7 @@ func (a *coreOutboxStore) PurgeOldOutbox(olderThan time.Duration) (int, error) {
 func NewOutboxDrainer(db *store.DB, client *Client, interval time.Duration) *outbox.Drainer {
 	adapter := &coreOutboxStore{db: db}
 	drainer := outbox.NewDrainer(adapter, client, "", interval, 50)
-	// Wrap DebugLog from clie
+	// Wrap DebugLog from client
+	drainer.DebugLog = types.DebugLogFunc(client.DebugLog)
+	return drainer
+}
