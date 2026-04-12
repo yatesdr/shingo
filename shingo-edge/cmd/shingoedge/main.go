@@ -1,3 +1,21 @@
+// main.go — ShinGo Edge composition root.
+//
+// This is the single place where all edge subsystems are created,
+// configured, and wired together. Nothing runs until main() stitches
+// the pieces.
+//
+// Startup sequence (main):
+//   flags → restore check → debug log → config → DB → engine →
+//   backup service → messaging → data sender → outbox drainer →
+//   production reporter → Kafka subscribers → HTTP server → shutdown
+//
+// Kafka wiring lives in setupKafkaSubscribers() because it requires
+// a live connection. If Connect fails, the outbox drainer still runs
+// and will drain when connectivity returns.
+//
+// The file also contains the interactive restore flow (--restore flag)
+// and its prompt helpers at the bottom.
+
 package main
 
 import (
@@ -121,7 +139,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("protocol ingestor listening on %s (station=%s)", cfg.Messaging.DispatchTopic, stationID)
 	}
 
-	// Heartbeater (registration + periodic heartbeat)
+	// ── Heartbeater (registration + periodic heartbeat) ────────────────
 	hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
 		return db.CountActiveOrders()
 	})
@@ -130,6 +148,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// Note: hb.Stop() is not deferred here — it lives for the process lifetime
 	// and is cleaned up by the Kafka client close.
 
+	// ── Handler callbacks (catalog, status, registration) ───────────────
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 
 	edgeHandler.SetPayloadCatalogHandler(func(entries []protocol.CatalogPayloadInfo) {
@@ -203,6 +222,7 @@ func awaitShutdown(srv *http.Server, stopWeb func()) {
 }
 
 func main() {
+	// ── Flags & restore ─────────────────────────────────────────────────
 	flags := parseFlags()
 
 	if flags.debugFlag {
@@ -218,15 +238,17 @@ func main() {
 		log.Fatalf("apply pending restore: %v", err)
 	}
 
+	// ── Debug log & config ─────────────────────────────────────────────
 	dbg := mustInitDebugLog(flags.fileFilter)
 	defer dbg.Close()
 
 	cfg := mustLoadConfig(flags.configPath, flags.port)
 
+	// ── Database ────────────────────────────────────────────────────────
 	db := mustOpenDatabase(cfg.DatabasePath)
 	defer db.Close()
 
-	// Engine
+	// ── Engine ──────────────────────────────────────────────────────────
 	eng := engine.New(engine.Config{
 		AppConfig:   cfg,
 		ConfigPath:  flags.configPath,
@@ -237,11 +259,12 @@ func main() {
 	eng.Start()
 	defer eng.Stop()
 
+	// ── Backup service ─────────────────────────────────────────────────
 	backupSvc := backup.NewService(db, cfg, flags.configPath, "dev", log.Printf)
 	backupSvc.Start()
 	defer backupSvc.Stop()
 
-	// Messaging
+	// ── Messaging (Kafka) ───────────────────────────────────────────────
 	if cfg.Messaging.Kafka.GroupID == "" {
 		cfg.Messaging.Kafka.GroupID = cfg.KafkaGroupID()
 	}
@@ -253,7 +276,7 @@ func main() {
 	}
 	defer msgClient.Close()
 
-	// Wire send function and reconnect unconditionally — they self-gate on connection state
+	// ── Data sender & outbox drainer ────────────────────────────────────
 	dataSender := messaging.NewDataSender(msgClient, cfg.Messaging.OrdersTopic, nil)
 	dataSender.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
 	eng.SetSendFunc(func(env *protocol.Envelope) error {
@@ -261,13 +284,13 @@ func main() {
 	})
 	eng.SetKafkaReconnectFunc(msgClient.Reconnect)
 
-	// Outbox drainer — runs unconditionally, self-gates on connection state
+	// Outbox drainer — runs unconditionally, drains when connected
 	drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)
 	drainer.DebugLog = messaging.DebugLogFunc(dbg.Func("outbox"))
 	drainer.Start()
 	defer drainer.Stop()
 
-	// Production reporter
+	// ── Production reporter ────────────────────────────────────────────
 	stationID := cfg.StationID()
 	reporter := messaging.NewProductionReporter(db, stationID)
 	reporter.DebugLog = messaging.DebugLogFunc(dbg.Func("reporter"))
@@ -279,20 +302,22 @@ func main() {
 	reporter.Start()
 	defer reporter.Stop()
 
-	// Connect to Kafka — subscription and heartbeat require a live connection
+	// ── Kafka connect & subscribe ───────────────────────────────────────
 	if err := msgClient.Connect(); err != nil {
 		log.Printf("messaging connect: %v (outbox drainer active, will drain when connected)", err)
 	} else {
 		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, db)
 	}
 
-	// HTTP server
+	// ── HTTP server & shutdown ──────────────────────────────────────────
 	router, stopWeb := www.NewRouter(eng, dbg, backupSvc)
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
 	srv := startHTTPServer(addr, router)
 
 	awaitShutdown(srv, stopWeb)
 }
+
+// ── Interactive restore flow (--restore flag) ───────────────────────
 
 func runInteractiveRestore(configPath string) error {
 	reader := bufio.NewReader(os.Stdin)
@@ -401,6 +426,8 @@ func runInteractiveRestore(configPath string) error {
 	fmt.Println("Restore completed successfully. Launching ShinGo Edge...")
 	return nil
 }
+
+// ── Prompt helpers ──────────────────────────────────────────────────
 
 func promptNonEmpty(reader *bufio.Reader, label string) (string, error) {
 	for {

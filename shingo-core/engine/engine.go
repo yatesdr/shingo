@@ -1,3 +1,18 @@
+// engine.go — ShinGo Core engine: struct, lifecycle, and subsystem wiring.
+//
+// Layout:
+//   Config / Engine struct       – dependencies and internal state
+//   New / Start / Stop           – lifecycle (Start wires dispatcher, tracker,
+//                                  fulfillment scanner, event handlers, background loops)
+//   Accessors                    – one-liner getters for subsystems
+//   SendToEdge / SendDataToEdge  – outbound envelope helpers
+//   Connection health            – checkConnectionStatus, connectionHealthLoop
+//   Scene sync                   – SyncScenePoints, SyncFleetNodes, UpdateNodeZones
+//   Background loops             – robotRefreshLoop, stagedBinSweepLoop
+//   Reconfigure*                 – live-reload for DB, fleet, messaging
+//
+// To find where a background loop is started, search Start() for "go e.".
+
 package engine
 
 import (
@@ -112,6 +127,8 @@ func (e *Engine) GetAllCachedRobots() []fleet.RobotStatus {
 	return robots
 }
 
+// ── Lifecycle ───────────────────────────────────────────────────────
+
 func (e *Engine) Start() {
 	// Create emitter adapters
 	de := &dispatchEmitter{bus: e.Events}
@@ -185,7 +202,8 @@ func (e *Engine) Stop() {
 	e.logFn("engine: stopped")
 }
 
-// Accessors
+// ── Accessors ───────────────────────────────────────────────────────
+
 func (e *Engine) DB() *store.DB                          { return e.db }
 func (e *Engine) AppConfig() *config.Config              { return e.cfg }
 func (e *Engine) ConfigPath() string                     { return e.configPath }
@@ -196,6 +214,8 @@ func (e *Engine) MsgClient() *messaging.Client           { return e.msgClient }
 func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
 func (e *Engine) Recovery() *RecoveryService             { return e.recovery }
 func (e *Engine) BinManifest() *service.BinManifestService { return e.binManifest }
+
+// ── Outbound messaging ──────────────────────────────────────────────
 
 // SendToEdge is an exported wrapper around sendToEdge, allowing HTTP handlers
 // and other external callers to enqueue messages for edge stations via outbox.
@@ -232,6 +252,8 @@ func (e *Engine) RunFulfillmentScan() int {
 	}
 	return e.fulfillment.RunOnce()
 }
+
+// ── Connection health ───────────────────────────────────────────────
 
 func (e *Engine) checkConnectionStatus() {
 	// Fleet
@@ -308,6 +330,8 @@ func (e *Engine) loadActiveOrders() {
 	}
 }
 
+// ── Live reconfiguration ────────────────────────────────────────────
+
 // ReconfigureDatabase reconnects the database with current config.
 func (e *Engine) ReconfigureDatabase() {
 	if err := e.db.Reconnect(&e.cfg.Database); err != nil {
@@ -337,6 +361,8 @@ func (e *Engine) ReconfigureMessaging() {
 	}
 	e.checkConnectionStatus()
 }
+
+// ── Scene sync (fleet → DB → nodes) ─────────────────────────────────
 
 // SyncScenePoints persists fleet scene areas to the database.
 // Returns the total number of points synced and a map of bin location instanceName → areaName.
@@ -505,6 +531,8 @@ func (e *Engine) SceneSync() (int, int, int, error) {
 	return total, created, deleted, nil
 }
 
+// ── Background loops ────────────────────────────────────────────────
+
 // robotRefreshLoop polls robot status every 2 seconds and emits EventRobotsUpdated
 // only when the robot state has actually changed.
 func (e *Engine) robotRefreshLoop() {
@@ -577,6 +605,8 @@ func (e *Engine) stagedBinSweepLoop() {
 		}
 	}
 }
+
+// ── Adapters ────────────────────────────────────────────────────────
 
 // orderResolver implements fleet.OrderIDResolver.
 type orderResolver struct {

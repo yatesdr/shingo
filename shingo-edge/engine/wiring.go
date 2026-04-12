@@ -1,3 +1,27 @@
+// wiring.go — Edge event handler wiring and order completion processing.
+//
+// wireEventHandlers() subscribes to the EventBus and dispatches to handlers.
+// The completion chain (handleNodeOrderCompleted) matches order type and
+// changeover context using an early-return pattern — each handler returns
+// true if it matched, false to fall through.
+//
+// Layout:
+//   wireEventHandlers              – all subscriptions
+//   handleCounterDelta             – consume/produce UOP tracking, auto-reorder,
+//                                    A/B paired node cycling, fallthrough safety net
+//   Completion chain:
+//     loadOrderCompletionCtx       – shared lookup for order/node/runtime/changeover
+//     handleNodeOrderCompleted     – dispatcher: staged → Order B → changeover →
+//                                    manual swap → produce ingest → normal replenishment
+//     handleStagedDelivery         – Order A → inbound staging
+//     handleOrderBCompletion       – Order B (old material release)
+//     handleChangeoverRelease      – Order A direct delivery
+//     handleManualSwapCompletion   – move order for manual_swap nodes
+//     handleProduceIngestCompletion – ingest order for produce nodes
+//     handleNormalReplenishment    – standard retrieve/complex
+//   handleNodeOrderFailed          – changeover error marking
+//   handleSequentialBackfill       – auto-create Order B on in_transit
+
 package engine
 
 import (
@@ -6,6 +30,8 @@ import (
 	"shingoedge/orders"
 	"shingoedge/store"
 )
+
+// ── Event subscriptions ─────────────────────────────────────────────
 
 // wireEventHandlers keeps process ownership in Edge and updates process-node runtime
 // from order lifecycle events. Counter deltas still feed hourly production.
@@ -42,6 +68,8 @@ func (e *Engine) wireEventHandlers() {
 func isInactivePairedNode(claim *store.StyleNodeClaim, runtime *store.ProcessNodeRuntimeState) bool {
 	return claim.PairedCoreNode != "" && !runtime.ActivePull
 }
+
+// ── Counter delta (UOP tracking, auto-reorder, A/B cycling) ─────────
 
 // handleCounterDelta processes a production counter tick:
 // - For consume nodes: decrement remaining UOP, trigger auto-reorder if at threshold
@@ -155,6 +183,8 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		}
 	}
 }
+
+// ── Order completion chain ──────────────────────────────────────────
 
 // orderCompletionCtx holds shared lookups for order completion handling.
 // Loaded once by loadOrderCompletionCtx and passed to each handler.
@@ -450,6 +480,8 @@ func (e *Engine) maybePreStage(node *store.ProcessNode, claim *store.StyleNodeCl
 	}
 }
 
+// ── Order failure ───────────────────────────────────────────────────
+
 func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	order, err := e.db.GetOrder(failed.OrderID)
 	if err != nil || order.ProcessNodeID == nil {
@@ -481,6 +513,8 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 		log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
 	}
 }
+
+// ── Sequential backfill ─────────────────────────────────────────────
 
 // handleSequentialBackfill watches for sequential Order A going in_transit
 // and auto-creates Order B (backfill) to deliver replacement material.

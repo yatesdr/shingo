@@ -1,3 +1,18 @@
+// engine.go — ShinGo Edge engine: struct, lifecycle, and subsystem wiring.
+//
+// Layout:
+//   Types / Engine struct       – dependencies and internal state
+//   New / Start / Stop          – lifecycle (Start creates managers, wires
+//                                 event handlers, restores changeover state,
+//                                 starts PLC polling)
+//   Accessors                   – one-liner getters for subsystems
+//   Core node sync              – SetCoreNodes, CoreNodes
+//   Func injection              – SetNodeSyncFunc, SetCatalogSyncFunc,
+//                                 SetSendFunc, SetKafkaReconnectFunc
+//   Payload catalog             – HandlePayloadCatalog
+//   Outbound messaging          – SendEnvelope, ReconnectKafka
+//   WarLink                     – ApplyWarLinkConfig
+
 package engine
 
 import (
@@ -14,6 +29,8 @@ import (
 	"shingoedge/plc"
 	"shingoedge/store"
 )
+
+// ── Types & struct ──────────────────────────────────────────────────
 
 // LogFunc is the logging callback signature.
 type LogFunc func(format string, args ...any)
@@ -58,6 +75,8 @@ type Config struct {
 	LogFunc     LogFunc
 	DebugLogger *debuglog.Logger
 }
+
+// ── Lifecycle ───────────────────────────────────────────────────────
 
 // New creates a new Engine. Call Start() to initialize and wire subsystems.
 func New(c Config) *Engine {
@@ -123,6 +142,8 @@ func (e *Engine) Start() {
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)
 }
 
+// ── Accessors ───────────────────────────────────────────────────────
+
 // Uptime returns the number of seconds since the engine started.
 func (e *Engine) Uptime() int64 {
 	return int64(time.Since(e.startedAt).Seconds())
@@ -140,6 +161,8 @@ func (e *Engine) Stop() {
 	}
 	e.logFn("Engine stopped")
 }
+
+// ── WarLink (PLC connectivity) ──────────────────────────────────────
 
 // ApplyWarLinkConfig stops and restarts the WarLink poller/SSE to match the current config.
 // Always stops first to handle mode switches (poll→sse or sse→poll) cleanly.
@@ -174,6 +197,8 @@ func (e *Engine) OrderManager() *orders.Manager          { return e.orderMgr }
 func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
 func (e *Engine) CoreSync() *CoreSyncService             { return e.coreSync }
 
+// ── Core node sync ──────────────────────────────────────────────────
+
 // SetCoreNodes updates the core node set and emits EventCoreNodesUpdated.
 func (e *Engine) SetCoreNodes(nodes []protocol.NodeInfo) {
 	e.coreNodesMu.Lock()
@@ -201,6 +226,8 @@ func (e *Engine) CoreNodes() map[string]protocol.NodeInfo {
 	return cp
 }
 
+// ── Func injection (wired by main.go) ───────────────────────────────
+
 // SetNodeSyncFunc sets the function to call when a node sync is requested.
 func (e *Engine) SetNodeSyncFunc(fn func()) {
 	e.nodeSyncFn = fn
@@ -225,6 +252,8 @@ func (e *Engine) RequestCatalogSync() {
 	}
 }
 
+// ── Payload catalog ─────────────────────────────────────────────────
+
 // HandlePayloadCatalog upserts payload catalog entries received from core and
 // prunes any local entries that no longer exist in core's response.
 func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
@@ -245,6 +274,8 @@ func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 	}
 	e.logFn("engine: updated payload catalog (%d entries)", len(entries))
 }
+
+// ── Outbound messaging ──────────────────────────────────────────────
 
 // SetSendFunc sets the function used to publish protocol envelopes.
 func (e *Engine) SetSendFunc(fn func(*protocol.Envelope) error) {

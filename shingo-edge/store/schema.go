@@ -1,6 +1,29 @@
+// schema.go — Edge SQLite schema definition and forward migrations.
+//
+// Layout:
+//   schemaMigrations const   – DROP statements for removed tables
+//   schema const             – canonical CREATE TABLE statements (the
+//                              "desired state" for a fresh database)
+//   migrate()                – master migration runner:
+//                              1. schemaMigrations (cleanup)
+//                              2. schema (CREATE IF NOT EXISTS)
+//                              3. Column renames (graceful rebuilds)
+//                              4. ALTER TABLE additions (idempotent)
+//                              5. Data fixups (queued→pending, etc.)
+//   migrate* helpers         – one per table rename/rebuild
+//   strip* / rebuild*        – legacy table cleanup
+//   tableHasColumn / tableExists – introspection utilities
+//
+// All migrations are idempotent — safe to re-run on an already-migrated DB.
+// New columns are added via ALTER TABLE ... ADD COLUMN (SQLite ignores
+// duplicates on error). Structural changes use the rename-rebuild pattern:
+// rename → create new → INSERT INTO ... SELECT → drop old.
+
 package store
 
 import "strings"
+
+// ── Cleanup migrations (drop removed tables) ────────────────────────
 
 const schemaMigrations = `
 DROP TABLE IF EXISTS bom_entries;
@@ -9,6 +32,8 @@ DROP TABLE IF EXISTS materials;
 DROP TABLE IF EXISTS kanban_templates;
 DROP TABLE IF EXISTS operator_screens;
 `
+
+// ── Canonical schema (desired state for fresh DB) ───────────────────
 
 const schema = `
 CREATE TABLE IF NOT EXISTS admin_users (
@@ -250,6 +275,8 @@ CREATE INDEX IF NOT EXISTS idx_cst_changeover_id ON changeover_station_tasks(pro
 CREATE INDEX IF NOT EXISTS idx_cnt_changeover_id ON changeover_node_tasks(process_changeover_id);
 `
 
+// ── Master migration runner ─────────────────────────────────────────
+
 func (db *DB) migrate() error {
 	// Run cleanup migrations first (drop old tables)
 	if _, err := db.Exec(schemaMigrations); err != nil {
@@ -268,9 +295,9 @@ func (db *DB) migrate() error {
 		return err
 	}
 
-	// --- Column renames via graceful migrations ---
+	// ── Column renames (graceful table rebuilds) ────────────────────
 
-	// processes: active_job_style_id → active_style_id, target_job_style_id → target_style_id
+	// processes: active_job_style_id → active_style_id
 	if err := db.migrateProcessColumns(); err != nil {
 		return err
 	}
@@ -310,7 +337,7 @@ func (db *DB) migrate() error {
 		return err
 	}
 
-	// Strip old columns from process_node_runtime_states if they exist
+	// ── Legacy column cleanup ───────────────────────────────────────
 	if err := db.stripLegacyRuntimeStateColumns(); err != nil {
 		return err
 	}
@@ -327,7 +354,7 @@ func (db *DB) migrate() error {
 	db.Exec("DROP TABLE IF EXISTS op_node_style_assignments_legacy")
 	db.Exec("DROP TABLE IF EXISTS changeover_log")
 
-	// Style node claims routing columns
+	// ── ALTER TABLE additions (idempotent) ──────────────────────────
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN swap_mode TEXT NOT NULL DEFAULT 'simple'")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN staging_node TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN release_node TEXT NOT NULL DEFAULT ''")
@@ -354,7 +381,7 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_request_payload TEXT NOT NULL DEFAULT ''")
 
-	// Migrate queued → pending status
+	// ── Data fixups ────────────────────────────────────────────────
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 
 	// Legacy catalog renames
@@ -424,6 +451,8 @@ func (db *DB) migrate() error {
 
 	return nil
 }
+
+// ── Table rebuild helpers (rename-rebuild pattern) ───────────────────
 
 // migrateProcessColumns renames active_job_style_id → active_style_id
 func (db *DB) migrateProcessColumns() error {
@@ -644,6 +673,8 @@ DROP TABLE operator_stations_legacy;
 `)
 	return err
 }
+
+// ── Process node ownership migration ────────────────────────────────
 
 // migrateProcessNodeOwnership migrates from op_station_nodes + junction table to inline operator_station_id
 func (db *DB) migrateProcessNodeOwnership() error {
@@ -922,6 +953,8 @@ CREATE TABLE IF NOT EXISTS changeover_node_tasks (
 	}
 	return nil
 }
+
+// ── Introspection utilities ──────────────────────────────────────────
 
 func (db *DB) tableHasColumn(tableName, columnName string) (bool, error) {
 	rows, err := db.Query(`SELECT name FROM pragma_table_info('`+tableName+`') WHERE name = ?`, columnName)

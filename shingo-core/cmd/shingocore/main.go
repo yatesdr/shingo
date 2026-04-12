@@ -1,3 +1,18 @@
+// main.go — ShinGo Core composition root.
+//
+// This is the single place where all subsystems are created, configured,
+// and wired together. Nothing runs until main() stitches the pieces.
+//
+// Startup sequence (main):
+//   flags → debug log → config → DB → fleet adapter → messaging →
+//   engine → protocol ingestor → outbox drainer → web server → shutdown
+//
+// Helper functions are ordered to match that sequence.
+// Each helper is prefixed must*/maybe* to signal whether it can fail.
+//
+// To find where a subsystem is created, search for its constructor name
+// (e.g. engine.New, protocol.NewIngestor, messaging.NewOutboxDrainer).
+
 package main
 
 import (
@@ -162,6 +177,7 @@ func awaitShutdown(srv *http.Server, stopWeb func()) {
 }
 
 func main() {
+	// ── Flags & config ──────────────────────────────────────────────────
 	flags := parseFlags()
 
 	dbg := mustInitDebugLog(flags.fileFilter)
@@ -170,10 +186,11 @@ func main() {
 	cfg := mustLoadConfig(flags.configPath)
 	maybeResetDB(flags.resetDB, cfg)
 
+	// ── Database ────────────────────────────────────────────────────────
 	db := mustOpenDatabase(cfg)
 	defer db.Close()
 
-	// Fleet backend (Seer RDS adapter)
+	// ── Fleet backend (Seer RDS adapter) ────────────────────────────────
 	fleetAdapter := seerrds.New(seerrds.Config{
 		BaseURL:      cfg.RDS.BaseURL,
 		Timeout:      cfg.RDS.Timeout,
@@ -186,7 +203,7 @@ func main() {
 		log.Printf("shingocore: fleet backend not available (%v)", err)
 	}
 
-	// Messaging client
+	// ── Messaging (Kafka) ───────────────────────────────────────────────
 	msgClient := messaging.NewClient(&cfg.Messaging)
 	msgClient.DebugLog = dbg.Func("kafka")
 	if cfg.Messaging.SigningKey != "" {
@@ -199,7 +216,7 @@ func main() {
 	}
 	defer msgClient.Close()
 
-	// Engine
+	// ── Engine ──────────────────────────────────────────────────────────
 	eng := engine.New(engine.Config{
 		AppConfig:  cfg,
 		ConfigPath: flags.configPath,
@@ -213,7 +230,7 @@ func main() {
 
 	eng.Dispatcher().DebugLog = dbg.Func("dispatch")
 
-	// Protocol ingestor (inbound from ShinGo Edge)
+	// ── Protocol ingestor (inbound from ShinGo Edge) ───────────────────
 	coreHandler := messaging.NewCoreHandler(db, msgClient, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
 	coreHandler.DebugLog = dbg.Func("core_handler")
 	coreHandler.Start()
@@ -232,17 +249,18 @@ func main() {
 		log.Printf("shingocore: protocol ingestor listening on %s", cfg.Messaging.OrdersTopic)
 	}
 
-	// Outbox drainer (outbound to ShinGo Edge)
+	// ── Outbox drainer (outbound to ShinGo Edge) ───────────────────────
 	drainer := messaging.NewOutboxDrainer(db, msgClient, cfg.Messaging.OutboxDrainInterval)
 	drainer.DebugLog = dbg.Func("outbox")
 	drainer.Start()
 	defer drainer.Stop()
 
-	// Web server
+	// ── Web server ─────────────────────────────────────────────────────
 	handler, stopWeb := www.NewRouter(eng, dbg)
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
 	srv := startHTTPServer(addr, handler)
 
+	// ── Ready — wait for shutdown signal ────────────────────────────────
 	log.Printf("shingocore: ready")
 
 	awaitShutdown(srv, stopWeb)

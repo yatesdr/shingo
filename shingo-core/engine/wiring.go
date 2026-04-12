@@ -1,3 +1,22 @@
+// wiring.go — Core event handler wiring and order lifecycle processing.
+//
+// This is the reactive heart of ShinGo Core. wireEventHandlers() subscribes
+// to EventBus events and dispatches to handlers in this file.
+//
+// Layout:
+//   sendToEdge                    – outbound envelope helper
+//   wireEventHandlers             – all EventBus subscriptions in one place
+//   handleVendorStatusChange      – fleet status → order status mapping,
+//                                   waybill, staged notification, terminal dispatch
+//   handleOrderDelivered/Completed – bin arrival, multi-bin, compound order advancement
+//   handleOrderCompleted chain    – staged delivery → Order B → changeover release →
+//                                   manual swap → produce ingest → normal replenishment
+//   handleNodeOrderFailed         – changeover error marking
+//   handleSequentialBackfill      – auto-create Order B on in_transit
+//
+// The completion chain (handleNodeOrderCompleted) uses early-return pattern:
+// each handler returns true if it matched, false to fall through to the next.
+
 package engine
 
 import (
@@ -10,6 +29,8 @@ import (
 	"shingocore/dispatch"
 	"shingocore/store"
 )
+
+// ── Outbound messaging ──────────────────────────────────────────────
 
 // sendToEdge builds a protocol envelope and enqueues it for dispatch to an edge station.
 func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error {
@@ -30,7 +51,10 @@ func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error
 	return nil
 }
 
+// ── Event subscriptions ─────────────────────────────────────────────
+
 func (e *Engine) wireEventHandlers() {
+	// ── Dispatch tracking ───────────────────────────────────────────
 	// When an order is dispatched, track it in the tracker
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderDispatchedEvent)
@@ -47,7 +71,7 @@ func (e *Engine) wireEventHandlers() {
 		e.logFn("engine: tracking vendor order %s for order %d", ev.VendorOrderID, ev.OrderID)
 	}, EventOrderDispatched)
 
-	// When the fleet reports a status change, update our order and notify ShinGo Edge
+	// ── Vendor status changes ───────────────────────────────────────
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderStatusChangedEvent)
 		e.dbg("vendor status change: order=%d vendor=%s %s->%s robot=%s", ev.OrderID, ev.VendorOrderID, ev.OldStatus, ev.NewStatus, ev.RobotID)
@@ -60,7 +84,7 @@ func (e *Engine) wireEventHandlers() {
 		e.recordMissionEvent(ev)
 	}, EventOrderStatusChanged)
 
-	// When an order fails, log it, handle compound orders, and auto-return bins
+	// ── Order failure ───────────────────────────────────────────────
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderFailedEvent)
 		e.logFn("engine: order %d failed: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
@@ -75,7 +99,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderFailed)
 
-	// When an order is completed, update inventory and audit
+	// ── Order completion ────────────────────────────────────────────
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderCompletedEvent)
 		e.logFn("engine: order %d completed", ev.OrderID)
@@ -83,7 +107,7 @@ func (e *Engine) wireEventHandlers() {
 		e.handleOrderCompleted(ev)
 	}, EventOrderCompleted)
 
-	// When an order is cancelled, audit it, notify edge, and auto-return bins
+	// ── Order cancellation ─────────────────────────────────────────
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderCancelledEvent)
 		e.logFn("engine: order %d cancelled: %s", ev.OrderID, ev.Reason)
@@ -116,7 +140,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderCancelled)
 
-	// When an order is received, audit it
+	// ── Audit-only subscriptions ────────────────────────────────────
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderReceivedEvent)
 		e.logFn("engine: order %d received from %s: %s %s -> %s", ev.OrderID, ev.StationID, ev.OrderType, ev.PayloadCode, ev.DeliveryNode)
@@ -141,7 +165,7 @@ func (e *Engine) wireEventHandlers() {
 		e.db.AppendAudit("correction", ev.CorrectionID, ev.CorrectionType, "", ev.Reason, ev.Actor)
 	}, EventCorrectionApplied)
 
-	// CMS transaction logging on bin movement
+	// ── CMS transaction logging ────────────────────────────────────
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(BinUpdatedEvent)
 		if ev.Action == "moved" && ev.FromNodeID != 0 && ev.ToNodeID != 0 {
@@ -149,7 +173,7 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventBinUpdated)
 
-	// Fulfillment scanner: trigger on events that may make bins available
+	// ── Fulfillment scanner triggers ────────────────────────────────
 	triggerFulfillment := func(Event) {
 		if e.fulfillment != nil {
 			e.fulfillment.Trigger()
@@ -161,20 +185,22 @@ func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCancelled)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderFailed)
 
-	// Queued order: audit
+	// ── Queued order audit ─────────────────────────────────────────
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderQueuedEvent)
 		e.logFn("engine: order %d queued for payload %s", ev.OrderID, ev.PayloadCode)
 		e.db.AppendAudit("order", ev.OrderID, "queued", "", fmt.Sprintf("payload=%s from %s", ev.PayloadCode, ev.StationID), "system")
 	}, EventOrderQueued)
 
-	// Kanban demand wiring: when a bin event fires at a storage node,
+	// ── Kanban demand ──────────────────────────────────────────────
 	// look up the demand registry and send a demand signal to Edge.
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(BinUpdatedEvent)
 		e.handleKanbanDemand(ev)
 	}, EventBinUpdated)
 }
+
+// ── Vendor status change → order update pipeline ────────────────────
 
 func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	order, err := e.db.GetOrder(ev.OrderID)
@@ -280,6 +306,8 @@ func (e *Engine) handleFleetOrderCancelled(order *store.Order) {
 		PreviousStatus: previousStatus,
 	}})
 }
+
+// ── Delivery & bin arrival ───────────────────────────────────────────
 
 func (e *Engine) handleOrderDelivered(order *store.Order) {
 	// Resolve staged expiry for the delivered message
