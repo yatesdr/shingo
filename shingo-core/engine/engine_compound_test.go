@@ -59,10 +59,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("reshuffle-buried-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "reshuffle-buried-1")
 	t.Logf("order %d: status=%s bin=%v vendor=%s", order.ID, order.Status, order.BinID, order.VendorOrderID)
 
 	// Order should be in "reshuffling" status (compound parent)
@@ -113,10 +110,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	}
 
 	// Verify parent order completed
-	order, err = db.GetOrderByUUID("reshuffle-buried-1")
-	if err != nil {
-		t.Fatalf("get parent order: %v", err)
-	}
+	order = testdb.RequireOrder(t, db, "reshuffle-buried-1")
 	t.Logf("parent order final: status=%s", order.Status)
 
 	// Verify target bin moved from depth-2 slot toward line
@@ -192,13 +186,7 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("strand-reshuffle-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusReshuffling {
-		t.Fatalf("order status = %q, want reshuffling", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "strand-reshuffle-1", dispatch.StatusReshuffling)
 
 	children, _ := db.ListChildOrders(order.ID)
 	if len(children) < 3 {
@@ -324,13 +312,7 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("swap-5step-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusReshuffling {
-		t.Fatalf("status = %q, want reshuffling", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "swap-5step-1", dispatch.StatusReshuffling)
 
 	children, _ := db.ListChildOrders(order.ID)
 	t.Logf("compound: %d children", len(children))
@@ -437,13 +419,7 @@ func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("pcancel-reshuffle-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusReshuffling {
-		t.Fatalf("status = %q, want reshuffling", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "pcancel-reshuffle-1", dispatch.StatusReshuffling)
 
 	children, _ := db.ListChildOrders(order.ID)
 	if len(children) < 3 {
@@ -542,13 +518,7 @@ func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("skip-reshuffle-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusReshuffling {
-		t.Fatalf("status = %q, want reshuffling", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "skip-reshuffle-1", dispatch.StatusReshuffling)
 
 	children, _ := db.ListChildOrders(order.ID)
 	if len(children) < 3 {
@@ -634,13 +604,7 @@ func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order1, err := db.GetOrderByUUID("lock-reshuffle-1")
-	if err != nil {
-		t.Fatalf("get order 1: %v", err)
-	}
-	if order1.Status != dispatch.StatusReshuffling {
-		t.Fatalf("order 1 status = %q, want reshuffling", order1.Status)
-	}
+	testdb.RequireOrderStatus(t, db, "lock-reshuffle-1", dispatch.StatusReshuffling)
 
 	// Verify lane is locked
 	if !eng.Dispatcher().LaneLock().IsLocked(lane.ID) {
@@ -657,10 +621,7 @@ func TestLaneLock_Contention_SecondReshuffleBlocked(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order2, err := db.GetOrderByUUID("lock-reshuffle-2")
-	if err != nil {
-		t.Fatalf("get order 2: %v", err)
-	}
+	order2 := testdb.RequireOrder(t, db, "lock-reshuffle-2")
 	t.Logf("order 2 status: %s", order2.Status)
 
 	// Verify: lane_locked → queueOrder (not failOrder)
@@ -711,13 +672,7 @@ func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("restock-status-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusReshuffling {
-		t.Fatalf("status = %q, want reshuffling", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "restock-status-1", dispatch.StatusReshuffling)
 
 	children, _ := db.ListChildOrders(order.ID)
 	t.Logf("compound: %d children", len(children))
@@ -800,10 +755,7 @@ func TestCompound_StagingTTLExpiryDuringReshuffle(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("ttl-reshuffle-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "ttl-reshuffle-1")
 
 	children, _ := db.ListChildOrders(order.ID)
 	if len(children) < 3 {

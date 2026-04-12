@@ -39,19 +39,13 @@ func deliveredOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simulator.Sim
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("co-order-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order = testdb.RequireOrder(t, db, "co-order-1")
 
 	// Drive to delivered
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order, _ = db.GetOrderByUUID("co-order-1")
-	if order.Status != "delivered" {
-		t.Fatalf("expected delivered, got %q", order.Status)
-	}
+	order = testdb.RequireOrderStatus(t, db, "co-order-1", "delivered")
 
 	return db, eng, sim, d, order, sd.LineNode
 }
@@ -79,17 +73,11 @@ func TestOrderCompleted_BinAlreadyAtDest(t *testing.T) {
 	})
 
 	// Order should be confirmed after receipt
-	got, _ := db.GetOrderByUUID("co-order-1")
-	if got.Status != "confirmed" {
-		t.Errorf("status after receipt: got %q, want %q", got.Status, "confirmed")
-	}
+	got := testdb.AssertOrderStatus(t, db, "co-order-1", "confirmed")
 
 	// Bin should still be at line node (no double-move)
 	if got.BinID != nil {
-		bin, _ := db.GetBin(*got.BinID)
-		if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
-			t.Errorf("bin should remain at line node, got node_id=%v", bin.NodeID)
-		}
+		testdb.AssertBinAtNode(t, db, *got.BinID, lineNode.ID)
 	}
 }
 
@@ -196,10 +184,7 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 	}
 
 	// Verify bin is still at storage node
-	binBefore, _ := db.GetBin(bin.ID)
-	if binBefore.NodeID == nil || *binBefore.NodeID != sd.StorageNode.ID {
-		t.Fatalf("bin should be at storage node before completion")
-	}
+	testdb.RequireBinAtNode(t, db, bin.ID, sd.StorageNode.ID)
 
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID:   order.ID,
@@ -208,10 +193,7 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 	})
 
 	// Bin should now be at the delivery (line) node via ApplyBinArrival
-	binAfter, _ := db.GetBin(bin.ID)
-	if binAfter.NodeID == nil || *binAfter.NodeID != sd.LineNode.ID {
-		t.Errorf("bin node after safety-net arrival: got %v, want %d (line node)", binAfter.NodeID, sd.LineNode.ID)
-	}
+	testdb.AssertBinAtNode(t, db, bin.ID, sd.LineNode.ID)
 }
 
 // TC-CO-6: handleOrderCompleted with retrieve_empty payload → staged=false override.
@@ -247,10 +229,8 @@ func TestOrderCompleted_RetrieveEmptyOverride(t *testing.T) {
 
 	// Bin should be at line node with status "available" (not "staged")
 	// because retrieve_empty forces staged=false.
-	binAfter, _ := db.GetBin(bin.ID)
-	if binAfter.NodeID == nil || *binAfter.NodeID != sd.LineNode.ID {
-		t.Errorf("bin not at line node after retrieve_empty completion")
-	}
+	testdb.AssertBinAtNode(t, db, bin.ID, sd.LineNode.ID)
+	binAfter := testdb.RequireBin(t, db, bin.ID)
 	if binAfter.Status == "staged" {
 		t.Error("retrieve_empty should override staging — bin should not be staged")
 	}
@@ -290,10 +270,8 @@ func TestOrderCompleted_ComplexWaitOverride(t *testing.T) {
 		StationID: order.StationID,
 	})
 
-	binAfter, _ := db.GetBin(bin.ID)
-	if binAfter.NodeID == nil || *binAfter.NodeID != sd.LineNode.ID {
-		t.Errorf("bin not at line node after complex-wait completion")
-	}
+	testdb.AssertBinAtNode(t, db, bin.ID, sd.LineNode.ID)
+	binAfter := testdb.RequireBin(t, db, bin.ID)
 	if binAfter.Status == "staged" {
 		t.Error("complex order with WaitIndex > 0 should override staging")
 	}

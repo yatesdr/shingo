@@ -36,13 +36,7 @@ func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify order is in database
-	order, err := db.GetOrderByUUID("retrieve-uuid-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != StatusDispatched {
-		t.Errorf("status = %q, want %q", order.Status, StatusDispatched)
-	}
+	order := testdb.AssertOrderStatus(t, db, "retrieve-uuid-1", StatusDispatched)
 	if order.SourceNode != storageNode.Name {
 		t.Errorf("source node = %q, want %q", order.SourceNode, storageNode.Name)
 	}
@@ -113,13 +107,7 @@ func TestDispatcher_MoveOrder_FullLifecycle(t *testing.T) {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
 
-	order, err := db.GetOrderByUUID("move-uuid-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != StatusDispatched {
-		t.Errorf("status = %q, want %q", order.Status, StatusDispatched)
-	}
+	order := testdb.AssertOrderStatus(t, db, "move-uuid-1", StatusDispatched)
 
 	// Phase 2: Simulate fleet delivery, then confirm receipt
 	db.UpdateOrderStatus(order.ID, StatusDelivered, "fleet delivered")
@@ -163,10 +151,7 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
 
-	order, err := db.GetOrderByUUID("store-uuid-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "store-uuid-1")
 	if order.DeliveryNode == "" {
 		t.Fatal("delivery node should be set for store order")
 	}
@@ -202,7 +187,7 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 		Quantity:     1.0,
 	})
 
-	order, _ := db.GetOrderByUUID("cancel-uuid-1")
+	order := testdb.RequireOrder(t, db, "cancel-uuid-1")
 
 	// Verify bin was claimed by this order
 	claimed, _ := db.GetBin(bin.ID)
@@ -271,7 +256,7 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 	})
 
 	// Verify order destination was updated (need to re-fetch from DB)
-	order2, _ := db.GetOrderByUUID("redirect-uuid-1")
+	order2 := testdb.RequireOrder(t, db, "redirect-uuid-1")
 	if order2.DeliveryNode != lineNode2.Name {
 		t.Errorf("delivery node = %q, want %q", order2.DeliveryNode, lineNode2.Name)
 	}
@@ -343,13 +328,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 		t.Fatalf("received events = %d, want 1", len(emitter.received))
 	}
 
-	order, err := db.GetOrderByUUID("syn-retrieve-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != StatusDispatched {
-		t.Errorf("status = %q, want %q", order.Status, StatusDispatched)
-	}
+	order := testdb.AssertOrderStatus(t, db, "syn-retrieve-1", StatusDispatched)
 	// Delivery node should be resolved to child1 (empty slot), not child2 (occupied)
 	if order.DeliveryNode != child1.Name {
 		t.Errorf("delivery node = %q, want %q (empty child)", order.DeliveryNode, child1.Name)
@@ -443,9 +422,9 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 		t.Fatalf("unexpected failures: %d (first: %s)", len(emitter.failed), emitter.failed[0].errorCode)
 	}
 
-	o1, _ := db.GetOrderByUUID("multi-1")
-	o2, _ := db.GetOrderByUUID("multi-2")
-	o3, _ := db.GetOrderByUUID("multi-3")
+	o1 := testdb.RequireOrder(t, db, "multi-1")
+	o2 := testdb.RequireOrder(t, db, "multi-2")
+	o3 := testdb.RequireOrder(t, db, "multi-3")
 
 	// All three should be dispatched
 	for _, o := range []*store.Order{o1, o2, o3} {
@@ -540,10 +519,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 		t.Fatalf("order should not fail, got: %s", emitter.failed[0].errorCode)
 	}
 
-	o, err := db.GetOrderByUUID("empty-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	o := testdb.RequireOrder(t, db, "empty-1")
 	if o.Status != StatusDispatched {
 		t.Errorf("status = %q, want dispatched", o.Status)
 	}
@@ -632,10 +608,7 @@ func TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle(t *testing.T) {
 		Quantity:      1,
 	})
 
-	o, err := db.GetOrderByUUID("tc41-empty-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	o := testdb.RequireOrder(t, db, "tc41-empty-1")
 
 	// Before the fix: order would go to "dispatched" targeting an unreachable slot.
 	// After the fix: order should go to "reshuffling" (compound reshuffle planned).
@@ -701,7 +674,7 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 		t.Fatalf("order should not fail, got: %s", emitter.failed[0].errorCode)
 	}
 
-	o, _ := db.GetOrderByUUID("dot-1")
+	o := testdb.RequireOrder(t, db, "dot-1")
 	if o.Status != StatusDispatched {
 		t.Errorf("status = %q, want dispatched", o.Status)
 	}
@@ -748,13 +721,7 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 	}
 
 	// Verify order status is failed
-	order, err := db.GetOrderByUUID("fleet-fail-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != StatusFailed {
-		t.Errorf("status = %q, want %q", order.Status, StatusFailed)
-	}
+	testdb.AssertOrderStatus(t, db, "fleet-fail-1", StatusFailed)
 
 	// Verify bin was unclaimed after fleet failure
 	b, _ := db.GetBin(bin.ID)
@@ -805,8 +772,8 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 	})
 
 	// Both orders should be dispatched
-	order1, _ := db.GetOrderByUUID("low-priority")
-	order2, _ := db.GetOrderByUUID("high-priority")
+	order1 := testdb.RequireOrder(t, db, "low-priority")
+	order2 := testdb.RequireOrder(t, db, "high-priority")
 
 	if order1.Priority != 0 {
 		t.Errorf("low priority = %d, want 0", order1.Priority)
@@ -839,10 +806,7 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 		Quantity:     1.0,
 	})
 
-	order, err := db.GetOrderByUUID("uuid-bin-track")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "uuid-bin-track")
 
 	// Order should have BinID set
 	if order.BinID == nil {
@@ -965,13 +929,7 @@ func TestDispatcher_MoveOrder_NGRPSource(t *testing.T) {
 	})
 
 	// Verify the order was dispatched (not failed)
-	order, err := db.GetOrderByUUID("move-ngrp-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != StatusDispatched {
-		t.Fatalf("status = %q, want %q (order likely failed due to NGRP resolution)", order.Status, StatusDispatched)
-	}
+	order := testdb.RequireOrderStatus(t, db, "move-ngrp-1", StatusDispatched)
 
 	// Verify the bin was claimed
 	if order.BinID == nil {
@@ -1050,10 +1008,7 @@ func TestDispatcher_MoveOrder_NGRPSource_NoBin(t *testing.T) {
 		Quantity:     1.0,
 	})
 
-	order, err := db.GetOrderByUUID("move-empty-ngrp-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "move-empty-ngrp-1")
 
 	// Should be queued, not failed or dispatched with nil BinID
 	if order.Status != StatusQueued {
@@ -1099,10 +1054,7 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 		Quantity:     1.0,
 	})
 
-	order, err := db.GetOrderByUUID("move-buried-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "move-buried-1")
 
 	// The order should trigger a compound reshuffle — status = "reshuffling"
 	if order.Status != StatusReshuffling {

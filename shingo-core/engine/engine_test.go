@@ -78,35 +78,17 @@ func TestSimulator_FullLifecycle(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("lc-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("initial status = %q, want %q", order.Status, dispatch.StatusDispatched)
-	}
+	order := testdb.RequireOrderStatus(t, db, "lc-1", dispatch.StatusDispatched)
 
 	// Step 2: Drive RUNNING — event fires, handleVendorStatusChange updates DB
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 
-	order, err = db.GetOrderByUUID("lc-1")
-	if err != nil {
-		t.Fatalf("get order after RUNNING: %v", err)
-	}
-	if order.Status != "in_transit" {
-		t.Fatalf("after RUNNING: status = %q, want %q", order.Status, "in_transit")
-	}
+	order = testdb.RequireOrderStatus(t, db, "lc-1", "in_transit")
 
 	// Step 3: Drive FINISHED — handleVendorStatusChange calls handleOrderDelivered
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order, err = db.GetOrderByUUID("lc-1")
-	if err != nil {
-		t.Fatalf("get order after FINISHED: %v", err)
-	}
-	if order.Status != "delivered" {
-		t.Fatalf("after FINISHED: status = %q, want %q", order.Status, "delivered")
-	}
+	order = testdb.RequireOrderStatus(t, db, "lc-1", "delivered")
 
 	// Step 4: Simulate Edge receipt — triggers handleOrderCompleted → ApplyBinArrival
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -115,25 +97,11 @@ func TestSimulator_FullLifecycle(t *testing.T) {
 		FinalCount:  1,
 	})
 
-	order, err = db.GetOrderByUUID("lc-1")
-	if err != nil {
-		t.Fatalf("get order after receipt: %v", err)
-	}
-	if order.Status != "confirmed" {
-		t.Fatalf("after receipt: status = %q, want %q", order.Status, "confirmed")
-	}
+	order = testdb.RequireOrderStatus(t, db, "lc-1", "confirmed")
 
 	// Step 5: Verify bin moved to destination and claim released
-	bin, err := db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin: %v", err)
-	}
-	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
-		t.Errorf("bin node = %v, want %d (line node)", bin.NodeID, lineNode.ID)
-	}
-	if bin.ClaimedBy != nil {
-		t.Errorf("bin claimed_by = %v, want nil (claim should be released)", bin.ClaimedBy)
-	}
+	testdb.AssertBinAtNode(t, db, *order.BinID, lineNode.ID)
+	testdb.AssertBinUnclaimed(t, db, *order.BinID)
 }
 
 // --- TC-2: Staged Complex Order Release ---
@@ -166,13 +134,7 @@ func TestSimulator_StagedComplexOrderRelease(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("staged-tc2")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("initial status = %q, want %q", order.Status, dispatch.StatusDispatched)
-	}
+	order := testdb.RequireOrderStatus(t, db, "staged-tc2", dispatch.StatusDispatched)
 
 	// Simulator should have a staged (incomplete) order
 	if sim.StagedOrderCount() != 1 {
@@ -194,25 +156,13 @@ func TestSimulator_StagedComplexOrderRelease(t *testing.T) {
 	// Step 2: Drive RUNNING — robot is moving to first pickup
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 
-	order, err = db.GetOrderByUUID("staged-tc2")
-	if err != nil {
-		t.Fatalf("get order after RUNNING: %v", err)
-	}
-	if order.Status != "in_transit" {
-		t.Fatalf("after RUNNING: status = %q, want %q", order.Status, "in_transit")
-	}
+	order = testdb.RequireOrderStatus(t, db, "staged-tc2", "in_transit")
 
 	// Step 3: Drive WAITING — robot has arrived at wait point and is dwelling.
 	// The engine maps WAITING → "staged" and updates the DB.
 	sim.DriveState(order.VendorOrderID, "WAITING")
 
-	order, err = db.GetOrderByUUID("staged-tc2")
-	if err != nil {
-		t.Fatalf("get order after WAITING: %v", err)
-	}
-	if order.Status != dispatch.StatusStaged {
-		t.Fatalf("after WAITING: status = %q, want %q", order.Status, dispatch.StatusStaged)
-	}
+	order = testdb.RequireOrderStatus(t, db, "staged-tc2", dispatch.StatusStaged)
 
 	// Step 4: Edge sends release — appends post-wait blocks
 	d.HandleOrderRelease(env, &protocol.OrderRelease{
@@ -236,25 +186,13 @@ func TestSimulator_StagedComplexOrderRelease(t *testing.T) {
 	}
 
 	// Order status should now be in_transit (released from staging)
-	order, err = db.GetOrderByUUID("staged-tc2")
-	if err != nil {
-		t.Fatalf("get order after release: %v", err)
-	}
-	if order.Status != dispatch.StatusInTransit {
-		t.Fatalf("after release: status = %q, want %q", order.Status, dispatch.StatusInTransit)
-	}
+	order = testdb.RequireOrderStatus(t, db, "staged-tc2", dispatch.StatusInTransit)
 
 	// Step 5: Drive RUNNING → FINISHED to complete the order
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order, err = db.GetOrderByUUID("staged-tc2")
-	if err != nil {
-		t.Fatalf("get order after FINISHED: %v", err)
-	}
-	if order.Status != "delivered" {
-		t.Fatalf("after FINISHED: status = %q, want %q", order.Status, "delivered")
-	}
+	order = testdb.RequireOrderStatus(t, db, "staged-tc2", "delivered")
 }
 
 // --- TC-ClaimBin: Silent Claim Overwrite ---
@@ -279,16 +217,10 @@ func TestClaimBin_SilentOverwrite(t *testing.T) {
 	}
 
 	// Verify claim is set
-	bin, err := db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin after first claim: %v", err)
-	}
-	if bin.ClaimedBy == nil || *bin.ClaimedBy != 100 {
-		t.Fatalf("claimed_by = %v, want 100", bin.ClaimedBy)
-	}
+	testdb.RequireBinClaimedBy(t, db, bin.ID, 100)
 
 	// Order 2 tries to claim the same bin — this SHOULD fail but currently doesn't.
-	err = db.ClaimBin(bin.ID, 200)
+	err := db.ClaimBin(bin.ID, 200)
 	if err == nil {
 		// Bug confirmed: second claim silently overwrote the first.
 		bin, _ = db.GetBin(bin.ID)
@@ -366,10 +298,7 @@ func TestTC23a_MoveClaimedStagedBin(t *testing.T) {
 		SourceNode: lineNode.Name,
 	})
 
-	activeOrder, err := db.GetOrderByUUID("active-23a")
-	if err != nil {
-		t.Fatalf("get active order: %v", err)
-	}
+	activeOrder := testdb.RequireOrder(t, db, "active-23a")
 	if activeOrder.BinID == nil {
 		t.Fatal("active order should have claimed a bin")
 	}
@@ -388,10 +317,7 @@ func TestTC23a_MoveClaimedStagedBin(t *testing.T) {
 		SourceNode: lineNode.Name,
 	})
 
-	secondOrder, err := db.GetOrderByUUID("second-23a")
-	if err != nil {
-		t.Fatalf("get second order: %v", err)
-	}
+	secondOrder := testdb.RequireOrder(t, db, "second-23a")
 
 	// The second order should NOT have claimed the same bin
 	if secondOrder.BinID != nil && *secondOrder.BinID == claimedBinID {
@@ -400,16 +326,7 @@ func TestTC23a_MoveClaimedStagedBin(t *testing.T) {
 	}
 
 	// Verify the active order's bin claim is still intact
-	claimedBin, err := db.GetBin(claimedBinID)
-	if err != nil {
-		t.Fatalf("get claimed bin: %v", err)
-	}
-	if claimedBin.ClaimedBy == nil || *claimedBin.ClaimedBy != activeOrder.ID {
-		t.Errorf("bin %d claim changed — expected order %d, got %v",
-			claimedBinID, activeOrder.ID, claimedBin.ClaimedBy)
-	} else {
-		t.Logf("bin %d correctly still claimed by active order %d", claimedBinID, activeOrder.ID)
-	}
+	testdb.AssertBinClaimedBy(t, db, claimedBinID, activeOrder.ID)
 
 	// The second order should have claimed one of the OTHER unclaimed bins
 	if secondOrder.BinID != nil {
@@ -445,10 +362,7 @@ func TestTC23b_CancelThenMoveBin(t *testing.T) {
 		SourceNode: lineNode.Name,
 	})
 
-	order, err := db.GetOrderByUUID("active-23b")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "active-23b")
 	if order.BinID == nil {
 		t.Fatal("store order should have claimed a bin")
 	}
@@ -472,20 +386,11 @@ func TestTC23b_CancelThenMoveBin(t *testing.T) {
 		Reason:    "changeover",
 	})
 
-	order, err = db.GetOrderByUUID("active-23b")
-	if err != nil {
-		t.Fatalf("get order after cancel: %v", err)
-	}
-	if order.Status != dispatch.StatusCancelled {
-		t.Fatalf("order status after cancel = %q, want %q", order.Status, dispatch.StatusCancelled)
-	}
+	order = testdb.RequireOrderStatus(t, db, "active-23b", dispatch.StatusCancelled)
 
 	// KEY CHECK: bin should now be claimed by the auto-return order, not free.
 	// Cancel flow: unclaim original → maybeCreateReturnOrder → return claims bin.
-	bin0, err = db.GetBin(claimedBinID)
-	if err != nil {
-		t.Fatalf("get bin after cancel: %v", err)
-	}
+	bin0 = testdb.RequireBin(t, db, claimedBinID)
 	if bin0.ClaimedBy == nil {
 		t.Logf("bin %d is unclaimed after cancel (no return order created)", bin0.ID)
 	} else if *bin0.ClaimedBy == order.ID {
@@ -503,10 +408,7 @@ func TestTC23b_CancelThenMoveBin(t *testing.T) {
 		SourceNode: lineNode.Name,
 	})
 
-	storeOrder, err := db.GetOrderByUUID("store-23b-move")
-	if err != nil {
-		t.Fatalf("get store order: %v", err)
-	}
+	storeOrder := testdb.RequireOrder(t, db, "store-23b-move")
 
 	if storeOrder.BinID != nil && *storeOrder.BinID == claimedBinID {
 		t.Errorf("BUG: store order stole bin %d from the return order", claimedBinID)
@@ -519,10 +421,7 @@ func TestTC23b_CancelThenMoveBin(t *testing.T) {
 
 	// Verify remaining bins
 	for i := 0; i < 3; i++ {
-		b, err := db.GetBin(bins[i].ID)
-		if err != nil {
-			t.Fatalf("get bin %d: %v", i, err)
-		}
+		b := testdb.RequireBin(t, db, bins[i].ID)
 		claimStr := "unclaimed"
 		if b.ClaimedBy != nil {
 			claimStr = fmt.Sprintf("claimed_by=%d", *b.ClaimedBy)
@@ -642,13 +541,7 @@ func TestTC23c_ChangeoverWithMissingBin(t *testing.T) {
 	}
 
 	// Verify bin 0 was NOT touched (it's at QH, not at the line)
-	bin0, err := db.GetBin(bins[0].ID)
-	if err != nil {
-		t.Fatalf("get bin 0: %v", err)
-	}
-	if bin0.NodeID == nil || *bin0.NodeID != qhNode.ID {
-		t.Errorf("bin 0 was moved from QH — node=%v, want %d", bin0.NodeID, qhNode.ID)
-	}
+	testdb.AssertBinAtNode(t, db, bins[0].ID, qhNode.ID)
 }
 
 // --- TC-23d: Changeover while move-to-quality-hold is still in flight ---
@@ -682,10 +575,7 @@ func TestTC23d_ChangeoverWhileMoveInFlight(t *testing.T) {
 		SourceNode: lineNode.Name,
 	})
 
-	qhOrder, err := db.GetOrderByUUID("qh-move-23d")
-	if err != nil {
-		t.Fatalf("get QH order: %v", err)
-	}
+	qhOrder := testdb.RequireOrder(t, db, "qh-move-23d")
 	if qhOrder.BinID == nil {
 		t.Fatal("QH store order should have claimed a bin")
 	}
@@ -743,38 +633,22 @@ func TestTC23d_ChangeoverWhileMoveInFlight(t *testing.T) {
 	}
 
 	// Verify the QH order's bin is still correctly claimed by the QH order
-	qhBin, err := db.GetBin(qhBinID)
-	if err != nil {
-		t.Fatalf("get QH bin: %v", err)
-	}
-	if qhBin.ClaimedBy == nil || *qhBin.ClaimedBy != qhOrder.ID {
-		t.Errorf("QH bin claim changed — expected order %d, got %v", qhOrder.ID, qhBin.ClaimedBy)
-	} else {
-		t.Logf("QH bin %d still correctly claimed by order %d", qhBinID, qhOrder.ID)
-	}
+	testdb.AssertBinClaimedBy(t, db, qhBinID, qhOrder.ID)
 
 	// Step 3: QH order completes — verify clean state
 	if qhOrder.VendorOrderID != "" {
 		sim.DriveState(qhOrder.VendorOrderID, "FINISHED")
 	}
 
-	qhOrder, err = db.GetOrderByUUID("qh-move-23d")
-	if err != nil {
-		t.Fatalf("get QH order after finish: %v", err)
-	}
+	qhOrder = testdb.RequireOrder(t, db, "qh-move-23d")
 	t.Logf("QH order final status: %s", qhOrder.Status)
 
 	// Verify no bins are double-claimed at the end
 	for _, b := range bins {
-		refreshed, err := db.GetBin(b.ID)
-		if err != nil {
-			t.Fatalf("get bin %d: %v", b.ID, err)
-		}
+		refreshed := testdb.RequireBin(t, db, b.ID)
 		if refreshed.ClaimedBy != nil {
-			claimOrder, _ := db.GetOrderByUUID(fmt.Sprintf("%d", *refreshed.ClaimedBy))
-			t.Logf("bin %d (%s): claimed_by=%d, node=%v",
+			t.Logf("bin %d (%s): still claimed by order %d, node=%v",
 				refreshed.ID, refreshed.Label, *refreshed.ClaimedBy, refreshed.NodeID)
-			_ = claimOrder // just for logging context
 		}
 	}
 }
@@ -817,10 +691,7 @@ func TestTC24_ComplexOrderBinPoaching(t *testing.T) {
 		},
 	})
 
-	complexOrder, err := db.GetOrderByUUID("complex-24")
-	if err != nil {
-		t.Fatalf("get complex order: %v", err)
-	}
+	complexOrder := testdb.RequireOrder(t, db, "complex-24")
 	t.Logf("complex order %d: status=%s, bin_id=%v, vendor_id=%s",
 		complexOrder.ID, complexOrder.Status, complexOrder.BinID, complexOrder.VendorOrderID)
 
@@ -839,14 +710,7 @@ func TestTC24_ComplexOrderBinPoaching(t *testing.T) {
 	}
 
 	// Verify the bin is claimed by the complex order
-	bin, err = db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin after complex dispatch: %v", err)
-	}
-	if bin.ClaimedBy == nil || *bin.ClaimedBy != complexOrder.ID {
-		t.Fatalf("bin %d should be claimed by complex order %d, got claimed_by=%v",
-			bin.ID, complexOrder.ID, bin.ClaimedBy)
-	}
+	testdb.RequireBinClaimedBy(t, db, bin.ID, complexOrder.ID)
 
 	// Now: a store order arrives targeting the same storage node.
 	// Because the bin is claimed, the store order must NOT get it.
@@ -856,10 +720,7 @@ func TestTC24_ComplexOrderBinPoaching(t *testing.T) {
 		SourceNode: storageNode.Name,
 	})
 
-	storeOrder, err := db.GetOrderByUUID("store-poach-24")
-	if err != nil {
-		t.Fatalf("get store order: %v", err)
-	}
+	storeOrder := testdb.RequireOrder(t, db, "store-poach-24")
 
 	// KEY CHECK: store order must NOT have claimed the bin the robot is carrying
 	if storeOrder.BinID != nil && *storeOrder.BinID == bin.ID {
@@ -903,23 +764,14 @@ func TestTC24b_StaleBinLocationAfterComplexOrder(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("complex-24b")
-	if err != nil {
-		t.Fatalf("get complex order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "complex-24b")
 	if order.BinID == nil {
 		t.Fatalf("complex order BinID=nil — claimComplexBins did not set it")
 	}
 	t.Logf("complex order %d: vendor_id=%s, bin_id=%d", order.ID, order.VendorOrderID, *order.BinID)
 
 	// Verify bin is at storage before robot moves
-	bin, err = db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin before: %v", err)
-	}
-	if bin.NodeID == nil || *bin.NodeID != storageNode.ID {
-		t.Fatalf("bin should be at storage node before move, got node_id=%v", bin.NodeID)
-	}
+	testdb.RequireBinAtNode(t, db, bin.ID, storageNode.ID)
 
 	// Drive the order through RUNNING → FINISHED (delivered)
 	if order.VendorOrderID != "" {
@@ -937,17 +789,7 @@ func TestTC24b_StaleBinLocationAfterComplexOrder(t *testing.T) {
 	})
 
 	// KEY CHECK: bin's location must update to the line node
-	bin, err = db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin after completion: %v", err)
-	}
-
-	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
-		t.Errorf("bin %d should be at line node %d after complex order, got node_id=%v",
-			bin.ID, lineNode.ID, bin.NodeID)
-	} else {
-		t.Logf("bin %d correctly moved to line node %d", bin.ID, lineNode.ID)
-	}
+	testdb.AssertBinAtNode(t, db, bin.ID, lineNode.ID)
 
 	// Bin should be unclaimed after completion (ApplyBinArrival unclaims)
 	if bin.ClaimedBy != nil {
@@ -994,10 +836,7 @@ func TestTC24c_PhantomInventoryRetrieve(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("complex-24c")
-	if err != nil {
-		t.Fatalf("get complex order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "complex-24c")
 	if order.BinID == nil {
 		t.Fatalf("complex order BinID=nil — claimComplexBins did not set it")
 	}
@@ -1014,10 +853,7 @@ func TestTC24c_PhantomInventoryRetrieve(t *testing.T) {
 	})
 
 	// Verify bin location updated to line node (not stale at storage)
-	bin, err = db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin after complex order: %v", err)
-	}
+	bin = testdb.RequireBin(t, db, bin.ID)
 	if bin.NodeID != nil && *bin.NodeID == storageNode.ID {
 		t.Errorf("bin %d still at storage node %d — ApplyBinArrival did not fire", bin.ID, storageNode.ID)
 	} else if bin.NodeID != nil && *bin.NodeID == lineNode.ID {
@@ -1035,10 +871,7 @@ func TestTC24c_PhantomInventoryRetrieve(t *testing.T) {
 		Quantity:     1,
 	})
 
-	retrieveOrder, err := db.GetOrderByUUID("retrieve-24c")
-	if err != nil {
-		t.Fatalf("get retrieve order: %v", err)
-	}
+	retrieveOrder := testdb.RequireOrder(t, db, "retrieve-24c")
 
 	t.Logf("retrieve order %d: status=%s, bin_id=%v",
 		retrieveOrder.ID, retrieveOrder.Status, retrieveOrder.BinID)
@@ -1087,10 +920,7 @@ func TestTC25_StoreOrderClaimsStagedBinAtCoreNode(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("retrieve-25")
-	if err != nil {
-		t.Fatalf("get retrieve order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "retrieve-25")
 
 	// Drive to completion
 	sim.DriveSimpleLifecycle(order.VendorOrderID)
@@ -1101,13 +931,8 @@ func TestTC25_StoreOrderClaimsStagedBinAtCoreNode(t *testing.T) {
 	})
 
 	// Verify bin is at line, staged, unclaimed
-	bin, err = db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin after delivery: %v", err)
-	}
-	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
-		t.Fatalf("bin should be at line node after delivery")
-	}
+	testdb.RequireBinAtNode(t, db, bin.ID, lineNode.ID)
+	bin = testdb.RequireBin(t, db, bin.ID)
 	if bin.Status != "staged" {
 		t.Fatalf("bin status should be 'staged' at lineside, got %q", bin.Status)
 	}
@@ -1123,10 +948,7 @@ func TestTC25_StoreOrderClaimsStagedBinAtCoreNode(t *testing.T) {
 		SourceNode: lineNode.Name,
 	})
 
-	storeOrder, err := db.GetOrderByUUID("store-release-25")
-	if err != nil {
-		t.Fatalf("get store order: %v", err)
-	}
+	storeOrder := testdb.RequireOrder(t, db, "store-release-25")
 
 	// KEY CHECK: store order SHOULD claim the staged bin — it's the only bin
 	// at the node and the operator is intentionally releasing it.
@@ -1156,10 +978,7 @@ func TestTC21_QualityHoldBinNotDispatched(t *testing.T) {
 	if err := db.UpdateBinStatus(bin.ID, "quality_hold"); err != nil {
 		t.Fatalf("set bin to quality_hold: %v", err)
 	}
-	bin, err := db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("refresh bin: %v", err)
-	}
+	bin = testdb.RequireBin(t, db, bin.ID)
 	if bin.Status != "quality_hold" {
 		t.Fatalf("bin status = %q, want quality_hold", bin.Status)
 	}
@@ -1179,10 +998,7 @@ func TestTC21_QualityHoldBinNotDispatched(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("retrieve-qh-21")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "retrieve-qh-21")
 
 	t.Logf("order status: %s, bin_id: %v, vendor_order_id: %s", order.Status, order.BinID, order.VendorOrderID)
 
@@ -1208,15 +1024,7 @@ func TestTC21_QualityHoldBinNotDispatched(t *testing.T) {
 	}
 
 	// The bin should NOT be claimed
-	bin, err = db.GetBin(bin.ID)
-	if err != nil {
-		t.Fatalf("get bin after order: %v", err)
-	}
-	if bin.ClaimedBy != nil {
-		t.Errorf("BUG: quality_hold bin was claimed by order %d", *bin.ClaimedBy)
-	} else {
-		t.Logf("quality_hold bin correctly not claimed")
-	}
+	testdb.AssertBinUnclaimed(t, db, bin.ID)
 
 	// The bin should still be in quality_hold status (not changed by the dispatch attempt)
 	if bin.Status != "quality_hold" {
@@ -1262,56 +1070,29 @@ func TestTC30_FailedOrderReturnClaimTransfer(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("retrieve-tc30")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("order status = %q, want dispatched", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "retrieve-tc30", dispatch.StatusDispatched)
 	if order.BinID == nil {
 		t.Fatal("order should have a bin claimed")
 	}
 	t.Logf("order %d dispatched, bin %d claimed, vendor_id=%s", order.ID, *order.BinID, order.VendorOrderID)
 
 	// Verify bin is claimed by the original order
-	bin, err = db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin: %v", err)
-	}
-	if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
-		t.Fatalf("bin claimed_by = %v, want %d", bin.ClaimedBy, order.ID)
-	}
+	testdb.RequireBinClaimedBy(t, db, *order.BinID, order.ID)
 
 	// Step 2: Robot starts moving
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 
-	order, err = db.GetOrderByUUID("retrieve-tc30")
-	if err != nil {
-		t.Fatalf("get order after RUNNING: %v", err)
-	}
-	if order.Status != "in_transit" {
-		t.Fatalf("after RUNNING: status = %q, want in_transit", order.Status)
-	}
+	order = testdb.RequireOrderStatus(t, db, "retrieve-tc30", "in_transit")
 
 	// Step 3: Fleet reports FAILED (robot broke down)
 	sim.DriveState(order.VendorOrderID, "FAILED")
 
 	// Give the synchronous event chain a moment to complete
-	order, err = db.GetOrderByUUID("retrieve-tc30")
-	if err != nil {
-		t.Fatalf("get order after FAILED: %v", err)
-	}
-	if order.Status != dispatch.StatusFailed {
-		t.Fatalf("after FAILED: status = %q, want failed", order.Status)
-	}
+	order = testdb.RequireOrderStatus(t, db, "retrieve-tc30", dispatch.StatusFailed)
 	t.Logf("original order %d is now failed", order.ID)
 
 	// Step 4: Check bin claim state — was it released by the failure handler?
-	bin, err = db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin after failure: %v", err)
-	}
+	bin = testdb.RequireBin(t, db, *order.BinID)
 	if bin.ClaimedBy != nil && *bin.ClaimedBy == order.ID {
 		t.Errorf("BUG: bin %d still claimed by failed order %d — fleet-reported failure path does not release bin claims",
 			bin.ID, order.ID)
@@ -1351,10 +1132,7 @@ func TestTC30_FailedOrderReturnClaimTransfer(t *testing.T) {
 		}
 
 		// KEY CHECK: the bin should be claimed by the RETURN order, not the original
-		bin, err = db.GetBin(*order.BinID)
-		if err != nil {
-			t.Fatalf("get bin for final check: %v", err)
-		}
+		bin = testdb.RequireBin(t, db, *order.BinID)
 
 		if bin.ClaimedBy == nil {
 			t.Errorf("BUG: bin %d is unclaimed — return order %d exists but couldn't claim the bin (likely because original claim wasn't released first)",
@@ -1447,14 +1225,8 @@ func TestTC28_ConcurrentRetrieveSamePart(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order1, err := db.GetOrderByUUID("retrieve-line1")
-	if err != nil {
-		t.Fatalf("get order 1: %v", err)
-	}
-	order2, err := db.GetOrderByUUID("retrieve-line2")
-	if err != nil {
-		t.Fatalf("get order 2: %v", err)
-	}
+	order1 := testdb.RequireOrder(t, db, "retrieve-line1")
+	order2 := testdb.RequireOrder(t, db, "retrieve-line2")
 
 	t.Logf("order 1: status=%s, bin_id=%v, vendor_id=%s", order1.Status, order1.BinID, order1.VendorOrderID)
 	t.Logf("order 2: status=%s, bin_id=%v, vendor_id=%s", order2.Status, order2.BinID, order2.VendorOrderID)
@@ -1482,14 +1254,8 @@ func TestTC28_ConcurrentRetrieveSamePart(t *testing.T) {
 	}
 
 	// Verify bins are claimed by the correct orders
-	bin1, err = db.GetBin(bin1.ID)
-	if err != nil {
-		t.Fatalf("refresh bin1: %v", err)
-	}
-	bin2, err = db.GetBin(bin2.ID)
-	if err != nil {
-		t.Fatalf("refresh bin2: %v", err)
-	}
+	bin1 = testdb.RequireBin(t, db, bin1.ID)
+	bin2 = testdb.RequireBin(t, db, bin2.ID)
 
 	claimedBins := 0
 	if bin1.ClaimedBy != nil {
@@ -1554,10 +1320,7 @@ func TestMaybeCreateReturnOrder_SourceNode(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("ret-src-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "ret-src-1")
 	if order.SourceNode != storageNode.Name {
 		t.Fatalf("order SourceNode = %q, want %q (storage)", order.SourceNode, storageNode.Name)
 	}
@@ -1644,14 +1407,8 @@ func TestTC36_RetrieveClaimFailure_QueueNotFail(t *testing.T) {
 	close(start) // fire both goroutines simultaneously
 	wg.Wait()
 
-	orderA, err := db.GetOrderByUUID("tc36-a")
-	if err != nil {
-		t.Fatalf("get order A: %v", err)
-	}
-	orderB, err := db.GetOrderByUUID("tc36-b")
-	if err != nil {
-		t.Fatalf("get order B: %v", err)
-	}
+	orderA := testdb.RequireOrder(t, db, "tc36-a")
+	orderB := testdb.RequireOrder(t, db, "tc36-b")
 
 	t.Logf("order A: status=%s bin=%v vendor=%s", orderA.Status, orderA.BinID, orderA.VendorOrderID)
 	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, orderB.BinID, orderB.VendorOrderID)
@@ -1723,13 +1480,7 @@ func TestTC38_CancelDeliveredOrder_NoReturnOrder(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("tc38-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("initial status = %q, want %q", order.Status, dispatch.StatusDispatched)
-	}
+	order := testdb.RequireOrderStatus(t, db, "tc38-1", dispatch.StatusDispatched)
 	binID := *order.BinID
 
 	// Step 2: Robot runs and finishes. Order status = "delivered".
@@ -1738,10 +1489,7 @@ func TestTC38_CancelDeliveredOrder_NoReturnOrder(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order, _ = db.GetOrderByUUID("tc38-1")
-	if order.Status != "delivered" {
-		t.Fatalf("after FINISHED: status = %q, want %q", order.Status, "delivered")
-	}
+	order = testdb.RequireOrderStatus(t, db, "tc38-1", "delivered")
 	t.Logf("after fleet FINISHED: order=%d status=delivered bin=%d", order.ID, binID)
 
 	// Step 3: Admin cancels the delivered order (3:21 PM in production incident).
@@ -1751,10 +1499,7 @@ func TestTC38_CancelDeliveredOrder_NoReturnOrder(t *testing.T) {
 		Reason:    "cancelled by admin",
 	})
 
-	order, _ = db.GetOrderByUUID("tc38-1")
-	if order.Status != dispatch.StatusCancelled {
-		t.Fatalf("after cancel: status = %q, want %q", order.Status, dispatch.StatusCancelled)
-	}
+	order = testdb.RequireOrderStatus(t, db, "tc38-1", dispatch.StatusCancelled)
 
 	// Verify no spurious auto_return order was created.
 	t.Logf("checking for spurious return orders after cancel of delivered order %d", order.ID)
@@ -1771,14 +1516,7 @@ func TestTC38_CancelDeliveredOrder_NoReturnOrder(t *testing.T) {
 	}
 
 	// Verify bin is unclaimed after cancel (no return order holding it).
-	bin, err := db.GetBin(binID)
-	if err != nil {
-		t.Fatalf("get bin after cancel: %v", err)
-	}
-	if bin.ClaimedBy != nil {
-		t.Errorf("BUG A (claim): bin %d claimed_by = %d after cancelling delivered order — "+
-			"should be unclaimed", binID, *bin.ClaimedBy)
-	}
+	testdb.AssertBinUnclaimed(t, db, binID)
 
 	// Step 4: Operator confirms receipt on the now-cancelled order (3:36 PM in production).
 	// BUG B: ConfirmReceipt does not reject receipts on cancelled orders.
@@ -1798,13 +1536,8 @@ func TestTC38_CancelDeliveredOrder_NoReturnOrder(t *testing.T) {
 	}
 
 	// Final state: bin should be at lineside, unclaimed, and usable.
-	bin, err = db.GetBin(binID)
-	if err != nil {
-		t.Fatalf("get bin final: %v", err)
-	}
-	if bin.ClaimedBy != nil {
-		t.Errorf("bin %d still claimed_by = %d in final state — should be unclaimed", binID, *bin.ClaimedBy)
-	}
+	testdb.AssertBinUnclaimed(t, db, binID)
+	bin := testdb.RequireBin(t, db, binID)
 	t.Logf("final: bin=%d node=%v claimed=%v", binID, bin.NodeID, bin.ClaimedBy)
 }
 
@@ -1829,6 +1562,7 @@ func TestTC39_TerminateOrder_RejectsTerminalStatuses(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 	d := eng.Dispatcher()
 	env := testEnvelope()
+	var err error
 
 	// Full lifecycle: dispatch → run → finish → confirm receipt
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
@@ -1839,10 +1573,7 @@ func TestTC39_TerminateOrder_RejectsTerminalStatuses(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("tc39-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "tc39-1")
 	binID := *order.BinID
 
 	sim.DriveState(order.VendorOrderID, "RUNNING")
@@ -1854,10 +1585,7 @@ func TestTC39_TerminateOrder_RejectsTerminalStatuses(t *testing.T) {
 		FinalCount:  1,
 	})
 
-	order, _ = db.GetOrderByUUID("tc39-1")
-	if order.Status != dispatch.StatusConfirmed {
-		t.Fatalf("after receipt: status = %q, want %q", order.Status, dispatch.StatusConfirmed)
-	}
+	order = testdb.RequireOrderStatus(t, db, "tc39-1", dispatch.StatusConfirmed)
 
 	bin, _ := db.GetBin(binID)
 	t.Logf("pre-terminate: order=%d status=%s bin=%d node=%v claimed=%v",
@@ -1922,35 +1650,23 @@ func TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes(t *testing.T) 
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("retrieve-tc80")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "retrieve-tc80")
 	if order.BinID == nil {
 		t.Fatal("order should have a bin claimed")
 	}
 	t.Logf("order %d dispatched, bin %d claimed", order.ID, *order.BinID)
 
 	// Verify bin is claimed
-	bin, err = db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin: %v", err)
-	}
-	if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
-		t.Fatalf("bin claimed_by = %v, want %d", bin.ClaimedBy, order.ID)
-	}
+	testdb.RequireBinClaimedBy(t, db, *order.BinID, order.ID)
 
 	// Step 2: Simulate the pre-fix bug — manually set order to failed
 	// WITHOUT releasing the claim (simulates UnclaimOrderBins failing silently)
-	_, err = db.Exec(`UPDATE orders SET status='failed', error_detail='simulated partial failure', updated_at=NOW() WHERE id=$1`, order.ID)
+	_, err := db.Exec(`UPDATE orders SET status='failed', error_detail='simulated partial failure', updated_at=NOW() WHERE id=$1`, order.ID)
 	if err != nil {
 		t.Fatalf("manual fail order: %v", err)
 	}
 	// Bin should still be claimed (the bug state)
-	bin, err = db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin after manual fail: %v", err)
-	}
+	bin = testdb.RequireBin(t, db, *order.BinID)
 	if bin.ClaimedBy == nil {
 		t.Fatal("bin should still be claimed (simulating leaked claim)")
 	}
@@ -2001,13 +1717,7 @@ func TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes(t *testing.T) 
 	}
 
 	// Step 6: Verify bin is now unclaimed
-	bin, err = db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin after sweep: %v", err)
-	}
-	if bin.ClaimedBy != nil {
-		t.Errorf("bin claimed_by = %d after sweep, expected NULL", *bin.ClaimedBy)
-	}
+	testdb.AssertBinUnclaimed(t, db, *order.BinID)
 	t.Logf("sweep released orphaned claim — bin %d now unclaimed", bin.ID)
 
 	// Step 7: Verify anomalies no longer detect it
@@ -2032,10 +1742,7 @@ func TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes(t *testing.T) 
 		Quantity:     1,
 	})
 
-	order2, err := db.GetOrderByUUID("retrieve-tc80b")
-	if err != nil {
-		t.Fatalf("get order2: %v", err)
-	}
+	order2 := testdb.RequireOrder(t, db, "retrieve-tc80b")
 	t.Logf("order2 %d dispatched, bin2 %d claimed", order2.ID, bin2.ID)
 
 	// Fail atomically
@@ -2044,21 +1751,9 @@ func TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes(t *testing.T) 
 	}
 
 	// Verify order is failed AND bin is unclaimed in one shot
-	order2, err = db.GetOrderByUUID("retrieve-tc80b")
-	if err != nil {
-		t.Fatalf("get order2 after atomic fail: %v", err)
-	}
-	if order2.Status != dispatch.StatusFailed {
-		t.Errorf("order2 status = %q, want failed", order2.Status)
-	}
+	order2 = testdb.AssertOrderStatus(t, db, "retrieve-tc80b", dispatch.StatusFailed)
 
-	bin2, err = db.GetBin(bin2.ID)
-	if err != nil {
-		t.Fatalf("get bin2 after atomic fail: %v", err)
-	}
-	if bin2.ClaimedBy != nil {
-		t.Errorf("bin2 claimed_by = %d after FailOrderAtomic, expected NULL", *bin2.ClaimedBy)
-	}
+	testdb.AssertBinUnclaimed(t, db, bin2.ID)
 	t.Logf("FailOrderAtomic: order %d failed, bin %d unclaimed — no leak possible", order2.ID, bin2.ID)
 }
 
@@ -2086,34 +1781,17 @@ func TestRegression_BinMovesOnDelivered(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("regr-deliver-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "regr-deliver-1")
 
 	// Drive to FINISHED — fleet physically delivered the bin
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order, err = db.GetOrderByUUID("regr-deliver-1")
-	if err != nil {
-		t.Fatalf("get order after FINISHED: %v", err)
-	}
-	if order.Status != "delivered" {
-		t.Fatalf("after FINISHED: status = %q, want delivered", order.Status)
-	}
+	order = testdb.RequireOrderStatus(t, db, "regr-deliver-1", "delivered")
 
 	// KEY ASSERTION: bin should already be at the line node BEFORE confirmation
-	bin, err := db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin after delivery: %v", err)
-	}
-	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
-		t.Errorf("bin node after DELIVERED = %v, want %d (line node) — bin should move on delivery, not confirmation", bin.NodeID, lineNode.ID)
-	}
-	if bin.ClaimedBy != nil {
-		t.Errorf("bin claimed_by after DELIVERED = %v, want nil", bin.ClaimedBy)
-	}
+	testdb.AssertBinAtNode(t, db, *order.BinID, lineNode.ID)
+	testdb.AssertBinUnclaimed(t, db, *order.BinID)
 
 	// Confirmation should still work (idempotent — bin already there)
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -2122,22 +1800,10 @@ func TestRegression_BinMovesOnDelivered(t *testing.T) {
 		FinalCount:  1,
 	})
 
-	order, err = db.GetOrderByUUID("regr-deliver-1")
-	if err != nil {
-		t.Fatalf("get order after receipt: %v", err)
-	}
-	if order.Status != "confirmed" {
-		t.Fatalf("after receipt: status = %q, want confirmed", order.Status)
-	}
+	order = testdb.RequireOrderStatus(t, db, "regr-deliver-1", "confirmed")
 
 	// Bin still at line node after confirmation
-	bin, err = db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin after confirmation: %v", err)
-	}
-	if bin.NodeID == nil || *bin.NodeID != lineNode.ID {
-		t.Errorf("bin node after CONFIRMED = %v, want %d", bin.NodeID, lineNode.ID)
-	}
+	testdb.AssertBinAtNode(t, db, *order.BinID, lineNode.ID)
 }
 
 // --- Regression: Bug 4 — Cancel with empty EdgeUUID does not notify Edge ---
@@ -2238,10 +1904,7 @@ func TestRegression_MultiBinMovesOnDelivered(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("regr-multibin-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "regr-multibin-1")
 
 	// Verify junction table was populated (multi-bin path)
 	orderBins, err := db.ListOrderBins(order.ID)
@@ -2256,40 +1919,17 @@ func TestRegression_MultiBinMovesOnDelivered(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	order, err = db.GetOrderByUUID("regr-multibin-1")
-	if err != nil {
-		t.Fatalf("get order after FINISHED: %v", err)
-	}
-	if order.Status != "delivered" {
-		t.Fatalf("after FINISHED: status = %q, want delivered", order.Status)
-	}
+	order = testdb.RequireOrderStatus(t, db, "regr-multibin-1", "delivered")
 
 	// KEY ASSERTION: both bins should have moved to their resolved destinations.
 	// Step simulation: newBin (storage→inbound→line), oldBin (line→outbound-staging→outbound-dest)
 	// Final destinations: newBin → lineNode, oldBin → outboundDest.
-	newBinAfter, err := db.GetBin(newBin.ID)
-	if err != nil {
-		t.Fatalf("get newBin after delivery: %v", err)
-	}
-	if newBinAfter.NodeID == nil || *newBinAfter.NodeID != lineNode.ID {
-		t.Fatalf("newBin after DELIVERED at node %v, want %d (lineNode)", newBinAfter.NodeID, lineNode.ID)
-	}
-
-	oldBinAfter, err := db.GetBin(oldBin.ID)
-	if err != nil {
-		t.Fatalf("get oldBin after delivery: %v", err)
-	}
-	if oldBinAfter.NodeID == nil || *oldBinAfter.NodeID != outboundDest.ID {
-		t.Fatalf("oldBin after DELIVERED at node %v, want %d (outboundDest)", oldBinAfter.NodeID, outboundDest.ID)
-	}
+	testdb.RequireBinAtNode(t, db, newBin.ID, lineNode.ID)
+	testdb.RequireBinAtNode(t, db, oldBin.ID, outboundDest.ID)
 
 	// Both bins should be unclaimed after delivery
-	if newBinAfter.ClaimedBy != nil {
-		t.Errorf("newBin claimed_by = %v after DELIVERED, want nil", newBinAfter.ClaimedBy)
-	}
-	if oldBinAfter.ClaimedBy != nil {
-		t.Errorf("oldBin claimed_by = %v after DELIVERED, want nil", oldBinAfter.ClaimedBy)
-	}
+	testdb.AssertBinUnclaimed(t, db, newBin.ID)
+	testdb.AssertBinUnclaimed(t, db, oldBin.ID)
 
 	// Confirmation should work (idempotent — bins already at destinations)
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -2298,13 +1938,7 @@ func TestRegression_MultiBinMovesOnDelivered(t *testing.T) {
 		FinalCount:  1,
 	})
 
-	order, err = db.GetOrderByUUID("regr-multibin-1")
-	if err != nil {
-		t.Fatalf("get order after receipt: %v", err)
-	}
-	if order.Status != "confirmed" {
-		t.Fatalf("after receipt: status = %q, want confirmed", order.Status)
-	}
+	order = testdb.RequireOrderStatus(t, db, "regr-multibin-1", "confirmed")
 
 	// Verify junction table was cleaned up on completion
 	orderBinsAfter, _ := db.ListOrderBins(order.ID)
@@ -2335,19 +1969,13 @@ func TestRegression_CompletionIdempotentAfterDelivery(t *testing.T) {
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("regr-idemp-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "regr-idemp-1")
 
 	// Drive to FINISHED — bin moves to line node
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	binAfterDelivery, err := db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin after delivery: %v", err)
-	}
+	binAfterDelivery := testdb.RequireBin(t, db, *order.BinID)
 
 	// Record the bin state after delivery — confirmation must not change it
 	nodeAfterDelivery := *binAfterDelivery.NodeID
@@ -2359,10 +1987,7 @@ func TestRegression_CompletionIdempotentAfterDelivery(t *testing.T) {
 		FinalCount:  1,
 	})
 
-	binAfterConfirm, err := db.GetBin(*order.BinID)
-	if err != nil {
-		t.Fatalf("get bin after confirmation: %v", err)
-	}
+	binAfterConfirm := testdb.RequireBin(t, db, *order.BinID)
 
 	// Bin should still be at the same node — no double-move
 	if binAfterConfirm.NodeID == nil || *binAfterConfirm.NodeID != nodeAfterDelivery {

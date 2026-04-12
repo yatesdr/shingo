@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
 	"shingocore/store"
 )
 
@@ -50,16 +51,10 @@ func TestComplexOrder_CancelMidTransit(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("cx-cancel-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("status = %q, want %q", order.Status, dispatch.StatusDispatched)
-	}
+	order := testdb.RequireOrderStatus(t, db, "cx-cancel-1", dispatch.StatusDispatched)
 
 	// Verify bin was claimed
-	bin, err = db.GetBin(bin.ID)
+	bin, err := db.GetBin(bin.ID)
 	if err != nil {
 		t.Fatalf("get bin: %v", err)
 	}
@@ -148,10 +143,7 @@ func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("cx-fail-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "cx-fail-1")
 
 	// Robot starts then fails
 	sim.DriveState(order.VendorOrderID, "RUNNING")
@@ -225,13 +217,7 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("cx-empty-wait-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("status = %q, want dispatched", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "cx-empty-wait-1", dispatch.StatusDispatched)
 
 	// Verify bin claimed
 	bin, _ = db.GetBin(bin.ID)
@@ -324,10 +310,7 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("cx-redir-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "cx-redir-1")
 
 	// Drive to staged (dwelling)
 	sim.DriveState(order.VendorOrderID, "RUNNING")
@@ -399,10 +382,7 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("cx-ghost-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
+	order := testdb.RequireOrder(t, db, "cx-ghost-1")
 
 	// Order should fail at planning — no bin available
 	if order.Status != dispatch.StatusFailed {
@@ -584,13 +564,7 @@ func TestComplexOrder_SequentialBackfill(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("seq-backfill-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("status = %q, want dispatched", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "seq-backfill-1", dispatch.StatusDispatched)
 
 	// Bin claimed at storage (first step is pickup)
 	if order.BinID == nil {
@@ -676,13 +650,7 @@ func TestComplexOrder_SequentialRemoval(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("seq-removal-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("status = %q, want dispatched", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "seq-removal-1", dispatch.StatusDispatched)
 
 	// Bin claimed — claimComplexBins iterates ALL steps including post-wait
 	if order.BinID == nil {
@@ -781,13 +749,7 @@ func TestComplexOrder_TwoRobotSwap_Resupply(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("tworobot-resupply-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("status = %q, want dispatched", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "tworobot-resupply-1", dispatch.StatusDispatched)
 
 	// Bin claimed at storage (first step is pickup)
 	if order.BinID == nil {
@@ -893,13 +855,7 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("tworobot-removal-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("status = %q, want dispatched", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "tworobot-removal-1", dispatch.StatusDispatched)
 
 	// Bin claimed — claimComplexBins iterates ALL steps including post-wait
 	if order.BinID == nil {
@@ -993,13 +949,7 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 		},
 	})
 
-	stageOrder, err := db.GetOrderByUUID("stage-1")
-	if err != nil {
-		t.Fatalf("get stage order: %v", err)
-	}
-	if stageOrder.Status != dispatch.StatusDispatched {
-		t.Fatalf("stage order status = %q, want dispatched", stageOrder.Status)
-	}
+	stageOrder := testdb.RequireOrderStatus(t, db, "stage-1", dispatch.StatusDispatched)
 	if stageOrder.BinID == nil {
 		t.Fatal("stage order should have claimed bin at storage")
 	}
@@ -1033,13 +983,7 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 		},
 	})
 
-	deliverOrder, err := db.GetOrderByUUID("deliver-1")
-	if err != nil {
-		t.Fatalf("get deliver order: %v", err)
-	}
-	if deliverOrder.Status != dispatch.StatusDispatched {
-		t.Fatalf("deliver order status = %q, want dispatched", deliverOrder.Status)
-	}
+	deliverOrder := testdb.RequireOrderStatus(t, db, "deliver-1", dispatch.StatusDispatched)
 
 	// Deliver order claims the staged bin at inbound staging
 	if deliverOrder.BinID == nil {
@@ -1131,13 +1075,7 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("single-swap-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("status = %q, want dispatched", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "single-swap-1", dispatch.StatusDispatched)
 
 	// New bin at storage claimed (BinID = first claimed bin)
 	if order.BinID == nil {
@@ -1327,13 +1265,7 @@ func TestComplexOrder_DoubleWait(t *testing.T) {
 		},
 	})
 
-	order, err := db.GetOrderByUUID("double-wait-1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("initial status = %q, want %q", order.Status, dispatch.StatusDispatched)
-	}
+	order := testdb.RequireOrderStatus(t, db, "double-wait-1", dispatch.StatusDispatched)
 
 	// ── Phase 1: Pre-wait blocks ──────────────────────────────────────────
 	// Only blocks before the first wait should be sent to the fleet.

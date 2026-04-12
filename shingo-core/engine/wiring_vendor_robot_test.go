@@ -44,13 +44,7 @@ func dispatchRetrieveOrderWithRobot(t *testing.T) (*store.DB, *Engine, *simulato
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("rid-order-1")
-	if err != nil {
-		t.Fatalf("get dispatched order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("expected dispatched, got %q", order.Status)
-	}
+	order := testdb.RequireOrderStatus(t, db, "rid-order-1", dispatch.StatusDispatched)
 	return db, eng, sim, order
 }
 
@@ -64,10 +58,7 @@ func TestVendorStatus_RobotID_FirstAssignment(t *testing.T) {
 	// Drive RUNNING with a real robot ID (matches production RDS behavior)
 	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
 
-	got, _ := db.GetOrderByUUID("rid-order-1")
-	if got.Status != "in_transit" {
-		t.Errorf("status: got %q, want %q", got.Status, "in_transit")
-	}
+	got := testdb.AssertOrderStatus(t, db, "rid-order-1", "in_transit")
 	if got.RobotID != "AMB-42" {
 		t.Errorf("robot_id: got %q, want %q", got.RobotID, "AMB-42")
 	}
@@ -106,7 +97,7 @@ func TestVendorStatus_RobotID_CaseD_NoClobber(t *testing.T) {
 	// Step 1: Assign robot on RUNNING
 	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
 
-	got, _ := db.GetOrderByUUID("rid-order-1")
+	got := testdb.RequireOrder(t, db, "rid-order-1")
 	if got.RobotID != "AMB-42" {
 		t.Fatalf("robot_id after RUNNING: got %q, want %q", got.RobotID, "AMB-42")
 	}
@@ -115,10 +106,7 @@ func TestVendorStatus_RobotID_CaseD_NoClobber(t *testing.T) {
 	// This is the exact scenario that caused Case D before the fix.
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	got, _ = db.GetOrderByUUID("rid-order-1")
-	if got.Status != "delivered" {
-		t.Errorf("status: got %q, want %q", got.Status, "delivered")
-	}
+	got = testdb.AssertOrderStatus(t, db, "rid-order-1", "delivered")
 	// The critical assertion: robot_id must be preserved, not clobbered to empty
 	if got.RobotID != "AMB-42" {
 		t.Errorf("Case D regression: robot_id was clobbered to %q, want %q (preserved)", got.RobotID, "AMB-42")
@@ -134,7 +122,7 @@ func TestVendorStatus_RobotID_Reassignment(t *testing.T) {
 	// Step 1: Assign robot on RUNNING
 	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
 
-	got, _ := db.GetOrderByUUID("rid-order-1")
+	got := testdb.RequireOrder(t, db, "rid-order-1")
 	if got.RobotID != "AMB-42" {
 		t.Fatalf("robot_id after RUNNING: got %q, want %q", got.RobotID, "AMB-42")
 	}
@@ -142,10 +130,7 @@ func TestVendorStatus_RobotID_Reassignment(t *testing.T) {
 	// Step 2: Robot is reassigned - fleet sends WAITING with new robot
 	sim.DriveStateWithRobot(order.VendorOrderID, "WAITING", "AMB-99")
 
-	got, _ = db.GetOrderByUUID("rid-order-1")
-	if got.Status != "staged" {
-		t.Errorf("status: got %q, want %q", got.Status, "staged")
-	}
+	got = testdb.AssertOrderStatus(t, db, "rid-order-1", "staged")
 	if got.RobotID != "AMB-99" {
 		t.Errorf("robot_id after reassignment: got %q, want %q", got.RobotID, "AMB-99")
 	}
@@ -160,7 +145,7 @@ func TestVendorStatus_RobotID_IdempotentNoChange(t *testing.T) {
 	// Step 1: First RUNNING with robot
 	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
 
-	got1, _ := db.GetOrderByUUID("rid-order-1")
+	got1 := testdb.RequireOrder(t, db, "rid-order-1")
 	if got1.RobotID != "AMB-42" {
 		t.Fatalf("robot_id after first RUNNING: got %q, want %q", got1.RobotID, "AMB-42")
 	}
@@ -169,10 +154,7 @@ func TestVendorStatus_RobotID_IdempotentNoChange(t *testing.T) {
 	// Step 2: Drive RUNNING again with same robot (idempotent)
 	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
 
-	got2, _ := db.GetOrderByUUID("rid-order-1")
-	if got2.Status != "in_transit" {
-		t.Errorf("status after double RUNNING: got %q, want %q", got2.Status, "in_transit")
-	}
+	got2 := testdb.AssertOrderStatus(t, db, "rid-order-1", "in_transit")
 	if got2.RobotID != "AMB-42" {
 		t.Errorf("robot_id after double RUNNING: got %q, want %q", got2.RobotID, "AMB-42")
 	}
@@ -196,10 +178,7 @@ func TestVendorStatus_RobotID_OptionC_SingleWrite(t *testing.T) {
 	// Drive RUNNING with robot - Option C path: waybill + single UpdateOrderVendor
 	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
 
-	got, _ := db.GetOrderByUUID("rid-order-1")
-	if got.Status != "in_transit" {
-		t.Errorf("status: got %q, want %q", got.Status, "in_transit")
-	}
+	got := testdb.AssertOrderStatus(t, db, "rid-order-1", "in_transit")
 	if got.RobotID != "AMB-42" {
 		t.Errorf("robot_id: got %q, want %q", got.RobotID, "AMB-42")
 	}
@@ -223,7 +202,7 @@ func TestVendorStatus_RobotID_NarrowWrite_SameStatusNewRobot(t *testing.T) {
 	// Step 1: RUNNING with robot AMB-42
 	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-42")
 
-	got1, _ := db.GetOrderByUUID("rid-order-1")
+	got1 := testdb.RequireOrder(t, db, "rid-order-1")
 	if got1.VendorState != "RUNNING" {
 		t.Fatalf("vendor_state after RUNNING: got %q, want %q", got1.VendorState, "RUNNING")
 	}
@@ -242,7 +221,7 @@ func TestVendorStatus_RobotID_NarrowWrite_SameStatusNewRobot(t *testing.T) {
 		RobotID:       "AMB-99",
 	})
 
-	got2, _ := db.GetOrderByUUID("rid-order-1")
+	got2 := testdb.RequireOrder(t, db, "rid-order-1")
 	if got2.RobotID != "AMB-99" {
 		t.Errorf("robot_id after reassignment on idempotent path: got %q, want %q", got2.RobotID, "AMB-99")
 	}

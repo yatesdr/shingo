@@ -38,13 +38,7 @@ func dispatchRetrieveOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simula
 		Quantity:     1,
 	})
 
-	order, err := db.GetOrderByUUID("vs-order-1")
-	if err != nil {
-		t.Fatalf("get dispatched order: %v", err)
-	}
-	if order.Status != dispatch.StatusDispatched {
-		t.Fatalf("expected dispatched, got %q", order.Status)
-	}
+	order = testdb.RequireOrderStatus(t, db, "vs-order-1", dispatch.StatusDispatched)
 	return db, eng, sim, order, sd.StorageNode, sd.LineNode
 }
 
@@ -56,10 +50,7 @@ func TestVendorStatus_RunningUpdatesStatus(t *testing.T) {
 
 	sim.DriveStateWithRobot(order.VendorOrderID, "RUNNING", "AMB-01")
 
-	got, _ := db.GetOrderByUUID("vs-order-1")
-	if got.Status != "in_transit" {
-		t.Errorf("status after RUNNING: got %q, want %q", got.Status, "in_transit")
-	}
+	got := testdb.RequireOrderStatus(t, db, "vs-order-1", "in_transit")
 	if got.RobotID != "AMB-01" {
 		t.Errorf("robot_id after RUNNING: got %q, want %q", got.RobotID, "AMB-01")
 	}
@@ -73,10 +64,7 @@ func TestVendorStatus_IdempotentStatus(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 
-	got, _ := db.GetOrderByUUID("vs-order-1")
-	if got.Status != "in_transit" {
-		t.Errorf("status after double RUNNING: got %q, want %q", got.Status, "in_transit")
-	}
+	testdb.AssertOrderStatus(t, db, "vs-order-1", "in_transit")
 }
 
 // TC-VS-3: FINISHED terminal state → order delivered, bin moved to dest.
@@ -87,17 +75,11 @@ func TestVendorStatus_FinishedDelivers(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FINISHED")
 
-	got, _ := db.GetOrderByUUID("vs-order-1")
-	if got.Status != "delivered" {
-		t.Errorf("status after FINISHED: got %q, want %q", got.Status, "delivered")
-	}
+	got := testdb.AssertOrderStatus(t, db, "vs-order-1", "delivered")
 
 	// handleOrderDelivered should move the bin to the delivery node.
 	if got.BinID != nil {
-		bin, _ := db.GetBin(*got.BinID)
-		if bin != nil && bin.NodeID != nil && *bin.NodeID != lineNode.ID {
-			t.Errorf("bin node after delivery: got %d, want %d (line node)", *bin.NodeID, lineNode.ID)
-		}
+		testdb.AssertBinAtNode(t, db, *got.BinID, lineNode.ID)
 	}
 }
 
@@ -120,10 +102,7 @@ func TestVendorStatus_FailedTerminal(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FAILED")
 
-	got, _ := db.GetOrderByUUID("vs-order-1")
-	if got.Status != "failed" {
-		t.Errorf("status after FAILED: got %q, want %q", got.Status, "failed")
-	}
+	testdb.AssertOrderStatus(t, db, "vs-order-1", "failed")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -157,10 +136,7 @@ func TestVendorStatus_StoppedCancels(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "STOPPED")
 
-	got, _ := db.GetOrderByUUID("vs-order-1")
-	if got.Status != "cancelled" {
-		t.Errorf("status after STOPPED: got %q, want %q", got.Status, "cancelled")
-	}
+	testdb.AssertOrderStatus(t, db, "vs-order-1", "cancelled")
 
 	mu.Lock()
 	defer mu.Unlock()
