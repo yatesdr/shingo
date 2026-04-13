@@ -3,7 +3,7 @@ package seerrds
 import (
 	"log"
 
-	"shingocore/dispatch"
+	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/rds"
 )
@@ -12,20 +12,20 @@ import (
 func MapState(vendorState string) string {
 	switch rds.OrderState(vendorState) {
 	case rds.StateCreated, rds.StateToBeDispatched:
-		return dispatch.StatusDispatched
+		return protocol.StatusDispatched
 	case rds.StateRunning:
-		return dispatch.StatusInTransit
+		return protocol.StatusInTransit
 	case rds.StateWaiting:
-		return dispatch.StatusStaged
+		return protocol.StatusStaged
 	case rds.StateFinished:
-		return dispatch.StatusDelivered
+		return protocol.StatusDelivered
 	case rds.StateFailed:
-		return dispatch.StatusFailed
+		return protocol.StatusFailed
 	case rds.StateStopped:
-		return dispatch.StatusCancelled
+		return protocol.StatusCancelled
 	default:
 		log.Printf("mapstate: unrecognized RDS state %q, defaulting to dispatched", vendorState)
-		return dispatch.StatusDispatched
+		return protocol.StatusDispatched
 	}
 }
 
