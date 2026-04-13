@@ -11,6 +11,9 @@ import (
 	"shingocore/fleet"
 )
 
+// rdsProxyTimeout is the HTTP timeout for proxied RDS explorer requests.
+const rdsProxyTimeout = 15 * time.Second
+
 func (h *Handlers) handleFleetExplorer(w http.ResponseWriter, r *http.Request) {
 	baseURL := ""
 	if vp, ok := h.engine.Fleet().(fleet.VendorProxy); ok {
@@ -71,7 +74,7 @@ func (h *Handlers) apiFleetProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: rdsProxyTimeout}
 	resp, err := client.Do(httpReq)
 	elapsed := time.Since(start)
 

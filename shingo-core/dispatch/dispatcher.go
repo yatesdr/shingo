@@ -103,7 +103,9 @@ func (d *Dispatcher) queueOrder(order *store.Order, env *protocol.Envelope, payl
 		log.Printf("dispatch: queue order %d: %v", order.ID, err)
 	}
 	if payloadCode != "" && order.PayloadCode == "" {
-		_ = d.db.UpdateOrderPayloadCode(order.ID, payloadCode)
+		if err := d.db.UpdateOrderPayloadCode(order.ID, payloadCode); err != nil {
+			log.Printf("dispatch: update payload code order %d: %v", order.ID, err)
+		}
 	}
 	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
 	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, env.Src.Station, payloadCode)
@@ -111,7 +113,7 @@ func (d *Dispatcher) queueOrder(order *store.Order, env *protocol.Envelope, payl
 }
 
 func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope, sourceNode, destNode *store.Node) {
-	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
+	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
 	req := fleet.TransportOrderRequest{
 		OrderID:    vendorOrderID,
@@ -151,7 +153,7 @@ func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope,
 // Used for orders created internally (e.g. direct orders from the UI).
 // Returns the vendor order ID on success.
 func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *store.Node) (string, error) {
-	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
+	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
 	req := fleet.TransportOrderRequest{
 		OrderID:    vendorOrderID,

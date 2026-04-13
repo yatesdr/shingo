@@ -76,7 +76,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	preWait, hasWait := splitAtWait(resolvedSteps)
 
 	// Build RDS blocks for pre-wait steps
-	vendorOrderID := fmt.Sprintf("sg-%d-%s", order.ID, uuid.New().String()[:8])
+	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 	blocks := stepsToBlocks(vendorOrderID, preWait, 0)
 
 	if len(blocks) == 0 {
@@ -268,7 +268,7 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			}
 			result, err := d.resolver.Resolve(node, orderType, payloadCode, nil)
 			if err != nil {
-				return "", fmt.Errorf("cannot resolve group %s: %v", step.Node, err)
+				return "", fmt.Errorf("cannot resolve group %s: %w", step.Node, err)
 			}
 			return result.Node.Name, nil
 		}
@@ -282,18 +282,18 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 		case "pickup":
 			bin, err := d.db.FindSourceBinFIFO(payloadCode)
 			if err != nil {
-				return "", fmt.Errorf("no source bin for payload %q: %v", payloadCode, err)
+				return "", fmt.Errorf("no source bin for payload %q: %w", payloadCode, err)
 			}
 			node, err := d.db.GetNode(*bin.NodeID)
 			if err != nil {
-				return "", fmt.Errorf("resolve node for source bin %d: %v", bin.ID, err)
+				return "", fmt.Errorf("resolve node for source bin %d: %w", bin.ID, err)
 			}
 			d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", node.Name, bin.ID)
 			return node.Name, nil
 		case "dropoff":
 			node, err := d.db.FindStorageDestination(payloadCode)
 			if err != nil {
-				return "", fmt.Errorf("no storage destination for payload %q: %v", payloadCode, err)
+				return "", fmt.Errorf("no storage destination for payload %q: %w", payloadCode, err)
 			}
 			d.dbg("resolveStepNode: global fallback dropoff → %s", node.Name)
 			return node.Name, nil

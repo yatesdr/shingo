@@ -24,3 +24,6 @@ const (
 	StatusFailed       = protocol.StatusFailed
 	StatusCancelled    = protocol.StatusCancelled
 )
+
+// VendorIDPrefix is prepended to fleet transport order IDs for traceability.
+const VendorIDPrefix = "sg-"

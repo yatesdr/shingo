@@ -48,6 +48,9 @@ func (s *edgeOutboxStore) PurgeOldOutbox(olderThan time.Duration) (int, error) {
 	return int(n), err
 }
 
+// DrainBatchSize is the maximum number of outbox messages drained per cycle.
+const DrainBatchSize = 50
+
 // NewOutboxDrainer creates a new outbox drainer.
 func NewOutboxDrainer(db *store.DB, client *Client, cfg *config.MessagingConfig) *outbox.Drainer {
 	store := &edgeOutboxStore{db: db}
@@ -55,6 +58,6 @@ func NewOutboxDrainer(db *store.DB, client *Client, cfg *config.MessagingConfig)
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
-	drainer := outbox.NewDrainer(store, client, cfg.OrdersTopic, interval, 50)
+	drainer := outbox.NewDrainer(store, client, cfg.OrdersTopic, interval, DrainBatchSize)
 	return drainer
 }

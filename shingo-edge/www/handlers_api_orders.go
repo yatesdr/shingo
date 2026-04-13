@@ -2,11 +2,15 @@ package www
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"shingo/protocol"
 )
+
+// MaxBatchRetrieveCount is the maximum number of orders in a batch retrieve request.
+const MaxBatchRetrieveCount = 5
 
 // --- Order Creation ---
 
@@ -42,8 +46,8 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		count = 1
 	}
 	if count > 1 {
-		if count > 5 {
-			writeError(w, http.StatusBadRequest, "count exceeds maximum of 5")
+		if count > MaxBatchRetrieveCount {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("count exceeds maximum of %d", MaxBatchRetrieveCount))
 			return
 		}
 		if req.PayloadCode == "" || req.DeliveryNode == "" {

@@ -11,6 +11,14 @@ import (
 // MaxRetries is the number of delivery attempts before a message is dead-lettered.
 const MaxRetries = 10
 
+const (
+	// PurgeCycleInterval is how often (in drain cycles) old messages are purged.
+	PurgeCycleInterval = 100
+
+	// MessageRetentionPeriod is how long sent messages are kept before purging.
+	MessageRetentionPeriod = 24 * time.Hour
+)
+
 // Message represents a pending outbox message.
 type Message struct {
 	ID      int64
@@ -96,8 +104,8 @@ func (d *Drainer) run() {
 		case <-ticker.C:
 			d.drain()
 			cycles++
-			if cycles%100 == 0 {
-				if n, err := d.store.PurgeOldOutbox(24 * time.Hour); err != nil {
+			if cycles%PurgeCycleInterval == 0 {
+				if n, err := d.store.PurgeOldOutbox(MessageRetentionPeriod); err != nil {
 					log.Printf("outbox: purge old: %v", err)
 				} else if n > 0 {
 					log.Printf("outbox: purged %d old messages", n)
