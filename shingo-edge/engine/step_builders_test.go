@@ -44,16 +44,15 @@ func TestBuildSwapChangeoverSteps(t *testing.T) {
 
 	steps := BuildSwapChangeoverSteps(from, to)
 
-	if len(steps) != 8 {
-		t.Fatalf("expected 8 steps, got %d", len(steps))
+	if len(steps) != 7 {
+		t.Fatalf("expected 7 steps, got %d", len(steps))
 	}
 	if w := countWaits(steps); w != 1 {
 		t.Errorf("expected 1 wait, got %d", w)
 	}
 
 	want := []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: "CORE-A"},
-		{Action: "wait"},
+		{Action: "wait", Node: "CORE-A"},
 		{Action: "pickup", Node: "CORE-A"},
 		{Action: "dropoff", Node: "OUT-STAGE"},
 		{Action: "pickup", Node: "IN-STAGE"},
@@ -85,23 +84,23 @@ func TestBuildEvacuateChangeoverSteps(t *testing.T) {
 
 	steps := BuildEvacuateChangeoverSteps(from, to)
 
-	if len(steps) != 9 {
-		t.Fatalf("expected 9 steps, got %d", len(steps))
+	if len(steps) != 8 {
+		t.Fatalf("expected 8 steps, got %d", len(steps))
 	}
 	if w := countWaits(steps); w != 2 {
 		t.Errorf("expected 2 waits, got %d", w)
 	}
 
-	// Verify the two wait positions: index 1 ("ready") and index 4 ("tooling done")
-	if steps[1].Action != "wait" {
-		t.Errorf("step 1: expected wait, got %q", steps[1].Action)
+	// Verify the two wait positions: index 0 ("ready" with node) and index 3 ("tooling done" bare)
+	if steps[0].Action != "wait" || steps[0].Node != "CORE-A" {
+		t.Errorf("step 0: expected wait at CORE-A, got %q at %q", steps[0].Action, steps[0].Node)
 	}
-	if steps[4].Action != "wait" {
-		t.Errorf("step 4: expected wait (tooling done), got %q", steps[4].Action)
+	if steps[3].Action != "wait" {
+		t.Errorf("step 3: expected wait (tooling done), got %q", steps[3].Action)
 	}
 
 	actions := stepActions(steps)
-	wantActions := []string{"dropoff", "wait", "pickup", "dropoff", "wait", "pickup", "dropoff", "pickup", "dropoff"}
+	wantActions := []string{"wait", "pickup", "dropoff", "wait", "pickup", "dropoff", "pickup", "dropoff"}
 	for i, a := range actions {
 		if a != wantActions[i] {
 			t.Errorf("step %d action: got %q, want %q", i, a, wantActions[i])
@@ -155,16 +154,15 @@ func TestBuildKeepStagedEvacSteps(t *testing.T) {
 
 	steps := BuildKeepStagedEvacSteps(from)
 
-	if len(steps) != 4 {
-		t.Fatalf("expected 4 steps, got %d", len(steps))
+	if len(steps) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(steps))
 	}
 	if w := countWaits(steps); w != 1 {
 		t.Errorf("expected 1 wait, got %d", w)
 	}
 
 	want := []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: "CORE-NODE"},
-		{Action: "wait"},
+		{Action: "wait", Node: "CORE-NODE"},
 		{Action: "pickup", Node: "CORE-NODE"},
 		{Action: "dropoff", Node: "DEST-FINAL"},
 	}

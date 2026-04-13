@@ -24,7 +24,7 @@ func TestResolvePerBinDestinations_SinglePickupDropoff(t *testing.T) {
 
 func TestResolvePerBinDestinations_SwapPattern(t *testing.T) {
 	t.Parallel()
-	// Full 10-step swap: two bins, multiple pickups and dropoffs.
+	// Full 9-step swap: two bins, multiple pickups and dropoffs.
 	// This is the TC-60 production pattern.
 	//
 	// newBin (101): storage → inStaging → (wait) → inStaging → line (final)
@@ -32,18 +32,17 @@ func TestResolvePerBinDestinations_SwapPattern(t *testing.T) {
 	steps := []resolvedStep{
 		{Action: "pickup", Node: "storage"},       // 1: pick newBin
 		{Action: "dropoff", Node: "inStaging"},    // 2: stage newBin
-		{Action: "dropoff", Node: "line"},         // 3: pre-position (robot empty, no-op)
-		{Action: "wait"},                          // 4: wait
-		{Action: "pickup", Node: "line"},          // 5: pick oldBin
-		{Action: "dropoff", Node: "outStaging"},   // 6: park oldBin
-		{Action: "pickup", Node: "inStaging"},     // 7: re-pick newBin
-		{Action: "dropoff", Node: "line"},         // 8: deliver newBin (FINAL for newBin)
-		{Action: "pickup", Node: "outStaging"},    // 9: re-pick oldBin
-		{Action: "dropoff", Node: "outDest"},      // 10: deliver oldBin (FINAL for oldBin)
+		{Action: "wait", Node: "line"},            // 3: drive to node + hold (BinTask=Wait)
+		{Action: "pickup", Node: "line"},          // 4: pick oldBin
+		{Action: "dropoff", Node: "outStaging"},   // 5: park oldBin
+		{Action: "pickup", Node: "inStaging"},     // 6: re-pick newBin
+		{Action: "dropoff", Node: "line"},         // 7: deliver newBin (FINAL for newBin)
+		{Action: "pickup", Node: "outStaging"},    // 8: re-pick oldBin
+		{Action: "dropoff", Node: "outDest"},      // 9: deliver oldBin (FINAL for oldBin)
 	}
 	claimed := map[string]int64{
 		"storage": 101, // newBin claimed at step 1
-		"line":    102, // oldBin claimed at step 5
+		"line":    102, // oldBin claimed at step 4
 	}
 
 	dest := resolvePerBinDestinations(steps, claimed)

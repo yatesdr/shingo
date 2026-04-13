@@ -618,14 +618,14 @@ func TestComplexOrder_SequentialBackfill(t *testing.T) {
 //
 // Pattern from BuildSequentialRemovalSteps:
 //
-//	dropoff(CoreNode) → wait → pickup(CoreNode) → dropoff(OutboundDest)
+//	wait(CoreNode) → pickup(CoreNode) → dropoff(OutboundDest)
 //
-// Robot navigates empty to line, waits for operator, picks up old bin, delivers
-// to outbound destination. First step is dropoff, but claimComplexBins iterates
-// ALL steps (including post-wait) and finds the pickup(lineNode) step, claiming
+// Robot drives to line and holds (RDS BinTask=Wait), operator releases, picks
+// up old bin, delivers to outbound destination. claimComplexBins iterates ALL
+// steps (including post-wait) and finds the pickup(lineNode) step, claiming
 // the bin there.
 //
-// Expected: 1 pre-wait block, staged order. After release: 3 total blocks.
+// Expected: 1 pre-wait block (Wait), staged order. After release: 3 total blocks.
 // After completion: bin at outbound dest.
 func TestComplexOrder_SequentialRemoval(t *testing.T) {
 	t.Parallel()
@@ -643,8 +643,7 @@ func TestComplexOrder_SequentialRemoval(t *testing.T) {
 		PayloadCode: bp.Code,
 		Quantity:    1,
 		Steps: []protocol.ComplexOrderStep{
-			{Action: "dropoff", Node: lineNode.Name},
-			{Action: "wait"},
+			{Action: "wait", Node: lineNode.Name},
 			{Action: "pickup", Node: lineNode.Name},
 			{Action: "dropoff", Node: outboundDest.Name},
 		},
@@ -665,8 +664,8 @@ func TestComplexOrder_SequentialRemoval(t *testing.T) {
 	if len(view.Blocks) != 1 {
 		t.Fatalf("pre-wait blocks = %d, want 1", len(view.Blocks))
 	}
-	if view.Blocks[0].Location != lineNode.Name || view.Blocks[0].BinTask != "JackUnload" {
-		t.Errorf("block 0: location=%q task=%q, want %q/JackUnload", view.Blocks[0].Location, view.Blocks[0].BinTask, lineNode.Name)
+	if view.Blocks[0].Location != lineNode.Name || view.Blocks[0].BinTask != "Wait" {
+		t.Errorf("block 0: location=%q task=%q, want %q/Wait", view.Blocks[0].Location, view.Blocks[0].BinTask, lineNode.Name)
 	}
 	if view.Complete {
 		t.Error("order should NOT be complete (has wait step)")
@@ -825,12 +824,13 @@ func TestComplexOrder_TwoRobotSwap_Resupply(t *testing.T) {
 //
 // Pattern from BuildTwoRobotSwapSteps orderB:
 //
-//	dropoff(CoreNode) → wait → pickup(CoreNode) → dropoff(OutboundDest)
+//	wait(CoreNode) → pickup(CoreNode) → dropoff(OutboundDest)
 //
 // Same structure as sequential removal but in the two-robot context.
-// claimComplexBins finds the post-wait pickup and claims the bin.
+// Robot drives to node and holds (RDS BinTask=Wait). claimComplexBins
+// finds the post-wait pickup and claims the bin.
 //
-// Expected: 1 pre-wait block, staged. After release: 3 blocks.
+// Expected: 1 pre-wait block (Wait), staged. After release: 3 blocks.
 // After completion: bin at outbound dest.
 func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 	t.Parallel()
@@ -848,8 +848,7 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 		PayloadCode: bp.Code,
 		Quantity:    1,
 		Steps: []protocol.ComplexOrderStep{
-			{Action: "dropoff", Node: lineNode.Name},
-			{Action: "wait"},
+			{Action: "wait", Node: lineNode.Name},
 			{Action: "pickup", Node: lineNode.Name},
 			{Action: "dropoff", Node: outboundDest.Name},
 		},
@@ -870,8 +869,8 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 	if len(view.Blocks) != 1 {
 		t.Fatalf("pre-wait blocks = %d, want 1", len(view.Blocks))
 	}
-	if view.Blocks[0].Location != lineNode.Name || view.Blocks[0].BinTask != "JackUnload" {
-		t.Errorf("block 0: location=%q task=%q, want %q/JackUnload", view.Blocks[0].Location, view.Blocks[0].BinTask, lineNode.Name)
+	if view.Blocks[0].Location != lineNode.Name || view.Blocks[0].BinTask != "Wait" {
+		t.Errorf("block 0: location=%q task=%q, want %q/Wait", view.Blocks[0].Location, view.Blocks[0].BinTask, lineNode.Name)
 	}
 
 	// Drive to staged, release
@@ -888,7 +887,7 @@ func TestComplexOrder_TwoRobotSwap_Removal(t *testing.T) {
 		t.Error("order should be complete after release")
 	}
 
-	// Block structure: line/JackUnload, line/JackLoad, dest/JackUnload
+	// Block structure: line/Wait, line/JackLoad, dest/JackUnload
 	if view.Blocks[1].Location != lineNode.Name || view.Blocks[1].BinTask != "JackLoad" {
 		t.Errorf("block 1: location=%q task=%q, want %q/JackLoad", view.Blocks[1].Location, view.Blocks[1].BinTask, lineNode.Name)
 	}
@@ -1014,22 +1013,22 @@ func TestComplexOrder_StagingAndDeliver(t *testing.T) {
 	}
 }
 
-// --- TC-60: Single-Robot 10-Step Swap ---
+// --- TC-60: Single-Robot 9-Step Swap ---
 //
 // Pattern from BuildSingleSwapSteps — the most complex production pattern:
 //
-//	pickup(source) → dropoff(inStaging) → dropoff(line) → wait
+//	pickup(source) → dropoff(inStaging) → wait(line)
 //	→ pickup(line) → dropoff(outStaging) → pickup(inStaging)
 //	→ dropoff(line) → pickup(outStaging) → dropoff(outDest)
 //
 // One robot swaps two bins in a single trip. It stages the new bin at inbound
-// staging, pre-positions at line, waits for the operator, swaps old for new,
-// then delivers the old bin to outbound destination.
+// staging, drives to line and holds (RDS BinTask=Wait), operator releases,
+// swaps old for new, then delivers the old bin to outbound destination.
 //
 // This test validates the order_bins junction table fix for multi-bin
 // complex orders. Two bins are tracked:
-//   - newBin: storage → inStaging → lineNode (final dest, step 8)
-//   - oldBin: lineNode → outStaging → outboundDest (final dest, step 10)
+//   - newBin: storage → inStaging → lineNode (final dest, step 7)
+//   - oldBin: lineNode → outStaging → outboundDest (final dest, step 9)
 //
 // The fix:
 //   - claimComplexBins populates order_bins with per-bin destinations computed
@@ -1064,14 +1063,13 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 		Steps: []protocol.ComplexOrderStep{
 			{Action: "pickup", Node: storageNode.Name},       // 1
 			{Action: "dropoff", Node: inboundStaging.Name},   // 2
-			{Action: "dropoff", Node: lineNode.Name},         // 3
-			{Action: "wait"},                                 // 4
-			{Action: "pickup", Node: lineNode.Name},          // 5
-			{Action: "dropoff", Node: outboundStaging.Name},  // 6
-			{Action: "pickup", Node: inboundStaging.Name},    // 7
-			{Action: "dropoff", Node: lineNode.Name},         // 8
-			{Action: "pickup", Node: outboundStaging.Name},   // 9
-			{Action: "dropoff", Node: outboundDest.Name},     // 10
+			{Action: "wait", Node: lineNode.Name},            // 3 drive to node + hold
+			{Action: "pickup", Node: lineNode.Name},          // 4
+			{Action: "dropoff", Node: outboundStaging.Name},  // 5
+			{Action: "pickup", Node: inboundStaging.Name},    // 6
+			{Action: "dropoff", Node: lineNode.Name},         // 7
+			{Action: "pickup", Node: outboundStaging.Name},   // 8
+			{Action: "dropoff", Node: outboundDest.Name},     // 9
 		},
 	})
 
@@ -1110,7 +1108,7 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 	wantPre := []struct{ loc, task string }{
 		{storageNode.Name, "JackLoad"},
 		{inboundStaging.Name, "JackUnload"},
-		{lineNode.Name, "JackUnload"},
+		{lineNode.Name, "Wait"},
 	}
 	for i, w := range wantPre {
 		if view.Blocks[i].Location != w.loc || view.Blocks[i].BinTask != w.task {
@@ -1136,14 +1134,14 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 	wantAll := []struct{ loc, task string }{
 		{storageNode.Name, "JackLoad"},       // 1: pickup new
 		{inboundStaging.Name, "JackUnload"},  // 2: stage new
-		{lineNode.Name, "JackUnload"},        // 3: pre-position at line
-		// wait
-		{lineNode.Name, "JackLoad"},          // 5: pickup old from line
-		{outboundStaging.Name, "JackUnload"}, // 6: park old
-		{inboundStaging.Name, "JackLoad"},    // 7: grab new from staging
-		{lineNode.Name, "JackUnload"},        // 8: deliver new to line
-		{outboundStaging.Name, "JackLoad"},   // 9: grab old from staging
-		{outboundDest.Name, "JackUnload"},    // 10: deliver old to dest
+		{lineNode.Name, "Wait"},              // 3: drive to node + hold
+		// (release)
+		{lineNode.Name, "JackLoad"},          // 4: pickup old from line
+		{outboundStaging.Name, "JackUnload"}, // 5: park old
+		{inboundStaging.Name, "JackLoad"},    // 6: grab new from staging
+		{lineNode.Name, "JackUnload"},        // 7: deliver new to line
+		{outboundStaging.Name, "JackLoad"},   // 8: grab old from staging
+		{outboundDest.Name, "JackUnload"},    // 9: deliver old to dest
 	}
 	for i, w := range wantAll {
 		if view.Blocks[i].Location != w.loc || view.Blocks[i].BinTask != w.task {

@@ -64,32 +64,30 @@ func BuildStagedDeliverSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrde
 	}
 }
 
-// BuildSingleSwapSteps builds a 10-step single-robot swap sequence:
-//  1. pickup(InboundSource)      — pick new from source
-//  2. dropoff(InboundStaging)    — park new at inbound staging
-//  3. dropoff(CoreNodeName)      — pre-position at lineside
-//  4. wait                       — operator releases
-//  5. pickup(CoreNodeName)       — pick up old from line
-//  6. dropoff(OutboundStaging)   — quick-park old nearby
-//  7. pickup(InboundStaging)     — grab new from staging
-//  8. dropoff(CoreNodeName)      — deliver new to line
-//  9. pickup(OutboundStaging)    — grab old from staging
-// 10. dropoff(OutboundDestination)    — deliver old to final destination
+// BuildSingleSwapSteps builds a 9-step single-robot swap sequence:
+//  1. pickup(InboundSource)           — pick new from source
+//  2. dropoff(InboundStaging)         — park new at inbound staging
+//  3. wait(CoreNodeName)              — drive to node and hold (RDS BinTask=Wait)
+//  4. pickup(CoreNodeName)            — pick up old from line
+//  5. dropoff(OutboundStaging)        — quick-park old nearby
+//  6. pickup(InboundStaging)          — grab new from staging
+//  7. dropoff(CoreNodeName)           — deliver new to line
+//  8. pickup(OutboundStaging)         — grab old from staging
+//  9. dropoff(OutboundDestination)    — deliver old to final destination
 func BuildSingleSwapSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	if claim.InboundStaging == "" || claim.OutboundStaging == "" {
 		return nil
 	}
 	return []protocol.ComplexOrderStep{
-		buildStep("pickup", claim.InboundSource), // 1
-		{Action: "dropoff", Node: claim.InboundStaging},                            // 2
-		{Action: "dropoff", Node: claim.CoreNodeName},                              // 3 pre-position
-		{Action: "wait"},                                                            // 4
-		{Action: "pickup", Node: claim.CoreNodeName},                               // 5
-		{Action: "dropoff", Node: claim.OutboundStaging},                           // 6
-		{Action: "pickup", Node: claim.InboundStaging},                             // 7
-		{Action: "dropoff", Node: claim.CoreNodeName},                              // 8
-		{Action: "pickup", Node: claim.OutboundStaging},                            // 9
-		buildStep("dropoff", claim.OutboundDestination), // 10
+		buildStep("pickup", claim.InboundSource),        // 1
+		{Action: "dropoff", Node: claim.InboundStaging}, // 2
+		{Action: "wait", Node: claim.CoreNodeName},      // 3 drive to node + hold
+		{Action: "pickup", Node: claim.CoreNodeName},    // 4
+		{Action: "dropoff", Node: claim.OutboundStaging},  // 5
+		{Action: "pickup", Node: claim.InboundStaging},    // 6
+		{Action: "dropoff", Node: claim.CoreNodeName},     // 7
+		{Action: "pickup", Node: claim.OutboundStaging},   // 8
+		buildStep("dropoff", claim.OutboundDestination),   // 9
 	}
 }
 
@@ -97,7 +95,7 @@ func BuildSingleSwapSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderSt
 // Returns two step lists — one for each robot order:
 //
 // Order A (resupply robot): pickup new from source → stage → wait → pickup from staging → deliver to node
-// Order B (removal robot): pre-position at node → wait → pickup old from node → deliver to outbound destination
+// Order B (removal robot): wait at node → pickup old from node → deliver to outbound destination
 //
 // Edge coordinates: releases Order B first (remove old), then releases Order A (deliver new).
 func BuildTwoRobotSwapSteps(claim *store.StyleNodeClaim) (orderA, orderB []protocol.ComplexOrderStep) {
@@ -106,34 +104,31 @@ func BuildTwoRobotSwapSteps(claim *store.StyleNodeClaim) (orderA, orderB []proto
 	}
 	// Robot A: fetch new material, stage, wait for node clear, then deliver
 	orderA = []protocol.ComplexOrderStep{
-		buildStep("pickup", claim.InboundSource), // pick new from source
-		{Action: "dropoff", Node: claim.InboundStaging},                            // stage new
-		{Action: "wait"},                                                            // wait for node to be cleared
-		{Action: "pickup", Node: claim.InboundStaging},                             // pick new from staging
-		{Action: "dropoff", Node: claim.CoreNodeName},                              // deliver to production
+		buildStep("pickup", claim.InboundSource),        // pick new from source
+		{Action: "dropoff", Node: claim.InboundStaging}, // stage new
+		{Action: "wait"},                                // wait for node to be cleared
+		{Action: "pickup", Node: claim.InboundStaging},  // pick new from staging
+		{Action: "dropoff", Node: claim.CoreNodeName},   // deliver to production
 	}
-	// Robot B: pre-position at node, wait for release, remove old to destination
+	// Robot B: drive to node and hold, wait for release, remove old to destination
 	orderB = []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: claim.CoreNodeName},                                  // pre-position
-		{Action: "wait"},                                                                // wait for release signal
-		{Action: "pickup", Node: claim.CoreNodeName},                                   // remove old from production
-		buildStep("dropoff", claim.OutboundDestination),  // deliver to destination
+		{Action: "wait", Node: claim.CoreNodeName},                    // drive to node + hold (RDS BinTask=Wait)
+		{Action: "pickup", Node: claim.CoreNodeName},                  // remove old from production
+		buildStep("dropoff", claim.OutboundDestination),               // deliver to destination
 	}
 	return orderA, orderB
 }
 
 // BuildSequentialRemovalSteps builds Order A for sequential mode (removal robot).
-// Robot navigates to line, waits for operator release, picks up old bin, delivers to destination.
-//  1. dropoff(CoreNodeName)    — pre-position at lineside
-//  2. wait                     — operator releases
-//  3. pickup(CoreNodeName)     — pick up old from line
-//  4. dropoff(OutboundDestination)  — deliver old to destination
+// Robot drives to line and holds, waits for operator release, picks up old bin, delivers to destination.
+//  1. wait(CoreNodeName)            — drive to node + hold (RDS BinTask=Wait)
+//  2. pickup(CoreNodeName)          — pick up old from line
+//  3. dropoff(OutboundDestination)  — deliver old to destination
 func BuildSequentialRemovalSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: claim.CoreNodeName},                                  // 1
-		{Action: "wait"},                                                                // 2
-		{Action: "pickup", Node: claim.CoreNodeName},                                   // 3
-		buildStep("dropoff", claim.OutboundDestination),  // 4
+		{Action: "wait", Node: claim.CoreNodeName},      // 1 drive to node + hold
+		{Action: "pickup", Node: claim.CoreNodeName},    // 2
+		buildStep("dropoff", claim.OutboundDestination), // 3
 	}
 }
 
@@ -158,12 +153,11 @@ func BuildSequentialBackfillSteps(claim *store.StyleNodeClaim) []protocol.Comple
 // controls flow by releasing wait steps.
 
 // BuildSwapChangeoverSteps builds Robot B's complex order for a swap changeover
-// (no tool clearance). Single wait point. Robot pre-positions at core, waits for
-// operator "ready", then evacuates old → delivers new → clears old to final.
+// (no tool clearance). Single wait point. Robot drives to core and holds (Wait),
+// operator releases, then evacuates old → delivers new → clears old to final.
 func BuildSwapChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: fromClaim.CoreNodeName},    // pre-position
-		{Action: "wait"},                                      // "ready"
+		{Action: "wait", Node: fromClaim.CoreNodeName},       // drive to node + hold ("ready")
 		{Action: "pickup", Node: fromClaim.CoreNodeName},     // evacuate old
 		{Action: "dropoff", Node: fromClaim.OutboundStaging}, // park old
 		{Action: "pickup", Node: toClaim.InboundStaging},     // grab new
@@ -177,8 +171,7 @@ func BuildSwapChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []protoc
 // changeover (tool clearance needed). Two wait points — "ready" and "tooling done".
 func BuildEvacuateChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: fromClaim.CoreNodeName},    // pre-position
-		{Action: "wait"},                                      // "ready"
+		{Action: "wait", Node: fromClaim.CoreNodeName},       // drive to node + hold ("ready")
 		{Action: "pickup", Node: fromClaim.CoreNodeName},     // evacuate old
 		{Action: "dropoff", Node: fromClaim.OutboundStaging}, // park old
 		{Action: "wait"},                                      // "tooling done"
@@ -194,8 +187,7 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []pr
 // straight to final destination after evacuation.
 func BuildKeepStagedEvacSteps(fromClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
-		{Action: "dropoff", Node: fromClaim.CoreNodeName},   // pre-position
-		{Action: "wait"},                                     // "ready"
+		{Action: "wait", Node: fromClaim.CoreNodeName},      // drive to node + hold ("ready")
 		{Action: "pickup", Node: fromClaim.CoreNodeName},    // evacuate old
 		buildStep("dropoff", fromClaim.OutboundDestination), // straight to final
 	}
@@ -220,11 +212,4 @@ func BuildKeepStagedDeliverSteps(toClaim *store.StyleNodeClaim) []protocol.Compl
 func BuildKeepStagedCombinedSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: toClaim.InboundStaging},  // grab keep-staged bin
-		buildStep("dropoff", fromClaim.InboundSource),     // return to market/source
-		buildStep("pickup", toClaim.InboundSource),        // grab changeover material
-		{Action: "dropoff", Node: toClaim.InboundStaging}, // stage new
-		{Action: "wait"},                                   // "ready"
-		{Action: "pickup", Node: toClaim.InboundStaging},  // grab new
-		{Action: "dropoff", Node: toClaim.CoreNodeName},   // deliver to line
-	}
-}
+		bu

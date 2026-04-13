@@ -229,7 +229,18 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 			}
 			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName})
 		case "wait":
-			resolved = append(resolved, resolvedStep{Action: "wait"})
+			// Wait may optionally include a node (drive-to-and-hold).
+			// If present, resolve it; otherwise it's a bare wait (split point only).
+			if step.Node != "" {
+				nodeName, err := d.resolveStepNode(step, payloadCode)
+				if err != nil {
+					d.sendError(env, orderUUID, "resolution_failed", fmt.Sprintf("step %d: %v", i, err))
+					return nil, err
+				}
+				resolved = append(resolved, resolvedStep{Action: "wait", Node: nodeName})
+			} else {
+				resolved = append(resolved, resolvedStep{Action: "wait"})
+			}
 		default:
 			err := fmt.Errorf("unknown step action: %s", step.Action)
 			d.sendError(env, orderUUID, "invalid_steps", fmt.Sprintf("step %d: %v", i, err))
@@ -304,10 +315,19 @@ func extractEndpoints(steps []resolvedStep) (pickup, delivery string) {
 	return
 }
 
-// splitAtWait returns steps before the first "wait" and whether a wait was found.
+// splitAtWait returns steps up to and including the first "wait" and whether a
+// wait was found. A wait-with-node produces an RDS block (BinTask=Wait) and is
+// included in preWait so the robot receives the "drive to node" instruction
+// before the order is staged. A bare wait (no node) is a pure split marker and
+// is excluded from preWait (no block emitted).
 func splitAtWait(steps []resolvedStep) (preWait []resolvedStep, hasWait bool) {
 	for i, s := range steps {
 		if s.Action == "wait" {
+			if s.Node != "" {
+				// Wait-with-node: include it (becomes a Wait block), split after.
+				return steps[:i+1], true
+			}
+			// Bare wait: split before (no block for this step).
 			return steps[:i], true
 		}
 	}
@@ -317,13 +337,16 @@ func splitAtWait(steps []resolvedStep) (preWait []resolvedStep, hasWait bool) {
 // splitSegment extracts the next segment of steps to release for a given
 // waitIndex. It skips past the first (waitIndex+1) wait actions, then returns
 // steps up to the next wait (or end of list). Returns the segment, whether
-// more waits remain after it, and the block offset (total non-wait steps
-// before this segment) for correct block ID numbering.
+// more waits remain after it, and the block offset (total steps that produce
+// RDS blocks before this segment) for correct block ID numbering.
 //
-// Example for steps: [pickup, dropoff, wait, pickup, dropoff, wait, pickup, dropoff]
+// Wait-with-node steps produce RDS blocks (BinTask=Wait) and count toward the
+// offset. Bare waits (no node) are pure split markers and do not produce blocks.
 //
-//	waitIndex=0 → segment=[pickup, dropoff] after wait₀, moreWaits=true, offset=2+1
-//	waitIndex=1 → segment=[pickup, dropoff] after wait₁, moreWaits=false, offset=4+2
+// Example for steps: [pickup, dropoff, wait(node), pickup, dropoff, wait, pickup, dropoff]
+//
+//	waitIndex=0 → segment=[pickup, dropoff] after wait₀, moreWaits=true, offset=3
+//	waitIndex=1 → segment=[pickup, dropoff] after wait₁, moreWaits=false, offset=5+1
 func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, moreWaits bool, blockOffset int) {
 	// Find the start: skip past (waitIndex+1) wait actions.
 	// waitIndex=0 means we want steps after the 1st wait.
@@ -348,21 +371,29 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 		return nil, false, 0
 	}
 
-	// Count non-wait steps before startIdx for block offset.
+	// Count steps before startIdx that produce RDS blocks.
+	// pickup/dropoff always produce blocks. wait-with-node produces a block
+	// (BinTask=Wait). Bare waits (no node) produce no block.
 	blockOffset = 0
 	for i := 0; i < startIdx; i++ {
-		if steps[i].Action != "wait" {
+		if steps[i].Action != "wait" || steps[i].Node != "" {
 			blockOffset++
 		}
 	}
-	// Add 1 for the wait action itself (matches original stepsToBlocks offset convention).
-	blockOffset += waitsSeen
 
 	// Find the end: next wait after startIdx, or end of steps.
+	// A wait-with-node is included in the segment (it produces an RDS block);
+	// the split happens after it. A bare wait ends the segment before it.
 	endIdx := len(steps)
 	for i := startIdx; i < len(steps); i++ {
 		if steps[i].Action == "wait" {
-			endIdx = i
+			if steps[i].Node != "" {
+				// Wait-with-node: include it in segment, split after.
+				endIdx = i + 1
+			} else {
+				// Bare wait: split before.
+				endIdx = i
+			}
 			moreWaits = true
 			break
 		}
@@ -378,7 +409,8 @@ func splitSegment(steps []resolvedStep, waitIndex int) (segment []resolvedStep, 
 func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int) []fleet.OrderBlock {
 	var blocks []fleet.OrderBlock
 	for i, s := range steps {
-		if s.Action == "wait" {
+		if s.Action == "wait" && s.Node == "" {
+			// Bare wait (no node) is a split point only — not an RDS block.
 			continue
 		}
 		// Map action to bin task for SEER RDS
@@ -388,6 +420,9 @@ func stepsToBlocks(vendorOrderID string, steps []resolvedStep, blockOffset int) 
 			binTask = "JackLoad"
 		case "dropoff":
 			binTask = "JackUnload"
+		case "wait":
+			// Wait-with-node: robot drives to the node and holds (RDS Wait key).
+			binTask = "Wait"
 		}
 		blocks = append(blocks, fleet.OrderBlock{
 			BlockID:  fmt.Sprintf("%s-b%d", vendorOrderID, blockOffset+i+1),
@@ -564,3 +599,4 @@ func resolvePerBinDestinations(steps []resolvedStep, claimedBins map[string]int6
 
 	return dest
 }
+               
