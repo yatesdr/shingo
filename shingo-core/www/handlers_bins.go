@@ -494,7 +494,7 @@ func (h *Handlers) binMove(b *store.Bin, params json.RawMessage) error {
 		return err
 	}
 	db.AppendAudit("bin", b.ID, "moved", b.NodeName, destNode.Name, "ui")
-	h.engine.Events.Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
 		BinID:       b.ID,
 		NodeID:      p.NodeID,
 		Action:      "moved",
@@ -576,7 +576,7 @@ func (h *Handlers) binUpdate(b *store.Bin, params json.RawMessage) error {
 }
 
 func (h *Handlers) emitBinUpdate(b *store.Bin, action, detail string) {
-	h.engine.Events.Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
 		BinID:       b.ID,
 		NodeID:      derefInt64(b.NodeID),
 		Action:      action,

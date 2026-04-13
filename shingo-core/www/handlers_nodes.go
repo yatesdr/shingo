@@ -160,7 +160,7 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: node.ID, NodeName: node.Name, Action: "created",
 	}})
 
@@ -241,7 +241,7 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: node.ID, NodeName: node.Name, Action: "updated",
 	}})
 
@@ -295,7 +295,7 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: id, NodeName: node.Name, Action: "deleted",
 	}})
 
@@ -507,7 +507,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		Action: "created",
 	}})
 
@@ -551,7 +551,7 @@ func (h *Handlers) apiDeleteTestNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		Action: "deleted",
 	}})
 

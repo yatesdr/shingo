@@ -15,7 +15,8 @@ import (
 )
 
 type Handlers struct {
-	engine   *engine.Engine
+	engine   EngineAccess    // interface for handler logic
+	eng      *engine.Engine  // concrete for SSE/EventBus wiring only
 	sessions *sessions.CookieStore
 	tmpls    map[string]*template.Template
 	eventHub *EventHub
@@ -69,7 +70,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	}
 
 	h := &Handlers{
-		engine:   eng,
+		engine:   eng, // *engine.Engine satisfies EngineAccess
+		eng:      eng, // concrete ref for SSE wiring
 		sessions: sessionStore,
 		tmpls:    tmpls,
 		eventHub: hub,

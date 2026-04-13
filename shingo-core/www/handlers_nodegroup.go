@@ -28,7 +28,7 @@ func (h *Handlers) apiCreateNodeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: id, NodeName: req.Name, Action: "created",
 	}})
 
@@ -54,7 +54,7 @@ func (h *Handlers) apiAddLane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: id, NodeName: req.Name, Action: "created",
 	}})
 
@@ -141,7 +141,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 					// Edge. Without these fields the handler silently skips
 					// the notification and Edge keeps showing the order as
 					// active.
-					h.engine.Events.Emit(engine.Event{
+					h.engine.EventBus().Emit(engine.Event{
 						Type: engine.EventOrderFailed,
 						Payload: engine.OrderFailedEvent{
 							OrderID:   order.ID,
@@ -187,7 +187,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 		h.reindexLaneSlots(*oldParentID)
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: req.NodeID, NodeName: node.Name, Action: "reparented",
 	}})
 
@@ -255,7 +255,7 @@ func (h *Handlers) apiReorderLaneSlots(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: req.LaneID, NodeName: lane.Name, Action: "reordered",
 	}})
 	h.jsonSuccess(w)
@@ -322,7 +322,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 					fmt.Sprintf("source group %q deleted", group.Name))
 				// Populate EdgeUUID/StationID so the EventOrderFailed handler's
 				// notification gate routes the message to Edge.
-				h.engine.Events.Emit(engine.Event{
+				h.engine.EventBus().Emit(engine.Event{
 					Type: engine.EventOrderFailed,
 					Payload: engine.OrderFailedEvent{
 						OrderID:   order.ID,
@@ -341,7 +341,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.engine.Events.Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
+	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
 		NodeID: req.ID, Action: "deleted",
 	}})
 

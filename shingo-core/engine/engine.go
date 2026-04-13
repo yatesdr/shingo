@@ -43,7 +43,6 @@ type Config struct {
 	Fleet      fleet.Backend
 	MsgClient  *messaging.Client
 	LogFunc    LogFunc
-	Debug      bool
 	DebugLog   func(string, ...any)
 }
 
@@ -226,6 +225,7 @@ func (e *Engine) MsgClient() *messaging.Client           { return e.msgClient }
 func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
 func (e *Engine) Recovery() *RecoveryService             { return e.recovery }
 func (e *Engine) BinManifest() *service.BinManifestService { return e.binManifest }
+func (e *Engine) EventBus() *EventBus                      { return e.Events }
 
 // SetCountGroupRunner registers a configured Runner built by the
 // composition root. The caller passes the Runner directly — transitions
