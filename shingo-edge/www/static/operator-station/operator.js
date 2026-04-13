@@ -342,7 +342,6 @@ function renderPayloadBoard(entry) {
         var binNoPayload = hasBinState && !entry.bin_state.payload_code;
         var binIsEmpty = binOccupied && binNoPayload;
         var canLoad = payloadDelivered || (binIsEmpty && (payloadQueued || payloadInTransit));
-        console.log('[card]', code, 'bin_state:', JSON.stringify(entry.bin_state), 'binIsEmpty:', binIsEmpty, 'canLoad:', canLoad, 'delivered:', !!payloadDelivered, 'queued:', !!payloadQueued, 'transit:', !!payloadInTransit);
         if (canLoad) {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
