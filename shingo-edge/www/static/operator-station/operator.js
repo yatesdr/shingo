@@ -899,6 +899,10 @@ function openLoadBin(nodeID, allowedCodes, defaultCapacity) {
         payloadEl.appendChild(btn);
     });
     document.getElementById('load-bin-modal').hidden = false;
+    // Auto-select when there's only one payload option
+    if (allowedCodes.length === 1) {
+        selectLoadPayload(allowedCodes[0]);
+    }
 }
 
 async function selectLoadPayload(code) {
