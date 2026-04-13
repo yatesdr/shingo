@@ -24,7 +24,7 @@ func (db *DB) EnqueueOutbox(topic string, payload []byte, eventType, stationID s
 }
 
 func (db *DB) ListPendingOutbox(limit int) ([]*OutboxMessage, error) {
-	rows, err := db.Query(`SELECT id, topic, payload, msg_type, station_id, retries, created_at FROM outbox WHERE sent_at IS NULL AND retries < $1 ORDER BY id LIMIT $2`, MaxOutboxRetries, limit)
+	rows, err := db.Query(`SELECT id, topic, payload, msg_type, station_id, retries, created_at, sent_at FROM outbox WHERE sent_at IS NULL AND retries < $1 ORDER BY id LIMIT $2`, MaxOutboxRetries, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +32,7 @@ func (db *DB) ListPendingOutbox(limit int) ([]*OutboxMessage, error) {
 	var msgs []*OutboxMessage
 	for rows.Next() {
 		var m OutboxMessage
-		if err := rows.Scan(&m.ID, &m.Topic, &m.Payload, &m.MsgType, &m.StationID, &m.Retries, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Topic, &m.Payload, &m.MsgType, &m.StationID, &m.Retries, &m.CreatedAt, &m.SentAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, &m)
@@ -41,7 +41,7 @@ func (db *DB) ListPendingOutbox(limit int) ([]*OutboxMessage, error) {
 }
 
 func (db *DB) ListDeadLetterOutbox(limit int) ([]*OutboxMessage, error) {
-	rows, err := db.Query(`SELECT id, topic, payload, msg_type, station_id, retries, created_at FROM outbox WHERE sent_at IS NULL AND retries >= $1 ORDER BY id LIMIT $2`, MaxOutboxRetries, limit)
+	rows, err := db.Query(`SELECT id, topic, payload, msg_type, station_id, retries, created_at, sent_at FROM outbox WHERE sent_at IS NULL AND retries >= $1 ORDER BY id LIMIT $2`, MaxOutboxRetries, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +49,7 @@ func (db *DB) ListDeadLetterOutbox(limit int) ([]*OutboxMessage, error) {
 	var msgs []*OutboxMessage
 	for rows.Next() {
 		var m OutboxMessage
-		if err := rows.Scan(&m.ID, &m.Topic, &m.Payload, &m.MsgType, &m.StationID, &m.Retries, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Topic, &m.Payload, &m.MsgType, &m.StationID, &m.Retries, &m.CreatedAt, &m.SentAt); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, &m)
