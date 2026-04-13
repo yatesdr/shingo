@@ -212,4 +212,11 @@ func BuildKeepStagedDeliverSteps(toClaim *store.StyleNodeClaim) []protocol.Compl
 func BuildKeepStagedCombinedSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: toClaim.InboundStaging},  // grab keep-staged bin
-		bu
+		buildStep("dropoff", fromClaim.InboundSource),     // return to market/source
+		buildStep("pickup", toClaim.InboundSource),        // grab changeover material
+		{Action: "dropoff", Node: toClaim.InboundStaging}, // stage new
+		{Action: "wait"},                                   // "ready"
+		{Action: "pickup", Node: toClaim.InboundStaging},  // grab new
+		{Action: "dropoff", Node: toClaim.CoreNodeName},   // deliver to line
+	}
+}
