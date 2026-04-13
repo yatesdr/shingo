@@ -309,8 +309,11 @@ function renderPayloadBoard(entry) {
 
         // Detail text
         var detailText = '';
+        var binIsEmptyForDetail = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
         if (payloadDelivered) {
             detailText = 'Tap to ' + (claim.role === 'produce' ? 'load' : 'unload');
+        } else if (binIsEmptyForDetail && (payloadInTransit || payloadQueued)) {
+            detailText = 'Empty bin at node — tap to load';
         } else if (payloadInTransit) {
             detailText = 'Robot en route';
         } else if (payloadQueued) {
@@ -330,8 +333,13 @@ function renderPayloadBoard(entry) {
             queuePos++;
         }
 
-        // Click handler: only delivered cards are interactive
-        if (payloadDelivered) {
+        // Click handler: delivered cards are always interactive.
+        // Queued/in-transit cards are also interactive when an empty bin
+        // is already sitting at the node — the operator can load it now
+        // without waiting for the robot delivery cycle to complete.
+        var binIsEmpty = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
+        var canLoad = payloadDelivered || (binIsEmpty && (payloadQueued || payloadInTransit));
+        if (canLoad) {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
                 openLoadBin(entry.node.id, [code], claim.uop_capacity || 0);
