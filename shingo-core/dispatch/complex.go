@@ -599,4 +599,3 @@ func resolvePerBinDestinations(steps []resolvedStep, claimedBins map[string]int6
 
 	return dest
 }
-               
