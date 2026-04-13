@@ -12,6 +12,26 @@ function statusBadge(s) {
   return '<span class="to-status to-status-' + escapeHtml(s) + '">' + escapeHtml(s) + '</span>';
 }
 
+function formatRoute(order) {
+  if (order.steps_json) {
+    try {
+      var steps = JSON.parse(order.steps_json);
+      if (steps.length > 0) {
+        var nodes = [];
+        for (var i = 0; i < steps.length; i++) {
+          if (steps[i].node) {
+            var label = escapeHtml(steps[i].node);
+            if (steps[i].action === 'wait') label += ' <span style="font-size:.75em;color:#888">(wait)</span>';
+            nodes.push(label);
+          }
+        }
+        if (nodes.length > 0) return nodes.join(' &rarr; ');
+      }
+    } catch(e) {}
+  }
+  return escapeHtml(order.source_node || '-') + ' &rarr; ' + escapeHtml(order.delivery_node || '-');
+}
+
 function fmtTime(t) {
   if (!t || t === '0001-01-01T00:00:00Z') return '-';
   try {
@@ -102,7 +122,7 @@ function renderOrdersTable(orders, containerId, isKafka) {
     html += '<td>' + statusBadge(o.status) + '</td>';
     html += '<td>' + statusBadge(o.vendor_state) + '</td>';
     html += '<td>' + escapeHtml(o.robot_id) + '</td>';
-    html += '<td style="font-size:.85rem;">' + escapeHtml(o.source_node || '-') + ' &rarr; ' + escapeHtml(o.delivery_node || '-') + '</td>';
+    html += '<td style="font-size:.85rem;">' + formatRoute(o) + '</td>';
     html += '<td style="font-size:.8rem;">' + fmtTime(o.created_at) + '</td>';
     if (authenticated) {
       html += '<td class="to-actions">';
@@ -440,7 +460,7 @@ async function viewHistory(orderId) {
       html += '<strong>Type:</strong> ' + escapeHtml(o.order_type) + ' &nbsp; <strong>Status:</strong> ' + statusBadge(o.status) + '<br>';
       html += '<strong>Vendor:</strong> ' + escapeHtml(o.vendor_order_id || '-') + ' ' + statusBadge(o.vendor_state) + '<br>';
       html += '<strong>Robot:</strong> ' + escapeHtml(o.robot_id || '-') + '<br>';
-      html += '<strong>Route:</strong> ' + escapeHtml(o.source_node || '-') + ' &rarr; ' + escapeHtml(o.delivery_node || '-') + '<br>';
+      html += '<strong>Route:</strong> ' + formatRoute(o) + '<br>';
       if (o.error_detail) html += '<strong>Error:</strong> <span style="color:#dc3545;">' + escapeHtml(o.error_detail) + '</span><br>';
       html += '</div>';
     }

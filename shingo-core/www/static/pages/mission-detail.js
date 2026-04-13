@@ -47,6 +47,28 @@
     'STOPPED': 'var(--text-muted)'
   };
 
+  function formatRoute(order) {
+    // If steps_json is available, show each node in the route
+    if (order.steps_json) {
+      try {
+        var steps = JSON.parse(order.steps_json);
+        if (steps.length > 0) {
+          var nodes = [];
+          for (var i = 0; i < steps.length; i++) {
+            if (steps[i].node) {
+              var label = steps[i].node;
+              if (steps[i].action === 'wait') label += ' <span style="font-size:.75em;color:var(--text-muted)">(wait)</span>';
+              nodes.push(label);
+            }
+          }
+          if (nodes.length > 0) return nodes.join(' &rarr; ');
+        }
+      } catch(e) {}
+    }
+    // Fallback: source → delivery
+    return (order.source_node || '?') + ' &rarr; ' + (order.delivery_node || '?');
+  }
+
   function loadMission() {
     fetch('/api/missions/' + orderID).then(function(r) { return r.json(); }).then(function(data) {
       document.getElementById('mission-loading').style.display = 'none';
@@ -71,7 +93,7 @@
     html += '<div title="Transport order type (retrieve, store, move, etc.)"><strong>Type</strong><br>' + (o.order_type || '-') + '</div>';
     html += '<div title="Edge station that requested this order"><strong>Station</strong><br>' + (o.station_id || '-') + '</div>';
     html += '<div title="Robot vehicle ID assigned by the fleet"><strong>Robot</strong><br>' + (t.robot_id || o.robot_id || '-') + '</div>';
-    html += '<div title="Source node to delivery node"><strong>Route</strong><br>' + (o.source_node || '?') + ' &rarr; ' + (o.delivery_node || '?') + '</div>';
+    html += '<div title="Source node to delivery node"><strong>Route</strong><br>' + formatRoute(o) + '</div>';
     html += '<div title="Current order status in Shingo"><strong>Status</strong><br>' + stateBadge(o.status) + '</div>';
     html += '<div title="Total time from order creation in Shingo to completion"><strong>Total Duration</strong><br>' + formatDuration(t.duration_ms) + '</div>';
     html += '<div title="Time measured by the fleet backend (RDS create to terminal)"><strong>Fleet Duration</strong><br>' + formatDuration(t.vendor_duration_ms) + '</div>';
