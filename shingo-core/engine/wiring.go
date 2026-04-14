@@ -658,6 +658,18 @@ func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 		return
 	}
 
+	// Skip auto-return for complex orders when the bin position is uncertain.
+	// ApplyBinArrival only fires on FINISHED, so on failure mid-transit the DB
+	// still shows the original pickup node while the bin is physically wherever
+	// the robot stopped. A return order with the wrong source just sits forever.
+	//
+	// Exception: StatusStaged means the robot reached a wait node and dropped
+	// the bin — the DB knows the bin's actual position, so a return is safe.
+	if order.OrderType == dispatch.OrderTypeComplex && order.Status != dispatch.StatusStaged {
+		e.logFn("engine: order %d is complex (status=%s), skipping auto-return (bin position uncertain)", order.ID, order.Status)
+		return
+	}
+
 	// Don't create return orders for compound/reshuffle children
 	if order.ParentOrderID != nil {
 		return
