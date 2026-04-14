@@ -281,7 +281,14 @@ function editClaim(claim) {
     toggleClaimsAddPayload();
     validateClaimStaging();
     if (claim.swap_mode === 'manual_swap') {
-        buildAllowedPayloadPicker(claim.allowed_payload_codes || []);
+        // Fallback: legacy claims migrated from bin_loader have payload_code set
+        // but allowed_payload_codes empty. Seed the picker from payload_code so
+        // Save doesn't immediately reject with "Select at least one allowed payload".
+        var allowed = claim.allowed_payload_codes || [];
+        if (allowed.length === 0 && claim.payload_code) {
+            allowed = [claim.payload_code];
+        }
+        buildAllowedPayloadPicker(allowed);
         updateAutoRequestDropdown();
         document.getElementById('claims-add-auto-request').value = claim.auto_request_payload || '';
     }

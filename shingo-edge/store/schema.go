@@ -446,6 +446,16 @@ func (db *DB) migrate() error {
 	db.Exec(`UPDATE style_node_claims SET role = 'produce', swap_mode = 'manual_swap' WHERE role = 'bin_loader' AND (mode = 'loader' OR mode = '')`)
 	db.Exec(`UPDATE style_node_claims SET role = 'consume', swap_mode = 'manual_swap' WHERE role = 'bin_loader' AND mode = 'unloader'`)
 
+	// v15 backfill: manual_swap claims need allowed_payload_codes populated.
+	// Seed from the legacy single payload_code for any manual_swap claim that was
+	// converted before this backfill existed (otherwise the edit modal's picker
+	// is empty and Save rejects with "Select at least one allowed payload").
+	db.Exec(`UPDATE style_node_claims
+		SET allowed_payload_codes = '["' || payload_code || '"]'
+		WHERE swap_mode = 'manual_swap'
+		  AND (allowed_payload_codes = '' OR allowed_payload_codes = '[]')
+		  AND payload_code <> ''`)
+
 	// v16: Add payload_code to orders for per-payload demand mapping.
 	db.Exec("ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''")
 
