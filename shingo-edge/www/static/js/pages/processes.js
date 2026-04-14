@@ -513,6 +513,18 @@ function toggleClaimsAddPayload() {
         document.getElementById('claims-add-paired-node').value = '';
         buildAllowedPayloadPicker([]);
     }
+    // When transitioning to manual_swap during edit, make sure the picker is
+    // populated. Seeds from the legacy single payload_code if nothing selected yet.
+    if (isManualSwap && isEditing) {
+        var picker = document.getElementById('claims-allowed-picker');
+        var hasCheckboxes = picker && picker.querySelector('.allowed-payload-cb');
+        if (!hasCheckboxes) {
+            var legacyPayload = document.getElementById('claims-add-payload').value;
+            var seed = legacyPayload ? [legacyPayload] : [];
+            buildAllowedPayloadPicker(seed);
+            updateAutoRequestDropdown();
+        }
+    }
 }
 
 async function syncPayloadCatalog() {
