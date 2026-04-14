@@ -1070,3 +1070,36 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 		t.Error("fleet orders = 0, want >= 1 (compound reshuffle children should be dispatched)")
 	}
 }
+
+// TC-71: Move order where source and destination are the same node must fail.
+// Bug: 2026-04-13 — planMove() did not guard against same-node moves,
+// which would dispatch a physically impossible fleet transport.
+func TestDispatcher_MoveOrder_SameNode(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, _, bp := setupTestData(t, db)
+
+	testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-SAME-1")
+
+	backend := testdb.NewTrackingBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "move-same-node-1",
+		OrderType:    OrderTypeMove,
+		PayloadCode:  "PART-A",
+		SourceNode:   storageNode.Name,
+		DeliveryNode: storageNode.Name,
+		Quantity:     1.0,
+	})
+
+	// Order should be failed, not dispatched.
+	testdb.AssertOrderStatus(t, db, "move-same-node-1", StatusFailed)
+
+	// Fleet should NOT have received any orders.
+	if len(backend.Orders()) != 0 {
+		t.Errorf("fleet orders = %d, want 0 (same-node move should not dispatch)", len(backend.Orders()))
+	}
+}

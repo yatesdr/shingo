@@ -256,11 +256,6 @@ func setupThreeBinLine(t *testing.T, db *store.DB) (bins [3]*store.Bin, storageN
 	for i := 0; i < 3; i++ {
 		label := fmt.Sprintf("BIN-LINE-%d", i+1)
 		bins[i] = createTestBinAtNode(t, db, bp.Code, lineNode.ID, label)
-		// Move bin to line node (createTestBinAtNode puts it at the node we specify,
-		// but let's be explicit about the final location)
-		if err := db.MoveBin(bins[i].ID, lineNode.ID); err != nil {
-			t.Fatalf("move bin %s to line: %v", label, err)
-		}
 	}
 
 	// Refresh bins so we have current state

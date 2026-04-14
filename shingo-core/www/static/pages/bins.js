@@ -183,6 +183,7 @@ function renderActions(data) {
   html += '<div class="inline-form">';
   html += '<div class="form-group"><label>Destination</label><select id="bd-move-node" style="width:200px"><option value="">-- Select --</option>';
   (PAGE_NODES || []).forEach(function(n) {
+    if (b.node_id && n.id === b.node_id) return; // skip current location
     html += '<option value="' + n.id + '">' + esc(n.name) + '</option>';
   });
   html += '</select></div>';
@@ -299,12 +300,18 @@ function lockBin() {
 function moveBin() {
   var nodeId = parseInt(document.getElementById('bd-move-node').value);
   if (!nodeId) { alert('Select a destination'); return; }
+  if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
+    alert('Bin is already at this location'); return;
+  }
   doBinAction('move', { node_id: nodeId });
 }
 
 function requestTransport() {
   var nodeId = parseInt(document.getElementById('bd-move-node').value);
   if (!nodeId) { alert('Select a destination'); return; }
+  if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
+    alert('Bin is already at this location'); return;
+  }
   apiPost('/api/bins/request-transport', { bin_id: currentBinId, destination_node_id: nodeId })
     .then(function(data) { alert(data.message || 'Transport requested'); openBinDetail(currentBinId); })
     .catch(function(e) { alert('Error: ' + (e.error || e)); });

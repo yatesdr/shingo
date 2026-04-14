@@ -497,6 +497,23 @@ func TestExecuteBinAction_Move_UnknownNode(t *testing.T) {
 	}
 }
 
+// TC-70: Moving a bin to its current node is physically impossible and must be rejected.
+// Bug: 2026-04-13 — binMove() had no guard against same-node moves; the dropdown
+// also offered the bin's current location as a destination.
+func TestExecuteBinAction_Move_SameNode(t *testing.T) {
+	h, _, sd, bin := setupBinForAction(t)
+
+	// Attempt to move the bin to the storage node where it already lives.
+	params := mustJSON(t, map[string]any{"node_id": sd.StorageNode.ID})
+	err := h.executeBinAction(bin, "move", params)
+	if err == nil {
+		t.Fatal("move to current node should error")
+	}
+	if err.Error() != "bin is already at this location" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // --- Record count ---
 
 func TestExecuteBinAction_RecordCount(t *testing.T) {

@@ -380,6 +380,11 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 	if err != nil {
 		return nil, &planningError{Code: "node_error", Detail: err.Error(), Err: err}
 	}
+	// Guard: source and destination must differ. A same-node move is physically
+	// impossible and would waste a fleet transport order.
+	if sourceNode.ID == destNode.ID {
+		return nil, &planningError{Code: "same_node", Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
+	}
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
 

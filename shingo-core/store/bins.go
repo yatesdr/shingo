@@ -195,10 +195,18 @@ func (db *DB) NodeTileStates() (map[int64]NodeTileState, error) {
 	return states, rows.Err()
 }
 
-// MoveBin moves a bin to a new node.
+// MoveBin moves a bin to a new node. Returns an error if the bin is already
+// at the destination (same-node move is physically impossible).
 func (db *DB) MoveBin(binID, toNodeID int64) error {
-	_, err := db.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID)
-	return err
+	res, err := db.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`, toNodeID, binID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("bin %d is already at node %d", binID, toNodeID)
+	}
+	return nil
 }
 
 // ListAvailableBins returns bins with no manifest (empty, available for loading).

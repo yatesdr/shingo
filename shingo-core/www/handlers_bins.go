@@ -436,6 +436,9 @@ func (h *Handlers) binMove(b *store.Bin, params json.RawMessage) error {
 	if p.NodeID == 0 {
 		return fmt.Errorf("node_id is required")
 	}
+	if b.NodeID != nil && *b.NodeID == p.NodeID {
+		return fmt.Errorf("bin is already at this location")
+	}
 	destNode, err := db.GetNode(p.NodeID)
 	if err != nil {
 		return fmt.Errorf("node not found")
@@ -668,6 +671,10 @@ func (h *Handlers) apiRequestBinTransport(w http.ResponseWriter, r *http.Request
 	}
 	if b.NodeID == nil {
 		h.jsonError(w, "bin has no current location", http.StatusBadRequest)
+		return
+	}
+	if *b.NodeID == req.DestinationNodeID {
+		h.jsonError(w, "bin is already at this location", http.StatusBadRequest)
 		return
 	}
 
