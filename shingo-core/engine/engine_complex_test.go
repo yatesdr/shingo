@@ -85,33 +85,27 @@ func TestComplexOrder_CancelMidTransit(t *testing.T) {
 	bin, _ = db.GetBin(bin.ID)
 	t.Logf("bin after cancel: claimed_by=%v status=%s", bin.ClaimedBy, bin.Status)
 
-	// Check for auto-return order — maybeCreateReturnOrder should fire
-	// because: BinID set, VendorOrderID set, status was in_transit → cancelled
+	// Auto-return is intentionally skipped for complex orders cancelled
+	// mid-transit — the bin's physical position is uncertain (ApplyBinArrival
+	// only fires on FINISHED), so a return order with the DB-stale source
+	// node would dispatch a robot to an empty location and sit forever.
+	// The bin is left unclaimed for manual recovery.
 	allOrders, err := db.ListOrders("", 50)
 	if err != nil {
 		t.Fatalf("list orders: %v", err)
 	}
 
-	var returnOrder *store.Order
 	for _, o := range allOrders {
 		if o.PayloadDesc == "auto_return" {
-			returnOrder = o
-			break
+			t.Errorf("unexpected auto-return order %d created for complex cancel mid-transit: source=%s dest=%s bin=%v",
+				o.ID, o.SourceNode, o.DeliveryNode, o.BinID)
 		}
 	}
 
-	if returnOrder == nil {
-		t.Errorf("BUG: no auto-return order created after cancelling complex order mid-transit — bin may be stranded")
-	} else {
-		t.Logf("auto-return order %d created: source=%s dest=%s bin=%v",
-			returnOrder.ID, returnOrder.SourceNode, returnOrder.DeliveryNode, returnOrder.BinID)
-		// Return order should have claimed the bin
-		bin, _ = db.GetBin(bin.ID)
-		if bin.ClaimedBy == nil {
-			t.Errorf("bin should be claimed by return order, but claimed_by is nil")
-		} else if *bin.ClaimedBy != returnOrder.ID {
-			t.Errorf("bin claimed by %d, want %d (return order)", *bin.ClaimedBy, returnOrder.ID)
-		}
+	// Bin should be unclaimed (by cancel handler) and left for manual recovery.
+	bin, _ = db.GetBin(bin.ID)
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin should be unclaimed after cancel, got claimed_by=%d", *bin.ClaimedBy)
 	}
 }
 
@@ -161,26 +155,21 @@ func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 	bin, _ = db.GetBin(bin.ID)
 	t.Logf("bin after failure: claimed_by=%v", bin.ClaimedBy)
 
-	// Check for auto-return order
+	// Auto-return is intentionally skipped for complex orders that fail
+	// mid-transit — the bin's physical position is uncertain, so a return
+	// order would target the wrong source node and sit forever.
 	allOrders, _ := db.ListOrders("", 50)
-	var returnOrder *store.Order
 	for _, o := range allOrders {
 		if o.PayloadDesc == "auto_return" {
-			returnOrder = o
-			break
+			t.Errorf("unexpected auto-return order %d created for complex fleet failure: source=%s dest=%s",
+				o.ID, o.SourceNode, o.DeliveryNode)
 		}
 	}
 
-	if returnOrder == nil {
-		t.Errorf("BUG: no auto-return order created after fleet failure on complex order — bin may be stranded")
-	} else {
-		t.Logf("auto-return order %d: source=%s dest=%s", returnOrder.ID, returnOrder.SourceNode, returnOrder.DeliveryNode)
-
-		// Return should have re-claimed the bin
-		bin, _ = db.GetBin(bin.ID)
-		if bin.ClaimedBy == nil || *bin.ClaimedBy != returnOrder.ID {
-			t.Errorf("bin claimed_by = %v, want %d (return order)", bin.ClaimedBy, returnOrder.ID)
-		}
+	// Bin should be unclaimed and left for manual recovery.
+	bin, _ = db.GetBin(bin.ID)
+	if bin.ClaimedBy != nil {
+		t.Errorf("bin should be unclaimed after fleet failure, got claimed_by=%d", *bin.ClaimedBy)
 	}
 }
 
