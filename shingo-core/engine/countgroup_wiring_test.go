@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/fleet/simulator"
 )
 
 // TestHandleCountGroupTransitionBuildsBroadcastCommand verifies the
@@ -15,7 +16,7 @@ import (
 // correct subject, broadcast destination, and payload fields.
 func TestHandleCountGroupTransitionBuildsBroadcastCommand(t *testing.T) {
 	db := testDB(t)
-	eng := newTestEngine(t, db, nil)
+	eng := newTestEngine(t, db, simulator.New())
 
 	ev := CountGroupTransitionEvent{
 		Group:             "Crosswalk1",
@@ -111,7 +112,7 @@ func TestHandleCountGroupTransitionBuildsBroadcastCommand(t *testing.T) {
 // distinguishes a fail-safe triggered transition from a normal one.
 func TestHandleCountGroupTransitionFailSafeAudit(t *testing.T) {
 	db := testDB(t)
-	eng := newTestEngine(t, db, nil)
+	eng := newTestEngine(t, db, simulator.New())
 
 	eng.handleCountGroupTransition(CountGroupTransitionEvent{
 		Group:             "Crosswalk1",

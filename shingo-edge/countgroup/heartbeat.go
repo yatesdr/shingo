@@ -94,7 +94,7 @@ func (w *HeartbeatWriter) tick() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := w.h.plc.WriteTag(ctx, w.h.cfg.HeartbeatPLC,
+	if err := w.h.plc.WriteTagValue(ctx, w.h.cfg.HeartbeatPLC,
 		w.h.cfg.HeartbeatTag, w.counter); err != nil {
 		// A heartbeat write failure means the PLC deadman will trip
 		// shortly. Log at INFO, not ERROR — this is expected during
@@ -124,7 +124,7 @@ func (w *HeartbeatWriter) checkAcks(ctx context.Context) {
 	h.inFlightMu.Unlock()
 
 	for _, p := range snapshot {
-		val, err := h.plc.ReadTag(ctx, p.PLC, p.Tag)
+		val, err := h.plc.ReadTagValue(ctx, p.PLC, p.Tag)
 		if err != nil {
 			// Transient read error; leave in-flight for next tick.
 			h.logFn("countgroup: group=%s ack-check read failed: %v", p.Group, err)

@@ -32,8 +32,8 @@ type AckSender func(ack *protocol.CountGroupAck) error
 // Taking an interface here rather than a concrete Manager keeps the
 // package independent of plc's public surface and makes testing trivial.
 type TagReadWriter interface {
-	ReadTag(ctx context.Context, plcName, tagName string) (interface{}, error)
-	WriteTag(ctx context.Context, plcName, tagName string, value interface{}) error
+	ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error)
+	WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error
 }
 
 // Handler processes CountGroupCommand messages from core. Safe for
@@ -127,7 +127,7 @@ func (h *Handler) OnCommand(cmd protocol.CountGroupCommand) {
 	// Bootstrap clear — first request per group, OR after an ack-timeout
 	// abandoned a prior request leaving the tag non-zero. Safe to do every
 	// command: it's idempotent (zero stays zero) and costs one read.
-	cur, err := h.plc.ReadTag(ctx, binding.PLC, binding.RequestTag)
+	cur, err := h.plc.ReadTagValue(ctx, binding.PLC, binding.RequestTag)
 	if err != nil {
 		h.logFn("countgroup: group=%s read request tag failed: %v", cmd.Group, err)
 		h.sendAck(&cmd, protocol.AckOutcomeWarlinkErr, 0)
@@ -136,7 +136,7 @@ func (h *Handler) OnCommand(cmd protocol.CountGroupCommand) {
 	if !isZero(cur) {
 		h.logFn("countgroup: group=%s stale request tag %s=%v cleared on bootstrap",
 			cmd.Group, binding.RequestTag, cur)
-		if err := h.plc.WriteTag(ctx, binding.PLC, binding.RequestTag, 0); err != nil {
+		if err := h.plc.WriteTagValue(ctx, binding.PLC, binding.RequestTag, 0); err != nil {
 			h.logFn("countgroup: group=%s bootstrap clear failed: %v", cmd.Group, err)
 			h.sendAck(&cmd, protocol.AckOutcomeWarlinkErr, 0)
 			return
@@ -145,7 +145,7 @@ func (h *Handler) OnCommand(cmd protocol.CountGroupCommand) {
 
 	// Write the action code. PLC manager validates writable flag and PLC
 	// connectivity via WarLink; any non-2xx bubbles up as an error.
-	if err := h.plc.WriteTag(ctx, binding.PLC, binding.RequestTag, code); err != nil {
+	if err := h.plc.WriteTagValue(ctx, binding.PLC, binding.RequestTag, code); err != nil {
 		h.logFn("countgroup: group=%s write %s=%d failed: %v",
 			cmd.Group, binding.RequestTag, code, err)
 		h.sendAck(&cmd, protocol.AckOutcomeWarlinkErr, 0)
@@ -208,4 +208,3 @@ func isZero(v interface{}) bool {
 	}
 	return false
 }
-

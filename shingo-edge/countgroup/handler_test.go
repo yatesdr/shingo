@@ -54,7 +54,7 @@ func (f *fakePLC) writesFor(plcName, tag string) []writeCall {
 	return out
 }
 
-func (f *fakePLC) ReadTag(ctx context.Context, plcName, tagName string) (interface{}, error) {
+func (f *fakePLC) ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.readErr != nil {
@@ -66,7 +66,7 @@ func (f *fakePLC) ReadTag(ctx context.Context, plcName, tagName string) (interfa
 	return nil, nil
 }
 
-func (f *fakePLC) WriteTag(ctx context.Context, plcName, tagName string, value interface{}) error {
+func (f *fakePLC) WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.writes = append(f.writes, writeCall{PLC: plcName, Tag: tagName, Value: value})
