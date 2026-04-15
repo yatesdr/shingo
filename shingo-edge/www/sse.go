@@ -158,6 +158,14 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.OrderCompletedEvent); ok {
 				sseEvt = SSEEvent{Type: "order-update", Data: p}
 			}
+		case engine.EventOrderFailed:
+			// Broadcast as a distinct "order-failed" event so the client can
+			// fire a sticky toast with the parsed failure reason. Without this
+			// case the operator has no async indication that their order died
+			// on Core (fleet failure, structural error, admin terminate, etc.).
+			if p, ok := evt.Payload.(engine.OrderFailedEvent); ok {
+				sseEvt = SSEEvent{Type: "order-failed", Data: p}
+			}
 		case engine.EventCounterDelta:
 			if p, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-update", Data: p}
@@ -197,10 +205,6 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 		case engine.EventCounterReadError:
 			if p, ok := evt.Payload.(engine.CounterReadErrorEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-read-error", Data: p}
-			}
-		case engine.EventOrderFailed:
-			if p, ok := evt.Payload.(engine.OrderFailedEvent); ok {
-				sseEvt = SSEEvent{Type: "order-failed", Data: p}
 			}
 		default:
 			return

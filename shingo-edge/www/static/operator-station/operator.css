@@ -480,6 +480,31 @@ body {
 .os-toast-msg.error { border-color: var(--os-red); color: #ff8a8a; }
 .os-toast-msg.success { border-color: var(--os-green-bright); color: #8aff8a; }
 
+/* Sticky toasts don't auto-fade — they persist until the operator clicks
+   the close button. Used for async failure notifications where the operator
+   may not be watching the screen at the moment the failure arrives. */
+.os-toast-msg.sticky {
+    animation: os-toast-in 0.2s ease-out;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+}
+.os-toast-msg.sticky .os-toast-close {
+    background: none;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    color: inherit;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 2px 8px;
+    margin-left: auto;
+}
+.os-toast-msg.sticky .os-toast-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
 @keyframes os-toast-in {
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }

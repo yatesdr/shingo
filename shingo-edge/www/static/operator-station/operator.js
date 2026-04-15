@@ -41,11 +41,23 @@ async function loadView() {
 function connectSSE() {
     if (eventSource) { eventSource.close(); }
     eventSource = new EventSource('/events');
-    const events = ['order-update', 'order-completed', 'order-failed',
+    const events = ['order-update', 'order-completed',
                     'counter-update', 'changeover-update', 'material-refresh'];
     for (const name of events) {
         eventSource.addEventListener(name, () => scheduleRefresh());
     }
+    // order-failed also fires a sticky error toast so the operator sees the
+    // failure even if they've looked away from the screen. Without this,
+    // async failures (fleet failure, admin terminate, structural resolver
+    // error) are only visible on the next view refresh.
+    eventSource.addEventListener('order-failed', (e) => {
+        scheduleRefresh();
+        let data = null;
+        try { data = JSON.parse(e.data); } catch (err) { /* tolerate missing data */ }
+        const reason = data && (data.reason || data.Reason || data.detail || data.Detail);
+        const msg = friendlyOrderError(reason) || 'Order failed';
+        showToast(msg, 'error', { sticky: true });
+    });
     eventSource.onerror = () => {
         eventSource.close();
         eventSource = null;
@@ -1022,13 +1034,65 @@ function renderFooter() {
 
 // ─── Toast ───
 
-function showToast(msg, type) {
-    const toast = el('div', {
-        className: 'os-toast-msg' + (type ? ' ' + type : ''),
-        textContent: msg
-    });
+function showToast(msg, type, opts) {
+    opts = opts || {};
+    const classes = ['os-toast-msg'];
+    if (type) classes.push(type);
+    if (opts.sticky) classes.push('sticky');
+
+    const toast = el('div', { className: classes.join(' ') });
+    // Stack cap: keep no more than 3 visible at once. Oldest auto-dismissed.
+    while (toastContainer.children.length >= 3) {
+        toastContainer.firstChild.remove();
+    }
+
+    if (opts.sticky) {
+        const text = el('span', { textContent: msg });
+        const close = el('button', {
+            className: 'os-toast-close',
+            textContent: '\u00D7', // ×
+            type: 'button',
+        });
+        close.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toast.remove();
+        });
+        toast.appendChild(text);
+        toast.appendChild(close);
+    } else {
+        toast.textContent = msg;
+        setTimeout(() => toast.remove(), 3200);
+    }
     toastContainer.appendChild(toast);
-    setTimeout(() => toast.remove(), 3200);
+    return toast;
+}
+
+// Extracts the operator-facing message from a raw error detail string.
+// Handles three shapes in order of preference:
+//   1. "rds HTTP NNN: {json}"  → returns json.msg
+//   2. "{json}"                → returns json.msg if present
+//   3. anything else           → returns the raw string (or a generic fallback)
+function friendlyOrderError(detail) {
+    if (!detail) return 'Order failed';
+    let s = String(detail);
+    // Strip "rds HTTP NNN: " prefix if present
+    const jsonStart = s.indexOf(': {');
+    if (jsonStart !== -1 && s.slice(0, jsonStart).indexOf('HTTP') !== -1) {
+        s = s.slice(jsonStart + 2);
+    }
+    // Try to parse JSON and extract msg field
+    const trimmed = s.trim();
+    if (trimmed.startsWith('{')) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && typeof parsed.msg === 'string' && parsed.msg.length > 0) {
+                return parsed.msg;
+            }
+        } catch (e) {
+            // Fall through to returning the raw string
+        }
+    }
+    return s;
 }
 
 // ─── Backdrop click to close modals ───
