@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/store"
@@ -217,6 +219,16 @@ func (e *Engine) wireEventHandlers() {
 		ev := evt.Payload.(BinUpdatedEvent)
 		e.handleKanbanDemand(ev)
 	}, EventBinUpdated)
+
+	// ── Count-group transitions ────────────────────────────────────
+	// When the countgroup runner detects a debounced occupancy change
+	// (or fires the RDS-down fail-safe), ship a CountGroupCommand to
+	// all edges. Each edge checks its own bindings map and either
+	// drives the PLC tag or ignores.
+	e.Events.SubscribeTypes(func(evt Event) {
+		ev := evt.Payload.(CountGroupTransitionEvent)
+		e.handleCountGroupTransition(ev)
+	}, EventCountGroupTransition)
 }
 
 // ── Vendor status change → order update pipeline ────────────────────
@@ -997,4 +1009,43 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 	if err := e.db.UpsertMissionTelemetry(mt); err != nil {
 		e.logFn("engine: finalize telemetry: %v", err)
 	}
+}
+
+// ── Count-group transitions ─────────────────────────────────────────
+
+// handleCountGroupTransition builds a CountGroupCommand for the transition
+// and broadcasts it to all edges via the outbox. Every edge evaluates the
+// command against its own bindings map; if the group isn't bound on that
+// edge, it logs WARN and returns (no NACK, no tag write).
+func (e *Engine) handleCountGroupTransition(ev CountGroupTransitionEvent) {
+	cmd := &protocol.CountGroupCommand{
+		CorrelationID:     uuid.NewString(),
+		Group:             ev.Group,
+		Desired:           ev.Desired,
+		Robots:            ev.Robots,
+		RobotCount:        len(ev.Robots),
+		FailSafeTriggered: ev.FailSafeTriggered,
+		Timestamp:         ev.Timestamp,
+	}
+
+	if err := e.SendDataToEdge(protocol.SubjectCountGroupCommand,
+		protocol.StationBroadcast, cmd); err != nil {
+		e.logFn("engine: countgroup dispatch group=%s desired=%s: %v",
+			ev.Group, ev.Desired, err)
+		return
+	}
+
+	// Audit row — one per transition, not per poll. Store under "countgroup"
+	// entity with entityID=0; action distinguishes normal transitions from
+	// fail-safe force-ons; newValue carries the full detail for forensics.
+	action := "transition"
+	if ev.FailSafeTriggered {
+		action = "fail_safe_on"
+	}
+	detail := fmt.Sprintf("group=%s desired=%s robots=%d corr=%s",
+		ev.Group, ev.Desired, len(ev.Robots), cmd.CorrelationID)
+	e.db.AppendAudit("countgroup", 0, action, "", detail, "system")
+	e.dbg("countgroup transition emitted: group=%s desired=%s robots=%d fail_safe=%v corr=%s elapsed=%s",
+		ev.Group, ev.Desired, len(ev.Robots), ev.FailSafeTriggered, cmd.CorrelationID,
+		time.Since(ev.Timestamp))
 }

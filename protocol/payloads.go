@@ -347,3 +347,30 @@ type DemandSignal struct {
 	Role         string `json:"role"`            // "produce" or "consume" — determines order type
 	Reason       string `json:"reason"`          // human-readable trigger (e.g., "empty bin returned to storage")
 }
+
+// CountGroupCommand is sent by Core to Edge when an advanced zone's occupancy state changes.
+// Edge translates this into a request/ack handshake against a PLC tag via WarLink.
+//
+// Subject: protocol.SubjectCountGroupCommand.
+type CountGroupCommand struct {
+	CorrelationID    string    `json:"corr_id"`             // for matching the eventual CountGroupAck
+	Group            string    `json:"group"`               // RDS advanced-group name
+	Desired          string    `json:"desired"`             // "on" | "off"
+	Robots           []string  `json:"robots"`              // robot IDs in the zone (for audit)
+	RobotCount       int       `json:"robot_count"`         // len(Robots) — cheap log without decoding the slice
+	FailSafeTriggered bool     `json:"fail_safe_triggered"` // true if this command came from RDS-down fail-safe
+	Timestamp        time.Time `json:"ts"`
+}
+
+// CountGroupAck is sent by Edge to Core after a CountGroupCommand has been
+// processed (or abandoned) by the PLC.
+//
+// Subject: protocol.SubjectCountGroupAck. Outcome ∈ {AckOutcomeAcked,
+// AckOutcomeTimeout, AckOutcomeWarlinkErr}.
+type CountGroupAck struct {
+	CorrelationID string    `json:"corr_id"`
+	Group         string    `json:"group"`
+	Outcome       string    `json:"outcome"`
+	AckLatencyMs  int64     `json:"ack_latency_ms"`
+	Timestamp     time.Time `json:"ts"`
+}

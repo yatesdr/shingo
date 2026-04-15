@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -80,8 +81,29 @@ func (s *CoreDataService) Handle(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		s.handleClaimSync(env, &sync)
+	case protocol.SubjectCountGroupAck:
+		var ack protocol.CountGroupAck
+		if err := json.Unmarshal(p.Body, &ack); err != nil {
+			log.Printf("core_handler: decode countgroup ack body: %v", err)
+			return
+		}
+		s.handleCountGroupAck(env, &ack)
 	default:
 		log.Printf("core_handler: unhandled data subject: %s", p.Subject)
+	}
+}
+
+// handleCountGroupAck records an edge's response to a prior CountGroupCommand.
+// One audit row per ack — combined with the transition-side row emitted by
+// countgroup_wiring.go, this gives end-to-end forensics: core saw X, edge
+// wrote Y, PLC took Z ms to ack (or timed out).
+func (s *CoreDataService) handleCountGroupAck(env *protocol.Envelope, ack *protocol.CountGroupAck) {
+	log.Printf("core_handler: countgroup ack from=%s group=%s outcome=%s latency=%dms corr=%s",
+		env.Src.Station, ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID)
+	detail := fmt.Sprintf("group=%s outcome=%s latency_ms=%d corr=%s station=%s",
+		ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID, env.Src.Station)
+	if err := s.db.AppendAudit("countgroup_ack", 0, ack.Outcome, "", detail, env.Src.Station); err != nil {
+		log.Printf("core_handler: countgroup ack audit: %v", err)
 	}
 }
 

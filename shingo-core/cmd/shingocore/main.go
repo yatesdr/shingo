@@ -28,11 +28,13 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingocore/config"
 	"shingo/protocol/debuglog"
+	"shingocore/config"
+	"shingocore/countgroup"
 	"shingocore/engine"
 	"shingocore/fleet/seerrds"
 	"shingocore/messaging"
+	"shingocore/rds"
 	"shingocore/store"
 	"shingocore/www"
 )
@@ -225,6 +227,23 @@ func main() {
 		MsgClient:  msgClient,
 		DebugLog:   dbg.Func("engine"),
 	})
+
+	// ── Count-group runner (advanced-zone light alerts) ────────────────
+	// Uses a dedicated short-timeout RDS client separate from the 10s
+	// fleet adapter so one slow response can't back up N poll cycles.
+	// Runner is a no-op if cfg.CountGroups.Groups is empty.
+	if len(cfg.CountGroups.Groups) > 0 {
+		cgTimeout := cfg.CountGroups.RDSTimeout
+		if cgTimeout <= 0 {
+			cgTimeout = 400 * time.Millisecond
+		}
+		cgClient := rds.NewClient(cfg.RDS.BaseURL, cgTimeout)
+		cgClient.DebugLog = dbg.Func("countgroup")
+		eng.SetCountGroupRunner(func(em countgroup.Emitter) *countgroup.Runner {
+			return countgroup.NewRunner(cfg.CountGroups, cgClient, em, log.Printf)
+		})
+	}
+
 	eng.Start()
 	defer eng.Stop()
 

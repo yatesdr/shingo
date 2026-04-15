@@ -11,11 +11,31 @@ import (
 type Config struct {
 	mu sync.RWMutex `yaml:"-"`
 
-	Database  DatabaseConfig  `yaml:"database"`
-	RDS       RDSConfig       `yaml:"rds"`
-	Web       WebConfig       `yaml:"web"`
-	Messaging MessagingConfig `yaml:"messaging"`
-	Staging   StagingConfig   `yaml:"staging"`
+	Database    DatabaseConfig    `yaml:"database"`
+	RDS         RDSConfig         `yaml:"rds"`
+	Web         WebConfig         `yaml:"web"`
+	Messaging   MessagingConfig   `yaml:"messaging"`
+	Staging     StagingConfig     `yaml:"staging"`
+	CountGroups CountGroupsConfig `yaml:"count_groups"`
+}
+
+// CountGroupsConfig configures the advanced-zone polling feature.
+// Empty Groups slice ⇒ feature disabled.
+// All fields are overridable per-deployment via shingocore.yaml.
+type CountGroupsConfig struct {
+	PollInterval       time.Duration       `yaml:"poll_interval"`
+	RDSTimeout         time.Duration       `yaml:"rds_timeout"`
+	OnThreshold        int                 `yaml:"on_threshold"`
+	OffThreshold       int                 `yaml:"off_threshold"`
+	FailSafeTimeout    time.Duration       `yaml:"fail_safe_timeout"`
+	NeverOccupiedWarn  time.Duration       `yaml:"never_occupied_warn"`
+	NeverOccupiedError time.Duration       `yaml:"never_occupied_error"`
+	Groups             []CountGroupConfig  `yaml:"groups"`
+}
+
+type CountGroupConfig struct {
+	Name    string `yaml:"name"`
+	Enabled bool   `yaml:"enabled"`
 }
 
 type StagingConfig struct {
@@ -106,6 +126,15 @@ func Defaults() *Config {
 			DispatchTopic:       "shingo.dispatch",
 			OutboxDrainInterval: 5 * time.Second,
 			StationID:           "core",
+		},
+		CountGroups: CountGroupsConfig{
+			PollInterval:       500 * time.Millisecond,
+			RDSTimeout:         400 * time.Millisecond,
+			OnThreshold:        2,
+			OffThreshold:       3,
+			FailSafeTimeout:    5 * time.Second,
+			NeverOccupiedWarn:  5 * time.Minute,
+			NeverOccupiedError: 30 * time.Minute,
 		},
 	}
 }

@@ -29,3 +29,21 @@ messaging:
   dispatch_topic: shingo.dispatch       # Core -> Edge topic
   outbox_drain_interval: 5s             # How often to flush outbox to Kafka
   station_id: core                      # This core instance's identity
+
+# Count-group (advanced-zone) light alerts. Empty groups list = feature disabled.
+# Core polls RDS /robotsInCountGroup per group and emits commands that edge
+# translates into PLC tag writes via WarLink. See docs for the full handshake.
+count_groups:
+  poll_interval: 500ms                  # Safety-adjacent; do not raise above 1s.
+  rds_timeout: 400ms                    # Dedicated client; must be < poll_interval.
+  on_threshold: 2                       # N-of-M samples to commit ON transition.
+  off_threshold: 3                      # N-of-M samples to commit OFF (asymmetric on purpose).
+  fail_safe_timeout: 5s                 # After this long of RDS failure, force lights ON.
+  never_occupied_warn: 5m               # Log WARN if a group never returns occupied.
+  never_occupied_error: 30m             # Escalate to ERROR.
+  groups:
+    # - name: Crosswalk1                # Must match the advanced group name in Roboshop exactly (case-sensitive).
+    #                                   # Edge resolves the binding by this name — see shingoedge.yaml.
+    #   enabled: true
+    # - name: ForkliftAisleN
+    #   enabled: true

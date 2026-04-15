@@ -36,6 +36,7 @@ import (
 	"shingo/protocol/debuglog"
 	"shingoedge/backup"
 	"shingoedge/config"
+	"shingoedge/countgroup"
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingoedge/store"
@@ -119,7 +120,12 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 
 // setupKafkaSubscribers wires protocol ingestor, heartbeater, and all handler
 // callbacks that require a live Kafka connection. Called only when Connect succeeds.
-func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID string, db *store.DB) {
+//
+// cgHandler may be nil — countgroup is an optional feature. If non-nil, the
+// handler's MarkStarted() is called after the Kafka subscribe succeeds, which
+// enables the heartbeat writer (deadman). See countgroup/handler.go for the
+// `started` guard rationale.
+func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID string, db *store.DB, cgHandler *countgroup.Handler) {
 	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(nodes []protocol.NodeInfo) {
 		eng.SetCoreNodes(nodes)
 	})
@@ -137,6 +143,14 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("protocol ingestor subscribe: %v", err)
 	} else {
 		log.Printf("protocol ingestor listening on %s (station=%s)", cfg.Messaging.DispatchTopic, stationID)
+		// Kafka subscription is live — flip the countgroup started flag
+		// so the heartbeat writer can begin. Before this moment the
+		// heartbeat is intentionally suppressed so the PLC deadman
+		// trips ON during the startup window (fail-safe).
+		if cgHandler != nil {
+			cgHandler.MarkStarted()
+			log.Printf("countgroup: subscription confirmed, heartbeat enabled")
+		}
 	}
 
 	// ── Heartbeater (registration + periodic heartbeat) ────────────────
@@ -190,6 +204,12 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	edgeHandler.SetDemandSignalHandler(func(signal *protocol.DemandSignal) {
 		go eng.HandleDemandSignal(signal)
 	})
+
+	if cgHandler != nil {
+		edgeHandler.SetCountGroupCommandHandler(func(cmd protocol.CountGroupCommand) {
+			cgHandler.OnCommand(cmd)
+		})
+	}
 
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)
@@ -302,11 +322,26 @@ func main() {
 	reporter.Start()
 	defer reporter.Stop()
 
+	// ── Count-group handler (advanced-zone light alerts) ────────────────
+	// Constructed before Kafka connect so the heartbeat writer can start
+	// immediately (but gated by `started` until subscription confirms).
+	// Handler is nil if feature disabled / no bindings — setupKafkaSubscribers
+	// tolerates nil and simply doesn't register the handler.
+	var cgHandler *countgroup.Handler
+	var cgHeartbeat *countgroup.HeartbeatWriter
+	if len(cfg.CountGroups.Bindings) > 0 {
+		cgHandler = countgroup.New(cfg.CountGroups, eng.PLCManager(), eng.SendCountGroupAck, log.Printf)
+		cgHeartbeat = countgroup.NewHeartbeatWriter(cgHandler, log.Printf)
+		cgHeartbeat.Start()
+		defer cgHeartbeat.Stop()
+		log.Printf("countgroup: edge handler active (%d bindings)", len(cfg.CountGroups.Bindings))
+	}
+
 	// ── Kafka connect & subscribe ───────────────────────────────────────
 	if err := msgClient.Connect(); err != nil {
 		log.Printf("messaging connect: %v (outbox drainer active, will drain when connected)", err)
 	} else {
-		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, db)
+		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, db, cgHandler)
 	}
 
 	// ── HTTP server & shutdown ──────────────────────────────────────────

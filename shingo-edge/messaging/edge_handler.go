@@ -23,6 +23,7 @@ type EdgeHandler struct {
 	onOrderStatuses        func([]protocol.OrderStatusSnapshot)
 	onNodeStructureChanged func()
 	onDemandSignal         func(*protocol.DemandSignal)
+	onCountGroupCommand    func(protocol.CountGroupCommand)
 
 	DebugLog DebugLogFunc
 }
@@ -64,6 +65,12 @@ func (h *EdgeHandler) SetNodeStructureChangedHandler(fn func()) {
 // SetDemandSignalHandler sets a callback for when core sends a kanban demand signal.
 func (h *EdgeHandler) SetDemandSignalHandler(fn func(*protocol.DemandSignal)) {
 	h.onDemandSignal = fn
+}
+
+// SetCountGroupCommandHandler sets a callback for when core sends a
+// count-group command (advanced-zone light state change request).
+func (h *EdgeHandler) SetCountGroupCommandHandler(fn func(protocol.CountGroupCommand)) {
+	h.onCountGroupCommand = fn
 }
 
 func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
@@ -184,6 +191,15 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			signal.CoreNodeName, signal.PayloadCode, signal.Role, signal.Reason)
 		if h.onDemandSignal != nil {
 			h.onDemandSignal(&signal)
+		}
+	case protocol.SubjectCountGroupCommand:
+		var cmd protocol.CountGroupCommand
+		if err := json.Unmarshal(p.Body, &cmd); err != nil {
+			log.Printf("edge_handler: decode countgroup command: %v", err)
+			return
+		}
+		if h.onCountGroupCommand != nil {
+			h.onCountGroupCommand(cmd)
 		}
 	default:
 		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)

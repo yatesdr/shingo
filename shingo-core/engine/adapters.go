@@ -1,6 +1,9 @@
 package engine
 
-import "shingocore/fleet"
+import (
+	"shingocore/countgroup"
+	"shingocore/fleet"
+)
 
 // dispatchEmitter bridges the dispatch package's emitter interface to the EventBus.
 type dispatchEmitter struct {
@@ -79,4 +82,22 @@ func (e *pollerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, old
 		Detail:        detail,
 		Snapshot:      snapshot,
 	}})
+}
+
+// countGroupEventEmitter bridges the countgroup package's Emitter interface to the EventBus.
+type countGroupEventEmitter struct {
+	bus *EventBus
+}
+
+func (e *countGroupEventEmitter) Emit(t countgroup.Transition) {
+	e.bus.Emit(Event{
+		Type: EventCountGroupTransition,
+		Payload: CountGroupTransitionEvent{
+			Group:             t.Group,
+			Desired:           t.Desired,
+			Robots:            t.Robots,
+			FailSafeTriggered: t.FailSafeTriggered,
+			Timestamp:         t.Timestamp,
+		},
+	})
 }

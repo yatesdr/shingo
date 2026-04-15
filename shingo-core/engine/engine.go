@@ -26,6 +26,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/config"
+	"shingocore/countgroup"
 	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/messaging"
@@ -47,28 +48,29 @@ type Config struct {
 }
 
 type Engine struct {
-	cfg            *config.Config
-	configPath     string
-	db             *store.DB
-	fleet          fleet.Backend
-	msgClient      *messaging.Client
-	dispatcher     *dispatch.Dispatcher
-	tracker        fleet.OrderTracker
-	Events         *EventBus
-	logFn          LogFunc
-	debugLog       func(string, ...any)
-	reconciliation *ReconciliationService
-	recovery       *RecoveryService
-	fulfillment    *FulfillmentScanner
-	binManifest    *service.BinManifestService
-	stopChan       chan struct{}
-	stopOnce       sync.Once
-	sceneSyncing   atomic.Bool
-	fleetConnected atomic.Bool
-	msgConnected   atomic.Bool
-	dbConnected    atomic.Bool
-	robotsMu       sync.RWMutex
-	robotsCache    map[string]fleet.RobotStatus
+	cfg             *config.Config
+	configPath      string
+	db              *store.DB
+	fleet           fleet.Backend
+	msgClient       *messaging.Client
+	dispatcher      *dispatch.Dispatcher
+	tracker         fleet.OrderTracker
+	countGroup      *countgroup.Runner // nil if feature disabled / no groups configured
+	Events          *EventBus
+	logFn           LogFunc
+	debugLog        func(string, ...any)
+	reconciliation  *ReconciliationService
+	recovery        *RecoveryService
+	fulfillment     *FulfillmentScanner
+	binManifest     *service.BinManifestService
+	stopChan        chan struct{}
+	stopOnce        sync.Once
+	sceneSyncing    atomic.Bool
+	fleetConnected  atomic.Bool
+	msgConnected    atomic.Bool
+	dbConnected     atomic.Bool
+	robotsMu        sync.RWMutex
+	robotsCache     map[string]fleet.RobotStatus
 }
 
 func New(c Config) *Engine {
@@ -188,6 +190,12 @@ func (e *Engine) Start() {
 	// Start periodic reconciliation logging and auto-confirm
 	go e.reconciliation.Loop(e.stopChan, e.cfg.Staging.SweepInterval, e.cfg.Staging.AutoConfirmDelivered)
 
+	// Start count-group runner if configured (no-op if no groups enabled).
+	if e.countGroup != nil {
+		e.countGroup.Start()
+		e.logFn("engine: count-group runner started")
+	}
+
 	e.logFn("engine: started")
 }
 
@@ -198,6 +206,9 @@ func (e *Engine) Stop() {
 	}
 	if e.tracker != nil {
 		e.tracker.Stop()
+	}
+	if e.countGroup != nil {
+		e.countGroup.Stop()
 	}
 	e.logFn("engine: stopped")
 }
@@ -214,6 +225,22 @@ func (e *Engine) MsgClient() *messaging.Client           { return e.msgClient }
 func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
 func (e *Engine) Recovery() *RecoveryService             { return e.recovery }
 func (e *Engine) BinManifest() *service.BinManifestService { return e.binManifest }
+
+// SetCountGroupRunner registers a configured Runner built by the
+// composition root. The caller passes the Runner directly — transitions
+// land on the engine's EventBus via the internal emitter adapter.
+// Engine.Start() will call .Start() on it; Engine.Stop() will call .Stop().
+// Pass nil (or just don't call) to disable the feature.
+//
+// Takes a factory function that receives the EventBus-backed emitter so
+// the caller can build the Runner without the engine exposing emitter
+// construction as part of its public API.
+func (e *Engine) SetCountGroupRunner(build func(countgroup.Emitter) *countgroup.Runner) {
+	if build == nil {
+		return
+	}
+	e.countGroup = build(&countGroupEventEmitter{bus: e.Events})
+}
 
 // ── Outbound messaging ──────────────────────────────────────────────
 

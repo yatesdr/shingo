@@ -64,6 +64,18 @@ const (
 	// Kanban demand wiring (Phase 2)
 	SubjectClaimSync   = "claim.sync"    // Edge -> Core: manual_swap claim config
 	SubjectDemandSignal = "demand.signal" // Core -> Edge: kanban demand trigger
+
+	// Count-group light alerts (advanced-zone occupancy → PLC-driven warning light)
+	SubjectCountGroupCommand = "countgroup.command" // Core -> Edge: requested light state for a zone
+	SubjectCountGroupAck     = "countgroup.ack"     // Edge -> Core: PLC ack outcome for a prior command
+)
+
+// CountGroupAck.Outcome values.
+// Use these constants instead of string literals at every call site.
+const (
+	AckOutcomeAcked      = "acked"        // PLC ladder cleared the request tag.
+	AckOutcomeTimeout    = "ack_timeout"  // PLC did not clear within ack_dead; edge abandoned the request.
+	AckOutcomeWarlinkErr = "warlink_error" // WarLink read or write failed.
 )
 
 // Roles for Address.Role.

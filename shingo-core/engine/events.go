@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"time"
+
 	"shingocore/fleet"
 	"shingocore/store"
 )
@@ -25,6 +27,7 @@ const (
 	EventDBDisconnected
 	EventRobotsUpdated
 	EventCMSTransaction
+	EventCountGroupTransition
 )
 
 // --- Event payloads ---
@@ -120,4 +123,15 @@ type RobotsUpdatedEvent struct {
 
 type CMSTransactionEvent struct {
 	Transactions []*store.CMSTransaction
+}
+
+// CountGroupTransitionEvent is emitted by the countgroup Runner whenever
+// an advanced zone's debounced occupancy flips (or the RDS-down fail-safe
+// fires). A wiring subscriber picks it up and ships it to edge via the outbox.
+type CountGroupTransitionEvent struct {
+	Group             string
+	Desired           string // "on" | "off"
+	Robots            []string
+	FailSafeTriggered bool
+	Timestamp         time.Time
 }

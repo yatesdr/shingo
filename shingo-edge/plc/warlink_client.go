@@ -26,6 +26,17 @@ type WarlinkClient interface {
 	// SetTagPublishing enables or disables REST publishing for a tag.
 	SetTagPublishing(ctx context.Context, plcName, tagName string, enabled bool) error
 
+	// ReadTagValue reads the current value of a single PLC tag.
+	// Returns the value as decoded JSON (typically int, float64, bool, or string).
+	// Tag must exist on the PLC; returns 404 otherwise.
+	ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error)
+
+	// WriteTagValue writes a value to a PLC tag.
+	// Tag must be marked writable: true in WarLink config; returns 403 otherwise.
+	// PLC must be connected; returns 503 otherwise.
+	// Integer values auto-convert to the tag's data type (DINT recommended).
+	WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error
+
 	// OpenEventStream opens a long-lived SSE connection for real-time updates.
 	// The caller is responsible for closing the returned ReadCloser.
 	OpenEventStream(ctx context.Context) (io.ReadCloser, error)
@@ -157,6 +168,86 @@ func (c *httpWarlinkClient) SetTagPublishing(ctx context.Context, plcName, tagNa
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("WarLink PATCH %s/%s returned %d", plcName, tagName, resp.StatusCode)
+	}
+	return nil
+}
+
+// ReadTagValue calls GET /<plc>/tags/<tag> and returns the decoded value.
+// Per Derek's WarLink REST API: response is {"plc","name","value","type","timestamp"}.
+func (c *httpWarlinkClient) ReadTagValue(ctx context.Context, plcName, tagName string) (interface{}, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		c.baseURL+"/"+url.PathEscape(plcName)+"/tags/"+url.PathEscape(tagName), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("WarLink GET %s/%s returned %d", plcName, tagName, resp.StatusCode)
+	}
+	var body struct {
+		Value interface{} `json:"value"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decode tag value %s/%s: %w", plcName, tagName, err)
+	}
+	return body.Value, nil
+}
+
+// WriteTagValue calls POST /<plc>/write with body {"plc","tag","value"}.
+// Per Derek's WarLink REST API:
+//   - 200 on success
+//   - 400 invalid JSON or PLC name in body doesn't match URL path
+//   - 403 tag not marked writable
+//   - 404 PLC or tag not found
+//   - 500 write failed/timeout
+//   - 503 PLC not connected
+func (c *httpWarlinkClient) WriteTagValue(ctx context.Context, plcName, tagName string, value interface{}) error {
+	payload := map[string]interface{}{
+		"plc":   plcName, // must equal the PLC in the URL path or WarLink returns 400
+		"tag":   tagName,
+		"value": value,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		c.baseURL+"/"+url.PathEscape(plcName)+"/write", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Read the body once into a buffer so we can both try the JSON
+		// decode AND fall back to the raw bytes if WarLink returns a
+		// non-JSON error (HTML error page, plaintext). Without this
+		// fallback a 403 "tag not writable" produces an error message
+		// with a trailing empty string, leaving ops no hint of why.
+		raw, _ := io.ReadAll(resp.Body)
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		msg := ""
+		if err := json.Unmarshal(raw, &errBody); err == nil && errBody.Error != "" {
+			msg = errBody.Error
+		} else if len(raw) > 0 {
+			if len(raw) > 200 {
+				msg = string(raw[:200]) + "...(truncated)"
+			} else {
+				msg = string(raw)
+			}
+		}
+		return fmt.Errorf("WarLink POST %s/write tag=%s returned %d: %s",
+			plcName, tagName, resp.StatusCode, msg)
 	}
 	return nil
 }
