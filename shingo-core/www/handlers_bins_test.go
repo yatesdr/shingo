@@ -2,7 +2,12 @@ package www
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"shingo/protocol/debuglog"
@@ -514,6 +519,36 @@ func TestExecuteBinAction_Move_SameNode(t *testing.T) {
 	}
 }
 
+// Bug 4 (4/14): moving a bin to a node that already has a bin must be rejected.
+// The move path had no destination-occupancy guard, so an admin could move a
+// bin on top of another bin. Downstream code that assumes one-bin-per-node
+// (ListBinsByNode consumers doing bins[0]) silently picked one and ignored
+// the rest. This asserts the new guard refuses the move with a clear error.
+func TestExecuteBinAction_Move_RefusesOccupiedDestination(t *testing.T) {
+	h, db, sd, bin := setupBinForAction(t)
+
+	// Place a second bin at the line node so the move destination is occupied.
+	occupyingBin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.LineNode.ID, "BIN-OCC-1")
+	_ = occupyingBin
+
+	params := mustJSON(t, map[string]any{"node_id": sd.LineNode.ID})
+	err := h.executeBinAction(bin, "move", params)
+	if err == nil {
+		t.Fatal("move to occupied destination should error")
+	}
+	// Error message includes the node ID and existing-bin count
+	if err.Error() == "" {
+		t.Error("expected non-empty error message")
+	}
+
+	// Verify the moved bin stayed at its original node
+	after, _ := db.GetBin(bin.ID)
+	if after.NodeID == nil || *after.NodeID != sd.StorageNode.ID {
+		t.Errorf("bin should have stayed at storage node %d; got node=%v",
+			sd.StorageNode.ID, after.NodeID)
+	}
+}
+
 // --- Record count ---
 
 func TestExecuteBinAction_RecordCount(t *testing.T) {
@@ -675,6 +710,105 @@ func TestExecuteBinAction_Update_PartialFields(t *testing.T) {
 	}
 	if got.Description != "New desc only" {
 		t.Errorf("description: got %q, want %q", got.Description, "New desc only")
+	}
+}
+
+// --- Create-bin occupancy guard (Bug 4, 4/14) ---
+
+// handleBinCreate must refuse to create a bin at a node that already has one.
+// Before the guard, admins could create a second bin at an occupied node via
+// the web form, and downstream bins[0]-indexing code would silently break.
+func TestHandleBinCreate_RefusesOccupiedNode(t *testing.T) {
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+	// Storage node is occupied by this bin
+	existing := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-EXISTING")
+	_ = existing
+
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	form := url.Values{}
+	form.Set("bin_type_id", fmt.Sprintf("%d", bt.ID))
+	form.Set("quantity", "1")
+	form.Set("label_prefix", "BIN-NEW-")
+	form.Set("status", "available")
+	form.Set("node_id", fmt.Sprintf("%d", sd.StorageNode.ID))
+
+	req := httptest.NewRequest(http.MethodPost, "/bins/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.handleBinCreate(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("expected 409 Conflict creating bin at occupied node, got %d: %s",
+			rec.Code, rec.Body.String())
+	}
+
+	// Verify no new bin was created at that node
+	count, _ := db.CountBinsByNode(sd.StorageNode.ID)
+	if count != 1 {
+		t.Errorf("expected 1 bin at storage node (the original); got %d", count)
+	}
+}
+
+// handleBinCreate must refuse multi-bin create targeting a physical node.
+// Creating N bins at a single physical node is never valid (one bin per node).
+func TestHandleBinCreate_RefusesMultiBinAtPhysicalNode(t *testing.T) {
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	form := url.Values{}
+	form.Set("bin_type_id", fmt.Sprintf("%d", bt.ID))
+	form.Set("quantity", "3")
+	form.Set("label_prefix", "BIN-MULTI-")
+	form.Set("status", "available")
+	// Target an empty non-synthetic node
+	form.Set("node_id", fmt.Sprintf("%d", sd.LineNode.ID))
+
+	req := httptest.NewRequest(http.MethodPost, "/bins/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.handleBinCreate(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("expected 409 Conflict on multi-bin create at physical node, got %d: %s",
+			rec.Code, rec.Body.String())
+	}
+
+	count, _ := db.CountBinsByNode(sd.LineNode.ID)
+	if count != 0 {
+		t.Errorf("expected 0 bins at line node after rejected create; got %d", count)
+	}
+}
+
+// handleBinCreate should succeed when the target node is empty (baseline).
+// Guards against over-restrictive guards breaking the normal flow.
+func TestHandleBinCreate_AllowsEmptyNode(t *testing.T) {
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	form := url.Values{}
+	form.Set("bin_type_id", fmt.Sprintf("%d", bt.ID))
+	form.Set("quantity", "1")
+	form.Set("label_prefix", "BIN-OK-")
+	form.Set("status", "available")
+	form.Set("node_id", fmt.Sprintf("%d", sd.LineNode.ID))
+
+	req := httptest.NewRequest(http.MethodPost, "/bins/create", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.handleBinCreate(rec, req)
+
+	// Redirect indicates success (handler redirects to /bins on success)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("expected 303 See Other on successful create, got %d: %s",
+			rec.Code, rec.Body.String())
+	}
+
+	count, _ := db.CountBinsByNode(sd.LineNode.ID)
+	if count != 1 {
+		t.Errorf("expected 1 bin at line node after create; got %d", count)
 	}
 }
 

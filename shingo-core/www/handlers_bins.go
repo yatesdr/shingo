@@ -179,6 +179,39 @@ func (h *Handlers) handleBinCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Occupancy guard: a physical node holds one bin. Creating a second bin
+	// at an occupied node breaks downstream code that assumes one-bin-per-node
+	// (queries doing bins[0] indexing silently pick one and ignore the rest).
+	//
+	// Skip the check for:
+	//   - Synthetic nodes (LANE, NGRP) — children hold bins, not the node itself
+	//   - Multi-bin create (count > 1) at the same node — always invalid, caught below
+	//
+	// The dispatch path already has equivalent guards (fulfillment_scanner.go
+	// destination-occupancy check). This mirrors that at the admin UI entry point.
+	if nodeID != nil {
+		node, err := h.engine.DB().GetNode(*nodeID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("node %d not found", *nodeID), http.StatusBadRequest)
+			return
+		}
+		if !node.IsSynthetic {
+			if count > 1 {
+				http.Error(w, "cannot create multiple bins at a single physical node", http.StatusConflict)
+				return
+			}
+			existing, err := h.engine.DB().CountBinsByNode(*nodeID)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("check node occupancy: %v", err), http.StatusInternalServerError)
+				return
+			}
+			if existing > 0 {
+				http.Error(w, fmt.Sprintf("node %d already has %d bin(s); move or delete existing bin first", *nodeID, existing), http.StatusConflict)
+				return
+			}
+		}
+	}
+
 	for i := 0; i < count; i++ {
 		binLabel := label + fmt.Sprintf("%04d", i+1)
 		b := &store.Bin{
@@ -443,6 +476,20 @@ func (h *Handlers) binMove(b *store.Bin, params json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("node not found")
 	}
+
+	// Destination-occupancy guard: one bin per physical node. Synthetic nodes
+	// (LANE, NGRP) hold bins via their children, not directly. Mirrors the
+	// guard in handleBinCreate.
+	if !destNode.IsSynthetic {
+		existing, err := db.CountBinsByNode(p.NodeID)
+		if err != nil {
+			return fmt.Errorf("check destination occupancy: %w", err)
+		}
+		if existing > 0 {
+			return fmt.Errorf("destination node %d already has %d bin(s); move or delete existing bin first", p.NodeID, existing)
+		}
+	}
+
 	if err := db.MoveBin(b.ID, p.NodeID); err != nil {
 		return err
 	}
