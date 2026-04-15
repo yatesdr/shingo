@@ -19,10 +19,16 @@ type FulfillmentScanner struct {
 	dispatcher *dispatch.Dispatcher
 	resolver   *dispatch.DefaultResolver
 	sendToEdge func(msgType, stationID string, payload any) error
-	logFn      func(string, ...any)
-	debugLog   func(string, ...any)
+	// failFn fails an order in the DB AND emits EventOrderFailed so the
+	// standard handler chain (audit, return order, edge notification) fires.
+	// Wired at construction to engine.failOrderAndEmit. Without this, the
+	// scanner's structural-error path silently terminates orders with no
+	// audit trail, no Edge notification, and no bin recovery.
+	failFn   func(orderID int64, code, detail string)
+	logFn    func(string, ...any)
+	debugLog func(string, ...any)
 
-	scanMu   sync.Mutex // serializes scan() calls
+	scanMu    sync.Mutex // serializes scan() calls
 	triggerMu sync.Mutex
 	pending   bool // coalesce triggers during a scan
 	stopChan  chan struct{}
@@ -33,6 +39,7 @@ func newFulfillmentScanner(
 	dispatcher *dispatch.Dispatcher,
 	resolver *dispatch.DefaultResolver,
 	sendFn func(string, string, any) error,
+	failFn func(orderID int64, code, detail string),
 	logFn func(string, ...any),
 	debugLog func(string, ...any),
 ) *FulfillmentScanner {
@@ -41,6 +48,7 @@ func newFulfillmentScanner(
 		dispatcher: dispatcher,
 		resolver:   resolver,
 		sendToEdge: sendFn,
+		failFn:     failFn,
 		logFn:      logFn,
 		debugLog:   debugLog,
 		stopChan:   make(chan struct{}),
@@ -185,7 +193,18 @@ func (s *FulfillmentScanner) tryFulfill(order *store.Order) bool {
 				if rErr != nil {
 					var structErr *dispatch.StructuralError
 					if errors.As(rErr, &structErr) {
-						s.db.FailOrderAtomic(order.ID, structErr.Error())
+						// Use failFn so the standard EventOrderFailed handler
+						// chain fires (audit, maybeCreateReturnOrder, edge
+						// notification). Bare FailOrderAtomic would leave
+						// the order silently failed in the DB with Edge
+						// still showing it active.
+						if s.failFn != nil {
+							s.failFn(order.ID, "structural", structErr.Error())
+						} else {
+							// Fallback for tests that construct the scanner
+							// without wiring failFn — preserve original behavior.
+							s.db.FailOrderAtomic(order.ID, structErr.Error())
+						}
 						s.logFn("fulfillment: order %d terminated — structural: %s",
 							order.ID, structErr.Error())
 						return false

@@ -90,6 +90,25 @@ func (e *Engine) wireEventHandlers() {
 		e.logFn("engine: order %d failed: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
 		e.db.AppendAudit("order", ev.OrderID, "failed", "", ev.Detail, "system")
 
+		// Notify ShinGo Edge so it can transition the order locally.
+		// Mirrors the EventOrderCancelled handler's notification block below.
+		// The edge handler (HandleOrderError) is idempotent — duplicate
+		// failure notifications for an already-failed order are harmless.
+		// Auto-return orders have empty EdgeUUID by design (Core-internal);
+		// the gate correctly skips them.
+		if ev.StationID != "" && ev.EdgeUUID != "" {
+			if err := e.sendToEdge(protocol.TypeOrderError, ev.StationID,
+				&protocol.OrderError{
+					OrderUUID: ev.EdgeUUID,
+					ErrorCode: ev.ErrorCode,
+					Detail:    ev.Detail,
+				}); err != nil {
+				e.logFn("engine: fail notification to edge: %v", err)
+			} else {
+				e.dbg("fail notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
+			}
+		}
+
 		if order, err := e.db.GetOrder(ev.OrderID); err == nil {
 			// If child of a compound order, handle parent failure
 			if order.ParentOrderID != nil && e.dispatcher != nil {
@@ -629,13 +648,33 @@ func (e *Engine) resolveNodeStaging(destNode *store.Node) (staged bool, expiresA
 	return !isStorageSlot, expiresAt
 }
 
+// autoReturnEnabled gates maybeCreateReturnOrder. SHORT-CIRCUITED 2026-04-14:
+// auto-return has not been observed to complete successfully in production.
+// The created store orders sit in `pending` status indefinitely because
+// EventOrderReceived is audit-only and the fulfillment scanner doesn't process
+// store-type orders. The bin claim from the never-dispatched return order
+// strands the bin until the orphan claim sweep runs.
+//
+// Re-enable only after the dispatch path for internally-created store orders
+// is verified end-to-end. See shingobugs414-stephen-questions.md for the full
+// investigation. Function body preserved so this can be flipped back with a
+// single edit if/when the underlying issue is fixed.
+const autoReturnEnabled = false
+
 // maybeCreateReturnOrder creates STORE orders to return bins to their origins
 // when an in-flight order is cancelled or fails. Each bin is routed to the
 // root parent of its pickup node so the group resolver can pick the best slot.
 //
 // For multi-bin orders (junction table populated), a separate return order is
 // created for each bin. For single-bin orders, the legacy path creates one.
+//
+// Currently short-circuited — see autoReturnEnabled.
 func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
+	if !autoReturnEnabled {
+		e.logFn("engine: auto-return short-circuited for order %d (%s)", order.ID, reason)
+		return
+	}
+
 	// If the fleet never accepted the order (no vendor order ID), the bin
 	// never left its origin — no return needed. This prevents spurious
 	// auto_return orders when dispatch fails at the fleet API level.

@@ -154,7 +154,7 @@ func (e *Engine) Start() {
 	}
 
 	// Create fulfillment scanner for queued orders
-	e.fulfillment = newFulfillmentScanner(e.db, e.dispatcher, resolver, e.sendToEdge, e.logFn, e.debugLog)
+	e.fulfillment = newFulfillmentScanner(e.db, e.dispatcher, resolver, e.sendToEdge, e.failOrderAndEmit, e.logFn, e.debugLog)
 
 	// Wire event handlers
 	e.wireEventHandlers()

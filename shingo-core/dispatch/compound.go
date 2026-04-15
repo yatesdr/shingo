@@ -9,6 +9,12 @@ import (
 
 const StatusReshuffling = "reshuffling"
 
+// reshuffleFailDetail is shared between the parent's status update and the
+// EmitOrderFailed event payload so they can't drift. Used in
+// AdvanceCompoundOrder's hasFailed branch when one or more child orders
+// failed and the parent must be marked failed.
+const reshuffleFailDetail = "reshuffle failed: child order failed"
+
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
 // All children and bin claims are created in a single transaction.
 func (d *Dispatcher) CreateCompoundOrder(parentOrder *store.Order, plan *ReshufflePlan) error {
@@ -70,13 +76,20 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 
 		if hasFailed {
 			log.Printf("dispatch: compound order %d has failed children — marking parent failed", parentOrderID)
-			if err := d.db.UpdateOrderStatus(parentOrderID, StatusFailed, "reshuffle failed: child order failed"); err != nil {
+			if err := d.db.UpdateOrderStatus(parentOrderID, StatusFailed, reshuffleFailDetail); err != nil {
 				log.Printf("dispatch: update compound order %d status to failed: %v", parentOrderID, err)
 			}
 			d.unlockLaneForCompound(parentOrderID)
 			parent, pErr := d.db.GetOrder(parentOrderID)
 			if pErr == nil {
-				d.emitter.EmitOrderCompleted(parentOrderID, parent.EdgeUUID, parent.StationID)
+				// Emit OrderFailed (was OrderCompleted) so the parent's status in
+				// the event matches its status in the DB. The wrong event type
+				// previously routed failed compound parents through the completion
+				// handler instead of the failure handler — no auto-return, no
+				// edge notification, audit trail showed "completed" for a failed
+				// order.
+				d.emitter.EmitOrderFailed(parentOrderID, parent.EdgeUUID, parent.StationID,
+					"reshuffle_failed", reshuffleFailDetail)
 			}
 			return nil
 		}

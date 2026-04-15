@@ -114,3 +114,37 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 
 	return nil
 }
+
+// failOrderAndEmit fails an order in the DB AND emits EventOrderFailed so the
+// standard handler chain (audit, return order, edge notification) fires.
+//
+// Use this from any caller that previously did a bare db.FailOrderAtomic and
+// would otherwise leave the order silently failed in the DB. The fulfillment
+// scanner's structural-error path uses this to ensure scanner-driven failures
+// reach Edge via the same notification pipeline as fleet-driven failures.
+//
+// Looks up StationID and EdgeUUID from the order so the EventOrderFailed
+// payload is complete — without these fields populated, the wiring.go
+// handler's notification gate skips the edge push.
+func (e *Engine) failOrderAndEmit(orderID int64, errorCode, detail string) {
+	if err := e.db.FailOrderAtomic(orderID, detail); err != nil {
+		e.logFn("engine: fail order %d (%s): %v", orderID, errorCode, err)
+		return
+	}
+	stationID := ""
+	edgeUUID := ""
+	if order, err := e.db.GetOrder(orderID); err == nil {
+		stationID = order.StationID
+		edgeUUID = order.EdgeUUID
+	}
+	e.Events.Emit(Event{
+		Type: EventOrderFailed,
+		Payload: OrderFailedEvent{
+			OrderID:   orderID,
+			EdgeUUID:  edgeUUID,
+			StationID: stationID,
+			ErrorCode: errorCode,
+			Detail:    detail,
+		},
+	})
+}

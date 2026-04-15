@@ -614,3 +614,89 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		t.Error("lane lock is still held after compound failure — prevents retry")
 	}
 }
+
+// TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed regression-tests the
+// fix for the bug where AdvanceCompoundOrder's hasFailed branch (compound.go)
+// emitted EmitOrderCompleted for a parent order whose status was StatusFailed.
+//
+// The wrong event type previously routed failed compound parents through the
+// completion handler instead of the failure handler — no auto-return logic
+// fired, no edge notification, and the audit trail showed "completed" for a
+// failed order.
+//
+// Scenario: create a parent + one failed child + one terminal child (no
+// pending children). Call AdvanceCompoundOrder. Assert the emitter received
+// exactly one EmitOrderFailed for the parent and ZERO EmitOrderCompleted.
+func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	parent := &store.Order{
+		EdgeUUID:     "parent-fail-event",
+		StationID:    "line-1",
+		OrderType:    OrderTypeRetrieve,
+		Status:       StatusReshuffling,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode.Name,
+		Quantity:     1,
+	}
+	if err := db.CreateOrder(parent); err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+
+	failedChild := &store.Order{
+		EdgeUUID:      "child-fail-event",
+		StationID:     parent.StationID,
+		OrderType:     OrderTypeMove,
+		Status:        StatusFailed,
+		ParentOrderID: &parent.ID,
+		Sequence:      1,
+		SourceNode:    lineNode.Name,
+		DeliveryNode:  lineNode.Name,
+	}
+	if err := db.CreateOrder(failedChild); err != nil {
+		t.Fatalf("create failed child: %v", err)
+	}
+
+	// Reset emitter to ignore receipt events from order creation
+	emitter.failed = nil
+	emitter.completed = nil
+
+	d.AdvanceCompoundOrder(parent.ID)
+
+	// Assert: parent failure was emitted
+	if len(emitter.failed) == 0 {
+		t.Fatal("expected EmitOrderFailed for parent with failed children, got none")
+	}
+	foundParentFailed := false
+	for _, f := range emitter.failed {
+		if f.orderID == parent.ID {
+			foundParentFailed = true
+			if f.errorCode != "reshuffle_failed" {
+				t.Errorf("parent failure errorCode = %q, want %q", f.errorCode, "reshuffle_failed")
+			}
+			break
+		}
+	}
+	if !foundParentFailed {
+		t.Errorf("EmitOrderFailed did not fire for parent %d (got: %+v)", parent.ID, emitter.failed)
+	}
+
+	// Assert: parent completion was NOT emitted (the bug we're regression-guarding)
+	for _, c := range emitter.completed {
+		if c.orderID == parent.ID {
+			t.Errorf("BUG REGRESSION: parent %d emitted EmitOrderCompleted for a failed compound — "+
+				"the hasFailed branch in AdvanceCompoundOrder must emit EmitOrderFailed instead",
+				parent.ID)
+		}
+	}
+
+	// Assert: parent DB status reflects failure (sanity check)
+	got, _ := db.GetOrder(parent.ID)
+	if got.Status != StatusFailed {
+		t.Errorf("parent status = %q, want %q", got.Status, StatusFailed)
+	}
+}

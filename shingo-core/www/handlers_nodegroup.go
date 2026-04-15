@@ -136,10 +136,17 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 					_ = h.engine.DB().FailOrderAtomic(order.ID,
 						fmt.Sprintf("source group %q restructured "+
 							"(node %s reparented)", oldParent.Name, node.Name))
+					// Populate EdgeUUID/StationID so the EventOrderFailed
+					// handler's notification gate can route the message to
+					// Edge. Without these fields the handler silently skips
+					// the notification and Edge keeps showing the order as
+					// active.
 					h.engine.Events.Emit(engine.Event{
 						Type: engine.EventOrderFailed,
 						Payload: engine.OrderFailedEvent{
 							OrderID:   order.ID,
+							EdgeUUID:  order.EdgeUUID,
+							StationID: order.StationID,
 							ErrorCode: "group_restructured",
 							Detail:    "source group restructured (node reparented)",
 						},
@@ -313,10 +320,14 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 			for _, order := range blocked {
 				_ = h.engine.DB().FailOrderAtomic(order.ID,
 					fmt.Sprintf("source group %q deleted", group.Name))
+				// Populate EdgeUUID/StationID so the EventOrderFailed handler's
+				// notification gate routes the message to Edge.
 				h.engine.Events.Emit(engine.Event{
 					Type: engine.EventOrderFailed,
 					Payload: engine.OrderFailedEvent{
 						OrderID:   order.ID,
+						EdgeUUID:  order.EdgeUUID,
+						StationID: order.StationID,
 						ErrorCode: "group_deleted",
 						Detail:    "source group deleted",
 					},

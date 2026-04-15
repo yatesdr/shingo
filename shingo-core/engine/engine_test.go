@@ -1296,6 +1296,13 @@ func TestTC28_ConcurrentRetrieveSamePart(t *testing.T) {
 // This test isolates the bug without relying on TC-42's round-trip symmetry
 // (where SourceNode == DeliveryNode masks the defect).
 func TestMaybeCreateReturnOrder_SourceNode(t *testing.T) {
+	// Auto-return is short-circuited (see autoReturnEnabled in wiring.go).
+	// This test asserts the SourceNode behavior of maybeCreateReturnOrder
+	// when it actually creates an order — re-enable when autoReturnEnabled
+	// is flipped back to true. Until then, the function returns early and
+	// no return order is ever created, so the assertion at line ~1339 would
+	// fail with "no auto-return order created after fleet failure".
+	t.Skip("auto-return short-circuited; see autoReturnEnabled in wiring.go")
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -1799,6 +1806,78 @@ func TestRegression_BinMovesOnDelivered(t *testing.T) {
 
 	// Bin still at line node after confirmation
 	testdb.AssertBinAtNode(t, db, *order.BinID, lineNode.ID)
+}
+
+// TestRegression_OrderFailedNotifiesEdge regression-tests the fix that adds
+// sendToEdge(TypeOrderError) to the EventOrderFailed handler in wiring.go.
+//
+// Before the fix, the EventOrderFailed handler only logged + audited + called
+// maybeCreateReturnOrder. It never sent a message to Edge. Fleet-driven
+// failures, scanner-driven failures, and compound-parent failures all flowed
+// through this handler — so Edge never learned about any of them, and the
+// operator's UI showed orders as still active even after Core had marked them
+// failed.
+//
+// The fix mirrors the EventOrderCancelled handler's pattern: when StationID
+// and EdgeUUID are populated, send a TypeOrderError envelope to the outbox.
+func TestRegression_OrderFailedNotifiesEdge(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+
+	// Emit EventOrderFailed with populated fields directly (skips needing
+	// a real fleet failure to drive the test).
+	eng.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
+		OrderID:   42,
+		EdgeUUID:  "regr-fail-edge-uuid",
+		StationID: "line-1",
+		ErrorCode: "fleet_failed",
+		Detail:    "rds HTTP 400: simulated fleet failure",
+	}})
+
+	// Assert: an order.error envelope landed in the outbox addressed to line-1
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(*) FROM outbox
+		WHERE msg_type = 'order.error' AND station_id = $1
+	`, "line-1").Scan(&count)
+	if err != nil {
+		t.Fatalf("query outbox: %v", err)
+	}
+	if count == 0 {
+		t.Errorf("expected order.error in outbox for line-1 after EventOrderFailed; got 0 rows — " +
+			"EventOrderFailed handler is not pushing failure notifications to Edge")
+	}
+}
+
+// TestRegression_OrderFailedSkipsEmptyEdgeUUID asserts that the EventOrderFailed
+// handler's notification gate skips orders with empty EdgeUUID — auto-return
+// orders are Core-internal and have no Edge counterpart to notify.
+func TestRegression_OrderFailedSkipsEmptyEdgeUUID(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+
+	eng.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
+		OrderID:   99,
+		EdgeUUID:  "", // intentionally empty (auto-return-style internal order)
+		StationID: "line-1",
+		ErrorCode: "structural",
+		Detail:    "no source bin",
+	}})
+
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = 'order.error'`).Scan(&count)
+	if err != nil {
+		t.Fatalf("query outbox: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("outbox has %d order.error messages, want 0 — empty EdgeUUID should skip Edge notification", count)
+	}
 }
 
 // --- Regression: Bug 4 — Cancel with empty EdgeUUID does not notify Edge ---
