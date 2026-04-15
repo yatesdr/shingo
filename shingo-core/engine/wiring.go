@@ -389,14 +389,12 @@ func (e *Engine) applyBinArrivalForOrder(order *store.Order) {
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
 
-	if order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0 {
-		staged = false
-		expiresAt = nil
-	}
-	if order.PayloadDesc == "retrieve_empty" {
-		staged = false
-		expiresAt = nil
-	}
+	// Note: previously this path forced staged=false for complex orders with
+	// WaitIndex > 0 and for retrieve_empty deliveries. Both overrides removed
+	// 2026-04-14 — they bypassed the FindSourceBinFIFO staged exclusion and
+	// allowed unloader/loader auto-requests to poach lineside bins. With the
+	// overrides gone, lineside deliveries arrive `staged` and stay protected
+	// until the next claim or operator action.
 
 	if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
 		e.logFn("engine: apply bin arrival on delivery for order %d bin %d: %v", order.ID, *order.BinID, err)
@@ -420,9 +418,13 @@ func (e *Engine) applyBinArrivalForOrder(order *store.Order) {
 }
 
 // applyMultiBinArrivalForOrder handles the multi-bin case at delivery time.
+//
+// Note: previously this path forced staged=false for complex orders with
+// WaitIndex > 0 ("operatorConfirmed"). Override removed 2026-04-14 — bins
+// arriving at lineside via complex orders now stage like simple orders do.
+// See applyBinArrivalForOrder for full context.
 func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*store.OrderBin) {
 	var instructions []store.BinArrivalInstruction
-	operatorConfirmed := order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0
 
 	for _, ob := range orderBins {
 		if ob.DestNode == "" {
@@ -434,10 +436,6 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*s
 			continue
 		}
 		staged, expiresAt := e.resolveNodeStaging(destNode)
-		if operatorConfirmed {
-			staged = false
-			expiresAt = nil
-		}
 		instructions = append(instructions, store.BinArrivalInstruction{
 			BinID:     ob.BinID,
 			ToNodeID:  destNode.ID,
@@ -530,14 +528,9 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
 
-	if order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0 {
-		staged = false
-		expiresAt = nil
-	}
-	if order.PayloadDesc == "retrieve_empty" {
-		staged = false
-		expiresAt = nil
-	}
+	// Note: see applyBinArrivalForOrder for the override-removal context.
+	// Same overrides existed here in the safety-net path and were removed
+	// for the same reason.
 
 	if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
 		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
@@ -568,7 +561,9 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.OrderBin) {
 	var instructions []store.BinArrivalInstruction
 
-	operatorConfirmed := order.OrderType == dispatch.OrderTypeComplex && order.WaitIndex > 0
+	// Note: previously had an "operatorConfirmed" override forcing staged=false
+	// for complex orders with WaitIndex > 0. Removed 2026-04-14 — see
+	// applyBinArrivalForOrder for context.
 
 	for _, ob := range orderBins {
 		if ob.DestNode == "" {
@@ -589,10 +584,6 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 		}
 
 		staged, expiresAt := e.resolveNodeStaging(destNode)
-		if operatorConfirmed {
-			staged = false
-			expiresAt = nil
-		}
 		instructions = append(instructions, store.BinArrivalInstruction{
 			BinID:     ob.BinID,
 			ToNodeID:  destNode.ID,

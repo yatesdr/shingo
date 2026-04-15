@@ -1166,13 +1166,17 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 		t.Errorf("new bin claimed_by = %v, want nil (claim released by ApplyMultiBinArrival)", newBin.ClaimedBy)
 	}
 
-	// Fixed Defect 3: newBin at lineside must be "available", not "staged".
-	// resolveNodeStaging used to mark ALL lineside bins as staged, but for
-	// operator-released swap orders (WaitIndex > 0) the operator already
-	// confirmed by releasing the wait. Staging would leave bins permanently
-	// stuck with no unstage mechanism.
-	if newBin.Status != "available" {
-		t.Errorf("new bin status = %q, want available (operator confirmed by releasing wait)", newBin.Status)
+	// Lineside delivery: bin must be "staged" (not "available").
+	// resolveNodeStaging marks lineside bins as staged so FindSourceBinFIFO
+	// can't poach them; the bin stays staged until the next cycle's
+	// claimComplexBins claims it (claimComplexBins intentionally allows
+	// staged bins per TC-24a) or operator action releases it.
+	//
+	// Previously the WaitIndex>0 override forced this to "available", which
+	// allowed unloader/loader auto-requests to grab lineside bins via
+	// FindSourceBinFIFO. Override removed 2026-04-14.
+	if newBin.Status != "staged" {
+		t.Errorf("new bin status = %q, want staged (lineside delivery — protected from FindSourceBinFIFO)", newBin.Status)
 	}
 
 	// Fixed Defect 2: oldBin should be at outboundDest (step 10 destination)
@@ -1189,8 +1193,11 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 		t.Errorf("old bin at node %v, want %d (outboundDest) — per-bin destination from order_bins junction table",
 			oldBin.NodeID, outboundDest.ID)
 	}
-	if oldBin.Status != "available" {
-		t.Errorf("old bin status = %q, want available (swap order with released wait)", oldBin.Status)
+	// Outbound destination: not a LANE-child storage slot (per setupProductionNodes
+	// it's a plain node with no parent), so resolveNodeStaging returns staged=true.
+	// Override removal means the WaitIndex>0 path no longer forces "available".
+	if oldBin.Status != "staged" {
+		t.Errorf("old bin status = %q, want staged (outbound dest is not a storage slot)", oldBin.Status)
 	}
 }
 

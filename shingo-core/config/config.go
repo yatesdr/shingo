@@ -19,8 +19,12 @@ type Config struct {
 }
 
 type StagingConfig struct {
-	TTL                 time.Duration `yaml:"ttl"`                  // default 2h
-	SweepInterval       time.Duration `yaml:"sweep_interval"`       // default 5m
+	// TTL is the global default staging expiry. 0 (the default) means permanent:
+	// staged bins never auto-unstage — they're released only by the next claim
+	// or by operator action. Override per-node via the `staging_ttl` property
+	// (admin UI) on a specific node or its parent.
+	TTL                  time.Duration `yaml:"ttl"`                    // default 0 (permanent)
+	SweepInterval        time.Duration `yaml:"sweep_interval"`         // default 5m
 	AutoConfirmDelivered time.Duration `yaml:"auto_confirm_delivered"` // 0 = disabled
 }
 
