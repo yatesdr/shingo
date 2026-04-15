@@ -341,6 +341,13 @@ func TestTC23a_MoveClaimedStagedBin(t *testing.T) {
 // order to the return order. A subsequent store order should claim one of
 // the OTHER unclaimed bins, not the one held by the return order.
 func TestTC23b_CancelThenMoveBin(t *testing.T) {
+	// Skipped 2026-04-14: exercises auto-return protection of a cancelled
+	// bin against subsequent store-order poaching. autoReturnEnabled is
+	// currently false (see maybeCreateReturnOrder), so there is no return
+	// order and the bin is simply unclaimed after cancel — the premise of
+	// this test no longer holds. Preserved for re-enable alongside
+	// TestMaybeCreateReturnOrder_SourceNode when auto-return comes back.
+	t.Skip("auto-return disabled; re-enable with autoReturnEnabled")
 	t.Parallel()
 	db := testDB(t)
 	bins, _, lineNode, _ := setupThreeBinLine(t, db)
