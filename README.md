@@ -24,6 +24,18 @@ A **payload** defines what a bin should contain: a parts list and a unit-of-prod
 
 Operators request material by payload type. Shingo Core locates the oldest eligible bin (FIFO), dispatches a robot to retrieve it, and tracks the order through delivery and operator confirmation. Storage orders work in reverse — the system selects the optimal storage slot automatically.
 
+### Changeover Automation
+
+When a production line switches styles, Shingo orchestrates the material changeover automatically. Core aborts in-flight orders on affected nodes, A/B cycles material slots between old and new styles, dispatches fresh material, and confirms completion. Bins staged at lineside are preserved when the payload is shared between styles (keep-staged).
+
+### Safety Lighting (Count Groups)
+
+Core monitors robot presence in advanced zones — crosswalks, forklift aisles, and other shared spaces — and drives safety indicator lights via PLC. Polling runs at sub-second intervals with asymmetric hysteresis (ON commits faster than OFF) and a fail-safe timeout that forces lights on during communication failures.
+
+### Fire Alarm
+
+Core relays fire alarm activate/clear commands to the fleet backend. RDS owns all robot logic (stop, evacuate, resume). The feature is gated behind configuration and designed for future automation via plant-side input (PLC, building alarm system).
+
 ### Decoupled Architecture
 
 Core and edge communicate asynchronously over Kafka. Each edge station operates independently; if connectivity to core is lost, the edge continues tracking local state and queues outbound messages for later delivery.
@@ -48,7 +60,7 @@ shingo/
 
 ## Getting Started
 
-Each module builds independently. Requires Go 1.24 or later.
+Each module builds independently. Requires Go 1.25 or later.
 
 ```sh
 cd shingo-core && make build

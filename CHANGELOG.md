@@ -1,5 +1,247 @@
 # Changelog
 
+## 2026-04-15 — Count-Group Light Alerts & Fire Alarm Pass-Through
+
+### Count-Group Advanced-Zone Light Alerts
+
+Real-time safety lighting for advanced zones (crosswalks, forklift aisles). Core polls RDS `/robotsInCountGroup` per configured group and emits Kafka commands that Edge translates into PLC tag writes via WarLink. Designed as a safety-adjacent polling loop with asymmetric hysteresis — ON commits faster than OFF to bias toward caution.
+
+- **Configurable per-group polling** with dedicated RDS client and sub-second poll interval (default 500ms)
+- **N-of-M hysteresis thresholds**: `on_threshold` (2) and `off_threshold` (3) prevent flicker from transient sensor readings
+- **Fail-safe timeout**: forces lights ON after sustained RDS communication failure (default 5s)
+- **Stale-group warnings**: escalating log levels when a group never reports occupied (WARN at 5m, ERROR at 30m)
+- **Audit trail**: all transitions and fail-safe activations logged to the audit table
+- **Feature gate**: empty `groups` list = feature disabled; no polling goroutine started
+
+### Fire Alarm Pass-Through
+
+Feature-gated fire alarm control on the diagnostics admin page. Core relays activate/clear commands to RDS via `/isFire` and `/fireOperations` — RDS owns all robot logic (stop, evacuate, resume). Core is only the communicator; the upgrade path is automating the trigger via a plant-side input (PLC, building alarm system).
+
+- **Two API endpoints** (protected): `GET /api/fire-alarm/status`, `POST /api/fire-alarm/trigger`
+- **Optional interface pattern**: `fleet.FireAlarmController` with adapter delegation — same architecture as `RobotLister`, `VendorProxy`, etc.
+- **SSE broadcast**: real-time `fire-alarm` events push state changes to all connected browsers
+- **Auto-resume checkbox**: when checked, robots resume navigation automatically on alarm clear without manual RDS intervention
+- **Confirm dialogs** on both activate and clear to prevent accidental triggers
+- **Audit trail**: every activate/clear logged with actor, timestamp, and auto-resume setting
+- **Config gate**: `fire_alarm.enabled: false` hides the UI tab and returns 404 on API calls
+
+### Bug Fixes
+
+- **ReadTag name collision**: resolved naming conflict in count-group test that shadowed the WarLink ReadTag method
+- **Nil fleet test panic**: fixed test setup that panicked when fleet backend was nil during count-group wiring tests
+
+### Code Quality
+
+- **Trailing newline cleanup**: fixed 13 files across core and edge missing POSIX trailing newlines
+
+## 2026-04-14 — Order Failure Hardening & Bin Protection
+
+### Bug Fixes
+
+- **Occupied node guard**: refuse to create or move bins onto already-occupied physical nodes, preventing bin stacking
+- **Staging override removal**: lineside bins are now protected from poaching by staging logic
+- **Edge failure notification**: edge is now notified on order failure; broken auto-return disabled pending redesign
+- **Manual swap form fixes**: `manual_swap` claim form hides non-applicable fields, pre-seeds allowed payloads, and allowed-payloads picker populates correctly when switching from `simple` to `manual_swap` during edit
+
+### Features
+
+- **Sticky operator toast**: async order failure notifications persist as a toast on the operator HMI instead of disappearing silently
+
+### Tests
+
+- **Auto-return tests**: updated complex order cancel/fail tests for new auto-return behavior
+- **TC23b skip**: `TestTC23b_CancelThenMoveBin` skipped while auto-return is disabled
+- **Test catalog**: expanded documentation to cover all 262 test functions across 35 files
+
+## 2026-04-13 — Wait Block, Operator UX & Route Visibility
+
+### Features
+
+- **RDS Wait block**: replaced pre-position dropoff with RDS native Wait block for wait-at-node sequences — eliminates dummy location visits
+- **Load bin at node**: operators can load an empty bin already at the node without waiting for a delivery order
+- **Step-by-step route display**: mission detail and test orders pages show the full block-by-block route for each order
+
+### Bug Fixes
+
+- **Auto-return safety**: skip auto-return for complex orders when bin position is uncertain after partial completion
+- **Same-node move prevention**: refuse to dispatch a move order where source and destination resolve to the same node
+- **Single-payload auto-select**: auto-select payload in load bin modal when only one option is available
+- **Mount corruption repair**: restored truncated `BuildKeepStagedCombinedSteps` and removed NUL bytes from `complex.go`
+
+## 2026-04-12 — Cross-Module Deduplication & Code Organization
+
+### Refactoring
+
+- **Shared protocol packages**: extracted duplicated types and helpers into shared packages across core, edge, and protocol modules
+- **Test assertion helpers**: replaced inline test assertions with `testdb` package helpers across core tests
+- **Navigation headers**: added section comments and navigation headers to core and edge router files for IDE navigation
+
+### Bug Fixes
+
+- **Truncated file restoration**: fixed files corrupted during dedup commit
+
+## 2026-04-11 — Structural Refactoring
+
+### Refactoring
+
+- **Characterization tests**: added characterization tests to lock existing behavior before refactoring, then applied 5 structural refactors across core and edge
+- **Edge helper extraction**: shared helpers extracted from changeover and demand code to reduce duplication
+- **Plan discussion items**: implemented items 2, 5, 7 from architecture review (`2567plandiscussion.md`)
+
+## 2026-04-10 — Bin Loader/Unloader Multi-Order Queue
+
+### Features
+
+- **Multi-order queue with kanban demand**: bin loader and unloader nodes now support queued multi-order workflows with automatic kanban-style demand generation. Orders queue at the node and fulfill in sequence.
+
+### Bug Fixes
+
+- **Plant testing fixes**: bin arrival on delivery, cancel guard, and transition idempotency fixes discovered during plant testing
+- **Test infrastructure**: fixed `sql.Open` for testdb admin connections to prevent parallel migration races; completed truncated `TestRegression_CancelEmptyEdgeUUID`
+
+## 2026-04-09 — Bin Loader Stabilization & URL Encoding
+
+### Bug Fixes
+
+- **Bin loader state machine**: fixed wrong UOP count, missing confirm step, and stale HMI state after load operations
+- **Auto-confirm**: bin movement auto-confirm now works correctly; added claim-level auto-confirm setting for bin loader nodes
+- **Node claim editor**: unlocked core node dropdown and preserved bin_loader-specific fields during edit
+- **Staging skip**: bin_loader retrieve-empty orders skip staging step; added HMI refresh safety net
+- **Receipt error propagation**: `ConfirmReceipt` errors now propagate correctly; added Kafka publish timeout
+- **URL encoding**: fixed URL-encoding for PLC names, tag names, node names (spaces), payload manifest paths, and node children paths in Edge HTTP clients
+- **HMI styling**: added background color to load-bin payload picker buttons for visibility
+
+## 2026-04-08 — Database Migration Repairs & Node Guards
+
+### Database
+
+- **Migration v11**: fix `payload_bin_types` FK referencing stale `blueprints` table
+- **Migration v12**: fix `payload_manifest` FK, extract shared `fixPayloadFK` helper
+- **Migration v13**: fix `node_payloads` FK referencing stale `blueprints` table
+
+### Features
+
+- **Reparent/delete guards**: structural error classification prevents orphaning nodes; Edge notified of structural changes
+
+### Bug Fixes
+
+- **Payload modal crashes**: fixed null response crash in payload edit modal for manifest and bin-type fetches
+- **Payload save errors**: payload template save no longer silently discards bin type and manifest errors
+
+## 2026-04-07 — Diagnostics & Move Order Fixes
+
+### Bug Fixes
+
+- **Diagnostics tabs**: fixed tabs not displaying content due to CSS `hide` class conflict with tab switching logic
+- **NGRP move orders**: fixed move order from NGRP source not updating bin location (`planMove` was missing group resolution)
+
+## 2026-04-06 — Edge Cancel & Operator HMI Fixes
+
+### Bug Fixes
+
+- **Edge cancel notification**: fixed cancel notification delivery to edge stations
+- **HMI cache busting**: added cache-busting to prevent stale operator HMI state after actions
+- **CONFIRM button**: fixed operator CONFIRM button not appearing after delivery
+
+## 2026-04-05 — Operator HMI Simplification
+
+### UI/UX
+
+- **HMI streamlining**: removed release-empty and release-partial actions from operator station (rarely used, caused confusion). Added manifest confirm action for bin verification at delivery.
+
+## 2026-04-01 — Changeover Automation & Production Hardening
+
+### Features
+
+- **Changeover automation (Phases 1–5)**: full implementation of automated style changeover with A/B cycling and keep-staged bin handling. Core orchestrates the changeover sequence — abort in-flight orders, A/B cycle material slots, dispatch new material, and confirm completion.
+- **A/B cycling UI**: operator HMI shows changeover progress and A/B cycle state
+- **Keep-staged wiring**: bins staged at lineside are preserved across changeover when the payload is shared between old and new styles
+- **Lot production timestamps**: production timestamped at cell completion for FIFO audit traceability
+
+### Bug Fixes
+
+- **TC-48**: redirect stale steps — fixed redirect patch breaking multi-wait orders
+- **TC-51**: compound premature confirm — fixed compound orders confirming before all children complete
+- **TC-80**: orphaned bin claims from non-atomic terminal transitions
+- **TC-34/TC-49**: complex orders now fail at planning when no bin available (immediate feedback instead of silent dispatch failure)
+- **TC-61**: abort pre-existing orders on affected nodes when changeover starts
+- **TC-62–67**: bin lifecycle bugs and produce node automation fixes
+- **TC-36**: queue order on `claim_failed` instead of permanently failing
+- **Bins stuck staged**: fixed bins stuck in staged state after swap order completion
+- **Fulfillment scanner race**: fixed flaky `TestFulfillmentScanner_QueueToDispatch` with event-driven scan
+- **Receipt confirmation**: hardened receipt confirmation to fix double-writes; added auto-confirm timeout
+- **Vehicle pinning**: pin staged order vehicle on release so RDS doesn't re-dispatch to a different robot
+- **Post-delivery cancel**: fixed bin lock, SSE refresh, catalog prune, and NGRP sync (TC-68–70)
+- **HMI modal buttons**: cycle buttons now shown by order state instead of all at once
+
+### Tests
+
+- **Changeover tests (TC-86–108)**: comprehensive unit tests for `DiffStyleClaims`, A/B produce cycles, and changeover orchestration
+- **Production cycle tests (TC-55–60)**: 6 end-to-end production cycle pattern tests with fleet simulator
+- **Concurrency tests**: 9 new simulator-based concurrency tests with testing infrastructure
+- **Compound order tests**: cascade cancel to compound children + 13 production readiness tests + 9 strengthened existing tests
+- **Test infrastructure**: extracted shared `testdb` package, split test files by domain
+
+### Refactoring
+
+- **Receipt confirmation**: hardened against double-writes with auto-confirm timeout
+- **Test consolidation**: consolidated test mocks, compound setup helpers, bin helpers, and dispatch handler pattern
+- **Wiring optimization**: cached `toStyleID`, extracted A/B predicate, added DB error logging
+- **`CanAcceptOrders`/`AbortNodeOrders`**: extracted reusable abstraction for node order management
+
+## 2026-03-30 — FIFO Retrieval & Bin Dispatch Fixes
+
+### Features
+
+- **Strict FIFO retrieval**: enforced across all retrieval paths. Added COST mode for NGRP lanes (closest-optimal-storage-time).
+- **Buried bin reshuffle**: `planRetrieveEmpty` now detects buried empty bins and triggers a reshuffle move to make them accessible
+
+### Bug Fixes
+
+- **Complex order bin claims**: bins are now claimed at dispatch time, preventing races; staged bins at core nodes are claimable
+- **Ghost robot dispatch**: prevented dispatch when no bin is available at source node
+- **Bin claim release**: claims released on fleet-reported order failure
+- **TC-25 dismissed**: staged bin poaching is a non-issue with one-bin-per-node constraint
+
+### Documentation
+
+- **Fleet simulator catalog**: added/updated test case writeups, restored truncated docs
+- **Line ending normalization**: `.gitattributes` added, all files normalized to LF
+
+## 2026-03-29 — Compound Order Fixes & Test Extraction
+
+### Bug Fixes
+
+- **Compound sibling cancellation**: cascade cancel to all compound children when parent is cancelled
+- **Return order source node**: `maybeCreateReturnOrder` now correctly sets `SourceNode`
+- **Multi-bin completion**: added `order_bins` junction table for complex orders that move multiple bins
+
+### Refactoring
+
+- **Shared testdb package**: extracted from inline helpers; test files split by domain for navigability
+
+## 2026-03-28 — FIFO, Concurrency Testing & Bin Dispatch
+
+### Features
+
+- **Strict FIFO retrieval**: oldest eligible bin always retrieved first from NGRP lanes
+- **COST mode**: closest-optimal-storage-time retrieval for performance-sensitive lanes
+- **Concurrency testing infrastructure**: fleet simulator framework for deterministic multi-robot scenario testing; 9 initial tests
+
+### Bug Fixes
+
+- **TC-36**: orders re-queued on `claim_failed` instead of permanently failing
+- **Buried empty bins**: detected and reshuffled when blocking retrieval
+- **Complex bin claims**: staged bins at core nodes now claimable for complex orders
+- **Dispatch-time claiming**: bins claimed atomically at dispatch to prevent races
+
+## 2026-03-27 — Dispatch Safety
+
+### Bug Fixes
+
+- **Ghost dispatch prevention**: refuse to dispatch when no bin is available at source node
+- **Claim release on failure**: bin claims released when fleet reports order failure
+
 ## 2026-03-26 — Performance, SSE Stability & UI Polish
 
 ### Performance

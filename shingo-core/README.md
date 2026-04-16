@@ -4,7 +4,7 @@ Central server for the Shingo material tracking system. Receives transport order
 
 ## Prerequisites
 
-- Go 1.24+
+- Go 1.25+
 - PostgreSQL 14+
 - Kafka broker
 - Seer RDS fleet backend (or compatible)
@@ -70,6 +70,7 @@ Without a filter (`--log-debug`), all subsystems are logged.
 | `reconciliation` | Drift detection and recovery signals |
 | `nodestate` | Node state cache operations |
 | `engine` | Engine lifecycle events |
+| `countgroup` | Advanced-zone polling, hysteresis transitions, fail-safe |
 
 ## Web Interface
 
@@ -85,7 +86,7 @@ Shingo Core provides a management interface for fleet operations, inventory, and
 | Payloads | `/payloads` | Payload template definitions and manifest configuration |
 | Demand | `/demand` | Material demand planning and order generation |
 | Test Orders | `/test-orders` | Order submission for testing (Kafka and direct fleet) |
-| Diagnostics | `/diagnostics` | Kafka, fleet, and edge connectivity status |
+| Diagnostics | `/diagnostics` | Debug logs, CMS transactions, reconciliation, recovery actions, and fire alarm control |
 | Configuration | `/config` | Runtime settings (fleet, messaging) |
 | Fleet Explorer | `/fleet-explorer` | Raw API explorer for the fleet backend |
 
@@ -97,6 +98,8 @@ See [UI Guide](docs/ui-guide.md) for detailed page descriptions.
 - Core tracks processed inbound envelope IDs in a durable inbox to suppress replayed mutating commands.
 - The diagnostics page includes reconciliation drift checks and recovery tooling for dead-lettered outbox messages.
 - The `/health` endpoint now reflects reconciliation severity in addition to dependency connectivity.
+- Count-group polling includes a fail-safe timeout that forces safety lights on during sustained RDS communication failure.
+- Fire alarm activate/clear commands are audit-logged with actor, timestamp, and auto-resume setting.
 
 ## Documentation
 

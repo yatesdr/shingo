@@ -109,6 +109,10 @@ Shingo Edge integrates with PLCs through the WarLink driver service. WarLink pro
 
 **Reporting points** bind PLC counter tags to job styles. When a reporting point is active, Edge polls the counter at a configurable interval, calculates production deltas, and decrements UOP remaining on active bins. When UOP remaining drops below the configured threshold, a replacement bin is ordered automatically.
 
+### Count-Group Safety Lighting
+
+Edge receives count-group light commands from Core over Kafka and translates them into PLC tag writes via WarLink. When Core detects robots in an advanced zone (crosswalk, forklift aisle), Edge sets the corresponding PLC tag to drive a safety indicator light. Edge handles the WarLink handshake — tag publishing, heartbeat acknowledgement, and timeout detection — and logs warnings when PLC acknowledgement is slow or missing.
+
 ### Order Lifecycle
 
 Orders follow a linear lifecycle on the edge side:
