@@ -125,4 +125,4 @@ func AssertBinClaimedBy(t *testing.T, db *store.DB, binID, wantOrderID int64) {
 	} else if *bin.ClaimedBy != wantOrderID {
 		t.Errorf("bin %d: claimed by %d, want %d", binID, *bin.ClaimedBy, wantOrderID)
 	}
-} 
+}
