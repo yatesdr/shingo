@@ -76,6 +76,9 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		cfg.Messaging.Kafka.GroupID = r.FormValue("group_id")
 		cfg.Messaging.OrdersTopic = r.FormValue("orders_topic")
 		cfg.Messaging.DispatchTopic = r.FormValue("dispatch_topic")
+	case "fire_alarm":
+		cfg.FireAlarm.Enabled = r.FormValue("fa_enabled") == "on"
+		cfg.FireAlarm.AutoResumeDefault = r.FormValue("fa_auto_resume") == "on"
 	default:
 		cfg.Unlock()
 		http.Error(w, "unknown section", http.StatusBadRequest)

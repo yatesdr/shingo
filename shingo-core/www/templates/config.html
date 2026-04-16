@@ -131,6 +131,38 @@
       <button type="submit" class="btn btn-primary btn-sm">Save</button>
     </form>
   </div>
+  <!-- Fire Alarm -->
+  <div class="card mb-2">
+    <h3>Fire Alarm</h3>
+    <form method="POST" action="/config/save">
+      <input type="hidden" name="section" value="fire_alarm">
+      <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.75rem;">
+        Pass-through to RDS fire alarm endpoints. When enabled, a Fire Alarm tab
+        appears on the Diagnostics page. RDS owns all robot logic.
+      </p>
+      <div class="grid grid-2">
+        <div class="form-group">
+          <label style="display:inline;cursor:pointer;">
+            <input type="checkbox" name="fa_enabled" {{if .Config.FireAlarm.Enabled}}checked{{end}}>
+            Enabled
+          </label>
+          <div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem;">
+            Show Fire Alarm tab on Diagnostics page and expose API endpoints.
+          </div>
+        </div>
+        <div class="form-group">
+          <label style="display:inline;cursor:pointer;">
+            <input type="checkbox" name="fa_auto_resume" {{if .Config.FireAlarm.AutoResumeDefault}}checked{{end}}>
+            Auto-resume on clear (default)
+          </label>
+          <div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem;">
+            Default checkbox state for auto-resume when clearing the alarm.
+          </div>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Save</button>
+    </form>
+  </div>
 </div>
 
 <div id="page-data" data-broker-count="{{len .Config.Messaging.Kafka.Brokers}}"></div>
