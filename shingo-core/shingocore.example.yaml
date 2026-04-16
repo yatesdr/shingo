@@ -47,3 +47,10 @@ count_groups:
     #   enabled: true
     # - name: ForkliftAisleN
     #   enabled: true
+
+# Fire alarm pass-through. Core relays activate/clear commands to RDS and
+# broadcasts state via SSE. RDS owns all robot logic (stop, evacuate, resume).
+# When false the UI tab is hidden and the API returns 404.
+fire_alarm:
+  enabled: false                        # Set true once RDS fire-alarm endpoints are available.
+  auto_resume_default: true             # Default checkbox state for "auto-resume on clear".

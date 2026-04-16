@@ -286,6 +286,13 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     });
 
+    es.addEventListener('fire-alarm', function(e) {
+      if (typeof window.onFireAlarmUpdate === 'function') {
+        var data = JSON.parse(e.data);
+        window.onFireAlarmUpdate(data);
+      }
+    });
+
     es.onerror = function() {
       es.close();
       setTimeout(connect, 3000);

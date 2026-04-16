@@ -251,6 +251,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 				r.Post("/outbox/replay", h.apiReplayOutbox)
 				r.Post("/recovery/repair", h.apiRepairAnomaly)
 
+				// Fire alarm
+				r.Get("/fire-alarm/status", h.apiFireAlarmStatus)
+				r.Post("/fire-alarm/trigger", h.apiFireAlarmTrigger)
+
 				// Demands
 				r.Post("/demands", h.apiCreateDemand)
 				r.Put("/demands/{id}", h.apiUpdateDemand)

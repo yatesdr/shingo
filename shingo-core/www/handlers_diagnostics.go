@@ -5,6 +5,7 @@ import (
 )
 
 func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
+	cfg := h.engine.AppConfig()
 	subsystem := r.URL.Query().Get("subsystem")
 	anomalies, err := h.engine.Reconciliation().ListAnomalies()
 	if err != nil {
@@ -22,13 +23,15 @@ func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{
-		"Page":            "logs",
-		"Entries":         h.debugLog.Entries(subsystem),
-		"Subsystems":      h.debugLog.Subsystems(),
-		"Subsystem":       subsystem,
-		"Anomalies":       anomalies,
-		"Recon":           summary,
-		"RecoveryActions": recoveryActions,
+		"Page":                "logs", // DO NOT change — drives nav active state
+		"Entries":             h.debugLog.Entries(subsystem),
+		"Subsystems":          h.debugLog.Subsystems(),
+		"Subsystem":           subsystem,
+		"Anomalies":           anomalies,
+		"Recon":               summary,
+		"RecoveryActions":     recoveryActions,
+		"FireAlarmEnabled":    cfg.FireAlarm.Enabled,
+		"FireAlarmAutoResume": cfg.FireAlarm.AutoResumeDefault,
 	}
 	h.render(w, r, "diagnostics.html", data)
 }

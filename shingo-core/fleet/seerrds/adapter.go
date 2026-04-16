@@ -276,6 +276,16 @@ func (a *Adapter) GetSceneAreas() ([]fleet.SceneArea, error) {
 	return areas, nil
 }
 
+// --- fleet.FireAlarmController ---
+
+func (a *Adapter) GetFireAlarmStatus() (*fleet.FireAlarmStatus, error) {
+	return a.client.GetFireAlarmStatus()
+}
+
+func (a *Adapter) SetFireAlarm(on bool, autoResume bool) error {
+	return a.client.SetFireAlarm(on, autoResume)
+}
+
 // RDSClient returns the underlying rds.Client for vendor-specific operations
 // (simulation, etc.) that don't belong in the fleet interface.
 func (a *Adapter) RDSClient() *rds.Client {

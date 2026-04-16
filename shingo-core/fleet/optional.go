@@ -57,6 +57,19 @@ type VendorCommander interface {
 	GetVendorOrderDetail(vendorOrderID string) (*VendorOrderDetail, error)
 }
 
+// FireAlarmStatus is a vendor-neutral representation of fire alarm state.
+type FireAlarmStatus struct {
+	IsFire    bool   `json:"is_fire"`
+	ChangedAt string `json:"changed_at"` // ISO timestamp from vendor, empty if never triggered
+}
+
+// FireAlarmController provides fire alarm control for supported fleet backends.
+// Web handlers type-assert Backend to this interface.
+type FireAlarmController interface {
+	GetFireAlarmStatus() (*FireAlarmStatus, error)
+	SetFireAlarm(on bool, autoResume bool) error
+}
+
 // RobotStatus is a vendor-neutral representation of a robot's state.
 type RobotStatus struct {
 	VehicleID      string

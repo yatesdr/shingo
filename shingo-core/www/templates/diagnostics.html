@@ -4,6 +4,9 @@
   <button class="diag-tab" onclick="switchDiagTab('cms')">CMS Transactions</button>
   <button class="diag-tab" onclick="switchDiagTab('recon')">Reconciliation</button>
   <button class="diag-tab" onclick="switchDiagTab('recovery')">Recovery</button>
+  {{if .FireAlarmEnabled}}
+  <button class="diag-tab" data-tab="fire" onclick="switchDiagTab('fire')">Fire Alarm</button>
+  {{end}}
 </div>
 
 <!-- Debug Log Tab -->
@@ -218,6 +221,57 @@
       </table>
     </div>
   </div>
+</div>
+
+<!-- Fire Alarm Tab -->
+<div id="tab-fire" class="hide">
+  <h1>Fire Alarm</h1>
+
+  {{if .FireAlarmEnabled}}
+  <div class="card mb-2">
+    <div class="flex flex-between items-center">
+      <div>
+        <span style="font-size:1.1rem;font-weight:600;">Status:</span>
+        <span id="fa-status" style="font-size:1.1rem;font-weight:700;margin-left:8px;">
+          Loading...
+        </span>
+        <span id="fa-changed-at" style="font-size:0.85rem;color:var(--text-muted);margin-left:8px;"></span>
+      </div>
+      <div class="flex gap-1 items-center">
+        <label style="display:inline;font-weight:normal;font-size:0.9rem;cursor:pointer;"
+               title="When checked, robots automatically resume navigation when the alarm is cleared. When unchecked, operators must manually click Continue Navigation in RDS.">
+          <input type="checkbox" id="fa-auto-resume"
+                 {{if .FireAlarmAutoResume}}checked{{end}}>
+          Auto-resume on clear
+        </label>
+        <button id="fa-btn-activate" class="btn btn-danger"
+                onclick="fireAlarmTrigger(true)" style="display:none;">
+          Activate Fire Alarm
+        </button>
+        <button id="fa-btn-clear" class="btn btn-primary"
+                onclick="fireAlarmTrigger(false)" style="display:none;">
+          Clear Fire Alarm
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <p style="color:var(--text-muted);font-size:0.85rem;">
+      Activating the fire alarm sends a command to RDS. Vehicles outside the fire alarm
+      area stop in place; vehicles inside evacuate then stop. Clearing the alarm lifts
+      the hold — if "auto-resume" is checked, robots resume automatically without
+      needing to click "Continue Navigation" in RDS.
+    </p>
+  </div>
+  {{else}}
+  <div class="card">
+    <p style="color:var(--text-muted);">
+      Fire alarm feature is disabled. Set <code>fire_alarm.enabled: true</code> in
+      <code>shingocore.yaml</code> and restart to enable.
+    </p>
+  </div>
+  {{end}}
 </div>
 
 <script src="/static/pages/diagnostics.js"></script>

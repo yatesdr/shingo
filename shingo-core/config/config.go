@@ -17,6 +17,7 @@ type Config struct {
 	Messaging   MessagingConfig   `yaml:"messaging"`
 	Staging     StagingConfig     `yaml:"staging"`
 	CountGroups CountGroupsConfig `yaml:"count_groups"`
+	FireAlarm   FireAlarmConfig   `yaml:"fire_alarm"`
 }
 
 // CountGroupsConfig configures the advanced-zone polling feature.
@@ -36,6 +37,11 @@ type CountGroupsConfig struct {
 type CountGroupConfig struct {
 	Name    string `yaml:"name"`
 	Enabled bool   `yaml:"enabled"`
+}
+
+type FireAlarmConfig struct {
+	Enabled           bool `yaml:"enabled"`             // feature gate; false = hidden from UI
+	AutoResumeDefault bool `yaml:"auto_resume_default"` // default checkbox state for auto-resume on clear
 }
 
 type StagingConfig struct {

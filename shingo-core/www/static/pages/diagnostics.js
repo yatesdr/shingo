@@ -5,12 +5,19 @@
     document.getElementById('tab-cms').style.display = tab === 'cms' ? 'block' : 'none';
     document.getElementById('tab-recon').style.display = tab === 'recon' ? 'block' : 'none';
     document.getElementById('tab-recovery').style.display = tab === 'recovery' ? 'block' : 'none';
+    var tabFire = document.getElementById('tab-fire');
+    if (tabFire) tabFire.style.display = tab === 'fire' ? 'block' : 'none';
     var tabs = document.querySelectorAll('.diag-tab');
     tabs.forEach(function(t) { t.classList.remove('active'); });
     if (tab === 'debug') tabs[0].classList.add('active');
     else if (tab === 'cms') tabs[1].classList.add('active');
     else if (tab === 'recon') tabs[2].classList.add('active');
-    else tabs[3].classList.add('active');
+    else if (tab === 'recovery') tabs[3].classList.add('active');
+    var fireTab = document.querySelector('.diag-tab[data-tab="fire"]');
+    if (fireTab) {
+      if (tab === 'fire') fireTab.classList.add('active');
+      else fireTab.classList.remove('active');
+    }
 
     if (tab === 'cms' && !cmsLoaded) {
       cmsLoaded = true;
@@ -23,6 +30,10 @@
     if (tab === 'recovery' && !recoveryLoaded) {
       recoveryLoaded = true;
       loadDeadLetters();
+    }
+    if (tab === 'fire' && !fireLoaded) {
+      fireLoaded = true;
+      loadFireAlarmStatus();
     }
   };
 
@@ -81,6 +92,7 @@
   var recoveryBody = document.getElementById('recovery-body');
   var recoveryActionsBody = document.getElementById('recovery-actions-body');
   var recoveryLoaded = false;
+  var fireLoaded = false;
 
   function formatCMSTime(ts) {
     var d = new Date(ts);
@@ -271,5 +283,89 @@
         loadReconciliation();
         loadDeadLetters();
       });
+  };
+
+  // ── Fire Alarm ─────────────────────────────────────────
+
+  function loadFireAlarmStatus() {
+    fetch('/api/fire-alarm/status')
+      .then(function(r) {
+        if (!r.ok) throw new Error('status query failed');
+        return r.json();
+      })
+      .then(function(data) {
+        updateFireAlarmUI(data.is_fire, data.changed_at);
+      })
+      .catch(function() {
+        var el = document.getElementById('fa-status');
+        if (el) {
+          el.textContent = 'Unavailable';
+          el.style.color = 'var(--text-muted)';
+        }
+      });
+  }
+
+  function updateFireAlarmUI(isFire, changedAt) {
+    var statusEl = document.getElementById('fa-status');
+    var changedEl = document.getElementById('fa-changed-at');
+    var btnActivate = document.getElementById('fa-btn-activate');
+    var btnClear = document.getElementById('fa-btn-clear');
+
+    if (!statusEl) return;
+
+    if (isFire) {
+      statusEl.textContent = 'ACTIVE';
+      statusEl.style.color = '#dc2626';
+      if (btnActivate) btnActivate.style.display = 'none';
+      if (btnClear) btnClear.style.display = 'inline-block';
+    } else {
+      statusEl.textContent = 'Clear';
+      statusEl.style.color = '#16a34a';
+      if (btnActivate) btnActivate.style.display = 'inline-block';
+      if (btnClear) btnClear.style.display = 'none';
+    }
+
+    if (changedEl && changedAt) {
+      var d = new Date(changedAt);
+      if (!isNaN(d.getTime())) {
+        changedEl.textContent = 'since ' + d.toLocaleString();
+      } else {
+        changedEl.textContent = '';
+      }
+    } else if (changedEl) {
+      changedEl.textContent = '';
+    }
+  }
+
+  window.fireAlarmTrigger = function(on) {
+    var autoResume = false;
+    var cb = document.getElementById('fa-auto-resume');
+    if (cb) autoResume = cb.checked;
+
+    var action = on ? 'ACTIVATE' : 'CLEAR';
+    if (!confirm('Are you sure you want to ' + action + ' the fire alarm?')) {
+      return;
+    }
+
+    fetch('/api/fire-alarm/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: on, autoResume: autoResume })
+    })
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'trigger failed'); });
+        return r.json();
+      })
+      .then(function() {
+        loadFireAlarmStatus();
+      })
+      .catch(function(err) {
+        alert('Fire alarm command failed: ' + err.message);
+      });
+  };
+
+  // SSE callback — wired from app.js es.addEventListener('fire-alarm', ...)
+  window.onFireAlarmUpdate = function(data) {
+    updateFireAlarmUI(data.is_fire, null);
   };
 })();
