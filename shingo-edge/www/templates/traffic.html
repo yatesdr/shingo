@@ -1,0 +1,126 @@
+{{template "header" .}}
+
+<div class="page-header">
+    <h1>Traffic Zones</h1>
+    <p style="color:var(--text-muted);font-size:0.85rem;">
+        Edge-side bindings for advanced-zone warning lights. Each binding maps a count-group
+        name (matching core and Roboshop) to a PLC and WarLink request tag.
+    </p>
+</div>
+
+<div id="toast-area"></div>
+
+<!-- Heartbeat Config -->
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header"><strong>Heartbeat</strong></div>
+    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="margin:0;min-width:14rem;flex:1">
+            <label>Heartbeat Tag</label>
+            <input type="text" id="heartbeat-tag" class="form-input" value="{{.HeartbeatTag}}" placeholder="e.g. Shingo_Alive">
+        </div>
+        <div class="form-group" style="margin:0;min-width:12rem;flex:1">
+            <label>Heartbeat PLC</label>
+            <select id="heartbeat-plc" class="form-input">
+                <option value="">-- select --</option>
+                {{range .PLCNames}}
+                <option value="{{.}}" {{if eq . $.HeartbeatPLC}}selected{{end}}>{{.}}</option>
+                {{end}}
+            </select>
+        </div>
+        <button class="btn btn-primary" onclick="saveHeartbeat()">Save Heartbeat</button>
+    </div>
+</div>
+
+<!-- Bindings Table -->
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header"><strong>Zone Bindings</strong></div>
+    <div class="card-body">
+        <table class="table" style="width:100%">
+            <thead>
+                <tr>
+                    <th>Zone Name</th>
+                    <th>PLC</th>
+                    <th>Request Tag</th>
+                    <th style="width:6rem">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="bindings-body">
+                {{range .Bindings}}
+                <tr id="binding-row-{{.Name}}">
+                    <td><code>{{.Name}}</code></td>
+                    <td>{{.PLC}}</td>
+                    <td><code>{{.RequestTag}}</code></td>
+                    <td><button class="btn btn-sm btn-danger" onclick="deleteBinding('{{.Name}}')">Remove</button></td>
+                </tr>
+                {{else}}
+                <tr id="binding-empty">
+                    <td colspan="4" style="color:var(--text-muted);text-align:center">No bindings configured.</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Binding -->
+<div class="card" style="margin-bottom:1rem">
+    <div class="card-header"><strong>Add Binding</strong></div>
+    <div class="card-body" style="display:flex;gap:0.75rem;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="margin:0;min-width:12rem;flex:1">
+            <label>Zone Name</label>
+            <input type="text" id="new-name" class="form-input" placeholder="Exact name from Roboshop">
+        </div>
+        <div class="form-group" style="margin:0;min-width:10rem;flex:1">
+            <label>PLC</label>
+            <select id="new-plc" class="form-input">
+                <option value="">-- select --</option>
+                {{range .PLCNames}}
+                <option value="{{.}}">{{.}}</option>
+                {{end}}
+            </select>
+        </div>
+        <div class="form-group" style="margin:0;min-width:14rem;flex:1">
+            <label>Request Tag</label>
+            <input type="text" id="new-request-tag" class="form-input" placeholder="e.g. Shingo_Crosswalk1_Req">
+        </div>
+        <button class="btn btn-primary" onclick="addBinding()">Add</button>
+    </div>
+</div>
+
+<script>
+async function saveHeartbeat() {
+    try {
+        await ShingoEdge.api.put('/api/traffic/heartbeat', {
+            heartbeat_tag: document.getElementById('heartbeat-tag').value,
+            heartbeat_plc: document.getElementById('heartbeat-plc').value
+        });
+        ShingoEdge.toast('Heartbeat config saved', 'success');
+    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+}
+
+async function addBinding() {
+    var name = document.getElementById('new-name').value.trim();
+    var plc = document.getElementById('new-plc').value;
+    var tag = document.getElementById('new-request-tag').value.trim();
+    if (!name || !plc || !tag) { ShingoEdge.toast('All fields are required', 'error'); return; }
+    try {
+        await ShingoEdge.api.post('/api/traffic/bindings', {
+            name: name, plc: plc, request_tag: tag
+        });
+        ShingoEdge.toast('Binding added', 'success');
+        location.reload();
+    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+}
+
+async function deleteBinding(name) {
+    if (!confirm('Remove binding for "' + name + '"?')) return;
+    try {
+        await ShingoEdge.api.post('/api/traffic/bindings/delete', { name: name });
+        ShingoEdge.toast('Binding removed', 'success');
+        var row = document.getElementById('binding-row-' + name);
+        if (row) row.remove();
+    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+}
+</script>
+
+{{template "footer" .}}
