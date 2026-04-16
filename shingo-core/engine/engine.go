@@ -55,7 +55,8 @@ type Engine struct {
 	msgClient       *messaging.Client
 	dispatcher      *dispatch.Dispatcher
 	tracker         fleet.OrderTracker
-	countGroup      *countgroup.Runner // nil if feature disabled / no groups configured
+	countGroup      *countgroup.Runner                      // nil if feature disabled / no groups configured
+	countGroupBuild func(countgroup.Emitter) *countgroup.Runner // stored for ReconfigureCountGroups
 	Events          *EventBus
 	logFn           LogFunc
 	debugLog        func(string, ...any)
@@ -239,6 +240,7 @@ func (e *Engine) SetCountGroupRunner(build func(countgroup.Emitter) *countgroup.
 	if build == nil {
 		return
 	}
+	e.countGroupBuild = build
 	e.countGroup = build(&countGroupEventEmitter{bus: e.Events})
 }
 
@@ -377,6 +379,28 @@ func (e *Engine) ReconfigureFleet() {
 	})
 	e.logFn("engine: fleet reconfigured (%s)", e.fleet.Name())
 	e.checkConnectionStatus()
+}
+
+// ReconfigureCountGroups stops the current count-group runner and starts
+// a new one with the latest config. Safe to call when the builder is nil
+// (feature was never enabled) — it logs and returns.
+func (e *Engine) ReconfigureCountGroups() {
+	if e.countGroupBuild == nil {
+		e.logFn("engine: count-group reconfigure skipped (no builder registered)")
+		return
+	}
+
+	// Stop the old runner gracefully.
+	if e.countGroup != nil {
+		e.countGroup.Stop()
+		e.logFn("engine: count-group runner stopped for reconfiguration")
+	}
+
+	// Build and start a fresh runner — the builder's closure reads
+	// cfg.CountGroups at call time, so it picks up the new group list.
+	e.countGroup = e.countGroupBuild(&countGroupEventEmitter{bus: e.Events})
+	e.countGroup.Start()
+	e.logFn("engine: count-group runner reconfigured (%d groups)", len(e.cfg.CountGroups.Groups))
 }
 
 // ReconfigureMessaging reconnects messaging with current config.

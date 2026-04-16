@@ -231,8 +231,9 @@ func main() {
 	// ── Count-group runner (advanced-zone light alerts) ────────────────
 	// Uses a dedicated short-timeout RDS client separate from the 10s
 	// fleet adapter so one slow response can't back up N poll cycles.
-	// Runner is a no-op if cfg.CountGroups.Groups is empty.
-	if len(cfg.CountGroups.Groups) > 0 {
+	// Always register the builder so the Traffic UI can add groups at
+	// runtime. Runner.Start() is a no-op if no groups are enabled.
+	{
 		cgTimeout := cfg.CountGroups.RDSTimeout
 		if cgTimeout <= 0 {
 			cgTimeout = 400 * time.Millisecond

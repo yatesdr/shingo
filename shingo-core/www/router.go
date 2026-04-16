@@ -107,6 +107,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		r.Get("/demand", h.handleDemand)
 		r.Get("/missions", h.handleMissions)
 		r.Get("/missions/{orderID}", h.handleMissionDetail)
+		r.Get("/traffic", h.handleTraffic)
 
 		// ── API routes ─────────────────────────────────────────
 		r.Route("/api", func(r chi.Router) {
@@ -146,6 +147,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			r.Get("/bins/by-node", h.apiBinsByNode)
 			r.Get("/bins/available", h.apiListAvailableBins)
 			r.Get("/bins/detail", h.apiBinDetail)
+
+			// Traffic (count groups)
+			r.Get("/traffic/groups", h.apiTrafficGroups)
 
 			// Telemetry
 			r.Get("/telemetry/node-bins", h.apiTelemetryNodeBins)
@@ -279,6 +283,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 			r.Get("/config", h.handleConfig)
 			r.Post("/config/save", h.handleConfigSave)
 			r.Get("/fleet-explorer", h.handleFleetExplorer)
+
+			// Traffic (count group CRUD)
+			r.Post("/traffic/save", h.handleTrafficSave)
+			r.Post("/traffic/add", h.handleTrafficAdd)
+			r.Post("/traffic/delete", h.handleTrafficDelete)
 
 			// Node CRUD
 			r.Post("/nodes/create", h.handleNodeCreate)

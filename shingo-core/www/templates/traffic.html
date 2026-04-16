@@ -1,0 +1,94 @@
+{{define "content"}}
+<div>
+  <h1 class="mb-2">Traffic Zones</h1>
+  <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:1rem;">
+    Advanced-zone count groups for pedestrian warning lights. Group names must match
+    the zone names configured in Roboshop (case-sensitive). When enabled, shingo polls
+    RDS and commands edge to drive PLC warning lights via WarLink.
+  </p>
+
+  {{if .Saved}}
+  <div class="alert alert-ok mb-2">
+    {{if eq .Saved "added"}}Group added.
+    {{else if eq .Saved "deleted"}}Group removed.
+    {{else}}Groups saved.{{end}}
+  </div>
+  {{end}}
+
+  {{if .Error}}
+  <div class="alert alert-danger mb-2">
+    {{if eq .Error "empty"}}Group name cannot be empty.
+    {{else if eq .Error "duplicate"}}A group with that name already exists.
+    {{else}}Error: {{.Error}}{{end}}
+  </div>
+  {{end}}
+
+  <!-- Existing groups -->
+  <div class="card mb-2">
+    <h3>Count Groups</h3>
+    {{if .Groups}}
+    <form method="POST" action="/traffic/save" id="traffic-form">
+      <table class="table" style="width:100%;">
+        <thead>
+          <tr>
+            <th style="width:50%">Zone Name (from Roboshop)</th>
+            <th style="width:25%">Enabled</th>
+            <th style="width:25%">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="group-rows">
+          {{range $i, $g := .Groups}}
+          <tr>
+            <td>
+              <input type="text" name="group_name_{{$i}}" value="{{$g.Name}}" class="input-full"
+                     placeholder="Zone name from Roboshop" required>
+            </td>
+            <td>
+              <label style="cursor:pointer;">
+                <input type="checkbox" name="group_enabled_{{$i}}" {{if $g.Enabled}}checked{{end}}>
+                Active
+              </label>
+            </td>
+            <td>
+              <button type="button" class="btn btn-danger btn-sm" onclick="deleteGroup('{{$g.Name}}')">Remove</button>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      <button type="submit" class="btn btn-primary btn-sm">Save All</button>
+    </form>
+    {{else}}
+    <p style="color:var(--text-muted);">No count groups configured. Add one below.</p>
+    {{end}}
+  </div>
+
+  <!-- Add new group -->
+  <div class="card mb-2">
+    <h3>Add Zone</h3>
+    <form method="POST" action="/traffic/add" class="flex gap-1" style="align-items:flex-end;">
+      <div class="form-group" style="flex:1;">
+        <label>Zone Name</label>
+        <input type="text" name="name" placeholder="Exact name from Roboshop (case-sensitive)" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Add</button>
+    </form>
+  </div>
+</div>
+
+<script>
+function deleteGroup(name) {
+  if (!confirm('Remove zone "' + name + '"? The runner will stop polling this group.')) return;
+  var form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/traffic/delete';
+  var input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'name';
+  input.value = name;
+  form.appendChild(input);
+  document.body.appendChild(form);
+  form.submit();
+}
+</script>
+{{end}}
