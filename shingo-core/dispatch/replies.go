@@ -2,6 +2,7 @@ package dispatch
 
 import "shingo/protocol"
 
+// TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
 func (d *Dispatcher) coreAddress() protocol.Address {
 	return d.replies.CoreAddress()
 }

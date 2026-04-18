@@ -47,6 +47,7 @@ func (h *EdgeHandler) SetOrderStatusHandler(fn func([]protocol.OrderStatusSnapsh
 	h.onOrderStatuses = fn
 }
 
+// TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
 func (h *EdgeHandler) SetNodeStateHandler(fn func([]protocol.NodeStateEntry)) {
 	h.onNodeState = fn
 }

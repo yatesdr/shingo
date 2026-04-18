@@ -315,6 +315,7 @@ func stateDir(configPath string) string {
 	return filepath.Join(dir, ".shingoedge-backup")
 }
 
+// TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
 func hashBytes(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])

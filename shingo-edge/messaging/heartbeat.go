@@ -119,6 +119,7 @@ func (h *Heartbeater) RequestCatalogSync() {
 }
 
 // RequestNodeState sends a node state request to core for the given node names.
+// TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
 func (h *Heartbeater) RequestNodeState(nodes []string) {
 	env, err := protocol.NewDataEnvelope(
 		protocol.SubjectNodeStateRequest,
