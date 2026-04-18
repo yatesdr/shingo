@@ -1,88 +1,345 @@
 # Changelog
 
-## 2026-04-18 — Architecture Stage 9: Narrow Interfaces, Scenesync Extraction, Docker-Gated Tests
+## 2026-04-18 — Architecture Refactor: Stages 1-9 (shingo-core)
 
-### Consumer-Side Narrow Interfaces
+Nine-stage architectural cleanup of `shingo-core`, landed as one squashed
+commit on `main` after being developed on `refactor/shingo-architecture`.
+Public API surface and wire protocol are preserved; the changes are
+internal organization, test structure, and documentation.
 
-Two packages now hold their collaborators behind narrow interfaces instead of
-concrete dispatcher types. Structural typing means `*dispatch.Dispatcher` and
-`*dispatch.DefaultResolver` satisfy them automatically — the engine wiring in
-`cmd/shingocore/main.go` is unchanged.
+The subsections below walk through each stage in the order it landed.
 
-- **`fulfillment.Dispatcher`** (1 method) and **`fulfillment.Resolver`** (1 method)
-  — declared in `fulfillment/dispatcher.go`, held on `Scanner` fields. Lets
-  `scanner_test.go` stub one-method fakes, closing the coverage gap flagged in
-  the Stage 7 scope note.
-- **`messaging.Dispatcher`** (8 methods covering all order-channel handlers)
-  — declared in `messaging/dispatcher.go`, held by `CoreHandler`. Removes the
-  `messaging → dispatch` import edge so dispatch can't leak transport
-  assumptions back up to the handler.
-- **Compile-time assertions** (`var _ Dispatcher = (*dispatch.Dispatcher)(nil)`)
-  catch drift before any caller-site build failure.
+### Stage 1 — `engine.DB()` → Named Engine Methods (www)
 
-### Scenesync Package Extraction
+`www/` handlers no longer receive a `*store.DB` handle through
+`engine.DB()` and pick arbitrary queries off it. The `EngineAccess`
+interface gains 116 named, single-purpose query methods; handlers call
+`h.engine.ListBins()` / `h.engine.GetNode()` / etc. directly.
 
-New `shingocore/scenesync` package owns fleet→DB scene reconciliation logic.
-Exposes a narrow 8-method `Store` interface (DeleteScenePointsByArea,
-UpsertScenePoint, GetNodeTypeByCode, GetNodeByName, CreateNode, UpdateNode,
-ListNodes, DeleteNode) plus LogFn/NodeChangeFn callback types.
+- `engine/engine_db_methods.go` — 116 alphabetized one-line delegates
+  to `*store.DB` keep the implementation thin
+- `DB()` removed from `EngineAccess`; still exists as a concrete
+  method on `*engine.Engine` for `router.go`'s `ensureDefaultAdmin`
+  callsite
+- `www/nodes_page_data.go` takes a narrow `nodesPageDataStore`
+  interface so `getNodesPageData` remains testable with a fake
+- Prep commit characterized the seven handler write-paths affected
+  (nodegroup, orders, test_orders, nodes, demand, auth, bins-gaps)
+  with HTTP-surface tests so Stage 1 could run green without touching
+  test expectations
+
+### Stage 2A — `domain/` Package
+
+Pure data types lifted out of the store aggregates into a new
+persistence-free `shingocore/domain/` package so higher layers
+(dispatch, engine, service, www) can reference the shapes without
+pulling in `database/sql`.
+
+Types moved: `Bin` (+`Manifest`, `ManifestEntry`, `Bin.ParseManifest`),
+`BinType`, `Node`, `NodeType`, `NodeProperty`, `Payload`,
+`PayloadManifestItem`, `Order`, `OrderBin`. Each store sub-package
+retains the local name via a one-line `type Bin = domain.Bin` alias so
+every existing call site compiles untouched. Non-pure types
+(`NodeTileState` view projection, `orders.History`, `orders.Filter`,
+`orders.BinArrivalInstruction`, scan helpers) stay in place.
+
+### Stage 2C — `wiring.go` Split by Functional Concern
+
+`engine/wiring.go` (~1050 LOC spanning fleet status mapping, completion,
+staging, auto-return, kanban, telemetry, and count-group dispatch) split
+into per-concern sibling files. The master `wireEventHandlers` registry
+and `sendToEdge` helper stay in `wiring.go` so the reactive contract
+still reads top-to-bottom in one place.
+
+- `wiring_vendor_status.go`, `wiring_completion.go`,
+  `wiring_staging.go`, `wiring_auto_return.go`, `wiring_kanban.go`,
+  `wiring_telemetry.go`, `wiring_count_group.go` each track a single
+  concern
+- No symbol visibility or signature changes; no call-site edits
+- New filenames align with existing per-concern `_test.go` files
+
+### Stage 2D — `store/` Split by Aggregate
+
+Flat `store/` package decomposed into four aggregate-scoped sub-packages
+(`bins/`, `nodes/`, `orders/`, `payloads/`). The outer `store/` keeps
+the full `*store.DB` method surface via type aliases and one-line
+delegate methods; sub-packages own free-function persistence APIs
+taking `*sql.DB` and are zero-dep on each other.
+
+Cross-aggregate composition methods (`SetBinManifestFromTemplate`,
+`FindStorageDestination`, `GetEffectiveBinTypes`, `GetEffectivePayloads`,
+`GetGroupLayout`, `FindSourceBinInLane`, `FindBuriedBin`,
+`FindOldestBuriedBin`, `ApplyMultiBinArrival`, `CreateCompoundChildren`,
+`FailOrderAtomic`, `CancelOrderAtomic`, `ListOrdersByBin`,
+`UpdateOrderBinID`) stay at the outer `store/` level. Public API
+unchanged; no caller-visible renames.
+
+### Stage 3 — BinService Pilot
+
+New `shingocore/service/bin_service.go` — the first service-layer
+migration. Validation and mutation logic moves out of
+`www/handlers_bins.go` into `BinService`. Audit logging and event
+emission stay at the handler layer (same boundary `BinManifestService`
+established).
+
+Covers: `Create`, `CreateBatch` (one-bin-per-physical-node plus
+multi-bin-at-synthetic invariants), `Move`, `LoadPayload`, `Lock`,
+`ChangeStatus`, `Release`, `Unlock`, `RecordCount` (with discrepancy
+signal), `AddNote`, `Update`. `handleBinCreate` delegates to
+`CreateBatch`; `httpStatusForCreate` maps service error messages back
+to pre-refactor status codes (400 node-not-found, 409 occupancy, 500
+otherwise).
+
+### Stage 4 — OrderService + NodeService
+
+Follows the BinService pilot for the remaining mutating handlers.
+
+- `service/order_service.go` — `Create`, `UpdateStatus`,
+  `UpdateVendor`, `SetPriority` (composes fleet + DB, returns the
+  resolved order), `ClaimBin`, `UnclaimBin`. `apiSetOrderPriority`,
+  `submitSpotSendTo`, `submitSpotRetrieveSpecific` now delegate
+  through `h.engine.OrderService()`
+- `service/node_service.go` — `ApplyAssignments` consolidates the
+  4-step "station mode + stations + bin-type mode + bin types" flow
+  previously duplicated between `handleNodeCreate` and
+  `handleNodeUpdate`. Sub-step errors are joined and returned; audit
+  / event emission stay at the handler layer
+
+### Stage 5 — `dispatch/binresolver/` Extraction
+
+Slot-picking algorithms separated from the dispatch state-machine.
+Files moved verbatim into `dispatch/binresolver/`:
+
+- `resolver.go`, `group_resolver.go`, `lane_lock.go`, `helpers.go`
+- `dispatch/binresolver_aliases.go` re-exports the public surface via
+  type aliases (so `*dispatch.BuriedError` and
+  `*binresolver.BuriedError` are the same type — `errors.As` at call
+  sites keeps working without edits), var forwards (`ErrBuried`,
+  `NewLaneLock`), and const forwards (`RetrieveFIFO/COST/FAVL`,
+  `StoreLKND/DPTH`)
+- Private helpers (`isBinAvailableForRetrieve`, `storageCandidate`,
+  `bestStorageCandidate`, `classifyEmptyGroup`, `binTypeAllowed`,
+  `getGroupAlgorithm`, `resolveRetrieve`, `resolveStore`) stay
+  internal to the sub-package
+
+Stage 5 gate: `binresolver/store.go` narrow Store interface (14
+methods), fake-backed unit tests across every strategy — FIFO, COST,
+FAVL, LKND, DPTH, and `classifyEmptyGroup`. 19 new tests, zero DB
+fixtures required.
+
+### Stage 6 — `material/` Package (CMS Transactions)
+
+Pure boundary-walk and transaction-builder logic extracted from
+`engine/cms_transactions.go` into a top-level `shingocore/material`
+sub-package following the Stage 5 pattern. The engine wrapper keeps
+`FindCMSBoundary`, `RecordMovementTransactions`,
+`RecordCorrectionTransactions` so the two call sites
+(`engine/wiring.go` and `engine/corrections.go`) don't move.
+
+- Narrow 4-method `Store` interface + compile-time assertion that
+  `*store.DB` satisfies it
+- Package functions take a Store and return values/errors; no
+  persistence, no event emission, no engine coupling
+- Hand-rolled fakeStore drives unit tests without a database
+- Engine wrapper owns `CreateCMSTransactions` + `EventCMSTransaction`
+  emission, logs build errors, preserves the nil-only fallback
+- `cms_transactions.go` drops from 246 → 74 LOC
+- Coverage: `go test ./material/... -cover` = 89.6%
+
+### Stage 7 — `engine.go` Split + `fulfillment/` Extraction
+
+Two changes in one atomic commit — the last engine-package
+reorganization before the Stage 8 protocol inbox work.
+
+`engine.go` (682 LOC) split into the struct file plus seven siblings,
+mirroring the Stage 2C `wiring` pattern:
+
+- `engine.go` — struct + `New` + `dbg` + robot-cache getters
+- `engine_lifecycle.go` — `Start`/`Stop`/`loadActiveOrders`
+- `engine_accessors.go` — one-liner getters + `SetCountGroupRunner`
+- `engine_messaging.go` — `SendToEdge`/`SendDataToEdge`/
+  `RunFulfillmentScan`
+- `engine_connection.go` — `checkConnectionStatus`/
+  `connectionHealthLoop`
+- `engine_reconfigure.go` — `ReconfigureDatabase`/`Fleet`/
+  `CountGroups`/`Messaging`
+- `engine_scene_sync.go` — `SyncScenePoints`/`SyncFleetNodes`/
+  `UpdateNodeZones`/`SceneSync`
+- `engine_background.go` — `robotRefreshLoop`/`stagedBinSweepLoop`
+
+`orderResolver` (fleet.OrderIDResolver adapter) moved into
+`adapters.go` alongside `dispatchEmitter` / `pollerEmitter` /
+`countGroupEventEmitter`.
+
+`FulfillmentScanner` extracted to `shingocore/fulfillment/`:
+
+- `doc.go`, `store.go` (14-method consumer-side Store interface with
+  compile-time assertion), `scanner.go` (`Scanner` renamed from
+  `FulfillmentScanner`, `NewScanner`, `Trigger`, `RunOnce`,
+  `StartPeriodicSweep`, `Stop`, `scan`, `tryFulfill` — logic
+  preserved verbatim)
+- Engine struct field `fulfillment *FulfillmentScanner` becomes
+  `*fulfillment.Scanner`; `engine_lifecycle.go` calls
+  `fulfillment.NewScanner` at Start
+- Method names (`Trigger`, `RunOnce`) unchanged so wiring call-sites
+  need no edits beyond the field type
+
+Stage 7 gate: fake-backed 12-case `scanner_test.go` covering every
+branch of `tryFulfill` that returns false before
+`s.dispatcher.DispatchDirect` — cancelled-between-list-and-fetch
+fresh-copy re-check, in-flight delivery node blocks dispatch,
+destination still parked, empty payload short-circuit,
+`retrieve_empty` zone preference derivation, `ClaimBin` failure (no
+unclaim / no status change), `GetNode`/`GetNodeByDotName` post-claim
+failure triggering `UnclaimOrderBins` (and for `GetNodeByDotName`
+also `StatusQueued` re-queue), `Trigger` coalescing during an
+in-progress scan, `StartPeriodicSweep`/`Stop` lifecycle.
+
+### Stage 8 — InboxDedup Decorator
+
+Three-line `shouldProcessInbound` guard that was copy-pasted across
+all eight `HandleOrder*` methods in `CoreHandler` collapses into a
+single `protocol.MessageHandler` decorator (`InboxDedup`) wired into
+the composition root between the ingestor and `CoreHandler`.
+
+- `messaging/inbox_dedup.go` — embeds `protocol.NoOpHandler` for
+  forward compatibility, overrides all 16 interface methods
+  explicitly to stay transparent, gates the 8 Edge→Core order methods
+  via `RecordInboundMessage`, passes `HandleData` + the 7 Core→Edge
+  replies through ungated (matching pre-decorator behavior where
+  only order messages were guarded)
+- `core_handler.go` loses `shouldProcessInbound` and 24 lines of
+  per-method guard duplication
+- `main.go` wraps `coreHandler` with `messaging.NewInboxDedup` before
+  passing it to `protocol.NewIngestor`
+- Existing dedup tests updated to exercise the new path;
+  `inbox_dedup_test.go` adds unit coverage for `HandleData`
+  passthrough and the empty-envelope-ID bypass
+- No changes to `protocol/`, `store/`, or any other package — dedup
+  behavior and wire format are unchanged
+
+### Stage 9 — Narrow Interfaces, Scenesync Extraction, Docker-Gated Tests
+
+#### Consumer-Side Narrow Interfaces
+
+Two packages now hold their collaborators behind narrow interfaces
+instead of concrete dispatcher types. Structural typing means
+`*dispatch.Dispatcher` and `*dispatch.DefaultResolver` satisfy them
+automatically — the engine wiring in `cmd/shingocore/main.go` is
+unchanged.
+
+- **`fulfillment.Dispatcher`** (1 method) and
+  **`fulfillment.Resolver`** (1 method) — declared in
+  `fulfillment/dispatcher.go`, held on `Scanner` fields. Lets
+  `scanner_test.go` stub one-method fakes, closing the coverage gap
+  flagged in the Stage 7 scope note.
+- **`messaging.Dispatcher`** (8 methods covering all order-channel
+  handlers) — declared in `messaging/dispatcher.go`, held by
+  `CoreHandler`. Removes the `messaging → dispatch` import edge so
+  dispatch can't leak transport assumptions back up to the handler.
+- **Compile-time assertions**
+  (`var _ Dispatcher = (*dispatch.Dispatcher)(nil)`) catch drift
+  before any caller-site build failure.
+
+#### Scenesync Package Extraction
+
+New `shingocore/scenesync` package owns fleet→DB scene reconciliation
+logic. Exposes a narrow 8-method `Store` interface
+(`DeleteScenePointsByArea`, `UpsertScenePoint`, `GetNodeTypeByCode`,
+`GetNodeByName`, `CreateNode`, `UpdateNode`, `ListNodes`,
+`DeleteNode`) plus `LogFn`/`NodeChangeFn` callback types.
 
 `engine/engine_scene_sync.go` is reduced to a thin shim — holds the
-`sceneSyncing` atomic, wires `emitNodeChange` to `Events.Emit`, and delegates
-`SyncScenePoints`/`SyncFleetNodes`/`UpdateNodeZones`/`SceneSync` to the new
-package. External API is byte-for-byte identical; `www/handlers_nodes.go` and
-`engine/engine_connection.go` see no change.
+`sceneSyncing` atomic, wires `emitNodeChange` to `Events.Emit`, and
+delegates `SyncScenePoints`/`SyncFleetNodes`/`UpdateNodeZones`/
+`SceneSync` to the new package. External API is byte-for-byte
+identical; `www/handlers_nodes.go` and `engine/engine_connection.go`
+see no change.
 
-### Protocol: RawHeader.Src
+Go named-type identity requires explicit `scenesync.LogFn(e.logFn)`
+conversions at the four call sites (both types are
+`func(format string, args ...any)` but are nominally distinct).
 
-`protocol/envelope.go` RawHeader gains a `Src Address` field alongside `Dst`.
-Wire format unchanged (json tag `src` matches `Envelope.Src`). Lets routing
-code identify the sender from the minimal decode without a full payload
-parse — necessary for inbound dedup + rate-limit work that can't afford to
-decode every message.
+#### Protocol: RawHeader.Src
 
-### Test Structure
+`protocol/envelope.go` `RawHeader` gains a `Src Address` field
+alongside `Dst`. Wire format unchanged (json tag `src` matches
+`Envelope.Src`). Lets routing code identify the sender from the
+minimal decode without a full payload parse — necessary for inbound
+dedup + rate-limit work that can't afford to decode every message.
 
-- **`dispatch/integration_test.go` → `end_to_end_test.go`**. The tests drive
-  the dispatcher through complete retrieve/move/store/cancel/redirect
-  /synthetic/reshuffle lifecycles — that is end-to-end behavior, not two
-  subsystems interacting, so "integration" was the wrong word.
-- **`engine/engine_test.go` split three ways.** Shared scaffolding moved to
-  `engine_testhelpers_test.go` (testDB, setupTestData, createTestBinAtNode,
-  testEnvelope, newTestEngine). The six `TestRegression_*` tests moved to
-  `engine_regression_test.go`. `engine_test.go` itself keeps only top-level
-  behavior tests.
+#### Test Structure
 
-### //go:build docker Gating
+- **`dispatch/integration_test.go` → `end_to_end_test.go`**. The
+  tests drive the dispatcher through complete retrieve/move/store/
+  cancel/redirect/synthetic/reshuffle lifecycles — that is end-to-end
+  behavior, not two subsystems interacting, so "integration" was
+  the wrong word.
+- **`engine/engine_test.go` split three ways.** Shared scaffolding
+  moved to `engine_testhelpers_test.go` (`testDB`, `setupTestData`,
+  `createTestBinAtNode`, `testEnvelope`, `newTestEngine`). The six
+  `TestRegression_*` tests moved to `engine_regression_test.go`.
+  `engine_test.go` itself keeps only top-level behavior tests.
+
+#### `//go:build docker` Gating
 
 39 test files across `dispatch/`, `engine/`, `messaging/`, `service/`,
-`store/`, `www/`, and `shingo-edge/store/` now carry `//go:build docker` on
-the first line. `go test ./...` on a bare machine compiles and runs only the
-unit + fake-backed tests; the Postgres-backed tests are excluded from the
-build. `go test -tags=docker ./...` pulls them back in.
+`store/`, `www/`, and `shingo-edge/store/` now carry
+`//go:build docker` on the first line. `go test ./...` on a bare
+machine compiles and runs only the unit + fake-backed tests; the
+Postgres-backed tests are excluded from the build.
+`go test -tags=docker ./...` pulls them back in.
 
-- `shingo-core/Makefile`: `test` target unchanged; new `test-all` target runs
-  `-tags=docker`.
-- `shingo-core/README.md` "Build Targets" section documents both plus the
-  rationale (fake-backed contract coverage stays tag-free and runs on every
-  push).
-- `shingo-core/docs/architecture.md` and `docs/test-catalog.md` updated to
-  reflect the tag convention and the renamed/split test files.
+- `shingo-core/Makefile`: `test` target unchanged; new `test-all`
+  target runs `-tags=docker`
+- `shingo-core/README.md` "Build Targets" section documents both plus
+  the rationale (fake-backed contract coverage stays tag-free and
+  runs on every push)
+- Tag-free fake-backed coverage retained in `material/`,
+  `fulfillment/`, `dispatch/binresolver/`
 
-### Documentation
+#### Documentation
 
-- **architecture.md** — Package Layout rewritten to remove phantom `nodestate/`
-  and `debuglog/` entries and add the real sub-packages that have landed since
-  the last pass: `countgroup/`, `fulfillment/`, `material/`, `scenesync/`,
-  `service/`, `internal/testdb/`, `fleet/seerrds/`, `fleet/simulator/`,
-  `store/{bins,nodes,orders,payloads}/`. Message Ingest Pipeline diagram now
-  shows the `InboxDedup` decorator (Stage 8 artifact) sitting between the
-  protocol Ingestor and CoreHandler.
+- **architecture.md** — Package Layout rewritten to remove phantom
+  `nodestate/` and `debuglog/` entries and add the real sub-packages
+  that have landed since the last pass: `countgroup/`, `fulfillment/`,
+  `material/`, `scenesync/`, `service/`, `internal/testdb/`,
+  `fleet/seerrds/`, `fleet/simulator/`,
+  `store/{bins,nodes,orders,payloads}/`. Message Ingest Pipeline
+  diagram now shows the `InboxDedup` decorator sitting between the
+  protocol Ingestor and `CoreHandler`.
 - **test-catalog.md** — renamed dispatch integration section, added
-  engine_testhelpers_test.go and engine_regression_test.go sections, added
-  Docker-gating note to the preamble, updated TC numbering backlog references.
-- **fleet-simulator/architecture.md** and **fleet-simulator/complex-orders.md**
-  — updated references to the renamed `dispatch/end_to_end_test.go`.
+  `engine_testhelpers_test.go` and `engine_regression_test.go`
+  sections, added Docker-gating note to the preamble, updated TC
+  numbering backlog references.
+- **fleet-simulator/architecture.md** and
+  **fleet-simulator/complex-orders.md** — updated references to the
+  renamed `dispatch/end_to_end_test.go`.
+
+### Validation
+
+Builds and tests green across `protocol/`, `shingo-core/`, and
+`shingo-edge/` with and without `-tags=docker` (18 commands, all
+pass). Includes two validation-phase fixups: explicit
+`scenesync.LogFn` conversions in `engine_scene_sync.go`, and
+`//go:build docker` headers on `www/auth_test.go` and
+`www/handlers_demand_test.go` (both reference `testHandlers` /
+`postJSON` defined in gated files).
+
+## 2026-04-17 — Toolchain Bump & Dead-Symbol Flagging
+
+### Toolchain
+
+- **Go 1.26.2**: bumped across all modules (`protocol/`, `shingo-core/`,
+  `shingo-edge/`). `x/crypto` aligned to match. `go mod tidy` swept
+  afterward.
+
+### Code Quality
+
+- **Dead-code audit**: flagged potentially-dead symbols across the
+  codebase with `TODO(dead-code)` comments for a later pruning pass.
+  No deletions in this commit — just annotations on the callsite-free
+  functions and variables found during the sweep.
 
 ## 2026-04-15 — Count-Group Light Alerts & Fire Alarm Pass-Through
 
