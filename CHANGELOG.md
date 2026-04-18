@@ -330,16 +330,47 @@ pass). Includes two validation-phase fixups: explicit
 
 ### Toolchain
 
-- **Go 1.26.2**: bumped across all modules (`protocol/`, `shingo-core/`,
-  `shingo-edge/`). `x/crypto` aligned to match. `go mod tidy` swept
-  afterward.
+- **Go 1.26.2 across all modules**: `protocol/`, `shingo-core/`, and
+  `shingo-edge/` all moved to Go 1.26.2 (latest stable, 2026-04-07
+  release), clearing the 1.24/1.25 drift between the three modules.
+  CI workflows bumped to match.
+- **x/crypto v0.48.0 alignment**: pinned uniformly across all modules;
+  edge's `x/net`, `x/sys`, `x/text` indirects aligned with
+  shingo-core's current pins.
+- **Drift-check test**: new `protocol/version_test.go` parses all
+  three `go.mod` files and fails if Go versions or `x/crypto`
+  versions drift apart again (pulls `golang.org/x/mod` v0.27.0 as a
+  test dependency).
+- **go mod tidy sweep**: follow-up to regenerate `go.sum` entries
+  matching the new version pins.
 
 ### Code Quality
 
-- **Dead-code audit**: flagged potentially-dead symbols across the
-  codebase with `TODO(dead-code)` comments for a later pruning pass.
-  No deletions in this commit — just annotations on the callsite-free
-  functions and variables found during the sweep.
+- **Dead-symbol flagging**: six callsite-free symbols annotated with
+  `TODO(dead-code)` markers for a later pruning pass —
+  `core/dispatch.coreAddress()`, `edge/backup.hashBytes()`,
+  `edge/engine.BuildDeliverSteps()`,
+  `edge/messaging.EdgeHandler.SetNodeStateHandler()`,
+  `edge/messaging.Heartbeater.RequestNodeState()`,
+  `edge/orders.Manager.forceTransitionOrder()`. Kept (not removed)
+  in case external wiring, reflection, or WIP branches rely on them.
+
+## 2026-04-16 — Web UI Configuration: Traffic Page & Fire Alarm Toggle
+
+### Features
+
+- **Traffic page (core + edge)**: operators can configure
+  heartbeat tag/PLC and zone-to-PLC bindings and advanced-zone
+  count-groups from a Traffic tab on each service's Admin UI instead
+  of editing YAML manually.
+  - **Edge** — PLC names auto-populate from WarLink discovery; binds
+    are written straight to `shingoedge.yaml`.
+  - **Core** — count-group add / remove / toggle is now a UI action;
+    changes persist to `shingocore.yaml` and hot-reload the
+    count-group Runner without a service restart.
+- **Fire alarm toggle on config page**: enables/disables the fire
+  alarm feature and sets the auto-resume default from the web UI
+  instead of requiring a YAML edit and service restart.
 
 ## 2026-04-15 — Count-Group Light Alerts & Fire Alarm Pass-Through
 
@@ -394,7 +425,7 @@ Feature-gated fire alarm control on the diagnostics admin page. Core relays acti
 - **TC23b skip**: `TestTC23b_CancelThenMoveBin` skipped while auto-return is disabled
 - **Test catalog**: expanded documentation to cover all 262 test functions across 35 files
 
-## 2026-04-13 — Wait Block, Operator UX & Route Visibility
+## 2026-04-13 — Wait Block, Operator UX, Route Visibility & Engine Access Refactor
 
 ### Features
 
@@ -402,11 +433,36 @@ Feature-gated fire alarm control on the diagnostics admin page. Core relays acti
 - **Load bin at node**: operators can load an empty bin already at the node without waiting for a delivery order
 - **Step-by-step route display**: mission detail and test orders pages show the full block-by-block route for each order
 
+### Refactoring
+
+- **EngineAccess interface + EventBus migration**: new consumer-side
+  `EngineAccess` interface in `www/engine_iface.go` (26 methods),
+  `EventBus()` accessor added to `*Engine`, dual-field pattern on
+  `Handlers` (`engine EngineAccess` + `eng *engine.Engine`). All 14
+  `.Events.Emit()` calls migrated to `.EventBus().Emit()`. Dead
+  `Config.Debug` field removed. Sets up the boundary that Stage 1
+  (2026-04-18) later narrows further by replacing `engine.DB()`.
+- **`handlers_testing.go` → `handlers_test_orders.go`**: pure rename
+  for discoverability — the file hosts test-order UI routes, not Go
+  test infrastructure. No logic changes.
+- **Named constants for magic strings / numbers**: `VendorIDPrefix`
+  (dispatch), `PurgeCycleInterval` + `MessageRetentionPeriod`
+  (protocol/outbox), `DrainBatchSize` (edge/messaging),
+  `MaxBatchRetrieveCount` (edge/www), `rdsProxyTimeout` (core/www).
+  Dispatch also upgraded a swallowed error to a log + `%w` wrap.
+- **Cross-layer import fix (seerrds)**: mappers now import status
+  constants from `shingo/protocol` instead of
+  `shingocore/dispatch`, eliminating an adapter-to-orchestration
+  import violation.
+
 ### Bug Fixes
 
 - **Auto-return safety**: skip auto-return for complex orders when bin position is uncertain after partial completion
 - **Same-node move prevention**: refuse to dispatch a move order where source and destination resolve to the same node
 - **Single-payload auto-select**: auto-select payload in load bin modal when only one option is available
+- **Outbox SELECT missing `sent_at`**: both `ListPendingOutbox` and
+  `ListDeadLetterOutbox` were missing `sent_at` in their SELECT and
+  Scan, causing row-scan misalignment. Added back.
 - **Mount corruption repair**: restored truncated `BuildKeepStagedCombinedSteps` and removed NUL bytes from `complex.go`
 
 ## 2026-04-12 — Cross-Module Deduplication & Code Organization
