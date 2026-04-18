@@ -1,8 +1,9 @@
 module shingo/protocol
 
-go 1.24.0
+go 1.26.2
 
 require (
 	github.com/google/uuid v1.6.0
-	golang.org/x/crypto v0.42.0
+	golang.org/x/crypto v0.48.0
+	golang.org/x/mod v0.27.0
 )
