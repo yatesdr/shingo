@@ -21,7 +21,7 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 		UOPCapacity: uop,
 	}
 
-	if err := h.engine.DB().CreatePayload(p); err != nil {
+	if err := h.engine.CreatePayload(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -41,7 +41,7 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := h.engine.DB().GetPayload(id)
+	p, err := h.engine.GetPayload(id)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -51,7 +51,7 @@ func (h *Handlers) handlePayloadUpdate(w http.ResponseWriter, r *http.Request) {
 	p.Description = r.FormValue("description")
 	p.UOPCapacity, _ = strconv.Atoi(r.FormValue("uop_capacity"))
 
-	if err := h.engine.DB().UpdatePayload(p); err != nil {
+	if err := h.engine.UpdatePayload(p); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -66,7 +66,7 @@ func (h *Handlers) handlePayloadDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DB().DeletePayload(id); err != nil {
+	if err := h.engine.DeletePayload(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -94,13 +94,13 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		Description: req.Description,
 		UOPCapacity: req.UOPCapacity,
 	}
-	if err := h.engine.DB().CreatePayload(p); err != nil {
+	if err := h.engine.CreatePayload(p); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if len(req.BinTypeIDs) > 0 {
-		if err := h.engine.DB().SetPayloadBinTypes(p.ID, req.BinTypeIDs); err != nil {
+		if err := h.engine.SetPayloadBinTypes(p.ID, req.BinTypeIDs); err != nil {
 			h.jsonError(w, "bin types: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -113,7 +113,7 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 				Quantity:   it.Quantity,
 			})
 		}
-		if err := h.engine.DB().ReplacePayloadManifest(p.ID, items); err != nil {
+		if err := h.engine.ReplacePayloadManifest(p.ID, items); err != nil {
 			h.jsonError(w, "manifest: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -138,7 +138,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	p, err := h.engine.DB().GetPayload(req.ID)
+	p, err := h.engine.GetPayload(req.ID)
 	if err != nil {
 		h.jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -148,12 +148,12 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 	p.Description = req.Description
 	p.UOPCapacity = req.UOPCapacity
 
-	if err := h.engine.DB().UpdatePayload(p); err != nil {
+	if err := h.engine.UpdatePayload(p); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if err := h.engine.DB().SetPayloadBinTypes(p.ID, req.BinTypeIDs); err != nil {
+	if err := h.engine.SetPayloadBinTypes(p.ID, req.BinTypeIDs); err != nil {
 		h.jsonError(w, "bin types: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -165,7 +165,7 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 			Quantity:   it.Quantity,
 		})
 	}
-	if err := h.engine.DB().ReplacePayloadManifest(p.ID, items); err != nil {
+	if err := h.engine.ReplacePayloadManifest(p.ID, items); err != nil {
 		h.jsonError(w, "manifest: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -179,7 +179,7 @@ func (h *Handlers) apiGetPayloadManifestTemplate(w http.ResponseWriter, r *http.
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	items, err := h.engine.DB().ListPayloadManifest(id)
+	items, err := h.engine.ListPayloadManifest(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -209,7 +209,7 @@ func (h *Handlers) apiSavePayloadManifestTemplate(w http.ResponseWriter, r *http
 		})
 	}
 
-	if err := h.engine.DB().ReplacePayloadManifest(req.PayloadID, items); err != nil {
+	if err := h.engine.ReplacePayloadManifest(req.PayloadID, items); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -222,7 +222,7 @@ func (h *Handlers) apiGetPayloadBinTypes(w http.ResponseWriter, r *http.Request)
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	binTypes, err := h.engine.DB().ListBinTypesForPayload(id)
+	binTypes, err := h.engine.ListBinTypesForPayload(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -238,7 +238,7 @@ func (h *Handlers) apiSavePayloadBinTypes(w http.ResponseWriter, r *http.Request
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-	if err := h.engine.DB().SetPayloadBinTypes(req.PayloadID, req.BinTypeIDs); err != nil {
+	if err := h.engine.SetPayloadBinTypes(req.PayloadID, req.BinTypeIDs); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

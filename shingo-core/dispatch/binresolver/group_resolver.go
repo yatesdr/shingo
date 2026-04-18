@@ -1,4 +1,4 @@
-package dispatch
+package binresolver
 
 import (
 	"errors"
@@ -51,8 +51,12 @@ const (
 )
 
 // GroupResolver handles NGRP → LANE → Slot and NGRP → direct child resolution.
+//
+// DB is the narrow Store interface (satisfied by *store.DB); see
+// store.go. This lets per-algorithm tests drive the resolver with a
+// fake and avoid database fixtures.
 type GroupResolver struct {
-	DB       *store.DB
+	DB       Store
 	LaneLock *LaneLock
 	DebugLog func(string, ...any)
 }

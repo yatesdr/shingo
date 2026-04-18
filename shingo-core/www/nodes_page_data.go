@@ -8,6 +8,20 @@ import (
 	"shingocore/store"
 )
 
+// nodesPageDataStore is the narrow read surface getNodesPageData needs.
+// *engine.Engine satisfies this via the delegating methods, and it keeps
+// this helper independent of the larger EngineAccess contract so it stays
+// testable with a fake if needed.
+type nodesPageDataStore interface {
+	ListNodes() ([]*store.Node, error)
+	CountBinsByAllNodes() (map[int64]int, error)
+	NodeTileStates() (map[int64]store.NodeTileState, error)
+	ListScenePoints() ([]*store.ScenePoint, error)
+	ListBinTypes() ([]*store.BinType, error)
+	ListEdges() ([]store.EdgeRegistration, error)
+	GetSlotDepth(nodeID int64) (int, error)
+}
+
 // nodeSceneInfo holds parsed scene data for a node location.
 type nodeSceneInfo struct {
 	PointName string
@@ -31,7 +45,7 @@ type nodesPageData struct {
 }
 
 // getNodesPageData assembles all data for the nodes page.
-func getNodesPageData(db *store.DB) (*nodesPageData, error) {
+func getNodesPageData(db nodesPageDataStore) (*nodesPageData, error) {
 	nodes, err := db.ListNodes()
 	if err != nil {
 		log.Printf("nodes page: list nodes: %v", err)

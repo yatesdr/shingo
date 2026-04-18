@@ -3,6 +3,7 @@ package engine
 import (
 	"shingocore/countgroup"
 	"shingocore/fleet"
+	"shingocore/store"
 )
 
 // dispatchEmitter bridges the dispatch package's emitter interface to the EventBus.
@@ -100,4 +101,21 @@ func (e *countGroupEventEmitter) Emit(t countgroup.Transition) {
 			Timestamp:         t.Timestamp,
 		},
 	})
+}
+
+// orderResolver implements fleet.OrderIDResolver — the tracker looks
+// up the internal order ID for a vendor order ID when it emits a
+// status-change event. Lives here because it's the same shape as the
+// other fleet/countgroup adapters: a tiny struct wrapping a
+// dependency with one method that satisfies an external interface.
+type orderResolver struct {
+	db *store.DB
+}
+
+func (r *orderResolver) ResolveVendorOrderID(vendorOrderID string) (int64, error) {
+	order, err := r.db.GetOrderByVendorID(vendorOrderID)
+	if err != nil {
+		return 0, err
+	}
+	return order.ID, nil
 }

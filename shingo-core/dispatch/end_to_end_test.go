@@ -1,3 +1,21 @@
+//go:build docker
+
+// End-to-end dispatch tests.
+//
+// This file was previously integration_test.go. Renamed because
+// "integration" suggested these tests only verified multi-component
+// wiring, when in fact most of them drive the dispatcher through a
+// complete order lifecycle against a live Postgres (via testdb) and
+// validate behavior that is the single system's responsibility:
+// retrieve/move/store/cancel/redirect lifecycles, synthetic-node
+// resolution (NGRP + dot notation), buried-bin reshuffle planning,
+// fleet-failure recovery, priority handling, bin tracking, ingest,
+// same-node guards. These exercise the dispatch state machine end-
+// to-end — not two subsystems interacting — hence the rename.
+//
+// All tests in this file require a live Postgres. They are gated by
+// the //go:build docker tag on the test files in this package; run
+// with: go test -tags=docker ./shingo-core/dispatch/...
 package dispatch
 
 import (

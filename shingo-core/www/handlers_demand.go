@@ -9,7 +9,7 @@ import (
 
 // handleDemand renders the demand page.
 func (h *Handlers) handleDemand(w http.ResponseWriter, r *http.Request) {
-	demands, _ := h.engine.DB().ListDemands()
+	demands, _ := h.engine.ListDemands()
 	data := map[string]any{
 		"Page":          "demand",
 		"Demands": demands,
@@ -20,7 +20,7 @@ func (h *Handlers) handleDemand(w http.ResponseWriter, r *http.Request) {
 // --- Demand API ---
 
 func (h *Handlers) apiListDemands(w http.ResponseWriter, r *http.Request) {
-	demands, err := h.engine.DB().ListDemands()
+	demands, err := h.engine.ListDemands()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -41,7 +41,7 @@ func (h *Handlers) apiCreateDemand(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "cat_id is required", http.StatusBadRequest)
 		return
 	}
-	id, err := h.engine.DB().CreateDemand(req.CatID, req.Description, req.DemandQty)
+	id, err := h.engine.CreateDemand(req.CatID, req.Description, req.DemandQty)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -64,7 +64,7 @@ func (h *Handlers) apiUpdateDemand(w http.ResponseWriter, r *http.Request) {
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-	if err := h.engine.DB().UpdateDemand(id, req.CatID, req.Description, req.DemandQty, req.ProducedQty); err != nil {
+	if err := h.engine.UpdateDemand(id, req.CatID, req.Description, req.DemandQty, req.ProducedQty); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -84,7 +84,7 @@ func (h *Handlers) apiApplyDemand(w http.ResponseWriter, r *http.Request) {
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-	if err := h.engine.DB().UpdateDemandAndResetProduced(id, req.Description, req.DemandQty); err != nil {
+	if err := h.engine.UpdateDemandAndResetProduced(id, req.Description, req.DemandQty); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -97,7 +97,7 @@ func (h *Handlers) apiDeleteDemand(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.DB().DeleteDemand(id); err != nil {
+	if err := h.engine.DeleteDemand(id); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -116,7 +116,7 @@ func (h *Handlers) apiApplyAllDemands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, row := range req.Rows {
-		if err := h.engine.DB().UpdateDemandAndResetProduced(row.ID, row.Description, row.DemandQty); err != nil {
+		if err := h.engine.UpdateDemandAndResetProduced(row.ID, row.Description, row.DemandQty); err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -140,7 +140,7 @@ func (h *Handlers) apiSetDemandProduced(w http.ResponseWriter, r *http.Request) 
 		h.jsonError(w, "produced_qty must be >= 0", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.DB().SetProduced(id, req.ProducedQty); err != nil {
+	if err := h.engine.SetProduced(id, req.ProducedQty); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -153,7 +153,7 @@ func (h *Handlers) apiClearDemandProduced(w http.ResponseWriter, r *http.Request
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.DB().ClearProduced(id); err != nil {
+	if err := h.engine.ClearProduced(id); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -161,7 +161,7 @@ func (h *Handlers) apiClearDemandProduced(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handlers) apiClearAllProduced(w http.ResponseWriter, r *http.Request) {
-	if err := h.engine.DB().ClearAllProduced(); err != nil {
+	if err := h.engine.ClearAllProduced(); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -174,12 +174,12 @@ func (h *Handlers) apiDemandLog(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	demand, err := h.engine.DB().GetDemand(id)
+	demand, err := h.engine.GetDemand(id)
 	if err != nil {
 		h.jsonError(w, "demand not found", http.StatusNotFound)
 		return
 	}
-	entries, err := h.engine.DB().ListProductionLog(demand.CatID, 100)
+	entries, err := h.engine.ListProductionLog(demand.CatID, 100)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

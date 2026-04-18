@@ -94,7 +94,7 @@ func (h *Handlers) apiListNodeCorrections(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	corrections, err := h.engine.DB().ListCorrectionsByNode(nodeID, 20)
+	corrections, err := h.engine.ListCorrectionsByNode(nodeID, 20)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

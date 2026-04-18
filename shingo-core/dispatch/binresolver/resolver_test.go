@@ -1,0 +1,168 @@
+package binresolver
+
+import (
+	"testing"
+	"time"
+
+	"shingocore/store"
+)
+
+// --- Non-NGRP retrieve -----------------------------------------------------
+
+func TestDefaultResolver_Retrieve_PicksFirstChildWithAvailableBin(t *testing.T) {
+	f := newFakeStore()
+	parent := directChild(1, "parent")
+	childA := directChild(10, "child-A")
+	childB := directChild(11, "child-B")
+	f.children[parent.ID] = []*store.Node{childA, childB}
+	// child-A has only an unavailable bin; child-B has an available one.
+	f.bins[childA.ID] = []*store.Bin{unavailBin(100, "P1")}
+	f.bins[childB.ID] = []*store.Bin{availBin(101, "P1", time.Now())}
+
+	r := &DefaultResolver{DB: f}
+	got, err := r.Resolve(parent, "retrieve", "P1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Node != childB {
+		t.Fatalf("expected child-B, got %s", got.Node.Name)
+	}
+}
+
+func TestDefaultResolver_Retrieve_NoAvailableBins(t *testing.T) {
+	f := newFakeStore()
+	parent := directChild(1, "parent")
+	child := directChild(10, "only-child")
+	f.children[parent.ID] = []*store.Node{child}
+	f.bins[child.ID] = []*store.Bin{claimedBin(100, "P1", 7)}
+
+	r := &DefaultResolver{DB: f}
+	if _, err := r.Resolve(parent, "retrieve", "P1", nil); err == nil {
+		t.Fatal("expected error when no child has an available bin")
+	}
+}
+
+func TestDefaultResolver_Retrieve_PayloadFilter(t *testing.T) {
+	f := newFakeStore()
+	parent := directChild(1, "parent")
+	child := directChild(10, "c")
+	f.children[parent.ID] = []*store.Node{child}
+	// Bin exists but its payload code does not match the request.
+	f.bins[child.ID] = []*store.Bin{availBin(100, "OTHER", time.Now())}
+
+	r := &DefaultResolver{DB: f}
+	if _, err := r.Resolve(parent, "retrieve", "P1", nil); err == nil {
+		t.Fatal("expected error when no bin matches requested payload")
+	}
+}
+
+// --- Non-NGRP store --------------------------------------------------------
+
+func TestDefaultResolver_Store_PicksConsolidationCandidate(t *testing.T) {
+	f := newFakeStore()
+	parent := directChild(1, "parent")
+	a := directChild(10, "empty-A")
+	b := directChild(11, "consolidate-B")
+	f.children[parent.ID] = []*store.Node{a, b}
+	// Both empty (count 0), but B already holds a bin with matching
+	// payload — resolveStore prefers the consolidation candidate.
+	f.bins[b.ID] = []*store.Bin{availBin(100, "P1", time.Now())}
+	// Override counts: the real resolveStore skips nodes with count>=1.
+	// We want both reported as empty for ranking purposes.
+	f.binCounts[a.ID] = 0
+	f.binCounts[b.ID] = 0
+
+	r := &DefaultResolver{DB: f}
+	got, err := r.Resolve(parent, "store", "P1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Node != b {
+		t.Fatalf("expected consolidate-B, got %s", got.Node.Name)
+	}
+}
+
+func TestDefaultResolver_Store_SkipsOccupiedAndSynthetic(t *testing.T) {
+	f := newFakeStore()
+	parent := directChild(1, "parent")
+	syn := &store.Node{ID: 10, Name: "syn", IsSynthetic: true, Enabled: true}
+	full := directChild(11, "full")
+	empty := directChild(12, "empty")
+	f.children[parent.ID] = []*store.Node{syn, full, empty}
+	f.binCounts[full.ID] = 1
+	f.binCounts[empty.ID] = 0
+
+	r := &DefaultResolver{DB: f}
+	got, err := r.Resolve(parent, "store", "P1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Node != empty {
+		t.Fatalf("expected empty, got %s", got.Node.Name)
+	}
+}
+
+func TestDefaultResolver_Store_NoCandidate(t *testing.T) {
+	f := newFakeStore()
+	parent := directChild(1, "parent")
+	full := directChild(10, "full")
+	f.children[parent.ID] = []*store.Node{full}
+	f.binCounts[full.ID] = 1
+
+	r := &DefaultResolver{DB: f}
+	if _, err := r.Resolve(parent, "store", "P1", nil); err == nil {
+		t.Fatal("expected error when no child has room")
+	}
+}
+
+// --- Unknown order type / empty synthetic ---------------------------------
+
+func TestDefaultResolver_UnknownOrderType_FirstEnabled(t *testing.T) {
+	f := newFakeStore()
+	parent := directChild(1, "parent")
+	disabled := disabledChild(9, "off")
+	on := directChild(10, "on")
+	f.children[parent.ID] = []*store.Node{disabled, on}
+
+	r := &DefaultResolver{DB: f}
+	got, err := r.Resolve(parent, "weird", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Node != on {
+		t.Fatal("unknown order type should return the first enabled child")
+	}
+}
+
+func TestDefaultResolver_NoChildren(t *testing.T) {
+	f := newFakeStore()
+	parent := directChild(1, "lonely")
+
+	r := &DefaultResolver{DB: f}
+	if _, err := r.Resolve(parent, "retrieve", "", nil); err == nil {
+		t.Fatal("expected error for parent with no children")
+	}
+}
+
+// --- NGRP delegation -------------------------------------------------------
+
+func TestDefaultResolver_Retrieve_NGRPDelegatesToGroupResolver(t *testing.T) {
+	f := newFakeStore()
+	ngrp := ngrpNode(1, "group")
+	lane := laneChild(10, "lane-1")
+	slot := slotInLane(100, "slot-1")
+	f.nodes[slot.ID] = slot
+	bin := availBin(1000, "P1", time.Now())
+	attachSlot(bin, slot)
+	f.children[ngrp.ID] = []*store.Node{lane}
+	f.sourceInLane[lane.ID] = bin
+
+	r := &DefaultResolver{DB: f, LaneLock: NewLaneLock()}
+	got, err := r.Resolve(ngrp, "retrieve", "P1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Bin != bin || got.Node != slot {
+		t.Fatalf("expected bin from lane-1 / slot-1, got %+v", got)
+	}
+}

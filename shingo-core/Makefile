@@ -21,9 +21,17 @@ build:
 run:
 	go run ./cmd/shingocore
 
-# Run tests
+# Run unit and fake-backed tests — no Docker required. Postgres-backed
+# tests are tagged //go:build docker and excluded here so the default
+# target stays green on a bare machine.
 test:
 	go test -v ./...
+
+# Run the full suite, including the //go:build docker-tagged tests
+# that require a live Postgres via testdb / testcontainers. Use this
+# locally before pushing, and in CI where Docker Desktop is available.
+test-all:
+	go test -v -tags=docker ./...
 
 # Linux builds
 linux: linux-amd64 linux-arm64

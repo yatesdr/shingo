@@ -13,9 +13,15 @@
 >   sections at the bottom track what is missing.
 >
 > **Convention:** A `// TC-N:` comment above the function, or `TestTC##_*` in the function name.
+>
+> **Docker gating:** Test files that need a live Postgres carry `//go:build docker`
+> on the first line. Run those with `-tags=docker` (or `make test-all`). The
+> fake-backed suites in `material/`, `fulfillment/`, and `dispatch/binresolver/`
+> are tag-free and run on every push without Docker.
 
 ```sh
-go test -v ./<package> -run <TestFunctionName>
+go test -v ./<package> -run <TestFunctionName>                # unit + fake-backed
+go test -v -tags=docker ./<package> -run <TestFunctionName>   # Postgres-backed
 ```
 
 ---
@@ -49,7 +55,7 @@ go test -v ./<package> -run <TestFunctionName>
 | - | `TestNodeGroupResolveRetrieve_Mixed` | Node group resolve retrieve with mixed accessibility |
 | - | `TestNodeGroupResolveStore_DirectChildren` | Node group resolve store to direct children |
 | - | `TestGroupResolveStore_BinTypeRestriction` | Store respects bin-type restrictions on lane slots |
-## Dispatch Integration (`dispatch/integration_test.go`)
+## Dispatch End-to-End (`dispatch/end_to_end_test.go`)
 
 | ID | Function | Description |
 |----|----------|-------------|
@@ -138,6 +144,20 @@ go test -v ./<package> -run <TestFunctionName>
 | - | `TestCompoundOrderCreation` | Compound order created correctly from reshuffle plan |
 | - | `TestHandleChildOrderFailure` | Child order failure triggers rollback of reshuffle |
 | - | `TestHandleChildOrderFailure_InFlightSibling` | Child order failure with in-flight sibling orphaned |
+## Engine - Test Helpers (`engine/engine_testhelpers_test.go`)
+
+Shared test scaffolding for the engine package. No test functions — all
+exported names are setup helpers consumed by `engine_test.go` and
+`engine_regression_test.go`. Carries `//go:build docker`.
+
+| ID | Function | Description |
+|----|----------|-------------|
+| - | `testDB` | Opens a fresh per-test Postgres database via `internal/testdb.Open` |
+| - | `setupTestData` | Creates standard storage/line/payload fixtures via `testdb.SetupStandardData` |
+| - | `createTestBinAtNode` | Thin wrapper around `testdb.CreateBinAtNode` |
+| - | `testEnvelope` | Builds a baseline protocol envelope via `testdb.Envelope` |
+| - | `newTestEngine` | Constructs a real Engine wired to the test DB and simulator, with `t.Cleanup` Stop |
+
 ## Engine - Core Lifecycle (`engine/engine_test.go`)
 
 | ID | Function | Description |
@@ -160,6 +180,15 @@ go test -v ./<package> -run <TestFunctionName>
 | TC-38 | `TestTC38_CancelDeliveredOrder_NoReturnOrder` | Cancel delivered order must not create return order / receipt on cancelled order |
 | TC-39 | `TestTC39_TerminateOrder_RejectsTerminalStatuses` | TerminateOrder rejects terminal statuses |
 | TC-80 | `TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes` | Orphaned bin claim after terminal order - reconciliation detects and sweep fixes |
+
+## Engine - Regression (`engine/engine_regression_test.go`)
+
+Regression suite extracted from `engine_test.go` in Stage 9 so the
+happy-path behavior file is not dominated by bug-fix scaffolding.
+Carries `//go:build docker`.
+
+| ID | Function | Description |
+|----|----------|-------------|
 | - | `TestMaybeCreateReturnOrder_SourceNode` | Return order created with correct source node after failure |
 | - | `TestRegression_BinMovesOnDelivered` | Regression - bin moves on delivered order completion |
 | - | `TestRegression_CancelEmptyEdgeUUID` | Regression - cancel on empty edge with no vendor UUID |
@@ -537,11 +566,11 @@ Prioritize tests with Regression, Concurrent, or Race in the name:
 
 | File | Function | Rationale |
 |------|----------|-----------|
-| `engine/engine_test.go` | `TestMaybeCreateReturnOrder_SourceNode` | Regression fix with no TC - return order SourceNode correctness |
-| `engine/engine_test.go` | `TestRegression_BinMovesOnDelivered` | Regression - bin moves on delivered order completion |
-| `engine/engine_test.go` | `TestRegression_CancelEmptyEdgeUUID` | Regression - cancel on empty edge with no vendor UUID |
-| `engine/engine_test.go` | `TestRegression_MultiBinMovesOnDelivered` | Regression - multiple bins moved on delivered order completion |
-| `engine/engine_test.go` | `TestRegression_CompletionIdempotentAfterDelivery` | Regression - completion handler idempotency |
+| `engine/engine_regression_test.go` | `TestMaybeCreateReturnOrder_SourceNode` | Regression fix with no TC - return order SourceNode correctness |
+| `engine/engine_regression_test.go` | `TestRegression_BinMovesOnDelivered` | Regression - bin moves on delivered order completion |
+| `engine/engine_regression_test.go` | `TestRegression_CancelEmptyEdgeUUID` | Regression - cancel on empty edge with no vendor UUID |
+| `engine/engine_regression_test.go` | `TestRegression_MultiBinMovesOnDelivered` | Regression - multiple bins moved on delivered order completion |
+| `engine/engine_regression_test.go` | `TestRegression_CompletionIdempotentAfterDelivery` | Regression - completion handler idempotency |
 | `dispatch/reshuffle_test.go` | `TestHandleChildOrderFailure_InFlightSibling` | Design-doc scenario TC-14b - orphaned sibling detection |
 | `service/bin_manifest_test.go` | `TestBinManifestService_ClaimForDispatch_ConcurrentRace` | Real race condition in claim path |
 | `engine/engine_concurrent_test.go` | `TestConcurrent_ClaimRaceDeterministic` | Concurrent claim race behavioral scenario |
@@ -553,10 +582,15 @@ Prioritize tests with Regression, Concurrent, or Race in the name:
 
 ## Statistics
 
+Counts are approximate — the test suite changes faster than this catalog does.
+Rebuild with `grep -r '^func Test' shingo-core/` when a precise number matters.
+
 | Metric | Count |
 |--------|-------|
-| Total test files | 35 |
-| Total test functions (excl. helpers) | 262 |
+| Total test files | 37 (35 + engine_testhelpers_test.go + engine_regression_test.go split from engine_test.go) |
+| Total test functions (excl. helpers) | ~262 |
+| Docker-gated files (``//go:build docker``) | 39 across core and `shingo-edge/store/outbox_test.go` |
+| Tag-free files (fake-backed) | `material/`, `fulfillment/`, `dispatch/binresolver/` |
 | Functions with TC comments (``// TC-N:``) | 31 |
 | Functions with TC in name (``TestTC##_*``) | 29 |
 | Functions in catalog with TC ID | 70 |

@@ -9,7 +9,7 @@ import (
 )
 
 func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
-	payloads, err := h.engine.DB().ListPayloads()
+	payloads, err := h.engine.ListPayloads()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -17,7 +17,7 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 
 	compatNodes := make(map[int64][]string)
 	for _, p := range payloads {
-		nodeList, err := h.engine.DB().ListNodesForPayload(p.ID)
+		nodeList, err := h.engine.ListNodesForPayload(p.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -27,7 +27,7 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	binTypes, err := h.engine.DB().ListBinTypes()
+	binTypes, err := h.engine.ListBinTypes()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -35,7 +35,7 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 
 	payloadBinTypes := make(map[int64][]string)
 	for _, p := range payloads {
-		btList, err := h.engine.DB().ListBinTypesForPayload(p.ID)
+		btList, err := h.engine.ListBinTypesForPayload(p.ID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -56,7 +56,7 @@ func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiListPayloads(w http.ResponseWriter, r *http.Request) {
-	payloads, err := h.engine.DB().ListPayloads()
+	payloads, err := h.engine.ListPayloads()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -71,7 +71,7 @@ func (h *Handlers) apiGetPayload(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	p, err := h.engine.DB().GetPayload(id)
+	p, err := h.engine.GetPayload(id)
 	if err != nil {
 		h.jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -87,7 +87,7 @@ func (h *Handlers) apiListManifest(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	items, err := h.engine.DB().ListPayloadManifest(id)
+	items, err := h.engine.ListPayloadManifest(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -112,7 +112,7 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 		PartNumber: req.PartNumber,
 		Quantity:   req.Quantity,
 	}
-	if err := h.engine.DB().CreatePayloadManifestItem(m); err != nil {
+	if err := h.engine.CreatePayloadManifestItem(m); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -130,7 +130,7 @@ func (h *Handlers) apiUpdateManifestItem(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.engine.DB().UpdatePayloadManifestItem(req.ID, req.PartNumber, req.Quantity); err != nil {
+	if err := h.engine.UpdatePayloadManifestItem(req.ID, req.PartNumber, req.Quantity); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -145,7 +145,7 @@ func (h *Handlers) apiDeleteManifestItem(w http.ResponseWriter, r *http.Request)
 	if !h.parseJSON(w, r, &req) {
 		return
 	}
-	if err := h.engine.DB().DeletePayloadManifestItem(req.ID); err != nil {
+	if err := h.engine.DeletePayloadManifestItem(req.ID); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -176,7 +176,7 @@ func (h *Handlers) apiListPayloadEvents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// Use the audit log for bin events
-	events, err := h.engine.DB().ListEntityAudit("bin", id)
+	events, err := h.engine.ListEntityAudit("bin", id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -190,7 +190,7 @@ func (h *Handlers) apiPayloadsByNode(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	bins, err := h.engine.DB().ListBinsByNode(id)
+	bins, err := h.engine.ListBinsByNode(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -222,7 +222,7 @@ func (h *Handlers) apiBulkRegisterBins(w http.ResponseWriter, r *http.Request) {
 			Status:    "available",
 			NodeID:    req.NodeID,
 		}
-		if err := h.engine.DB().CreateBin(b); err != nil {
+		if err := h.engine.CreateBin(b); err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

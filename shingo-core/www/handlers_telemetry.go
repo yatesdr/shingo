@@ -34,7 +34,7 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		Occupied          bool    `json:"occupied"`
 	}
 
-	db := h.engine.DB()
+	db := h.engine
 	result := make([]nodeBinInfo, 0, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
@@ -73,7 +73,7 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		h.jsonOK(w, map[string]interface{}{"uop_capacity": 0, "items": []struct{}{}})
 		return
 	}
-	db := h.engine.DB()
+	db := h.engine
 	payload, err := db.GetPayloadByCode(code)
 	if err != nil {
 		h.jsonOK(w, map[string]interface{}{"uop_capacity": 0, "items": []struct{}{}})
@@ -117,7 +117,7 @@ func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Reque
 		h.jsonOK(w, []struct{}{})
 		return
 	}
-	db := h.engine.DB()
+	db := h.engine
 	node, err := db.GetNodeByDotName(name)
 	if err != nil {
 		h.jsonOK(w, []struct{}{})
@@ -170,7 +170,7 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := h.engine.DB()
+	db := h.engine
 	node, err := db.GetNodeByDotName(req.NodeName)
 	if err != nil {
 		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
@@ -231,7 +231,7 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_name is required", http.StatusBadRequest)
 		return
 	}
-	db := h.engine.DB()
+	db := h.engine
 	node, err := db.GetNodeByDotName(req.NodeName)
 	if err != nil {
 		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)

@@ -73,7 +73,7 @@ shingo-core/
 │   ├── dispatcher_test.go         # 18 tests, uses testdb.NewFailingBackend
 │   ├── reshuffle_test.go          # 6 tests, uses testdb.NewSuccessBackend/NewFailingBackend
 │   ├── group_resolver_test.go     # 15 tests, helpers removed (~650 lines)
-│   ├── integration_test.go        # 13 tests, uses testdb.NewTrackingBackend/CreateBinAtNode
+│   ├── end_to_end_test.go         # 13 tests, uses testdb.NewTrackingBackend/CreateBinAtNode
 │   └── fleet_simulator_test.go    # 5 tests (~315 lines, unchanged)
 └── fleet/
     └── simulator/
@@ -101,7 +101,7 @@ shingo-core/
 | `dispatch/dispatcher_test.go` | Dispatcher-level tests. 18 tests, uses shared `testdb.NewFailingBackend()` instead of inline mock. |
 | `dispatch/reshuffle_test.go` | Reshuffle planning tests. 6 tests, uses `testdb.NewSuccessBackend()` and `testdb.NewFailingBackend()`. |
 | `dispatch/group_resolver_test.go` | Group resolver tests. 15 tests, `createTestBinAtNode` wrapper to `testdb`. |
-| `dispatch/integration_test.go` | Integration tests. 13 tests, uses `testdb.NewTrackingBackend()` and `testdb.CreateBinAtNode()` for bin setup. |
+| `dispatch/end_to_end_test.go` | End-to-end dispatcher tests. 13 tests, uses `testdb.NewTrackingBackend()` and `testdb.CreateBinAtNode()` for bin setup. Drives the dispatcher through complete retrieve/move/store/cancel/redirect/synthetic/reshuffle lifecycles. |
 | `dispatch/fleet_simulator_test.go` | Dispatcher-level scenario tests (TC-1, TC-3, TC-4, TC-5). Tests the outbound path only (what gets sent to the fleet). |
 | `dispatch/bin_lifecycle_test.go` | Bin lifecycle integration tests (TC-64a–c). Full depletion, partial consumption, concurrent retrieve_empty race. |
 | `dispatch/planning_test.go` | `extractRemainingUOP` unit tests (TC-65). Nil, empty, missing, zero, positive, malformed JSON. |

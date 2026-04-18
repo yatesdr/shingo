@@ -88,7 +88,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 
-	user, err := h.engine.DB().GetAdminUser(username)
+	user, err := h.engine.GetAdminUser(username)
 	if err != nil || !auth.CheckPassword(user.PasswordHash, password) {
 		data := map[string]any{
 			"Page":  "login",

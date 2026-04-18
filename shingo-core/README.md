@@ -43,11 +43,27 @@ On first startup, Shingo Core creates all database tables, indexes, and a defaul
 
 ```sh
 make build      # Build for current platform
-make test       # Run tests
+make test       # Run unit + fake-backed tests (no Docker required)
+make test-all   # Run full suite including Postgres-backed tests (requires Docker)
 make all        # Cross-compile (linux/windows/macos)
 make fmt        # Format code
 make vet        # Static analysis
 ```
+
+### Docker-gated tests
+
+Test files that need a live Postgres carry `//go:build docker` on
+their first line (dispatch/, engine/, messaging/, service/, store/,
+www/, and `shingo-edge/store/outbox_test.go`). `make test` skips
+them by omitting the tag, so the default target runs fast and
+green on a machine without Docker. `make test-all` (or
+`go test -tags=docker ./...`) pulls them back in.
+
+Behavioral contracts that don't need a DB — narrow-interface
+satisfaction, algorithm correctness for bin resolution, scanner
+flow — are covered by fake-backed tests in `material/`,
+`fulfillment/`, and `dispatch/binresolver/`. Those stay tag-free
+so they run on every push without Docker.
 
 ## Debug Logging
 

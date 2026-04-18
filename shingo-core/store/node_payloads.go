@@ -1,44 +1,56 @@
 package store
 
-import "fmt"
+// Stage 2D delegate file: node_payloads junction writes live in store/nodes/
+// (AssignPayload/UnassignPayload/SetPayloads), while the cross-aggregate
+// queries that return *Payload or *Node stay here as composition methods.
+
+import (
+	"fmt"
+
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
+)
 
 func (db *DB) AssignPayloadToNode(nodeID, payloadID int64) error {
-	_, err := db.Exec(`INSERT INTO node_payloads (node_id, payload_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, nodeID, payloadID)
-	return err
+	return nodes.AssignPayload(db.DB, nodeID, payloadID)
 }
 
 func (db *DB) UnassignPayloadFromNode(nodeID, payloadID int64) error {
-	_, err := db.Exec(`DELETE FROM node_payloads WHERE node_id=$1 AND payload_id=$2`, nodeID, payloadID)
-	return err
+	return nodes.UnassignPayload(db.DB, nodeID, payloadID)
 }
 
+// ListPayloadsForNode returns the directly-assigned payload templates for a
+// node. Cross-aggregate (nodes ↔ payloads).
 func (db *DB) ListPayloadsForNode(nodeID int64) ([]*Payload, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT %s FROM payloads
 		WHERE id IN (SELECT payload_id FROM node_payloads WHERE node_id=$1)
-		ORDER BY code`, payloadSelectCols), nodeID)
+		ORDER BY code`, payloads.SelectCols), nodeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPayloads(rows)
+	return payloads.ScanPayloads(rows)
 }
 
+// ListNodesForPayload returns all nodes that have the given payload assigned.
+// Cross-aggregate (nodes ↔ payloads).
 func (db *DB) ListNodesForPayload(payloadID int64) ([]*Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT %s %s
 		WHERE n.id IN (SELECT np.node_id FROM node_payloads np WHERE np.payload_id=$1)
-		ORDER BY n.name`, nodeSelectCols, nodeFromClause), payloadID)
+		ORDER BY n.name`, nodes.SelectCols, nodes.FromClause), payloadID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanNodes(rows)
+	return nodes.ScanNodes(rows)
 }
 
-// GetEffectivePayloads returns payload templates for a node, walking up the parent
-// chain until a non-empty set is found. Returns nil (all payloads) if no ancestor has payloads.
-// Uses a recursive CTE to resolve the ancestor chain in a single query.
+// GetEffectivePayloads returns payload templates for a node, walking up the
+// parent chain until a non-empty set is found. Returns nil (all payloads) if
+// no ancestor has payloads. Uses a recursive CTE to resolve the ancestor
+// chain in a single query. Cross-aggregate (nodes ↔ payloads).
 func (db *DB) GetEffectivePayloads(nodeID int64) ([]*Payload, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		WITH RECURSIVE ancestors AS (
@@ -57,28 +69,15 @@ func (db *DB) GetEffectivePayloads(nodeID int64) ([]*Payload, error) {
 				LIMIT 1
 			)
 		)
-		ORDER BY code`, payloadSelectCols), nodeID)
+		ORDER BY code`, payloads.SelectCols), nodeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanPayloads(rows)
+	return payloads.ScanPayloads(rows)
 }
 
 // SetNodePayloads replaces all payload template assignments for a node.
 func (db *DB) SetNodePayloads(nodeID int64, payloadIDs []int64) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, nodeID); err != nil {
-		return err
-	}
-	for _, pID := range payloadIDs {
-		if _, err := tx.Exec(`INSERT INTO node_payloads (node_id, payload_id) VALUES ($1, $2)`, nodeID, pID); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return nodes.SetPayloads(db.DB, nodeID, payloadIDs)
 }

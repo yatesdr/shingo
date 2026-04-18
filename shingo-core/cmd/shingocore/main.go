@@ -255,7 +255,9 @@ func main() {
 	coreHandler.DebugLog = dbg.Func("core_handler")
 	coreHandler.Start()
 	defer coreHandler.Stop()
-	ingestor := protocol.NewIngestor(coreHandler, func(_ *protocol.RawHeader) bool { return true })
+	inboxDedup := messaging.NewInboxDedup(coreHandler, db)
+	inboxDedup.DebugLog = dbg.Func("core_handler")
+	ingestor := protocol.NewIngestor(inboxDedup, func(_ *protocol.RawHeader) bool { return true })
 	ingestor.DebugLog = dbg.Func("protocol")
 	if cfg.Messaging.SigningKey != "" {
 		ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)

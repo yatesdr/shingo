@@ -17,8 +17,8 @@ import (
 // --- Test Orders Page ---
 
 func (h *Handlers) handleTestOrders(w http.ResponseWriter, r *http.Request) {
-	nodes, _ := h.engine.DB().ListNodes()
-	payloads, _ := h.engine.DB().ListPayloads()
+	nodes, _ := h.engine.ListNodes()
+	payloads, _ := h.engine.ListPayloads()
 	data := map[string]any{
 		"Page":     "test-orders",
 		"Nodes":    nodes,
@@ -28,7 +28,7 @@ func (h *Handlers) handleTestOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiTestOrdersList(w http.ResponseWriter, r *http.Request) {
-	orders, err := h.engine.DB().ListOrdersByStation("core-test", 50)
+	orders, err := h.engine.ListOrdersByStation("core-test", 50)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -42,12 +42,12 @@ func (h *Handlers) apiTestOrderDetail(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	order, err := h.engine.DB().GetOrder(id)
+	order, err := h.engine.GetOrder(id)
 	if err != nil {
 		h.jsonError(w, "order not found", http.StatusNotFound)
 		return
 	}
-	history, _ := h.engine.DB().ListOrderHistory(id)
+	history, _ := h.engine.ListOrderHistory(id)
 	h.jsonOK(w, map[string]any{"order": order, "history": history})
 }
 
@@ -66,7 +66,7 @@ func (h *Handlers) apiTestRobots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiTestScenePoints(w http.ResponseWriter, r *http.Request) {
-	points, err := h.engine.DB().ListScenePoints()
+	points, err := h.engine.ListScenePoints()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -291,7 +291,7 @@ func (h *Handlers) apiDirectOrderReceipt(w http.ResponseWriter, r *http.Request)
 		req.ReceiptType = "full"
 	}
 
-	order, err := h.engine.DB().GetOrderByUUID(req.OrderUUID)
+	order, err := h.engine.GetOrderByUUID(req.OrderUUID)
 	if err != nil {
 		h.jsonError(w, "order not found", http.StatusNotFound)
 		return
@@ -311,7 +311,7 @@ func (h *Handlers) apiDirectOrderReceipt(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handlers) apiDirectOrdersList(w http.ResponseWriter, r *http.Request) {
-	orders, err := h.engine.DB().ListOrdersByStation("core-direct", 50)
+	orders, err := h.engine.ListOrdersByStation("core-direct", 50)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -713,11 +713,11 @@ func (h *Handlers) apiTestCommandSubmit(w http.ResponseWriter, r *http.Request) 
 		tc.Detail = result.Detail
 	}
 
-	if dbErr := h.engine.DB().CreateTestCommand(tc); dbErr != nil {
+	if dbErr := h.engine.CreateTestCommand(tc); dbErr != nil {
 		log.Printf("test-commands: db save error: %v", dbErr)
 	}
 	if result != nil && result.State == "COMPLETED" {
-		h.engine.DB().CompleteTestCommand(tc.ID)
+		h.engine.CompleteTestCommand(tc.ID)
 	}
 
 	if err != nil {
@@ -741,7 +741,7 @@ func (h *Handlers) apiTestCommandStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tc, err := h.engine.DB().GetTestCommand(id)
+	tc, err := h.engine.GetTestCommand(id)
 	if err != nil {
 		h.jsonError(w, "command not found", http.StatusNotFound)
 		return
@@ -754,11 +754,11 @@ func (h *Handlers) apiTestCommandStatus(w http.ResponseWriter, r *http.Request) 
 			if err == nil {
 				vendorDetail = detail.Raw
 				if detail.State != tc.VendorState {
-					h.engine.DB().UpdateTestCommandStatus(id, detail.State, "")
+					h.engine.UpdateTestCommandStatus(id, detail.State, "")
 					tc.VendorState = detail.State
 				}
 				if detail.IsTerminal {
-					h.engine.DB().CompleteTestCommand(id)
+					h.engine.CompleteTestCommand(id)
 				}
 			}
 		}
@@ -771,7 +771,7 @@ func (h *Handlers) apiTestCommandStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handlers) apiTestCommandsList(w http.ResponseWriter, r *http.Request) {
-	cmds, err := h.engine.DB().ListTestCommands(50)
+	cmds, err := h.engine.ListTestCommands(50)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

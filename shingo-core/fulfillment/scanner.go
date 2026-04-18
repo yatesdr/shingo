@@ -1,4 +1,4 @@
-package engine
+package fulfillment
 
 import (
 	"errors"
@@ -11,13 +11,21 @@ import (
 	"shingocore/store"
 )
 
-// FulfillmentScanner monitors queued orders and fulfills them when
-// matching inventory becomes available. Runs event-driven with a
-// periodic safety sweep.
-type FulfillmentScanner struct {
-	db         *store.DB
-	dispatcher *dispatch.Dispatcher
-	resolver   *dispatch.DefaultResolver
+// Scanner monitors queued orders and fulfills them when matching
+// inventory becomes available. Runs event-driven with a periodic
+// safety sweep.
+//
+// Construct via NewScanner. The zero value is not usable.
+//
+// dispatcher and resolver are narrow consumer-side interfaces
+// (see dispatcher.go). The concrete types *dispatch.Dispatcher and
+// *dispatch.DefaultResolver satisfy them structurally, so the
+// engine wires them in unchanged. Holding interfaces here is what
+// lets scanner_test.go stub a one-method fake dispatcher.
+type Scanner struct {
+	db         Store
+	dispatcher Dispatcher
+	resolver   Resolver
 	sendToEdge func(msgType, stationID string, payload any) error
 	// failFn fails an order in the DB AND emits EventOrderFailed so the
 	// standard handler chain (audit, return order, edge notification) fires.
@@ -34,16 +42,22 @@ type FulfillmentScanner struct {
 	stopChan  chan struct{}
 }
 
-func newFulfillmentScanner(
-	db *store.DB,
-	dispatcher *dispatch.Dispatcher,
-	resolver *dispatch.DefaultResolver,
+// NewScanner constructs a Scanner wired to the provided dependencies.
+// See package doc for the role of each argument.
+//
+// dispatcher and resolver are accepted as narrow interfaces. Callers
+// (engine) continue to pass the concrete *dispatch.Dispatcher and
+// *dispatch.DefaultResolver — Go's structural typing handles the rest.
+func NewScanner(
+	db Store,
+	dispatcher Dispatcher,
+	resolver Resolver,
 	sendFn func(string, string, any) error,
 	failFn func(orderID int64, code, detail string),
 	logFn func(string, ...any),
 	debugLog func(string, ...any),
-) *FulfillmentScanner {
-	return &FulfillmentScanner{
+) *Scanner {
+	return &Scanner{
 		db:         db,
 		dispatcher: dispatcher,
 		resolver:   resolver,
@@ -57,14 +71,14 @@ func newFulfillmentScanner(
 
 // Trigger requests a scan. If a scan is already running, the request
 // is coalesced — the scanner will re-run after the current scan finishes.
-func (s *FulfillmentScanner) Trigger() {
+func (s *Scanner) Trigger() {
 	s.triggerMu.Lock()
 	s.pending = true
 	s.triggerMu.Unlock()
 }
 
 // RunOnce executes a single scan pass. Only one scan runs at a time.
-func (s *FulfillmentScanner) RunOnce() int {
+func (s *Scanner) RunOnce() int {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
 
@@ -86,7 +100,7 @@ func (s *FulfillmentScanner) RunOnce() int {
 }
 
 // StartPeriodicSweep runs the scanner every interval as a safety net.
-func (s *FulfillmentScanner) StartPeriodicSweep(interval time.Duration) {
+func (s *Scanner) StartPeriodicSweep(interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -102,11 +116,11 @@ func (s *FulfillmentScanner) StartPeriodicSweep(interval time.Duration) {
 }
 
 // Stop halts the periodic sweep.
-func (s *FulfillmentScanner) Stop() {
+func (s *Scanner) Stop() {
 	close(s.stopChan)
 }
 
-func (s *FulfillmentScanner) scan() int {
+func (s *Scanner) scan() int {
 	orders, err := s.db.ListQueuedOrders()
 	if err != nil {
 		log.Printf("fulfillment: list queued orders: %v", err)
@@ -132,7 +146,7 @@ func (s *FulfillmentScanner) scan() int {
 	return fulfilled
 }
 
-func (s *FulfillmentScanner) tryFulfill(order *store.Order) bool {
+func (s *Scanner) tryFulfill(order *store.Order) bool {
 	// Re-check status (may have been cancelled between listing and processing)
 	current, err := s.db.GetOrder(order.ID)
 	if err != nil || current.Status != protocol.StatusQueued {

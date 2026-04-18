@@ -1,123 +1,35 @@
 package store
 
-import "fmt"
+// Stage 2D delegate file: node_stations CRUD + effective resolution live in
+// store/nodes/.
+
+import "shingocore/store/nodes"
 
 func (db *DB) AssignNodeToStation(nodeID int64, stationID string) error {
-	_, err := db.Exec(`INSERT INTO node_stations (node_id, station_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, nodeID, stationID)
-	return err
+	return nodes.AssignStation(db.DB, nodeID, stationID)
 }
 
 func (db *DB) UnassignNodeFromStation(nodeID int64, stationID string) error {
-	_, err := db.Exec(`DELETE FROM node_stations WHERE node_id=$1 AND station_id=$2`, nodeID, stationID)
-	return err
+	return nodes.UnassignStation(db.DB, nodeID, stationID)
 }
 
 func (db *DB) ListStationsForNode(nodeID int64) ([]string, error) {
-	rows, err := db.Query(`SELECT station_id FROM node_stations WHERE node_id=$1 ORDER BY station_id`, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var stations []string
-	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
-			return nil, err
-		}
-		stations = append(stations, s)
-	}
-	return stations, rows.Err()
+	return nodes.ListStationsForNode(db.DB, nodeID)
 }
 
-// ListNodesForStation returns nodes directly assigned to a station, plus NGRP
-// node group parents whose children are assigned to the station.
+// ListNodesForStation returns nodes directly assigned to a station, plus
+// NGRP node group parents whose children are assigned to the station.
 func (db *DB) ListNodesForStation(stationID string) ([]*Node, error) {
-	rows, err := db.Query(fmt.Sprintf(`
-		SELECT %s %s
-		WHERE (n.id IN (
-			SELECT ns.node_id FROM node_stations ns WHERE ns.station_id = $1
-		)
-		AND (n.parent_id IS NULL
-		     OR (n.is_synthetic = false AND EXISTS (
-		         SELECT 1 FROM nodes p
-		         JOIN node_types pt ON pt.id = p.node_type_id
-		         WHERE p.id = n.parent_id AND pt.code = 'NGRP'
-		     ))))
-		OR (EXISTS (
-		    SELECT 1 FROM node_types nt WHERE nt.id = n.node_type_id AND nt.code = 'NGRP'
-		    AND EXISTS (
-		        SELECT 1 FROM nodes c JOIN node_stations cs ON cs.node_id = c.id
-		        WHERE c.parent_id = n.id AND cs.station_id = $1
-		    )
-		)))
-		ORDER BY n.name`, nodeSelectCols, nodeFromClause), stationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanNodes(rows)
+	return nodes.ListNodesForStation(db.DB, stationID)
 }
 
-// GetEffectiveStations returns stations for a node based on its station_mode property:
-//   - "all": no restrictions (returns nil)
-//   - "specific": returns directly assigned stations
-//   - "" / "inherit": walks parent chain until a non-empty set is found
+// GetEffectiveStations resolves the station set for a node via its
+// station_mode property (all / none / specific / inherit).
 func (db *DB) GetEffectiveStations(nodeID int64) ([]string, error) {
-	mode := db.GetNodeProperty(nodeID, "station_mode")
-	switch mode {
-	case "all":
-		return nil, nil
-	case "none":
-		return []string{}, nil // empty = no stations permitted
-	case "specific":
-		return db.ListStationsForNode(nodeID)
-	default: // "" or "inherit"
-		rows, err := db.Query(`
-			WITH RECURSIVE ancestors AS (
-				SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = $1
-				UNION ALL
-				SELECT n.id, n.parent_id, a.depth + 1 FROM nodes n
-				JOIN ancestors a ON n.id = a.parent_id
-			)
-			SELECT ns.station_id FROM node_stations ns
-			WHERE ns.node_id = (
-				SELECT a.id FROM ancestors a
-				WHERE EXISTS (SELECT 1 FROM node_stations ns2 WHERE ns2.node_id = a.id)
-				ORDER BY a.depth ASC
-				LIMIT 1
-			)
-			ORDER BY ns.station_id
-		`, nodeID)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		var stations []string
-		for rows.Next() {
-			var s string
-			if err := rows.Scan(&s); err != nil {
-				return nil, err
-			}
-			stations = append(stations, s)
-		}
-		return stations, rows.Err()
-	}
+	return nodes.GetEffectiveStations(db.DB, nodeID)
 }
 
 // SetNodeStations replaces all station assignments for a node.
 func (db *DB) SetNodeStations(nodeID int64, stationIDs []string) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM node_stations WHERE node_id=$1`, nodeID); err != nil {
-		return err
-	}
-	for _, sid := range stationIDs {
-		if _, err := tx.Exec(`INSERT INTO node_stations (node_id, station_id) VALUES ($1, $2)`, nodeID, sid); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return nodes.SetStations(db.DB, nodeID, stationIDs)
 }

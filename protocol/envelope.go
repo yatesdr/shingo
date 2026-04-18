@@ -31,6 +31,7 @@ type RawHeader struct {
 	Version   int       `json:"v"`
 	Type      string    `json:"type"`
 	ID        string    `json:"id"`
+	Src       Address   `json:"src"`
 	Dst       Address   `json:"dst"`
 	ExpiresAt time.Time `json:"exp"`
 }

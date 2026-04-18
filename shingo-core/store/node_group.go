@@ -1,41 +1,26 @@
 package store
 
+// Stage 2D delegate file: node_group CRUD (CreateGroup / AddLane /
+// DeleteGroup) lives in store/nodes/. The cross-aggregate GetGroupLayout
+// stays here because the layout structs embed a concrete *Bin pointer.
+
 import (
 	"fmt"
 	"strings"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
-// CreateNodeGroup creates an empty NGRP node with the given name.
-// Lanes and direct children are added separately via AddLane and drag-and-drop reparenting.
+// CreateNodeGroup creates an empty NGRP node with the given name. Lanes and
+// direct children are added separately via AddLane and reparenting.
 func (db *DB) CreateNodeGroup(name string) (int64, error) {
-	grpType, err := db.GetNodeTypeByCode("NGRP")
-	if err != nil {
-		return 0, fmt.Errorf("NGRP node type not found")
-	}
-	id, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, node_type_id, enabled) VALUES ($1, true, $2, true) RETURNING id`,
-		name, grpType.ID)
-	if err != nil {
-		return 0, fmt.Errorf("create node group: %w", err)
-	}
-	return id, nil
+	return nodes.CreateGroup(db.DB, name)
 }
 
 // AddLane creates a LANE node as a child of the given node group.
 func (db *DB) AddLane(groupID int64, name string) (int64, error) {
-	grpNode, err := db.GetNode(groupID)
-	if err != nil {
-		return 0, fmt.Errorf("node group not found: %w", err)
-	}
-	lanType, err := db.GetNodeTypeByCode("LANE")
-	if err != nil {
-		return 0, fmt.Errorf("LANE node type not found")
-	}
-	laneID, err := db.insertID(`INSERT INTO nodes (name, is_synthetic, node_type_id, parent_id, zone, enabled) VALUES ($1, true, $2, $3, $4, true) RETURNING id`,
-		name, lanType.ID, groupID, grpNode.Zone)
-	if err != nil {
-		return 0, fmt.Errorf("create lane: %w", err)
-	}
-	return laneID, nil
+	return nodes.AddLane(db.DB, groupID, name)
 }
 
 // GroupSlotInfo describes a slot in a node group layout.
@@ -69,20 +54,21 @@ type GroupStats struct {
 
 // GetGroupLayout assembles the lane/slot/payload layout for a node group.
 // Uses bulk queries to avoid N+1 per-slot database round trips.
+// Cross-aggregate composition (nodes ↔ bins).
 func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
-	children, err := db.ListChildNodes(groupID)
+	children, err := nodes.ListChildren(db.DB, groupID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Collect all slot/direct-child node IDs under this group
 	var allNodeIDs []int64
-	laneSlots := make(map[int64][]*Node)  // laneID -> ordered slots
-	slotDepths := make(map[int64]int)       // nodeID -> depth
+	laneSlots := make(map[int64][]*Node) // laneID -> ordered slots
+	slotDepths := make(map[int64]int)    // nodeID -> depth
 
 	for _, child := range children {
 		if child.NodeTypeCode == "LANE" {
-			slots, _ := db.ListLaneSlots(child.ID)
+			slots, _ := nodes.ListLaneSlots(db.DB, child.ID)
 			laneSlots[child.ID] = slots
 			for _, slot := range slots {
 				allNodeIDs = append(allNodeIDs, slot.ID)
@@ -107,12 +93,12 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 			args[i] = id
 		}
 		query := fmt.Sprintf(`%s WHERE b.node_id IN (%s) ORDER BY b.id ASC`,
-			binJoinQuery, strings.Join(placeholders, ", "))
+			bins.BinJoinQuery, strings.Join(placeholders, ", "))
 		rows, err := db.Query(query, args...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
-				bin, err := scanBin(rows)
+				bin, err := bins.ScanBin(rows)
 				if err != nil {
 					continue
 				}
@@ -170,45 +156,5 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 // child nodes are unparented and returned to the flat grid. Synthetic nodes
 // (the NGRP, LANE containers) are deleted.
 func (db *DB) DeleteNodeGroup(grpID int64) error {
-	// Collect all descendant info before starting the transaction.
-	type nodeInfo struct {
-		id          int64
-		isSynthetic bool
-	}
-	var descendants []nodeInfo
-	children, _ := db.ListChildNodes(grpID)
-	for _, child := range children {
-		grandchildren, _ := db.ListChildNodes(child.ID)
-		for _, gc := range grandchildren {
-			descendants = append(descendants, nodeInfo{gc.ID, gc.IsSynthetic})
-		}
-		descendants = append(descendants, nodeInfo{child.ID, child.IsSynthetic})
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	for _, d := range descendants {
-		if d.isSynthetic {
-			tx.Exec(`DELETE FROM node_properties WHERE node_id=$1`, d.id)
-			tx.Exec(`DELETE FROM node_stations WHERE node_id=$1`, d.id)
-			tx.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, d.id)
-			tx.Exec(`DELETE FROM nodes WHERE id=$1`, d.id)
-		} else {
-			// Unparent physical nodes — return them to the flat grid
-			tx.Exec(`UPDATE nodes SET parent_id=NULL, updated_at=NOW() WHERE id=$1`, d.id)
-			tx.Exec(`DELETE FROM node_properties WHERE node_id=$1 AND key IN ('depth','role')`, d.id)
-		}
-	}
-
-	// Delete the node group itself
-	tx.Exec(`DELETE FROM node_properties WHERE node_id=$1`, grpID)
-	tx.Exec(`DELETE FROM node_stations WHERE node_id=$1`, grpID)
-	tx.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, grpID)
-	tx.Exec(`DELETE FROM nodes WHERE id=$1`, grpID)
-
-	return tx.Commit()
+	return nodes.DeleteGroup(db.DB, grpID)
 }

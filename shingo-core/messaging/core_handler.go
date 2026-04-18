@@ -6,13 +6,17 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingocore/dispatch"
 	"shingocore/store"
 )
 
 // CoreHandler handles inbound protocol messages on the orders topic.
 // It processes registration and heartbeat messages directly, and
 // delegates order messages to the dispatcher.
+//
+// dispatcher is the narrow consumer-side Dispatcher interface (see
+// dispatcher.go in this package). *dispatch.Dispatcher satisfies it
+// structurally, so engine wiring is unchanged; the indirection is
+// what lets core_handler_test.go stub a fake.
 type CoreHandler struct {
 	protocol.NoOpHandler
 
@@ -20,7 +24,7 @@ type CoreHandler struct {
 	client        *Client
 	stationID     string
 	dispatchTopic string
-	dispatcher    *dispatch.Dispatcher
+	dispatcher    Dispatcher
 	dataService   *CoreDataService
 	DebugLog      func(string, ...any)
 
@@ -30,7 +34,11 @@ type CoreHandler struct {
 }
 
 // NewCoreHandler creates a handler for inbound edge messages.
-func NewCoreHandler(db *store.DB, client *Client, stationID, dispatchTopic string, dispatcher *dispatch.Dispatcher) *CoreHandler {
+//
+// dispatcher is accepted as the narrow Dispatcher interface. Callers
+// (engine) pass the concrete *dispatch.Dispatcher; structural typing
+// handles the rest.
+func NewCoreHandler(db *store.DB, client *Client, stationID, dispatchTopic string, dispatcher Dispatcher) *CoreHandler {
 	h := &CoreHandler{
 		db:            db,
 		client:        client,
@@ -104,94 +112,57 @@ func (h *CoreHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 	h.dataService.Handle(env, p)
 }
 
-// Order message handlers delegate to the dispatcher.
+// Order message handlers delegate to the dispatcher. Inbox
+// deduplication is performed by the InboxDedup decorator in the
+// composition root — these methods assume the envelope has already
+// cleared the dedup guard.
 
 func (h *CoreHandler) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
 	log.Printf("core_handler: order request from %s: uuid=%s type=%s", env.Src.Station, p.OrderUUID, p.OrderType)
 	h.dbg("-> order_request from=%s uuid=%s type=%s", env.Src.Station, p.OrderUUID, p.OrderType)
 	h.dispatcher.HandleOrderRequest(env, p)
 }
 
 func (h *CoreHandler) HandleOrderCancel(env *protocol.Envelope, p *protocol.OrderCancel) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
 	log.Printf("core_handler: order cancel from %s: uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dbg("-> order_cancel from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderCancel(env, p)
 }
 
 func (h *CoreHandler) HandleOrderReceipt(env *protocol.Envelope, p *protocol.OrderReceipt) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
 	log.Printf("core_handler: delivery receipt from %s: uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dbg("-> order_receipt from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderReceipt(env, p)
 }
 
 func (h *CoreHandler) HandleOrderRedirect(env *protocol.Envelope, p *protocol.OrderRedirect) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
 	log.Printf("core_handler: redirect from %s: uuid=%s -> %s", env.Src.Station, p.OrderUUID, p.NewDeliveryNode)
 	h.dbg("-> order_redirect from=%s uuid=%s new_dest=%s", env.Src.Station, p.OrderUUID, p.NewDeliveryNode)
 	h.dispatcher.HandleOrderRedirect(env, p)
 }
 
 func (h *CoreHandler) HandleOrderStorageWaybill(env *protocol.Envelope, p *protocol.OrderStorageWaybill) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
 	log.Printf("core_handler: storage waybill from %s: uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dbg("-> storage_waybill from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderStorageWaybill(env, p)
 }
 
 func (h *CoreHandler) HandleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
 	log.Printf("core_handler: complex order from %s: uuid=%s steps=%d", env.Src.Station, p.OrderUUID, len(p.Steps))
 	h.dbg("-> complex_order from=%s uuid=%s steps=%d", env.Src.Station, p.OrderUUID, len(p.Steps))
 	h.dispatcher.HandleComplexOrderRequest(env, p)
 }
 
 func (h *CoreHandler) HandleOrderRelease(env *protocol.Envelope, p *protocol.OrderRelease) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
 	log.Printf("core_handler: order release from %s: uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dbg("-> order_release from=%s uuid=%s", env.Src.Station, p.OrderUUID)
 	h.dispatcher.HandleOrderRelease(env, p)
 }
 
 func (h *CoreHandler) HandleOrderIngest(env *protocol.Envelope, p *protocol.OrderIngestRequest) {
-	if !h.shouldProcessInbound(env) {
-		return
-	}
 	log.Printf("core_handler: order ingest from %s: uuid=%s payload=%s bin=%s", env.Src.Station, p.OrderUUID, p.PayloadCode, p.BinLabel)
 	h.dbg("-> order_ingest from=%s uuid=%s payload=%s bin=%s", env.Src.Station, p.OrderUUID, p.PayloadCode, p.BinLabel)
 	h.dispatcher.HandleOrderIngest(env, p)
-}
-
-func (h *CoreHandler) shouldProcessInbound(env *protocol.Envelope) bool {
-	if env == nil || env.ID == "" {
-		return true
-	}
-	inserted, err := h.db.RecordInboundMessage(env.ID, env.Type, env.Src.Station)
-	if err != nil {
-		log.Printf("core_handler: inbox record %s: %v", env.ID, err)
-		return false
-	}
-	if !inserted {
-		h.dbg("duplicate inbound ignored: id=%s type=%s from=%s", env.ID, env.Type, env.Src.Station)
-		return false
-	}
-	return true
 }
 
 func (h *CoreHandler) staleEdgeLoop() {

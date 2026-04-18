@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"shingocore/engine"
 	"shingocore/store"
@@ -38,7 +39,7 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		HeightIn:    heightIn,
 	}
 
-	if err := h.engine.DB().CreateBinType(bt); err != nil {
+	if err := h.engine.CreateBinType(bt); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -58,7 +59,7 @@ func (h *Handlers) handleBinTypeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bt, err := h.engine.DB().GetBinType(id)
+	bt, err := h.engine.GetBinType(id)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -73,7 +74,7 @@ func (h *Handlers) handleBinTypeUpdate(w http.ResponseWriter, r *http.Request) {
 		bt.HeightIn = h
 	}
 
-	if err := h.engine.DB().UpdateBinType(bt); err != nil {
+	if err := h.engine.UpdateBinType(bt); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -88,7 +89,7 @@ func (h *Handlers) handleBinTypeDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DB().DeleteBinType(id); err != nil {
+	if err := h.engine.DeleteBinType(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -99,19 +100,19 @@ func (h *Handlers) handleBinTypeDelete(w http.ResponseWriter, r *http.Request) {
 // --- Page handler ---
 
 func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
-	bins, err := h.engine.DB().ListBins()
+	bins, err := h.engine.ListBins()
 	if err != nil {
 		log.Printf("bins page: list bins: %v", err)
 	}
-	binTypes, err := h.engine.DB().ListBinTypes()
+	binTypes, err := h.engine.ListBinTypes()
 	if err != nil {
 		log.Printf("bins page: list bin types: %v", err)
 	}
-	nodes, err := h.engine.DB().ListNodes()
+	nodes, err := h.engine.ListNodes()
 	if err != nil {
 		log.Printf("bins page: list nodes: %v", err)
 	}
-	payloads, err := h.engine.DB().ListPayloads()
+	payloads, err := h.engine.ListPayloads()
 	if err != nil {
 		log.Printf("bins page: list payloads: %v", err)
 	}
@@ -121,7 +122,7 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 	for i, b := range bins {
 		binIDs[i] = b.ID
 	}
-	binHasNotes, err := h.engine.DB().BinHasNotes(binIDs)
+	binHasNotes, err := h.engine.BinHasNotes(binIDs)
 	if err != nil {
 		log.Printf("bins page: check bin notes: %v", err)
 	}
@@ -179,54 +180,33 @@ func (h *Handlers) handleBinCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Occupancy guard: a physical node holds one bin. Creating a second bin
-	// at an occupied node breaks downstream code that assumes one-bin-per-node
-	// (queries doing bins[0] indexing silently pick one and ignore the rest).
-	//
-	// Skip the check for:
-	//   - Synthetic nodes (LANE, NGRP) — children hold bins, not the node itself
-	//   - Multi-bin create (count > 1) at the same node — always invalid, caught below
-	//
-	// The dispatch path already has equivalent guards (fulfillment_scanner.go
-	// destination-occupancy check). This mirrors that at the admin UI entry point.
-	if nodeID != nil {
-		node, err := h.engine.DB().GetNode(*nodeID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("node %d not found", *nodeID), http.StatusBadRequest)
-			return
-		}
-		if !node.IsSynthetic {
-			if count > 1 {
-				http.Error(w, "cannot create multiple bins at a single physical node", http.StatusConflict)
-				return
-			}
-			existing, err := h.engine.DB().CountBinsByNode(*nodeID)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("check node occupancy: %v", err), http.StatusInternalServerError)
-				return
-			}
-			if existing > 0 {
-				http.Error(w, fmt.Sprintf("node %d already has %d bin(s); move or delete existing bin first", *nodeID, existing), http.StatusConflict)
-				return
-			}
-		}
+	template := store.Bin{
+		BinTypeID: binTypeID,
+		NodeID:    nodeID,
+		Status:    status,
 	}
-
-	for i := 0; i < count; i++ {
-		binLabel := label + fmt.Sprintf("%04d", i+1)
-		b := &store.Bin{
-			BinTypeID: binTypeID,
-			Label:     binLabel,
-			NodeID:    nodeID,
-			Status:    status,
-		}
-		if err := h.engine.DB().CreateBin(b); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	if err := h.engine.BinService().CreateBatch(template, label, count); err != nil {
+		http.Error(w, err.Error(), httpStatusForCreate(err))
+		return
 	}
 
 	http.Redirect(w, r, "/bins", http.StatusSeeOther)
+}
+
+// httpStatusForCreate maps BinService.CreateBatch error messages to HTTP
+// status codes so the admin UI gets the pre-refactor response codes
+// (404 node-not-found, 409 occupancy, 500 otherwise).
+func httpStatusForCreate(err error) int {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		return http.StatusBadRequest
+	case strings.Contains(msg, "cannot create multiple bins"),
+		strings.Contains(msg, "already has"):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 func (h *Handlers) handleBinDelete(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +216,7 @@ func (h *Handlers) handleBinDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DB().DeleteBin(id); err != nil {
+	if err := h.engine.DeleteBin(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -256,7 +236,7 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, err := h.engine.DB().GetBin(req.ID)
+	b, err := h.engine.GetBin(req.ID)
 	if err != nil {
 		h.jsonError(w, "bin not found", http.StatusNotFound)
 		return
@@ -301,27 +281,24 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 // --- Bin action handlers (bound method values used by executeBinAction) ---
 
 func (h *Handlers) binActivate(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
-	if err := db.UpdateBinStatus(b.ID, "available"); err != nil {
+	if err := h.engine.BinService().ChangeStatus(b.ID, "available"); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "status", b.Status, "available", "ui")
+	h.engine.AppendAudit("bin", b.ID, "status", b.Status, "available", "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 
 func (h *Handlers) binFlag(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
-	if err := db.UpdateBinStatus(b.ID, "flagged"); err != nil {
+	if err := h.engine.BinService().ChangeStatus(b.ID, "flagged"); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "status", b.Status, "flagged", "ui")
+	h.engine.AppendAudit("bin", b.ID, "status", b.Status, "flagged", "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 
 func (h *Handlers) binQualityHold(b *store.Bin, params json.RawMessage) error {
-	db := h.engine.DB()
 	var p struct {
 		Reason string `json:"reason"`
 		Actor  string `json:"actor"`
@@ -329,50 +306,47 @@ func (h *Handlers) binQualityHold(b *store.Bin, params json.RawMessage) error {
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	if err := db.UpdateBinStatus(b.ID, "quality_hold"); err != nil {
+	svc := h.engine.BinService()
+	if err := svc.ChangeStatus(b.ID, "quality_hold"); err != nil {
 		return err
 	}
 	actor := h.resolveActor(p.Actor)
-	db.AppendAudit("bin", b.ID, "status", b.Status, "quality_hold", actor)
+	h.engine.AppendAudit("bin", b.ID, "status", b.Status, "quality_hold", actor)
 	if p.Reason != "" {
-		db.AddBinNote(b.ID, "hold", p.Reason, actor)
+		h.engine.AddBinNote(b.ID, "hold", p.Reason, actor)
 	}
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 
 func (h *Handlers) binMaintenance(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
-	if err := db.UpdateBinStatus(b.ID, "maintenance"); err != nil {
+	if err := h.engine.BinService().ChangeStatus(b.ID, "maintenance"); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "status", b.Status, "maintenance", "ui")
+	h.engine.AppendAudit("bin", b.ID, "status", b.Status, "maintenance", "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 
 func (h *Handlers) binRetire(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
-	if err := db.UpdateBinStatus(b.ID, "retired"); err != nil {
+	if err := h.engine.BinService().ChangeStatus(b.ID, "retired"); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "status", b.Status, "retired", "ui")
+	h.engine.AppendAudit("bin", b.ID, "status", b.Status, "retired", "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 
 func (h *Handlers) binRelease(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
-	if err := db.ReleaseStagedBin(b.ID); err != nil {
+	if err := h.engine.BinService().Release(b.ID); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "status", "staged", "available", "ui")
+	h.engine.AppendAudit("bin", b.ID, "status", "staged", "available", "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 
 func (h *Handlers) binLock(b *store.Bin, params json.RawMessage) error {
-	db := h.engine.DB()
 	var p struct {
 		Actor string `json:"actor"`
 	}
@@ -380,29 +354,24 @@ func (h *Handlers) binLock(b *store.Bin, params json.RawMessage) error {
 		return fmt.Errorf("invalid params: %w", err)
 	}
 	actor := h.resolveActor(p.Actor)
-	if actor == "" {
-		return fmt.Errorf("actor is required for lock")
-	}
-	if err := db.LockBin(b.ID, actor); err != nil {
+	if err := h.engine.BinService().Lock(b.ID, actor); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "locked", "", actor, actor)
+	h.engine.AppendAudit("bin", b.ID, "locked", "", actor, actor)
 	h.emitBinUpdate(b, "locked", actor)
 	return nil
 }
 
 func (h *Handlers) binUnlock(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
-	if err := db.UnlockBin(b.ID); err != nil {
+	if err := h.engine.BinService().Unlock(b.ID); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "unlocked", b.LockedBy, "", "ui")
+	h.engine.AppendAudit("bin", b.ID, "unlocked", b.LockedBy, "", "ui")
 	h.emitBinUpdate(b, "unlocked", "")
 	return nil
 }
 
 func (h *Handlers) binLoadPayload(b *store.Bin, params json.RawMessage) error {
-	db := h.engine.DB()
 	var p struct {
 		PayloadCode string `json:"payload_code"`
 		UOPOverride int    `json:"uop_override"`
@@ -410,90 +379,57 @@ func (h *Handlers) binLoadPayload(b *store.Bin, params json.RawMessage) error {
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	if p.PayloadCode == "" {
-		return fmt.Errorf("payload_code is required")
-	}
-	if _, err := db.GetPayloadByCode(p.PayloadCode); err != nil {
-		return fmt.Errorf("payload template %q not found", p.PayloadCode)
-	}
-	if err := db.SetBinManifestFromTemplate(b.ID, p.PayloadCode, p.UOPOverride); err != nil {
+	if err := h.engine.BinService().LoadPayload(b.ID, p.PayloadCode, p.UOPOverride); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "loaded", "", p.PayloadCode, "ui")
+	h.engine.AppendAudit("bin", b.ID, "loaded", "", p.PayloadCode, "ui")
 	h.emitBinUpdate(b, "loaded", p.PayloadCode)
 	return nil
 }
 
 func (h *Handlers) binClear(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
 	oldCode := b.PayloadCode
-	if err := h.engine.BinManifest().ClearForReuse(b.ID); err != nil {
+	if err := h.engine.BinService().Manifest().ClearForReuse(b.ID); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "cleared", oldCode, "", "ui")
+	h.engine.AppendAudit("bin", b.ID, "cleared", oldCode, "", "ui")
 	h.emitBinUpdate(b, "cleared", "")
 	return nil
 }
 
 func (h *Handlers) binConfirmManifest(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
 	if b.Manifest == nil {
 		return fmt.Errorf("bin has no manifest to confirm")
 	}
-	if err := h.engine.BinManifest().Confirm(b.ID, ""); err != nil {
+	if err := h.engine.BinService().Manifest().Confirm(b.ID, ""); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "confirmed", "unconfirmed", "confirmed", "ui")
+	h.engine.AppendAudit("bin", b.ID, "confirmed", "unconfirmed", "confirmed", "ui")
 	h.emitBinUpdate(b, "loaded", "")
 	return nil
 }
 
 func (h *Handlers) binUnconfirmManifest(b *store.Bin, _ json.RawMessage) error {
-	db := h.engine.DB()
-	if err := db.UnconfirmBinManifest(b.ID); err != nil {
+	if err := h.engine.UnconfirmBinManifest(b.ID); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "unconfirmed", "confirmed", "unconfirmed", "ui")
+	h.engine.AppendAudit("bin", b.ID, "unconfirmed", "confirmed", "unconfirmed", "ui")
 	h.emitBinUpdate(b, "loaded", "")
 	return nil
 }
 
 func (h *Handlers) binMove(b *store.Bin, params json.RawMessage) error {
-	db := h.engine.DB()
 	var p struct {
 		NodeID int64 `json:"node_id"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	if p.NodeID == 0 {
-		return fmt.Errorf("node_id is required")
-	}
-	if b.NodeID != nil && *b.NodeID == p.NodeID {
-		return fmt.Errorf("bin is already at this location")
-	}
-	destNode, err := db.GetNode(p.NodeID)
+	res, err := h.engine.BinService().Move(b, p.NodeID)
 	if err != nil {
-		return fmt.Errorf("node not found")
-	}
-
-	// Destination-occupancy guard: one bin per physical node. Synthetic nodes
-	// (LANE, NGRP) hold bins via their children, not directly. Mirrors the
-	// guard in handleBinCreate.
-	if !destNode.IsSynthetic {
-		existing, err := db.CountBinsByNode(p.NodeID)
-		if err != nil {
-			return fmt.Errorf("check destination occupancy: %w", err)
-		}
-		if existing > 0 {
-			return fmt.Errorf("destination node %d already has %d bin(s); move or delete existing bin first", p.NodeID, existing)
-		}
-	}
-
-	if err := db.MoveBin(b.ID, p.NodeID); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "moved", b.NodeName, destNode.Name, "ui")
+	h.engine.AppendAudit("bin", b.ID, "moved", b.NodeName, res.DestNode.Name, "ui")
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
 		BinID:       b.ID,
 		NodeID:      p.NodeID,
@@ -506,7 +442,6 @@ func (h *Handlers) binMove(b *store.Bin, params json.RawMessage) error {
 }
 
 func (h *Handlers) binRecordCount(b *store.Bin, params json.RawMessage) error {
-	db := h.engine.DB()
 	var p struct {
 		ActualUOP int    `json:"actual_uop"`
 		Actor     string `json:"actor"`
@@ -515,20 +450,21 @@ func (h *Handlers) binRecordCount(b *store.Bin, params json.RawMessage) error {
 		return fmt.Errorf("invalid params: %w", err)
 	}
 	actor := h.resolveActor(p.Actor)
-	expected := b.UOPRemaining
-	if err := db.RecordBinCount(b.ID, p.ActualUOP, actor); err != nil {
+	res, err := h.engine.BinService().RecordCount(b, p.ActualUOP, actor)
+	if err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "counted", strconv.Itoa(expected), strconv.Itoa(p.ActualUOP), actor)
-	if expected != p.ActualUOP {
-		db.AddBinNote(b.ID, "count", fmt.Sprintf("Cycle count discrepancy: expected %d, actual %d (%+d)", expected, p.ActualUOP, p.ActualUOP-expected), actor)
+	h.engine.AppendAudit("bin", b.ID, "counted", strconv.Itoa(res.Expected), strconv.Itoa(res.Actual), actor)
+	if res.Discrepancy {
+		h.engine.AddBinNote(b.ID, "count",
+			fmt.Sprintf("Cycle count discrepancy: expected %d, actual %d (%+d)", res.Expected, res.Actual, res.Actual-res.Expected),
+			actor)
 	}
 	h.emitBinUpdate(b, "counted", "")
 	return nil
 }
 
 func (h *Handlers) binAddNote(b *store.Bin, params json.RawMessage) error {
-	db := h.engine.DB()
 	var p struct {
 		NoteType string `json:"note_type"`
 		Message  string `json:"message"`
@@ -537,19 +473,11 @@ func (h *Handlers) binAddNote(b *store.Bin, params json.RawMessage) error {
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	if p.Message == "" {
-		return fmt.Errorf("message is required")
-	}
 	actor := h.resolveActor(p.Actor)
-	noteType := p.NoteType
-	if noteType == "" {
-		noteType = "general"
-	}
-	return db.AddBinNote(b.ID, noteType, p.Message, actor)
+	return h.engine.BinService().AddNote(b.ID, p.NoteType, p.Message, actor)
 }
 
 func (h *Handlers) binUpdate(b *store.Bin, params json.RawMessage) error {
-	db := h.engine.DB()
 	var p struct {
 		Label       *string `json:"label"`
 		Description *string `json:"description"`
@@ -558,19 +486,10 @@ func (h *Handlers) binUpdate(b *store.Bin, params json.RawMessage) error {
 	if err := json.Unmarshal(params, &p); err != nil && len(params) > 0 {
 		return fmt.Errorf("invalid params: %w", err)
 	}
-	if p.Label != nil {
-		b.Label = *p.Label
-	}
-	if p.Description != nil {
-		b.Description = *p.Description
-	}
-	if p.BinTypeID != nil {
-		b.BinTypeID = *p.BinTypeID
-	}
-	if err := db.UpdateBin(b); err != nil {
+	if err := h.engine.BinService().Update(b, p.Label, p.Description, p.BinTypeID); err != nil {
 		return err
 	}
-	db.AppendAudit("bin", b.ID, "updated", "", "", "ui")
+	h.engine.AppendAudit("bin", b.ID, "updated", "", "", "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
@@ -615,7 +534,7 @@ func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, err := h.engine.DB().GetBin(id)
+	b, err := h.engine.GetBin(id)
 	if err != nil {
 		h.jsonError(w, "bin not found", http.StatusNotFound)
 		return
@@ -630,21 +549,21 @@ func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 
 	// Payload template
 	if b.PayloadCode != "" {
-		if p, err := h.engine.DB().GetPayloadByCode(b.PayloadCode); err == nil {
+		if p, err := h.engine.GetPayloadByCode(b.PayloadCode); err == nil {
 			resp.Template = p
 		}
 	}
 
 	// Audit log
-	resp.Audit, _ = h.engine.DB().ListEntityAudit("bin", id)
+	resp.Audit, _ = h.engine.ListEntityAudit("bin", id)
 
 	// Current order
 	if b.ClaimedBy != nil {
-		resp.CurrentOrder, _ = h.engine.DB().GetOrder(*b.ClaimedBy)
+		resp.CurrentOrder, _ = h.engine.GetOrder(*b.ClaimedBy)
 	}
 
 	// Recent orders
-	resp.RecentOrders, _ = h.engine.DB().ListOrdersByBin(id, 20)
+	resp.RecentOrders, _ = h.engine.ListOrdersByBin(id, 20)
 	if resp.RecentOrders == nil {
 		resp.RecentOrders = []*store.Order{}
 	}
@@ -677,7 +596,7 @@ func (h *Handlers) apiBulkBinAction(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]bulkResult, 0, len(req.IDs))
 	for _, id := range req.IDs {
-		b, err := h.engine.DB().GetBin(id)
+		b, err := h.engine.GetBin(id)
 		if err != nil {
 			results = append(results, bulkResult{ID: id, Error: "not found"})
 			continue
@@ -707,7 +626,7 @@ func (h *Handlers) apiRequestBinTransport(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	b, err := h.engine.DB().GetBin(req.BinID)
+	b, err := h.engine.GetBin(req.BinID)
 	if err != nil {
 		h.jsonError(w, "bin not found", http.StatusNotFound)
 		return
@@ -725,12 +644,12 @@ func (h *Handlers) apiRequestBinTransport(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	srcNode, err := h.engine.DB().GetNode(*b.NodeID)
+	srcNode, err := h.engine.GetNode(*b.NodeID)
 	if err != nil {
 		h.jsonError(w, "source node not found", http.StatusNotFound)
 		return
 	}
-	destNode, err := h.engine.DB().GetNode(req.DestinationNodeID)
+	destNode, err := h.engine.GetNode(req.DestinationNodeID)
 	if err != nil {
 		h.jsonError(w, "destination node not found", http.StatusNotFound)
 		return
@@ -752,7 +671,7 @@ func (h *Handlers) apiBinsByNode(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	bins, err := h.engine.DB().ListBinsByNode(id)
+	bins, err := h.engine.ListBinsByNode(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -1,9 +1,19 @@
-package dispatch
+package binresolver
 
 import (
 	"fmt"
 
 	"shingocore/store"
+)
+
+// Order-type string values used by Resolve. Kept as literals (not imports
+// from dispatch) to keep this package free of a back-reference to
+// dispatch. These must stay in sync with dispatch.OrderTypeRetrieve /
+// dispatch.OrderTypeStore — both are asserted indirectly by the
+// characterization tests in dispatch/.
+const (
+	orderTypeRetrieve = "retrieve"
+	orderTypeStore    = "store"
 )
 
 // ResolveResult carries the resolved node and optionally a specific bin.
@@ -19,11 +29,18 @@ type NodeResolver interface {
 
 // DefaultResolver resolves synthetic nodes using the database.
 // For NGRP (node group) nodes, it delegates to the GroupResolver for two-level resolution.
+//
+// DB is declared as the narrow Store interface (satisfied by *store.DB)
+// so algorithm unit tests can substitute a fake. See store.go for the
+// method set.
 type DefaultResolver struct {
-	DB       *store.DB
+	DB       Store
 	LaneLock *LaneLock
 	DebugLog func(string, ...any)
 }
+
+// Compile-time assertion that *DefaultResolver satisfies NodeResolver.
+var _ NodeResolver = (*DefaultResolver)(nil)
 
 func (r *DefaultResolver) dbg(format string, args ...any) {
 	if fn := r.DebugLog; fn != nil {
@@ -45,21 +62,21 @@ func (r *DefaultResolver) Resolve(syntheticNode *store.Node, orderType string, p
 	if syntheticNode.NodeTypeCode == "NGRP" {
 		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock, DebugLog: r.DebugLog}
 		switch orderType {
-		case OrderTypeRetrieve:
+		case orderTypeRetrieve:
 			return gr.ResolveRetrieve(syntheticNode, payloadCode)
-		case OrderTypeStore:
+		case orderTypeStore:
 			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID)
 		}
 	}
 
 	switch orderType {
-	case OrderTypeRetrieve:
+	case orderTypeRetrieve:
 		node, err := r.resolveRetrieve(children, payloadCode)
 		if err != nil {
 			return nil, err
 		}
 		return &ResolveResult{Node: node}, nil
-	case OrderTypeStore:
+	case orderTypeStore:
 		node, err := r.resolveStore(children, payloadCode)
 		if err != nil {
 			return nil, err

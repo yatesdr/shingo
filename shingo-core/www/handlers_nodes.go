@@ -10,11 +10,28 @@ import (
 
 	"shingocore/engine"
 	"shingocore/fleet"
+	"shingocore/service"
 	"shingocore/store"
 )
 
+// parseNodeAssignments pulls the station + bin-type selections out of
+// an HTTP form into the shape NodeService.ApplyAssignments expects.
+func parseNodeAssignments(r *http.Request) service.NodeAssignments {
+	a := service.NodeAssignments{
+		StationMode: r.FormValue("station_mode"),
+		Stations:    r.Form["stations"],
+		BinTypeMode: r.FormValue("bin_type_mode"),
+	}
+	for _, s := range r.Form["bin_type_ids"] {
+		if id, err := strconv.ParseInt(s, 10, 64); err == nil {
+			a.BinTypeIDs = append(a.BinTypeIDs, id)
+		}
+	}
+	return a
+}
+
 func (h *Handlers) apiListNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.engine.DB().ListNodes()
+	nodes, err := h.engine.ListNodes()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -27,7 +44,7 @@ func (h *Handlers) apiNodePayloads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	bins, err := h.engine.DB().ListBinsByNode(id)
+	bins, err := h.engine.ListBinsByNode(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -36,7 +53,7 @@ func (h *Handlers) apiNodePayloads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiNodeState(w http.ResponseWriter, r *http.Request) {
-	states, err := h.engine.DB().ListNodeStates()
+	states, err := h.engine.ListNodeStates()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -54,11 +71,11 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 	)
 	switch {
 	case class != "":
-		points, err = h.engine.DB().ListScenePointsByClass(class)
+		points, err = h.engine.ListScenePointsByClass(class)
 	case area != "":
-		points, err = h.engine.DB().ListScenePointsByArea(area)
+		points, err = h.engine.ListScenePointsByArea(area)
 	default:
-		points, err = h.engine.DB().ListScenePoints()
+		points, err = h.engine.ListScenePoints()
 	}
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -68,7 +85,7 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
-	pd, err := getNodesPageData(h.engine.DB())
+	pd, err := getNodesPageData(h.engine)
 	if err != nil {
 		log.Printf("nodes page: get page data: %v", err)
 	}
@@ -115,49 +132,13 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		node.ParentID = &parentID
 	}
 
-	if err := h.engine.DB().CreateNode(node); err != nil {
+	if err := h.engine.CreateNode(node); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Save station mode + assignments
-	stationMode := r.FormValue("station_mode")
-	if stationMode != "" {
-		if err := h.engine.DB().SetNodeProperty(node.ID, "station_mode", stationMode); err != nil {
-			log.Printf("node create: set station_mode for node %d: %v", node.ID, err)
-		}
-	}
-	if stationMode == "specific" {
-		if err := h.engine.DB().SetNodeStations(node.ID, r.Form["stations"]); err != nil {
-			log.Printf("node create: set stations for node %d: %v", node.ID, err)
-		}
-	} else {
-		if err := h.engine.DB().SetNodeStations(node.ID, nil); err != nil {
-			log.Printf("node create: clear stations for node %d: %v", node.ID, err)
-		}
-	}
-
-	// Save bin type mode + assignments
-	binTypeMode := r.FormValue("bin_type_mode")
-	if binTypeMode != "" {
-		if err := h.engine.DB().SetNodeProperty(node.ID, "bin_type_mode", binTypeMode); err != nil {
-			log.Printf("node create: set bin_type_mode for node %d: %v", node.ID, err)
-		}
-	}
-	if binTypeMode == "specific" {
-		var ids []int64
-		for _, s := range r.Form["bin_type_ids"] {
-			if id, err := strconv.ParseInt(s, 10, 64); err == nil {
-				ids = append(ids, id)
-			}
-		}
-		if err := h.engine.DB().SetNodeBinTypes(node.ID, ids); err != nil {
-			log.Printf("node create: set bin types for node %d: %v", node.ID, err)
-		}
-	} else {
-		if err := h.engine.DB().SetNodeBinTypes(node.ID, nil); err != nil {
-			log.Printf("node create: clear bin types for node %d: %v", node.ID, err)
-		}
+	if err := h.engine.NodeService().ApplyAssignments(node.ID, parseNodeAssignments(r)); err != nil {
+		log.Printf("node create: apply assignments for node %d: %v", node.ID, err)
 	}
 
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
@@ -179,7 +160,7 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.engine.DB().GetNode(id)
+	node, err := h.engine.GetNode(id)
 	if err != nil {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
@@ -200,45 +181,17 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		node.ParentID = nil
 	}
 
-	if err := h.engine.DB().UpdateNode(node); err != nil {
+	if err := h.engine.UpdateNode(node); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Update station mode + assignments
-	stationMode := r.FormValue("station_mode")
-	if err := h.engine.DB().SetNodeProperty(node.ID, "station_mode", stationMode); err != nil {
-		log.Printf("node update: set station_mode for node %d: %v", node.ID, err)
-	}
-	if stationMode == "specific" {
-		if err := h.engine.DB().SetNodeStations(node.ID, r.Form["stations"]); err != nil {
-			log.Printf("node update: set stations for node %d: %v", node.ID, err)
-		}
-	} else {
-		if err := h.engine.DB().SetNodeStations(node.ID, nil); err != nil {
-			log.Printf("node update: clear stations for node %d: %v", node.ID, err)
-		}
-	}
-
-	// Update bin type mode + assignments
-	binTypeMode := r.FormValue("bin_type_mode")
-	if err := h.engine.DB().SetNodeProperty(node.ID, "bin_type_mode", binTypeMode); err != nil {
-		log.Printf("node update: set bin_type_mode for node %d: %v", node.ID, err)
-	}
-	if binTypeMode == "specific" {
-		var binTypeIDs []int64
-		for _, s := range r.Form["bin_type_ids"] {
-			if sID, err := strconv.ParseInt(s, 10, 64); err == nil {
-				binTypeIDs = append(binTypeIDs, sID)
-			}
-		}
-		if err := h.engine.DB().SetNodeBinTypes(node.ID, binTypeIDs); err != nil {
-			log.Printf("node update: set bin types for node %d: %v", node.ID, err)
-		}
-	} else {
-		if err := h.engine.DB().SetNodeBinTypes(node.ID, nil); err != nil {
-			log.Printf("node update: clear bin types for node %d: %v", node.ID, err)
-		}
+	// NodeService.ApplyAssignments always writes the station + bin-type mode,
+	// even when the form posts an empty mode — that matches the pre-refactor
+	// update-path behavior where an empty mode was written through verbatim.
+	a := parseNodeAssignments(r)
+	if err := h.engine.NodeService().ApplyAssignments(node.ID, a); err != nil {
+		log.Printf("node update: apply assignments for node %d: %v", node.ID, err)
 	}
 
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventNodeUpdated, Payload: engine.NodeUpdatedEvent{
@@ -284,13 +237,13 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.engine.DB().GetNode(id)
+	node, err := h.engine.GetNode(id)
 	if err != nil {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
 
-	if err := h.engine.DB().DeleteNode(id); err != nil {
+	if err := h.engine.DeleteNode(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -323,42 +276,42 @@ func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.engine.DB().GetNode(id)
+	node, err := h.engine.GetNode(id)
 	if err != nil {
 		h.jsonError(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	stations, err := h.engine.DB().ListStationsForNode(id)
+	stations, err := h.engine.ListStationsForNode(id)
 	if err != nil {
 		log.Printf("node detail: list stations for node %d: %v", id, err)
 	}
-	binTypes, err := h.engine.DB().ListBinTypesForNode(id)
+	binTypes, err := h.engine.ListBinTypesForNode(id)
 	if err != nil {
 		log.Printf("node detail: list bin types for node %d: %v", id, err)
 	}
-	props, err := h.engine.DB().ListNodeProperties(id)
+	props, err := h.engine.ListNodeProperties(id)
 	if err != nil {
 		log.Printf("node detail: list properties for node %d: %v", id, err)
 	}
 
 	// Effective (inherited) values for child nodes
-	effectiveStations, err := h.engine.DB().GetEffectiveStations(id)
+	effectiveStations, err := h.engine.GetEffectiveStations(id)
 	if err != nil {
 		log.Printf("node detail: effective stations for node %d: %v", id, err)
 	}
-	effectiveBinTypes, err := h.engine.DB().GetEffectiveBinTypes(id)
+	effectiveBinTypes, err := h.engine.GetEffectiveBinTypes(id)
 	if err != nil {
 		log.Printf("node detail: effective bin types for node %d: %v", id, err)
 	}
 
 	// Mode properties
-	binTypeMode := h.engine.DB().GetNodeProperty(id, "bin_type_mode")
-	stationMode := h.engine.DB().GetNodeProperty(id, "station_mode")
+	binTypeMode := h.engine.GetNodeProperty(id, "bin_type_mode")
+	stationMode := h.engine.GetNodeProperty(id, "station_mode")
 
 	var children []*store.Node
 	if node.IsSynthetic {
-		children, err = h.engine.DB().ListChildNodes(id)
+		children, err = h.engine.ListChildNodes(id)
 		if err != nil {
 			log.Printf("node detail: list children for node %d: %v", id, err)
 		}
@@ -391,7 +344,7 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.DB().SetNodeProperty(req.NodeID, req.Key, req.Value); err != nil {
+	if err := h.engine.SetNodeProperty(req.NodeID, req.Key, req.Value); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -400,7 +353,7 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 
 // apiGenerateTestNodes creates a representative set of test nodes for debugging.
 func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
+	db := h.engine
 
 	// Check if test nodes already exist.
 	nodes, err := db.ListNodes()
@@ -517,7 +470,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 // apiDeleteTestNodes removes all TEST- prefixed nodes.
 func (h *Handlers) apiDeleteTestNodes(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
+	db := h.engine
 
 	nodes, err := db.ListNodes()
 	if err != nil {
@@ -572,7 +525,7 @@ func (h *Handlers) apiSetNodeBinTypes(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_id is required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.DB().SetNodeBinTypes(req.NodeID, req.BinTypeIDs); err != nil {
+	if err := h.engine.SetNodeBinTypes(req.NodeID, req.BinTypeIDs); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -586,7 +539,7 @@ func (h *Handlers) apiGetNodeBinTypes(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	binTypes, err := h.engine.DB().ListBinTypesForNode(id)
+	binTypes, err := h.engine.ListBinTypesForNode(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -607,7 +560,7 @@ func (h *Handlers) apiNodePropertyDelete(w http.ResponseWriter, r *http.Request)
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.DB().DeleteNodeProperty(req.NodeID, req.Key); err != nil {
+	if err := h.engine.DeleteNodeProperty(req.NodeID, req.Key); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

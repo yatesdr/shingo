@@ -9,7 +9,7 @@ Complex orders handle multi-step robot instructions (pickup, dropoff, wait, swap
 - `engine/engine_complex_test.go` — complex order lifecycle and production cycle patterns (TC-42–60)
 - `engine/engine_compound_test.go` — compound reshuffle tests (TC-40a–54)
 - `dispatch/group_resolver_test.go` — FIFO/COST resolution, buried bin detection
-- `dispatch/integration_test.go` — reshuffle integration
+- `dispatch/end_to_end_test.go` — reshuffle end-to-end
 - `dispatch/reshuffle_test.go` — reshuffle planning
 
 Run this domain's tests:
@@ -183,9 +183,9 @@ Complex orders (`HandleComplexOrderRequest`) previously never called `ClaimBin` 
 
 **Expected behavior:** The system should detect that the empty is buried and trigger a reshuffle to unbury the shallowest one (fewest blockers), rather than dispatching a robot to an inaccessible slot.
 
-**Result:** PASS. Two complementary tests verified: (1) Unit level (`group_resolver_test.go`): confirms the gap — `FindEmptyCompatibleBin` is lane-unaware and returns a buried empty, but `IsSlotAccessible` correctly reports it as unreachable. This documents the pre-fix behavior where a robot would be sent to a slot it can't physically access. (2) Integration level (`integration_test.go`): after the fix, the `retrieve_empty` path with buried empties creates a reshuffle compound order (status `reshuffling` with compound children) instead of dispatching directly to the unreachable slot.
+**Result:** PASS. Two complementary tests verified: (1) Unit level (`group_resolver_test.go`): confirms the gap — `FindEmptyCompatibleBin` is lane-unaware and returns a buried empty, but `IsSlotAccessible` correctly reports it as unreachable. This documents the pre-fix behavior where a robot would be sent to a slot it can't physically access. (2) End-to-end level (`end_to_end_test.go`): after the fix, the `retrieve_empty` path with buried empties creates a reshuffle compound order (status `reshuffling` with compound children) instead of dispatching directly to the unreachable slot.
 
-**Tests:** `dispatch/group_resolver_test.go` — `TestTC41_EmptyStarvation_BuriedEmptiesUnreachable`; `dispatch/integration_test.go` — `TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle`
+**Tests:** `dispatch/group_resolver_test.go` — `TestTC41_EmptyStarvation_BuriedEmptiesUnreachable`; `dispatch/end_to_end_test.go` — `TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle`
 
 ---
 

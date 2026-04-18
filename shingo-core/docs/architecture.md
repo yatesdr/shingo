@@ -8,16 +8,31 @@ Developer reference for ShinGo Core internals. Covers package layout, data flow,
 shingo-core/
   cmd/shingocore/       Entry point, flag parsing, component wiring
   config/               YAML config loading, hot-reload support
+  domain/               Pure data types: Bin, Node, Payload, Order, and their children
   engine/               Core orchestrator: lifecycle, event bus, order handlers
-  dispatch/             Order routing: resolve source/dest, dispatch to fleet
+  dispatch/             Order routing: dispatch to fleet, lifecycle state machine
+  dispatch/binresolver/ Slot-picking algorithms (FIFO/COST/FAVL, LKND/DPTH, lane locks)
+  fulfillment/          Queued-order fulfillment scanner (narrow Dispatcher/Resolver interfaces)
+  material/             Pure CMS-transaction mapping for bin movement and manifest corrections
+  service/              Service layer (BinService, BinManifestService) — validation + mutation behind handlers
+  scenesync/            Reconciles the fleet backend's authoritative scene with shingo nodes and scene points
+  countgroup/           Advanced-zone polling with N-of-M hysteresis and fail-safe safety lighting
+  messaging/            Kafka producer/consumer, outbox drainer, InboxDedup decorator, CoreHandler
   fleet/                Fleet backend interface (vendor-agnostic)
-  rds/                  Seer RDS HTTP client (fleet.Backend implementation)
-  store/                Database layer: schema, migrations, queries
-  nodestate/            Node state cache (payload tracking at nodes)
-  messaging/            Kafka producer/consumer, outbox drainer
+  fleet/seerrds/        Seer RDS fleet.Backend adapter
+  fleet/simulator/      In-memory fleet.Backend for deterministic tests
+  rds/                  Seer RDS HTTP client (transport used by seerrds adapter and countgroup poller)
+  store/                Database: schema, migrations, queries, outbox/inbox tables
+  store/bins/           Bin, bin_types, and bin_manifest queries
+  store/nodes/          Node CRUD, lane/group queries, dot-notation resolution
+  store/orders/         Order CRUD, order_bins junction, history
+  store/payloads/       Payload templates, payload_manifest, node_payload assignments
+  internal/testdb/      Shared Postgres test harness and fixture builders (test-only)
   www/                  Web server: router, handlers, templates, SSE
-  debuglog/             Subsystem-filtered debug logger
 ```
+
+Shared infrastructure (auth, types, debuglog, backoff, eventbus, outbox, bcrypt wrappers) lives in the
+separate `protocol/` module at the repo root and is imported by both core and edge.
 
 ## Startup Sequence
 
@@ -91,9 +106,17 @@ Kafka Consumer (shingo.orders)
     |
     v
 Protocol Ingestor (two-phase decode)
-    |-- Phase 1: parse header (version, expiry, destination)
+    |-- Phase 1: parse header (version, expiry, destination, src)
     |-- Drop if expired or wrong destination
     |-- Phase 2: full payload decode
+    |
+    v
+InboxDedup (protocol.MessageHandler decorator)
+    |-- Inserts envelope ID into inbox table
+    |-- Drops replays before the inner handler sees them
+    |-- Gates the 8 order-channel methods; HandleData and reply-
+    |   channel methods pass through ungated (same shape the
+    |   per-handler shouldProcessInbound guard used to enforce)
     |
     v
 CoreHandler
@@ -104,6 +127,14 @@ CoreHandler
     |-- data (edge.register)   --> Engine.RegisterEdge()
     |-- data (edge.heartbeat)  --> Engine.HandleHeartbeat()
 ```
+
+`CoreHandler` holds the dispatcher behind the narrow `messaging.Dispatcher`
+interface (8 methods — one per order-channel handler) rather than the
+concrete `*dispatch.Dispatcher`. The composition root in
+`cmd/shingocore/main.go` wires the concrete dispatcher in; every other
+caller sees only the interface. This removes the `messaging → dispatch`
+import edge and lets tests stub the dispatcher surface without spinning
+the real lifecycle machinery.
 
 ### Outbox Pattern
 
@@ -126,21 +157,28 @@ This ensures at-least-once delivery even when Kafka is temporarily unavailable.
 
 ### Inbox Pattern
 
-Mutating inbound messages from edge stations are deduplicated using the envelope `id`:
+Mutating inbound messages from edge stations are deduplicated using the envelope `id`.
+The dedup is implemented once as a `protocol.MessageHandler` decorator
+(`messaging.InboxDedup`) wrapping `CoreHandler`:
 
 ```
 Inbound envelope
     |
     v
-DB: INSERT INTO inbox (msg_id, msg_type, station_id)
-    |
-    |-- duplicate key -> drop replay
+InboxDedup.shouldProcess()
+    |-- INSERT INTO inbox (msg_id, msg_type, station_id)
+    |-- duplicate key -> log + drop replay
     |
     v
-CoreHandler -> Dispatcher
+CoreHandler -> messaging.Dispatcher (interface)
 ```
 
-This suppresses replayed cancels, receipts, redirects, requests, releases, ingest commands, and other mutating commands without relying on best-effort in-memory state.
+This suppresses replayed cancels, receipts, redirects, requests, releases,
+ingest commands, and other mutating commands without relying on best-effort
+in-memory state. Replacing the per-handler `shouldProcessInbound` call that
+used to be copy-pasted across eight `HandleOrder*` methods keeps the gate
+in one place and makes it trivial to add a new order-channel message type
+without re-auditing dedup coverage.
 
 ## Key Patterns
 
@@ -293,14 +331,42 @@ These are surfaced through:
 ## Testing
 
 ```sh
-make test                                           # all tests
-go test -v ./dispatch -run TestHandleOrderRequest   # single test
-go test -v ./store                                  # store layer
+make test                                           # unit + fake-backed (no Docker)
+make test-all                                       # full suite, includes //go:build docker tests
+go test -v ./dispatch -run TestHandleOrderRequest   # single test (no Docker path)
+go test -v -tags=docker ./store                     # store layer (requires Docker Desktop)
 ```
 
-- Store tests use ephemeral PostgreSQL containers via `testcontainers-go`
-- Dispatch tests use mock emitter and fleet backend interfaces
-- No external dependencies (Kafka, PostgreSQL, RDS) needed for tests
+### Docker-gated tests
+
+Test files that require a live Postgres carry `//go:build docker` on their
+first line. Without the tag:
+
+- `go test ./...` (and `make test`) compiles and runs only the unit tests
+  and fake-backed tests. CI steps that don't provision Postgres stay green.
+- `go test -tags=docker ./...` (and `make test-all`) pulls the gated files
+  back in via `internal/testdb` and `testcontainers-go`.
+
+The gated packages are `dispatch/`, `engine/`, `messaging/`, `service/`,
+`store/`, `www/`, and `shingo-edge/store/outbox_test.go`. Any new test file
+that opens a Postgres connection — directly or transitively through
+`internal/testdb` — must carry the same tag, otherwise the default
+`go test ./...` build breaks.
+
+### Tag-free fake-backed coverage
+
+Behavioral contracts that don't need a DB live in `material/`,
+`fulfillment/`, and `dispatch/binresolver/`. Those test files are tag-free
+and run on every push without Docker:
+
+- `material/` — pure CMS-transaction mapping, no persistence
+- `fulfillment/` — scanner behavior tested against fake Dispatcher/Resolver
+  interfaces (narrow-interface win from Stage 9)
+- `dispatch/binresolver/` — slot-picking algorithm correctness against an
+  in-memory fake store
+
+Most of the architectural contract coverage now lives in these fake-backed
+suites; the Docker-gated tests cover integration shape and query behavior.
 
 ## Dependencies
 

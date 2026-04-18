@@ -1,3 +1,5 @@
+//go:build docker
+
 package messaging
 
 import (
@@ -140,6 +142,7 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	backend := &countingBackend{}
 	dispatcher := dispatch.NewDispatcher(db, backend, noopEmitter{}, "core", "dispatch", nil)
 	handler := NewCoreHandler(db, nil, "core", "dispatch", dispatcher)
+	dedup := NewInboxDedup(handler, db)
 
 	env := &protocol.Envelope{
 		ID:   "msg-redirect-1",
@@ -149,8 +152,8 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	}
 	req := &protocol.OrderRedirect{OrderUUID: order.EdgeUUID, NewDeliveryNode: dest.Name}
 
-	handler.HandleOrderRedirect(env, req)
-	handler.HandleOrderRedirect(env, req)
+	dedup.HandleOrderRedirect(env, req)
+	dedup.HandleOrderRedirect(env, req)
 
 	if backend.cancels != 1 {
 		t.Fatalf("expected redirect cancel to run once, got %d", backend.cancels)
@@ -178,6 +181,7 @@ func TestCoreHandlerDeduplicatesOrderRequestByEnvelopeID(t *testing.T) {
 	backend := &countingBackend{}
 	dispatcher := dispatch.NewDispatcher(db, backend, noopEmitter{}, "core", "dispatch", nil)
 	handler := NewCoreHandler(db, nil, "core", "dispatch", dispatcher)
+	dedup := NewInboxDedup(handler, db)
 
 	env := &protocol.Envelope{
 		ID:   "msg-request-1",
@@ -193,8 +197,8 @@ func TestCoreHandlerDeduplicatesOrderRequestByEnvelopeID(t *testing.T) {
 		Quantity:     1,
 	}
 
-	handler.HandleOrderRequest(env, req)
-	handler.HandleOrderRequest(env, req)
+	dedup.HandleOrderRequest(env, req)
+	dedup.HandleOrderRequest(env, req)
 
 	orders, err := db.ListOrders("", 10)
 	if err != nil {
@@ -231,10 +235,10 @@ func TestCoreHandlerDeduplicationPersistsAcrossHandlerRestart(t *testing.T) {
 	}
 
 	first := NewCoreHandler(db, nil, "core", "dispatch", dispatch.NewDispatcher(db, &countingBackend{}, noopEmitter{}, "core", "dispatch", nil))
-	first.HandleOrderRequest(env, req)
+	NewInboxDedup(first, db).HandleOrderRequest(env, req)
 
 	second := NewCoreHandler(db, nil, "core", "dispatch", dispatch.NewDispatcher(db, &countingBackend{}, noopEmitter{}, "core", "dispatch", nil))
-	second.HandleOrderRequest(env, req)
+	NewInboxDedup(second, db).HandleOrderRequest(env, req)
 
 	orders, err := db.ListOrders("", 10)
 	if err != nil {
@@ -267,10 +271,10 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 	req := &protocol.OrderReceipt{OrderUUID: order.EdgeUUID, ReceiptType: "delivered", FinalCount: 1}
 
 	first := NewCoreHandler(db, nil, "core", "dispatch", dispatch.NewDispatcher(db, &countingBackend{}, noopEmitter{}, "core", "dispatch", nil))
-	first.HandleOrderReceipt(env, req)
+	NewInboxDedup(first, db).HandleOrderReceipt(env, req)
 
 	second := NewCoreHandler(db, nil, "core", "dispatch", dispatch.NewDispatcher(db, &countingBackend{}, noopEmitter{}, "core", "dispatch", nil))
-	second.HandleOrderReceipt(env, req)
+	NewInboxDedup(second, db).HandleOrderReceipt(env, req)
 
 	got, err := db.GetOrder(order.ID)
 	if err != nil {

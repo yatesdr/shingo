@@ -1,5 +1,89 @@
 # Changelog
 
+## 2026-04-18 — Architecture Stage 9: Narrow Interfaces, Scenesync Extraction, Docker-Gated Tests
+
+### Consumer-Side Narrow Interfaces
+
+Two packages now hold their collaborators behind narrow interfaces instead of
+concrete dispatcher types. Structural typing means `*dispatch.Dispatcher` and
+`*dispatch.DefaultResolver` satisfy them automatically — the engine wiring in
+`cmd/shingocore/main.go` is unchanged.
+
+- **`fulfillment.Dispatcher`** (1 method) and **`fulfillment.Resolver`** (1 method)
+  — declared in `fulfillment/dispatcher.go`, held on `Scanner` fields. Lets
+  `scanner_test.go` stub one-method fakes, closing the coverage gap flagged in
+  the Stage 7 scope note.
+- **`messaging.Dispatcher`** (8 methods covering all order-channel handlers)
+  — declared in `messaging/dispatcher.go`, held by `CoreHandler`. Removes the
+  `messaging → dispatch` import edge so dispatch can't leak transport
+  assumptions back up to the handler.
+- **Compile-time assertions** (`var _ Dispatcher = (*dispatch.Dispatcher)(nil)`)
+  catch drift before any caller-site build failure.
+
+### Scenesync Package Extraction
+
+New `shingocore/scenesync` package owns fleet→DB scene reconciliation logic.
+Exposes a narrow 8-method `Store` interface (DeleteScenePointsByArea,
+UpsertScenePoint, GetNodeTypeByCode, GetNodeByName, CreateNode, UpdateNode,
+ListNodes, DeleteNode) plus LogFn/NodeChangeFn callback types.
+
+`engine/engine_scene_sync.go` is reduced to a thin shim — holds the
+`sceneSyncing` atomic, wires `emitNodeChange` to `Events.Emit`, and delegates
+`SyncScenePoints`/`SyncFleetNodes`/`UpdateNodeZones`/`SceneSync` to the new
+package. External API is byte-for-byte identical; `www/handlers_nodes.go` and
+`engine/engine_connection.go` see no change.
+
+### Protocol: RawHeader.Src
+
+`protocol/envelope.go` RawHeader gains a `Src Address` field alongside `Dst`.
+Wire format unchanged (json tag `src` matches `Envelope.Src`). Lets routing
+code identify the sender from the minimal decode without a full payload
+parse — necessary for inbound dedup + rate-limit work that can't afford to
+decode every message.
+
+### Test Structure
+
+- **`dispatch/integration_test.go` → `end_to_end_test.go`**. The tests drive
+  the dispatcher through complete retrieve/move/store/cancel/redirect
+  /synthetic/reshuffle lifecycles — that is end-to-end behavior, not two
+  subsystems interacting, so "integration" was the wrong word.
+- **`engine/engine_test.go` split three ways.** Shared scaffolding moved to
+  `engine_testhelpers_test.go` (testDB, setupTestData, createTestBinAtNode,
+  testEnvelope, newTestEngine). The six `TestRegression_*` tests moved to
+  `engine_regression_test.go`. `engine_test.go` itself keeps only top-level
+  behavior tests.
+
+### //go:build docker Gating
+
+39 test files across `dispatch/`, `engine/`, `messaging/`, `service/`,
+`store/`, `www/`, and `shingo-edge/store/` now carry `//go:build docker` on
+the first line. `go test ./...` on a bare machine compiles and runs only the
+unit + fake-backed tests; the Postgres-backed tests are excluded from the
+build. `go test -tags=docker ./...` pulls them back in.
+
+- `shingo-core/Makefile`: `test` target unchanged; new `test-all` target runs
+  `-tags=docker`.
+- `shingo-core/README.md` "Build Targets" section documents both plus the
+  rationale (fake-backed contract coverage stays tag-free and runs on every
+  push).
+- `shingo-core/docs/architecture.md` and `docs/test-catalog.md` updated to
+  reflect the tag convention and the renamed/split test files.
+
+### Documentation
+
+- **architecture.md** — Package Layout rewritten to remove phantom `nodestate/`
+  and `debuglog/` entries and add the real sub-packages that have landed since
+  the last pass: `countgroup/`, `fulfillment/`, `material/`, `scenesync/`,
+  `service/`, `internal/testdb/`, `fleet/seerrds/`, `fleet/simulator/`,
+  `store/{bins,nodes,orders,payloads}/`. Message Ingest Pipeline diagram now
+  shows the `InboxDedup` decorator (Stage 8 artifact) sitting between the
+  protocol Ingestor and CoreHandler.
+- **test-catalog.md** — renamed dispatch integration section, added
+  engine_testhelpers_test.go and engine_regression_test.go sections, added
+  Docker-gating note to the preamble, updated TC numbering backlog references.
+- **fleet-simulator/architecture.md** and **fleet-simulator/complex-orders.md**
+  — updated references to the renamed `dispatch/end_to_end_test.go`.
+
 ## 2026-04-15 — Count-Group Light Alerts & Fire Alarm Pass-Through
 
 ### Count-Group Advanced-Zone Light Alerts
