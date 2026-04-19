@@ -283,3 +283,184 @@ func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 		t.Fatal("expected error for consume node")
 	}
 }
+
+// markStaged forces an order directly into the "staged" status, bypassing
+// the lifecycle state machine. Used in tests to simulate both robots arriving
+// at their wait points without running Core's reply pipeline.
+func markStaged(t *testing.T, db *store.DB, orderID int64) {
+	t.Helper()
+	if err := db.UpdateOrderStatus(orderID, orders.StatusStaged); err != nil {
+		t.Fatalf("mark order %d staged: %v", orderID, err)
+	}
+}
+
+func TestReleaseStagedOrders_BothStaged(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
+	eng := testEngine(t, db)
+
+	result, err := eng.FinalizeProduceNode(nodeID)
+	if err != nil {
+		t.Fatalf("FinalizeProduceNode: %v", err)
+	}
+	markStaged(t, db, result.OrderA.ID)
+	markStaged(t, db, result.OrderB.ID)
+
+	if err := eng.ReleaseStagedOrders(nodeID); err != nil {
+		t.Fatalf("ReleaseStagedOrders: %v", err)
+	}
+
+	a, err := db.GetOrder(result.OrderA.ID)
+	if err != nil {
+		t.Fatalf("get OrderA: %v", err)
+	}
+	b, err := db.GetOrder(result.OrderB.ID)
+	if err != nil {
+		t.Fatalf("get OrderB: %v", err)
+	}
+	if a.Status != orders.StatusInTransit {
+		t.Errorf("OrderA status = %q, want in_transit", a.Status)
+	}
+	if b.Status != orders.StatusInTransit {
+		t.Errorf("OrderB status = %q, want in_transit", b.Status)
+	}
+}
+
+// TestReleaseStagedOrders_OnlyOneStaged covers two guarantees at once:
+//
+//  1. Fail-closed: if the second leg (A, the delivery robot) is not in a
+//     releasable status, ReleaseStagedOrders returns an error rather than
+//     silently swallowing it.
+//  2. B-before-A ordering: because releaseIfStaged is called on the StagedOrderID
+//     first, B transitions to in_transit before A's check runs. This is the
+//     deterministic replacement for the old timestamp-based ordering test —
+//     observing B's post-call status proves the call order without relying on
+//     SQLite's timestamp resolution.
+//
+// Scenario: B (removal robot) is staged, A (delivery robot) is still in its
+// initial post-finalize status. ReleaseStagedOrders should release B, then
+// fail when it tries to release A, returning the A error.
+func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
+	eng := testEngine(t, db)
+
+	result, err := eng.FinalizeProduceNode(nodeID)
+	if err != nil {
+		t.Fatalf("FinalizeProduceNode: %v", err)
+	}
+	// Only B is staged; A is still in its initial post-finalize status.
+	markStaged(t, db, result.OrderB.ID)
+	aBefore, err := db.GetOrder(result.OrderA.ID)
+	if err != nil {
+		t.Fatalf("read A before release: %v", err)
+	}
+
+	err = eng.ReleaseStagedOrders(nodeID)
+	if err == nil {
+		t.Fatal("expected error when only one order is staged")
+	}
+
+	a, _ := db.GetOrder(result.OrderA.ID)
+	b, _ := db.GetOrder(result.OrderB.ID)
+	// B was released first (proves B-before-A ordering).
+	if b.Status != orders.StatusInTransit {
+		t.Errorf("OrderB status = %q, want in_transit (B should have been released before A's check failed)", b.Status)
+	}
+	// A's status did not change (proves fail-closed on A).
+	if a.Status != aBefore.Status {
+		t.Errorf("OrderA status changed from %q to %q; should have been left alone after A's release check failed", aBefore.Status, a.Status)
+	}
+	if a.Status == orders.StatusInTransit {
+		t.Error("OrderA should not have been released when it was not in staged status")
+	}
+}
+
+// TestReleaseStagedOrders_RejectsNonTwoRobot verifies the claim-mode guard:
+// even if a node somehow has both ActiveOrderID and StagedOrderID populated,
+// ReleaseStagedOrders refuses to release them unless the active claim is
+// two_robot. This is defense-in-depth for direct API callers; the UI already
+// gates the button on swap_ready.
+func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeID, styleID, _ := seedProduceNode(t, db, "two_robot")
+	eng := testEngine(t, db)
+
+	result, err := eng.FinalizeProduceNode(nodeID)
+	if err != nil {
+		t.Fatalf("FinalizeProduceNode: %v", err)
+	}
+	markStaged(t, db, result.OrderA.ID)
+	markStaged(t, db, result.OrderB.ID)
+
+	// Flip the claim's swap mode out from under the runtime. Both order IDs
+	// remain tracked, but ReleaseStagedOrders should refuse.
+	if _, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID:             styleID,
+		CoreNodeName:        "PRODUCE-NODE",
+		Role:                "produce",
+		SwapMode:            "single_robot",
+		PayloadCode:         "WIDGET-A",
+		UOPCapacity:         100,
+		InboundStaging:      "PRODUCE-IN-STAGING",
+		OutboundStaging:     "PRODUCE-OUT-STAGING",
+		OutboundDestination: "FILLED-STORAGE",
+	}); err != nil {
+		t.Fatalf("flip claim swap mode: %v", err)
+	}
+
+	if err := eng.ReleaseStagedOrders(nodeID); err == nil {
+		t.Fatal("expected error when claim swap mode is not two_robot")
+	}
+
+	// Neither order should have been released.
+	a, _ := db.GetOrder(result.OrderA.ID)
+	b, _ := db.GetOrder(result.OrderB.ID)
+	if a.Status == orders.StatusInTransit {
+		t.Error("OrderA should not have been released when claim is not two_robot")
+	}
+	if b.Status == orders.StatusInTransit {
+		t.Error("OrderB should not have been released when claim is not two_robot")
+	}
+}
+
+// TestReleaseStagedOrders_Idempotent verifies that if one order has already
+// advanced past staged (e.g. a concurrent Core reply transitioned it to
+// in_transit between the operator's click and the handler running), the
+// release call treats it as success rather than erroring.
+func TestReleaseStagedOrders_Idempotent(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
+	eng := testEngine(t, db)
+
+	result, err := eng.FinalizeProduceNode(nodeID)
+	if err != nil {
+		t.Fatalf("FinalizeProduceNode: %v", err)
+	}
+	markStaged(t, db, result.OrderA.ID)
+	// B already advanced past staged.
+	if err := db.UpdateOrderStatus(result.OrderB.ID, orders.StatusInTransit); err != nil {
+		t.Fatalf("force B in_transit: %v", err)
+	}
+
+	if err := eng.ReleaseStagedOrders(nodeID); err != nil {
+		t.Fatalf("ReleaseStagedOrders should be idempotent on already-released order: %v", err)
+	}
+
+	a, _ := db.GetOrder(result.OrderA.ID)
+	if a.Status != orders.StatusInTransit {
+		t.Errorf("OrderA status = %q, want in_transit", a.Status)
+	}
+}
+
+func TestReleaseStagedOrders_NoTrackedOrders(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
+	eng := testEngine(t, db)
+
+	// No finalize called — runtime has no ActiveOrderID/StagedOrderID.
+	err := eng.ReleaseStagedOrders(nodeID)
+	if err == nil {
+		t.Fatal("expected error when no orders are tracked on the node")
+	}
+}

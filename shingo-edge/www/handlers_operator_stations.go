@@ -253,6 +253,22 @@ func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request)
 	writeJSONWithTrigger(w, r, order, "refreshMaterial")
 }
 
+// apiReleaseNodeStagedOrders releases both orders of a two-robot swap in one
+// call. See Engine.ReleaseStagedOrders for ordering (B-then-A) and
+// idempotency semantics.
+func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	if err := h.engine.ReleaseStagedOrders(id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
 func (h *Handlers) apiConfirmNodeManifest(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

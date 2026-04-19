@@ -19,6 +19,11 @@ type StationNodeView struct {
 	ChangeoverTask *ChangeoverNodeTask      `json:"changeover_task,omitempty"`
 	Orders         []Order                  `json:"orders"`
 	BinState       *NodeBinState            `json:"bin_state,omitempty"`
+	// SwapReady is true when both tracked orders for a two-robot swap are
+	// in "staged" status — i.e. both robots are holding at their wait
+	// points and a single coordinated release can move both forward.
+	// Non-two-robot nodes always report false.
+	SwapReady bool `json:"swap_ready"`
 }
 
 type OperatorStationView struct {
@@ -90,8 +95,34 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 			nodeView.ChangeoverTask = &taskCopy
 		}
 		nodeView.Orders, _ = db.ListActiveOrdersByProcessNode(node.ID)
+		nodeView.SwapReady = computeSwapReady(db, nodeView.ActiveClaim, runtime)
 		view.Nodes = append(view.Nodes, nodeView)
 	}
 	return view, nil
+}
+
+// computeSwapReady returns true only when a two-robot swap has both tracked
+// orders (ActiveOrderID and StagedOrderID on the runtime) in "staged" status.
+// That's the gate for the single coordinated release: both robots are holding
+// at their wait points, so one operator click can move the whole swap forward.
+//
+// Non-two-robot claims always return false — their single staged order is
+// still released via the per-order /api/orders/{id}/release endpoint.
+func computeSwapReady(db *DB, claim *StyleNodeClaim, runtime *ProcessNodeRuntimeState) bool {
+	if claim == nil || claim.SwapMode != "two_robot" {
+		return false
+	}
+	if runtime == nil || runtime.ActiveOrderID == nil || runtime.StagedOrderID == nil {
+		return false
+	}
+	active, err := db.GetOrder(*runtime.ActiveOrderID)
+	if err != nil || active == nil {
+		return false
+	}
+	staged, err := db.GetOrder(*runtime.StagedOrderID)
+	if err != nil || staged == nil {
+		return false
+	}
+	return active.Status == "staged" && staged.Status == "staged"
 }
 

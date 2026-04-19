@@ -258,6 +258,78 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 	return true, ""
 }
 
+// ReleaseStagedOrders releases both orders of a two-robot swap in a single
+// server-side step. Order B (StagedOrderID — the removal robot) is released
+// first so it leaves the production node before Order A (ActiveOrderID — the
+// delivery robot) arrives from inbound staging.
+//
+// The claim's SwapMode must be "two_robot" — the method refuses to operate
+// on any other mode even if both runtime order slots are populated. The UI
+// already gates the button on swap_ready (which checks the claim mode), but
+// this is defense-in-depth for direct API callers.
+//
+// Idempotency: if either tracked order has already moved past "staged" (e.g.
+// a concurrent status update already advanced it to in_transit), that leg is
+// treated as success so the button behaves predictably under races.
+//
+// Failure handling is fail-closed: if B's release fails, A is never released.
+// If A fails after B succeeded, the error is returned — Order A will remain
+// staged and the operator can retry via the standard per-order release, which
+// the UI re-renders automatically once swap_ready goes false.
+func (e *Engine) ReleaseStagedOrders(nodeID int64) error {
+	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
+	if err != nil {
+		return fmt.Errorf("get runtime for node %d: %w", nodeID, err)
+	}
+	if runtime == nil || runtime.ActiveOrderID == nil || runtime.StagedOrderID == nil {
+		return fmt.Errorf("node %d: expected two tracked orders for two-robot release", nodeID)
+	}
+	if runtime.ActiveClaimID == nil {
+		return fmt.Errorf("node %d: no active claim for two-robot release", nodeID)
+	}
+	claim, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID)
+	if err != nil {
+		return fmt.Errorf("node %d: load active claim: %w", nodeID, err)
+	}
+	if claim == nil || claim.SwapMode != "two_robot" {
+		mode := "<nil>"
+		if claim != nil {
+			mode = claim.SwapMode
+		}
+		return fmt.Errorf("node %d: release-staged requires two_robot swap, got %q", nodeID, mode)
+	}
+
+	if err := e.releaseIfStaged(*runtime.StagedOrderID, "B"); err != nil {
+		return err
+	}
+	if err := e.releaseIfStaged(*runtime.ActiveOrderID, "A"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// releaseIfStaged calls ReleaseOrder, but treats an order that has already
+// advanced past "staged" as success. Any other status-validation failure
+// (e.g. order is terminal) is still surfaced.
+func (e *Engine) releaseIfStaged(orderID int64, label string) error {
+	order, err := e.db.GetOrder(orderID)
+	if err != nil {
+		return fmt.Errorf("get order %s (%d): %w", label, orderID, err)
+	}
+	switch order.Status {
+	case orders.StatusStaged:
+		if err := e.orderMgr.ReleaseOrder(orderID); err != nil {
+			return fmt.Errorf("release order %s (%d): %w", label, orderID, err)
+		}
+		return nil
+	case orders.StatusInTransit, orders.StatusDelivered, orders.StatusConfirmed:
+		// Already moving or further along — release is a no-op.
+		return nil
+	default:
+		return fmt.Errorf("order %s (%d) is in status %q, cannot release", label, orderID, order.Status)
+	}
+}
+
 // AbortNodeOrders cancels all non-terminal orders tracked in a node's
 // runtime state and clears the runtime order references.
 func (e *Engine) AbortNodeOrders(nodeID int64) {
@@ -278,7 +350,7 @@ func (e *Engine) AbortNodeOrders(nodeID int64) {
 		}
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, nil); err != nil {
-			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
-		}
+		e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
+	}
 }
 

@@ -687,7 +687,17 @@ function renderModal(entry) {
             const delivered = active.find(o => o.status === 'delivered');
             const inFlight = active.find(o => !staged && !delivered);
 
-            if (staged) {
+            if (entry.swap_ready) {
+                // Two-robot swap: both robots are holding at their wait
+                // points. One click releases both in B-then-A order.
+                html += actionBtn('RELEASE', 'request', true,
+                    '/api/process-nodes/' + entry.node.id + '/release-staged');
+            } else if (staged && claim && claim.swap_mode === 'two_robot') {
+                // Two-robot swap, only one robot has arrived so far — hold
+                // the release until both are staged so a single click can
+                // move the whole swap forward.
+                html += actionBtn('WAITING FOR OTHER ROBOT', 'close', false, '');
+            } else if (staged) {
                 // Staged — robot waiting, operator must release
                 html += actionBtn('RELEASE', 'request', true,
                     '/api/orders/' + staged.id + '/release');
