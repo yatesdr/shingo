@@ -27,6 +27,9 @@ type RobotBasicInfo struct {
 	CurrentArea  []string `json:"current_area"`
 	CurrentGroup string   `json:"current_group"`
 	CurrentMap   string   `json:"current_map"`
+ 	CtrlTemp     float64  `json:"controller_temp"`
+ 	CtrlHumi     float64  `json:"controller_humi"`
+ 	CtrlVoltage  float64  `json:"controller_voltage"`
 }
 
 type RbkReport struct {
@@ -44,7 +47,19 @@ type RbkReport struct {
 	Containers          []Container `json:"containers"`
 	AvailableContainers int         `json:"available_containers"`
 	TotalContainers     int         `json:"total_containers"`
+ 	Odo                 float64     `json:"odo"`
+ 	TodayOdo            float64     `json:"today_odo"`
+ 	Time                int64       `json:"time"`
+ 	TotalTime           int64       `json:"total_time"`
+ 	Jack                JackReport  `json:"jack"`
+ 	Voltage             float64     `json:"voltage"`
+ 	Current             float64     `json:"current"`
 }
+type JackReport struct {
+ 	JackLoadTimes int     `json:"jack_load_times"`
+ 	JackHeight    float64 `json:"jack_height"`
+ 	JackErrorCode int     `json:"jack_error_code"`
+ }
 
 type Container struct {
 	ContainerName string `json:"container_name"`

@@ -90,6 +90,19 @@ type RobotStatus struct {
 	NetworkDelay   int
 	CurrentStation string
 	LastStation    string
+ 	OdoTotal       float64
+ 	OdoToday       float64
+ 	SessionMs      int64
+ 	TotalMs        int64
+ 	LiftCount      int
+ 	LiftHeight     float64
+ 	LiftError      int
+ 	BatteryV       float64
+ 	BatteryA       float64
+ 	CtrlTemp       float64
+ 	CtrlHumi       float64
+ 	CtrlVoltage    float64
+ 	Version        string
 }
 
 // State returns a computed state string for the robot: offline, error, busy, paused, or ready.

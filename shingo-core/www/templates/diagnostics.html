@@ -7,6 +7,7 @@
   {{if .FireAlarmEnabled}}
   <button class="diag-tab" data-tab="fire" onclick="switchDiagTab('fire')">Fire Alarm</button>
   {{end}}
+  <button class="diag-tab" data-tab="emaint" onclick="switchDiagTab('emaint')">E-Maint</button>
 </div>
 
 <!-- Debug Log Tab -->
@@ -272,6 +273,48 @@
     </p>
   </div>
   {{end}}
+</div>
+
+<!-- E-Maint Tab -->
+<div id="tab-emaint" class="hide">
+  <div class="flex flex-between mb-2">
+    <h1>E-Maint Robot Telemetry</h1>
+    <div class="flex gap-1 items-center">
+      <button class="btn" onclick="loadEMaintReport()">Refresh Report</button>
+      <a id="emaint-download" href="/api/telemetry/e-maint/download" class="btn" style="display:none;">Download JSON</a>
+    </div>
+  </div>
+
+  <div class="card mb-2">
+    <p style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem;">
+      On-demand fleet telemetry snapshot from the robot status cache. Click Refresh to load current data.
+    </p>
+    <div id="emaint-summary" style="font-size:0.9rem;color:var(--text-muted);"></div>
+  </div>
+
+  <div class="card p-0">
+    <div class="debug-log-wrap">
+      <table class="debug-log-table">
+        <thead>
+          <tr>
+            <th>Robot</th>
+            <th>Status</th>
+            <th>Battery</th>
+            <th>Voltage</th>
+            <th>Odo Total (m)</th>
+            <th>Odo Today (m)</th>
+            <th>Runtime (h)</th>
+            <th>Lifts</th>
+            <th>Ctrl Temp (°C)</th>
+            <th>Station</th>
+          </tr>
+        </thead>
+        <tbody id="emaint-body">
+          <tr><td colspan="10" class="text-muted">Click Refresh Report to load telemetry data.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <script src="/static/pages/diagnostics.js"></script>

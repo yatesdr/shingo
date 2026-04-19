@@ -7,6 +7,8 @@
     document.getElementById('tab-recovery').style.display = tab === 'recovery' ? 'block' : 'none';
     var tabFire = document.getElementById('tab-fire');
     if (tabFire) tabFire.style.display = tab === 'fire' ? 'block' : 'none';
+    var tabEmaint = document.getElementById('tab-emaint');
+    if (tabEmaint) tabEmaint.style.display = tab === 'emaint' ? 'block' : 'none';
     var tabs = document.querySelectorAll('.diag-tab');
     tabs.forEach(function(t) { t.classList.remove('active'); });
     if (tab === 'debug') tabs[0].classList.add('active');
@@ -34,6 +36,11 @@
     if (tab === 'fire' && !fireLoaded) {
       fireLoaded = true;
       loadFireAlarmStatus();
+    }
+    var emaintTab = document.querySelector('.diag-tab[data-tab="emaint"]');
+    if (emaintTab) {
+      if (tab === 'emaint') emaintTab.classList.add('active');
+      else emaintTab.classList.remove('active');
     }
   };
 
@@ -367,5 +374,57 @@
   // SSE callback — wired from app.js es.addEventListener('fire-alarm', ...)
   window.onFireAlarmUpdate = function(data) {
     updateFireAlarmUI(data.is_fire, null);
+  };
+
+  // ── E-Maint Robot Telemetry ──────────────────────────────
+  var emaintBody = document.getElementById('emaint-body');
+  var emaintSummary = document.getElementById('emaint-summary');
+  var emaintDownload = document.getElementById('emaint-download');
+
+  window.loadEMaintReport = function() {
+    emaintBody.innerHTML = '<tr><td colspan="10" class="text-muted">Loading...</td></tr>';
+    fetch('/api/telemetry/e-maint')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        emaintSummary.textContent = 'Report ' + data.report_id + ' | Generated ' + data.generated_at + ' | ' + data.robot_count + ' robot(s)';
+        emaintDownload.style.display = 'inline-block';
+        emaintBody.innerHTML = '';
+        if (!data.robots || !data.robots.length) {
+          emaintBody.innerHTML = '<tr><td colspan="10" class="text-muted">No robots found in cache.</td></tr>';
+          return;
+        }
+        data.robots.forEach(function(r) {
+          var tr = document.createElement('tr');
+          var runtimeH = r.runtime && r.runtime.total_ms ? (r.runtime.total_ms / 3600000).toFixed(1) : '-';
+          var batteryPct = r.battery ? r.battery.level_pct.toFixed(0) + '%' : '-';
+          var voltage = r.battery && r.battery.voltage_v ? r.battery.voltage_v.toFixed(1) : '-';
+          var odoTotal = r.odometer ? r.odometer.total_m.toFixed(0) : '-';
+          var odoToday = r.odometer ? r.odometer.today_m.toFixed(0) : '-';
+          var lifts = r.lifts ? r.lifts.total_count : '-';
+          var ctrlTemp = r.controller && r.controller.temp_c ? r.controller.temp_c.toFixed(1) : '-';
+          var station = r.position ? r.position.current_station || '-' : '-';
+          var status = r.task ? r.task.status : '-';
+          var statusColor = '';
+          if (status === 'ready') statusColor = 'color:#16a34a;';
+          else if (status === 'busy') statusColor = 'color:#2563eb;';
+          else if (status === 'offline') statusColor = 'color:#9ca3af;';
+          else if (status === 'error') statusColor = 'color:#dc2626;';
+          tr.innerHTML =
+            '<td><strong>' + escapeHtml(r.vehicle_id || '') + '</strong></td>' +
+            '<td style="' + statusColor + '">' + escapeHtml(status) + '</td>' +
+            '<td>' + batteryPct + '</td>' +
+            '<td>' + voltage + '</td>' +
+            '<td>' + odoTotal + '</td>' +
+            '<td>' + odoToday + '</td>' +
+            '<td>' + runtimeH + '</td>' +
+            '<td>' + lifts + '</td>' +
+            '<td>' + ctrlTemp + '</td>' +
+            '<td>' + escapeHtml(station) + '</td>';
+          emaintBody.appendChild(tr);
+        });
+      })
+      .catch(function(err) {
+        emaintBody.innerHTML = '<tr><td colspan="10" class="text-muted">Error: ' + escapeHtml(err.message) + '</td></tr>';
+      });
   };
 })();

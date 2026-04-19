@@ -6,8 +6,11 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/google/uuid"
 
 	"shingocore/store"
 )
@@ -256,4 +259,90 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		"bin_id":    bin.ID,
 		"bin_label": bin.Label,
 	})
+}
+
+// ── E-Maint Robot Telemetry ──────────────────────────────────
+//
+// Generates an on-demand telemetry snapshot from the in-memory robot cache.
+// No persistence, no background goroutine — just reads what robotRefreshLoop
+// already keeps warm (2-second freshness).
+
+// apiEMaintRobotTelemetry returns a fleet-wide telemetry report for e-maintenance.
+// GET /api/telemetry/e-maint
+func (h *Handlers) apiEMaintRobotTelemetry(w http.ResponseWriter, r *http.Request) {
+	report := h.buildEMaintReport()
+	h.jsonOK(w, report)
+}
+
+// apiEMaintRobotTelemetryDownload returns the same report as a downloadable JSON file.
+// GET /api/telemetry/e-maint/download
+func (h *Handlers) apiEMaintRobotTelemetryDownload(w http.ResponseWriter, r *http.Request) {
+	report := h.buildEMaintReport()
+	filename := fmt.Sprintf("robot-telemetry-%s.json", time.Now().UTC().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	json.NewEncoder(w).Encode(report)
+}
+
+func (h *Handlers) buildEMaintReport() map[string]any {
+	robots := h.engine.GetAllCachedRobots()
+	now := time.Now().UTC()
+
+	entries := make([]map[string]any, 0, len(robots))
+	for _, r := range robots {
+		entry := map[string]any{
+			"vehicle_id":        r.VehicleID,
+			"connected":         r.Connected,
+			"snapshot_at":       now.Format(time.RFC3339),
+			"position": map[string]any{
+				"x":               r.X,
+				"y":               r.Y,
+				"angle":            r.Angle,
+				"current_station":  r.CurrentStation,
+				"current_map":      r.CurrentMap,
+			},
+			"odometer": map[string]any{
+				"total_m": r.OdoTotal,
+				"today_m": r.OdoToday,
+			},
+			"runtime": map[string]any{
+				"session_ms": r.SessionMs,
+				"total_ms":   r.TotalMs,
+			},
+			"lifts": map[string]any{
+				"total_count":      r.LiftCount,
+				"current_height_mm": r.LiftHeight,
+				"error_code":       r.LiftError,
+			},
+			"battery": map[string]any{
+				"level_pct":  r.BatteryLevel,
+				"charging":   r.Charging,
+				"voltage_v":  r.BatteryV,
+				"current_a":  r.BatteryA,
+			},
+			"controller": map[string]any{
+				"temp_c":      r.CtrlTemp,
+				"humidity_pct": r.CtrlHumi,
+				"voltage_v":   r.CtrlVoltage,
+			},
+			"safety": map[string]any{
+				"blocked":    r.Blocked,
+				"emergency":  r.Emergency,
+			},
+			"task": map[string]any{
+				"status":  r.State(),
+				"model":   r.Model,
+				"version": r.Version,
+			},
+		}
+		entries = append(entries, entry)
+	}
+
+	return map[string]any{
+		"report_id":    uuid.New().String(),
+		"generated_at": now.Format(time.RFC3339),
+		"source":       "shingo-core",
+		"robot_count":  len(robots),
+		"robots":       entries,
+	}
 }

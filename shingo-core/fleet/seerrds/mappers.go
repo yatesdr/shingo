@@ -83,5 +83,18 @@ func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
 		NetworkDelay:   r.NetworkDelay,
 		CurrentStation: r.RbkReport.CurrentStation,
 		LastStation:    r.RbkReport.LastStation,
+ 		OdoTotal:       r.RbkReport.Odo,
+ 		OdoToday:       r.RbkReport.TodayOdo,
+ 		SessionMs:      r.RbkReport.Time,
+ 		TotalMs:        r.RbkReport.TotalTime,
+ 		LiftCount:      r.RbkReport.Jack.JackLoadTimes,
+ 		LiftHeight:     r.RbkReport.Jack.JackHeight,
+ 		LiftError:      r.RbkReport.Jack.JackErrorCode,
+ 		BatteryV:       r.RbkReport.Voltage,
+ 		BatteryA:       r.RbkReport.Current,
+ 		CtrlTemp:       r.BasicInfo.CtrlTemp,
+ 		CtrlHumi:       r.BasicInfo.CtrlHumi,
+ 		CtrlVoltage:    r.BasicInfo.CtrlVoltage,
+ 		Version:        r.BasicInfo.Version,
 	}
 }
