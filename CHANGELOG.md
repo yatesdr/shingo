@@ -330,10 +330,9 @@ pass). Includes two validation-phase fixups: explicit
 
 ### Toolchain
 
-- **Go 1.26.2 across all modules**: `protocol/`, `shingo-core/`, and
-  `shingo-edge/` all moved to Go 1.26.2 (latest stable, 2026-04-07
-  release), clearing the 1.24/1.25 drift between the three modules.
-  CI workflows bumped to match.
+- **Go 1.25.0 across all modules**: `protocol/`, `shingo-core/`, and
+  `shingo-edge/` all moved to Go 1.25.0, clearing the version drift
+  between the three modules. CI workflows updated to match.
 - **x/crypto v0.48.0 alignment**: pinned uniformly across all modules;
   edge's `x/net`, `x/sys`, `x/text` indirects aligned with
   shingo-core's current pins.

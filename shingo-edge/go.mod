@@ -1,6 +1,6 @@
 module shingoedge
 
-go 1.26.2
+go 1.25.0
 
 require shingo/protocol v0.0.0
 
