@@ -402,6 +402,27 @@ func TestBinManifestService_Confirm(t *testing.T) {
 	}
 }
 
+func TestBinManifestService_Unconfirm(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	// createTestBin confirms by default; Unconfirm should flip it back.
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNC-1", "PART-A", 100)
+	if !bin.ManifestConfirmed {
+		t.Fatal("expected test bin to start confirmed")
+	}
+
+	if err := svc.Unconfirm(bin.ID); err != nil {
+		t.Fatalf("Unconfirm: %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.ManifestConfirmed {
+		t.Error("ManifestConfirmed = true, want false after Unconfirm")
+	}
+}
+
 func TestBinManifestService_ClearAndClaim_FailsIfLocked(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)

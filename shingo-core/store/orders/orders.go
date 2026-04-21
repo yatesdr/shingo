@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // Order is the order domain entity. The struct lives in shingocore/domain
@@ -78,12 +79,12 @@ func ScanOrders(rows *sql.Rows) ([]*Order, error) {
 
 // Create inserts a new order row and sets o.ID on success.
 func Create(db *sql.DB, o *Order) error {
-	id, err := insertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id, payload_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
 		o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 		o.Quantity,
 		o.SourceNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
-		nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-		nullableInt64(o.BinID), o.PayloadCode)
+		helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
+		helpers.NullableInt64(o.BinID), o.PayloadCode)
 	if err != nil {
 		return fmt.Errorf("create order: %w", err)
 	}

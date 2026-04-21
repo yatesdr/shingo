@@ -7,6 +7,7 @@ package store
 import (
 	"fmt"
 
+	"shingocore/store/internal/helpers"
 	"shingocore/store/orders"
 )
 
@@ -48,7 +49,7 @@ func (db *DB) ApplyMultiBinArrival(instructions []BinArrivalInstruction) error {
 		}
 		if inst.Staged {
 			if _, err := tx.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
-				nullableTime(inst.ExpiresAt), inst.BinID); err != nil {
+				helpers.NullableTime(inst.ExpiresAt), inst.BinID); err != nil {
 				return fmt.Errorf("stage bin %d: %w", inst.BinID, err)
 			}
 		} else {

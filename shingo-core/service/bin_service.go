@@ -238,3 +238,90 @@ func (s *BinService) Update(b *store.Bin, label, description *string, binTypeID 
 	}
 	return s.db.UpdateBin(b)
 }
+
+// --- Queries --------------------------------------------------------------
+
+// GetBin loads a bin by ID. Absorbed from engine_db_methods.go as part
+// of the www-handler service migration (PR 3a.2).
+func (s *BinService) GetBin(id int64) (*store.Bin, error) {
+	return s.db.GetBin(id)
+}
+
+// ListBins returns every bin in the store. Absorbed from
+// engine_db_methods.go as part of the www-handler service migration
+// (PR 3a.2).
+func (s *BinService) ListBins() ([]*store.Bin, error) {
+	return s.db.ListBins()
+}
+
+// Delete removes a bin row. Absorbed from engine_db_methods.go as part
+// of the www-handler service migration (PR 3a.2).
+func (s *BinService) Delete(id int64) error {
+	return s.db.DeleteBin(id)
+}
+
+// HasNotes returns a map indicating which of the supplied bin IDs have
+// any notes attached. Absorbed from engine_db_methods.go as part of the
+// www-handler service migration (PR 3a.2).
+func (s *BinService) HasNotes(binIDs []int64) (map[int64]bool, error) {
+	return s.db.BinHasNotes(binIDs)
+}
+
+// --- Bin types ------------------------------------------------------------
+
+// CreateBinType inserts a new bin type row. Absorbed from
+// engine_db_methods.go as part of the www-handler service migration
+// (PR 3a.2).
+func (s *BinService) CreateBinType(bt *store.BinType) error {
+	return s.db.CreateBinType(bt)
+}
+
+// GetBinType loads a bin type by ID. Absorbed from engine_db_methods.go
+// as part of the www-handler service migration (PR 3a.2).
+func (s *BinService) GetBinType(id int64) (*store.BinType, error) {
+	return s.db.GetBinType(id)
+}
+
+// UpdateBinType persists changes to a bin type row. Absorbed from
+// engine_db_methods.go as part of the www-handler service migration
+// (PR 3a.2).
+func (s *BinService) UpdateBinType(bt *store.BinType) error {
+	return s.db.UpdateBinType(bt)
+}
+
+// DeleteBinType removes a bin type row. Absorbed from
+// engine_db_methods.go as part of the www-handler service migration
+// (PR 3a.2).
+func (s *BinService) DeleteBinType(id int64) error {
+	return s.db.DeleteBinType(id)
+}
+
+// ListBinTypes returns every bin type in the store. Absorbed from
+// engine_db_methods.go as part of the www-handler service migration
+// (PR 3a.2).
+func (s *BinService) ListBinTypes() ([]*store.BinType, error) {
+	return s.db.ListBinTypes()
+}
+
+// CountBinsByAllNodes returns a map of node_id -> bin count for every
+// node that has at least one bin. Absorbed from engine_db_methods.go
+// as part of the nodesPageDataStore dissolution (PR 3a.5.1).
+func (s *BinService) CountBinsByAllNodes() (map[int64]int, error) {
+	return s.db.CountBinsByAllNodes()
+}
+
+// ── PR 3a.6 additions: remaining www-reachable bin lookups ───────────────
+
+// GetByLabel resolves a bin by its human-readable label. Absorbed
+// from engine_db_methods.go as part of the Phase 3a closeout
+// (PR 3a.6).
+func (s *BinService) GetByLabel(label string) (*store.Bin, error) {
+	return s.db.GetBinByLabel(label)
+}
+
+// GetManifest returns the confirmed manifest items currently loaded
+// on a bin. Absorbed from engine_db_methods.go as part of the Phase
+// 3a closeout (PR 3a.6).
+func (s *BinService) GetManifest(binID int64) (*store.BinManifest, error) {
+	return s.db.GetBinManifest(binID)
+}

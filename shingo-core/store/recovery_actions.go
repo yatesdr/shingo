@@ -1,36 +1,20 @@
 package store
 
-import "time"
+// Phase 5 delegate file: recovery_actions CRUD lives in store/recovery/.
+// This file preserves the *store.DB method surface so external callers
+// don't need to change.
 
-type RecoveryAction struct {
-	ID         int64     `json:"id"`
-	Action     string    `json:"action"`
-	TargetType string    `json:"target_type"`
-	TargetID   int64     `json:"target_id"`
-	Detail     string    `json:"detail"`
-	Actor      string    `json:"actor"`
-	CreatedAt  time.Time `json:"created_at"`
-}
+import (
+	"shingocore/store/recovery"
+)
+
+// RecoveryAction preserves the store.RecoveryAction public API.
+type RecoveryAction = recovery.Action
 
 func (db *DB) RecordRecoveryAction(action, targetType string, targetID int64, detail, actor string) error {
-	_, err := db.Exec(`INSERT INTO recovery_actions (action, target_type, target_id, detail, actor) VALUES ($1, $2, $3, $4, $5)`,
-		action, targetType, targetID, detail, actor)
-	return err
+	return recovery.RecordAction(db.DB, action, targetType, targetID, detail, actor)
 }
 
 func (db *DB) ListRecoveryActions(limit int) ([]*RecoveryAction, error) {
-	rows, err := db.Query(`SELECT id, action, target_type, target_id, detail, actor, created_at FROM recovery_actions ORDER BY id DESC LIMIT $1`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []*RecoveryAction
-	for rows.Next() {
-		var a RecoveryAction
-		if err := rows.Scan(&a.ID, &a.Action, &a.TargetType, &a.TargetID, &a.Detail, &a.Actor, &a.CreatedAt); err != nil {
-			return nil, err
-		}
-		items = append(items, &a)
-	}
-	return items, rows.Err()
+	return recovery.ListActions(db.DB, limit)
 }

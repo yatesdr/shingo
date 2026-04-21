@@ -3,6 +3,8 @@ package nodes
 import (
 	"database/sql"
 	"fmt"
+
+	"shingocore/store/internal/helpers"
 )
 
 // CreateGroup creates an empty NGRP node with the given name.
@@ -12,7 +14,7 @@ func CreateGroup(db *sql.DB, name string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("NGRP node type not found")
 	}
-	id, err := insertID(db, `INSERT INTO nodes (name, is_synthetic, node_type_id, enabled) VALUES ($1, true, $2, true) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO nodes (name, is_synthetic, node_type_id, enabled) VALUES ($1, true, $2, true) RETURNING id`,
 		name, grpType.ID)
 	if err != nil {
 		return 0, fmt.Errorf("create node group: %w", err)
@@ -30,7 +32,7 @@ func AddLane(db *sql.DB, groupID int64, name string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("LANE node type not found")
 	}
-	laneID, err := insertID(db, `INSERT INTO nodes (name, is_synthetic, node_type_id, parent_id, zone, enabled) VALUES ($1, true, $2, $3, $4, true) RETURNING id`,
+	laneID, err := helpers.InsertID(db, `INSERT INTO nodes (name, is_synthetic, node_type_id, parent_id, zone, enabled) VALUES ($1, true, $2, $3, $4, true) RETURNING id`,
 		name, lanType.ID, groupID, grpNode.Zone)
 	if err != nil {
 		return 0, fmt.Errorf("create lane: %w", err)

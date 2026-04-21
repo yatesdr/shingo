@@ -66,6 +66,15 @@ type Engine struct {
 	binService      *service.BinService
 	orderService    *service.OrderService
 	nodeService     *service.NodeService
+	auditService    *service.AuditService
+	demandService   *service.DemandService
+	payloadService  *service.PayloadService
+	missionService  *service.MissionService
+	testCmdService  *service.TestCommandService
+	cmsTxnService   *service.CMSTransactionService
+	inventoryService *service.InventoryService
+	adminService    *service.AdminService
+	healthService   *service.HealthService
 	stopChan        chan struct{}
 	stopOnce        sync.Once
 	sceneSyncing    atomic.Bool
@@ -106,6 +115,15 @@ func New(c Config) *Engine {
 	e.binService = service.NewBinService(e.db, e.binManifest)
 	e.orderService = service.NewOrderService(e.db, e.fleet)
 	e.nodeService = service.NewNodeService(e.db)
+	e.auditService = service.NewAuditService(e.db)
+	e.demandService = service.NewDemandService(e.db)
+	e.payloadService = service.NewPayloadService(e.db)
+	e.missionService = service.NewMissionService(e.db)
+	e.testCmdService = service.NewTestCommandService(e.db)
+	e.cmsTxnService = service.NewCMSTransactionService(e.db)
+	e.inventoryService = service.NewInventoryService(e.db)
+	e.adminService = service.NewAdminService(e.db)
+	e.healthService = service.NewHealthService(e.db)
 	return e
 }
 

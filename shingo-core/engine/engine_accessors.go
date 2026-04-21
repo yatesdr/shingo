@@ -26,11 +26,22 @@ func (e *Engine) Fleet() fleet.Backend                      { return e.fleet }
 func (e *Engine) MsgClient() *messaging.Client              { return e.msgClient }
 func (e *Engine) Reconciliation() *ReconciliationService    { return e.reconciliation }
 func (e *Engine) Recovery() *RecoveryService                { return e.recovery }
-func (e *Engine) BinManifest() *service.BinManifestService  { return e.binManifest }
-func (e *Engine) BinService() *service.BinService           { return e.binService }
-func (e *Engine) OrderService() *service.OrderService       { return e.orderService }
-func (e *Engine) NodeService() *service.NodeService         { return e.nodeService }
-func (e *Engine) EventBus() *EventBus                       { return e.Events }
+func (e *Engine) BinManifest() *service.BinManifestService         { return e.binManifest }
+func (e *Engine) BinService() *service.BinService                  { return e.binService }
+func (e *Engine) OrderService() *service.OrderService              { return e.orderService }
+func (e *Engine) NodeService() *service.NodeService                { return e.nodeService }
+func (e *Engine) AuditService() *service.AuditService              { return e.auditService }
+func (e *Engine) DemandService() *service.DemandService            { return e.demandService }
+func (e *Engine) PayloadService() *service.PayloadService          { return e.payloadService }
+func (e *Engine) MissionService() *service.MissionService          { return e.missionService }
+func (e *Engine) TestCommandService() *service.TestCommandService  { return e.testCmdService }
+func (e *Engine) CMSTransactionService() *service.CMSTransactionService {
+	return e.cmsTxnService
+}
+func (e *Engine) InventoryService() *service.InventoryService { return e.inventoryService }
+func (e *Engine) AdminService() *service.AdminService         { return e.adminService }
+func (e *Engine) HealthService() *service.HealthService       { return e.healthService }
+func (e *Engine) EventBus() *EventBus                         { return e.Events }
 
 // SetCountGroupRunner registers a configured Runner built by the
 // composition root. The caller passes the Runner directly — transitions

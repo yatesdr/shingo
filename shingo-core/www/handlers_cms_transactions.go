@@ -26,7 +26,7 @@ func (h *Handlers) apiListCMSTransactions(w http.ResponseWriter, r *http.Request
 			h.jsonError(w, "invalid node_id", http.StatusBadRequest)
 			return
 		}
-		txns, err := h.engine.ListCMSTransactions(nodeID, limit, offset)
+		txns, err := h.engine.CMSTransactionService().ListByNode(nodeID, limit, offset)
 		if err != nil {
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -35,7 +35,7 @@ func (h *Handlers) apiListCMSTransactions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	txns, err := h.engine.ListAllCMSTransactions(limit, offset)
+	txns, err := h.engine.CMSTransactionService().ListAll(limit, offset)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -11,7 +11,6 @@ import (
 )
 
 func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
 	cfg := h.engine.AppConfig()
 	mgr := h.engine.PLCManager()
 
@@ -23,7 +22,7 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
-	shifts, _ := db.ListShifts()
+	shifts, _ := h.engine.ListShifts()
 	if shifts == nil {
 		shifts = []store.Shift{}
 	}
@@ -45,10 +44,9 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
-	processes, _ := db.ListProcesses()
-	styles, _ := db.ListStyles()
-	stations, _ := db.ListOperatorStations()
+	processes, _ := h.engine.ListProcesses()
+	styles, _ := h.engine.ListStyles()
+	stations, _ := h.engine.ListOperatorStations()
 	coreNodes := h.engine.CoreNodes()
 	plcNames := h.engine.PLCManager().PLCNames()
 
@@ -74,9 +72,9 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	stationNodeMap := map[int64][]string{}
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
-		processStyles, _ = db.ListStylesByProcess(activeProcess.ID)
-		processStations, _ = db.ListOperatorStationsByProcess(activeProcess.ID)
-		processNodes, _ = db.ListProcessNodesByProcess(activeProcess.ID)
+		processStyles, _ = h.engine.ListStylesByProcess(activeProcess.ID)
+		processStations, _ = h.engine.ListOperatorStationsByProcess(activeProcess.ID)
+		processNodes, _ = h.engine.ListProcessNodesByProcess(activeProcess.ID)
 	}
 
 	// Derive station→nodes map and claimed-by index from already-fetched processNodes
@@ -132,16 +130,14 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 
-	db := h.engine.DB()
-
-	exists, _ := db.AdminUserExists()
+	exists, _ := h.engine.AdminUserExists()
 	if !exists {
 		hash, err := auth.HashPassword(password)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		if _, err := db.CreateAdminUser(username, hash); err != nil {
+		if _, err := h.engine.CreateAdminUser(username, hash); err != nil {
 			http.Error(w, "failed to create admin user", http.StatusInternalServerError)
 			return
 		}
@@ -150,7 +146,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := db.GetAdminUser(username)
+	user, err := h.engine.GetAdminUser(username)
 	if err != nil || !auth.CheckPassword(user.PasswordHash, password) {
 		h.renderTemplate(w, r, "login.html", map[string]interface{}{
 			"Page":  "login",

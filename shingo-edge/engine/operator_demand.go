@@ -196,15 +196,13 @@ func (e *Engine) tryAutoRequest(node *store.ProcessNode, claim *store.StyleNodeC
 		}
 	}
 
-	// If orders exist but none carry payload_code (legacy), skip all to avoid
-	// blind duplicates. Once all orders carry payload_code, this falls through
-	// to the per-payload check below.
-	if len(existing) > 0 && len(existingPayloads) == 0 {
-		if _, err := e.db.Exec("COMMIT"); err != nil {
-			log.Printf("manual_swap auto-request: commit (legacy skip) for node %s: %v", node.Name, err)
-		}
-		return
-	}
+	// Note: previously we short-circuited when any in-flight order had no
+	// payload_code, on the assumption it was a legacy/manual record that
+	// might collide. That guard blocked every kanban request behind a single
+	// stuck empty-payload order (e.g. a manually-submitted move) and never
+	// re-opened. We now rely on the per-payload existing check below: an
+	// empty-payload order is simply ignored, and each `payload` we own is
+	// evaluated on its own merits.
 
 	var created int
 	for _, pc := range payloads {

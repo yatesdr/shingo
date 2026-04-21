@@ -29,7 +29,7 @@ type changeoverViewData struct {
 	AllNodesComplete bool
 }
 
-func (h *Handlers) buildChangeoverViewData(db *store.DB, activeProcess *store.Process) changeoverViewData {
+func (h *Handlers) buildChangeoverViewData(activeProcess *store.Process) changeoverViewData {
 	var d changeoverViewData
 	d.NodeTaskMap = map[int64][]changeoverNodeView{}
 
@@ -38,19 +38,19 @@ func (h *Handlers) buildChangeoverViewData(db *store.DB, activeProcess *store.Pr
 		return d
 	}
 
-	d.Styles, _ = db.ListStylesByProcess(activeProcess.ID)
+	d.Styles, _ = h.engine.ListStylesByProcess(activeProcess.ID)
 	if activeProcess.ActiveStyleID != nil {
-		if s, err := db.GetStyle(*activeProcess.ActiveStyleID); err == nil {
+		if s, err := h.engine.GetStyle(*activeProcess.ActiveStyleID); err == nil {
 			d.CurrentStyleName = s.Name
 		}
 	}
-	d.ActiveChangeover, _ = db.GetActiveProcessChangeover(activeProcess.ID)
+	d.ActiveChangeover, _ = h.engine.GetActiveProcessChangeover(activeProcess.ID)
 	if d.ActiveChangeover != nil {
-		d.StationTasks, _ = db.ListChangeoverStationTasks(d.ActiveChangeover.ID)
-		allNodeTasks, _ := db.ListChangeoverNodeTasks(d.ActiveChangeover.ID)
+		d.StationTasks, _ = h.engine.ListChangeoverStationTasks(d.ActiveChangeover.ID)
+		allNodeTasks, _ := h.engine.ListChangeoverNodeTasks(d.ActiveChangeover.ID)
 
 		// Build map of processNodeID -> operatorStationID from process nodes
-		processNodes, _ := db.ListProcessNodesByProcess(activeProcess.ID)
+		processNodes, _ := h.engine.ListProcessNodesByProcess(activeProcess.ID)
 		nodeStationMap := make(map[int64]*int64, len(processNodes))
 		for i := range processNodes {
 			nodeStationMap[processNodes[i].ID] = processNodes[i].OperatorStationID
@@ -63,13 +63,13 @@ func (h *Handlers) buildChangeoverViewData(db *store.DB, activeProcess *store.Pr
 				Situation:          task.Situation,
 			}
 			if task.FromClaimID != nil {
-				if claim, err := db.GetStyleNodeClaim(*task.FromClaimID); err == nil {
+				if claim, err := h.engine.GetStyleNodeClaim(*task.FromClaimID); err == nil {
 					view.FromPayload = claim.PayloadCode
 					view.FromRole = claim.Role
 				}
 			}
 			if task.ToClaimID != nil {
-				if claim, err := db.GetStyleNodeClaim(*task.ToClaimID); err == nil {
+				if claim, err := h.engine.GetStyleNodeClaim(*task.ToClaimID); err == nil {
 					view.ToPayload = claim.PayloadCode
 					view.ToRole = claim.Role
 				}
@@ -77,7 +77,7 @@ func (h *Handlers) buildChangeoverViewData(db *store.DB, activeProcess *store.Pr
 			// Check linked orders for failures
 			for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
 				if orderID != nil {
-					if o, err := db.GetOrder(*orderID); err == nil && o.Status == "failed" {
+					if o, err := h.engine.GetOrder(*orderID); err == nil && o.Status == "failed" {
 						view.LastOrderError = "Order " + o.UUID[:8] + " failed"
 					}
 				}
@@ -109,11 +109,10 @@ func (h *Handlers) buildChangeoverViewData(db *store.DB, activeProcess *store.Pr
 }
 
 func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
-	processes, _ := db.ListProcesses()
+	processes, _ := h.engine.ListProcesses()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
-	d := h.buildChangeoverViewData(db, activeProcess)
+	d := h.buildChangeoverViewData(activeProcess)
 
 	var activeProcessID int64
 	if activeProcess != nil {
@@ -122,7 +121,7 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 
 	var changeoverHistory []store.ProcessChangeover
 	if activeProcess != nil {
-		changeoverHistory, _ = db.ListProcessChangeovers(activeProcess.ID)
+		changeoverHistory, _ = h.engine.ListProcessChangeovers(activeProcess.ID)
 		// Filter out the active changeover from history
 		filtered := changeoverHistory[:0]
 		for _, c := range changeoverHistory {
@@ -154,11 +153,10 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleChangeoverPartial(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
-	processes, _ := db.ListProcesses()
+	processes, _ := h.engine.ListProcesses()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
-	d := h.buildChangeoverViewData(db, activeProcess)
+	d := h.buildChangeoverViewData(activeProcess)
 
 	data := map[string]interface{}{
 		"ActiveProcess":    activeProcess,

@@ -15,7 +15,7 @@ func (h *Handlers) handleInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiInventory(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.engine.ListInventory()
+	rows, err := h.engine.InventoryService().List()
 	if err != nil {
 		h.jsonError(w, "Failed to load inventory: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -24,7 +24,7 @@ func (h *Handlers) apiInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.engine.ListInventory()
+	rows, err := h.engine.InventoryService().List()
 	if err != nil {
 		http.Error(w, "Failed to load inventory", http.StatusInternalServerError)
 		return

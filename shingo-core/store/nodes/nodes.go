@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // Node is the node domain entity. The struct lives in shingocore/domain
@@ -69,8 +70,8 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 
 // Create inserts a new node and sets n.ID on success.
 func Create(db *sql.DB, n *Node) error {
-	id, err := insertID(db, `INSERT INTO nodes (name, is_synthetic, zone, enabled, depth, node_type_id, parent_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-		n.Name, n.IsSynthetic, n.Zone, n.Enabled, nullableInt(n.Depth), nullableInt64(n.NodeTypeID), nullableInt64(n.ParentID))
+	id, err := helpers.InsertID(db, `INSERT INTO nodes (name, is_synthetic, zone, enabled, depth, node_type_id, parent_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID))
 	if err != nil {
 		return fmt.Errorf("create node: %w", err)
 	}
@@ -81,7 +82,7 @@ func Create(db *sql.DB, n *Node) error {
 // Update writes the mutable columns on a node.
 func Update(db *sql.DB, n *Node) error {
 	_, err := db.Exec(`UPDATE nodes SET name=$1, is_synthetic=$2, zone=$3, enabled=$4, depth=$5, node_type_id=$6, parent_id=$7, updated_at=NOW() WHERE id=$8`,
-		n.Name, n.IsSynthetic, n.Zone, n.Enabled, nullableInt(n.Depth), nullableInt64(n.NodeTypeID), nullableInt64(n.ParentID), n.ID)
+		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID), n.ID)
 	if err != nil {
 		return fmt.Errorf("update node: %w", err)
 	}

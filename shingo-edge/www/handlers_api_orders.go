@@ -35,7 +35,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		processNodeID = &req.ProcessNodeID
 	}
 	if processNodeID != nil && req.DeliveryNode == "" {
-		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil {
+		if node, err := h.engine.GetProcessNode(*processNodeID); err == nil {
 			req.DeliveryNode = node.CoreNodeName
 		}
 	}
@@ -111,7 +111,7 @@ func (h *Handlers) apiCreateStoreOrder(w http.ResponseWriter, r *http.Request) {
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
-		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
+		if node, err := h.engine.GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
 			req.SourceNode = node.CoreNodeName
 		}
 	}
@@ -148,7 +148,7 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
-		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
+		if node, err := h.engine.GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
 			req.SourceNode = node.CoreNodeName
 		}
 	}
@@ -218,7 +218,7 @@ func (h *Handlers) apiCreateIngestOrder(w http.ResponseWriter, r *http.Request) 
 	var processNodeID *int64
 	if req.ProcessNodeID > 0 {
 		processNodeID = &req.ProcessNodeID
-		if node, err := h.engine.DB().GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
+		if node, err := h.engine.GetProcessNode(*processNodeID); err == nil && req.SourceNode == "" {
 			req.SourceNode = node.CoreNodeName
 		}
 	}
@@ -313,7 +313,7 @@ func (h *Handlers) apiSetOrderCount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdateOrderFinalCount(orderID, req.FinalCount, true); err != nil {
+	if err := h.engine.UpdateOrderFinalCount(orderID, req.FinalCount, true); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

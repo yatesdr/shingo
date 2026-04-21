@@ -1,60 +1,31 @@
 package store
 
-import "time"
+// Phase 5b delegate file: counter_snapshots CRUD now lives in
+// store/counters/. This file preserves the *store.DB method surface so
+// external callers do not need to change.
+
+import "shingoedge/store/counters"
 
 // CounterSnapshot records a PLC counter reading.
-type CounterSnapshot struct {
-	ID                int64     `json:"id"`
-	ReportingPointID  int64     `json:"reporting_point_id"`
-	CountValue        int64     `json:"count_value"`
-	Delta             int64     `json:"delta"`
-	Anomaly           *string   `json:"anomaly"`
-	OperatorConfirmed bool      `json:"operator_confirmed"`
-	RecordedAt        time.Time `json:"recorded_at"`
-}
+type CounterSnapshot = counters.Snapshot
 
+// InsertCounterSnapshot writes one counter_snapshots row.
 func (db *DB) InsertCounterSnapshot(rpID int64, countValue, delta int64, anomaly string, confirmed bool) (int64, error) {
-	var anomalyPtr *string
-	if anomaly != "" {
-		anomalyPtr = &anomaly
-	}
-	res, err := db.Exec(`INSERT INTO counter_snapshots (reporting_point_id, count_value, delta, anomaly, operator_confirmed) VALUES (?, ?, ?, ?, ?)`,
-		rpID, countValue, delta, anomalyPtr, confirmed)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	return counters.InsertSnapshot(db.DB, rpID, countValue, delta, anomaly, confirmed)
 }
 
+// ListUnconfirmedAnomalies returns every counter snapshot tagged as a
+// "jump" anomaly that the operator has not yet confirmed.
 func (db *DB) ListUnconfirmedAnomalies() ([]CounterSnapshot, error) {
-	rows, err := db.Query(`
-		SELECT id, reporting_point_id, count_value, delta, anomaly, operator_confirmed, recorded_at
-		FROM counter_snapshots
-		WHERE anomaly = 'jump' AND operator_confirmed = 0
-		ORDER BY recorded_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var snaps []CounterSnapshot
-	for rows.Next() {
-		var s CounterSnapshot
-		var recordedAt string
-		if err := rows.Scan(&s.ID, &s.ReportingPointID, &s.CountValue, &s.Delta, &s.Anomaly, &s.OperatorConfirmed, &recordedAt); err != nil {
-			return nil, err
-		}
-		s.RecordedAt = scanTime(recordedAt)
-		snaps = append(snaps, s)
-	}
-	return snaps, rows.Err()
+	return counters.ListUnconfirmedAnomalies(db.DB)
 }
 
+// ConfirmAnomaly marks an anomaly snapshot as operator-confirmed.
 func (db *DB) ConfirmAnomaly(id int64) error {
-	_, err := db.Exec(`UPDATE counter_snapshots SET operator_confirmed = 1 WHERE id = ?`, id)
-	return err
+	return counters.ConfirmAnomaly(db.DB, id)
 }
 
+// DismissAnomaly deletes an unconfirmed anomaly snapshot.
 func (db *DB) DismissAnomaly(id int64) error {
-	_, err := db.Exec(`DELETE FROM counter_snapshots WHERE id = ? AND anomaly = 'jump' AND operator_confirmed = 0`, id)
-	return err
+	return counters.DismissAnomaly(db.DB, id)
 }

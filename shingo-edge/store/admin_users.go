@@ -1,42 +1,30 @@
 package store
 
-import "time"
+// Phase 5b delegate file: admin-user CRUD now lives in store/admin/.
+// This file preserves the *store.DB method surface so external callers
+// do not need to change.
+
+import "shingoedge/store/admin"
 
 // AdminUser is a user who can access the setup page.
-type AdminUser struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-}
+type AdminUser = admin.User
 
+// GetAdminUser returns one admin user by username.
 func (db *DB) GetAdminUser(username string) (*AdminUser, error) {
-	u := &AdminUser{}
-	var createdAt string
-	err := db.QueryRow(`SELECT id, username, password_hash, created_at FROM admin_users WHERE username = ?`, username).
-		Scan(&u.ID, &u.Username, &u.PasswordHash, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-	u.CreatedAt = scanTime(createdAt)
-	return u, nil
+	return admin.Get(db.DB, username)
 }
 
+// CreateAdminUser inserts an admin user and returns the new row id.
 func (db *DB) CreateAdminUser(username, passwordHash string) (int64, error) {
-	res, err := db.Exec(`INSERT INTO admin_users (username, password_hash) VALUES (?, ?)`, username, passwordHash)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	return admin.Create(db.DB, username, passwordHash)
 }
 
+// UpdateAdminPassword sets a new password hash for the given username.
 func (db *DB) UpdateAdminPassword(username, passwordHash string) error {
-	_, err := db.Exec(`UPDATE admin_users SET password_hash = ? WHERE username = ?`, passwordHash, username)
-	return err
+	return admin.UpdatePassword(db.DB, username, passwordHash)
 }
 
+// AdminUserExists reports whether at least one admin_users row exists.
 func (db *DB) AdminUserExists() (bool, error) {
-	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM admin_users`).Scan(&count)
-	return count > 0, err
+	return admin.AnyExists(db.DB)
 }

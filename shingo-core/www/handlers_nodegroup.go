@@ -22,7 +22,7 @@ func (h *Handlers) apiCreateNodeGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.engine.CreateNodeGroup(req.Name)
+	id, err := h.engine.NodeService().CreateNodeGroup(req.Name)
 	if err != nil {
 		h.jsonError(w, "create node group: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -48,7 +48,7 @@ func (h *Handlers) apiAddLane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := h.engine.AddLane(req.GroupID, req.Name)
+	id, err := h.engine.NodeService().AddLane(req.GroupID, req.Name)
 	if err != nil {
 		h.jsonError(w, "add lane: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -76,8 +76,10 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nodes := h.engine.NodeService()
+
 	// Validate node exists and is physical (non-synthetic)
-	node, err := h.engine.GetNode(req.NodeID)
+	node, err := nodes.GetNode(req.NodeID)
 	if err != nil {
 		h.jsonError(w, "node not found", http.StatusNotFound)
 		return
@@ -90,7 +92,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 	// Validate parent if set
 	var parentIsGroup bool
 	if req.ParentID != nil {
-		parent, err := h.engine.GetNode(*req.ParentID)
+		parent, err := nodes.GetNode(*req.ParentID)
 		if err != nil {
 			h.jsonError(w, "parent not found", http.StatusNotFound)
 			return
@@ -106,9 +108,9 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 	// NOTE: TOCTOU — a new order could arrive between this check and the
 	// reparent below. Acceptable for rare, operator-initiated actions.
 	if node.ParentID != nil {
-		oldParent, gpErr := h.engine.GetNode(*node.ParentID)
+		oldParent, gpErr := nodes.GetNode(*node.ParentID)
 		if gpErr == nil && oldParent.NodeTypeCode == "NGRP" {
-			blocked, bErr := h.engine.ListActiveOrdersBySourceRef(
+			blocked, bErr := h.engine.OrderService().ListActiveBySourceRef(
 				[]string{oldParent.Name})
 			if bErr != nil {
 				h.jsonError(w, "failed to check active orders: "+bErr.Error(),
@@ -133,7 +135,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 				}
 				// Force mode: fail blocked orders terminally
 				for _, order := range blocked {
-					_ = h.engine.FailOrderAtomic(order.ID,
+					_ = h.engine.OrderService().FailAtomic(order.ID,
 						fmt.Sprintf("source group %q restructured "+
 							"(node %s reparented)", oldParent.Name, node.Name))
 					// Populate EdgeUUID/StationID so the EventOrderFailed
@@ -166,15 +168,15 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Perform reparent
-	if err := h.engine.ReparentNode(req.NodeID, req.ParentID, position); err != nil {
+	if err := nodes.ReparentNode(req.NodeID, req.ParentID, position); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// On adopt: clear direct station and style assignments (now inherited)
 	if req.ParentID != nil {
-		h.engine.SetNodeStations(req.NodeID, nil)
-		h.engine.SetNodePayloads(req.NodeID, nil)
+		nodes.SetNodeStations(req.NodeID, nil)
+		nodes.SetNodePayloads(req.NodeID, nil)
 	}
 
 	// Reindex siblings in new parent (only for lanes, not groups)
@@ -195,7 +197,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 	if node.ParentID != nil || parentIsGroup {
 		oldWasNGRP := false
 		if node.ParentID != nil {
-			if op, e := h.engine.GetNode(*node.ParentID); e == nil {
+			if op, e := nodes.GetNode(*node.ParentID); e == nil {
 				oldWasNGRP = op.NodeTypeCode == "NGRP"
 			}
 		}
@@ -219,7 +221,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 
 // reindexLaneSlots recomputes depth for all children of a lane.
 func (h *Handlers) reindexLaneSlots(laneID int64) {
-	children, err := h.engine.ListLaneSlots(laneID)
+	children, err := h.engine.NodeService().ListLaneSlots(laneID)
 	if err != nil {
 		return
 	}
@@ -227,7 +229,7 @@ func (h *Handlers) reindexLaneSlots(laneID int64) {
 	for _, c := range children {
 		ids = append(ids, c.ID)
 	}
-	h.engine.ReorderLaneSlots(laneID, ids)
+	h.engine.NodeService().ReorderLaneSlots(laneID, ids)
 }
 
 func (h *Handlers) apiReorderLaneSlots(w http.ResponseWriter, r *http.Request) {
@@ -242,7 +244,7 @@ func (h *Handlers) apiReorderLaneSlots(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "lane_id and ordered_ids are required", http.StatusBadRequest)
 		return
 	}
-	lane, err := h.engine.GetNode(req.LaneID)
+	lane, err := h.engine.NodeService().GetNode(req.LaneID)
 	if err != nil {
 		h.jsonError(w, "lane not found", http.StatusNotFound)
 		return
@@ -251,7 +253,7 @@ func (h *Handlers) apiReorderLaneSlots(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node is not a lane", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.ReorderLaneSlots(req.LaneID, req.OrderedIDs); err != nil {
+	if err := h.engine.NodeService().ReorderLaneSlots(req.LaneID, req.OrderedIDs); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -268,7 +270,7 @@ func (h *Handlers) apiGetGroupLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	layout, err := h.engine.GetGroupLayout(id)
+	layout, err := h.engine.NodeService().GetGroupLayout(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -286,7 +288,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up the group so we can check its type and name
-	group, err := h.engine.GetNode(req.ID)
+	group, err := h.engine.NodeService().GetNode(req.ID)
 	if err != nil {
 		h.jsonError(w, "group not found", http.StatusNotFound)
 		return
@@ -295,7 +297,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 	// Guard: only NGRP names can appear as source_node references.
 	// LANEs and other types don't need the order check.
 	if group.NodeTypeCode == "NGRP" {
-		blocked, bErr := h.engine.ListActiveOrdersBySourceRef([]string{group.Name})
+		blocked, bErr := h.engine.OrderService().ListActiveBySourceRef([]string{group.Name})
 		if bErr != nil {
 			h.jsonError(w, "failed to check active orders: "+bErr.Error(),
 				http.StatusInternalServerError)
@@ -318,7 +320,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			for _, order := range blocked {
-				_ = h.engine.FailOrderAtomic(order.ID,
+				_ = h.engine.OrderService().FailAtomic(order.ID,
 					fmt.Sprintf("source group %q deleted", group.Name))
 				// Populate EdgeUUID/StationID so the EventOrderFailed handler's
 				// notification gate routes the message to Edge.
@@ -336,7 +338,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.engine.DeleteNodeGroup(req.ID); err != nil {
+	if err := h.engine.NodeService().DeleteNodeGroup(req.ID); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

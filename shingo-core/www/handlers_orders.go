@@ -22,15 +22,16 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	svc := h.engine.OrderService()
 	var orders []*store.Order
 	var err error
 	switch {
 	case status == "":
-		orders, err = h.engine.ListActiveOrders()
+		orders, err = svc.ListActiveOrders()
 	case status == "all":
-		orders, err = h.engine.ListOrders("", limit)
+		orders, err = svc.ListOrders("", limit)
 	default:
-		orders, err = h.engine.ListOrders(status, limit)
+		orders, err = svc.ListOrders(status, limit)
 	}
 	if err != nil {
 		log.Printf("orders page: list orders: %v", err)
@@ -52,13 +53,14 @@ func (h *Handlers) handleOrderDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.engine.GetOrder(id)
+	svc := h.engine.OrderService()
+	order, err := svc.GetOrder(id)
 	if err != nil {
 		http.Error(w, "order not found", http.StatusNotFound)
 		return
 	}
 
-	history, err := h.engine.ListOrderHistory(id)
+	history, err := svc.ListOrderHistory(id)
 	if err != nil {
 		log.Printf("order detail: list history for order %d: %v", id, err)
 	}
@@ -95,7 +97,7 @@ func (h *Handlers) apiListOrders(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	orders, err := h.engine.ListOrders(status, limit)
+	orders, err := h.engine.OrderService().ListOrders(status, limit)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -108,7 +110,7 @@ func (h *Handlers) apiGetOrder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	order, err := h.engine.GetOrder(id)
+	order, err := h.engine.OrderService().GetOrder(id)
 	if err != nil {
 		h.jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -121,7 +123,8 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	order, err := h.engine.GetOrder(id)
+	svc := h.engine.OrderService()
+	order, err := svc.GetOrder(id)
 	if err != nil {
 		h.jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -142,23 +145,23 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 
 	result := enrichedOrder{Order: order}
 
-	result.History, _ = h.engine.ListOrderHistory(id)
+	result.History, _ = svc.ListOrderHistory(id)
 
 	if order.BinID != nil {
-		result.Bin, _ = h.engine.GetBin(*order.BinID)
-		result.BinManifest, _ = h.engine.GetBinManifest(*order.BinID)
+		result.Bin, _ = h.engine.BinService().GetBin(*order.BinID)
+		result.BinManifest, _ = h.engine.BinService().GetManifest(*order.BinID)
 	}
 	if order.SourceNode != "" {
-		result.SourceNode, _ = h.engine.GetNodeByName(order.SourceNode)
+		result.SourceNode, _ = h.engine.NodeService().GetByName(order.SourceNode)
 	}
 	if order.DeliveryNode != "" {
-		result.DeliveryNode, _ = h.engine.GetNodeByName(order.DeliveryNode)
+		result.DeliveryNode, _ = h.engine.NodeService().GetByName(order.DeliveryNode)
 	}
 	if order.ParentOrderID != nil {
-		result.Parent, _ = h.engine.GetOrder(*order.ParentOrderID)
+		result.Parent, _ = svc.GetOrder(*order.ParentOrderID)
 	}
 
-	children, _ := h.engine.ListChildOrders(id)
+	children, _ := svc.ListChildOrders(id)
 	if len(children) > 0 {
 		result.Children = children
 	}
@@ -276,7 +279,7 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 			}
 			h.engine.Dispatcher().HandleOrderRequest(env, orderReq)
 			if i == 1 {
-				if o, err := h.engine.GetOrderByUUID(batchUUID); err == nil {
+				if o, err := h.engine.OrderService().GetOrderByUUID(batchUUID); err == nil {
 					firstOrderID = o.ID
 					firstStatus = o.Status
 				}
@@ -318,7 +321,7 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 		return
 	}
 
-	destNode, err := h.engine.GetNodeByName(destination)
+	destNode, err := h.engine.NodeService().GetByName(destination)
 	if err != nil {
 		h.jsonError(w, "destination node not found: "+destination, http.StatusBadRequest)
 		return
@@ -404,7 +407,7 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 }
 
 func (h *Handlers) readBackSpotOrder(w http.ResponseWriter, orderUUID string) {
-	order, err := h.engine.GetOrderByUUID(orderUUID)
+	order, err := h.engine.OrderService().GetOrderByUUID(orderUUID)
 	if err != nil {
 		h.jsonError(w, "order submitted but could not read back: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -427,7 +430,7 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		return
 	}
 
-	bin, err := h.engine.GetBinByLabel(binLabel)
+	bin, err := h.engine.BinService().GetByLabel(binLabel)
 	if err != nil {
 		h.jsonError(w, "bin not found: "+binLabel, http.StatusBadRequest)
 		return
@@ -441,12 +444,12 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		return
 	}
 
-	sourceNode, err := h.engine.GetNode(*bin.NodeID)
+	sourceNode, err := h.engine.NodeService().GetNode(*bin.NodeID)
 	if err != nil {
 		h.jsonError(w, "source node not found", http.StatusInternalServerError)
 		return
 	}
-	destNode, err := h.engine.GetNodeByName(deliveryNode)
+	destNode, err := h.engine.NodeService().GetByName(deliveryNode)
 	if err != nil {
 		h.jsonError(w, "delivery node not found: "+deliveryNode, http.StatusBadRequest)
 		return
@@ -494,7 +497,7 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 		return
 	}
 
-	if _, err := h.engine.GetNodeByName(targetNode); err != nil {
+	if _, err := h.engine.NodeService().GetByName(targetNode); err != nil {
 		h.jsonError(w, "target node not found: "+targetNode, http.StatusBadRequest)
 		return
 	}
@@ -540,12 +543,13 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 	h.engine.Dispatcher().HandleOrderRequest(retrieveEnv, retrieveReq)
 
 	// Read back both orders
+	svc := h.engine.OrderService()
 	resp := map[string]any{}
-	if o, err := h.engine.GetOrderByUUID(storeUUID); err == nil {
+	if o, err := svc.GetOrderByUUID(storeUUID); err == nil {
 		resp["store_order_id"] = o.ID
 		resp["store_status"] = o.Status
 	}
-	if o, err := h.engine.GetOrderByUUID(retrieveUUID); err == nil {
+	if o, err := svc.GetOrderByUUID(retrieveUUID); err == nil {
 		resp["retrieve_order_id"] = o.ID
 		resp["retrieve_status"] = o.Status
 	}
@@ -553,7 +557,7 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 }
 
 func (h *Handlers) apiListAvailableBins(w http.ResponseWriter, r *http.Request) {
-	bins, err := h.engine.ListBins()
+	bins, err := h.engine.BinService().ListBins()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -567,7 +571,7 @@ func (h *Handlers) apiListAvailableBins(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Build a map of node_id -> zone for quick lookup
-	nodes, _ := h.engine.ListNodes()
+	nodes, _ := h.engine.NodeService().ListNodes()
 	nodeZone := make(map[int64]string, len(nodes))
 	for _, n := range nodes {
 		nodeZone[n.ID] = n.Zone

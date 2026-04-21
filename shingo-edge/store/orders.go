@@ -1,273 +1,124 @@
 package store
 
+// Phase 5b delegate file: order CRUD now lives in store/orders/.
+// This file preserves the *store.DB method surface so external callers
+// do not need to change.
+
 import (
-	"database/sql"
-	"log"
 	"time"
+
+	"shingoedge/store/orders"
 )
 
 // Order represents an E-Kanban order.
-type Order struct {
-	ID             int64      `json:"id"`
-	UUID           string     `json:"uuid"`
-	OrderType      string     `json:"order_type"`
-	Status         string     `json:"status"`
-	ProcessNodeID  *int64     `json:"process_node_id,omitempty"`
-	RetrieveEmpty  bool       `json:"retrieve_empty"`
-	Quantity       int64      `json:"quantity"`
-	DeliveryNode   string     `json:"delivery_node"`
-	StagingNode    string     `json:"staging_node"`
-	SourceNode     string     `json:"source_node"`
-	LoadType       string     `json:"load_type"`
-	WaybillID      *string    `json:"waybill_id"`
-	ExternalRef    *string    `json:"external_ref"`
-	FinalCount     *int64     `json:"final_count"`
-	CountConfirmed bool       `json:"count_confirmed"`
-	ETA            *string    `json:"eta"`
-	AutoConfirm    bool       `json:"auto_confirm"`
-	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
-	PayloadCode    string     `json:"payload_code"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-
-	// Joined fields
-	ProcessName     string `json:"process_name"`
-	ProcessNodeName string `json:"process_node_name"`
-	StationName     string `json:"station_name"`
-}
+type Order = orders.Order
 
 // OrderHistory records a status transition.
-type OrderHistory struct {
-	ID        int64     `json:"id"`
-	OrderID   int64     `json:"order_id"`
-	OldStatus string    `json:"old_status"`
-	NewStatus string    `json:"new_status"`
-	Detail    string    `json:"detail"`
-	CreatedAt time.Time `json:"created_at"`
-}
+type OrderHistory = orders.History
 
-const orderSelectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
-	o.delivery_node, o.staging_node, o.source_node, o.load_type,
-	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.payload_code, o.created_at, o.updated_at,
-	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
-
-const orderJoin = `FROM orders o
-	LEFT JOIN process_nodes n ON n.id = o.process_node_id
-	LEFT JOIN operator_stations os ON os.id = n.operator_station_id
-	LEFT JOIN processes pl ON pl.id = n.process_id`
-
+// ListOrders returns every order, newest first.
 func (db *DB) ListOrders() ([]Order, error) {
-	rows, err := db.Query(`SELECT ` + orderSelectCols + ` ` + orderJoin + ` ORDER BY o.created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanOrders(rows)
+	return orders.List(db.DB)
 }
 
+// ListActiveOrders returns every non-terminal order, newest first.
 func (db *DB) ListActiveOrders() ([]Order, error) {
-	rows, err := db.Query(`SELECT ` + orderSelectCols + ` ` + orderJoin + `
-		WHERE o.status NOT IN ('confirmed', 'cancelled')
-		ORDER BY o.created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanOrders(rows)
+	return orders.ListActive(db.DB)
 }
 
+// CountActiveOrders returns the count of non-terminal orders.
 func (db *DB) CountActiveOrders() int {
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('confirmed', 'cancelled', 'failed')`).Scan(&count); err != nil {
-		log.Printf("count active orders: %v", err)
-		return 0
-	}
-	return count
+	return orders.CountActive(db.DB)
 }
 
+// ListActiveOrdersByProcess returns non-terminal orders for one process.
 func (db *DB) ListActiveOrdersByProcess(processID int64) ([]Order, error) {
-	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
-		WHERE o.status NOT IN ('confirmed', 'cancelled')
-		AND pl.id = ?
-		ORDER BY o.created_at DESC`, processID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanOrders(rows)
+	return orders.ListActiveByProcess(db.DB, processID)
 }
 
-func scanOrders(rows *sql.Rows) ([]Order, error) {
-	var orders []Order
-	for rows.Next() {
-		var o Order
-		var stagedExpireAt sql.NullString
-		var createdAt, updatedAt string
-		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
-			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
-			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &o.PayloadCode, &createdAt, &updatedAt,
-			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
-			return nil, err
-		}
-		if stagedExpireAt.Valid {
-			t := scanTime(stagedExpireAt.String)
-			o.StagedExpireAt = &t
-		}
-		o.CreatedAt = scanTime(createdAt)
-		o.UpdatedAt = scanTime(updatedAt)
-		orders = append(orders, o)
-	}
-	return orders, rows.Err()
-}
-
-func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error {
-	var stagedExpireAt sql.NullString
-	var createdAt, updatedAt string
-	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
-		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
-		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &o.PayloadCode, &createdAt, &updatedAt,
-		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
-		return err
-	}
-	if stagedExpireAt.Valid {
-		t := scanTime(stagedExpireAt.String)
-		o.StagedExpireAt = &t
-	}
-	o.CreatedAt = scanTime(createdAt)
-	o.UpdatedAt = scanTime(updatedAt)
-	return nil
-}
-
+// GetOrder returns one order by id.
 func (db *DB) GetOrder(id int64) (*Order, error) {
-	o := &Order{}
-	if err := scanOrder(o, db.QueryRow(`SELECT `+orderSelectCols+` `+orderJoin+` WHERE o.id = ?`, id)); err != nil {
-		return nil, err
-	}
-	return o, nil
+	return orders.Get(db.DB, id)
 }
 
+// GetOrderByUUID returns one order by uuid.
 func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
-	o := &Order{}
-	if err := scanOrder(o, db.QueryRow(`SELECT `+orderSelectCols+` `+orderJoin+` WHERE o.uuid = ?`, uuid)); err != nil {
-		return nil, err
-	}
-	return o, nil
+	return orders.GetByUUID(db.DB, uuid)
 }
 
+// CreateOrder inserts an order and returns the new row id.
 func (db *DB) CreateOrder(uuid, orderType string, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
-	res, err := db.Exec(`
-		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm, payload_code)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	return orders.Create(db.DB, uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
 }
 
+// UpdateOrderProcessNode rebinds an order to a different process_node.
 func (db *DB) UpdateOrderProcessNode(id int64, processNodeID *int64) error {
-	_, err := db.Exec(`UPDATE orders SET process_node_id=?, updated_at=datetime('now') WHERE id=?`, processNodeID, id)
-	return err
+	return orders.UpdateProcessNode(db.DB, id, processNodeID)
 }
 
+// UpdateOrderStatus changes the order status and bumps updated_at.
 func (db *DB) UpdateOrderStatus(id int64, newStatus string) error {
-	_, err := db.Exec(`UPDATE orders SET status=?, updated_at=datetime('now') WHERE id=?`, newStatus, id)
-	return err
+	return orders.UpdateStatus(db.DB, id, newStatus)
 }
 
+// UpdateOrderWaybill writes the carrier waybill and ETA fields.
 func (db *DB) UpdateOrderWaybill(id int64, waybillID, eta string) error {
-	_, err := db.Exec(`UPDATE orders SET waybill_id=?, eta=?, updated_at=datetime('now') WHERE id=?`, waybillID, eta, id)
-	return err
+	return orders.UpdateWaybill(db.DB, id, waybillID, eta)
 }
 
+// UpdateOrderETA sets the ETA on an order.
 func (db *DB) UpdateOrderETA(id int64, eta string) error {
-	_, err := db.Exec(`UPDATE orders SET eta=?, updated_at=datetime('now') WHERE id=?`, eta, id)
-	return err
+	return orders.UpdateETA(db.DB, id, eta)
 }
 
+// UpdateOrderFinalCount writes the final count and operator-confirmation
+// flag.
 func (db *DB) UpdateOrderFinalCount(id int64, finalCount int64, confirmed bool) error {
-	_, err := db.Exec(`UPDATE orders SET final_count=?, count_confirmed=?, updated_at=datetime('now') WHERE id=?`, finalCount, confirmed, id)
-	return err
+	return orders.UpdateFinalCount(db.DB, id, finalCount, confirmed)
 }
 
+// UpdateOrderDeliveryNode rebinds the delivery node on an order.
 func (db *DB) UpdateOrderDeliveryNode(id int64, deliveryNode string) error {
-	_, err := db.Exec(`UPDATE orders SET delivery_node=?, updated_at=datetime('now') WHERE id=?`, deliveryNode, id)
-	return err
+	return orders.UpdateDeliveryNode(db.DB, id, deliveryNode)
 }
 
+// UpdateOrderStepsJSON stores the per-order steps document used by the
+// scenesync runtime.
 func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
-	_, err := db.Exec(`UPDATE orders SET steps_json=?, updated_at=datetime('now') WHERE id=?`, stepsJSON, id)
-	return err
+	return orders.UpdateStepsJSON(db.DB, id, stepsJSON)
 }
 
+// UpdateOrderStagedExpireAt sets (or clears) the staged_expire_at
+// timestamp on an order.
 func (db *DB) UpdateOrderStagedExpireAt(id int64, stagedExpireAt *time.Time) error {
-	if stagedExpireAt == nil {
-		_, err := db.Exec(`UPDATE orders SET staged_expire_at=NULL, updated_at=datetime('now') WHERE id=?`, id)
-		return err
-	}
-	_, err := db.Exec(`UPDATE orders SET staged_expire_at=?, updated_at=datetime('now') WHERE id=?`, stagedExpireAt.UTC().Format("2006-01-02 15:04:05"), id)
-	return err
+	return orders.UpdateStagedExpireAt(db.DB, id, stagedExpireAt)
 }
 
+// InsertOrderHistory writes one order_history row.
 func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail string) error {
-	_, err := db.Exec(`INSERT INTO order_history (order_id, old_status, new_status, detail) VALUES (?, ?, ?, ?)`,
-		orderID, oldStatus, newStatus, detail)
-	return err
+	return orders.InsertHistory(db.DB, orderID, oldStatus, newStatus, detail)
 }
 
-// ListStagedOrdersByPayload returns staged orders linked to a specific payload.
+// ListStagedOrdersByProcessNode returns staged orders linked to a
+// specific process_node.
 func (db *DB) ListStagedOrdersByProcessNode(processNodeID int64) ([]Order, error) {
-	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
-		WHERE o.process_node_id = ? AND o.status = 'staged'
-		ORDER BY o.created_at`, processNodeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanOrders(rows)
+	return orders.ListStagedByProcessNode(db.DB, processNodeID)
 }
 
-// ListActiveOrdersByProcessNodeAndType returns non-terminal orders for a process node filtered by order type.
+// ListActiveOrdersByProcessNodeAndType returns non-terminal orders for
+// a process node filtered by order type.
 func (db *DB) ListActiveOrdersByProcessNodeAndType(processNodeID int64, orderType string) ([]Order, error) {
-	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
-		WHERE o.process_node_id = ? AND o.order_type = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
-		ORDER BY o.created_at`, processNodeID, orderType)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanOrders(rows)
+	return orders.ListActiveByProcessNodeAndType(db.DB, processNodeID, orderType)
 }
 
+// ListActiveOrdersByProcessNode returns non-terminal orders for a
+// process node.
 func (db *DB) ListActiveOrdersByProcessNode(processNodeID int64) ([]Order, error) {
-	rows, err := db.Query(`SELECT `+orderSelectCols+` `+orderJoin+`
-		WHERE o.process_node_id = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
-		ORDER BY o.created_at`, processNodeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanOrders(rows)
+	return orders.ListActiveByProcessNode(db.DB, processNodeID)
 }
 
+// ListOrderHistory returns the status history for one order, oldest
+// first.
 func (db *DB) ListOrderHistory(orderID int64) ([]OrderHistory, error) {
-	rows, err := db.Query(`SELECT id, order_id, old_status, new_status, detail, created_at FROM order_history WHERE order_id = ? ORDER BY created_at`, orderID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var history []OrderHistory
-	for rows.Next() {
-		var h OrderHistory
-		var createdAt string
-		if err := rows.Scan(&h.ID, &h.OrderID, &h.OldStatus, &h.NewStatus, &h.Detail, &createdAt); err != nil {
-			return nil, err
-		}
-		h.CreatedAt = scanTime(createdAt)
-		history = append(history, h)
-	}
-	return history, rows.Err()
+	return orders.ListHistory(db.DB, orderID)
 }

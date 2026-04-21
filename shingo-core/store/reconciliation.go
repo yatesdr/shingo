@@ -1,305 +1,34 @@
 package store
 
+// Phase 5 delegate file: reconciliation lives in store/reconciliation/.
+// This file preserves the *store.DB method surface so external callers
+// don't need to change.
+
 import (
-	"fmt"
-	"time"
+	"shingocore/store/reconciliation"
 )
 
-const criticalOutboxAge = 5 * time.Minute
-const stuckOrderAge = 30 * time.Minute
+// OrderCompletionAnomaly preserves the store.OrderCompletionAnomaly public API.
+type OrderCompletionAnomaly = reconciliation.CompletionAnomaly
 
-type OrderCompletionAnomaly struct {
-	OrderID     int64  `json:"order_id"`
-	BinID       *int64 `json:"bin_id,omitempty"`
-	OrderStatus string `json:"order_status"`
-	BinStatus   string `json:"bin_status,omitempty"`
-	Issue       string `json:"issue"`
-}
+// ReconciliationAnomaly preserves the store.ReconciliationAnomaly public API.
+type ReconciliationAnomaly = reconciliation.Anomaly
 
-type ReconciliationAnomaly struct {
-	Category          string     `json:"category"`
-	Severity          string     `json:"severity"`
-	Issue             string     `json:"issue"`
-	RecommendedAction string     `json:"recommended_action,omitempty"`
-	OrderID           *int64     `json:"order_id,omitempty"`
-	BinID             *int64     `json:"bin_id,omitempty"`
-	StationID         string     `json:"station_id,omitempty"`
-	OrderStatus       string     `json:"order_status,omitempty"`
-	BinStatus         string     `json:"bin_status,omitempty"`
-	Detail            string     `json:"detail,omitempty"`
-	ObservedAt        *time.Time `json:"observed_at,omitempty"`
-}
+// ReconciliationSummary preserves the store.ReconciliationSummary public API.
+type ReconciliationSummary = reconciliation.Summary
 
-type ReconciliationSummary struct {
-	CompletionAnomalies int        `json:"completion_anomalies"`
-	StuckOrders         int        `json:"stuck_orders"`
-	ExpiredStagedBins   int        `json:"expired_staged_bins"`
-	StaleEdges          int        `json:"stale_edges"`
-	TotalAnomalies      int        `json:"total_anomalies"`
-	OutboxPending       int        `json:"outbox_pending"`
-	OldestOutboxAt      *time.Time `json:"oldest_outbox_at,omitempty"`
-	DeadLetters         int        `json:"dead_letters"`
-	Status              string     `json:"status"`
-}
-
-// ListOrderCompletionAnomalies surfaces high-risk drift between terminal orders and bin claim state.
 func (db *DB) ListOrderCompletionAnomalies() ([]*OrderCompletionAnomaly, error) {
-	rows, err := db.Query(`
-		SELECT o.id AS order_id, b.id AS bin_id, o.status AS order_status, b.status AS bin_status, 'terminal_order_still_claims_bin' AS issue
-		FROM orders o
-		JOIN bins b ON b.claimed_by = o.id
-		WHERE o.completed_at IS NOT NULL OR o.status IN ('cancelled', 'failed')
-		UNION ALL
-		SELECT o.id AS order_id, NULL::bigint AS bin_id, o.status AS order_status, '' AS bin_status, 'completed_order_missing_bin' AS issue
-		FROM orders o
-		WHERE o.completed_at IS NOT NULL AND o.bin_id IS NULL
-		UNION ALL
-		SELECT o.id AS order_id, o.bin_id AS bin_id, o.status AS order_status, COALESCE(b.status, '') AS bin_status, 'confirmed_without_completed_at' AS issue
-		FROM orders o
-		LEFT JOIN bins b ON b.id = o.bin_id
-		WHERE o.status = 'confirmed' AND o.completed_at IS NULL
-		ORDER BY order_id, issue`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var anomalies []*OrderCompletionAnomaly
-	for rows.Next() {
-		var a OrderCompletionAnomaly
-		var binID *int64
-		if err := rows.Scan(&a.OrderID, &binID, &a.OrderStatus, &a.BinStatus, &a.Issue); err != nil {
-			return nil, err
-		}
-		a.BinID = binID
-		anomalies = append(anomalies, &a)
-	}
-	return anomalies, rows.Err()
+	return reconciliation.ListOrderCompletionAnomalies(db.DB)
 }
 
 func (db *DB) ListReconciliationAnomalies() ([]*ReconciliationAnomaly, error) {
-	completion, err := db.ListOrderCompletionAnomalies()
-	if err != nil {
-		return nil, err
-	}
-
-	var anomalies []*ReconciliationAnomaly
-	for _, a := range completion {
-		issue := a.Issue
-		action := ""
-		switch issue {
-		case "confirmed_without_completed_at":
-			action = "reapply_completion"
-		case "terminal_order_still_claims_bin":
-			action = "release_terminal_claim"
-		}
-		orderID := a.OrderID
-		anomalies = append(anomalies, &ReconciliationAnomaly{
-			Category:          "order_completion",
-			Severity:          "critical",
-			Issue:             issue,
-			RecommendedAction: action,
-			OrderID:           &orderID,
-			BinID:             a.BinID,
-			OrderStatus:       a.OrderStatus,
-			BinStatus:         a.BinStatus,
-		})
-	}
-
-	rows, err := db.Query(`
-		SELECT id, status, updated_at
-		FROM orders
-		WHERE status IN ('pending','sourcing','submitted','acknowledged','dispatched','in_transit','staged')
-		  AND updated_at < NOW() - ($1 * INTERVAL '1 second')
-		ORDER BY updated_at ASC`, int(stuckOrderAge.Seconds()))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var orderID int64
-		var status string
-		var updatedAt time.Time
-		if err := rows.Scan(&orderID, &status, &updatedAt); err != nil {
-			return nil, err
-		}
-		anomalies = append(anomalies, &ReconciliationAnomaly{
-			Category:          "order_runtime",
-			Severity:          "degraded",
-			Issue:             "active_order_stuck",
-			RecommendedAction: "cancel_stuck_order",
-			OrderID:           &orderID,
-			OrderStatus:       status,
-			ObservedAt:        &updatedAt,
-			Detail:            "order has not advanced within the allowed age threshold",
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	rows, err = db.Query(`
-		SELECT id, status, staged_expires_at
-		FROM bins
-		WHERE status='staged'
-		  AND staged_expires_at IS NOT NULL
-		  AND staged_expires_at < NOW()
-		ORDER BY staged_expires_at ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var binID int64
-		var status string
-		var observedAt time.Time
-		if err := rows.Scan(&binID, &status, &observedAt); err != nil {
-			return nil, err
-		}
-		anomalies = append(anomalies, &ReconciliationAnomaly{
-			Category:          "bin_staging",
-			Severity:          "degraded",
-			Issue:             "staged_bin_expired",
-			RecommendedAction: "release_staged_bin",
-			BinID:             &binID,
-			BinStatus:         status,
-			ObservedAt:        &observedAt,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	rows, err = db.Query(`
-		SELECT station_id, last_heartbeat
-		FROM edge_registry
-		WHERE status='stale'
-		ORDER BY station_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var stationID string
-		var observedAt *time.Time
-		if err := rows.Scan(&stationID, &observedAt); err != nil {
-			return nil, err
-		}
-		anomalies = append(anomalies, &ReconciliationAnomaly{
-			Category:          "edge_connectivity",
-			Severity:          "degraded",
-			Issue:             "edge_marked_stale",
-			RecommendedAction: "request_reregistration",
-			StationID:         stationID,
-			ObservedAt:        observedAt,
-		})
-	}
-
-	// Detect bins with speculative manifest but no active claiming order.
-	// This is informational only — manifest represents physical reality and
-	// should NOT be cleared. The detection surfaces these bins for review.
-	rows, err = db.Query(`
-		SELECT b.id, b.label, b.status, b.claimed_by,
-		       COALESCE(o.status, 'no_order') AS order_status
-		FROM bins b
-		LEFT JOIN orders o ON o.id = b.claimed_by
-		WHERE b.manifest IS NOT NULL
-		  AND (b.claimed_by IS NULL
-		       OR o.status IN ('confirmed', 'failed', 'cancelled'))
-		ORDER BY b.id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var binID int64
-		var label, binStatus string
-		var claimedBy *int64
-		var orderStatus string
-		if err := rows.Scan(&binID, &label, &binStatus, &claimedBy, &orderStatus); err != nil {
-			return nil, err
-		}
-		anomalies = append(anomalies, &ReconciliationAnomaly{
-			Category:          "bin_manifest",
-			Severity:          "info",
-			Issue:             "manifest_without_active_order",
-			RecommendedAction: "review_manifest",
-			BinID:             &binID,
-			BinStatus:         binStatus,
-			OrderID:           claimedBy,
-			OrderStatus:       orderStatus,
-			Detail:            fmt.Sprintf("bin %s has manifest but no active claiming order (claimed_by=%v, order_status=%s)", label, claimedBy, orderStatus),
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return anomalies, nil
+	return reconciliation.ListAnomalies(db.DB)
 }
 
 func (db *DB) GetReconciliationSummary() (*ReconciliationSummary, error) {
-	completion, err := db.ListOrderCompletionAnomalies()
-	if err != nil {
-		return nil, err
-	}
-	anomalies, err := db.ListReconciliationAnomalies()
-	if err != nil {
-		return nil, err
-	}
-
-	summary := &ReconciliationSummary{
-		CompletionAnomalies: len(completion),
-		TotalAnomalies:      len(anomalies),
-	}
-
-	row := db.QueryRow(`SELECT COUNT(*), MIN(created_at) FROM outbox WHERE sent_at IS NULL AND retries < $1`, MaxOutboxRetries)
-	if err := row.Scan(&summary.OutboxPending, &summary.OldestOutboxAt); err != nil {
-		return nil, err
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE sent_at IS NULL AND retries >= $1`, MaxOutboxRetries).Scan(&summary.DeadLetters); err != nil {
-		return nil, err
-	}
-
-	for _, a := range anomalies {
-		switch a.Issue {
-		case "active_order_stuck":
-			summary.StuckOrders++
-		case "staged_bin_expired":
-			summary.ExpiredStagedBins++
-		case "edge_marked_stale":
-			summary.StaleEdges++
-		}
-	}
-	summary.Status = "ok"
-	if summary.OutboxPending > 0 || summary.StuckOrders > 0 || summary.ExpiredStagedBins > 0 || summary.StaleEdges > 0 {
-		summary.Status = "degraded"
-	}
-	if summary.CompletionAnomalies > 0 || summary.DeadLetters > 0 {
-		summary.Status = "critical"
-	} else if summary.OldestOutboxAt != nil && time.Since(summary.OldestOutboxAt.UTC()) >= criticalOutboxAge {
-		summary.Status = "critical"
-	}
-
-	return summary, nil
+	return reconciliation.GetSummary(db.DB)
 }
 
-// ReleaseOrphanedClaims finds bins still claimed by terminal orders and releases them.
-// This is the defense-in-depth sweep that catches any claims that leaked past the
-// atomic status transitions (e.g. due to a process crash mid-transaction).
-// Returns the number of claims released.
 func (db *DB) ReleaseOrphanedClaims() (int, error) {
-	result, err := db.Exec(`
-		UPDATE bins
-		SET claimed_by = NULL, updated_at = NOW()
-		WHERE claimed_by IS NOT NULL
-		  AND claimed_by IN (
-		    SELECT id FROM orders
-		    WHERE status IN ('confirmed', 'failed', 'cancelled')
-		  )`)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := result.RowsAffected()
-	return int(n), nil
+	return reconciliation.ReleaseOrphanedClaims(db.DB)
 }

@@ -17,12 +17,12 @@ func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.R
 		http.Error(w, "invalid station id", http.StatusBadRequest)
 		return
 	}
-	station, err := h.engine.DB().GetOperatorStation(id)
+	station, err := h.engine.GetOperatorStation(id)
 	if err != nil {
 		http.Error(w, "station not found", http.StatusNotFound)
 		return
 	}
-	_ = h.engine.DB().TouchOperatorStation(id, "online")
+	_ = h.engine.TouchOperatorStation(id, "online")
 	data := map[string]interface{}{
 		"Page":    "operator-display",
 		"Station": station,
@@ -36,7 +36,7 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	view, err := h.engine.DB().BuildOperatorStationView(id)
+	view, err := h.engine.BuildOperatorStationView(id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "station not found")
 		return
@@ -44,12 +44,12 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 	views := []store.OperatorStationView{*view}
 	enrichViewBinState(h.engine.CoreAPI(), views)
 	view.Nodes = views[0].Nodes
-	_ = h.engine.DB().TouchOperatorStation(id, "online")
+	_ = h.engine.TouchOperatorStation(id, "online")
 	writeJSON(w, view)
 }
 
 func (h *Handlers) apiGetActiveOrders(w http.ResponseWriter, r *http.Request) {
-	orders, err := h.engine.DB().ListActiveOrders()
+	orders, err := h.engine.ListActiveOrders()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -58,7 +58,7 @@ func (h *Handlers) apiGetActiveOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiListOperatorStations(w http.ResponseWriter, r *http.Request) {
-	stations, err := h.engine.DB().ListOperatorStations()
+	stations, err := h.engine.ListOperatorStations()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -72,7 +72,7 @@ func (h *Handlers) apiCreateOperatorStation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.engine.DB().CreateOperatorStation(in)
+	id, err := h.engine.CreateOperatorStation(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -91,7 +91,7 @@ func (h *Handlers) apiUpdateOperatorStation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdateOperatorStation(id, in); err != nil {
+	if err := h.engine.UpdateOperatorStation(id, in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -104,7 +104,7 @@ func (h *Handlers) apiDeleteOperatorStation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.engine.DB().DeleteOperatorStation(id); err != nil {
+	if err := h.engine.DeleteOperatorStation(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -128,7 +128,7 @@ func (h *Handlers) apiMoveOperatorStation(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "direction must be up or down")
 		return
 	}
-	if err := h.engine.DB().MoveOperatorStation(id, req.Direction); err != nil {
+	if err := h.engine.MoveOperatorStation(id, req.Direction); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -136,7 +136,7 @@ func (h *Handlers) apiMoveOperatorStation(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handlers) apiListConfiguredProcessNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.engine.DB().ListProcessNodes()
+	nodes, err := h.engine.ListProcessNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -150,7 +150,7 @@ func (h *Handlers) apiListConfiguredProcessNodesByStation(w http.ResponseWriter,
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	nodes, err := h.engine.DB().ListProcessNodesByStation(stationID)
+	nodes, err := h.engine.ListProcessNodesByStation(stationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -164,12 +164,12 @@ func (h *Handlers) apiCreateProcessNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.engine.DB().CreateProcessNode(in)
+	id, err := h.engine.CreateProcessNode(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_, _ = h.engine.DB().EnsureProcessNodeRuntime(id)
+	_, _ = h.engine.EnsureProcessNodeRuntime(id)
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -184,7 +184,7 @@ func (h *Handlers) apiUpdateProcessNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdateProcessNode(id, in); err != nil {
+	if err := h.engine.UpdateProcessNode(id, in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -197,7 +197,7 @@ func (h *Handlers) apiDeleteProcessNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.engine.DB().DeleteProcessNode(id); err != nil {
+	if err := h.engine.DeleteProcessNode(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -405,7 +405,7 @@ func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.DB().UpdateProcessNodeRuntimeOrders(id, nil, nil); err != nil {
+	if err := h.engine.UpdateProcessNodeRuntimeOrders(id, nil, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -604,7 +604,7 @@ func (h *Handlers) apiGetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	names, err := h.engine.DB().GetStationNodeNames(id)
+	names, err := h.engine.GetStationNodeNames(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -625,7 +625,7 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().SetStationNodes(id, req.Nodes); err != nil {
+	if err := h.engine.SetStationNodes(id, req.Nodes); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

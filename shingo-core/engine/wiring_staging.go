@@ -18,16 +18,11 @@ import (
 // resolveNodeStaging determines if a destination node should receive bins
 // as "staged" (lineside nodes) or "available" (storage slots under LANEs).
 func (e *Engine) resolveNodeStaging(destNode *store.Node) (staged bool, expiresAt *time.Time) {
-	isStorageSlot := false
-	if destNode.ParentID != nil {
-		if parent, err := e.db.GetNode(*destNode.ParentID); err == nil && parent.NodeTypeCode == "LANE" {
-			isStorageSlot = true
-		}
-	}
-	if !isStorageSlot {
+	isStorage := e.isStorageSlot(destNode.ID)
+	if !isStorage {
 		expiresAt = e.resolveStagingExpiry(destNode)
 	}
-	return !isStorageSlot, expiresAt
+	return !isStorage, expiresAt
 }
 
 // resolveStagingExpiry computes the staging expiry time for a node.

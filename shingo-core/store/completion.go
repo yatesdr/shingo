@@ -3,6 +3,8 @@ package store
 import (
 	"fmt"
 	"time"
+
+	"shingocore/store/internal/helpers"
 )
 
 // ApplyBinArrival moves a claimed bin to its destination and updates its claim/staging state atomically.
@@ -21,7 +23,7 @@ func (db *DB) ApplyBinArrival(binID, toNodeID int64, staged bool, expiresAt *tim
 	}
 	if staged {
 		if _, err := tx.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
-			nullableTime(expiresAt), binID); err != nil {
+			helpers.NullableTime(expiresAt), binID); err != nil {
 			return fmt.Errorf("stage bin: %w", err)
 		}
 	} else {

@@ -22,24 +22,34 @@ import (
 //   - Bin moved TO a storage slot   → supply increased → signal "consume" stations that material is available
 func (e *Engine) handleKanbanDemand(ev BinUpdatedEvent) {
 	if ev.PayloadCode == "" {
+		e.dbg("kanban: skipped bin=%d — empty payload, action=%s", ev.BinID, ev.Action)
 		return
 	}
 
 	// Only bin movements trigger kanban demand.
 	if ev.Action != "moved" {
+		e.dbg("kanban: skipped bin=%d — action=%q (want moved), payload=%s", ev.BinID, ev.Action, ev.PayloadCode)
 		return
 	}
 
+	fromMatched := ev.FromNodeID != 0 && e.isStorageSlot(ev.FromNodeID)
+	toMatched := ev.ToNodeID != 0 && e.isStorageSlot(ev.ToNodeID)
+
 	// Bin left a storage slot → supply decreased → tell producers to replenish.
-	if ev.FromNodeID != 0 && e.isStorageSlot(ev.FromNodeID) {
+	if fromMatched {
 		e.sendDemandSignals(ev.PayloadCode, "produce",
 			fmt.Sprintf("bin %d removed from storage (payload %s)", ev.BinID, ev.PayloadCode))
 	}
 
 	// Bin arrived at a storage slot → supply increased → tell consumers material is available.
-	if ev.ToNodeID != 0 && e.isStorageSlot(ev.ToNodeID) {
+	if toMatched {
 		e.sendDemandSignals(ev.PayloadCode, "consume",
 			fmt.Sprintf("bin %d arrived at storage (payload %s)", ev.BinID, ev.PayloadCode))
+	}
+
+	// Log when neither endpoint matched — helps diagnose NGRP-direct and non-storage moves.
+	if !fromMatched && !toMatched {
+		e.dbg("kanban: no storage match for bin=%d payload=%s from=%d to=%d", ev.BinID, ev.PayloadCode, ev.FromNodeID, ev.ToNodeID)
 	}
 }
 

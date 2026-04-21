@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // Payload is the payload-template domain entity. The struct lives in
@@ -52,7 +53,7 @@ func ScanPayloads(rows *sql.Rows) ([]*Payload, error) {
 
 // Create inserts a new payload template and sets p.ID on success.
 func Create(db *sql.DB, p *Payload) error {
-	id, err := insertID(db, `INSERT INTO payloads (code, description, uop_capacity) VALUES ($1, $2, $3) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO payloads (code, description, uop_capacity) VALUES ($1, $2, $3) RETURNING id`,
 		p.Code, p.Description, p.UOPCapacity)
 	if err != nil {
 		return fmt.Errorf("create payload: %w", err)

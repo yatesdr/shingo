@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // BinType is the bin-type domain entity. The struct lives in
@@ -43,7 +44,7 @@ func ScanBinTypes(rows *sql.Rows) ([]*BinType, error) {
 
 // CreateType inserts a new bin type and sets bt.ID on success.
 func CreateType(db *sql.DB, bt *BinType) error {
-	id, err := insertID(db, `INSERT INTO bin_types (code, description, width_in, height_in) VALUES ($1, $2, $3, $4) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO bin_types (code, description, width_in, height_in) VALUES ($1, $2, $3, $4) RETURNING id`,
 		bt.Code, bt.Description, bt.WidthIn, bt.HeightIn)
 	if err != nil {
 		return fmt.Errorf("create bin type: %w", err)

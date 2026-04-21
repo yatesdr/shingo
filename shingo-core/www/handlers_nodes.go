@@ -31,7 +31,7 @@ func parseNodeAssignments(r *http.Request) service.NodeAssignments {
 }
 
 func (h *Handlers) apiListNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.engine.ListNodes()
+	nodes, err := h.engine.NodeService().ListNodes()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -44,7 +44,7 @@ func (h *Handlers) apiNodePayloads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	bins, err := h.engine.ListBinsByNode(id)
+	bins, err := h.engine.NodeService().ListBinsByNode(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -53,7 +53,7 @@ func (h *Handlers) apiNodePayloads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiNodeState(w http.ResponseWriter, r *http.Request) {
-	states, err := h.engine.ListNodeStates()
+	states, err := h.engine.NodeService().ListNodeStates()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -71,11 +71,11 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 	)
 	switch {
 	case class != "":
-		points, err = h.engine.ListScenePointsByClass(class)
+		points, err = h.engine.NodeService().ListScenePointsByClass(class)
 	case area != "":
-		points, err = h.engine.ListScenePointsByArea(area)
+		points, err = h.engine.NodeService().ListScenePointsByArea(area)
 	default:
-		points, err = h.engine.ListScenePoints()
+		points, err = h.engine.NodeService().ListScenePoints()
 	}
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -85,7 +85,7 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleNodes(w http.ResponseWriter, r *http.Request) {
-	pd, err := getNodesPageData(h.engine)
+	pd, err := getNodesPageData(&nodesPageDataAdapter{ns: h.engine.NodeService(), bs: h.engine.BinService()})
 	if err != nil {
 		log.Printf("nodes page: get page data: %v", err)
 	}
@@ -132,7 +132,7 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		node.ParentID = &parentID
 	}
 
-	if err := h.engine.CreateNode(node); err != nil {
+	if err := h.engine.NodeService().CreateNode(node); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -160,7 +160,7 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.engine.GetNode(id)
+	node, err := h.engine.NodeService().GetNode(id)
 	if err != nil {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
@@ -181,7 +181,7 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		node.ParentID = nil
 	}
 
-	if err := h.engine.UpdateNode(node); err != nil {
+	if err := h.engine.NodeService().UpdateNode(node); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -237,13 +237,13 @@ func (h *Handlers) handleNodeDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.engine.GetNode(id)
+	node, err := h.engine.NodeService().GetNode(id)
 	if err != nil {
 		http.Error(w, "node not found", http.StatusNotFound)
 		return
 	}
 
-	if err := h.engine.DeleteNode(id); err != nil {
+	if err := h.engine.NodeService().DeleteNode(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -276,42 +276,44 @@ func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.engine.GetNode(id)
+	svc := h.engine.NodeService()
+
+	node, err := svc.GetNode(id)
 	if err != nil {
 		h.jsonError(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	stations, err := h.engine.ListStationsForNode(id)
+	stations, err := svc.ListStationsForNode(id)
 	if err != nil {
 		log.Printf("node detail: list stations for node %d: %v", id, err)
 	}
-	binTypes, err := h.engine.ListBinTypesForNode(id)
+	binTypes, err := svc.ListBinTypesForNode(id)
 	if err != nil {
 		log.Printf("node detail: list bin types for node %d: %v", id, err)
 	}
-	props, err := h.engine.ListNodeProperties(id)
+	props, err := svc.ListNodeProperties(id)
 	if err != nil {
 		log.Printf("node detail: list properties for node %d: %v", id, err)
 	}
 
 	// Effective (inherited) values for child nodes
-	effectiveStations, err := h.engine.GetEffectiveStations(id)
+	effectiveStations, err := svc.GetEffectiveStations(id)
 	if err != nil {
 		log.Printf("node detail: effective stations for node %d: %v", id, err)
 	}
-	effectiveBinTypes, err := h.engine.GetEffectiveBinTypes(id)
+	effectiveBinTypes, err := svc.GetEffectiveBinTypes(id)
 	if err != nil {
 		log.Printf("node detail: effective bin types for node %d: %v", id, err)
 	}
 
 	// Mode properties
-	binTypeMode := h.engine.GetNodeProperty(id, "bin_type_mode")
-	stationMode := h.engine.GetNodeProperty(id, "station_mode")
+	binTypeMode := svc.GetNodeProperty(id, "bin_type_mode")
+	stationMode := svc.GetNodeProperty(id, "station_mode")
 
 	var children []*store.Node
 	if node.IsSynthetic {
-		children, err = h.engine.ListChildNodes(id)
+		children, err = svc.ListChildNodes(id)
 		if err != nil {
 			log.Printf("node detail: list children for node %d: %v", id, err)
 		}
@@ -344,7 +346,7 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.SetNodeProperty(req.NodeID, req.Key, req.Value); err != nil {
+	if err := h.engine.NodeService().SetNodeProperty(req.NodeID, req.Key, req.Value); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -353,10 +355,10 @@ func (h *Handlers) apiNodePropertySet(w http.ResponseWriter, r *http.Request) {
 
 // apiGenerateTestNodes creates a representative set of test nodes for debugging.
 func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) {
-	db := h.engine
+	svc := h.engine.NodeService()
 
 	// Check if test nodes already exist.
-	nodes, err := db.ListNodes()
+	nodes, err := svc.ListNodes()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -402,7 +404,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 			Zone:    d.zone,
 			Enabled: true,
 		}
-		if err := db.CreateNode(n); err != nil {
+		if err := svc.CreateNode(n); err != nil {
 			h.jsonError(w, fmt.Sprintf("creating %s: %v", d.name, err), http.StatusInternalServerError)
 			return
 		}
@@ -410,7 +412,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Node group with lanes and slots.
-	groupID, err := db.CreateNodeGroup("TEST-NGRP-1")
+	groupID, err := svc.CreateNodeGroup("TEST-NGRP-1")
 	if err != nil {
 		h.jsonError(w, fmt.Sprintf("creating node group: %v", err), http.StatusInternalServerError)
 		return
@@ -425,7 +427,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 			Enabled:  true,
 			ParentID: &groupID,
 		}
-		if err := db.CreateNode(child); err != nil {
+		if err := svc.CreateNode(child); err != nil {
 			h.jsonError(w, fmt.Sprintf("creating %s: %v", name, err), http.StatusInternalServerError)
 			return
 		}
@@ -434,7 +436,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 	// Two lanes, each with 4 slot nodes.
 	for _, laneName := range []string{"TEST-LANE-A", "TEST-LANE-B"} {
-		laneID, err := db.AddLane(groupID, laneName)
+		laneID, err := svc.AddLane(groupID, laneName)
 		if err != nil {
 			h.jsonError(w, fmt.Sprintf("adding lane %s: %v", laneName, err), http.StatusInternalServerError)
 			return
@@ -448,11 +450,11 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 				Zone:     "Production",
 				Enabled:  true,
 			}
-			if err := db.CreateNode(slot); err != nil {
+			if err := svc.CreateNode(slot); err != nil {
 				h.jsonError(w, fmt.Sprintf("creating %s: %v", slotName, err), http.StatusInternalServerError)
 				return
 			}
-			if err := db.ReparentNode(slot.ID, &laneID, i); err != nil {
+			if err := svc.ReparentNode(slot.ID, &laneID, i); err != nil {
 				h.jsonError(w, fmt.Sprintf("reparenting %s: %v", slotName, err), http.StatusInternalServerError)
 				return
 			}
@@ -470,9 +472,9 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 // apiDeleteTestNodes removes all TEST- prefixed nodes.
 func (h *Handlers) apiDeleteTestNodes(w http.ResponseWriter, r *http.Request) {
-	db := h.engine
+	svc := h.engine.NodeService()
 
-	nodes, err := db.ListNodes()
+	nodes, err := svc.ListNodes()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -483,7 +485,7 @@ func (h *Handlers) apiDeleteTestNodes(w http.ResponseWriter, r *http.Request) {
 	// First pass: delete node groups (cascades to lanes + children).
 	for _, n := range nodes {
 		if strings.HasPrefix(n.Name, "TEST-") && n.IsSynthetic && n.ParentID == nil {
-			if err := db.DeleteNodeGroup(n.ID); err != nil {
+			if err := svc.DeleteNodeGroup(n.ID); err != nil {
 				h.jsonError(w, fmt.Sprintf("deleting group %s: %v", n.Name, err), http.StatusInternalServerError)
 				return
 			}
@@ -493,10 +495,10 @@ func (h *Handlers) apiDeleteTestNodes(w http.ResponseWriter, r *http.Request) {
 
 	// Second pass: delete remaining standalone TEST- nodes.
 	// Re-fetch since DeleteNodeGroup may have removed children.
-	nodes, _ = db.ListNodes()
+	nodes, _ = svc.ListNodes()
 	for _, n := range nodes {
 		if strings.HasPrefix(n.Name, "TEST-") {
-			if err := db.DeleteNode(n.ID); err != nil {
+			if err := svc.DeleteNode(n.ID); err != nil {
 				log.Printf("delete test node %s: %v", n.Name, err)
 				continue
 			}
@@ -525,7 +527,7 @@ func (h *Handlers) apiSetNodeBinTypes(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_id is required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.SetNodeBinTypes(req.NodeID, req.BinTypeIDs); err != nil {
+	if err := h.engine.NodeService().SetNodeBinTypes(req.NodeID, req.BinTypeIDs); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -539,7 +541,7 @@ func (h *Handlers) apiGetNodeBinTypes(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	binTypes, err := h.engine.ListBinTypesForNode(id)
+	binTypes, err := h.engine.NodeService().ListBinTypesForNode(id)
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -560,7 +562,7 @@ func (h *Handlers) apiNodePropertyDelete(w http.ResponseWriter, r *http.Request)
 		h.jsonError(w, "node_id and key are required", http.StatusBadRequest)
 		return
 	}
-	if err := h.engine.DeleteNodeProperty(req.NodeID, req.Key); err != nil {
+	if err := h.engine.NodeService().DeleteNodeProperty(req.NodeID, req.Key); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

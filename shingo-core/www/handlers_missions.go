@@ -26,7 +26,7 @@ func (h *Handlers) handleMissionDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.engine.GetOrder(orderID)
+	order, err := h.engine.OrderService().GetOrder(orderID)
 	if err != nil {
 		http.Error(w, "order not found", http.StatusNotFound)
 		return
@@ -41,7 +41,7 @@ func (h *Handlers) handleMissionDetail(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiListMissions(w http.ResponseWriter, r *http.Request) {
 	f := parseMissionFilter(r)
-	missions, total, err := h.engine.ListMissions(f)
+	missions, total, err := h.engine.MissionService().List(f)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -64,15 +64,15 @@ func (h *Handlers) apiGetMission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.engine.GetOrder(orderID)
+	order, err := h.engine.OrderService().GetOrder(orderID)
 	if err != nil {
 		http.Error(w, "order not found", http.StatusNotFound)
 		return
 	}
 
-	telemetry, _ := h.engine.GetMissionTelemetry(orderID)
-	events, _ := h.engine.ListMissionEvents(orderID)
-	history, _ := h.engine.ListOrderHistory(orderID)
+	telemetry, _ := h.engine.MissionService().Telemetry(orderID)
+	events, _ := h.engine.MissionService().ListEvents(orderID)
+	history, _ := h.engine.OrderService().ListOrderHistory(orderID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -85,7 +85,7 @@ func (h *Handlers) apiGetMission(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiMissionStats(w http.ResponseWriter, r *http.Request) {
 	f := parseMissionFilter(r)
-	stats, err := h.engine.GetMissionStats(f)
+	stats, err := h.engine.MissionService().Stats(f)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

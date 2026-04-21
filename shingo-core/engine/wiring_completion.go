@@ -116,6 +116,10 @@ func (e *Engine) applyBinArrivalForOrder(order *store.Order) {
 // See applyBinArrivalForOrder for full context.
 func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*store.OrderBin) {
 	var instructions []store.BinArrivalInstruction
+	// fromNodeIDs[i] is the source node of instructions[i]. Captured here
+	// so the post-arrival BinUpdatedEvent can carry FromNodeID — without it
+	// handleKanbanDemand cannot fire produce signals on storage-slot exit.
+	var fromNodeIDs []int64
 
 	for _, ob := range orderBins {
 		if ob.DestNode == "" {
@@ -133,6 +137,17 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*s
 			Staged:    staged,
 			ExpiresAt: expiresAt,
 		})
+
+		// Resolve the per-bin source node (the OrderBin.NodeName is the dot-path
+		// of the pickup step). 0 means "unknown source" — kanban will simply not
+		// fire the FROM-side check, which is the correct degradation.
+		fromNodeID := int64(0)
+		if ob.NodeName != "" {
+			if srcNode, err := e.db.GetNodeByDotName(ob.NodeName); err == nil && srcNode != nil {
+				fromNodeID = srcNode.ID
+			}
+		}
+		fromNodeIDs = append(fromNodeIDs, fromNodeID)
 	}
 
 	if len(instructions) == 0 {
@@ -144,7 +159,7 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*s
 		return
 	}
 
-	for _, inst := range instructions {
+	for i, inst := range instructions {
 		bin, err := e.db.GetBin(inst.BinID)
 		if err != nil {
 			continue
@@ -153,6 +168,7 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*s
 			Action:      "moved",
 			BinID:       bin.ID,
 			PayloadCode: bin.PayloadCode,
+			FromNodeID:  fromNodeIDs[i],
 			ToNodeID:    inst.ToNodeID,
 			NodeID:      inst.ToNodeID,
 		}})
@@ -251,6 +267,10 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 // (normal case when applyMultiBinArrivalForOrder already ran at delivery time).
 func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.OrderBin) {
 	var instructions []store.BinArrivalInstruction
+	// fromNodeIDs[i] is the source node of instructions[i] — same purpose as
+	// in applyMultiBinArrivalForOrder: keep FromNodeID intact so kanban can
+	// fire on storage-slot exit when this safety-net path actually moves a bin.
+	var fromNodeIDs []int64
 
 	// Note: previously had an "operatorConfirmed" override forcing staged=false
 	// for complex orders with WaitIndex > 0. Removed 2026-04-14 — see
@@ -281,6 +301,16 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 			Staged:    staged,
 			ExpiresAt: expiresAt,
 		})
+
+		// Capture the per-bin source node before we move it so the post-arrival
+		// event still has it. The OrderBin.NodeName is the pickup step's dot-path.
+		fromNodeID := int64(0)
+		if ob.NodeName != "" {
+			if srcNode, err := e.db.GetNodeByDotName(ob.NodeName); err == nil && srcNode != nil {
+				fromNodeID = srcNode.ID
+			}
+		}
+		fromNodeIDs = append(fromNodeIDs, fromNodeID)
 	}
 
 	// Clean up junction table rows regardless of whether bins needed moving
@@ -297,7 +327,7 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 	}
 
 	// Emit BinUpdatedEvent only for bins that actually moved
-	for _, inst := range instructions {
+	for i, inst := range instructions {
 		bin, err := e.db.GetBin(inst.BinID)
 		if err != nil {
 			e.logFn("engine: get bin %d for multi-bin event: %v", inst.BinID, err)
@@ -307,6 +337,7 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 			Action:      "moved",
 			BinID:       bin.ID,
 			PayloadCode: bin.PayloadCode,
+			FromNodeID:  fromNodeIDs[i],
 			ToNodeID:    inst.ToNodeID,
 			NodeID:      inst.ToNodeID,
 		}})

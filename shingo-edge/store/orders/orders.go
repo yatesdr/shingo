@@ -1,0 +1,308 @@
+// Package orders holds E-Kanban order persistence for shingo-edge.
+//
+// Phase 5b of the architecture plan moved the orders + order_history
+// CRUD out of the flat store/ package and into this sub-package. The
+// outer store/ keeps type aliases (`store.Order = orders.Order`,
+// `store.OrderHistory = orders.History`) and one-line delegate methods
+// on *store.DB so external callers see no API change.
+package orders
+
+import (
+	"database/sql"
+	"log"
+	"time"
+
+	"shingoedge/store/internal/helpers"
+)
+
+// Order represents an E-Kanban order.
+type Order struct {
+	ID             int64      `json:"id"`
+	UUID           string     `json:"uuid"`
+	OrderType      string     `json:"order_type"`
+	Status         string     `json:"status"`
+	ProcessNodeID  *int64     `json:"process_node_id,omitempty"`
+	RetrieveEmpty  bool       `json:"retrieve_empty"`
+	Quantity       int64      `json:"quantity"`
+	DeliveryNode   string     `json:"delivery_node"`
+	StagingNode    string     `json:"staging_node"`
+	SourceNode     string     `json:"source_node"`
+	LoadType       string     `json:"load_type"`
+	WaybillID      *string    `json:"waybill_id"`
+	ExternalRef    *string    `json:"external_ref"`
+	FinalCount     *int64     `json:"final_count"`
+	CountConfirmed bool       `json:"count_confirmed"`
+	ETA            *string    `json:"eta"`
+	AutoConfirm    bool       `json:"auto_confirm"`
+	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
+	PayloadCode    string     `json:"payload_code"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+
+	// Joined fields
+	ProcessName     string `json:"process_name"`
+	ProcessNodeName string `json:"process_node_name"`
+	StationName     string `json:"station_name"`
+}
+
+// History records a status transition.
+type History struct {
+	ID        int64     `json:"id"`
+	OrderID   int64     `json:"order_id"`
+	OldStatus string    `json:"old_status"`
+	NewStatus string    `json:"new_status"`
+	Detail    string    `json:"detail"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
+	o.delivery_node, o.staging_node, o.source_node, o.load_type,
+	o.waybill_id, o.external_ref, o.final_count,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.payload_code, o.created_at, o.updated_at,
+	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
+
+const joinClause = `FROM orders o
+	LEFT JOIN process_nodes n ON n.id = o.process_node_id
+	LEFT JOIN operator_stations os ON os.id = n.operator_station_id
+	LEFT JOIN processes pl ON pl.id = n.process_id`
+
+// List returns every order, newest first.
+func List(db *sql.DB) ([]Order, error) {
+	rows, err := db.Query(`SELECT ` + selectCols + ` ` + joinClause + ` ORDER BY o.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// ListActive returns every non-terminal order, newest first.
+func ListActive(db *sql.DB) ([]Order, error) {
+	rows, err := db.Query(`SELECT ` + selectCols + ` ` + joinClause + `
+		WHERE o.status NOT IN ('confirmed', 'cancelled')
+		ORDER BY o.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// CountActive returns the count of non-terminal orders. Logs and
+// returns 0 on error to keep dashboards alive.
+func CountActive(db *sql.DB) int {
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('confirmed', 'cancelled', 'failed')`).Scan(&count); err != nil {
+		log.Printf("count active orders: %v", err)
+		return 0
+	}
+	return count
+}
+
+// ListActiveByProcess returns non-terminal orders for one process.
+func ListActiveByProcess(db *sql.DB, processID int64) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.status NOT IN ('confirmed', 'cancelled')
+		AND pl.id = ?
+		ORDER BY o.created_at DESC`, processID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+func scanOrders(rows *sql.Rows) ([]Order, error) {
+	var out []Order
+	for rows.Next() {
+		var o Order
+		var stagedExpireAt sql.NullString
+		var createdAt, updatedAt string
+		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
+			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
+			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &o.PayloadCode, &createdAt, &updatedAt,
+			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
+			return nil, err
+		}
+		if stagedExpireAt.Valid {
+			t := helpers.ScanTime(stagedExpireAt.String)
+			o.StagedExpireAt = &t
+		}
+		o.CreatedAt = helpers.ScanTime(createdAt)
+		o.UpdatedAt = helpers.ScanTime(updatedAt)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error {
+	var stagedExpireAt sql.NullString
+	var createdAt, updatedAt string
+	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
+		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
+		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &o.PayloadCode, &createdAt, &updatedAt,
+		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
+		return err
+	}
+	if stagedExpireAt.Valid {
+		t := helpers.ScanTime(stagedExpireAt.String)
+		o.StagedExpireAt = &t
+	}
+	o.CreatedAt = helpers.ScanTime(createdAt)
+	o.UpdatedAt = helpers.ScanTime(updatedAt)
+	return nil
+}
+
+// Get returns one order by id.
+func Get(db *sql.DB, id int64) (*Order, error) {
+	o := &Order{}
+	if err := scanOrder(o, db.QueryRow(`SELECT `+selectCols+` `+joinClause+` WHERE o.id = ?`, id)); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+// GetByUUID returns one order by uuid.
+func GetByUUID(db *sql.DB, uuid string) (*Order, error) {
+	o := &Order{}
+	if err := scanOrder(o, db.QueryRow(`SELECT `+selectCols+` `+joinClause+` WHERE o.uuid = ?`, uuid)); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+
+// Create inserts an order and returns the new row id.
+func Create(db *sql.DB, uuid, orderType string, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
+	res, err := db.Exec(`
+		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm, payload_code)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateProcessNode rebinds an order to a different process_node.
+func UpdateProcessNode(db *sql.DB, id int64, processNodeID *int64) error {
+	_, err := db.Exec(`UPDATE orders SET process_node_id=?, updated_at=datetime('now') WHERE id=?`, processNodeID, id)
+	return err
+}
+
+// UpdateStatus changes the order status and bumps updated_at.
+func UpdateStatus(db *sql.DB, id int64, newStatus string) error {
+	_, err := db.Exec(`UPDATE orders SET status=?, updated_at=datetime('now') WHERE id=?`, newStatus, id)
+	return err
+}
+
+// UpdateWaybill writes the carrier waybill and ETA fields.
+func UpdateWaybill(db *sql.DB, id int64, waybillID, eta string) error {
+	_, err := db.Exec(`UPDATE orders SET waybill_id=?, eta=?, updated_at=datetime('now') WHERE id=?`, waybillID, eta, id)
+	return err
+}
+
+// UpdateETA sets the ETA on an order.
+func UpdateETA(db *sql.DB, id int64, eta string) error {
+	_, err := db.Exec(`UPDATE orders SET eta=?, updated_at=datetime('now') WHERE id=?`, eta, id)
+	return err
+}
+
+// UpdateFinalCount writes the final count and operator-confirmation
+// flag.
+func UpdateFinalCount(db *sql.DB, id int64, finalCount int64, confirmed bool) error {
+	_, err := db.Exec(`UPDATE orders SET final_count=?, count_confirmed=?, updated_at=datetime('now') WHERE id=?`, finalCount, confirmed, id)
+	return err
+}
+
+// UpdateDeliveryNode rebinds the delivery node on an order.
+func UpdateDeliveryNode(db *sql.DB, id int64, deliveryNode string) error {
+	_, err := db.Exec(`UPDATE orders SET delivery_node=?, updated_at=datetime('now') WHERE id=?`, deliveryNode, id)
+	return err
+}
+
+// UpdateStepsJSON stores the per-order steps document used by the
+// scenesync runtime.
+func UpdateStepsJSON(db *sql.DB, id int64, stepsJSON string) error {
+	_, err := db.Exec(`UPDATE orders SET steps_json=?, updated_at=datetime('now') WHERE id=?`, stepsJSON, id)
+	return err
+}
+
+// UpdateStagedExpireAt sets (or clears, when stagedExpireAt is nil) the
+// staged_expire_at timestamp on an order. Times are stored in
+// SQLite-canonical UTC formatting.
+func UpdateStagedExpireAt(db *sql.DB, id int64, stagedExpireAt *time.Time) error {
+	if stagedExpireAt == nil {
+		_, err := db.Exec(`UPDATE orders SET staged_expire_at=NULL, updated_at=datetime('now') WHERE id=?`, id)
+		return err
+	}
+	_, err := db.Exec(`UPDATE orders SET staged_expire_at=?, updated_at=datetime('now') WHERE id=?`, stagedExpireAt.UTC().Format(helpers.TimeLayout), id)
+	return err
+}
+
+// InsertHistory writes one order_history row.
+func InsertHistory(db *sql.DB, orderID int64, oldStatus, newStatus, detail string) error {
+	_, err := db.Exec(`INSERT INTO order_history (order_id, old_status, new_status, detail) VALUES (?, ?, ?, ?)`,
+		orderID, oldStatus, newStatus, detail)
+	return err
+}
+
+// ListStagedByProcessNode returns staged orders linked to a specific
+// process_node.
+func ListStagedByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.process_node_id = ? AND o.status = 'staged'
+		ORDER BY o.created_at`, processNodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// ListActiveByProcessNodeAndType returns non-terminal orders for a
+// process node filtered by order type.
+func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType string) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.process_node_id = ? AND o.order_type = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
+		ORDER BY o.created_at`, processNodeID, orderType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// ListActiveByProcessNode returns non-terminal orders for a process
+// node.
+func ListActiveByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.process_node_id = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
+		ORDER BY o.created_at`, processNodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
+// ListHistory returns the status history for one order, oldest first.
+func ListHistory(db *sql.DB, orderID int64) ([]History, error) {
+	rows, err := db.Query(`SELECT id, order_id, old_status, new_status, detail, created_at FROM order_history WHERE order_id = ? ORDER BY created_at`, orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []History
+	for rows.Next() {
+		var h History
+		var createdAt string
+		if err := rows.Scan(&h.ID, &h.OrderID, &h.OldStatus, &h.NewStatus, &h.Detail, &createdAt); err != nil {
+			return nil, err
+		}
+		h.CreatedAt = helpers.ScanTime(createdAt)
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}

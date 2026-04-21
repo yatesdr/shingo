@@ -78,7 +78,7 @@ func (h *Handlers) apiFireAlarmTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 	detail := fmt.Sprintf("on=%v autoResume=%v", req.On, req.AutoResume)
 
-	if err := h.engine.AppendAudit("firealarm", 0, action, "", detail, actor); err != nil {
+	if err := h.engine.AuditService().Append("firealarm", 0, action, "", detail, actor); err != nil {
 		log.Printf("fire-alarm: audit write failed: %v", err)
 		// Non-fatal — don't fail the request over an audit error
 	}

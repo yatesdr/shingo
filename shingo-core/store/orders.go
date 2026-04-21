@@ -8,6 +8,7 @@ package store
 import (
 	"fmt"
 
+	"shingocore/store/internal/helpers"
 	"shingocore/store/orders"
 )
 
@@ -43,8 +44,8 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
 			o.SourceNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
-			nullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
-			nullableInt64(o.BinID)).Scan(&id)
+			helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
+			helpers.NullableInt64(o.BinID)).Scan(&id)
 		if err != nil {
 			return fmt.Errorf("create child order (seq %d): %w", o.Sequence, err)
 		}

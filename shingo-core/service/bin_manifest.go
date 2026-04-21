@@ -56,6 +56,16 @@ func (s *BinManifestService) Confirm(binID int64, producedAt string) error {
 	return nil
 }
 
+// Unconfirm clears a bin's manifest confirmation flag. Absorbed from
+// engine_db_methods.go as part of the www-handler service migration
+// (PR 3a.2).
+func (s *BinManifestService) Unconfirm(binID int64) error {
+	if err := s.db.UnconfirmBinManifest(binID); err != nil {
+		return fmt.Errorf("unconfirm manifest bin %d: %w", binID, err)
+	}
+	return nil
+}
+
 // ClearAndClaim atomically clears manifest and claims the bin for an order.
 // Closes the TOCTOU race where ClaimBin + ClearBinManifest are separate txns.
 func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {

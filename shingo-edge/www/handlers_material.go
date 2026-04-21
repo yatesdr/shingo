@@ -50,14 +50,14 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []store.OperatorStatio
 }
 
 
-func buildStationViews(db *store.DB, activeProcess *store.Process) []store.OperatorStationView {
+func buildStationViews(eng EngineAccess, activeProcess *store.Process) []store.OperatorStationView {
 	if activeProcess == nil {
 		return nil
 	}
-	stations, _ := db.ListOperatorStationsByProcess(activeProcess.ID)
+	stations, _ := eng.ListOperatorStationsByProcess(activeProcess.ID)
 	var views []store.OperatorStationView
 	for _, station := range stations {
-		if view, err := db.BuildOperatorStationView(station.ID); err == nil {
+		if view, err := eng.BuildOperatorStationView(station.ID); err == nil {
 			views = append(views, *view)
 		}
 	}
@@ -65,25 +65,24 @@ func buildStationViews(db *store.DB, activeProcess *store.Process) []store.Opera
 }
 
 func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
-	processes, _ := db.ListProcesses()
+	processes, _ := h.engine.ListProcesses()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
 	var activeProcessID int64
 	var currentStyleName, targetStyleName string
 
-	stationViews := buildStationViews(db, activeProcess)
+	stationViews := buildStationViews(h.engine, activeProcess)
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
 		if activeProcess.ActiveStyleID != nil {
-			if style, err := db.GetStyle(*activeProcess.ActiveStyleID); err == nil {
+			if style, err := h.engine.GetStyle(*activeProcess.ActiveStyleID); err == nil {
 				currentStyleName = style.Name
 			}
 		}
 		if activeProcess.TargetStyleID != nil {
-			if style, err := db.GetStyle(*activeProcess.TargetStyleID); err == nil {
+			if style, err := h.engine.GetStyle(*activeProcess.TargetStyleID); err == nil {
 				targetStyleName = style.Name
 			}
 		}
@@ -104,11 +103,10 @@ func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleMaterialPartial(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
-	processes, _ := db.ListProcesses()
+	processes, _ := h.engine.ListProcesses()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
-	stationViews := buildStationViews(db, activeProcess)
+	stationViews := buildStationViews(h.engine, activeProcess)
 	enrichViewBinState(h.engine.CoreAPI(), stationViews)
 
 	data := map[string]interface{}{

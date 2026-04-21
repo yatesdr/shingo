@@ -5,8 +5,8 @@ import (
 )
 
 func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	activeOrders, _ := h.engine.ListActiveOrders()
-	nodes, _ := h.engine.ListNodes()
+	activeOrders, _ := h.engine.OrderService().ListActiveOrders()
+	nodes, _ := h.engine.NodeService().ListNodes()
 
 	// Count orders by status
 	statusCounts := map[string]int{}
@@ -29,8 +29,8 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msgOK := h.engine.MsgClient().IsConnected()
-	dbOK := h.engine.Ping() == nil
-	recon, _ := h.engine.GetReconciliationSummary()
+	dbOK := h.engine.HealthService().PingDB() == nil
+	recon, _ := h.engine.Reconciliation().Summary()
 
 	trackerCount := 0
 	if t := h.engine.Tracker(); t != nil {

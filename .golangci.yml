@@ -1,0 +1,112 @@
+# golangci-lint configuration for the SHINGO monorepo.
+# Targets golangci-lint v2.x syntax (installed: v2.11.4).
+#
+# Primary guardrail: www handlers must not import *store.DB directly.
+# Handlers that currently do are listed under `exclusions.rules` as
+# ratcheted exemptions. Each entry comes off the list as its handler is
+# migrated off *store.DB during Phase 3 (core) and Phase 4 (edge) of the
+# architecture refactor. When the ratcheted-exemption list hits zero, the
+# entire `exclusions.rules` block below (except the two permanent
+# `engine_iface.go` / `*_test.go` carveouts) can be deleted, leaving the
+# rule as a permanent regression guard.
+
+version: "2"
+
+linters:
+  # PR 1 is scoped to the depguard guardrail only. Start from zero and
+  # enable depguard explicitly, so pre-existing errcheck/staticcheck/unused
+  # findings across the repo don't block the PR that lands this config.
+  # A follow-up PR can enable the standard linter set and tackle the
+  # code-quality backlog as its own tracked piece of work.
+  default: none
+  enable:
+    - depguard
+
+  settings:
+    depguard:
+      rules:
+        www-no-direct-store:
+          list-mode: lax
+          files:
+            - "**/shingo-core/www/**"
+            - "**/shingo-edge/www/**"
+          deny:
+            - pkg: "shingocore/store"
+              desc: "www handlers must use a service interface, not *store.DB directly"
+            - pkg: "shingoedge/store"
+              desc: "www handlers must use a service interface, not *store.DB directly"
+
+  exclusions:
+    rules:
+      # ---- Structural exemptions (permanent) --------------------------------
+      # engine_iface.go is the service-interface definition itself; it must
+      # reference store types to define the contract. Test files need store
+      # types to build fixtures. Neither category ever migrates off store.
+      - path: "shingo-(core|edge)/www/engine_iface\\.go"
+        linters:
+          - depguard
+      - path: "shingo-(core|edge)/www/.*_test\\.go"
+        linters:
+          - depguard
+
+      # ---- Ratcheted exemptions (remove as handlers migrate) ----------------
+      # Each entry below corresponds to a production file that currently
+      # imports shingocore/store or shingoedge/store directly. Remove the
+      # matching entry in the same PR that migrates the handler to a service
+      # interface. Do NOT leave stale entries: golangci-lint will eventually
+      # flag an exclusion that no longer has a corresponding violation.
+      #
+      # Core (10 files — eliminated during Phase 3):
+      - path: "shingo-core/www/auth\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/handlers_bins\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/handlers_missions\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/handlers_nodes\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/handlers_orders\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/handlers_payloads\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/handlers_payload_templates\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/handlers_telemetry\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/handlers_test_orders\\.go"
+        linters:
+          - depguard
+      - path: "shingo-core/www/nodes_page_data\\.go"
+        linters:
+          - depguard
+      #
+      # Edge (7 files — eliminated during Phase 4):
+      - path: "shingo-edge/www/helpers\\.go"
+        linters:
+          - depguard
+      - path: "shingo-edge/www/handlers_admin_pages\\.go"
+        linters:
+          - depguard
+      - path: "shingo-edge/www/handlers_api_config\\.go"
+        linters:
+          - depguard
+      - path: "shingo-edge/www/handlers_changeover\\.go"
+        linters:
+          - depguard
+      - path: "shingo-edge/www/handlers_kanbans\\.go"
+        linters:
+          - depguard
+      - path: "shingo-edge/www/handlers_material\\.go"
+        linters:
+          - depguard
+      - path: "shingo-edge/www/handlers_operator_stations\\.go"
+        linters:
+          - depguard

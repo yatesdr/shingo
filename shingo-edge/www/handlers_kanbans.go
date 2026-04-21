@@ -8,9 +8,7 @@ import (
 )
 
 func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
-
-	processes, _ := db.ListProcesses()
+	processes, _ := h.engine.ListProcesses()
 
 	// Determine active process from query param (0 = all processes)
 	var activeProcessID int64
@@ -28,9 +26,9 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 
 	var activeOrders []store.Order
 	if activeProcessID > 0 {
-		activeOrders, _ = db.ListActiveOrdersByProcess(activeProcessID)
+		activeOrders, _ = h.engine.ListActiveOrdersByProcess(activeProcessID)
 	} else {
-		activeOrders, _ = db.ListActiveOrders()
+		activeOrders, _ = h.engine.ListActiveOrders()
 	}
 
 	// Core-synced nodes for redirect dropdown
@@ -56,7 +54,6 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleKanbansPartial(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
 	var activeProcessID int64
 	if p := r.URL.Query().Get("process"); p != "" {
 		if id, err := strconv.ParseInt(p, 10, 64); err == nil {
@@ -65,9 +62,9 @@ func (h *Handlers) handleKanbansPartial(w http.ResponseWriter, r *http.Request) 
 	}
 	var activeOrders []store.Order
 	if activeProcessID > 0 {
-		activeOrders, _ = db.ListActiveOrdersByProcess(activeProcessID)
+		activeOrders, _ = h.engine.ListActiveOrdersByProcess(activeProcessID)
 	} else {
-		activeOrders, _ = db.ListActiveOrders()
+		activeOrders, _ = h.engine.ListActiveOrders()
 	}
 	data := map[string]interface{}{
 		"ActiveOrders": activeOrders,

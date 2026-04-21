@@ -9,9 +9,7 @@ import (
 )
 
 func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
-
-	processes, _ := db.ListProcesses()
+	processes, _ := h.engine.ListProcesses()
 
 	// Determine active process
 	var activeProcessID int64
@@ -31,7 +29,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Styles for this process (for the style toggle)
-	styles, _ := db.ListStylesByProcess(activeProcessID)
+	styles, _ := h.engine.ListStylesByProcess(activeProcessID)
 
 	// Style filter: "all" (default) or a specific style ID
 	styleParam := r.URL.Query().Get("style")
@@ -49,20 +47,20 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	shifts, _ := db.ListShifts()
+	shifts, _ := h.engine.ListShifts()
 
 	// Load hourly counts
 	var hourlyCounts map[int]int64
 	if activeProcessID > 0 {
 		if filterStyleID > 0 {
 			// Single style: convert list to map
-			counts, _ := db.ListHourlyCounts(activeProcessID, filterStyleID, dateStr)
+			counts, _ := h.engine.ListHourlyCounts(activeProcessID, filterStyleID, dateStr)
 			hourlyCounts = make(map[int]int64)
 			for _, c := range counts {
 				hourlyCounts[c.Hour] = c.Delta
 			}
 		} else {
-			hourlyCounts, _ = db.HourlyCountTotals(activeProcessID, dateStr)
+			hourlyCounts, _ = h.engine.HourlyCountTotals(activeProcessID, dateStr)
 		}
 	}
 	if hourlyCounts == nil {
@@ -114,7 +112,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiListShifts(w http.ResponseWriter, r *http.Request) {
-	shifts, err := h.engine.DB().ListShifts()
+	shifts, err := h.engine.ListShifts()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -134,16 +132,15 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := h.engine.DB()
 	for _, s := range shifts {
 		if s.ShiftNumber < 1 || s.ShiftNumber > 3 {
 			continue
 		}
 		if s.StartTime == "" && s.EndTime == "" {
-			db.DeleteShift(s.ShiftNumber)
+			h.engine.DeleteShift(s.ShiftNumber)
 			continue
 		}
-		if err := db.UpsertShift(s.ShiftNumber, s.Name, s.StartTime, s.EndTime); err != nil {
+		if err := h.engine.UpsertShift(s.ShiftNumber, s.Name, s.StartTime, s.EndTime); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -167,7 +164,7 @@ func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	counts, err := h.engine.DB().HourlyCountTotals(processID, dateStr)
+	counts, err := h.engine.HourlyCountTotals(processID, dateStr)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

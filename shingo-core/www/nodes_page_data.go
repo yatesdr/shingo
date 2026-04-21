@@ -5,13 +5,30 @@ import (
 	"log"
 	"strings"
 
+	"shingocore/service"
 	"shingocore/store"
 )
 
+// nodesPageDataAdapter composes NodeService + BinService so getNodesPageData
+// can stay independent of *engine.Engine while we phase out the engine's
+// store passthroughs (PR 3a.5.1).
+type nodesPageDataAdapter struct {
+	ns *service.NodeService
+	bs *service.BinService
+}
+
+func (a *nodesPageDataAdapter) ListNodes() ([]*store.Node, error)                      { return a.ns.ListNodes() }
+func (a *nodesPageDataAdapter) CountBinsByAllNodes() (map[int64]int, error)            { return a.bs.CountBinsByAllNodes() }
+func (a *nodesPageDataAdapter) NodeTileStates() (map[int64]store.NodeTileState, error) { return a.ns.NodeTileStates() }
+func (a *nodesPageDataAdapter) ListScenePoints() ([]*store.ScenePoint, error)          { return a.ns.ListScenePoints() }
+func (a *nodesPageDataAdapter) ListBinTypes() ([]*store.BinType, error)                { return a.bs.ListBinTypes() }
+func (a *nodesPageDataAdapter) ListEdges() ([]store.EdgeRegistration, error)           { return a.ns.ListEdges() }
+func (a *nodesPageDataAdapter) GetSlotDepth(nodeID int64) (int, error)                 { return a.ns.GetSlotDepth(nodeID) }
+
 // nodesPageDataStore is the narrow read surface getNodesPageData needs.
-// *engine.Engine satisfies this via the delegating methods, and it keeps
-// this helper independent of the larger EngineAccess contract so it stays
-// testable with a fake if needed.
+// nodesPageDataAdapter satisfies this; *engine.Engine no longer does
+// (PR 3a.5.1 absorbed the 5 underlying queries into NodeService /
+// BinService and dropped the corresponding passthroughs).
 type nodesPageDataStore interface {
 	ListNodes() ([]*store.Node, error)
 	CountBinsByAllNodes() (map[int64]int, error)

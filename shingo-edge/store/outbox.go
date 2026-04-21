@@ -1,89 +1,58 @@
 package store
 
-import "time"
+// Phase 5b delegate file: outbox CRUD now lives in store/outbox/.
+// This file preserves the *store.DB method surface and the
+// MaxOutboxRetries const so external callers do not need to change.
+
+import (
+	"time"
+
+	"shingoedge/store/outbox"
+)
 
 // OutboxMessage is a queued outbound message.
-type OutboxMessage struct {
-	ID        int64      `json:"id"`
-	Payload   []byte     `json:"payload"`
-	MsgType   string     `json:"msg_type"`
-	Retries   int        `json:"retries"`
-	CreatedAt time.Time  `json:"created_at"`
-	SentAt    *time.Time `json:"sent_at"`
-}
-
-func (db *DB) EnqueueOutbox(payload []byte, msgType string) (int64, error) {
-	res, err := db.Exec(`INSERT INTO outbox (topic, payload, msg_type) VALUES ('orders', ?, ?)`, payload, msgType)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
+type OutboxMessage = outbox.Message
 
 // MaxOutboxRetries is the number of delivery attempts before a message is
 // considered dead-lettered and skipped by the drainer.
-const MaxOutboxRetries = 10
+const MaxOutboxRetries = outbox.MaxRetries
 
+// EnqueueOutbox inserts a new outbound message and returns its row id.
+func (db *DB) EnqueueOutbox(payload []byte, msgType string) (int64, error) {
+	return outbox.Enqueue(db.DB, payload, msgType)
+}
+
+// ListPendingOutbox returns the next batch of un-sent messages whose
+// retry count is below MaxOutboxRetries.
 func (db *DB) ListPendingOutbox(limit int) ([]OutboxMessage, error) {
-	rows, err := db.Query(`SELECT id, payload, msg_type, retries, created_at FROM outbox WHERE sent_at IS NULL AND retries < ? ORDER BY id LIMIT ?`, MaxOutboxRetries, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var msgs []OutboxMessage
-	for rows.Next() {
-		var m OutboxMessage
-		var createdAt string
-		if err := rows.Scan(&m.ID, &m.Payload, &m.MsgType, &m.Retries, &createdAt); err != nil {
-			return nil, err
-		}
-		m.CreatedAt = scanTime(createdAt)
-		msgs = append(msgs, m)
-	}
-	return msgs, rows.Err()
+	return outbox.ListPending(db.DB, limit)
 }
 
+// ListDeadLetterOutbox returns un-sent messages that have hit
+// MaxOutboxRetries.
 func (db *DB) ListDeadLetterOutbox(limit int) ([]OutboxMessage, error) {
-	rows, err := db.Query(`SELECT id, payload, msg_type, retries, created_at FROM outbox WHERE sent_at IS NULL AND retries >= ? ORDER BY id LIMIT ?`, MaxOutboxRetries, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var msgs []OutboxMessage
-	for rows.Next() {
-		var m OutboxMessage
-		var createdAt string
-		if err := rows.Scan(&m.ID, &m.Payload, &m.MsgType, &m.Retries, &createdAt); err != nil {
-			return nil, err
-		}
-		m.CreatedAt = scanTime(createdAt)
-		msgs = append(msgs, m)
-	}
-	return msgs, rows.Err()
+	return outbox.ListDeadLetter(db.DB, limit)
 }
 
+// AckOutbox marks a message as sent.
 func (db *DB) AckOutbox(id int64) error {
-	_, err := db.Exec(`UPDATE outbox SET sent_at = datetime('now') WHERE id = ?`, id)
-	return err
+	return outbox.Ack(db.DB, id)
 }
 
+// IncrementOutboxRetries bumps the retry counter on a message.
 func (db *DB) IncrementOutboxRetries(id int64) error {
-	_, err := db.Exec(`UPDATE outbox SET retries = retries + 1 WHERE id = ?`, id)
-	return err
+	return outbox.IncrementRetries(db.DB, id)
 }
 
+// RequeueOutbox resets the retry counter so a dead-lettered message
+// will be picked up by the drainer again.
 func (db *DB) RequeueOutbox(id int64) error {
-	_, err := db.Exec(`UPDATE outbox SET retries = 0 WHERE id = ? AND sent_at IS NULL`, id)
-	return err
+	return outbox.Requeue(db.DB, id)
 }
 
 // PurgeOldOutbox deletes sent messages older than the given duration,
-// and dead-lettered messages (retries >= max) older than the given duration.
+// and dead-lettered messages (retries >= max) older than the given
+// duration.
 func (db *DB) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
-	cutoff := time.Now().Add(-olderThan).Format("2006-01-02 15:04:05")
-	res, err := db.Exec(`DELETE FROM outbox WHERE (sent_at IS NOT NULL AND sent_at < ?) OR (retries >= ? AND created_at < ?)`, cutoff, MaxOutboxRetries, cutoff)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	return outbox.PurgeOld(db.DB, olderThan)
 }

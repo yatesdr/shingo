@@ -1,24 +1,40 @@
 package store
 
+// Phase 5b delegate file: process_changeover CRUD now lives in
+// store/changeovers/. This file preserves the *store.DB method surface
+// so external callers do not need to change.
+//
+// CreateChangeover stays at the top-level store package because it
+// runs as a single transaction that also updates processes (set
+// target_style_id, production_state) and inserts into process_nodes /
+// process_node_runtime_states; that orchestration crosses aggregates
+// and would otherwise have to thread *sql.Tx through several
+// sub-packages.
+
 import (
-	"database/sql"
 	"fmt"
-	"time"
+
+	"shingoedge/store/changeovers"
 )
 
-// ChangeoverNodeTaskInput holds pre-computed data for a single node task
-// to be created as part of a changeover transaction.
-type ChangeoverNodeTaskInput struct {
-	ProcessID    int64  // used for auto-creating process node
-	CoreNodeName string // matched against existing nodes or used for auto-create
-	FromClaimID  *int64
-	ToClaimID    *int64
-	Situation    string
-	State        string
-}
+// ChangeoverNodeTaskInput holds pre-computed data for a single node
+// task to be created as part of a changeover transaction.
+type ChangeoverNodeTaskInput = changeovers.NodeTaskInput
 
-// CreateChangeover atomically creates a changeover with its station and node tasks.
-// Returns the changeover ID.
+// ProcessChangeover is one row of process_changeovers.
+type ProcessChangeover = changeovers.Changeover
+
+// ChangeoverStationTask is one row of changeover_station_tasks.
+type ChangeoverStationTask = changeovers.StationTask
+
+// ChangeoverNodeTask is one row of changeover_node_tasks.
+type ChangeoverNodeTask = changeovers.NodeTask
+
+// CreateChangeover atomically creates a changeover with its station
+// and node tasks. Cross-aggregate: it also flips the owning process
+// into the changeover state and backfills process_nodes /
+// process_node_runtime_states for any core nodes that didn't have a
+// row yet. Returns the new changeover id.
 func (db *DB) CreateChangeover(processID int64, fromStyleID *int64, toStyleID int64, calledBy, notes string,
 	stationIDs []int64, nodeTasks []ChangeoverNodeTaskInput, existingNodes []ProcessNode) (int64, error) {
 
@@ -53,7 +69,7 @@ func (db *DB) CreateChangeover(processID int64, fromStyleID *int64, toStyleID in
 	}
 
 	for _, nt := range nodeTasks {
-		// Find existing process node by core_node_name
+		// Find existing process node by core_node_name.
 		var processNodeID *int64
 		for i := range existingNodes {
 			if existingNodes[i].CoreNodeName == nt.CoreNodeName {
@@ -63,7 +79,7 @@ func (db *DB) CreateChangeover(processID int64, fromStyleID *int64, toStyleID in
 			}
 		}
 		if processNodeID == nil {
-			// Auto-create process node for this claimed core node
+			// Auto-create process node for this claimed core node.
 			res, err := tx.Exec(`INSERT INTO process_nodes (process_id, core_node_name, code, name) VALUES (?, ?, ?, ?)`,
 				nt.ProcessID, nt.CoreNodeName, nt.CoreNodeName, nt.CoreNodeName)
 			if err != nil {
@@ -89,234 +105,66 @@ func (db *DB) CreateChangeover(processID int64, fromStyleID *int64, toStyleID in
 	return changeoverID, nil
 }
 
-type ProcessChangeover struct {
-	ID          int64      `json:"id"`
-	ProcessID   int64      `json:"process_id"`
-	FromStyleID *int64     `json:"from_style_id,omitempty"`
-	ToStyleID   int64      `json:"to_style_id"`
-	State       string     `json:"state"`
-	CalledBy    string     `json:"called_by"`
-	Notes       string     `json:"notes"`
-	StartedAt   time.Time  `json:"started_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-
-	ProcessName   string `json:"process_name"`
-	FromStyleName string `json:"from_style_name"`
-	ToStyleName   string `json:"to_style_name"`
-}
-
-type ChangeoverStationTask struct {
-	ID                  int64     `json:"id"`
-	ProcessChangeoverID int64     `json:"process_changeover_id"`
-	OperatorStationID   int64     `json:"operator_station_id"`
-	State               string    `json:"state"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	StationName         string    `json:"station_name"`
-}
-
-type ChangeoverNodeTask struct {
-	ID                        int64     `json:"id"`
-	ProcessChangeoverID       int64     `json:"process_changeover_id"`
-	ProcessNodeID             int64     `json:"process_node_id"`
-	FromClaimID               *int64    `json:"from_claim_id,omitempty"`
-	ToClaimID                 *int64    `json:"to_claim_id,omitempty"`
-	Situation                 string    `json:"situation"`
-	State                     string    `json:"state"`
-	NextMaterialOrderID       *int64    `json:"next_material_order_id,omitempty"`
-	OldMaterialReleaseOrderID *int64    `json:"old_material_release_order_id,omitempty"`
-	UpdatedAt                 time.Time `json:"updated_at"`
-	NodeName                  string    `json:"node_name"`
-}
-
-func scanProcessChangeover(scanner interface{ Scan(...interface{}) error }) (ProcessChangeover, error) {
-	var c ProcessChangeover
-	var startedAt, completedAt, updatedAt string
-	err := scanner.Scan(&c.ID, &c.ProcessID, &c.FromStyleID, &c.ToStyleID, &c.State, &c.CalledBy, &c.Notes,
-		&startedAt, &completedAt, &updatedAt, &c.ProcessName, &c.FromStyleName, &c.ToStyleName)
-	if err != nil {
-		return c, err
-	}
-	c.StartedAt = scanTime(startedAt)
-	if completedAt != "" {
-		t := scanTime(completedAt)
-		c.CompletedAt = &t
-	}
-	c.UpdatedAt = scanTime(updatedAt)
-	return c, nil
-}
-
+// ListProcessChangeovers returns every process_changeover for a
+// process, newest first.
 func (db *DB) ListProcessChangeovers(processID int64) ([]ProcessChangeover, error) {
-	rows, err := db.Query(`SELECT c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
-		c.started_at, COALESCE(c.completed_at, ''), c.updated_at,
-		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')
-		FROM process_changeovers c
-		LEFT JOIN processes p ON p.id = c.process_id
-		LEFT JOIN styles fs ON fs.id = c.from_style_id
-		LEFT JOIN styles ts ON ts.id = c.to_style_id
-		WHERE c.process_id = ?
-		ORDER BY c.started_at DESC`, processID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ProcessChangeover
-	for rows.Next() {
-		c, err := scanProcessChangeover(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	return changeovers.List(db.DB, processID)
 }
 
+// GetActiveProcessChangeover returns the active (non-completed,
+// non-cancelled) changeover for a process, if any.
 func (db *DB) GetActiveProcessChangeover(processID int64) (*ProcessChangeover, error) {
-	c, err := scanProcessChangeover(db.QueryRow(`SELECT c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
-		c.started_at, COALESCE(c.completed_at, ''), c.updated_at,
-		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')
-		FROM process_changeovers c
-		LEFT JOIN processes p ON p.id = c.process_id
-		LEFT JOIN styles fs ON fs.id = c.from_style_id
-		LEFT JOIN styles ts ON ts.id = c.to_style_id
-		WHERE c.process_id = ? AND c.state NOT IN ('completed', 'cancelled')
-		ORDER BY c.started_at DESC LIMIT 1`, processID))
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
+	return changeovers.GetActive(db.DB, processID)
 }
 
+// UpdateProcessChangeoverState changes the state on a
+// process_changeover.
 func (db *DB) UpdateProcessChangeoverState(id int64, state string) error {
-	completedAt := sql.NullString{}
-	if state == "completed" || state == "cancelled" {
-		completedAt = sql.NullString{Valid: true, String: time.Now().UTC().Format("2006-01-02 15:04:05")}
-	}
-	_, err := db.Exec(`UPDATE process_changeovers SET state=?, completed_at=CASE WHEN ? != '' THEN ? ELSE completed_at END, updated_at=datetime('now') WHERE id=?`,
-		state, completedAt.String, completedAt.String, id)
-	return err
+	return changeovers.UpdateState(db.DB, id, state)
 }
 
+// ListChangeoverStationTasks returns every changeover_station_task
+// for one changeover.
 func (db *DB) ListChangeoverStationTasks(changeoverID int64) ([]ChangeoverStationTask, error) {
-	rows, err := db.Query(`SELECT t.id, t.process_changeover_id, t.operator_station_id, t.state,
-		t.updated_at, COALESCE(s.name, '')
-		FROM changeover_station_tasks t
-		LEFT JOIN operator_stations s ON s.id = t.operator_station_id
-		WHERE t.process_changeover_id = ?
-		ORDER BY s.sequence, s.name`, changeoverID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ChangeoverStationTask
-	for rows.Next() {
-		var t ChangeoverStationTask
-		var updatedAt string
-		if err := rows.Scan(&t.ID, &t.ProcessChangeoverID, &t.OperatorStationID, &t.State,
-			&updatedAt, &t.StationName); err != nil {
-			return nil, err
-		}
-		t.UpdatedAt = scanTime(updatedAt)
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return changeovers.ListStationTasks(db.DB, changeoverID)
 }
 
+// UpdateChangeoverStationTaskState writes the state on a station task.
 func (db *DB) UpdateChangeoverStationTaskState(id int64, state string) error {
-	_, err := db.Exec(`UPDATE changeover_station_tasks SET state=?, updated_at=datetime('now') WHERE id=?`,
-		state, id)
-	return err
+	return changeovers.UpdateStationTaskState(db.DB, id, state)
 }
 
+// GetChangeoverStationTaskByStation returns the station task for one
+// (changeover, station) pair.
 func (db *DB) GetChangeoverStationTaskByStation(changeoverID, stationID int64) (*ChangeoverStationTask, error) {
-	row := db.QueryRow(`SELECT t.id, t.process_changeover_id, t.operator_station_id, t.state,
-		t.updated_at, COALESCE(s.name, '')
-		FROM changeover_station_tasks t
-		LEFT JOIN operator_stations s ON s.id = t.operator_station_id
-		WHERE t.process_changeover_id = ? AND t.operator_station_id = ? LIMIT 1`, changeoverID, stationID)
-	var t ChangeoverStationTask
-	var updatedAt string
-	if err := row.Scan(&t.ID, &t.ProcessChangeoverID, &t.OperatorStationID, &t.State,
-		&updatedAt, &t.StationName); err != nil {
-		return nil, err
-	}
-	t.UpdatedAt = scanTime(updatedAt)
-	return &t, nil
+	return changeovers.GetStationTaskByStation(db.DB, changeoverID, stationID)
 }
 
-func scanChangeoverNodeTask(scanner interface{ Scan(...interface{}) error }) (ChangeoverNodeTask, error) {
-	var t ChangeoverNodeTask
-	var updatedAt string
-	if err := scanner.Scan(&t.ID, &t.ProcessChangeoverID, &t.ProcessNodeID,
-		&t.FromClaimID, &t.ToClaimID, &t.Situation, &t.State,
-		&t.NextMaterialOrderID, &t.OldMaterialReleaseOrderID,
-		&updatedAt, &t.NodeName); err != nil {
-		return t, err
-	}
-	t.UpdatedAt = scanTime(updatedAt)
-	return t, nil
-}
-
-func (db *DB) listChangeoverNodeTasksQuery(changeoverID int64, extraWhere string, extraArgs ...interface{}) ([]ChangeoverNodeTask, error) {
-	query := `SELECT t.id, t.process_changeover_id, t.process_node_id,
-		t.from_claim_id, t.to_claim_id, t.situation, t.state,
-		t.next_material_order_id, t.old_material_release_order_id,
-		t.updated_at, COALESCE(n.name, '')
-		FROM changeover_node_tasks t
-		LEFT JOIN process_nodes n ON n.id = t.process_node_id
-		WHERE t.process_changeover_id=?`
-	args := []interface{}{changeoverID}
-	if extraWhere != "" {
-		query += " AND " + extraWhere
-		args = append(args, extraArgs...)
-	}
-	query += " ORDER BY n.sequence, n.name"
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []ChangeoverNodeTask
-	for rows.Next() {
-		t, err := scanChangeoverNodeTask(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
+// ListChangeoverNodeTasks returns every changeover_node_task for a
+// changeover.
 func (db *DB) ListChangeoverNodeTasks(changeoverID int64) ([]ChangeoverNodeTask, error) {
-	return db.listChangeoverNodeTasksQuery(changeoverID, "")
+	return changeovers.ListNodeTasks(db.DB, changeoverID)
 }
 
+// ListChangeoverNodeTasksByStation filters node tasks to those whose
+// process node belongs to the given operator_station.
 func (db *DB) ListChangeoverNodeTasksByStation(changeoverID, stationID int64) ([]ChangeoverNodeTask, error) {
-	return db.listChangeoverNodeTasksQuery(changeoverID, "n.operator_station_id=?", stationID)
+	return changeovers.ListNodeTasksByStation(db.DB, changeoverID, stationID)
 }
 
+// GetChangeoverNodeTaskByNode returns the node task for one
+// (changeover, node) pair.
 func (db *DB) GetChangeoverNodeTaskByNode(changeoverID, processNodeID int64) (*ChangeoverNodeTask, error) {
-	t, err := scanChangeoverNodeTask(db.QueryRow(`SELECT t.id, t.process_changeover_id, t.process_node_id,
-		t.from_claim_id, t.to_claim_id, t.situation, t.state,
-		t.next_material_order_id, t.old_material_release_order_id,
-		t.updated_at, COALESCE(n.name, '')
-		FROM changeover_node_tasks t
-		LEFT JOIN process_nodes n ON n.id = t.process_node_id
-		WHERE t.process_changeover_id=? AND t.process_node_id=? LIMIT 1`, changeoverID, processNodeID))
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
+	return changeovers.GetNodeTaskByNode(db.DB, changeoverID, processNodeID)
 }
 
+// UpdateChangeoverNodeTaskState writes the state on a node task.
 func (db *DB) UpdateChangeoverNodeTaskState(id int64, state string) error {
-	_, err := db.Exec(`UPDATE changeover_node_tasks SET state=?, updated_at=datetime('now') WHERE id=?`, state, id)
-	return err
+	return changeovers.UpdateNodeTaskState(db.DB, id, state)
 }
 
+// LinkChangeoverNodeOrders associates the next/old material order ids
+// with a node task.
 func (db *DB) LinkChangeoverNodeOrders(id int64, nextOrderID, oldOrderID *int64) error {
-	_, err := db.Exec(`UPDATE changeover_node_tasks SET next_material_order_id=COALESCE(?, next_material_order_id),
-		old_material_release_order_id=COALESCE(?, old_material_release_order_id), updated_at=datetime('now')
-		WHERE id=?`, nextOrderID, oldOrderID, id)
-	return err
+	return changeovers.LinkNodeOrders(db.DB, id, nextOrderID, oldOrderID)
 }

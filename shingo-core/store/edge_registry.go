@@ -1,112 +1,28 @@
 package store
 
+// Phase 5 delegate file: edge-registry CRUD lives in store/registry/.
+// This file preserves the *store.DB method surface so external callers
+// don't need to change.
+
 import (
-	"encoding/json"
 	"time"
+
+	"shingocore/store/registry"
 )
 
-// EdgeRegistration represents a registered edge station.
-type EdgeRegistration struct {
-	ID             int64     `json:"id"`
-	StationID      string    `json:"station_id"`
-	Hostname       string    `json:"hostname"`
-	Version        string    `json:"version"`
-	LineIDs        []string  `json:"line_ids"`
-	RegisteredAt   time.Time `json:"registered_at"`
-	LastHeartbeat  *time.Time `json:"last_heartbeat"`
-	Status         string    `json:"status"`
-}
+// EdgeRegistration preserves the store.EdgeRegistration public API.
+type EdgeRegistration = registry.Edge
 
-// RegisterEdge upserts an edge registration. If the station_id already exists,
-// it updates the record and resets status to active.
 func (db *DB) RegisterEdge(stationID, hostname, version string, lineIDs []string) error {
-	lineJSON, _ := json.Marshal(lineIDs)
-
-	_, err := db.Exec(`
-		INSERT INTO edge_registry (station_id, hostname, version, line_ids, registered_at, status)
-		VALUES ($1, $2, $3, $4, NOW(), 'active')
-		ON CONFLICT(station_id) DO UPDATE SET
-			hostname = excluded.hostname,
-			version = excluded.version,
-			line_ids = excluded.line_ids,
-			registered_at = excluded.registered_at,
-			status = 'active'
-	`, stationID, hostname, version, string(lineJSON))
-	return err
+	return registry.Register(db.DB, stationID, hostname, version, lineIDs)
 }
 
-// UpdateHeartbeat upserts the last_heartbeat timestamp and sets status to active.
-// If the edge hasn't registered yet, creates a minimal registry entry.
-// Returns true if a new row was inserted (unregistered edge detected).
 func (db *DB) UpdateHeartbeat(stationID string) (isNew bool, err error) {
-	// Check existence first — ON CONFLICT doesn't reliably report insert vs update
-	var exists bool
-	db.QueryRow(`SELECT 1 FROM edge_registry WHERE station_id = $1`, stationID).Scan(&exists)
-
-	_, err = db.Exec(`
-		INSERT INTO edge_registry (station_id, last_heartbeat, status)
-		VALUES ($1, NOW(), 'active')
-		ON CONFLICT(station_id) DO UPDATE SET
-			last_heartbeat = NOW(),
-			status = 'active'
-	`, stationID)
-	return !exists, err
+	return registry.UpdateHeartbeat(db.DB, stationID)
 }
 
-// ListEdges returns all registered edges.
-func (db *DB) ListEdges() ([]EdgeRegistration, error) {
-	rows, err := db.Query(`
-		SELECT id, station_id, hostname, version, line_ids, registered_at, last_heartbeat, status
-		FROM edge_registry ORDER BY station_id
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+func (db *DB) ListEdges() ([]EdgeRegistration, error) { return registry.List(db.DB) }
 
-	var edges []EdgeRegistration
-	for rows.Next() {
-		var e EdgeRegistration
-		var lineJSON string
-		if err := rows.Scan(&e.ID, &e.StationID, &e.Hostname, &e.Version, &lineJSON, &e.RegisteredAt, &e.LastHeartbeat, &e.Status); err != nil {
-			return nil, err
-		}
-		json.Unmarshal([]byte(lineJSON), &e.LineIDs)
-		edges = append(edges, e)
-	}
-	return edges, rows.Err()
-}
-
-// MarkStaleEdges sets status to "stale" for edges whose last_heartbeat is older
-// than the given threshold. Returns the station IDs that were marked stale.
 func (db *DB) MarkStaleEdges(threshold time.Duration) ([]string, error) {
-	cutoff := time.Now().UTC().Add(-threshold)
-
-	rows, err := db.Query(`
-		UPDATE edge_registry
-		SET status = 'stale'
-		WHERE status = 'active'
-		  AND last_heartbeat IS NOT NULL
-		  AND last_heartbeat < $1
-		RETURNING station_id
-	`, cutoff)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var staleIDs []string
-	for rows.Next() {
-		var sid string
-		if err := rows.Scan(&sid); err != nil {
-			return nil, err
-		}
-		staleIDs = append(staleIDs, sid)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(staleIDs) == 0 {
-		return nil, nil
-	}
-	return staleIDs, nil
+	return registry.MarkStale(db.DB, threshold)
 }

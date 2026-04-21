@@ -55,7 +55,7 @@ func ListNodesForStation(db *sql.DB, stationID string) ([]*Node, error) {
 		        SELECT 1 FROM nodes c JOIN node_stations cs ON cs.node_id = c.id
 		        WHERE c.parent_id = n.id AND cs.station_id = $1
 		    )
-		)))
+		))
 		ORDER BY n.name`, SelectCols, FromClause), stationID)
 	if err != nil {
 		return nil, err

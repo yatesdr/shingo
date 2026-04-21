@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // Bin is the bin domain entity. The struct lives in shingocore/domain
@@ -78,8 +79,8 @@ func scanBins(rows *sql.Rows) ([]*Bin, error) {
 
 // Create inserts a new bin row and sets b.ID on success.
 func Create(db *sql.DB, b *Bin) error {
-	id, err := insertID(db, `INSERT INTO bins (bin_type_id, label, description, node_id, status) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		b.BinTypeID, b.Label, b.Description, nullableInt64(b.NodeID), b.Status)
+	id, err := helpers.InsertID(db, `INSERT INTO bins (bin_type_id, label, description, node_id, status) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		b.BinTypeID, b.Label, b.Description, helpers.NullableInt64(b.NodeID), b.Status)
 	if err != nil {
 		return fmt.Errorf("create bin: %w", err)
 	}
@@ -91,7 +92,7 @@ func Create(db *sql.DB, b *Bin) error {
 // node_id, status).
 func Update(db *sql.DB, b *Bin) error {
 	_, err := db.Exec(`UPDATE bins SET bin_type_id=$1, label=$2, description=$3, node_id=$4, status=$5, updated_at=NOW() WHERE id=$6`,
-		b.BinTypeID, b.Label, b.Description, nullableInt64(b.NodeID), b.Status, b.ID)
+		b.BinTypeID, b.Label, b.Description, helpers.NullableInt64(b.NodeID), b.Status, b.ID)
 	return err
 }
 
@@ -302,7 +303,7 @@ func UpdateStatus(db *sql.DB, binID int64, status string) error {
 // If expiresAt is nil, the bin is staged permanently (no auto-release).
 func Stage(db *sql.DB, binID int64, expiresAt *time.Time) error {
 	_, err := db.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
-		nullableTime(expiresAt), binID)
+		helpers.NullableTime(expiresAt), binID)
 	return err
 }
 

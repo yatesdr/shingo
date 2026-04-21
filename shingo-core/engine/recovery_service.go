@@ -34,19 +34,14 @@ func (s *RecoveryService) ReapplyOrderCompletion(orderID int64, actor string) er
 		return fmt.Errorf("load delivery node: %w", err)
 	}
 
-	isStorageSlot := false
-	if destNode.ParentID != nil {
-		if parent, err := e.db.GetNode(*destNode.ParentID); err == nil && parent.NodeTypeCode == "LANE" {
-			isStorageSlot = true
-		}
-	}
+	isStorage := e.isStorageSlot(destNode.ID)
 
 	var expiresAt *time.Time
-	if !isStorageSlot {
+	if !isStorage {
 		expiresAt = e.resolveStagingExpiry(destNode)
 	}
 
-	if err := e.db.RepairConfirmedOrderCompletion(order.ID, *order.BinID, destNode.ID, !isStorageSlot, expiresAt); err != nil {
+	if err := e.db.RepairConfirmedOrderCompletion(order.ID, *order.BinID, destNode.ID, !isStorage, expiresAt); err != nil {
 		return err
 	}
 

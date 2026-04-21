@@ -37,7 +37,7 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		Occupied          bool    `json:"occupied"`
 	}
 
-	db := h.engine
+	nodes := h.engine.NodeService()
 	result := make([]nodeBinInfo, 0, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
@@ -45,12 +45,12 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		entry := nodeBinInfo{NodeName: name}
-		node, err := db.GetNodeByDotName(name)
+		node, err := nodes.GetByDotName(name)
 		if err != nil {
 			result = append(result, entry)
 			continue
 		}
-		bins, err := db.ListBinsByNode(node.ID)
+		bins, err := nodes.ListBinsByNode(node.ID)
 		if err != nil || len(bins) == 0 {
 			result = append(result, entry)
 			continue
@@ -76,8 +76,8 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		h.jsonOK(w, map[string]interface{}{"uop_capacity": 0, "items": []struct{}{}})
 		return
 	}
-	db := h.engine
-	payload, err := db.GetPayloadByCode(code)
+	payloads := h.engine.PayloadService()
+	payload, err := payloads.GetByCode(code)
 	if err != nil {
 		h.jsonOK(w, map[string]interface{}{"uop_capacity": 0, "items": []struct{}{}})
 		return
@@ -87,7 +87,7 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		Quantity    int64  `json:"quantity"`
 		Description string `json:"description"`
 	}
-	items, err := db.ListPayloadManifest(payload.ID)
+	items, err := payloads.ListManifest(payload.ID)
 	if err != nil || len(items) == 0 {
 		// No manifest template — return a single entry with the payload code as part number
 		h.jsonOK(w, map[string]interface{}{
@@ -120,13 +120,13 @@ func (h *Handlers) apiTelemetryNodeChildren(w http.ResponseWriter, r *http.Reque
 		h.jsonOK(w, []struct{}{})
 		return
 	}
-	db := h.engine
-	node, err := db.GetNodeByDotName(name)
+	nodes := h.engine.NodeService()
+	node, err := nodes.GetByDotName(name)
 	if err != nil {
 		h.jsonOK(w, []struct{}{})
 		return
 	}
-	children, err := db.ListChildNodes(node.ID)
+	children, err := nodes.ListChildNodes(node.ID)
 	if err != nil {
 		h.jsonOK(w, []struct{}{})
 		return
@@ -173,13 +173,13 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := h.engine
-	node, err := db.GetNodeByDotName(req.NodeName)
+	nodes := h.engine.NodeService()
+	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
 		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
 		return
 	}
-	bins, err := db.ListBinsByNode(node.ID)
+	bins, err := nodes.ListBinsByNode(node.ID)
 	if err != nil || len(bins) == 0 {
 		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
 		return
@@ -234,13 +234,13 @@ func (h *Handlers) apiBinClear(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, "node_name is required", http.StatusBadRequest)
 		return
 	}
-	db := h.engine
-	node, err := db.GetNodeByDotName(req.NodeName)
+	nodes := h.engine.NodeService()
+	node, err := nodes.GetByDotName(req.NodeName)
 	if err != nil {
 		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
 		return
 	}
-	bins, err := db.ListBinsByNode(node.ID)
+	bins, err := nodes.ListBinsByNode(node.ID)
 	if err != nil || len(bins) == 0 {
 		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
 		return

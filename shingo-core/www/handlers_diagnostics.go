@@ -41,7 +41,7 @@ func (h *Handlers) apiHealthCheck(w http.ResponseWriter, r *http.Request) {
 	if err := h.engine.Fleet().Ping(); err == nil {
 		fleetOK = true
 	}
-	dbOK := h.engine.Ping() == nil
+	dbOK := h.engine.HealthService().PingDB() == nil
 	recon, err := h.engine.Reconciliation().Summary()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)

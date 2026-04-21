@@ -24,7 +24,7 @@ func (h *Handlers) apiConfirmAnomaly(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid snapshot ID")
 		return
 	}
-	if err := h.engine.DB().ConfirmAnomaly(snapshotID); err != nil {
+	if err := h.engine.ConfirmAnomaly(snapshotID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -37,7 +37,7 @@ func (h *Handlers) apiDismissAnomaly(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid snapshot ID")
 		return
 	}
-	if err := h.engine.DB().DismissAnomaly(snapshotID); err != nil {
+	if err := h.engine.DismissAnomaly(snapshotID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -181,7 +181,7 @@ func (h *Handlers) apiReadTag(w http.ResponseWriter, r *http.Request) {
 // --- Reporting Points Admin ---
 
 func (h *Handlers) apiListReportingPoints(w http.ResponseWriter, r *http.Request) {
-	rps, err := h.engine.DB().ListReportingPoints()
+	rps, err := h.engine.ListReportingPoints()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -199,7 +199,7 @@ func (h *Handlers) apiCreateReportingPoint(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.engine.DB().CreateReportingPoint(req.PLCName, req.TagName, req.StyleID)
+	id, err := h.engine.CreateReportingPoint(req.PLCName, req.TagName, req.StyleID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -228,9 +228,9 @@ func (h *Handlers) apiUpdateReportingPoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	oldRP, _ := h.engine.DB().GetReportingPoint(id)
+	oldRP, _ := h.engine.GetReportingPoint(id)
 
-	if err := h.engine.DB().UpdateReportingPoint(id, req.PLCName, req.TagName, req.StyleID, req.Enabled); err != nil {
+	if err := h.engine.UpdateReportingPoint(id, req.PLCName, req.TagName, req.StyleID, req.Enabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -250,9 +250,9 @@ func (h *Handlers) apiDeleteReportingPoint(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rp, _ := h.engine.DB().GetReportingPoint(id)
+	rp, _ := h.engine.GetReportingPoint(id)
 
-	if err := h.engine.DB().DeleteReportingPoint(id); err != nil {
+	if err := h.engine.DeleteReportingPoint(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -268,7 +268,7 @@ func (h *Handlers) apiDeleteReportingPoint(w http.ResponseWriter, r *http.Reques
 // --- Styles Admin ---
 
 func (h *Handlers) apiListStyles(w http.ResponseWriter, r *http.Request) {
-	styles, err := h.engine.DB().ListStyles()
+	styles, err := h.engine.ListStyles()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -290,7 +290,7 @@ func (h *Handlers) apiCreateStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_id is required")
 		return
 	}
-	id, err := h.engine.DB().CreateStyle(req.Name, req.Description, req.ProcessID)
+	id, err := h.engine.CreateStyle(req.Name, req.Description, req.ProcessID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -318,7 +318,7 @@ func (h *Handlers) apiUpdateStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_id is required")
 		return
 	}
-	if err := h.engine.DB().UpdateStyle(id, req.Name, req.Description, req.ProcessID); err != nil {
+	if err := h.engine.UpdateStyle(id, req.Name, req.Description, req.ProcessID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -332,7 +332,7 @@ func (h *Handlers) apiDeleteStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	if err := h.engine.DB().DeleteStyle(id); err != nil {
+	if err := h.engine.DeleteStyle(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -357,7 +357,7 @@ func (h *Handlers) apiSyncCoreNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiListPayloadCatalog(w http.ResponseWriter, r *http.Request) {
-	entries, err := h.engine.DB().ListPayloadCatalog()
+	entries, err := h.engine.ListPayloadCatalog()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -373,7 +373,7 @@ func (h *Handlers) apiSyncPayloadCatalog(w http.ResponseWriter, r *http.Request)
 // --- Processes Admin ---
 
 func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
-	processes, err := h.engine.DB().ListProcesses()
+	processes, err := h.engine.ListProcesses()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -398,7 +398,7 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	id, err := h.engine.DB().CreateProcess(req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
+	id, err := h.engine.CreateProcess(req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -425,7 +425,7 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().UpdateProcess(id, req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {
+	if err := h.engine.UpdateProcess(id, req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -439,7 +439,7 @@ func (h *Handlers) apiDeleteProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	if err := h.engine.DB().DeleteProcess(id); err != nil {
+	if err := h.engine.DeleteProcess(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -460,7 +460,7 @@ func (h *Handlers) apiSetActiveStyle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.DB().SetActiveStyle(id, req.StyleID); err != nil {
+	if err := h.engine.SetActiveStyle(id, req.StyleID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -479,7 +479,7 @@ func (h *Handlers) apiListProcessStyles(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid ID")
 		return
 	}
-	styles, err := h.engine.DB().ListStylesByProcess(id)
+	styles, err := h.engine.ListStylesByProcess(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -497,7 +497,7 @@ func (h *Handlers) apiListStyleNodeClaims(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid style id")
 		return
 	}
-	claims, err := h.engine.DB().ListStyleNodeClaims(styleID)
+	claims, err := h.engine.ListStyleNodeClaims(styleID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -519,7 +519,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "core_node_name is required")
 		return
 	}
-	id, err := h.engine.DB().UpsertStyleNodeClaim(in)
+	id, err := h.engine.UpsertStyleNodeClaim(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -535,7 +535,7 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.engine.DB().DeleteStyleNodeClaim(id); err != nil {
+	if err := h.engine.DeleteStyleNodeClaim(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -698,7 +698,7 @@ func (h *Handlers) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.engine.DB().GetAdminUser(username)
+	user, err := h.engine.GetAdminUser(username)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "user not found")
 		return
@@ -715,7 +715,7 @@ func (h *Handlers) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.DB().UpdateAdminPassword(username, hash); err != nil {
+	if err := h.engine.UpdateAdminPassword(username, hash); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update password: %v", err))
 		return
 	}

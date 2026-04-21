@@ -38,6 +38,10 @@ Thumbs.db
 *.out
 coverage.txt
 coverage.html
+coverage
+coverage-*
+test-*.log
+*.patch
 
 # Go module cache (local builds)
 .cache/

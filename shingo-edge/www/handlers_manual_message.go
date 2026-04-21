@@ -10,10 +10,9 @@ import (
 )
 
 func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
-	db := h.engine.DB()
 	cfg := h.engine.AppConfig()
 
-	orders, _ := db.ListActiveOrders()
+	orders, _ := h.engine.ListActiveOrders()
 	coreNodes := h.engine.CoreNodes()
 	coreNodeNames := make([]string, 0, len(coreNodes))
 	for name := range coreNodes {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // ManifestItem is the payload-template manifest line-item domain
@@ -15,7 +16,7 @@ type ManifestItem = domain.PayloadManifestItem
 
 // CreateItem inserts a manifest line and sets item.ID on success.
 func CreateItem(db *sql.DB, item *ManifestItem) error {
-	id, err := insertID(db, `INSERT INTO payload_manifest (payload_id, part_number, quantity, description) VALUES ($1, $2, $3, $4) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO payload_manifest (payload_id, part_number, quantity, description) VALUES ($1, $2, $3, $4) RETURNING id`,
 		item.PayloadID, item.PartNumber, item.Quantity, item.Description)
 	if err != nil {
 		return err

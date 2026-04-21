@@ -1,33 +1,24 @@
 package store
 
+// Phase 5 delegate file: admin-user CRUD lives in store/admin/. This file
+// preserves the *store.DB method surface so external callers don't need
+// to change.
+
 import (
-	"time"
+	"shingocore/store/admin"
 )
 
-type AdminUser struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-}
+// AdminUser preserves the store.AdminUser public API.
+type AdminUser = admin.User
 
 func (db *DB) CreateAdminUser(username, passwordHash string) error {
-	_, err := db.Exec(`INSERT INTO admin_users (username, password_hash) VALUES ($1, $2)`, username, passwordHash)
-	return err
+	return admin.Create(db.DB, username, passwordHash)
 }
 
 func (db *DB) GetAdminUser(username string) (*AdminUser, error) {
-	var u AdminUser
-	err := db.QueryRow(`SELECT id, username, password_hash, created_at FROM admin_users WHERE username=$1`, username).
-		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
+	return admin.Get(db.DB, username)
 }
 
 func (db *DB) AdminUserExists() (bool, error) {
-	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM admin_users`).Scan(&count)
-	return count > 0, err
+	return admin.AnyExists(db.DB)
 }

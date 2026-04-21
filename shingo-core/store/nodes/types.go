@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"shingocore/domain"
+	"shingocore/store/internal/helpers"
 )
 
 // NodeType is the node-type domain entity. The struct lives in
@@ -38,7 +39,7 @@ func scanNodeTypes(rows *sql.Rows) ([]*NodeType, error) {
 
 // CreateType inserts a new node type and sets nt.ID on success.
 func CreateType(db *sql.DB, nt *NodeType) error {
-	id, err := insertID(db, `INSERT INTO node_types (code, name, description, is_synthetic) VALUES ($1, $2, $3, $4) RETURNING id`,
+	id, err := helpers.InsertID(db, `INSERT INTO node_types (code, name, description, is_synthetic) VALUES ($1, $2, $3, $4) RETURNING id`,
 		nt.Code, nt.Name, nt.Description, nt.IsSynthetic)
 	if err != nil {
 		return fmt.Errorf("create node type: %w", err)

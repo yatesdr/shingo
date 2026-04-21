@@ -28,9 +28,8 @@ func resolveProcessFromQuery(r *http.Request, processes []store.Process) *store.
 // loadAnomalyData loads unconfirmed anomalies and builds a reporting point map
 // for display in the global anomaly popover. Used by all page handlers.
 func loadAnomalyData(h *Handlers) ([]store.CounterSnapshot, map[int64]map[string]string) {
-	db := h.engine.DB()
-	anomalies, _ := db.ListUnconfirmedAnomalies()
-	reportingPoints, _ := db.ListReportingPoints()
+	anomalies, _ := h.engine.ListUnconfirmedAnomalies()
+	reportingPoints, _ := h.engine.ListReportingPoints()
 
 	rpMap := make(map[int64]map[string]string)
 	for _, rp := range reportingPoints {
