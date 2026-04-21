@@ -193,9 +193,16 @@ type IngestManifestItem struct {
 type NodeListRequest struct{}
 
 // NodeInfo describes a single node in the core's node list.
+//
+// ParentNodeType is the node type of the immediate parent (e.g. "LANE",
+// "NGRP", empty for top-level nodes). Edge uses it to validate that
+// consume-role style claims land on LANE-parented storage slots — the
+// only nodes handleKanbanDemand will actually fire "consume" signals
+// for (see shingo-core/engine/wiring_kanban.go's isStorageSlot check).
 type NodeInfo struct {
-	Name     string `json:"name"`
-	NodeType string `json:"node_type"`
+	Name           string `json:"name"`
+	NodeType       string `json:"node_type"`
+	ParentNodeType string `json:"parent_node_type,omitempty"`
 }
 
 // NodeListResponse carries the core's authoritative node list.

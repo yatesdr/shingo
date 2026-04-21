@@ -150,6 +150,22 @@ func (s *CoreDataService) handleNodeListRequest(env *protocol.Envelope) {
 		return
 	}
 
+	// parentType resolves the parent's NodeTypeCode without assuming the
+	// parent sits in the current result slice. Station-scoped queries
+	// only return rows assigned to the station, so a storage slot's
+	// LANE parent typically won't be included — a single targeted Get
+	// is the cheapest correct lookup.
+	parentType := func(parentID *int64) string {
+		if parentID == nil {
+			return ""
+		}
+		p, err := s.db.GetNode(*parentID)
+		if err != nil || p == nil {
+			return ""
+		}
+		return p.NodeTypeCode
+	}
+
 	var infos []protocol.NodeInfo
 	if stationScoped {
 		for _, n := range nodes {
@@ -157,7 +173,11 @@ func (s *CoreDataService) handleNodeListRequest(env *protocol.Envelope) {
 			if n.ParentID != nil && !n.IsSynthetic && n.ParentName != "" {
 				name = n.ParentName + "." + n.Name
 			}
-			infos = append(infos, protocol.NodeInfo{Name: name, NodeType: n.NodeTypeCode})
+			infos = append(infos, protocol.NodeInfo{
+				Name:           name,
+				NodeType:       n.NodeTypeCode,
+				ParentNodeType: parentType(n.ParentID),
+			})
 		}
 	} else {
 		nodeMap := make(map[int64]*store.Node, len(nodes))
@@ -169,7 +189,11 @@ func (s *CoreDataService) handleNodeListRequest(env *protocol.Envelope) {
 				infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode})
 			} else if !n.IsSynthetic {
 				if parent, ok := nodeMap[*n.ParentID]; ok && parent.NodeTypeCode == "NGRP" {
-					infos = append(infos, protocol.NodeInfo{Name: parent.Name + "." + n.Name, NodeType: n.NodeTypeCode})
+					infos = append(infos, protocol.NodeInfo{
+						Name:           parent.Name + "." + n.Name,
+						NodeType:       n.NodeTypeCode,
+						ParentNodeType: parent.NodeTypeCode,
+					})
 				}
 			}
 		}
@@ -291,9 +315,21 @@ func (s *CoreDataService) handleClaimSync(env *protocol.Envelope, sync *protocol
 	}
 	log.Printf("core_handler: claim sync from %s: %d claims", stationID, len(sync.Claims))
 
-	// Convert protocol entries to store entries
+	// Convert protocol entries to store entries, warning when a consume
+	// claim targets a node that isn't LANE-parented — handleKanbanDemand
+	// will never fire a consume signal for such nodes (see isStorageSlot
+	// in wiring_kanban.go), so the registry row is inert and usually
+	// means an Edge-UI validation gap. Warn-don't-reject keeps this a
+	// belt-and-suspenders check alongside the Edge-side 400.
 	var entries []store.DemandRegistryEntry
 	for _, c := range sync.Claims {
+		if c.Role == "consume" {
+			if node, err := s.db.GetNodeByDotName(c.CoreNodeName); err == nil && node != nil && node.ParentID != nil {
+				if parent, err := s.db.GetNode(*node.ParentID); err == nil && parent != nil && parent.NodeTypeCode != "LANE" {
+					log.Printf("core_handler: consume claim from %s targets %s (parent node_type=%s, not LANE) — demand signals will be suppressed by wiring_kanban", stationID, c.CoreNodeName, parent.NodeTypeCode)
+				}
+			}
+		}
 		for _, pc := range c.AllowedPayloadCodes {
 			entries = append(entries, store.DemandRegistryEntry{
 				StationID:    stationID,

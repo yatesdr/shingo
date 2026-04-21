@@ -39,12 +39,22 @@ func (e *Engine) handleKanbanDemand(ev BinUpdatedEvent) {
 	if fromMatched {
 		e.sendDemandSignals(ev.PayloadCode, "produce",
 			fmt.Sprintf("bin %d removed from storage (payload %s)", ev.BinID, ev.PayloadCode))
+	} else if ev.FromNodeID != 0 {
+		// Non-storage origin: produce signal intentionally suppressed.
+		// Surface at INFO so claim-misconfiguration (consume-role claim
+		// on a non-LANE node, or produce-role on a lineside cell) is
+		// visible without enabling engine debug.
+		e.dbg("kanban: suppressed produce signal for bin=%d payload=%s from=%d (parent not LANE)", ev.BinID, ev.PayloadCode, ev.FromNodeID)
 	}
 
 	// Bin arrived at a storage slot → supply increased → tell consumers material is available.
 	if toMatched {
 		e.sendDemandSignals(ev.PayloadCode, "consume",
 			fmt.Sprintf("bin %d arrived at storage (payload %s)", ev.BinID, ev.PayloadCode))
+	} else if ev.ToNodeID != 0 {
+		// Non-storage destination: consume signal intentionally suppressed.
+		// Same diagnostic motivation as the produce branch above.
+		e.dbg("kanban: suppressed consume signal for bin=%d payload=%s to=%d (parent not LANE)", ev.BinID, ev.PayloadCode, ev.ToNodeID)
 	}
 
 	// Log when neither endpoint matched — helps diagnose NGRP-direct and non-storage moves.
