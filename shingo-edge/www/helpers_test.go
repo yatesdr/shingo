@@ -90,6 +90,7 @@ func (s *stubEngine) RequestNodeSync()                  {}
 func (s *stubEngine) RequestCatalogSync()               {}
 func (s *stubEngine) RequestOrderStatusSync() error     { return nil }
 func (s *stubEngine) StartupReconcile() error           { return nil }
+func (s *stubEngine) SendClaimSync()                    {}
 func (s *stubEngine) SyncProcessCounter(int64) error    { return nil }
 func (s *stubEngine) EnsureTagPublished(int64, string, string) {}
 func (s *stubEngine) ManageReportingPointTag(int64, string, string, bool, string, string) {}

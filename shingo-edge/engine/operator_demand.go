@@ -28,7 +28,11 @@ func (e *Engine) HandleDemandSignal(signal *protocol.DemandSignal) {
 // all active processes and sends it to Core. Core uses this to populate its
 // demand registry for kanban wiring.
 //
-// Called on startup (after registration ack) and when claim configs change.
+// Called on startup (after registration ack) and whenever the operator
+// upserts or deletes a style node claim via the admin UI (see
+// shingo-edge/www/handlers_api_config.go). Without the UI-triggered
+// resync, demand_registry would only converge on the next heartbeat
+// cycle or Edge restart.
 func (e *Engine) SendClaimSync() {
 	stationID := e.cfg.StationID()
 	processes, err := e.db.ListProcesses()

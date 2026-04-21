@@ -526,6 +526,10 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	}
 	h.requestBackup("style-node-claim-updated")
 	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "node-claim-updated"}})
+	// Push the refreshed claim set to Core so demand_registry stays in sync
+	// with what the operator just edited. Fire-and-forget — SendClaimSync
+	// logs its own failures and the outbox will retry transient send errors.
+	go h.engine.SendClaimSync()
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -541,6 +545,11 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	}
 	h.requestBackup("style-node-claim-deleted")
 	h.eventHub.Broadcast(SSEEvent{Type: "material-refresh", Data: map[string]string{"action": "node-claim-deleted"}})
+	// Claim removed → push the refreshed (shorter) claim set to Core so
+	// demand_registry drops the corresponding row. Without this push the
+	// registry drifts and Core keeps sending demand signals to a node
+	// whose claim is gone.
+	go h.engine.SendClaimSync()
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

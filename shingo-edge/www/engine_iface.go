@@ -32,6 +32,7 @@ type EngineAccess interface {
 	RequestCatalogSync()
 	RequestOrderStatusSync() error
 	StartupReconcile() error
+	SendClaimSync()
 
 	// ── Material orchestration ─────────────────────────────────────
 	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)
