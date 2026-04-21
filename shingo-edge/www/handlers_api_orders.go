@@ -155,6 +155,7 @@ func (h *Handlers) apiCreateMoveOrder(w http.ResponseWriter, r *http.Request) {
 
 	order, err := h.engine.OrderManager().CreateMoveOrder(
 		processNodeID, req.Quantity, req.SourceNode, req.DeliveryNode,
+		h.engine.AppConfig().Web.AutoConfirm,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

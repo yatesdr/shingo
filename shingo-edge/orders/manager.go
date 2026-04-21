@@ -163,14 +163,17 @@ func (m *Manager) SubmitStoreOrder(orderID int64, finalCount int64) error {
 }
 
 // CreateMoveOrder creates a new move order (e.g., quality hold).
-func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string) (*store.Order, error) {
+// autoConfirm threads through to the order row so Manager.handleDelivered
+// can self-confirm instead of stranding the order at "delivered" when no
+// operator station is wired up to confirm manually.
+func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, autoConfirm bool) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,
-		quantity, deliveryNode, "", sourceNode, "", false, payloadCode)
+		quantity, deliveryNode, "", sourceNode, "", autoConfirm, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
 	}
@@ -193,15 +196,16 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 
 // CreateMoveOrderWithUOP creates a move order and threads remainingUOP into the
 // protocol envelope so Core can atomically clear/sync the bin manifest on claim.
-// Existing callers of CreateMoveOrder are unchanged (it passes nil).
-func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int) (*store.Order, error) {
+// autoConfirm mirrors CreateMoveOrder so operator-initiated moves at a
+// manual_swap node can self-confirm on delivery.
+func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int, autoConfirm bool) (*store.Order, error) {
 	orderUUID := uuid.New().String()
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
 		processNodeID, false,
-		quantity, deliveryNode, "", sourceNode, "", false, payloadCode)
+		quantity, deliveryNode, "", sourceNode, "", autoConfirm, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create move order: %w", err)
 	}

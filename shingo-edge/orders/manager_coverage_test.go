@@ -277,7 +277,7 @@ func TestCreateMoveOrder_HappyPath(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	order, err := mgr.CreateMoveOrder(nil, 3, "SRC-M", "DST-M")
+	order, err := mgr.CreateMoveOrder(nil, 3, "SRC-M", "DST-M", false)
 	if err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestCreateMoveOrderWithUOP_ThreadsRemainingUOP(t *testing.T) {
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	remaining := 5
-	if _, err := mgr.CreateMoveOrderWithUOP(nil, 1, "SRC", "DST", &remaining); err != nil {
+	if _, err := mgr.CreateMoveOrderWithUOP(nil, 1, "SRC", "DST", &remaining, false); err != nil {
 		t.Fatalf("CreateMoveOrderWithUOP: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -762,7 +762,7 @@ func TestLookupPayloadMeta_NilProcessNode_NoLookup(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	if _, err := mgr.CreateMoveOrder(nil, 1, "S", "D"); err != nil {
+	if _, err := mgr.CreateMoveOrder(nil, 1, "S", "D", false); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -784,7 +784,7 @@ func TestLookupPayloadMeta_ActiveStyleOnly(t *testing.T) {
 		t.Fatalf("SetActiveStyle: %v", err)
 	}
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D"); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -812,7 +812,7 @@ func TestLookupPayloadMeta_TargetStyleOverridesActiveDuringChangeover(t *testing
 	_ = db.SetActiveStyle(pid, &active)
 	_ = db.SetTargetStyle(pid, &target)
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D"); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest
@@ -829,7 +829,7 @@ func TestLookupPayloadMeta_NoActiveStyleFallsThrough(t *testing.T) {
 	_, _, nid := seedProcessStyleNode(t, db, "P-NA", "S-NA", "CN-NA")
 	// Don't set ActiveStyleID — lookup should early-return empty.
 
-	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D"); err != nil {
+	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
 	}
 	var req protocol.OrderRequest

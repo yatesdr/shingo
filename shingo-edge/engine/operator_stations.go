@@ -62,7 +62,7 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 		}
 		log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery", node.Name, claim.SwapMode)
-		order, err := e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, claim.CoreNodeName)
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, claim.CoreNodeName, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
 		if err != nil {
 			return nil, err
 		}
@@ -150,7 +150,7 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 		if claim.InboundSource == "" {
 			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 		}
-		order, err := e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, claim.CoreNodeName)
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, claim.CoreNodeName, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
 		if err != nil {
 			return nil, err
 		}
@@ -192,7 +192,7 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, erro
 		v := runtime.RemainingUOP
 		remainingUOP = &v
 	}
-	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination, remainingUOP)
+	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination, remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
 	if err != nil {
 		return nil, err
 	}

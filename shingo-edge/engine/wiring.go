@@ -452,6 +452,11 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 		if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
 			log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 		}
+		// Retrieve completion at a manual_swap bin-loader leaves the
+		// node with an empty bin but no follow-up order. Re-evaluate
+		// kanban demand now so the next cycle auto-queues instead of
+		// waiting for a restart or a manual operator action.
+		e.tryAutoRequest(ctx.node, claim)
 	}
 
 	// Keep-staged: immediately pre-populate inbound staging for next swap

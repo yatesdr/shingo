@@ -101,7 +101,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 
 	// If outbound destination is configured, move the loaded bin there
 	if claim.OutboundDestination != "" {
-		order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, node.CoreNodeName, claim.OutboundDestination)
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, node.CoreNodeName, claim.OutboundDestination, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
 		if err != nil {
 			log.Printf("manual_swap: move to outbound for node %s: %v", node.Name, err)
 		} else {

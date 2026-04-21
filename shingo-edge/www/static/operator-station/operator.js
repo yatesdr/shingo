@@ -305,13 +305,16 @@ function renderPayloadBoard(entry) {
         // Payload code
         card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
 
-        // Status tag
+        // Status tag — any active (non-terminal) order with no delivered/in-transit
+        // sibling counts as QUEUED; otherwise NO DEMAND. This covers pending,
+        // sourcing, queued, submitted, dispatched, staged — so cards never
+        // silently go inert when an order sits in an intermediate status.
         var statusText, statusClass;
         if (payloadDelivered) {
             statusText = 'DELIVERED'; statusClass = 'os-board-tag-delivered';
         } else if (payloadInTransit) {
             statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit';
-        } else if (payloadQueued) {
+        } else if (isActive) {
             statusText = 'QUEUED'; statusClass = 'os-board-tag-queued';
         } else {
             statusText = 'NO DEMAND'; statusClass = 'os-board-tag-nodemand';
@@ -324,11 +327,11 @@ function renderPayloadBoard(entry) {
         var binIsEmptyForDetail = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
         if (payloadDelivered) {
             detailText = 'Tap to ' + (claim.role === 'produce' ? 'load' : 'unload');
-        } else if (binIsEmptyForDetail && (payloadInTransit || payloadQueued)) {
+        } else if (binIsEmptyForDetail && (payloadInTransit || (isActive && !payloadDelivered))) {
             detailText = 'Empty bin at node — tap to load';
         } else if (payloadInTransit) {
             detailText = 'Robot en route';
-        } else if (payloadQueued) {
+        } else if (isActive) {
             detailText = 'Waiting for robot';
         } else {
             detailText = 'No kanban signal';
@@ -353,7 +356,11 @@ function renderPayloadBoard(entry) {
         var binOccupied = hasBinState && entry.bin_state.occupied;
         var binNoPayload = hasBinState && !entry.bin_state.payload_code;
         var binIsEmpty = binOccupied && binNoPayload;
-        var canLoad = payloadDelivered || (binIsEmpty && (payloadQueued || payloadInTransit));
+        // Any active (non-terminal) order makes the card loadable when an empty
+        // bin is sitting at the node — not just queued/in-transit. This prevents
+        // cards from going inert while an order is stuck at an intermediate
+        // status (e.g. delivered but awaiting confirmation, or sourcing).
+        var canLoad = payloadDelivered || (binIsEmpty && isActive);
         if (canLoad) {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
