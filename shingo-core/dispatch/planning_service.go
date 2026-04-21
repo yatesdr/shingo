@@ -346,10 +346,10 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 		binClaimed := false
 		remainingUOP := extractRemainingUOP(env)
 		for _, bin := range bins {
-			if bin.ClaimedBy != nil {
-				continue
-			}
-			if payloadCode != "" && bin.PayloadCode != payloadCode {
+			if !IsAvailableAtConcreteNode(bin, payloadCode) {
+				if bin.ClaimedBy == nil && payloadCode != "" && bin.PayloadCode != "" && bin.PayloadCode != payloadCode {
+					s.dbg("move: skipping bin %d at %s — payload %q does not match order %q", bin.ID, order.SourceNode, bin.PayloadCode, payloadCode)
+				}
 				continue
 			}
 			if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err == nil {

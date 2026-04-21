@@ -13,6 +13,38 @@ func isBinAvailableForRetrieve(b *store.Bin, payloadCode string) bool {
 	return true
 }
 
+// IsAvailableAtConcreteNode checks if a bin can be claimed at a concrete
+// (non-synthetic) node for lineside pickup.
+//
+// Two relaxations vs isBinAvailableForRetrieve:
+//
+//  1. ManifestConfirmed is not required. A cleared bin (post-completion
+//     state where ClearAndClaim zeroed payload_code, manifest, and
+//     manifest_confirmed) is a valid pickup target at a lineside slot.
+//
+//  2. Status "staged" is accepted (not just "available"). Lineside bins
+//     are always staged — ApplyBinArrival sets staged for non-storage slots.
+//
+// The payload filter only rejects a mismatch when both sides are non-empty:
+//
+//	payloadCode != "" && bin.PayloadCode != "" && bin.PayloadCode != payloadCode
+//
+// This catches "wrong part parked at wrong station" while allowing the normal
+// post-completion state (cleared bin with empty payload_code) to pass through.
+func IsAvailableAtConcreteNode(b *store.Bin, payloadCode string) bool {
+	if b.ClaimedBy != nil {
+		return false
+	}
+	switch b.Status {
+	case "maintenance", "flagged", "retired", "quality_hold":
+		return false
+	}
+	if payloadCode != "" && b.PayloadCode != "" && b.PayloadCode != payloadCode {
+		return false
+	}
+	return true
+}
+
 // storageCandidate represents a potential storage slot for ranking.
 type storageCandidate struct {
 	node     *store.Node

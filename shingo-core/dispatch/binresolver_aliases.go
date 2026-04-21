@@ -39,3 +39,7 @@ const (
 	StoreLKND    = binresolver.StoreLKND
 	StoreDPTH    = binresolver.StoreDPTH
 )
+
+// IsAvailableAtConcreteNode mirrors binresolver.IsAvailableAtConcreteNode.
+// Re-exported so dispatch/ code can call it without a direct sub-package import.
+var IsAvailableAtConcreteNode = binresolver.IsAvailableAtConcreteNode

@@ -29,6 +29,89 @@ func TestDefaultResolver_Retrieve_PicksFirstChildWithAvailableBin(t *testing.T) 
 	}
 }
 
+// --- IsAvailableAtConcreteNode (payload-match trap fix) -------------------
+
+func TestIsAvailableAtConcreteNode_ClearedBinPasses(t *testing.T) {
+	// Post-completion state: payload cleared, manifest_confirmed=false, status=staged.
+	// This is exactly what ClearAndClaim leaves behind.
+	cleared := &store.Bin{
+		ID:                1,
+		Status:            "staged",
+		ManifestConfirmed: false,
+		PayloadCode:       "",
+	}
+	if !IsAvailableAtConcreteNode(cleared, "PAYLOAD-X") {
+		t.Error("cleared bin at concrete node should be available for lineside pickup")
+	}
+}
+
+func TestIsAvailableAtConcreteNode_MatchingPayloadPasses(t *testing.T) {
+	bin := &store.Bin{
+		ID:                2,
+		Status:            "staged",
+		ManifestConfirmed: true,
+		PayloadCode:       "PAYLOAD-X",
+	}
+	if !IsAvailableAtConcreteNode(bin, "PAYLOAD-X") {
+		t.Error("bin with matching payload should be available")
+	}
+}
+
+func TestIsAvailableAtConcreteNode_MismatchedPayloadRejected(t *testing.T) {
+	// Wrong part parked at wrong station — should be rejected.
+	bin := &store.Bin{
+		ID:                3,
+		Status:            "staged",
+		ManifestConfirmed: true,
+		PayloadCode:       "PAYLOAD-Y",
+	}
+	if IsAvailableAtConcreteNode(bin, "PAYLOAD-X") {
+		t.Error("bin with wrong payload at concrete node should be rejected")
+	}
+}
+
+func TestIsAvailableAtConcreteNode_ClaimedBinRejected(t *testing.T) {
+	orderID := int64(99)
+	bin := &store.Bin{
+		ID:                4,
+		Status:            "staged",
+		ManifestConfirmed: false,
+		PayloadCode:       "",
+		ClaimedBy:         &orderID,
+	}
+	if IsAvailableAtConcreteNode(bin, "PAYLOAD-X") {
+		t.Error("claimed bin should be rejected")
+	}
+}
+
+func TestIsAvailableAtConcreteNode_BadStatusRejected(t *testing.T) {
+	for _, status := range []string{"maintenance", "flagged", "retired", "quality_hold"} {
+		bin := &store.Bin{
+			ID:                5,
+			Status:            status,
+			ManifestConfirmed: false,
+			PayloadCode:       "",
+		}
+		if IsAvailableAtConcreteNode(bin, "PAYLOAD-X") {
+			t.Errorf("bin with status %q should be rejected", status)
+		}
+	}
+}
+
+func TestIsAvailableAtConcreteNode_EmptyPayloadCodeAccepted(t *testing.T) {
+	// When the order itself has no payload filter, any bin should pass
+	// except claimed/bad-status.
+	bin := &store.Bin{
+		ID:                6,
+		Status:            "staged",
+		ManifestConfirmed: false,
+		PayloadCode:       "",
+	}
+	if !IsAvailableAtConcreteNode(bin, "") {
+		t.Error("bin with empty payload filter should pass")
+	}
+}
+
 func TestDefaultResolver_Retrieve_NoAvailableBins(t *testing.T) {
 	f := newFakeStore()
 	parent := directChild(1, "parent")
