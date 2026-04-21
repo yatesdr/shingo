@@ -28,10 +28,24 @@ type CoreHandler struct {
 	dataService   *CoreDataService
 	DebugLog      func(string, ...any)
 
+	// StaleEdgeThreshold controls how long an edge can skip heartbeats
+	// before the stale-detection loop marks it stale and reaps its
+	// demand_registry rows. Composition root sets this after
+	// construction from MessagingConfig; zero falls back to
+	// defaultStaleEdgeThreshold.
+	StaleEdgeThreshold time.Duration
+
 	// Background goroutine for stale edge detection
 	stopOnce sync.Once
 	stopCh   chan struct{}
 }
+
+// defaultStaleEdgeThreshold is the fallback used when the caller leaves
+// StaleEdgeThreshold unset. 15 minutes matches the operations guidance
+// in docs/bin-loader-unloader-architecture.md — long enough to ride out
+// flaky links, short enough to bound how long stale demand signals
+// target a dead edge after a hard crash.
+const defaultStaleEdgeThreshold = 15 * time.Minute
 
 // NewCoreHandler creates a handler for inbound edge messages.
 //
@@ -168,12 +182,16 @@ func (h *CoreHandler) HandleOrderIngest(env *protocol.Envelope, p *protocol.Orde
 func (h *CoreHandler) staleEdgeLoop() {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
+	threshold := h.StaleEdgeThreshold
+	if threshold <= 0 {
+		threshold = defaultStaleEdgeThreshold
+	}
 	for {
 		select {
 		case <-h.stopCh:
 			return
 		case <-ticker.C:
-			staleIDs, err := h.db.MarkStaleEdges(180 * time.Second)
+			staleIDs, err := h.db.MarkStaleEdges(threshold)
 			if err != nil {
 				log.Printf("core_handler: mark stale edges: %v", err)
 				continue
@@ -184,6 +202,14 @@ func (h *CoreHandler) staleEdgeLoop() {
 			for _, sid := range staleIDs {
 				log.Printf("core_handler: edge %s marked stale, sending notification", sid)
 				h.sendStaleNotification(sid)
+				// Reap demand_registry rows for the stale station so
+				// bin-move events stop trying to route demand signals
+				// to an edge that isn't listening. The station's
+				// entries repopulate via ClaimSync when the edge
+				// re-registers, same path as cold boot.
+				if err := h.db.SyncDemandRegistry(sid, nil); err != nil {
+					log.Printf("core_handler: reap demand registry for %s: %v", sid, err)
+				}
 			}
 		}
 	}

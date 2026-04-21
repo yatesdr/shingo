@@ -253,6 +253,7 @@ func main() {
 	// ── Protocol ingestor (inbound from ShinGo Edge) ───────────────────
 	coreHandler := messaging.NewCoreHandler(db, msgClient, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
 	coreHandler.DebugLog = dbg.Func("core_handler")
+	coreHandler.StaleEdgeThreshold = cfg.Messaging.StaleEdgeThreshold
 	coreHandler.Start()
 	defer coreHandler.Stop()
 	inboxDedup := messaging.NewInboxDedup(coreHandler, db)
