@@ -934,3 +934,99 @@ func TestWiring_AB_AsymmetricPair(t *testing.T) {
 
 	_ = claimAID
 }
+
+// ── Lineside-first drain tests ──────────────────────────────────────
+
+// TestWiring_CounterDelta_DrainsLinesideBeforeNodeCounter verifies that
+// counter deltas decrement an active lineside bucket before touching
+// RemainingUOP on the node.
+func TestWiring_CounterDelta_DrainsLinesideBeforeNodeCounter(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "LSD-DRAIN", PayloadCode: "P-500", UOPCapacity: 100, InitialUOP: 100,
+	})
+
+	// Capture 60 parts to lineside for this (node, style, part).
+	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "P-500", 60); err != nil {
+		t.Fatalf("CaptureLinesideBucket: %v", err)
+	}
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Drain 15 — should come entirely from the bucket, node counter untouched.
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     15,
+	})
+
+	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	if runtime.RemainingUOP != 100 {
+		t.Errorf("RemainingUOP = %d, want 100 (drain came from lineside)", runtime.RemainingUOP)
+	}
+
+	b, err := db.GetActiveLinesideBucket(nodeID, styleID, "P-500")
+	if err != nil {
+		t.Fatalf("GetActiveLinesideBucket: %v", err)
+	}
+	if b.Qty != 45 {
+		t.Errorf("bucket qty = %d, want 45 (60 - 15)", b.Qty)
+	}
+}
+
+// TestWiring_CounterDelta_CarriesRemainderToNodeCounter verifies that
+// when a delta exceeds the bucket qty, the bucket drains to zero (and
+// is deleted) and the remainder flows to the node counter.
+func TestWiring_CounterDelta_CarriesRemainderToNodeCounter(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "LSD-CARRY", PayloadCode: "P-600", UOPCapacity: 100, InitialUOP: 100,
+	})
+	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "P-600", 10); err != nil {
+		t.Fatalf("CaptureLinesideBucket: %v", err)
+	}
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Drain 25 — 10 from bucket, 15 from node counter.
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     25,
+	})
+
+	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	if runtime.RemainingUOP != 85 {
+		t.Errorf("RemainingUOP = %d, want 85 (100 - 15 remainder)", runtime.RemainingUOP)
+	}
+
+	// Bucket should be gone.
+	if _, err := db.GetActiveLinesideBucket(nodeID, styleID, "P-600"); err != sql.ErrNoRows {
+		t.Errorf("expected drained bucket to be deleted, got err=%v", err)
+	}
+}
+
+// TestWiring_CounterDelta_NoLinesideBucket verifies that when no bucket
+// exists, the full delta hits the node counter as before.
+func TestWiring_CounterDelta_NoLinesideBucket(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "LSD-NONE", PayloadCode: "P-700", UOPCapacity: 100, InitialUOP: 100,
+	})
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	eng.handleCounterDelta(CounterDeltaEvent{
+		ProcessID: processID,
+		StyleID:   styleID,
+		Delta:     7,
+	})
+
+	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	if runtime.RemainingUOP != 93 {
+		t.Errorf("RemainingUOP = %d, want 93 (no bucket, full delta hits counter)", runtime.RemainingUOP)
+	}
+}

@@ -239,6 +239,7 @@ function openClaimModal() {
     document.getElementById('claims-add-payload').selectedIndex = 0;
     document.getElementById('claims-add-capacity').value = '0';
     document.getElementById('claims-add-reorder').value = '0';
+    document.getElementById('claims-add-lineside-soft').value = '0';
     document.getElementById('claims-add-inbound').value = '';
     document.getElementById('claims-add-outbound').value = '';
     document.getElementById('claims-add-inbound-source').value = '';
@@ -269,6 +270,7 @@ function editClaim(claim) {
     document.getElementById('claims-add-payload').value = claim.payload_code || '';
     document.getElementById('claims-add-capacity').value = claim.uop_capacity || 0;
     document.getElementById('claims-add-reorder').value = claim.reorder_point || 0;
+    document.getElementById('claims-add-lineside-soft').value = claim.lineside_soft_threshold || 0;
     document.getElementById('claims-add-inbound').value = claim.inbound_staging || '';
     document.getElementById('claims-add-outbound').value = claim.outbound_staging || '';
     document.getElementById('claims-add-inbound-source').value = claim.inbound_source || '';
@@ -378,6 +380,8 @@ async function saveClaim() {
     var payloadCode = document.getElementById('claims-add-payload').value;
     var capacity = parseInt(document.getElementById('claims-add-capacity').value, 10) || 0;
     var reorder = parseInt(document.getElementById('claims-add-reorder').value, 10) || 0;
+    var linesideSoft = parseInt(document.getElementById('claims-add-lineside-soft').value, 10) || 0;
+    if (linesideSoft < 0) linesideSoft = 0;
 
     var swap = document.getElementById('claims-add-swap').value;
     var allowedPayloadCodes = [];
@@ -407,6 +411,7 @@ async function saveClaim() {
         allowed_payload_codes: allowedPayloadCodes,
         uop_capacity: capacity,
         reorder_point: reorder,
+        lineside_soft_threshold: linesideSoft,
         auto_reorder: true,
         inbound_staging: document.getElementById('claims-add-inbound').value,
         outbound_staging: document.getElementById('claims-add-outbound').value,
@@ -475,6 +480,11 @@ function toggleClaimsAddPayload() {
     document.getElementById('claims-add-payload-group').style.display = (isChangeover || isManualSwap) ? 'none' : '';
     document.getElementById('claims-add-allowed-group').style.display = isManualSwap ? '' : 'none';
     document.getElementById('claims-add-reorder-group').style.display = (isChangeover || isManualSwap) ? 'none' : '';
+    // Lineside soft cap — only applies to consume claims that flow through the release prompt.
+    var linesideGroup = document.getElementById('claims-add-lineside-group');
+    if (linesideGroup) {
+        linesideGroup.style.display = (role === 'consume' && !isManualSwap) ? '' : 'none';
+    }
     // Staging — not used by manual_swap or changeover
     document.getElementById('claims-staging-fieldset').style.display = (isChangeover || isManualSwap) ? 'none' : '';
     // Swap mode dropdown — always visible (not hidden for changeover either, let them see it)
@@ -499,6 +509,7 @@ function toggleClaimsAddPayload() {
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-capacity').value = '0';
         document.getElementById('claims-add-reorder').value = '0';
+        document.getElementById('claims-add-lineside-soft').value = '0';
     }
     // Only reset manual_swap fields when creating a new claim (not editing)
     var isEditing = !!document.getElementById('claims-edit-id').value;

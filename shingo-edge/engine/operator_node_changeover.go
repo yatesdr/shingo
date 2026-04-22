@@ -219,9 +219,22 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 		return fmt.Errorf("target style claim not found for node")
 	}
 	claimID := claim.ID
-	uop := claim.UOPCapacity
-	if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, uop); err != nil {
-		return err
+
+	// Lineside phase 5: skip the UOP reset when the release-click path
+	// already pointed runtime at the target claim. Re-resetting here
+	// would clobber any counter drift accumulated while the bots were
+	// heading home — exactly the "post-swap confirm" behaviour we're
+	// removing. Still update runtime (and state transition below) when
+	// the runtime hasn't been advanced yet, so legacy / safety-net
+	// paths continue to work.
+	runtime, runtimeErr := e.db.EnsureProcessNodeRuntime(nodeID)
+	needsUOPReset := runtimeErr != nil || runtime == nil ||
+		runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != claimID
+	if needsUOPReset {
+		uop := claim.UOPCapacity
+		if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, uop); err != nil {
+			return err
+		}
 	}
 
 	changeover, err := e.db.GetActiveProcessChangeover(processID)

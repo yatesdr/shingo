@@ -1496,6 +1496,58 @@ func TestStyleNodeClaims_AllowedPayloads(t *testing.T) {
 	}
 }
 
+// TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip verifies the
+// phase-6 column roundtrips cleanly through insert, update, get, and
+// get-by-node. Default is zero ("off"); explicit values must survive
+// both INSERT and UPDATE paths.
+func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
+	db := coverageDB(t)
+	_, sid := seedProcessStyle(t, db, "P", "S")
+
+	// Default (unset) persists as 0.
+	id, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL",
+	})
+	if err != nil {
+		t.Fatalf("insert default: %v", err)
+	}
+	got, _ := db.GetStyleNodeClaim(id)
+	if got.LinesideSoftThreshold != 0 {
+		t.Errorf("default LinesideSoftThreshold = %d, want 0", got.LinesideSoftThreshold)
+	}
+
+	// Explicit value on update survives.
+	if _, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL",
+		LinesideSoftThreshold: 12,
+	}); err != nil {
+		t.Fatalf("update with threshold: %v", err)
+	}
+	got, _ = db.GetStyleNodeClaim(id)
+	if got.LinesideSoftThreshold != 12 {
+		t.Errorf("after update: LinesideSoftThreshold = %d, want 12", got.LinesideSoftThreshold)
+	}
+
+	// Verified via GetByNode too (same scanner, but covers the second read path).
+	byNode, _ := db.GetStyleNodeClaimByNode(sid, "N1")
+	if byNode.LinesideSoftThreshold != 12 {
+		t.Errorf("GetByNode: LinesideSoftThreshold = %d, want 12", byNode.LinesideSoftThreshold)
+	}
+
+	// Explicit value on fresh insert (different node) also survives.
+	id2, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+		StyleID: sid, CoreNodeName: "N2", PayloadCode: "PL2",
+		LinesideSoftThreshold: 5,
+	})
+	if err != nil {
+		t.Fatalf("insert with threshold: %v", err)
+	}
+	got2, _ := db.GetStyleNodeClaim(id2)
+	if got2.LinesideSoftThreshold != 5 {
+		t.Errorf("fresh insert: LinesideSoftThreshold = %d, want 5", got2.LinesideSoftThreshold)
+	}
+}
+
 func TestStyleNodeClaims_Delete(t *testing.T) {
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")

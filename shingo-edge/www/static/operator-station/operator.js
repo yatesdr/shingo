@@ -576,6 +576,36 @@ function renderModal(entry) {
         html += '<div class="os-modal-fill-bar"><div class="os-modal-fill-level" style="width:' + Math.round(pct * 100) + '%;background:' + fillColor(pct, remaining) + '"></div></div>';
         html += '<div class="os-modal-fill-text">' + remaining + ' / ' + capacity + '</div>';
         html += '</div>';
+
+        // Active lineside bar — parts the operator pulled to lineside on
+        // the current style that are still counting toward UOP. Each
+        // chip renders as "PART: qty" in the claim's fill colour.
+        const activeBuckets = entry.lineside_active || [];
+        if (activeBuckets.length > 0) {
+            html += '<div class="os-lineside-active-row">';
+            html += '<div class="os-lineside-label">Lineside</div>';
+            html += '<div class="os-lineside-chips">';
+            activeBuckets.forEach(function(b) {
+                html += '<span class="os-lineside-chip active">' +
+                    esc(b.part_number) + ': <strong>' + (b.qty || 0) + '</strong></span>';
+            });
+            html += '</div></div>';
+        }
+
+        // Stranded chips — inactive buckets from prior styles. Operator
+        // taps a chip to open the stranded-detail stub modal.
+        const strandedBuckets = entry.lineside_inactive || [];
+        if (strandedBuckets.length > 0) {
+            html += '<div class="os-lineside-stranded-row">';
+            html += '<div class="os-lineside-label stranded">Stranded</div>';
+            html += '<div class="os-lineside-chips">';
+            strandedBuckets.forEach(function(b) {
+                html += '<button type="button" class="os-lineside-chip stranded" ' +
+                    'data-action="stranded-chip:' + b.id + '">' +
+                    esc(b.part_number) + ': ' + (b.qty || 0) + '</button>';
+            });
+            html += '</div></div>';
+        }
     }
 
     // Order status
@@ -723,16 +753,19 @@ function renderModal(entry) {
                 // Two-robot swap: both robots are holding at their wait
                 // points. One click releases both in B-then-A order.
                 html += actionBtn('RELEASE', 'request', true,
-                    '/api/process-nodes/' + entry.node.id + '/release-staged');
+                    'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged');
             } else if (staged && claim && claim.swap_mode === 'two_robot') {
                 // Two-robot swap, only one robot has arrived so far — hold
                 // the release until both are staged so a single click can
                 // move the whole swap forward.
                 html += actionBtn('WAITING FOR OTHER ROBOT', 'close', false, '');
             } else if (staged) {
-                // Staged — robot waiting, operator must release
+                // Staged — robot waiting, operator must release. Routing
+                // through the release-prompt action so we can capture any
+                // parts the operator pulled to lineside during the swap
+                // before dispatching the bots home (lineside phase 4).
                 html += actionBtn('RELEASE', 'request', true,
-                    '/api/orders/' + staged.id + '/release');
+                    'release-prompt:/api/orders/' + staged.id + '/release');
             } else if (delivered) {
                 // Delivered — bin dropped, operator confirms delivery
                 var confirmLabel = 'CONFIRM';
@@ -845,6 +878,27 @@ async function handleModalAction(evt) {
         const remaining = parseInt(parts[2], 10) || 0;
         closeModal();
         openKeypad(nodeID, remaining);
+        return;
+    }
+
+    // Release click: open the two-step lineside prompt instead of
+    // submitting the POST directly. Operator picks which parts (if any)
+    // they pulled to lineside during the swap, then confirms quantities;
+    // we submit {qty_by_part} to the backend release endpoint.
+    if (action.startsWith('release-prompt:')) {
+        const url = action.slice('release-prompt:'.length);
+        const entry = selectedNodeID ? findNodeByID(selectedNodeID) : null;
+        openReleasePrompt(url, entry);
+        return;
+    }
+
+    // Stranded-chip click: open the stub detail modal for a bucket.
+    if (action.startsWith('stranded-chip:')) {
+        const bucketID = parseInt(action.split(':')[1], 10);
+        const entry = selectedNodeID ? findNodeByID(selectedNodeID) : null;
+        if (!entry) return;
+        const bucket = (entry.lineside_inactive || []).find(function(b) { return b.id === bucketID; });
+        if (bucket) openStrandedStub(bucket);
         return;
     }
 
@@ -1051,6 +1105,229 @@ document.getElementById('load-bin-clear').addEventListener('click', async () => 
 document.getElementById('load-bin-modal').addEventListener('click', evt => {
     if (evt.target === document.getElementById('load-bin-modal')) closeLoadBin();
 });
+
+// ─── Release prompt (lineside phase 4) ───
+//
+// Two-step flow rendered inside the existing node modal:
+//   Step 1 — "Anything pulled to lineside during the swap?" with a
+//            button per allowed payload plus a NOTHING button.
+//   Step 2 — Quantity entry per selected part (simple number input
+//            rows; operator confirms the counts before release fires).
+//
+// Submit posts {qty_by_part} to the release endpoint the operator
+// started from (orders/release or process-nodes/release-staged).
+
+let releasePromptState = null;
+
+function allowedPayloadsForEntry(entry) {
+    if (!entry) return [];
+    const claim = entry.active_claim;
+    if (!claim) return [];
+    if (claim.allowed_payload_codes && claim.allowed_payload_codes.length > 0) {
+        return claim.allowed_payload_codes.slice();
+    }
+    if (claim.payload_code) return [claim.payload_code];
+    return [];
+}
+
+// linesideSoftThresholdForEntry returns the per-claim soft cap for the
+// release qty prompt. Pulled to lineside qty is a property of the
+// currently-running style (the parts the operator physically grabbed
+// before the swap arrived), so read the active claim first. Fall back
+// to the target claim on cold-start edge cases where active isn't set.
+// Returns 0 when the cap is disabled or no claim is available.
+function linesideSoftThresholdForEntry(entry) {
+    if (!entry) return 0;
+    const claim = entry.active_claim || entry.target_claim;
+    if (!claim) return 0;
+    const v = parseInt(claim.lineside_soft_threshold, 10);
+    return isNaN(v) || v < 0 ? 0 : v;
+}
+
+function openReleasePrompt(url, entry) {
+    releasePromptState = {
+        url: url,
+        entry: entry,
+        payloads: allowedPayloadsForEntry(entry),
+        selected: {}, // partCode → qty (string)
+    };
+    renderReleasePromptStep1();
+}
+
+function renderReleasePromptStep1() {
+    const state = releasePromptState;
+    if (!state) return;
+
+    let html = '';
+    html += '<div class="os-modal-header">';
+    html += '<div class="os-modal-node-name">Release</div>';
+    html += '<div class="os-modal-payload">Anything pulled to lineside during the swap?</div>';
+    html += '</div>';
+
+    html += '<div class="os-release-prompt">';
+    if (state.payloads.length === 0) {
+        html += '<div style="color:#999;padding:12px 0;font-size:14px">No allowed payloads on this node.</div>';
+    } else {
+        html += '<div class="os-release-part-grid">';
+        state.payloads.forEach(function(code) {
+            const picked = state.selected[code] != null;
+            html += '<button type="button" class="os-action-btn os-release-part-btn' +
+                (picked ? ' picked' : '') + '" data-action="release-pick:' + esc(code) + '">' +
+                esc(code) + (picked ? ' (' + state.selected[code] + ')' : '') + '</button>';
+        });
+        html += '</div>';
+    }
+    html += '</div>';
+
+    html += '<div class="os-modal-actions">';
+    html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
+    html += '<button type="button" class="os-action-btn empty-tools" data-action="release-submit">NOTHING PULLED</button>';
+    const hasPicks = Object.keys(state.selected).length > 0;
+    html += '<button type="button" class="os-action-btn request"' +
+        (hasPicks ? '' : ' disabled') +
+        ' data-action="release-submit-parts">CONFIRM & RELEASE</button>';
+    html += '</div>';
+
+    nodeModalContent.innerHTML = html;
+    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
+        btn.addEventListener('click', handleReleasePromptAction);
+    });
+    nodeModal.hidden = false;
+}
+
+function renderReleasePromptStep2(code) {
+    const state = releasePromptState;
+    if (!state) return;
+
+    const softCap = linesideSoftThresholdForEntry(state.entry);
+    const warnAt = softCap > 0 ? softCap * 2 : 0;
+
+    let html = '';
+    html += '<div class="os-modal-header">';
+    html += '<div class="os-modal-node-name">Lineside qty: ' + esc(code) + '</div>';
+    html += '<div class="os-modal-payload">How many ' + esc(code) + ' parts did you pull?</div>';
+    html += '</div>';
+
+    html += '<div class="os-release-prompt">';
+    html += '<input type="number" id="os-release-qty" min="1" step="1" value="' +
+        (state.selected[code] || '') + '" ' +
+        'style="width:100%;padding:14px;font-size:28px;text-align:center;border-radius:6px;' +
+        'border:1px solid var(--os-gray,#444);background:#111;color:#fff;">';
+    // Soft-cap warning slot — populated live as the operator types.
+    // Hidden until the entered qty exceeds 2× the configured threshold.
+    html += '<div id="os-release-softcap-warn" class="os-release-softcap-warn" ' +
+        'data-warn-at="' + warnAt + '" hidden>';
+    html += 'Typo check: this is more than 2\u00D7 the configured lineside soft cap (' +
+        softCap + '). Release anyway if that\u2019s right.';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div class="os-modal-actions">';
+    html += '<button type="button" class="os-action-btn close" data-action="release-back">BACK</button>';
+    html += '<button type="button" class="os-action-btn request" data-action="release-qty-ok:' + esc(code) + '">OK</button>';
+    html += '</div>';
+
+    nodeModalContent.innerHTML = html;
+    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
+        btn.addEventListener('click', handleReleasePromptAction);
+    });
+    const input = document.getElementById('os-release-qty');
+    const warn = document.getElementById('os-release-softcap-warn');
+    function refreshSoftCapWarn() {
+        if (!warn) return;
+        if (warnAt <= 0) { warn.hidden = true; return; }
+        const v = parseInt(input.value || '0', 10);
+        warn.hidden = !(v > warnAt);
+    }
+    if (input) {
+        input.focus();
+        input.select();
+        input.addEventListener('input', refreshSoftCapWarn);
+        refreshSoftCapWarn();
+    }
+}
+
+async function handleReleasePromptAction(evt) {
+    const action = evt.currentTarget.dataset.action;
+    const state = releasePromptState;
+    if (!action || !state) return;
+
+    if (action === 'release-cancel') {
+        closeReleasePrompt();
+        // Re-render the node modal so the operator can try again.
+        if (selectedNodeID !== null) {
+            const entry = findNodeByID(selectedNodeID);
+            if (entry) renderModal(entry);
+        }
+        return;
+    }
+
+    if (action === 'release-back') {
+        renderReleasePromptStep1();
+        return;
+    }
+
+    if (action.startsWith('release-pick:')) {
+        const code = action.slice('release-pick:'.length);
+        renderReleasePromptStep2(code);
+        return;
+    }
+
+    if (action.startsWith('release-qty-ok:')) {
+        const code = action.slice('release-qty-ok:'.length);
+        const input = document.getElementById('os-release-qty');
+        const qty = input ? parseInt(input.value || '0', 10) : 0;
+        if (qty > 0) {
+            state.selected[code] = qty;
+        } else {
+            delete state.selected[code];
+        }
+        renderReleasePromptStep1();
+        return;
+    }
+
+    // Submit paths. "NOTHING PULLED" → empty map; "CONFIRM & RELEASE" →
+    // whatever the operator picked across steps.
+    if (action === 'release-submit' || action === 'release-submit-parts') {
+        const url = state.url;
+        const qtyByPart = (action === 'release-submit') ? {} : (state.selected || {});
+        closeReleasePrompt();
+        evt.currentTarget.disabled = true;
+        const ok = await postAction(url, { qty_by_part: qtyByPart });
+        if (ok) closeModal();
+        return;
+    }
+}
+
+function closeReleasePrompt() {
+    releasePromptState = null;
+}
+
+// ─── Stranded bucket stub modal (lineside phase 4) ───
+//
+// Operator taps a stranded chip on the node modal to see what part it
+// represents. Phase 4 ships the stub view — scrap / repack / recall
+// actions arrive in later phases. The modal currently only offers a
+// DISMISS / CLOSE path so the operator can acknowledge it exists.
+function openStrandedStub(bucket) {
+    let html = '';
+    html += '<div class="os-modal-header">';
+    html += '<div class="os-modal-node-name">Stranded at lineside</div>';
+    html += '<div class="os-modal-payload">' + esc(bucket.part_number) + ' — ' + (bucket.qty || 0) + ' unit' + ((bucket.qty || 0) === 1 ? '' : 's') + '</div>';
+    html += '</div>';
+    html += '<div style="padding:12px 0;color:#bbb;font-size:14px;line-height:1.4">';
+    html += 'These parts were captured during a previous changeover and are not counting toward the active style.<br><br>';
+    html += '<strong>Scrap / repack / recall actions will land in a later phase.</strong>';
+    html += '</div>';
+    html += '<div class="os-modal-actions">';
+    html += '<button type="button" class="os-action-btn close" data-action="close">CLOSE</button>';
+    html += '</div>';
+    nodeModalContent.innerHTML = html;
+    nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
+        btn.addEventListener('click', handleModalAction);
+    });
+    nodeModal.hidden = false;
+}
 
 // ─── Footer ───
 

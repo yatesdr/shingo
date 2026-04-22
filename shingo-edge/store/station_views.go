@@ -24,6 +24,14 @@ type StationNodeView struct {
 	// points and a single coordinated release can move both forward.
 	// Non-two-robot nodes always report false.
 	SwapReady bool `json:"swap_ready"`
+	// LinesideActive is the set of buckets currently counting toward
+	// remaining UOP on this node (one row per part for the active style).
+	// Rendered as the "active lineside bar" beneath the node fill-bar.
+	LinesideActive []LinesideBucket `json:"lineside_active,omitempty"`
+	// LinesideInactive is the set of stranded buckets — parts that were
+	// pulled to lineside under a prior style and haven't been drained or
+	// recalled yet. Rendered as stacked chips that open a detail modal.
+	LinesideInactive []LinesideBucket `json:"lineside_inactive,omitempty"`
 }
 
 type OperatorStationView struct {
@@ -96,6 +104,11 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 		}
 		nodeView.Orders, _ = db.ListActiveOrdersByProcessNode(node.ID)
 		nodeView.SwapReady = computeSwapReady(db, nodeView.ActiveClaim, runtime)
+		// Lineside buckets power the active-bar and stranded-chip UI on
+		// the operator station modal. Best-effort — absence of buckets
+		// just means the node has nothing pulled to lineside yet.
+		nodeView.LinesideActive, _ = db.ListActiveLinesideBuckets(node.ID)
+		nodeView.LinesideInactive, _ = db.ListInactiveLinesideBuckets(node.ID)
 		view.Nodes = append(view.Nodes, nodeView)
 	}
 	return view, nil

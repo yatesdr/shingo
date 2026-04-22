@@ -98,7 +98,15 @@ func (s *stubEngine) CleanupReportingPointTag(int64, string, string, bool) {}
 func (s *stubEngine) RequestNodeMaterial(int64, int64) (*engine.NodeOrderResult, error) { return nil, nil }
 func (s *stubEngine) ReleaseNodeEmpty(int64) (*store.Order, error)                     { return nil, nil }
 func (s *stubEngine) ReleaseNodePartial(int64, int64) (*store.Order, error)             { return nil, nil }
-func (s *stubEngine) ReleaseStagedOrders(int64) error                                   { return nil }
+// ReleaseOrderWithLineside stub forwards to orderMgr.ReleaseOrder so
+// existing release-flow tests (TestApiOrders_ReleaseOrder_Success, etc.)
+// still exercise the status-transition + lifecycle-error paths. The
+// engine-side lineside capture + UOP reset is covered by
+// engine/operator_release_test.go, not the www handler tests.
+func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, _ map[string]int) error {
+	return s.orderMgr.ReleaseOrder(orderID)
+}
+func (s *stubEngine) ReleaseStagedOrders(int64, map[string]int) error                  { return nil }
 func (s *stubEngine) ConfirmNodeManifest(int64) error                                  { return nil }
 func (s *stubEngine) FinalizeProduceNode(int64) (*engine.NodeOrderResult, error)        { return nil, nil }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }

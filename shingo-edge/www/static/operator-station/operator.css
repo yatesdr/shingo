@@ -375,6 +375,95 @@ body {
     margin-bottom: 4px;
 }
 
+/* ===== Lineside Bar + Stranded Chips (phase 4) ===== */
+
+.os-lineside-active-row,
+.os-lineside-stranded-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+    font-size: 13px;
+}
+
+.os-lineside-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--os-text-muted);
+    min-width: 72px;
+}
+.os-lineside-label.stranded { color: var(--os-amber); }
+
+.os-lineside-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.os-lineside-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 14px;
+    padding: 4px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    background: var(--os-blue);
+    color: #fff;
+}
+.os-lineside-chip.active {
+    background: rgba(30, 100, 200, 0.22);
+    border-color: var(--os-blue);
+    color: #cfe;
+}
+.os-lineside-chip.stranded {
+    background: rgba(160, 110, 20, 0.22);
+    border-color: var(--os-amber);
+    color: #fc8;
+    cursor: pointer;
+}
+.os-lineside-chip.stranded:hover { background: rgba(160, 110, 20, 0.38); }
+
+/* ===== Release Prompt (phase 4) ===== */
+
+.os-release-prompt {
+    margin: 12px 0;
+}
+
+.os-release-part-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+}
+
+.os-release-part-btn {
+    background: var(--os-gray);
+    font-size: 16px;
+    padding: 14px;
+    min-height: 52px;
+}
+.os-release-part-btn.picked {
+    background: var(--os-blue);
+    outline: 2px solid #fff;
+}
+
+/* Soft-cap warning pill shown under the qty input when the operator's
+   entered value exceeds 2× the per-claim threshold. Warn-only — never
+   blocks the release. */
+.os-release-softcap-warn {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: rgba(245, 158, 11, 0.16);
+    border: 1px solid var(--os-amber);
+    color: var(--os-amber);
+    font-size: 13px;
+    line-height: 1.35;
+}
+
 /* ===== Modal Action Buttons ===== */
 
 .os-modal-actions {

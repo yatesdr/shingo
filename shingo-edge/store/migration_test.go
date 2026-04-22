@@ -283,3 +283,60 @@ INSERT INTO op_node_style_assignments (id, op_node_id, style_id, payload_code, p
 		t.Fatalf("expected operator_station_process_nodes junction table to be dropped after migration")
 	}
 }
+
+func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "lineside-migration.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open fresh db: %v", err)
+	}
+	defer db.Close()
+
+	// Table must exist.
+	var tableCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type='table' AND name='node_lineside_bucket'`).Scan(&tableCount); err != nil {
+		t.Fatalf("check table exists: %v", err)
+	}
+	if tableCount != 1 {
+		t.Fatalf("expected node_lineside_bucket table, got %d", tableCount)
+	}
+
+	// Unique-active index must exist.
+	var indexCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type='index' AND name='idx_lineside_active_unique'`).Scan(&indexCount); err != nil {
+		t.Fatalf("check index exists: %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("expected idx_lineside_active_unique index, got %d", indexCount)
+	}
+
+	// Expected columns are present.
+	expected := map[string]bool{
+		"id": false, "node_id": false, "pair_key": false,
+		"style_id": false, "part_number": false, "qty": false,
+		"state": false, "created_at": false, "updated_at": false,
+	}
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('node_lineside_bucket')`)
+	if err != nil {
+		t.Fatalf("read table info: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			t.Fatalf("scan col: %v", err)
+		}
+		if _, ok := expected[col]; ok {
+			expected[col] = true
+		}
+	}
+	for col, seen := range expected {
+		if !seen {
+			t.Fatalf("expected column %q on node_lineside_bucket", col)
+		}
+	}
+}

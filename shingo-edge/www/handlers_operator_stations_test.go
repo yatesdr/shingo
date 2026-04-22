@@ -699,6 +699,31 @@ func TestOperatorStations_ReleaseStagedOrders_InvalidID(t *testing.T) {
 	assertJSONPath(t, resp, "error", "invalid node id")
 }
 
+// Phase 7 (lineside): the release-staged endpoint accepts qty_by_part in the
+// body so the two-robot HMI button can forward lineside captures like the
+// single-order path does. A well-formed body should decode and succeed.
+func TestOperatorStations_ReleaseStagedOrders_AcceptsQtyByPart(t *testing.T) {
+	_, router := newOperatorStationsRouter(t)
+
+	body := map[string]interface{}{
+		"qty_by_part": map[string]int{"PART-A": 5, "PART-B": 2},
+	}
+	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
+	assertStatus(t, resp, http.StatusOK)
+	assertJSONPath(t, resp, "status", "ok")
+}
+
+// A malformed body is rejected with a 400 — the handler defends against bad
+// JSON rather than silently falling through to a no-op release.
+func TestOperatorStations_ReleaseStagedOrders_BadBody(t *testing.T) {
+	_, router := newOperatorStationsRouter(t)
+
+	// qty_by_part must be a map; sending an int triggers a decode error.
+	body := map[string]interface{}{"qty_by_part": 123}
+	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
+}
+
 func TestOperatorStations_ConfirmNodeManifest_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 

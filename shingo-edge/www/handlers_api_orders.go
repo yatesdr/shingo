@@ -261,6 +261,15 @@ func (h *Handlers) apiConfirmDelivery(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
 }
 
+// apiReleaseOrder is the operator's "release" click for a staged order.
+//
+// Phase 3 (lineside): release is now unified through
+// ReleaseOrderWithLineside so the engine can (1) capture parts the
+// operator pulled to lineside during the swap, (2) reset the node
+// counter, and (3) advance changeover task state atomically before the
+// bots head back. qty_by_part is optional — when absent or empty, the
+// call is backward-compatible with pre-Phase-3 behavior (just releases
+// the order).
 func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 	orderID, err := parseID(r, "orderID")
 	if err != nil {
@@ -268,7 +277,18 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.engine.OrderManager().ReleaseOrder(orderID); err != nil {
+	// Body is optional — empty body means "release, no lineside capture."
+	var req struct {
+		QtyByPart map[string]int `json:"qty_by_part"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	if err := h.engine.ReleaseOrderWithLineside(orderID, req.QtyByPart); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -256,13 +256,28 @@ func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request)
 // apiReleaseNodeStagedOrders releases both orders of a two-robot swap in one
 // call. See Engine.ReleaseStagedOrders for ordering (B-then-A) and
 // idempotency semantics.
+//
+// Phase 7 (lineside): the HMI's release prompt posts qty_by_part on this
+// endpoint too (single release path covers single-order and two-robot
+// swaps). Forwarded to the engine so two-robot releases capture lineside
+// buckets like the single-order path does. Empty body / missing field
+// means "no parts captured."
 func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.ReleaseStagedOrders(id); err != nil {
+	var req struct {
+		QtyByPart map[string]int `json:"qty_by_part"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if err := h.engine.ReleaseStagedOrders(id, req.QtyByPart); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

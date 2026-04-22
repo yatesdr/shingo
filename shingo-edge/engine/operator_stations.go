@@ -276,7 +276,15 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // If A fails after B succeeded, the error is returned — Order A will remain
 // staged and the operator can retry via the standard per-order release, which
 // the UI re-renders automatically once swap_ready goes false.
-func (e *Engine) ReleaseStagedOrders(nodeID int64) error {
+//
+// Lineside (phase 7 fixup): qtyByPart is forwarded only to the Order B release
+// call. Order B is the evacuation (fires first, before Order A arrives), and
+// ReleaseOrderWithLineside captures buckets, resets UOP, and advances the
+// changeover-task state there. The Order A call then passes nil so we don't
+// re-run the capture step — it's idempotent for UOP/state but additive for
+// bucket qty. nil for A is safe: the deactivation side-effect is already done
+// and no new captures are applied.
+func (e *Engine) ReleaseStagedOrders(nodeID int64, qtyByPart map[string]int) error {
 	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
 	if err != nil {
 		return fmt.Errorf("get runtime for node %d: %w", nodeID, err)
@@ -299,26 +307,35 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64) error {
 		return fmt.Errorf("node %d: release-staged requires two_robot swap, got %q", nodeID, mode)
 	}
 
-	if err := e.releaseIfStaged(*runtime.StagedOrderID, "B"); err != nil {
+	if err := e.releaseIfStaged(*runtime.StagedOrderID, "B", qtyByPart); err != nil {
 		return err
 	}
-	if err := e.releaseIfStaged(*runtime.ActiveOrderID, "A"); err != nil {
+	if err := e.releaseIfStaged(*runtime.ActiveOrderID, "A", nil); err != nil {
 		return err
 	}
 	return nil
 }
 
-// releaseIfStaged calls ReleaseOrder, but treats an order that has already
-// advanced past "staged" as success. Any other status-validation failure
-// (e.g. order is terminal) is still surfaced.
-func (e *Engine) releaseIfStaged(orderID int64, label string) error {
+// releaseIfStaged calls ReleaseOrderWithLineside, but treats an order that has
+// already advanced past "staged" as success. Any other status-validation
+// failure (e.g. order is terminal) is still surfaced.
+//
+// Phase 3 (lineside): routed through the lineside-aware release path so the
+// two-robot "RELEASE" button also triggers the UOP reset and changeover-task
+// state transition at click time (not at Order B completion).
+//
+// Phase 7 (lineside): qtyByPart is forwarded to ReleaseOrderWithLineside so
+// the HMI's lineside prompt on two-robot swaps actually captures buckets.
+// Callers pass non-nil on the first release (Order B) and nil on the second
+// (Order A) to avoid additive double-capture.
+func (e *Engine) releaseIfStaged(orderID int64, label string, qtyByPart map[string]int) error {
 	order, err := e.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order %s (%d): %w", label, orderID, err)
 	}
 	switch order.Status {
 	case orders.StatusStaged:
-		if err := e.orderMgr.ReleaseOrder(orderID); err != nil {
+		if err := e.ReleaseOrderWithLineside(orderID, qtyByPart); err != nil {
 			return fmt.Errorf("release order %s (%d): %w", label, orderID, err)
 		}
 		return nil

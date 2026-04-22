@@ -230,6 +230,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     paired_core_node        TEXT NOT NULL DEFAULT '',
     auto_confirm            INTEGER NOT NULL DEFAULT 0,
     sequence                INTEGER NOT NULL DEFAULT 0,
+    lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(style_id, core_node_name)
 );
@@ -273,6 +274,28 @@ CREATE TABLE IF NOT EXISTS changeover_node_tasks (
 CREATE INDEX IF NOT EXISTS idx_changeovers_process_id ON process_changeovers(process_id);
 CREATE INDEX IF NOT EXISTS idx_cst_changeover_id ON changeover_station_tasks(process_changeover_id);
 CREATE INDEX IF NOT EXISTS idx_cnt_changeover_id ON changeover_node_tasks(process_changeover_id);
+
+CREATE TABLE IF NOT EXISTS node_lineside_bucket (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
+    pair_key     TEXT NOT NULL DEFAULT '',
+    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
+    part_number  TEXT NOT NULL,
+    qty          INTEGER NOT NULL DEFAULT 0,
+    state        TEXT NOT NULL DEFAULT 'active',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lineside_active_unique
+    ON node_lineside_bucket(node_id, style_id, part_number)
+    WHERE state = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_lineside_node_state
+    ON node_lineside_bucket(node_id, state);
+
+CREATE INDEX IF NOT EXISTS idx_lineside_pair_state
+    ON node_lineside_bucket(pair_key, state) WHERE pair_key != '';
 `
 
 // ── Master migration runner ─────────────────────────────────────────
@@ -458,6 +481,11 @@ func (db *DB) migrate() error {
 
 	// v16: Add payload_code to orders for per-payload demand mapping.
 	db.Exec("ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''")
+
+	// v17 (lineside phase 6): per-claim soft threshold for the release
+	// qty-override prompt. Zero means "off" — the default. When >0, the
+	// HMI warns if the operator enters a qty greater than 2× this value.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN lineside_soft_threshold INTEGER NOT NULL DEFAULT 0")
 
 	return nil
 }

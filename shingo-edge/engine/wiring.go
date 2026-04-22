@@ -125,7 +125,14 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 				pairedConsumeHandled = true
 			}
 
-			newRemaining := runtime.RemainingUOP - int(delta.Delta)
+			// Lineside first: drain the active bucket for this node's
+			// primary part before touching the node counter. The bucket
+			// represents parts the operator pulled to lineside during
+			// the last swap, which physically leave the station before
+			// the new bin is tapped. Remainder flows to the bin counter.
+			remainder := drainLinesideFirst(e.db, node.ID, claim, int(delta.Delta))
+
+			newRemaining := runtime.RemainingUOP - remainder
 			if newRemaining < 0 {
 				newRemaining = 0
 			}
@@ -174,7 +181,13 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 	if !pairedConsumeHandled && pairedFallbackNode != nil && pairedFallbackRuntime != nil {
 		log.Printf("A/B fallthrough: no active-pull node for process %d, decrementing fallback node %s",
 			delta.ProcessID, pairedFallbackNode.Name)
-		newRemaining := pairedFallbackRuntime.RemainingUOP - int(delta.Delta)
+		// Lineside-first on the fallback node too.
+		fallbackClaim := findActiveClaim(e.db, pairedFallbackNode)
+		remainder := int(delta.Delta)
+		if fallbackClaim != nil {
+			remainder = drainLinesideFirst(e.db, pairedFallbackNode.ID, fallbackClaim, int(delta.Delta))
+		}
+		newRemaining := pairedFallbackRuntime.RemainingUOP - remainder
 		if newRemaining < 0 {
 			newRemaining = 0
 		}
@@ -182,6 +195,51 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			log.Printf("update UOP for node %d: %v", pairedFallbackNode.ID, err)
 		}
 	}
+}
+
+// drainLinesideFirst decrements the active lineside bucket(s) for the
+// claim's parts and returns the remainder that should flow to the node
+// counter. For a single-part claim, the primary PayloadCode is used;
+// the remainder is delta - drained.
+//
+// Multi-part claims (claims with more than one entry in AllowedPayloads)
+// drain each part by up to delta independently, but the node counter
+// still represents one unit of production per tick, so the remainder
+// tracks the *primary* part's drain. The rationale: the node counter is
+// a single integer (one UOP = one assembly), and staging/reorder
+// thresholds key off that value. Secondary part buckets drain so the
+// UI stays honest, even though their draining doesn't affect the node
+// counter arithmetic. If a plant ever ships a claim where secondary
+// parts can deplete independently (e.g. consumables), revisit this.
+func drainLinesideFirst(db *store.DB, nodeID int64, claim *store.StyleNodeClaim, delta int) int {
+	if delta <= 0 || claim == nil {
+		return delta
+	}
+
+	// Primary part controls the node-counter math.
+	primaryRemainder := delta
+	if primary := claim.PayloadCode; primary != "" {
+		drained, err := db.DrainLinesideBucket(nodeID, claim.StyleID, primary, delta)
+		if err != nil {
+			log.Printf("lineside: drain primary part %q on node %d: %v", primary, nodeID, err)
+		} else {
+			primaryRemainder = delta - drained
+		}
+	}
+
+	// Secondary parts: drain independently for UI honesty. Skip if they
+	// match the primary (avoids a double-drain when AllowedPayloads
+	// includes the primary).
+	for _, part := range claim.AllowedPayloads() {
+		if part == "" || part == claim.PayloadCode {
+			continue
+		}
+		if _, err := db.DrainLinesideBucket(nodeID, claim.StyleID, part, delta); err != nil {
+			log.Printf("lineside: drain secondary part %q on node %d: %v", part, nodeID, err)
+		}
+	}
+
+	return primaryRemainder
 }
 
 // ── Order completion chain ──────────────────────────────────────────
@@ -301,6 +359,11 @@ func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
 // handleComplexOrderBCompletion handles complex Order B in swap/evacuate changeovers.
 // Regular: evacuation + delivery in one order → "released".
 // Keep-staged: only evacuates → depends on whether Order A (delivery) also completed.
+//
+// Phase 3 (lineside): ReleaseOrderWithLineside normally resets UOP + advances the
+// task to "released" at the operator's release click. When that path ran, this
+// handler no-ops on the mutation — it's only a safety net for paths that bypass
+// the release handler (e.g. changeover restore, auto-confirm edge cases).
 func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	isKeepStaged := false
 	if ctx.nodeTask.FromClaimID != nil {
@@ -313,7 +376,14 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 		return e.handleKeepStagedOrderBCompletion(ctx)
 	}
 
-	// Regular swap/evacuate: Order B did evacuation + delivery in one order.
+	// Release handler already ran — nothing to do. Return true so we
+	// don't fall through to handleNormalReplenishment.
+	if ctx.nodeTask.State == "released" {
+		return true
+	}
+
+	// Safety-net path (release handler didn't run): Order B did
+	// evacuation + delivery in one order.
 	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
 	if err != nil {
 		return true // matched the path but claim lookup failed
@@ -331,7 +401,16 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 // handleKeepStagedOrderBCompletion handles keep-staged changeovers where Order B
 // only evacuated old material (no delivery steps).
 // If Order A (delivery) also completed → "released". Otherwise → "line_cleared".
+//
+// Phase 3 (lineside): the "released" transition is now primarily driven by the
+// operator release handler. This handler still fires if the release never ran
+// (safety net) or if only Order A has completed (→ "line_cleared").
 func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool {
+	// Release handler already ran — nothing to do.
+	if ctx.nodeTask.State == "released" {
+		return true
+	}
+
 	orderADone := true
 	if ctx.nodeTask.NextMaterialOrderID != nil {
 		if orderA, err := e.db.GetOrder(*ctx.nodeTask.NextMaterialOrderID); err == nil && !orders.IsTerminal(orderA.Status) {
@@ -363,9 +442,19 @@ func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool 
 
 // handleChangeoverRelease handles Order A completing to release staged/replenished
 // material into production during a changeover (non-staging delivery path).
+//
+// Phase 3 (lineside): the operator release click now normally runs the UOP
+// reset + "released" state transition before this event fires. When that
+// happened, this handler no-ops (state is already "released"). It remains as
+// a safety net for restore / auto-release paths that bypass the release
+// handler.
 func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 	if ctx.nodeTask == nil || ctx.nodeTask.NextMaterialOrderID == nil || *ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
 		return false
+	}
+	// Release handler already ran — nothing to do.
+	if ctx.nodeTask.State == "released" {
+		return true
 	}
 	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
 	if err != nil {
@@ -426,6 +515,15 @@ func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
 
 // handleNormalReplenishment handles standard retrieve/complex order completion.
 // Resets UOP from the active claim (capacity for consume, 0 for produce).
+//
+// Phase 3 (lineside): for complex orders on consume nodes, the release click
+// handler (ReleaseOrderWithLineside) already reset UOP to capacity before
+// dispatch. Re-resetting on completion would wipe any counter ticks that
+// happened during the bots-home leg — that's the drift we're fixing. So the
+// reset is gated: consume + complex with runtime already pointing at this
+// claim and RemainingUOP > 0 is treated as "release already ran, don't
+// clobber." Produce nodes still reset (empty bin arriving), and simple
+// retrieve orders still reset (no release-click prompt exists for them).
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
 		return
@@ -441,8 +539,18 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if claim.Role == "produce" {
 		resetUOP = 0
 	}
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
-		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+
+	// Consume + complex: the release-click handler
+	// (ReleaseOrderWithLineside) already reset UOP to capacity before
+	// dispatch. Resetting again here would wipe any counter ticks the
+	// operator ran off during the bots-home leg — exactly the drift
+	// this phase is fixing. Skip the reset for that case; other paths
+	// (retrieve, produce) keep the existing completion-time reset.
+	skipReset := claim.Role == "consume" && ctx.order.OrderType == orders.TypeComplex
+	if !skipReset {
+		if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
+			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+		}
 	}
 
 	// manual_swap nodes: clear order slots so CanAcceptOrders and the
