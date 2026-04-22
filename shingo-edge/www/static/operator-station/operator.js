@@ -425,10 +425,15 @@ function createNodeButton(entry) {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? binState.bin_label : '';
         const binPayload = binState && binState.payload_code ? binState.payload_code : '';
-        const hasQueued = (entry.orders || []).some(o => o.status === 'queued');
+        // "Awaiting stock" = any non-terminal order. Using just 'queued' lost
+        // the indicator the moment the order advanced (sourcing, dispatched,
+        // in_transit, delivered-awaiting-confirm, etc.) — which made
+        // multi-node manual_swap stations look like only one node had demand.
+        const hasActiveOrder = (entry.orders || []).some(o =>
+            o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
         // Manual swap: show what's loaded or awaiting
         let statusText;
-        if (hasQueued) {
+        if (hasActiveOrder) {
             statusText = 'AWAITING STOCK';
         } else if (binPayload) {
             statusText = binPayload;
@@ -476,8 +481,11 @@ function nodeColorClass(entry) {
     if (!claim) return 'os-unclaimed';
     const remaining = entry.runtime ? entry.runtime.remaining_uop : 0;
     if (claim.swap_mode === 'manual_swap') {
-        const hasQueued = entry.orders && entry.orders.some(o => o.status === 'queued');
-        if (hasQueued) return 'os-mid'; // amber for awaiting stock
+        // Same broadening as createNodeButton: any non-terminal order means
+        // the node has demand and should colour amber, not just 'queued'.
+        const hasActiveOrder = entry.orders && entry.orders.some(o =>
+            o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+        if (hasActiveOrder) return 'os-mid'; // amber for awaiting stock
         return remaining > 0 ? 'os-full' : 'os-empty';
     }
     const capacity = claim.uop_capacity || 1;
