@@ -429,6 +429,17 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Re-sync the reporting point so the counter config edit takes effect
+	// immediately — previously, this only ran on SetActiveStyle, which meant
+	// that adding/changing counter fields on an already-active process
+	// silently did nothing until the style was re-activated. The sync is a
+	// no-op when counter config or active style is missing, so it's safe to
+	// call unconditionally. Log-and-continue on error: the process update
+	// itself succeeded and we don't want to fail the whole request if the
+	// secondary sync hits a transient issue.
+	if err := h.engine.SyncProcessCounter(id); err != nil {
+		log.Printf("sync reporting point after process %d update: %v", id, err)
+	}
 	h.requestBackup("process-updated")
 	writeJSON(w, map[string]string{"status": "ok"})
 }

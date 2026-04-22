@@ -110,6 +110,43 @@ body {
 .os-header-btn.changeover { background: var(--os-orange); color: #000; }
 .os-header-btn.cutover { background: var(--os-green-bright); color: #000; }
 
+/* Active-style chip — display-only, sits in the action bar next to the
+   changeover button so the operator can see what's running at a glance. */
+.os-header-style {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #0f1824;
+    border: 1px solid #2a3a50;
+    border-radius: 10px;
+    padding: 6px 14px;
+    min-height: 42px;
+    box-sizing: border-box;
+    max-width: 320px;
+}
+.os-header-style.changing {
+    border-color: var(--os-orange);
+    background: #2a1f10;
+}
+.os-header-style-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #7a8fa8;
+    text-transform: uppercase;
+}
+.os-header-style.changing .os-header-style-label {
+    color: var(--os-orange);
+}
+.os-header-style-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 /* ===== Changeover Picker ===== */
 .os-co-picker-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,0.7);
@@ -214,8 +251,8 @@ body {
     bottom: 8px;
     left: 12px;
     right: 12px;
-    font-size: 17px;
-    font-weight: 600;
+    font-size: 22px;
+    font-weight: 700;
     color: rgba(255,255,255,0.92);
     white-space: nowrap;
     overflow: hidden;
@@ -556,6 +593,9 @@ body {
     .os-header-station { font-size: 18px; }
     .os-header-info { font-size: 13px; }
     .os-header-btn { padding: 8px 12px; font-size: 13px; min-height: 36px; border-radius: 8px; }
+    .os-header-style { padding: 4px 10px; min-height: 36px; max-width: 220px; border-radius: 8px; }
+    .os-header-style-label { font-size: 9px; }
+    .os-header-style-value { font-size: 14px; }
     .os-health-badge { width: 10px; height: 10px; }
     .os-header-right { gap: 6px; }
 
@@ -563,7 +603,7 @@ body {
     .os-node-icon { font-size: 15px; top: 6px; right: 8px; }
     .os-node-remaining { font-size: 36px; }
     .os-node-capacity { font-size: 14px; }
-    .os-node-payload { font-size: 15px; bottom: 6px; left: 8px; right: 8px; }
+    .os-node-payload { font-size: 19px; bottom: 6px; left: 8px; right: 8px; }
     .os-node-btn { padding: 8px 10px; border-radius: 10px; }
 
     .os-modal { padding: 16px; border-radius: 14px; }
@@ -686,7 +726,10 @@ body {
     .os-header-station { font-size: 16px; }
     .os-header-info { font-size: 11px; }
     .os-header-btn { padding: 6px 10px; font-size: 12px; min-height: 32px; }
+    .os-header-style { padding: 3px 8px; min-height: 32px; max-width: 160px; }
+    .os-header-style-label { font-size: 8px; letter-spacing: 0.5px; }
+    .os-header-style-value { font-size: 12px; }
     .os-node-remaining { font-size: 30px; }
     .os-node-name { font-size: 12px; }
-    .os-node-payload { font-size: 13px; }
+    .os-node-payload { font-size: 16px; }
 }

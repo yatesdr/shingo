@@ -114,6 +114,23 @@ function renderHeader() {
     });
     headerActions.appendChild(badge);
 
+    // Active style chip — sits next to the changeover button so the operator
+    // can see which style is running without reading the small metadata line.
+    // During a changeover, shows "current → target" so the transition is
+    // visible at a glance.
+    const styleName = view.current_style ? view.current_style.name : 'No Style';
+    const targetName = view.target_style ? view.target_style.name : null;
+    const styleChip = el('div', { className: 'os-header-style' + (targetName ? ' changing' : '') });
+    styleChip.appendChild(el('span', { className: 'os-header-style-label', textContent: 'STYLE' }));
+    const styleValue = el('span', { className: 'os-header-style-value' });
+    if (targetName) {
+        styleValue.textContent = styleName + ' \u2192 ' + targetName;
+    } else {
+        styleValue.textContent = styleName;
+    }
+    styleChip.appendChild(styleValue);
+    headerActions.appendChild(styleChip);
+
     // Changeover / Cutover button
     if (view.active_changeover) {
         headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
