@@ -850,6 +850,41 @@ func TestOperatorStations_ReleaseChangeoverWait_Success(t *testing.T) {
 	assertJSONPath(t, resp, "status", "ok")
 }
 
+// TestOperatorStations_ReleaseChangeoverWait_ThreadsCalledBy verifies that
+// the called_by field in the request body flows through to the engine call,
+// closing the gap where Phase 8 added body parsing but no test asserted the
+// value was actually plumbed (regression coverage for item 15 in the
+// release-manifest follow-ups).
+func TestOperatorStations_ReleaseChangeoverWait_ThreadsCalledBy(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+
+	body := map[string]interface{}{"called_by": "stephen-station-7"}
+	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	stub := h.engine.(*stubEngine)
+	if stub.lastReleaseChangeoverWaitCalledBy != "stephen-station-7" {
+		t.Errorf("ReleaseChangeoverWait called_by: got %q, want %q",
+			stub.lastReleaseChangeoverWaitCalledBy, "stephen-station-7")
+	}
+}
+
+// TestOperatorStations_ReleaseChangeoverWait_EmptyBodyOK verifies the
+// backward-compat path: a missing/empty body (legacy clients) results in
+// an empty CalledBy without rejecting the request.
+func TestOperatorStations_ReleaseChangeoverWait_EmptyBodyOK(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
+
+	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", nil, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	stub := h.engine.(*stubEngine)
+	if stub.lastReleaseChangeoverWaitCalledBy != "" {
+		t.Errorf("ReleaseChangeoverWait called_by on empty body: got %q, want empty",
+			stub.lastReleaseChangeoverWaitCalledBy)
+	}
+}
+
 func TestOperatorStations_CompleteProductionCutover_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 

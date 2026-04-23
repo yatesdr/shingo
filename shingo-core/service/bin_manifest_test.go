@@ -516,3 +516,256 @@ func TestBinManifestService_ClaimForDispatch_ConcurrentRace(t *testing.T) {
 		}
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// SyncOrClearForReleased — late-binding manifest mutation on already-claimed
+// bins. Used by HandleOrderRelease to apply the operator's release-time
+// disposition (NOTHING PULLED → 0, SEND PARTIAL BACK → positive, legacy → nil).
+//
+// Invariants under test:
+//   - nil  → no-op (manifest, UOP, claim untouched)
+//   - 0    → manifest cleared, claim preserved
+//   - >0   → UOP synced, manifest + claim preserved
+//   - guard: claimed_by must equal the supplied orderID
+//   - guard: locked=false (bins under active fleet handling are off-limits)
+//   - retry-safe: repeating the same call leaves the row in the same state
+// ──────────────────────────────────────────────────────────────────────────
+
+// claimBinForTest sets claimed_by directly so SyncOrClearForReleased's
+// already-claimed precondition is met. Mirrors what claimComplexBins would
+// have done at order creation time.
+func claimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
+	t.Helper()
+	if err := db.ClaimBin(binID, orderID); err != nil {
+		t.Fatalf("claim bin %d for order %d: %v", binID, orderID, err)
+	}
+}
+
+func TestBinManifestService_SyncOrClearForReleased_NilIsNoOp(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-NIL", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, nil, ""); err != nil {
+		t.Fatalf("SyncOrClearForReleased(nil): %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != bin.PayloadCode {
+		t.Errorf("PayloadCode = %q, want %q (unchanged)", got.PayloadCode, bin.PayloadCode)
+	}
+	if got.UOPRemaining != bin.UOPRemaining {
+		t.Errorf("UOPRemaining = %d, want %d (unchanged)", got.UOPRemaining, bin.UOPRemaining)
+	}
+	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
+		t.Errorf("ClaimedBy = %v, want %d (preserved)", got.ClaimedBy, order.ID)
+	}
+}
+
+func TestBinManifestService_SyncOrClearForReleased_ZeroClearsManifest(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-ZERO", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	zero := 0
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, ""); err != nil {
+		t.Fatalf("SyncOrClearForReleased(0): %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty (cleared)", got.PayloadCode)
+	}
+	if got.UOPRemaining != 0 {
+		t.Errorf("UOPRemaining = %d, want 0", got.UOPRemaining)
+	}
+	if got.Manifest != nil {
+		t.Errorf("Manifest = %v, want nil (cleared)", got.Manifest)
+	}
+	if got.ManifestConfirmed {
+		t.Error("ManifestConfirmed = true, want false (cleared)")
+	}
+	// Claim must be preserved — release does not unclaim the bin.
+	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
+		t.Errorf("ClaimedBy = %v, want %d (preserved)", got.ClaimedBy, order.ID)
+	}
+}
+
+func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-POS", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	originalManifest := *bin.Manifest
+
+	partial := 800
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, ""); err != nil {
+		t.Fatalf("SyncOrClearForReleased(800): %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 800 {
+		t.Errorf("UOPRemaining = %d, want 800", got.UOPRemaining)
+	}
+	if got.PayloadCode != bin.PayloadCode {
+		t.Errorf("PayloadCode = %q, want %q (preserved)", got.PayloadCode, bin.PayloadCode)
+	}
+	if got.Manifest == nil || *got.Manifest != originalManifest {
+		t.Error("Manifest changed; want preserved")
+	}
+	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
+		t.Errorf("ClaimedBy = %v, want %d (preserved)", got.ClaimedBy, order.ID)
+	}
+}
+
+// TestBinManifestService_SyncOrClearForReleased_WrongOrderRejected verifies
+// the claimed_by=$orderID guard. A stale release (e.g. the bin was reassigned
+// to a different order between staging and release) must not stomp the new
+// claim's bin state.
+func TestBinManifestService_SyncOrClearForReleased_WrongOrderRejected(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-WRONG", "PART-A", 100)
+	realOwner := createTestOrder(t, db, sd.LineNode.ID)
+	staleOrder := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, realOwner.ID)
+
+	zero := 0
+	err := svc.SyncOrClearForReleased(bin.ID, staleOrder.ID, &zero, "")
+	if err == nil {
+		t.Fatal("expected error when orderID does not match claimed_by, got nil")
+	}
+
+	// Bin must be untouched.
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != bin.PayloadCode {
+		t.Errorf("PayloadCode = %q, want %q (untouched after rejected sync)", got.PayloadCode, bin.PayloadCode)
+	}
+	if got.ClaimedBy == nil || *got.ClaimedBy != realOwner.ID {
+		t.Errorf("ClaimedBy = %v, want %d (real owner preserved)", got.ClaimedBy, realOwner.ID)
+	}
+}
+
+// TestBinManifestService_SyncOrClearForReleased_LockedRejected verifies the
+// locked=false guard. A bin under active fleet handling (locked=true) must
+// not have its manifest mutated mid-flight.
+func TestBinManifestService_SyncOrClearForReleased_LockedRejected(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-LOCK", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+	if _, err := db.Exec("UPDATE bins SET locked=true WHERE id=$1", bin.ID); err != nil {
+		t.Fatalf("lock bin: %v", err)
+	}
+
+	zero := 0
+	err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, "")
+	if err == nil {
+		t.Fatal("expected error when bin is locked, got nil")
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != bin.PayloadCode {
+		t.Errorf("PayloadCode = %q, want %q (untouched on locked bin)", got.PayloadCode, bin.PayloadCode)
+	}
+}
+
+// TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow verifies
+// that the caller's actor identity lands on the audit row, and that an
+// empty actor falls back to "system" for consistency with other bin
+// audits (claimComplexBins, etc.).
+func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	// Named actor (e.g. the operator's station name from called_by)
+	binNamed := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-ACTOR-N", "PART-A", 100)
+	orderNamed := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, binNamed.ID, orderNamed.ID)
+	zero := 0
+	if err := svc.SyncOrClearForReleased(binNamed.ID, orderNamed.ID, &zero, "stephen-station-7"); err != nil {
+		t.Fatalf("SyncOrClearForReleased named actor: %v", err)
+	}
+
+	// Empty actor — should fall back to "system" in the audit row
+	binSystem := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-ACTOR-S", "PART-A", 100)
+	orderSystem := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, binSystem.ID, orderSystem.ID)
+	if err := svc.SyncOrClearForReleased(binSystem.ID, orderSystem.ID, &zero, ""); err != nil {
+		t.Fatalf("SyncOrClearForReleased empty actor: %v", err)
+	}
+
+	// Query audit log for both bins and verify the actor column.
+	rows, err := db.Query(`
+		SELECT entity_id, actor FROM audit_log
+		WHERE entity_type='bin' AND action='released_empty' AND entity_id IN ($1, $2)
+		ORDER BY id`,
+		binNamed.ID, binSystem.ID)
+	if err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	defer rows.Close()
+	seen := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var actor string
+		if err := rows.Scan(&id, &actor); err != nil {
+			t.Fatalf("scan audit_log: %v", err)
+		}
+		seen[id] = actor
+	}
+	if seen[binNamed.ID] != "stephen-station-7" {
+		t.Errorf("named-actor audit: got %q, want %q", seen[binNamed.ID], "stephen-station-7")
+	}
+	if seen[binSystem.ID] != "system" {
+		t.Errorf("empty-actor audit: got %q, want %q (fallback)", seen[binSystem.ID], "system")
+	}
+}
+
+// TestBinManifestService_SyncOrClearForReleased_IdempotentRetry verifies that
+// running the same call twice (e.g. retry after a transient failure on the
+// caller side) leaves the bin in the same end state and does not error on
+// the second call.
+func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-IDEMP", "PART-A", 100)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	partial := 250
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, ""); err != nil {
+		t.Fatalf("first SyncOrClearForReleased: %v", err)
+	}
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, ""); err != nil {
+		t.Fatalf("second SyncOrClearForReleased should succeed (idempotent): %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 250 {
+		t.Errorf("UOPRemaining = %d, want 250 (idempotent retry)", got.UOPRemaining)
+	}
+	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
+		t.Errorf("ClaimedBy = %v, want %d (preserved across retries)", got.ClaimedBy, order.ID)
+	}
+}

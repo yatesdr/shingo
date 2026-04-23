@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/engine"
 	"shingoedge/orders"
 	"shingoedge/store"
 
@@ -473,6 +474,95 @@ func TestApiOrders_ReleaseOrder_WrongStatus(t *testing.T) {
 
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", nil, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
+}
+
+// TestApiOrders_ReleaseOrder_UnknownDispositionFallsBackToNoOp verifies the
+// default branch in buildReleaseDisposition: an unknown disposition string
+// (typo, version drift, future API value) maps to ReleaseDisposition{}
+// (Mode == "") which produces nil remainingUOP — Core leaves the bin's
+// manifest alone. The handler still succeeds; only the disposition is
+// downgraded. CalledBy still flows for audit. Pairs with the log.Printf
+// in buildReleaseDisposition that catches typos.
+func TestApiOrders_ReleaseOrder_UnknownDispositionFallsBackToNoOp(t *testing.T) {
+	h, router := newApiOrdersRouter(t)
+	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+
+	body := map[string]interface{}{
+		"disposition": "send_partial_bak", // deliberate typo
+		"called_by":   "stephen-station-7",
+	}
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", body, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	stub := h.engine.(*stubEngine)
+	if stub.lastReleaseOrderDisposition == nil {
+		t.Fatal("expected ReleaseOrderWithLineside to have been called")
+	}
+	if stub.lastReleaseOrderDisposition.Mode != "" {
+		t.Errorf("disposition Mode: got %q, want empty (unknown mode falls back to no-op)",
+			stub.lastReleaseOrderDisposition.Mode)
+	}
+	if stub.lastReleaseOrderDisposition.CalledBy != "stephen-station-7" {
+		t.Errorf("disposition CalledBy: got %q, want %q (still flows on unknown mode)",
+			stub.lastReleaseOrderDisposition.CalledBy, "stephen-station-7")
+	}
+}
+
+// TestApiOrders_ReleaseOrder_CaptureLinesideDispositionFlows verifies that
+// the explicit capture_lineside disposition from the NOTHING PULLED button
+// or per-part qty submission is correctly mapped to the engine.
+func TestApiOrders_ReleaseOrder_CaptureLinesideDispositionFlows(t *testing.T) {
+	h, router := newApiOrdersRouter(t)
+	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+
+	body := map[string]interface{}{
+		"disposition": "capture_lineside",
+		"qty_by_part": map[string]int{"PART-A": 5},
+		"called_by":   "stephen-station-7",
+	}
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", body, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	stub := h.engine.(*stubEngine)
+	if stub.lastReleaseOrderDisposition == nil {
+		t.Fatal("expected ReleaseOrderWithLineside to have been called")
+	}
+	if stub.lastReleaseOrderDisposition.Mode != engine.DispositionCaptureLineside {
+		t.Errorf("disposition Mode: got %q, want %q",
+			stub.lastReleaseOrderDisposition.Mode, engine.DispositionCaptureLineside)
+	}
+	if got := stub.lastReleaseOrderDisposition.LinesideCapture["PART-A"]; got != 5 {
+		t.Errorf("LinesideCapture[PART-A]: got %d, want 5", got)
+	}
+}
+
+// TestApiOrders_ReleaseOrder_SendPartialBackDispositionFlows verifies the
+// SEND PARTIAL BACK button's submission path: disposition arrives at the
+// engine, qty_by_part is dropped (no capture for partial-back), CalledBy
+// flows through.
+func TestApiOrders_ReleaseOrder_SendPartialBackDispositionFlows(t *testing.T) {
+	h, router := newApiOrdersRouter(t)
+	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+
+	body := map[string]interface{}{
+		"disposition": "send_partial_back",
+		"called_by":   "stephen-station-7",
+	}
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", body, nil)
+	assertStatus(t, resp, http.StatusOK)
+
+	stub := h.engine.(*stubEngine)
+	if stub.lastReleaseOrderDisposition == nil {
+		t.Fatal("expected ReleaseOrderWithLineside to have been called")
+	}
+	if stub.lastReleaseOrderDisposition.Mode != engine.DispositionSendPartialBack {
+		t.Errorf("disposition Mode: got %q, want %q",
+			stub.lastReleaseOrderDisposition.Mode, engine.DispositionSendPartialBack)
+	}
+	if len(stub.lastReleaseOrderDisposition.LinesideCapture) != 0 {
+		t.Errorf("LinesideCapture should be empty on send_partial_back; got %v",
+			stub.lastReleaseOrderDisposition.LinesideCapture)
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════

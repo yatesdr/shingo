@@ -73,6 +73,14 @@ type stubEngine struct {
 	cfgPath  string
 	core     map[string]protocol.NodeInfo
 	orderMgr *orders.Manager
+
+	// Spy fields — populated by stub methods so handler tests can assert on
+	// the values that flowed through. Add new fields here as needed; keep
+	// them named after the method that writes to them so the assertion
+	// site is easy to find.
+	lastReleaseChangeoverWaitCalledBy string
+	lastReleaseOrderDisposition       *engine.ReleaseDisposition
+	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
 }
 
 func (s *stubEngine) AppConfig() *config.Config        { return s.cfg }
@@ -105,10 +113,16 @@ func (s *stubEngine) ReleaseNodePartial(int64, int64) (*store.Order, error)     
 // engine/operator_release_test.go, not the www handler tests. Pass nil
 // remainingUOP since the stub doesn't model the disposition/manifest
 // late-binding (Core-side concern).
-func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, _ engine.ReleaseDisposition) error {
-	return s.orderMgr.ReleaseOrder(orderID, nil)
+func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error {
+	d := disp
+	s.lastReleaseOrderDisposition = &d
+	return s.orderMgr.ReleaseOrder(orderID, nil, "")
 }
-func (s *stubEngine) ReleaseStagedOrders(int64, engine.ReleaseDisposition) error       { return nil }
+func (s *stubEngine) ReleaseStagedOrders(_ int64, disp engine.ReleaseDisposition) error {
+	d := disp
+	s.lastReleaseStagedOrdersDisposition = &d
+	return nil
+}
 func (s *stubEngine) ConfirmNodeManifest(int64) error                                  { return nil }
 func (s *stubEngine) FinalizeProduceNode(int64) (*engine.NodeOrderResult, error)        { return nil, nil }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
@@ -119,7 +133,10 @@ func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*stor
 func (s *stubEngine) CompleteProcessProductionCutover(int64) error                      { return nil }
 func (s *stubEngine) CancelProcessChangeover(int64) error                               { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error               { return nil }
-func (s *stubEngine) ReleaseChangeoverWait(int64, string) error                         { return nil }
+func (s *stubEngine) ReleaseChangeoverWait(_ int64, calledBy string) error {
+	s.lastReleaseChangeoverWaitCalledBy = calledBy
+	return nil
+}
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*store.Order, error)     { return nil, nil }
 func (s *stubEngine) EmptyNodeForToolChange(int64, int64, int64) (*store.Order, error)   { return nil, nil }
 func (s *stubEngine) ReleaseNodeIntoProduction(int64, int64) (*store.Order, error)       { return nil, nil }

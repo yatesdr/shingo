@@ -165,9 +165,15 @@ type ComplexOrderRequest struct {
 //
 // Routing on Core mirrors ClaimForDispatch but operates on the already-claimed
 // bin via BinManifestService.SyncOrClearForReleased. See docs on that method.
+//
+// CalledBy carries the operator identity (station name, badge id, etc.) from
+// the HTTP body all the way through to Core's bin audit. Empty when the
+// caller is a system-internal path (wiring completion fallbacks, restore,
+// etc.); Core defaults to "system" in that case.
 type OrderRelease struct {
 	OrderUUID    string `json:"order_uuid"`
 	RemainingUOP *int   `json:"remaining_uop,omitempty"`
+	CalledBy     string `json:"called_by,omitempty"`
 }
 
 // OrderStaged notifies edge that an order is dwelling at a staging node.

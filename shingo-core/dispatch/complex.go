@@ -158,9 +158,10 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	// p.RemainingUOP carries the operator's intent: nil = no manifest change
 	// (legacy/Order-A path), 0 = bin empty (NOTHING PULLED), >0 = partial
 	// (SEND PARTIAL BACK). Must run before backend.ReleaseOrder so the fleet
-	// doesn't proceed against an inconsistent manifest.
+	// doesn't proceed against an inconsistent manifest. p.CalledBy carries
+	// the operator identity through to the bin audit row.
 	if p.RemainingUOP != nil && order.BinID != nil {
-		if err := d.binManifest.SyncOrClearForReleased(*order.BinID, order.ID, p.RemainingUOP); err != nil {
+		if err := d.binManifest.SyncOrClearForReleased(*order.BinID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
 			log.Printf("dispatch: manifest sync on release for order %d: %v", order.ID, err)
 			d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 			return

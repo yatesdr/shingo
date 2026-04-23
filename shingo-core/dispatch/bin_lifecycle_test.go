@@ -284,3 +284,153 @@ func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
 		t.Error("staging bin should be claimed")
 	}
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// HandleOrderRelease + RemainingUOP integration tests.
+//
+// These tests stage a complex order with a wait step (so it lands in
+// StatusStaged with the line bin claimed by claimComplexBins), then call
+// HandleOrderRelease with various RemainingUOP values to assert the
+// late-binding manifest sync runs correctly before the fleet release.
+//
+// Maps to BinManifestService.SyncOrClearForReleased's three branches plus
+// the "wrong owner" failure surface (operator clicks release on an order
+// whose bin has been reassigned to someone else).
+// ──────────────────────────────────────────────────────────────────────────
+
+// stageComplexOrderWithLineBin sets up a complex order whose first non-wait
+// pickup is at the line node, dispatches it through HandleComplexOrderRequest
+// (which claims the line bin), then forces the order into StatusStaged so
+// HandleOrderRelease will accept it.
+func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lineNode *store.Node, bp *store.Payload, orderUUID, binLabel string) (*store.Order, *store.Bin) {
+	t.Helper()
+
+	// Filled bin at the line (outgoing partial/empty after consumption).
+	bin := &store.Bin{BinTypeID: 1, Label: binLabel, NodeID: &lineNode.ID, Status: "staged"}
+	if err := db.CreateBin(bin); err != nil {
+		t.Fatalf("create bin %s: %v", binLabel, err)
+	}
+	if err := db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":100}]}`, bp.Code, 100); err != nil {
+		t.Fatalf("set manifest %s: %v", binLabel, err)
+	}
+	if err := db.ConfirmBinManifest(bin.ID, ""); err != nil {
+		t.Fatalf("confirm manifest %s: %v", binLabel, err)
+	}
+
+	env := testEnvelope()
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   orderUUID,
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "wait", Node: lineNode.Name},
+			{Action: "pickup", Node: lineNode.Name},
+			{Action: "dropoff", Node: "RELEASE-DEST"},
+		},
+		// nil at creation — release path is what we're testing.
+	})
+
+	order, err := db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.BinID == nil {
+		t.Fatalf("expected order.BinID to be set by claimComplexBins; got nil")
+	}
+	if *order.BinID != bin.ID {
+		t.Fatalf("expected order to claim bin %d, got %d", bin.ID, *order.BinID)
+	}
+
+	// Force StatusStaged so HandleOrderRelease accepts the release.
+	if err := db.UpdateOrderStatus(order.ID, StatusStaged, "test: simulate robot waiting"); err != nil {
+		t.Fatalf("set order staged: %v", err)
+	}
+	order, _ = db.GetOrderByUUID(orderUUID)
+	return order, bin
+}
+
+func TestHandleOrderRelease_RemainingUOPZeroClearsManifest(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	_, bin := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-rel-zero", "BIN-REL-ZERO")
+
+	// NOTHING PULLED disposition → remaining_uop=0 → manifest cleared.
+	zero := 0
+	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
+		OrderUUID:    "uuid-rel-zero",
+		RemainingUOP: &zero,
+	})
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty (cleared on release)", got.PayloadCode)
+	}
+	if got.UOPRemaining != 0 {
+		t.Errorf("UOPRemaining = %d, want 0", got.UOPRemaining)
+	}
+	if got.ManifestConfirmed {
+		t.Error("ManifestConfirmed should be false after release-clear")
+	}
+	// Claim must remain — release does not unclaim.
+	if got.ClaimedBy == nil {
+		t.Error("ClaimedBy should be preserved after release-clear")
+	}
+}
+
+func TestHandleOrderRelease_RemainingUOPPositiveSyncsUOP(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	_, bin := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-rel-pos", "BIN-REL-POS")
+
+	// SEND PARTIAL BACK disposition → remaining_uop=positive → UOP synced,
+	// manifest preserved.
+	partial := 800
+	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
+		OrderUUID:    "uuid-rel-pos",
+		RemainingUOP: &partial,
+	})
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 800 {
+		t.Errorf("UOPRemaining = %d, want 800 (synced from release)", got.UOPRemaining)
+	}
+	if got.PayloadCode != bp.Code {
+		t.Errorf("PayloadCode = %q, want %q (preserved)", got.PayloadCode, bp.Code)
+	}
+	if got.Manifest == nil {
+		t.Error("Manifest should be preserved on partial-back release")
+	}
+}
+
+func TestHandleOrderRelease_RemainingUOPNilLeavesManifestAlone(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	_, bin := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-rel-nil", "BIN-REL-NIL")
+
+	before, _ := db.GetBin(bin.ID)
+
+	// Legacy / Order-A path: nil remaining_uop → no manifest action.
+	// Preserves pre-Phase-8 behavior: release dispatches without touching
+	// the bin's manifest.
+	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
+		OrderUUID: "uuid-rel-nil",
+		// RemainingUOP omitted (nil)
+	})
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != before.PayloadCode {
+		t.Errorf("PayloadCode = %q, want %q (untouched on nil release)", got.PayloadCode, before.PayloadCode)
+	}
+	if got.UOPRemaining != before.UOPRemaining {
+		t.Errorf("UOPRemaining = %d, want %d (untouched on nil release)", got.UOPRemaining, before.UOPRemaining)
+	}
+}

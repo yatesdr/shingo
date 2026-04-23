@@ -302,7 +302,12 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 // &0 to mark the bin empty (NOTHING PULLED disposition). Pass &N (N>0) to
 // preserve the manifest with a synced count (SEND PARTIAL BACK disposition).
 // See protocol.OrderRelease and BinManifestService.SyncOrClearForReleased.
-func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int) error {
+//
+// calledBy carries the operator identity through to Core's bin audit so the
+// "who released this bin" question is answerable from Core's audit_log
+// table. Empty for system/internal paths (wiring fallbacks, restore); Core
+// substitutes "system" in that case.
+func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string) error {
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -314,6 +319,7 @@ func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int) error {
 	if err := m.sender.Queue(protocol.TypeOrderRelease, &protocol.OrderRelease{
 		OrderUUID:    order.UUID,
 		RemainingUOP: remainingUOP,
+		CalledBy:     calledBy,
 	}); err != nil {
 		return fmt.Errorf("enqueue release: %w", err)
 	}
@@ -325,11 +331,10 @@ func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int) error {
 		return fmt.Errorf("transition to in_transit: %w", err)
 	}
 
-	if remainingUOP != nil {
-		m.DebugLog.Log("release: id=%d uuid=%s remaining_uop=%d", orderID, order.UUID, *remainingUOP)
-	} else {
-		m.DebugLog.Log("release: id=%d uuid=%s", orderID, order.UUID)
-	}
+	// Single log shape regardless of nil-ness — keeps log-parsing tools
+	// from having to handle two different formats for the same event.
+	// Nil prints as "<nil>" via %v.
+	m.DebugLog.Log("release: id=%d uuid=%s remaining_uop=%v called_by=%q", orderID, order.UUID, remainingUOP, calledBy)
 	return nil
 }
 
@@ -537,4 +542,27 @@ func (m *Manager) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot)
 func (m *Manager) forceTransitionOrder(orderID int64, newStatus, detail string) error {
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ForceTransition(orderID, newStatus, detail)
+}
+
+// RollbackForRetry force-transitions an order back to StatusStaged with a
+// friendly detail message. Used for recoverable Core errors (e.g.
+// manifest_sync_failed) where the operator can simply click release again
+// instead of having to recreate the whole order.
+//
+// Why force-transition: the order may currently be in StatusInTransit (the
+// release click already ran on Edge) or any non-terminal state, so the
+// regular Transition rules don't apply. The caller has already validated
+// that the rollback is appropriate (typically by inspecting an OrderError
+// code from Core).
+//
+// The friendly detail string is what the operator UI surfaces as the
+// "release error" chip on the node — see StationNodeView.LastReleaseError
+// and the rendering in operator-station/operator.js.
+func (m *Manager) RollbackForRetry(orderUUID, detail string) error {
+	order, err := m.db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		return fmt.Errorf("get order %s: %w", orderUUID, err)
+	}
+	m.lifecycle.debug = m.DebugLog
+	return m.lifecycle.ForceTransition(order.ID, StatusStaged, detail)
 }

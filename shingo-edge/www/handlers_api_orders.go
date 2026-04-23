@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -328,6 +329,13 @@ func buildReleaseDisposition(mode string, qtyByPart map[string]int, calledBy str
 	default:
 		// Empty or unknown disposition — preserve legacy "no manifest action"
 		// behavior. CalledBy still flows through for the audit trail.
+		// Catch typos and client/server enum drift: an explicit non-empty
+		// value that isn't recognised is logged so the failure is visible
+		// rather than silent. Empty mode (legitimate legacy clients posting
+		// bare bodies) is not logged.
+		if mode != "" {
+			log.Printf("apiReleaseOrder: unknown disposition %q from client, treating as no manifest action", mode)
+		}
 		return engine.ReleaseDisposition{CalledBy: calledBy}
 	}
 }

@@ -246,6 +246,21 @@ func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.O
 func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.OrderError) {
 	h.DebugLog.Log("order_error uuid=%s code=%s", p.OrderUUID, p.ErrorCode)
 	log.Printf("edge_handler: order error: uuid=%s code=%s detail=%s", p.OrderUUID, p.ErrorCode, p.Detail)
+
+	// Recoverable error: Core couldn't sync the bin manifest at release time
+	// (claim mismatch, locked bin, transient DB issue). The bin is still in
+	// the same physical state; the operator can fix the underlying issue
+	// and click release again. Roll the order back to StatusStaged with a
+	// friendly detail so it reappears in the active order list with a
+	// "release error" chip rather than disappearing into the failed pile.
+	if p.ErrorCode == "manifest_sync_failed" {
+		detail := "Manifest sync failed at Core: " + p.Detail + ". Click release to retry."
+		if err := h.orderMgr.RollbackForRetry(p.OrderUUID, detail); err != nil {
+			log.Printf("edge_handler: rollback for retry %s: %v", p.OrderUUID, err)
+		}
+		return
+	}
+
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, orders.ReplyError, "", "", p.Detail); err != nil {
 		log.Printf("edge_handler: handle error for %s: %v", p.OrderUUID, err)
 	}

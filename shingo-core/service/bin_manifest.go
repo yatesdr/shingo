@@ -135,15 +135,23 @@ func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP
 //   - *remainingUOP == 0: clear manifest, keep claim (e.g. NOTHING PULLED disposition)
 //   - *remainingUOP > 0: sync UOP, keep manifest + claim (e.g. SEND PARTIAL BACK)
 //
+// actor is the operator identity for the audit row (typically the station
+// name from the HTTP request body's called_by field). Empty falls back to
+// "system" so internal callers (wiring fallbacks, etc.) get a consistent
+// audit shape with the rest of the codebase.
+//
 // SQL guards: WHERE id=$ AND claimed_by=$ AND locked=false. The claimed_by
 // guard prevents a stale release from stomping a bin that has been reassigned
 // to a different order. The locked guard mirrors ClearAndClaim/SyncUOPAndClaim.
 //
 // Idempotent: re-running with the same arguments produces the same row state,
 // so retries after a failed fleet release are safe.
-func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remainingUOP *int) error {
+func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remainingUOP *int, actor string) error {
 	if remainingUOP == nil {
 		return nil
+	}
+	if actor == "" {
+		actor = "system"
 	}
 	if *remainingUOP == 0 {
 		// Clear manifest, preserve claim
@@ -162,8 +170,15 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 			return fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
 		}
 		s.db.AppendAudit("bin", binID, "released_empty",
-			"", fmt.Sprintf("order=%d", orderID), "system")
+			"", fmt.Sprintf("order=%d", orderID), actor)
 		return nil
+	}
+	// Defense in depth: Edge's computeReleaseRemainingUOP guards against
+	// non-positive values reaching this branch, but a direct Core caller
+	// (test, automation, future bypass) could still hand us a negative
+	// pointer. Reject loudly rather than corrupt the bin row.
+	if *remainingUOP < 0 {
+		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
 	}
 	// Positive: sync UOP, preserve manifest + claim
 	res, err := s.db.Exec(`
@@ -179,7 +194,7 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 		return fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
 	}
 	s.db.AppendAudit("bin", binID, "released_partial",
-		"", fmt.Sprintf("uop=%d order=%d", *remainingUOP, orderID), "system")
+		"", fmt.Sprintf("uop=%d order=%d", *remainingUOP, orderID), actor)
 	return nil
 }
 

@@ -32,6 +32,13 @@ type StationNodeView struct {
 	// pulled to lineside under a prior style and haven't been drained or
 	// recalled yet. Rendered as stacked chips that open a detail modal.
 	LinesideInactive []LinesideBucket `json:"lineside_inactive,omitempty"`
+	// LastReleaseError is set when one of the runtime's tracked orders has
+	// been rolled back to StatusStaged after a Core-side release failure
+	// (e.g. manifest_sync_failed). The operator UI surfaces this as a chip
+	// on the node card with the detail string so the operator knows why
+	// their release didn't take and can click release again to retry.
+	// Empty when no recent release error is pending.
+	LastReleaseError string `json:"last_release_error,omitempty"`
 }
 
 type OperatorStationView struct {
@@ -109,9 +116,64 @@ func (db *DB) BuildOperatorStationView(stationID int64) (*OperatorStationView, e
 		// just means the node has nothing pulled to lineside yet.
 		nodeView.LinesideActive, _ = db.ListActiveLinesideBuckets(node.ID)
 		nodeView.LinesideInactive, _ = db.ListInactiveLinesideBuckets(node.ID)
+		// Surface any pending release-time error that's been rolled back to
+		// Staged for the operator to retry. Inspect the most recent history
+		// row of each tracked order; if it's a manifest_sync_failed
+		// rollback (detail prefix matches), expose the detail.
+		nodeView.LastReleaseError = lookupLastReleaseError(db, runtime)
 		view.Nodes = append(view.Nodes, nodeView)
 	}
 	return view, nil
+}
+
+// releaseErrorPrefix is the leading substring written by
+// orders.Manager.RollbackForRetry into the order_history detail when a
+// manifest_sync_failed rollback occurs. The operator UI keys off this
+// prefix to render the release-error chip.
+const releaseErrorPrefix = "Manifest sync failed at Core"
+
+// lookupLastReleaseError returns the rollback detail for the runtime's
+// tracked orders if either of them has a recent manifest_sync_failed
+// rollback in its history. Returns the most recent matching detail, or
+// empty string if no error is pending.
+//
+// We check both ActiveOrderID and StagedOrderID because the rollback can
+// land on either depending on which order was being released. The history
+// query is cheap (indexed on order_id) and best-effort — any failure to
+// read history just leaves the chip absent rather than blocking the view.
+func lookupLastReleaseError(db *DB, runtime *ProcessNodeRuntimeState) string {
+	if runtime == nil {
+		return ""
+	}
+	var detail string
+	for _, oid := range []*int64{runtime.ActiveOrderID, runtime.StagedOrderID} {
+		if oid == nil {
+			continue
+		}
+		hist, err := db.ListOrderHistory(*oid)
+		if err != nil || len(hist) == 0 {
+			continue
+		}
+		// Most recent first. ListOrderHistory returns oldest-first, so walk
+		// from the end.
+		for i := len(hist) - 1; i >= 0; i-- {
+			d := hist[i].Detail
+			if d == "" {
+				continue
+			}
+			if len(d) >= len(releaseErrorPrefix) && d[:len(releaseErrorPrefix)] == releaseErrorPrefix {
+				detail = d
+				break
+			}
+			// Stop scanning once we hit a non-error transition — the rollback
+			// is the most recent thing or it isn't pending.
+			break
+		}
+		if detail != "" {
+			return detail
+		}
+	}
+	return ""
 }
 
 // computeSwapReady returns true only when a two-robot swap has both tracked

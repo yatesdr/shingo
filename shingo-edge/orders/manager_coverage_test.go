@@ -852,7 +852,7 @@ func TestReleaseOrder_HappyPath(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, StatusInTransit)
 	_ = db.UpdateOrderStatus(oid, StatusStaged)
 
-	if err := mgr.ReleaseOrder(oid, nil); err != nil {
+	if err := mgr.ReleaseOrder(oid, nil, ""); err != nil {
 		t.Fatalf("ReleaseOrder: %v", err)
 	}
 	o, _ := db.GetOrder(oid)
@@ -867,6 +867,31 @@ func TestReleaseOrder_HappyPath(t *testing.T) {
 	}
 	if rel.RemainingUOP != nil {
 		t.Errorf("OrderRelease.RemainingUOP: got %v, want nil (plain ReleaseOrder call)", rel.RemainingUOP)
+	}
+	if rel.CalledBy != "" {
+		t.Errorf("OrderRelease.CalledBy: got %q, want empty (system caller)", rel.CalledBy)
+	}
+}
+
+// TestReleaseOrder_ThreadsCalledBy verifies that calledBy lands on the
+// envelope so Core's bin audit can record operator identity instead of
+// always writing actor=system.
+func TestReleaseOrder_ThreadsCalledBy(t *testing.T) {
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	oid, _ := db.CreateOrder("uuid-cb", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+	_ = db.UpdateOrderStatus(oid, StatusSubmitted)
+	_ = db.UpdateOrderStatus(oid, StatusInTransit)
+	_ = db.UpdateOrderStatus(oid, StatusStaged)
+
+	if err := mgr.ReleaseOrder(oid, nil, "stephen-station-7"); err != nil {
+		t.Fatalf("ReleaseOrder: %v", err)
+	}
+	var rel protocol.OrderRelease
+	decodeOnlyOutboxPayload(t, db, protocol.TypeOrderRelease, &rel)
+	if rel.CalledBy != "stephen-station-7" {
+		t.Errorf("OrderRelease.CalledBy: got %q, want %q", rel.CalledBy, "stephen-station-7")
 	}
 }
 
@@ -893,7 +918,7 @@ func TestReleaseOrder_ThreadsRemainingUOP(t *testing.T) {
 			_ = db.UpdateOrderStatus(oid, StatusInTransit)
 			_ = db.UpdateOrderStatus(oid, StatusStaged)
 
-			if err := mgr.ReleaseOrder(oid, tc.uop); err != nil {
+			if err := mgr.ReleaseOrder(oid, tc.uop, ""); err != nil {
 				t.Fatalf("ReleaseOrder: %v", err)
 			}
 			var rel protocol.OrderRelease
@@ -917,7 +942,7 @@ func TestReleaseOrder_RejectsNonStaged(t *testing.T) {
 	oid, _ := db.CreateOrder("uuid-rns", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
 	_ = db.UpdateOrderStatus(oid, StatusSubmitted)
 
-	err := mgr.ReleaseOrder(oid, nil)
+	err := mgr.ReleaseOrder(oid, nil, "")
 	if err == nil {
 		t.Fatal("expected error releasing non-staged order")
 	}
@@ -930,7 +955,7 @@ func TestReleaseOrder_MissingOrder(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	err := mgr.ReleaseOrder(99999, nil)
+	err := mgr.ReleaseOrder(99999, nil, "")
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}

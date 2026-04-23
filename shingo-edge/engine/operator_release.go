@@ -107,7 +107,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// the lineside path entirely. No disposition mapping — Core gets
 	// nil remaining_uop and leaves the bin alone (legacy behavior).
 	if order.ProcessNodeID == nil {
-		return e.orderMgr.ReleaseOrder(orderID, nil)
+		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 
 	node, err := e.db.GetProcessNode(*order.ProcessNodeID)
@@ -126,20 +126,45 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		// No claim to reset against — still want the release to go out.
 		// Skip the disposition mapping; this covers config drift / ingest-only
 		// nodes where Core has no opinion on the bin manifest anyway.
-		return e.orderMgr.ReleaseOrder(orderID, nil)
+		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 
 	// Produce nodes don't use lineside buckets — skip capture, skip UOP
 	// reset (produce resets on ingest completion, not release). Pass
 	// nil remaining_uop so Core leaves the produce bin's manifest alone.
 	if toClaim.Role == "produce" {
-		return e.orderMgr.ReleaseOrder(orderID, nil)
+		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 
-	// Compute remaining_uop from the disposition. Capture the runtime UOP
-	// BEFORE the SetProcessNodeRuntime reset below — otherwise the reset
-	// would clobber the operator's intent.
-	remainingUOP := computeReleaseRemainingUOP(disp, runtime)
+	// Compute the manifest-sync UOP from the disposition. Capture the
+	// runtime UOP BEFORE the SetProcessNodeRuntime reset below — otherwise
+	// the reset would clobber the operator's intent. Renamed from
+	// `remainingUOP` to disambiguate from Manager.ReleaseOrder's parameter
+	// of the same name; both flow to the same envelope field but live in
+	// different scopes.
+	manifestUOP := computeReleaseRemainingUOP(disp, runtime)
+
+	// Two-robot supply-bin protection. The per-order release path
+	// (apiReleaseOrder, /api/orders/{id}/release) doesn't know whether the
+	// order being released is the supply (Order A) or the evac (Order B),
+	// so it forwards the operator's chosen disposition either way. If the
+	// UI fell through to per-order RELEASE prompts on a two-robot setup
+	// (claim-lookup race, swap_ready false), the operator may click
+	// NOTHING PULLED on Order A — which would normally clear Order A's
+	// bin manifest. But Order A's bin is the freshly-loaded supply bin
+	// from the supermarket, and clearing its manifest right before
+	// delivery destroys the payload data the line is about to need.
+	//
+	// Override manifestUOP to nil for the supply order so Core leaves its
+	// bin alone regardless of what the operator clicked. The consolidated
+	// ReleaseStagedOrders path already does this by passing
+	// ReleaseDisposition{} for Order A — this guard is the safety net
+	// when the per-order path runs instead.
+	if manifestUOP != nil && e.isSupplyOrderInActiveTwoRobotSwap(node.ID, orderID) {
+		log.Printf("release: order %d is the supply order in a two-robot swap on node %s — skipping manifest sync to protect supply bin",
+			orderID, node.Name)
+		manifestUOP = nil
+	}
 
 	// Capture lineside buckets (conditional on disposition) and always
 	// deactivate other styles on this node.
@@ -157,7 +182,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		}
 	}
 
-	return e.orderMgr.ReleaseOrder(orderID, remainingUOP)
+	return e.orderMgr.ReleaseOrder(orderID, manifestUOP, disp.CalledBy)
 }
 
 // computeReleaseRemainingUOP turns the operator's declared disposition into
@@ -190,6 +215,47 @@ func computeReleaseRemainingUOP(disp ReleaseDisposition, runtime *store.ProcessN
 		// "" / unknown mode → backward-compat: no manifest action.
 		return nil
 	}
+}
+
+// isSupplyOrderInActiveTwoRobotSwap reports whether the given order is the
+// supply order (Order A) in a currently-staged two-robot swap on the given
+// node. Used by ReleaseOrderWithLineside to suppress the manifest sync for
+// Order A — the supply bin coming from the supermarket should never have
+// its manifest cleared at release time, only the evac bin (Order B) at the
+// line should.
+//
+// Identification: in a two-robot swap, the runtime tracks both order IDs
+// via UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, &orderB.ID). The
+// first slot (ActiveOrderID) is Order A (supply); the second
+// (StagedOrderID) is Order B (evac). The claim's SwapMode must be
+// "two_robot". All three signals must be present — we don't want this
+// guard firing on non-two-robot orders that happen to share a node ID.
+//
+// Returns false on any DB read error (defensive — better to allow the
+// release than block it on a transient lookup failure).
+func (e *Engine) isSupplyOrderInActiveTwoRobotSwap(nodeID, orderID int64) bool {
+	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
+	if err != nil || runtime == nil {
+		return false
+	}
+	if runtime.ActiveOrderID == nil || runtime.StagedOrderID == nil {
+		return false
+	}
+	if *runtime.ActiveOrderID != orderID {
+		// The order being released isn't the supply slot — either it's
+		// the evac order (Order B in StagedOrderID) or an unrelated order
+		// that just shares the node. Manifest sync is fine for the evac
+		// order; that's the path designed to clear the line bin.
+		return false
+	}
+	if runtime.ActiveClaimID == nil {
+		return false
+	}
+	claim, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID)
+	if err != nil || claim == nil {
+		return false
+	}
+	return claim.SwapMode == "two_robot"
 }
 
 // resolveReleaseClaim returns the claim whose capacity the release

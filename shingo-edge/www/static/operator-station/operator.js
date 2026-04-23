@@ -636,6 +636,23 @@ function renderModal(entry) {
     }
     html += '</div>'; // close header
 
+    // Release-error chip: surfaces a Core-side recoverable failure (currently
+    // only manifest_sync_failed) that has rolled the order back to Staged
+    // for retry. The detail string includes the original Core error and an
+    // explicit "Click release to retry" instruction. The retry IS the
+    // existing release button below — no separate action needed because the
+    // order is back in StatusStaged. Chip clears automatically once the
+    // operator's next release succeeds (history grows past the rollback row,
+    // releaseErrorPrefix no longer matches the most-recent transition).
+    if (entry.last_release_error) {
+        html += '<div class="os-release-error-chip" style="' +
+            'margin:8px 0;padding:10px 14px;border-radius:6px;' +
+            'background:#3a1f1a;color:#ffb3a8;border:1px solid #6a3028;' +
+            'font-size:13px;line-height:1.4">' +
+            '<strong>Release error:</strong> ' + esc(entry.last_release_error) +
+            '</div>';
+    }
+
     // Actions — state machine: only show the next step in the cycle.
     // Consume cycle: IDLE → REQUEST MATERIAL → (robot stages) → RELEASE → (robot drops) → CONFIRM
     // Produce cycle: same but FINALIZE instead of REQUEST MATERIAL when node has parts.
@@ -757,15 +774,33 @@ function renderModal(entry) {
             const orders = entry.orders || [];
             const active = orders.filter(o => o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
             const staged = active.find(o => o.status === 'staged');
+            const stagedCount = active.filter(o => o.status === 'staged').length;
             const delivered = active.find(o => o.status === 'delivered');
             const inFlight = active.find(o => !staged && !delivered);
 
-            if (entry.swap_ready) {
+            // Two-robot detection: trust the claim's swap_mode when present,
+            // BUT also infer two-robot from "two staged orders on this node"
+            // when the active claim lookup returns null. Without this fallback
+            // the per-order RELEASE branch below would fire twice (once per
+            // staged order) on a real two-robot setup whose active_claim
+            // didn't resolve in the view response (claim configured on a
+            // different style, CoreNodeName mismatch, etc). The server's
+            // ReleaseStagedOrders validates the swap_mode regardless — this
+            // is just a UI gate.
+            const claimedTwoRobot = !!(claim && claim.swap_mode === 'two_robot');
+            const inferredTwoRobot = stagedCount >= 2;
+            const twoRobotSetup = claimedTwoRobot || inferredTwoRobot;
+
+            if (entry.swap_ready || (twoRobotSetup && stagedCount >= 2)) {
                 // Two-robot swap: both robots are holding at their wait
-                // points. One click releases both in B-then-A order.
+                // points. One click releases both in B-then-A order. The
+                // server-computed swap_ready is the primary signal; the
+                // inferred-from-staged-count fallback handles the case where
+                // active_claim lookup failed in the view (so swap_ready is
+                // false even though both robots are actually staged).
                 html += actionBtn('RELEASE', 'request', true,
                     'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged');
-            } else if (staged && claim && claim.swap_mode === 'two_robot') {
+            } else if (staged && twoRobotSetup) {
                 // Two-robot swap, only one robot has arrived so far — hold
                 // the release until both are staged so a single click can
                 // move the whole swap forward.
@@ -1197,6 +1232,13 @@ function renderReleasePromptStep1() {
     // exposes the snapshot count so the operator can see what's being
     // sent — note this is "what's left at this moment," and any further
     // consumption between click and robot pickup isn't tracked.
+    //
+    // remaining_uop != null guard: covers both "field absent" and the
+    // explicit JSON-null case (server sometimes serialises an unset value
+    // as null rather than omitting it). null != null is false in JS, so
+    // both shapes fall through to the `: 0` branch and the SEND PARTIAL
+    // BACK button stays disabled — which is the right behaviour when we
+    // don't trust the runtime value.
     const rt = state.entry && state.entry.runtime;
     const claim = state.entry && (state.entry.active_claim || state.entry.target_claim);
     const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
@@ -1208,9 +1250,11 @@ function renderReleasePromptStep1() {
     html += '<button type="button" class="os-action-btn empty-tools" data-action="release-submit">NOTHING PULLED</button>';
     html += '<button type="button" class="os-action-btn"' +
         (canSendPartial ? '' : ' disabled') +
-        ' data-action="release-submit-partial" title="Return the partial bin to the supermarket without capturing leftovers as lineside inventory">' +
+        ' data-action="release-submit-partial" title="Return the partial bin to the supermarket without capturing leftovers as lineside inventory. Count is captured at this moment — any further consumption before the robot picks the bin up is not tracked.">' +
         'SEND PARTIAL BACK' +
-        (capacityUOP > 0 ? ' (' + remainingUOP + ' / ' + capacityUOP + ')' : ' (' + remainingUOP + ')') +
+        (capacityUOP > 0
+            ? ' (' + remainingUOP + ' of ' + capacityUOP + ' — at this moment)'
+            : ' (' + remainingUOP + ' — at this moment)') +
         '</button>';
     const hasPicks = Object.keys(state.selected).length > 0;
     html += '<button type="button" class="os-action-btn request"' +

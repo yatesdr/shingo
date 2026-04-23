@@ -2,6 +2,7 @@ package engine
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 
@@ -446,6 +447,13 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, calledBy string) error {
 		Mode:     DispositionCaptureLineside,
 		CalledBy: calledBy,
 	}
+	// Collect per-task failures rather than swallowing them. Pre-fix
+	// behaviour was log-and-continue + return nil, which silently recreated
+	// the original ALN_001 incident on partial failure: one node's manifest
+	// stays stale, the operator gets a 200 OK, and the bin loader can't
+	// move that bin. Returning errors.Join ensures the handler surfaces
+	// the failed node names instead of lying about success.
+	var failures []error
 	for _, task := range tasks {
 		if task.Situation == "unchanged" {
 			continue
@@ -455,15 +463,19 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, calledBy string) error {
 		}
 		order, err := e.db.GetOrder(*task.OldMaterialReleaseOrderID)
 		if err != nil {
+			// Couldn't even read the order — log + collect for the rollup.
+			log.Printf("release changeover wait node %s: get order: %v", task.NodeName, err)
+			failures = append(failures, fmt.Errorf("node %s: get order: %w", task.NodeName, err))
 			continue
 		}
 		if order.Status == orders.StatusStaged {
 			if err := e.ReleaseOrderWithLineside(order.ID, disp); err != nil {
 				log.Printf("release changeover wait node %s: %v", task.NodeName, err)
+				failures = append(failures, fmt.Errorf("node %s: %w", task.NodeName, err))
 			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
