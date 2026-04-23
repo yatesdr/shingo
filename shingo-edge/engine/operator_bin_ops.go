@@ -48,7 +48,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
-	// Server-side demand guard: require an active order matching this payload.
+	// Server-side demand guard: require an active order at this node.
 	// Prevents API bypass of the HMI demand check that protects storage capacity.
 	activeOrders, err := e.db.ListActiveOrdersByProcessNode(nodeID)
 	if err != nil {
@@ -57,20 +57,22 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	if len(activeOrders) == 0 {
 		return fmt.Errorf("no active demand at node %s — cannot load without a pending order", node.Name)
 	}
-	// Per-payload demand check: if orders carry payload_code, verify a match.
-	hasPayloadMatch := false
-	hasLegacy := false
+	// Quick fix for multi-payload starvation (see investigation-r2.md):
+	// the per-payload demand check used to require an active order tagged
+	// with the chosen payload, which serialized loading at multi-payload
+	// manual_swap nodes — only the first-in-list payload could be loaded
+	// even when the operator wanted the other one. Any active order at
+	// this node now satisfies demand; the operator's payloadCode argument
+	// (validated against the claim's allowed list above) is the source of
+	// truth for what was actually loaded. Core records the operator's
+	// choice via the LoadBin call below; the order log retains its
+	// original payload tag (audit-trail compromise documented in r2).
+	// Full fix (decoupled empty-bin transport, two-board UI) supersedes
+	// this in the planned redesign.
 	for _, o := range activeOrders {
-		if o.PayloadCode == payloadCode {
-			hasPayloadMatch = true
-			break
+		if o.PayloadCode != "" && o.PayloadCode != payloadCode {
+			log.Printf("bin_ops: load at node %s rebound from order payload %q to operator choice %q (order %d)", node.Name, o.PayloadCode, payloadCode, o.ID)
 		}
-		if o.PayloadCode == "" {
-			hasLegacy = true
-		}
-	}
-	if !hasPayloadMatch && !hasLegacy {
-		return fmt.Errorf("no active demand for payload %q at node %s", payloadCode, node.Name)
 	}
 
 	if uopCount <= 0 {

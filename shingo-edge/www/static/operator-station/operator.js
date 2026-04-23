@@ -293,6 +293,17 @@ function renderPayloadBoard(entry) {
     });
     var hasDemand = activeOrders.length > 0;
 
+    // Quick fix for multi-payload starvation (see investigation-r2.md):
+    // when an empty bin is at the node and any active demand exists, every
+    // allowed payload becomes a loadable option — the operator picks the
+    // payload at load time and the server (LoadBin) re-binds via the
+    // request's payload_code argument. The active order's own payload tag
+    // is left unchanged in the order log. Without this, only the payload
+    // tagged on the in-flight order could be loaded, which serialized
+    // multi-payload manual_swap nodes to one payload per cycle.
+    var nodeBinIsEmpty = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
+    var loadableHere = nodeBinIsEmpty && hasDemand;
+
     // Card container
     var cardGrid = el('div', { className: 'os-board-cards' });
     var cols = allowed.length <= 3 ? allowed.length : (allowed.length <= 6 ? 3 : 4);
@@ -301,7 +312,7 @@ function renderPayloadBoard(entry) {
     var queuePos = 1;
     allowed.forEach(function(code) {
         var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
-        var isActive = payloadOrders.length > 0 || (hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+        var isActive = payloadOrders.length > 0 || loadableHere || (hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
         var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
         var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
         var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });
