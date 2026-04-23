@@ -260,8 +260,13 @@ func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request)
 // Phase 7 (lineside): the HMI's release prompt posts qty_by_part on this
 // endpoint too (single release path covers single-order and two-robot
 // swaps). Forwarded to the engine so two-robot releases capture lineside
-// buckets like the single-order path does. Empty body / missing field
-// means "no parts captured."
+// buckets like the single-order path does.
+//
+// Phase 8 (release-time manifest): body now also carries a disposition so
+// the "SEND PARTIAL BACK" button can return the partially-consumed bin to
+// the supermarket instead of declaring it empty. Legacy body shape
+// (qty_by_part only, missing disposition) maps to zero-value disposition,
+// which leaves the bin's manifest untouched at Core.
 func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -269,7 +274,9 @@ func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var req struct {
-		QtyByPart map[string]int `json:"qty_by_part"`
+		Disposition string         `json:"disposition"`
+		QtyByPart   map[string]int `json:"qty_by_part"`
+		CalledBy    string         `json:"called_by"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -277,7 +284,8 @@ func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
-	if err := h.engine.ReleaseStagedOrders(id, req.QtyByPart); err != nil {
+	disp := buildReleaseDisposition(req.Disposition, req.QtyByPart, req.CalledBy)
+	if err := h.engine.ReleaseStagedOrders(id, disp); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -483,13 +491,30 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
+// apiReleaseChangeoverWait gates the changeover wait-points (ready / tooling done).
+//
+// Phase 8: ReleaseChangeoverWait now routes every staged evacuation order
+// through ReleaseOrderWithLineside with a capture_lineside disposition so
+// the bin's manifest is cleared at Core before the fleet picks the bin up.
+// called_by is captured from the body (matching apiStartProcessChangeover's
+// pattern) and threaded through for audit. Body is optional — missing body
+// is treated as no operator identifier.
 func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	if err := h.engine.ReleaseChangeoverWait(processID); err != nil {
+	var req struct {
+		CalledBy string `json:"called_by"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if err := h.engine.ReleaseChangeoverWait(processID, req.CalledBy); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

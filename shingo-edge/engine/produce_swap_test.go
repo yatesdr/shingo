@@ -306,7 +306,7 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 	markStaged(t, db, result.OrderA.ID)
 	markStaged(t, db, result.OrderB.ID)
 
-	if err := eng.ReleaseStagedOrders(nodeID, nil); err != nil {
+	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}); err != nil {
 		t.Fatalf("ReleaseStagedOrders: %v", err)
 	}
 
@@ -356,7 +356,7 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 		t.Fatalf("read A before release: %v", err)
 	}
 
-	err = eng.ReleaseStagedOrders(nodeID, nil)
+	err = eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{})
 	if err == nil {
 		t.Fatal("expected error when only one order is staged")
 	}
@@ -409,7 +409,7 @@ func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
 		t.Fatalf("flip claim swap mode: %v", err)
 	}
 
-	if err := eng.ReleaseStagedOrders(nodeID, nil); err == nil {
+	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}); err == nil {
 		t.Fatal("expected error when claim swap mode is not two_robot")
 	}
 
@@ -443,7 +443,7 @@ func TestReleaseStagedOrders_Idempotent(t *testing.T) {
 		t.Fatalf("force B in_transit: %v", err)
 	}
 
-	if err := eng.ReleaseStagedOrders(nodeID, nil); err != nil {
+	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}); err != nil {
 		t.Fatalf("ReleaseStagedOrders should be idempotent on already-released order: %v", err)
 	}
 
@@ -459,7 +459,7 @@ func TestReleaseStagedOrders_NoTrackedOrders(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// No finalize called — runtime has no ActiveOrderID/StagedOrderID.
-	err := eng.ReleaseStagedOrders(nodeID, nil)
+	err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{})
 	if err == nil {
 		t.Fatal("expected error when no orders are tracked on the node")
 	}

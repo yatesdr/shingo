@@ -277,14 +277,15 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // staged and the operator can retry via the standard per-order release, which
 // the UI re-renders automatically once swap_ready goes false.
 //
-// Lineside (phase 7 fixup): qtyByPart is forwarded only to the Order B release
-// call. Order B is the evacuation (fires first, before Order A arrives), and
-// ReleaseOrderWithLineside captures buckets, resets UOP, and advances the
-// changeover-task state there. The Order A call then passes nil so we don't
-// re-run the capture step — it's idempotent for UOP/state but additive for
-// bucket qty. nil for A is safe: the deactivation side-effect is already done
-// and no new captures are applied.
-func (e *Engine) ReleaseStagedOrders(nodeID int64, qtyByPart map[string]int) error {
+// Lineside (phase 7 fixup): the disposition is forwarded only to the Order B
+// release call. Order B is the evacuation (fires first, before Order A
+// arrives), and ReleaseOrderWithLineside captures buckets, resets UOP, and
+// advances the changeover-task state there. The Order A call gets the
+// zero-value ReleaseDisposition{} (Mode == "" → nil remainingUOP at Core,
+// no manifest action) so we don't re-run capture and don't accidentally
+// clear Order A's freshly-loaded supply bin manifest. The deactivation
+// side-effect is already done by the B release.
+func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
 	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
 	if err != nil {
 		return fmt.Errorf("get runtime for node %d: %w", nodeID, err)
@@ -307,10 +308,15 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, qtyByPart map[string]int) err
 		return fmt.Errorf("node %d: release-staged requires two_robot swap, got %q", nodeID, mode)
 	}
 
-	if err := e.releaseIfStaged(*runtime.StagedOrderID, "B", qtyByPart); err != nil {
+	// Order B (evacuation) gets the operator's full disposition — capture,
+	// UOP sync, audit-via-CalledBy.
+	if err := e.releaseIfStaged(*runtime.StagedOrderID, "B", disp); err != nil {
 		return err
 	}
-	if err := e.releaseIfStaged(*runtime.ActiveOrderID, "A", nil); err != nil {
+	// Order A (supply) gets the zero-value disposition. Mode == "" maps to
+	// nil remainingUOP at Core, leaving the supply bin's manifest untouched.
+	// CalledBy is preserved for the audit log even though no capture happens.
+	if err := e.releaseIfStaged(*runtime.ActiveOrderID, "A", ReleaseDisposition{CalledBy: disp.CalledBy}); err != nil {
 		return err
 	}
 	return nil
@@ -324,18 +330,18 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, qtyByPart map[string]int) err
 // two-robot "RELEASE" button also triggers the UOP reset and changeover-task
 // state transition at click time (not at Order B completion).
 //
-// Phase 7 (lineside): qtyByPart is forwarded to ReleaseOrderWithLineside so
-// the HMI's lineside prompt on two-robot swaps actually captures buckets.
-// Callers pass non-nil on the first release (Order B) and nil on the second
-// (Order A) to avoid additive double-capture.
-func (e *Engine) releaseIfStaged(orderID int64, label string, qtyByPart map[string]int) error {
+// Phase 7 (lineside): the operator's disposition is forwarded to
+// ReleaseOrderWithLineside. Callers pass the operator's full disposition for
+// the evacuation (Order B) and ReleaseDisposition{} for the supply (Order A)
+// to avoid double-capture and to leave the supply bin's manifest alone.
+func (e *Engine) releaseIfStaged(orderID int64, label string, disp ReleaseDisposition) error {
 	order, err := e.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order %s (%d): %w", label, orderID, err)
 	}
 	switch order.Status {
 	case orders.StatusStaged:
-		if err := e.ReleaseOrderWithLineside(orderID, qtyByPart); err != nil {
+		if err := e.ReleaseOrderWithLineside(orderID, disp); err != nil {
 			return fmt.Errorf("release order %s (%d): %w", label, orderID, err)
 		}
 		return nil

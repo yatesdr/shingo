@@ -102,11 +102,13 @@ func (s *stubEngine) ReleaseNodePartial(int64, int64) (*store.Order, error)     
 // existing release-flow tests (TestApiOrders_ReleaseOrder_Success, etc.)
 // still exercise the status-transition + lifecycle-error paths. The
 // engine-side lineside capture + UOP reset is covered by
-// engine/operator_release_test.go, not the www handler tests.
-func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, _ map[string]int) error {
-	return s.orderMgr.ReleaseOrder(orderID)
+// engine/operator_release_test.go, not the www handler tests. Pass nil
+// remainingUOP since the stub doesn't model the disposition/manifest
+// late-binding (Core-side concern).
+func (s *stubEngine) ReleaseOrderWithLineside(orderID int64, _ engine.ReleaseDisposition) error {
+	return s.orderMgr.ReleaseOrder(orderID, nil)
 }
-func (s *stubEngine) ReleaseStagedOrders(int64, map[string]int) error                  { return nil }
+func (s *stubEngine) ReleaseStagedOrders(int64, engine.ReleaseDisposition) error       { return nil }
 func (s *stubEngine) ConfirmNodeManifest(int64) error                                  { return nil }
 func (s *stubEngine) FinalizeProduceNode(int64) (*engine.NodeOrderResult, error)        { return nil, nil }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
@@ -117,7 +119,7 @@ func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*stor
 func (s *stubEngine) CompleteProcessProductionCutover(int64) error                      { return nil }
 func (s *stubEngine) CancelProcessChangeover(int64) error                               { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error               { return nil }
-func (s *stubEngine) ReleaseChangeoverWait(int64) error                                 { return nil }
+func (s *stubEngine) ReleaseChangeoverWait(int64, string) error                         { return nil }
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*store.Order, error)     { return nil, nil }
 func (s *stubEngine) EmptyNodeForToolChange(int64, int64, int64) (*store.Order, error)   { return nil, nil }
 func (s *stubEngine) ReleaseNodeIntoProduction(int64, int64) (*store.Order, error)       { return nil, nil }

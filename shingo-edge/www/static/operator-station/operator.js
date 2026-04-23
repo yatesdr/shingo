@@ -1190,9 +1190,28 @@ function renderReleasePromptStep1() {
     }
     html += '</div>';
 
+    // SEND PARTIAL BACK button: alternative submission path that returns
+    // the partially-consumed bin to the supermarket with its actual UOP
+    // count instead of declaring the bin empty. Shown alongside the
+    // existing capture-lineside flow as a third option. The chip below
+    // exposes the snapshot count so the operator can see what's being
+    // sent — note this is "what's left at this moment," and any further
+    // consumption between click and robot pickup isn't tracked.
+    const rt = state.entry && state.entry.runtime;
+    const claim = state.entry && (state.entry.active_claim || state.entry.target_claim);
+    const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
+    const capacityUOP = claim && claim.uop_capacity ? claim.uop_capacity : 0;
+    const canSendPartial = remainingUOP > 0;
+
     html += '<div class="os-modal-actions">';
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
     html += '<button type="button" class="os-action-btn empty-tools" data-action="release-submit">NOTHING PULLED</button>';
+    html += '<button type="button" class="os-action-btn"' +
+        (canSendPartial ? '' : ' disabled') +
+        ' data-action="release-submit-partial" title="Return the partial bin to the supermarket without capturing leftovers as lineside inventory">' +
+        'SEND PARTIAL BACK' +
+        (capacityUOP > 0 ? ' (' + remainingUOP + ' / ' + capacityUOP + ')' : ' (' + remainingUOP + ')') +
+        '</button>';
     const hasPicks = Object.keys(state.selected).length > 0;
     html += '<button type="button" class="os-action-btn request"' +
         (hasPicks ? '' : ' disabled') +
@@ -1297,14 +1316,37 @@ async function handleReleasePromptAction(evt) {
         return;
     }
 
-    // Submit paths. "NOTHING PULLED" → empty map; "CONFIRM & RELEASE" →
-    // whatever the operator picked across steps.
-    if (action === 'release-submit' || action === 'release-submit-parts') {
+    // Submit paths.
+    //
+    //   release-submit         "NOTHING PULLED"        → capture_lineside, empty buckets
+    //   release-submit-parts   "CONFIRM & RELEASE"     → capture_lineside, picked buckets
+    //   release-submit-partial "SEND PARTIAL BACK"     → send_partial_back, no buckets
+    //
+    // Every path now sends an explicit disposition. capture_lineside tells
+    // Core to clear the bin's manifest (remaining_uop=0) before the fleet
+    // picks it up; send_partial_back tells Core to sync uop_remaining to
+    // the runtime count and preserve the manifest. called_by mirrors the
+    // changeover-start pattern.
+    if (action === 'release-submit' || action === 'release-submit-parts' || action === 'release-submit-partial') {
         const url = state.url;
-        const qtyByPart = (action === 'release-submit') ? {} : (state.selected || {});
+        const calledBy = (typeof view !== 'undefined' && view && view.station && view.station.name) ? view.station.name : 'operator';
+        let body;
+        if (action === 'release-submit-partial') {
+            body = {
+                disposition: 'send_partial_back',
+                called_by: calledBy,
+            };
+        } else {
+            const qtyByPart = (action === 'release-submit') ? {} : (state.selected || {});
+            body = {
+                disposition: 'capture_lineside',
+                qty_by_part: qtyByPart,
+                called_by: calledBy,
+            };
+        }
         closeReleasePrompt();
         evt.currentTarget.disabled = true;
-        const ok = await postAction(url, { qty_by_part: qtyByPart });
+        const ok = await postAction(url, body);
         if (ok) closeModal();
         return;
     }

@@ -41,7 +41,11 @@ func TestReleaseOrderWithLineside_ResetsUOPAndCapturesBuckets(t *testing.T) {
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-1")
 
 	eng := testEngine(t, db)
-	if err := eng.ReleaseOrderWithLineside(orderID, map[string]int{"PART-R": 12}); err != nil {
+	disp := ReleaseDisposition{
+		Mode:            DispositionCaptureLineside,
+		LinesideCapture: map[string]int{"PART-R": 12},
+	}
+	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
@@ -84,13 +88,15 @@ func TestReleaseOrderWithLineside_EmptyMapStillResetsUOP(t *testing.T) {
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-2")
 
 	eng := testEngine(t, db)
-	if err := eng.ReleaseOrderWithLineside(orderID, nil); err != nil {
+	// Empty disposition (legacy / NOTHING-PULLED-with-no-explicit-mode):
+	// should still drive the UOP reset.
+	if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionCaptureLineside}); err != nil {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	if runtime.RemainingUOP != 50 {
-		t.Errorf("RemainingUOP = %d, want 50 (capacity) after release with nil map", runtime.RemainingUOP)
+		t.Errorf("RemainingUOP = %d, want 50 (capacity) after release with empty capture map", runtime.RemainingUOP)
 	}
 }
 
@@ -114,7 +120,11 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-3")
 	eng := testEngine(t, db)
-	if err := eng.ReleaseOrderWithLineside(orderID, map[string]int{"PART-R3": 2}); err != nil {
+	disp := ReleaseDisposition{
+		Mode:            DispositionCaptureLineside,
+		LinesideCapture: map[string]int{"PART-R3": 2},
+	}
+	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
@@ -137,6 +147,103 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 	}
 	if b.Qty != 2 {
 		t.Errorf("active bucket qty = %d, want 2", b.Qty)
+	}
+}
+
+// TestComputeReleaseRemainingUOP exercises the disposition → *int routing in
+// isolation so the late-binding contract (empty Mode → nil, capture → &0,
+// partial → &runtime.RemainingUOP, partial-with-non-positive-runtime → &0)
+// is locked down without the surrounding HTTP/DB/dispatch machinery.
+func TestComputeReleaseRemainingUOP(t *testing.T) {
+	cases := []struct {
+		name        string
+		mode        ReleaseDispositionMode
+		runtimeUOP  int
+		wantNil     bool
+		wantValue   int
+	}{
+		{"empty_mode_returns_nil_for_backward_compat", "", 42, true, 0},
+		{"unknown_mode_returns_nil", "weird_thing", 42, true, 0},
+		{"capture_lineside_returns_zero", DispositionCaptureLineside, 42, false, 0},
+		{"send_partial_back_returns_runtime_uop", DispositionSendPartialBack, 800, false, 800},
+		{"send_partial_back_zero_runtime_returns_zero", DispositionSendPartialBack, 0, false, 0},
+		{"send_partial_back_negative_runtime_returns_zero", DispositionSendPartialBack, -1, false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &store.ProcessNodeRuntimeState{RemainingUOP: tc.runtimeUOP}
+			got := computeReleaseRemainingUOP(ReleaseDisposition{Mode: tc.mode}, rt)
+			if tc.wantNil {
+				if got != nil {
+					t.Errorf("got %v, want nil", *got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("got nil, want *%d", tc.wantValue)
+			}
+			if *got != tc.wantValue {
+				t.Errorf("got %d, want %d", *got, tc.wantValue)
+			}
+		})
+	}
+}
+
+// TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture verifies
+// the SEND PARTIAL BACK disposition: no bucket capture happens (so the
+// operator's leftover stays on the bin instead of being kitted lineside),
+// the runtime UOP still resets to capacity for the next bin, and stranded
+// other-style buckets are still deactivated.
+func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "LSD-PARTIAL", PayloadCode: "PART-PB", UOPCapacity: 1200, InitialUOP: 800,
+	})
+	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 800); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+	// Stranded bucket from a previous style — should be deactivated even
+	// on the partial-back path because the deactivation reflects "this
+	// node is now running this style," not bucket capture.
+	otherStyleID := styleID + 999
+	if _, err := db.CaptureLinesideBucket(nodeID, "", otherStyleID, "PART-OLD-PB", 7); err != nil {
+		t.Fatalf("seed leftover bucket: %v", err)
+	}
+
+	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-pb-1")
+	eng := testEngine(t, db)
+	disp := ReleaseDisposition{
+		Mode:            DispositionSendPartialBack,
+		LinesideCapture: map[string]int{"PART-PB": 99}, // ignored when Mode == send_partial_back
+	}
+	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
+		t.Fatalf("ReleaseOrderWithLineside: %v", err)
+	}
+
+	// Runtime should reset to capacity for the NEXT bin.
+	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	if runtime.RemainingUOP != 1200 {
+		t.Errorf("RemainingUOP = %d, want 1200 (capacity)", runtime.RemainingUOP)
+	}
+
+	// No active bucket for the operator's part — capture skipped.
+	if b, err := db.GetActiveLinesideBucket(nodeID, styleID, "PART-PB"); err == nil && b != nil && b.Qty > 0 {
+		t.Errorf("send_partial_back should not capture lineside bucket; got bucket %+v", b)
+	}
+
+	// Stranded other-style bucket should be deactivated.
+	inactive, err := db.ListInactiveLinesideBuckets(nodeID)
+	if err != nil {
+		t.Fatalf("ListInactiveLinesideBuckets: %v", err)
+	}
+	if len(inactive) != 1 || inactive[0].StyleID != otherStyleID {
+		t.Errorf("expected one inactive bucket for the other style; got %+v", inactive)
+	}
+
+	// Order in_transit (release dispatched).
+	o, _ := db.GetOrder(orderID)
+	if o.Status != orders.StatusInTransit {
+		t.Errorf("order status = %q, want %q", o.Status, orders.StatusInTransit)
 	}
 }
 

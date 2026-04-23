@@ -120,3 +120,66 @@ func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP
 	return s.db.ClaimBin(binID, orderID)
 }
 
+// SyncOrClearForReleased applies the operator's release-time remainingUOP value
+// to a bin that is already claimed by orderID. Routes nil/zero/positive
+// identically to ClaimForDispatch but operates on the existing claim — does
+// not set claimed_by (already set during creation-time claim) and does not
+// require claimed_by IS NULL.
+//
+// Used by HandleOrderRelease to late-bind the bin's manifest at the operator's
+// release click. Complex orders are claimed at creation time for poaching
+// protection, but the count of consumed parts isn't known until the operator
+// commits to releasing — this method bridges that gap.
+//
+//   - remainingUOP == nil: no-op (manifest unchanged — preserves legacy behavior)
+//   - *remainingUOP == 0: clear manifest, keep claim (e.g. NOTHING PULLED disposition)
+//   - *remainingUOP > 0: sync UOP, keep manifest + claim (e.g. SEND PARTIAL BACK)
+//
+// SQL guards: WHERE id=$ AND claimed_by=$ AND locked=false. The claimed_by
+// guard prevents a stale release from stomping a bin that has been reassigned
+// to a different order. The locked guard mirrors ClearAndClaim/SyncUOPAndClaim.
+//
+// Idempotent: re-running with the same arguments produces the same row state,
+// so retries after a failed fleet release are safe.
+func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remainingUOP *int) error {
+	if remainingUOP == nil {
+		return nil
+	}
+	if *remainingUOP == 0 {
+		// Clear manifest, preserve claim
+		res, err := s.db.Exec(`
+			UPDATE bins SET
+				payload_code='', manifest=NULL, uop_remaining=0,
+				manifest_confirmed=false, loaded_at=NULL,
+				updated_at=NOW()
+			WHERE id=$1 AND claimed_by=$2 AND locked=false`,
+			binID, orderID)
+		if err != nil {
+			return fmt.Errorf("clear manifest for released bin %d: %w", binID, err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
+		}
+		s.db.AppendAudit("bin", binID, "released_empty",
+			"", fmt.Sprintf("order=%d", orderID), "system")
+		return nil
+	}
+	// Positive: sync UOP, preserve manifest + claim
+	res, err := s.db.Exec(`
+		UPDATE bins SET
+			uop_remaining=$1, updated_at=NOW()
+		WHERE id=$2 AND claimed_by=$3 AND locked=false`,
+		*remainingUOP, binID, orderID)
+	if err != nil {
+		return fmt.Errorf("sync UOP for released bin %d: %w", binID, err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
+	}
+	s.db.AppendAudit("bin", binID, "released_partial",
+		"", fmt.Sprintf("uop=%d order=%d", *remainingUOP, orderID), "system")
+	return nil
+}
+

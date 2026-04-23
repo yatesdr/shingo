@@ -296,7 +296,13 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 }
 
 // ReleaseOrder sends a release message for a staged (dwelling) order.
-func (m *Manager) ReleaseOrder(orderID int64) error {
+//
+// remainingUOP late-binds the bin's manifest at Core's release handler. Pass
+// nil when no manifest change is intended (legacy/Order-A/produce paths). Pass
+// &0 to mark the bin empty (NOTHING PULLED disposition). Pass &N (N>0) to
+// preserve the manifest with a synced count (SEND PARTIAL BACK disposition).
+// See protocol.OrderRelease and BinManifestService.SyncOrClearForReleased.
+func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int) error {
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -306,7 +312,8 @@ func (m *Manager) ReleaseOrder(orderID int64) error {
 	}
 
 	if err := m.sender.Queue(protocol.TypeOrderRelease, &protocol.OrderRelease{
-		OrderUUID: order.UUID,
+		OrderUUID:    order.UUID,
+		RemainingUOP: remainingUOP,
 	}); err != nil {
 		return fmt.Errorf("enqueue release: %w", err)
 	}
@@ -318,7 +325,11 @@ func (m *Manager) ReleaseOrder(orderID int64) error {
 		return fmt.Errorf("transition to in_transit: %w", err)
 	}
 
-	m.DebugLog.Log("release: id=%d uuid=%s", orderID, order.UUID)
+	if remainingUOP != nil {
+		m.DebugLog.Log("release: id=%d uuid=%s remaining_uop=%d", orderID, order.UUID, *remainingUOP)
+	} else {
+		m.DebugLog.Log("release: id=%d uuid=%s", orderID, order.UUID)
+	}
 	return nil
 }
 

@@ -38,8 +38,8 @@ type EngineAccess interface {
 	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)
 	ReleaseNodeEmpty(nodeID int64) (*store.Order, error)
 	ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error)
-	ReleaseOrderWithLineside(orderID int64, qtyByPart map[string]int) error
-	ReleaseStagedOrders(nodeID int64, qtyByPart map[string]int) error
+	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
+	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	ConfirmNodeManifest(nodeID int64) error
 	FinalizeProduceNode(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
@@ -52,7 +52,7 @@ type EngineAccess interface {
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
-	ReleaseChangeoverWait(processID int64) error
+	ReleaseChangeoverWait(processID int64, calledBy string) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*store.Order, error)
 	EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*store.Order, error)
 	ReleaseNodeIntoProduction(processID, nodeID int64) (*store.Order, error)

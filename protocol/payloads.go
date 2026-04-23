@@ -156,8 +156,18 @@ type ComplexOrderRequest struct {
 }
 
 // OrderRelease signals that a staged (dwelling) order should resume.
+//
+// RemainingUOP late-binds the bin's manifest at the operator's release click:
+//
+//   - nil = no manifest change (legacy/unspecified — preserves pre-release behavior)
+//   - 0   = clear manifest (bin is empty, e.g. NOTHING PULLED disposition)
+//   - >0  = sync UOP, preserve manifest (bin returns as partial, e.g. SEND PARTIAL BACK)
+//
+// Routing on Core mirrors ClaimForDispatch but operates on the already-claimed
+// bin via BinManifestService.SyncOrClearForReleased. See docs on that method.
 type OrderRelease struct {
-	OrderUUID string `json:"order_uuid"`
+	OrderUUID    string `json:"order_uuid"`
+	RemainingUOP *int   `json:"remaining_uop,omitempty"`
 }
 
 // OrderStaged notifies edge that an order is dwelling at a staging node.

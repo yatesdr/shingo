@@ -152,6 +152,21 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
+	// Late-bind bin manifest at the operator's release click. The bin was
+	// claimed at order creation time (claimComplexBins, for poaching
+	// protection), but the consumed-parts count isn't known until release.
+	// p.RemainingUOP carries the operator's intent: nil = no manifest change
+	// (legacy/Order-A path), 0 = bin empty (NOTHING PULLED), >0 = partial
+	// (SEND PARTIAL BACK). Must run before backend.ReleaseOrder so the fleet
+	// doesn't proceed against an inconsistent manifest.
+	if p.RemainingUOP != nil && order.BinID != nil {
+		if err := d.binManifest.SyncOrClearForReleased(*order.BinID, order.ID, p.RemainingUOP); err != nil {
+			log.Printf("dispatch: manifest sync on release for order %d: %v", order.ID, err)
+			d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
+			return
+		}
+	}
+
 	// Parse stored steps
 	var steps []resolvedStep
 	if err := json.Unmarshal([]byte(order.StepsJSON), &steps); err != nil {

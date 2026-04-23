@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingoedge/engine"
 )
 
 // MaxBatchRetrieveCount is the maximum number of orders in a batch retrieve request.
@@ -263,13 +264,21 @@ func (h *Handlers) apiConfirmDelivery(w http.ResponseWriter, r *http.Request) {
 
 // apiReleaseOrder is the operator's "release" click for a staged order.
 //
-// Phase 3 (lineside): release is now unified through
-// ReleaseOrderWithLineside so the engine can (1) capture parts the
-// operator pulled to lineside during the swap, (2) reset the node
-// counter, and (3) advance changeover task state atomically before the
-// bots head back. qty_by_part is optional — when absent or empty, the
-// call is backward-compatible with pre-Phase-3 behavior (just releases
-// the order).
+// Phase 3 (lineside): release is unified through ReleaseOrderWithLineside
+// so the engine can (1) capture parts the operator pulled to lineside
+// during the swap, (2) reset the node counter, and (3) advance the
+// changeover task state atomically before the bots head back.
+//
+// Phase 8 (release-time manifest): the body now also carries a disposition
+// so the operator can choose between "bin is empty" (capture_lineside) and
+// "send the partial bin back to supermarket" (send_partial_back). The
+// disposition late-binds the bin's manifest at Core (see OrderRelease and
+// BinManifestService.SyncOrClearForReleased).
+//
+// Backward compat: an absent or empty disposition (Mode == "") leaves the
+// bin's manifest untouched at Core — matching pre-Phase-8 behavior. The
+// "NOTHING PULLED" button explicitly sends disposition="capture_lineside",
+// which is the path that newly clears the bin manifest.
 func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 	orderID, err := parseID(r, "orderID")
 	if err != nil {
@@ -277,9 +286,12 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Body is optional — empty body means "release, no lineside capture."
+	// Body is optional — empty body means "release, no lineside capture,
+	// no manifest action" (legacy behavior).
 	var req struct {
-		QtyByPart map[string]int `json:"qty_by_part"`
+		Disposition string         `json:"disposition"`
+		QtyByPart   map[string]int `json:"qty_by_part"`
+		CalledBy    string         `json:"called_by"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -288,11 +300,36 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.engine.ReleaseOrderWithLineside(orderID, req.QtyByPart); err != nil {
+	disp := buildReleaseDisposition(req.Disposition, req.QtyByPart, req.CalledBy)
+	if err := h.engine.ReleaseOrderWithLineside(orderID, disp); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshOrders")
+}
+
+// buildReleaseDisposition translates the JSON body into an engine.ReleaseDisposition.
+// An unknown or empty disposition string maps to the zero-value disposition
+// (Mode == "") — Core leaves the bin's manifest alone, preserving pre-Phase-8
+// behavior for older clients posting bare bodies.
+func buildReleaseDisposition(mode string, qtyByPart map[string]int, calledBy string) engine.ReleaseDisposition {
+	switch engine.ReleaseDispositionMode(mode) {
+	case engine.DispositionCaptureLineside:
+		return engine.ReleaseDisposition{
+			Mode:            engine.DispositionCaptureLineside,
+			LinesideCapture: qtyByPart,
+			CalledBy:        calledBy,
+		}
+	case engine.DispositionSendPartialBack:
+		return engine.ReleaseDisposition{
+			Mode:     engine.DispositionSendPartialBack,
+			CalledBy: calledBy,
+		}
+	default:
+		// Empty or unknown disposition — preserve legacy "no manifest action"
+		// behavior. CalledBy still flows through for the audit trail.
+		return engine.ReleaseDisposition{CalledBy: calledBy}
+	}
 }
 
 func (h *Handlers) apiSubmitOrder(w http.ResponseWriter, r *http.Request) {

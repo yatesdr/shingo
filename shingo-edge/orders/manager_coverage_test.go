@@ -852,7 +852,7 @@ func TestReleaseOrder_HappyPath(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, StatusInTransit)
 	_ = db.UpdateOrderStatus(oid, StatusStaged)
 
-	if err := mgr.ReleaseOrder(oid); err != nil {
+	if err := mgr.ReleaseOrder(oid, nil); err != nil {
 		t.Fatalf("ReleaseOrder: %v", err)
 	}
 	o, _ := db.GetOrder(oid)
@@ -865,6 +865,49 @@ func TestReleaseOrder_HappyPath(t *testing.T) {
 	if rel.OrderUUID != "uuid-rel" {
 		t.Errorf("OrderRelease.OrderUUID: got %q", rel.OrderUUID)
 	}
+	if rel.RemainingUOP != nil {
+		t.Errorf("OrderRelease.RemainingUOP: got %v, want nil (plain ReleaseOrder call)", rel.RemainingUOP)
+	}
+}
+
+// TestReleaseOrder_ThreadsRemainingUOP verifies that a non-nil remainingUOP
+// passed to ReleaseOrder lands on the OrderRelease envelope. Asserted at three
+// values to cover Core's nil/zero/positive routing semantics in
+// BinManifestService.SyncOrClearForReleased.
+func TestReleaseOrder_ThreadsRemainingUOP(t *testing.T) {
+	cases := []struct {
+		name string
+		uop  *int
+	}{
+		{"nil_unchanged", nil},
+		{"zero_clears", func() *int { z := 0; return &z }()},
+		{"positive_syncs", func() *int { v := 800; return &v }()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testManagerDB(t)
+			mgr := NewManager(db, testEmitter{}, "edge")
+
+			oid, _ := db.CreateOrder("uuid-uop-"+tc.name, TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
+			_ = db.UpdateOrderStatus(oid, StatusSubmitted)
+			_ = db.UpdateOrderStatus(oid, StatusInTransit)
+			_ = db.UpdateOrderStatus(oid, StatusStaged)
+
+			if err := mgr.ReleaseOrder(oid, tc.uop); err != nil {
+				t.Fatalf("ReleaseOrder: %v", err)
+			}
+			var rel protocol.OrderRelease
+			decodeOnlyOutboxPayload(t, db, protocol.TypeOrderRelease, &rel)
+			switch {
+			case tc.uop == nil && rel.RemainingUOP != nil:
+				t.Errorf("RemainingUOP: got %v, want nil", *rel.RemainingUOP)
+			case tc.uop != nil && rel.RemainingUOP == nil:
+				t.Errorf("RemainingUOP: got nil, want *%d", *tc.uop)
+			case tc.uop != nil && rel.RemainingUOP != nil && *rel.RemainingUOP != *tc.uop:
+				t.Errorf("RemainingUOP: got %d, want %d", *rel.RemainingUOP, *tc.uop)
+			}
+		})
+	}
 }
 
 func TestReleaseOrder_RejectsNonStaged(t *testing.T) {
@@ -874,7 +917,7 @@ func TestReleaseOrder_RejectsNonStaged(t *testing.T) {
 	oid, _ := db.CreateOrder("uuid-rns", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
 	_ = db.UpdateOrderStatus(oid, StatusSubmitted)
 
-	err := mgr.ReleaseOrder(oid)
+	err := mgr.ReleaseOrder(oid, nil)
 	if err == nil {
 		t.Fatal("expected error releasing non-staged order")
 	}
@@ -887,7 +930,7 @@ func TestReleaseOrder_MissingOrder(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	err := mgr.ReleaseOrder(99999)
+	err := mgr.ReleaseOrder(99999, nil)
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}

@@ -421,7 +421,18 @@ func findNodeByCoreName(nodes []store.ProcessNode, coreName string) *store.Proce
 //   - First call releases the "ready" wait on all nodes
 //   - For evacuate nodes, orders stage again at the second wait, and the second
 //     call releases "tooling done"
-func (e *Engine) ReleaseChangeoverWait(processID int64) error {
+//
+// Each evacuation order is routed through ReleaseOrderWithLineside with the
+// capture_lineside disposition so the bin's manifest is cleared at Core
+// (via OrderRelease.RemainingUOP=0) before the fleet picks the bin up. Going
+// through the lineside-aware path also runs the deactivation side-effect and
+// the changeover-task state advance — without it, the evacuation bin would
+// land at OutboundDestination still tagged with its old payload (the exact
+// ALN_001 → SLN_002 → SMN_005 incident reported in 2026-04). LinesideCapture
+// is empty here because the operator has already gated through the wait
+// button by the time this is called — there's no per-part prompt at this
+// point. CalledBy is plumbed through for audit.
+func (e *Engine) ReleaseChangeoverWait(processID int64, calledBy string) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return err
@@ -431,6 +442,10 @@ func (e *Engine) ReleaseChangeoverWait(processID int64) error {
 		return err
 	}
 
+	disp := ReleaseDisposition{
+		Mode:     DispositionCaptureLineside,
+		CalledBy: calledBy,
+	}
 	for _, task := range tasks {
 		if task.Situation == "unchanged" {
 			continue
@@ -443,7 +458,7 @@ func (e *Engine) ReleaseChangeoverWait(processID int64) error {
 			continue
 		}
 		if order.Status == orders.StatusStaged {
-			if err := e.orderMgr.ReleaseOrder(order.ID); err != nil {
+			if err := e.ReleaseOrderWithLineside(order.ID, disp); err != nil {
 				log.Printf("release changeover wait node %s: %v", task.NodeName, err)
 			}
 		}
