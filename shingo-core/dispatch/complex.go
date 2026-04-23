@@ -153,18 +153,50 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	}
 
 	// Late-bind bin manifest at the operator's release click. The bin was
-	// claimed at order creation time (claimComplexBins, for poaching
-	// protection), but the consumed-parts count isn't known until release.
-	// p.RemainingUOP carries the operator's intent: nil = no manifest change
-	// (legacy/Order-A path), 0 = bin empty (NOTHING PULLED), >0 = partial
-	// (SEND PARTIAL BACK). Must run before backend.ReleaseOrder so the fleet
-	// doesn't proceed against an inconsistent manifest. p.CalledBy carries
-	// the operator identity through to the bin audit row.
-	if p.RemainingUOP != nil && order.BinID != nil {
-		if err := d.binManifest.SyncOrClearForReleased(*order.BinID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
-			log.Printf("dispatch: manifest sync on release for order %d: %v", order.ID, err)
-			d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
-			return
+	// (ideally) claimed at order creation time by claimComplexBins, which
+	// sets order.BinID. p.RemainingUOP carries the operator's intent: nil =
+	// no manifest change (legacy/Order-A path), 0 = bin empty (NOTHING
+	// PULLED), >0 = partial (SEND PARTIAL BACK). Must run before
+	// backend.ReleaseOrder so the fleet doesn't proceed against an
+	// inconsistent manifest. p.CalledBy carries the operator identity
+	// through to the bin audit row.
+	//
+	// Source-node fallback: claimComplexBins doesn't always populate
+	// order.BinID (verified failure mode for two-robot Order B in plant
+	// tests on 2026-04-23 — bin is at the line, payload matches, yet the
+	// claim doesn't take). Without a fallback, the guard below would
+	// silently skip the manifest sync, fleet would still dispatch, the bin
+	// would land at OutboundDestination with stale manifest, and the bin
+	// loader would skip it — the exact ALN_002 → SMN_003 incident. When
+	// BinID is nil at release time, look up the bin currently at
+	// order.SourceNode (which for an evac order is the line, where the bin
+	// sits until release triggers the bot to pick up). Use the no-claim
+	// variant so the WHERE claimed_by guard doesn't block (the bin isn't
+	// claimed by this order if claimComplexBins missed it).
+	if p.RemainingUOP != nil {
+		if order.BinID != nil {
+			if err := d.binManifest.SyncOrClearForReleased(*order.BinID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
+				log.Printf("dispatch: manifest sync on release for order %d: %v", order.ID, err)
+				d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
+				return
+			}
+		} else if order.SourceNode != "" {
+			binID, ok := d.findFallbackBinAtSource(order)
+			if ok {
+				log.Printf("dispatch: release for order %d had nil BinID; fallback located bin %d at source node %s",
+					order.ID, binID, order.SourceNode)
+				if err := d.binManifest.SyncOrClearForReleasedNoOwner(binID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
+					log.Printf("dispatch: fallback manifest sync on release for order %d (bin %d): %v", order.ID, binID, err)
+					d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
+					return
+				}
+			} else {
+				log.Printf("dispatch: release for order %d had nil BinID and no fallback bin at source node %s — manifest will not clear",
+					order.ID, order.SourceNode)
+			}
+		} else {
+			log.Printf("dispatch: release for order %d had nil BinID and no SourceNode — manifest will not clear",
+				order.ID)
 		}
 	}
 
@@ -224,6 +256,45 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	}
 	log.Printf("dispatch: complex order %d released with %d additional blocks (wait %d, complete=%v)",
 		order.ID, len(blocks), order.WaitIndex, complete)
+}
+
+// findFallbackBinAtSource locates the bin currently at the order's source
+// node when order.BinID is nil at release time. Returns (binID, true) on
+// success.
+//
+// Used by HandleOrderRelease's BinID-nil fallback. Selects the first bin
+// at the source node whose payload_code matches the order's payload (so
+// we don't accidentally clear an unrelated bin that happens to share the
+// node — possible at supermarket NGRPs but rare at process nodes). Falls
+// back to "any non-empty bin at the source" if no payload-matching bin
+// exists, since release-time intent is "this evac order's bin needs its
+// manifest synced" and there should only be one bin at the line anyway.
+func (d *Dispatcher) findFallbackBinAtSource(order *store.Order) (int64, bool) {
+	srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
+	if err != nil || srcNode == nil {
+		return 0, false
+	}
+	bins, err := d.db.ListBinsByNode(srcNode.ID)
+	if err != nil || len(bins) == 0 {
+		return 0, false
+	}
+	// Prefer a payload-matching bin (correct in the multi-bin storage case).
+	if order.PayloadCode != "" {
+		for _, b := range bins {
+			if b.PayloadCode == order.PayloadCode {
+				return b.ID, true
+			}
+		}
+	}
+	// No payload match — fall back to the first bin with a non-empty
+	// manifest. Skip already-cleared bins to avoid double-clearing a
+	// stale empty.
+	for _, b := range bins {
+		if b.PayloadCode != "" {
+			return b.ID, true
+		}
+	}
+	return 0, false
 }
 
 // resolvedStep is a step with concrete node names after resolution.

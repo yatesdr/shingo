@@ -150,6 +150,169 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 	}
 }
 
+// TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime locks down
+// the Bug B fix from the ALN_002 plant test (2026-04-23). For two-robot
+// swaps in the per-order release path, Order A (the supply) is released
+// before Order B (the evac) if the operator clicks them in that order.
+// Without the runtime-reset guard, Order A's release would call
+// SetProcessNodeRuntime(node.ID, &claimID, UOPCapacity) and clobber the
+// runtime UOP. Order B's subsequent release with SEND PARTIAL BACK would
+// then read the now-reset value (= UOPCapacity) instead of the actual
+// remaining count, send remaining_uop=UOPCapacity to Core, and Core would
+// stamp the evac bin with full UOP — manifest preserved, bin lands at
+// OutboundDestination looking like a fresh full bin.
+//
+// The fix: skip SetProcessNodeRuntime when the order being released is
+// the supply slot in an active two-robot swap. Order B's release (or the
+// consolidated ReleaseStagedOrders path which does B-then-A) owns the
+// reset.
+func TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime(t *testing.T) {
+	db := testEngineDB(t)
+
+	// Seed a consume-role node with an explicit two_robot claim.
+	processID, err := db.CreateProcess("TR-SUPPLY", "two-robot supply test", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
+		ProcessID:    processID,
+		CoreNodeName: "TR-SUPPLY-NODE",
+		Code:         "TRS",
+		Name:         "TR Supply Node",
+		Sequence:     1,
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	styleID, err := db.CreateStyle("TR-SUPPLY-STYLE", "two-robot style", processID)
+	if err != nil {
+		t.Fatalf("create style: %v", err)
+	}
+	db.SetActiveStyle(processID, &styleID)
+
+	// Two-robot claim with InboundStaging configured (the helper requires it
+	// to be non-empty when SwapMode == "two_robot").
+	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID:        styleID,
+		CoreNodeName:   "TR-SUPPLY-NODE",
+		Role:           "consume",
+		SwapMode:       "two_robot",
+		PayloadCode:    "PART-TR",
+		UOPCapacity:    1200,
+		InboundSource:  "TR-SOURCE",
+		InboundStaging: "TR-STAGING",
+	})
+	if err != nil {
+		t.Fatalf("upsert two_robot claim: %v", err)
+	}
+
+	// Drain the runtime to a partial value so we can detect a clobber if
+	// Order A's release wrongly resets it.
+	db.EnsureProcessNodeRuntime(nodeID)
+	const partialUOP = 800
+	if err := db.SetProcessNodeRuntime(nodeID, &claimID, partialUOP); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+
+	// Stage two orders against this node. ActiveOrderID = supply (Order A),
+	// StagedOrderID = evac (Order B). The isSupplyOrderInActiveTwoRobotSwap
+	// helper keys off this convention.
+	orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply-A")
+	orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply-B")
+	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
+		t.Fatalf("track A+B on runtime: %v", err)
+	}
+
+	eng := testEngine(t, db)
+
+	// Release Order A (the supply) with the operator's NOTHING PULLED
+	// disposition. Pre-fix: this would call SetProcessNodeRuntime and
+	// clobber runtime.RemainingUOP from 800 → 1200.
+	disp := ReleaseDisposition{
+		Mode:            DispositionCaptureLineside,
+		LinesideCapture: map[string]int{},
+	}
+	if err := eng.ReleaseOrderWithLineside(orderA, disp); err != nil {
+		t.Fatalf("release Order A: %v", err)
+	}
+
+	// Runtime UOP must be UNCHANGED — Order B will read it for SEND PARTIAL
+	// BACK or whatever disposition comes next.
+	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	if runtime.RemainingUOP != partialUOP {
+		t.Errorf("RemainingUOP = %d, want %d (Order A's release must not reset the runtime UOP for two-robot supply orders — Order B owns the reset)",
+			runtime.RemainingUOP, partialUOP)
+	}
+}
+
+// TestReleaseOrderWithLineside_TwoRobotEvacResetsRuntime is the
+// counterpart: Order B (the evac) IS allowed to reset the runtime UOP,
+// because that's "prepare the line for the new bin's UOP cycle." Without
+// this, Bug B's fix would over-correct and break the legitimate reset.
+func TestReleaseOrderWithLineside_TwoRobotEvacResetsRuntime(t *testing.T) {
+	db := testEngineDB(t)
+
+	processID, err := db.CreateProcess("TR-EVAC", "two-robot evac test", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
+		ProcessID:    processID,
+		CoreNodeName: "TR-EVAC-NODE",
+		Code:         "TRE",
+		Name:         "TR Evac Node",
+		Sequence:     1,
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	styleID, _ := db.CreateStyle("TR-EVAC-STYLE", "", processID)
+	db.SetActiveStyle(processID, &styleID)
+	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+		StyleID:        styleID,
+		CoreNodeName:   "TR-EVAC-NODE",
+		Role:           "consume",
+		SwapMode:       "two_robot",
+		PayloadCode:    "PART-TR",
+		UOPCapacity:    1200,
+		InboundSource:  "TR-SOURCE",
+		InboundStaging: "TR-STAGING",
+	})
+	if err != nil {
+		t.Fatalf("upsert claim: %v", err)
+	}
+	db.EnsureProcessNodeRuntime(nodeID)
+	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 800); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+
+	// Both orders staged, but releasing the EVAC slot (StagedOrderID = B).
+	orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-evac-A")
+	orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-evac-B")
+	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
+		t.Fatalf("track A+B on runtime: %v", err)
+	}
+
+	eng := testEngine(t, db)
+
+	disp := ReleaseDisposition{
+		Mode:            DispositionCaptureLineside,
+		LinesideCapture: map[string]int{},
+	}
+	if err := eng.ReleaseOrderWithLineside(orderB, disp); err != nil {
+		t.Fatalf("release Order B: %v", err)
+	}
+
+	// Runtime UOP MUST be reset to capacity — that's the "new cycle" signal.
+	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	if runtime.RemainingUOP != 1200 {
+		t.Errorf("RemainingUOP = %d, want 1200 (Order B's release must reset the runtime UOP for the next cycle)",
+			runtime.RemainingUOP)
+	}
+}
+
 // TestComputeReleaseRemainingUOP exercises the disposition → *int routing in
 // isolation so the late-binding contract (empty Mode → nil, capture → &0,
 // partial → &runtime.RemainingUOP, partial-with-non-positive-runtime → &0)

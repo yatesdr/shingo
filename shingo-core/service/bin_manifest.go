@@ -198,3 +198,66 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 	return nil
 }
 
+// SyncOrClearForReleasedNoOwner is the source-node-fallback variant of
+// SyncOrClearForReleased. Identical routing (nil → no-op, 0 → clear,
+// >0 → sync UOP), identical audit, but the SQL guard drops the
+// claimed_by check — used by HandleOrderRelease when order.BinID is nil
+// and we've located the bin by source-node lookup instead.
+//
+// Why no claim guard: the bin we're targeting wasn't claimed by this
+// order (claimComplexBins missed it at creation time, which is the bug
+// this method is the safety net for). Requiring claimed_by=$orderID
+// would always fail. The locked=false guard stays — actively-handled
+// bins must not be mutated mid-flight regardless of how we found them.
+//
+// orderID is still threaded through for audit-trail completeness so the
+// row identifies which release request triggered the change.
+//
+// Idempotent: re-running with the same arguments produces the same row
+// state, so retries after a failed fleet release are safe.
+func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64, remainingUOP *int, actor string) error {
+	if remainingUOP == nil {
+		return nil
+	}
+	if actor == "" {
+		actor = "system"
+	}
+	if *remainingUOP == 0 {
+		res, err := s.db.Exec(`
+			UPDATE bins SET
+				payload_code='', manifest=NULL, uop_remaining=0,
+				manifest_confirmed=false, loaded_at=NULL,
+				updated_at=NOW()
+			WHERE id=$1 AND locked=false`,
+			binID)
+		if err != nil {
+			return fmt.Errorf("clear manifest for released bin %d (no-owner fallback): %w", binID, err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return fmt.Errorf("bin %d not found or locked (no-owner fallback)", binID)
+		}
+		s.db.AppendAudit("bin", binID, "released_empty_fallback",
+			"", fmt.Sprintf("order=%d (source-node fallback)", orderID), actor)
+		return nil
+	}
+	if *remainingUOP < 0 {
+		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
+	}
+	res, err := s.db.Exec(`
+		UPDATE bins SET
+			uop_remaining=$1, updated_at=NOW()
+		WHERE id=$2 AND locked=false`,
+		*remainingUOP, binID)
+	if err != nil {
+		return fmt.Errorf("sync UOP for released bin %d (no-owner fallback): %w", binID, err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("bin %d not found or locked (no-owner fallback)", binID)
+	}
+	s.db.AppendAudit("bin", binID, "released_partial_fallback",
+		"", fmt.Sprintf("uop=%d order=%d (source-node fallback)", *remainingUOP, orderID), actor)
+	return nil
+}
+

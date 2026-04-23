@@ -774,33 +774,15 @@ function renderModal(entry) {
             const orders = entry.orders || [];
             const active = orders.filter(o => o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
             const staged = active.find(o => o.status === 'staged');
-            const stagedCount = active.filter(o => o.status === 'staged').length;
             const delivered = active.find(o => o.status === 'delivered');
             const inFlight = active.find(o => !staged && !delivered);
 
-            // Two-robot detection: trust the claim's swap_mode when present,
-            // BUT also infer two-robot from "two staged orders on this node"
-            // when the active claim lookup returns null. Without this fallback
-            // the per-order RELEASE branch below would fire twice (once per
-            // staged order) on a real two-robot setup whose active_claim
-            // didn't resolve in the view response (claim configured on a
-            // different style, CoreNodeName mismatch, etc). The server's
-            // ReleaseStagedOrders validates the swap_mode regardless — this
-            // is just a UI gate.
-            const claimedTwoRobot = !!(claim && claim.swap_mode === 'two_robot');
-            const inferredTwoRobot = stagedCount >= 2;
-            const twoRobotSetup = claimedTwoRobot || inferredTwoRobot;
-
-            if (entry.swap_ready || (twoRobotSetup && stagedCount >= 2)) {
+            if (entry.swap_ready) {
                 // Two-robot swap: both robots are holding at their wait
-                // points. One click releases both in B-then-A order. The
-                // server-computed swap_ready is the primary signal; the
-                // inferred-from-staged-count fallback handles the case where
-                // active_claim lookup failed in the view (so swap_ready is
-                // false even though both robots are actually staged).
+                // points. One click releases both in B-then-A order.
                 html += actionBtn('RELEASE', 'request', true,
                     'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged');
-            } else if (staged && twoRobotSetup) {
+            } else if (staged && claim && claim.swap_mode === 'two_robot') {
                 // Two-robot swap, only one robot has arrived so far — hold
                 // the release until both are staged so a single click can
                 // move the whole swap forward.

@@ -305,6 +305,12 @@ func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
 func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lineNode *store.Node, bp *store.Payload, orderUUID, binLabel string) (*store.Order, *store.Bin) {
 	t.Helper()
 
+	// Destination node for the dropoff step (must exist for step resolution).
+	destNode := &store.Node{Name: "RELEASE-DEST", Enabled: true}
+	if err := db.CreateNode(destNode); err != nil {
+		t.Fatalf("create dest node: %v", err)
+	}
+
 	// Filled bin at the line (outgoing partial/empty after consumption).
 	bin := &store.Bin{BinTypeID: 1, Label: binLabel, NodeID: &lineNode.ID, Status: "staged"}
 	if err := db.CreateBin(bin); err != nil {
@@ -325,7 +331,7 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 		Steps: []protocol.ComplexOrderStep{
 			{Action: "wait", Node: lineNode.Name},
 			{Action: "pickup", Node: lineNode.Name},
-			{Action: "dropoff", Node: "RELEASE-DEST"},
+			{Action: "dropoff", Node: destNode.Name},
 		},
 		// nil at creation — release path is what we're testing.
 	})
@@ -434,3 +440,129 @@ func TestHandleOrderRelease_RemainingUOPNilLeavesManifestAlone(t *testing.T) {
 		t.Errorf("UOPRemaining = %d, want %d (untouched on nil release)", got.UOPRemaining, before.UOPRemaining)
 	}
 }
+
+// TestHandleOrderRelease_BinIDNilFallbackClearsManifest verifies the
+// source-node fallback path. Setup: an order with order.BinID=nil but a
+// bin sitting at order.SourceNode (the line). This is the production
+// failure mode for two-robot Order B observed on ALN_002 plant test
+// 2026-04-23 — claimComplexBins didn't populate BinID, but the bin is
+// physically at the line and the operator's release wants its manifest
+// cleared. Without the fallback, HandleOrderRelease silently skipped the
+// sync and the bin landed at OutboundDestination still tagged.
+//
+// With the fallback: HandleOrderRelease detects BinID==nil, looks up the
+// bin at order.SourceNode, calls SyncOrClearForReleasedNoOwner (which
+// drops the claim guard since the fallback bin isn't claimed by this
+// order), and the manifest clears.
+func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	// Bin physically at the line with manifest intact (the OLD bin
+	// the line consumed down to zero — Edge knows it's empty, Core
+	// still has the loaded state because there's no cycle telemetry).
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-FALLBACK", NodeID: &lineNode.ID, Status: "staged"}
+	if err := db.CreateBin(bin); err != nil {
+		t.Fatalf("create bin: %v", err)
+	}
+	if err := db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":100}]}`, bp.Code, 100); err != nil {
+		t.Fatalf("set manifest: %v", err)
+	}
+
+	// Order whose BinID is nil but whose SourceNode points at the line.
+	// Mimics the production failure mode where claimComplexBins didn't
+	// claim a bin for the order at creation time.
+	order := &store.Order{
+		EdgeUUID:     "uuid-fallback-clear",
+		StationID:    "line-1",
+		OrderType:    OrderTypeComplex,
+		Status:       StatusStaged,
+		Quantity:     1,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: "OUTBOUND-DEST",
+		PayloadCode:  bp.Code,
+		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
+		// BinID intentionally nil
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	// Force StatusStaged (CreateOrder may default to pending).
+	if err := db.UpdateOrderStatus(order.ID, StatusStaged, "test: fallback scenario"); err != nil {
+		t.Fatalf("set order staged: %v", err)
+	}
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// Operator release with NOTHING PULLED → remaining_uop=0.
+	zero := 0
+	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
+		OrderUUID:    "uuid-fallback-clear",
+		RemainingUOP: &zero,
+	})
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty (cleared via source-node fallback)", got.PayloadCode)
+	}
+	if got.UOPRemaining != 0 {
+		t.Errorf("UOPRemaining = %d, want 0 (cleared via fallback)", got.UOPRemaining)
+	}
+	// The bin was NOT claimed by this order — the no-owner variant
+	// should leave claimed_by alone (it was nil, stays nil).
+	if got.ClaimedBy != nil {
+		t.Errorf("ClaimedBy = %v, want nil (fallback should not claim)", got.ClaimedBy)
+	}
+}
+
+// TestHandleOrderRelease_BinIDNilFallbackSyncsPartial verifies the
+// fallback path for SEND PARTIAL BACK (positive remaining_uop).
+func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	bin := &store.Bin{BinTypeID: 1, Label: "BIN-FALLBACK-PART", NodeID: &lineNode.ID, Status: "staged"}
+	if err := db.CreateBin(bin); err != nil {
+		t.Fatalf("create bin: %v", err)
+	}
+	manifest := `{"items":[{"catid":"PART-A","qty":100}]}`
+	if err := db.SetBinManifest(bin.ID, manifest, bp.Code, 100); err != nil {
+		t.Fatalf("set manifest: %v", err)
+	}
+
+	order := &store.Order{
+		EdgeUUID:     "uuid-fallback-partial",
+		StationID:    "line-1",
+		OrderType:    OrderTypeComplex,
+		Status:       StatusStaged,
+		Quantity:     1,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: "OUTBOUND-DEST",
+		PayloadCode:  bp.Code,
+		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := db.UpdateOrderStatus(order.ID, StatusStaged, "test: fallback partial scenario"); err != nil {
+		t.Fatalf("set order staged: %v", err)
+	}
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	partial := 37
+	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
+		OrderUUID:    "uuid-fallback-partial",
+		RemainingUOP: &partial,
+	})
+
+	got, _ := db.GetBin(bin.ID)
+	if got.UOPRemaining != 37 {
+		t.Errorf("UOPRemaining = %d, want 37 (synced via fallback)", got.UOPRemaining)
+	}
+	if got.PayloadCode != bp.Code {
+		t.Errorf("PayloadCode = %q, want %q (preserved on partial-back)", got.PayloadCode, bp.Code)
+	}
+} 

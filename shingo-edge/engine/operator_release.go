@@ -144,23 +144,22 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// different scopes.
 	manifestUOP := computeReleaseRemainingUOP(disp, runtime)
 
-	// Two-robot supply-bin protection. The per-order release path
+	// Two-robot supply-order detection. The per-order release path
 	// (apiReleaseOrder, /api/orders/{id}/release) doesn't know whether the
 	// order being released is the supply (Order A) or the evac (Order B),
-	// so it forwards the operator's chosen disposition either way. If the
-	// UI fell through to per-order RELEASE prompts on a two-robot setup
-	// (claim-lookup race, swap_ready false), the operator may click
-	// NOTHING PULLED on Order A — which would normally clear Order A's
-	// bin manifest. But Order A's bin is the freshly-loaded supply bin
-	// from the supermarket, and clearing its manifest right before
-	// delivery destroys the payload data the line is about to need.
-	//
-	// Override manifestUOP to nil for the supply order so Core leaves its
-	// bin alone regardless of what the operator clicked. The consolidated
-	// ReleaseStagedOrders path already does this by passing
-	// ReleaseDisposition{} for Order A — this guard is the safety net
-	// when the per-order path runs instead.
-	if manifestUOP != nil && e.isSupplyOrderInActiveTwoRobotSwap(node.ID, orderID) {
+	// so it forwards the operator's chosen disposition either way. We have
+	// to discriminate server-side based on which order is which in the
+	// runtime's order slots.
+	isSupply := e.isSupplyOrderInActiveTwoRobotSwap(node.ID, orderID)
+
+	// Two-robot supply-bin protection (Bug A guard, ALN_002 plant test
+	// 2026-04-23): if this is the supply order, skip the manifest sync.
+	// Order A's bin is the freshly-loaded supply bin from the supermarket,
+	// and clearing its manifest right before delivery destroys the payload
+	// data the line is about to need. The consolidated ReleaseStagedOrders
+	// path already does this by passing ReleaseDisposition{} for Order A;
+	// this guard is the safety net when the per-order path runs instead.
+	if manifestUOP != nil && isSupply {
 		log.Printf("release: order %d is the supply order in a two-robot swap on node %s — skipping manifest sync to protect supply bin",
 			orderID, node.Name)
 		manifestUOP = nil
@@ -172,9 +171,33 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		return err
 	}
 
-	claimID := toClaim.ID
-	if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
-		return fmt.Errorf("reset runtime on release for node %d: %w", node.ID, err)
+	// Two-robot runtime-reset protection (Bug B guard, same plant incident):
+	// in the per-order release path, if Order A (the supply) is released
+	// before Order B (the evac), Order A's release would normally call
+	// SetProcessNodeRuntime to reset RemainingUOP to capacity. That reset
+	// CLOBBERS the runtime UOP that Order B's subsequent release needs to
+	// read for the SEND PARTIAL BACK disposition. Result: Edge sends
+	// remaining_uop=capacity (e.g. 1200) for Order B's evac, Core's
+	// SyncOrClearForReleased writes that bogus value to the bin row,
+	// manifest stays loaded with full UOP, bin lands at OutboundDestination
+	// looking like a fresh full bin — exact ALN_002 → SMN_003 symptom for
+	// the partial-back case.
+	//
+	// The runtime reset's purpose is "prepare the line node's UOP tracking
+	// for the new bin's cycle." That's properly Order B's responsibility:
+	// Order B is what evacuates the old bin and signals the cycle turnover.
+	// Order A delivers the new bin, but until B clears, the old bin's UOP
+	// state is what matters. Skip the reset on Order A's release; Order B's
+	// release (or the consolidated ReleaseStagedOrders path, which does B
+	// then A) will perform it correctly.
+	if !isSupply {
+		claimID := toClaim.ID
+		if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+			return fmt.Errorf("reset runtime on release for node %d: %w", node.ID, err)
+		}
+	} else {
+		log.Printf("release: order %d is the supply order in a two-robot swap on node %s — skipping runtime UOP reset (Order B's release owns the reset)",
+			orderID, node.Name)
 	}
 	if nodeTask != nil {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
