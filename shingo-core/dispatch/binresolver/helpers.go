@@ -1,6 +1,10 @@
 package binresolver
 
-import "shingocore/store"
+import (
+	"fmt"
+
+	"shingocore/store"
+)
 
 // isBinAvailableForRetrieve checks if a bin can be claimed for retrieval.
 func isBinAvailableForRetrieve(b *store.Bin, payloadCode string) bool {
@@ -32,17 +36,34 @@ func isBinAvailableForRetrieve(b *store.Bin, payloadCode string) bool {
 // This catches "wrong part parked at wrong station" while allowing the normal
 // post-completion state (cleared bin with empty payload_code) to pass through.
 func IsAvailableAtConcreteNode(b *store.Bin, payloadCode string) bool {
+	return BinUnavailableReason(b, payloadCode) == ""
+}
+
+// BinUnavailableReason is the reason-returning sibling of IsAvailableAtConcreteNode.
+// Returns "" when the bin is available; otherwise a short, log-friendly string
+// describing why the bin was rejected.
+//
+// Exists so callers (claimComplexBins, planning_service) can tell operators
+// WHY a bin at the right node was skipped — the previous d.dbg only logged
+// payload mismatches, leaving claimed_by / status rejections silent. That
+// silence is what made the ALN_002 → SMN_003 incident (2026-04-23) hard to
+// root-cause: the line bin was visibly there with a matching payload, but no
+// log explained why the claim silently failed.
+//
+// Keep this in lockstep with IsAvailableAtConcreteNode — adding a new reject
+// rule there means adding a new branch here.
+func BinUnavailableReason(b *store.Bin, payloadCode string) string {
 	if b.ClaimedBy != nil {
-		return false
+		return fmt.Sprintf("already claimed by order %d", *b.ClaimedBy)
 	}
 	switch b.Status {
 	case "maintenance", "flagged", "retired", "quality_hold":
-		return false
+		return fmt.Sprintf("status=%q rejects pickup", b.Status)
 	}
 	if payloadCode != "" && b.PayloadCode != "" && b.PayloadCode != payloadCode {
-		return false
+		return fmt.Sprintf("payload %q does not match order payload %q", b.PayloadCode, payloadCode)
 	}
-	return true
+	return ""
 }
 
 // storageCandidate represents a potential storage slot for ranking.

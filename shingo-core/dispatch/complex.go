@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -527,6 +528,37 @@ type claimedBin struct {
 	nodeName  string
 }
 
+// pickupSkip records why a pickup step in a complex order failed to claim a
+// bin. Surfaced to production logs by claimComplexBins so silent claim
+// failures (the ALN_002 → SMN_003 incident class) become diagnosable from
+// the log instead of only from the late-bind manifest fallback path.
+type pickupSkip struct {
+	stepIndex int
+	nodeName  string
+	reason    string
+}
+
+// joinRejects formats per-bin reject reasons into a single log line. Caps at
+// the first 6 entries so a node with many bins doesn't blow up the log; the
+// summary still notes the count even if entries are truncated.
+func joinRejects(rejects []string) string {
+	const maxEntries = 6
+	if len(rejects) <= maxEntries {
+		return strings.Join(rejects, "; ")
+	}
+	return strings.Join(rejects[:maxEntries], "; ") + fmt.Sprintf("; ... +%d more", len(rejects)-maxEntries)
+}
+
+// stepSkipSummaries renders per-step skip summaries as compact "step N at
+// NODE: REASON" tuples for the order-level missed-step rollup log line.
+func stepSkipSummaries(skips []pickupSkip) []string {
+	out := make([]string, 0, len(skips))
+	for _, s := range skips {
+		out = append(out, fmt.Sprintf("step %d at %s: %s", s.stepIndex, s.nodeName, s.reason))
+	}
+	return out
+}
+
 // claimComplexBins resolves and claims bins for pickup steps in a complex order.
 // For single-pickup orders (the most common pattern), it sets Order.BinID so
 // that the normal completion flow — ApplyBinArrival (moves bin to delivery
@@ -549,26 +581,60 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 	// all other pickups (e.g. storage pickups) use a plain claim.
 	processNode := order.SourceNode
 
-	var claimed []claimedBin
+	// Per-step skip-reason capture. We track every pickup step and record a
+	// reason if no bin was claimed for it. Surfaced via log.Printf below so
+	// production logs explain WHY a step missed (already-claimed bin, payload
+	// mismatch, ClaimForDispatch SQL guard fail, no bins at node, etc.) —
+	// previously this was silent and produced the ALN_002 → SMN_003 incident
+	// (2026-04-23) where order.BinID stayed nil and the release-time manifest
+	// sync silently fell through to the source-node fallback.
+	var (
+		claimed     []claimedBin
+		pickupSteps int
+		stepSkips   []pickupSkip
+	)
+
 	for i, s := range steps {
 		if s.Action != "pickup" {
 			continue
 		}
+		pickupSteps++
 		node, err := d.db.GetNodeByDotName(s.Node)
 		if err != nil {
-			d.dbg("complex: cannot resolve pickup node %s for claiming: %v", s.Node, err)
+			reason := fmt.Sprintf("cannot resolve node %s: %v", s.Node, err)
+			log.Printf("dispatch: complex order %d pickup step %d at %s — %s",
+				order.ID, i, s.Node, reason)
+			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
 			continue
 		}
 		bins, err := d.db.ListBinsByNode(node.ID)
 		if err != nil {
-			d.dbg("complex: cannot list bins at %s for claiming: %v", s.Node, err)
+			reason := fmt.Sprintf("ListBinsByNode failed: %v", err)
+			log.Printf("dispatch: complex order %d pickup step %d at %s — %s",
+				order.ID, i, s.Node, reason)
+			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
 			continue
 		}
+		if len(bins) == 0 {
+			reason := "no bins at node"
+			log.Printf("dispatch: complex order %d pickup step %d at %s — %s",
+				order.ID, i, s.Node, reason)
+			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
+			continue
+		}
+
+		// Per-bin reject reasons for THIS step. If we exit the inner loop
+		// without claiming, summarise these into one log line so the operator
+		// sees every candidate the resolver considered and why each was
+		// rejected. Previously only payload-mismatch was logged (at debug
+		// level), which left already-claimed and status-rejected bins silent.
+		var (
+			stepClaimed = false
+			rejects     []string
+		)
 		for _, bin := range bins {
-			if !IsAvailableAtConcreteNode(bin, payloadCode) {
-				if bin.ClaimedBy == nil && payloadCode != "" && bin.PayloadCode != "" && bin.PayloadCode != payloadCode {
-					d.dbg("complex: skipping bin %d at %s — payload %q does not match order %q", bin.ID, s.Node, bin.PayloadCode, payloadCode)
-				}
+			if reason := BinUnavailableReason(bin, payloadCode); reason != "" {
+				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): %s", bin.ID, bin.Label, reason))
 				continue
 			}
 			// Only apply remainingUOP at the process node (outgoing bin).
@@ -578,6 +644,13 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 				stepUOP = remainingUOP
 			}
 			if err := d.binManifest.ClaimForDispatch(bin.ID, order.ID, stepUOP); err != nil {
+				// Was silently swallowed pre-2026-04-24. ClaimForDispatch
+				// returns informative errors ("bin X is locked, already
+				// claimed, or does not exist") that are exactly the diagnostic
+				// signal the user needs when the late-bind fallback fires.
+				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): ClaimForDispatch failed: %v", bin.ID, bin.Label, err))
+				log.Printf("dispatch: complex order %d ClaimForDispatch failed for bin %d at %s — %v",
+					order.ID, bin.ID, s.Node, err)
 				continue
 			}
 			d.dbg("complex: claimed bin %d (%s) at %s for order %d",
@@ -585,7 +658,15 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 			d.db.AppendAudit("bin", bin.ID, "claimed",
 				"", fmt.Sprintf("complex order %d pickup at %s", order.ID, s.Node), "system")
 			claimed = append(claimed, claimedBin{binID: bin.ID, stepIndex: i, nodeName: s.Node})
+			stepClaimed = true
 			break
+		}
+		if !stepClaimed {
+			reason := fmt.Sprintf("no candidate among %d bin(s); rejects: [%s]",
+				len(bins), joinRejects(rejects))
+			log.Printf("dispatch: complex order %d pickup step %d at %s — %s",
+				order.ID, i, s.Node, reason)
+			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
 		}
 	}
 
@@ -593,11 +674,26 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 		return &planningError{Code: "no_bin", Detail: fmt.Sprintf("no available bin at pickup node(s) for order %d", order.ID)}
 	}
 
+	// Order proceeded with claims for some steps but missed others. This is
+	// the silent-failure path that produces order.BinID-correct-but-misleading
+	// or order.BinID-nil-on-the-relevant-step. Surface it loudly so the
+	// late-bind manifest fallback (HandleOrderRelease's findFallbackBinAtSource)
+	// has a paired diagnostic in the log instead of being the only signal that
+	// something went wrong.
+	if len(stepSkips) > 0 {
+		log.Printf("dispatch: complex order %d claimed %d/%d pickup step(s); %d step(s) missed: %v",
+			order.ID, len(claimed), pickupSteps, len(stepSkips), stepSkipSummaries(stepSkips))
+	}
+
 	// Set Order.BinID to the first claimed bin. This enables the standard
 	// single-bin completion path in wiring.go for simple complex orders.
 	order.BinID = &claimed[0].binID
 	if err := d.db.UpdateOrderBinID(order.ID, claimed[0].binID); err != nil {
-		log.Printf("dispatch: update complex order %d bin_id: %v", order.ID, err)
+		// Second silent path the late-bind fallback was working around: an
+		// in-memory order.BinID that never made it to the DB row. Surface as
+		// WARNING so it stands out from the per-step skip lines above.
+		log.Printf("dispatch: WARNING complex order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
+			order.ID, claimed[0].binID, err)
 	}
 
 	// Multi-bin: populate the order_bins junction table with per-bin destinations.

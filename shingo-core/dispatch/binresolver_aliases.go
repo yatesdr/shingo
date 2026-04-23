@@ -43,3 +43,9 @@ const (
 // IsAvailableAtConcreteNode mirrors binresolver.IsAvailableAtConcreteNode.
 // Re-exported so dispatch/ code can call it without a direct sub-package import.
 var IsAvailableAtConcreteNode = binresolver.IsAvailableAtConcreteNode
+
+// BinUnavailableReason mirrors binresolver.BinUnavailableReason. Returns ""
+// when the bin is available; otherwise a short string explaining the reject
+// (already claimed by which order, status reject, payload mismatch). Used by
+// claim-loop logging so silent rejections become visible in production logs.
+var BinUnavailableReason = binresolver.BinUnavailableReason

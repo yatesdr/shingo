@@ -345,31 +345,47 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 		bins, _ := s.db.ListBinsByNode(sourceNode.ID)
 		binClaimed := false
 		remainingUOP := extractRemainingUOP(env)
+		// Per-bin reject reasons. Used in the no_bin/no_payload failure log so
+		// "why" is in the log alongside "what failed" — mirrors the
+		// claimComplexBins skip-reason pattern. Previously only payload
+		// mismatches were logged at debug level, leaving already-claimed and
+		// status-rejected bins silent.
+		var rejects []string
 		for _, bin := range bins {
-			if !IsAvailableAtConcreteNode(bin, payloadCode) {
-				if bin.ClaimedBy == nil && payloadCode != "" && bin.PayloadCode != "" && bin.PayloadCode != payloadCode {
-					s.dbg("move: skipping bin %d at %s — payload %q does not match order %q", bin.ID, order.SourceNode, bin.PayloadCode, payloadCode)
-				}
+			if reason := BinUnavailableReason(bin, payloadCode); reason != "" {
+				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): %s", bin.ID, bin.Label, reason))
 				continue
 			}
-			if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err == nil {
-				order.BinID = &bin.ID
-				if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
-					log.Printf("dispatch: update order %d bin_id: %v", order.ID, err)
-				}
-				s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", bin.ID, order.SourceNode, remainingUOP)
-				binClaimed = true
-				break
+			if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err != nil {
+				// Was silently swallowed before. Surface the SQL-guard error
+				// (locked, claimed_by mismatch, etc.) so the operator can see
+				// why a bin that passed the availability check still couldn't
+				// be claimed.
+				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): ClaimForDispatch failed: %v", bin.ID, bin.Label, err))
+				log.Printf("dispatch: move order %d ClaimForDispatch failed for bin %d at %s — %v",
+					order.ID, bin.ID, order.SourceNode, err)
+				continue
 			}
+			order.BinID = &bin.ID
+			if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
+				log.Printf("dispatch: WARNING move order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
+					order.ID, bin.ID, err)
+			}
+			s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", bin.ID, order.SourceNode, remainingUOP)
+			binClaimed = true
+			break
 		}
 		if !binClaimed {
+			detail := fmt.Sprintf("no unclaimed bin at %s for move order %d (evaluated %d bin(s); rejects: [%s])",
+				order.SourceNode, order.ID, len(bins), joinRejects(rejects))
+			log.Printf("dispatch: move order %d at %s — %s", order.ID, order.SourceNode, detail)
 			if payloadCode != "" {
 				return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
 			}
 			// Safety net: a move order without a claimed bin would silently
 			// dispatch to the fleet, but handleOrderCompleted would skip the
 			// bin arrival update (BinID == nil). Fail loudly instead.
-			return nil, &planningError{Code: "no_bin", Detail: fmt.Sprintf("no unclaimed bin at %s for move order %d", order.SourceNode, order.ID)}
+			return nil, &planningError{Code: "no_bin", Detail: detail}
 		}
 	}
 
