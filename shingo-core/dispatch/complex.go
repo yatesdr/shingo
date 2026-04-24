@@ -602,23 +602,20 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 		node, err := d.db.GetNodeByDotName(s.Node)
 		if err != nil {
 			reason := fmt.Sprintf("cannot resolve node %s: %v", s.Node, err)
-			log.Printf("dispatch: complex order %d pickup step %d at %s — %s",
-				order.ID, i, s.Node, reason)
+			d.dbg("complex: order %d pickup step %d at %s — %s", order.ID, i, s.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
 			continue
 		}
 		bins, err := d.db.ListBinsByNode(node.ID)
 		if err != nil {
 			reason := fmt.Sprintf("ListBinsByNode failed: %v", err)
-			log.Printf("dispatch: complex order %d pickup step %d at %s — %s",
-				order.ID, i, s.Node, reason)
+			d.dbg("complex: order %d pickup step %d at %s — %s", order.ID, i, s.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
 			continue
 		}
 		if len(bins) == 0 {
 			reason := "no bins at node"
-			log.Printf("dispatch: complex order %d pickup step %d at %s — %s",
-				order.ID, i, s.Node, reason)
+			d.dbg("complex: order %d pickup step %d at %s — %s", order.ID, i, s.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
 			continue
 		}
@@ -649,7 +646,7 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 				// claimed, or does not exist") that are exactly the diagnostic
 				// signal the user needs when the late-bind fallback fires.
 				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): ClaimForDispatch failed: %v", bin.ID, bin.Label, err))
-				log.Printf("dispatch: complex order %d ClaimForDispatch failed for bin %d at %s — %v",
+				d.dbg("complex: order %d ClaimForDispatch failed for bin %d at %s — %v",
 					order.ID, bin.ID, s.Node, err)
 				continue
 			}
@@ -664,7 +661,7 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 		if !stepClaimed {
 			reason := fmt.Sprintf("no candidate among %d bin(s); rejects: [%s]",
 				len(bins), joinRejects(rejects))
-			log.Printf("dispatch: complex order %d pickup step %d at %s — %s",
+			d.dbg("complex: order %d pickup step %d at %s — %s",
 				order.ID, i, s.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
 		}
@@ -681,7 +678,7 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 	// has a paired diagnostic in the log instead of being the only signal that
 	// something went wrong.
 	if len(stepSkips) > 0 {
-		log.Printf("dispatch: complex order %d claimed %d/%d pickup step(s); %d step(s) missed: %v",
+		d.dbg("complex: order %d claimed %d/%d pickup step(s); %d step(s) missed: %v",
 			order.ID, len(claimed), pickupSteps, len(stepSkips), stepSkipSummaries(stepSkips))
 	}
 
@@ -692,7 +689,7 @@ func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, 
 		// Second silent path the late-bind fallback was working around: an
 		// in-memory order.BinID that never made it to the DB row. Surface as
 		// WARNING so it stands out from the per-step skip lines above.
-		log.Printf("dispatch: WARNING complex order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
+		d.dbg("complex: WARNING order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
 			order.ID, claimed[0].binID, err)
 	}
 

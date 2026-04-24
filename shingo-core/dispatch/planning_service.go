@@ -362,13 +362,13 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 				// why a bin that passed the availability check still couldn't
 				// be claimed.
 				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): ClaimForDispatch failed: %v", bin.ID, bin.Label, err))
-				log.Printf("dispatch: move order %d ClaimForDispatch failed for bin %d at %s — %v",
+				s.dbg("move: order %d ClaimForDispatch failed for bin %d at %s — %v",
 					order.ID, bin.ID, order.SourceNode, err)
 				continue
 			}
 			order.BinID = &bin.ID
 			if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
-				log.Printf("dispatch: WARNING move order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
+				s.dbg("move: WARNING order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
 					order.ID, bin.ID, err)
 			}
 			s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", bin.ID, order.SourceNode, remainingUOP)
@@ -378,7 +378,7 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 		if !binClaimed {
 			detail := fmt.Sprintf("no unclaimed bin at %s for move order %d (evaluated %d bin(s); rejects: [%s])",
 				order.SourceNode, order.ID, len(bins), joinRejects(rejects))
-			log.Printf("dispatch: move order %d at %s — %s", order.ID, order.SourceNode, detail)
+			s.dbg("move: order %d at %s — %s", order.ID, order.SourceNode, detail)
 			if payloadCode != "" {
 				return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
 			}
