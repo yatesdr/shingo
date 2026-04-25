@@ -126,6 +126,21 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		// No claim to reset against — still want the release to go out.
 		// Skip the disposition mapping; this covers config drift / ingest-only
 		// nodes where Core has no opinion on the bin manifest anyway.
+		//
+		// Diagnostic: this nil-return silently drops the operator's disposition.
+		// Surface it so a recurrence is visible in logs instead of producing the
+		// invisible "remaining_uop=<nil>" symptom downstream. Was a candidate
+		// failure mode for the ALN_002 incident class; see bug-fix-review-plan.md
+		// item 1.3.
+		// Print "<nil>" rather than 0 when the runtime slot is unset — at 2am
+		// in the Debug Log UI, "ActiveClaimID=0" is ambiguous (could be a
+		// real ID, could be unset); "ActiveClaimID=<nil>" is unmistakable.
+		activeClaimStr := "<nil>"
+		if runtime != nil && runtime.ActiveClaimID != nil {
+			activeClaimStr = fmt.Sprintf("%d", *runtime.ActiveClaimID)
+		}
+		e.logFn("release: order %d on node %s — toClaim is nil (runtime.ActiveClaimID=%s), skipping manifest sync; disposition %q dropped",
+			orderID, node.Name, activeClaimStr, string(disp.Mode))
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 

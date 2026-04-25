@@ -176,10 +176,19 @@ func lookupLastReleaseError(db *DB, runtime *ProcessNodeRuntimeState) string {
 	return ""
 }
 
-// computeSwapReady returns true only when a two-robot swap has both tracked
-// orders (ActiveOrderID and StagedOrderID on the runtime) in "staged" status.
-// That's the gate for the single coordinated release: both robots are holding
-// at their wait points, so one operator click can move the whole swap forward.
+// computeSwapReady returns true when a two-robot swap can be released via the
+// consolidated single-click path. Both tracked orders must exist; at least one
+// must be in "staged" status; the other must be in a pre-staged active status
+// (dispatched or in_transit) — meaning it's en route and will reach staged
+// soon. The companion auto-release-on-staged hook in wiring then picks up the
+// second order when it arrives, so the operator's single click covers both.
+//
+// Pre-2026-04-25 semantic: required BOTH orders simultaneously staged. In
+// practice the two robots arrive at their wait points seconds apart, so the
+// simultaneous-staged window often did not exist when the operator looked.
+// Operators fell back to the admin orders page (which has its own bug — see
+// kanbans.js:32 fix), losing the coordinated B-then-A ordering and the proper
+// disposition handling.
 //
 // Non-two-robot claims always return false — their single staged order is
 // still released via the per-order /api/orders/{id}/release endpoint.
@@ -198,6 +207,23 @@ func computeSwapReady(db *DB, claim *StyleNodeClaim, runtime *ProcessNodeRuntime
 	if err != nil || staged == nil {
 		return false
 	}
-	return active.Status == "staged" && staged.Status == "staged"
+	// At least one staged + the other in a pre-staged active status. Both
+	// orders must be in non-terminal statuses — if either is confirmed/failed/
+	// cancelled, the swap is over and the consolidated release shouldn't fire.
+	atLeastOneStaged := active.Status == "staged" || staged.Status == "staged"
+	bothNonTerminal := isNonTerminalForSwap(active.Status) && isNonTerminalForSwap(staged.Status)
+	return atLeastOneStaged && bothNonTerminal
+}
+
+// isNonTerminalForSwap reports whether an order status indicates the order is
+// still part of an active two-robot swap — i.e., not yet completed, failed, or
+// cancelled. Statuses "dispatched", "in_transit", "staged", "delivered" all
+// count as still-active for the swap-readiness check.
+func isNonTerminalForSwap(status string) bool {
+	switch status {
+	case "confirmed", "failed", "cancelled":
+		return false
+	}
+	return true
 }
 

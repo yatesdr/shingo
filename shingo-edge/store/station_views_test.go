@@ -100,6 +100,13 @@ func TestComputeSwapReady_BothStaged(t *testing.T) {
 	}
 }
 
+// TestComputeSwapReady_OnlyOneStaged covers the post-2026-04-25 relaxation:
+// the consolidated RELEASE button should appear as soon as the FIRST robot
+// arrives at its wait point (not only when both arrive simultaneously, which
+// in practice almost never happened — robots arrive seconds apart). The
+// late-arriving leg is handled by the auto-release-on-staged hook in
+// wiring.go after the operator clicks. See bug-fix-plan-final-dev-d.md
+// item 2.1.
 func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 	db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
 	if err := db.UpdateOrderStatus(aID, "staged"); err != nil {
@@ -108,8 +115,28 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 	if err := db.UpdateOrderStatus(bID, "in_transit"); err != nil {
 		t.Fatalf("mark B in_transit: %v", err)
 	}
-	if computeSwapReady(db, claim, runtime) {
-		t.Error("expected SwapReady=false when only one order is staged")
+	if !computeSwapReady(db, claim, runtime) {
+		t.Error("expected SwapReady=true when one order is staged and the other is non-terminal (relaxed timing-window contract)")
+	}
+}
+
+// TestComputeSwapReady_OneStagedOneTerminal ensures the relaxation does NOT
+// fire when the non-staged leg has gone terminal (confirmed/failed/cancelled).
+// The cycle is over at that point and the consolidated path shouldn't appear.
+func TestComputeSwapReady_OneStagedOneTerminal(t *testing.T) {
+	for _, terminalStatus := range []string{"confirmed", "failed", "cancelled"} {
+		t.Run(terminalStatus, func(t *testing.T) {
+			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
+			if err := db.UpdateOrderStatus(aID, "staged"); err != nil {
+				t.Fatalf("mark A staged: %v", err)
+			}
+			if err := db.UpdateOrderStatus(bID, terminalStatus); err != nil {
+				t.Fatalf("mark B %s: %v", terminalStatus, err)
+			}
+			if computeSwapReady(db, claim, runtime) {
+				t.Errorf("expected SwapReady=false when sibling is terminal (%s) — cycle is over", terminalStatus)
+			}
+		})
 	}
 }
 

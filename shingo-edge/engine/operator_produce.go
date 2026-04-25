@@ -166,6 +166,14 @@ func (e *Engine) finalizeProduceTwoRobot(node *store.ProcessNode, runtime *store
 		return nil, fmt.Errorf("node %s: two-robot swap requires inbound staging node", node.Name)
 	}
 
+	// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
+	// Runs BEFORE setProduceManifest so we don't burn an ingest order on a
+	// node that's about to be rejected. Edge-runtime-only — Core anomalies
+	// don't shut down the line.
+	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+		return nil, err
+	}
+
 	// Manifest the filled bin first
 	ingestOrder, err := e.setProduceManifest(nodeID, node, runtime, claim)
 	if err != nil {

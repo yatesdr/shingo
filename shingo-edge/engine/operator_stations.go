@@ -100,6 +100,12 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 		if claim.InboundStaging == "" {
 			return nil, fmt.Errorf("node %s: two-robot swap requires inbound staging node", node.Name)
 		}
+		// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
+		// Edge-runtime-only — Core anomalies don't shut down the line. See
+		// operator_guards.go.
+		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+			return nil, err
+		}
 		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
 		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, claim.CoreNodeName, stepsA)
 		if err != nil {
@@ -323,8 +329,13 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 }
 
 // releaseIfStaged calls ReleaseOrderWithLineside, but treats an order that has
-// already advanced past "staged" as success. Any other status-validation
-// failure (e.g. order is terminal) is still surfaced.
+// already advanced past "staged" as success. An order that hasn't reached
+// "staged" yet (e.g. still "dispatched" or "in_transit_pre_stage") is also
+// treated as success — the auto-release-on-staged hook in wiring.go will
+// fire it later when it lands at staged. This makes the consolidated RELEASE
+// button safe to click before BOTH robots have arrived at their wait points
+// (Bug 2: timing-window fix). Any other validation failure (e.g. order is
+// terminal) is still surfaced.
 //
 // Phase 3 (lineside): routed through the lineside-aware release path so the
 // two-robot "RELEASE" button also triggers the UOP reset and changeover-task
@@ -349,7 +360,14 @@ func (e *Engine) releaseIfStaged(orderID int64, label string, disp ReleaseDispos
 		// Already moving or further along — release is a no-op.
 		return nil
 	default:
-		return fmt.Errorf("order %s (%d) is in status %q, cannot release", label, orderID, order.Status)
+		// Pre-staged status (e.g. "dispatched") — robot is en route to its wait
+		// point but hasn't arrived yet. Skip rather than erroring; the auto-
+		// release-on-staged hook (handleAutoReleaseOnStaged in wiring.go) will
+		// pick it up when it transitions to staged. The hook keys off the
+		// sibling having already moved past staged — which is true once we
+		// release the staged sibling here.
+		e.logFn("two-robot release: order %s (%d) status=%q not yet staged — will auto-release when it arrives at staged", label, orderID, order.Status)
+		return nil
 	}
 }
 

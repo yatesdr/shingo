@@ -29,7 +29,17 @@ async function releaseOrder(orderID) {
         'dispatches the bots without capturing anything.';
     if (!await ShingoEdge.confirm(msg)) return;
     try {
-        await ShingoEdge.api.post('/api/orders/' + orderID + '/release', { qty_by_part: {} });
+        // Send explicit capture_lineside disposition so Core clears the bin's
+        // manifest. Pre-fix this POST sent no disposition, which fell through
+        // to "no manifest action" — bin landed at supermarket with stale UOP
+        // and the bin loader treated it as full. See bug-fix-review-plan.md
+        // item 1.1; fingerprint of the bug was called_by="" remaining_uop=<nil>
+        // in the orders subsystem log.
+        await ShingoEdge.api.post('/api/orders/' + orderID + '/release', {
+            disposition: 'capture_lineside',
+            qty_by_part: {},
+            called_by: 'admin-ui',
+        });
         ShingoEdge.toast('Order released', 'success');
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }

@@ -217,6 +217,60 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		})
 	}
 
+	// Detect bins stacked at a non-storage, non-staging concrete node — i.e.,
+	// more than one bin physically present at a process node (line node,
+	// dropoff target, etc.). This indicates a prior cycle's evac order failed
+	// to complete the bin handoff (e.g., Robot B faulted en route from core
+	// to AMR group, operator took manual control, transaction never finalized)
+	// while subsequent cycles continued to deliver new bins to the same node.
+	// See bug-fix-review-plan.md item 3.1.
+	//
+	// Excluded — these are aggregate/synthetic types, not concrete physical
+	// positions. Their bin_count rolls up across child slots and is
+	// meaningless for the "stacked at one position" check:
+	//   NGRP    — synthetic parent for lanes / direct nodes
+	//   LANE    — depth-ordered slot group (children are the actual slots)
+	//   STOR    — supermarket storage aggregate
+	//   TRANSIT — logical in-flight bin model (many bins can be "in transit")
+	//
+	// All other concrete node types (line nodes, dropoff targets, STAG
+	// staging positions, OVFL overflow positions) hold one physical bin at
+	// a time. >1 at the same node ID is the anomaly we want to surface.
+	rows, err = db.Query(`
+		SELECT n.id, n.name, COUNT(b.id) AS bin_count
+		FROM bins b
+		JOIN nodes n ON n.id = b.node_id
+		JOIN node_types nt ON nt.id = n.node_type_id
+		WHERE n.is_synthetic = false
+		  AND nt.code NOT IN ('NGRP', 'LANE', 'STOR', 'TRANSIT')
+		  AND n.parent_id IS NULL
+		GROUP BY n.id, n.name
+		HAVING COUNT(b.id) > 1
+		ORDER BY n.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeID int64
+		var nodeName string
+		var binCount int
+		if err := rows.Scan(&nodeID, &nodeName, &binCount); err != nil {
+			return nil, err
+		}
+		anomalies = append(anomalies, &Anomaly{
+			Category:          "node_inventory",
+			Severity:          "critical",
+			Issue:             "multi_bin_at_non_storage_node",
+			RecommendedAction: "clear_stacked_bins",
+			Detail: fmt.Sprintf("node %s has %d bins stacked — likely prior evac handoff failed; clear via admin bin-move",
+				nodeName, binCount),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	// Detect bins with speculative manifest but no active claiming order.
 	// This is informational only — manifest represents physical reality and
 	// should NOT be cleared. The detection surfaces these bins for review.
