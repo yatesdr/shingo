@@ -5,6 +5,11 @@ import (
 	"fmt"
 
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/inventory"
+	"shingocore/store/nodes"
+	"shingocore/store/registry"
+	"shingocore/store/scene"
 )
 
 // NodeService centralizes the node-assignment composite flow that used
@@ -71,7 +76,7 @@ func (s *NodeService) GetGroupLayout(groupID int64) (*store.GroupLayout, error) 
 // ListLaneSlots returns the ordered slot children of a lane. Absorbed
 // from engine_db_methods.go as part of the www-handler service
 // migration.
-func (s *NodeService) ListLaneSlots(laneID int64) ([]*store.Node, error) {
+func (s *NodeService) ListLaneSlots(laneID int64) ([]*nodes.Node, error) {
 	return s.db.ListLaneSlots(laneID)
 }
 
@@ -99,14 +104,14 @@ func (s *NodeService) SetNodeStations(nodeID int64, stationIDs []string) error {
 // CreateNode inserts a new node row and populates its ID. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.1b).
-func (s *NodeService) CreateNode(n *store.Node) error {
+func (s *NodeService) CreateNode(n *nodes.Node) error {
 	return s.db.CreateNode(n)
 }
 
 // UpdateNode persists changes to a node row. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.1b).
-func (s *NodeService) UpdateNode(n *store.Node) error {
+func (s *NodeService) UpdateNode(n *nodes.Node) error {
 	return s.db.UpdateNode(n)
 }
 
@@ -118,21 +123,21 @@ func (s *NodeService) DeleteNode(id int64) error {
 
 // GetNode loads a node by ID. Absorbed from engine_db_methods.go as
 // part of the www-handler service migration (PR 3a.1b).
-func (s *NodeService) GetNode(id int64) (*store.Node, error) {
+func (s *NodeService) GetNode(id int64) (*nodes.Node, error) {
 	return s.db.GetNode(id)
 }
 
 // ListNodes returns every node in the store. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.1b).
-func (s *NodeService) ListNodes() ([]*store.Node, error) {
+func (s *NodeService) ListNodes() ([]*nodes.Node, error) {
 	return s.db.ListNodes()
 }
 
 // ListChildNodes returns the direct children of a parent node.
 // Absorbed from engine_db_methods.go as part of the www-handler
 // service migration (PR 3a.1b).
-func (s *NodeService) ListChildNodes(parentID int64) ([]*store.Node, error) {
+func (s *NodeService) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return s.db.ListChildNodes(parentID)
 }
 
@@ -140,7 +145,7 @@ func (s *NodeService) ListChildNodes(parentID int64) ([]*store.Node, error) {
 // node ID (bin counts, occupancy indicators, etc.). Absorbed from
 // engine_db_methods.go as part of the nodesPageDataStore dissolution
 // (PR 3a.5.1).
-func (s *NodeService) NodeTileStates() (map[int64]store.NodeTileState, error) {
+func (s *NodeService) NodeTileStates() (map[int64]bins.NodeTileState, error) {
 	return s.db.NodeTileStates()
 }
 
@@ -148,14 +153,14 @@ func (s *NodeService) NodeTileStates() (map[int64]store.NodeTileState, error) {
 // Absorbed from engine_db_methods.go as part of the nodesPageDataStore
 // dissolution (PR 3a.5.1). Scene data is node-adjacent: points map to
 // node locations via their instance names.
-func (s *NodeService) ListScenePoints() ([]*store.ScenePoint, error) {
+func (s *NodeService) ListScenePoints() ([]*scene.Point, error) {
 	return s.db.ListScenePoints()
 }
 
 // ListEdges returns the registered edges (adjacency records) between
 // nodes. Absorbed from engine_db_methods.go as part of the
 // nodesPageDataStore dissolution (PR 3a.5.1).
-func (s *NodeService) ListEdges() ([]store.EdgeRegistration, error) {
+func (s *NodeService) ListEdges() ([]registry.Edge, error) {
 	return s.db.ListEdges()
 }
 
@@ -171,7 +176,7 @@ func (s *NodeService) GetSlotDepth(nodeID int64) (int, error) {
 // GetByName loads a node by its human-readable name (instance name).
 // Absorbed from engine_db_methods.go as part of the Phase 3a closeout
 // (PR 3a.6).
-func (s *NodeService) GetByName(name string) (*store.Node, error) {
+func (s *NodeService) GetByName(name string) (*nodes.Node, error) {
 	return s.db.GetNodeByName(name)
 }
 
@@ -180,28 +185,28 @@ func (s *NodeService) GetByName(name string) (*store.Node, error) {
 // as part of the Phase 3a closeout (PR 3a.6). Internal engine and
 // dispatch flows still call *store.DB.GetNodeByDotName directly — this
 // method is the handler-layer entry point only.
-func (s *NodeService) GetByDotName(name string) (*store.Node, error) {
+func (s *NodeService) GetByDotName(name string) (*nodes.Node, error) {
 	return s.db.GetNodeByDotName(name)
 }
 
 // ListScenePointsByArea returns the scene points registered under a
 // given area name. Absorbed from engine_db_methods.go as part of the
 // Phase 3a closeout (PR 3a.6).
-func (s *NodeService) ListScenePointsByArea(areaName string) ([]*store.ScenePoint, error) {
+func (s *NodeService) ListScenePointsByArea(areaName string) ([]*scene.Point, error) {
 	return s.db.ListScenePointsByArea(areaName)
 }
 
 // ListScenePointsByClass returns the scene points whose class name
 // matches the filter. Absorbed from engine_db_methods.go as part of
 // the Phase 3a closeout (PR 3a.6).
-func (s *NodeService) ListScenePointsByClass(className string) ([]*store.ScenePoint, error) {
+func (s *NodeService) ListScenePointsByClass(className string) ([]*scene.Point, error) {
 	return s.db.ListScenePointsByClass(className)
 }
 
 // ListCorrectionsByNode returns the most recent correction entries
 // filed against a single node, capped at limit rows. Absorbed from
 // engine_db_methods.go as part of the Phase 3a closeout (PR 3a.6).
-func (s *NodeService) ListCorrectionsByNode(nodeID int64, limit int) ([]*store.Correction, error) {
+func (s *NodeService) ListCorrectionsByNode(nodeID int64, limit int) ([]*inventory.Correction, error) {
 	return s.db.ListCorrectionsByNode(nodeID, limit)
 }
 
@@ -215,7 +220,7 @@ func (s *NodeService) ListNodeStates() (map[int64]*store.NodeState, error) {
 // ListBinsByNode returns the bins currently at a node. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.1b).
-func (s *NodeService) ListBinsByNode(nodeID int64) ([]*store.Bin, error) {
+func (s *NodeService) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
 	return s.db.ListBinsByNode(nodeID)
 }
 
@@ -229,14 +234,14 @@ func (s *NodeService) ListStationsForNode(nodeID int64) ([]string, error) {
 // ListBinTypesForNode returns the explicit bin-type assignments for a
 // node. Absorbed from engine_db_methods.go as part of the www-handler
 // service migration (PR 3a.1b).
-func (s *NodeService) ListBinTypesForNode(nodeID int64) ([]*store.BinType, error) {
+func (s *NodeService) ListBinTypesForNode(nodeID int64) ([]*bins.BinType, error) {
 	return s.db.ListBinTypesForNode(nodeID)
 }
 
 // ListNodeProperties returns all properties associated with a node.
 // Absorbed from engine_db_methods.go as part of the www-handler
 // service migration (PR 3a.1b).
-func (s *NodeService) ListNodeProperties(nodeID int64) ([]*store.NodeProperty, error) {
+func (s *NodeService) ListNodeProperties(nodeID int64) ([]*nodes.Property, error) {
 	return s.db.ListNodeProperties(nodeID)
 }
 
@@ -252,7 +257,7 @@ func (s *NodeService) GetEffectiveStations(nodeID int64) ([]string, error) {
 // taking inheritance modes into account. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.1b).
-func (s *NodeService) GetEffectiveBinTypes(nodeID int64) ([]*store.BinType, error) {
+func (s *NodeService) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
 	return s.db.GetEffectiveBinTypes(nodeID)
 }
 

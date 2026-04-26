@@ -3,7 +3,9 @@ package material
 import (
 	"errors"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/cms"
+	"shingocore/store/nodes"
 )
 
 // errCMSBoundaryCycle is returned by FindCMSBoundary when the parent
@@ -38,7 +40,7 @@ type MovementEvent struct {
 // logging boundary. Returns (nil, err) if a Store call fails or the
 // walk detects a cycle, so callers can distinguish "no boundary
 // here" from "something went wrong on the way up".
-func FindCMSBoundary(s Store, nodeID int64) (*store.Node, error) {
+func FindCMSBoundary(s Store, nodeID int64) (*nodes.Node, error) {
 	visited := make(map[int64]bool)
 	currentID := nodeID
 	for {
@@ -93,8 +95,8 @@ func txnType(delta int64) string {
 // items, or neither endpoint has a boundary). The caller should
 // persist and emit for a non-nil slice; a nil slice and nil error
 // means "no-op, carry on".
-func BuildMovementTransactions(s Store, ev MovementEvent) ([]*store.CMSTransaction, error) {
-	var srcBoundary, dstBoundary *store.Node
+func BuildMovementTransactions(s Store, ev MovementEvent) ([]*cms.Transaction, error) {
+	var srcBoundary, dstBoundary *nodes.Node
 	if ev.FromNodeID != 0 {
 		b, err := FindCMSBoundary(s, ev.FromNodeID)
 		if err != nil {
@@ -137,7 +139,7 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*store.CMSTransacti
 		orderID = bin.ClaimedBy
 	}
 
-	var txns []*store.CMSTransaction
+	var txns []*cms.Transaction
 
 	// Source boundary: bin leaving → negative delta.
 	if srcBoundary != nil {
@@ -149,7 +151,7 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*store.CMSTransacti
 			delta := -m.Quantity
 			qtyAfter := totals[m.CatID]
 			qtyBefore := qtyAfter + m.Quantity
-			txns = append(txns, &store.CMSTransaction{
+			txns = append(txns, &cms.Transaction{
 				NodeID:      srcBoundary.ID,
 				NodeName:    srcBoundary.Name,
 				TxnType:     txnType(delta),
@@ -180,7 +182,7 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*store.CMSTransacti
 			if qtyBefore < 0 {
 				qtyBefore = 0
 			}
-			txns = append(txns, &store.CMSTransaction{
+			txns = append(txns, &cms.Transaction{
 				NodeID:      dstBoundary.ID,
 				NodeName:    dstBoundary.Name,
 				TxnType:     txnType(delta),
@@ -215,7 +217,7 @@ func BuildMovementTransactions(s Store, ev MovementEvent) ([]*store.CMSTransacti
 // silently drop, even if the tree isn't set up for CMS logging.
 //
 // Returns a nil slice when there are no non-zero deltas.
-func BuildCorrectionTransactions(s Store, binID, nodeID int64, oldManifest, newManifest []store.ManifestEntry, reason string) ([]*store.CMSTransaction, error) {
+func BuildCorrectionTransactions(s Store, binID, nodeID int64, oldManifest, newManifest []bins.ManifestEntry, reason string) ([]*cms.Transaction, error) {
 	boundary, err := FindCMSBoundary(s, nodeID)
 	if err != nil {
 		return nil, err
@@ -258,7 +260,7 @@ func BuildCorrectionTransactions(s Store, binID, nodeID int64, oldManifest, newM
 
 	totals := s.SumCatIDsAtBoundary(boundaryID)
 
-	var txns []*store.CMSTransaction
+	var txns []*cms.Transaction
 	for catID := range allCatIDs {
 		delta := newQty[catID] - oldQty[catID]
 		if delta == 0 {
@@ -269,7 +271,7 @@ func BuildCorrectionTransactions(s Store, binID, nodeID int64, oldManifest, newM
 		if qtyBefore < 0 {
 			qtyBefore = 0
 		}
-		txns = append(txns, &store.CMSTransaction{
+		txns = append(txns, &cms.Transaction{
 			NodeID:      boundaryID,
 			NodeName:    boundaryName,
 			TxnType:     txnType(delta),

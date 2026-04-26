@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/cms"
+	"shingocore/store/nodes"
 )
 
 // ptrInt64 returns a pointer to i — convenience for building node
@@ -14,7 +16,7 @@ func ptrInt64(i int64) *int64 { return &i }
 // addNode inserts a Node into the fake, optionally marking it
 // synthetic. parentID=0 means the node is a root.
 func addNode(f *fakeStore, id int64, name string, synthetic bool, parentID int64) {
-	n := &store.Node{
+	n := &nodes.Node{
 		ID:          id,
 		Name:        name,
 		IsSynthetic: synthetic,
@@ -121,8 +123,8 @@ func TestFindCMSBoundary_CycleReturnsError(t *testing.T) {
 	// should detect the revisit and return (nil, err) so the engine
 	// wrapper can log the anomaly without returning a bogus node.
 	f := newFakeStore()
-	f.nodes[1] = &store.Node{ID: 1, Name: "a", IsSynthetic: false, ParentID: ptrInt64(2)}
-	f.nodes[2] = &store.Node{ID: 2, Name: "b", IsSynthetic: false, ParentID: ptrInt64(1)}
+	f.nodes[1] = &nodes.Node{ID: 1, Name: "a", IsSynthetic: false, ParentID: ptrInt64(2)}
+	f.nodes[2] = &nodes.Node{ID: 2, Name: "b", IsSynthetic: false, ParentID: ptrInt64(1)}
 
 	got, err := FindCMSBoundary(f, 1)
 	if err == nil {
@@ -136,8 +138,8 @@ func TestFindCMSBoundary_CycleReturnsError(t *testing.T) {
 // ---------- BuildMovementTransactions -------------------------------
 
 // setManifest sets a bin's Manifest JSON from the given entries.
-func setManifest(b *store.Bin, entries []store.ManifestEntry) {
-	body, _ := json.Marshal(store.BinManifest{Items: entries})
+func setManifest(b *bins.Bin, entries []bins.ManifestEntry) {
+	body, _ := json.Marshal(bins.Manifest{Items: entries})
 	s := string(body)
 	b.Manifest = &s
 }
@@ -146,8 +148,8 @@ func TestBuildMovement_SameBoundaryNoTxns(t *testing.T) {
 	f := newFakeStore()
 	addNode(f, 1, "boundary", true, 0) // single synthetic root
 
-	bin := &store.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
-	setManifest(bin, []store.ManifestEntry{{CatID: "C1", Quantity: 5}})
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
+	setManifest(bin, []bins.ManifestEntry{{CatID: "C1", Quantity: 5}})
 	f.bins[10] = bin
 
 	got, err := BuildMovementTransactions(f, MovementEvent{
@@ -168,8 +170,8 @@ func TestBuildMovement_CrossBoundaryProducesPair(t *testing.T) {
 	f.totals[1] = map[string]int64{"C1": 3}  // after leaving, src holds 3
 	f.totals[2] = map[string]int64{"C1": 12} // after arrival, dst holds 12
 
-	bin := &store.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
-	setManifest(bin, []store.ManifestEntry{{CatID: "C1", Quantity: 5}})
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
+	setManifest(bin, []bins.ManifestEntry{{CatID: "C1", Quantity: 5}})
 	f.bins[10] = bin
 
 	txns, err := BuildMovementTransactions(f, MovementEvent{
@@ -205,7 +207,7 @@ func TestBuildMovement_EmptyManifestNil(t *testing.T) {
 	addNode(f, 1, "src", true, 0)
 	addNode(f, 2, "dst", true, 0)
 
-	bin := &store.Bin{ID: 10, Label: "B10", PayloadCode: "P1"} // no manifest
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1"} // no manifest
 	f.bins[10] = bin
 
 	got, err := BuildMovementTransactions(f, MovementEvent{
@@ -226,11 +228,11 @@ func TestBuildCorrection_DiffsProduceSignedDeltas(t *testing.T) {
 	addNode(f, 1, "boundary", true, 0)
 	f.totals[1] = map[string]int64{"C1": 10, "C2": 4}
 
-	bin := &store.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
 	f.bins[10] = bin
 
-	old := []store.ManifestEntry{{CatID: "C1", Quantity: 3}, {CatID: "C2", Quantity: 2}}
-	nw := []store.ManifestEntry{{CatID: "C1", Quantity: 5}} // C1 +2, C2 -2
+	old := []bins.ManifestEntry{{CatID: "C1", Quantity: 3}, {CatID: "C2", Quantity: 2}}
+	nw := []bins.ManifestEntry{{CatID: "C1", Quantity: 5}} // C1 +2, C2 -2
 
 	txns, err := BuildCorrectionTransactions(f, 10, 1, old, nw, "shift count")
 	if err != nil {
@@ -240,7 +242,7 @@ func TestBuildCorrection_DiffsProduceSignedDeltas(t *testing.T) {
 		t.Fatalf("expected 2 txns, got %d", len(txns))
 	}
 
-	byCat := map[string]*store.CMSTransaction{}
+	byCat := map[string]*cms.Transaction{}
 	for _, t := range txns {
 		byCat[t.CatID] = t
 	}
@@ -264,10 +266,10 @@ func TestBuildCorrection_NoChangesNil(t *testing.T) {
 	f := newFakeStore()
 	addNode(f, 1, "boundary", true, 0)
 
-	bin := &store.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
 	f.bins[10] = bin
 
-	same := []store.ManifestEntry{{CatID: "C1", Quantity: 4}}
+	same := []bins.ManifestEntry{{CatID: "C1", Quantity: 4}}
 	got, err := BuildCorrectionTransactions(f, 10, 1, same, same, "no-op")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -283,11 +285,11 @@ func TestBuildCorrection_NoBoundaryUsesNodeItself(t *testing.T) {
 	f := newFakeStore()
 	addNode(f, 1, "plain-root", false, 0)
 
-	bin := &store.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
+	bin := &bins.Bin{ID: 10, Label: "B10", PayloadCode: "P1"}
 	f.bins[10] = bin
 
-	old := []store.ManifestEntry{{CatID: "C1", Quantity: 1}}
-	nw := []store.ManifestEntry{{CatID: "C1", Quantity: 3}}
+	old := []bins.ManifestEntry{{CatID: "C1", Quantity: 1}}
+	nw := []bins.ManifestEntry{{CatID: "C1", Quantity: 3}}
 
 	txns, err := BuildCorrectionTransactions(f, 10, 1, old, nw, "count")
 	if err != nil {

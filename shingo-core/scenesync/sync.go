@@ -17,19 +17,20 @@ import (
 	"sync/atomic"
 
 	"shingocore/fleet"
-	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/scene"
 )
 
 // Store is the narrow persistence surface scene sync requires.
 // *store.DB satisfies it structurally.
 type Store interface {
 	DeleteScenePointsByArea(areaName string) error
-	UpsertScenePoint(sp *store.ScenePoint) error
-	GetNodeTypeByCode(code string) (*store.NodeType, error)
-	GetNodeByName(name string) (*store.Node, error)
-	CreateNode(n *store.Node) error
-	UpdateNode(n *store.Node) error
-	ListNodes() ([]*store.Node, error)
+	UpsertScenePoint(sp *scene.Point) error
+	GetNodeTypeByCode(code string) (*nodes.NodeType, error)
+	GetNodeByName(name string) (*nodes.Node, error)
+	CreateNode(n *nodes.Node) error
+	UpdateNode(n *nodes.Node) error
+	ListNodes() ([]*nodes.Node, error)
 	DeleteNode(id int64) error
 }
 
@@ -51,7 +52,7 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[str
 			log("scenesync: delete points for area %s: %v", area.Name, err)
 		}
 		for _, ap := range area.AdvancedPoints {
-			sp := &store.ScenePoint{
+			sp := &scene.Point{
 				AreaName:       area.Name,
 				InstanceName:   ap.InstanceName,
 				ClassName:      ap.ClassName,
@@ -69,7 +70,7 @@ func SyncScenePoints(db Store, log LogFn, areas []fleet.SceneArea) (int, map[str
 		}
 		for _, bin := range area.BinLocations {
 			locationSet[bin.InstanceName] = area.Name
-			sp := &store.ScenePoint{
+			sp := &scene.Point{
 				AreaName:       area.Name,
 				InstanceName:   bin.InstanceName,
 				ClassName:      bin.ClassName,
@@ -113,7 +114,7 @@ func SyncFleetNodes(db Store, log LogFn, onChange NodeChangeFn, locationSet map[
 			}
 			continue
 		}
-		node := &store.Node{
+		node := &nodes.Node{
 			Name:       instanceName,
 			NodeTypeID: storageTypeID,
 			Zone:       areaName,

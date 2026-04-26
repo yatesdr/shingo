@@ -7,6 +7,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store"
+	"shingoedge/store/messaging"
 )
 
 // findOutboxByType returns the most recent pending outbox messages of the
@@ -15,13 +16,13 @@ import (
 // remaining_uop=0, which is what causes Core to clear the bin's manifest
 // before the fleet picks the bin up. Without that, we re-introduce the
 // ALN_001 → SLN_002 → SMN_005 incident the rerouting fixed.
-func findOutboxByType(t *testing.T, db *store.DB, msgType string) []store.OutboxMessage {
+func findOutboxByType(t *testing.T, db *store.DB, msgType string) []messaging.Message {
 	t.Helper()
 	msgs, err := db.ListPendingOutbox(100)
 	if err != nil {
 		t.Fatalf("ListPendingOutbox: %v", err)
 	}
-	var matches []store.OutboxMessage
+	var matches []messaging.Message
 	for _, m := range msgs {
 		if m.MsgType == msgType {
 			matches = append(matches, m)
@@ -32,7 +33,7 @@ func findOutboxByType(t *testing.T, db *store.DB, msgType string) []store.Outbox
 
 // decodeOrderRelease unmarshals an outbox row into an OrderRelease envelope
 // and the inner payload.
-func decodeOrderRelease(t *testing.T, msg store.OutboxMessage) protocol.OrderRelease {
+func decodeOrderRelease(t *testing.T, msg messaging.Message) protocol.OrderRelease {
 	t.Helper()
 	var env protocol.Envelope
 	if err := json.Unmarshal(msg.Payload, &env); err != nil {

@@ -10,19 +10,13 @@ import (
 	"shingoedge/store/orders"
 )
 
-// Order represents an E-Kanban order.
-type Order = orders.Order
-
-// OrderHistory records a status transition.
-type OrderHistory = orders.History
-
 // ListOrders returns every order, newest first.
-func (db *DB) ListOrders() ([]Order, error) {
+func (db *DB) ListOrders() ([]orders.Order, error) {
 	return orders.List(db.DB)
 }
 
 // ListActiveOrders returns every non-terminal order, newest first.
-func (db *DB) ListActiveOrders() ([]Order, error) {
+func (db *DB) ListActiveOrders() ([]orders.Order, error) {
 	return orders.ListActive(db.DB)
 }
 
@@ -32,17 +26,17 @@ func (db *DB) CountActiveOrders() int {
 }
 
 // ListActiveOrdersByProcess returns non-terminal orders for one process.
-func (db *DB) ListActiveOrdersByProcess(processID int64) ([]Order, error) {
+func (db *DB) ListActiveOrdersByProcess(processID int64) ([]orders.Order, error) {
 	return orders.ListActiveByProcess(db.DB, processID)
 }
 
 // GetOrder returns one order by id.
-func (db *DB) GetOrder(id int64) (*Order, error) {
+func (db *DB) GetOrder(id int64) (*orders.Order, error) {
 	return orders.Get(db.DB, id)
 }
 
 // GetOrderByUUID returns one order by uuid.
-func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
+func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {
 	return orders.GetByUUID(db.DB, uuid)
 }
 
@@ -101,24 +95,24 @@ func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail str
 
 // ListStagedOrdersByProcessNode returns staged orders linked to a
 // specific process_node.
-func (db *DB) ListStagedOrdersByProcessNode(processNodeID int64) ([]Order, error) {
+func (db *DB) ListStagedOrdersByProcessNode(processNodeID int64) ([]orders.Order, error) {
 	return orders.ListStagedByProcessNode(db.DB, processNodeID)
 }
 
 // ListActiveOrdersByProcessNodeAndType returns non-terminal orders for
 // a process node filtered by order type.
-func (db *DB) ListActiveOrdersByProcessNodeAndType(processNodeID int64, orderType string) ([]Order, error) {
+func (db *DB) ListActiveOrdersByProcessNodeAndType(processNodeID int64, orderType string) ([]orders.Order, error) {
 	return orders.ListActiveByProcessNodeAndType(db.DB, processNodeID, orderType)
 }
 
 // ListActiveOrdersByProcessNode returns non-terminal orders for a
 // process node.
-func (db *DB) ListActiveOrdersByProcessNode(processNodeID int64) ([]Order, error) {
+func (db *DB) ListActiveOrdersByProcessNode(processNodeID int64) ([]orders.Order, error) {
 	return orders.ListActiveByProcessNode(db.DB, processNodeID)
 }
 
 // ListOrderHistory returns the status history for one order, oldest
 // first.
-func (db *DB) ListOrderHistory(orderID int64) ([]OrderHistory, error) {
+func (db *DB) ListOrderHistory(orderID int64) ([]orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }

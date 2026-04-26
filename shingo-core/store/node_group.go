@@ -2,7 +2,7 @@ package store
 
 // Stage 2D delegate file: node_group CRUD (CreateGroup / AddLane /
 // DeleteGroup) lives in store/nodes/. The cross-aggregate GetGroupLayout
-// stays here because the layout structs embed a concrete *Bin pointer.
+// stays here because the layout structs embed a concrete *bins.Bin pointer.
 
 import (
 	"fmt"
@@ -28,7 +28,7 @@ type GroupSlotInfo struct {
 	NodeID int64  `json:"node_id"`
 	Name   string `json:"name"`
 	Depth  int    `json:"depth"`
-	Bin    *Bin   `json:"bin,omitempty"`
+	Bin         *bins.Bin   `json:"bin,omitempty"`
 }
 
 // GroupLaneInfo describes a lane in a node group layout.
@@ -63,7 +63,7 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 
 	// Collect all slot/direct-child node IDs under this group
 	var allNodeIDs []int64
-	laneSlots := make(map[int64][]*Node) // laneID -> ordered slots
+	laneSlots := make(map[int64][]*nodes.Node) // laneID -> ordered slots
 	slotDepths := make(map[int64]int)    // nodeID -> depth
 
 	for _, child := range children {
@@ -84,7 +84,7 @@ func (db *DB) GetGroupLayout(groupID int64) (*GroupLayout, error) {
 	}
 
 	// Bulk-fetch all bins at these nodes in one query
-	binsByNode := make(map[int64]*Bin)
+	binsByNode := make(map[int64]*bins.Bin)
 	if len(allNodeIDs) > 0 {
 		placeholders := make([]string, len(allNodeIDs))
 		args := make([]any, len(allNodeIDs))

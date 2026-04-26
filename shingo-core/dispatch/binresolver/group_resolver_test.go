@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // --- FIFO ------------------------------------------------------------------
@@ -17,7 +19,7 @@ func TestFIFO_PicksOldestAcrossLanes(t *testing.T) {
 
 	laneA := laneChild(10, "lane-A")
 	laneB := laneChild(11, "lane-B")
-	f.children[group.ID] = []*store.Node{laneA, laneB}
+	f.children[group.ID] = []*nodes.Node{laneA, laneB}
 
 	slotA := slotInLane(100, "A1")
 	slotB := slotInLane(101, "B1")
@@ -48,7 +50,7 @@ func TestFIFO_BuriedOlderThanAccessibleTriggersReshuffle(t *testing.T) {
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	lane := laneChild(10, "L")
-	f.children[group.ID] = []*store.Node{lane}
+	f.children[group.ID] = []*nodes.Node{lane}
 
 	accSlot := slotInLane(100, "acc")
 	buriedSlot := slotInLane(101, "buried")
@@ -84,7 +86,7 @@ func TestFIFO_SkipsLockedLanes(t *testing.T) {
 	group := ngrpNode(1, "grp")
 	locked := laneChild(10, "locked")
 	open := laneChild(11, "open")
-	f.children[group.ID] = []*store.Node{locked, open}
+	f.children[group.ID] = []*nodes.Node{locked, open}
 
 	slot := slotInLane(100, "slot")
 	f.nodes[slot.ID] = slot
@@ -122,7 +124,7 @@ func TestCOST_PrefersAccessibleOverOlderBuried(t *testing.T) {
 	f.setProp(group.ID, "retrieve_algorithm", RetrieveCOST)
 
 	lane := laneChild(10, "L")
-	f.children[group.ID] = []*store.Node{lane}
+	f.children[group.ID] = []*nodes.Node{lane}
 
 	accSlot := slotInLane(100, "acc")
 	buriedSlot := slotInLane(101, "buried")
@@ -157,7 +159,7 @@ func TestCOST_FallsBackToBuriedWhenNoAccessible(t *testing.T) {
 	f.setProp(group.ID, "retrieve_algorithm", RetrieveCOST)
 
 	lane := laneChild(10, "L")
-	f.children[group.ID] = []*store.Node{lane}
+	f.children[group.ID] = []*nodes.Node{lane}
 
 	buriedSlot := slotInLane(100, "b")
 	f.nodes[buriedSlot.ID] = buriedSlot
@@ -187,7 +189,7 @@ func TestFAVL_FirstAvailableNoReshuffle(t *testing.T) {
 
 	laneA := laneChild(10, "A")
 	laneB := laneChild(11, "B")
-	f.children[group.ID] = []*store.Node{laneA, laneB}
+	f.children[group.ID] = []*nodes.Node{laneA, laneB}
 
 	slotA := slotInLane(100, "a-slot")
 	f.nodes[slotA.ID] = slotA
@@ -230,11 +232,11 @@ func TestLKND_PrefersConsolidationOverEmptier(t *testing.T) {
 
 	empty := directChild(10, "empty")
 	match := directChild(11, "match")
-	f.children[group.ID] = []*store.Node{empty, match}
+	f.children[group.ID] = []*nodes.Node{empty, match}
 	f.binCounts[empty.ID] = 0
 	f.binCounts[match.ID] = 0
 	// 'match' already holds a matching bin — consolidation wins.
-	f.bins[match.ID] = []*store.Bin{availBin(100, "P1", time.Now())}
+	f.bins[match.ID] = []*bins.Bin{availBin(100, "P1", time.Now())}
 
 	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
 	got, err := gr.ResolveStore(group, "P1", nil)
@@ -253,7 +255,7 @@ func TestLKND_EmptiestWhenNoMatch(t *testing.T) {
 	// Two lanes, different counts, neither holds a matching bin.
 	laneA := laneChild(10, "A")
 	laneB := laneChild(11, "B")
-	f.children[group.ID] = []*store.Node{laneA, laneB}
+	f.children[group.ID] = []*nodes.Node{laneA, laneB}
 	slotA := slotInLane(100, "a-open")
 	slotB := slotInLane(101, "b-open")
 	f.storeSlot[laneA.ID] = slotA
@@ -278,14 +280,14 @@ func TestLKND_SkipsLaneWithPayloadMismatch(t *testing.T) {
 	group := ngrpNode(1, "grp")
 	restricted := laneChild(10, "restricted")
 	open := laneChild(11, "open")
-	f.children[group.ID] = []*store.Node{restricted, open}
+	f.children[group.ID] = []*nodes.Node{restricted, open}
 	f.storeSlot[restricted.ID] = slotInLane(100, "r-slot")
 	f.storeSlot[open.ID] = slotInLane(101, "o-slot")
 	f.laneBinCounts[restricted.ID] = 0
 	f.laneBinCounts[open.ID] = 0
 
 	// 'restricted' accepts only payload OTHER; the request is for P1.
-	f.effPayloads[restricted.ID] = []*store.Payload{payload("OTHER")}
+	f.effPayloads[restricted.ID] = []*payloads.Payload{payload("OTHER")}
 
 	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
 	got, err := gr.ResolveStore(group, "P1", nil)
@@ -303,11 +305,11 @@ func TestLKND_SkipsBinTypeMismatch(t *testing.T) {
 	group := ngrpNode(1, "grp")
 	restricted := directChild(10, "wrong-type")
 	open := directChild(11, "ok")
-	f.children[group.ID] = []*store.Node{restricted, open}
+	f.children[group.ID] = []*nodes.Node{restricted, open}
 	f.binCounts[restricted.ID] = 0
 	f.binCounts[open.ID] = 0
 	// Restricted only allows bin type 99; request is for type 7.
-	f.effBinTypes[restricted.ID] = []*store.BinType{binType(99)}
+	f.effBinTypes[restricted.ID] = []*bins.BinType{binType(99)}
 
 	want := int64(7)
 	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
@@ -331,7 +333,7 @@ func TestDPTH_LanesBeatDirectChildren(t *testing.T) {
 
 	direct := directChild(10, "direct")
 	lane := laneChild(11, "lane")
-	f.children[group.ID] = []*store.Node{direct, lane}
+	f.children[group.ID] = []*nodes.Node{direct, lane}
 	f.binCounts[direct.ID] = 0
 	laneSlot := slotInLane(100, "lane-slot")
 	f.storeSlot[lane.ID] = laneSlot
@@ -354,7 +356,7 @@ func TestDPTH_FallsBackToDirectChild(t *testing.T) {
 
 	lane := laneChild(10, "full-lane")
 	direct := directChild(11, "direct")
-	f.children[group.ID] = []*store.Node{lane, direct}
+	f.children[group.ID] = []*nodes.Node{lane, direct}
 	// No storeSlot fixture for 'full-lane' -> FindStoreSlotInLane errors.
 	f.binCounts[direct.ID] = 0
 
@@ -374,7 +376,7 @@ func TestDPTH_FallsBackToDirectChild(t *testing.T) {
 func TestClassifyEmpty_NoEnabledChildren_Structural(t *testing.T) {
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
-	f.children[group.ID] = []*store.Node{disabledChild(10, "off")}
+	f.children[group.ID] = []*nodes.Node{disabledChild(10, "off")}
 
 	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
 	_, err := gr.ResolveRetrieve(group, "P1")
@@ -394,9 +396,9 @@ func TestClassifyEmpty_NoChildAcceptsPayload_Structural(t *testing.T) {
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	child := directChild(10, "fixed")
-	f.children[group.ID] = []*store.Node{child}
+	f.children[group.ID] = []*nodes.Node{child}
 	// Child only accepts payload OTHER; requester asks for P1.
-	f.effPayloads[child.ID] = []*store.Payload{payload("OTHER")}
+	f.effPayloads[child.ID] = []*payloads.Payload{payload("OTHER")}
 
 	gr := &GroupResolver{DB: f, LaneLock: NewLaneLock()}
 	_, err := gr.ResolveRetrieve(group, "P1")
@@ -413,7 +415,7 @@ func TestClassifyEmpty_Transient_WhenGroupStructurallyCapable(t *testing.T) {
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	child := directChild(10, "cap")
-	f.children[group.ID] = []*store.Node{child}
+	f.children[group.ID] = []*nodes.Node{child}
 	// Empty effective payloads = "no restriction" -> capable.
 	// No bins at the child -> nothing to retrieve.
 

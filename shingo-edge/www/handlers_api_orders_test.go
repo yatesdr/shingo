@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"shingo/protocol"
 	"shingoedge/engine"
 	"shingoedge/orders"
-	"shingoedge/store"
-
-	"github.com/go-chi/chi/v5"
+	storeorders "shingoedge/store/orders"
 )
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -79,7 +79,7 @@ func TestApiOrders_CreateRetrieveOrder_Success(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/retrieve", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var order store.Order
+	var order storeorders.Order
 	decodeJSON(t, resp, &order)
 	if order.ID == 0 {
 		t.Fatal("expected non-zero order id")
@@ -120,7 +120,7 @@ func TestApiOrders_CreateRetrieveOrder_ResolvesDeliveryFromNode(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/retrieve", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var order store.Order
+	var order storeorders.Order
 	decodeJSON(t, resp, &order)
 	if order.DeliveryNode != "core-node-ret-x" {
 		t.Errorf("derived delivery_node: got %q, want %q",
@@ -199,7 +199,7 @@ func TestApiOrders_CreateStoreOrder_Success(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/store", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var order store.Order
+	var order storeorders.Order
 	decodeJSON(t, resp, &order)
 	if order.ID == 0 {
 		t.Fatal("expected non-zero order id")
@@ -236,7 +236,7 @@ func TestApiOrders_CreateMoveOrder_Success(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/move", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var order store.Order
+	var order storeorders.Order
 	decodeJSON(t, resp, &order)
 	if order.OrderType != orders.TypeMove {
 		t.Errorf("order type: got %q, want %q", order.OrderType, orders.TypeMove)
@@ -266,7 +266,7 @@ func TestApiOrders_CreateComplexOrder_Success(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/complex", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var order store.Order
+	var order storeorders.Order
 	decodeJSON(t, resp, &order)
 	if order.OrderType != orders.TypeComplex {
 		t.Errorf("order type: got %q, want %q", order.OrderType, orders.TypeComplex)
@@ -305,7 +305,7 @@ func TestApiOrders_CreateIngestOrder_Success(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/ingest", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var order store.Order
+	var order storeorders.Order
 	decodeJSON(t, resp, &order)
 	if order.OrderType != orders.TypeIngest {
 		t.Errorf("order type: got %q, want %q", order.OrderType, orders.TypeIngest)
@@ -719,7 +719,7 @@ func TestApiOrders_RedirectOrder_Success(t *testing.T) {
 	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/redirect", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var order store.Order
+	var order storeorders.Order
 	decodeJSON(t, resp, &order)
 	if order.DeliveryNode != "NEW-DEST" {
 		t.Errorf("delivery_node in response: got %q, want NEW-DEST", order.DeliveryNode)

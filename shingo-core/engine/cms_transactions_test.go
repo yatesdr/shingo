@@ -9,6 +9,8 @@ import (
 
 	"shingocore/fleet/simulator"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // cms_transactions_test.go — coverage for cms_transactions.go.
@@ -23,16 +25,16 @@ import (
 // makeCMSBoundary creates a synthetic node with log_cms_transactions=true
 // and a child storage slot under it. Returns (boundary, child) so callers
 // can move bins between two such trees.
-func makeCMSBoundary(t *testing.T, db *store.DB, name string) (*store.Node, *store.Node) {
+func makeCMSBoundary(t *testing.T, db *store.DB, name string) (*nodes.Node, *nodes.Node) {
 	t.Helper()
-	root := &store.Node{Name: name + "-ROOT", IsSynthetic: true, Enabled: true}
+	root := &nodes.Node{Name: name + "-ROOT", IsSynthetic: true, Enabled: true}
 	if err := db.CreateNode(root); err != nil {
 		t.Fatalf("create root %s: %v", name, err)
 	}
 	if err := db.SetNodeProperty(root.ID, "log_cms_transactions", "true"); err != nil {
 		t.Fatalf("set boundary prop on %s: %v", name, err)
 	}
-	child := &store.Node{Name: name + "-SLOT", Enabled: true, ParentID: &root.ID}
+	child := &nodes.Node{Name: name + "-SLOT", Enabled: true, ParentID: &root.ID}
 	if err := db.CreateNode(child); err != nil {
 		t.Fatalf("create child %s: %v", name, err)
 	}
@@ -46,7 +48,7 @@ func makeCMSBoundary(t *testing.T, db *store.DB, name string) (*store.Node, *sto
 // have something to count.
 func putManifest(t *testing.T, db *store.DB, binID int64, payloadCode, catID string, qty int64) {
 	t.Helper()
-	m := store.BinManifest{Items: []store.ManifestEntry{{CatID: catID, Quantity: qty}}}
+	m := bins.Manifest{Items: []bins.ManifestEntry{{CatID: catID, Quantity: qty}}}
 	data, _ := json.Marshal(m)
 	if err := db.SetBinManifest(binID, string(data), payloadCode, 100); err != nil {
 		t.Fatalf("set bin manifest: %v", err)
@@ -80,7 +82,7 @@ func TestFindCMSBoundary_NoBoundary_NonSyntheticChain(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Plain non-synthetic node with no synthetic parent.
-	n := &store.Node{Name: "PLAIN-1", Enabled: true}
+	n := &nodes.Node{Name: "PLAIN-1", Enabled: true}
 	if err := db.CreateNode(n); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -176,7 +178,7 @@ func TestRecordMovementTransactions_NoOpWhenSameBoundary(t *testing.T) {
 
 	root, slotA := makeCMSBoundary(t, db, "ONE")
 	// A second slot under the SAME boundary root.
-	slotB := &store.Node{Name: "ONE-SLOT2", Enabled: true, ParentID: &root.ID}
+	slotB := &nodes.Node{Name: "ONE-SLOT2", Enabled: true, ParentID: &root.ID}
 	if err := db.CreateNode(slotB); err != nil {
 		t.Fatalf("create slotB: %v", err)
 	}
@@ -220,8 +222,8 @@ func TestRecordCorrectionTransactions_PersistsAndEmits(t *testing.T) {
 	captured := make(chan Event, 2)
 	eng.Events.SubscribeTypes(func(evt Event) { captured <- evt }, EventCMSTransaction)
 
-	old := []store.ManifestEntry{{CatID: "PART-A", Quantity: 4}}
-	new := []store.ManifestEntry{{CatID: "PART-A", Quantity: 7}}
+	old := []bins.ManifestEntry{{CatID: "PART-A", Quantity: 4}}
+	new := []bins.ManifestEntry{{CatID: "PART-A", Quantity: 7}}
 	eng.RecordCorrectionTransactions(bin.ID, slot.ID, old, new, "operator drift fix")
 
 	rows, err := db.ListCMSTransactions(root.ID, 10, 0)
@@ -263,7 +265,7 @@ func TestRecordCorrectionTransactions_NoOpWhenManifestUnchanged(t *testing.T) {
 	emitted := false
 	eng.Events.SubscribeTypes(func(Event) { emitted = true }, EventCMSTransaction)
 
-	same := []store.ManifestEntry{{CatID: "PART-A", Quantity: 4}}
+	same := []bins.ManifestEntry{{CatID: "PART-A", Quantity: 4}}
 	eng.RecordCorrectionTransactions(bin.ID, slot.ID, same, same, "no change")
 
 	rows, _ := db.ListCMSTransactions(root.ID, 10, 0)

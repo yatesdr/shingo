@@ -5,14 +5,15 @@ import (
 	"log"
 
 	"shingoedge/orders"
-	"shingoedge/store"
+	storeorders "shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
 
 type NodeOrderResult struct {
 	CycleMode     string       `json:"cycle_mode"`
-	Order         *store.Order `json:"order,omitempty"`
-	OrderA        *store.Order `json:"order_a,omitempty"`
-	OrderB        *store.Order `json:"order_b,omitempty"`
+	Order         *storeorders.Order `json:"order,omitempty"`
+	OrderA        *storeorders.Order `json:"order_a,omitempty"`
+	OrderB        *storeorders.Order `json:"order_b,omitempty"`
 	ProcessNodeID int64        `json:"process_node_id"`
 }
 
@@ -52,7 +53,7 @@ func (e *Engine) nodeIsOccupied(coreNodeName string) bool {
 // requestNodeFromClaim constructs orders using style_node_claims routing.
 // If the node is physically empty (no bin per Core telemetry), a simple move
 // order is created regardless of swap mode — there is nothing to swap out.
-func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim, quantity int64) (*NodeOrderResult, error) {
+func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64) (*NodeOrderResult, error) {
 	nodeID := node.ID
 
 	// If the node is not physically occupied, skip swap choreography and just deliver.
@@ -173,11 +174,11 @@ func (e *Engine) requestNodeFromClaim(node *store.ProcessNode, runtime *store.Pr
 	}
 }
 
-func (e *Engine) ReleaseNodeEmpty(nodeID int64) (*store.Order, error) {
+func (e *Engine) ReleaseNodeEmpty(nodeID int64) (*storeorders.Order, error) {
 	return e.ReleaseNodePartial(nodeID, 1)
 }
 
-func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*store.Order, error) {
+func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err

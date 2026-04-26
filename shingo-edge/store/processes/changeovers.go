@@ -1,22 +1,23 @@
-// Package changeovers holds process_changeover, station_task, and
-// node_task persistence for shingo-edge. The three tables share the
-// same aggregate: a process_changeover owns a set of station_tasks
+// changeovers.go — process_changeover, station_task, and node_task
+// persistence inside the processes aggregate. The three tables share
+// the same aggregate: a process_changeover owns a set of station_tasks
 // (one per operator station) and node_tasks (one per process_node
 // touched by the changeover).
 //
-// Phase 5b of the architecture plan moved this CRUD out of the flat
-// store/ package and into this sub-package. The outer store/ keeps
-// type aliases (`store.ProcessChangeover = changeovers.Changeover`,
-// `store.ChangeoverStationTask = changeovers.StationTask`,
-// `store.ChangeoverNodeTask = changeovers.NodeTask`) and one-line
-// delegate methods on *store.DB so external callers see no API change.
+// Phase 6.0c folded shingo-edge/store/changeovers/ into store/processes/
+// because changeovers transition processes between styles — the verbs
+// belong to the same domain cluster as Process / Style / NodeClaim.
+// Function names carry Changeover / StationTask / NodeTask prefixes/
+// suffixes so they don't collide with sibling functions in this package.
 //
-// CreateChangeover stays at the top-level store package because it
-// runs as a single transaction that also updates the processes
-// aggregate (target_style_id, production_state) and inserts rows into
-// process_nodes / process_node_runtime_states; that orchestration
-// would otherwise have to thread *sql.Tx through several packages.
-package changeovers
+// CreateChangeover stays at the top-level store package (in
+// store/process_changeovers.go) because it runs as a single transaction
+// that also updates the processes table (target_style_id,
+// production_state) and inserts rows into process_nodes /
+// process_node_runtime_states; that orchestration would otherwise have
+// to thread *sql.Tx through several files.
+
+package processes
 
 import (
 	"database/sql"
@@ -98,8 +99,9 @@ func scanChangeover(scanner interface{ Scan(...interface{}) error }) (Changeover
 	return c, nil
 }
 
-// List returns every process_changeover for a process, newest first.
-func List(db *sql.DB, processID int64) ([]Changeover, error) {
+// ListChangeovers returns every process_changeover for a process,
+// newest first.
+func ListChangeovers(db *sql.DB, processID int64) ([]Changeover, error) {
 	rows, err := db.Query(`SELECT c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
 		c.started_at, COALESCE(c.completed_at, ''), c.updated_at,
 		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')
@@ -124,9 +126,9 @@ func List(db *sql.DB, processID int64) ([]Changeover, error) {
 	return out, rows.Err()
 }
 
-// GetActive returns the active (non-completed, non-cancelled)
-// changeover for a process, if any.
-func GetActive(db *sql.DB, processID int64) (*Changeover, error) {
+// GetActiveChangeover returns the active (non-completed,
+// non-cancelled) changeover for a process, if any.
+func GetActiveChangeover(db *sql.DB, processID int64) (*Changeover, error) {
 	c, err := scanChangeover(db.QueryRow(`SELECT c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
 		c.started_at, COALESCE(c.completed_at, ''), c.updated_at,
 		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')
@@ -142,9 +144,10 @@ func GetActive(db *sql.DB, processID int64) (*Changeover, error) {
 	return &c, nil
 }
 
-// UpdateState changes the state on a process_changeover, setting
-// completed_at when transitioning to "completed" or "cancelled".
-func UpdateState(db *sql.DB, id int64, state string) error {
+// UpdateChangeoverState changes the state on a process_changeover,
+// setting completed_at when transitioning to "completed" or
+// "cancelled".
+func UpdateChangeoverState(db *sql.DB, id int64, state string) error {
 	completedAt := sql.NullString{}
 	if state == "completed" || state == "cancelled" {
 		completedAt = sql.NullString{Valid: true, String: time.Now().UTC().Format(helpers.TimeLayout)}
@@ -156,9 +159,9 @@ func UpdateState(db *sql.DB, id int64, state string) error {
 
 // --- station tasks ---
 
-// ListStationTasks returns every changeover_station_task for one
-// changeover.
-func ListStationTasks(db *sql.DB, changeoverID int64) ([]StationTask, error) {
+// ListChangeoverStationTasks returns every changeover_station_task for
+// one changeover.
+func ListChangeoverStationTasks(db *sql.DB, changeoverID int64) ([]StationTask, error) {
 	rows, err := db.Query(`SELECT t.id, t.process_changeover_id, t.operator_station_id, t.state,
 		t.updated_at, COALESCE(s.name, '')
 		FROM changeover_station_tasks t
@@ -183,16 +186,16 @@ func ListStationTasks(db *sql.DB, changeoverID int64) ([]StationTask, error) {
 	return out, rows.Err()
 }
 
-// UpdateStationTaskState writes the state on a station task.
-func UpdateStationTaskState(db *sql.DB, id int64, state string) error {
+// UpdateChangeoverStationTaskState writes the state on a station task.
+func UpdateChangeoverStationTaskState(db *sql.DB, id int64, state string) error {
 	_, err := db.Exec(`UPDATE changeover_station_tasks SET state=?, updated_at=datetime('now') WHERE id=?`,
 		state, id)
 	return err
 }
 
-// GetStationTaskByStation returns the station task for one
+// GetChangeoverStationTaskByStation returns the station task for one
 // (changeover, station) pair.
-func GetStationTaskByStation(db *sql.DB, changeoverID, stationID int64) (*StationTask, error) {
+func GetChangeoverStationTaskByStation(db *sql.DB, changeoverID, stationID int64) (*StationTask, error) {
 	row := db.QueryRow(`SELECT t.id, t.process_changeover_id, t.operator_station_id, t.state,
 		t.updated_at, COALESCE(s.name, '')
 		FROM changeover_station_tasks t
@@ -253,20 +256,21 @@ func listNodeTasksQuery(db *sql.DB, changeoverID int64, extraWhere string, extra
 	return out, rows.Err()
 }
 
-// ListNodeTasks returns every changeover_node_task for a changeover.
-func ListNodeTasks(db *sql.DB, changeoverID int64) ([]NodeTask, error) {
+// ListChangeoverNodeTasks returns every changeover_node_task for a
+// changeover.
+func ListChangeoverNodeTasks(db *sql.DB, changeoverID int64) ([]NodeTask, error) {
 	return listNodeTasksQuery(db, changeoverID, "")
 }
 
-// ListNodeTasksByStation filters node tasks to those whose process
-// node belongs to the given operator_station.
-func ListNodeTasksByStation(db *sql.DB, changeoverID, stationID int64) ([]NodeTask, error) {
+// ListChangeoverNodeTasksByStation filters node tasks to those whose
+// process node belongs to the given operator_station.
+func ListChangeoverNodeTasksByStation(db *sql.DB, changeoverID, stationID int64) ([]NodeTask, error) {
 	return listNodeTasksQuery(db, changeoverID, "n.operator_station_id=?", stationID)
 }
 
-// GetNodeTaskByNode returns the node task for one (changeover, node)
-// pair.
-func GetNodeTaskByNode(db *sql.DB, changeoverID, processNodeID int64) (*NodeTask, error) {
+// GetChangeoverNodeTaskByNode returns the node task for one
+// (changeover, node) pair.
+func GetChangeoverNodeTaskByNode(db *sql.DB, changeoverID, processNodeID int64) (*NodeTask, error) {
 	t, err := scanNodeTask(db.QueryRow(`SELECT t.id, t.process_changeover_id, t.process_node_id,
 		t.from_claim_id, t.to_claim_id, t.situation, t.state,
 		t.next_material_order_id, t.old_material_release_order_id,
@@ -280,16 +284,16 @@ func GetNodeTaskByNode(db *sql.DB, changeoverID, processNodeID int64) (*NodeTask
 	return &t, nil
 }
 
-// UpdateNodeTaskState writes the state on a node task.
-func UpdateNodeTaskState(db *sql.DB, id int64, state string) error {
+// UpdateChangeoverNodeTaskState writes the state on a node task.
+func UpdateChangeoverNodeTaskState(db *sql.DB, id int64, state string) error {
 	_, err := db.Exec(`UPDATE changeover_node_tasks SET state=?, updated_at=datetime('now') WHERE id=?`, state, id)
 	return err
 }
 
-// LinkNodeOrders associates the next/old material order ids with a
-// node task. COALESCE preserves any existing values when nil is
+// LinkChangeoverNodeOrders associates the next/old material order ids
+// with a node task. COALESCE preserves any existing values when nil is
 // passed.
-func LinkNodeOrders(db *sql.DB, id int64, nextOrderID, oldOrderID *int64) error {
+func LinkChangeoverNodeOrders(db *sql.DB, id int64, nextOrderID, oldOrderID *int64) error {
 	_, err := db.Exec(`UPDATE changeover_node_tasks SET next_material_order_id=COALESCE(?, next_material_order_id),
 		old_material_release_order_id=COALESCE(?, old_material_release_order_id), updated_at=datetime('now')
 		WHERE id=?`, nextOrderID, oldOrderID, id)

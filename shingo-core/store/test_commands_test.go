@@ -2,12 +2,16 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/diagnostics"
+)
 
 func TestTestCommandCRUD(t *testing.T) {
 	db := testDB(t)
 
-	tc := &TestCommand{
+	tc := &diagnostics.TestCommand{
 		CommandType:   "move",
 		RobotID:       "AMB-1",
 		VendorOrderID: "rds-1",
@@ -78,7 +82,7 @@ func TestTestCommandCRUD(t *testing.T) {
 func TestListTestCommands(t *testing.T) {
 	db := testDB(t)
 
-	cmds := []*TestCommand{
+	cmds := []*diagnostics.TestCommand{
 		{CommandType: "move", RobotID: "AMB-1"},
 		{CommandType: "stop", RobotID: "AMB-1"},
 		{CommandType: "move", RobotID: "AMB-2"},

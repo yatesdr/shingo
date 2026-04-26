@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // Characterization tests for handlers_dashboard.go — renders the dashboard
@@ -78,7 +78,7 @@ func TestHandleDashboard_ReflectsActiveOrderCount(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 
 	// Seed a pending order.
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:   "dash-order-1",
 		StationID:  "line-1",
 		OrderType:  "move",

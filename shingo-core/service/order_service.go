@@ -5,6 +5,7 @@ import (
 
 	"shingocore/fleet"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // OrderService centralizes order-facing mutations that the www/ handlers
@@ -31,7 +32,7 @@ func NewOrderService(db *store.DB, f fleet.Backend) *OrderService {
 // Create inserts a new order. Thin delegate kept here so handlers that
 // already hold an *OrderService for other mutations don't have to plumb
 // a second engine accessor through just to insert the row.
-func (s *OrderService) Create(o *store.Order) error {
+func (s *OrderService) Create(o *orders.Order) error {
 	return s.db.CreateOrder(o)
 }
 
@@ -57,7 +58,7 @@ func (s *OrderService) UpdateVendor(orderID int64, vendorOrderID, vendorState, r
 // Returns an "order not found" error (suitable for 404) when the order
 // id does not exist. Fleet errors are returned unwrapped so the caller
 // can map them to whichever HTTP status it prefers.
-func (s *OrderService) SetPriority(orderID int64, priority int) (*store.Order, error) {
+func (s *OrderService) SetPriority(orderID int64, priority int) (*orders.Order, error) {
 	order, err := s.db.GetOrder(orderID)
 	if err != nil {
 		return nil, fmt.Errorf("order not found")
@@ -94,42 +95,42 @@ func (s *OrderService) UnclaimBin(binID int64) error {
 
 // GetOrder loads an order by ID. Absorbed from engine_db_methods.go as
 // part of the www-handler service migration (PR 3a.3a).
-func (s *OrderService) GetOrder(id int64) (*store.Order, error) {
+func (s *OrderService) GetOrder(id int64) (*orders.Order, error) {
 	return s.db.GetOrder(id)
 }
 
 // GetOrderByUUID loads an order by its edge UUID. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.3a).
-func (s *OrderService) GetOrderByUUID(uuid string) (*store.Order, error) {
+func (s *OrderService) GetOrderByUUID(uuid string) (*orders.Order, error) {
 	return s.db.GetOrderByUUID(uuid)
 }
 
 // ListActiveOrders returns every order currently in an active (not
 // terminal) status. Absorbed from engine_db_methods.go as part of the
 // www-handler service migration (PR 3a.3a).
-func (s *OrderService) ListActiveOrders() ([]*store.Order, error) {
+func (s *OrderService) ListActiveOrders() ([]*orders.Order, error) {
 	return s.db.ListActiveOrders()
 }
 
 // ListOrders returns orders filtered by status (empty string = all),
 // capped at limit rows. Absorbed from engine_db_methods.go as part of
 // the www-handler service migration (PR 3a.3a).
-func (s *OrderService) ListOrders(status string, limit int) ([]*store.Order, error) {
+func (s *OrderService) ListOrders(status string, limit int) ([]*orders.Order, error) {
 	return s.db.ListOrders(status, limit)
 }
 
 // ListOrderHistory returns the historical status transitions for a
 // single order. Absorbed from engine_db_methods.go as part of the
 // www-handler service migration (PR 3a.3a).
-func (s *OrderService) ListOrderHistory(orderID int64) ([]*store.OrderHistory, error) {
+func (s *OrderService) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 	return s.db.ListOrderHistory(orderID)
 }
 
 // ListChildOrders returns the sequenced child orders for a compound
 // parent order. Absorbed from engine_db_methods.go as part of the
 // www-handler service migration (PR 3a.3a).
-func (s *OrderService) ListChildOrders(parentOrderID int64) ([]*store.Order, error) {
+func (s *OrderService) ListChildOrders(parentOrderID int64) ([]*orders.Order, error) {
 	return s.db.ListChildOrders(parentOrderID)
 }
 
@@ -137,7 +138,7 @@ func (s *OrderService) ListChildOrders(parentOrderID int64) ([]*store.Order, err
 // specific station id, capped at limit rows. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.3b).
-func (s *OrderService) ListOrdersByStation(stationID string, limit int) ([]*store.Order, error) {
+func (s *OrderService) ListOrdersByStation(stationID string, limit int) ([]*orders.Order, error) {
 	return s.db.ListOrdersByStation(stationID, limit)
 }
 
@@ -148,14 +149,14 @@ func (s *OrderService) ListOrdersByStation(stationID string, limit int) ([]*stor
 // node-group-shutdown flow to find orders that still reference a
 // group about to be torn down. Absorbed from engine_db_methods.go as
 // part of the Phase 3a closeout (PR 3a.6).
-func (s *OrderService) ListActiveBySourceRef(names []string) ([]*store.Order, error) {
+func (s *OrderService) ListActiveBySourceRef(names []string) ([]*orders.Order, error) {
 	return s.db.ListActiveOrdersBySourceRef(names)
 }
 
 // ListByBin returns the most recent orders that touched a single bin,
 // capped at limit rows. Absorbed from engine_db_methods.go as part of
 // the Phase 3a closeout (PR 3a.6).
-func (s *OrderService) ListByBin(binID int64, limit int) ([]*store.Order, error) {
+func (s *OrderService) ListByBin(binID int64, limit int) ([]*orders.Order, error) {
 	return s.db.ListOrdersByBin(binID, limit)
 }
 

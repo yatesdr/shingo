@@ -6,6 +6,8 @@ import (
 
 	"shingoedge/orders"
 	"shingoedge/store"
+	"shingoedge/store/catalog"
+	"shingoedge/store/processes"
 )
 
 // TestWiring_IngestCompletion_ResetsProduceUOP verifies that when an ingest
@@ -109,7 +111,7 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: prefix + "-NODE",
 		Code:         prefix[:3],
@@ -126,7 +128,7 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: prefix + "-NODE",
 		Role:         "consume",
@@ -261,7 +263,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "BL-NODE",
 		Code:         "BL1",
@@ -278,7 +280,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "BL-NODE",
 		Role:                "produce",
@@ -333,19 +335,19 @@ func TestHandlePayloadCatalog_PruneDeletedEntries(t *testing.T) {
 	db := testEngineDB(t)
 
 	// Seed local catalog with two entries as if they were previously synced from core
-	if err := db.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+	if err := db.UpsertPayloadCatalog(&catalog.CatalogEntry{
 		ID: 1, Name: "PART-A", Code: "PART-A", Description: "Part A", UOPCapacity: 100,
 	}); err != nil {
 		t.Fatalf("seed PART-A: %v", err)
 	}
-	if err := db.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+	if err := db.UpsertPayloadCatalog(&catalog.CatalogEntry{
 		ID: 2, Name: "PART-B", Code: "PART-B", Description: "Part B", UOPCapacity: 50,
 	}); err != nil {
 		t.Fatalf("seed PART-B: %v", err)
 	}
 
 	// Simulate core responding with only PART-A (PART-B was deleted in core)
-	if err := db.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+	if err := db.UpsertPayloadCatalog(&catalog.CatalogEntry{
 		ID: 1, Name: "PART-A", Code: "PART-A", Description: "Part A", UOPCapacity: 100,
 	}); err != nil {
 		t.Fatalf("upsert active PART-A: %v", err)
@@ -394,7 +396,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeAID, err = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeAID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "AB-NODE-A",
 		Code:         "ABA",
@@ -405,7 +407,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 	if err != nil {
 		t.Fatalf("create node A: %v", err)
 	}
-	nodeBID, err = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeBID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "AB-NODE-B",
 		Code:         "ABB",
@@ -423,7 +425,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 	}
 	db.SetActiveStyle(processID, &styleID)
 
-	claimAID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimAID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        styleID,
 		CoreNodeName:   "AB-NODE-A",
 		Role:           "consume",
@@ -437,7 +439,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 	if err != nil {
 		t.Fatalf("upsert claim A: %v", err)
 	}
-	claimBID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimBID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        styleID,
 		CoreNodeName:   "AB-NODE-B",
 		Role:           "consume",
@@ -639,22 +641,22 @@ func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID,
 	t.Helper()
 
 	processID, _ = db.CreateProcess("ABP-PROC", "a/b produce test", "active_production", "", "", false)
-	nodeAID, _ = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeAID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ABP-A", Code: "PA1", Name: "Produce A", Sequence: 1, Enabled: true,
 	})
-	nodeBID, _ = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeBID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ABP-B", Code: "PB1", Name: "Produce B", Sequence: 2, Enabled: true,
 	})
 
 	styleID, _ = db.CreateStyle("ABP-STYLE", "a/b produce style", processID)
 	db.SetActiveStyle(processID, &styleID)
 
-	claimAID, _ = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimAID, _ = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ABP-A", Role: "produce", SwapMode: "simple",
 		PayloadCode: "PART-ABP", UOPCapacity: 100, InboundSource: "SRC-EMPTY",
 		PairedCoreNode: "ABP-B",
 	})
-	claimBID, _ = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimBID, _ = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ABP-B", Role: "produce", SwapMode: "simple",
 		PayloadCode: "PART-ABP", UOPCapacity: 100, InboundSource: "SRC-EMPTY",
 		PairedCoreNode: "ABP-A",
@@ -675,21 +677,21 @@ func seedAsymmetricABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeB
 	t.Helper()
 
 	processID, _ = db.CreateProcess("ASYM-PROC", "asymmetric a/b", "active_production", "", "", false)
-	nodeAID, _ = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeAID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ASYM-A", Code: "AA1", Name: "Asym A", Sequence: 1, Enabled: true,
 	})
-	nodeBID, _ = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeBID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ASYM-B", Code: "AB1", Name: "Asym B", Sequence: 2, Enabled: true,
 	})
 
 	styleID, _ = db.CreateStyle("ASYM-STYLE", "asym style", processID)
 	db.SetActiveStyle(processID, &styleID)
 
-	claimAID, _ = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimAID, _ = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ASYM-A", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-ASYM", UOPCapacity: 100, PairedCoreNode: "ASYM-B",
 	})
-	claimBID, _ = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimBID, _ = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: styleID, CoreNodeName: "ASYM-B", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-ASYM", UOPCapacity: 100,
 		// PairedCoreNode intentionally empty — B doesn't know about A
@@ -715,11 +717,11 @@ func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
 
 	// Create a second style and start changeover
 	style2, _ := db.CreateStyle("AB-STYLE-2", "second style", processID)
-	db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: style2, CoreNodeName: "AB-NODE-A", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-NEW", UOPCapacity: 100,
 	})
-	db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: style2, CoreNodeName: "AB-NODE-B", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-NEW", UOPCapacity: 100,
 	})
@@ -823,12 +825,12 @@ func TestWiring_ABPairsAcrossStyles(t *testing.T) {
 
 	// Create Style 2 with NO pairing (both nodes unpaired)
 	style2ID, _ := db.CreateStyle("AB-STYLE-NO-PAIR", "no pairing", processID)
-	db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: style2ID, CoreNodeName: "AB-NODE-A", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-X", UOPCapacity: 100,
 		// No PairedCoreNode
 	})
-	db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: style2ID, CoreNodeName: "AB-NODE-B", Role: "consume", SwapMode: "simple",
 		PayloadCode: "PART-X", UOPCapacity: 100,
 		// No PairedCoreNode

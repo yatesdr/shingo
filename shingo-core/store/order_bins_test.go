@@ -2,28 +2,34 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+)
 
 func TestOrderBinsCRUD(t *testing.T) {
 	db := testDB(t)
 
 	// Need an order + a bin (FK references)
-	o := &Order{EdgeUUID: "ob-uuid", Status: "pending"}
+	o := &orders.Order{EdgeUUID: "ob-uuid", Status: "pending"}
 	if err := db.CreateOrder(o); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 
-	bt := &BinType{Code: "OB-BT", Description: "t"}
+	bt := &bins.BinType{Code: "OB-BT", Description: "t"}
 	db.CreateBinType(bt)
 
-	node := &Node{Name: "OB-NODE", Enabled: true}
+	node := &nodes.Node{Name: "OB-NODE", Enabled: true}
 	db.CreateNode(node)
 
-	b1 := &Bin{BinTypeID: bt.ID, Label: "OB-B1", NodeID: &node.ID, Status: "available"}
+	b1 := &bins.Bin{BinTypeID: bt.ID, Label: "OB-B1", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(b1)
-	b2 := &Bin{BinTypeID: bt.ID, Label: "OB-B2", NodeID: &node.ID, Status: "available"}
+	b2 := &bins.Bin{BinTypeID: bt.ID, Label: "OB-B2", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(b2)
-	b3 := &Bin{BinTypeID: bt.ID, Label: "OB-B3", NodeID: &node.ID, Status: "available"}
+	b3 := &bins.Bin{BinTypeID: bt.ID, Label: "OB-B3", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(b3)
 
 	// Insert rows in non-sorted step order — ListOrderBins must order them.
@@ -75,26 +81,26 @@ func TestOrderBinsCRUD(t *testing.T) {
 func TestApplyMultiBinArrival(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "ARR-BT", Description: "arrival tote"}
+	bt := &bins.BinType{Code: "ARR-BT", Description: "arrival tote"}
 	db.CreateBinType(bt)
 
-	startNode := &Node{Name: "ARR-START", Enabled: true}
+	startNode := &nodes.Node{Name: "ARR-START", Enabled: true}
 	db.CreateNode(startNode)
-	destA := &Node{Name: "ARR-DEST-A", Enabled: true}
+	destA := &nodes.Node{Name: "ARR-DEST-A", Enabled: true}
 	db.CreateNode(destA)
-	destB := &Node{Name: "ARR-DEST-B", Enabled: true}
+	destB := &nodes.Node{Name: "ARR-DEST-B", Enabled: true}
 	db.CreateNode(destB)
 
-	b1 := &Bin{BinTypeID: bt.ID, Label: "ARR-1", NodeID: &startNode.ID, Status: "available"}
+	b1 := &bins.Bin{BinTypeID: bt.ID, Label: "ARR-1", NodeID: &startNode.ID, Status: "available"}
 	db.CreateBin(b1)
-	b2 := &Bin{BinTypeID: bt.ID, Label: "ARR-2", NodeID: &startNode.ID, Status: "available"}
+	b2 := &bins.Bin{BinTypeID: bt.ID, Label: "ARR-2", NodeID: &startNode.ID, Status: "available"}
 	db.CreateBin(b2)
 
 	// Claim both for a synthetic order so ApplyMultiBinArrival has something to release.
 	db.ClaimBin(b1.ID, 42)
 	db.ClaimBin(b2.ID, 42)
 
-	instrs := []BinArrivalInstruction{
+	instrs := []orders.BinArrivalInstruction{
 		{BinID: b1.ID, ToNodeID: destA.ID, Staged: false},
 		{BinID: b2.ID, ToNodeID: destB.ID, Staged: true},
 	}

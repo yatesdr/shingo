@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingocore/store"
+	"shingocore/store/telemetry"
 )
 
 // MissionService centralizes mission telemetry and statistics queries.
@@ -19,23 +20,23 @@ func NewMissionService(db *store.DB) *MissionService {
 }
 
 // Stats returns summary counters across missions matching the filter.
-func (s *MissionService) Stats(f store.MissionFilter) (*store.MissionStats, error) {
+func (s *MissionService) Stats(f telemetry.Filter) (*telemetry.Stats, error) {
 	return s.db.GetMissionStats(f)
 }
 
 // Telemetry returns the latest telemetry snapshot for a single
 // mission (keyed by order ID).
-func (s *MissionService) Telemetry(orderID int64) (*store.MissionTelemetry, error) {
+func (s *MissionService) Telemetry(orderID int64) (*telemetry.Mission, error) {
 	return s.db.GetMissionTelemetry(orderID)
 }
 
 // ListEvents returns the event timeline for a single mission.
-func (s *MissionService) ListEvents(orderID int64) ([]*store.MissionEvent, error) {
+func (s *MissionService) ListEvents(orderID int64) ([]*telemetry.Event, error) {
 	return s.db.ListMissionEvents(orderID)
 }
 
 // List returns telemetry for every mission matching the filter along
 // with a total row count (for pagination).
-func (s *MissionService) List(f store.MissionFilter) ([]*store.MissionTelemetry, int, error) {
+func (s *MissionService) List(f telemetry.Filter) ([]*telemetry.Mission, int, error) {
 	return s.db.ListMissions(f)
 }

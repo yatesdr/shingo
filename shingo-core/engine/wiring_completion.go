@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // handleOrderDelivered runs on fleet-reported FINISHED. Notifies Edge
 // and moves the bin to its destination immediately so subsequent orders
 // see accurate occupancy.
-func (e *Engine) handleOrderDelivered(order *store.Order) {
+func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	// Resolve staged expiry for the delivered message
 	var stagedExpireAt *time.Time
 	if order.DeliveryNode != "" {
@@ -49,7 +49,7 @@ func (e *Engine) handleOrderDelivered(order *store.Order) {
 // Called from handleOrderDelivered (on fleet FINISHED) so that telemetry
 // is accurate immediately. handleOrderCompleted still runs on confirmation
 // but is idempotent — it skips the bin move if already at the destination.
-func (e *Engine) applyBinArrivalForOrder(order *store.Order) {
+func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 	if order.SourceNode == "" || order.DeliveryNode == "" {
 		return
 	}
@@ -87,7 +87,7 @@ func (e *Engine) applyBinArrivalForOrder(order *store.Order) {
 	// overrides gone, lineside deliveries arrive `staged` and stay protected
 	// until the next claim or operator action.
 
-	if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
+	if err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
 		e.logFn("engine: apply bin arrival on delivery for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
 	}
@@ -114,8 +114,8 @@ func (e *Engine) applyBinArrivalForOrder(order *store.Order) {
 // WaitIndex > 0 ("operatorConfirmed"). Override removed 2026-04-14 — bins
 // arriving at lineside via complex orders now stage like simple orders do.
 // See applyBinArrivalForOrder for full context.
-func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*store.OrderBin) {
-	var instructions []store.BinArrivalInstruction
+func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*orders.OrderBin) {
+	var instructions []orders.BinArrivalInstruction
 	// fromNodeIDs[i] is the source node of instructions[i]. Captured here
 	// so the post-arrival BinUpdatedEvent can carry FromNodeID — without it
 	// handleKanbanDemand cannot fire produce signals on storage-slot exit.
@@ -131,7 +131,7 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *store.Order, orderBins []*s
 			continue
 		}
 		staged, expiresAt := e.resolveNodeStaging(destNode)
-		instructions = append(instructions, store.BinArrivalInstruction{
+		instructions = append(instructions, orders.BinArrivalInstruction{
 			BinID:     ob.BinID,
 			ToNodeID:  destNode.ID,
 			Staged:    staged,
@@ -239,7 +239,7 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 	// Same overrides existed here in the safety-net path and were removed
 	// for the same reason.
 
-	if err := e.db.ApplyBinArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
+	if err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
 		e.logFn("engine: apply bin arrival for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return
 	}
@@ -265,8 +265,8 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 // Each bin is moved to its per-step destination (from the order_bins junction table)
 // in a single atomic transaction. Idempotent — skips bins already at their destination
 // (normal case when applyMultiBinArrivalForOrder already ran at delivery time).
-func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.OrderBin) {
-	var instructions []store.BinArrivalInstruction
+func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*orders.OrderBin) {
+	var instructions []orders.BinArrivalInstruction
 	// fromNodeIDs[i] is the source node of instructions[i] — same purpose as
 	// in applyMultiBinArrivalForOrder: keep FromNodeID intact so kanban can
 	// fire on storage-slot exit when this safety-net path actually moves a bin.
@@ -295,7 +295,7 @@ func (e *Engine) handleMultiBinCompleted(order *store.Order, orderBins []*store.
 		}
 
 		staged, expiresAt := e.resolveNodeStaging(destNode)
-		instructions = append(instructions, store.BinArrivalInstruction{
+		instructions = append(instructions, orders.BinArrivalInstruction{
 			BinID:     ob.BinID,
 			ToNodeID:  destNode.ID,
 			Staged:    staged,

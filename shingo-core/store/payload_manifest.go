@@ -4,10 +4,7 @@ package store
 
 import "shingocore/store/payloads"
 
-// PayloadManifestItem aliases the payloads sub-package's manifest row type.
-type PayloadManifestItem = payloads.ManifestItem
-
-func (db *DB) CreatePayloadManifestItem(item *PayloadManifestItem) error {
+func (db *DB) CreatePayloadManifestItem(item *payloads.ManifestItem) error {
 	return payloads.CreateItem(db.DB, item)
 }
 
@@ -19,10 +16,10 @@ func (db *DB) DeletePayloadManifestItem(id int64) error {
 	return payloads.DeleteItem(db.DB, id)
 }
 
-func (db *DB) ListPayloadManifest(payloadID int64) ([]*PayloadManifestItem, error) {
+func (db *DB) ListPayloadManifest(payloadID int64) ([]*payloads.ManifestItem, error) {
 	return payloads.ListManifest(db.DB, payloadID)
 }
 
-func (db *DB) ReplacePayloadManifest(payloadID int64, items []*PayloadManifestItem) error {
+func (db *DB) ReplacePayloadManifest(payloadID int64, items []*payloads.ManifestItem) error {
 	return payloads.ReplaceManifest(db.DB, payloadID, items)
 }

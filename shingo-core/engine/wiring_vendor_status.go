@@ -13,7 +13,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
@@ -92,7 +92,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	}
 }
 
-func (e *Engine) handleFleetOrderFailed(order *store.Order) {
+func (e *Engine) handleFleetOrderFailed(order *orders.Order) {
 	if err := e.db.FailOrderAtomic(order.ID, "fleet order failed"); err != nil {
 		e.logFn("engine: atomic fail order %d: %v", order.ID, err)
 	}
@@ -105,7 +105,7 @@ func (e *Engine) handleFleetOrderFailed(order *store.Order) {
 	}})
 }
 
-func (e *Engine) handleFleetOrderCancelled(order *store.Order) {
+func (e *Engine) handleFleetOrderCancelled(order *orders.Order) {
 	// order.Status is the in-memory value loaded before UpdateOrderStatus ran,
 	// so it reflects the status prior to the cancellation update.
 	previousStatus := order.Status

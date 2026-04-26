@@ -4,12 +4,14 @@ import (
 	"testing"
 
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/orders"
 )
 
 // --- Fetch helpers (always fatal on miss) ---
 
 // RequireOrder fetches an order by UUID and fatals if not found.
-func RequireOrder(t *testing.T, db *store.DB, uuid string) *store.Order {
+func RequireOrder(t *testing.T, db *store.DB, uuid string) *orders.Order {
 	t.Helper()
 	order, err := db.GetOrderByUUID(uuid)
 	if err != nil {
@@ -19,7 +21,7 @@ func RequireOrder(t *testing.T, db *store.DB, uuid string) *store.Order {
 }
 
 // RequireBin fetches a bin by ID and fatals if not found.
-func RequireBin(t *testing.T, db *store.DB, binID int64) *store.Bin {
+func RequireBin(t *testing.T, db *store.DB, binID int64) *bins.Bin {
 	t.Helper()
 	bin, err := db.GetBin(binID)
 	if err != nil {
@@ -32,7 +34,7 @@ func RequireBin(t *testing.T, db *store.DB, binID int64) *store.Bin {
 
 // RequireOrderStatus fetches an order and fatals if the status does not match.
 // Use for preconditions where subsequent logic depends on the expected status.
-func RequireOrderStatus(t *testing.T, db *store.DB, uuid, wantStatus string) *store.Order {
+func RequireOrderStatus(t *testing.T, db *store.DB, uuid, wantStatus string) *orders.Order {
 	t.Helper()
 	order := RequireOrder(t, db, uuid)
 	if order.Status != wantStatus {
@@ -44,7 +46,7 @@ func RequireOrderStatus(t *testing.T, db *store.DB, uuid, wantStatus string) *st
 // AssertOrderStatus fetches an order and logs an error (non-fatal) if the status
 // does not match. Use for end-of-test verification where you want to see all
 // failures. Returns the order for further inspection (may be nil on fetch error).
-func AssertOrderStatus(t *testing.T, db *store.DB, uuid, wantStatus string) *store.Order {
+func AssertOrderStatus(t *testing.T, db *store.DB, uuid, wantStatus string) *orders.Order {
 	t.Helper()
 	order, err := db.GetOrderByUUID(uuid)
 	if err != nil {

@@ -7,21 +7,19 @@ package store
 import (
 	"encoding/json"
 
+	"shingocore/store/bins"
 	"shingocore/store/cms"
 )
 
-// CMSTransaction preserves the store.CMSTransaction public API.
-type CMSTransaction = cms.Transaction
-
-func (db *DB) CreateCMSTransactions(txns []*CMSTransaction) error {
+func (db *DB) CreateCMSTransactions(txns []*cms.Transaction) error {
 	return cms.Create(db.DB, txns)
 }
 
-func (db *DB) ListCMSTransactions(nodeID int64, limit, offset int) ([]*CMSTransaction, error) {
+func (db *DB) ListCMSTransactions(nodeID int64, limit, offset int) ([]*cms.Transaction, error) {
 	return cms.ListByNode(db.DB, nodeID, limit, offset)
 }
 
-func (db *DB) ListAllCMSTransactions(limit, offset int) ([]*CMSTransaction, error) {
+func (db *DB) ListAllCMSTransactions(limit, offset int) ([]*cms.Transaction, error) {
 	return cms.ListAll(db.DB, limit, offset)
 }
 
@@ -51,7 +49,7 @@ func (db *DB) SumCatIDsAtBoundary(boundaryID int64) map[string]int64 {
 		if rows.Scan(&manifestJSON) != nil {
 			continue
 		}
-		var m BinManifest
+		var m bins.Manifest
 		if json.Unmarshal([]byte(manifestJSON), &m) != nil {
 			continue
 		}

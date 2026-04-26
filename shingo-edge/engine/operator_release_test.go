@@ -5,6 +5,7 @@ import (
 
 	"shingoedge/orders"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // stageOrderForConsumeNode seeds a staged complex order against the
@@ -174,7 +175,7 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime(t *testing.T
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "TR-SUPPLY-NODE",
 		Code:         "TRS",
@@ -193,7 +194,7 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime(t *testing.T
 
 	// Two-robot claim with InboundStaging configured (the helper requires it
 	// to be non-empty when SwapMode == "two_robot").
-	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        styleID,
 		CoreNodeName:   "TR-SUPPLY-NODE",
 		Role:           "consume",
@@ -257,7 +258,7 @@ func TestReleaseOrderWithLineside_TwoRobotEvacResetsRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "TR-EVAC-NODE",
 		Code:         "TRE",
@@ -270,7 +271,7 @@ func TestReleaseOrderWithLineside_TwoRobotEvacResetsRuntime(t *testing.T) {
 	}
 	styleID, _ := db.CreateStyle("TR-EVAC-STYLE", "", processID)
 	db.SetActiveStyle(processID, &styleID)
-	claimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        styleID,
 		CoreNodeName:   "TR-EVAC-NODE",
 		Role:           "consume",
@@ -334,7 +335,7 @@ func TestComputeReleaseRemainingUOP(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rt := &store.ProcessNodeRuntimeState{RemainingUOP: tc.runtimeUOP}
+			rt := &processes.RuntimeState{RemainingUOP: tc.runtimeUOP}
 			got := computeReleaseRemainingUOP(ReleaseDisposition{Mode: tc.mode}, rt)
 			if tc.wantNil {
 				if got != nil {

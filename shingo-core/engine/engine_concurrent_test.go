@@ -13,7 +13,8 @@ import (
 	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
-	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // =============================================================================
@@ -130,7 +131,7 @@ func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
 	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, orderB.BinID, orderB.VendorOrderID)
 
 	// Neither order should be permanently failed
-	for _, order := range []*store.Order{orderA, orderB} {
+	for _, order := range []*orders.Order{orderA, orderB} {
 		if order.Status == dispatch.StatusFailed {
 			t.Errorf("BUG: order permanently failed after deterministic TOCTOU race — should be queued")
 		}
@@ -138,7 +139,7 @@ func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
 
 	// Exactly one should have claimed the bin
 	claimed := 0
-	for _, order := range []*store.Order{orderA, orderB} {
+	for _, order := range []*orders.Order{orderA, orderB} {
 		if order.BinID != nil {
 			claimed++
 		}
@@ -336,7 +337,7 @@ func TestRedirect_MidTransit(t *testing.T) {
 	storageNode, lineNode1, bp := setupTestData(t, db)
 
 	// Create second line node for redirect destination
-	lineNode2 := &store.Node{Name: "LINE2-IN", Enabled: true}
+	lineNode2 := &nodes.Node{Name: "LINE2-IN", Enabled: true}
 	if err := db.CreateNode(lineNode2); err != nil {
 		t.Fatalf("create line node 2: %v", err)
 	}
@@ -553,7 +554,7 @@ func TestTC37_StagingExpiryVsActiveClaim(t *testing.T) {
 	t.Logf("bin %d at line: status=%s, claimed_by=%v", bin.ID, bin.Status, bin.ClaimedBy)
 
 	// Step 3: Manually claim the bin for a second order (simulates operator action)
-	secondOrder := &store.Order{
+	secondOrder := &orders.Order{
 		StationID:    "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
 		PayloadCode:  bp.Code,

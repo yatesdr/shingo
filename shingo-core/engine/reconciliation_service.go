@@ -5,6 +5,9 @@ import (
 	"time"
 
 	"shingocore/store"
+	"shingocore/store/messaging"
+	"shingocore/store/reconciliation"
+	"shingocore/store/recovery"
 )
 
 type ReconciliationService struct {
@@ -17,15 +20,15 @@ func newReconciliationService(db *store.DB, logFn LogFunc) *ReconciliationServic
 	return &ReconciliationService{db: db, logFn: logFn}
 }
 
-func (s *ReconciliationService) Summary() (*store.ReconciliationSummary, error) {
+func (s *ReconciliationService) Summary() (*reconciliation.Summary, error) {
 	return s.db.GetReconciliationSummary()
 }
 
-func (s *ReconciliationService) ListAnomalies() ([]*store.ReconciliationAnomaly, error) {
+func (s *ReconciliationService) ListAnomalies() ([]*reconciliation.Anomaly, error) {
 	return s.db.ListReconciliationAnomalies()
 }
 
-func (s *ReconciliationService) ListRecoveryActions(limit int) ([]*store.RecoveryAction, error) {
+func (s *ReconciliationService) ListRecoveryActions(limit int) ([]*recovery.Action, error) {
 	return s.db.ListRecoveryActions(limit)
 }
 
@@ -33,7 +36,7 @@ func (s *ReconciliationService) RequeueOutbox(id int64) error {
 	return s.db.RequeueOutbox(id)
 }
 
-func (s *ReconciliationService) ListDeadLetterOutbox(limit int) ([]*store.OutboxMessage, error) {
+func (s *ReconciliationService) ListDeadLetterOutbox(limit int) ([]*messaging.OutboxMessage, error) {
 	return s.db.ListDeadLetterOutbox(limit)
 }
 

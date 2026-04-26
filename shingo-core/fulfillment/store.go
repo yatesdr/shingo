@@ -1,6 +1,11 @@
 package fulfillment
 
-import "shingocore/store"
+import (
+	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+)
 
 // Store is the narrow DB surface the fulfillment scanner depends on.
 //
@@ -21,18 +26,18 @@ import "shingocore/store"
 // unit-testable in isolation.
 type Store interface {
 	// Order reads.
-	ListQueuedOrders() ([]*store.Order, error)
-	GetOrder(id int64) (*store.Order, error)
+	ListQueuedOrders() ([]*orders.Order, error)
+	GetOrder(id int64) (*orders.Order, error)
 	CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error)
 
 	// Node reads.
-	GetNode(id int64) (*store.Node, error)
-	GetNodeByDotName(name string) (*store.Node, error)
+	GetNode(id int64) (*nodes.Node, error)
+	GetNodeByDotName(name string) (*nodes.Node, error)
 
 	// Bin reads.
 	CountBinsByNode(nodeID int64) (int, error)
-	FindEmptyCompatibleBin(payloadCode, preferZone string) (*store.Bin, error)
-	FindSourceBinFIFO(payloadCode string) (*store.Bin, error)
+	FindEmptyCompatibleBin(payloadCode, preferZone string) (*bins.Bin, error)
+	FindSourceBinFIFO(payloadCode string) (*bins.Bin, error)
 
 	// Mutations performed on the bin/order during fulfillment.
 	ClaimBin(binID, orderID int64) error

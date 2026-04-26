@@ -33,7 +33,9 @@ import (
 	"shingo/protocol"
 	"shingoedge/config"
 	"shingoedge/orders"
+	"shingoedge/service"
 	"shingoedge/store"
+	"shingoedge/store/catalog"
 )
 
 // ── Shared fixtures ─────────────────────────────────────────────────
@@ -69,6 +71,8 @@ func newCoverageEngine(t *testing.T) *Engine {
 	eng.reconciliation = newReconciliationService(eng.db)
 	eng.coreSync = newCoreSyncService(eng)
 	eng.orderMgr = orders.NewManager(db, testOrderEmitter{}, cfg.StationID())
+	eng.stationService = service.NewStationService(db)
+	eng.changeoverService = service.NewChangeoverService(db)
 	return eng
 }
 
@@ -242,7 +246,7 @@ func TestEngine_HandlePayloadCatalog_UpsertsAndPrunes(t *testing.T) {
 
 	// Seed an entry with ID=99 that should be pruned when Core's catalog
 	// doesn't mention it.
-	stale := &store.PayloadCatalogEntry{ID: 99, Name: "stale", Code: "STALE", UOPCapacity: 10}
+	stale := &catalog.CatalogEntry{ID: 99, Name: "stale", Code: "STALE", UOPCapacity: 10}
 	if err := eng.db.UpsertPayloadCatalog(stale); err != nil {
 		t.Fatalf("seed stale: %v", err)
 	}
@@ -259,7 +263,7 @@ func TestEngine_HandlePayloadCatalog_UpsertsAndPrunes(t *testing.T) {
 		t.Fatalf("list catalog: %v", err)
 	}
 	// Expect exactly the two fresh entries; stale row 99 should be pruned.
-	byCode := map[string]*store.PayloadCatalogEntry{}
+	byCode := map[string]*catalog.CatalogEntry{}
 	for _, e := range list {
 		byCode[e.Code] = e
 	}
@@ -278,7 +282,7 @@ func TestEngine_HandlePayloadCatalog_EmptyIsSafe(t *testing.T) {
 	eng := newCoverageEngine(t)
 	// Seed three entries.
 	for i := int64(1); i <= 3; i++ {
-		eng.db.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+		eng.db.UpsertPayloadCatalog(&catalog.CatalogEntry{
 			ID: i, Name: fmt.Sprintf("e%d", i), Code: fmt.Sprintf("E%d", i), UOPCapacity: 10,
 		})
 	}

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"shingocore/fleet"
-	"shingocore/store"
+	"shingocore/store/cms"
 )
 
 // events_test.go — coverage tests for events.go.
@@ -285,7 +285,7 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 		{
 			name:    "CMSTransaction",
 			evtType: EventCMSTransaction,
-			payload: CMSTransactionEvent{Transactions: []*store.CMSTransaction{
+			payload: CMSTransactionEvent{Transactions: []*cms.Transaction{
 				{}, {}, // two empty entries — we only assert the slice length
 			}},
 			check: func(t *testing.T, got any) {

@@ -1,32 +1,15 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
 
-// tableExists checks if a table exists in the database.
-func (db *DB) tableExists(table string) bool {
-	var exists bool
-	db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name=$1)`, table).Scan(&exists)
-	return exists
-}
-
-// columnExists checks if a column exists in a table.
-func (db *DB) columnExists(table, column string) bool {
-	var exists bool
-	db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`, table, column).Scan(&exists)
-	return exists
-}
-
-// isColumnType returns the data type of a column, or empty string if not found.
-func (db *DB) isColumnType(table, column string) string {
-	var dataType string
-	db.QueryRow(
-		`SELECT data_type FROM information_schema.columns WHERE table_name=$1 AND column_name=$2`,
-		table, column,
-	).Scan(&dataType)
-	return dataType
-}
+	"shingocore/store/schema"
+)
 
 // migrateRenames idempotently renames old columns to vendor-neutral names.
+// These run BEFORE the baseline DDL because CREATE TABLE IF NOT EXISTS would
+// skip tables whose only divergence from current is column names — leaving the
+// database wedged on the old schema with no way forward.
 func (db *DB) migrateRenames() error {
 	renames := []struct{ table, oldCol, newCol string }{
 		{"orders", "rds_order_id", "vendor_order_id"},
@@ -38,7 +21,7 @@ func (db *DB) migrateRenames() error {
 		{"outbox", "client_id", "station_id"},
 	}
 	for _, r := range renames {
-		if db.columnExists(r.table, r.oldCol) {
+		if schema.ColumnExists(db.DB, r.table, r.oldCol) {
 			_, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s RENAME COLUMN %s TO %s`, r.table, r.oldCol, r.newCol))
 			if err != nil {
 				return fmt.Errorf("rename %s.%s: %w", r.table, r.oldCol, err)
@@ -50,15 +33,15 @@ func (db *DB) migrateRenames() error {
 	return nil
 }
 
-// migrate runs column renames (for ancient databases), schema creation, and versioned migrations.
+// migrate runs column renames (for ancient databases), the baseline DDL via
+// the schema sub-package, then versioned migrations. Order matters: renames
+// fix tables that the baseline CREATE ... IF NOT EXISTS would otherwise skip.
 func (db *DB) migrate() error {
-	// Renames must run before schema creation since they fix column names
-	// on tables that CREATE TABLE IF NOT EXISTS would skip.
 	if err := db.migrateRenames(); err != nil {
 		return fmt.Errorf("migrate renames: %w", err)
 	}
-	if _, err := db.Exec(schemaPostgres); err != nil {
-		return fmt.Errorf("schema exec: %w", err)
+	if err := schema.Apply(db.DB); err != nil {
+		return err
 	}
 	return db.runVersionedMigrations()
 }
@@ -115,10 +98,10 @@ func (db *DB) v1BooleanColumns() error {
 		{"bins", "locked", "false"},
 	}
 	for _, c := range conversions {
-		if !db.tableExists(c.table) || !db.columnExists(c.table, c.column) {
+		if !schema.TableExists(db.DB, c.table) || !schema.ColumnExists(db.DB, c.table, c.column) {
 			continue
 		}
-		if db.isColumnType(c.table, c.column) == "boolean" {
+		if schema.ColumnType(db.DB, c.table, c.column) == "boolean" {
 			continue
 		}
 		db.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT`, c.table, c.column))
@@ -132,7 +115,7 @@ func (db *DB) v1BooleanColumns() error {
 
 // v2DepthColumn adds a depth column to nodes and migrates data from node_properties.
 func (db *DB) v2DepthColumn() error {
-	if db.columnExists("nodes", "depth") {
+	if schema.ColumnExists(db.DB, "nodes", "depth") {
 		return nil
 	}
 	db.Exec(`ALTER TABLE nodes ADD COLUMN depth INTEGER`)
@@ -152,7 +135,7 @@ func (db *DB) v3DropDeadColumns() error {
 		{"edge_registry", "factory_id"},
 	}
 	for _, d := range drops {
-		if db.columnExists(d.table, d.column) {
+		if schema.ColumnExists(db.DB, d.table, d.column) {
 			db.Exec(fmt.Sprintf(`ALTER TABLE %s DROP COLUMN IF EXISTS %s`, d.table, d.column))
 		}
 	}
@@ -163,7 +146,7 @@ func (db *DB) v3DropDeadColumns() error {
 // Orders now reference bins via bin_id; the payload template is accessed through
 // the bin's payload_code field.
 func (db *DB) v4DropOrderPayloadID() error {
-	if db.columnExists("orders", "payload_id") {
+	if schema.ColumnExists(db.DB, "orders", "payload_id") {
 		db.Exec(`ALTER TABLE orders DROP COLUMN IF EXISTS payload_id`)
 	}
 	return nil
@@ -173,7 +156,7 @@ func (db *DB) v4DropOrderPayloadID() error {
 // from payloads. Manifest templates are stored in the normalized payload_manifest
 // table; this denormalized blob was never read at runtime.
 func (db *DB) v7DropDefaultManifestJSON() error {
-	if db.columnExists("payloads", "default_manifest_json") {
+	if schema.ColumnExists(db.DB, "payloads", "default_manifest_json") {
 		db.Exec(`ALTER TABLE payloads DROP COLUMN default_manifest_json`)
 	}
 	return nil
@@ -201,14 +184,14 @@ func (db *DB) v6LegacyConsolidation() error {
 // --- Legacy migrations (idempotent, retained for v6 consolidation) ---
 
 func (db *DB) migrateStepsJSON() {
-	if db.columnExists("orders", "steps_json") {
+	if schema.ColumnExists(db.DB, "orders", "steps_json") {
 		return
 	}
 	db.Exec(`ALTER TABLE orders ADD COLUMN steps_json TEXT NOT NULL DEFAULT ''`)
 }
 
 func (db *DB) migrateVendorLocation() {
-	if !db.columnExists("nodes", "vendor_location") {
+	if !schema.ColumnExists(db.DB, "nodes", "vendor_location") {
 		return
 	}
 	db.Exec(`UPDATE nodes SET name = vendor_location WHERE (name = '' OR name IS NULL) AND vendor_location != ''`)
@@ -216,37 +199,37 @@ func (db *DB) migrateVendorLocation() {
 }
 
 func (db *DB) migrateIsSynthetic() {
-	if !db.columnExists("nodes", "is_synthetic") {
+	if !schema.ColumnExists(db.DB, "nodes", "is_synthetic") {
 		db.Exec(`ALTER TABLE nodes ADD COLUMN is_synthetic BOOLEAN NOT NULL DEFAULT false`)
 	}
 	db.Exec(`UPDATE nodes SET is_synthetic = true WHERE node_type_id IN (SELECT id FROM node_types WHERE is_synthetic = true) AND is_synthetic = false`)
 }
 
 func (db *DB) migrateDropCapacity() {
-	if !db.columnExists("nodes", "capacity") {
+	if !schema.ColumnExists(db.DB, "nodes", "capacity") {
 		return
 	}
 	db.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS capacity`)
 }
 
 func (db *DB) migrateDropNodeType() {
-	if !db.columnExists("nodes", "node_type") {
+	if !schema.ColumnExists(db.DB, "nodes", "node_type") {
 		return
 	}
 	db.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS node_type`)
 }
 
 func (db *DB) migrateCMSTransactions() {
-	if !db.tableExists("cms_transactions") {
+	if !schema.TableExists(db.DB, "cms_transactions") {
 		return
 	}
-	if db.columnExists("cms_transactions", "txn_type") {
+	if schema.ColumnExists(db.DB, "cms_transactions", "txn_type") {
 		return
 	}
-	if db.columnExists("cms_transactions", "direction") {
+	if schema.ColumnExists(db.DB, "cms_transactions", "direction") {
 		db.Exec(`ALTER TABLE cms_transactions RENAME COLUMN direction TO txn_type`)
 	}
-	if db.columnExists("cms_transactions", "quantity") {
+	if schema.ColumnExists(db.DB, "cms_transactions", "quantity") {
 		db.Exec(`ALTER TABLE cms_transactions RENAME COLUMN quantity TO delta`)
 	}
 	newCols := []struct{ name, def string }{
@@ -255,17 +238,17 @@ func (db *DB) migrateCMSTransactions() {
 		{"bin_label", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, c := range newCols {
-		if !db.columnExists("cms_transactions", c.name) {
+		if !schema.ColumnExists(db.DB, "cms_transactions", c.name) {
 			db.Exec(fmt.Sprintf(`ALTER TABLE cms_transactions ADD COLUMN %s %s`, c.name, c.def))
 		}
 	}
 }
 
 func (db *DB) migrateBinClaiming() {
-	if !db.columnExists("bins", "claimed_by") {
+	if !schema.ColumnExists(db.DB, "bins", "claimed_by") {
 		db.Exec(`ALTER TABLE bins ADD COLUMN claimed_by BIGINT REFERENCES orders(id)`)
 	}
-	if !db.columnExists("orders", "bin_id") {
+	if !schema.ColumnExists(db.DB, "orders", "bin_id") {
 		db.Exec(`ALTER TABLE orders ADD COLUMN bin_id BIGINT REFERENCES bins(id)`)
 	}
 }
@@ -283,7 +266,7 @@ func (db *DB) migrateBinsCommandCenter() {
 		{"last_counted_by", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, c := range cols {
-		if db.columnExists("bins", c.name) {
+		if schema.ColumnExists(db.DB, "bins", c.name) {
 			continue
 		}
 		db.Exec(fmt.Sprintf(`ALTER TABLE bins ADD COLUMN %s %s`, c.name, c.def))
@@ -293,12 +276,12 @@ func (db *DB) migrateBinsCommandCenter() {
 }
 
 func (db *DB) migrateNodeTypes() error {
-	if !db.columnExists("nodes", "node_type_id") {
+	if !schema.ColumnExists(db.DB, "nodes", "node_type_id") {
 		if _, err := db.Exec(`ALTER TABLE nodes ADD COLUMN node_type_id BIGINT`); err != nil {
 			return fmt.Errorf("add node_type_id: %w", err)
 		}
 	}
-	if !db.columnExists("nodes", "parent_id") {
+	if !schema.ColumnExists(db.DB, "nodes", "parent_id") {
 		if _, err := db.Exec(`ALTER TABLE nodes ADD COLUMN parent_id BIGINT REFERENCES nodes(id)`); err != nil {
 			return fmt.Errorf("add parent_id: %w", err)
 		}
@@ -377,7 +360,7 @@ func (db *DB) migrateShallowLanes() {
 
 // v8OrderPayloadCode adds payload_code column to orders for queued order fulfillment.
 func (db *DB) v8OrderPayloadCode() error {
-	if !db.columnExists("orders", "payload_code") {
+	if !schema.ColumnExists(db.DB, "orders", "payload_code") {
 		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''`)
 		return err
 	}
@@ -388,7 +371,7 @@ func (db *DB) v8OrderPayloadCode() error {
 // Single-bin orders continue using Order.BinID. Multi-pickup complex orders record
 // per-bin destinations so handleOrderCompleted can move each bin to the correct node.
 func (db *DB) v9OrderBins() error {
-	if db.tableExists("order_bins") {
+	if schema.TableExists(db.DB, "order_bins") {
 		return nil
 	}
 	_, err := db.Exec(`CREATE TABLE order_bins (
@@ -430,7 +413,7 @@ func (db *DB) v5MissionTelemetryBackfill() error {
 // Tracks how many wait segments have been released so HandleOrderRelease knows
 // which segment to emit next.
 func (db *DB) v10OrderWaitIndex() error {
-	if !db.columnExists("orders", "wait_index") {
+	if !schema.ColumnExists(db.DB, "orders", "wait_index") {
 		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN wait_index INTEGER NOT NULL DEFAULT 0`)
 		return err
 	}
@@ -471,8 +454,8 @@ func fixPayloadFK(db *DB, table, constraintName string) error {
 	if refTable == "payloads" {
 		return nil
 	}
-	db.Exec(`ALTER TABLE `+table+` DROP CONSTRAINT `+constraintName)
-	_, err := db.Exec(`ALTER TABLE `+table+` ADD CONSTRAINT `+constraintName+
+	db.Exec(`ALTER TABLE ` + table + ` DROP CONSTRAINT ` + constraintName)
+	_, err := db.Exec(`ALTER TABLE ` + table + ` ADD CONSTRAINT ` + constraintName +
 		` FOREIGN KEY (payload_id) REFERENCES payloads(id) ON DELETE CASCADE`)
 	return err
 }

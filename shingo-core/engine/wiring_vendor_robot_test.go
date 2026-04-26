@@ -11,6 +11,7 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // --- Robot ID persistence tests for handleVendorStatusChange (Option C) ---
@@ -27,7 +28,7 @@ import (
 
 // dispatchRetrieveOrderWithRobot is a variant of dispatchRetrieveOrder that
 // returns only the values needed for robot ID tests.
-func dispatchRetrieveOrderWithRobot(t *testing.T) (*store.DB, *Engine, *simulator.SimulatorBackend, *store.Order) {
+func dispatchRetrieveOrderWithRobot(t *testing.T) (*store.DB, *Engine, *simulator.SimulatorBackend, *orders.Order) {
 	t.Helper()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)

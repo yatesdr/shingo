@@ -6,20 +6,23 @@ import (
 	"time"
 
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // CompoundScenario holds all entities for a compound reshuffle test.
 // Tests access fields directly to inspect or mutate entities after setup.
 type CompoundScenario struct {
-	Grp          *store.Node
-	Lane         *store.Node
-	Slots        []*store.Node   // indexed by depth-1 (Slots[0] = depth 1, front)
-	ShuffleSlots []*store.Node
-	LineNode     *store.Node
-	TargetBin    *store.Bin
-	Blockers     []*store.Bin    // indexed front-to-back (Blockers[0] = shallowest)
-	Payload      *store.Payload
-	BinType      *store.BinType
+	Grp          *nodes.Node
+	Lane         *nodes.Node
+	Slots        []*nodes.Node   // indexed by depth-1 (Slots[0] = depth 1, front)
+	ShuffleSlots []*nodes.Node
+	LineNode     *nodes.Node
+	TargetBin    *bins.Bin
+	Blockers     []*bins.Bin    // indexed front-to-back (Blockers[0] = shallowest)
+	Payload      *payloads.Payload
+	BinType      *bins.BinType
 }
 
 // CompoundConfig controls the layout of a compound reshuffle test scenario.
@@ -88,24 +91,24 @@ func SetupCompound(t *testing.T, db *store.DB, cfg CompoundConfig) *CompoundScen
 	}
 
 	// Create payload and bin type
-	bp := &store.Payload{Code: fmt.Sprintf("PART-%s", cfg.Prefix), Description: fmt.Sprintf("%s test payload", cfg.Prefix)}
+	bp := &payloads.Payload{Code: fmt.Sprintf("PART-%s", cfg.Prefix), Description: fmt.Sprintf("%s test payload", cfg.Prefix)}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
 	btCode := fmt.Sprintf("DEFAULT-%s", cfg.Prefix)
-	bt := &store.BinType{Code: btCode, Description: fmt.Sprintf("%s bin type", cfg.Prefix)}
+	bt := &bins.BinType{Code: btCode, Description: fmt.Sprintf("%s bin type", cfg.Prefix)}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
 
 	// Create NGRP
-	grp := &store.Node{Name: fmt.Sprintf("GRP-%s", cfg.Prefix), NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
+	grp := &nodes.Node{Name: fmt.Sprintf("GRP-%s", cfg.Prefix), NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
 	if err := db.CreateNode(grp); err != nil {
 		t.Fatalf("create NGRP: %v", err)
 	}
 
 	// Create LANE under NGRP
-	lane := &store.Node{
+	lane := &nodes.Node{
 		Name: fmt.Sprintf("GRP-%s-L1", cfg.Prefix), NodeTypeID: &lanType.ID,
 		ParentID: &grp.ID, Enabled: true, IsSynthetic: true,
 	}
@@ -114,10 +117,10 @@ func SetupCompound(t *testing.T, db *store.DB, cfg CompoundConfig) *CompoundScen
 	}
 
 	// Create storage slots under LANE
-	slots := make([]*store.Node, cfg.NumSlots)
+	slots := make([]*nodes.Node, cfg.NumSlots)
 	for i := 0; i < cfg.NumSlots; i++ {
 		depth := i + 1
-		slot := &store.Node{
+		slot := &nodes.Node{
 			Name:     fmt.Sprintf("GRP-%s-L1-S%d", cfg.Prefix, depth),
 			ParentID: &lane.ID, Enabled: true, Depth: &depth,
 		}
@@ -128,13 +131,13 @@ func SetupCompound(t *testing.T, db *store.DB, cfg CompoundConfig) *CompoundScen
 	}
 
 	// Create shuffle slots under NGRP
-	shuffleSlots := make([]*store.Node, cfg.NumShuffles)
+	shuffleSlots := make([]*nodes.Node, cfg.NumShuffles)
 	for i := 0; i < cfg.NumShuffles; i++ {
 		name := fmt.Sprintf("GRP-%s-SHUF%d", cfg.Prefix, i+1)
 		if cfg.NumShuffles == 1 {
 			name = fmt.Sprintf("GRP-%s-SHUF", cfg.Prefix)
 		}
-		ss := &store.Node{Name: name, ParentID: &grp.ID, Enabled: true}
+		ss := &nodes.Node{Name: name, ParentID: &grp.ID, Enabled: true}
 		if err := db.CreateNode(ss); err != nil {
 			t.Fatalf("create shuffle slot %d: %v", i+1, err)
 		}
@@ -142,14 +145,14 @@ func SetupCompound(t *testing.T, db *store.DB, cfg CompoundConfig) *CompoundScen
 	}
 
 	// Create line node (delivery destination)
-	lineNode := &store.Node{Name: fmt.Sprintf("LINE-%s", cfg.Prefix), Enabled: true}
+	lineNode := &nodes.Node{Name: fmt.Sprintf("LINE-%s", cfg.Prefix), Enabled: true}
 	if err := db.CreateNode(lineNode); err != nil {
 		t.Fatalf("create line node: %v", err)
 	}
 
 	// Create target bin at the target slot (deepest by default)
 	targetSlotNode := slots[cfg.TargetSlot-1]
-	targetBin := &store.Bin{BinTypeID: bt.ID, Label: fmt.Sprintf("BIN-%s-TARGET", cfg.Prefix), NodeID: &targetSlotNode.ID, Status: "available"}
+	targetBin := &bins.Bin{BinTypeID: bt.ID, Label: fmt.Sprintf("BIN-%s-TARGET", cfg.Prefix), NodeID: &targetSlotNode.ID, Status: "available"}
 	if err := db.CreateBin(targetBin); err != nil {
 		t.Fatalf("create target bin: %v", err)
 	}
@@ -166,12 +169,12 @@ func SetupCompound(t *testing.T, db *store.DB, cfg CompoundConfig) *CompoundScen
 	}
 
 	// Create blocker bins at all other slots
-	var blockers []*store.Bin
+	var blockers []*bins.Bin
 	for i := 0; i < cfg.NumSlots; i++ {
 		if i == cfg.TargetSlot-1 {
 			continue // skip the target slot
 		}
-		blk := &store.Bin{
+		blk := &bins.Bin{
 			BinTypeID: bt.ID,
 			Label:     fmt.Sprintf("BIN-%s-BLK%d", cfg.Prefix, i+1),
 			NodeID:    &slots[i].ID,

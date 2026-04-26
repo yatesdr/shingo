@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"shingoedge/orders"
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // guardNoActiveSwap refuses to dispatch a new two-robot cycle on a node when
@@ -30,7 +30,7 @@ import (
 // truth for dispatched orders), but moving it requires either a protocol
 // extension to send Edge runtime state on every ComplexOrderRequest or
 // duplicating runtime tracking in Core. Keeping it Edge-side for this ship.
-func (e *Engine) guardNoActiveSwap(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim) error {
+func (e *Engine) guardNoActiveSwap(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) error {
 	if claim == nil {
 		return nil // caller already short-circuited on claim==nil; defense.
 	}
@@ -42,7 +42,7 @@ func (e *Engine) guardNoActiveSwap(node *store.ProcessNode, runtime *store.Proce
 
 // hasActiveSwap reports whether the runtime slots reference any non-terminal
 // order. Pure Edge-DB check — no Core round-trip.
-func hasActiveSwap(e *Engine, runtime *store.ProcessNodeRuntimeState) bool {
+func hasActiveSwap(e *Engine, runtime *processes.RuntimeState) bool {
 	if runtime == nil {
 		return false
 	}

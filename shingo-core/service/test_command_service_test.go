@@ -5,12 +5,12 @@ package service
 import (
 	"testing"
 
-	"shingocore/store"
+	"shingocore/store/diagnostics"
 )
 
-func makeTestCommand(t *testing.T, svc *TestCommandService, cmdType, robotID string) *store.TestCommand {
+func makeTestCommand(t *testing.T, svc *TestCommandService, cmdType, robotID string) *diagnostics.TestCommand {
 	t.Helper()
-	tc := &store.TestCommand{
+	tc := &diagnostics.TestCommand{
 		CommandType: cmdType,
 		RobotID:     robotID,
 		VendorState: "queued",
@@ -28,7 +28,7 @@ func TestTestCommandService_Create_PersistsRow(t *testing.T) {
 	db := testDB(t)
 	svc := NewTestCommandService(db)
 
-	tc := &store.TestCommand{
+	tc := &diagnostics.TestCommand{
 		CommandType:   "move",
 		RobotID:       "R1",
 		VendorOrderID: "vo-1",

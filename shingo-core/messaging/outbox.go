@@ -13,7 +13,7 @@ type coreOutboxStore struct {
 	db *store.DB
 }
 
-// ListPendingOutbox converts store.OutboxMessage to outbox.Message.
+// ListPendingOutbox converts messaging.OutboxMessage to outbox.Message.
 func (a *coreOutboxStore) ListPendingOutbox(limit int) ([]outbox.Message, error) {
 	dbMsgs, err := a.db.ListPendingOutbox(limit)
 	if err != nil {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingocore/store"
+	"shingocore/store/cms"
 )
 
 // CMSTransactionService exposes read-only CMS transaction listings.
@@ -20,12 +21,12 @@ func NewCMSTransactionService(db *store.DB) *CMSTransactionService {
 
 // ListByNode returns the most recent CMS transactions filed against a
 // single node, paginated by limit/offset.
-func (s *CMSTransactionService) ListByNode(nodeID int64, limit, offset int) ([]*store.CMSTransaction, error) {
+func (s *CMSTransactionService) ListByNode(nodeID int64, limit, offset int) ([]*cms.Transaction, error) {
 	return s.db.ListCMSTransactions(nodeID, limit, offset)
 }
 
 // ListAll returns the most recent CMS transactions across every
 // node, paginated by limit/offset.
-func (s *CMSTransactionService) ListAll(limit, offset int) ([]*store.CMSTransaction, error) {
+func (s *CMSTransactionService) ListAll(limit, offset int) ([]*cms.Transaction, error) {
 	return s.db.ListAllCMSTransactions(limit, offset)
 }

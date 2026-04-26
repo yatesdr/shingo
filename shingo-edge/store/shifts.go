@@ -6,11 +6,8 @@ package store
 
 import "shingoedge/store/shifts"
 
-// Shift represents a work shift with start/end times.
-type Shift = shifts.Shift
-
 // ListShifts returns all shifts ordered by shift_number.
-func (db *DB) ListShifts() ([]Shift, error) {
+func (db *DB) ListShifts() ([]shifts.Shift, error) {
 	return shifts.List(db.DB)
 }
 

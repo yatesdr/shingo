@@ -72,6 +72,7 @@ func testHandlersWithVendorProxy(t *testing.T, baseURL string) (*Handlers, *stor
 
 	h := &Handlers{
 		engine:   eng,
+		orchestration: eng,
 		sessions: newSessionStore("test-secret"),
 		tmpls:    make(map[string]*template.Template),
 		eventHub: hub,

@@ -1,31 +1,35 @@
-// schema.go — Edge SQLite schema definition and forward migrations.
+// migrations.go — Edge SQLite migration runner.
 //
-// Layout:
-//   schemaMigrations const   – DROP statements for removed tables
-//   schema const             – canonical CREATE TABLE statements (the
-//                              "desired state" for a fresh database)
-//   migrate()                – master migration runner:
-//                              1. schemaMigrations (cleanup)
-//                              2. schema (CREATE IF NOT EXISTS)
-//                              3. Column renames (graceful rebuilds)
-//                              4. ALTER TABLE additions (idempotent)
-//                              5. Data fixups (queued→pending, etc.)
-//   migrate* helpers         – one per table rename/rebuild
-//   strip* / rebuild*        – legacy table cleanup
-//   tableHasColumn / tableExists – introspection utilities
+// Phase 6.0b extracted this from the 1013-line schema.go. Layout:
 //
-// All migrations are idempotent — safe to re-run on an already-migrated DB.
-// New columns are added via ALTER TABLE ... ADD COLUMN (SQLite ignores
-// duplicates on error). Structural changes use the rename-rebuild pattern:
-// rename → create new → INSERT INTO ... SELECT → drop old.
+//   schema/sqlite_ddl.go     — canonical "fresh DB" CREATE TABLE constant
+//   schema/schema.go         — Apply() + introspection helpers
+//   migrations.go (this file) — legacyDropDDL constant, migrate() entry
+//                              point, per-table rename/rebuild/strip
+//                              helpers, db.tableHasColumn / db.tableExists
+//                              wrappers (kept for migration_test.go's
+//                              existing call sites).
+//
+// All migrations are idempotent — safe to re-run on an already-migrated
+// DB. New columns are added via ALTER TABLE ... ADD COLUMN (SQLite
+// silently fails on duplicates, which we ignore). Structural changes
+// use the rename-rebuild pattern: rename existing → CREATE new →
+// INSERT INTO ... SELECT → DROP old. Versioned per-column migrations
+// run AFTER schema.Apply().
 
 package store
 
-import "strings"
+import (
+	"strings"
 
-// ── Cleanup migrations (drop removed tables) ────────────────────────
+	"shingoedge/store/schema"
+)
 
-const schemaMigrations = `
+// legacyDropDDL drops tables that have been removed entirely from the
+// canonical schema. Runs first in migrate() so the rest of the
+// migration logic operates on a clean table set. DROP IF EXISTS is
+// safe on every database state.
+const legacyDropDDL = `
 DROP TABLE IF EXISTS bom_entries;
 DROP TABLE IF EXISTS inventory;
 DROP TABLE IF EXISTS materials;
@@ -33,334 +37,55 @@ DROP TABLE IF EXISTS kanban_templates;
 DROP TABLE IF EXISTS operator_screens;
 `
 
-// ── Canonical schema (desired state for fresh DB) ───────────────────
-
-const schema = `
-CREATE TABLE IF NOT EXISTS admin_users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username      TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS processes (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    name                TEXT NOT NULL UNIQUE,
-    description         TEXT NOT NULL DEFAULT '',
-    active_style_id     INTEGER REFERENCES styles(id) ON DELETE SET NULL,
-    target_style_id     INTEGER REFERENCES styles(id) ON DELETE SET NULL,
-    production_state    TEXT NOT NULL DEFAULT 'active_production',
-    counter_plc_name    TEXT NOT NULL DEFAULT '',
-    counter_tag_name    TEXT NOT NULL DEFAULT '',
-    counter_enabled     INTEGER NOT NULL DEFAULT 0,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS styles (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id  INTEGER REFERENCES processes(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_id, name)
-);
-
-CREATE TABLE IF NOT EXISTS reporting_points (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    style_id        INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-    plc_name        TEXT NOT NULL,
-    tag_name        TEXT NOT NULL,
-    last_count      INTEGER NOT NULL DEFAULT 0,
-    last_poll_at    TEXT,
-    enabled         INTEGER NOT NULL DEFAULT 1,
-    warlink_managed INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(plc_name, tag_name)
-);
-
-CREATE TABLE IF NOT EXISTS counter_snapshots (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    reporting_point_id INTEGER NOT NULL REFERENCES reporting_points(id),
-    count_value        INTEGER NOT NULL,
-    delta              INTEGER NOT NULL DEFAULT 0,
-    anomaly            TEXT,
-    operator_confirmed INTEGER NOT NULL DEFAULT 0,
-    recorded_at        TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS orders (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid            TEXT NOT NULL UNIQUE,
-    order_type      TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'pending',
-    process_node_id INTEGER REFERENCES process_nodes(id) ON DELETE SET NULL,
-    retrieve_empty  INTEGER NOT NULL DEFAULT 1,
-    quantity        INTEGER NOT NULL DEFAULT 0,
-    delivery_node   TEXT NOT NULL DEFAULT '',
-    staging_node    TEXT NOT NULL DEFAULT '',
-    source_node     TEXT NOT NULL DEFAULT '',
-    load_type       TEXT NOT NULL DEFAULT '',
-    waybill_id      TEXT,
-    external_ref    TEXT,
-    final_count     INTEGER,
-    count_confirmed INTEGER NOT NULL DEFAULT 0,
-    eta             TEXT,
-    auto_confirm    INTEGER NOT NULL DEFAULT 0,
-    steps_json      TEXT NOT NULL DEFAULT '',
-    staged_expire_at TEXT,
-    payload_code    TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
-CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(uuid);
-
-CREATE TABLE IF NOT EXISTS order_history (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id   INTEGER NOT NULL REFERENCES orders(id),
-    old_status TEXT NOT NULL,
-    new_status TEXT NOT NULL,
-    detail     TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS outbox (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    topic      TEXT NOT NULL,
-    payload    BLOB NOT NULL,
-    msg_type   TEXT NOT NULL DEFAULT '',
-    retries    INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    sent_at    TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox(sent_at) WHERE sent_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_order_history_order_id ON order_history(order_id);
-CREATE INDEX IF NOT EXISTS idx_counter_snapshots_anomaly ON counter_snapshots(anomaly, operator_confirmed)
-    WHERE anomaly IS NOT NULL AND operator_confirmed = 0;
-
-CREATE TABLE IF NOT EXISTS shifts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    name         TEXT NOT NULL DEFAULT '',
-    shift_number INTEGER NOT NULL UNIQUE,
-    start_time   TEXT NOT NULL,
-    end_time     TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS hourly_counts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id   INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
-    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-    count_date   TEXT NOT NULL,
-    hour         INTEGER NOT NULL,
-    delta        INTEGER NOT NULL DEFAULT 0,
-    updated_at   TEXT DEFAULT (datetime('now')),
-    UNIQUE(process_id, style_id, count_date, hour)
-);
-
-CREATE TABLE IF NOT EXISTS payload_catalog (
-    id           INTEGER PRIMARY KEY,
-    name         TEXT NOT NULL,
-    code         TEXT NOT NULL DEFAULT '',
-    description  TEXT NOT NULL DEFAULT '',
-    uop_capacity INTEGER NOT NULL DEFAULT 0,
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS operator_stations (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id         INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
-    code               TEXT NOT NULL,
-    name               TEXT NOT NULL,
-    note               TEXT NOT NULL DEFAULT '',
-    area_label         TEXT NOT NULL DEFAULT '',
-    sequence           INTEGER NOT NULL DEFAULT 0,
-    controller_node_id TEXT NOT NULL DEFAULT '',
-    device_mode        TEXT NOT NULL DEFAULT 'touch_hmi',
-    enabled            INTEGER NOT NULL DEFAULT 1,
-    health_status      TEXT NOT NULL DEFAULT 'offline',
-    last_seen_at       TEXT,
-    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_id, code)
-);
-
-CREATE TABLE IF NOT EXISTS process_nodes (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id          INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
-    operator_station_id INTEGER REFERENCES operator_stations(id) ON DELETE SET NULL,
-    core_node_name      TEXT NOT NULL DEFAULT '',
-    code                TEXT NOT NULL,
-    name                TEXT NOT NULL,
-    sequence            INTEGER NOT NULL DEFAULT 0,
-    enabled             INTEGER NOT NULL DEFAULT 1,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_id, code)
-);
-
-CREATE TABLE IF NOT EXISTS process_node_runtime_states (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_node_id    INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
-    active_claim_id    INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
-    remaining_uop      INTEGER NOT NULL DEFAULT 0,
-    active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-    staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-    active_pull        INTEGER NOT NULL DEFAULT 1,
-    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS style_node_claims (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    style_id                INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-    core_node_name          TEXT NOT NULL,
-    role                    TEXT NOT NULL DEFAULT 'consume',
-    swap_mode               TEXT NOT NULL DEFAULT 'simple',
-    payload_code            TEXT NOT NULL DEFAULT '',
-    uop_capacity            INTEGER NOT NULL DEFAULT 0,
-    reorder_point           INTEGER NOT NULL DEFAULT 0,
-    auto_reorder            INTEGER NOT NULL DEFAULT 1,
-    inbound_staging         TEXT NOT NULL DEFAULT '',
-    outbound_staging        TEXT NOT NULL DEFAULT '',
-    inbound_source          TEXT NOT NULL DEFAULT '',
-    outbound_destination    TEXT NOT NULL DEFAULT '',
-    allowed_payload_codes   TEXT NOT NULL DEFAULT '',
-    auto_request_payload    TEXT NOT NULL DEFAULT '',
-    keep_staged             INTEGER NOT NULL DEFAULT 0,
-    evacuate_on_changeover  INTEGER NOT NULL DEFAULT 0,
-    paired_core_node        TEXT NOT NULL DEFAULT '',
-    auto_confirm            INTEGER NOT NULL DEFAULT 0,
-    sequence                INTEGER NOT NULL DEFAULT 0,
-    lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
-    created_at              TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(style_id, core_node_name)
-);
-
-CREATE TABLE IF NOT EXISTS process_changeovers (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_id      INTEGER NOT NULL REFERENCES processes(id) ON DELETE CASCADE,
-    from_style_id   INTEGER REFERENCES styles(id) ON DELETE SET NULL,
-    to_style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-    state           TEXT NOT NULL DEFAULT 'planned',
-    called_by       TEXT NOT NULL DEFAULT '',
-    notes           TEXT NOT NULL DEFAULT '',
-    started_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at    TEXT,
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS changeover_station_tasks (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_changeover_id INTEGER NOT NULL REFERENCES process_changeovers(id) ON DELETE CASCADE,
-    operator_station_id   INTEGER NOT NULL REFERENCES operator_stations(id) ON DELETE CASCADE,
-    state                 TEXT NOT NULL DEFAULT 'waiting',
-    updated_at            TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_changeover_id, operator_station_id)
-);
-
-CREATE TABLE IF NOT EXISTS changeover_node_tasks (
-    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_changeover_id      INTEGER NOT NULL REFERENCES process_changeovers(id) ON DELETE CASCADE,
-    process_node_id            INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
-    from_claim_id              INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
-    to_claim_id                INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
-    situation                  TEXT NOT NULL DEFAULT 'unchanged',
-    state                      TEXT NOT NULL DEFAULT 'pending',
-    next_material_order_id     INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-    old_material_release_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-    updated_at                 TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(process_changeover_id, process_node_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_changeovers_process_id ON process_changeovers(process_id);
-CREATE INDEX IF NOT EXISTS idx_cst_changeover_id ON changeover_station_tasks(process_changeover_id);
-CREATE INDEX IF NOT EXISTS idx_cnt_changeover_id ON changeover_node_tasks(process_changeover_id);
-
-CREATE TABLE IF NOT EXISTS node_lineside_bucket (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    node_id      INTEGER NOT NULL REFERENCES process_nodes(id) ON DELETE CASCADE,
-    pair_key     TEXT NOT NULL DEFAULT '',
-    style_id     INTEGER NOT NULL REFERENCES styles(id) ON DELETE CASCADE,
-    part_number  TEXT NOT NULL,
-    qty          INTEGER NOT NULL DEFAULT 0,
-    state        TEXT NOT NULL DEFAULT 'active',
-    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_lineside_active_unique
-    ON node_lineside_bucket(node_id, style_id, part_number)
-    WHERE state = 'active';
-
-CREATE INDEX IF NOT EXISTS idx_lineside_node_state
-    ON node_lineside_bucket(node_id, state);
-
-CREATE INDEX IF NOT EXISTS idx_lineside_pair_state
-    ON node_lineside_bucket(pair_key, state) WHERE pair_key != '';
-`
-
-// ── Master migration runner ─────────────────────────────────────────
-
+// migrate runs the full forward-migration pipeline: legacy DROPs,
+// legacy table renames, canonical CREATE (via schema.Apply), per-
+// column renames/rebuilds, idempotent ALTER ADD COLUMN, and data
+// fixups. Callable on databases of any age — every step is no-op on
+// already-migrated state.
 func (db *DB) migrate() error {
-	// Run cleanup migrations first (drop old tables)
-	if _, err := db.Exec(schemaMigrations); err != nil {
+	// 1. Cleanup: drop tables removed from the canonical schema
+	if _, err := db.Exec(legacyDropDDL); err != nil {
 		return err
 	}
 	db.Exec("ALTER TABLE orders DROP COLUMN material_id")
 
-	// Rename legacy tables
+	// 2. Rename legacy tables BEFORE schema.Apply so existing data
+	//    migrates into the new table names instead of being orphaned
+	//    behind a freshly-created empty replacement.
 	db.Exec("ALTER TABLE production_lines RENAME TO processes")
 	db.Exec("ALTER TABLE job_styles RENAME TO styles")
 	db.Exec("ALTER TABLE location_nodes RENAME TO nodes")
 
-	// Create clean schema
-	_, err := db.Exec(schema)
-	if err != nil {
+	// 3. Canonical CREATE TABLE IF NOT EXISTS pass.
+	if err := schema.Apply(db.DB); err != nil {
 		return err
 	}
 
-	// ── Column renames (graceful table rebuilds) ────────────────────
-
-	// processes: active_job_style_id → active_style_id
+	// 4. Per-table column renames (graceful rebuilds).
 	if err := db.migrateProcessColumns(); err != nil {
 		return err
 	}
-
-	// styles: line_id → process_id
 	if err := db.migrateStyleColumns(); err != nil {
 		return err
 	}
-
-	// styles: strip dead is_default and active columns
 	if err := db.stripDeadStyleColumns(); err != nil {
 		return err
 	}
-
-	// reporting_points: job_style_id → style_id
 	if err := db.migrateReportingPointColumns(); err != nil {
 		return err
 	}
-
-	// hourly_counts: line_id → process_id, job_style_id → style_id
 	if err := db.migrateHourlyCountColumns(); err != nil {
 		return err
 	}
-
-	// hourly_counts: add missing foreign keys
 	if err := db.migrateHourlyCountFKs(); err != nil {
 		return err
 	}
-
-	// operator_stations: remove expected_client_type, parent_station_id
 	if err := db.migrateOperatorStationColumns(); err != nil {
 		return err
 	}
-
-	// process_nodes: inline operator_station_id (was junction table)
 	if err := db.migrateProcessNodeOwnership(); err != nil {
 		return err
 	}
-
-	// ── Legacy column cleanup ───────────────────────────────────────
 	if err := db.stripLegacyRuntimeStateColumns(); err != nil {
 		return err
 	}
@@ -377,7 +102,8 @@ func (db *DB) migrate() error {
 	db.Exec("DROP TABLE IF EXISTS op_node_style_assignments_legacy")
 	db.Exec("DROP TABLE IF EXISTS changeover_log")
 
-	// ── ALTER TABLE additions (idempotent) ──────────────────────────
+	// 5. ALTER TABLE additions (idempotent — duplicate column adds fail
+	//    silently in SQLite and we deliberately ignore the error).
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN swap_mode TEXT NOT NULL DEFAULT 'simple'")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN staging_node TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN release_node TEXT NOT NULL DEFAULT ''")
@@ -404,7 +130,7 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_request_payload TEXT NOT NULL DEFAULT ''")
 
-	// ── Data fixups ────────────────────────────────────────────────
+	// 6. Data fixups
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 
 	// Legacy catalog renames
@@ -428,7 +154,7 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE processes ADD COLUMN counter_enabled INTEGER NOT NULL DEFAULT 0")
 
 	// Migrate counter binding data to process columns
-	if exists, _ := db.tableExists("process_counter_bindings"); exists {
+	if exists, _ := schema.TableExists(db.DB, "process_counter_bindings"); exists {
 		db.Exec(`UPDATE processes SET
 			counter_plc_name = COALESCE((SELECT plc_name FROM process_counter_bindings WHERE process_id = processes.id), ''),
 			counter_tag_name = COALESCE((SELECT tag_name FROM process_counter_bindings WHERE process_id = processes.id), ''),
@@ -494,7 +220,7 @@ func (db *DB) migrate() error {
 
 // migrateProcessColumns renames active_job_style_id → active_style_id
 func (db *DB) migrateProcessColumns() error {
-	has, err := db.tableHasColumn("processes", "active_job_style_id")
+	has, err := schema.TableHasColumn(db.DB, "processes", "active_job_style_id")
 	if err != nil || !has {
 		// Already migrated or fresh DB — ensure new columns exist
 		db.Exec("ALTER TABLE processes ADD COLUMN target_style_id INTEGER REFERENCES styles(id) ON DELETE SET NULL")
@@ -528,7 +254,7 @@ DROP TABLE processes_legacy;
 
 // migrateStyleColumns renames line_id → process_id
 func (db *DB) migrateStyleColumns() error {
-	hasLineID, err := db.tableHasColumn("styles", "line_id")
+	hasLineID, err := schema.TableHasColumn(db.DB, "styles", "line_id")
 	if err != nil {
 		return err
 	}
@@ -558,7 +284,7 @@ DROP TABLE styles_legacy;
 
 // stripDeadStyleColumns removes unused is_default and active columns from styles.
 func (db *DB) stripDeadStyleColumns() error {
-	has, _ := db.tableHasColumn("styles", "is_default")
+	has, _ := schema.TableHasColumn(db.DB, "styles", "is_default")
 	if !has {
 		return nil
 	}
@@ -582,7 +308,7 @@ DROP TABLE styles_strip;
 
 // migrateReportingPointColumns renames job_style_id → style_id
 func (db *DB) migrateReportingPointColumns() error {
-	has, err := db.tableHasColumn("reporting_points", "job_style_id")
+	has, err := schema.TableHasColumn(db.DB, "reporting_points", "job_style_id")
 	if err != nil || !has {
 		return err
 	}
@@ -609,7 +335,7 @@ DROP TABLE reporting_points_legacy;
 
 // migrateHourlyCountColumns renames line_id → process_id, job_style_id → style_id
 func (db *DB) migrateHourlyCountColumns() error {
-	has, err := db.tableHasColumn("hourly_counts", "line_id")
+	has, err := schema.TableHasColumn(db.DB, "hourly_counts", "line_id")
 	if err != nil || !has {
 		return err
 	}
@@ -632,7 +358,6 @@ DROP TABLE hourly_counts_legacy;
 `)
 	return err
 }
-
 
 // migrateHourlyCountFKs adds foreign keys to hourly_counts if missing.
 func (db *DB) migrateHourlyCountFKs() error {
@@ -669,11 +394,11 @@ DROP TABLE hourly_counts_nofk;
 
 // migrateOperatorStationColumns removes parent_station_id and expected_client_type
 func (db *DB) migrateOperatorStationColumns() error {
-	hasParent, err := db.tableHasColumn("operator_stations", "parent_station_id")
+	hasParent, err := schema.TableHasColumn(db.DB, "operator_stations", "parent_station_id")
 	if err != nil {
 		return err
 	}
-	hasExpected, _ := db.tableHasColumn("operator_stations", "expected_client_type")
+	hasExpected, _ := schema.TableHasColumn(db.DB, "operator_stations", "expected_client_type")
 	if !hasParent && !hasExpected {
 		// Add columns that may be missing on legacy DBs
 		db.Exec("ALTER TABLE operator_stations ADD COLUMN note TEXT NOT NULL DEFAULT ''")
@@ -717,7 +442,7 @@ DROP TABLE operator_stations_legacy;
 // migrateProcessNodeOwnership migrates from op_station_nodes + junction table to inline operator_station_id
 func (db *DB) migrateProcessNodeOwnership() error {
 	// Phase 1: migrate from old op_station_nodes table if it exists
-	opStationNodesExist, err := db.tableExists("op_station_nodes")
+	opStationNodesExist, err := schema.TableExists(db.DB, "op_station_nodes")
 	if err != nil {
 		return err
 	}
@@ -728,18 +453,18 @@ func (db *DB) migrateProcessNodeOwnership() error {
 	}
 
 	// Phase 2: migrate from junction table to inline FK (if junction table exists)
-	junctionExists, err := db.tableExists("operator_station_process_nodes")
+	junctionExists, err := schema.TableExists(db.DB, "operator_station_process_nodes")
 	if err != nil {
 		return err
 	}
 	if junctionExists {
-		hasInlineFK, err := db.tableHasColumn("process_nodes", "operator_station_id")
+		hasInlineFK, err := schema.TableHasColumn(db.DB, "process_nodes", "operator_station_id")
 		if err != nil {
 			return err
 		}
 		if !hasInlineFK {
-		// Need to rebuild process_nodes with inline FK (simplified schema)
-		_, err = db.Exec(`
+			// Need to rebuild process_nodes with inline FK (simplified schema)
+			_, err = db.Exec(`
 ALTER TABLE process_nodes RENAME TO process_nodes_legacy;
 CREATE TABLE process_nodes (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -763,10 +488,10 @@ FROM process_nodes_legacy n
 LEFT JOIN operator_station_process_nodes d ON d.process_node_id = n.id;
 DROP TABLE process_nodes_legacy;
 `)
-		if err != nil {
-			return err
+			if err != nil {
+				return err
+			}
 		}
-	}
 
 		// Drop junction table
 		db.Exec("DROP TABLE IF EXISTS operator_station_process_nodes")
@@ -795,7 +520,7 @@ DROP TABLE process_nodes_legacy;
 }
 
 func (db *DB) stripLegacyRuntimeStateColumns() error {
-	hasOldCol, _ := db.tableHasColumn("process_node_runtime_states", "effective_style_id")
+	hasOldCol, _ := schema.TableHasColumn(db.DB, "process_node_runtime_states", "effective_style_id")
 	if !hasOldCol {
 		return nil
 	}
@@ -819,7 +544,7 @@ DROP TABLE process_node_runtime_states_old;
 }
 
 func (db *DB) stripLegacyProcessNodeColumns() error {
-	hasPositionType, _ := db.tableHasColumn("process_nodes", "position_type")
+	hasPositionType, _ := schema.TableHasColumn(db.DB, "process_nodes", "position_type")
 	if !hasPositionType {
 		return nil // already stripped
 	}
@@ -857,7 +582,7 @@ func (db *DB) rebuildFromOpStationNodes() error {
 		return nil
 	}
 
-	hasCoreNodeName, _ := db.tableHasColumn("op_station_nodes", "core_node_name")
+	hasCoreNodeName, _ := schema.TableHasColumn(db.DB, "op_station_nodes", "core_node_name")
 	coreNodeExpr := "''"
 	if hasCoreNodeName {
 		coreNodeExpr = "COALESCE(n.core_node_name, '')"
@@ -892,7 +617,7 @@ func (db *DB) rebuildLegacyAssignments() error {
 
 func (db *DB) rebuildLegacyRuntimeStates() error {
 	for _, name := range []string{"op_node_runtime_states_legacy", "op_node_runtime_states"} {
-		has, err := db.tableHasColumn(name, "op_node_id")
+		has, err := schema.TableHasColumn(db.DB, name, "op_node_id")
 		if err != nil || !has {
 			continue
 		}
@@ -913,7 +638,7 @@ FROM ` + name)
 }
 
 func (db *DB) rebuildLegacyOrders() error {
-	has, err := db.tableHasColumn("orders", "op_node_id")
+	has, err := schema.TableHasColumn(db.DB, "orders", "op_node_id")
 	if err != nil || !has {
 		return err
 	}
@@ -966,9 +691,9 @@ func (db *DB) rebuildLegacyChangeoverNodeTasks() error {
 	db.Exec("DROP TABLE IF EXISTS changeover_node_tasks_legacy")
 
 	// If the current table has the old column layout, rebuild it
-	hasOldCol, _ := db.tableHasColumn("changeover_node_tasks", "changeover_station_task_id")
+	hasOldCol, _ := schema.TableHasColumn(db.DB, "changeover_node_tasks", "changeover_station_task_id")
 	if !hasOldCol {
-		hasOldCol, _ = db.tableHasColumn("changeover_node_tasks", "from_assignment_id")
+		hasOldCol, _ = schema.TableHasColumn(db.DB, "changeover_node_tasks", "from_assignment_id")
 	}
 	if hasOldCol {
 		_, err := db.Exec(`
@@ -992,22 +717,18 @@ CREATE TABLE IF NOT EXISTS changeover_node_tasks (
 	return nil
 }
 
-// ── Introspection utilities ──────────────────────────────────────────
+// ── Compatibility wrappers (kept for migration_test.go) ─────────────
 
+// tableHasColumn delegates to schema.TableHasColumn so existing
+// migration_test.go call sites compile unchanged. Phase 6.4 may
+// migrate the test directly to the schema package and drop this
+// wrapper.
 func (db *DB) tableHasColumn(tableName, columnName string) (bool, error) {
-	rows, err := db.Query(`SELECT name FROM pragma_table_info('`+tableName+`') WHERE name = ?`, columnName)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	return rows.Next(), rows.Err()
+	return schema.TableHasColumn(db.DB, tableName, columnName)
 }
 
+// tableExists delegates to schema.TableExists for the same reason
+// as tableHasColumn above.
 func (db *DB) tableExists(tableName string) (bool, error) {
-	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tableName)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	return rows.Next(), rows.Err()
+	return schema.TableExists(db.DB, tableName)
 }

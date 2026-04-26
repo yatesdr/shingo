@@ -13,10 +13,6 @@ import (
 	"shingocore/store/payloads"
 )
 
-// Type aliases preserve the store.BinManifest / store.ManifestEntry public API.
-type ManifestEntry = bins.ManifestEntry
-type BinManifest = bins.Manifest
-
 // SetBinManifest populates a bin's contents from a payload template.
 func (db *DB) SetBinManifest(binID int64, manifestJSON string, payloadCode string, uopRemaining int) error {
 	return bins.SetManifest(db.DB, binID, manifestJSON, payloadCode, uopRemaining)
@@ -31,20 +27,20 @@ func (db *DB) ConfirmBinManifest(binID int64, producedAt string) error {
 func (db *DB) ClearBinManifest(binID int64) error { return bins.ClearManifest(db.DB, binID) }
 
 // GetBinManifest fetches a bin and parses its manifest.
-func (db *DB) GetBinManifest(binID int64) (*BinManifest, error) {
+func (db *DB) GetBinManifest(binID int64) (*bins.Manifest, error) {
 	return bins.GetManifest(db.DB, binID)
 }
 
 // FindSourceBinFIFO finds the best unclaimed bin at an enabled storage node
 // matching the given payload code, using FIFO ordering.
-func (db *DB) FindSourceBinFIFO(payloadCode string) (*Bin, error) {
+func (db *DB) FindSourceBinFIFO(payloadCode string) (*bins.Bin, error) {
 	return bins.FindSourceFIFO(db.DB, payloadCode)
 }
 
 // FindStorageDestination finds the best storage node for a bin. Prefers nodes
 // with existing bins of the same payload code, then empty nodes. Cross-aggregate
 // composition (bins ↔ nodes) so it stays at this level.
-func (db *DB) FindStorageDestination(payloadCode string) (*Node, error) {
+func (db *DB) FindStorageDestination(payloadCode string) (*nodes.Node, error) {
 	// Try consolidation: storage nodes that already have bins of the same payload code
 	row := db.QueryRow(fmt.Sprintf(`
 		SELECT %s %s WHERE n.id = (
@@ -88,9 +84,9 @@ func (db *DB) SetBinManifestFromTemplate(binID int64, payloadCode string, uopCap
 		return fmt.Errorf("payload manifest: %w", err)
 	}
 
-	manifest := BinManifest{Items: make([]ManifestEntry, len(items))}
+	manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(items))}
 	for i, item := range items {
-		manifest.Items[i] = ManifestEntry{
+		manifest.Items[i] = bins.ManifestEntry{
 			CatID:    item.PartNumber,
 			Quantity: item.Quantity,
 		}

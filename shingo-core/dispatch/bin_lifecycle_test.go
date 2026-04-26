@@ -10,6 +10,10 @@ import (
 	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // TestFullDepletion_ClearsManifest verifies that when a move order carries
@@ -21,10 +25,10 @@ func TestFullDepletion_ClearsManifest(t *testing.T) {
 	_, lineNode, bp := setupTestData(t, db)
 
 	// Create a line node (process node) and a filled bin there
-	processNode := &store.Node{Name: "LINE1-CONSUME", Enabled: true}
+	processNode := &nodes.Node{Name: "LINE1-CONSUME", Enabled: true}
 	db.CreateNode(processNode)
 
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-DEP-1", NodeID: &processNode.ID, Status: "staged"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-DEP-1", NodeID: &processNode.ID, Status: "staged"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":100}]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
@@ -79,10 +83,10 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
 
-	processNode := &store.Node{Name: "LINE1-PARTIAL", Enabled: true}
+	processNode := &nodes.Node{Name: "LINE1-PARTIAL", Enabled: true}
 	db.CreateNode(processNode)
 
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-PRT-1", NodeID: &processNode.ID, Status: "staged"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-PRT-1", NodeID: &processNode.ID, Status: "staged"}
 	db.CreateBin(bin)
 	manifest := `{"items":[{"catid":"PART-A","qty":100}]}`
 	db.SetBinManifest(bin.ID, manifest, bp.Code, 100)
@@ -148,24 +152,24 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 	_, _, _ = setupTestData(t, db)
 
 	// Create a payload with bin type compatibility
-	bp := &store.Payload{Code: "RACE-BP"}
+	bp := &payloads.Payload{Code: "RACE-BP"}
 	db.CreatePayload(bp)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
-	storageNode := &store.Node{Name: "RACE-STORAGE", Zone: "A", Enabled: true}
+	storageNode := &nodes.Node{Name: "RACE-STORAGE", Zone: "A", Enabled: true}
 	db.CreateNode(storageNode)
 
 	// Create two empty bins
-	bin1 := &store.Bin{BinTypeID: bt.ID, Label: "RACE-BIN-1", NodeID: &storageNode.ID, Status: "available"}
+	bin1 := &bins.Bin{BinTypeID: bt.ID, Label: "RACE-BIN-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin1)
-	bin2 := &store.Bin{BinTypeID: bt.ID, Label: "RACE-BIN-2", NodeID: &storageNode.ID, Status: "available"}
+	bin2 := &bins.Bin{BinTypeID: bt.ID, Label: "RACE-BIN-2", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin2)
 
 	// Create two orders that will race to claim
-	order1 := &store.Order{EdgeUUID: "race-1", StationID: "test", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: "LINE1-IN", PayloadDesc: "retrieve_empty"}
+	order1 := &orders.Order{EdgeUUID: "race-1", StationID: "test", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: "LINE1-IN", PayloadDesc: "retrieve_empty"}
 	db.CreateOrder(order1)
-	order2 := &store.Order{EdgeUUID: "race-2", StationID: "test", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: "LINE1-IN", PayloadDesc: "retrieve_empty"}
+	order2 := &orders.Order{EdgeUUID: "race-2", StationID: "test", OrderType: "retrieve", Status: "pending", Quantity: 1, DeliveryNode: "LINE1-IN", PayloadDesc: "retrieve_empty"}
 	db.CreateOrder(order2)
 
 	// Race: two goroutines try to find and claim empty bins concurrently
@@ -228,19 +232,19 @@ func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 
-	processNode := &store.Node{Name: "COMPLEX-LINE1", Enabled: true}
+	processNode := &nodes.Node{Name: "COMPLEX-LINE1", Enabled: true}
 	db.CreateNode(processNode)
-	stagingNode := &store.Node{Name: "COMPLEX-STAGING", Enabled: true}
+	stagingNode := &nodes.Node{Name: "COMPLEX-STAGING", Enabled: true}
 	db.CreateNode(stagingNode)
 
 	// Bin at process node (outgoing, depleted bin)
-	binProcess := &store.Bin{BinTypeID: 1, Label: "BIN-CP-1", NodeID: &processNode.ID, Status: "staged"}
+	binProcess := &bins.Bin{BinTypeID: 1, Label: "BIN-CP-1", NodeID: &processNode.ID, Status: "staged"}
 	db.CreateBin(binProcess)
 	db.SetBinManifest(binProcess.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(binProcess.ID, "")
 
 	// Bin at staging node (incoming, should NOT have manifest changed)
-	binStaging := &store.Bin{BinTypeID: 1, Label: "BIN-CP-2", NodeID: &stagingNode.ID, Status: "staged"}
+	binStaging := &bins.Bin{BinTypeID: 1, Label: "BIN-CP-2", NodeID: &stagingNode.ID, Status: "staged"}
 	db.CreateBin(binStaging)
 	db.SetBinManifest(binStaging.ID, `{"items":[{"catid":"NEW","qty":200}]}`, bp.Code, 200)
 	db.ConfirmBinManifest(binStaging.ID, "")
@@ -302,17 +306,17 @@ func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
 // pickup is at the line node, dispatches it through HandleComplexOrderRequest
 // (which claims the line bin), then forces the order into StatusStaged so
 // HandleOrderRelease will accept it.
-func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lineNode *store.Node, bp *store.Payload, orderUUID, binLabel string) (*store.Order, *store.Bin) {
+func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lineNode *nodes.Node, bp *payloads.Payload, orderUUID, binLabel string) (*orders.Order, *bins.Bin) {
 	t.Helper()
 
 	// Destination node for the dropoff step (must exist for step resolution).
-	destNode := &store.Node{Name: "RELEASE-DEST", Enabled: true}
+	destNode := &nodes.Node{Name: "RELEASE-DEST", Enabled: true}
 	if err := db.CreateNode(destNode); err != nil {
 		t.Fatalf("create dest node: %v", err)
 	}
 
 	// Filled bin at the line (outgoing partial/empty after consumption).
-	bin := &store.Bin{BinTypeID: 1, Label: binLabel, NodeID: &lineNode.ID, Status: "staged"}
+	bin := &bins.Bin{BinTypeID: 1, Label: binLabel, NodeID: &lineNode.ID, Status: "staged"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin %s: %v", binLabel, err)
 	}
@@ -462,7 +466,7 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 	// Bin physically at the line with manifest intact (the OLD bin
 	// the line consumed down to zero — Edge knows it's empty, Core
 	// still has the loaded state because there's no cycle telemetry).
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-FALLBACK", NodeID: &lineNode.ID, Status: "staged"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-FALLBACK", NodeID: &lineNode.ID, Status: "staged"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
@@ -473,7 +477,7 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 	// Order whose BinID is nil but whose SourceNode points at the line.
 	// Mimics the production failure mode where claimComplexBins didn't
 	// claim a bin for the order at creation time.
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "uuid-fallback-clear",
 		StationID:    "line-1",
 		OrderType:    OrderTypeComplex,
@@ -523,7 +527,7 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
 
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-FALLBACK-PART", NodeID: &lineNode.ID, Status: "staged"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-FALLBACK-PART", NodeID: &lineNode.ID, Status: "staged"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
@@ -532,7 +536,7 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 		t.Fatalf("set manifest: %v", err)
 	}
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "uuid-fallback-partial",
 		StationID:    "line-1",
 		OrderType:    OrderTypeComplex,

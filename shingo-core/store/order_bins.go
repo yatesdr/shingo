@@ -11,11 +11,6 @@ import (
 	"shingocore/store/orders"
 )
 
-// Type aliases preserve the store.OrderBin / store.BinArrivalInstruction
-// public API.
-type OrderBin = orders.OrderBin
-type BinArrivalInstruction = orders.BinArrivalInstruction
-
 // InsertOrderBin records a claimed bin and its resolved destination for a
 // complex order.
 func (db *DB) InsertOrderBin(orderID, binID int64, stepIndex int, action, nodeName, destNode string) error {
@@ -23,7 +18,7 @@ func (db *DB) InsertOrderBin(orderID, binID int64, stepIndex int, action, nodeNa
 }
 
 // ListOrderBins returns all junction rows for an order, ordered by step_index.
-func (db *DB) ListOrderBins(orderID int64) ([]*OrderBin, error) {
+func (db *DB) ListOrderBins(orderID int64) ([]*orders.OrderBin, error) {
 	return orders.ListOrderBins(db.DB, orderID)
 }
 
@@ -35,7 +30,7 @@ func (db *DB) DeleteOrderBins(orderID int64) { orders.DeleteOrderBins(db.DB, ord
 // unclaims them atomically in a single transaction. The caller provides
 // pre-computed arrival instructions (destination node, staging, expiry) for
 // each bin. Cross-aggregate (bins ↔ order_bins).
-func (db *DB) ApplyMultiBinArrival(instructions []BinArrivalInstruction) error {
+func (db *DB) ApplyMultiBinArrival(instructions []orders.BinArrivalInstruction) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

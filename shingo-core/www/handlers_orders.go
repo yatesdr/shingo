@@ -10,7 +10,9 @@ import (
 
 	"shingo/protocol"
 	"shingocore/fleet"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +25,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	svc := h.engine.OrderService()
-	var orders []*store.Order
+	var orders []*orders.Order
 	var err error
 	switch {
 	case status == "":
@@ -82,7 +84,7 @@ func (h *Handlers) apiTerminateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actor := h.getUsername(r)
-	if err := h.engine.TerminateOrder(req.OrderID, actor); err != nil {
+	if err := h.orchestration.TerminateOrder(req.OrderID, actor); err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -131,14 +133,14 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type enrichedOrder struct {
-		Order        *store.Order             `json:"order"`
-		History      []*store.OrderHistory    `json:"history,omitempty"`
-		Bin          *store.Bin               `json:"bin,omitempty"`
-		BinManifest  *store.BinManifest       `json:"bin_manifest,omitempty"`
-		SourceNode   *store.Node              `json:"source_node,omitempty"`
-		DeliveryNode *store.Node              `json:"delivery_node,omitempty"`
-		Children     []*store.Order           `json:"children,omitempty"`
-		Parent       *store.Order             `json:"parent,omitempty"`
+		Order        *orders.Order             `json:"order"`
+		History      []*orders.History    `json:"history,omitempty"`
+		Bin          *bins.Bin               `json:"bin,omitempty"`
+		BinManifest  *bins.Manifest       `json:"bin_manifest,omitempty"`
+		SourceNode   *nodes.Node              `json:"source_node,omitempty"`
+		DeliveryNode *nodes.Node              `json:"delivery_node,omitempty"`
+		Children     []*orders.Order           `json:"children,omitempty"`
+		Parent       *orders.Order             `json:"parent,omitempty"`
 		VendorDetail *fleet.VendorOrderDetail `json:"vendor_detail,omitempty"`
 		Robot        *fleet.RobotStatus       `json:"robot,omitempty"`
 	}
@@ -327,7 +329,7 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 		return
 	}
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     orderUUID,
 		StationID:    "core-spot",
 		OrderType:    "send_to",
@@ -455,7 +457,7 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		return
 	}
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     orderUUID,
 		StationID:    "core-spot",
 		OrderType:    "move",

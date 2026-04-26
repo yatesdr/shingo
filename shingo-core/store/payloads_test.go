@@ -5,12 +5,16 @@ package store
 import (
 	"testing"
 	"time"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 func TestBinTypeCRUD(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{
+	bt := &bins.BinType{
 		Code:        "TOTE-SM",
 		Description: "Small tote",
 		WidthIn:     12.0,
@@ -65,7 +69,7 @@ func TestBinTypeCRUD(t *testing.T) {
 	}
 
 	// List
-	bt2 := &BinType{Code: "CRATE-LG", Description: "Large crate", WidthIn: 24.0, HeightIn: 16.0}
+	bt2 := &bins.BinType{Code: "CRATE-LG", Description: "Large crate", WidthIn: 24.0, HeightIn: 16.0}
 	db.CreateBinType(bt2)
 	all, err := db.ListBinTypes()
 	if err != nil {
@@ -89,14 +93,14 @@ func TestBinCRUD(t *testing.T) {
 	db := testDB(t)
 
 	// Create prerequisites
-	bt := &BinType{Code: "TOTE-A", Description: "Standard tote", WidthIn: 12.0, HeightIn: 8.0}
+	bt := &bins.BinType{Code: "TOTE-A", Description: "Standard tote", WidthIn: 12.0, HeightIn: 8.0}
 	db.CreateBinType(bt)
 
-	node := &Node{Name: "STORAGE-B1", Enabled: true}
+	node := &nodes.Node{Name: "STORAGE-B1", Enabled: true}
 	db.CreateNode(node)
 
 	// Create bin
-	bin := &Bin{
+	bin := &bins.Bin{
 		BinTypeID:   bt.ID,
 		Label:       "BIN-001",
 		Description: "First bin",
@@ -152,7 +156,7 @@ func TestBinCRUD(t *testing.T) {
 	}
 
 	// Create second bin at same node
-	bin2 := &Bin{BinTypeID: bt.ID, Label: "BIN-002", NodeID: &node.ID, Status: "available"}
+	bin2 := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-002", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin2)
 
 	// ListBins
@@ -183,7 +187,7 @@ func TestBinCRUD(t *testing.T) {
 	}
 
 	// MoveBin
-	node2 := &Node{Name: "LINE-1", Enabled: true}
+	node2 := &nodes.Node{Name: "LINE-1", Enabled: true}
 	db.CreateNode(node2)
 	if err := db.MoveBin(bin.ID, node2.ID); err != nil {
 		t.Fatalf("move bin: %v", err)
@@ -206,7 +210,7 @@ func TestBinCRUD(t *testing.T) {
 func TestPayloadCRUD(t *testing.T) {
 	db := testDB(t)
 
-	bp := &Payload{
+	bp := &payloads.Payload{
 		Code:        "WK-100",
 		Description: "Standard widget kit",
 		UOPCapacity: 50,
@@ -269,12 +273,12 @@ func TestPayloadCRUD(t *testing.T) {
 func TestPayloadBinTypeJunction(t *testing.T) {
 	db := testDB(t)
 
-	bp := &Payload{Code: "MBK-1", UOPCapacity: 100}
+	bp := &payloads.Payload{Code: "MBK-1", UOPCapacity: 100}
 	db.CreatePayload(bp)
 
-	bt1 := &BinType{Code: "TOTE-A", Description: "Tote type A", WidthIn: 12.0, HeightIn: 8.0}
+	bt1 := &bins.BinType{Code: "TOTE-A", Description: "Tote type A", WidthIn: 12.0, HeightIn: 8.0}
 	db.CreateBinType(bt1)
-	bt2 := &BinType{Code: "CRATE-B", Description: "Crate type B", WidthIn: 24.0, HeightIn: 16.0}
+	bt2 := &bins.BinType{Code: "CRATE-B", Description: "Crate type B", WidthIn: 24.0, HeightIn: 16.0}
 	db.CreateBinType(bt2)
 
 	// Set bin types for payload
@@ -316,7 +320,7 @@ func TestPayloadBinTypeJunction(t *testing.T) {
 func TestPayloadTemplateCRUD(t *testing.T) {
 	db := testDB(t)
 
-	p := &Payload{Code: "BIN-X", UOPCapacity: 200, Description: "Test template"}
+	p := &payloads.Payload{Code: "BIN-X", UOPCapacity: 200, Description: "Test template"}
 	if err := db.CreatePayload(p); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
@@ -347,7 +351,7 @@ func TestPayloadTemplateCRUD(t *testing.T) {
 	}
 
 	// Create second template
-	p2 := &Payload{Code: "BIN-Y", UOPCapacity: 50}
+	p2 := &payloads.Payload{Code: "BIN-Y", UOPCapacity: 50}
 	db.CreatePayload(p2)
 
 	// ListPayloads
@@ -372,18 +376,18 @@ func TestPayloadTemplateCRUD(t *testing.T) {
 func TestBinManifestLifecycle(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "CRATE-Y", Description: "Standard crate", WidthIn: 24.0, HeightIn: 16.0}
+	bt := &bins.BinType{Code: "CRATE-Y", Description: "Standard crate", WidthIn: 24.0, HeightIn: 16.0}
 	db.CreateBinType(bt)
 
-	bp := &Payload{Code: "CRATE-Y", UOPCapacity: 100}
+	bp := &payloads.Payload{Code: "CRATE-Y", UOPCapacity: 100}
 	db.CreatePayload(bp)
 
-	node1 := &Node{Name: "STORE-1", Enabled: true}
+	node1 := &nodes.Node{Name: "STORE-1", Enabled: true}
 	db.CreateNode(node1)
-	node2 := &Node{Name: "LINE-1", Enabled: true}
+	node2 := &nodes.Node{Name: "LINE-1", Enabled: true}
 	db.CreateNode(node2)
 
-	bin := &Bin{BinTypeID: bt.ID, Label: "CY-001", NodeID: &node1.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "CY-001", NodeID: &node1.ID, Status: "available"}
 	db.CreateBin(bin)
 
 	// Set bin manifest
@@ -431,12 +435,12 @@ func TestBinManifestLifecycle(t *testing.T) {
 	db.ClaimBin(bin.ID, 99)
 
 	// FindSourceBinFIFO -- create two more bins with manifests, verify FIFO order
-	bin2 := &Bin{BinTypeID: bt.ID, Label: "CY-002", NodeID: &node1.ID, Status: "available"}
+	bin2 := &bins.Bin{BinTypeID: bt.ID, Label: "CY-002", NodeID: &node1.ID, Status: "available"}
 	db.CreateBin(bin2)
 	db.SetBinManifest(bin2.ID, `{"items":[]}`, bp.Code, 50)
 	db.ConfirmBinManifest(bin2.ID, "")
 
-	bin3 := &Bin{BinTypeID: bt.ID, Label: "CY-003", NodeID: &node1.ID, Status: "available"}
+	bin3 := &bins.Bin{BinTypeID: bt.ID, Label: "CY-003", NodeID: &node1.ID, Status: "available"}
 	db.CreateBin(bin3)
 	db.SetBinManifest(bin3.ID, `{"items":[]}`, bp.Code, 75)
 	db.ConfirmBinManifest(bin3.ID, "")
@@ -466,12 +470,12 @@ func TestBinManifestLifecycle(t *testing.T) {
 func TestNodePayloadAssignment(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "STORE-NB", Enabled: true}
+	node := &nodes.Node{Name: "STORE-NB", Enabled: true}
 	db.CreateNode(node)
 
-	bp1 := &Payload{Code: "KIT-A", UOPCapacity: 10}
+	bp1 := &payloads.Payload{Code: "KIT-A", UOPCapacity: 10}
 	db.CreatePayload(bp1)
-	bp2 := &Payload{Code: "KIT-B", UOPCapacity: 20}
+	bp2 := &payloads.Payload{Code: "KIT-B", UOPCapacity: 20}
 	db.CreatePayload(bp2)
 
 	// Assign
@@ -527,15 +531,15 @@ func TestNodePayloadAssignment(t *testing.T) {
 func TestConfirmBinManifest_ProducedAt(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "STORAGE-PA", Enabled: true}
+	node := &nodes.Node{Name: "STORAGE-PA", Enabled: true}
 	db.CreateNode(node)
-	bt := &BinType{Code: "DEFAULT-PA"}
+	bt := &bins.BinType{Code: "DEFAULT-PA"}
 	db.CreateBinType(bt)
-	bp := &Payload{Code: "PART-PA", UOPCapacity: 50}
+	bp := &payloads.Payload{Code: "PART-PA", UOPCapacity: 50}
 	db.CreatePayload(bp)
 
 	// --- Test 1: explicit producedAt is written to loaded_at ---
-	bin1 := &Bin{BinTypeID: bt.ID, Label: "PA-001", NodeID: &node.ID, Status: "available"}
+	bin1 := &bins.Bin{BinTypeID: bt.ID, Label: "PA-001", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin1)
 	db.SetBinManifest(bin1.ID, `{"items":[]}`, bp.Code, 50)
 
@@ -559,7 +563,7 @@ func TestConfirmBinManifest_ProducedAt(t *testing.T) {
 	}
 
 	// --- Test 2: empty producedAt falls back to server time ---
-	bin2 := &Bin{BinTypeID: bt.ID, Label: "PA-002", NodeID: &node.ID, Status: "available"}
+	bin2 := &bins.Bin{BinTypeID: bt.ID, Label: "PA-002", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin2)
 	db.SetBinManifest(bin2.ID, `{"items":[]}`, bp.Code, 50)
 

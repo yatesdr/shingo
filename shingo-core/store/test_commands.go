@@ -4,14 +4,9 @@ package store
 // This file preserves the *store.DB method surface so external callers
 // don't need to change.
 
-import (
-	"shingocore/store/diagnostics"
-)
+import "shingocore/store/diagnostics"
 
-// TestCommand preserves the store.TestCommand public API.
-type TestCommand = diagnostics.TestCommand
-
-func (db *DB) CreateTestCommand(tc *TestCommand) error {
+func (db *DB) CreateTestCommand(tc *diagnostics.TestCommand) error {
 	return diagnostics.Create(db.DB, tc)
 }
 
@@ -23,14 +18,14 @@ func (db *DB) CompleteTestCommand(id int64) error {
 	return diagnostics.Complete(db.DB, id)
 }
 
-func (db *DB) GetTestCommand(id int64) (*TestCommand, error) {
+func (db *DB) GetTestCommand(id int64) (*diagnostics.TestCommand, error) {
 	return diagnostics.Get(db.DB, id)
 }
 
-func (db *DB) ListTestCommands(limit int) ([]*TestCommand, error) {
+func (db *DB) ListTestCommands(limit int) ([]*diagnostics.TestCommand, error) {
 	return diagnostics.List(db.DB, limit)
 }
 
-func (db *DB) ListActiveTestCommands() ([]*TestCommand, error) {
+func (db *DB) ListActiveTestCommands() ([]*diagnostics.TestCommand, error) {
 	return diagnostics.ListActive(db.DB)
 }

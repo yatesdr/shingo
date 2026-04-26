@@ -6,7 +6,7 @@ import (
 )
 
 func (h *Handlers) handleManualOrder(w http.ResponseWriter, r *http.Request) {
-	processNodes, _ := h.engine.ListProcessNodes()
+	processNodes, _ := h.engine.ProcessService().ListNodes()
 	coreNodes := h.engine.CoreNodes()
 	coreNodeNames := make([]string, 0, len(coreNodes))
 	for name := range coreNodes {

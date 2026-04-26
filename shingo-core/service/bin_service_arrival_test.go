@@ -1,21 +1,30 @@
 //go:build docker
 
-package store
+package service
 
 import (
 	"testing"
 	"time"
+
+	"shingocore/internal/testdb"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
-func TestApplyBinArrival(t *testing.T) {
-	db := testDB(t)
+// TestApplyArrival exercises BinService.ApplyArrival's two-branch contract:
+// staged vs. unstaged, claim-release in both. The orchestration body lives
+// in this package as of Phase 6.4a (moved from store/completion.go's
+// (db *DB).ApplyBinArrival, which has been deleted).
+func TestApplyArrival(t *testing.T) {
+	db := testdb.Open(t)
+	svc := newBinSvc(db)
 
-	bt := &BinType{Code: "AB-BT", Description: "tote"}
+	bt := &bins.BinType{Code: "AB-BT", Description: "tote"}
 	db.CreateBinType(bt)
 
-	startNode := &Node{Name: "AB-START", Enabled: true}
+	startNode := &nodes.Node{Name: "AB-START", Enabled: true}
 	db.CreateNode(startNode)
-	destNode := &Node{Name: "AB-DEST", Enabled: true}
+	destNode := &nodes.Node{Name: "AB-DEST", Enabled: true}
 	db.CreateNode(destNode)
 
 	cases := []struct {
@@ -35,15 +44,15 @@ func TestApplyBinArrival(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			bin := &Bin{BinTypeID: bt.ID, Label: "AB-" + tc.name, NodeID: &startNode.ID, Status: "available"}
+			bin := &bins.Bin{BinTypeID: bt.ID, Label: "AB-" + tc.name, NodeID: &startNode.ID, Status: "available"}
 			if err := db.CreateBin(bin); err != nil {
 				t.Fatalf("create bin: %v", err)
 			}
-			// Claim so we can verify ApplyBinArrival releases it.
+			// Claim so we can verify ApplyArrival releases it.
 			db.ClaimBin(bin.ID, 7)
 
-			if err := db.ApplyBinArrival(bin.ID, destNode.ID, tc.staged, tc.expiresAt); err != nil {
-				t.Fatalf("ApplyBinArrival: %v", err)
+			if err := svc.ApplyArrival(bin.ID, destNode.ID, tc.staged, tc.expiresAt); err != nil {
+				t.Fatalf("ApplyArrival: %v", err)
 			}
 
 			got, _ := db.GetBin(bin.ID)

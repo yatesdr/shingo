@@ -11,6 +11,8 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // --- Characterization tests for handleVendorStatusChange (wiring.go:179-262) ---
@@ -21,7 +23,7 @@ import (
 
 // dispatchRetrieveOrder is a test helper that creates standard fixtures and
 // dispatches a retrieve order. Returns everything needed for vendor status tests.
-func dispatchRetrieveOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simulator.SimulatorBackend, order *store.Order, storageNode, lineNode *store.Node) {
+func dispatchRetrieveOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simulator.SimulatorBackend, order *orders.Order, storageNode, lineNode *nodes.Node) {
 	t.Helper()
 	db = testDB(t)
 	sd := testdb.SetupStandardData(t, db)

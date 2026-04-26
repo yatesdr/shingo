@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // FlipABNode switches the active pull point to the specified node and deactivates
@@ -34,7 +34,7 @@ func (e *Engine) FlipABNode(nodeID int64) error {
 	if err != nil {
 		return err
 	}
-	var pairedNode *store.ProcessNode
+	var pairedNode *processes.Node
 	for i := range nodes {
 		if nodes[i].CoreNodeName == claim.PairedCoreNode {
 			pairedNode = &nodes[i]

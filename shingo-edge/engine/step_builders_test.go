@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // countWaits counts the number of "wait" actions in a step list.
@@ -32,12 +32,12 @@ func stepActions(steps []protocol.ComplexOrderStep) []string {
 // ---------------------------------------------------------------------------
 
 func TestBuildSwapChangeoverSteps(t *testing.T) {
-	from := &store.StyleNodeClaim{
+	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
 		OutboundStaging:     "OUT-STAGE",
 		OutboundDestination: "DEST-FINAL",
 	}
-	to := &store.StyleNodeClaim{
+	to := &processes.NodeClaim{
 		CoreNodeName:   "CORE-B",
 		InboundStaging: "IN-STAGE",
 	}
@@ -72,12 +72,12 @@ func TestBuildSwapChangeoverSteps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildEvacuateChangeoverSteps(t *testing.T) {
-	from := &store.StyleNodeClaim{
+	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
 		OutboundStaging:     "OUT-STAGE",
 		OutboundDestination: "DEST-FINAL",
 	}
-	to := &store.StyleNodeClaim{
+	to := &processes.NodeClaim{
 		CoreNodeName:   "CORE-B",
 		InboundStaging: "IN-STAGE",
 	}
@@ -113,7 +113,7 @@ func TestBuildEvacuateChangeoverSteps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildKeepStagedDeliverSteps(t *testing.T) {
-	to := &store.StyleNodeClaim{
+	to := &processes.NodeClaim{
 		CoreNodeName:   "CORE-NODE",
 		InboundSource:  "SOURCE",
 		InboundStaging: "IN-STAGE",
@@ -147,7 +147,7 @@ func TestBuildKeepStagedDeliverSteps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildKeepStagedEvacSteps(t *testing.T) {
-	from := &store.StyleNodeClaim{
+	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-NODE",
 		OutboundDestination: "DEST-FINAL",
 	}
@@ -178,10 +178,10 @@ func TestBuildKeepStagedEvacSteps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildKeepStagedCombinedSteps(t *testing.T) {
-	from := &store.StyleNodeClaim{
+	from := &processes.NodeClaim{
 		InboundSource: "FROM-SOURCE",
 	}
-	to := &store.StyleNodeClaim{
+	to := &processes.NodeClaim{
 		CoreNodeName:   "CORE-NODE",
 		InboundSource:  "TO-SOURCE",
 		InboundStaging: "IN-STAGE",
@@ -238,7 +238,7 @@ func TestBuildKeepStagedCombinedSteps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildStageSteps(t *testing.T) {
-	claim := &store.StyleNodeClaim{
+	claim := &processes.NodeClaim{
 		InboundSource:  "MARKET",
 		InboundStaging: "STAGING-AREA",
 	}
@@ -259,7 +259,7 @@ func TestBuildStageSteps(t *testing.T) {
 }
 
 func TestBuildStageSteps_NoInboundStaging(t *testing.T) {
-	claim := &store.StyleNodeClaim{
+	claim := &processes.NodeClaim{
 		InboundSource: "MARKET",
 		// InboundStaging empty — cannot pre-stage
 	}
@@ -274,7 +274,7 @@ func TestBuildStageSteps_NoInboundStaging(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildReleaseSteps(t *testing.T) {
-	claim := &store.StyleNodeClaim{
+	claim := &processes.NodeClaim{
 		CoreNodeName:        "CORE-NODE",
 		OutboundDestination: "DEST",
 	}
@@ -294,7 +294,7 @@ func TestBuildReleaseSteps(t *testing.T) {
 // Edge case: missing OutboundDestination → dropoff step has no Node.
 // Core uses payload-based routing (global fallback).
 func TestBuildReleaseSteps_MissingDestination(t *testing.T) {
-	claim := &store.StyleNodeClaim{
+	claim := &processes.NodeClaim{
 		CoreNodeName: "CORE-NODE",
 		// OutboundDestination empty
 	}
@@ -321,7 +321,7 @@ func TestBuildReleaseSteps_MissingDestination(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildRestoreSteps(t *testing.T) {
-	claim := &store.StyleNodeClaim{
+	claim := &processes.NodeClaim{
 		CoreNodeName:    "CORE-NODE",
 		OutboundStaging: "OUT-STAGE",
 	}
@@ -342,7 +342,7 @@ func TestBuildRestoreSteps(t *testing.T) {
 }
 
 func TestBuildRestoreSteps_NoOutboundStaging(t *testing.T) {
-	claim := &store.StyleNodeClaim{
+	claim := &processes.NodeClaim{
 		CoreNodeName: "CORE-NODE",
 		// OutboundStaging empty — nothing to restore
 	}
@@ -359,7 +359,7 @@ func TestBuildRestoreSteps_NoOutboundStaging(t *testing.T) {
 // BuildStageSteps with empty InboundSource: pickup step has no Node.
 // Core resolves the source via payloadCode.
 func TestBuildStageSteps_MissingInboundSource(t *testing.T) {
-	claim := &store.StyleNodeClaim{
+	claim := &processes.NodeClaim{
 		// InboundSource empty
 		InboundStaging: "STAGING-AREA",
 	}
@@ -378,7 +378,7 @@ func TestBuildStageSteps_MissingInboundSource(t *testing.T) {
 
 // BuildKeepStagedDeliverSteps with empty InboundSource: first pickup has no Node.
 func TestBuildKeepStagedDeliverSteps_MissingInboundSource(t *testing.T) {
-	to := &store.StyleNodeClaim{
+	to := &processes.NodeClaim{
 		CoreNodeName:   "CORE-NODE",
 		InboundStaging: "IN-STAGE",
 		// InboundSource empty

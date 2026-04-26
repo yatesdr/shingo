@@ -9,6 +9,8 @@ import (
 	"shingo/protocol"
 	"shingoedge/engine"
 	"shingoedge/store"
+	"shingoedge/store/processes"
+	"shingoedge/store/stations"
 )
 
 func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.Request) {
@@ -17,12 +19,12 @@ func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.R
 		http.Error(w, "invalid station id", http.StatusBadRequest)
 		return
 	}
-	station, err := h.engine.GetOperatorStation(id)
+	station, err := h.engine.StationService().Get(id)
 	if err != nil {
 		http.Error(w, "station not found", http.StatusNotFound)
 		return
 	}
-	_ = h.engine.TouchOperatorStation(id, "online")
+	_ = h.engine.StationService().Touch(id, "online")
 	data := map[string]interface{}{
 		"Page":    "operator-display",
 		"Station": station,
@@ -36,7 +38,7 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	view, err := h.engine.BuildOperatorStationView(id)
+	view, err := h.engine.StationService().BuildView(id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "station not found")
 		return
@@ -44,12 +46,12 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 	views := []store.OperatorStationView{*view}
 	enrichViewBinState(h.engine.CoreAPI(), views)
 	view.Nodes = views[0].Nodes
-	_ = h.engine.TouchOperatorStation(id, "online")
+	_ = h.engine.StationService().Touch(id, "online")
 	writeJSON(w, view)
 }
 
 func (h *Handlers) apiGetActiveOrders(w http.ResponseWriter, r *http.Request) {
-	orders, err := h.engine.ListActiveOrders()
+	orders, err := h.engine.OrderService().ListActive()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -58,7 +60,7 @@ func (h *Handlers) apiGetActiveOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiListOperatorStations(w http.ResponseWriter, r *http.Request) {
-	stations, err := h.engine.ListOperatorStations()
+	stations, err := h.engine.StationService().List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -67,12 +69,12 @@ func (h *Handlers) apiListOperatorStations(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handlers) apiCreateOperatorStation(w http.ResponseWriter, r *http.Request) {
-	var in store.OperatorStationInput
+	var in stations.Input
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.engine.CreateOperatorStation(in)
+	id, err := h.engine.StationService().Create(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -86,12 +88,12 @@ func (h *Handlers) apiUpdateOperatorStation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var in store.OperatorStationInput
+	var in stations.Input
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.UpdateOperatorStation(id, in); err != nil {
+	if err := h.engine.StationService().Update(id, in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -104,7 +106,7 @@ func (h *Handlers) apiDeleteOperatorStation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.engine.DeleteOperatorStation(id); err != nil {
+	if err := h.engine.StationService().Delete(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -128,7 +130,7 @@ func (h *Handlers) apiMoveOperatorStation(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "direction must be up or down")
 		return
 	}
-	if err := h.engine.MoveOperatorStation(id, req.Direction); err != nil {
+	if err := h.engine.StationService().Move(id, req.Direction); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -136,7 +138,7 @@ func (h *Handlers) apiMoveOperatorStation(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handlers) apiListConfiguredProcessNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.engine.ListProcessNodes()
+	nodes, err := h.engine.ProcessService().ListNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -150,7 +152,7 @@ func (h *Handlers) apiListConfiguredProcessNodesByStation(w http.ResponseWriter,
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	nodes, err := h.engine.ListProcessNodesByStation(stationID)
+	nodes, err := h.engine.ProcessService().ListNodesByStation(stationID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -159,17 +161,17 @@ func (h *Handlers) apiListConfiguredProcessNodesByStation(w http.ResponseWriter,
 }
 
 func (h *Handlers) apiCreateProcessNode(w http.ResponseWriter, r *http.Request) {
-	var in store.ProcessNodeInput
+	var in processes.NodeInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	id, err := h.engine.CreateProcessNode(in)
+	id, err := h.engine.ProcessService().CreateNode(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	_, _ = h.engine.EnsureProcessNodeRuntime(id)
+	_, _ = h.engine.ProcessService().EnsureNodeRuntime(id)
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -179,12 +181,12 @@ func (h *Handlers) apiUpdateProcessNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var in store.ProcessNodeInput
+	var in processes.NodeInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.UpdateProcessNode(id, in); err != nil {
+	if err := h.engine.ProcessService().UpdateNode(id, in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -197,7 +199,7 @@ func (h *Handlers) apiDeleteProcessNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := h.engine.DeleteProcessNode(id); err != nil {
+	if err := h.engine.ProcessService().DeleteNode(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -210,7 +212,7 @@ func (h *Handlers) apiRequestNodeMaterial(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	result, err := h.engine.RequestNodeMaterial(id, 1)
+	result, err := h.orchestration.RequestNodeMaterial(id, 1)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -224,7 +226,7 @@ func (h *Handlers) apiReleaseNodeEmpty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.engine.ReleaseNodeEmpty(id)
+	order, err := h.orchestration.ReleaseNodeEmpty(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -245,7 +247,7 @@ func (h *Handlers) apiReleaseNodePartial(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	order, err := h.engine.ReleaseNodePartial(id, req.Qty)
+	order, err := h.orchestration.ReleaseNodePartial(id, req.Qty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -285,7 +287,7 @@ func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Req
 		}
 	}
 	disp := buildReleaseDisposition(req.Disposition, req.QtyByPart, req.CalledBy)
-	if err := h.engine.ReleaseStagedOrders(id, disp); err != nil {
+	if err := h.orchestration.ReleaseStagedOrders(id, disp); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -298,7 +300,7 @@ func (h *Handlers) apiConfirmNodeManifest(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.ConfirmNodeManifest(id); err != nil {
+	if err := h.orchestration.ConfirmNodeManifest(id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -311,7 +313,7 @@ func (h *Handlers) apiFinalizeProduceNode(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	result, err := h.engine.FinalizeProduceNode(id)
+	result, err := h.orchestration.FinalizeProduceNode(id)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -334,7 +336,7 @@ func (h *Handlers) apiLoadBin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.LoadBin(id, req.PayloadCode, req.UOPCount, req.Manifest); err != nil {
+	if err := h.orchestration.LoadBin(id, req.PayloadCode, req.UOPCount, req.Manifest); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -354,7 +356,7 @@ func (h *Handlers) apiRequestEmptyBin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	order, err := h.engine.RequestEmptyBin(id, req.PayloadCode)
+	order, err := h.orchestration.RequestEmptyBin(id, req.PayloadCode)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -375,7 +377,7 @@ func (h *Handlers) apiRequestFullBin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	order, err := h.engine.RequestFullBin(id, req.PayloadCode)
+	order, err := h.orchestration.RequestFullBin(id, req.PayloadCode)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -389,7 +391,7 @@ func (h *Handlers) apiClearBin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.ClearBin(id); err != nil {
+	if err := h.orchestration.ClearBin(id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -428,7 +430,7 @@ func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.UpdateProcessNodeRuntimeOrders(id, nil, nil); err != nil {
+	if err := h.engine.ProcessService().UpdateNodeRuntimeOrders(id, nil, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -450,7 +452,7 @@ func (h *Handlers) apiStartProcessChangeover(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	co, err := h.engine.StartProcessChangeover(processID, req.ToStyleID, req.CalledBy, req.Notes)
+	co, err := h.orchestration.StartProcessChangeover(processID, req.ToStyleID, req.CalledBy, req.Notes)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -474,7 +476,7 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	if req.NextStyleID != nil {
-		if err := h.engine.CancelProcessChangeoverRedirect(processID, req.NextStyleID); err != nil {
+		if err := h.orchestration.CancelProcessChangeoverRedirect(processID, req.NextStyleID); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -483,7 +485,7 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.engine.CancelProcessChangeover(processID); err != nil {
+	if err := h.orchestration.CancelProcessChangeover(processID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -514,7 +516,7 @@ func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if err := h.engine.ReleaseChangeoverWait(processID, req.CalledBy); err != nil {
+	if err := h.orchestration.ReleaseChangeoverWait(processID, req.CalledBy); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -528,7 +530,7 @@ func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	if err := h.engine.CompleteProcessProductionCutover(processID); err != nil {
+	if err := h.orchestration.CompleteProcessProductionCutover(processID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -547,7 +549,7 @@ func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.engine.StageNodeChangeoverMaterial(processID, nodeID)
+	order, err := h.orchestration.StageNodeChangeoverMaterial(processID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -571,7 +573,7 @@ func (h *Handlers) apiEmptyNodeForToolChange(w http.ResponseWriter, r *http.Requ
 		Qty int64 `json:"qty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	order, err := h.engine.EmptyNodeForToolChange(processID, nodeID, req.Qty)
+	order, err := h.orchestration.EmptyNodeForToolChange(processID, nodeID, req.Qty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -591,7 +593,7 @@ func (h *Handlers) apiReleaseNodeIntoProduction(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.engine.ReleaseNodeIntoProduction(processID, nodeID)
+	order, err := h.orchestration.ReleaseNodeIntoProduction(processID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -611,7 +613,7 @@ func (h *Handlers) apiSwitchNodeToTarget(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.SwitchNodeToTarget(processID, nodeID); err != nil {
+	if err := h.orchestration.SwitchNodeToTarget(processID, nodeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -630,7 +632,7 @@ func (h *Handlers) apiSwitchOperatorStationToTarget(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	if err := h.engine.SwitchOperatorStationToTarget(processID, stationID); err != nil {
+	if err := h.orchestration.SwitchOperatorStationToTarget(processID, stationID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -644,7 +646,7 @@ func (h *Handlers) apiGetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	names, err := h.engine.GetStationNodeNames(id)
+	names, err := h.engine.StationService().GetNodeNames(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -665,7 +667,7 @@ func (h *Handlers) apiSetStationClaimedNodes(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.SetStationNodes(id, req.Nodes); err != nil {
+	if err := h.engine.StationService().SetNodes(id, req.Nodes); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -679,7 +681,7 @@ func (h *Handlers) apiFlipABNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	if err := h.engine.FlipABNode(id); err != nil {
+	if err := h.orchestration.FlipABNode(id); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -9,6 +9,9 @@ import (
 	"shingo/protocol"
 	"shingocore/fleet/simulator"
 	"shingocore/store"
+	"shingocore/store/demands"
+	"shingocore/store/messaging"
+	"shingocore/store/nodes"
 )
 
 // wiring_kanban_test.go — coverage for wiring_kanban.go.
@@ -38,7 +41,7 @@ func seedLaneNodeType(t *testing.T, db *store.DB) {
 		}
 	}
 	// Fallback: create it if migrations didn't seed for some reason.
-	if err := db.CreateNodeType(&store.NodeType{Code: "LANE", Name: "Lane", IsSynthetic: true}); err != nil {
+	if err := db.CreateNodeType(&nodes.NodeType{Code: "LANE", Name: "Lane", IsSynthetic: true}); err != nil {
 		t.Fatalf("create LANE node type: %v", err)
 	}
 }
@@ -51,11 +54,11 @@ func TestIsStorageSlot_ChildOfLane(t *testing.T) {
 	seedLaneNodeType(t, db)
 
 	laneTypeID := mustGetNodeTypeID(t, db, "LANE")
-	lane := &store.Node{Name: "LANE-K1", Enabled: true, NodeTypeID: &laneTypeID}
+	lane := &nodes.Node{Name: "LANE-K1", Enabled: true, NodeTypeID: &laneTypeID}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
 	}
-	slot := &store.Node{Name: "LANE-K1-SLOT-1", Enabled: true, ParentID: &lane.ID}
+	slot := &nodes.Node{Name: "LANE-K1-SLOT-1", Enabled: true, ParentID: &lane.ID}
 	if err := db.CreateNode(slot); err != nil {
 		t.Fatalf("create slot: %v", err)
 	}
@@ -70,11 +73,11 @@ func TestIsStorageSlot_ChildOfNonLane(t *testing.T) {
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
-	parent := &store.Node{Name: "NOT-LANE", Enabled: true}
+	parent := &nodes.Node{Name: "NOT-LANE", Enabled: true}
 	if err := db.CreateNode(parent); err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
-	child := &store.Node{Name: "NOT-LANE-CHILD", Enabled: true, ParentID: &parent.ID}
+	child := &nodes.Node{Name: "NOT-LANE-CHILD", Enabled: true, ParentID: &parent.ID}
 	if err := db.CreateNode(child); err != nil {
 		t.Fatalf("create child: %v", err)
 	}
@@ -89,7 +92,7 @@ func TestIsStorageSlot_OrphanNode(t *testing.T) {
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
-	orphan := &store.Node{Name: "ORPHAN-1", Enabled: true}
+	orphan := &nodes.Node{Name: "ORPHAN-1", Enabled: true}
 	if err := db.CreateNode(orphan); err != nil {
 		t.Fatalf("create orphan: %v", err)
 	}
@@ -159,11 +162,11 @@ func TestHandleKanbanDemand_FromStorageSignalsProducers(t *testing.T) {
 
 	seedLaneNodeType(t, db)
 	laneTypeID := mustGetNodeTypeID(t, db, "LANE")
-	lane := &store.Node{Name: "LANE-FROM", Enabled: true, NodeTypeID: &laneTypeID}
+	lane := &nodes.Node{Name: "LANE-FROM", Enabled: true, NodeTypeID: &laneTypeID}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
 	}
-	slot := &store.Node{Name: "LANE-FROM-SLOT", Enabled: true, ParentID: &lane.ID}
+	slot := &nodes.Node{Name: "LANE-FROM-SLOT", Enabled: true, ParentID: &lane.ID}
 	if err := db.CreateNode(slot); err != nil {
 		t.Fatalf("create slot: %v", err)
 	}
@@ -210,11 +213,11 @@ func TestHandleKanbanDemand_ToStorageSignalsConsumers(t *testing.T) {
 
 	seedLaneNodeType(t, db)
 	laneTypeID := mustGetNodeTypeID(t, db, "LANE")
-	lane := &store.Node{Name: "LANE-TO", Enabled: true, NodeTypeID: &laneTypeID}
+	lane := &nodes.Node{Name: "LANE-TO", Enabled: true, NodeTypeID: &laneTypeID}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
 	}
-	slot := &store.Node{Name: "LANE-TO-SLOT", Enabled: true, ParentID: &lane.ID}
+	slot := &nodes.Node{Name: "LANE-TO-SLOT", Enabled: true, ParentID: &lane.ID}
 	if err := db.CreateNode(slot); err != nil {
 		t.Fatalf("create slot: %v", err)
 	}
@@ -254,8 +257,8 @@ func TestHandleKanbanDemand_NonStorageNodesSkipped(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Two plain (non-LANE-parented) nodes.
-	a := &store.Node{Name: "PLAIN-A", Enabled: true}
-	b := &store.Node{Name: "PLAIN-B", Enabled: true}
+	a := &nodes.Node{Name: "PLAIN-A", Enabled: true}
+	b := &nodes.Node{Name: "PLAIN-B", Enabled: true}
 	_ = db.CreateNode(a)
 	_ = db.CreateNode(b)
 
@@ -301,7 +304,7 @@ func mustGetNodeTypeID(t *testing.T, db *store.DB, code string) int64 {
 // use different stationIDs so they don't clobber each other.
 func seedDemandEntry(t *testing.T, db *store.DB, stationID, coreNodeName, role, payloadCode string) {
 	t.Helper()
-	if err := db.SyncDemandRegistry(stationID, []store.DemandRegistryEntry{{
+	if err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
 		StationID:    stationID,
 		CoreNodeName: coreNodeName,
 		Role:         role,
@@ -315,7 +318,7 @@ func seedDemandEntry(t *testing.T, db *store.DB, stationID, coreNodeName, role, 
 // envelope to the given station, and returns the decoded signal or nil.
 // Data envelopes wrap their subject-specific body inside a protocol.Data
 // value, which is itself the Payload of the outer Envelope.
-func findDemandSignal(t *testing.T, msgs []*store.OutboxMessage, stationID string) *protocol.DemandSignal {
+func findDemandSignal(t *testing.T, msgs []*messaging.OutboxMessage, stationID string) *protocol.DemandSignal {
 	t.Helper()
 	wantType := "data." + protocol.SubjectDemandSignal
 	for _, m := range msgs {
@@ -340,7 +343,7 @@ func findDemandSignal(t *testing.T, msgs []*store.OutboxMessage, stationID strin
 }
 
 // outboxSummary returns a compact string for test-failure messages.
-func outboxSummary(msgs []*store.OutboxMessage) []string {
+func outboxSummary(msgs []*messaging.OutboxMessage) []string {
 	out := make([]string, 0, len(msgs))
 	for _, m := range msgs {
 		out = append(out, m.MsgType+"→"+m.StationID)

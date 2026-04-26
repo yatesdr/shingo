@@ -66,6 +66,7 @@ func testHandlersWithConfigPath(t *testing.T) (*Handlers, *store.DB, string) {
 
 	h := &Handlers{
 		engine:   eng,
+		orchestration: eng,
 		sessions: newSessionStore("test-secret"),
 		tmpls:    make(map[string]*template.Template),
 		eventHub: hub,

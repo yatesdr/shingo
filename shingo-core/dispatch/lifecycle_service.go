@@ -11,6 +11,9 @@ import (
 	"shingocore/fleet"
 	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 type lifecycleError struct {
@@ -52,13 +55,13 @@ func (s *LifecycleService) dbg(format string, args ...any) {
 	}
 }
 
-func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.OrderRequest) (*store.Order, string, *lifecycleError) {
+func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.OrderRequest) (*orders.Order, string, *lifecycleError) {
 	payloadCode := p.PayloadCode
 	payloadDesc := p.PayloadDesc
 	if p.RetrieveEmpty && p.OrderType == OrderTypeRetrieve {
 		payloadDesc = "retrieve_empty"
 	}
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     p.OrderUUID,
 		StationID:    stationID,
 		OrderType:    p.OrderType,
@@ -99,8 +102,8 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	return order, payloadCode, nil
 }
 
-func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protocol.OrderStorageWaybill) (*store.Order, *lifecycleError) {
-	order := &store.Order{
+func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protocol.OrderStorageWaybill) (*orders.Order, *lifecycleError) {
+	order := &orders.Order{
 		EdgeUUID:    p.OrderUUID,
 		StationID:   stationID,
 		OrderType:   p.OrderType,
@@ -118,7 +121,7 @@ func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protoc
 	return order, nil
 }
 
-func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.OrderIngestRequest) (*store.Order, string, *lifecycleError) {
+func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.OrderIngestRequest) (*orders.Order, string, *lifecycleError) {
 	tmpl, err := s.db.GetPayloadByCode(p.PayloadCode)
 	if err != nil {
 		return nil, "", lifecycleErr("payload_error", fmt.Sprintf("payload %q not found", p.PayloadCode), err)
@@ -128,9 +131,9 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 		return nil, "", lifecycleErr("bin_error", fmt.Sprintf("bin %q not found", p.BinLabel), err)
 	}
 	if len(p.Manifest) > 0 {
-		manifest := store.BinManifest{Items: make([]store.ManifestEntry, len(p.Manifest))}
+		manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(p.Manifest))}
 		for i, item := range p.Manifest {
-			manifest.Items[i] = store.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
+			manifest.Items[i] = bins.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
 		}
 		manifestJSON, _ := json.Marshal(manifest)
 		if err := s.binManifest.SetForProduction(bin.ID, string(manifestJSON), p.PayloadCode, tmpl.UOPCapacity); err != nil {
@@ -155,7 +158,7 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 		loadedAt = time.Now().UTC().Format("2006-01-02 15:04:05")
 	}
 	s.dbg("ingest: set manifest on bin=%d, payload=%s, loaded_at=%s", bin.ID, p.PayloadCode, loadedAt)
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:    p.OrderUUID,
 		StationID:   stationID,
 		OrderType:   OrderTypeStore,
@@ -178,7 +181,7 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 	return order, p.PayloadCode, nil
 }
 
-func (s *LifecycleService) CancelOrder(order *store.Order, stationID, reason string) {
+func (s *LifecycleService) CancelOrder(order *orders.Order, stationID, reason string) {
 	if order.VendorOrderID != "" && order.Status != StatusConfirmed && order.Status != StatusFailed && order.Status != StatusCancelled {
 		if err := s.backend.CancelOrder(order.VendorOrderID); err != nil {
 			log.Printf("dispatch: cancel vendor order %s: %v", order.VendorOrderID, err)
@@ -193,7 +196,7 @@ func (s *LifecycleService) CancelOrder(order *store.Order, stationID, reason str
 	s.emitter.EmitOrderCancelled(order.ID, order.EdgeUUID, stationID, reason, order.Status)
 }
 
-func (s *LifecycleService) ConfirmReceipt(order *store.Order, stationID, receiptType string, finalCount int64) (bool, error) {
+func (s *LifecycleService) ConfirmReceipt(order *orders.Order, stationID, receiptType string, finalCount int64) (bool, error) {
 	if order.CompletedAt != nil {
 		s.dbg("delivery receipt: uuid=%s already completed at %s", order.EdgeUUID, order.CompletedAt.UTC().Format(time.RFC3339))
 		return false, nil
@@ -211,7 +214,7 @@ func (s *LifecycleService) ConfirmReceipt(order *store.Order, stationID, receipt
 	return true, nil
 }
 
-func (s *LifecycleService) PrepareRedirect(order *store.Order, newDeliveryNode string) (*store.Node, *store.Node, error) {
+func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode string) (*nodes.Node, *nodes.Node, error) {
 	if order.VendorOrderID != "" {
 		if err := s.backend.CancelOrder(order.VendorOrderID); err != nil {
 			log.Printf("dispatch: cancel for redirect %s: %v", order.VendorOrderID, err)

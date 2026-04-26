@@ -2,18 +2,22 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/payloads"
+)
 
 func TestPayloadManifestCRUD(t *testing.T) {
 	db := testDB(t)
 
-	p := &Payload{Code: "PM-TMPL-1", UOPCapacity: 100}
+	p := &payloads.Payload{Code: "PM-TMPL-1", UOPCapacity: 100}
 	if err := db.CreatePayload(p); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
 
 	// Create one item
-	item := &PayloadManifestItem{
+	item := &payloads.ManifestItem{
 		PayloadID:   p.ID,
 		PartNumber:  "PART-A",
 		Quantity:    3,
@@ -66,11 +70,11 @@ func TestPayloadManifestCRUD(t *testing.T) {
 func TestReplacePayloadManifest(t *testing.T) {
 	db := testDB(t)
 
-	p := &Payload{Code: "PM-TMPL-REPL", UOPCapacity: 50}
+	p := &payloads.Payload{Code: "PM-TMPL-REPL", UOPCapacity: 50}
 	db.CreatePayload(p)
 
 	// Start with [A, B]
-	initial := []*PayloadManifestItem{
+	initial := []*payloads.ManifestItem{
 		{PayloadID: p.ID, PartNumber: "PART-A", Quantity: 1},
 		{PayloadID: p.ID, PartNumber: "PART-B", Quantity: 2},
 	}
@@ -83,7 +87,7 @@ func TestReplacePayloadManifest(t *testing.T) {
 	}
 
 	// Replace with [C] — A and B should be gone
-	replacement := []*PayloadManifestItem{
+	replacement := []*payloads.ManifestItem{
 		{PayloadID: p.ID, PartNumber: "PART-C", Quantity: 5},
 	}
 	if err := db.ReplacePayloadManifest(p.ID, replacement); err != nil {

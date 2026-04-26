@@ -12,19 +12,13 @@ import (
 	"shingocore/store/orders"
 )
 
-// Type aliases preserve the store.Order / store.OrderHistory / store.OrderFilter
-// public API.
-type Order = orders.Order
-type OrderHistory = orders.History
-type OrderFilter = orders.Filter
-
-func (db *DB) CreateOrder(o *Order) error { return orders.Create(db.DB, o) }
+func (db *DB) CreateOrder(o *orders.Order) error { return orders.Create(db.DB, o) }
 
 // CompoundChild describes a child order to create in a compound order
 // transaction. Declared here (not in the orders sub-package) because
 // CreateCompoundChildren is cross-aggregate.
 type CompoundChild struct {
-	Order *Order
+	Order        *orders.Order
 	BinID int64 // bin to claim for this child
 }
 
@@ -64,12 +58,12 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 }
 
 // ListChildOrders returns all child orders for a parent order.
-func (db *DB) ListChildOrders(parentOrderID int64) ([]*Order, error) {
+func (db *DB) ListChildOrders(parentOrderID int64) ([]*orders.Order, error) {
 	return orders.ListChildren(db.DB, parentOrderID)
 }
 
 // GetNextChildOrder returns the next pending child order for a parent.
-func (db *DB) GetNextChildOrder(parentOrderID int64) (*Order, error) {
+func (db *DB) GetNextChildOrder(parentOrderID int64) (*orders.Order, error) {
 	return orders.GetNextChild(db.DB, parentOrderID)
 }
 
@@ -96,26 +90,26 @@ func (db *DB) UpdateOrderDeliveryNode(id int64, deliveryNode string) error {
 }
 
 func (db *DB) CompleteOrder(id int64) error            { return orders.Complete(db.DB, id) }
-func (db *DB) GetOrder(id int64) (*Order, error)       { return orders.Get(db.DB, id) }
-func (db *DB) GetOrderByUUID(uuid string) (*Order, error) {
+func (db *DB) GetOrder(id int64) (*orders.Order, error)       { return orders.Get(db.DB, id) }
+func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {
 	return orders.GetByUUID(db.DB, uuid)
 }
-func (db *DB) GetOrderByVendorID(vendorOrderID string) (*Order, error) {
+func (db *DB) GetOrderByVendorID(vendorOrderID string) (*orders.Order, error) {
 	return orders.GetByVendorID(db.DB, vendorOrderID)
 }
 
-func (db *DB) ListOrders(status string, limit int) ([]*Order, error) {
+func (db *DB) ListOrders(status string, limit int) ([]*orders.Order, error) {
 	return orders.List(db.DB, status, limit)
 }
 
 // ListOrdersFiltered returns orders matching the given filter with pagination.
-func (db *DB) ListOrdersFiltered(f OrderFilter) ([]*Order, error) {
+func (db *DB) ListOrdersFiltered(f orders.Filter) ([]*orders.Order, error) {
 	return orders.ListFiltered(db.DB, f)
 }
 
-func (db *DB) ListActiveOrders() ([]*Order, error) { return orders.ListActive(db.DB) }
+func (db *DB) ListActiveOrders() ([]*orders.Order, error) { return orders.ListActive(db.DB) }
 
-func (db *DB) ListOrderHistory(orderID int64) ([]*OrderHistory, error) {
+func (db *DB) ListOrderHistory(orderID int64) ([]*orders.History, error) {
 	return orders.ListHistory(db.DB, orderID)
 }
 
@@ -123,7 +117,7 @@ func (db *DB) UpdateOrderPriority(id int64, priority int) error {
 	return orders.UpdatePriority(db.DB, id, priority)
 }
 
-func (db *DB) ListOrdersByStation(stationID string, limit int) ([]*Order, error) {
+func (db *DB) ListOrdersByStation(stationID string, limit int) ([]*orders.Order, error) {
 	return orders.ListByStation(db.DB, stationID, limit)
 }
 
@@ -141,12 +135,12 @@ func (db *DB) ListDispatchedVendorOrderIDs() ([]string, error) {
 
 // ListActiveOrdersBySourceRef returns orders in pre-dispatch states (pending,
 // sourcing, queued) whose source_node matches any of the provided names.
-func (db *DB) ListActiveOrdersBySourceRef(names []string) ([]*Order, error) {
+func (db *DB) ListActiveOrdersBySourceRef(names []string) ([]*orders.Order, error) {
 	return orders.ListActiveBySourceRef(db.DB, names)
 }
 
 // ListQueuedOrders returns all orders in "queued" status, oldest first (FIFO).
-func (db *DB) ListQueuedOrders() ([]*Order, error) { return orders.ListQueued(db.DB) }
+func (db *DB) ListQueuedOrders() ([]*orders.Order, error) { return orders.ListQueued(db.DB) }
 
 // UpdateOrderPayloadCode sets the payload_code on an order.
 func (db *DB) UpdateOrderPayloadCode(orderID int64, payloadCode string) error {
@@ -161,9 +155,9 @@ func (db *DB) UpdateOrderBinID(orderID, binID int64) error {
 }
 
 // ListOrdersByBin returns recent orders involving a specific bin.
-// Cross-aggregate entry point: the query lives in orders/ (returns *Order)
+// Cross-aggregate entry point: the query lives in orders/ (returns *orders.Order)
 // but callers reach it via the bins-side delegate name.
-func (db *DB) ListOrdersByBin(binID int64, limit int) ([]*Order, error) {
+func (db *DB) ListOrdersByBin(binID int64, limit int) ([]*orders.Order, error) {
 	return orders.ListByBinID(db.DB, binID, limit)
 }
 

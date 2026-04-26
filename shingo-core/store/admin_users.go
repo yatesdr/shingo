@@ -4,18 +4,13 @@ package store
 // preserves the *store.DB method surface so external callers don't need
 // to change.
 
-import (
-	"shingocore/store/admin"
-)
-
-// AdminUser preserves the store.AdminUser public API.
-type AdminUser = admin.User
+import "shingocore/store/admin"
 
 func (db *DB) CreateAdminUser(username, passwordHash string) error {
 	return admin.Create(db.DB, username, passwordHash)
 }
 
-func (db *DB) GetAdminUser(username string) (*AdminUser, error) {
+func (db *DB) GetAdminUser(username string) (*admin.User, error) {
 	return admin.Get(db.DB, username)
 }
 

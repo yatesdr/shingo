@@ -2,19 +2,24 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
+)
 
 func TestNodePayload_AssignUnassignList(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "NP-NODE-1", Enabled: true}
+	node := &nodes.Node{Name: "NP-NODE-1", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
 
-	p1 := &Payload{Code: "NP-P1", UOPCapacity: 10}
+	p1 := &payloads.Payload{Code: "NP-P1", UOPCapacity: 10}
 	db.CreatePayload(p1)
-	p2 := &Payload{Code: "NP-P2", UOPCapacity: 20}
+	p2 := &payloads.Payload{Code: "NP-P2", UOPCapacity: 20}
 	db.CreatePayload(p2)
 
 	if err := db.AssignPayloadToNode(node.ID, p1.ID); err != nil {
@@ -68,14 +73,14 @@ func TestNodePayload_AssignUnassignList(t *testing.T) {
 func TestSetNodePayloads_Replaces(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "NP-SET-1", Enabled: true}
+	node := &nodes.Node{Name: "NP-SET-1", Enabled: true}
 	db.CreateNode(node)
 
-	pA := &Payload{Code: "NP-SET-A"}
+	pA := &payloads.Payload{Code: "NP-SET-A"}
 	db.CreatePayload(pA)
-	pB := &Payload{Code: "NP-SET-B"}
+	pB := &payloads.Payload{Code: "NP-SET-B"}
 	db.CreatePayload(pB)
-	pC := &Payload{Code: "NP-SET-C"}
+	pC := &payloads.Payload{Code: "NP-SET-C"}
 	db.CreatePayload(pC)
 
 	// [A, B]
@@ -112,12 +117,12 @@ func TestSetNodePayloads_Replaces(t *testing.T) {
 func TestGetEffectivePayloads_InheritFromParent(t *testing.T) {
 	db := testDB(t)
 
-	parent := &Node{Name: "NP-EFF-PARENT", Enabled: true}
+	parent := &nodes.Node{Name: "NP-EFF-PARENT", Enabled: true}
 	db.CreateNode(parent)
-	child := &Node{Name: "NP-EFF-CHILD", Enabled: true, ParentID: &parent.ID}
+	child := &nodes.Node{Name: "NP-EFF-CHILD", Enabled: true, ParentID: &parent.ID}
 	db.CreateNode(child)
 
-	p := &Payload{Code: "NP-EFF-P"}
+	p := &payloads.Payload{Code: "NP-EFF-P"}
 	db.CreatePayload(p)
 
 	// Assign at parent. Child has no direct assignments — should inherit.

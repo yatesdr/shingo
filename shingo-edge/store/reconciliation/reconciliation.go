@@ -8,8 +8,11 @@
 // `store.ReconciliationSummary = reconciliation.Summary`) and one-line
 // delegate methods on *store.DB so external callers see no API change.
 //
-// Note: this package imports shingoedge/store/outbox to share the
+// Note: this package imports shingoedge/store/messaging to share the
 // MaxRetries const used to compute pending vs. dead-letter counts.
+// Phase 6.0c renamed the package from outbox to messaging; the table
+// name on disk is still `outbox`. The depguard cross-aggregate
+// allow-list permits this single import.
 package reconciliation
 
 import (
@@ -17,7 +20,7 @@ import (
 	"time"
 
 	"shingoedge/store/internal/helpers"
-	"shingoedge/store/outbox"
+	"shingoedge/store/messaging"
 )
 
 // criticalOutboxAge is the age at which an unsent outbox message
@@ -125,7 +128,7 @@ func GetSummary(db *sql.DB) (*Summary, error) {
 	summary := &Summary{TotalAnomalies: len(anomalies)}
 
 	// MIN(created_at) returns NULL when no rows match, so scan into NullString.
-	row := db.QueryRow(`SELECT COUNT(*), MIN(created_at) FROM outbox WHERE sent_at IS NULL AND retries < ?`, outbox.MaxRetries)
+	row := db.QueryRow(`SELECT COUNT(*), MIN(created_at) FROM outbox WHERE sent_at IS NULL AND retries < ?`, messaging.MaxRetries)
 	var oldest sql.NullString
 	if err := row.Scan(&summary.OutboxPending, &oldest); err != nil {
 		return nil, err
@@ -134,7 +137,7 @@ func GetSummary(db *sql.DB) (*Summary, error) {
 		t := helpers.ScanTime(oldest.String)
 		summary.OldestOutboxAt = &t
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE sent_at IS NULL AND retries >= ?`, outbox.MaxRetries).Scan(&summary.DeadLetters); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE sent_at IS NULL AND retries >= ?`, messaging.MaxRetries).Scan(&summary.DeadLetters); err != nil {
 		return nil, err
 	}
 	for _, a := range anomalies {

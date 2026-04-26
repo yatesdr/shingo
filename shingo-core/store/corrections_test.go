@@ -2,15 +2,20 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/inventory"
+	"shingocore/store/nodes"
+)
 
 func TestCorrectionCRUD(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "S1", Enabled: true}
+	node := &nodes.Node{Name: "S1", Enabled: true}
 	db.CreateNode(node)
 
-	c := &Correction{
+	c := &inventory.Correction{
 		CorrectionType: "add",
 		NodeID:         node.ID,
 		Quantity:       5.0,

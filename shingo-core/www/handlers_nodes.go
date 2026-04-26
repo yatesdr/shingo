@@ -11,7 +11,8 @@ import (
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/service"
-	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/scene"
 )
 
 // parseNodeAssignments pulls the station + bin-type selections out of
@@ -66,7 +67,7 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 	area := r.URL.Query().Get("area")
 
 	var (
-		points []*store.ScenePoint
+		points []*scene.Point
 		err    error
 	)
 	switch {
@@ -119,7 +120,7 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node := &store.Node{
+	node := &nodes.Node{
 		Name:     r.FormValue("name"),
 		Zone:     r.FormValue("zone"),
 		Enabled:  r.FormValue("enabled") == "on",
@@ -202,7 +203,7 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleNodeSyncFleet(w http.ResponseWriter, r *http.Request) {
-	total, created, deleted, err := h.engine.SceneSync()
+	total, created, deleted, err := h.orchestration.SceneSync()
 	if err != nil {
 		log.Printf("node sync: %v", err)
 	} else {
@@ -224,8 +225,8 @@ func (h *Handlers) handleSceneSync(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/nodes", http.StatusSeeOther)
 		return
 	}
-	total, locationSet := h.engine.SyncScenePoints(areas)
-	h.engine.UpdateNodeZones(locationSet, false)
+	total, locationSet := h.orchestration.SyncScenePoints(areas)
+	h.orchestration.UpdateNodeZones(locationSet, false)
 	log.Printf("scene sync: %d points synced", total)
 	http.Redirect(w, r, "/nodes", http.StatusSeeOther)
 }
@@ -311,7 +312,7 @@ func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 	binTypeMode := svc.GetNodeProperty(id, "bin_type_mode")
 	stationMode := svc.GetNodeProperty(id, "station_mode")
 
-	var children []*store.Node
+	var children []*nodes.Node
 	if node.IsSynthetic {
 		children, err = svc.ListChildNodes(id)
 		if err != nil {
@@ -358,12 +359,12 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 	svc := h.engine.NodeService()
 
 	// Check if test nodes already exist.
-	nodes, err := svc.ListNodes()
+	nodeList, err := svc.ListNodes()
 	if err != nil {
 		h.jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	for _, n := range nodes {
+	for _, n := range nodeList {
 		if strings.HasPrefix(n.Name, "TEST-") {
 			h.jsonError(w, "test nodes already exist — delete them first", http.StatusConflict)
 			return
@@ -399,7 +400,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 	created := 0
 	for _, d := range defs {
-		n := &store.Node{
+		n := &nodes.Node{
 			Name:    d.name,
 			Zone:    d.zone,
 			Enabled: true,
@@ -421,7 +422,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 	// Two direct children on the group node.
 	for _, name := range []string{"TEST-NGRP-1-D1", "TEST-NGRP-1-D2"} {
-		child := &store.Node{
+		child := &nodes.Node{
 			Name:     name,
 			Zone:     "Production",
 			Enabled:  true,
@@ -445,7 +446,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 		for i := 1; i <= 4; i++ {
 			slotName := fmt.Sprintf("%s-S%d", laneName, i)
-			slot := &store.Node{
+			slot := &nodes.Node{
 				Name:     slotName,
 				Zone:     "Production",
 				Enabled:  true,
@@ -568,4 +569,3 @@ func (h *Handlers) apiNodePropertyDelete(w http.ResponseWriter, r *http.Request)
 	}
 	h.jsonSuccess(w)
 }
-

@@ -3,7 +3,9 @@ package fulfillment
 import (
 	"errors"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // fakeStore is an in-memory Store used by the fulfillment scanner
@@ -18,12 +20,12 @@ import (
 // reaching past it.
 type fakeStore struct {
 	// Seed data.
-	queued       []*store.Order
-	ordersByID   map[int64]*store.Order
-	nodesByDot   map[string]*store.Node
-	nodesByID    map[int64]*store.Node
-	emptyBin     *store.Bin
-	sourceBin    *store.Bin
+	queued       []*orders.Order
+	ordersByID   map[int64]*orders.Order
+	nodesByDot   map[string]*nodes.Node
+	nodesByID    map[int64]*nodes.Node
+	emptyBin     *bins.Bin
+	sourceBin    *bins.Bin
 	inFlightAt   map[string]int
 	binsAtNode   map[int64]int
 
@@ -41,7 +43,7 @@ type fakeStore struct {
 	// lookup for GetNodeByDotName. Used by the DestNodeLookupFails
 	// scenario to succeed on the first call (bin-occupancy check)
 	// and fail on the second (final destination resolution).
-	getNodeByDotNameFn func(name string) (*store.Node, error)
+	getNodeByDotNameFn func(name string) (*nodes.Node, error)
 
 	// onListQueuedOrders, when non-nil, is invoked on every
 	// ListQueuedOrders call before results are returned. Used by
@@ -82,9 +84,9 @@ type findEmptyCall struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		ordersByID: map[int64]*store.Order{},
-		nodesByDot: map[string]*store.Node{},
-		nodesByID:  map[int64]*store.Node{},
+		ordersByID: map[int64]*orders.Order{},
+		nodesByDot: map[string]*nodes.Node{},
+		nodesByID:  map[int64]*nodes.Node{},
 		inFlightAt: map[string]int{},
 		binsAtNode: map[int64]int{},
 	}
@@ -92,7 +94,7 @@ func newFakeStore() *fakeStore {
 
 // --- Store interface ---------------------------------------------
 
-func (f *fakeStore) ListQueuedOrders() ([]*store.Order, error) {
+func (f *fakeStore) ListQueuedOrders() ([]*orders.Order, error) {
 	if f.onListQueuedOrders != nil {
 		f.onListQueuedOrders()
 	}
@@ -102,7 +104,7 @@ func (f *fakeStore) ListQueuedOrders() ([]*store.Order, error) {
 	return f.queued, nil
 }
 
-func (f *fakeStore) GetOrder(id int64) (*store.Order, error) {
+func (f *fakeStore) GetOrder(id int64) (*orders.Order, error) {
 	if f.errGetOrder != nil {
 		return nil, f.errGetOrder
 	}
@@ -120,7 +122,7 @@ func (f *fakeStore) CountInFlightOrdersByDeliveryNode(deliveryNode string) (int,
 	return f.inFlightAt[deliveryNode], nil
 }
 
-func (f *fakeStore) GetNode(id int64) (*store.Node, error) {
+func (f *fakeStore) GetNode(id int64) (*nodes.Node, error) {
 	if f.errGetNode != nil {
 		return nil, f.errGetNode
 	}
@@ -131,7 +133,7 @@ func (f *fakeStore) GetNode(id int64) (*store.Node, error) {
 	return n, nil
 }
 
-func (f *fakeStore) GetNodeByDotName(name string) (*store.Node, error) {
+func (f *fakeStore) GetNodeByDotName(name string) (*nodes.Node, error) {
 	if f.getNodeByDotNameFn != nil {
 		return f.getNodeByDotNameFn(name)
 	}
@@ -149,7 +151,7 @@ func (f *fakeStore) CountBinsByNode(nodeID int64) (int, error) {
 	return f.binsAtNode[nodeID], nil
 }
 
-func (f *fakeStore) FindEmptyCompatibleBin(payloadCode, preferZone string) (*store.Bin, error) {
+func (f *fakeStore) FindEmptyCompatibleBin(payloadCode, preferZone string) (*bins.Bin, error) {
 	f.findEmptyPrefZones = append(f.findEmptyPrefZones, findEmptyCall{
 		PayloadCode: payloadCode,
 		PreferZone:  preferZone,
@@ -160,7 +162,7 @@ func (f *fakeStore) FindEmptyCompatibleBin(payloadCode, preferZone string) (*sto
 	return f.emptyBin, nil
 }
 
-func (f *fakeStore) FindSourceBinFIFO(payloadCode string) (*store.Bin, error) {
+func (f *fakeStore) FindSourceBinFIFO(payloadCode string) (*bins.Bin, error) {
 	if f.errFindSourceBinFIFO != nil {
 		return nil, f.errFindSourceBinFIFO
 	}

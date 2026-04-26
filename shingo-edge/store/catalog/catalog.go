@@ -1,11 +1,17 @@
-// Package payloads holds payload-catalog persistence for shingo-edge.
+// Package catalog holds payload-catalog persistence for shingo-edge.
+// The catalog is synced from core's `payloads/` (which holds the
+// canonical payload templates); edge keeps a local read-through copy
+// so HMI lookups don't have to hit core for every render.
 //
-// Phase 5b of the architecture plan moved the payload_catalog CRUD out
-// of the flat store/ package and into this sub-package. The outer
-// store/ keeps a type alias (`store.PayloadCatalogEntry =
-// payloads.CatalogEntry`) and one-line delegate methods on *store.DB so
-// external callers see no API change.
-package payloads
+// Phase 5b moved this CRUD out of the flat store/ package; Phase 6.0c
+// renamed the sub-package from `payloads/` to `catalog/`. The rename
+// disambiguates from core's `payloads/` (which holds the source-of-
+// truth template definitions) — same word, different responsibility.
+// On-disk table name `payload_catalog` is unchanged. The outer store/
+// keeps a type alias (`store.PayloadCatalogEntry = catalog.CatalogEntry`)
+// and one-line delegate methods on *store.DB so external callers see
+// no API change.
+package catalog
 
 import (
 	"database/sql"

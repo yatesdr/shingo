@@ -1,14 +1,27 @@
 //go:build docker
 
-package store
+package service
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/internal/testdb"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+)
+
+// TestVerifyTag_NoOrder, _NoBin, _LearnEmptyLabel, _MatchAndMismatch
+// exercise the four branches of TagVerifyService.VerifyTag. The
+// orchestration body lives in this package as of Phase 6.4a (moved
+// from store/tag_verify.go's deleted (db *DB).VerifyTag method).
 
 func TestVerifyTag_NoOrder(t *testing.T) {
-	db := testDB(t)
+	db := testdb.Open(t)
+	svc := NewTagVerifyService(db)
 
 	// Unknown order UUID — best-effort: Match=true, helpful Detail.
-	res := db.VerifyTag("no-such-uuid", "TAG-1", "LINE-1")
+	res := svc.VerifyTag("no-such-uuid", "TAG-1", "LINE-1")
 	if res == nil {
 		t.Fatal("result should never be nil")
 	}
@@ -21,35 +34,37 @@ func TestVerifyTag_NoOrder(t *testing.T) {
 }
 
 func TestVerifyTag_NoBin(t *testing.T) {
-	db := testDB(t)
+	db := testdb.Open(t)
+	svc := NewTagVerifyService(db)
 
 	// Order with no bin assigned
-	o := &Order{EdgeUUID: "tv-no-bin", Status: "pending"}
+	o := &orders.Order{EdgeUUID: "tv-no-bin", Status: "pending"}
 	db.CreateOrder(o)
 
-	res := db.VerifyTag("tv-no-bin", "TAG-2", "LINE-1")
+	res := svc.VerifyTag("tv-no-bin", "TAG-2", "LINE-1")
 	if !res.Match {
 		t.Errorf("no-bin Match = false, want true (best-effort)")
 	}
 }
 
 func TestVerifyTag_LearnEmptyLabel(t *testing.T) {
-	db := testDB(t)
+	db := testdb.Open(t)
+	svc := NewTagVerifyService(db)
 
-	bt := &BinType{Code: "TV-BT", Description: "tv"}
+	bt := &bins.BinType{Code: "TV-BT", Description: "tv"}
 	db.CreateBinType(bt)
 
-	node := &Node{Name: "TV-NODE", Enabled: true}
+	node := &nodes.Node{Name: "TV-NODE", Enabled: true}
 	db.CreateNode(node)
 
 	// Bin with NO label (empty string) — this is the "learn" branch
-	bin := &Bin{BinTypeID: bt.ID, NodeID: &node.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin)
 
-	o := &Order{EdgeUUID: "tv-learn", Status: "pending", BinID: &bin.ID}
+	o := &orders.Order{EdgeUUID: "tv-learn", Status: "pending", BinID: &bin.ID}
 	db.CreateOrder(o)
 
-	res := db.VerifyTag("tv-learn", "LEARNED-TAG", "LINE-1")
+	res := svc.VerifyTag("tv-learn", "LEARNED-TAG", "LINE-1")
 	if !res.Match {
 		t.Errorf("learn Match = false, want true")
 	}
@@ -62,21 +77,22 @@ func TestVerifyTag_LearnEmptyLabel(t *testing.T) {
 }
 
 func TestVerifyTag_MatchAndMismatch(t *testing.T) {
-	db := testDB(t)
+	db := testdb.Open(t)
+	svc := NewTagVerifyService(db)
 
-	bt := &BinType{Code: "TV-BT2", Description: "tv2"}
+	bt := &bins.BinType{Code: "TV-BT2", Description: "tv2"}
 	db.CreateBinType(bt)
-	node := &Node{Name: "TV-NODE2", Enabled: true}
+	node := &nodes.Node{Name: "TV-NODE2", Enabled: true}
 	db.CreateNode(node)
 
-	bin := &Bin{BinTypeID: bt.ID, Label: "TAG-EXPECTED", NodeID: &node.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "TAG-EXPECTED", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin)
 
-	o := &Order{EdgeUUID: "tv-verify", Status: "pending", BinID: &bin.ID}
+	o := &orders.Order{EdgeUUID: "tv-verify", Status: "pending", BinID: &bin.ID}
 	db.CreateOrder(o)
 
 	// Match path
-	match := db.VerifyTag("tv-verify", "TAG-EXPECTED", "LINE-2")
+	match := svc.VerifyTag("tv-verify", "TAG-EXPECTED", "LINE-2")
 	if !match.Match {
 		t.Errorf("exact match Match = false, want true")
 	}
@@ -85,7 +101,7 @@ func TestVerifyTag_MatchAndMismatch(t *testing.T) {
 	}
 
 	// Mismatch path — Match=false, Expected=existing label
-	mism := db.VerifyTag("tv-verify", "WRONG-TAG", "LINE-2")
+	mism := svc.VerifyTag("tv-verify", "WRONG-TAG", "LINE-2")
 	if mism.Match {
 		t.Error("mismatch Match = true, want false")
 	}

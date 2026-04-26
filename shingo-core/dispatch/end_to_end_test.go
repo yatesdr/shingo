@@ -23,7 +23,10 @@ import (
 
 	"shingo/protocol"
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 func TestDispatcher_RetrieveOrder_FullLifecycle(t *testing.T) {
@@ -186,7 +189,7 @@ func TestDispatcher_CancelOrder(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin with a manifest
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-CAN-1", NodeID: &storageNode.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-CAN-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
@@ -243,11 +246,11 @@ func TestDispatcher_RedirectOrder(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create another line node
-	lineNode2 := &store.Node{Name: "LINE2-IN", Enabled: true}
+	lineNode2 := &nodes.Node{Name: "LINE2-IN", Enabled: true}
 	db.CreateNode(lineNode2)
 
 	// Create a bin with a manifest
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-RED-1", NodeID: &storageNode.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-RED-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
@@ -292,7 +295,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	}
 
 	// Create a synthetic parent node (delivery zone)
-	parentNode := &store.Node{
+	parentNode := &nodes.Node{
 		Name: "ZONE-A", IsSynthetic: true,
 		NodeTypeID: &syntheticType.ID, Enabled: true,
 	}
@@ -301,21 +304,21 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 	}
 
 	// Create child nodes under the synthetic parent (lineside slots)
-	child1 := &store.Node{Name: "ZONE-A-01", Enabled: true}
-	child2 := &store.Node{Name: "ZONE-A-02", Enabled: true}
+	child1 := &nodes.Node{Name: "ZONE-A-01", Enabled: true}
+	child2 := &nodes.Node{Name: "ZONE-A-02", Enabled: true}
 	db.CreateNode(child1)
 	db.CreateNode(child2)
 	db.SetNodeParent(child1.ID, parentNode.ID)
 	db.SetNodeParent(child2.ID, parentNode.ID)
 
 	// Put a bin at child2 to occupy it (child2 occupied, child1 empty)
-	occBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-OCC", NodeID: &child2.ID, Status: "available"}
+	occBin := &bins.Bin{BinTypeID: 1, Label: "BIN-SYN-OCC", NodeID: &child2.ID, Status: "available"}
 	db.CreateBin(occBin)
 
 	// Create source bin at a separate node for FIFO to find
-	srcNode := &store.Node{Name: "SRC-SYN", Enabled: true}
+	srcNode := &nodes.Node{Name: "SRC-SYN", Enabled: true}
 	db.CreateNode(srcNode)
-	srcBin := &store.Bin{BinTypeID: 1, Label: "BIN-SYN-SRC", NodeID: &srcNode.ID, Status: "available"}
+	srcBin := &bins.Bin{BinTypeID: 1, Label: "BIN-SYN-SRC", NodeID: &srcNode.ID, Status: "available"}
 	db.CreateBin(srcBin)
 	db.SetBinManifest(srcBin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(srcBin.ID, "")
@@ -371,11 +374,11 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	}
 
 	// Create NGRP zone with 3 physical children
-	zone := &store.Node{Name: "PRESS-A1", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	zone := &nodes.Node{Name: "PRESS-A1", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
 	db.CreateNode(zone)
-	slot1 := &store.Node{Name: "PRESS-A1-01", Enabled: true}
-	slot2 := &store.Node{Name: "PRESS-A1-02", Enabled: true}
-	slot3 := &store.Node{Name: "PRESS-A1-03", Enabled: true}
+	slot1 := &nodes.Node{Name: "PRESS-A1-01", Enabled: true}
+	slot2 := &nodes.Node{Name: "PRESS-A1-02", Enabled: true}
+	slot3 := &nodes.Node{Name: "PRESS-A1-03", Enabled: true}
 	db.CreateNode(slot1)
 	db.CreateNode(slot2)
 	db.CreateNode(slot3)
@@ -384,17 +387,17 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	db.SetNodeParent(slot3.ID, zone.ID)
 
 	// Create source payloads in a supermarket (payload A x2, payload B x1)
-	bpA := &store.Payload{Code: "PART-MULTI-A"}
-	bpB := &store.Payload{Code: "PART-MULTI-B"}
+	bpA := &payloads.Payload{Code: "PART-MULTI-A"}
+	bpB := &payloads.Payload{Code: "PART-MULTI-B"}
 	db.CreatePayload(bpA)
 	db.CreatePayload(bpB)
 
-	supermarket := &store.Node{Name: "SM-MULTI", Zone: "W", Enabled: true}
+	supermarket := &nodes.Node{Name: "SM-MULTI", Zone: "W", Enabled: true}
 	db.CreateNode(supermarket)
 
-	binA1 := &store.Bin{BinTypeID: 1, Label: "M-A1", NodeID: &supermarket.ID, Status: "available"}
-	binA2 := &store.Bin{BinTypeID: 1, Label: "M-A2", NodeID: &supermarket.ID, Status: "available"}
-	binB1 := &store.Bin{BinTypeID: 1, Label: "M-B1", NodeID: &supermarket.ID, Status: "available"}
+	binA1 := &bins.Bin{BinTypeID: 1, Label: "M-A1", NodeID: &supermarket.ID, Status: "available"}
+	binA2 := &bins.Bin{BinTypeID: 1, Label: "M-A2", NodeID: &supermarket.ID, Status: "available"}
+	binB1 := &bins.Bin{BinTypeID: 1, Label: "M-B1", NodeID: &supermarket.ID, Status: "available"}
 	db.CreateBin(binA1)
 	db.CreateBin(binA2)
 	db.CreateBin(binB1)
@@ -445,7 +448,7 @@ func TestDispatcher_MultiOrderToSyntheticNGRP(t *testing.T) {
 	o3 := testdb.RequireOrder(t, db, "multi-3")
 
 	// All three should be dispatched
-	for _, o := range []*store.Order{o1, o2, o3} {
+	for _, o := range []*orders.Order{o1, o2, o3} {
 		if o.Status != StatusDispatched {
 			t.Errorf("order %s status = %q, want dispatched", o.EdgeUUID, o.Status)
 		}
@@ -493,29 +496,29 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	syntheticType, _ := db.GetNodeTypeByCode("NGRP")
 
 	// Create NGRP zone with 2 children, one occupied
-	zone := &store.Node{Name: "EMPTY-ZONE", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	zone := &nodes.Node{Name: "EMPTY-ZONE", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
 	db.CreateNode(zone)
-	slot1 := &store.Node{Name: "EZ-01", Enabled: true}
-	slot2 := &store.Node{Name: "EZ-02", Enabled: true}
+	slot1 := &nodes.Node{Name: "EZ-01", Enabled: true}
+	slot2 := &nodes.Node{Name: "EZ-02", Enabled: true}
 	db.CreateNode(slot1)
 	db.CreateNode(slot2)
 	db.SetNodeParent(slot1.ID, zone.ID)
 	db.SetNodeParent(slot2.ID, zone.ID)
 
 	// Occupy slot1
-	occBin := &store.Bin{BinTypeID: 1, Label: "OCC-1", NodeID: &slot1.ID, Status: "available"}
+	occBin := &bins.Bin{BinTypeID: 1, Label: "OCC-1", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(occBin)
 
 	// Create payload with bin type compatibility
-	bp := &store.Payload{Code: "EMPTY-BP"}
+	bp := &payloads.Payload{Code: "EMPTY-BP"}
 	db.CreatePayload(bp)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
 	// Create an empty compatible bin somewhere (source)
-	srcNode := &store.Node{Name: "EMPTY-SRC", Enabled: true}
+	srcNode := &nodes.Node{Name: "EMPTY-SRC", Enabled: true}
 	db.CreateNode(srcNode)
-	emptyBin := &store.Bin{BinTypeID: bt.ID, Label: "EMPTY-BIN-1", NodeID: &srcNode.ID, Status: "available"}
+	emptyBin := &bins.Bin{BinTypeID: bt.ID, Label: "EMPTY-BIN-1", NodeID: &srcNode.ID, Status: "available"}
 	db.CreateBin(emptyBin)
 
 	backend := testdb.NewTrackingBackend()
@@ -559,56 +562,56 @@ func TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle(t *testing.T) {
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
 	lanType, _ := db.GetNodeTypeByCode("LANE")
 
-	bp := &store.Payload{Code: "TC41-BP"}
+	bp := &payloads.Payload{Code: "TC41-BP"}
 	db.CreatePayload(bp)
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
 	// Create NGRP with 2 lanes of 3 slots
-	grp := &store.Node{Name: "TC41-GRP", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	grp := &nodes.Node{Name: "TC41-GRP", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
 	db.CreateNode(grp)
 	grp, _ = db.GetNode(grp.ID)
 
 	// Lane 1: full bins at depth 1+2, empty buried at depth 3
-	lane1 := &store.Node{Name: "TC41-L1", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
+	lane1 := &nodes.Node{Name: "TC41-L1", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(lane1)
 	lane1, _ = db.GetNode(lane1.ID)
 
 	d1, d2, d3 := 1, 2, 3
-	l1s1 := &store.Node{Name: "TC41-L1-S1", ParentID: &lane1.ID, Enabled: true, Depth: &d1}
+	l1s1 := &nodes.Node{Name: "TC41-L1-S1", ParentID: &lane1.ID, Enabled: true, Depth: &d1}
 	db.CreateNode(l1s1)
-	l1s2 := &store.Node{Name: "TC41-L1-S2", ParentID: &lane1.ID, Enabled: true, Depth: &d2}
+	l1s2 := &nodes.Node{Name: "TC41-L1-S2", ParentID: &lane1.ID, Enabled: true, Depth: &d2}
 	db.CreateNode(l1s2)
-	l1s3 := &store.Node{Name: "TC41-L1-S3", ParentID: &lane1.ID, Enabled: true, Depth: &d3}
+	l1s3 := &nodes.Node{Name: "TC41-L1-S3", ParentID: &lane1.ID, Enabled: true, Depth: &d3}
 	db.CreateNode(l1s3)
 
 	// Full bins blocking lane 1
-	blkBin1 := &store.Bin{BinTypeID: bt.ID, Label: "TC41-FULL-1", NodeID: &l1s1.ID, Status: "available"}
+	blkBin1 := &bins.Bin{BinTypeID: bt.ID, Label: "TC41-FULL-1", NodeID: &l1s1.ID, Status: "available"}
 	db.CreateBin(blkBin1)
 	db.SetBinManifest(blkBin1.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(blkBin1.ID, "")
 
-	blkBin2 := &store.Bin{BinTypeID: bt.ID, Label: "TC41-FULL-2", NodeID: &l1s2.ID, Status: "available"}
+	blkBin2 := &bins.Bin{BinTypeID: bt.ID, Label: "TC41-FULL-2", NodeID: &l1s2.ID, Status: "available"}
 	db.CreateBin(blkBin2)
 	db.SetBinManifest(blkBin2.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(blkBin2.ID, "")
 
 	// Buried empty at depth 3
-	emptyBin := &store.Bin{BinTypeID: bt.ID, Label: "TC41-EMPTY", NodeID: &l1s3.ID, Status: "available"}
+	emptyBin := &bins.Bin{BinTypeID: bt.ID, Label: "TC41-EMPTY", NodeID: &l1s3.ID, Status: "available"}
 	db.CreateBin(emptyBin)
 
 	// Lane 2: completely empty — provides shuffle slots for the reshuffle
-	lane2 := &store.Node{Name: "TC41-L2", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
+	lane2 := &nodes.Node{Name: "TC41-L2", IsSynthetic: true, NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(lane2)
 	lane2, _ = db.GetNode(lane2.ID)
 
-	l2s1 := &store.Node{Name: "TC41-L2-S1", ParentID: &lane2.ID, Enabled: true, Depth: &d1}
+	l2s1 := &nodes.Node{Name: "TC41-L2-S1", ParentID: &lane2.ID, Enabled: true, Depth: &d1}
 	db.CreateNode(l2s1)
-	l2s2 := &store.Node{Name: "TC41-L2-S2", ParentID: &lane2.ID, Enabled: true, Depth: &d2}
+	l2s2 := &nodes.Node{Name: "TC41-L2-S2", ParentID: &lane2.ID, Enabled: true, Depth: &d2}
 	db.CreateNode(l2s2)
 
 	// Delivery target (lineside node)
-	destNode := &store.Node{Name: "TC41-LINE", Enabled: true}
+	destNode := &nodes.Node{Name: "TC41-LINE", Enabled: true}
 	db.CreateNode(destNode)
 
 	backend := testdb.NewTrackingBackend()
@@ -659,16 +662,16 @@ func TestDispatcher_DotNotationBypassesResolver(t *testing.T) {
 	_, _, bp := setupTestData(t, db)
 
 	syntheticType, _ := db.GetNodeTypeByCode("NGRP")
-	zone := &store.Node{Name: "DOT-ZONE", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	zone := &nodes.Node{Name: "DOT-ZONE", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
 	db.CreateNode(zone)
-	child := &store.Node{Name: "SLOT-X", Enabled: true}
+	child := &nodes.Node{Name: "SLOT-X", Enabled: true}
 	db.CreateNode(child)
 	db.SetNodeParent(child.ID, zone.ID)
 
 	// Create source bin
-	srcNode := &store.Node{Name: "DOT-SRC", Enabled: true}
+	srcNode := &nodes.Node{Name: "DOT-SRC", Enabled: true}
 	db.CreateNode(srcNode)
-	bin := &store.Bin{BinTypeID: 1, Label: "DOT-BIN-1", NodeID: &srcNode.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "DOT-BIN-1", NodeID: &srcNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
@@ -709,7 +712,7 @@ func TestDispatcher_FleetFailure(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create a bin with a manifest
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-FF-1", NodeID: &storageNode.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-FF-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
@@ -754,12 +757,12 @@ func TestDispatcher_PriorityHandling(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create bins with manifests
-	bin1 := &store.Bin{BinTypeID: 1, Label: "BIN-PRI-1", NodeID: &storageNode.ID, Status: "available"}
+	bin1 := &bins.Bin{BinTypeID: 1, Label: "BIN-PRI-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin1)
 	db.SetBinManifest(bin1.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin1.ID, "")
 
-	bin2 := &store.Bin{BinTypeID: 1, Label: "BIN-PRI-2", NodeID: &storageNode.ID, Status: "available"}
+	bin2 := &bins.Bin{BinTypeID: 1, Label: "BIN-PRI-2", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin2)
 	db.SetBinManifest(bin2.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin2.ID, "")
@@ -807,7 +810,7 @@ func TestHandleRetrieve_BinTracking(t *testing.T) {
 	storageNode, lineNode, bp := setupTestData(t, db)
 
 	// Create bin with manifest
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-BT-1", NodeID: &storageNode.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-BT-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(bin.ID, "")
@@ -854,10 +857,10 @@ func TestHandleOrderIngest(t *testing.T) {
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
 	// Create an empty bin at the station (simulating a bin at a produce location)
-	produceNode := &store.Node{Name: "PRODUCE-1", Enabled: true}
+	produceNode := &nodes.Node{Name: "PRODUCE-1", Enabled: true}
 	db.CreateNode(produceNode)
 
-	bin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-ING-1", NodeID: &produceNode.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-ING-1", NodeID: &produceNode.ID, Status: "available"}
 	db.CreateBin(bin)
 
 	// Also create a storage node for the store destination
@@ -986,26 +989,26 @@ func TestDispatcher_MoveOrder_NGRPSource_NoBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get LANE type: %v", err)
 	}
-	bp := &store.Payload{Code: "PART-MVEMPTY", Description: "test"}
+	bp := &payloads.Payload{Code: "PART-MVEMPTY", Description: "test"}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
 
 	// Create NGRP with an empty lane (no bins)
-	grp := &store.Node{Name: "GRP-MVEMPTY", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
+	grp := &nodes.Node{Name: "GRP-MVEMPTY", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
 	if err := db.CreateNode(grp); err != nil {
 		t.Fatalf("create NGRP: %v", err)
 	}
-	lane := &store.Node{Name: "GRP-MVEMPTY-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
+	lane := &nodes.Node{Name: "GRP-MVEMPTY-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	if err := db.CreateNode(lane); err != nil {
 		t.Fatalf("create lane: %v", err)
 	}
 	depth := 1
-	slot := &store.Node{Name: "GRP-MVEMPTY-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth}
+	slot := &nodes.Node{Name: "GRP-MVEMPTY-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth}
 	if err := db.CreateNode(slot); err != nil {
 		t.Fatalf("create slot: %v", err)
 	}
-	lineNode := &store.Node{Name: "LINE-MVEMPTY", Enabled: true}
+	lineNode := &nodes.Node{Name: "LINE-MVEMPTY", Enabled: true}
 	if err := db.CreateNode(lineNode); err != nil {
 		t.Fatalf("create line: %v", err)
 	}

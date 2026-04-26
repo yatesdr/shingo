@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingocore/store"
+	"shingocore/store/telemetry"
 )
 
 // seedMission inserts a mission_telemetry row (via UpsertMissionTelemetry)
@@ -15,9 +16,9 @@ import (
 // BlocksJSON/ErrorsJSON/WarningsJSON/NoticesJSON must be valid JSON — the
 // underlying columns are jsonb, so empty string is rejected. We seed "[]"
 // for consistency with store/telemetry_test.go.
-func seedMission(t *testing.T, db *store.DB, orderID int64, station, robot, state string) *store.MissionTelemetry {
+func seedMission(t *testing.T, db *store.DB, orderID int64, station, robot, state string) *telemetry.Mission {
 	t.Helper()
-	tel := &store.MissionTelemetry{
+	tel := &telemetry.Mission{
 		OrderID:       orderID,
 		VendorOrderID: "vendor-" + station,
 		RobotID:       robot,
@@ -59,7 +60,7 @@ func TestMissionService_ListEvents_ReturnsInserted(t *testing.T) {
 	// BlocksJSON/ErrorsJSON columns are jsonb — empty strings are rejected,
 	// so seed "[]".
 	for _, state := range []string{"started", "moving"} {
-		e := &store.MissionEvent{
+		e := &telemetry.Event{
 			OrderID:       55,
 			VendorOrderID: "v55",
 			OldState:      "",
@@ -72,7 +73,7 @@ func TestMissionService_ListEvents_ReturnsInserted(t *testing.T) {
 			t.Fatalf("InsertMissionEvent: %v", err)
 		}
 	}
-	other := &store.MissionEvent{
+	other := &telemetry.Event{
 		OrderID:       56,
 		VendorOrderID: "v56",
 		NewState:      "x",
@@ -106,7 +107,7 @@ func TestMissionService_List_CountsMatchFilter(t *testing.T) {
 	seedMission(t, db, 203, "STN-B", "R1", "FINISHED")
 
 	// No filter — 3 rows.
-	rows, total, err := svc.List(store.MissionFilter{})
+	rows, total, err := svc.List(telemetry.Filter{})
 	if err != nil {
 		t.Fatalf("List (all): %v", err)
 	}
@@ -115,7 +116,7 @@ func TestMissionService_List_CountsMatchFilter(t *testing.T) {
 	}
 
 	// Station filter — 2 rows at STN-A.
-	rows, total, err = svc.List(store.MissionFilter{StationID: "STN-A"})
+	rows, total, err = svc.List(telemetry.Filter{StationID: "STN-A"})
 	if err != nil {
 		t.Fatalf("List (station): %v", err)
 	}
@@ -133,7 +134,7 @@ func TestMissionService_Stats_CountsCompletionsAndFailures(t *testing.T) {
 	seedMission(t, db, 303, "STN-S", "R", "FAILED")
 	seedMission(t, db, 304, "STN-S", "R", "STOPPED")
 
-	s, err := svc.Stats(store.MissionFilter{StationID: "STN-S"})
+	s, err := svc.Stats(telemetry.Filter{StationID: "STN-S"})
 	if err != nil {
 		t.Fatalf("Stats: %v", err)
 	}

@@ -9,22 +9,19 @@ import (
 	"shingocore/store/payloads"
 )
 
-// Payload aliases the payloads sub-package row type.
-type Payload = payloads.Payload
-
-func (db *DB) CreatePayload(p *Payload) error             { return payloads.Create(db.DB, p) }
-func (db *DB) UpdatePayload(p *Payload) error             { return payloads.Update(db.DB, p) }
+func (db *DB) CreatePayload(p *payloads.Payload) error             { return payloads.Create(db.DB, p) }
+func (db *DB) UpdatePayload(p *payloads.Payload) error             { return payloads.Update(db.DB, p) }
 func (db *DB) DeletePayload(id int64) error               { return payloads.Delete(db.DB, id) }
-func (db *DB) GetPayload(id int64) (*Payload, error)      { return payloads.Get(db.DB, id) }
-func (db *DB) GetPayloadByCode(code string) (*Payload, error) {
+func (db *DB) GetPayload(id int64) (*payloads.Payload, error)      { return payloads.Get(db.DB, id) }
+func (db *DB) GetPayloadByCode(code string) (*payloads.Payload, error) {
 	return payloads.GetByCode(db.DB, code)
 }
-func (db *DB) ListPayloads() ([]*Payload, error) { return payloads.List(db.DB) }
+func (db *DB) ListPayloads() ([]*payloads.Payload, error) { return payloads.List(db.DB) }
 
 // ListBinTypesForPayload returns all bin types associated with a payload
-// template. Cross-aggregate (payloads ↔ bins): the function returns *BinType
+// template. Cross-aggregate (payloads ↔ bins): the function returns *bins.BinType
 // so it's owned by bins/, but the entry point lives in the payloads delegate.
-func (db *DB) ListBinTypesForPayload(payloadID int64) ([]*BinType, error) {
+func (db *DB) ListBinTypesForPayload(payloadID int64) ([]*bins.BinType, error) {
 	return bins.ListTypesForPayload(db.DB, payloadID)
 }
 

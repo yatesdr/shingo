@@ -10,6 +10,8 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // --- Characterization tests for handleOrderCompleted (wiring.go:410-495) ---
@@ -22,7 +24,7 @@ import (
 
 // deliveredOrder creates fixtures, dispatches a retrieve order, and drives it
 // through RUNNING → FINISHED so it's in "delivered" status ready for receipt.
-func deliveredOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simulator.SimulatorBackend, d *dispatch.Dispatcher, order *store.Order, lineNode *store.Node) {
+func deliveredOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simulator.SimulatorBackend, d *dispatch.Dispatcher, order *orders.Order, lineNode *nodes.Node) {
 	t.Helper()
 	db = testDB(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -93,7 +95,7 @@ func TestOrderCompleted_NoBinID(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 
 	// Create an order with no bin assigned
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "co-no-bin",
 		StationID:    "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
@@ -123,7 +125,7 @@ func TestOrderCompleted_MissingNodes(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 
 	// Order with empty source and delivery nodes
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:  "co-no-nodes",
 		StationID: "line-1",
 		OrderType: dispatch.OrderTypeRetrieve,
@@ -171,7 +173,7 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 
 	// Create a delivered order with bin still at source (simulating delivery arrival failure).
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "co-safety-net",
 		StationID:    "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
@@ -220,7 +222,7 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 	// staged=false override).
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-FIFO-POACH")
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "regr-fifo-poach",
 		StationID:    "line-1",
 		OrderType:    dispatch.OrderTypeComplex,
@@ -287,7 +289,7 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 
 	// Case 1: retrieve_empty delivery to lineside (loader path).
 	binEmpty := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LSS-EMPTY")
-	emptyOrder := &store.Order{
+	emptyOrder := &orders.Order{
 		EdgeUUID:     "lss-retrieve-empty",
 		StationID:    "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
@@ -314,7 +316,7 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 
 	// Case 2: complex order with WaitIndex > 0 delivery to lineside (swap path).
 	binComplex := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LSS-CPLX")
-	complexOrder := &store.Order{
+	complexOrder := &orders.Order{
 		EdgeUUID:     "lss-complex-wait",
 		StationID:    "line-1",
 		OrderType:    dispatch.OrderTypeComplex,

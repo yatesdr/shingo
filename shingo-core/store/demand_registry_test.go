@@ -2,12 +2,16 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/demands"
+)
 
 func TestSyncDemandRegistry_InsertAndResync(t *testing.T) {
 	db := testDB(t)
 
-	initial := []DemandRegistryEntry{
+	initial := []demands.RegistryEntry{
 		{StationID: "line-1", CoreNodeName: "MS-A", Role: "consume", PayloadCode: "WIDGET-A", OutboundDest: "LINE1-IN"},
 		{StationID: "line-1", CoreNodeName: "MS-B", Role: "produce", PayloadCode: "WIDGET-B", OutboundDest: ""},
 	}
@@ -22,7 +26,7 @@ func TestSyncDemandRegistry_InsertAndResync(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("initial list len = %d, want 2", len(all))
 	}
-	codes := map[string]DemandRegistryEntry{}
+	codes := map[string]demands.RegistryEntry{}
 	for _, e := range all {
 		codes[e.PayloadCode] = e
 	}
@@ -37,7 +41,7 @@ func TestSyncDemandRegistry_InsertAndResync(t *testing.T) {
 	}
 
 	// Re-sync replaces the previous entries for the station
-	replacement := []DemandRegistryEntry{
+	replacement := []demands.RegistryEntry{
 		{StationID: "line-1", CoreNodeName: "MS-Z", Role: "consume", PayloadCode: "WIDGET-Z", OutboundDest: ""},
 	}
 	if err := db.SyncDemandRegistry("line-1", replacement); err != nil {
@@ -55,7 +59,7 @@ func TestSyncDemandRegistry_InsertAndResync(t *testing.T) {
 	}
 
 	// Sync a different station — prior station should be unaffected
-	other := []DemandRegistryEntry{
+	other := []demands.RegistryEntry{
 		{StationID: "line-2", CoreNodeName: "MS-OTHER", Role: "consume", PayloadCode: "WIDGET-Y", OutboundDest: ""},
 	}
 	if err := db.SyncDemandRegistry("line-2", other); err != nil {
@@ -70,13 +74,13 @@ func TestSyncDemandRegistry_InsertAndResync(t *testing.T) {
 func TestLookupDemandRegistry(t *testing.T) {
 	db := testDB(t)
 
-	db.SyncDemandRegistry("line-1", []DemandRegistryEntry{
+	db.SyncDemandRegistry("line-1", []demands.RegistryEntry{
 		{StationID: "line-1", CoreNodeName: "N1", Role: "consume", PayloadCode: "P-1", OutboundDest: ""},
 	})
-	db.SyncDemandRegistry("line-2", []DemandRegistryEntry{
+	db.SyncDemandRegistry("line-2", []demands.RegistryEntry{
 		{StationID: "line-2", CoreNodeName: "N2", Role: "produce", PayloadCode: "P-1", OutboundDest: ""},
 	})
-	db.SyncDemandRegistry("line-3", []DemandRegistryEntry{
+	db.SyncDemandRegistry("line-3", []demands.RegistryEntry{
 		{StationID: "line-3", CoreNodeName: "N3", Role: "consume", PayloadCode: "P-OTHER", OutboundDest: ""},
 	})
 

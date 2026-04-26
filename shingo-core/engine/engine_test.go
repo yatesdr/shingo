@@ -12,6 +12,10 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // Shared scaffolding (testDB, setupTestData, createTestBinAtNode,
@@ -206,12 +210,12 @@ func TestClaimBin_SilentOverwrite(t *testing.T) {
 // setupThreeBinLine creates a line with 3 bins delivered and confirmed (claims released).
 // This represents a line mid-operation: bins are physically there, orders are done.
 // Returns the 3 bins, the storage node, the line node, and the payload.
-func setupThreeBinLine(t *testing.T, db *store.DB) (bins [3]*store.Bin, storageNode, lineNode *store.Node, bp *store.Payload) {
+func setupThreeBinLine(t *testing.T, db *store.DB) (bins [3]*bins.Bin, storageNode, lineNode *nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	storageNode, lineNode, bp = setupTestData(t, db)
 
 	// Create a quality-hold node (another destination the operator might use)
-	qhNode := &store.Node{Name: "QUALITY-HOLD-1", Zone: "Q", Enabled: true}
+	qhNode := &nodes.Node{Name: "QUALITY-HOLD-1", Zone: "Q", Enabled: true}
 	if err := db.CreateNode(qhNode); err != nil {
 		t.Fatalf("create QH node: %v", err)
 	}
@@ -1076,7 +1080,7 @@ func TestTC30_FailedOrderReturnClaimTransfer(t *testing.T) {
 		t.Fatalf("list orders: %v", err)
 	}
 
-	var returnOrder *store.Order
+	var returnOrder *orders.Order
 	for _, o := range allOrders {
 		if o.ID != order.ID && o.PayloadDesc == "auto_return" {
 			returnOrder = o
@@ -1137,30 +1141,30 @@ func TestTC28_ConcurrentRetrieveSamePart(t *testing.T) {
 	db := testDB(t)
 
 	// Two storage nodes, each with one bin of PART-A
-	storageNode1 := &store.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
+	storageNode1 := &nodes.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
 	if err := db.CreateNode(storageNode1); err != nil {
 		t.Fatalf("create storage node 1: %v", err)
 	}
-	storageNode2 := &store.Node{Name: "STORAGE-A2", Zone: "A", Enabled: true}
+	storageNode2 := &nodes.Node{Name: "STORAGE-A2", Zone: "A", Enabled: true}
 	if err := db.CreateNode(storageNode2); err != nil {
 		t.Fatalf("create storage node 2: %v", err)
 	}
 
 	// Two line nodes (two different production lines)
-	lineNode1 := &store.Node{Name: "LINE1-IN", Enabled: true}
+	lineNode1 := &nodes.Node{Name: "LINE1-IN", Enabled: true}
 	if err := db.CreateNode(lineNode1); err != nil {
 		t.Fatalf("create line node 1: %v", err)
 	}
-	lineNode2 := &store.Node{Name: "LINE2-IN", Enabled: true}
+	lineNode2 := &nodes.Node{Name: "LINE2-IN", Enabled: true}
 	if err := db.CreateNode(lineNode2); err != nil {
 		t.Fatalf("create line node 2: %v", err)
 	}
 
-	bp := &store.Payload{Code: "PART-A", Description: "Steel bracket tote"}
+	bp := &payloads.Payload{Code: "PART-A", Description: "Steel bracket tote"}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
-	bt := &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+	bt := &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
@@ -1307,7 +1311,7 @@ func TestMaybeCreateReturnOrder_SourceNode(t *testing.T) {
 
 	// Find auto-return order
 	allOrders, _ := db.ListOrders("", 50)
-	var returnOrder *store.Order
+	var returnOrder *orders.Order
 	for _, o := range allOrders {
 		if o.PayloadDesc == "auto_return" {
 			returnOrder = o
@@ -1387,7 +1391,7 @@ func TestTC36_RetrieveClaimFailure_QueueNotFail(t *testing.T) {
 	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, orderB.BinID, orderB.VendorOrderID)
 
 	// Neither order should be permanently failed for a transient claim race.
-	for _, order := range []*store.Order{orderA, orderB} {
+	for _, order := range []*orders.Order{orderA, orderB} {
 		if order.Status == dispatch.StatusFailed {
 			t.Errorf("BUG: order %s permanently failed after claim_failed — should be queued for retry",
 				order.EdgeUUID)
@@ -1397,7 +1401,7 @@ func TestTC36_RetrieveClaimFailure_QueueNotFail(t *testing.T) {
 	// One should be dispatched, the other queued (not failed, not sourcing)
 	dispatched := 0
 	queued := 0
-	for _, order := range []*store.Order{orderA, orderB} {
+	for _, order := range []*orders.Order{orderA, orderB} {
 		switch order.Status {
 		case dispatch.StatusDispatched, dispatch.StatusInTransit:
 			dispatched++

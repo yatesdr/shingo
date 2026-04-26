@@ -12,7 +12,8 @@ import (
 	"testing"
 
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/payloads"
 )
 
 // Characterization tests for handlers_payload_templates.go — HTML form
@@ -123,7 +124,7 @@ func TestHandlePayloadUpdate_NotFound(t *testing.T) {
 
 func TestHandlePayloadDelete_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
-	pl := &store.Payload{Code: "DELME-1", Description: "to delete"}
+	pl := &payloads.Payload{Code: "DELME-1", Description: "to delete"}
 	if err := db.CreatePayload(pl); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -157,7 +158,7 @@ func TestHandlePayloadDelete_InvalidID(t *testing.T) {
 func TestApiCreatePayloadTemplate_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
 	// Seed a bin type so we can associate it.
-	bt := &store.BinType{Code: "BT-TMPL", Description: "for template"}
+	bt := &bins.BinType{Code: "BT-TMPL", Description: "for template"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
@@ -176,7 +177,7 @@ func TestApiCreatePayloadTemplate_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var created store.Payload
+	var created payloads.Payload
 	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -204,7 +205,7 @@ func TestApiCreatePayloadTemplate_MinimalBody(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var created store.Payload
+	var created payloads.Payload
 	_ = json.NewDecoder(rec.Body).Decode(&created)
 	got, err := db.GetPayload(created.ID)
 	if err != nil {
@@ -227,11 +228,11 @@ func TestApiCreatePayloadTemplate_InvalidJSON(t *testing.T) {
 
 func TestApiUpdatePayloadTemplate_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
-	pl := &store.Payload{Code: "UPD-1", Description: "orig", UOPCapacity: 5}
+	pl := &payloads.Payload{Code: "UPD-1", Description: "orig", UOPCapacity: 5}
 	if err := db.CreatePayload(pl); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	bt := &store.BinType{Code: "BT-UPD", Description: "for update"}
+	bt := &bins.BinType{Code: "BT-UPD", Description: "for update"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
@@ -281,7 +282,7 @@ func TestApiUpdatePayloadTemplate_NotFound(t *testing.T) {
 func TestApiGetPayloadManifestTemplate_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
-	if err := db.CreatePayloadManifestItem(&store.PayloadManifestItem{
+	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "X", Quantity: 1,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -292,7 +293,7 @@ func TestApiGetPayloadManifestTemplate_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var items []*store.PayloadManifestItem
+	var items []*payloads.ManifestItem
 	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -315,7 +316,7 @@ func TestApiSavePayloadManifestTemplate_ReplacesItems(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	// Seed one old item to verify it gets replaced.
-	if err := db.CreatePayloadManifestItem(&store.PayloadManifestItem{
+	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "OLD", Quantity: 1,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -365,7 +366,7 @@ func TestApiGetPayloadBinTypes_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var bts []*store.BinType
+	var bts []*bins.BinType
 	if err := json.NewDecoder(rec.Body).Decode(&bts); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

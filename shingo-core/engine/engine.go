@@ -75,6 +75,7 @@ type Engine struct {
 	inventoryService *service.InventoryService
 	adminService    *service.AdminService
 	healthService   *service.HealthService
+	tagVerifyService *service.TagVerifyService
 	stopChan        chan struct{}
 	stopOnce        sync.Once
 	sceneSyncing    atomic.Bool
@@ -124,6 +125,7 @@ func New(c Config) *Engine {
 	e.inventoryService = service.NewInventoryService(e.db)
 	e.adminService = service.NewAdminService(e.db)
 	e.healthService = service.NewHealthService(e.db)
+	e.tagVerifyService = service.NewTagVerifyService(e.db)
 	return e
 }
 

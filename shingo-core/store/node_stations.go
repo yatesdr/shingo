@@ -3,7 +3,9 @@ package store
 // Stage 2D delegate file: node_stations CRUD + effective resolution live in
 // store/nodes/.
 
-import "shingocore/store/nodes"
+import (
+	"shingocore/store/nodes"
+)
 
 func (db *DB) AssignNodeToStation(nodeID int64, stationID string) error {
 	return nodes.AssignStation(db.DB, nodeID, stationID)
@@ -19,7 +21,7 @@ func (db *DB) ListStationsForNode(nodeID int64) ([]string, error) {
 
 // ListNodesForStation returns nodes directly assigned to a station, plus
 // NGRP node group parents whose children are assigned to the station.
-func (db *DB) ListNodesForStation(stationID string) ([]*Node, error) {
+func (db *DB) ListNodesForStation(stationID string) ([]*nodes.Node, error) {
 	return nodes.ListNodesForStation(db.DB, stationID)
 }
 

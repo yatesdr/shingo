@@ -76,7 +76,7 @@ func (h *Handlers) handleTrafficSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.engine.ReconfigureCountGroups()
+	h.orchestration.ReconfigureCountGroups()
 
 	log.Printf("traffic: saved %d groups", len(groups))
 	http.Redirect(w, r, "/traffic?saved=groups", http.StatusSeeOther)
@@ -116,7 +116,7 @@ func (h *Handlers) handleTrafficAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.engine.ReconfigureCountGroups()
+	h.orchestration.ReconfigureCountGroups()
 	log.Printf("traffic: added group %q", name)
 	http.Redirect(w, r, "/traffic?saved=added", http.StatusSeeOther)
 }
@@ -146,7 +146,7 @@ func (h *Handlers) handleTrafficDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.engine.ReconfigureCountGroups()
+	h.orchestration.ReconfigureCountGroups()
 	log.Printf("traffic: deleted group %q", name)
 	http.Redirect(w, r, "/traffic?saved=deleted", http.StatusSeeOther)
 }

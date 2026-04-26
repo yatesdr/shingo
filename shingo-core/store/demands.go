@@ -4,13 +4,7 @@ package store
 // store/demands/. This file preserves the *store.DB method surface so
 // external callers don't need to change.
 
-import (
-	"shingocore/store/demands"
-)
-
-// Type aliases preserve the store.Demand and ProductionLogEntry public API.
-type Demand = demands.Demand
-type ProductionLogEntry = demands.ProductionLogEntry
+import "shingocore/store/demands"
 
 func (db *DB) CreateDemand(catID, description string, demandQty int64) (int64, error) {
 	return demands.Create(db.DB, catID, description, demandQty)
@@ -26,11 +20,11 @@ func (db *DB) UpdateDemandAndResetProduced(id int64, description string, demandQ
 
 func (db *DB) DeleteDemand(id int64) error { return demands.Delete(db.DB, id) }
 
-func (db *DB) ListDemands() ([]*Demand, error) { return demands.List(db.DB) }
+func (db *DB) ListDemands() ([]*demands.Demand, error) { return demands.List(db.DB) }
 
-func (db *DB) GetDemand(id int64) (*Demand, error) { return demands.Get(db.DB, id) }
+func (db *DB) GetDemand(id int64) (*demands.Demand, error) { return demands.Get(db.DB, id) }
 
-func (db *DB) GetDemandByCatID(catID string) (*Demand, error) {
+func (db *DB) GetDemandByCatID(catID string) (*demands.Demand, error) {
 	return demands.GetByCatID(db.DB, catID)
 }
 
@@ -48,6 +42,6 @@ func (db *DB) LogProduction(catID, stationID string, qty int64) error {
 	return demands.LogProduction(db.DB, catID, stationID, qty)
 }
 
-func (db *DB) ListProductionLog(catID string, limit int) ([]*ProductionLogEntry, error) {
+func (db *DB) ListProductionLog(catID string, limit int) ([]*demands.ProductionLogEntry, error) {
 	return demands.ListProductionLog(db.DB, catID, limit)
 }

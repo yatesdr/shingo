@@ -4,9 +4,6 @@ package store
 
 import "shingocore/store/nodes"
 
-// NodeProperty aliases the nodes sub-package's property row type.
-type NodeProperty = nodes.Property
-
 // SetNodeProperty upserts a key-value property on a node.
 func (db *DB) SetNodeProperty(nodeID int64, key, value string) error {
 	return nodes.SetProperty(db.DB, nodeID, key, value)
@@ -16,7 +13,7 @@ func (db *DB) DeleteNodeProperty(nodeID int64, key string) error {
 	return nodes.DeleteProperty(db.DB, nodeID, key)
 }
 
-func (db *DB) ListNodeProperties(nodeID int64) ([]*NodeProperty, error) {
+func (db *DB) ListNodeProperties(nodeID int64) ([]*nodes.Property, error) {
 	return nodes.ListProperties(db.DB, nodeID)
 }
 

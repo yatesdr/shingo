@@ -2,7 +2,11 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/demands"
+)
 
 func TestDemandRemaining(t *testing.T) {
 	cases := []struct {
@@ -18,7 +22,7 @@ func TestDemandRemaining(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := &Demand{DemandQty: tc.demand, ProducedQty: tc.produced}
+			d := &demands.Demand{DemandQty: tc.demand, ProducedQty: tc.produced}
 			if got := d.Remaining(); got != tc.want {
 				t.Errorf("Remaining = %d, want %d", got, tc.want)
 			}

@@ -4,7 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // --- Non-NGRP retrieve -----------------------------------------------------
@@ -14,10 +15,10 @@ func TestDefaultResolver_Retrieve_PicksFirstChildWithAvailableBin(t *testing.T) 
 	parent := directChild(1, "parent")
 	childA := directChild(10, "child-A")
 	childB := directChild(11, "child-B")
-	f.children[parent.ID] = []*store.Node{childA, childB}
+	f.children[parent.ID] = []*nodes.Node{childA, childB}
 	// child-A has only an unavailable bin; child-B has an available one.
-	f.bins[childA.ID] = []*store.Bin{unavailBin(100, "P1")}
-	f.bins[childB.ID] = []*store.Bin{availBin(101, "P1", time.Now())}
+	f.bins[childA.ID] = []*bins.Bin{unavailBin(100, "P1")}
+	f.bins[childB.ID] = []*bins.Bin{availBin(101, "P1", time.Now())}
 
 	r := &DefaultResolver{DB: f}
 	got, err := r.Resolve(parent, "retrieve", "P1", nil)
@@ -34,7 +35,7 @@ func TestDefaultResolver_Retrieve_PicksFirstChildWithAvailableBin(t *testing.T) 
 func TestIsAvailableAtConcreteNode_ClearedBinPasses(t *testing.T) {
 	// Post-completion state: payload cleared, manifest_confirmed=false, status=staged.
 	// This is exactly what ClearAndClaim leaves behind.
-	cleared := &store.Bin{
+	cleared := &bins.Bin{
 		ID:                1,
 		Status:            "staged",
 		ManifestConfirmed: false,
@@ -46,7 +47,7 @@ func TestIsAvailableAtConcreteNode_ClearedBinPasses(t *testing.T) {
 }
 
 func TestIsAvailableAtConcreteNode_MatchingPayloadPasses(t *testing.T) {
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		ID:                2,
 		Status:            "staged",
 		ManifestConfirmed: true,
@@ -59,7 +60,7 @@ func TestIsAvailableAtConcreteNode_MatchingPayloadPasses(t *testing.T) {
 
 func TestIsAvailableAtConcreteNode_MismatchedPayloadRejected(t *testing.T) {
 	// Wrong part parked at wrong station — should be rejected.
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		ID:                3,
 		Status:            "staged",
 		ManifestConfirmed: true,
@@ -72,7 +73,7 @@ func TestIsAvailableAtConcreteNode_MismatchedPayloadRejected(t *testing.T) {
 
 func TestIsAvailableAtConcreteNode_ClaimedBinRejected(t *testing.T) {
 	orderID := int64(99)
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		ID:                4,
 		Status:            "staged",
 		ManifestConfirmed: false,
@@ -86,7 +87,7 @@ func TestIsAvailableAtConcreteNode_ClaimedBinRejected(t *testing.T) {
 
 func TestIsAvailableAtConcreteNode_BadStatusRejected(t *testing.T) {
 	for _, status := range []string{"maintenance", "flagged", "retired", "quality_hold"} {
-		bin := &store.Bin{
+		bin := &bins.Bin{
 			ID:                5,
 			Status:            status,
 			ManifestConfirmed: false,
@@ -101,7 +102,7 @@ func TestIsAvailableAtConcreteNode_BadStatusRejected(t *testing.T) {
 func TestIsAvailableAtConcreteNode_EmptyPayloadCodeAccepted(t *testing.T) {
 	// When the order itself has no payload filter, any bin should pass
 	// except claimed/bad-status.
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		ID:                6,
 		Status:            "staged",
 		ManifestConfirmed: false,
@@ -116,8 +117,8 @@ func TestDefaultResolver_Retrieve_NoAvailableBins(t *testing.T) {
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	child := directChild(10, "only-child")
-	f.children[parent.ID] = []*store.Node{child}
-	f.bins[child.ID] = []*store.Bin{claimedBin(100, "P1", 7)}
+	f.children[parent.ID] = []*nodes.Node{child}
+	f.bins[child.ID] = []*bins.Bin{claimedBin(100, "P1", 7)}
 
 	r := &DefaultResolver{DB: f}
 	if _, err := r.Resolve(parent, "retrieve", "P1", nil); err == nil {
@@ -129,9 +130,9 @@ func TestDefaultResolver_Retrieve_PayloadFilter(t *testing.T) {
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	child := directChild(10, "c")
-	f.children[parent.ID] = []*store.Node{child}
+	f.children[parent.ID] = []*nodes.Node{child}
 	// Bin exists but its payload code does not match the request.
-	f.bins[child.ID] = []*store.Bin{availBin(100, "OTHER", time.Now())}
+	f.bins[child.ID] = []*bins.Bin{availBin(100, "OTHER", time.Now())}
 
 	r := &DefaultResolver{DB: f}
 	if _, err := r.Resolve(parent, "retrieve", "P1", nil); err == nil {
@@ -146,10 +147,10 @@ func TestDefaultResolver_Store_PicksConsolidationCandidate(t *testing.T) {
 	parent := directChild(1, "parent")
 	a := directChild(10, "empty-A")
 	b := directChild(11, "consolidate-B")
-	f.children[parent.ID] = []*store.Node{a, b}
+	f.children[parent.ID] = []*nodes.Node{a, b}
 	// Both empty (count 0), but B already holds a bin with matching
 	// payload — resolveStore prefers the consolidation candidate.
-	f.bins[b.ID] = []*store.Bin{availBin(100, "P1", time.Now())}
+	f.bins[b.ID] = []*bins.Bin{availBin(100, "P1", time.Now())}
 	// Override counts: the real resolveStore skips nodes with count>=1.
 	// We want both reported as empty for ranking purposes.
 	f.binCounts[a.ID] = 0
@@ -168,10 +169,10 @@ func TestDefaultResolver_Store_PicksConsolidationCandidate(t *testing.T) {
 func TestDefaultResolver_Store_SkipsOccupiedAndSynthetic(t *testing.T) {
 	f := newFakeStore()
 	parent := directChild(1, "parent")
-	syn := &store.Node{ID: 10, Name: "syn", IsSynthetic: true, Enabled: true}
+	syn := &nodes.Node{ID: 10, Name: "syn", IsSynthetic: true, Enabled: true}
 	full := directChild(11, "full")
 	empty := directChild(12, "empty")
-	f.children[parent.ID] = []*store.Node{syn, full, empty}
+	f.children[parent.ID] = []*nodes.Node{syn, full, empty}
 	f.binCounts[full.ID] = 1
 	f.binCounts[empty.ID] = 0
 
@@ -189,7 +190,7 @@ func TestDefaultResolver_Store_NoCandidate(t *testing.T) {
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	full := directChild(10, "full")
-	f.children[parent.ID] = []*store.Node{full}
+	f.children[parent.ID] = []*nodes.Node{full}
 	f.binCounts[full.ID] = 1
 
 	r := &DefaultResolver{DB: f}
@@ -205,7 +206,7 @@ func TestDefaultResolver_UnknownOrderType_FirstEnabled(t *testing.T) {
 	parent := directChild(1, "parent")
 	disabled := disabledChild(9, "off")
 	on := directChild(10, "on")
-	f.children[parent.ID] = []*store.Node{disabled, on}
+	f.children[parent.ID] = []*nodes.Node{disabled, on}
 
 	r := &DefaultResolver{DB: f}
 	got, err := r.Resolve(parent, "weird", "", nil)
@@ -237,7 +238,7 @@ func TestDefaultResolver_Retrieve_NGRPDelegatesToGroupResolver(t *testing.T) {
 	f.nodes[slot.ID] = slot
 	bin := availBin(1000, "P1", time.Now())
 	attachSlot(bin, slot)
-	f.children[ngrp.ID] = []*store.Node{lane}
+	f.children[ngrp.ID] = []*nodes.Node{lane}
 	f.sourceInLane[lane.ID] = bin
 
 	r := &DefaultResolver{DB: f, LaneLock: NewLaneLock()}

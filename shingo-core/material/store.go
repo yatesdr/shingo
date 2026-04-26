@@ -1,6 +1,10 @@
 package material
 
-import "shingocore/store"
+import (
+	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+)
 
 // Store is the narrow DB surface the material package depends on.
 //
@@ -23,9 +27,9 @@ import "shingocore/store"
 // the write out of Store is deliberate — material builds records;
 // the engine is the boundary that writes and emits.
 type Store interface {
-	GetNode(id int64) (*store.Node, error)
+	GetNode(id int64) (*nodes.Node, error)
 	GetNodeProperty(nodeID int64, key string) string
-	GetBin(id int64) (*store.Bin, error)
+	GetBin(id int64) (*bins.Bin, error)
 	SumCatIDsAtBoundary(boundaryID int64) map[string]int64
 }
 

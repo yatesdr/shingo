@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"shingocore/fleet/simulator"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // recovery_service_test.go — coverage for recovery_service.go.
@@ -46,7 +46,7 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REAPPLY")
 
 	// Seed an order that reached confirmed status without completed_at.
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "recovery-reapply-1",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
@@ -107,7 +107,7 @@ func TestReapplyOrderCompletion_RejectsAlreadyCompleted(t *testing.T) {
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REAPPLY-DONE")
 	now := time.Now()
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "recovery-reapply-done",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
@@ -152,7 +152,7 @@ func TestReapplyOrderCompletion_RejectsNoBin(t *testing.T) {
 	setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "recovery-no-bin",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
@@ -183,7 +183,7 @@ func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RELEASE-TERM")
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:  "recovery-release-1",
 		StationID: "line-1",
 		OrderType: "retrieve",
@@ -227,7 +227,7 @@ func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-ACTIVE")
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:  "active-claim",
 		StationID: "line-1",
 		OrderType: "retrieve",
@@ -360,7 +360,7 @@ func TestCancelStuckOrder_RejectsTerminal(t *testing.T) {
 	setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:  "stuck-terminal",
 		StationID: "line-1",
 		OrderType: "retrieve",

@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingocore/store"
+	"shingocore/store/audit"
 )
 
 // AuditService centralizes audit-log writes and reads. Handlers call
@@ -31,6 +32,6 @@ func (s *AuditService) Append(entityType string, entityID int64, action, oldValu
 
 // ListForEntity returns the audit trail for a single entity, most
 // recent first.
-func (s *AuditService) ListForEntity(entityType string, entityID int64) ([]*store.AuditEntry, error) {
+func (s *AuditService) ListForEntity(entityType string, entityID int64) ([]*audit.Entry, error) {
 	return s.db.ListEntityAudit(entityType, entityID)
 }

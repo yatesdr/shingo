@@ -18,6 +18,8 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/audit"
+	"shingocore/store/bins"
 )
 
 // testHandlers creates a Handlers struct backed by a real Postgres database and a
@@ -52,6 +54,7 @@ func testHandlers(t *testing.T) (*Handlers, *store.DB) {
 
 	h := &Handlers{
 		engine:   eng,
+		orchestration: eng,
 		sessions: newSessionStore("test-secret"),
 		tmpls:    make(map[string]*template.Template),
 		eventHub: hub,
@@ -62,7 +65,7 @@ func testHandlers(t *testing.T) (*Handlers, *store.DB) {
 
 // setupBinForAction creates standard data and a bin at the storage node.
 // Returns the handlers, db, standard data, and the bin.
-func setupBinForAction(t *testing.T) (*Handlers, *store.DB, *testdb.StandardData, *store.Bin) {
+func setupBinForAction(t *testing.T) (*Handlers, *store.DB, *testdb.StandardData, *bins.Bin) {
 	t.Helper()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
@@ -93,7 +96,7 @@ func requireAudit(t *testing.T, db *store.DB, binID int64, action, oldVal, newVa
 	// We search by action+actor to find the correct handler-written entry,
 	// because some engine event actions match the handler's action string
 	// (e.g. both write "locked", "counted", "cleared").
-	var found *store.AuditEntry
+	var found *audit.Entry
 	for _, e := range entries {
 		if e.Action == action && e.Actor == actor {
 			found = e
@@ -120,7 +123,7 @@ func requireAudit(t *testing.T, db *store.DB, binID int64, action, oldVal, newVa
 }
 
 // auditActions returns a summary of audit entry actions for error messages.
-func auditActions(entries []*store.AuditEntry) []string {
+func auditActions(entries []*audit.Entry) []string {
 	actions := make([]string, len(entries))
 	for i, e := range entries {
 		actions[i] = e.Action
@@ -129,7 +132,7 @@ func auditActions(entries []*store.AuditEntry) []string {
 }
 
 // findAuditByAction returns the first audit entry matching the given action, or nil.
-func findAuditByAction(entries []*store.AuditEntry, action string) *store.AuditEntry {
+func findAuditByAction(entries []*audit.Entry, action string) *audit.Entry {
 	for _, e := range entries {
 		if e.Action == action {
 			return e
@@ -353,7 +356,7 @@ func TestExecuteBinAction_LoadPayload(t *testing.T) {
 	// Create a clean bin without manifest for loading.
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	nodeID := sd.StorageNode.ID
-	cleanBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-LOAD-1", NodeID: &nodeID, Status: "available"}
+	cleanBin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-LOAD-1", NodeID: &nodeID, Status: "available"}
 	if err := db.CreateBin(cleanBin); err != nil {
 		t.Fatalf("create clean bin: %v", err)
 	}
@@ -438,7 +441,7 @@ func TestExecuteBinAction_ConfirmManifest_NoManifest(t *testing.T) {
 	// Create a bin with no manifest.
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	nodeID := sd.StorageNode.ID
-	emptyBin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-NOMANI-1", NodeID: &nodeID, Status: "available"}
+	emptyBin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-NOMANI-1", NodeID: &nodeID, Status: "available"}
 	if err := db.CreateBin(emptyBin); err != nil {
 		t.Fatalf("create empty bin: %v", err)
 	}

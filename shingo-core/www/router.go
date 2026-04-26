@@ -1,6 +1,7 @@
 package www
 
 import (
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
@@ -14,13 +15,31 @@ import (
 	"shingocore/engine"
 )
 
+// Handlers holds dependencies for HTTP handlers.
+//
+// Phase 6.5 (2026-04-25) split the engine dependency into two fields
+// of different interface types so that compile-time enforcement
+// constrains where orchestration verbs can be reached:
+//
+//   - h.engine (ServiceAccess) — narrow surface, ~25 methods. CRUD-only
+//     handlers and read-only state queries use this. Calling
+//     orchestration verbs through h.engine fails to compile because
+//     those methods are not on ServiceAccess.
+//   - h.orchestration (EngineOrchestration) — wide surface adding 12
+//     verbs (corrections, direct orders, scene sync, cross-edge
+//     messaging, live reconfig). Embeds ServiceAccess so it can also
+//     reach service accessors and state queries.
+//
+// In production both fields point to the same *engine.Engine. In tests
+// they may differ (a service-only test fixture can leave orchestration
+// nil so any accidental orchestration call panics with a clear stack).
 type Handlers struct {
-	engine   EngineAccess    // interface for handler logic
-	eng      *engine.Engine  // concrete for SSE/EventBus wiring only
-	sessions *sessions.CookieStore
-	tmpls    map[string]*template.Template
-	eventHub *EventHub
-	debugLog *debuglog.Logger
+	engine        ServiceAccess
+	orchestration EngineOrchestration
+	sessions      *sessions.CookieStore
+	tmpls         map[string]*template.Template
+	eventHub      *EventHub
+	debugLog      *debuglog.Logger
 }
 
 // NewRouter registers all HTTP endpoints for shingo-core.
@@ -36,7 +55,7 @@ type Handlers struct {
 //
 // Auth boundary: h.requireAuth middleware. Public = shop floor read access.
 // Handlers live in handlers_*.go files grouped by domain (bins, nodes, payloads, etc.).
-func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) {
+func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), error) {
 	hub := NewEventHub()
 	hub.Start()
 	hub.SetupEngineListeners(eng)
@@ -56,7 +75,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	// automatically without code changes. Layout is the base, not a page.
 	pages, err := fs.Glob(templateFS, "templates/*.html")
 	if err != nil {
-		log.Fatalf("glob templates: %v", err)
+		return nil, nil, fmt.Errorf("glob templates: %w", err)
 	}
 	tmpls := make(map[string]*template.Template, len(pages))
 	for _, p := range pages {
@@ -70,12 +89,12 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 	}
 
 	h := &Handlers{
-		engine:   eng, // *engine.Engine satisfies EngineAccess
-		eng:      eng, // concrete ref for SSE wiring
-		sessions: sessionStore,
-		tmpls:    tmpls,
-		eventHub: hub,
-		debugLog: dbg,
+		engine:        eng, // ServiceAccess — narrow surface for CRUD handlers
+		orchestration: eng, // EngineOrchestration — wide surface for flow handlers
+		sessions:      sessionStore,
+		tmpls:         tmpls,
+		eventHub:      hub,
+		debugLog:      dbg,
 	}
 
 	h.ensureDefaultAdmin(eng.DB())
@@ -318,7 +337,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func()) 
 		hub.Stop()
 	}
 
-	return r, stopFn
+	return r, stopFn, nil
 }
 
 func (h *Handlers) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {

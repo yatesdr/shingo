@@ -6,6 +6,7 @@ package testdb
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -13,16 +14,17 @@ import (
 	"testing"
 	"time"
 
-	"shingo/protocol"
-	"shingocore/config"
-	"shingocore/store"
-
-	"database/sql"
 	_ "github.com/jackc/pgx/v5/stdlib"
-
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"shingo/protocol"
+	"shingocore/config"
+	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // containerState holds the shared Postgres container started once per test process.
@@ -141,10 +143,10 @@ func sanitize(name string) string {
 
 // StandardData holds the common entities created by SetupStandardData.
 type StandardData struct {
-	StorageNode *store.Node
-	LineNode    *store.Node
-	Payload     *store.Payload
-	BinType     *store.BinType
+	StorageNode *nodes.Node
+	LineNode    *nodes.Node
+	Payload     *payloads.Payload
+	BinType     *bins.BinType
 }
 
 // SetupStandardData creates the minimal fixture shared by most tests:
@@ -152,19 +154,19 @@ type StandardData struct {
 // one payload (PART-A), and one bin type (DEFAULT).
 func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 	t.Helper()
-	storageNode := &store.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
+	storageNode := &nodes.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
 	if err := db.CreateNode(storageNode); err != nil {
 		t.Fatalf("create storage node: %v", err)
 	}
-	lineNode := &store.Node{Name: "LINE1-IN", Enabled: true}
+	lineNode := &nodes.Node{Name: "LINE1-IN", Enabled: true}
 	if err := db.CreateNode(lineNode); err != nil {
 		t.Fatalf("create line node: %v", err)
 	}
-	bp := &store.Payload{Code: "PART-A", Description: "Steel bracket tote"}
+	bp := &payloads.Payload{Code: "PART-A", Description: "Steel bracket tote"}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
-	bt := &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+	bt := &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
@@ -179,18 +181,18 @@ func SetupStandardData(t *testing.T, db *store.DB) *StandardData {
 // CreateBinAtNode creates a bin at the given node with a confirmed manifest matching
 // the payload code. It ensures the DEFAULT bin type exists (idempotent). Returns the
 // fully-loaded bin from the database.
-func CreateBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *store.Bin {
+func CreateBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *bins.Bin {
 	t.Helper()
 	// Ensure DEFAULT bin type exists (idempotent — safe to call multiple times)
 	_, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
-		bt := &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+		bt := &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
 		if err := db.CreateBinType(bt); err != nil {
 			t.Fatalf("create default bin type: %v", err)
 		}
 	}
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
-	bin := &store.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin %s: %v", label, err)
 	}

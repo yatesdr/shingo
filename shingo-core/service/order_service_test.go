@@ -8,6 +8,7 @@ import (
 
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 func newOrderSvc(db *store.DB, fail bool) (*OrderService, *testdb.MockBackend) {
@@ -20,9 +21,9 @@ func newOrderSvc(db *store.DB, fail bool) (*OrderService, *testdb.MockBackend) {
 	return NewOrderService(db, m), m
 }
 
-func makeOrder(t *testing.T, db *store.DB, nodeName string) *store.Order {
+func makeOrder(t *testing.T, db *store.DB, nodeName string) *orders.Order {
 	t.Helper()
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:     fmt.Sprintf("svc-order-%s", t.Name()),
 		StationID:    "test-station",
 		OrderType:    "move",
@@ -40,7 +41,7 @@ func TestOrderService_Create_InsertsRow(t *testing.T) {
 	db := testDB(t)
 	svc, _ := newOrderSvc(db, false)
 
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:     "order-create-1",
 		StationID:    "st-1",
 		OrderType:    "move",
@@ -273,7 +274,7 @@ func TestOrderService_ClaimBin_FailsIfAlreadyClaimed(t *testing.T) {
 	}
 
 	// Second order tries to claim the same bin — must fail.
-	o2 := &store.Order{
+	o2 := &orders.Order{
 		EdgeUUID: "second-claim", StationID: "s", OrderType: "move", Status: "pending",
 		Quantity: 1, DeliveryNode: sd.LineNode.Name,
 	}
@@ -450,7 +451,7 @@ func TestOrderService_ListChildOrders_ReturnsSequencedChildren(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
-	parent := &store.Order{
+	parent := &orders.Order{
 		EdgeUUID:     "svc-parent-" + t.Name(),
 		StationID:    "test-station",
 		OrderType:    "compound",
@@ -463,7 +464,7 @@ func TestOrderService_ListChildOrders_ReturnsSequencedChildren(t *testing.T) {
 	}
 
 	for i := 1; i <= 3; i++ {
-		child := &store.Order{
+		child := &orders.Order{
 			EdgeUUID:      fmt.Sprintf("svc-child-%s-%d", t.Name(), i),
 			StationID:     "test-station",
 			OrderType:     "move",
@@ -504,7 +505,7 @@ func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
-	mine := &store.Order{
+	mine := &orders.Order{
 		EdgeUUID:     "svc-by-station-mine",
 		StationID:    "station-alpha",
 		OrderType:    "move",
@@ -515,7 +516,7 @@ func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
 	if err := db.CreateOrder(mine); err != nil {
 		t.Fatalf("create mine: %v", err)
 	}
-	other := &store.Order{
+	other := &orders.Order{
 		EdgeUUID:     "svc-by-station-other",
 		StationID:    "station-beta",
 		OrderType:    "move",
@@ -554,7 +555,7 @@ func TestOrderService_ListOrdersByStation_AppliesLimit(t *testing.T) {
 	svc, _ := newOrderSvc(db, false)
 
 	for i := 0; i < 5; i++ {
-		o := &store.Order{
+		o := &orders.Order{
 			EdgeUUID:     fmt.Sprintf("svc-limit-%d", i),
 			StationID:    "station-limit",
 			OrderType:    "move",

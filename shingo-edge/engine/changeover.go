@@ -2,12 +2,12 @@ package engine
 
 import (
 	"shingo/protocol"
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // BuildRestoreSteps builds steps to return material from outbound staging back
 // to the production node. Used after changeover-only node evacuation.
-func BuildRestoreSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildRestoreSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	if claim.OutboundStaging == "" {
 		return nil
 	}
@@ -34,18 +34,18 @@ const (
 type ChangeoverNodeDiff struct {
 	CoreNodeName string
 	Situation    ChangeoverSituation
-	FromClaim    *store.StyleNodeClaim // nil for "add" situations
-	ToClaim      *store.StyleNodeClaim // nil for "drop" situations
+	FromClaim    *processes.NodeClaim // nil for "add" situations
+	ToClaim      *processes.NodeClaim // nil for "drop" situations
 }
 
 // DiffStyleClaims computes the material changes needed at each physical node
 // when transitioning from one style to another.
-func DiffStyleClaims(fromClaims, toClaims []store.StyleNodeClaim) []ChangeoverNodeDiff {
-	fromMap := make(map[string]*store.StyleNodeClaim, len(fromClaims))
+func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNodeDiff {
+	fromMap := make(map[string]*processes.NodeClaim, len(fromClaims))
 	for i := range fromClaims {
 		fromMap[fromClaims[i].CoreNodeName] = &fromClaims[i]
 	}
-	toMap := make(map[string]*store.StyleNodeClaim, len(toClaims))
+	toMap := make(map[string]*processes.NodeClaim, len(toClaims))
 	for i := range toClaims {
 		toMap[toClaims[i].CoreNodeName] = &toClaims[i]
 	}

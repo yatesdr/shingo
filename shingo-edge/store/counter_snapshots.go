@@ -6,9 +6,6 @@ package store
 
 import "shingoedge/store/counters"
 
-// CounterSnapshot records a PLC counter reading.
-type CounterSnapshot = counters.Snapshot
-
 // InsertCounterSnapshot writes one counter_snapshots row.
 func (db *DB) InsertCounterSnapshot(rpID int64, countValue, delta int64, anomaly string, confirmed bool) (int64, error) {
 	return counters.InsertSnapshot(db.DB, rpID, countValue, delta, anomaly, confirmed)
@@ -16,7 +13,7 @@ func (db *DB) InsertCounterSnapshot(rpID int64, countValue, delta int64, anomaly
 
 // ListUnconfirmedAnomalies returns every counter snapshot tagged as a
 // "jump" anomaly that the operator has not yet confirmed.
-func (db *DB) ListUnconfirmedAnomalies() ([]CounterSnapshot, error) {
+func (db *DB) ListUnconfirmedAnomalies() ([]counters.Snapshot, error) {
 	return counters.ListUnconfirmedAnomalies(db.DB)
 }
 

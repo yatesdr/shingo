@@ -4,12 +4,13 @@ import (
 	"net/http"
 	"strconv"
 
-	"shingoedge/store"
+	"shingoedge/store/counters"
+	"shingoedge/store/processes"
 )
 
 // resolveProcessFromQuery reads the "process" query param and returns the
 // matching process, falling back to the first process if none specified.
-func resolveProcessFromQuery(r *http.Request, processes []store.Process) *store.Process {
+func resolveProcessFromQuery(r *http.Request, processes []processes.Process) *processes.Process {
 	if param := r.URL.Query().Get("process"); param != "" {
 		if id, err := strconv.ParseInt(param, 10, 64); err == nil {
 			for i := range processes {
@@ -27,9 +28,9 @@ func resolveProcessFromQuery(r *http.Request, processes []store.Process) *store.
 
 // loadAnomalyData loads unconfirmed anomalies and builds a reporting point map
 // for display in the global anomaly popover. Used by all page handlers.
-func loadAnomalyData(h *Handlers) ([]store.CounterSnapshot, map[int64]map[string]string) {
-	anomalies, _ := h.engine.ListUnconfirmedAnomalies()
-	reportingPoints, _ := h.engine.ListReportingPoints()
+func loadAnomalyData(h *Handlers) ([]counters.Snapshot, map[int64]map[string]string) {
+	anomalies, _ := h.engine.CounterService().ListUnconfirmedAnomalies()
+	reportingPoints, _ := h.engine.CounterService().ListReportingPoints()
 
 	rpMap := make(map[int64]map[string]string)
 	for _, rp := range reportingPoints {

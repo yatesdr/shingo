@@ -1,10 +1,13 @@
-// Package styles holds style/recipe persistence for shingo-edge.
+// styles.go — recipe style persistence inside the processes aggregate.
 //
-// Phase 5b of the architecture plan moved the styles CRUD out of the
-// flat store/ package and into this sub-package. The outer store/
-// keeps a type alias (`store.Style = styles.Style`) and one-line
-// delegate methods on *store.DB so external callers see no API change.
-package styles
+// Phase 6.0c of the architecture refactor folded shingo-edge/store/styles/
+// into store/processes/ because styles are part of the process domain
+// cluster (process runs a style, style has claims on core nodes, changeover
+// transitions between styles). Function names carry the Style suffix so
+// they don't collide with the equivalent Process / Node / Claim /
+// Changeover functions in their sibling files within this package.
+
+package processes
 
 import (
 	"database/sql"
@@ -44,8 +47,8 @@ func scanStyles(rows *sql.Rows) ([]Style, error) {
 	return styles, rows.Err()
 }
 
-// List returns all styles ordered by name.
-func List(db *sql.DB) ([]Style, error) {
+// ListStyles returns all styles ordered by name.
+func ListStyles(db *sql.DB) ([]Style, error) {
 	rows, err := db.Query(`SELECT id, name, description, COALESCE(process_id, 0) as process_id, created_at FROM styles ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -54,8 +57,8 @@ func List(db *sql.DB) ([]Style, error) {
 	return scanStyles(rows)
 }
 
-// ListByProcess returns styles for a single process_id.
-func ListByProcess(db *sql.DB, processID int64) ([]Style, error) {
+// ListStylesByProcess returns styles for a single process_id.
+func ListStylesByProcess(db *sql.DB, processID int64) ([]Style, error) {
 	rows, err := db.Query(`SELECT id, name, description, COALESCE(process_id, 0) as process_id, created_at FROM styles WHERE process_id = ? ORDER BY name`, processID)
 	if err != nil {
 		return nil, err
@@ -64,8 +67,8 @@ func ListByProcess(db *sql.DB, processID int64) ([]Style, error) {
 	return scanStyles(rows)
 }
 
-// GetByName looks up a single style by name.
-func GetByName(db *sql.DB, name string) (*Style, error) {
+// GetStyleByName looks up a single style by name.
+func GetStyleByName(db *sql.DB, name string) (*Style, error) {
 	s, err := scanStyle(db.QueryRow(`SELECT id, name, description, COALESCE(process_id, 0) as process_id, created_at FROM styles WHERE name = ?`, name))
 	if err != nil {
 		return nil, err
@@ -73,8 +76,8 @@ func GetByName(db *sql.DB, name string) (*Style, error) {
 	return &s, nil
 }
 
-// Get looks up a single style by id.
-func Get(db *sql.DB, id int64) (*Style, error) {
+// GetStyle looks up a single style by id.
+func GetStyle(db *sql.DB, id int64) (*Style, error) {
 	s, err := scanStyle(db.QueryRow(`SELECT id, name, description, COALESCE(process_id, 0) as process_id, created_at FROM styles WHERE id = ?`, id))
 	if err != nil {
 		return nil, err
@@ -82,8 +85,8 @@ func Get(db *sql.DB, id int64) (*Style, error) {
 	return &s, nil
 }
 
-// Create inserts a new style and returns the new row id.
-func Create(db *sql.DB, name, description string, processID int64) (int64, error) {
+// CreateStyle inserts a new style and returns the new row id.
+func CreateStyle(db *sql.DB, name, description string, processID int64) (int64, error) {
 	res, err := db.Exec(`INSERT INTO styles (name, description, process_id) VALUES (?, ?, ?)`, name, description, processID)
 	if err != nil {
 		return 0, err
@@ -91,14 +94,14 @@ func Create(db *sql.DB, name, description string, processID int64) (int64, error
 	return res.LastInsertId()
 }
 
-// Update modifies an existing style.
-func Update(db *sql.DB, id int64, name, description string, processID int64) error {
+// UpdateStyle modifies an existing style.
+func UpdateStyle(db *sql.DB, id int64, name, description string, processID int64) error {
 	_, err := db.Exec(`UPDATE styles SET name=?, description=?, process_id=? WHERE id=?`, name, description, processID, id)
 	return err
 }
 
-// Delete removes a style row by id.
-func Delete(db *sql.DB, id int64) error {
+// DeleteStyle removes a style row by id.
+func DeleteStyle(db *sql.DB, id int64) error {
 	_, err := db.Exec(`DELETE FROM styles WHERE id=?`, id)
 	return err
 }

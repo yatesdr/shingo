@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"shingoedge/orders"
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // restoreChangeoverState runs on engine startup after wireEventHandlers.
@@ -54,7 +54,7 @@ func (e *Engine) restoreChangeoverState() {
 // reconcileNodeTask checks linked orders for a changeover node task and
 // advances the node task state if orders completed while Edge was down.
 // Returns true if any state advancement was made.
-func (e *Engine) reconcileNodeTask(task *store.ChangeoverNodeTask, toStyleID int64) bool {
+func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bool {
 	advanced := false
 
 	// Resolve CoreNodeName from process node for claim lookups.

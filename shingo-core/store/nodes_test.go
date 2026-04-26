@@ -2,12 +2,18 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
+)
 
 func TestNodeCRUD(t *testing.T) {
 	db := testDB(t)
 
-	n := &Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
+	n := &nodes.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
 	if err := db.CreateNode(n); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -46,7 +52,7 @@ func TestNodeCRUD(t *testing.T) {
 	}
 
 	// List
-	db.CreateNode(&Node{Name: "LINE1-IN", Enabled: true})
+	db.CreateNode(&nodes.Node{Name: "LINE1-IN", Enabled: true})
 	nodes, err := db.ListNodes()
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -69,14 +75,14 @@ func TestLaneQueries(t *testing.T) {
 	db := testDB(t)
 
 	// Create node types
-	grpType := &NodeType{Code: "NGRP", Name: "Node Group", IsSynthetic: true}
+	grpType := &nodes.NodeType{Code: "NGRP", Name: "nodes.Node Group", IsSynthetic: true}
 	db.CreateNodeType(grpType)
 
-	lanType := &NodeType{Code: "LANE", Name: "Lane", IsSynthetic: true}
+	lanType := &nodes.NodeType{Code: "LANE", Name: "Lane", IsSynthetic: true}
 	db.CreateNodeType(lanType)
 
 	// Create NGRP node
-	grpNode := &Node{
+	grpNode := &nodes.Node{
 		Name:        "GRP-01",
 		IsSynthetic: true,
 		Enabled:     true,
@@ -85,7 +91,7 @@ func TestLaneQueries(t *testing.T) {
 	db.CreateNode(grpNode)
 
 	// Create LANE node as child of NGRP
-	lanNode := &Node{
+	lanNode := &nodes.Node{
 		Name:        "LAN-01",
 		IsSynthetic: true,
 		Enabled:     true,
@@ -96,25 +102,25 @@ func TestLaneQueries(t *testing.T) {
 
 	// Create 3 slot nodes as children of LANE
 	d1, d2, d3 := 1, 2, 3
-	slot1 := &Node{Name: "SLOT-01", Enabled: true, ParentID: &lanNode.ID, Depth: &d1}
+	slot1 := &nodes.Node{Name: "SLOT-01", Enabled: true, ParentID: &lanNode.ID, Depth: &d1}
 	db.CreateNode(slot1)
 
-	slot2 := &Node{Name: "SLOT-02", Enabled: true, ParentID: &lanNode.ID, Depth: &d2}
+	slot2 := &nodes.Node{Name: "SLOT-02", Enabled: true, ParentID: &lanNode.ID, Depth: &d2}
 	db.CreateNode(slot2)
 
-	slot3 := &Node{Name: "SLOT-03", Enabled: true, ParentID: &lanNode.ID, Depth: &d3}
+	slot3 := &nodes.Node{Name: "SLOT-03", Enabled: true, ParentID: &lanNode.ID, Depth: &d3}
 	db.CreateNode(slot3)
 
 	// Create bin type, payload template, bins with manifests
-	bt := &BinType{Code: "TOTE", Description: "Tote"}
+	bt := &bins.BinType{Code: "TOTE", Description: "Tote"}
 	db.CreateBinType(bt)
 
-	bp := &Payload{Code: "LANE-TOTE", UOPCapacity: 50}
+	bp := &payloads.Payload{Code: "LANE-TOTE", UOPCapacity: 50}
 	db.CreatePayload(bp)
 
-	binFront := &Bin{BinTypeID: bt.ID, Label: "LT-001", NodeID: &slot1.ID, Status: "available"}
+	binFront := &bins.Bin{BinTypeID: bt.ID, Label: "LT-001", NodeID: &slot1.ID, Status: "available"}
 	db.CreateBin(binFront)
-	binBack := &Bin{BinTypeID: bt.ID, Label: "LT-003", NodeID: &slot3.ID, Status: "available"}
+	binBack := &bins.Bin{BinTypeID: bt.ID, Label: "LT-003", NodeID: &slot3.ID, Status: "available"}
 	db.CreateBin(binBack)
 
 	db.SetBinManifest(binFront.ID, `{"items":[]}`, bp.Code, 50)

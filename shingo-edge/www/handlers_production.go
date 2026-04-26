@@ -9,7 +9,7 @@ import (
 )
 
 func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
-	processes, _ := h.engine.ListProcesses()
+	processes, _ := h.engine.ProcessService().List()
 
 	// Determine active process
 	var activeProcessID int64
@@ -29,7 +29,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Styles for this process (for the style toggle)
-	styles, _ := h.engine.ListStylesByProcess(activeProcessID)
+	styles, _ := h.engine.StyleService().ListByProcess(activeProcessID)
 
 	// Style filter: "all" (default) or a specific style ID
 	styleParam := r.URL.Query().Get("style")
@@ -47,20 +47,20 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	shifts, _ := h.engine.ListShifts()
+	shifts, _ := h.engine.ShiftService().List()
 
 	// Load hourly counts
 	var hourlyCounts map[int]int64
 	if activeProcessID > 0 {
 		if filterStyleID > 0 {
 			// Single style: convert list to map
-			counts, _ := h.engine.ListHourlyCounts(activeProcessID, filterStyleID, dateStr)
+			counts, _ := h.engine.CounterService().ListHourlyCounts(activeProcessID, filterStyleID, dateStr)
 			hourlyCounts = make(map[int]int64)
 			for _, c := range counts {
 				hourlyCounts[c.Hour] = c.Delta
 			}
 		} else {
-			hourlyCounts, _ = h.engine.HourlyCountTotals(activeProcessID, dateStr)
+			hourlyCounts, _ = h.engine.CounterService().HourlyTotals(activeProcessID, dateStr)
 		}
 	}
 	if hourlyCounts == nil {
@@ -112,7 +112,7 @@ func (h *Handlers) handleProduction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) apiListShifts(w http.ResponseWriter, r *http.Request) {
-	shifts, err := h.engine.ListShifts()
+	shifts, err := h.engine.ShiftService().List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -137,10 +137,10 @@ func (h *Handlers) apiSaveShifts(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if s.StartTime == "" && s.EndTime == "" {
-			h.engine.DeleteShift(s.ShiftNumber)
+			h.engine.ShiftService().Delete(s.ShiftNumber)
 			continue
 		}
-		if err := h.engine.UpsertShift(s.ShiftNumber, s.Name, s.StartTime, s.EndTime); err != nil {
+		if err := h.engine.ShiftService().Upsert(s.ShiftNumber, s.Name, s.StartTime, s.EndTime); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -164,7 +164,7 @@ func (h *Handlers) apiGetHourlyCounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	counts, err := h.engine.HourlyCountTotals(processID, dateStr)
+	counts, err := h.engine.CounterService().HourlyTotals(processID, dateStr)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

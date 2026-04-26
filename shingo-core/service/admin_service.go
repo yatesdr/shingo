@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingocore/store"
+	"shingocore/store/admin"
 )
 
 // AdminService exposes admin-user queries used by the login/session
@@ -22,6 +23,6 @@ func NewAdminService(db *store.DB) *AdminService {
 }
 
 // GetUser looks up an admin user by username.
-func (s *AdminService) GetUser(username string) (*store.AdminUser, error) {
+func (s *AdminService) GetUser(username string) (*admin.User, error) {
 	return s.db.GetAdminUser(username)
 }

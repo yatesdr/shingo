@@ -5,6 +5,7 @@ import (
 
 	"shingoedge/engine"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // enrichViewBinState fetches bin state from Core and attaches it to each node in the views.
@@ -50,14 +51,14 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []store.OperatorStatio
 }
 
 
-func buildStationViews(eng EngineAccess, activeProcess *store.Process) []store.OperatorStationView {
+func buildStationViews(eng ServiceAccess, activeProcess *processes.Process) []store.OperatorStationView {
 	if activeProcess == nil {
 		return nil
 	}
-	stations, _ := eng.ListOperatorStationsByProcess(activeProcess.ID)
+	stations, _ := eng.StationService().ListByProcess(activeProcess.ID)
 	var views []store.OperatorStationView
 	for _, station := range stations {
-		if view, err := eng.BuildOperatorStationView(station.ID); err == nil {
+		if view, err := eng.StationService().BuildView(station.ID); err == nil {
 			views = append(views, *view)
 		}
 	}
@@ -65,7 +66,7 @@ func buildStationViews(eng EngineAccess, activeProcess *store.Process) []store.O
 }
 
 func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
-	processes, _ := h.engine.ListProcesses()
+	processes, _ := h.engine.ProcessService().List()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
 	var activeProcessID int64
@@ -77,12 +78,12 @@ func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
 		if activeProcess.ActiveStyleID != nil {
-			if style, err := h.engine.GetStyle(*activeProcess.ActiveStyleID); err == nil {
+			if style, err := h.engine.StyleService().Get(*activeProcess.ActiveStyleID); err == nil {
 				currentStyleName = style.Name
 			}
 		}
 		if activeProcess.TargetStyleID != nil {
-			if style, err := h.engine.GetStyle(*activeProcess.TargetStyleID); err == nil {
+			if style, err := h.engine.StyleService().Get(*activeProcess.TargetStyleID); err == nil {
 				targetStyleName = style.Name
 			}
 		}
@@ -103,7 +104,7 @@ func (h *Handlers) handleMaterial(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleMaterialPartial(w http.ResponseWriter, r *http.Request) {
-	processes, _ := h.engine.ListProcesses()
+	processes, _ := h.engine.ProcessService().List()
 	activeProcess := resolveProcessFromQuery(r, processes)
 
 	stationViews := buildStationViews(h.engine, activeProcess)

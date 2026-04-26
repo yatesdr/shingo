@@ -109,6 +109,7 @@ func testHandlersWithFireAlarmFleet(t *testing.T, enabled bool) (*Handlers, *sto
 
 	h := &Handlers{
 		engine:   eng,
+		orchestration: eng,
 		sessions: newSessionStore("test-secret"),
 		tmpls:    make(map[string]*template.Template),
 		eventHub: hub,

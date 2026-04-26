@@ -13,7 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/payloads"
 )
 
 // Characterization tests for handlers_telemetry.go — node/bin telemetry
@@ -130,7 +130,7 @@ func TestApiTelemetryPayloadManifest_KnownWithManifest(t *testing.T) {
 	if err := db.UpdatePayload(sd.Payload); err != nil {
 		t.Fatalf("update payload uop: %v", err)
 	}
-	if err := db.CreatePayloadManifestItem(&store.PayloadManifestItem{
+	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "P-X", Quantity: 10, Description: "desc",
 	}); err != nil {
 		t.Fatalf("seed manifest item: %v", err)

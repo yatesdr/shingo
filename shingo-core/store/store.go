@@ -14,6 +14,17 @@ import (
 // The underlying *sql.DB is safe for concurrent use. Reconnect()
 // swaps the pointer; brief overlap during the swap is tolerable
 // since the old pool drains gracefully.
+//
+// *store.DB method-surface convention (Phase 6.4b, 2026-04-25):
+// target is no new methods on this receiver. Existing delegates
+// retire opportunistically as services adopt store/<aggregate>
+// sub-package calls directly.
+//   - New persistence logic: store/<aggregate>/ as a function on *sql.DB.
+//   - New cross-aggregate orchestration: shingocore/service/.
+// The architectural terminus is *store.DB as a connection-lifecycle
+// wrapper with zero application methods. The current path is absorption;
+// switch to a focused sprint if the absorption tripwires (see
+// implementation-plan.md) fire.
 type DB struct {
 	*sql.DB
 }

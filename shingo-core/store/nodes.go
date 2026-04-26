@@ -6,22 +6,19 @@ package store
 
 import "shingocore/store/nodes"
 
-// Node aliases the nodes sub-package row type.
-type Node = nodes.Node
-
-func (db *DB) CreateNode(n *Node) error              { return nodes.Create(db.DB, n) }
-func (db *DB) UpdateNode(n *Node) error              { return nodes.Update(db.DB, n) }
+func (db *DB) CreateNode(n *nodes.Node) error              { return nodes.Create(db.DB, n) }
+func (db *DB) UpdateNode(n *nodes.Node) error              { return nodes.Update(db.DB, n) }
 func (db *DB) DeleteNode(id int64) error             { return nodes.Delete(db.DB, id) }
-func (db *DB) GetNode(id int64) (*Node, error)       { return nodes.Get(db.DB, id) }
-func (db *DB) GetNodeByName(name string) (*Node, error) {
+func (db *DB) GetNode(id int64) (*nodes.Node, error)       { return nodes.Get(db.DB, id) }
+func (db *DB) GetNodeByName(name string) (*nodes.Node, error) {
 	return nodes.GetByName(db.DB, name)
 }
-func (db *DB) GetNodeByDotName(name string) (*Node, error) {
+func (db *DB) GetNodeByDotName(name string) (*nodes.Node, error) {
 	return nodes.GetByDotName(db.DB, name)
 }
-func (db *DB) GetRootNode(nodeID int64) (*Node, error) { return nodes.GetRoot(db.DB, nodeID) }
-func (db *DB) ListNodes() ([]*Node, error)             { return nodes.List(db.DB) }
-func (db *DB) ListChildNodes(parentID int64) ([]*Node, error) {
+func (db *DB) GetRootNode(nodeID int64) (*nodes.Node, error) { return nodes.GetRoot(db.DB, nodeID) }
+func (db *DB) ListNodes() ([]*nodes.Node, error)             { return nodes.List(db.DB) }
+func (db *DB) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return nodes.ListChildren(db.DB, parentID)
 }
 func (db *DB) SetNodeParent(nodeID, parentID int64) error {

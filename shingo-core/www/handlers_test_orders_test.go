@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // Characterization tests for handlers_test_orders.go — pinned before the
@@ -31,7 +31,7 @@ func TestApiDirectOrderReceipt_HappyPath(t *testing.T) {
 
 	// Seed an order already in the "delivered" state — the only status from
 	// which Lifecycle().ConfirmReceipt proceeds.
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:  "rcpt-happy-1",
 		StationID: "line-1",
 		OrderType: "move",
@@ -79,7 +79,7 @@ func TestApiDirectOrderReceipt_HappyPath(t *testing.T) {
 func TestApiDirectOrderReceipt_DefaultsReceiptType(t *testing.T) {
 	h, db := testHandlers(t)
 
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:  "rcpt-default-1",
 		StationID: "line-1",
 		OrderType: "move",
@@ -128,7 +128,7 @@ func TestApiDirectOrderReceipt_OrderNotFound(t *testing.T) {
 func TestApiDirectOrderReceipt_WrongStatusReturns500(t *testing.T) {
 	h, db := testHandlers(t)
 
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:  "rcpt-wrong-status-1",
 		StationID: "line-1",
 		OrderType: "move",
@@ -161,7 +161,7 @@ func TestApiDirectOrderReceipt_WrongStatusReturns500(t *testing.T) {
 func TestApiDirectOrderReceipt_AlreadyCompleted(t *testing.T) {
 	h, db := testHandlers(t)
 
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:  "rcpt-done-1",
 		StationID: "line-1",
 		OrderType: "move",

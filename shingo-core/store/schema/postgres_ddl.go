@@ -1,6 +1,13 @@
-package store
+package schema
 
-const schemaPostgres = `
+// postgresDDL is the baseline schema for shingo-core's PostgreSQL
+// database. Every statement is idempotent (CREATE ... IF NOT EXISTS)
+// so Apply() can be invoked on a fresh database or an existing one
+// without harm. Versioned migrations (in store/migrations.go) handle
+// post-baseline column evolution.
+//
+// Moved here from store/schema_postgres.go in Phase 6.0a.
+const postgresDDL = `
 CREATE TABLE IF NOT EXISTS nodes (
     id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,

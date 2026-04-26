@@ -3,7 +3,7 @@ package store
 // Stage 2D delegate file: lane-scoped node queries live in store/nodes/.
 // The bin-returning lane searches (FindSourceBinInLane, FindBuriedBin,
 // FindOldestBuriedBin) stay here as cross-aggregate composition methods
-// because their return type is *Bin (bins aggregate) while the WHERE
+// because their return type is *bins.Bin (bins aggregate) while the WHERE
 // clause joins nodes via parent_id.
 
 import (
@@ -15,7 +15,7 @@ import (
 
 // ListLaneSlots returns all child nodes of a lane, ordered by depth
 // (ascending).
-func (db *DB) ListLaneSlots(laneID int64) ([]*Node, error) {
+func (db *DB) ListLaneSlots(laneID int64) ([]*nodes.Node, error) {
 	return nodes.ListLaneSlots(db.DB, laneID)
 }
 
@@ -33,7 +33,7 @@ func (db *DB) IsSlotAccessible(slotNodeID int64) (bool, error) {
 // FindSourceBinInLane finds the shallowest accessible unclaimed bin in a
 // lane matching the given payload code. Cross-aggregate composition
 // (bins ↔ nodes).
-func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*Bin, error) {
+func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, error) {
 	query := fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
 		  AND b.claimed_by IS NULL
@@ -61,7 +61,7 @@ func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*Bin, error
 
 // FindStoreSlotInLane finds the deepest empty slot in a lane for
 // back-to-front packing.
-func (db *DB) FindStoreSlotInLane(laneID int64) (*Node, error) {
+func (db *DB) FindStoreSlotInLane(laneID int64) (*nodes.Node, error) {
 	return nodes.FindStoreSlotInLane(db.DB, laneID)
 }
 
@@ -74,7 +74,7 @@ func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 // loaded_at/created_at timestamp. Unlike FindBuriedBin (which returns the
 // shallowest buried bin for cheapest reshuffle), this returns the oldest
 // buried bin for strict FIFO correctness. Cross-aggregate composition.
-func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*Bin, *Node, error) {
+func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
 		  AND b.claimed_by IS NULL
@@ -105,7 +105,7 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*Bin, *Node
 
 // FindBuriedBin finds a bin that exists in a lane but is blocked by
 // shallower bins. Cross-aggregate composition (bins ↔ nodes).
-func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*Bin, *Node, error) {
+func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
 		  AND b.claimed_by IS NULL

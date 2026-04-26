@@ -3,7 +3,8 @@ package www
 import (
 	"testing"
 
-	"shingoedge/store"
+	"shingoedge/service"
+	"shingoedge/store/processes"
 )
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -43,7 +44,7 @@ func TestBuildChangeoverViewData_ProcessWithoutActiveChangeover(t *testing.T) {
 	pid := seedProcess(t, "ChangeoverNoActive")
 	_ = seedStyle(t, "S-A", pid)
 	_ = seedStyle(t, "S-B", pid)
-	process := &store.Process{ID: pid}
+	process := &processes.Process{ID: pid}
 
 	d := h.buildChangeoverViewData(process)
 	// Both styles loaded.
@@ -84,14 +85,14 @@ func TestBuildChangeoverViewData_ActiveChangeoverWithPendingNodeTasks(t *testing
 		t.Fatalf("ListProcessNodesByProcess: %v", err)
 	}
 	from := fromStyleID
-	_, err = testDB.CreateChangeover(
+	_, err = service.NewChangeoverService(testDB).Create(
 		pid,
 		&from,
 		toStyleID,
 		"test",
 		"test changeover",
 		[]int64{stationID},
-		[]store.ChangeoverNodeTaskInput{{
+		[]processes.NodeTaskInput{{
 			ProcessID:    pid,
 			CoreNodeName: "CO-NODE-A",
 			Situation:    "switch",
@@ -103,7 +104,7 @@ func TestBuildChangeoverViewData_ActiveChangeoverWithPendingNodeTasks(t *testing
 		t.Fatalf("CreateChangeover: %v", err)
 	}
 
-	process := &store.Process{ID: pid, ActiveStyleID: &fromStyleID}
+	process := &processes.Process{ID: pid, ActiveStyleID: &fromStyleID}
 	d := h.buildChangeoverViewData(process)
 
 	if d.ActiveChangeover == nil {
@@ -142,10 +143,10 @@ func TestBuildChangeoverViewData_AllSwitchedTasksMarkComplete(t *testing.T) {
 
 	existing, _ := testDB.ListProcessNodesByProcess(pid)
 	fromCopy := from
-	cid, err := testDB.CreateChangeover(
+	cid, err := service.NewChangeoverService(testDB).Create(
 		pid, &fromCopy, to, "tester", "",
 		[]int64{stationID},
-		[]store.ChangeoverNodeTaskInput{{
+		[]processes.NodeTaskInput{{
 			ProcessID:    pid,
 			CoreNodeName: "CO-NODE-B",
 			Situation:    "switch",
@@ -158,7 +159,7 @@ func TestBuildChangeoverViewData_AllSwitchedTasksMarkComplete(t *testing.T) {
 	}
 	_ = cid
 
-	process := &store.Process{ID: pid, ActiveStyleID: &from}
+	process := &processes.Process{ID: pid, ActiveStyleID: &from}
 	d := h.buildChangeoverViewData(process)
 	if !d.AllNodesComplete {
 		t.Error("AllNodesComplete: got false, want true (only switched tasks)")
@@ -185,10 +186,10 @@ func TestBuildChangeoverViewData_CentralNodeTasksWhenNoStation(t *testing.T) {
 
 	existing, _ := testDB.ListProcessNodesByProcess(pid)
 	fromCopy := from
-	if _, err := testDB.CreateChangeover(
+	if _, err := service.NewChangeoverService(testDB).Create(
 		pid, &fromCopy, to, "tester", "",
 		nil, // no station tasks
-		[]store.ChangeoverNodeTaskInput{{
+		[]processes.NodeTaskInput{{
 			ProcessID:    pid,
 			CoreNodeName: "CO-CENTRAL-A",
 			Situation:    "switch",
@@ -199,7 +200,7 @@ func TestBuildChangeoverViewData_CentralNodeTasksWhenNoStation(t *testing.T) {
 		t.Fatalf("CreateChangeover: %v", err)
 	}
 
-	process := &store.Process{ID: pid, ActiveStyleID: &from}
+	process := &processes.Process{ID: pid, ActiveStyleID: &from}
 	d := h.buildChangeoverViewData(process)
 
 	if len(d.CentralNodeTasks) != 1 {

@@ -27,7 +27,9 @@ import (
 	"shingoedge/config"
 	"shingoedge/orders"
 	"shingoedge/plc"
+	"shingoedge/service"
 	"shingoedge/store"
+	"shingoedge/store/catalog"
 )
 
 // ── Types & struct ──────────────────────────────────────────────────
@@ -53,6 +55,23 @@ type Engine struct {
 	hourlyTracker  *HourlyTracker
 	reconciliation *ReconciliationService
 	coreSync       *CoreSyncService
+
+	// Service layer (canonical caller surface for handlers + engine
+	// business logic). Phase 6.1 introduced the cross-aggregate
+	// coordinators (stationService, changeoverService); Phase 6.2′
+	// completed the per-domain extraction, deleting
+	// engine_db_methods.go and dropping EngineAccess to ~30 methods;
+	// Phase 6.5 split that into ServiceAccess (16 methods) +
+	// EngineOrchestration (35 verbs, embeds ServiceAccess).
+	stationService    *service.StationService
+	changeoverService *service.ChangeoverService
+	adminService      *service.AdminService
+	processService    *service.ProcessService
+	styleService      *service.StyleService
+	shiftService      *service.ShiftService
+	counterService    *service.CounterService
+	catalogService    *service.CatalogService
+	orderService      *service.OrderService
 
 	coreClient    *CoreClient
 	coreNodes     map[string]protocol.NodeInfo
@@ -101,6 +120,15 @@ func New(c Config) *Engine {
 	e.coreClient = NewCoreClient(c.AppConfig.CoreAPI)
 	e.reconciliation = newReconciliationService(e.db)
 	e.coreSync = newCoreSyncService(e)
+	e.stationService = service.NewStationService(e.db)
+	e.changeoverService = service.NewChangeoverService(e.db)
+	e.adminService = service.NewAdminService(e.db)
+	e.processService = service.NewProcessService(e.db)
+	e.styleService = service.NewStyleService(e.db)
+	e.shiftService = service.NewShiftService(e.db)
+	e.counterService = service.NewCounterService(e.db)
+	e.catalogService = service.NewCatalogService(e.db)
+	e.orderService = service.NewOrderService(e.db)
 	return e
 }
 
@@ -197,6 +225,22 @@ func (e *Engine) OrderManager() *orders.Manager          { return e.orderMgr }
 func (e *Engine) Reconciliation() *ReconciliationService { return e.reconciliation }
 func (e *Engine) CoreSync() *CoreSyncService             { return e.coreSync }
 
+// Service-layer accessors. Phase 6.1 introduced the cross-aggregate
+// coordinators (StationService, ChangeoverService); Phase 6.2′ added
+// the remaining per-domain services and deleted engine_db_methods.go.
+// All handler call sites reach the persistence layer through these
+// services; engine internals can call them or the underlying
+// *store.DB depending on whether they need orchestration semantics.
+func (e *Engine) StationService() *service.StationService       { return e.stationService }
+func (e *Engine) ChangeoverService() *service.ChangeoverService { return e.changeoverService }
+func (e *Engine) AdminService() *service.AdminService           { return e.adminService }
+func (e *Engine) ProcessService() *service.ProcessService       { return e.processService }
+func (e *Engine) StyleService() *service.StyleService           { return e.styleService }
+func (e *Engine) ShiftService() *service.ShiftService           { return e.shiftService }
+func (e *Engine) CounterService() *service.CounterService       { return e.counterService }
+func (e *Engine) CatalogService() *service.CatalogService       { return e.catalogService }
+func (e *Engine) OrderService() *service.OrderService           { return e.orderService }
+
 // ── Core node sync ──────────────────────────────────────────────────
 
 // SetCoreNodes updates the core node set and emits EventCoreNodesUpdated.
@@ -259,7 +303,7 @@ func (e *Engine) RequestCatalogSync() {
 func (e *Engine) HandlePayloadCatalog(entries []protocol.CatalogPayloadInfo) {
 	ids := make([]int64, 0, len(entries))
 	for _, b := range entries {
-		entry := &store.PayloadCatalogEntry{
+		entry := &catalog.CatalogEntry{
 			ID: b.ID, Name: b.Name, Code: b.Code,
 			Description: b.Description,
 			UOPCapacity: b.UOPCapacity,

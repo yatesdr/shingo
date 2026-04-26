@@ -10,13 +10,16 @@ import (
 
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
-func createTestBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *store.Bin {
+func createTestBinAtNode(t *testing.T, db *store.DB, payloadCode string, nodeID int64, label string) *bins.Bin {
 	return testdb.CreateBinAtNode(t, db, payloadCode, nodeID, label)
 }
 
-func setupNodeGroup(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store.Node, slots [][]*store.Node, bp *store.Payload) {
+func setupNodeGroup(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*nodes.Node, slots [][]*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	// Get node type IDs
 	grpType, err := db.GetNodeTypeByCode("NGRP")
@@ -29,23 +32,23 @@ func setupNodeGroup(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store
 	}
 
 	// Create payload template
-	bp = &store.Payload{Code: "WGA"}
+	bp = &payloads.Payload{Code: "WGA"}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
 
 	// Create NGRP node
-	grp = &store.Node{Name: "GRP-1", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	grp = &nodes.Node{Name: "GRP-1", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
 	if err := db.CreateNode(grp); err != nil {
 		t.Fatalf("create NGRP node: %v", err)
 	}
 	grp, _ = db.GetNode(grp.ID)
 
 	// Create 2 lanes
-	lanes = make([]*store.Node, 2)
-	slots = make([][]*store.Node, 2)
+	lanes = make([]*nodes.Node, 2)
+	slots = make([][]*nodes.Node, 2)
 	for i := 0; i < 2; i++ {
-		lane := &store.Node{
+		lane := &nodes.Node{
 			Name: fmt.Sprintf("GRP-1-L%d", i+1), IsSynthetic: true,
 			NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true,
 		}
@@ -56,10 +59,10 @@ func setupNodeGroup(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store
 		lanes[i] = lane
 
 		// 3 slots per lane
-		slots[i] = make([]*store.Node, 3)
+		slots[i] = make([]*nodes.Node, 3)
 		for d := 1; d <= 3; d++ {
 			depth := d
-			slot := &store.Node{
+			slot := &nodes.Node{
 				Name:     fmt.Sprintf("GRP-1-L%d-S%d", i+1, d),
 				ParentID: &lane.ID, Enabled: true, Depth: &depth,
 			}
@@ -108,7 +111,7 @@ func TestGroupResolveRetrieve_BuriedFails(t *testing.T) {
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
 	// Create a different payload template for the blocker
-	blockerBP := &store.Payload{Code: "BLK"}
+	blockerBP := &payloads.Payload{Code: "BLK"}
 	if err := db.CreatePayload(blockerBP); err != nil {
 		t.Fatalf("create blocker payload: %v", err)
 	}
@@ -234,17 +237,17 @@ func TestNodeGroupResolveRetrieve_DirectChildren(t *testing.T) {
 		t.Fatalf("get NGRP type: %v", err)
 	}
 
-	bp := &store.Payload{Code: "PDC"}
+	bp := &payloads.Payload{Code: "PDC"}
 	db.CreatePayload(bp)
 
 	// Create group with direct physical children (no lanes)
-	grp := &store.Node{Name: "GRP-DC", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	grp := &nodes.Node{Name: "GRP-DC", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
 	db.CreateNode(grp)
 	grp, _ = db.GetNode(grp.ID)
 
-	child1 := &store.Node{Name: "DC-01", ParentID: &grp.ID, Enabled: true}
+	child1 := &nodes.Node{Name: "DC-01", ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(child1)
-	child2 := &store.Node{Name: "DC-02", ParentID: &grp.ID, Enabled: true}
+	child2 := &nodes.Node{Name: "DC-02", ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(child2)
 
 	// Place bin at child2
@@ -269,7 +272,7 @@ func TestNodeGroupResolveRetrieve_Mixed(t *testing.T) {
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
 	// Add a direct physical child to the group
-	directChild := &store.Node{Name: "GRP-1-DC1", ParentID: &grp.ID, Enabled: true}
+	directChild := &nodes.Node{Name: "GRP-1-DC1", ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(directChild)
 
 	// Place older bin at direct child
@@ -296,16 +299,16 @@ func TestNodeGroupResolveStore_DirectChildren(t *testing.T) {
 	db := testDB(t)
 
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
-	bp := &store.Payload{Code: "PDS"}
+	bp := &payloads.Payload{Code: "PDS"}
 	db.CreatePayload(bp)
 
-	grp := &store.Node{Name: "GRP-DS", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	grp := &nodes.Node{Name: "GRP-DS", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
 	db.CreateNode(grp)
 	grp, _ = db.GetNode(grp.ID)
 
-	child1 := &store.Node{Name: "DS-01", ParentID: &grp.ID, Enabled: true}
+	child1 := &nodes.Node{Name: "DS-01", ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(child1)
-	child2 := &store.Node{Name: "DS-02", ParentID: &grp.ID, Enabled: true}
+	child2 := &nodes.Node{Name: "DS-02", ParentID: &grp.ID, Enabled: true}
 	db.CreateNode(child2)
 
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
@@ -325,18 +328,18 @@ func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
 	grp, _, slots, bp := setupNodeGroup(t, db)
 
 	// Create two bin types
-	btSmall := &store.BinType{Code: "SMALL"}
+	btSmall := &bins.BinType{Code: "SMALL"}
 	if err := db.CreateBinType(btSmall); err != nil {
 		t.Fatalf("create bin type SMALL: %v", err)
 	}
-	btLarge := &store.BinType{Code: "LARGE"}
+	btLarge := &bins.BinType{Code: "LARGE"}
 	if err := db.CreateBinType(btLarge); err != nil {
 		t.Fatalf("create bin type LARGE: %v", err)
 	}
 
 	// Restrict lane 0 to SMALL only
 	lanes, _ := db.ListChildNodes(grp.ID)
-	var lane0 *store.Node
+	var lane0 *nodes.Node
 	for _, l := range lanes {
 		if l.NodeTypeCode == "LANE" {
 			lane0 = l
@@ -384,7 +387,7 @@ func setBinLoadedAt(t *testing.T, db *store.DB, binID int64, loadedAt time.Time)
 }
 
 // setupNodeGroup3Lane creates an NGRP with 3 lanes of 3 slots each.
-func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *store.Node, lanes []*store.Node, slots [][]*store.Node, bp *store.Payload) {
+func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*nodes.Node, slots [][]*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	grpType, err := db.GetNodeTypeByCode("NGRP")
 	if err != nil {
@@ -395,21 +398,21 @@ func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *store.Node, lanes []*
 		t.Fatalf("get LANE node type: %v", err)
 	}
 
-	bp = &store.Payload{Code: "WGA"}
+	bp = &payloads.Payload{Code: "WGA"}
 	if err := db.CreatePayload(bp); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
 
-	grp = &store.Node{Name: "GRP-3L", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
+	grp = &nodes.Node{Name: "GRP-3L", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
 	if err := db.CreateNode(grp); err != nil {
 		t.Fatalf("create NGRP node: %v", err)
 	}
 	grp, _ = db.GetNode(grp.ID)
 
-	lanes = make([]*store.Node, 3)
-	slots = make([][]*store.Node, 3)
+	lanes = make([]*nodes.Node, 3)
+	slots = make([][]*nodes.Node, 3)
 	for i := 0; i < 3; i++ {
-		lane := &store.Node{
+		lane := &nodes.Node{
 			Name: fmt.Sprintf("GRP-3L-L%d", i+1), IsSynthetic: true,
 			NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true,
 		}
@@ -419,10 +422,10 @@ func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *store.Node, lanes []*
 		lane, _ = db.GetNode(lane.ID)
 		lanes[i] = lane
 
-		slots[i] = make([]*store.Node, 3)
+		slots[i] = make([]*nodes.Node, 3)
 		for d := 1; d <= 3; d++ {
 			depth := d
-			slot := &store.Node{
+			slot := &nodes.Node{
 				Name:     fmt.Sprintf("GRP-3L-L%d-S%d", i+1, d),
 				ParentID: &lane.ID, Enabled: true, Depth: &depth,
 			}
@@ -455,7 +458,7 @@ func TestTC40a_FIFOBuriedOlderThanAccessible(t *testing.T) {
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
 	// Create blocker payload
-	blkPayload := &store.Payload{Code: "BLK"}
+	blkPayload := &payloads.Payload{Code: "BLK"}
 	if err := db.CreatePayload(blkPayload); err != nil {
 		t.Fatalf("create blocker payload: %v", err)
 	}
@@ -502,7 +505,7 @@ func TestTC40a_FIFOAccessibleOlderThanBuried(t *testing.T) {
 
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
-	blkPayload := &store.Payload{Code: "BLK"}
+	blkPayload := &payloads.Payload{Code: "BLK"}
 	if err := db.CreatePayload(blkPayload); err != nil {
 		t.Fatalf("create blocker payload: %v", err)
 	}
@@ -545,7 +548,7 @@ func TestTC40b_COSTIgnoresBuriedWhenAccessible(t *testing.T) {
 
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
-	blkPayload := &store.Payload{Code: "BLK"}
+	blkPayload := &payloads.Payload{Code: "BLK"}
 	if err := db.CreatePayload(blkPayload); err != nil {
 		t.Fatalf("create blocker payload: %v", err)
 	}
@@ -591,7 +594,7 @@ func TestTC40b_COSTFallsToBuriedWhenNoAccessible(t *testing.T) {
 
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
-	blkPayload := &store.Payload{Code: "BLK"}
+	blkPayload := &payloads.Payload{Code: "BLK"}
 	if err := db.CreatePayload(blkPayload); err != nil {
 		t.Fatalf("create blocker payload: %v", err)
 	}
@@ -640,7 +643,7 @@ func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
 	// Set up bin type and payload-bin-type link for FindEmptyCompatibleBin
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
-		bt = &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+		bt = &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
 		if err := db.CreateBinType(bt); err != nil {
 			t.Fatalf("create default bin type: %v", err)
 		}
@@ -654,7 +657,7 @@ func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
 	createTestBinAtNode(t, db, bp.Code, slots[0][1].ID, "FULL-L1-S2")
 
 	// Empty bin at depth 3 — no manifest, just a bare bin
-	emptyL1 := &store.Bin{BinTypeID: bt.ID, Label: "EMPTY-L1-S3", NodeID: &slots[0][2].ID, Status: "available"}
+	emptyL1 := &bins.Bin{BinTypeID: bt.ID, Label: "EMPTY-L1-S3", NodeID: &slots[0][2].ID, Status: "available"}
 	if err := db.CreateBin(emptyL1); err != nil {
 		t.Fatalf("create empty bin L1: %v", err)
 	}
@@ -662,7 +665,7 @@ func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
 	// Fill lane 2 (index 1): full bin at depth 1, empty bin buried at depth 3
 	createTestBinAtNode(t, db, bp.Code, slots[1][0].ID, "FULL-L2-S1")
 
-	emptyL2 := &store.Bin{BinTypeID: bt.ID, Label: "EMPTY-L2-S3", NodeID: &slots[1][2].ID, Status: "available"}
+	emptyL2 := &bins.Bin{BinTypeID: bt.ID, Label: "EMPTY-L2-S3", NodeID: &slots[1][2].ID, Status: "available"}
 	if err := db.CreateBin(emptyL2); err != nil {
 		t.Fatalf("create empty bin L2: %v", err)
 	}

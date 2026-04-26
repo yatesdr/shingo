@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingocore/store"
+	"shingocore/store/demands"
 )
 
 // DemandService centralizes demand-row CRUD and produced-count
@@ -28,7 +29,7 @@ func (s *DemandService) Create(catID, description string, demandQty int64) (int6
 }
 
 // Get loads a demand by ID.
-func (s *DemandService) Get(id int64) (*store.Demand, error) {
+func (s *DemandService) Get(id int64) (*demands.Demand, error) {
 	return s.db.GetDemand(id)
 }
 
@@ -50,7 +51,7 @@ func (s *DemandService) Delete(id int64) error {
 }
 
 // List returns every demand row.
-func (s *DemandService) List() ([]*store.Demand, error) {
+func (s *DemandService) List() ([]*demands.Demand, error) {
 	return s.db.ListDemands()
 }
 
@@ -75,6 +76,6 @@ func (s *DemandService) ClearAllProduced() error {
 
 // ListProductionLog returns the most recent production-log entries for
 // a catalogue ID, capped at limit rows.
-func (s *DemandService) ListProductionLog(catID string, limit int) ([]*store.ProductionLogEntry, error) {
+func (s *DemandService) ListProductionLog(catID string, limit int) ([]*demands.ProductionLogEntry, error) {
 	return s.db.ListProductionLog(catID, limit)
 }

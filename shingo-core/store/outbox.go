@@ -13,18 +13,15 @@ import (
 // MaxOutboxRetries preserves the store.MaxOutboxRetries public API.
 const MaxOutboxRetries = messaging.MaxOutboxRetries
 
-// OutboxMessage preserves the store.OutboxMessage public API.
-type OutboxMessage = messaging.OutboxMessage
-
 func (db *DB) EnqueueOutbox(topic string, payload []byte, eventType, stationID string) error {
 	return messaging.EnqueueOutbox(db.DB, topic, payload, eventType, stationID)
 }
 
-func (db *DB) ListPendingOutbox(limit int) ([]*OutboxMessage, error) {
+func (db *DB) ListPendingOutbox(limit int) ([]*messaging.OutboxMessage, error) {
 	return messaging.ListPendingOutbox(db.DB, limit)
 }
 
-func (db *DB) ListDeadLetterOutbox(limit int) ([]*OutboxMessage, error) {
+func (db *DB) ListDeadLetterOutbox(limit int) ([]*messaging.OutboxMessage, error) {
 	return messaging.ListDeadLetterOutbox(db.DB, limit)
 }
 

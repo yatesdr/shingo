@@ -202,7 +202,7 @@ func (h *Handlers) apiReparentNode(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if oldWasNGRP || parentIsGroup {
-			h.engine.SendDataToEdge(
+			h.orchestration.SendDataToEdge(
 				protocol.SubjectNodeStructureChanged,
 				protocol.StationBroadcast,
 				&protocol.NodeStructureChanged{
@@ -349,7 +349,7 @@ func (h *Handlers) apiDeleteNodeGroup(w http.ResponseWriter, r *http.Request) {
 
 	// Notify Edge of group deletion
 	if group.NodeTypeCode == "NGRP" {
-		h.engine.SendDataToEdge(
+		h.orchestration.SendDataToEdge(
 			protocol.SubjectNodeStructureChanged,
 			protocol.StationBroadcast,
 			&protocol.NodeStructureChanged{

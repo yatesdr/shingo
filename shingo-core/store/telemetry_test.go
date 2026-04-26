@@ -5,6 +5,8 @@ package store
 import (
 	"testing"
 	"time"
+
+	"shingocore/store/telemetry"
 )
 
 func TestInsertAndListMissionEvents(t *testing.T) {
@@ -12,7 +14,7 @@ func TestInsertAndListMissionEvents(t *testing.T) {
 
 	orderID := int64(100)
 
-	e1 := &MissionEvent{
+	e1 := &telemetry.Event{
 		OrderID:       orderID,
 		VendorOrderID: "rds-100",
 		OldState:      "CREATED",
@@ -27,7 +29,7 @@ func TestInsertAndListMissionEvents(t *testing.T) {
 		t.Fatalf("InsertMissionEvent 1: %v", err)
 	}
 
-	e2 := &MissionEvent{
+	e2 := &telemetry.Event{
 		OrderID:       orderID,
 		VendorOrderID: "rds-100",
 		OldState:      "RUNNING",
@@ -42,7 +44,7 @@ func TestInsertAndListMissionEvents(t *testing.T) {
 	}
 
 	// Unrelated order event — should not appear in the list for orderID.
-	eOther := &MissionEvent{
+	eOther := &telemetry.Event{
 		OrderID:    200,
 		OldState:   "CREATED",
 		NewState:   "RUNNING",
@@ -78,7 +80,7 @@ func TestUpsertAndGetMissionTelemetry(t *testing.T) {
 	created := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	completed := time.Date(2025, 1, 1, 10, 5, 0, 0, time.UTC)
 
-	mt := &MissionTelemetry{
+	mt := &telemetry.Mission{
 		OrderID:        500,
 		VendorOrderID:  "rds-500",
 		RobotID:        "AMB-1",
@@ -153,7 +155,7 @@ func TestListMissionsFilter(t *testing.T) {
 		time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC),
 		time.Date(2025, 4, 1, 10, 0, 0, 0, time.UTC),
 	}
-	rows := []*MissionTelemetry{
+	rows := []*telemetry.Mission{
 		{OrderID: 1001, StationID: "STN-1", TerminalState: "FINISHED", DurationMS: 1000, CoreCompleted: &times[0], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
 		{OrderID: 1002, StationID: "STN-1", TerminalState: "FAILED", DurationMS: 2000, CoreCompleted: &times[1], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
 		{OrderID: 1003, StationID: "STN-2", TerminalState: "FINISHED", DurationMS: 3000, CoreCompleted: &times[2], BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
@@ -166,7 +168,7 @@ func TestListMissionsFilter(t *testing.T) {
 	}
 
 	// Filter by station only — STN-1 should get 3 rows.
-	list1, total1, err := db.ListMissions(MissionFilter{StationID: "STN-1", Limit: 50})
+	list1, total1, err := db.ListMissions(telemetry.Filter{StationID: "STN-1", Limit: 50})
 	if err != nil {
 		t.Fatalf("ListMissions STN-1: %v", err)
 	}
@@ -185,7 +187,7 @@ func TestListMissionsFilter(t *testing.T) {
 	// Date range — Feb 1 through Apr 1 inclusive.
 	since := time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)
 	until := time.Date(2025, 4, 1, 23, 0, 0, 0, time.UTC)
-	list2, total2, err := db.ListMissions(MissionFilter{Since: &since, Until: &until, Limit: 50})
+	list2, total2, err := db.ListMissions(telemetry.Filter{Since: &since, Until: &until, Limit: 50})
 	if err != nil {
 		t.Fatalf("ListMissions date-range: %v", err)
 	}
@@ -197,7 +199,7 @@ func TestListMissionsFilter(t *testing.T) {
 	}
 
 	// Combined filter: station + date range.
-	list3, total3, err := db.ListMissions(MissionFilter{StationID: "STN-1", Since: &since, Until: &until, Limit: 50})
+	list3, total3, err := db.ListMissions(telemetry.Filter{StationID: "STN-1", Since: &since, Until: &until, Limit: 50})
 	if err != nil {
 		t.Fatalf("ListMissions combined: %v", err)
 	}
@@ -213,7 +215,7 @@ func TestListMissionsFilter(t *testing.T) {
 func TestGetMissionStats(t *testing.T) {
 	db := testDB(t)
 
-	rows := []*MissionTelemetry{
+	rows := []*telemetry.Mission{
 		{OrderID: 2001, StationID: "S", TerminalState: "FINISHED", DurationMS: 1000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
 		{OrderID: 2002, StationID: "S", TerminalState: "FINISHED", DurationMS: 3000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
 		{OrderID: 2003, StationID: "S", TerminalState: "FAILED", DurationMS: 2000, BlocksJSON: "[]", ErrorsJSON: "[]", WarningsJSON: "[]", NoticesJSON: "[]"},
@@ -223,7 +225,7 @@ func TestGetMissionStats(t *testing.T) {
 		db.UpsertMissionTelemetry(r)
 	}
 
-	stats, err := db.GetMissionStats(MissionFilter{})
+	stats, err := db.GetMissionStats(telemetry.Filter{})
 	if err != nil {
 		t.Fatalf("GetMissionStats: %v", err)
 	}
@@ -258,7 +260,7 @@ func TestGetMissionStats(t *testing.T) {
 
 func TestGetMissionStats_EmptyPopulation(t *testing.T) {
 	db := testDB(t)
-	stats, err := db.GetMissionStats(MissionFilter{StationID: "NOBODY"})
+	stats, err := db.GetMissionStats(telemetry.Filter{StationID: "NOBODY"})
 	if err != nil {
 		t.Fatalf("GetMissionStats (empty): %v", err)
 	}

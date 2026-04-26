@@ -4,9 +4,12 @@ import (
 	"net/http"
 	"testing"
 
-	"shingoedge/store"
-
 	"github.com/go-chi/chi/v5"
+
+	"shingoedge/store"
+	"shingoedge/store/orders"
+	"shingoedge/store/processes"
+	"shingoedge/store/stations"
 )
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -93,7 +96,7 @@ func TestOperatorStations_ListStations_Success(t *testing.T) {
 	resp := doRequest(t, router, "GET", "/api/operator-stations", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	var stations []store.OperatorStation
+	var stations []stations.Station
 	decodeJSON(t, resp, &stations)
 
 	codes := make(map[string]bool)
@@ -110,7 +113,7 @@ func TestOperatorStations_CreateStation_Success(t *testing.T) {
 	cookie := authCookie(t, h)
 
 	pid := seedProcess(t, "CreateStationLine")
-	body := store.OperatorStationInput{
+	body := stations.Input{
 		ProcessID:  pid,
 		Code:       "OS-CREATE-1",
 		Name:       "CreatedStation",
@@ -163,7 +166,7 @@ func TestOperatorStations_UpdateStation_Success(t *testing.T) {
 	pid := seedProcess(t, "UpdateStationLine")
 	sid := seedOperatorStation(t, pid, "OS-UPD-1", "OriginalName")
 
-	body := store.OperatorStationInput{
+	body := stations.Input{
 		ProcessID: pid,
 		Code:      "OS-UPD-1",
 		Name:      "UpdatedName",
@@ -192,7 +195,7 @@ func TestOperatorStations_UpdateStation_InvalidID(t *testing.T) {
 	h, router := newOperatorStationsRouter(t)
 	cookie := authCookie(t, h)
 
-	body := store.OperatorStationInput{Name: "x"}
+	body := stations.Input{Name: "x"}
 	resp := doRequest(t, router, "PUT", "/api/operator-stations/notanumber", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "invalid id")
@@ -354,7 +357,7 @@ func TestOperatorStations_ListActiveOrders_Success(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 
 	// Body must decode as a JSON array (possibly empty/null).
-	var orders []store.Order
+	var orders []orders.Order
 	decodeJSON(t, resp, &orders)
 }
 
@@ -442,7 +445,7 @@ func TestOperatorStations_ListProcessNodes_Success(t *testing.T) {
 	resp := doRequest(t, router, "GET", "/api/process-nodes", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	var nodes []store.ProcessNode
+	var nodes []processes.Node
 	decodeJSON(t, resp, &nodes)
 	found := false
 	for _, n := range nodes {
@@ -467,7 +470,7 @@ func TestOperatorStations_ListProcessNodesByStation_Success(t *testing.T) {
 	resp := doRequest(t, router, "GET", "/api/process-nodes/station/"+itoa(sid), nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	var nodes []store.ProcessNode
+	var nodes []processes.Node
 	decodeJSON(t, resp, &nodes)
 	if len(nodes) != 2 {
 		t.Fatalf("expected 2 nodes for station %d, got %d", sid, len(nodes))
@@ -490,7 +493,7 @@ func TestOperatorStations_CreateProcessNode_Success(t *testing.T) {
 	pid := seedProcess(t, "CreatePNLine")
 	sid := seedOperatorStation(t, pid, "OS-CPN-1", "CreatePNStation")
 
-	body := store.ProcessNodeInput{
+	body := processes.NodeInput{
 		ProcessID:         pid,
 		OperatorStationID: &sid,
 		CoreNodeName:      "pn-create-alpha",
@@ -544,7 +547,7 @@ func TestOperatorStations_UpdateProcessNode_Success(t *testing.T) {
 	sid := seedOperatorStation(t, pid, "OS-UPN-1", "UpdatePNStation")
 	nodeID := seedProcessNode(t, pid, sid, "pn-upd-orig")
 
-	body := store.ProcessNodeInput{
+	body := processes.NodeInput{
 		ProcessID:         pid,
 		OperatorStationID: &sid,
 		CoreNodeName:      "pn-upd-new",
@@ -576,7 +579,7 @@ func TestOperatorStations_UpdateProcessNode_InvalidID(t *testing.T) {
 	cookie := authCookie(t, h)
 
 	resp := doRequest(t, router, "PUT", "/api/process-nodes/bad",
-		store.ProcessNodeInput{Name: "x"}, cookie)
+		processes.NodeInput{Name: "x"}, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "invalid id")
 }

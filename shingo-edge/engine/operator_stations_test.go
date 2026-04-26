@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"shingoedge/orders"
+	"shingoedge/service"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // testEngineDB opens a fresh SQLite database with full schema applied.
@@ -27,7 +29,7 @@ func seedProcessNode(t *testing.T, db *store.DB) (processID, nodeID int64) {
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nid, err := db.CreateProcessNode(store.ProcessNodeInput{
+	nid, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    pid,
 		CoreNodeName: "TEST-NODE",
 		Code:         "TN1",
@@ -140,7 +142,7 @@ func TestCanAcceptOrders(t *testing.T) {
 		}
 
 		// Create active changeover
-		_, err = db.CreateChangeover(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, nil, nil)
+		_, err = service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, nil, nil)
 		if err != nil {
 			t.Fatalf("create changeover: %v", err)
 		}
@@ -168,7 +170,7 @@ func TestCanAcceptOrders(t *testing.T) {
 			t.Fatalf("create to style: %v", err)
 		}
 
-		coID, err := db.CreateChangeover(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, nil, nil)
+		coID, err := service.NewChangeoverService(db).Create(processID, &fromStyleID, toStyleID, "test", "test changeover", nil, nil, nil)
 		if err != nil {
 			t.Fatalf("create changeover: %v", err)
 		}

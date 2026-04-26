@@ -9,7 +9,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // Engine-level regression tests.
@@ -159,7 +159,7 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 	bin := createTestBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-REGR-CANCEL")
 
 	// Create an order with empty EdgeUUID (simulates auto-return order)
-	autoReturn := &store.Order{
+	autoReturn := &orders.Order{
 		EdgeUUID:     "",
 		StationID:    "line-1",
 		OrderType:    dispatch.OrderTypeStore,

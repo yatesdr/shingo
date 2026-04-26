@@ -8,7 +8,8 @@ import (
 
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
-	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // wiring_auto_return_test.go — coverage for wiring_auto_return.go.
@@ -32,7 +33,7 @@ func TestMaybeCreateReturnOrder_DisabledByFlag(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-AR-1")
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:      "ar-test-1",
 		StationID:     "line-1",
 		OrderType:     dispatch.OrderTypeRetrieve,
@@ -82,7 +83,7 @@ func TestMaybeCreateReturnOrder_NoVendorOrderID(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-AR-2")
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "ar-no-vendor",
 		StationID:    "line-1",
 		OrderType:    dispatch.OrderTypeRetrieve,
@@ -121,17 +122,17 @@ func TestCreateSingleReturnOrder_PersistsOrderAndClaim(t *testing.T) {
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Build a two-level tree: synthetic root + lineside child.
-	root := &store.Node{Name: "AR-ROOT", IsSynthetic: true, Enabled: true}
+	root := &nodes.Node{Name: "AR-ROOT", IsSynthetic: true, Enabled: true}
 	if err := db.CreateNode(root); err != nil {
 		t.Fatalf("create root: %v", err)
 	}
-	leaf := &store.Node{Name: "AR-LEAF", Enabled: true, ParentID: &root.ID}
+	leaf := &nodes.Node{Name: "AR-LEAF", Enabled: true, ParentID: &root.ID}
 	if err := db.CreateNode(leaf); err != nil {
 		t.Fatalf("create leaf: %v", err)
 	}
 
 	bin := createTestBinAtNode(t, db, bp.Code, leaf.ID, "BIN-AR-CORE")
-	original := &store.Order{
+	original := &orders.Order{
 		EdgeUUID:      "original-for-return",
 		StationID:     "line-1",
 		OrderType:     dispatch.OrderTypeRetrieve,
@@ -154,7 +155,7 @@ func TestCreateSingleReturnOrder_PersistsOrderAndClaim(t *testing.T) {
 
 	// Verify new return order persisted.
 	all, _ := db.ListOrders("", 100)
-	var ret *store.Order
+	var ret *orders.Order
 	for _, o := range all {
 		if o.PayloadDesc == "auto_return" {
 			ret = o
@@ -219,7 +220,7 @@ func TestCreateSingleReturnOrder_MissingSourceNode(t *testing.T) {
 	// before touching it.
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-AR-MISS")
 
-	original := &store.Order{
+	original := &orders.Order{
 		EdgeUUID:      "ar-miss",
 		StationID:     "line-1",
 		OrderType:     dispatch.OrderTypeRetrieve,

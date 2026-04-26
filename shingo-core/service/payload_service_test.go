@@ -5,13 +5,14 @@ package service
 import (
 	"testing"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/payloads"
 )
 
 // makePayload inserts a payload directly through the service and returns it.
-func makePayload(t *testing.T, svc *PayloadService, code, desc string, uop int) *store.Payload {
+func makePayload(t *testing.T, svc *PayloadService, code, desc string, uop int) *payloads.Payload {
 	t.Helper()
-	p := &store.Payload{Code: code, Description: desc, UOPCapacity: uop}
+	p := &payloads.Payload{Code: code, Description: desc, UOPCapacity: uop}
 	if err := svc.Create(p); err != nil {
 		t.Fatalf("Create payload %s: %v", code, err)
 	}
@@ -22,7 +23,7 @@ func TestPayloadService_Create_PersistsRow(t *testing.T) {
 	db := testDB(t)
 	svc := NewPayloadService(db)
 
-	p := &store.Payload{Code: "PL-CR-1", Description: "first", UOPCapacity: 50}
+	p := &payloads.Payload{Code: "PL-CR-1", Description: "first", UOPCapacity: 50}
 	if err := svc.Create(p); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestPayloadService_CreateAndListManifest(t *testing.T) {
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-MAN", "manifest", 10)
 
-	item := &store.PayloadManifestItem{
+	item := &payloads.ManifestItem{
 		PayloadID:  p.ID,
 		PartNumber: "PART-1",
 		Quantity:   3,
@@ -136,7 +137,7 @@ func TestPayloadService_UpdateManifestItem_PersistsChanges(t *testing.T) {
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-UMI", "", 10)
 
-	item := &store.PayloadManifestItem{PayloadID: p.ID, PartNumber: "P-OLD", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P-OLD", Quantity: 1}
 	if err := svc.CreateManifestItem(item); err != nil {
 		t.Fatalf("CreateManifestItem: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestPayloadService_DeleteManifestItem_RemovesRow(t *testing.T) {
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-DMI", "", 10)
 
-	item := &store.PayloadManifestItem{PayloadID: p.ID, PartNumber: "P", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P", Quantity: 1}
 	if err := svc.CreateManifestItem(item); err != nil {
 		t.Fatalf("CreateManifestItem: %v", err)
 	}
@@ -174,11 +175,11 @@ func TestPayloadService_ReplaceManifest_SwapsList(t *testing.T) {
 	p := makePayload(t, svc, "PL-RPL", "", 10)
 
 	// Seed with one item, then replace with two.
-	if err := svc.CreateManifestItem(&store.PayloadManifestItem{PayloadID: p.ID, PartNumber: "OLD", Quantity: 1}); err != nil {
+	if err := svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", Quantity: 1}); err != nil {
 		t.Fatalf("seed CreateManifestItem: %v", err)
 	}
 
-	newItems := []*store.PayloadManifestItem{
+	newItems := []*payloads.ManifestItem{
 		{PayloadID: p.ID, PartNumber: "N1", Quantity: 4},
 		{PayloadID: p.ID, PartNumber: "N2", Quantity: 5},
 	}
@@ -200,8 +201,8 @@ func TestPayloadService_SetAndListBinTypes(t *testing.T) {
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-BTY", "", 10)
 
-	bt1 := &store.BinType{Code: "BT-A", Description: "a"}
-	bt2 := &store.BinType{Code: "BT-B", Description: "b"}
+	bt1 := &bins.BinType{Code: "BT-A", Description: "a"}
+	bt2 := &bins.BinType{Code: "BT-B", Description: "b"}
 	if err := db.CreateBinType(bt1); err != nil {
 		t.Fatalf("create bt1: %v", err)
 	}

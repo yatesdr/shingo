@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingocore/store"
+	"shingocore/store/inventory"
 )
 
 // InventoryService exposes the aggregated inventory view used by the
@@ -22,6 +23,6 @@ func NewInventoryService(db *store.DB) *InventoryService {
 
 // List returns the aggregated inventory rows (bin type + payload +
 // node counts).
-func (s *InventoryService) List() ([]store.InventoryRow, error) {
+func (s *InventoryService) List() ([]inventory.Row, error) {
 	return s.db.ListInventory()
 }

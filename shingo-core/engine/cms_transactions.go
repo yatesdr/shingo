@@ -2,7 +2,8 @@ package engine
 
 import (
 	"shingocore/material"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // cms_transactions.go — thin engine wrappers around shingocore/material.
@@ -22,7 +23,7 @@ import (
 // (cycle detection, store lookup failures) are logged and collapsed
 // back to nil so the method keeps the single-return contract the
 // rest of the engine expects.
-func (e *Engine) FindCMSBoundary(nodeID int64) *store.Node {
+func (e *Engine) FindCMSBoundary(nodeID int64) *nodes.Node {
 	node, err := material.FindCMSBoundary(e.db, nodeID)
 	if err != nil {
 		e.logFn("engine: cms boundary walk from node %d: %v", nodeID, err)
@@ -57,7 +58,7 @@ func (e *Engine) RecordMovementTransactions(ev BinUpdatedEvent) {
 // RecordCorrectionTransactions logs CMS adjustment transactions when
 // a bin's manifest is edited. Persistence and emission are the only
 // concerns that live here; the diff itself is done in material.
-func (e *Engine) RecordCorrectionTransactions(binID, nodeID int64, oldManifest, newManifest []store.ManifestEntry, reason string) {
+func (e *Engine) RecordCorrectionTransactions(binID, nodeID int64, oldManifest, newManifest []bins.ManifestEntry, reason string) {
 	txns, err := material.BuildCorrectionTransactions(e.db, binID, nodeID, oldManifest, newManifest, reason)
 	if err != nil {
 		e.logFn("engine: cms correction build: %v", err)

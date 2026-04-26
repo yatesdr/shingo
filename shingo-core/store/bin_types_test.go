@@ -2,12 +2,16 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+)
 
 func TestBinTypeRoundTrip(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{
+	bt := &bins.BinType{
 		Code:        "BT-RT-1",
 		Description: "Round trip type",
 		WidthIn:     10.0,

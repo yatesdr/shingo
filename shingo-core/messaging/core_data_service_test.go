@@ -10,13 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"shingo/protocol"
-	"shingocore/config"
-	"shingocore/store"
-
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"shingo/protocol"
+	"shingocore/config"
+	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 // captureResponder records replyData calls for test assertions.
@@ -111,7 +112,7 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 	}
 
 	// Create NGRP node (the group container)
-	grpNode := &store.Node{
+	grpNode := &nodes.Node{
 		Name:        "STORAGE-G1",
 		IsSynthetic: true,
 		Enabled:     true,
@@ -122,7 +123,7 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 	}
 
 	// Create a physical child node under the NGRP
-	childNode := &store.Node{
+	childNode := &nodes.Node{
 		Name:     "SLOT-1",
 		Enabled:  true,
 		ParentID: &grpNode.ID,
@@ -189,7 +190,7 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 	}
 
 	// Create NGRP node
-	grpNode := &store.Node{
+	grpNode := &nodes.Node{
 		Name:        "WH-SUPER",
 		IsSynthetic: true,
 		Enabled:     true,
@@ -200,7 +201,7 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 	}
 
 	// Create a physical child
-	childNode := &store.Node{
+	childNode := &nodes.Node{
 		Name:     "LANE-A1",
 		Enabled:  true,
 		ParentID: &grpNode.ID,

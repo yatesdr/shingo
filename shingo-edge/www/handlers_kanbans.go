@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"shingoedge/store"
+	"shingoedge/store/orders"
 )
 
 func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
-	processes, _ := h.engine.ListProcesses()
+	processes, _ := h.engine.ProcessService().List()
 
 	// Determine active process from query param (0 = all processes)
 	var activeProcessID int64
@@ -24,11 +24,11 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var activeOrders []store.Order
+	var activeOrders []orders.Order
 	if activeProcessID > 0 {
-		activeOrders, _ = h.engine.ListActiveOrdersByProcess(activeProcessID)
+		activeOrders, _ = h.engine.OrderService().ListActiveByProcess(activeProcessID)
 	} else {
-		activeOrders, _ = h.engine.ListActiveOrders()
+		activeOrders, _ = h.engine.OrderService().ListActive()
 	}
 
 	// Core-synced nodes for redirect dropdown
@@ -60,11 +60,11 @@ func (h *Handlers) handleKanbansPartial(w http.ResponseWriter, r *http.Request) 
 			activeProcessID = id
 		}
 	}
-	var activeOrders []store.Order
+	var activeOrders []orders.Order
 	if activeProcessID > 0 {
-		activeOrders, _ = h.engine.ListActiveOrdersByProcess(activeProcessID)
+		activeOrders, _ = h.engine.OrderService().ListActiveByProcess(activeProcessID)
 	} else {
-		activeOrders, _ = h.engine.ListActiveOrders()
+		activeOrders, _ = h.engine.OrderService().ListActive()
 	}
 	data := map[string]interface{}{
 		"ActiveOrders": activeOrders,

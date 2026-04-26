@@ -2,18 +2,24 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
+)
 
 func TestBinManifestSetConfirmClearGet(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "BM-BT", Description: "bm tote"}
+	bt := &bins.BinType{Code: "BM-BT", Description: "bm tote"}
 	db.CreateBinType(bt)
 
-	node := &Node{Name: "BM-NODE", Enabled: true}
+	node := &nodes.Node{Name: "BM-NODE", Enabled: true}
 	db.CreateNode(node)
 
-	bin := &Bin{BinTypeID: bt.ID, Label: "BM-B1", NodeID: &node.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BM-B1", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin)
 
 	// GetBinManifest on a bin with no manifest — should return an empty, non-nil Manifest
@@ -95,25 +101,25 @@ func TestBinManifestSetConfirmClearGet(t *testing.T) {
 func TestFindSourceBinFIFO(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "FIFO-BT", Description: "fifo tote"}
+	bt := &bins.BinType{Code: "FIFO-BT", Description: "fifo tote"}
 	db.CreateBinType(bt)
 
 	// Storage node — must be enabled + non-synthetic per FindSourceFIFO.
-	node := &Node{Name: "FIFO-NODE", Enabled: true}
+	node := &nodes.Node{Name: "FIFO-NODE", Enabled: true}
 	db.CreateNode(node)
 
 	// Create three bins; confirm with distinct timestamps to control loaded_at ordering.
-	older := &Bin{BinTypeID: bt.ID, Label: "FIFO-OLD", NodeID: &node.ID, Status: "available"}
+	older := &bins.Bin{BinTypeID: bt.ID, Label: "FIFO-OLD", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(older)
 	db.SetBinManifest(older.ID, `{"items":[]}`, "PAY-F", 10)
 	db.ConfirmBinManifest(older.ID, "2024-01-01 00:00:00")
 
-	middle := &Bin{BinTypeID: bt.ID, Label: "FIFO-MID", NodeID: &node.ID, Status: "available"}
+	middle := &bins.Bin{BinTypeID: bt.ID, Label: "FIFO-MID", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(middle)
 	db.SetBinManifest(middle.ID, `{"items":[]}`, "PAY-F", 10)
 	db.ConfirmBinManifest(middle.ID, "2024-06-01 00:00:00")
 
-	newer := &Bin{BinTypeID: bt.ID, Label: "FIFO-NEW", NodeID: &node.ID, Status: "available"}
+	newer := &bins.Bin{BinTypeID: bt.ID, Label: "FIFO-NEW", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(newer)
 	db.SetBinManifest(newer.ID, `{"items":[]}`, "PAY-F", 10)
 	db.ConfirmBinManifest(newer.ID, "2024-12-01 00:00:00")
@@ -148,21 +154,21 @@ func TestFindSourceBinFIFO(t *testing.T) {
 func TestFindStorageDestination(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "DEST-BT", Description: "dest tote"}
+	bt := &bins.BinType{Code: "DEST-BT", Description: "dest tote"}
 	db.CreateBinType(bt)
 
 	// Two physical storage nodes, one synthetic (should be excluded), and one disabled.
-	nodeA := &Node{Name: "DEST-A", Enabled: true}
+	nodeA := &nodes.Node{Name: "DEST-A", Enabled: true}
 	db.CreateNode(nodeA)
-	nodeB := &Node{Name: "DEST-B", Enabled: true}
+	nodeB := &nodes.Node{Name: "DEST-B", Enabled: true}
 	db.CreateNode(nodeB)
-	syntheticNode := &Node{Name: "DEST-SYN", Enabled: true, IsSynthetic: true}
+	syntheticNode := &nodes.Node{Name: "DEST-SYN", Enabled: true, IsSynthetic: true}
 	db.CreateNode(syntheticNode)
-	disabledNode := &Node{Name: "DEST-OFF", Enabled: false}
+	disabledNode := &nodes.Node{Name: "DEST-OFF", Enabled: false}
 	db.CreateNode(disabledNode)
 
 	// Put a matching-payload bin at nodeB — consolidation path should prefer nodeB.
-	existing := &Bin{BinTypeID: bt.ID, Label: "DEST-EX", NodeID: &nodeB.ID, Status: "available", PayloadCode: "DEST-PAY"}
+	existing := &bins.Bin{BinTypeID: bt.ID, Label: "DEST-EX", NodeID: &nodeB.ID, Status: "available", PayloadCode: "DEST-PAY"}
 	db.CreateBin(existing)
 	db.SetBinManifest(existing.ID, `{"items":[]}`, "DEST-PAY", 10)
 	db.ConfirmBinManifest(existing.ID, "")
@@ -199,21 +205,21 @@ func TestFindStorageDestination(t *testing.T) {
 func TestSetBinManifestFromTemplate(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "TMPL-BT", Description: "tmpl tote"}
+	bt := &bins.BinType{Code: "TMPL-BT", Description: "tmpl tote"}
 	db.CreateBinType(bt)
 
-	node := &Node{Name: "TMPL-NODE", Enabled: true}
+	node := &nodes.Node{Name: "TMPL-NODE", Enabled: true}
 	db.CreateNode(node)
 
-	// Payload with a manifest template
-	p := &Payload{Code: "TMPL-PAY", UOPCapacity: 77}
+	// payloads.Payload with a manifest template
+	p := &payloads.Payload{Code: "TMPL-PAY", UOPCapacity: 77}
 	db.CreatePayload(p)
-	db.ReplacePayloadManifest(p.ID, []*PayloadManifestItem{
+	db.ReplacePayloadManifest(p.ID, []*payloads.ManifestItem{
 		{PayloadID: p.ID, PartNumber: "PART-X", Quantity: 3},
 		{PayloadID: p.ID, PartNumber: "PART-Y", Quantity: 5},
 	})
 
-	bin := &Bin{BinTypeID: bt.ID, Label: "TMPL-B", NodeID: &node.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "TMPL-B", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin)
 
 	// Apply the template — uopCapacity=0 means use payload's default

@@ -14,12 +14,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
+
 	"shingo/protocol"
 	"shingocore/engine"
 	"shingocore/fleet"
-	"shingocore/store"
-
-	"github.com/google/uuid"
+	"shingocore/store/diagnostics"
 )
 
 // --- Test Orders Page ---
@@ -262,7 +262,7 @@ func (h *Handlers) apiDirectOrderSubmit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	result, err := h.engine.CreateDirectOrder(engine.DirectOrderRequest{
+	result, err := h.orchestration.CreateDirectOrder(engine.DirectOrderRequest{
 		FromNodeID: req.FromNodeID,
 		ToNodeID:   req.ToNodeID,
 		StationID:  "core-direct",
@@ -710,7 +710,7 @@ func (h *Handlers) apiTestCommandSubmit(w http.ResponseWriter, r *http.Request) 
 		GoodsID:       req.GoodsID,
 	})
 
-	tc := &store.TestCommand{
+	tc := &diagnostics.TestCommand{
 		CommandType: req.CommandType,
 		RobotID:     req.RobotID,
 		Location:    req.Location,

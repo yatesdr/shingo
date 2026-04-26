@@ -1,11 +1,12 @@
-// Package claims holds style/node-claim persistence for shingo-edge.
+// claims.go — style/node-claim persistence inside the processes aggregate.
 //
-// Phase 5b of the architecture plan moved the style_node_claims CRUD
-// out of the flat store/ package and into this sub-package. The outer
-// store/ keeps type aliases (`store.StyleNodeClaim = claims.NodeClaim`,
-// etc.) and one-line delegate methods on *store.DB so external callers
-// see no API change.
-package claims
+// Phase 6.0c folded shingo-edge/store/claims/ into store/processes/.
+// Claims declare which core nodes a style needs material from; they're
+// part of the process domain cluster (style → claims → core nodes).
+// Function names carry the Claim suffix to disambiguate from the sibling
+// Style/Process/Changeover/Node functions in this package.
+
+package processes
 
 import (
 	"database/sql"
@@ -78,7 +79,7 @@ func (c *NodeClaim) AllowedPayloads() []string {
 	return nil
 }
 
-// NodeClaimInput is the input shape for UpsertNodeClaim.
+// NodeClaimInput is the input shape for UpsertClaim.
 type NodeClaimInput struct {
 	StyleID              int64    `json:"style_id"`
 	CoreNodeName         string   `json:"core_node_name"`
@@ -125,8 +126,8 @@ func scanNodeClaim(scanner interface{ Scan(...interface{}) error }) (NodeClaim, 
 	return c, nil
 }
 
-// List returns every claim for a style.
-func List(db *sql.DB, styleID int64) ([]NodeClaim, error) {
+// ListClaims returns every claim for a style.
+func ListClaims(db *sql.DB, styleID int64) ([]NodeClaim, error) {
 	rows, err := db.Query(`SELECT `+claimSelect+`
 		FROM style_node_claims WHERE style_id=? ORDER BY sequence, core_node_name`, styleID)
 	if err != nil {
@@ -144,8 +145,8 @@ func List(db *sql.DB, styleID int64) ([]NodeClaim, error) {
 	return out, rows.Err()
 }
 
-// Get returns a single claim by id.
-func Get(db *sql.DB, id int64) (*NodeClaim, error) {
+// GetClaim returns a single claim by id.
+func GetClaim(db *sql.DB, id int64) (*NodeClaim, error) {
 	c, err := scanNodeClaim(db.QueryRow(`SELECT `+claimSelect+`
 		FROM style_node_claims WHERE id=?`, id))
 	if err != nil {
@@ -154,8 +155,8 @@ func Get(db *sql.DB, id int64) (*NodeClaim, error) {
 	return &c, nil
 }
 
-// GetByNode returns a claim by its (style_id, core_node_name) pair.
-func GetByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim, error) {
+// GetClaimByNode returns a claim by its (style_id, core_node_name) pair.
+func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim, error) {
 	c, err := scanNodeClaim(db.QueryRow(`SELECT `+claimSelect+`
 		FROM style_node_claims WHERE style_id=? AND core_node_name=?`, styleID, coreNodeName))
 	if err != nil {
@@ -164,10 +165,10 @@ func GetByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim, erro
 	return &c, nil
 }
 
-// Upsert inserts or updates a claim and returns the row id. Validates
+// UpsertClaim inserts or updates a claim and returns the row id. Validates
 // role/swap_mode invariants (manual_swap claims must auto-confirm and
 // must declare an outbound destination).
-func Upsert(db *sql.DB, in NodeClaimInput) (int64, error) {
+func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	if in.Role != "produce" && in.Role != "changeover" {
 		in.Role = "consume"
 	}
@@ -233,8 +234,8 @@ func marshalAllowedPayloads(codes []string) string {
 	return string(data)
 }
 
-// Delete removes a claim row by id.
-func Delete(db *sql.DB, id int64) error {
+// DeleteClaim removes a claim row by id.
+func DeleteClaim(db *sql.DB, id int64) error {
 	_, err := db.Exec(`DELETE FROM style_node_claims WHERE id=?`, id)
 	return err
 }

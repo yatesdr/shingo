@@ -20,6 +20,9 @@ import (
 	"shingocore/internal/testdb"
 	"shingocore/messaging"
 	"shingocore/store"
+	"shingocore/store/audit"
+	"shingocore/store/bins"
+	"shingocore/store/payloads"
 )
 
 // Characterization tests for handlers_payloads.go — JSON endpoints that read
@@ -115,6 +118,7 @@ func testHandlersForPages(t *testing.T) (*Handlers, *store.DB) {
 
 	h := &Handlers{
 		engine:   eng,
+		orchestration: eng,
 		sessions: newSessionStore("test-secret"),
 		tmpls:    make(map[string]*template.Template),
 		eventHub: hub,
@@ -153,7 +157,7 @@ func TestApiListPayloads_ReturnsAll(t *testing.T) {
 	h, db := testHandlers(t)
 	// Seed two payloads. testdb.SetupStandardData creates PART-A.
 	sd := testdb.SetupStandardData(t, db)
-	extra := &store.Payload{Code: "PART-B", Description: "second"}
+	extra := &payloads.Payload{Code: "PART-B", Description: "second"}
 	if err := db.CreatePayload(extra); err != nil {
 		t.Fatalf("seed payload: %v", err)
 	}
@@ -163,7 +167,7 @@ func TestApiListPayloads_ReturnsAll(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 
-	var payloads []*store.Payload
+	var payloads []*payloads.Payload
 	if err := json.NewDecoder(rec.Body).Decode(&payloads); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -189,7 +193,7 @@ func TestApiGetPayload_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var got store.Payload
+	var got payloads.Payload
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -223,12 +227,12 @@ func TestApiListManifest_HappyPath(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 
 	// Seed 2 manifest items.
-	if err := db.CreatePayloadManifestItem(&store.PayloadManifestItem{
+	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "P1", Quantity: 3,
 	}); err != nil {
 		t.Fatalf("create manifest item: %v", err)
 	}
-	if err := db.CreatePayloadManifestItem(&store.PayloadManifestItem{
+	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "P2", Quantity: 5,
 	}); err != nil {
 		t.Fatalf("create manifest item: %v", err)
@@ -238,7 +242,7 @@ func TestApiListManifest_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var items []*store.PayloadManifestItem
+	var items []*payloads.ManifestItem
 	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -270,7 +274,7 @@ func TestApiCreateManifestItem_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var created store.PayloadManifestItem
+	var created payloads.ManifestItem
 	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -307,7 +311,7 @@ func TestApiCreateManifestItem_InvalidJSON(t *testing.T) {
 func TestApiUpdateManifestItem_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
-	item := &store.PayloadManifestItem{PayloadID: sd.Payload.ID, PartNumber: "OLD", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "OLD", Quantity: 1}
 	if err := db.CreatePayloadManifestItem(item); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -330,7 +334,7 @@ func TestApiUpdateManifestItem_HappyPath(t *testing.T) {
 func TestApiDeleteManifestItem_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
-	item := &store.PayloadManifestItem{PayloadID: sd.Payload.ID, PartNumber: "GONE", Quantity: 1}
+	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "GONE", Quantity: 1}
 	if err := db.CreatePayloadManifestItem(item); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -394,7 +398,7 @@ func TestApiListPayloadEvents_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var entries []*store.AuditEntry
+	var entries []*audit.Entry
 	if err := json.NewDecoder(rec.Body).Decode(&entries); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -422,7 +426,7 @@ func TestApiPayloadsByNode_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var bins []*store.Bin
+	var bins []*bins.Bin
 	if err := json.NewDecoder(rec.Body).Decode(&bins); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

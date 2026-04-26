@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // ReshuffleStep describes a single move in a reshuffle plan.
@@ -11,22 +13,22 @@ type ReshuffleStep struct {
 	Sequence int
 	StepType string // "unbury", "retrieve", "restock"
 	BinID    int64
-	FromNode *store.Node
-	ToNode   *store.Node
+	FromNode *nodes.Node
+	ToNode   *nodes.Node
 }
 
 // ReshufflePlan describes the full reshuffle needed to access a buried bin.
 type ReshufflePlan struct {
-	TargetBin    *store.Bin
-	TargetSlot   *store.Node
-	Lane         *store.Node
-	ShuffleSlots []*store.Node
+	TargetBin    *bins.Bin
+	TargetSlot   *nodes.Node
+	Lane         *nodes.Node
+	ShuffleSlots []*nodes.Node
 	Steps        []ReshuffleStep
 }
 
 // PlanReshuffle creates a plan to unbury a target bin in a lane.
 // Steps: move blockers front-to-back to shuffle slots, retrieve target, restock blockers deepest-first.
-func PlanReshuffle(db *store.DB, target *store.Bin, targetSlot *store.Node, lane *store.Node, groupID int64) (*ReshufflePlan, error) {
+func PlanReshuffle(db *store.DB, target *bins.Bin, targetSlot *nodes.Node, lane *nodes.Node, groupID int64) (*ReshufflePlan, error) {
 	if targetSlot.ParentID == nil {
 		return nil, fmt.Errorf("target slot has no parent lane")
 	}
@@ -43,8 +45,8 @@ func PlanReshuffle(db *store.DB, target *store.Bin, targetSlot *store.Node, lane
 	}
 
 	type blocker struct {
-		bin   *store.Bin
-		slot  *store.Node
+		bin   *bins.Bin
+		slot  *nodes.Node
 		depth int
 	}
 
@@ -115,13 +117,13 @@ func PlanReshuffle(db *store.DB, target *store.Bin, targetSlot *store.Node, lane
 // findShuffleSlots locates empty accessible slots for temporary shuffle storage.
 // Pass 1: direct physical children of the group (always accessible).
 // Pass 2: accessible empty slots in regular lanes.
-func findShuffleSlots(db *store.DB, groupID int64, count int) ([]*store.Node, error) {
+func findShuffleSlots(db *store.DB, groupID int64, count int) ([]*nodes.Node, error) {
 	children, err := db.ListChildNodes(groupID)
 	if err != nil {
 		return nil, err
 	}
 
-	var available []*store.Node
+	var available []*nodes.Node
 
 	// Pass 1: direct physical children of the group (always accessible)
 	for _, c := range children {

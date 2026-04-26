@@ -5,6 +5,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"shingoedge/store/catalog"
+	"shingoedge/store/orders"
+	"shingoedge/store/processes"
+	"shingoedge/store/stations"
 )
 
 // coverageDB opens a fresh in-tempdir SQLite file and returns a migrated DB.
@@ -328,7 +333,7 @@ func TestShifts_UpsertListDelete(t *testing.T) {
 func TestPayloadCatalog_UpsertListGet(t *testing.T) {
 	db := coverageDB(t)
 
-	entry := &PayloadCatalogEntry{
+	entry := &catalog.CatalogEntry{
 		ID:          10,
 		Name:        "Widget Tote",
 		Code:        "WT-10",
@@ -370,7 +375,7 @@ func TestPayloadCatalog_UpsertListGet(t *testing.T) {
 func TestPayloadCatalog_DeleteStale(t *testing.T) {
 	db := coverageDB(t)
 	for _, id := range []int64{1, 2, 3} {
-		e := &PayloadCatalogEntry{ID: id, Name: "E", Code: "C"}
+		e := &catalog.CatalogEntry{ID: id, Name: "E", Code: "C"}
 		if err := db.UpsertPayloadCatalog(e); err != nil {
 			t.Fatalf("upsert: %v", err)
 		}
@@ -837,7 +842,7 @@ func TestOrders_ActiveListFilters(t *testing.T) {
 func TestOrders_ByProcessAndNodeFilters(t *testing.T) {
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P1", "", "", "", "", false)
-	nid, err := db.CreateProcessNode(ProcessNodeInput{
+	nid, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "N1", Code: "N1", Name: "N1", Sequence: 1, Enabled: true,
 	})
 	if err != nil {
@@ -879,7 +884,7 @@ func TestOrders_UpdateMutations(t *testing.T) {
 
 	// ProcessNode assignment
 	pid, _ := db.CreateProcess("P", "", "", "", "", false)
-	nid, _ := db.CreateProcessNode(ProcessNodeInput{
+	nid, _ := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "N", Code: "N", Name: "N", Sequence: 1, Enabled: true,
 	})
 	if err := db.UpdateOrderProcessNode(id, &nid); err != nil {
@@ -970,7 +975,7 @@ func TestOrders_HistoryInsertAndList(t *testing.T) {
 	}
 	// Check as a set — the two rows share the same created_at to the second,
 	// so SQLite's ORDER BY does not guarantee which comes first.
-	seen := map[string]OrderHistory{}
+	seen := map[string]orders.History{}
 	for _, h := range list {
 		seen[h.NewStatus] = h
 		if h.OrderID != id {
@@ -1004,7 +1009,7 @@ func TestOperatorStations_CRUD(t *testing.T) {
 	pid, _ := db.CreateProcess("P", "", "", "", "", false)
 
 	// Empty Code + Sequence trigger auto-generation paths.
-	id, err := db.CreateOperatorStation(OperatorStationInput{
+	id, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: pid, Name: "Main Station", Enabled: true,
 	})
 	if err != nil {
@@ -1028,7 +1033,7 @@ func TestOperatorStations_CRUD(t *testing.T) {
 	}
 
 	// Second create keeps incrementing sequence.
-	id2, err := db.CreateOperatorStation(OperatorStationInput{
+	id2, err := db.CreateOperatorStation(stations.Input{
 		ProcessID: pid, Code: "S-CUSTOM", Name: "Second", Enabled: true,
 	})
 	if err != nil {
@@ -1050,7 +1055,7 @@ func TestOperatorStations_CRUD(t *testing.T) {
 	}
 
 	// Update — empty Code + Sequence triggers preservation paths.
-	if err := db.UpdateOperatorStation(id, OperatorStationInput{
+	if err := db.UpdateOperatorStation(id, stations.Input{
 		ProcessID: pid, Name: "Main Renamed", AreaLabel: "A1",
 	}); err != nil {
 		t.Fatalf("update: %v", err)
@@ -1075,7 +1080,7 @@ func TestOperatorStations_CRUD(t *testing.T) {
 func TestOperatorStations_TouchUpdatesHealthAndLastSeen(t *testing.T) {
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false)
-	id, _ := db.CreateOperatorStation(OperatorStationInput{
+	id, _ := db.CreateOperatorStation(stations.Input{
 		ProcessID: pid, Name: "S", Enabled: true,
 	})
 
@@ -1094,9 +1099,9 @@ func TestOperatorStations_TouchUpdatesHealthAndLastSeen(t *testing.T) {
 func TestOperatorStations_MoveUpDown(t *testing.T) {
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false)
-	a, _ := db.CreateOperatorStation(OperatorStationInput{ProcessID: pid, Name: "A"})
-	b, _ := db.CreateOperatorStation(OperatorStationInput{ProcessID: pid, Name: "B"})
-	c, _ := db.CreateOperatorStation(OperatorStationInput{ProcessID: pid, Name: "C"})
+	a, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "A"})
+	b, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "B"})
+	c, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "C"})
 
 	// Initial sequences: A=1, B=2, C=3.
 
@@ -1134,95 +1139,10 @@ func TestOperatorStations_MoveUpDown(t *testing.T) {
 	}
 }
 
-func TestOperatorStations_SetStationNodes(t *testing.T) {
-	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
-	id, _ := db.CreateOperatorStation(OperatorStationInput{ProcessID: pid, Name: "S"})
-
-	// Initial set.
-	if err := db.SetStationNodes(id, []string{"N1", "N2"}); err != nil {
-		t.Fatalf("set 1: %v", err)
-	}
-	names, err := db.GetStationNodeNames(id)
-	if err != nil {
-		t.Fatalf("get names: %v", err)
-	}
-	if len(names) != 2 {
-		t.Fatalf("names len = %d", len(names))
-	}
-
-	// Verify runtime rows got created for each node.
-	nodes, _ := db.ListProcessNodesByStation(id)
-	if len(nodes) != 2 {
-		t.Fatalf("nodes len = %d", len(nodes))
-	}
-	for _, n := range nodes {
-		rt, err := db.GetProcessNodeRuntime(n.ID)
-		if err != nil {
-			t.Errorf("runtime missing for node %d: %v", n.ID, err)
-		}
-		if rt == nil {
-			t.Errorf("runtime nil for node %d", n.ID)
-		}
-	}
-
-	// Update: remove N1, add N3. N1 has no active orders, so it's deleted.
-	if err := db.SetStationNodes(id, []string{"N2", "N3"}); err != nil {
-		t.Fatalf("set 2: %v", err)
-	}
-	nodes2, _ := db.ListProcessNodesByStation(id)
-	if len(nodes2) != 2 {
-		t.Fatalf("nodes len after update = %d", len(nodes2))
-	}
-	nameSet := map[string]bool{}
-	for _, n := range nodes2 {
-		nameSet[n.CoreNodeName] = true
-	}
-	if !nameSet["N2"] || !nameSet["N3"] || nameSet["N1"] {
-		t.Errorf("after update: %v", nameSet)
-	}
-
-	// Input with duplicates + whitespace — dedupe + trim paths.
-	if err := db.SetStationNodes(id, []string{" N2 ", "N2", "", "N4"}); err != nil {
-		t.Fatalf("set 3: %v", err)
-	}
-	nodes3, _ := db.ListProcessNodesByStation(id)
-	if len(nodes3) != 2 { // N2, N4 — N3 removed
-		t.Errorf("nodes after dedup = %d, want 2", len(nodes3))
-	}
-}
-
-func TestOperatorStations_SetStationNodesDisablesRatherThanDeletesWhenOrdersActive(t *testing.T) {
-	db := coverageDB(t)
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
-	id, _ := db.CreateOperatorStation(OperatorStationInput{ProcessID: pid, Name: "S"})
-
-	db.SetStationNodes(id, []string{"N-KEEP"})
-	nodes, _ := db.ListProcessNodesByStation(id)
-	var nodeID int64
-	for _, n := range nodes {
-		if n.CoreNodeName == "N-KEEP" {
-			nodeID = n.ID
-		}
-	}
-	// Attach an active order to the node we're about to drop.
-	_, err := db.CreateOrder("keep-me", "retrieve", &nodeID, false, 1, "", "", "", "", false, "")
-	if err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-
-	// Drop N-KEEP. Node should be disabled, not deleted.
-	if err := db.SetStationNodes(id, []string{"N-NEW"}); err != nil {
-		t.Fatalf("set: %v", err)
-	}
-	n, err := db.GetProcessNode(nodeID)
-	if err != nil {
-		t.Fatalf("get node: %v (should still exist)", err)
-	}
-	if n.Enabled {
-		t.Error("expected disabled=true for node with active orders")
-	}
-}
+// TestOperatorStations_SetStationNodes* moved to
+// service/station_service_test.go in Phase 6.4a after the
+// (db *DB).SetStationNodes method was retired in favor of
+// StationService.SetNodes.
 
 // ============================================================================
 // process_nodes.go
@@ -1231,10 +1151,10 @@ func TestOperatorStations_SetStationNodesDisablesRatherThanDeletesWhenOrdersActi
 func TestProcessNodes_CRUDAndListing(t *testing.T) {
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false)
-	sid, _ := db.CreateOperatorStation(OperatorStationInput{ProcessID: pid, Name: "S"})
+	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	// Auto-code, auto-sequence, auto-name-from-core.
-	id, err := db.CreateProcessNode(ProcessNodeInput{
+	id, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,
 		OperatorStationID: &sid,
 		CoreNodeName:      "NODE-A",
@@ -1255,7 +1175,7 @@ func TestProcessNodes_CRUDAndListing(t *testing.T) {
 	}
 
 	// Second node increments sequence.
-	id2, _ := db.CreateProcessNode(ProcessNodeInput{
+	id2, _ := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "NODE-B", Code: "N-B-explicit", Sequence: 5, Enabled: true,
 	})
 	got2, _ := db.GetProcessNode(id2)
@@ -1278,7 +1198,7 @@ func TestProcessNodes_CRUDAndListing(t *testing.T) {
 	}
 
 	// Update with empty Code/Sequence preserves existing values.
-	if err := db.UpdateProcessNode(id, ProcessNodeInput{
+	if err := db.UpdateProcessNode(id, processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "NODE-A", Name: "Renamed", Enabled: true,
 	}); err != nil {
 		t.Fatalf("update: %v", err)
@@ -1303,7 +1223,7 @@ func TestProcessNodes_InvalidStationIDCoercedToNil(t *testing.T) {
 
 	// Pass OperatorStationID pointer to 0 — create should coerce to nil.
 	zero := int64(0)
-	id, err := db.CreateProcessNode(ProcessNodeInput{
+	id, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:         pid,
 		OperatorStationID: &zero,
 		CoreNodeName:      "N",
@@ -1325,7 +1245,7 @@ func TestProcessNodes_InvalidStationIDCoercedToNil(t *testing.T) {
 func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false)
-	nid, _ := db.CreateProcessNode(ProcessNodeInput{
+	nid, _ := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "N", Code: "N", Name: "N", Sequence: 1, Enabled: true,
 	})
 
@@ -1396,7 +1316,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
 	// Insert with defaults (role blanks → "consume", swap_mode blank → "simple").
-	id, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL-1",
 	})
 	if err != nil {
@@ -1411,7 +1331,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 	}
 
 	// Second insert on a different node — sequence auto-increments.
-	id2, _ := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	id2, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N2", Role: "produce", PayloadCode: "PL-2",
 	})
 	got2, _ := db.GetStyleNodeClaim(id2)
@@ -1420,7 +1340,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 	}
 
 	// Upsert on existing (styleID + coreNodeName match) — returns same id, updates fields.
-	id3, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	id3, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", Role: "produce", PayloadCode: "PL-1-v2",
 		AllowedPayloadCodes: []string{"PL-1-v2", "PL-FALLBACK"},
 	})
@@ -1456,7 +1376,7 @@ func TestStyleNodeClaims_ManualSwapRequiresOutboundDestination(t *testing.T) {
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
 	// Missing outbound_destination → error.
-	_, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N", SwapMode: "manual_swap", PayloadCode: "PL",
 	})
 	if err == nil {
@@ -1464,7 +1384,7 @@ func TestStyleNodeClaims_ManualSwapRequiresOutboundDestination(t *testing.T) {
 	}
 
 	// With outbound_destination → auto-confirm is forced.
-	id, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N", SwapMode: "manual_swap", PayloadCode: "PL",
 		OutboundDestination: "DEST", AutoConfirm: false,
 	})
@@ -1478,7 +1398,7 @@ func TestStyleNodeClaims_ManualSwapRequiresOutboundDestination(t *testing.T) {
 }
 
 func TestStyleNodeClaims_AllowedPayloads(t *testing.T) {
-	claim := &StyleNodeClaim{}
+	claim := &processes.NodeClaim{}
 	if got := claim.AllowedPayloads(); got != nil {
 		t.Errorf("empty claim: %v, want nil", got)
 	}
@@ -1505,7 +1425,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
 	// Default (unset) persists as 0.
-	id, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL",
 	})
 	if err != nil {
@@ -1517,7 +1437,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 	}
 
 	// Explicit value on update survives.
-	if _, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N1", PayloadCode: "PL",
 		LinesideSoftThreshold: 12,
 	}); err != nil {
@@ -1535,7 +1455,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 	}
 
 	// Explicit value on fresh insert (different node) also survives.
-	id2, err := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	id2, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N2", PayloadCode: "PL2",
 		LinesideSoftThreshold: 5,
 	})
@@ -1551,7 +1471,7 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 func TestStyleNodeClaims_Delete(t *testing.T) {
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
-	id, _ := db.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	id, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N", PayloadCode: "PL",
 	})
 	if err := db.DeleteStyleNodeClaim(id); err != nil {
@@ -1566,210 +1486,8 @@ func TestStyleNodeClaims_Delete(t *testing.T) {
 // process_changeovers.go
 // ============================================================================
 
-func TestProcessChangeovers_CreateAtomic(t *testing.T) {
-	db := coverageDB(t)
-	pid, fromStyle := seedProcessStyle(t, db, "P", "S-FROM")
-	toStyle, _ := db.CreateStyle("S-TO", "", pid)
-	sid, _ := db.CreateOperatorStation(OperatorStationInput{ProcessID: pid, Name: "S"})
-	// Seed an existing process node (the atomic create should reuse it
-	// instead of auto-creating a duplicate).
-	existNode, _ := db.CreateProcessNode(ProcessNodeInput{
-		ProcessID: pid, OperatorStationID: &sid, CoreNodeName: "N-EXIST",
-		Code: "NE", Name: "NE", Sequence: 1, Enabled: true,
-	})
-	existingNodes, _ := db.ListProcessNodesByProcess(pid)
-
-	cid, err := db.CreateChangeover(
-		pid, &fromStyle, toStyle, "alice", "swap A",
-		[]int64{sid},
-		[]ChangeoverNodeTaskInput{
-			{ProcessID: pid, CoreNodeName: "N-EXIST", Situation: "refill", State: "waiting"},
-			{ProcessID: pid, CoreNodeName: "N-NEW", Situation: "introduce", State: "waiting"},
-		},
-		existingNodes,
-	)
-	if err != nil {
-		t.Fatalf("create changeover: %v", err)
-	}
-	if cid == 0 {
-		t.Fatal("expected nonzero id")
-	}
-
-	// Process target style + production state updated.
-	proc, _ := db.GetProcess(pid)
-	if proc.TargetStyleID == nil || *proc.TargetStyleID != toStyle {
-		t.Errorf("target style = %v, want %d", proc.TargetStyleID, toStyle)
-	}
-	if proc.ProductionState != "changeover_active" {
-		t.Errorf("production_state = %q", proc.ProductionState)
-	}
-
-	// Station tasks created.
-	stTasks, _ := db.ListChangeoverStationTasks(cid)
-	if len(stTasks) != 1 || stTasks[0].OperatorStationID != sid || stTasks[0].State != "waiting" {
-		t.Errorf("station tasks: %+v", stTasks)
-	}
-
-	// Node tasks: one reuses existing, one auto-creates.
-	nodeTasks, _ := db.ListChangeoverNodeTasks(cid)
-	if len(nodeTasks) != 2 {
-		t.Fatalf("node tasks len = %d", len(nodeTasks))
-	}
-	var reusedExisting bool
-	for _, nt := range nodeTasks {
-		if nt.ProcessNodeID == existNode {
-			reusedExisting = true
-		}
-	}
-	if !reusedExisting {
-		t.Error("expected the existing process node to be reused")
-	}
-
-	// Runtime rows created for every node task.
-	for _, nt := range nodeTasks {
-		if _, err := db.GetProcessNodeRuntime(nt.ProcessNodeID); err != nil {
-			t.Errorf("runtime missing for node %d: %v", nt.ProcessNodeID, err)
-		}
-	}
-
-	// Active changeover lookup.
-	active, err := db.GetActiveProcessChangeover(pid)
-	if err != nil || active.ID != cid {
-		t.Errorf("active: %v %+v", err, active)
-	}
-	if active.FromStyleName != "S-FROM" || active.ToStyleName != "S-TO" {
-		t.Errorf("joined style names: %+v", active)
-	}
-}
-
-func TestProcessChangeovers_StateTransitionsAndListing(t *testing.T) {
-	db := coverageDB(t)
-	pid, fromStyle := seedProcessStyle(t, db, "P", "F")
-	toStyle, _ := db.CreateStyle("T", "", pid)
-
-	cid, err := db.CreateChangeover(pid, &fromStyle, toStyle, "x", "", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	// In-flight state transitions.
-	if err := db.UpdateProcessChangeoverState(cid, "phase_3"); err != nil {
-		t.Fatalf("update state: %v", err)
-	}
-
-	// Second changeover to test listing and exclusion-by-state.
-	cid2, _ := db.CreateChangeover(pid, &fromStyle, toStyle, "y", "", nil, nil, nil)
-	_ = cid2
-
-	list, _ := db.ListProcessChangeovers(pid)
-	if len(list) != 2 {
-		t.Errorf("list len = %d", len(list))
-	}
-
-	// Mark first as completed → GetActive returns the remaining one only.
-	if err := db.UpdateProcessChangeoverState(cid, "completed"); err != nil {
-		t.Fatalf("complete: %v", err)
-	}
-	active, err := db.GetActiveProcessChangeover(pid)
-	if err != nil {
-		t.Fatalf("get active after complete: %v", err)
-	}
-	if active.ID == cid {
-		t.Error("active still points at completed changeover")
-	}
-
-	// Completed changeover has completed_at populated.
-	histList, _ := db.ListProcessChangeovers(pid)
-	var completed *ProcessChangeover
-	for i := range histList {
-		if histList[i].ID == cid {
-			completed = &histList[i]
-		}
-	}
-	if completed == nil || completed.CompletedAt == nil {
-		t.Errorf("expected completed_at to be populated: %+v", completed)
-	}
-}
-
-func TestProcessChangeovers_NodeAndStationTaskMutations(t *testing.T) {
-	db := coverageDB(t)
-	pid, fromStyle := seedProcessStyle(t, db, "P", "F")
-	toStyle, _ := db.CreateStyle("T", "", pid)
-	sid, _ := db.CreateOperatorStation(OperatorStationInput{ProcessID: pid, Name: "S"})
-
-	// We also want node tasks filtered by station.
-	nid, _ := db.CreateProcessNode(ProcessNodeInput{
-		ProcessID: pid, OperatorStationID: &sid, CoreNodeName: "N",
-		Code: "N", Name: "N", Sequence: 1, Enabled: true,
-	})
-	existingNodes, _ := db.ListProcessNodesByProcess(pid)
-
-	cid, err := db.CreateChangeover(pid, &fromStyle, toStyle, "x", "",
-		[]int64{sid},
-		[]ChangeoverNodeTaskInput{{ProcessID: pid, CoreNodeName: "N", Situation: "refill", State: "waiting"}},
-		existingNodes)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	// Station task lookup + update.
-	st, err := db.GetChangeoverStationTaskByStation(cid, sid)
-	if err != nil {
-		t.Fatalf("get station task: %v", err)
-	}
-	if err := db.UpdateChangeoverStationTaskState(st.ID, "in_progress"); err != nil {
-		t.Fatalf("update station task: %v", err)
-	}
-	st2, _ := db.GetChangeoverStationTaskByStation(cid, sid)
-	if st2.State != "in_progress" {
-		t.Errorf("station task state = %q", st2.State)
-	}
-
-	// Node task lookup + update + link orders.
-	nt, err := db.GetChangeoverNodeTaskByNode(cid, nid)
-	if err != nil {
-		t.Fatalf("get node task: %v", err)
-	}
-	if err := db.UpdateChangeoverNodeTaskState(nt.ID, "in_progress"); err != nil {
-		t.Fatalf("update node task: %v", err)
-	}
-
-	// Link material orders.
-	orderA, _ := db.CreateOrder("next", "retrieve", &nid, false, 1, "", "", "", "", false, "")
-	orderB, _ := db.CreateOrder("old", "retrieve", &nid, false, 1, "", "", "", "", false, "")
-	if err := db.LinkChangeoverNodeOrders(nt.ID, &orderA, &orderB); err != nil {
-		t.Fatalf("link orders: %v", err)
-	}
-	nt2, _ := db.GetChangeoverNodeTaskByNode(cid, nid)
-	if nt2.State != "in_progress" {
-		t.Errorf("node task state = %q", nt2.State)
-	}
-	if nt2.NextMaterialOrderID == nil || *nt2.NextMaterialOrderID != orderA {
-		t.Errorf("next material = %v", nt2.NextMaterialOrderID)
-	}
-	if nt2.OldMaterialReleaseOrderID == nil || *nt2.OldMaterialReleaseOrderID != orderB {
-		t.Errorf("old material = %v", nt2.OldMaterialReleaseOrderID)
-	}
-
-	// Partial link (only old) — COALESCE keeps previous next.
-	orderC, _ := db.CreateOrder("old2", "retrieve", &nid, false, 1, "", "", "", "", false, "")
-	if err := db.LinkChangeoverNodeOrders(nt.ID, nil, &orderC); err != nil {
-		t.Fatalf("partial link: %v", err)
-	}
-	nt3, _ := db.GetChangeoverNodeTaskByNode(cid, nid)
-	if nt3.NextMaterialOrderID == nil || *nt3.NextMaterialOrderID != orderA {
-		t.Errorf("partial link: next should be preserved: %v", nt3.NextMaterialOrderID)
-	}
-	if nt3.OldMaterialReleaseOrderID == nil || *nt3.OldMaterialReleaseOrderID != orderC {
-		t.Errorf("partial link: old should be updated: %v", nt3.OldMaterialReleaseOrderID)
-	}
-
-	// ListChangeoverNodeTasksByStation — only node tasks for nodes attached to sid.
-	byStation, err := db.ListChangeoverNodeTasksByStation(cid, sid)
-	if err != nil {
-		t.Fatalf("list by station: %v", err)
-	}
-	if len(byStation) != 1 {
-		t.Errorf("by station = %d, want 1", len(byStation))
-	}
-}
+// TestProcessChangeovers_CreateAtomic / StateTransitionsAndListing /
+// NodeAndStationTaskMutations moved to
+// service/changeover_service_test.go in Phase 6.4a after the
+// (db *DB).CreateChangeover method was retired in favor of
+// ChangeoverService.Create.

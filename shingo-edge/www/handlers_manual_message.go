@@ -12,7 +12,7 @@ import (
 func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 	cfg := h.engine.AppConfig()
 
-	orders, _ := h.engine.ListActiveOrders()
+	orders, _ := h.engine.OrderService().ListActive()
 	coreNodes := h.engine.CoreNodes()
 	coreNodeNames := make([]string, 0, len(coreNodes))
 	for name := range coreNodes {
@@ -168,7 +168,7 @@ func (h *Handlers) apiSendManualMessage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.engine.SendEnvelope(env); err != nil {
+	if err := h.orchestration.SendEnvelope(env); err != nil {
 		writeError(w, http.StatusInternalServerError, "send failed: "+err.Error())
 		return
 	}

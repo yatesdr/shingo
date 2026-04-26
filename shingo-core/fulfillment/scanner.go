@@ -8,7 +8,9 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // Scanner monitors queued orders and fulfills them when matching
@@ -146,7 +148,7 @@ func (s *Scanner) scan() int {
 	return fulfilled
 }
 
-func (s *Scanner) tryFulfill(order *store.Order) bool {
+func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Re-check status (may have been cancelled between listing and processing)
 	current, err := s.db.GetOrder(order.ID)
 	if err != nil || current.Status != protocol.StatusQueued {
@@ -182,8 +184,8 @@ func (s *Scanner) tryFulfill(order *store.Order) bool {
 	}
 
 	// Find a matching bin based on order type
-	var bin *store.Bin
-	var sourceNode *store.Node
+	var bin *bins.Bin
+	var sourceNode *nodes.Node
 
 	if order.PayloadDesc == "retrieve_empty" {
 		// Empty bin retrieval

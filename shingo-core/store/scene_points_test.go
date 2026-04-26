@@ -2,12 +2,16 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/scene"
+)
 
 func TestScenePoint_UpsertInsertThenUpdate(t *testing.T) {
 	db := testDB(t)
 
-	sp := &ScenePoint{
+	sp := &scene.Point{
 		AreaName:       "AREA-1",
 		InstanceName:   "INST-1",
 		ClassName:      "RobotPose",
@@ -70,7 +74,7 @@ func TestScenePoint_UpsertInsertThenUpdate(t *testing.T) {
 func TestScenePoint_ListFiltersAndDelete(t *testing.T) {
 	db := testDB(t)
 
-	points := []*ScenePoint{
+	points := []*scene.Point{
 		{AreaName: "AREA-A", InstanceName: "I-1", ClassName: "Waypoint", PropertiesJSON: `{}`},
 		{AreaName: "AREA-A", InstanceName: "I-2", ClassName: "Dock", PropertiesJSON: `{}`},
 		{AreaName: "AREA-B", InstanceName: "I-3", ClassName: "Waypoint", PropertiesJSON: `{}`},

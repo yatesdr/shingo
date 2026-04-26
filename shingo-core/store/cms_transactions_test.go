@@ -2,23 +2,29 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/cms"
+	"shingocore/store/nodes"
+)
 
 func TestCreateAndListCMSTransactions(t *testing.T) {
 	db := testDB(t)
 
 	// Create two nodes — cms_transactions.node_id is NOT NULL FK.
-	nodeA := &Node{Name: "CMS-NODE-A", Enabled: true}
+	nodeA := &nodes.Node{Name: "CMS-NODE-A", Enabled: true}
 	if err := db.CreateNode(nodeA); err != nil {
 		t.Fatalf("create nodeA: %v", err)
 	}
-	nodeB := &Node{Name: "CMS-NODE-B", Enabled: true}
+	nodeB := &nodes.Node{Name: "CMS-NODE-B", Enabled: true}
 	if err := db.CreateNode(nodeB); err != nil {
 		t.Fatalf("create nodeB: %v", err)
 	}
 
 	// Batch-insert a handful of transactions across both nodes.
-	txns := []*CMSTransaction{
+	txns := []*cms.Transaction{
 		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", TxnType: "arrival", CatID: "CAT-1", Delta: 5, QtyAfter: 5, SourceType: "movement"},
 		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", TxnType: "departure", CatID: "CAT-1", Delta: -2, QtyBefore: 5, QtyAfter: 3, SourceType: "movement"},
 		{NodeID: nodeA.ID, NodeName: "CMS-NODE-A", TxnType: "arrival", CatID: "CAT-2", Delta: 7, QtyAfter: 7, SourceType: "movement"},
@@ -85,32 +91,32 @@ func TestCreateAndListCMSTransactions(t *testing.T) {
 func TestSumCatIDsAtBoundary(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "CMS-BT", Description: "cms tote"}
+	bt := &bins.BinType{Code: "CMS-BT", Description: "cms tote"}
 	db.CreateBinType(bt)
 
 	// Boundary group + two child storage nodes
-	boundary := &Node{Name: "CMS-BOUND", Enabled: true, IsSynthetic: true}
+	boundary := &nodes.Node{Name: "CMS-BOUND", Enabled: true, IsSynthetic: true}
 	db.CreateNode(boundary)
-	childA := &Node{Name: "CMS-BOUND-A", Enabled: true, ParentID: &boundary.ID}
+	childA := &nodes.Node{Name: "CMS-BOUND-A", Enabled: true, ParentID: &boundary.ID}
 	db.CreateNode(childA)
-	childB := &Node{Name: "CMS-BOUND-B", Enabled: true, ParentID: &boundary.ID}
+	childB := &nodes.Node{Name: "CMS-BOUND-B", Enabled: true, ParentID: &boundary.ID}
 	db.CreateNode(childB)
 
 	// Unrelated sibling node at top level — its bin's cat_ids should NOT appear in totals
-	outside := &Node{Name: "CMS-OUTSIDE", Enabled: true}
+	outside := &nodes.Node{Name: "CMS-OUTSIDE", Enabled: true}
 	db.CreateNode(outside)
 
 	// Bins with manifests at each node
-	b1 := &Bin{BinTypeID: bt.ID, Label: "CMS-B1", NodeID: &childA.ID, Status: "available"}
+	b1 := &bins.Bin{BinTypeID: bt.ID, Label: "CMS-B1", NodeID: &childA.ID, Status: "available"}
 	db.CreateBin(b1)
 	db.SetBinManifest(b1.ID, `{"items":[{"catid":"CAT-1","qty":10},{"catid":"CAT-2","qty":3}]}`, "P1", 10)
 
-	b2 := &Bin{BinTypeID: bt.ID, Label: "CMS-B2", NodeID: &childB.ID, Status: "available"}
+	b2 := &bins.Bin{BinTypeID: bt.ID, Label: "CMS-B2", NodeID: &childB.ID, Status: "available"}
 	db.CreateBin(b2)
 	db.SetBinManifest(b2.ID, `{"items":[{"catid":"CAT-1","qty":5}]}`, "P1", 5)
 
 	// Outside bin with CAT-3 — must be excluded
-	bOut := &Bin{BinTypeID: bt.ID, Label: "CMS-OUT", NodeID: &outside.ID, Status: "available"}
+	bOut := &bins.Bin{BinTypeID: bt.ID, Label: "CMS-OUT", NodeID: &outside.ID, Status: "available"}
 	db.CreateBin(bOut)
 	db.SetBinManifest(bOut.ID, `{"items":[{"catid":"CAT-3","qty":99}]}`, "P9", 99)
 

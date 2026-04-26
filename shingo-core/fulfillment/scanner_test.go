@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // Scope note:
@@ -52,8 +54,8 @@ func newTestScanner(t *testing.T, db Store) *Scanner {
 // seedQueuedRetrieve installs a simple retrieve order and the
 // delivery node lookup it will perform. Source node lookups default
 // to empty so tryFulfill falls through to FindSourceBinFIFO.
-func seedQueuedRetrieve(f *fakeStore, orderID int64, deliveryNode string) *store.Order {
-	order := &store.Order{
+func seedQueuedRetrieve(f *fakeStore, orderID int64, deliveryNode string) *orders.Order {
+	order := &orders.Order{
 		ID:           orderID,
 		Status:       protocol.StatusQueued,
 		PayloadCode:  "PN-123",
@@ -61,7 +63,7 @@ func seedQueuedRetrieve(f *fakeStore, orderID int64, deliveryNode string) *store
 	}
 	f.queued = append(f.queued, order)
 	f.ordersByID[orderID] = order
-	f.nodesByDot[deliveryNode] = &store.Node{ID: 100, Name: deliveryNode, Zone: "ZONE-A"}
+	f.nodesByDot[deliveryNode] = &nodes.Node{ID: 100, Name: deliveryNode, Zone: "ZONE-A"}
 	return order
 }
 
@@ -96,7 +98,7 @@ func TestScanner_TryFulfill_OrderCancelledBetweenListAndFetch(t *testing.T) {
 	order := seedQueuedRetrieve(f, 1, "dest-01")
 	// GetOrder returns a fresh copy where the order has since flipped
 	// out of queued (cancelled/failed/etc). tryFulfill must skip it.
-	f.ordersByID[order.ID] = &store.Order{
+	f.ordersByID[order.ID] = &orders.Order{
 		ID:     order.ID,
 		Status: protocol.StatusCancelled,
 	}
@@ -197,7 +199,7 @@ func TestScanner_TryFulfill_ClaimBinFails_SkipsSilently(t *testing.T) {
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 7, "dest-07")
 	sourceNodeID := int64(200)
-	f.sourceBin = &store.Bin{ID: 42, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
+	f.sourceBin = &bins.Bin{ID: 42, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
 	f.errClaimBin = errors.New("already claimed by another scanner")
 	s := newTestScanner(t, f)
 
@@ -216,7 +218,7 @@ func TestScanner_TryFulfill_GetNodeAfterClaimFails_Unclaims(t *testing.T) {
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 8, "dest-08")
 	sourceNodeID := int64(201)
-	f.sourceBin = &store.Bin{ID: 43, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
+	f.sourceBin = &bins.Bin{ID: 43, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
 	// Bin claim succeeds, but the source-node lookup fails before the
 	// order can be updated. The scanner must release the claim so
 	// the bin is selectable by the next pass.
@@ -241,14 +243,14 @@ func TestScanner_TryFulfill_DestNodeLookupFails_UnclaimsAndRequeues(t *testing.T
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 9, "dest-09")
 	sourceNodeID := int64(202)
-	f.sourceBin = &store.Bin{ID: 44, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
-	f.nodesByID[sourceNodeID] = &store.Node{ID: sourceNodeID, Name: "src-09"}
+	f.sourceBin = &bins.Bin{ID: 44, NodeID: &sourceNodeID, PayloadCode: "PN-123"}
+	f.nodesByID[sourceNodeID] = &nodes.Node{ID: sourceNodeID, Name: "src-09"}
 
 	// First GetNodeByDotName succeeds (bin-occupancy check);
 	// second call (final destination resolution) fails.
 	var calls int32
 	dest := f.nodesByDot[order.DeliveryNode]
-	f.getNodeByDotNameFn = func(name string) (*store.Node, error) {
+	f.getNodeByDotNameFn = func(name string) (*nodes.Node, error) {
 		n := atomic.AddInt32(&calls, 1)
 		if n == 1 {
 			return dest, nil

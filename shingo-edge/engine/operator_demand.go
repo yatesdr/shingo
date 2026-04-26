@@ -4,7 +4,8 @@ import (
 	"log"
 
 	"shingo/protocol"
-	"shingoedge/store"
+	"shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
 
 // HandleDemandSignal processes a kanban demand signal from Core. It finds
@@ -92,22 +93,22 @@ func (e *Engine) SendClaimSync() {
 
 // manualSwapNode pairs a manual_swap claim with its matching process node.
 type manualSwapNode struct {
-	node  store.ProcessNode
-	claim store.StyleNodeClaim
+	node  processes.Node
+	claim processes.NodeClaim
 }
 
 // findManualSwapNodes returns all (node, claim) pairs where the claim has
 // SwapMode=="manual_swap" across all active processes. If coreNodeName is
 // non-empty, only nodes matching that name are returned.
 func (e *Engine) findManualSwapNodes(coreNodeName string) []manualSwapNode {
-	processes, err := e.db.ListProcesses()
+	processList, err := e.db.ListProcesses()
 	if err != nil {
 		log.Printf("findManualSwapNodes: list processes: %v", err)
 		return nil
 	}
 
 	var results []manualSwapNode
-	for _, proc := range processes {
+	for _, proc := range processList {
 		if proc.ActiveStyleID == nil {
 			continue
 		}
@@ -118,7 +119,7 @@ func (e *Engine) findManualSwapNodes(coreNodeName string) []manualSwapNode {
 		}
 
 		// Fetch nodes once per process, not once per claim (fixes pre-existing N+1).
-		var nodes []store.ProcessNode
+		var nodes []processes.Node
 		var nodesFetched bool
 		for _, claim := range claims {
 			if claim.SwapMode != "manual_swap" {
@@ -171,7 +172,7 @@ func (e *Engine) StartupSweepManualSwap() {
 //
 // The check+create is wrapped in BEGIN IMMEDIATE to prevent two concurrent
 // goroutines from both seeing "no existing orders" and creating duplicates.
-func (e *Engine) tryAutoRequest(node *store.ProcessNode, claim *store.StyleNodeClaim) {
+func (e *Engine) tryAutoRequest(node *processes.Node, claim *processes.NodeClaim) {
 	payloads := claim.AllowedPayloads()
 	if len(payloads) == 0 {
 		return
@@ -213,7 +214,7 @@ func (e *Engine) tryAutoRequest(node *store.ProcessNode, claim *store.StyleNodeC
 		if existingPayloads[pc] {
 			continue // already have an order for this payload
 		}
-		var order *store.Order
+		var order *orders.Order
 		var err error
 		if claim.Role == "consume" {
 			order, err = e.RequestFullBin(node.ID, pc)

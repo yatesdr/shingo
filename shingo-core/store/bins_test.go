@@ -2,18 +2,24 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
+)
 
 func TestClaimBin(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "TOTE-CLM", Description: "Test tote"}
+	bt := &bins.BinType{Code: "TOTE-CLM", Description: "Test tote"}
 	db.CreateBinType(bt)
 
-	node := &Node{Name: "STORE-CLM", Enabled: true}
+	node := &nodes.Node{Name: "STORE-CLM", Enabled: true}
 	db.CreateNode(node)
 
-	bin := &Bin{BinTypeID: bt.ID, Label: "BIN-CLM-1", NodeID: &node.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-CLM-1", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin)
 
 	orderID := int64(42)
@@ -40,15 +46,15 @@ func TestClaimBin(t *testing.T) {
 func TestUnclaimOrderBins(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "TOTE-UO", Description: "Test tote"}
+	bt := &bins.BinType{Code: "TOTE-UO", Description: "Test tote"}
 	db.CreateBinType(bt)
 
-	node := &Node{Name: "STORE-UO", Enabled: true}
+	node := &nodes.Node{Name: "STORE-UO", Enabled: true}
 	db.CreateNode(node)
 
-	bin1 := &Bin{BinTypeID: bt.ID, Label: "BIN-UO-1", NodeID: &node.ID, Status: "available"}
+	bin1 := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-UO-1", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin1)
-	bin2 := &Bin{BinTypeID: bt.ID, Label: "BIN-UO-2", NodeID: &node.ID, Status: "available"}
+	bin2 := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-UO-2", NodeID: &node.ID, Status: "available"}
 	db.CreateBin(bin2)
 
 	orderID := int64(99)
@@ -72,25 +78,25 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 	db := testDB(t)
 
 	// Setup: bin type, payload, bin type assignment
-	bt := &BinType{Code: "TOTE-FEC", Description: "Compatible tote"}
+	bt := &bins.BinType{Code: "TOTE-FEC", Description: "Compatible tote"}
 	db.CreateBinType(bt)
 
-	bp := &Payload{Code: "WIDGET-FEC", UOPCapacity: 50}
+	bp := &payloads.Payload{Code: "WIDGET-FEC", UOPCapacity: 50}
 	db.CreatePayload(bp)
 
 	// Link payload to bin type
 	db.SetPayloadBinTypes(bp.ID, []int64{bt.ID})
 
 	// Create nodes in two zones
-	nodeA := &Node{Name: "STORE-A1", Enabled: true, Zone: "zone-a"}
+	nodeA := &nodes.Node{Name: "STORE-A1", Enabled: true, Zone: "zone-a"}
 	db.CreateNode(nodeA)
-	nodeB := &Node{Name: "STORE-B1", Enabled: true, Zone: "zone-b"}
+	nodeB := &nodes.Node{Name: "STORE-B1", Enabled: true, Zone: "zone-b"}
 	db.CreateNode(nodeB)
 
 	// Create empty bins (no payloads)
-	binA := &Bin{BinTypeID: bt.ID, Label: "BIN-FEC-A", NodeID: &nodeA.ID, Status: "available"}
+	binA := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-FEC-A", NodeID: &nodeA.ID, Status: "available"}
 	db.CreateBin(binA)
-	binB := &Bin{BinTypeID: bt.ID, Label: "BIN-FEC-B", NodeID: &nodeB.ID, Status: "available"}
+	binB := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-FEC-B", NodeID: &nodeB.ID, Status: "available"}
 	db.CreateBin(binB)
 
 	// Zone preference: should find binA when preferring zone-a

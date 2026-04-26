@@ -5,7 +5,7 @@
 // This package deliberately does not persist anything and does not
 // emit any events. It takes a narrow Store (read-only, declared
 // consumer-side in store.go), walks the node tree to find the CMS
-// boundary, and returns a slice of *store.CMSTransaction values that
+// boundary, and returns a slice of *cms.Transaction values that
 // the caller is free to write to the database however it likes. If
 // nothing needs to be recorded the functions return a nil slice and
 // nil error — "no rows" is never an error.

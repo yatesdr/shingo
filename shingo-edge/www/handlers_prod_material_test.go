@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"testing"
 
-	"shingoedge/store"
-
 	"github.com/go-chi/chi/v5"
+
+	"shingoedge/store"
+	"shingoedge/store/processes"
+	"shingoedge/store/shifts"
 )
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -60,7 +62,7 @@ func TestApiListShifts_ReturnsSeededShift(t *testing.T) {
 	resp := doRequest(t, router, "GET", "/api/shifts", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
 
-	var got []store.Shift
+	var got []shifts.Shift
 	decodeJSON(t, resp, &got)
 	if len(got) != 1 {
 		t.Fatalf("len(shifts): got %d, want 1", len(got))
@@ -155,7 +157,7 @@ func TestBuildStationViews_NilProcessReturnsNil(t *testing.T) {
 func TestBuildStationViews_ProcessWithoutStations(t *testing.T) {
 	h, _ := newTestHandlers(t)
 	pid := seedProcess(t, "MaterialNoStations")
-	process := &store.Process{ID: pid}
+	process := &processes.Process{ID: pid}
 
 	views := buildStationViews(h.engine, process)
 	if len(views) != 0 {
@@ -167,7 +169,7 @@ func TestBuildStationViews_ProcessWithStation(t *testing.T) {
 	h, _ := newTestHandlers(t)
 	pid := seedProcess(t, "MaterialOneStation")
 	_ = seedOperatorStation(t, pid, "MAT-CODE-1", "MaterialStation1")
-	process := &store.Process{ID: pid}
+	process := &processes.Process{ID: pid}
 
 	views := buildStationViews(h.engine, process)
 	if len(views) != 1 {

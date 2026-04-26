@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 // Characterization tests for handlers_nodes.go form handlers — pinned before
@@ -74,12 +74,12 @@ func TestHandleNodeCreate_HappyPathSpecificModes(t *testing.T) {
 	}
 
 	// CreateNode happened.
-	nodes, err := db.ListNodes()
+	nodeList, err := db.ListNodes()
 	if err != nil {
 		t.Fatalf("list nodes: %v", err)
 	}
-	var created *store.Node
-	for _, n := range nodes {
+	var created *nodes.Node
+	for _, n := range nodeList {
 		if n.Name == "STORAGE-NEW-1" {
 			created = n
 			break
@@ -150,12 +150,12 @@ func TestHandleNodeCreate_NonSpecificModesClearAssignments(t *testing.T) {
 		t.Fatalf("status: got %d, want 303; body=%s", rec.Code, rec.Body.String())
 	}
 
-	nodes, err := db.ListNodes()
+	nodeList, err := db.ListNodes()
 	if err != nil {
 		t.Fatalf("list nodes: %v", err)
 	}
-	var created *store.Node
-	for _, n := range nodes {
+	var created *nodes.Node
+	for _, n := range nodeList {
 		if n.Name == "STORAGE-NEW-2" {
 			created = n
 			break
@@ -202,7 +202,7 @@ func TestHandleNodeUpdate_HappyPathRewritesAssignments(t *testing.T) {
 	// Seed an existing node with one station and one bin type assigned, plus
 	// station_mode=specific so the assignments are visible through
 	// effective-stations queries too.
-	node := &store.Node{Name: "STORAGE-UPD-1", Zone: "A", Enabled: true}
+	node := &nodes.Node{Name: "STORAGE-UPD-1", Zone: "A", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestHandleNodeUpdate_NotFoundReturns404(t *testing.T) {
 func TestHandleNodeDelete_HappyPathEmitsEvent(t *testing.T) {
 	h, db := testHandlers(t)
 
-	node := &store.Node{Name: "STORAGE-DEL-1", Zone: "A", Enabled: true}
+	node := &nodes.Node{Name: "STORAGE-DEL-1", Zone: "A", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}

@@ -36,6 +36,51 @@ linters:
             - pkg: "shingoedge/store"
               desc: "www handlers must use a service interface, not *store.DB directly"
 
+        # ── Phase 6.0c: store sub-package isolation ──────────────────────
+        #
+        # Each store sub-package owns one aggregate. Cross-aggregate
+        # orchestration lives at the outer store/ level (in files like
+        # completion.go, station_views.go, station_nodes.go, etc.) which
+        # are exempted via the file-pattern below.
+        #
+        # The allow-list block captures the one legitimate cross-aggregate
+        # import: shingo-edge/store/reconciliation/ reads
+        # shingo-edge/store/messaging/'s MaxRetries constant when computing
+        # pending vs. dead-letter outbox counts.
+        store-sub-pkg-isolation:
+          list-mode: lax
+          files:
+            - "**/shingo-core/store/*/**"
+            - "**/shingo-edge/store/*/**"
+            - "!**/shingo-core/store/internal/**"
+            - "!**/shingo-edge/store/internal/**"
+          deny:
+            - pkg: "shingocore/store/admin"
+            - pkg: "shingocore/store/audit"
+            - pkg: "shingocore/store/bins"
+            - pkg: "shingocore/store/cms"
+            - pkg: "shingocore/store/demands"
+            - pkg: "shingocore/store/diagnostics"
+            - pkg: "shingocore/store/inventory"
+            - pkg: "shingocore/store/messaging"
+            - pkg: "shingocore/store/nodes"
+            - pkg: "shingocore/store/orders"
+            - pkg: "shingocore/store/payloads"
+            - pkg: "shingocore/store/recovery"
+            - pkg: "shingocore/store/registry"
+            - pkg: "shingocore/store/scene"
+            - pkg: "shingocore/store/schema"
+            - pkg: "shingocore/store/telemetry"
+            - pkg: "shingoedge/store/admin"
+            - pkg: "shingoedge/store/catalog"
+            - pkg: "shingoedge/store/counters"
+            - pkg: "shingoedge/store/lineside"
+            - pkg: "shingoedge/store/orders"
+            - pkg: "shingoedge/store/processes"
+            - pkg: "shingoedge/store/schema"
+            - pkg: "shingoedge/store/shifts"
+            - pkg: "shingoedge/store/stations"
+
   exclusions:
     rules:
       # ---- Structural exemptions (permanent) --------------------------------
@@ -46,6 +91,15 @@ linters:
         linters:
           - depguard
       - path: "shingo-(core|edge)/www/.*_test\\.go"
+        linters:
+          - depguard
+
+      # Cross-aggregate exception (Phase 6.0c): both modules' reconciliation
+      # packages read the messaging.MaxOutboxRetries constant to compute
+      # pending vs. dead-letter outbox counts. The single import is
+      # documented at the package level in
+      # shingo-(core|edge)/store/reconciliation/reconciliation.go.
+      - path: "shingo-(core|edge)/store/reconciliation/.*\\.go"
         linters:
           - depguard
 

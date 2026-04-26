@@ -12,15 +12,19 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"shingo/protocol"
 	"shingo/protocol/auth"
 	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/orders"
 	"shingoedge/plc"
+	"shingoedge/service"
 	"shingoedge/store"
-
-	"github.com/go-chi/chi/v5"
+	storeorders "shingoedge/store/orders"
+	"shingoedge/store/processes"
+	"shingoedge/store/stations"
 )
 
 // testDB is the shared SQLite database initialised by TestMain.
@@ -60,13 +64,21 @@ func (stubOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType s
 }
 func (stubOrderEmitter) EmitOrderFailed(orderID int64, orderUUID, orderType, reason string) {}
 
-// stubEngine implements EngineAccess for tests. Only the fields needed by
-// handlers_api_config.go are wired; everything else returns zero values.
+// stubEngine implements both ServiceAccess and EngineOrchestration for
+// tests, since *Handlers now holds two fields of those interface types
+// (Phase 6.5). Tests construct one *stubEngine and assign it to both
+// fields in newTestHandlers — any handler can reach what it needs.
+//
+// Tests that want to verify a handler does NOT reach orchestration can
+// build a narrower fixture: assign *stubEngine to h.engine, leave
+// h.orchestration nil, and any accidental orchestration call will nil-
+// panic with a clear stack. We don't ship that helper today; add it
+// when a test needs the discipline.
 //
 // orderMgr is a real *orders.Manager backed by testDB so handlers in
-// handlers_api_orders.go can exercise the full create/transition flow against
-// the ephemeral SQLite database. Tests that don't touch order endpoints can
-// ignore it.
+// handlers_api_orders.go can exercise the full create/transition flow
+// against the ephemeral SQLite database. Tests that don't touch order
+// endpoints can ignore it.
 type stubEngine struct {
 	db       *store.DB
 	cfg      *config.Config
@@ -104,8 +116,8 @@ func (s *stubEngine) EnsureTagPublished(int64, string, string) {}
 func (s *stubEngine) ManageReportingPointTag(int64, string, string, bool, string, string) {}
 func (s *stubEngine) CleanupReportingPointTag(int64, string, string, bool) {}
 func (s *stubEngine) RequestNodeMaterial(int64, int64) (*engine.NodeOrderResult, error) { return nil, nil }
-func (s *stubEngine) ReleaseNodeEmpty(int64) (*store.Order, error)                     { return nil, nil }
-func (s *stubEngine) ReleaseNodePartial(int64, int64) (*store.Order, error)             { return nil, nil }
+func (s *stubEngine) ReleaseNodeEmpty(int64) (*storeorders.Order, error)                     { return nil, nil }
+func (s *stubEngine) ReleaseNodePartial(int64, int64) (*storeorders.Order, error)             { return nil, nil }
 // ReleaseOrderWithLineside stub forwards to orderMgr.ReleaseOrder so
 // existing release-flow tests (TestApiOrders_ReleaseOrder_Success, etc.)
 // still exercise the status-transition + lifecycle-error paths. The
@@ -127,9 +139,9 @@ func (s *stubEngine) ConfirmNodeManifest(int64) error                           
 func (s *stubEngine) FinalizeProduceNode(int64) (*engine.NodeOrderResult, error)        { return nil, nil }
 func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem) error { return nil }
 func (s *stubEngine) ClearBin(int64) error                                             { return nil }
-func (s *stubEngine) RequestEmptyBin(int64, string) (*store.Order, error)               { return nil, nil }
-func (s *stubEngine) RequestFullBin(int64, string) (*store.Order, error)                { return nil, nil }
-func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*store.ProcessChangeover, error) { return nil, nil }
+func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)               { return nil, nil }
+func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)                { return nil, nil }
+func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*processes.Changeover, error) { return nil, nil }
 func (s *stubEngine) CompleteProcessProductionCutover(int64) error                      { return nil }
 func (s *stubEngine) CancelProcessChangeover(int64) error                               { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error               { return nil }
@@ -137,162 +149,46 @@ func (s *stubEngine) ReleaseChangeoverWait(_ int64, calledBy string) error {
 	s.lastReleaseChangeoverWaitCalledBy = calledBy
 	return nil
 }
-func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*store.Order, error)     { return nil, nil }
-func (s *stubEngine) EmptyNodeForToolChange(int64, int64, int64) (*store.Order, error)   { return nil, nil }
-func (s *stubEngine) ReleaseNodeIntoProduction(int64, int64) (*store.Order, error)       { return nil, nil }
+func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error)     { return nil, nil }
+func (s *stubEngine) EmptyNodeForToolChange(int64, int64, int64) (*storeorders.Order, error)   { return nil, nil }
+func (s *stubEngine) ReleaseNodeIntoProduction(int64, int64) (*storeorders.Order, error)       { return nil, nil }
 func (s *stubEngine) SwitchNodeToTarget(int64, int64) error                             { return nil }
 func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error                   { return nil }
 func (s *stubEngine) FlipABNode(int64) error                                            { return nil }
 
-// ── Named DB delegates (Phase 4) ───────────────────────────────────
-// Each method below mirrors a method added to *engine.Engine in
-// shingo-edge/engine/engine_db_methods.go and forwards to the same
-// *store.DB so handler tests exercise the real persistence layer.
+// ── Service accessors (Phase 6.2′) ─────────────────────────────────
+// Each accessor returns a real *service.X backed by the test DB so
+// handler tests exercise the full service → *store.DB → SQLite path.
+// Phase 6.2′ replaced ~60 named-method stubs with these 9 accessors;
+// the underlying behavior is identical (still goes through the same
+// *store.DB shim methods) but the call shape now matches production.
 
-func (s *stubEngine) AdminUserExists() (bool, error) { return s.db.AdminUserExists() }
-func (s *stubEngine) BuildOperatorStationView(stationID int64) (*store.OperatorStationView, error) {
-	return s.db.BuildOperatorStationView(stationID)
+func (s *stubEngine) StationService() *service.StationService {
+	return service.NewStationService(s.db)
 }
-func (s *stubEngine) ConfirmAnomaly(id int64) error { return s.db.ConfirmAnomaly(id) }
-func (s *stubEngine) CreateAdminUser(username, passwordHash string) (int64, error) {
-	return s.db.CreateAdminUser(username, passwordHash)
+func (s *stubEngine) ChangeoverService() *service.ChangeoverService {
+	return service.NewChangeoverService(s.db)
 }
-func (s *stubEngine) CreateOperatorStation(in store.OperatorStationInput) (int64, error) {
-	return s.db.CreateOperatorStation(in)
+func (s *stubEngine) AdminService() *service.AdminService {
+	return service.NewAdminService(s.db)
 }
-func (s *stubEngine) CreateProcess(name, description, productionState, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
-	return s.db.CreateProcess(name, description, productionState, counterPLC, counterTag, counterEnabled)
+func (s *stubEngine) ProcessService() *service.ProcessService {
+	return service.NewProcessService(s.db)
 }
-func (s *stubEngine) CreateProcessNode(in store.ProcessNodeInput) (int64, error) {
-	return s.db.CreateProcessNode(in)
+func (s *stubEngine) StyleService() *service.StyleService {
+	return service.NewStyleService(s.db)
 }
-func (s *stubEngine) CreateReportingPoint(plcName, tagName string, styleID int64) (int64, error) {
-	return s.db.CreateReportingPoint(plcName, tagName, styleID)
+func (s *stubEngine) ShiftService() *service.ShiftService {
+	return service.NewShiftService(s.db)
 }
-func (s *stubEngine) CreateStyle(name, description string, processID int64) (int64, error) {
-	return s.db.CreateStyle(name, description, processID)
+func (s *stubEngine) CounterService() *service.CounterService {
+	return service.NewCounterService(s.db)
 }
-func (s *stubEngine) DeleteOperatorStation(id int64) error { return s.db.DeleteOperatorStation(id) }
-func (s *stubEngine) DeleteProcess(id int64) error         { return s.db.DeleteProcess(id) }
-func (s *stubEngine) DeleteProcessNode(id int64) error     { return s.db.DeleteProcessNode(id) }
-func (s *stubEngine) DeleteReportingPoint(id int64) error  { return s.db.DeleteReportingPoint(id) }
-func (s *stubEngine) DeleteShift(shiftNumber int) error    { return s.db.DeleteShift(shiftNumber) }
-func (s *stubEngine) DeleteStyle(id int64) error           { return s.db.DeleteStyle(id) }
-func (s *stubEngine) DeleteStyleNodeClaim(id int64) error  { return s.db.DeleteStyleNodeClaim(id) }
-func (s *stubEngine) DismissAnomaly(id int64) error        { return s.db.DismissAnomaly(id) }
-func (s *stubEngine) EnsureProcessNodeRuntime(processNodeID int64) (*store.ProcessNodeRuntimeState, error) {
-	return s.db.EnsureProcessNodeRuntime(processNodeID)
+func (s *stubEngine) CatalogService() *service.CatalogService {
+	return service.NewCatalogService(s.db)
 }
-func (s *stubEngine) GetActiveProcessChangeover(processID int64) (*store.ProcessChangeover, error) {
-	return s.db.GetActiveProcessChangeover(processID)
-}
-func (s *stubEngine) GetAdminUser(username string) (*store.AdminUser, error) {
-	return s.db.GetAdminUser(username)
-}
-func (s *stubEngine) GetOperatorStation(id int64) (*store.OperatorStation, error) {
-	return s.db.GetOperatorStation(id)
-}
-func (s *stubEngine) GetOrder(id int64) (*store.Order, error)             { return s.db.GetOrder(id) }
-func (s *stubEngine) GetProcessNode(id int64) (*store.ProcessNode, error) { return s.db.GetProcessNode(id) }
-func (s *stubEngine) GetReportingPoint(id int64) (*store.ReportingPoint, error) {
-	return s.db.GetReportingPoint(id)
-}
-func (s *stubEngine) GetStationNodeNames(stationID int64) ([]string, error) {
-	return s.db.GetStationNodeNames(stationID)
-}
-func (s *stubEngine) GetStyle(id int64) (*store.Style, error) { return s.db.GetStyle(id) }
-func (s *stubEngine) GetStyleNodeClaim(id int64) (*store.StyleNodeClaim, error) {
-	return s.db.GetStyleNodeClaim(id)
-}
-func (s *stubEngine) HourlyCountTotals(processID int64, countDate string) (map[int]int64, error) {
-	return s.db.HourlyCountTotals(processID, countDate)
-}
-func (s *stubEngine) ListActiveOrders() ([]store.Order, error) { return s.db.ListActiveOrders() }
-func (s *stubEngine) ListActiveOrdersByProcess(processID int64) ([]store.Order, error) {
-	return s.db.ListActiveOrdersByProcess(processID)
-}
-func (s *stubEngine) ListChangeoverNodeTasks(changeoverID int64) ([]store.ChangeoverNodeTask, error) {
-	return s.db.ListChangeoverNodeTasks(changeoverID)
-}
-func (s *stubEngine) ListChangeoverStationTasks(changeoverID int64) ([]store.ChangeoverStationTask, error) {
-	return s.db.ListChangeoverStationTasks(changeoverID)
-}
-func (s *stubEngine) ListHourlyCounts(processID, styleID int64, countDate string) ([]store.HourlyCount, error) {
-	return s.db.ListHourlyCounts(processID, styleID, countDate)
-}
-func (s *stubEngine) ListOperatorStations() ([]store.OperatorStation, error) {
-	return s.db.ListOperatorStations()
-}
-func (s *stubEngine) ListOperatorStationsByProcess(processID int64) ([]store.OperatorStation, error) {
-	return s.db.ListOperatorStationsByProcess(processID)
-}
-func (s *stubEngine) ListPayloadCatalog() ([]*store.PayloadCatalogEntry, error) {
-	return s.db.ListPayloadCatalog()
-}
-func (s *stubEngine) ListProcessChangeovers(processID int64) ([]store.ProcessChangeover, error) {
-	return s.db.ListProcessChangeovers(processID)
-}
-func (s *stubEngine) ListProcessNodes() ([]store.ProcessNode, error) { return s.db.ListProcessNodes() }
-func (s *stubEngine) ListProcessNodesByProcess(processID int64) ([]store.ProcessNode, error) {
-	return s.db.ListProcessNodesByProcess(processID)
-}
-func (s *stubEngine) ListProcessNodesByStation(stationID int64) ([]store.ProcessNode, error) {
-	return s.db.ListProcessNodesByStation(stationID)
-}
-func (s *stubEngine) ListProcesses() ([]store.Process, error)                     { return s.db.ListProcesses() }
-func (s *stubEngine) ListReportingPoints() ([]store.ReportingPoint, error)         { return s.db.ListReportingPoints() }
-func (s *stubEngine) ListShifts() ([]store.Shift, error)                           { return s.db.ListShifts() }
-func (s *stubEngine) ListStyleNodeClaims(styleID int64) ([]store.StyleNodeClaim, error) {
-	return s.db.ListStyleNodeClaims(styleID)
-}
-func (s *stubEngine) ListStyles() ([]store.Style, error) { return s.db.ListStyles() }
-func (s *stubEngine) ListStylesByProcess(processID int64) ([]store.Style, error) {
-	return s.db.ListStylesByProcess(processID)
-}
-func (s *stubEngine) ListUnconfirmedAnomalies() ([]store.CounterSnapshot, error) {
-	return s.db.ListUnconfirmedAnomalies()
-}
-func (s *stubEngine) MoveOperatorStation(id int64, direction string) error {
-	return s.db.MoveOperatorStation(id, direction)
-}
-func (s *stubEngine) SetActiveStyle(processID int64, styleID *int64) error {
-	return s.db.SetActiveStyle(processID, styleID)
-}
-func (s *stubEngine) SetStationNodes(stationID int64, nodeNames []string) error {
-	return s.db.SetStationNodes(stationID, nodeNames)
-}
-func (s *stubEngine) TouchOperatorStation(id int64, healthStatus string) error {
-	return s.db.TouchOperatorStation(id, healthStatus)
-}
-func (s *stubEngine) UpdateAdminPassword(username, passwordHash string) error {
-	return s.db.UpdateAdminPassword(username, passwordHash)
-}
-func (s *stubEngine) UpdateOperatorStation(id int64, in store.OperatorStationInput) error {
-	return s.db.UpdateOperatorStation(id, in)
-}
-func (s *stubEngine) UpdateOrderFinalCount(id int64, finalCount int64, confirmed bool) error {
-	return s.db.UpdateOrderFinalCount(id, finalCount, confirmed)
-}
-func (s *stubEngine) UpdateProcess(id int64, name, description, productionState, counterPLC, counterTag string, counterEnabled bool) error {
-	return s.db.UpdateProcess(id, name, description, productionState, counterPLC, counterTag, counterEnabled)
-}
-func (s *stubEngine) UpdateProcessNode(id int64, in store.ProcessNodeInput) error {
-	return s.db.UpdateProcessNode(id, in)
-}
-func (s *stubEngine) UpdateProcessNodeRuntimeOrders(processNodeID int64, activeOrderID, stagedOrderID *int64) error {
-	return s.db.UpdateProcessNodeRuntimeOrders(processNodeID, activeOrderID, stagedOrderID)
-}
-func (s *stubEngine) UpdateReportingPoint(id int64, plcName, tagName string, styleID int64, enabled bool) error {
-	return s.db.UpdateReportingPoint(id, plcName, tagName, styleID, enabled)
-}
-func (s *stubEngine) UpdateStyle(id int64, name, description string, processID int64) error {
-	return s.db.UpdateStyle(id, name, description, processID)
-}
-func (s *stubEngine) UpsertShift(shiftNumber int, name, startTime, endTime string) error {
-	return s.db.UpsertShift(shiftNumber, name, startTime, endTime)
-}
-func (s *stubEngine) UpsertStyleNodeClaim(in store.StyleNodeClaimInput) (int64, error) {
-	return s.db.UpsertStyleNodeClaim(in)
+func (s *stubEngine) OrderService() *service.OrderService {
+	return service.NewOrderService(s.db)
 }
 
 // newTestHandlers builds *Handlers backed by the test DB, returning it along
@@ -312,9 +208,10 @@ func newTestHandlers(t *testing.T) (*Handlers, *chi.Mux) {
 	}
 
 	h := &Handlers{
-		engine:   eng,
-		sessions: newSessionStore(""),
-		eventHub: NewEventHub(),
+		engine:        eng, // ServiceAccess
+		orchestration: eng, // EngineOrchestration
+		sessions:      newSessionStore(""),
+		eventHub:      NewEventHub(),
 	}
 
 	r := chi.NewRouter()
@@ -491,7 +388,7 @@ func seedStyle(t *testing.T, name string, processID int64) int64 {
 // across tests sharing testDB.
 func seedOperatorStation(t *testing.T, processID int64, code, name string) int64 {
 	t.Helper()
-	id, err := testDB.CreateOperatorStation(store.OperatorStationInput{
+	id, err := testDB.CreateOperatorStation(stations.Input{
 		ProcessID:  processID,
 		Code:       code,
 		Name:       name,
@@ -508,7 +405,7 @@ func seedOperatorStation(t *testing.T, processID int64, code, name string) int64
 // and returns its ID. Pass stationID=0 to leave OperatorStationID nil.
 func seedProcessNode(t *testing.T, processID, stationID int64, coreNodeName string) int64 {
 	t.Helper()
-	in := store.ProcessNodeInput{
+	in := processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: coreNodeName,
 		Name:         coreNodeName,

@@ -3,7 +3,8 @@ package material
 import (
 	"errors"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // fakeStore is an in-memory Store used by the material unit tests.
@@ -13,9 +14,9 @@ import (
 // not model, add it inline in that test rather than growing this
 // struct.
 type fakeStore struct {
-	nodes map[int64]*store.Node
+	nodes map[int64]*nodes.Node
 	props map[int64]map[string]string
-	bins  map[int64]*store.Bin
+	bins  map[int64]*bins.Bin
 
 	// totals[boundaryID] -> map[catID]qty, returned verbatim by
 	// SumCatIDsAtBoundary.
@@ -24,9 +25,9 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		nodes:  map[int64]*store.Node{},
+		nodes:  map[int64]*nodes.Node{},
 		props:  map[int64]map[string]string{},
-		bins:   map[int64]*store.Bin{},
+		bins:   map[int64]*bins.Bin{},
 		totals: map[int64]map[string]int64{},
 	}
 }
@@ -41,7 +42,7 @@ func (f *fakeStore) setProp(nodeID int64, key, value string) {
 
 // --- Store interface ---------------------------------------------
 
-func (f *fakeStore) GetNode(id int64) (*store.Node, error) {
+func (f *fakeStore) GetNode(id int64) (*nodes.Node, error) {
 	n, ok := f.nodes[id]
 	if !ok {
 		return nil, errors.New("node not found")
@@ -53,7 +54,7 @@ func (f *fakeStore) GetNodeProperty(nodeID int64, key string) string {
 	return f.props[nodeID][key]
 }
 
-func (f *fakeStore) GetBin(id int64) (*store.Bin, error) {
+func (f *fakeStore) GetBin(id int64) (*bins.Bin, error) {
 	b, ok := f.bins[id]
 	if !ok {
 		return nil, errors.New("bin not found")

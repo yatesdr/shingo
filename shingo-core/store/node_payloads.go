@@ -2,7 +2,7 @@ package store
 
 // Stage 2D delegate file: node_payloads junction writes live in store/nodes/
 // (AssignPayload/UnassignPayload/SetPayloads), while the cross-aggregate
-// queries that return *Payload or *Node stay here as composition methods.
+// queries that return *payloads.Payload or *nodes.Node stay here as composition methods.
 
 import (
 	"fmt"
@@ -21,7 +21,7 @@ func (db *DB) UnassignPayloadFromNode(nodeID, payloadID int64) error {
 
 // ListPayloadsForNode returns the directly-assigned payload templates for a
 // node. Cross-aggregate (nodes ↔ payloads).
-func (db *DB) ListPayloadsForNode(nodeID int64) ([]*Payload, error) {
+func (db *DB) ListPayloadsForNode(nodeID int64) ([]*payloads.Payload, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT %s FROM payloads
 		WHERE id IN (SELECT payload_id FROM node_payloads WHERE node_id=$1)
@@ -35,7 +35,7 @@ func (db *DB) ListPayloadsForNode(nodeID int64) ([]*Payload, error) {
 
 // ListNodesForPayload returns all nodes that have the given payload assigned.
 // Cross-aggregate (nodes ↔ payloads).
-func (db *DB) ListNodesForPayload(payloadID int64) ([]*Node, error) {
+func (db *DB) ListNodesForPayload(payloadID int64) ([]*nodes.Node, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		SELECT %s %s
 		WHERE n.id IN (SELECT np.node_id FROM node_payloads np WHERE np.payload_id=$1)
@@ -51,7 +51,7 @@ func (db *DB) ListNodesForPayload(payloadID int64) ([]*Node, error) {
 // parent chain until a non-empty set is found. Returns nil (all payloads) if
 // no ancestor has payloads. Uses a recursive CTE to resolve the ancestor
 // chain in a single query. Cross-aggregate (nodes ↔ payloads).
-func (db *DB) GetEffectivePayloads(nodeID int64) ([]*Payload, error) {
+func (db *DB) GetEffectivePayloads(nodeID int64) ([]*payloads.Payload, error) {
 	rows, err := db.Query(fmt.Sprintf(`
 		WITH RECURSIVE ancestors AS (
 			SELECT id, parent_id, 0 AS depth FROM nodes WHERE id = $1

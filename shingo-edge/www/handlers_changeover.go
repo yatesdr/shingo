@@ -3,12 +3,12 @@ package www
 import (
 	"net/http"
 
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // changeoverNodeView enriches a ChangeoverNodeTask with claim details for display.
 type changeoverNodeView struct {
-	store.ChangeoverNodeTask
+	processes.NodeTask
 	ProcessID       int64  `json:"process_id"`
 	Situation       string `json:"situation"`
 	FromPayload     string `json:"from_payload"`
@@ -20,16 +20,16 @@ type changeoverNodeView struct {
 
 // changeoverViewData holds the common data loaded for changeover views.
 type changeoverViewData struct {
-	Styles           []store.Style
+	Styles           []processes.Style
 	CurrentStyleName string
-	ActiveChangeover *store.ProcessChangeover
-	StationTasks     []store.ChangeoverStationTask
+	ActiveChangeover *processes.Changeover
+	StationTasks     []processes.StationTask
 	NodeTaskMap      map[int64][]changeoverNodeView
 	CentralNodeTasks []changeoverNodeView
 	AllNodesComplete bool
 }
 
-func (h *Handlers) buildChangeoverViewData(activeProcess *store.Process) changeoverViewData {
+func (h *Handlers) buildChangeoverViewData(activeProcess *processes.Process) changeoverViewData {
 	var d changeoverViewData
 	d.NodeTaskMap = map[int64][]changeoverNodeView{}
 
@@ -38,19 +38,19 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *store.Process) changeo
 		return d
 	}
 
-	d.Styles, _ = h.engine.ListStylesByProcess(activeProcess.ID)
+	d.Styles, _ = h.engine.StyleService().ListByProcess(activeProcess.ID)
 	if activeProcess.ActiveStyleID != nil {
-		if s, err := h.engine.GetStyle(*activeProcess.ActiveStyleID); err == nil {
+		if s, err := h.engine.StyleService().Get(*activeProcess.ActiveStyleID); err == nil {
 			d.CurrentStyleName = s.Name
 		}
 	}
-	d.ActiveChangeover, _ = h.engine.GetActiveProcessChangeover(activeProcess.ID)
+	d.ActiveChangeover, _ = h.engine.ChangeoverService().GetActive(activeProcess.ID)
 	if d.ActiveChangeover != nil {
-		d.StationTasks, _ = h.engine.ListChangeoverStationTasks(d.ActiveChangeover.ID)
-		allNodeTasks, _ := h.engine.ListChangeoverNodeTasks(d.ActiveChangeover.ID)
+		d.StationTasks, _ = h.engine.ChangeoverService().ListStationTasks(d.ActiveChangeover.ID)
+		allNodeTasks, _ := h.engine.ChangeoverService().ListNodeTasks(d.ActiveChangeover.ID)
 
 		// Build map of processNodeID -> operatorStationID from process nodes
-		processNodes, _ := h.engine.ListProcessNodesByProcess(activeProcess.ID)
+		processNodes, _ := h.engine.ProcessService().ListNodesByProcess(activeProcess.ID)
 		nodeStationMap := make(map[int64]*int64, len(processNodes))
 		for i := range processNodes {
 			nodeStationMap[processNodes[i].ID] = processNodes[i].OperatorStationID
@@ -58,18 +58,18 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *store.Process) changeo
 
 		for _, task := range allNodeTasks {
 			view := changeoverNodeView{
-				ChangeoverNodeTask: task,
+				NodeTask: task,
 				ProcessID:          activeProcess.ID,
 				Situation:          task.Situation,
 			}
 			if task.FromClaimID != nil {
-				if claim, err := h.engine.GetStyleNodeClaim(*task.FromClaimID); err == nil {
+				if claim, err := h.engine.StyleService().GetClaim(*task.FromClaimID); err == nil {
 					view.FromPayload = claim.PayloadCode
 					view.FromRole = claim.Role
 				}
 			}
 			if task.ToClaimID != nil {
-				if claim, err := h.engine.GetStyleNodeClaim(*task.ToClaimID); err == nil {
+				if claim, err := h.engine.StyleService().GetClaim(*task.ToClaimID); err == nil {
 					view.ToPayload = claim.PayloadCode
 					view.ToRole = claim.Role
 				}
@@ -77,7 +77,7 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *store.Process) changeo
 			// Check linked orders for failures
 			for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
 				if orderID != nil {
-					if o, err := h.engine.GetOrder(*orderID); err == nil && o.Status == "failed" {
+					if o, err := h.engine.OrderService().Get(*orderID); err == nil && o.Status == "failed" {
 						view.LastOrderError = "Order " + o.UUID[:8] + " failed"
 					}
 				}
@@ -109,8 +109,8 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *store.Process) changeo
 }
 
 func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
-	processes, _ := h.engine.ListProcesses()
-	activeProcess := resolveProcessFromQuery(r, processes)
+	processList, _ := h.engine.ProcessService().List()
+	activeProcess := resolveProcessFromQuery(r, processList)
 
 	d := h.buildChangeoverViewData(activeProcess)
 
@@ -119,9 +119,9 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		activeProcessID = activeProcess.ID
 	}
 
-	var changeoverHistory []store.ProcessChangeover
+	var changeoverHistory []processes.Changeover
 	if activeProcess != nil {
-		changeoverHistory, _ = h.engine.ListProcessChangeovers(activeProcess.ID)
+		changeoverHistory, _ = h.engine.ChangeoverService().List(activeProcess.ID)
 		// Filter out the active changeover from history
 		filtered := changeoverHistory[:0]
 		for _, c := range changeoverHistory {
@@ -135,7 +135,7 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]interface{}{
 		"Page":               "changeover",
-		"Processes":          processes,
+		"Processes":          processList,
 		"ActiveProcess":      activeProcess,
 		"ActiveProcessID":    activeProcessID,
 		"Styles":             d.Styles,
@@ -153,8 +153,8 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleChangeoverPartial(w http.ResponseWriter, r *http.Request) {
-	processes, _ := h.engine.ListProcesses()
-	activeProcess := resolveProcessFromQuery(r, processes)
+	processList, _ := h.engine.ProcessService().List()
+	activeProcess := resolveProcessFromQuery(r, processList)
 
 	d := h.buildChangeoverViewData(activeProcess)
 

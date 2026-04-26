@@ -8,30 +8,33 @@ import (
 
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // --- Helper: setup node group with direct children for shuffle ---
 
-func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *store.Node, slots []*store.Node, shuffleSlots []*store.Node, bp *store.Payload) {
+func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *nodes.Node, slots []*nodes.Node, shuffleSlots []*nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	grpType, _ := db.GetNodeTypeByCode("NGRP")
 	lanType, _ := db.GetNodeTypeByCode("LANE")
 
-	bp = &store.Payload{Code: "PTX"}
+	bp = &payloads.Payload{Code: "PTX"}
 	db.CreatePayload(bp)
 
 	// Create NGRP
-	grp = &store.Node{Name: "GRP-TEST", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
+	grp = &nodes.Node{Name: "GRP-TEST", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
 	db.CreateNode(grp)
 
 	// Create 1 lane with 5 slots
-	lane = &store.Node{Name: "GRP-TEST-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
+	lane = &nodes.Node{Name: "GRP-TEST-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
 	db.CreateNode(lane)
 
-	slots = make([]*store.Node, 5)
+	slots = make([]*nodes.Node, 5)
 	for d := 1; d <= 5; d++ {
 		depth := d
-		slot := &store.Node{
+		slot := &nodes.Node{
 			Name:     fmt.Sprintf("GRP-TEST-L1-S%d", d),
 			ParentID: &lane.ID, Enabled: true, Depth: &depth,
 		}
@@ -40,9 +43,9 @@ func setupNodeGroupWithShuffle(t *testing.T, db *store.DB) (grp, lane *store.Nod
 	}
 
 	// Create 4 direct physical children of the group (shuffle slots)
-	shuffleSlots = make([]*store.Node, 4)
+	shuffleSlots = make([]*nodes.Node, 4)
 	for i := 0; i < 4; i++ {
-		ss := &store.Node{
+		ss := &nodes.Node{
 			Name:     fmt.Sprintf("GRP-TEST-DC-%d", i+1),
 			ParentID: &grp.ID, Enabled: true,
 		}
@@ -260,7 +263,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 	target := createTestBinAtNode(t, db, bp.Code, slots[1].ID, "BIN-CMP-TGT")
 
 	// Create parent order
-	parentOrder := &store.Order{
+	parentOrder := &orders.Order{
 		EdgeUUID:     "uuid-compound",
 		StationID:    "line-1",
 		OrderType:    OrderTypeRetrieve,
@@ -268,7 +271,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 		DeliveryNode: "LINE1-DEST",
 	}
 	// Create a delivery node so dispatchToFleet can resolve it
-	destNode := &store.Node{Name: "LINE1-DEST", Enabled: true}
+	destNode := &nodes.Node{Name: "LINE1-DEST", Enabled: true}
 	if err := db.CreateNode(destNode); err != nil {
 		t.Fatalf("create dest node: %v", err)
 	}
@@ -361,7 +364,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 
 	// Create parent order
-	parentOrder := &store.Order{
+	parentOrder := &orders.Order{
 		EdgeUUID:  "uuid-fail-parent",
 		StationID: "line-1",
 		OrderType: OrderTypeRetrieve,
@@ -372,7 +375,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 	}
 
 	// Create 3 child orders
-	child1 := &store.Order{
+	child1 := &orders.Order{
 		EdgeUUID:      "uuid-fail-parent-step-1",
 		StationID:     "line-1",
 		OrderType:     OrderTypeMove,
@@ -386,7 +389,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		t.Fatalf("create child1: %v", err)
 	}
 
-	child2 := &store.Order{
+	child2 := &orders.Order{
 		EdgeUUID:      "uuid-fail-parent-step-2",
 		StationID:     "line-1",
 		OrderType:     OrderTypeMove,
@@ -403,7 +406,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 	// Create a bin claimed by child3 to verify unclaim on cancel
 	binC3 := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-C3")
 
-	child3 := &store.Order{
+	child3 := &orders.Order{
 		EdgeUUID:      "uuid-fail-parent-step-3",
 		StationID:     "line-1",
 		OrderType:     OrderTypeMove,
@@ -479,7 +482,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	_, lane, slots, _, bp := setupNodeGroupWithShuffle(t, db)
 
 	// Create parent order
-	parentOrder := &store.Order{
+	parentOrder := &orders.Order{
 		EdgeUUID:  "uuid-inflight-parent",
 		StationID: "line-1",
 		OrderType: OrderTypeRetrieve,
@@ -490,7 +493,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	}
 
 	// Child 1: already confirmed (done)
-	child1 := &store.Order{
+	child1 := &orders.Order{
 		EdgeUUID:      "uuid-inflight-step-1",
 		StationID:     "line-1",
 		OrderType:     OrderTypeMove,
@@ -505,7 +508,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	}
 
 	// Child 2: the one that fails
-	child2 := &store.Order{
+	child2 := &orders.Order{
 		EdgeUUID:      "uuid-inflight-step-2",
 		StationID:     "line-1",
 		OrderType:     OrderTypeMove,
@@ -522,7 +525,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 	// Child 3: IN-FLIGHT (in_transit) — the key test case.
 	// Old code would skip this, leaving orphan robot and claimed bin.
 	binC3 := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-C3-INFLIGHT")
-	child3 := &store.Order{
+	child3 := &orders.Order{
 		EdgeUUID:      "uuid-inflight-step-3",
 		StationID:     "line-1",
 		OrderType:     OrderTypeMove,
@@ -541,7 +544,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 
 	// Child 4: still pending — should also be cancelled
 	binC4 := createTestBinAtNode(t, db, bp.Code, slots[0].ID, "BIN-C4-PENDING")
-	child4 := &store.Order{
+	child4 := &orders.Order{
 		EdgeUUID:      "uuid-inflight-step-4",
 		StationID:     "line-1",
 		OrderType:     OrderTypeMove,
@@ -636,7 +639,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
-	parent := &store.Order{
+	parent := &orders.Order{
 		EdgeUUID:     "parent-fail-event",
 		StationID:    "line-1",
 		OrderType:    OrderTypeRetrieve,
@@ -649,7 +652,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 		t.Fatalf("create parent: %v", err)
 	}
 
-	failedChild := &store.Order{
+	failedChild := &orders.Order{
 		EdgeUUID:      "child-fail-event",
 		StationID:     parent.StationID,
 		OrderType:     OrderTypeMove,

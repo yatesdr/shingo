@@ -2,12 +2,16 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/nodes"
+)
 
 func TestNodeStation_AssignUnassignList(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "STA-NODE-1", Enabled: true}
+	node := &nodes.Node{Name: "STA-NODE-1", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -56,11 +60,11 @@ func TestNodeStation_AssignUnassignList(t *testing.T) {
 func TestListNodesForStation(t *testing.T) {
 	db := testDB(t)
 
-	nodeA := &Node{Name: "STA-LIST-A", Enabled: true}
+	nodeA := &nodes.Node{Name: "STA-LIST-A", Enabled: true}
 	db.CreateNode(nodeA)
-	nodeB := &Node{Name: "STA-LIST-B", Enabled: true}
+	nodeB := &nodes.Node{Name: "STA-LIST-B", Enabled: true}
 	db.CreateNode(nodeB)
-	nodeC := &Node{Name: "STA-LIST-C", Enabled: true}
+	nodeC := &nodes.Node{Name: "STA-LIST-C", Enabled: true}
 	db.CreateNode(nodeC)
 
 	db.AssignNodeToStation(nodeA.ID, "line-X")
@@ -94,7 +98,7 @@ func TestListNodesForStation(t *testing.T) {
 func TestSetNodeStations_Replaces(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "STA-SET-1", Enabled: true}
+	node := &nodes.Node{Name: "STA-SET-1", Enabled: true}
 	db.CreateNode(node)
 
 	if err := db.SetNodeStations(node.ID, []string{"line-1", "line-2"}); err != nil {
@@ -130,7 +134,7 @@ func TestSetNodeStations_Replaces(t *testing.T) {
 func TestGetEffectiveStations_Modes(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "STA-EFF-1", Enabled: true}
+	node := &nodes.Node{Name: "STA-EFF-1", Enabled: true}
 	db.CreateNode(node)
 
 	db.SetNodeStations(node.ID, []string{"line-A"})

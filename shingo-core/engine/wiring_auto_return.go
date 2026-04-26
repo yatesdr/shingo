@@ -12,7 +12,7 @@ import (
 	"fmt"
 
 	"shingocore/dispatch"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // autoReturnEnabled gates maybeCreateReturnOrder. SHORT-CIRCUITED 2026-04-14:
@@ -36,7 +36,7 @@ const autoReturnEnabled = false
 // created for each bin. For single-bin orders, the legacy path creates one.
 //
 // Currently short-circuited — see autoReturnEnabled.
-func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
+func (e *Engine) maybeCreateReturnOrder(order *orders.Order, reason string) {
 	if !autoReturnEnabled {
 		e.logFn("engine: auto-return short-circuited for order %d (%s)", order.ID, reason)
 		return
@@ -112,7 +112,7 @@ func (e *Engine) maybeCreateReturnOrder(order *store.Order, reason string) {
 
 // createSingleReturnOrder creates one STORE order to return a specific bin
 // from its current location (sourceNodeName) to the root parent of that node.
-func (e *Engine) createSingleReturnOrder(order *store.Order, binID int64, sourceNodeName, reason string) {
+func (e *Engine) createSingleReturnOrder(order *orders.Order, binID int64, sourceNodeName, reason string) {
 	sourceNode, err := e.db.GetNodeByDotName(sourceNodeName)
 	if err != nil {
 		e.logFn("engine: resolve source node %q for return order: %v", sourceNodeName, err)
@@ -125,7 +125,7 @@ func (e *Engine) createSingleReturnOrder(order *store.Order, binID int64, source
 		return
 	}
 
-	returnOrder := &store.Order{
+	returnOrder := &orders.Order{
 		StationID:    order.StationID,
 		OrderType:    dispatch.OrderTypeStore,
 		Status:       dispatch.StatusPending,

@@ -4,7 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/inventory"
 )
 
 // ApplyCorrectionRequest holds the parameters for applying an inventory correction.
@@ -22,7 +23,7 @@ type ApplyCorrectionRequest struct {
 // ApplyCorrection executes a correction (add_item, remove_item, adjust_qty),
 // updates the bin's manifest JSON, records the correction, and emits events.
 func (e *Engine) ApplyCorrection(req ApplyCorrectionRequest) (int64, error) {
-	corr := &store.Correction{
+	corr := &inventory.Correction{
 		CorrectionType: req.CorrectionType,
 		NodeID:         req.NodeID,
 		BinID:          &req.BinID,
@@ -45,13 +46,13 @@ func (e *Engine) ApplyCorrection(req ApplyCorrectionRequest) (int64, error) {
 
 	switch req.CorrectionType {
 	case "add_item":
-		manifest.Items = append(manifest.Items, store.ManifestEntry{
+		manifest.Items = append(manifest.Items, bins.ManifestEntry{
 			CatID:    req.CatID,
 			Quantity: req.Quantity,
 			Notes:    fmt.Sprintf("correction: %s", req.Reason),
 		})
 	case "remove_item":
-		var filtered []store.ManifestEntry
+		var filtered []bins.ManifestEntry
 		removed := false
 		for _, item := range manifest.Items {
 			if !removed && item.CatID == req.CatID {
@@ -126,16 +127,16 @@ func (e *Engine) ApplyBatchCorrection(req BatchCorrectionRequest) error {
 	oldItems := oldManifest.Items
 
 	// Build new manifest from submitted items
-	newItems := make([]store.ManifestEntry, len(req.Items))
+	newItems := make([]bins.ManifestEntry, len(req.Items))
 	for i, item := range req.Items {
-		newItems[i] = store.ManifestEntry{
+		newItems[i] = bins.ManifestEntry{
 			CatID:    item.CatID,
 			Quantity: item.Quantity,
 		}
 	}
 
 	// Build corrections by diffing old vs new
-	var corrections []*store.Correction
+	var corrections []*inventory.Correction
 	oldQty := make(map[string]int64)
 	for _, m := range oldItems {
 		oldQty[m.CatID] += m.Quantity
@@ -165,7 +166,7 @@ func (e *Engine) ApplyBatchCorrection(req BatchCorrectionRequest) error {
 		} else if nq == 0 {
 			corrType = "remove_item"
 		}
-		corrections = append(corrections, &store.Correction{
+		corrections = append(corrections, &inventory.Correction{
 			CorrectionType: corrType,
 			NodeID:         req.NodeID,
 			BinID:          &req.BinID,
@@ -182,7 +183,7 @@ func (e *Engine) ApplyBatchCorrection(req BatchCorrectionRequest) error {
 	}
 
 	// Save the new manifest on the bin
-	newManifest := store.BinManifest{Items: newItems}
+	newManifest := bins.Manifest{Items: newItems}
 	manifestJSON, _ := json.Marshal(newManifest)
 	if err := e.binManifest.SetForProduction(req.BinID, string(manifestJSON), bin.PayloadCode, bin.UOPRemaining); err != nil {
 		return fmt.Errorf("update bin manifest: %w", err)

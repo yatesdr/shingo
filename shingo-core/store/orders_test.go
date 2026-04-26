@@ -2,12 +2,16 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/orders"
+)
 
 func TestOrderCRUD(t *testing.T) {
 	db := testDB(t)
 
-	o := &Order{
+	o := &orders.Order{
 		EdgeUUID:     "uuid-1",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
@@ -106,9 +110,9 @@ func TestOrderCRUD(t *testing.T) {
 func TestListOrders(t *testing.T) {
 	db := testDB(t)
 
-	db.CreateOrder(&Order{EdgeUUID: "u1", Status: "pending"})
-	db.CreateOrder(&Order{EdgeUUID: "u2", Status: "confirmed"})
-	db.CreateOrder(&Order{EdgeUUID: "u3", Status: "pending"})
+	db.CreateOrder(&orders.Order{EdgeUUID: "u1", Status: "pending"})
+	db.CreateOrder(&orders.Order{EdgeUUID: "u2", Status: "confirmed"})
+	db.CreateOrder(&orders.Order{EdgeUUID: "u3", Status: "pending"})
 
 	// All
 	all, _ := db.ListOrders("", 10)
@@ -132,9 +136,9 @@ func TestListOrders(t *testing.T) {
 func TestListDispatchedVendorOrderIDs(t *testing.T) {
 	db := testDB(t)
 
-	o1 := &Order{EdgeUUID: "u1", Status: "dispatched"}
-	o2 := &Order{EdgeUUID: "u2", Status: "in_transit"}
-	o3 := &Order{EdgeUUID: "u3", Status: "confirmed"}
+	o1 := &orders.Order{EdgeUUID: "u1", Status: "dispatched"}
+	o2 := &orders.Order{EdgeUUID: "u2", Status: "in_transit"}
+	o3 := &orders.Order{EdgeUUID: "u3", Status: "confirmed"}
 	db.CreateOrder(o1)
 	db.CreateOrder(o2)
 	db.CreateOrder(o3)
@@ -155,7 +159,7 @@ func TestOrderCompoundFields(t *testing.T) {
 	db := testDB(t)
 
 	// Create parent order
-	parent := &Order{
+	parent := &orders.Order{
 		EdgeUUID:  "parent-uuid",
 		StationID: "line-1",
 		OrderType: "compound",
@@ -166,7 +170,7 @@ func TestOrderCompoundFields(t *testing.T) {
 	}
 
 	// Create child orders with sequence
-	child1 := &Order{
+	child1 := &orders.Order{
 		EdgeUUID:      "child-uuid-1",
 		StationID:     "line-1",
 		OrderType:     "retrieve",
@@ -174,7 +178,7 @@ func TestOrderCompoundFields(t *testing.T) {
 		ParentOrderID: &parent.ID,
 		Sequence:      1,
 	}
-	child2 := &Order{
+	child2 := &orders.Order{
 		EdgeUUID:      "child-uuid-2",
 		StationID:     "line-1",
 		OrderType:     "store",
@@ -182,7 +186,7 @@ func TestOrderCompoundFields(t *testing.T) {
 		ParentOrderID: &parent.ID,
 		Sequence:      2,
 	}
-	child3 := &Order{
+	child3 := &orders.Order{
 		EdgeUUID:      "child-uuid-3",
 		StationID:     "line-1",
 		OrderType:     "move",

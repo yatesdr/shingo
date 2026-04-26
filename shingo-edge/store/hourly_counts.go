@@ -6,9 +6,6 @@ package store
 
 import "shingoedge/store/counters"
 
-// HourlyCount represents accumulated production count for one hour.
-type HourlyCount = counters.HourlyCount
-
 // UpsertHourlyCount adds delta to the existing count for the given
 // process/style/date/hour, or inserts a new row if none exists.
 func (db *DB) UpsertHourlyCount(processID, styleID int64, countDate string, hour int, delta int64) error {
@@ -17,7 +14,7 @@ func (db *DB) UpsertHourlyCount(processID, styleID int64, countDate string, hour
 
 // ListHourlyCounts returns all hourly count rows for a given
 // process/style/date.
-func (db *DB) ListHourlyCounts(processID, styleID int64, countDate string) ([]HourlyCount, error) {
+func (db *DB) ListHourlyCounts(processID, styleID int64, countDate string) ([]counters.HourlyCount, error) {
 	return counters.ListHourly(db.DB, processID, styleID, countDate)
 }
 

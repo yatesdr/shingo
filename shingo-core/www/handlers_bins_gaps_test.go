@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/orders"
 )
 
 // Characterization tests for the write-path handlers in handlers_bins.go that
@@ -244,7 +245,7 @@ func TestApiRequestBinTransport_ClaimedBinReturns409(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-CLAIMED")
 
 	// Seed a claim via an existing order.
-	priorOrder := &store.Order{
+	priorOrder := &orders.Order{
 		EdgeUUID: "xport-prior-1", StationID: "line-1",
 		OrderType: "move", Status: "pending", Quantity: 1,
 	}
@@ -272,7 +273,7 @@ func TestApiRequestBinTransport_NoNodeReturns400(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
-	bin := &store.Bin{BinTypeID: bt.ID, Label: "BIN-TRANSPORT-NONODE", Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-TRANSPORT-NONODE", Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create orphan bin: %v", err)
 	}

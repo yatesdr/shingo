@@ -2,7 +2,184 @@
 
 **Baseline commit:** `36ea180` (toolchain downgrade to Go 1.25.0)
 **Captured:** 2026-04-19, Go 1.25.0, `go test -tags=docker -coverprofile=coverage-*.out`
-**Branch:** `refactor/shingo-architecture-2`
+**Active branch:** `refactor/shingo-architecture-3` (Phase 6 sweep; squashed Phase 1–5 baseline at `68113fb`)
+
+> **Phase 6 status:** This map predates the Phase 6 sweep. New sub-packages
+> introduced or reshaped during 6.0a/6.0b/6.1 land without coverage entries
+> below; re-capture once the full Phase 6 branch lands.
+>
+> **Phase 6.0a additions (core):** `store/schema/` (DDL constant +
+> `Apply` / `TableExists` / `ColumnExists` / `ColumnType` introspection
+> helpers, extracted from top-level `schema_postgres.go` and
+> `migrations.go`). 35 type aliases on the outer `*store.DB` shim now
+> carry `// Deprecated:` comments — the marker Phase 6.4 will use to
+> grep callers and migrate them off `store.X` to `store/<pkg>.X`.
+>
+> **Phase 6.0b additions (edge):** `store/schema/` (DDL constant +
+> `Apply` / `TableExists` / `TableHasColumn`, extracted from the
+> 1013-line `schema.go`). The 17-version migration logic moved from
+> `schema.go` to a new top-level `migrations.go`. `SetStationNodes`
+> extracted from `operator_stations.go` to a new top-level
+> `station_nodes.go` (cross-aggregate orchestration spanning stations
+> + processes + orders, queued for service-layer extraction in 6.1).
+> 25 type aliases on edge's outer `*store.DB` shim carry
+> `// Deprecated:` comments. `lineside/` accepted as the eleventh
+> edge sub-package (post-squash addition from `4efbab4`); the v4
+> plan's "10 total" acceptance criterion is amended to 11.
+>
+> **Deferred from 6.0b** (will land as a follow-up before 6.3
+> depguard rules write the cross-aggregate allow-list): fold
+> `shifts/` into `counters/`, fold `styles/` + `claims/` +
+> `changeovers/` into `processes/`, rename `outbox/` → `messaging/`,
+> rename `payloads/` → `catalog/`. These are organizational moves
+> with no behavior change; depguard's allow-list lands against the
+> shipped names initially and gets a one-line update when the folds
+> are committed.
+>
+> **Phase 6.1 additions:** Service-layer extraction for the seven
+> cross-aggregate coordinators identified in Phase 5 closeout.
+> Core: `BinService.ApplyArrival` (new method on existing service),
+> `TagVerifyService` (new service). `NodeService.ListNodeStates`
+> and `InventoryService.List` were already wired through services
+> in Phase 3a — no change. Edge: new `shingo-edge/service/`
+> package introduced (was previously absent — edge took named
+> *engine.Engine methods in Phase 4) holding `StationService`
+> (`SetNodes`, `BuildView`) and `ChangeoverService` (`Create`).
+> Edge engine accessors `Engine.StationService()` and
+> `Engine.ChangeoverService()` added. The named-method shims
+> (`Engine.SetStationNodes`, `Engine.BuildOperatorStationView`)
+> stay on the `EngineAccess` contract but their bodies now route
+> through services. Five `*store.DB` cross-aggregate methods marked
+> Deprecated — Phase 6.4's type-alias sweep retires them and
+> migrates remaining test-file callers.
+>
+> **Phase 6 reshape (v6 plan, 2026-04-25):** Two rounds of
+> architectural review reshaped the remaining Phase 6 work after
+> 6.1 verified clean.
+>
+> Round 1 (four reviewers, "should we do 6.2 at all?"): unanimous
+> "skip 6.2." Phase 6.2 framing was a Go-language constraint
+> dressed up as a refactor; the receiver `*www.Handlers` cannot
+> move into a sub-package without inventing new types.
+>
+> Round 2 (four reviewers, "what would world-class Go architects
+> do with the *Handlers struct?"): unanimous "leave it alone." The
+> pattern is idiomatic Go at this scale (std lib, CockroachDB,
+> Hugo, Caddy, chi examples all use it). The decision is recorded
+> in the implementation-plan v6 with a tripwire condition (handler
+> count >50 / independent deployment / dep-set divergence) for any
+> future revisit.
+>
+> - **Phase 6.2 (handler sub-packages) WON'T DO.** Plan framed it
+>   as "pure import-path mechanics with no behavior change" — wrong.
+>   Per-domain split forces ~30+ new struct types, rewrites every
+>   test fixture. No architectural payoff justifies the churn.
+>   Round-2 review confirmed the `*www.Handlers` struct as
+>   idiomatic Go at this scale; not technical debt.
+> - **Phase 6.5 (DTO extraction) CUT.** Sub-packages already own
+>   their types. Adding `dto/` solves a hypothetical second-consumer
+>   problem we don't have.
+> - **Phase 6.6 (EngineAccess split) CUT.** Absorbed by 6.2′ —
+>   killing edge passthroughs collapses the interface from ~93 to
+>   ~30 methods without splitting.
+> - **Phase 7 (changeover domain) CUT.** Premature decomposition
+>   for a single-line plant.
+> - **Phase 8 (composition root) DEFERRED.** Better answer is
+>   `engine.Wire()` than file splits; defer until concrete pain.
+>
+> **Next commits on the branch (v6 plan):**
+>
+> - ✅ **6.0c housekeeping + depguard config + h.eng cleanup**
+>   delivered. Edge folded `styles/`+`claims/`+`changeovers/` →
+>   `processes/` (per-file inside the package: `styles.go`,
+>   `claims.go`, `changeovers.go`), renamed `outbox/` →
+>   `messaging/` and `payloads/` → `catalog/`, deleted the dead
+>   `h.eng` field on both modules (core: pure delete; edge:
+>   moved SSE wiring to use local `eng` parameter, then deleted
+>   the field). `.golangci.yml` extended with the
+>   `store-sub-pkg-isolation` rule forbidding sub-package-to-
+>   sub-package imports inside the store, with a documented
+>   exception for `reconciliation/` → `messaging/` (MaxRetries
+>   constant). The originally-planned `shifts/` → `counters/`
+>   fold was dropped — shifts (1st, 2nd, 3rd) is a first-class
+>   manufacturing-domain concept, not a counter implementation
+>   detail. Edge sub-package count after 6.0c: **11**
+>   (admin, catalog, counters, lineside, messaging, orders,
+>   processes, reconciliation, schema, shifts, stations; plus
+>   internal/helpers).
+> - ✅ **6.4a Deprecated method retirement** delivered. After
+>   four-reviewer round-3 consensus that the services-as-thin-wrappers
+>   shape was incoherent, the 5 orchestration bodies moved into their
+>   services: BinService.ApplyArrival, TagVerifyService.VerifyTag,
+>   ChangeoverService.Create, StationService.SetNodes,
+>   StationService.BuildView. Five `*store.DB` methods deleted; three
+>   files retired (completion.go, station_nodes.go, plus the
+>   VerifyTag method body in tag_verify.go). messaging/core_data_service.go
+>   migrated to TagVerifyService internally (constructor signature
+>   stayed stable). Five test files relocated:
+>   completion_test.go → service/bin_service_arrival_test.go;
+>   tag_verify_test.go → service/tag_verify_service_test.go; five
+>   tests excised from edge/store_coverage_test.go and ported to
+>   service/station_service_test.go and service/changeover_service_test.go;
+>   in-place substitutions in engine/operator_stations_test.go and
+>   www/handlers_manualorder_changeover_test.go. New
+>   shingo-edge/internal/testdb package added (mirrors core's pattern)
+>   so external test packages can spin up SQLite test DBs.
+>   `computeSwapReady` and `lookupLastReleaseError` exported as
+>   `ComputeSwapReady` / `LookupLastReleaseError` so the service can
+>   call them from outside store; their tests in
+>   station_views_test.go updated. Type aliases on outer-store
+>   delegate shims survive into 6.4b for the grep-and-replace sweep.
+>
+> - ✅ **6.2′ edge service-layer completion** delivered.
+>   `shingo-edge/engine/engine_db_methods.go` deleted (was 60
+>   passthrough methods). Seven new services per-file under
+>   `shingo-edge/service/`: AdminService, ProcessService,
+>   StyleService (includes claim CRUD), ShiftService,
+>   CounterService (reporting points + snapshots + hourly
+>   counts + anomalies), CatalogService, OrderService.
+>   Split the existing `service/service.go` from 6.1 into
+>   `station_service.go` + `changeover_service.go`, matching
+>   core's per-file pattern. Engine struct grew 7 service
+>   pointers + 7 accessor methods. EngineAccess interface
+>   collapsed from 103 methods to ~35 (subsystem accessors +
+>   service accessors + composite orchestration verbs). All
+>   ~90 production handler call sites migrated from
+>   `h.engine.X(...)` to `h.engine.YService().X(...)`. Test
+>   stubEngine in `helpers_test.go` shrunk: 60 named-method
+>   stubs replaced with 9 service-accessor stubs returning real
+>   services backed by testDB. Edge is now at architectural
+>   parity with core (which finished its equivalent extraction
+>   in Phase 3a).
+> - ✅ **6.4b production type-alias removal** delivered. AST-aware
+>   substitution script swept 244 files, replacing every `store.X`
+>   reference (where X was one of the 60 Deprecated aliases) with
+>   the qualified `subpkg.X` form. The script detected per-file
+>   collisions between sub-packages and same-named outer siblings
+>   (`shingoedge/orders` ↔ `shingoedge/store/orders`,
+>   `shingo{core,edge}/messaging` ↔ store/messaging) and emitted
+>   aliased imports (`storeorders "shingoedge/store/orders"`) only
+>   where both packages were already imported in the same file —
+>   six edge files use this pattern. Outer-store delegate files
+>   then had their 60 `type X = subpkg.Y` declarations and
+>   `// Deprecated:` comments deleted; their methods now expose
+>   the qualified `subpkg.Y` types directly. 35 outer-store files
+>   that referenced the aliases without the `store.` prefix
+>   (intra-package refs in test fixtures, view structs, lane
+>   queries) had the appropriate sub-package imports added and
+>   the bare names substituted. Three doc-only false positives
+>   (substitutions inside `doc.go` docstrings) reverted.
+>
+>   Verification (sandbox has no Go toolchain — Windows AI dev
+>   handles `go build` + tests):
+>   - 0 remaining `type X = subpkg.Y` aliases in either module.
+>   - 0 remaining `store.<aliased>` references anywhere.
+>   - 0 stranded `store` package imports.
+>   - All sub-package imports point to existing directories.
+>   - Import blocks re-grouped per Go convention (stdlib /
+>     third-party / internal).
+>
+> See `implementation-plan.md` v6 for full reshape rationale.
 
 ---
 

@@ -2,7 +2,13 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/inventory"
+	"shingocore/store/nodes"
+)
 
 func TestListInventory_Empty(t *testing.T) {
 	db := testDB(t)
@@ -18,29 +24,29 @@ func TestListInventory_Empty(t *testing.T) {
 func TestListInventory(t *testing.T) {
 	db := testDB(t)
 
-	bt := &BinType{Code: "INV-BT", Description: "inv tote"}
+	bt := &bins.BinType{Code: "INV-BT", Description: "inv tote"}
 	db.CreateBinType(bt)
 
-	nodeA := &Node{Name: "INV-NODE-A", Zone: "ZA", Enabled: true}
+	nodeA := &nodes.Node{Name: "INV-NODE-A", Zone: "ZA", Enabled: true}
 	db.CreateNode(nodeA)
-	nodeB := &Node{Name: "INV-NODE-B", Zone: "ZB", Enabled: true}
+	nodeB := &nodes.Node{Name: "INV-NODE-B", Zone: "ZB", Enabled: true}
 	db.CreateNode(nodeB)
 
-	// Bin with manifest having two items — should produce 2 rows (one per cat_id)
-	binFull := &Bin{BinTypeID: bt.ID, Label: "INV-FULL", NodeID: &nodeA.ID, Status: "available"}
+	// bins.Bin with manifest having two items — should produce 2 rows (one per cat_id)
+	binFull := &bins.Bin{BinTypeID: bt.ID, Label: "INV-FULL", NodeID: &nodeA.ID, Status: "available"}
 	db.CreateBin(binFull)
 	db.SetBinManifest(binFull.ID,
 		`{"items":[{"catid":"CAT-1","qty":4},{"catid":"CAT-2","qty":6}]}`,
 		"PAY-I", 10)
 	db.ConfirmBinManifest(binFull.ID, "")
 
-	// Bin with empty manifest items — should produce 1 row with cat_id=""
-	binEmptyItems := &Bin{BinTypeID: bt.ID, Label: "INV-EMPTY-ITEMS", NodeID: &nodeA.ID, Status: "available"}
+	// bins.Bin with empty manifest items — should produce 1 row with cat_id=""
+	binEmptyItems := &bins.Bin{BinTypeID: bt.ID, Label: "INV-EMPTY-ITEMS", NodeID: &nodeA.ID, Status: "available"}
 	db.CreateBin(binEmptyItems)
 	db.SetBinManifest(binEmptyItems.ID, `{"items":[]}`, "PAY-I", 0)
 
-	// Bin with no manifest at all — should produce 1 row
-	binNoManifest := &Bin{BinTypeID: bt.ID, Label: "INV-NO-MAN", NodeID: &nodeB.ID, Status: "available"}
+	// bins.Bin with no manifest at all — should produce 1 row
+	binNoManifest := &bins.Bin{BinTypeID: bt.ID, Label: "INV-NO-MAN", NodeID: &nodeB.ID, Status: "available"}
 	db.CreateBin(binNoManifest)
 
 	rows, err := db.ListInventory()
@@ -53,7 +59,7 @@ func TestListInventory(t *testing.T) {
 	}
 
 	// Group rows by bin label + cat_id for easy lookup
-	byKey := map[string]InventoryRow{}
+	byKey := map[string]inventory.Row{}
 	for _, r := range rows {
 		byKey[r.BinLabel+"|"+r.CatID] = r
 	}

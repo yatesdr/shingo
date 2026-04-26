@@ -6,11 +6,12 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
+
 	"shingo/protocol"
 	"shingo/protocol/types"
 	"shingoedge/store"
-
-	"github.com/google/uuid"
+	"shingoedge/store/orders"
 )
 
 // DebugLogFunc is a nil-safe debug logging function.
@@ -105,7 +106,7 @@ func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *pro
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the outbox.
 // If payloadCode is empty and payloadID is set, it is derived from the payload.
-func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, payloadCode string, autoConfirm bool) (*store.Order, error) {
+func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, payloadCode string, autoConfirm bool) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
@@ -137,7 +138,7 @@ func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 }
 
 // CreateStoreOrder creates a new store order (for returning payloads to warehouse).
-func (m *Manager) CreateStoreOrder(processNodeID *int64, quantity int64, sourceNode string) (*store.Order, error) {
+func (m *Manager) CreateStoreOrder(processNodeID *int64, quantity int64, sourceNode string) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeStore,
@@ -166,7 +167,7 @@ func (m *Manager) SubmitStoreOrder(orderID int64, finalCount int64) error {
 // autoConfirm threads through to the order row so Manager.handleDelivered
 // can self-confirm instead of stranding the order at "delivered" when no
 // operator station is wired up to confirm manually.
-func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, autoConfirm bool) (*store.Order, error) {
+func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, autoConfirm bool) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
@@ -198,7 +199,7 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 // protocol envelope so Core can atomically clear/sync the bin manifest on claim.
 // autoConfirm mirrors CreateMoveOrder so operator-initiated moves at a
 // manual_swap node can self-confirm on delivery.
-func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int, autoConfirm bool) (*store.Order, error) {
+func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, sourceNode, deliveryNode string, remainingUOP *int, autoConfirm bool) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
@@ -230,7 +231,7 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 // CreateComplexOrder creates a new multi-step complex order and enqueues it to the outbox.
 // deliveryNode is stored on the order for downstream logic (e.g., handleOrderCompleted
 // uses it to determine which payload to reset on completion).
-func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep) (*store.Order, error) {
+func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	stepsJSON, err := json.Marshal(steps)
@@ -268,7 +269,7 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 
 // CreateIngestOrder creates a new ingest order for originating a payload on a bin at a produce station.
 // producedAt is an RFC3339 timestamp from the Edge capturing the moment the operator finalized the bin.
-func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool, producedAt string) (*store.Order, error) {
+func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel, sourceNode string, quantity int64, manifest []protocol.IngestManifestItem, autoConfirm bool, producedAt string) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeIngest,
@@ -347,7 +348,7 @@ func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stag
 	return m.handleDelivered(order, statusDetail, stagedExpireAt)
 }
 
-func (m *Manager) handleDelivered(order *store.Order, statusDetail string, stagedExpireAt *time.Time) error {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time) error {
 	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt); err != nil {
 		return err
 	}
@@ -399,7 +400,7 @@ func (m *Manager) AbortOrder(orderID int64) error {
 // RedirectOrder changes the delivery node of a non-terminal order and enqueues a redirect message.
 // The envelope is built and enqueued before updating the local DB so that
 // Core receives the redirect. If enqueue fails, the error is returned.
-func (m *Manager) RedirectOrder(orderID int64, newDeliveryNode string) (*store.Order, error) {
+func (m *Manager) RedirectOrder(orderID int64, newDeliveryNode string) (*orders.Order, error) {
 	m.DebugLog.Log("redirect: id=%d new_delivery=%s", orderID, newDeliveryNode)
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {

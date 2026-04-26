@@ -1,10 +1,13 @@
 package engine
 
-import "shingoedge/store"
+import (
+	"shingoedge/store"
+	"shingoedge/store/processes"
+)
 
 // loadActiveNode loads a process node, its runtime state, and active claim.
 // Pure function - takes db parameter instead of Engine receiver.
-func loadActiveNode(db *store.DB, nodeID int64) (*store.ProcessNode, *store.ProcessNodeRuntimeState, *store.StyleNodeClaim, error) {
+func loadActiveNode(db *store.DB, nodeID int64) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim, error) {
 	node, err := db.GetProcessNode(nodeID)
 	if err != nil {
 		return nil, nil, nil, err
@@ -19,7 +22,7 @@ func loadActiveNode(db *store.DB, nodeID int64) (*store.ProcessNode, *store.Proc
 
 // findActiveClaim finds the active style node claim for a process node.
 // Pure function - takes db parameter instead of Engine receiver.
-func findActiveClaim(db *store.DB, node *store.ProcessNode) *store.StyleNodeClaim {
+func findActiveClaim(db *store.DB, node *processes.Node) *processes.NodeClaim {
 	process, err := db.GetProcess(node.ProcessID)
 	if err != nil || process.ActiveStyleID == nil {
 		return nil
@@ -33,8 +36,8 @@ func findActiveClaim(db *store.DB, node *store.ProcessNode) *store.StyleNodeClai
 
 // loadChangeoverNodeTask loads the changeover station task and node task for a given changeover and node.
 // Pure function - takes db parameter instead of Engine receiver.
-func loadChangeoverNodeTask(db *store.DB, changeoverID int64, node *store.ProcessNode) (*store.ChangeoverStationTask, *store.ChangeoverNodeTask, error) {
-	var changeoverTask *store.ChangeoverStationTask
+func loadChangeoverNodeTask(db *store.DB, changeoverID int64, node *processes.Node) (*processes.StationTask, *processes.NodeTask, error) {
+	var changeoverTask *processes.StationTask
 	if node.OperatorStationID != nil {
 		task, err := db.GetChangeoverStationTaskByStation(changeoverID, *node.OperatorStationID)
 		if err != nil {

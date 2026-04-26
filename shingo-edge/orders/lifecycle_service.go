@@ -7,6 +7,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/store"
+	"shingoedge/store/orders"
 )
 
 type LifecycleService struct {
@@ -47,7 +48,7 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus, detail stri
 	return s.applyTransition(order, newStatus, detail, true)
 }
 
-func (s *LifecycleService) applyTransition(order *store.Order, newStatus, detail string, forced bool) error {
+func (s *LifecycleService) applyTransition(order *orders.Order, newStatus, detail string, forced bool) error {
 	oldStatus := order.Status
 	if forced {
 		s.debug.Log("force transition: id=%d uuid=%s %s->%s", order.ID, order.UUID, oldStatus, newStatus)
@@ -75,7 +76,7 @@ func (s *LifecycleService) applyTransition(order *store.Order, newStatus, detail
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *store.Order, statusDetail string, stagedExpireAt *time.Time) error {
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time) error {
 	if stagedExpireAt != nil {
 		s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt)
 	}

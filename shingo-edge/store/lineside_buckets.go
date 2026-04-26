@@ -6,9 +6,6 @@ package store
 
 import "shingoedge/store/lineside"
 
-// LinesideBucket is one row of node_lineside_bucket.
-type LinesideBucket = lineside.Bucket
-
 // Bucket states re-exported for callers outside the store package.
 const (
 	LinesideStateActive   = lineside.StateActive
@@ -17,39 +14,39 @@ const (
 
 // GetActiveLinesideBucket returns the active bucket for (node, style,
 // part) or sql.ErrNoRows if none exists.
-func (db *DB) GetActiveLinesideBucket(nodeID, styleID int64, partNumber string) (*LinesideBucket, error) {
+func (db *DB) GetActiveLinesideBucket(nodeID, styleID int64, partNumber string) (*lineside.Bucket, error) {
 	return lineside.GetActive(db.DB, nodeID, styleID, partNumber)
 }
 
 // FindLinesideBucket returns any bucket (active or inactive) for
 // (node, style, part) or sql.ErrNoRows.
-func (db *DB) FindLinesideBucket(nodeID, styleID int64, partNumber string) (*LinesideBucket, error) {
+func (db *DB) FindLinesideBucket(nodeID, styleID int64, partNumber string) (*lineside.Bucket, error) {
 	return lineside.Find(db.DB, nodeID, styleID, partNumber)
 }
 
 // GetLinesideBucket returns one bucket by id.
-func (db *DB) GetLinesideBucket(id int64) (*LinesideBucket, error) {
+func (db *DB) GetLinesideBucket(id int64) (*lineside.Bucket, error) {
 	return lineside.GetByID(db.DB, id)
 }
 
 // ListLinesideBuckets returns every bucket on a node, active-first.
-func (db *DB) ListLinesideBuckets(nodeID int64) ([]LinesideBucket, error) {
+func (db *DB) ListLinesideBuckets(nodeID int64) ([]lineside.Bucket, error) {
 	return lineside.ListForNode(db.DB, nodeID)
 }
 
 // ListActiveLinesideBuckets returns only the active buckets on a node.
-func (db *DB) ListActiveLinesideBuckets(nodeID int64) ([]LinesideBucket, error) {
+func (db *DB) ListActiveLinesideBuckets(nodeID int64) ([]lineside.Bucket, error) {
 	return lineside.ListActiveForNode(db.DB, nodeID)
 }
 
 // ListInactiveLinesideBuckets returns only the stranded buckets on a
 // node (the ones that render as stacked chips).
-func (db *DB) ListInactiveLinesideBuckets(nodeID int64) ([]LinesideBucket, error) {
+func (db *DB) ListInactiveLinesideBuckets(nodeID int64) ([]lineside.Bucket, error) {
 	return lineside.ListInactiveForNode(db.DB, nodeID)
 }
 
 // ListLinesideBucketsForPair returns every bucket keyed to a pair.
-func (db *DB) ListLinesideBucketsForPair(pairKey string) ([]LinesideBucket, error) {
+func (db *DB) ListLinesideBucketsForPair(pairKey string) ([]lineside.Bucket, error) {
 	return lineside.ListForPair(db.DB, pairKey)
 }
 
@@ -57,7 +54,7 @@ func (db *DB) ListLinesideBucketsForPair(pairKey string) ([]LinesideBucket, erro
 // style, part). Merges into an existing bucket when present (reactivating
 // an inactive one) or creates a fresh active bucket otherwise. Zero qty
 // is a no-op.
-func (db *DB) CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) (*LinesideBucket, error) {
+func (db *DB) CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) (*lineside.Bucket, error) {
 	return lineside.Capture(db.DB, nodeID, pairKey, styleID, partNumber, qty)
 }
 

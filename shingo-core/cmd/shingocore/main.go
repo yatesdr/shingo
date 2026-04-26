@@ -279,7 +279,10 @@ func main() {
 	defer drainer.Stop()
 
 	// ── Web server ─────────────────────────────────────────────────────
-	handler, stopWeb := www.NewRouter(eng, dbg)
+	handler, stopWeb, err := www.NewRouter(eng, dbg)
+	if err != nil {
+		log.Fatalf("shingocore: build router: %v", err)
+	}
 	addr := fmt.Sprintf("%s:%d", cfg.Web.Host, cfg.Web.Port)
 	srv := startHTTPServer(addr, handler)
 

@@ -3,11 +3,12 @@ package binresolver
 import (
 	"fmt"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // isBinAvailableForRetrieve checks if a bin can be claimed for retrieval.
-func isBinAvailableForRetrieve(b *store.Bin, payloadCode string) bool {
+func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string) bool {
 	if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != "available" {
 		return false
 	}
@@ -35,7 +36,7 @@ func isBinAvailableForRetrieve(b *store.Bin, payloadCode string) bool {
 //
 // This catches "wrong part parked at wrong station" while allowing the normal
 // post-completion state (cleared bin with empty payload_code) to pass through.
-func IsAvailableAtConcreteNode(b *store.Bin, payloadCode string) bool {
+func IsAvailableAtConcreteNode(b *bins.Bin, payloadCode string) bool {
 	return BinUnavailableReason(b, payloadCode) == ""
 }
 
@@ -52,7 +53,7 @@ func IsAvailableAtConcreteNode(b *store.Bin, payloadCode string) bool {
 //
 // Keep this in lockstep with IsAvailableAtConcreteNode — adding a new reject
 // rule there means adding a new branch here.
-func BinUnavailableReason(b *store.Bin, payloadCode string) string {
+func BinUnavailableReason(b *bins.Bin, payloadCode string) string {
 	if b.ClaimedBy != nil {
 		return fmt.Sprintf("already claimed by order %d", *b.ClaimedBy)
 	}
@@ -68,13 +69,13 @@ func BinUnavailableReason(b *store.Bin, payloadCode string) string {
 
 // storageCandidate represents a potential storage slot for ranking.
 type storageCandidate struct {
-	node     *store.Node
+	node     *nodes.Node
 	hasMatch bool
 	count    int
 }
 
 // bestStorageCandidate picks the best slot: prefer consolidation, then emptiest.
-func bestStorageCandidate(candidates []storageCandidate) *store.Node {
+func bestStorageCandidate(candidates []storageCandidate) *nodes.Node {
 	if len(candidates) == 0 {
 		return nil
 	}

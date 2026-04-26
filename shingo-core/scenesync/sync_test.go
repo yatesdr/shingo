@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"shingocore/fleet"
-	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/scene"
 )
 
 // fakeStore is an in-memory implementation of scenesync.Store. It's
@@ -15,14 +16,14 @@ import (
 // without pulling in a real Postgres connection.
 type fakeStore struct {
 	// scene_points keyed by area_name + "/" + instance_name.
-	points map[string]*store.ScenePoint
+	points map[string]*scene.Point
 
 	// nodes keyed by ID.
-	nodes  map[int64]*store.Node
+	nodes  map[int64]*nodes.Node
 	nextID int64
 
 	// nodeTypes keyed by code.
-	nodeTypes map[string]*store.NodeType
+	nodeTypes map[string]*nodes.NodeType
 
 	// Knobs for error injection.
 	errDelete     error
@@ -35,9 +36,9 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		points:    map[string]*store.ScenePoint{},
-		nodes:     map[int64]*store.Node{},
-		nodeTypes: map[string]*store.NodeType{},
+		points:    map[string]*scene.Point{},
+		nodes:     map[int64]*nodes.Node{},
+		nodeTypes: map[string]*nodes.NodeType{},
 	}
 }
 
@@ -57,7 +58,7 @@ func (f *fakeStore) DeleteScenePointsByArea(areaName string) error {
 	return nil
 }
 
-func (f *fakeStore) UpsertScenePoint(sp *store.ScenePoint) error {
+func (f *fakeStore) UpsertScenePoint(sp *scene.Point) error {
 	if f.errUpsert != nil {
 		return f.errUpsert
 	}
@@ -68,7 +69,7 @@ func (f *fakeStore) UpsertScenePoint(sp *store.ScenePoint) error {
 	return nil
 }
 
-func (f *fakeStore) GetNodeTypeByCode(code string) (*store.NodeType, error) {
+func (f *fakeStore) GetNodeTypeByCode(code string) (*nodes.NodeType, error) {
 	nt, ok := f.nodeTypes[code]
 	if !ok {
 		return nil, fmt.Errorf("node type %q not found", code)
@@ -76,7 +77,7 @@ func (f *fakeStore) GetNodeTypeByCode(code string) (*store.NodeType, error) {
 	return nt, nil
 }
 
-func (f *fakeStore) GetNodeByName(name string) (*store.Node, error) {
+func (f *fakeStore) GetNodeByName(name string) (*nodes.Node, error) {
 	for _, n := range f.nodes {
 		if n.Name == name {
 			return n, nil
@@ -85,7 +86,7 @@ func (f *fakeStore) GetNodeByName(name string) (*store.Node, error) {
 	return nil, fmt.Errorf("node %q not found", name)
 }
 
-func (f *fakeStore) CreateNode(n *store.Node) error {
+func (f *fakeStore) CreateNode(n *nodes.Node) error {
 	if f.errCreate != nil {
 		return f.errCreate
 	}
@@ -95,7 +96,7 @@ func (f *fakeStore) CreateNode(n *store.Node) error {
 	return nil
 }
 
-func (f *fakeStore) UpdateNode(n *store.Node) error {
+func (f *fakeStore) UpdateNode(n *nodes.Node) error {
 	if f.errUpdate != nil {
 		return f.errUpdate
 	}
@@ -106,11 +107,11 @@ func (f *fakeStore) UpdateNode(n *store.Node) error {
 	return nil
 }
 
-func (f *fakeStore) ListNodes() ([]*store.Node, error) {
+func (f *fakeStore) ListNodes() ([]*nodes.Node, error) {
 	if f.errList != nil {
 		return nil, f.errList
 	}
-	out := make([]*store.Node, 0, len(f.nodes))
+	out := make([]*nodes.Node, 0, len(f.nodes))
 	for _, n := range f.nodes {
 		out = append(out, n)
 	}
@@ -229,7 +230,7 @@ func TestSyncScenePoints_AdvancedAndBins(t *testing.T) {
 func TestSyncScenePoints_DeletePerAreaCalled(t *testing.T) {
 	db := newFakeStore()
 	// Pre-seed a stale point in AreaA that sync should nuke.
-	_ = db.UpsertScenePoint(&store.ScenePoint{AreaName: "AreaA", InstanceName: "stale"})
+	_ = db.UpsertScenePoint(&scene.Point{AreaName: "AreaA", InstanceName: "stale"})
 
 	areas := []fleet.SceneArea{
 		{Name: "AreaA", AdvancedPoints: []fleet.ScenePoint{{InstanceName: "fresh", ClassName: "AP"}}},
@@ -268,7 +269,7 @@ func TestSyncScenePoints_ErrorsLoggedNotFatal(t *testing.T) {
 
 func TestSyncFleetNodes_CreatesMissingNodes(t *testing.T) {
 	db := newFakeStore()
-	db.nodeTypes["STAG"] = &store.NodeType{ID: 7, Code: "STAG"}
+	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 7, Code: "STAG"}
 	rc := &recordingChange{}
 
 	loc := map[string]string{
@@ -302,10 +303,10 @@ func TestSyncFleetNodes_CreatesMissingNodes(t *testing.T) {
 
 func TestSyncFleetNodes_UpdatesZoneOnExisting(t *testing.T) {
 	db := newFakeStore()
-	db.nodeTypes["STAG"] = &store.NodeType{ID: 1, Code: "STAG"}
+	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 1, Code: "STAG"}
 
 	// Pre-existing node with wrong zone.
-	_ = db.CreateNode(&store.Node{Name: "bin1", Zone: "OLD", Enabled: true})
+	_ = db.CreateNode(&nodes.Node{Name: "bin1", Zone: "OLD", Enabled: true})
 
 	loc := map[string]string{"bin1": "AreaA"}
 	created, deleted := SyncFleetNodes(db, noopLog, nil, loc)
@@ -327,20 +328,20 @@ func TestSyncFleetNodes_UpdatesZoneOnExisting(t *testing.T) {
 
 func TestSyncFleetNodes_DeletesNodesNotInScene(t *testing.T) {
 	db := newFakeStore()
-	db.nodeTypes["STAG"] = &store.NodeType{ID: 1, Code: "STAG"}
+	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 1, Code: "STAG"}
 
 	// A physical node not referenced by locationSet must be deleted.
-	_ = db.CreateNode(&store.Node{Name: "bin-ghost", Enabled: true})
+	_ = db.CreateNode(&nodes.Node{Name: "bin-ghost", Enabled: true})
 
 	// A synthetic node must NOT be deleted even if missing from the scene.
-	_ = db.CreateNode(&store.Node{Name: "group1", IsSynthetic: true, Enabled: true})
+	_ = db.CreateNode(&nodes.Node{Name: "group1", IsSynthetic: true, Enabled: true})
 
 	// A child node must NOT be deleted — its ParentID is set.
 	parentID := int64(42)
-	_ = db.CreateNode(&store.Node{Name: "child-bin", ParentID: &parentID, Enabled: true})
+	_ = db.CreateNode(&nodes.Node{Name: "child-bin", ParentID: &parentID, Enabled: true})
 
 	// A nameless node must NOT be deleted.
-	_ = db.CreateNode(&store.Node{Name: "", Enabled: true})
+	_ = db.CreateNode(&nodes.Node{Name: "", Enabled: true})
 
 	rc := &recordingChange{}
 	loc := map[string]string{} // scene now has no bins at all
@@ -400,10 +401,10 @@ func TestSyncFleetNodes_NoNodeTypeStillCreates(t *testing.T) {
 
 func TestUpdateNodeZones_OverwriteTrue(t *testing.T) {
 	db := newFakeStore()
-	_ = db.CreateNode(&store.Node{Name: "a", Zone: "OLD"})
-	_ = db.CreateNode(&store.Node{Name: "b", Zone: ""})
-	_ = db.CreateNode(&store.Node{Name: "c", Zone: "KEEP"}) // not in locationSet
-	_ = db.CreateNode(&store.Node{Name: "", Zone: "IGN"})   // nameless → skipped
+	_ = db.CreateNode(&nodes.Node{Name: "a", Zone: "OLD"})
+	_ = db.CreateNode(&nodes.Node{Name: "b", Zone: ""})
+	_ = db.CreateNode(&nodes.Node{Name: "c", Zone: "KEEP"}) // not in locationSet
+	_ = db.CreateNode(&nodes.Node{Name: "", Zone: "IGN"})   // nameless → skipped
 
 	loc := map[string]string{
 		"a": "AREA1",
@@ -431,8 +432,8 @@ func TestUpdateNodeZones_OverwriteTrue(t *testing.T) {
 
 func TestUpdateNodeZones_OverwriteFalse(t *testing.T) {
 	db := newFakeStore()
-	_ = db.CreateNode(&store.Node{Name: "a", Zone: "OLD"}) // non-empty → skipped
-	_ = db.CreateNode(&store.Node{Name: "b", Zone: ""})    // empty → filled
+	_ = db.CreateNode(&nodes.Node{Name: "a", Zone: "OLD"}) // non-empty → skipped
+	_ = db.CreateNode(&nodes.Node{Name: "b", Zone: ""})    // empty → filled
 
 	loc := map[string]string{
 		"a": "AREA1",
@@ -476,7 +477,7 @@ func (f *fakeSyncer) GetSceneAreas() ([]fleet.SceneArea, error) {
 
 func TestSync_HappyPath(t *testing.T) {
 	db := newFakeStore()
-	db.nodeTypes["STAG"] = &store.NodeType{ID: 1, Code: "STAG"}
+	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 1, Code: "STAG"}
 
 	syncer := &fakeSyncer{
 		areas: []fleet.SceneArea{

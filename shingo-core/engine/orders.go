@@ -3,10 +3,10 @@ package engine
 import (
 	"fmt"
 
-	"shingocore/dispatch"
-	"shingocore/store"
-
 	"github.com/google/uuid"
+
+	"shingocore/dispatch"
+	"shingocore/store/orders"
 )
 
 // DirectOrderRequest holds the parameters for creating a direct fleet order.
@@ -43,7 +43,7 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 
 	edgeUUID := req.StationID + "-" + uuid.New().String()[:8]
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     edgeUUID,
 		StationID:    req.StationID,
 		OrderType:    "move",

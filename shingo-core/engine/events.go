@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"shingocore/fleet"
-	"shingocore/store"
+	"shingocore/store/cms"
 )
 
 
@@ -122,7 +122,7 @@ type RobotsUpdatedEvent struct {
 }
 
 type CMSTransactionEvent struct {
-	Transactions []*store.CMSTransaction
+	Transactions []*cms.Transaction
 }
 
 // CountGroupTransitionEvent is emitted by the countgroup Runner whenever

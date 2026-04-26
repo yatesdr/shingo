@@ -3,10 +3,11 @@ package engine
 import (
 	"testing"
 
-	"shingoedge/orders"
-	"shingoedge/store"
-
 	"shingoedge/config"
+	"shingoedge/orders"
+	"shingoedge/service"
+	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // testOrderEmitter is a no-op implementation of orders.EventEmitter for testing.
@@ -26,7 +27,7 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode string) (processID, no
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "PRODUCE-NODE",
 		Code:         "PN1",
@@ -46,7 +47,7 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode string) (processID, no
 		t.Fatalf("set active style: %v", err)
 	}
 
-	claimID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "PRODUCE-NODE",
 		Role:                "produce",
@@ -100,6 +101,8 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 		logFn: func(string, ...interface{}) {},
 	}
 	eng.hourlyTracker = NewHourlyTracker(db, "")
+	eng.stationService = service.NewStationService(db)
+	eng.changeoverService = service.NewChangeoverService(db)
 	return eng
 }
 
@@ -271,7 +274,7 @@ func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 	eng := testEngine(t, db)
 
 	// Override claim to consume role
-	_, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: "PRODUCE-NODE",
 		Role:         "consume",
@@ -407,7 +410,7 @@ func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
 
 	// Flip the claim's swap mode out from under the runtime. Both order IDs
 	// remain tracked, but ReleaseStagedOrders should refuse.
-	if _, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "PRODUCE-NODE",
 		Role:                "produce",

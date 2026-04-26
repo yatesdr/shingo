@@ -3,7 +3,8 @@ package fulfillment
 import (
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
-	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // Dispatcher is the narrow dispatch surface the scanner depends on.
@@ -14,7 +15,7 @@ import (
 // stub dispatch with a one-method fake, which closes the coverage
 // gap the old lines-14–31 scope note called out.
 type Dispatcher interface {
-	DispatchDirect(order *store.Order, sourceNode, destNode *store.Node) (string, error)
+	DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error)
 }
 
 // Resolver is the narrow resolver surface the scanner depends on.
@@ -24,7 +25,7 @@ type Dispatcher interface {
 // the alias so scanner_test.go does not have to pull in dispatch
 // to stub a fake resolver.
 type Resolver interface {
-	Resolve(syntheticNode *store.Node, orderType string, payloadCode string, binTypeID *int64) (*binresolver.ResolveResult, error)
+	Resolve(syntheticNode *nodes.Node, orderType string, payloadCode string, binTypeID *int64) (*binresolver.ResolveResult, error)
 }
 
 // Compile-time checks that the concrete dispatch types satisfy the

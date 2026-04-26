@@ -10,7 +10,7 @@ import (
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/bins"
 )
 
 // Compound reshuffle order tests (TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54).
@@ -134,7 +134,7 @@ func TestBuriedBin_ReshuffleViaEngine(t *testing.T) {
 	t.Logf("blocker bin: node=%v", blockerBin.NodeID)
 
 	// No bins stuck as claimed
-	for _, b := range []*store.Bin{targetBin, blockerBin} {
+	for _, b := range []*bins.Bin{targetBin, blockerBin} {
 		if b.ClaimedBy != nil {
 			t.Errorf("bin %d still claimed by order %d after reshuffle", b.ID, *b.ClaimedBy)
 		}
@@ -373,7 +373,7 @@ func TestCompound_TwoRobotSwap_FullLifecycle(t *testing.T) {
 	}
 
 	// All claims released
-	for _, b := range []*store.Bin{targetBin, blocker1, blocker2} {
+	for _, b := range []*bins.Bin{targetBin, blocker1, blocker2} {
 		if b.ClaimedBy != nil {
 			t.Errorf("bin %d (%s) still claimed by %d", b.ID, b.Label, *b.ClaimedBy)
 		}
@@ -474,7 +474,7 @@ func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 	// All bins should be unclaimed
 	targetBin, _ = db.GetBin(targetBin.ID)
 	blockerBin, _ = db.GetBin(blockerBin.ID)
-	for _, b := range []*store.Bin{targetBin, blockerBin} {
+	for _, b := range []*bins.Bin{targetBin, blockerBin} {
 		if b.ClaimedBy != nil {
 			t.Errorf("BUG: bin %d (%s) still claimed by %d after parent cancel — permanently stuck",
 				b.ID, b.Label, *b.ClaimedBy)

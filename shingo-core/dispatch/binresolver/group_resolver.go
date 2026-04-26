@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // ErrBuried indicates the target bin exists but is blocked by shallower bins.
@@ -26,8 +27,8 @@ func (e *StructuralError) Error() string {
 
 // BuriedError provides detail about a buried bin for reshuffle planning.
 type BuriedError struct {
-	Bin    *store.Bin
-	Slot   *store.Node
+	Bin    *bins.Bin
+	Slot   *nodes.Node
 	LaneID int64
 }
 
@@ -77,7 +78,7 @@ func (r *GroupResolver) getGroupAlgorithm(groupID int64, key, defaultVal string)
 }
 
 // ResolveRetrieve finds the best accessible bin across all lanes and direct children.
-func (r *GroupResolver) ResolveRetrieve(group *store.Node, payloadCode string) (*ResolveResult, error) {
+func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
 	algo := r.getGroupAlgorithm(group.ID, "retrieve_algorithm", RetrieveFIFO)
 	switch algo {
 	case RetrieveFAVL:
@@ -90,14 +91,14 @@ func (r *GroupResolver) ResolveRetrieve(group *store.Node, payloadCode string) (
 }
 
 // resolveRetrieveFIFO picks the oldest accessible bin by timestamp, with buried-bin reshuffle.
-func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, payloadCode string) (*ResolveResult, error) {
+func (r *GroupResolver) resolveRetrieveFIFO(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
 
-	var bestBin *store.Bin
-	var bestNode *store.Node
+	var bestBin *bins.Bin
+	var bestNode *nodes.Node
 	var bestTime time.Time
 
 	for _, child := range children {
@@ -154,8 +155,8 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, payloadCode strin
 	}
 
 	// Phase 2: Scan for the oldest buried bin across all lanes
-	var oldestBuried *store.Bin
-	var oldestBuriedSlot *store.Node
+	var oldestBuried *bins.Bin
+	var oldestBuriedSlot *nodes.Node
 	var oldestBuriedLaneID int64
 	var oldestBuriedTime time.Time
 
@@ -198,14 +199,14 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *store.Node, payloadCode strin
 
 // resolveRetrieveCOST picks the oldest accessible bin by timestamp, with buried-bin reshuffle
 // only when no accessible bins exist. This is the cost-optimized retrieval strategy.
-func (r *GroupResolver) resolveRetrieveCOST(group *store.Node, payloadCode string) (*ResolveResult, error) {
+func (r *GroupResolver) resolveRetrieveCOST(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
 	}
 
-	var bestBin *store.Bin
-	var bestNode *store.Node
+	var bestBin *bins.Bin
+	var bestNode *nodes.Node
 	var bestTime time.Time
 
 	for _, child := range children {
@@ -280,7 +281,7 @@ func (r *GroupResolver) resolveRetrieveCOST(group *store.Node, payloadCode strin
 }
 
 // resolveRetrieveFAVL returns the first available unclaimed bin — no timestamp comparison, no reshuffle.
-func (r *GroupResolver) resolveRetrieveFAVL(group *store.Node, payloadCode string) (*ResolveResult, error) {
+func (r *GroupResolver) resolveRetrieveFAVL(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
@@ -334,7 +335,7 @@ func (r *GroupResolver) resolveRetrieveFAVL(group *store.Node, payloadCode strin
 //
 // On any DB error during classification, returns transient.
 func (r *GroupResolver) classifyEmptyGroup(
-	group *store.Node, children []*store.Node, payloadCode string,
+	group *nodes.Node, children []*nodes.Node, payloadCode string,
 ) error {
 	hasEnabled := false
 	for _, child := range children {
@@ -389,7 +390,7 @@ func (r *GroupResolver) classifyEmptyGroup(
 }
 
 // ResolveStore finds the best slot for storing a bin in a node group.
-func (r *GroupResolver) ResolveStore(group *store.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *GroupResolver) ResolveStore(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
 	algo := r.getGroupAlgorithm(group.ID, "store_algorithm", StoreLKND)
 	switch algo {
 	case StoreDPTH:
@@ -400,7 +401,7 @@ func (r *GroupResolver) ResolveStore(group *store.Node, payloadCode string, binT
 }
 
 // resolveStoreLKND consolidates matching payload codes first, then picks the emptiest slot.
-func (r *GroupResolver) resolveStoreLKND(group *store.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *GroupResolver) resolveStoreLKND(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
@@ -509,7 +510,7 @@ func (r *GroupResolver) resolveStoreLKND(group *store.Node, payloadCode string, 
 }
 
 // resolveStoreDPTH packs back-to-front regardless of payload. Prefers lanes over direct children.
-func (r *GroupResolver) resolveStoreDPTH(group *store.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *GroupResolver) resolveStoreDPTH(group *nodes.Node, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)

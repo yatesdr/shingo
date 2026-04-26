@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingocore/store"
+	"shingocore/store/diagnostics"
 )
 
 // TestCommandService centralizes test-command row CRUD for the
@@ -20,12 +21,12 @@ func NewTestCommandService(db *store.DB) *TestCommandService {
 }
 
 // Create inserts a new test command row and populates its ID.
-func (s *TestCommandService) Create(tc *store.TestCommand) error {
+func (s *TestCommandService) Create(tc *diagnostics.TestCommand) error {
 	return s.db.CreateTestCommand(tc)
 }
 
 // Get loads a test command by ID.
-func (s *TestCommandService) Get(id int64) (*store.TestCommand, error) {
+func (s *TestCommandService) Get(id int64) (*diagnostics.TestCommand, error) {
 	return s.db.GetTestCommand(id)
 }
 
@@ -41,6 +42,6 @@ func (s *TestCommandService) Complete(id int64) error {
 }
 
 // List returns the most recent test commands, capped at limit rows.
-func (s *TestCommandService) List(limit int) ([]*store.TestCommand, error) {
+func (s *TestCommandService) List(limit int) ([]*diagnostics.TestCommand, error) {
 	return s.db.ListTestCommands(limit)
 }

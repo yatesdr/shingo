@@ -2,28 +2,34 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+)
 
 func TestRepairConfirmedOrderCompletion(t *testing.T) {
 	db := testDB(t)
 
-	origin := &Node{Name: "ORIGIN", Enabled: true}
-	dest := &Node{Name: "DEST", Enabled: true}
+	origin := &nodes.Node{Name: "ORIGIN", Enabled: true}
+	dest := &nodes.Node{Name: "DEST", Enabled: true}
 	if err := db.CreateNode(origin); err != nil {
 		t.Fatalf("create origin node: %v", err)
 	}
 	if err := db.CreateNode(dest); err != nil {
 		t.Fatalf("create dest node: %v", err)
 	}
-	bt := &BinType{Code: "TOTE"}
+	bt := &bins.BinType{Code: "TOTE"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
-	bin := &Bin{BinTypeID: bt.ID, Label: "BIN-1", NodeID: &origin.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-1", NodeID: &origin.ID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &Order{
+	order := &orders.Order{
 		EdgeUUID:     "repair-order-1",
 		StationID:    "edge.1",
 		OrderType:    "retrieve",
@@ -72,19 +78,19 @@ func TestRepairConfirmedOrderCompletion(t *testing.T) {
 func TestReleaseTerminalBinClaimRejectsActiveOrder(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "NODE-A", Enabled: true}
+	node := &nodes.Node{Name: "NODE-A", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	bt := &BinType{Code: "TOTE-A"}
+	bt := &bins.BinType{Code: "TOTE-A"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
-	bin := &Bin{BinTypeID: bt.ID, Label: "BIN-A", NodeID: &node.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-A", NodeID: &node.ID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &Order{
+	order := &orders.Order{
 		EdgeUUID:   "active-order",
 		StationID:  "edge.1",
 		OrderType:  "retrieve",
@@ -107,19 +113,19 @@ func TestReleaseTerminalBinClaimRejectsActiveOrder(t *testing.T) {
 func TestReleaseTerminalBinClaimAllowsCancelledOrder(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "NODE-B", Enabled: true}
+	node := &nodes.Node{Name: "NODE-B", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
-	bt := &BinType{Code: "TOTE-B"}
+	bt := &bins.BinType{Code: "TOTE-B"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
-	bin := &Bin{BinTypeID: bt.ID, Label: "BIN-B", NodeID: &node.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-B", NodeID: &node.ID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
-	order := &Order{
+	order := &orders.Order{
 		EdgeUUID:   "cancelled-order",
 		StationID:  "edge.1",
 		OrderType:  "retrieve",

@@ -12,12 +12,12 @@ import (
 	"encoding/json"
 	"time"
 
-	"shingocore/store"
+	"shingocore/store/telemetry"
 )
 
 // recordMissionEvent captures a state transition with robot position snapshot for telemetry.
 func (e *Engine) recordMissionEvent(ev OrderStatusChangedEvent) {
-	me := &store.MissionEvent{
+	me := &telemetry.Event{
 		OrderID:       ev.OrderID,
 		VendorOrderID: ev.VendorOrderID,
 		OldState:      ev.OldStatus,
@@ -72,7 +72,7 @@ func (e *Engine) finalizeMissionTelemetry(ev OrderStatusChangedEvent) {
 	}
 
 	now := time.Now().UTC()
-	mt := &store.MissionTelemetry{
+	mt := &telemetry.Mission{
 		OrderID:       ev.OrderID,
 		VendorOrderID: ev.VendorOrderID,
 		RobotID:       ev.RobotID,

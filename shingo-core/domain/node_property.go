@@ -10,8 +10,7 @@ import "time"
 // them as data.
 //
 // In the store/nodes sub-package this type is aliased as
-// nodes.Property; the outer store/ package re-exports it as
-// store.NodeProperty. The domain name is the fully-qualified one so
+// nodes.Property. The domain name is the fully-qualified one so
 // consumers reading domain code don't have to infer scope from the
 // package.
 type NodeProperty struct {

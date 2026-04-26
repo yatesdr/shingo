@@ -11,6 +11,7 @@ import (
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // wiring_telemetry_test.go — coverage for wiring_telemetry.go.
@@ -28,10 +29,10 @@ import (
 //   - Snapshot JSON columns reflect the marshaled vendor blocks/errors
 
 // makeTelemetryOrder seeds an order so finalizeMissionTelemetry's
-// GetOrder lookup succeeds; returns the persisted *store.Order.
-func makeTelemetryOrder(t *testing.T, db *store.DB, edgeUUID, station string) *store.Order {
+// GetOrder lookup succeeds; returns the persisted *orders.Order.
+func makeTelemetryOrder(t *testing.T, db *store.DB, edgeUUID, station string) *orders.Order {
 	t.Helper()
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:      edgeUUID,
 		StationID:     station,
 		OrderType:     dispatch.OrderTypeRetrieve,

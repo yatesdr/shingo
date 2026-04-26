@@ -2,27 +2,33 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+)
 
 func TestListOrderCompletionAnomalies(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "LINE-1", Enabled: true}
+	node := &nodes.Node{Name: "LINE-1", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
 
-	binType := &BinType{Code: "TOTE", Description: "Tote"}
+	binType := &bins.BinType{Code: "TOTE", Description: "Tote"}
 	if err := db.CreateBinType(binType); err != nil {
 		t.Fatalf("create bin type: %v", err)
 	}
 
-	bin := &Bin{BinTypeID: binType.ID, Label: "BIN-1", Description: "Test bin", NodeID: &node.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: binType.ID, Label: "BIN-1", Description: "Test bin", NodeID: &node.ID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
 
-	claimed := &Order{
+	claimed := &orders.Order{
 		EdgeUUID:     "claimed-terminal",
 		StationID:    "edge.1",
 		OrderType:    "retrieve",
@@ -41,7 +47,7 @@ func TestListOrderCompletionAnomalies(t *testing.T) {
 		t.Fatalf("mark failed: %v", err)
 	}
 
-	missingBin := &Order{
+	missingBin := &orders.Order{
 		EdgeUUID:     "missing-bin",
 		StationID:    "edge.1",
 		OrderType:    "retrieve",
@@ -56,7 +62,7 @@ func TestListOrderCompletionAnomalies(t *testing.T) {
 		t.Fatalf("complete order: %v", err)
 	}
 
-	confirmedNoComplete := &Order{
+	confirmedNoComplete := &orders.Order{
 		EdgeUUID:     "confirmed-no-complete",
 		StationID:    "edge.1",
 		OrderType:    "retrieve",
@@ -98,7 +104,7 @@ func TestListOrderCompletionAnomalies(t *testing.T) {
 func TestGetReconciliationSummary(t *testing.T) {
 	db := testDB(t)
 
-	order := &Order{
+	order := &orders.Order{
 		EdgeUUID:    "summary-order",
 		StationID:   "edge.1",
 		OrderType:   "retrieve",

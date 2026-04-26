@@ -9,7 +9,7 @@ import (
 
 	"shingocore/countgroup"
 	"shingocore/fleet"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // adapters_test.go — coverage tests for adapters.go.
@@ -301,7 +301,7 @@ func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
 	setupTestData(t, db)
 
 	// Seed an order carrying a known vendor_order_id.
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "resolver-uuid",
 		StationID:    "line-1",
 		OrderType:    "retrieve",

@@ -2,8 +2,11 @@ package service
 
 import (
 	"fmt"
+	"time"
 
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // BinService centralizes bin validation and mutation. Handlers call BinService
@@ -35,7 +38,7 @@ func (s *BinService) Manifest() *BinManifestService { return s.manifest }
 // synthetic) node, the destination must be empty. Synthetic nodes (LANE,
 // NGRP) hold bins via their children and are not subject to the one-bin-
 // per-node rule.
-func (s *BinService) Create(b *store.Bin) error {
+func (s *BinService) Create(b *bins.Bin) error {
 	if b.NodeID != nil {
 		if err := s.ensurePhysicalNodeEmpty(*b.NodeID, 1); err != nil {
 			return err
@@ -48,7 +51,7 @@ func (s *BinService) Create(b *store.Bin) error {
 // status, description). Labels are formed as `labelPrefix + NNNN` starting
 // at 0001. Physical nodes may only receive one bin; synthetic nodes may
 // receive many.
-func (s *BinService) CreateBatch(template store.Bin, labelPrefix string, count int) error {
+func (s *BinService) CreateBatch(template bins.Bin, labelPrefix string, count int) error {
 	if count <= 0 {
 		count = 1
 	}
@@ -148,14 +151,14 @@ func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride in
 // MoveResult describes the destination a bin was moved to so callers can
 // write audit entries and emit events without re-fetching the node.
 type MoveResult struct {
-	DestNode *store.Node
+	DestNode *nodes.Node
 }
 
 // Move relocates a bin to a new node. Validates:
 //   - bin is not already at the destination
 //   - destination node exists
 //   - destination is either synthetic or empty
-func (s *BinService) Move(b *store.Bin, toNodeID int64) (*MoveResult, error) {
+func (s *BinService) Move(b *bins.Bin, toNodeID int64) (*MoveResult, error) {
 	if toNodeID == 0 {
 		return nil, fmt.Errorf("node_id is required")
 	}
@@ -194,7 +197,7 @@ type CountResult struct {
 // RecordCount writes a cycle count for the bin and returns the expected vs.
 // actual counts. Discrepancy notes are written by the caller so the note's
 // actor matches the audit actor convention already used by handlers.
-func (s *BinService) RecordCount(b *store.Bin, actualUOP int, actor string) (*CountResult, error) {
+func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*CountResult, error) {
 	expected := b.UOPRemaining
 	if err := s.db.RecordBinCount(b.ID, actualUOP, actor); err != nil {
 		return nil, err
@@ -225,8 +228,8 @@ func (s *BinService) AddNote(binID int64, noteType, message, actor string) error
 // Update applies partial field updates to a bin. Nil pointers mean "leave
 // this field alone". Fields supported today: Label, Description, BinTypeID.
 // This helper exists so handlers don't have to mutate the caller-owned
-// *store.Bin in place before calling UpdateBin.
-func (s *BinService) Update(b *store.Bin, label, description *string, binTypeID *int64) error {
+// *bins.Bin in place before calling UpdateBin.
+func (s *BinService) Update(b *bins.Bin, label, description *string, binTypeID *int64) error {
 	if label != nil {
 		b.Label = *label
 	}
@@ -243,14 +246,14 @@ func (s *BinService) Update(b *store.Bin, label, description *string, binTypeID 
 
 // GetBin loads a bin by ID. Absorbed from engine_db_methods.go as part
 // of the www-handler service migration (PR 3a.2).
-func (s *BinService) GetBin(id int64) (*store.Bin, error) {
+func (s *BinService) GetBin(id int64) (*bins.Bin, error) {
 	return s.db.GetBin(id)
 }
 
 // ListBins returns every bin in the store. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.2).
-func (s *BinService) ListBins() ([]*store.Bin, error) {
+func (s *BinService) ListBins() ([]*bins.Bin, error) {
 	return s.db.ListBins()
 }
 
@@ -272,20 +275,20 @@ func (s *BinService) HasNotes(binIDs []int64) (map[int64]bool, error) {
 // CreateBinType inserts a new bin type row. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.2).
-func (s *BinService) CreateBinType(bt *store.BinType) error {
+func (s *BinService) CreateBinType(bt *bins.BinType) error {
 	return s.db.CreateBinType(bt)
 }
 
 // GetBinType loads a bin type by ID. Absorbed from engine_db_methods.go
 // as part of the www-handler service migration (PR 3a.2).
-func (s *BinService) GetBinType(id int64) (*store.BinType, error) {
+func (s *BinService) GetBinType(id int64) (*bins.BinType, error) {
 	return s.db.GetBinType(id)
 }
 
 // UpdateBinType persists changes to a bin type row. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.2).
-func (s *BinService) UpdateBinType(bt *store.BinType) error {
+func (s *BinService) UpdateBinType(bt *bins.BinType) error {
 	return s.db.UpdateBinType(bt)
 }
 
@@ -299,7 +302,7 @@ func (s *BinService) DeleteBinType(id int64) error {
 // ListBinTypes returns every bin type in the store. Absorbed from
 // engine_db_methods.go as part of the www-handler service migration
 // (PR 3a.2).
-func (s *BinService) ListBinTypes() ([]*store.BinType, error) {
+func (s *BinService) ListBinTypes() ([]*bins.BinType, error) {
 	return s.db.ListBinTypes()
 }
 
@@ -315,13 +318,56 @@ func (s *BinService) CountBinsByAllNodes() (map[int64]int, error) {
 // GetByLabel resolves a bin by its human-readable label. Absorbed
 // from engine_db_methods.go as part of the Phase 3a closeout
 // (PR 3a.6).
-func (s *BinService) GetByLabel(label string) (*store.Bin, error) {
+func (s *BinService) GetByLabel(label string) (*bins.Bin, error) {
 	return s.db.GetBinByLabel(label)
 }
 
 // GetManifest returns the confirmed manifest items currently loaded
 // on a bin. Absorbed from engine_db_methods.go as part of the Phase
 // 3a closeout (PR 3a.6).
-func (s *BinService) GetManifest(binID int64) (*store.BinManifest, error) {
+func (s *BinService) GetManifest(binID int64) (*bins.Manifest, error) {
 	return s.db.GetBinManifest(binID)
+}
+
+// ── Phase 6.1 additions ────────────────────────────────────────────
+
+// ApplyArrival moves a claimed bin to its destination, unclaims it,
+// and updates its staging state inside a single transaction. Owns the
+// transaction directly; *store.DB is just the connection holder.
+//
+// Phase 6.1 introduced this method as a thin delegate; Phase 6.4a
+// moved the orchestration body in from the (now-deleted) outer
+// store/completion.go::ApplyBinArrival.
+func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt *time.Time) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
+		return fmt.Errorf("move bin: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
+		return fmt.Errorf("unclaim bin: %w", err)
+	}
+	if staged {
+		// nullableTime: pass UTC time or nil, mirroring helpers.NullableTime
+		// from the (internal) store helpers package — inlined here because
+		// internal/ blocks cross-package imports.
+		var expiresVal any
+		if expiresAt != nil {
+			expiresVal = expiresAt.UTC()
+		}
+		if _, err := tx.Exec(`UPDATE bins SET status='staged', staged_at=NOW(), staged_expires_at=$1, updated_at=NOW() WHERE id=$2`,
+			expiresVal, binID); err != nil {
+			return fmt.Errorf("stage bin: %w", err)
+		}
+	} else {
+		if _, err := tx.Exec(`UPDATE bins SET status='available', staged_at=NULL, staged_expires_at=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
+			return fmt.Errorf("set available bin: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }

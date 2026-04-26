@@ -9,15 +9,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
+
 	"shingo/protocol"
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/store"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 type countingBackend struct {
@@ -114,8 +117,8 @@ func testDB(t *testing.T) *store.DB {
 
 func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	db := testDB(t)
-	line := &store.Node{Name: "LINE-1", Enabled: true}
-	dest := &store.Node{Name: "LINE-2", Enabled: true}
+	line := &nodes.Node{Name: "LINE-1", Enabled: true}
+	dest := &nodes.Node{Name: "LINE-2", Enabled: true}
 	if err := db.CreateNode(line); err != nil {
 		t.Fatalf("create line node: %v", err)
 	}
@@ -123,7 +126,7 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 		t.Fatalf("create destination node: %v", err)
 	}
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:      "uuid-redir",
 		StationID:     "edge.1",
 		OrderType:     dispatch.OrderTypeMove,
@@ -169,11 +172,11 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 
 func TestCoreHandlerDeduplicatesOrderRequestByEnvelopeID(t *testing.T) {
 	db := testDB(t)
-	dest := &store.Node{Name: "LINE-REQ", Enabled: true}
+	dest := &nodes.Node{Name: "LINE-REQ", Enabled: true}
 	if err := db.CreateNode(dest); err != nil {
 		t.Fatalf("create destination node: %v", err)
 	}
-	payload := &store.Payload{Code: "PART-A", Description: "Part A", UOPCapacity: 10}
+	payload := &payloads.Payload{Code: "PART-A", Description: "Part A", UOPCapacity: 10}
 	if err := db.CreatePayload(payload); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
@@ -211,11 +214,11 @@ func TestCoreHandlerDeduplicatesOrderRequestByEnvelopeID(t *testing.T) {
 
 func TestCoreHandlerDeduplicationPersistsAcrossHandlerRestart(t *testing.T) {
 	db := testDB(t)
-	dest := &store.Node{Name: "LINE-RESTART", Enabled: true}
+	dest := &nodes.Node{Name: "LINE-RESTART", Enabled: true}
 	if err := db.CreateNode(dest); err != nil {
 		t.Fatalf("create destination node: %v", err)
 	}
-	payload := &store.Payload{Code: "PART-R", Description: "Part R", UOPCapacity: 10}
+	payload := &payloads.Payload{Code: "PART-R", Description: "Part R", UOPCapacity: 10}
 	if err := db.CreatePayload(payload); err != nil {
 		t.Fatalf("create payload: %v", err)
 	}
@@ -251,7 +254,7 @@ func TestCoreHandlerDeduplicationPersistsAcrossHandlerRestart(t *testing.T) {
 
 func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 	db := testDB(t)
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "uuid-receipt-restart",
 		StationID:    "edge.1",
 		OrderType:    dispatch.OrderTypeRetrieve,

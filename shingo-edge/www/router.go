@@ -21,14 +21,29 @@ import (
 var buildVer = time.Now().Format("20060102150405")
 
 // Handlers holds dependencies for HTTP handlers.
+//
+// Phase 6.5 (2026-04-25) split the engine dependency into two fields
+// of different interface types so that compile-time enforcement
+// constrains where orchestration verbs can be reached:
+//
+//   - h.engine (ServiceAccess) — narrow surface, 16 methods. CRUD-only
+//     handlers use this. Calling orchestration verbs through h.engine
+//     fails to compile because those methods are not on ServiceAccess.
+//   - h.orchestration (EngineOrchestration) — wide surface, 51 methods.
+//     Material flow, changeover, lifecycle, and WarLink handlers use
+//     this. Embeds ServiceAccess so it can also reach service accessors.
+//
+// In production both fields point to the same *engine.Engine. In tests
+// they may differ (a service-only test fixture can leave orchestration
+// nil so any accidental orchestration call panics with a clear stack).
 type Handlers struct {
-	engine   EngineAccess
-	eng      *engine.Engine // concrete engine for EventBus/SSE wiring
-	backup   *backup.Service
-	sessions *sessionStore
-	tmpl     *template.Template
-	eventHub *EventHub
-	debugLog *debuglog.Logger
+	engine        ServiceAccess
+	orchestration EngineOrchestration
+	backup        *backup.Service
+	sessions      *sessionStore
+	tmpl          *template.Template
+	eventHub      *EventHub
+	debugLog      *debuglog.Logger
 }
 
 // NewRouter registers all HTTP endpoints for shingo-edge.
@@ -47,12 +62,12 @@ type Handlers struct {
 // Handlers live in handlers_*.go files grouped by domain.
 func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Service) (http.Handler, func()) {
 	h := &Handlers{
-		engine:   eng,
-		eng:      eng,
-		backup:   backupSvc,
-		sessions: newSessionStore(eng.AppConfig().Web.SessionSecret),
-		eventHub: NewEventHub(),
-		debugLog: dbg,
+		engine:        eng, // ServiceAccess — narrow surface for CRUD handlers
+		orchestration: eng, // EngineOrchestration — wide surface for flow handlers
+		backup:        backupSvc,
+		sessions:      newSessionStore(eng.AppConfig().Web.SessionSecret),
+		eventHub:      NewEventHub(),
+		debugLog:      dbg,
 	}
 
 	funcMap := template.FuncMap{
@@ -111,7 +126,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	h.tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(templatesFS, "templates/*.html", "templates/partials/*.html"))
 
 	h.eventHub.Start()
-	h.eventHub.SetupEngineListeners(h.eng)
+	// Phase 6.0c: SSE wiring uses the local *engine.Engine parameter
+	// directly; no need for the field on *Handlers since no handler
+	// method reads it. Mirrors core/www/router.go's pattern.
+	h.eventHub.SetupEngineListeners(eng)
 
 	// Wire debug log entries to SSE broadcast
 	dbg.SetOnEntry(func(e debuglog.Entry) {

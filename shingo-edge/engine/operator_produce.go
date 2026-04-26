@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingoedge/store"
+	"shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
 
 // FinalizeProduceNode locks the current UOP count as the manifest and dispatches
@@ -44,7 +45,7 @@ func (e *Engine) FinalizeProduceNode(nodeID int64) (*NodeOrderResult, error) {
 
 // setProduceManifest creates an ingest order that sets the manifest on the bin
 // at Core. Used by all produce swap modes before dispatching the complex order.
-func (e *Engine) setProduceManifest(nodeID int64, node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim) (*store.Order, error) {
+func (e *Engine) setProduceManifest(nodeID int64, node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) (*orders.Order, error) {
 	manifest := []protocol.IngestManifestItem{
 		{
 			PartNumber:  claim.PayloadCode,
@@ -66,7 +67,7 @@ func (e *Engine) setProduceManifest(nodeID int64, node *store.ProcessNode, runti
 }
 
 // finalizeProduceSimple handles simple mode: bare ingest order, no swap.
-func (e *Engine) finalizeProduceSimple(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim) (*NodeOrderResult, error) {
+func (e *Engine) finalizeProduceSimple(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) (*NodeOrderResult, error) {
 	nodeID := node.ID
 	order, err := e.setProduceManifest(nodeID, node, runtime, claim)
 	if err != nil {
@@ -88,7 +89,7 @@ func (e *Engine) finalizeProduceSimple(node *store.ProcessNode, runtime *store.P
 // (pre-position, wait, pickup filled, dropoff to outbound). Backfill (deliver
 // next empty) is auto-created by handleSequentialBackfill when Order A goes
 // in_transit — same wiring as consume.
-func (e *Engine) finalizeProduceSequential(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim) (*NodeOrderResult, error) {
+func (e *Engine) finalizeProduceSequential(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) (*NodeOrderResult, error) {
 	nodeID := node.ID
 
 	// Manifest the filled bin first
@@ -123,7 +124,7 @@ func (e *Engine) finalizeProduceSequential(node *store.ProcessNode, runtime *sto
 
 // finalizeProduceSingleRobot handles single-robot swap: 10-step all-in-one
 // complex order that removes the filled bin and delivers the next empty.
-func (e *Engine) finalizeProduceSingleRobot(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim) (*NodeOrderResult, error) {
+func (e *Engine) finalizeProduceSingleRobot(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) (*NodeOrderResult, error) {
 	nodeID := node.ID
 	if claim.InboundStaging == "" || claim.OutboundStaging == "" {
 		return nil, fmt.Errorf("node %s: single-robot swap requires inbound and outbound staging nodes", node.Name)
@@ -160,7 +161,7 @@ func (e *Engine) finalizeProduceSingleRobot(node *store.ProcessNode, runtime *st
 // finalizeProduceTwoRobot handles two-robot coordinated swap: two complex orders
 // dispatched simultaneously. Robot A fetches the next empty and stages it.
 // Robot B removes the filled bin. Wiring coordinates the release sequence.
-func (e *Engine) finalizeProduceTwoRobot(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState, claim *store.StyleNodeClaim) (*NodeOrderResult, error) {
+func (e *Engine) finalizeProduceTwoRobot(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) (*NodeOrderResult, error) {
 	nodeID := node.ID
 	if claim.InboundStaging == "" {
 		return nil, fmt.Errorf("node %s: two-robot swap requires inbound staging node", node.Name)

@@ -9,6 +9,8 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/store"
+	"shingoedge/store/messaging"
+	"shingoedge/store/processes"
 )
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -77,7 +79,7 @@ func seedProcessStyleNode(t *testing.T, db *store.DB, procName, styleName, coreN
 	if err != nil {
 		t.Fatalf("CreateStyle: %v", err)
 	}
-	nid, err := db.CreateProcessNode(store.ProcessNodeInput{
+	nid, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    pid,
 		CoreNodeName: coreNode,
 		Name:         coreNode,
@@ -92,7 +94,7 @@ func seedProcessStyleNode(t *testing.T, db *store.DB, procName, styleName, coreN
 // seedClaim upserts a style_node_claim for a (style, coreNode) pair.
 func seedClaim(t *testing.T, db *store.DB, styleID int64, coreNode, payloadCode string) int64 {
 	t.Helper()
-	id, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	id, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:      styleID,
 		CoreNodeName: coreNode,
 		Role:         "consume",
@@ -115,7 +117,7 @@ func decodeOnlyOutboxPayload(t *testing.T, db *store.DB, msgType string, target 
 	if err != nil {
 		t.Fatalf("ListPendingOutbox: %v", err)
 	}
-	var matches []store.OutboxMessage
+	var matches []messaging.Message
 	for _, m := range msgs {
 		if m.MsgType == msgType {
 			matches = append(matches, m)

@@ -3,7 +3,9 @@ package binresolver
 import (
 	"errors"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // fakeStore is an in-memory Store used by the algorithm unit tests.
@@ -18,47 +20,47 @@ import (
 // in that test rather than growing this struct.
 type fakeStore struct {
 	// Basic lookup tables.
-	nodes            map[int64]*store.Node
-	children         map[int64][]*store.Node // parentID -> children
-	bins             map[int64][]*store.Bin  // nodeID -> bins at node
+	nodes            map[int64]*nodes.Node
+	children         map[int64][]*nodes.Node // parentID -> children
+	bins             map[int64][]*bins.Bin  // nodeID -> bins at node
 	props            map[int64]map[string]string
 	binCounts        map[int64]int    // nodeID -> CountBinsByNode value
 	activeByDelivery map[string]int   // node name -> CountActiveOrdersByDeliveryNode
-	laneSlots        map[int64][]*store.Node
+	laneSlots        map[int64][]*nodes.Node
 	laneBinCounts    map[int64]int
-	effPayloads      map[int64][]*store.Payload
-	effBinTypes      map[int64][]*store.BinType
+	effPayloads      map[int64][]*payloads.Payload
+	effBinTypes      map[int64][]*bins.BinType
 
 	// Lane query fixtures.
 	//
 	// Nil entries mean "lane is empty / no slot / no match" — the fake
 	// returns a sentinel error so the caller's "err != nil, continue"
 	// branch is exercised.
-	sourceInLane map[int64]*store.Bin // laneID -> source bin
-	storeSlot    map[int64]*store.Node
+	sourceInLane map[int64]*bins.Bin // laneID -> source bin
+	storeSlot    map[int64]*nodes.Node
 	oldestBuried map[int64]laneBuried
 	buriedAny    map[int64]laneBuried
 }
 
 type laneBuried struct {
-	bin  *store.Bin
-	slot *store.Node
+	bin  *bins.Bin
+	slot *nodes.Node
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		nodes:            map[int64]*store.Node{},
-		children:         map[int64][]*store.Node{},
-		bins:             map[int64][]*store.Bin{},
+		nodes:            map[int64]*nodes.Node{},
+		children:         map[int64][]*nodes.Node{},
+		bins:             map[int64][]*bins.Bin{},
 		props:            map[int64]map[string]string{},
 		binCounts:        map[int64]int{},
 		activeByDelivery: map[string]int{},
-		laneSlots:        map[int64][]*store.Node{},
+		laneSlots:        map[int64][]*nodes.Node{},
 		laneBinCounts:    map[int64]int{},
-		effPayloads:      map[int64][]*store.Payload{},
-		effBinTypes:      map[int64][]*store.BinType{},
-		sourceInLane:     map[int64]*store.Bin{},
-		storeSlot:        map[int64]*store.Node{},
+		effPayloads:      map[int64][]*payloads.Payload{},
+		effBinTypes:      map[int64][]*bins.BinType{},
+		sourceInLane:     map[int64]*bins.Bin{},
+		storeSlot:        map[int64]*nodes.Node{},
 		oldestBuried:     map[int64]laneBuried{},
 		buriedAny:        map[int64]laneBuried{},
 	}
@@ -75,11 +77,11 @@ func (f *fakeStore) setProp(nodeID int64, key, value string) {
 
 // --- Store interface ---------------------------------------------------
 
-func (f *fakeStore) ListChildNodes(parentID int64) ([]*store.Node, error) {
+func (f *fakeStore) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
 	return f.children[parentID], nil
 }
 
-func (f *fakeStore) GetNode(id int64) (*store.Node, error) {
+func (f *fakeStore) GetNode(id int64) (*nodes.Node, error) {
 	n, ok := f.nodes[id]
 	if !ok {
 		return nil, errors.New("node not found")
@@ -91,7 +93,7 @@ func (f *fakeStore) GetNodeProperty(nodeID int64, key string) string {
 	return f.props[nodeID][key]
 }
 
-func (f *fakeStore) ListBinsByNode(nodeID int64) ([]*store.Bin, error) {
+func (f *fakeStore) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) {
 	return f.bins[nodeID], nil
 }
 
@@ -107,7 +109,7 @@ func (f *fakeStore) CountActiveOrdersByDeliveryNode(nodeName string) (int, error
 	return f.activeByDelivery[nodeName], nil
 }
 
-func (f *fakeStore) ListLaneSlots(laneID int64) ([]*store.Node, error) {
+func (f *fakeStore) ListLaneSlots(laneID int64) ([]*nodes.Node, error) {
 	return f.laneSlots[laneID], nil
 }
 
@@ -115,7 +117,7 @@ func (f *fakeStore) CountBinsInLane(laneID int64) (int, error) {
 	return f.laneBinCounts[laneID], nil
 }
 
-func (f *fakeStore) FindSourceBinInLane(laneID int64, payloadCode string) (*store.Bin, error) {
+func (f *fakeStore) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, error) {
 	b := f.sourceInLane[laneID]
 	if b == nil {
 		return nil, errors.New("no source bin")
@@ -126,7 +128,7 @@ func (f *fakeStore) FindSourceBinInLane(laneID int64, payloadCode string) (*stor
 	return b, nil
 }
 
-func (f *fakeStore) FindStoreSlotInLane(laneID int64) (*store.Node, error) {
+func (f *fakeStore) FindStoreSlotInLane(laneID int64) (*nodes.Node, error) {
 	s := f.storeSlot[laneID]
 	if s == nil {
 		return nil, errors.New("lane full")
@@ -134,7 +136,7 @@ func (f *fakeStore) FindStoreSlotInLane(laneID int64) (*store.Node, error) {
 	return s, nil
 }
 
-func (f *fakeStore) FindOldestBuriedBin(laneID int64, payloadCode string) (*store.Bin, *store.Node, error) {
+func (f *fakeStore) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	lb, ok := f.oldestBuried[laneID]
 	if !ok || lb.bin == nil {
 		return nil, nil, nil
@@ -145,7 +147,7 @@ func (f *fakeStore) FindOldestBuriedBin(laneID int64, payloadCode string) (*stor
 	return lb.bin, lb.slot, nil
 }
 
-func (f *fakeStore) FindBuriedBin(laneID int64, payloadCode string) (*store.Bin, *store.Node, error) {
+func (f *fakeStore) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	lb, ok := f.buriedAny[laneID]
 	if !ok || lb.bin == nil {
 		return nil, nil, nil
@@ -156,11 +158,11 @@ func (f *fakeStore) FindBuriedBin(laneID int64, payloadCode string) (*store.Bin,
 	return lb.bin, lb.slot, nil
 }
 
-func (f *fakeStore) GetEffectivePayloads(nodeID int64) ([]*store.Payload, error) {
+func (f *fakeStore) GetEffectivePayloads(nodeID int64) ([]*payloads.Payload, error) {
 	return f.effPayloads[nodeID], nil
 }
 
-func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*store.BinType, error) {
+func (f *fakeStore) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
 	return f.effBinTypes[nodeID], nil
 }
 

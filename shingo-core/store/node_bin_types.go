@@ -1,11 +1,13 @@
 package store
 
 // Stage 2D delegate file: SetNodeBinTypes and ListBinTypesForNode live in
-// store/bins/ (as the junction-table-driven queries return *BinType).
+// store/bins/ (as the junction-table-driven queries return *bins.BinType).
 // GetEffectiveBinTypes is a cross-aggregate composition method: it reads a
 // node property to pick the resolution mode, then consults the bins aggregate.
 
-import "shingocore/store/bins"
+import (
+	"shingocore/store/bins"
+)
 
 // SetNodeBinTypes replaces all bin type assignments for a node.
 func (db *DB) SetNodeBinTypes(nodeID int64, binTypeIDs []int64) error {
@@ -13,7 +15,7 @@ func (db *DB) SetNodeBinTypes(nodeID int64, binTypeIDs []int64) error {
 }
 
 // ListBinTypesForNode returns the directly assigned bin types for a node.
-func (db *DB) ListBinTypesForNode(nodeID int64) ([]*BinType, error) {
+func (db *DB) ListBinTypesForNode(nodeID int64) ([]*bins.BinType, error) {
 	return bins.ListTypesForNode(db.DB, nodeID)
 }
 
@@ -25,7 +27,7 @@ func (db *DB) ListBinTypesForNode(nodeID int64) ([]*BinType, error) {
 //
 // Cross-aggregate because the mode is a node property and the result is a
 // bin-types list.
-func (db *DB) GetEffectiveBinTypes(nodeID int64) ([]*BinType, error) {
+func (db *DB) GetEffectiveBinTypes(nodeID int64) ([]*bins.BinType, error) {
 	mode := db.GetNodeProperty(nodeID, "bin_type_mode")
 	switch mode {
 	case "all":

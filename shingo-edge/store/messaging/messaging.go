@@ -1,11 +1,14 @@
-// Package outbox holds outbox-message persistence for shingo-edge.
+// Package messaging holds outbox-message persistence for shingo-edge.
+// "Messaging" describes the responsibility — durable inter-process
+// communication — rather than the implementation pattern (an outbox
+// table). Matches core's `messaging/` sub-package naming.
 //
-// Phase 5b of the architecture plan moved the outbox CRUD out of the
-// flat store/ package and into this sub-package. The outer store/
-// keeps a type alias (`store.OutboxMessage = outbox.Message`) and one-
-// line delegate methods on *store.DB so external callers see no API
-// change.
-package outbox
+// Phase 5b moved this CRUD out of the flat store/ package; Phase 6.0c
+// renamed it from `outbox/` to `messaging/`. The outer store/ keeps
+// a type alias (`store.OutboxMessage = messaging.Message`) and the
+// `store.MaxOutboxRetries` constant alias so external callers see no
+// API change.
+package messaging
 
 import (
 	"database/sql"

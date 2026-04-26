@@ -4,7 +4,10 @@ import (
 	"sort"
 	"testing"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/registry"
+	"shingocore/store/scene"
 )
 
 // stubNodesPageDataStore is a canned in-memory implementation of
@@ -12,30 +15,30 @@ import (
 // the docker build tag. It records the slot-depth IDs it was asked
 // about so tests can also assert the dispatch pattern.
 type stubNodesPageDataStore struct {
-	nodes       []*store.Node
+	nodes       []*nodes.Node
 	counts      map[int64]int
-	tileStates  map[int64]store.NodeTileState
-	scenePoints []*store.ScenePoint
-	binTypes    []*store.BinType
-	edges       []store.EdgeRegistration
+	tileStates  map[int64]bins.NodeTileState
+	scenePoints []*scene.Point
+	binTypes    []*bins.BinType
+	edges       []registry.Edge
 	slotDepths  map[int64]int
 
 	// depthQueries records the IDs getNodesPageData asked for GetSlotDepth.
 	depthQueries []int64
 }
 
-func (s *stubNodesPageDataStore) ListNodes() ([]*store.Node, error) { return s.nodes, nil }
+func (s *stubNodesPageDataStore) ListNodes() ([]*nodes.Node, error) { return s.nodes, nil }
 func (s *stubNodesPageDataStore) CountBinsByAllNodes() (map[int64]int, error) {
 	return s.counts, nil
 }
-func (s *stubNodesPageDataStore) NodeTileStates() (map[int64]store.NodeTileState, error) {
+func (s *stubNodesPageDataStore) NodeTileStates() (map[int64]bins.NodeTileState, error) {
 	return s.tileStates, nil
 }
-func (s *stubNodesPageDataStore) ListScenePoints() ([]*store.ScenePoint, error) {
+func (s *stubNodesPageDataStore) ListScenePoints() ([]*scene.Point, error) {
 	return s.scenePoints, nil
 }
-func (s *stubNodesPageDataStore) ListBinTypes() ([]*store.BinType, error) { return s.binTypes, nil }
-func (s *stubNodesPageDataStore) ListEdges() ([]store.EdgeRegistration, error) {
+func (s *stubNodesPageDataStore) ListBinTypes() ([]*bins.BinType, error) { return s.binTypes, nil }
+func (s *stubNodesPageDataStore) ListEdges() ([]registry.Edge, error) {
 	return s.edges, nil
 }
 func (s *stubNodesPageDataStore) GetSlotDepth(nodeID int64) (int, error) {
@@ -59,7 +62,7 @@ func TestGetNodesPageData_ComposesOutput(t *testing.T) {
 	parentID := int64(1)
 	otherParentID := int64(99) // parent that does not exist in the node list
 	stub := &stubNodesPageDataStore{
-		nodes: []*store.Node{
+		nodes: []*nodes.Node{
 			{ID: 1, Name: "root-a", Zone: "zone-A"},
 			{ID: 2, Name: "child-a1", Zone: "zone-A", ParentID: &parentID},
 			{ID: 3, Name: "child-a2", Zone: "zone-B", ParentID: &parentID},
@@ -67,12 +70,12 @@ func TestGetNodesPageData_ComposesOutput(t *testing.T) {
 			{ID: 5, Name: "solo", Zone: "zone-B"},
 		},
 		counts:     map[int64]int{1: 2, 3: 7},
-		tileStates: map[int64]store.NodeTileState{2: {}},
-		binTypes: []*store.BinType{
+		tileStates: map[int64]bins.NodeTileState{2: {}},
+		binTypes: []*bins.BinType{
 			{ID: 10, Code: "BT-A"},
 			{ID: 11, Code: "BT-B"},
 		},
-		edges: []store.EdgeRegistration{{StationID: "edge-a"}},
+		edges: []registry.Edge{{StationID: "edge-a"}},
 		// Node 2 has a depth; node 3 and node 4 do not (GetSlotDepth returns error).
 		slotDepths: map[int64]int{2: 1},
 	}

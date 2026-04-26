@@ -4,17 +4,18 @@ import (
 	"fmt"
 	"log"
 
-	"shingoedge/store"
+	"shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
 
 // changeoverNodeCtx bundles the data loaded by every node-changeover method.
 // Built by loadChangeoverNodeCtx, which performs shared validation.
 type changeoverNodeCtx struct {
-	changeover  *store.ProcessChangeover
-	node        *store.ProcessNode
-	runtime     *store.ProcessNodeRuntimeState // always loaded; callers that need it can access it
-	nodeTask    *store.ChangeoverNodeTask
-	stationTask *store.ChangeoverStationTask // may be nil (node not assigned to a station)
+	changeover  *processes.Changeover
+	node        *processes.Node
+	runtime     *processes.RuntimeState // always loaded; callers that need it can access it
+	nodeTask    *processes.NodeTask
+	stationTask *processes.StationTask // may be nil (node not assigned to a station)
 }
 
 // loadChangeoverNodeCtx loads and validates the common data needed by
@@ -83,7 +84,7 @@ func (e *Engine) recordChangeoverOrder(
 	}
 }
 
-func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*store.Order, error) {
+func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.Order, error) {
 	ctx, err := e.loadChangeoverNodeCtx(processID, nodeID)
 	if err != nil {
 		return nil, err
@@ -120,7 +121,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*store.Or
 	return order, nil
 }
 
-func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*store.Order, error) {
+func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*orders.Order, error) {
 	ctx, err := e.loadChangeoverNodeCtx(processID, nodeID)
 	if err != nil {
 		return nil, err
@@ -141,7 +142,7 @@ func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int6
 	}
 
 	// Fallback: simple release via move order
-	var order *store.Order
+	var order *orders.Order
 	if partialQty > 0 {
 		order, err = e.ReleaseNodePartial(nodeID, partialQty)
 	} else {
@@ -154,7 +155,7 @@ func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int6
 	return order, nil
 }
 
-func (e *Engine) ReleaseNodeIntoProduction(processID, nodeID int64) (*store.Order, error) {
+func (e *Engine) ReleaseNodeIntoProduction(processID, nodeID int64) (*orders.Order, error) {
 	ctx, err := e.loadChangeoverNodeCtx(processID, nodeID)
 	if err != nil {
 		return nil, err

@@ -10,7 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/fleet"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // HandleComplexOrderRequest processes a multi-step transport order from edge.
@@ -42,7 +42,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	sourceNode, deliveryNode := extractEndpoints(resolvedSteps)
 
 	// Create order record
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     p.OrderUUID,
 		StationID:    stationID,
 		OrderType:    OrderTypeComplex,
@@ -270,7 +270,7 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 // back to "any non-empty bin at the source" if no payload-matching bin
 // exists, since release-time intent is "this evac order's bin needs its
 // manifest synced" and there should only be one bin at the line anyway.
-func (d *Dispatcher) findFallbackBinAtSource(order *store.Order) (int64, bool) {
+func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (int64, bool) {
 	srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
 	if err != nil || srcNode == nil {
 		return 0, false
@@ -575,7 +575,7 @@ func stepSkipSummaries(skips []pickupSkip) []string {
 //
 // Compound order children (ParentOrderID != nil) never populate the junction
 // table — each child is a single-bin order handled by the legacy path.
-func (d *Dispatcher) claimComplexBins(order *store.Order, steps []resolvedStep, payloadCode string, remainingUOP *int) error {
+func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep, payloadCode string, remainingUOP *int) error {
 	// Determine the process node name from the order's source metadata.
 	// Only the outgoing bin at the process node gets remainingUOP applied;
 	// all other pickups (e.g. storage pickups) use a plain claim.

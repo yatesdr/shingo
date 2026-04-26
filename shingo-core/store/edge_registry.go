@@ -10,9 +10,6 @@ import (
 	"shingocore/store/registry"
 )
 
-// EdgeRegistration preserves the store.EdgeRegistration public API.
-type EdgeRegistration = registry.Edge
-
 func (db *DB) RegisterEdge(stationID, hostname, version string, lineIDs []string) error {
 	return registry.Register(db.DB, stationID, hostname, version, lineIDs)
 }
@@ -21,7 +18,7 @@ func (db *DB) UpdateHeartbeat(stationID string) (isNew bool, err error) {
 	return registry.UpdateHeartbeat(db.DB, stationID)
 }
 
-func (db *DB) ListEdges() ([]EdgeRegistration, error) { return registry.List(db.DB) }
+func (db *DB) ListEdges() ([]registry.Edge, error) { return registry.List(db.DB) }
 
 func (db *DB) MarkStaleEdges(threshold time.Duration) ([]string, error) {
 	return registry.MarkStale(db.DB, threshold)

@@ -2,21 +2,26 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+)
 
 func TestSetNodeBinTypes_Replaces(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "NBT-NODE-1", Enabled: true}
+	node := &nodes.Node{Name: "NBT-NODE-1", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
 
-	btA := &BinType{Code: "NBT-A"}
+	btA := &bins.BinType{Code: "NBT-A"}
 	db.CreateBinType(btA)
-	btB := &BinType{Code: "NBT-B"}
+	btB := &bins.BinType{Code: "NBT-B"}
 	db.CreateBinType(btB)
-	btC := &BinType{Code: "NBT-C"}
+	btC := &bins.BinType{Code: "NBT-C"}
 	db.CreateBinType(btC)
 
 	// First set: [A, B]
@@ -67,10 +72,10 @@ func TestSetNodeBinTypes_Replaces(t *testing.T) {
 func TestGetEffectiveBinTypes_Modes(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "NBT-EFF-1", Enabled: true}
+	node := &nodes.Node{Name: "NBT-EFF-1", Enabled: true}
 	db.CreateNode(node)
 
-	bt := &BinType{Code: "NBT-EFF-T"}
+	bt := &bins.BinType{Code: "NBT-EFF-T"}
 	db.CreateBinType(bt)
 
 	// "specific" mode — direct assignments
@@ -115,13 +120,13 @@ func TestGetEffectiveBinTypes_Modes(t *testing.T) {
 func TestGetEffectiveBinTypes_InheritFromParent(t *testing.T) {
 	db := testDB(t)
 
-	parent := &Node{Name: "NBT-PARENT", Enabled: true}
+	parent := &nodes.Node{Name: "NBT-PARENT", Enabled: true}
 	db.CreateNode(parent)
 
-	child := &Node{Name: "NBT-CHILD", Enabled: true, ParentID: &parent.ID}
+	child := &nodes.Node{Name: "NBT-CHILD", Enabled: true, ParentID: &parent.ID}
 	db.CreateNode(child)
 
-	bt := &BinType{Code: "NBT-INH"}
+	bt := &bins.BinType{Code: "NBT-INH"}
 	db.CreateBinType(bt)
 
 	// Assign at parent only, child should inherit

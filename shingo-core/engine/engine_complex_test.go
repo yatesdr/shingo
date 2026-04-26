@@ -10,6 +10,9 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // Complex order lifecycle tests (TC-42, TC-43, TC-47, TC-48, TC-49, TC-50).
@@ -279,7 +282,7 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 	_ = createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REDIR")
 
 	// Create a third node to be the redirect target
-	newDest := &store.Node{Name: "LINE-REDIR-NEW", Enabled: true}
+	newDest := &nodes.Node{Name: "LINE-REDIR-NEW", Enabled: true}
 	db.CreateNode(newDest)
 
 	sim := simulator.New()
@@ -354,7 +357,7 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 	_, lineNode, bp := setupTestData(t, db)
 
 	// Create an empty pickup node — no bins at all
-	emptyNode := &store.Node{Name: "EMPTY-PICKUP", Enabled: true}
+	emptyNode := &nodes.Node{Name: "EMPTY-PICKUP", Enabled: true}
 	db.CreateNode(emptyNode)
 
 	sim := simulator.New()
@@ -476,22 +479,22 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 // setupProductionNodes extends setupTestData with three additional nodes needed
 // by production cycle patterns: INBOUND-STAGING, OUTBOUND-STAGING, OUTBOUND-DEST.
 func setupProductionNodes(t *testing.T, db *store.DB) (
-	storageNode, lineNode *store.Node,
-	inboundStaging, outboundStaging, outboundDest *store.Node,
-	bp *store.Payload,
+	storageNode, lineNode *nodes.Node,
+	inboundStaging, outboundStaging, outboundDest *nodes.Node,
+	bp *payloads.Payload,
 ) {
 	t.Helper()
 	storageNode, lineNode, bp = setupTestData(t, db)
 
-	inboundStaging = &store.Node{Name: "INBOUND-STAGING", Enabled: true}
+	inboundStaging = &nodes.Node{Name: "INBOUND-STAGING", Enabled: true}
 	if err := db.CreateNode(inboundStaging); err != nil {
 		t.Fatalf("create inbound staging node: %v", err)
 	}
-	outboundStaging = &store.Node{Name: "OUTBOUND-STAGING", Enabled: true}
+	outboundStaging = &nodes.Node{Name: "OUTBOUND-STAGING", Enabled: true}
 	if err := db.CreateNode(outboundStaging); err != nil {
 		t.Fatalf("create outbound staging node: %v", err)
 	}
-	outboundDest = &store.Node{Name: "OUTBOUND-DEST", Enabled: true}
+	outboundDest = &nodes.Node{Name: "OUTBOUND-DEST", Enabled: true}
 	if err := db.CreateNode(outboundDest); err != nil {
 		t.Fatalf("create outbound dest node: %v", err)
 	}
@@ -500,7 +503,7 @@ func setupProductionNodes(t *testing.T, db *store.DB) (
 
 // driveToConfirmed advances an order through the full lifecycle:
 // RUNNING → FINISHED → receipt → confirmed.
-func driveToConfirmed(t *testing.T, sim *simulator.SimulatorBackend, d *dispatch.Dispatcher, db *store.DB, orderUUID string) *store.Order {
+func driveToConfirmed(t *testing.T, sim *simulator.SimulatorBackend, d *dispatch.Dispatcher, db *store.DB, orderUUID string) *orders.Order {
 	t.Helper()
 	order, err := db.GetOrderByUUID(orderUUID)
 	if err != nil {

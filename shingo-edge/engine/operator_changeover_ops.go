@@ -8,18 +8,20 @@ import (
 
 	"shingoedge/orders"
 	"shingoedge/store"
+	"shingoedge/store/processes"
+	"shingoedge/store/stations"
 )
 
 // changeoverPlan holds all pre-computed data needed to start a changeover.
 // Built by planChangeover (read-only), consumed by StartProcessChangeover (mutations).
 type changeoverPlan struct {
-	process    *store.Process
-	style      *store.Style
-	stations   []store.OperatorStation
+	process    *processes.Process
+	style      *processes.Style
+	stations   []stations.Station
 	stationIDs []int64
 	diffs      []ChangeoverNodeDiff
-	nodes      []store.ProcessNode
-	nodeTasks  []store.ChangeoverNodeTaskInput
+	nodes      []processes.Node
+	nodeTasks  []processes.NodeTaskInput
 }
 
 // planChangeover assembles all data needed for a changeover without writing anything.
@@ -54,7 +56,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	if err != nil {
 		return nil, err
 	}
-	var fromClaims, toClaims []store.StyleNodeClaim
+	var fromClaims, toClaims []processes.NodeClaim
 	if process.ActiveStyleID != nil {
 		fromClaims, err = e.db.ListStyleNodeClaims(*process.ActiveStyleID)
 		if err != nil {
@@ -76,7 +78,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 		stationIDs[i] = stations[i].ID
 	}
 
-	nodeTasks := make([]store.ChangeoverNodeTaskInput, len(diffs))
+	nodeTasks := make([]processes.NodeTaskInput, len(diffs))
 	for i, diff := range diffs {
 		state := "unchanged"
 		switch diff.Situation {
@@ -92,7 +94,7 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 			id := diff.ToClaim.ID
 			toClaimID = &id
 		}
-		nodeTasks[i] = store.ChangeoverNodeTaskInput{
+		nodeTasks[i] = processes.NodeTaskInput{
 			ProcessID:    processID,
 			CoreNodeName: diff.CoreNodeName,
 			FromClaimID:  fromClaimID,
@@ -114,13 +116,13 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 }
 
 // Error handling policy: log and continue. Do not add early returns without understanding the caller contract. See 2567plandiscussion.md.
-func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*store.ProcessChangeover, error) {
+func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*processes.Changeover, error) {
 	plan, err := e.planChangeover(processID, toStyleID)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := e.db.CreateChangeover(processID, plan.process.ActiveStyleID, toStyleID,
+	if _, err := e.changeoverService.Create(processID, plan.process.ActiveStyleID, toStyleID,
 		calledBy, notes, plan.stationIDs, plan.nodeTasks, plan.nodes); err != nil {
 		return nil, err
 	}
@@ -174,9 +176,9 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 // created: Order A (staging to inbound staging) and Order B (complex swap/evacuate
 // with wait steps). For add/drop situations, only one order is needed.
 func (e *Engine) createChangeoverOrders(
-	changeover *store.ProcessChangeover,
-	nodeTask *store.ChangeoverNodeTask,
-	node *store.ProcessNode,
+	changeover *processes.Changeover,
+	nodeTask *processes.NodeTask,
+	node *processes.Node,
 	diff ChangeoverNodeDiff,
 ) error {
 	nodeID := node.ID
@@ -296,10 +298,10 @@ func (e *Engine) createChangeoverOrders(
 // createFallbackStagingOrder creates a simple staging order (Phase 1 behavior)
 // when the full orders-up-front flow cannot be used (e.g., missing staging config).
 func (e *Engine) createFallbackStagingOrder(
-	changeover *store.ProcessChangeover,
-	nodeTask *store.ChangeoverNodeTask,
-	node *store.ProcessNode,
-	toClaim *store.StyleNodeClaim,
+	changeover *processes.Changeover,
+	nodeTask *processes.NodeTask,
+	node *processes.Node,
+	toClaim *processes.NodeClaim,
 ) error {
 	nodeID := node.ID
 	if toClaim.InboundStaging != "" {
@@ -350,8 +352,8 @@ func (e *Engine) createFallbackStagingOrder(
 //
 // The choice between split and combined is based on the from-claim's SwapMode.
 func (e *Engine) createKeepStagedChangeoverOrders(
-	nodeTask *store.ChangeoverNodeTask,
-	node *store.ProcessNode,
+	nodeTask *processes.NodeTask,
+	node *processes.Node,
 	diff ChangeoverNodeDiff,
 ) error {
 	nodeID := node.ID
@@ -408,7 +410,7 @@ func (e *Engine) createKeepStagedChangeoverOrders(
 }
 
 // findNodeByCoreName finds a process node by its CoreNodeName.
-func findNodeByCoreName(nodes []store.ProcessNode, coreName string) *store.ProcessNode {
+func findNodeByCoreName(nodes []processes.Node, coreName string) *processes.Node {
 	for i := range nodes {
 		if nodes[i].CoreNodeName == coreName {
 			return &nodes[i]
@@ -616,7 +618,7 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 	return e.db.UpdateProcessChangeoverState(changeover.ID, "completed")
 }
 
-func isNodeTaskTerminal(task *store.ChangeoverNodeTask) bool {
+func isNodeTaskTerminal(task *processes.NodeTask) bool {
 	return task.State == "switched" || task.State == "verified" || task.State == "unchanged"
 }
 

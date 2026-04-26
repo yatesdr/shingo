@@ -8,12 +8,16 @@ import (
 
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
+	"shingocore/store/scene"
 )
 
 // makeNode creates a fresh node and returns it.
-func makeNode(t *testing.T, db *store.DB, name string) *store.Node {
+func makeNode(t *testing.T, db *store.DB, name string) *nodes.Node {
 	t.Helper()
-	n := &store.Node{Name: name, Enabled: true}
+	n := &nodes.Node{Name: name, Enabled: true}
 	if err := db.CreateNode(n); err != nil {
 		t.Fatalf("create node %s: %v", name, err)
 	}
@@ -25,7 +29,7 @@ func TestNodeService_ApplyAssignments_SpecificStationsAndBinTypes(t *testing.T) 
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
 
-	bt2 := &store.BinType{Code: "BT2", Description: "second"}
+	bt2 := &bins.BinType{Code: "BT2", Description: "second"}
 	if err := db.CreateBinType(bt2); err != nil {
 		t.Fatalf("create second bin type: %v", err)
 	}
@@ -350,7 +354,7 @@ func TestNodeService_GetGroupLayout(t *testing.T) {
 	// Create two slots and attach to the lane via reparent.
 	var slotIDs []int64
 	for i := 1; i <= 2; i++ {
-		slot := &store.Node{Name: "NGRP-LAYOUT-S" + string(rune('0'+i)), Enabled: true}
+		slot := &nodes.Node{Name: "NGRP-LAYOUT-S" + string(rune('0'+i)), Enabled: true}
 		if err := db.CreateNode(slot); err != nil {
 			t.Fatalf("create slot %d: %v", i, err)
 		}
@@ -391,7 +395,7 @@ func TestNodeService_ListLaneSlots(t *testing.T) {
 		t.Fatalf("AddLane: %v", err)
 	}
 	for i := 1; i <= 3; i++ {
-		slot := &store.Node{Name: "SLOT-LIST-" + string(rune('0'+i)), Enabled: true}
+		slot := &nodes.Node{Name: "SLOT-LIST-" + string(rune('0'+i)), Enabled: true}
 		if err := db.CreateNode(slot); err != nil {
 			t.Fatalf("create slot %d: %v", i, err)
 		}
@@ -423,7 +427,7 @@ func TestNodeService_ReorderLaneSlots(t *testing.T) {
 	}
 	var slotIDs []int64
 	for i := 1; i <= 3; i++ {
-		slot := &store.Node{Name: "SLOT-REORDER-" + string(rune('0'+i)), Enabled: true}
+		slot := &nodes.Node{Name: "SLOT-REORDER-" + string(rune('0'+i)), Enabled: true}
 		if err := db.CreateNode(slot); err != nil {
 			t.Fatalf("create slot %d: %v", i, err)
 		}
@@ -459,7 +463,7 @@ func TestNodeService_SetNodePayloads(t *testing.T) {
 	svc := NewNodeService(db)
 
 	// Create a second payload to verify replacement semantics.
-	p2 := &store.Payload{Code: "PART-B", Description: "Second payload"}
+	p2 := &payloads.Payload{Code: "PART-B", Description: "Second payload"}
 	if err := db.CreatePayload(p2); err != nil {
 		t.Fatalf("create p2: %v", err)
 	}
@@ -548,7 +552,7 @@ func TestNodeService_CreateNode_AssignsIDAndReadback(t *testing.T) {
 	db := testDB(t)
 	svc := NewNodeService(db)
 
-	n := &store.Node{Name: "CREATE-NODE-1", Zone: "zone-a", Enabled: true}
+	n := &nodes.Node{Name: "CREATE-NODE-1", Zone: "zone-a", Enabled: true}
 	if err := svc.CreateNode(n); err != nil {
 		t.Fatalf("CreateNode: %v", err)
 	}
@@ -648,7 +652,7 @@ func TestNodeService_ListChildNodes_ReturnsOnlyChildren(t *testing.T) {
 	svc := NewNodeService(db)
 	parent := makeNode(t, db, "CHILD-PARENT-1")
 
-	child := &store.Node{Name: "CHILD-1", Enabled: true, ParentID: &parent.ID}
+	child := &nodes.Node{Name: "CHILD-1", Enabled: true, ParentID: &parent.ID}
 	if err := db.CreateNode(child); err != nil {
 		t.Fatalf("create child: %v", err)
 	}
@@ -686,7 +690,7 @@ func TestNodeService_ListBinsByNode_ReturnsAttachedBin(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
 
-	b := &store.Bin{
+	b := &bins.Bin{
 		Label:     "BIN-BY-NODE-1",
 		BinTypeID: sd.BinType.ID,
 		NodeID:    &sd.StorageNode.ID,
@@ -860,7 +864,7 @@ func TestNodeService_SetNodeBinTypes_ReplacesAssignments(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
 
-	btB := &store.BinType{Code: "BT-REPLACE-B", Description: "b"}
+	btB := &bins.BinType{Code: "BT-REPLACE-B", Description: "b"}
 	if err := db.CreateBinType(btB); err != nil {
 		t.Fatalf("create btB: %v", err)
 	}
@@ -897,7 +901,7 @@ func TestNodeService_ReparentNode_MovesUnderNewParent(t *testing.T) {
 		t.Fatalf("AddLane: %v", err)
 	}
 
-	slot := &store.Node{Name: "REPARENT-SLOT-1", Enabled: true}
+	slot := &nodes.Node{Name: "REPARENT-SLOT-1", Enabled: true}
 	if err := db.CreateNode(slot); err != nil {
 		t.Fatalf("create slot: %v", err)
 	}
@@ -923,7 +927,7 @@ func TestNodeService_NodeTileStates_IncludesNodeWithBin(t *testing.T) {
 
 	// Create a bin at the storage node so NodeTileStates has something
 	// to report. The tile-state query groups by node_id of bins.
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		Label:     "TILE-STATE-1",
 		BinTypeID: sd.BinType.ID,
 		NodeID:    &sd.StorageNode.ID,
@@ -947,7 +951,7 @@ func TestNodeService_ListScenePoints_RoundTrip(t *testing.T) {
 	db := testDB(t)
 	svc := NewNodeService(db)
 
-	sp := &store.ScenePoint{
+	sp := &scene.Point{
 		AreaName:       "AREA-SVC",
 		InstanceName:   "INST-SVC",
 		ClassName:      "GeneralLocation",
@@ -1013,7 +1017,7 @@ func TestNodeService_GetSlotDepth_ReflectsSlotOrder(t *testing.T) {
 	}
 	var slotIDs []int64
 	for i := 1; i <= 3; i++ {
-		slot := &store.Node{Name: "DEPTH-SLOT-" + string(rune('0'+i)), Enabled: true}
+		slot := &nodes.Node{Name: "DEPTH-SLOT-" + string(rune('0'+i)), Enabled: true}
 		if err := db.CreateNode(slot); err != nil {
 			t.Fatalf("create slot %d: %v", i, err)
 		}

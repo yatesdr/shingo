@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // reconciliation_service_test.go — coverage tests for
@@ -93,7 +94,7 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 	// Seed a dispatched order and backdate updated_at past the stuck-age
 	// threshold (30 minutes). Must be older than stuckOrderAge in
 	// store/reconciliation.go.
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "stuck-uuid",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
@@ -176,7 +177,7 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 	setupTestData(t, db)
 	svc := newReconService(t, db)
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:  "anom-uuid",
 		StationID: "line-1",
 		OrderType: "retrieve",
@@ -381,7 +382,7 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 	svc := newReconService(t, db)
 
 	// Seed a delivered order with updated_at well past the timeout.
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "auto-confirm-uuid",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
@@ -455,7 +456,7 @@ func TestReconciliationService_AutoConfirm_SkipsFreshDelivered(t *testing.T) {
 	svc := newReconService(t, db)
 
 	// A delivered order updated moments ago — too fresh for auto-confirm.
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "fresh-uuid",
 		StationID:    "line-1",
 		OrderType:    "retrieve",
@@ -493,7 +494,7 @@ func TestReconciliationService_AutoConfirm_SkipsNonDelivered(t *testing.T) {
 	svc := newReconService(t, db)
 
 	// A stuck but not-delivered order — query only matches status='delivered'.
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:  "ndo-uuid",
 		StationID: "line-1",
 		OrderType: "retrieve",
@@ -525,7 +526,7 @@ func TestReconciliationService_AutoConfirm_NoHookIsSafe(t *testing.T) {
 		t.Fatal("onOrderCompleted should default to nil on a bare service")
 	}
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "no-hook-uuid",
 		StationID:    "line-1",
 		OrderType:    "retrieve",

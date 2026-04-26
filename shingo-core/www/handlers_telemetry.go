@@ -9,10 +9,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-
 	"github.com/google/uuid"
 
-	"shingocore/store"
+	"shingocore/store/bins"
 )
 
 // apiTelemetryNodeBins returns bin state for requested core nodes.
@@ -179,17 +178,17 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 		h.jsonError(w, fmt.Sprintf("node %q not found", req.NodeName), http.StatusNotFound)
 		return
 	}
-	bins, err := nodes.ListBinsByNode(node.ID)
-	if err != nil || len(bins) == 0 {
+	binList, err := nodes.ListBinsByNode(node.ID)
+	if err != nil || len(binList) == 0 {
 		h.jsonError(w, fmt.Sprintf("no bin at node %s", req.NodeName), http.StatusBadRequest)
 		return
 	}
-	bin := bins[0]
+	bin := binList[0]
 
-	manifest := store.BinManifest{Items: make([]store.ManifestEntry, len(req.Manifest))}
+	manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(req.Manifest))}
 	var totalQty int64
 	for i, item := range req.Manifest {
-		manifest.Items[i] = store.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
+		manifest.Items[i] = bins.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
 		totalQty += item.Quantity
 	}
 	manifestJSON, _ := json.Marshal(manifest)

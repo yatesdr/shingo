@@ -10,7 +10,10 @@ import (
 	"strings"
 
 	"shingocore/engine"
-	"shingocore/store"
+	"shingocore/store/audit"
+	"shingocore/store/bins"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // --- Bin Type form handlers (unchanged) ---
@@ -32,7 +35,7 @@ func (h *Handlers) handleBinTypeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bt := &store.BinType{
+	bt := &bins.BinType{
 		Code:        r.FormValue("code"),
 		Description: r.FormValue("description"),
 		WidthIn:     widthIn,
@@ -182,7 +185,7 @@ func (h *Handlers) handleBinCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	template := store.Bin{
+	template := bins.Bin{
 		BinTypeID: binTypeID,
 		NodeID:    nodeID,
 		Status:    status,
@@ -252,9 +255,9 @@ func (h *Handlers) apiBinAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // binActionFunc is the handler signature for individual bin actions.
-type binActionFunc func(b *store.Bin, params json.RawMessage) error
+type binActionFunc func(b *bins.Bin, params json.RawMessage) error
 
-func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.RawMessage) error {
+func (h *Handlers) executeBinAction(b *bins.Bin, action string, params json.RawMessage) error {
 	actions := map[string]binActionFunc{
 		"activate":           h.binActivate,
 		"flag":               h.binFlag,
@@ -282,7 +285,7 @@ func (h *Handlers) executeBinAction(b *store.Bin, action string, params json.Raw
 
 // --- Bin action handlers (bound method values used by executeBinAction) ---
 
-func (h *Handlers) binActivate(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binActivate(b *bins.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().ChangeStatus(b.ID, "available"); err != nil {
 		return err
 	}
@@ -291,7 +294,7 @@ func (h *Handlers) binActivate(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binFlag(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binFlag(b *bins.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().ChangeStatus(b.ID, "flagged"); err != nil {
 		return err
 	}
@@ -300,7 +303,7 @@ func (h *Handlers) binFlag(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binQualityHold(b *store.Bin, params json.RawMessage) error {
+func (h *Handlers) binQualityHold(b *bins.Bin, params json.RawMessage) error {
 	var p struct {
 		Reason string `json:"reason"`
 		Actor  string `json:"actor"`
@@ -321,7 +324,7 @@ func (h *Handlers) binQualityHold(b *store.Bin, params json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binMaintenance(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binMaintenance(b *bins.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().ChangeStatus(b.ID, "maintenance"); err != nil {
 		return err
 	}
@@ -330,7 +333,7 @@ func (h *Handlers) binMaintenance(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binRetire(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binRetire(b *bins.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().ChangeStatus(b.ID, "retired"); err != nil {
 		return err
 	}
@@ -339,7 +342,7 @@ func (h *Handlers) binRetire(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binRelease(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binRelease(b *bins.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().Release(b.ID); err != nil {
 		return err
 	}
@@ -348,7 +351,7 @@ func (h *Handlers) binRelease(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binLock(b *store.Bin, params json.RawMessage) error {
+func (h *Handlers) binLock(b *bins.Bin, params json.RawMessage) error {
 	var p struct {
 		Actor string `json:"actor"`
 	}
@@ -364,7 +367,7 @@ func (h *Handlers) binLock(b *store.Bin, params json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binUnlock(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binUnlock(b *bins.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().Unlock(b.ID); err != nil {
 		return err
 	}
@@ -373,7 +376,7 @@ func (h *Handlers) binUnlock(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binLoadPayload(b *store.Bin, params json.RawMessage) error {
+func (h *Handlers) binLoadPayload(b *bins.Bin, params json.RawMessage) error {
 	var p struct {
 		PayloadCode string `json:"payload_code"`
 		UOPOverride int    `json:"uop_override"`
@@ -389,7 +392,7 @@ func (h *Handlers) binLoadPayload(b *store.Bin, params json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binClear(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binClear(b *bins.Bin, _ json.RawMessage) error {
 	oldCode := b.PayloadCode
 	if err := h.engine.BinService().Manifest().ClearForReuse(b.ID); err != nil {
 		return err
@@ -399,7 +402,7 @@ func (h *Handlers) binClear(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binConfirmManifest(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binConfirmManifest(b *bins.Bin, _ json.RawMessage) error {
 	if b.Manifest == nil {
 		return fmt.Errorf("bin has no manifest to confirm")
 	}
@@ -411,7 +414,7 @@ func (h *Handlers) binConfirmManifest(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binUnconfirmManifest(b *store.Bin, _ json.RawMessage) error {
+func (h *Handlers) binUnconfirmManifest(b *bins.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().Manifest().Unconfirm(b.ID); err != nil {
 		return err
 	}
@@ -420,7 +423,7 @@ func (h *Handlers) binUnconfirmManifest(b *store.Bin, _ json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binMove(b *store.Bin, params json.RawMessage) error {
+func (h *Handlers) binMove(b *bins.Bin, params json.RawMessage) error {
 	var p struct {
 		NodeID int64 `json:"node_id"`
 	}
@@ -443,7 +446,7 @@ func (h *Handlers) binMove(b *store.Bin, params json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binRecordCount(b *store.Bin, params json.RawMessage) error {
+func (h *Handlers) binRecordCount(b *bins.Bin, params json.RawMessage) error {
 	var p struct {
 		ActualUOP int    `json:"actual_uop"`
 		Actor     string `json:"actor"`
@@ -467,7 +470,7 @@ func (h *Handlers) binRecordCount(b *store.Bin, params json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) binAddNote(b *store.Bin, params json.RawMessage) error {
+func (h *Handlers) binAddNote(b *bins.Bin, params json.RawMessage) error {
 	var p struct {
 		NoteType string `json:"note_type"`
 		Message  string `json:"message"`
@@ -480,7 +483,7 @@ func (h *Handlers) binAddNote(b *store.Bin, params json.RawMessage) error {
 	return h.engine.BinService().AddNote(b.ID, p.NoteType, p.Message, actor)
 }
 
-func (h *Handlers) binUpdate(b *store.Bin, params json.RawMessage) error {
+func (h *Handlers) binUpdate(b *bins.Bin, params json.RawMessage) error {
 	var p struct {
 		Label       *string `json:"label"`
 		Description *string `json:"description"`
@@ -497,7 +500,7 @@ func (h *Handlers) binUpdate(b *store.Bin, params json.RawMessage) error {
 	return nil
 }
 
-func (h *Handlers) emitBinUpdate(b *store.Bin, action, detail string) {
+func (h *Handlers) emitBinUpdate(b *bins.Bin, action, detail string) {
 	h.engine.EventBus().Emit(engine.Event{Type: engine.EventBinUpdated, Payload: engine.BinUpdatedEvent{
 		BinID:       b.ID,
 		NodeID:      derefInt64(b.NodeID),
@@ -523,12 +526,12 @@ func derefInt64(p *int64) int64 {
 // --- Bin detail API ---
 
 type binDetailResponse struct {
-	Bin          *store.Bin          `json:"bin"`
-	Manifest     *store.BinManifest  `json:"manifest"`
-	Template     *store.Payload      `json:"template,omitempty"`
-	Audit        []*store.AuditEntry `json:"audit"`
-	CurrentOrder *store.Order        `json:"current_order,omitempty"`
-	RecentOrders []*store.Order      `json:"recent_orders"`
+	Bin          *bins.Bin          `json:"bin"`
+	Manifest     *bins.Manifest  `json:"manifest"`
+	Template     *payloads.Payload      `json:"template,omitempty"`
+	Audit        []*audit.Entry `json:"audit"`
+	CurrentOrder *orders.Order        `json:"current_order,omitempty"`
+	RecentOrders []*orders.Order      `json:"recent_orders"`
 }
 
 func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
@@ -568,7 +571,7 @@ func (h *Handlers) apiBinDetail(w http.ResponseWriter, r *http.Request) {
 	// Recent orders
 	resp.RecentOrders, _ = h.engine.OrderService().ListByBin(id, 20)
 	if resp.RecentOrders == nil {
-		resp.RecentOrders = []*store.Order{}
+		resp.RecentOrders = []*orders.Order{}
 	}
 
 	h.jsonOK(w, resp)

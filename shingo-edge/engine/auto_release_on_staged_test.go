@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // TestHandleAutoReleaseOnStaged_PerSiblingStatus is the predicate test for
@@ -323,7 +324,7 @@ func seedTwoRobotPair(t *testing.T, prefix string) (*store.DB, *Engine, int64, i
 	if claim == nil {
 		t.Fatalf("seedTwoRobotPair(%q): claim lookup returned nil — seed contract changed", prefix)
 	}
-	if _, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        claim.StyleID,
 		CoreNodeName:   claim.CoreNodeName,
 		Role:           claim.Role,

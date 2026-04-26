@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"shingocore/fleet/simulator"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // corrections_test.go — coverage for corrections.go.
@@ -24,7 +25,7 @@ func TestApplyCorrection_AddItem_PersistsManifestAndRecord(t *testing.T) {
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	node := &store.Node{Name: "CORR-NODE-ADD", Enabled: true}
+	node := &nodes.Node{Name: "CORR-NODE-ADD", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestApplyCorrection_AdjustQty_UpdatesExistingEntry(t *testing.T) {
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	node := &store.Node{Name: "CORR-NODE-ADJ", Enabled: true}
+	node := &nodes.Node{Name: "CORR-NODE-ADJ", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestApplyCorrection_RemoveItem_DropsEntry(t *testing.T) {
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	node := &store.Node{Name: "CORR-NODE-RM", Enabled: true}
+	node := &nodes.Node{Name: "CORR-NODE-RM", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestApplyBatchCorrection_DiffsAndEmits(t *testing.T) {
 	// Seed old manifest: P1=5, P2=3.
 	putManifest(t, db, bin.ID, bp.Code, "P1", 5)
 	// Second entry via a full rewrite.
-	m := store.BinManifest{Items: []store.ManifestEntry{
+	m := bins.Manifest{Items: []bins.ManifestEntry{
 		{CatID: "P1", Quantity: 5},
 		{CatID: "P2", Quantity: 3},
 	}}
@@ -261,7 +262,7 @@ func TestApplyBatchCorrection_NoChanges(t *testing.T) {
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	node := &store.Node{Name: "BATCH-NOOP", Enabled: true}
+	node := &nodes.Node{Name: "BATCH-NOOP", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}

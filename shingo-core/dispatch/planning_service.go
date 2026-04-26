@@ -9,11 +9,14 @@ import (
 	"shingo/protocol"
 	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 type PlanningResult struct {
-	SourceNode *store.Node
-	DestNode   *store.Node
+	SourceNode *nodes.Node
+	DestNode   *nodes.Node
 	Handled    bool
 	Queued     bool // order should be queued — inventory not available
 }
@@ -41,7 +44,7 @@ func (e *planningError) Unwrap() error {
 	return e.Err
 }
 
-type PlanningHandler func(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError)
+type PlanningHandler func(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError)
 
 type PlanningService struct {
 	db          *store.DB
@@ -50,7 +53,7 @@ type PlanningService struct {
 	binManifest *service.BinManifestService
 	debug       func(string, ...any)
 
-	createCompound  func(parentOrder *store.Order, plan *ReshufflePlan) error
+	createCompound  func(parentOrder *orders.Order, plan *ReshufflePlan) error
 	advanceCompound func(parentOrderID int64) error
 
 	handlers map[string]PlanningHandler
@@ -61,7 +64,7 @@ type PlanningService struct {
 	postFindHook func()
 }
 
-func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, binManifest *service.BinManifestService, debug func(string, ...any), createCompound func(*store.Order, *ReshufflePlan) error, advanceCompound func(int64) error) *PlanningService {
+func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, binManifest *service.BinManifestService, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error, advanceCompound func(int64) error) *PlanningService {
 	s := &PlanningService{
 		db:              db,
 		resolver:        resolver,
@@ -108,7 +111,7 @@ func (s *PlanningService) Register(orderType string, handler PlanningHandler) {
 	s.handlers[orderType] = handler
 }
 
-func (s *PlanningService) Plan(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
+func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 	handler, ok := s.handlers[order.OrderType]
 	if !ok {
 		return nil, &planningError{
@@ -119,7 +122,7 @@ func (s *PlanningService) Plan(order *store.Order, env *protocol.Envelope, paylo
 	return handler(order, env, payloadCode)
 }
 
-func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
+func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 	if err := s.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding source"); err != nil {
 		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
 	}
@@ -128,8 +131,8 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 		return s.planRetrieveEmpty(order, payloadCode)
 	}
 
-	var source *store.Bin
-	var sourceNode *store.Node
+	var source *bins.Bin
+	var sourceNode *nodes.Node
 
 	if order.SourceNode != "" && s.resolver != nil {
 		sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
@@ -195,7 +198,7 @@ func (s *PlanningService) planRetrieve(order *store.Order, env *protocol.Envelop
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
 
-func (s *PlanningService) planRetrieveEmpty(order *store.Order, payloadCode string) (*PlanningResult, *planningError) {
+func (s *PlanningService) planRetrieveEmpty(order *orders.Order, payloadCode string) (*PlanningResult, *planningError) {
 	var preferZone string
 	if order.DeliveryNode != "" {
 		if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil {
@@ -252,7 +255,7 @@ func (s *PlanningService) planRetrieveEmpty(order *store.Order, payloadCode stri
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
 
-func (s *PlanningService) planBuriedReshuffle(order *store.Order, buried *BuriedError) (*PlanningResult, *planningError) {
+func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *BuriedError) (*PlanningResult, *planningError) {
 	if s.laneLock.IsLocked(buried.LaneID) {
 		return nil, &planningError{Code: "lane_locked", Detail: fmt.Sprintf("lane %d is locked by another reshuffle", buried.LaneID)}
 	}
@@ -281,7 +284,7 @@ func (s *PlanningService) planBuriedReshuffle(order *store.Order, buried *Buried
 	return &PlanningResult{Handled: true}, nil
 }
 
-func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
+func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 	if err := s.db.UpdateOrderStatus(order.ID, StatusSourcing, "validating move"); err != nil {
 		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
 	}
@@ -404,7 +407,7 @@ func (s *PlanningService) planMove(order *store.Order, env *protocol.Envelope, p
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
 
-func (s *PlanningService) planStore(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
+func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 	if err := s.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding storage destination"); err != nil {
 		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
 	}
@@ -419,7 +422,7 @@ func (s *PlanningService) planStore(order *store.Order, env *protocol.Envelope, 
 		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
 	}
 
-	var sourceNode *store.Node
+	var sourceNode *nodes.Node
 	if order.SourceNode != "" {
 		sourceNode, err = s.db.GetNodeByDotName(order.SourceNode)
 		if err != nil {

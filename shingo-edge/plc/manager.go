@@ -13,6 +13,7 @@ import (
 	"shingo/protocol/types"
 	"shingoedge/config"
 	"shingoedge/store"
+	"shingoedge/store/counters"
 )
 
 // TagInfo describes a tag available on a PLC.
@@ -521,7 +522,7 @@ func (m *Manager) pollAllReportingPoints() {
 	}
 }
 
-func (m *Manager) pollReportingPoint(rp store.ReportingPoint) {
+func (m *Manager) pollReportingPoint(rp counters.ReportingPoint) {
 	if !m.IsConnected(rp.PLCName) {
 		return
 	}

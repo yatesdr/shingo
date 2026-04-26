@@ -25,7 +25,7 @@ func (h *Handlers) apiCreateCorrection(w http.ResponseWriter, r *http.Request) {
 		actor = "admin"
 	}
 
-	id, err := h.engine.ApplyCorrection(engine.ApplyCorrectionRequest{
+	id, err := h.orchestration.ApplyCorrection(engine.ApplyCorrectionRequest{
 		CorrectionType: req.CorrectionType,
 		NodeID:         req.NodeID,
 		BinID:          req.BinID,
@@ -74,7 +74,7 @@ func (h *Handlers) apiApplyBatchCorrection(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	err := h.engine.ApplyBatchCorrection(engine.BatchCorrectionRequest{
+	err := h.orchestration.ApplyBatchCorrection(engine.BatchCorrectionRequest{
 		BinID:  req.BinID,
 		NodeID: req.NodeID,
 		Reason: req.Reason,

@@ -2,7 +2,7 @@ package engine
 
 import (
 	"shingo/protocol"
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // Material movement step builders.
@@ -24,7 +24,7 @@ func buildStep(action, node string) protocol.ComplexOrderStep {
 // For consume nodes: pickup full bin from source, dropoff at core node.
 // For produce nodes: pickup empty bin from source, dropoff at core node.
 // TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
-func BuildDeliverSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildDeliverSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		buildStep("pickup", claim.InboundSource),
 		{Action: "dropoff", Node: claim.CoreNodeName},
@@ -33,7 +33,7 @@ func BuildDeliverSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep 
 
 // BuildReleaseSteps builds steps to remove material from a node and send it
 // to the configured outbound destination.
-func BuildReleaseSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: claim.CoreNodeName},
 		buildStep("dropoff", claim.OutboundDestination),
@@ -43,7 +43,7 @@ func BuildReleaseSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep 
 // BuildStageSteps builds steps to pre-stage material at the inbound staging
 // node in preparation for a swap. Material is fetched and placed at the
 // inbound staging node but NOT yet delivered to the production node.
-func BuildStageSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildStageSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	if claim.InboundStaging == "" {
 		return nil // no inbound staging configured, cannot pre-stage
 	}
@@ -55,7 +55,7 @@ func BuildStageSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
 
 // BuildStagedDeliverSteps builds steps to move already-staged material from
 // the inbound staging node to the production node. Used after staging + evacuation.
-func BuildStagedDeliverSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildStagedDeliverSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	if claim.InboundStaging == "" {
 		return nil
 	}
@@ -75,7 +75,7 @@ func BuildStagedDeliverSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrde
 //  7. dropoff(CoreNodeName)           — deliver new to line
 //  8. pickup(OutboundStaging)         — grab old from staging
 //  9. dropoff(OutboundDestination)    — deliver old to final destination
-func BuildSingleSwapSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildSingleSwapSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	if claim.InboundStaging == "" || claim.OutboundStaging == "" {
 		return nil
 	}
@@ -99,7 +99,7 @@ func BuildSingleSwapSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderSt
 // Order B (removal robot): wait at node → pickup old from node → deliver to outbound destination
 //
 // Edge coordinates: releases Order B first (remove old), then releases Order A (deliver new).
-func BuildTwoRobotSwapSteps(claim *store.StyleNodeClaim) (orderA, orderB []protocol.ComplexOrderStep) {
+func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protocol.ComplexOrderStep) {
 	if claim.InboundStaging == "" {
 		return nil, nil
 	}
@@ -125,7 +125,7 @@ func BuildTwoRobotSwapSteps(claim *store.StyleNodeClaim) (orderA, orderB []proto
 //  1. wait(CoreNodeName)            — drive to node + hold (RDS BinTask=Wait)
 //  2. pickup(CoreNodeName)          — pick up old from line
 //  3. dropoff(OutboundDestination)  — deliver old to destination
-func BuildSequentialRemovalSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildSequentialRemovalSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "wait", Node: claim.CoreNodeName},      // 1 drive to node + hold
 		{Action: "pickup", Node: claim.CoreNodeName},    // 2
@@ -138,7 +138,7 @@ func BuildSequentialRemovalSteps(claim *store.StyleNodeClaim) []protocol.Complex
 // Order B is auto-created by wiring when Order A goes in_transit.
 //  1. pickup(InboundSource)    — pick new from source
 //  2. dropoff(CoreNodeName)    — deliver to line
-func BuildSequentialBackfillSteps(claim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildSequentialBackfillSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		buildStep("pickup", claim.InboundSource), // 1
 		{Action: "dropoff", Node: claim.CoreNodeName},                              // 2
@@ -156,7 +156,7 @@ func BuildSequentialBackfillSteps(claim *store.StyleNodeClaim) []protocol.Comple
 // BuildSwapChangeoverSteps builds Robot B's complex order for a swap changeover
 // (no tool clearance). Single wait point. Robot drives to core and holds (Wait),
 // operator releases, then evacuates old → delivers new → clears old to final.
-func BuildSwapChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildSwapChangeoverSteps(fromClaim, toClaim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "wait", Node: fromClaim.CoreNodeName},       // drive to node + hold ("ready")
 		{Action: "pickup", Node: fromClaim.CoreNodeName},     // evacuate old
@@ -170,7 +170,7 @@ func BuildSwapChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []protoc
 
 // BuildEvacuateChangeoverSteps builds Robot B's complex order for an evacuate
 // changeover (tool clearance needed). Two wait points — "ready" and "tooling done".
-func BuildEvacuateChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "wait", Node: fromClaim.CoreNodeName},       // drive to node + hold ("ready")
 		{Action: "pickup", Node: fromClaim.CoreNodeName},     // evacuate old
@@ -186,7 +186,7 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *store.StyleNodeClaim) []pr
 // BuildKeepStagedEvacSteps builds Robot B's complex order for keep-staged
 // changeovers. Simpler than swap/evacuate — no outbound staging hop, goes
 // straight to final destination after evacuation.
-func BuildKeepStagedEvacSteps(fromClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildKeepStagedEvacSteps(fromClaim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "wait", Node: fromClaim.CoreNodeName},      // drive to node + hold ("ready")
 		{Action: "pickup", Node: fromClaim.CoreNodeName},    // evacuate old
@@ -197,7 +197,7 @@ func BuildKeepStagedEvacSteps(fromClaim *store.StyleNodeClaim) []protocol.Comple
 // BuildKeepStagedDeliverSteps builds Robot A's complex order for keep-staged
 // changeovers (split mode — two robots). Stages new material then waits for
 // operator release to deliver.
-func BuildKeepStagedDeliverSteps(toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildKeepStagedDeliverSteps(toClaim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		buildStep("pickup", toClaim.InboundSource),        // grab new
 		{Action: "dropoff", Node: toClaim.InboundStaging}, // stage new
@@ -210,7 +210,7 @@ func BuildKeepStagedDeliverSteps(toClaim *store.StyleNodeClaim) []protocol.Compl
 // BuildKeepStagedCombinedSteps builds Robot A's complex order for keep-staged
 // changeovers (combined mode — single robot). Clears the keep-staged bin, stages
 // new material, waits, then delivers.
-func BuildKeepStagedCombinedSteps(fromClaim, toClaim *store.StyleNodeClaim) []protocol.ComplexOrderStep {
+func BuildKeepStagedCombinedSteps(fromClaim, toClaim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	return []protocol.ComplexOrderStep{
 		{Action: "pickup", Node: toClaim.InboundStaging},  // grab keep-staged bin
 		buildStep("dropoff", fromClaim.InboundSource),     // return to market/source

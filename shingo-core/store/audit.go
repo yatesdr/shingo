@@ -6,22 +6,17 @@ package store
 // it crosses naming concerns ("bin" entity type) and is small enough to
 // keep at the outer level rather than push into audit/.
 
-import (
-	"shingocore/store/audit"
-)
-
-// AuditEntry preserves the store.AuditEntry public API.
-type AuditEntry = audit.Entry
+import "shingocore/store/audit"
 
 func (db *DB) AppendAudit(entityType string, entityID int64, action, oldValue, newValue, actor string) error {
 	return audit.Append(db.DB, entityType, entityID, action, oldValue, newValue, actor)
 }
 
-func (db *DB) ListAuditLog(limit int) ([]*AuditEntry, error) {
+func (db *DB) ListAuditLog(limit int) ([]*audit.Entry, error) {
 	return audit.List(db.DB, limit)
 }
 
-func (db *DB) ListEntityAudit(entityType string, entityID int64) ([]*AuditEntry, error) {
+func (db *DB) ListEntityAudit(entityType string, entityID int64) ([]*audit.Entry, error) {
 	return audit.ListForEntity(db.DB, entityType, entityID)
 }
 

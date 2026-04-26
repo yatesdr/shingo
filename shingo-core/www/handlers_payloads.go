@@ -5,7 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/payloads"
 )
 
 func (h *Handlers) handlePayloadsPage(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +108,7 @@ func (h *Handlers) apiCreateManifestItem(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	m := &store.PayloadManifestItem{
+	m := &payloads.ManifestItem{
 		PayloadID:  req.PayloadID,
 		PartNumber: req.PartNumber,
 		Quantity:   req.Quantity,
@@ -216,7 +217,7 @@ func (h *Handlers) apiBulkRegisterBins(w http.ResponseWriter, r *http.Request) {
 
 	var created []int64
 	for i := 0; i < req.Count; i++ {
-		b := &store.Bin{
+		b := &bins.Bin{
 			BinTypeID: req.BinTypeID,
 			Label:     fmt.Sprintf("%s%04d", req.Prefix, i+1),
 			Status:    "available",

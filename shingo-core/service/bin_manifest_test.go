@@ -11,6 +11,8 @@ import (
 
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/orders"
 )
 
 func testDB(t *testing.T) *store.DB {
@@ -18,16 +20,16 @@ func testDB(t *testing.T) *store.DB {
 }
 
 // createTestBin creates a bin at the given node with a manifest and returns it.
-func createTestBin(t *testing.T, db *store.DB, nodeID int64, label, payloadCode string, uop int) *store.Bin {
+func createTestBin(t *testing.T, db *store.DB, nodeID int64, label, payloadCode string, uop int) *bins.Bin {
 	t.Helper()
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
-		bt = &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+		bt = &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
 		if err := db.CreateBinType(bt); err != nil {
 			t.Fatalf("create default bin type: %v", err)
 		}
 	}
-	bin := &store.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin %s: %v", label, err)
 	}
@@ -45,11 +47,11 @@ func createTestBin(t *testing.T, db *store.DB, nodeID int64, label, payloadCode 
 
 var testOrderSeq int64
 
-func createTestOrder(t *testing.T, db *store.DB, nodeID int64) *store.Order {
+func createTestOrder(t *testing.T, db *store.DB, nodeID int64) *orders.Order {
 	t.Helper()
 	seq := atomic.AddInt64(&testOrderSeq, 1)
 	node, _ := db.GetNode(nodeID)
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     fmt.Sprintf("test-order-%s-%d", t.Name(), seq),
 		StationID:    "test",
 		OrderType:    "move",

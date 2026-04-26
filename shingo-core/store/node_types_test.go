@@ -2,12 +2,16 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/nodes"
+)
 
 func TestNodeTypeRoundTrip(t *testing.T) {
 	db := testDB(t)
 
-	nt := &NodeType{
+	nt := &nodes.NodeType{
 		Code:        "STOR-RT",
 		Name:        "Storage Slot",
 		Description: "Physical storage slot",

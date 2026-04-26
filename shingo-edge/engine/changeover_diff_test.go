@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // findDiff returns the diff for the named node, or nil if not found.
@@ -22,8 +22,8 @@ func findDiff(diffs []ChangeoverNodeDiff, nodeName string) *ChangeoverNodeDiff {
 
 func TestDiffStyleClaims_Swap(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -39,8 +39,8 @@ func TestDiffStyleClaims_Swap(t *testing.T) {
 
 func TestDiffStyleClaims_Evacuate(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", EvacuateOnChangeover: true}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", EvacuateOnChangeover: true}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -53,8 +53,8 @@ func TestDiffStyleClaims_Evacuate(t *testing.T) {
 
 func TestDiffStyleClaims_Unchanged(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -68,7 +68,7 @@ func TestDiffStyleClaims_Unchanged(t *testing.T) {
 func TestDiffStyleClaims_Add(t *testing.T) {
 	diffs := DiffStyleClaims(
 		nil, // no from-style claims
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -87,7 +87,7 @@ func TestDiffStyleClaims_Add(t *testing.T) {
 
 func TestDiffStyleClaims_Drop(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		nil,
 	)
 	d := findDiff(diffs, "N1")
@@ -112,8 +112,8 @@ func TestDiffStyleClaims_Drop(t *testing.T) {
 // To-claim with __empty__ → explicitly clear the node (SituationDrop).
 func TestDiffStyleClaims_ToEmpty(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -127,8 +127,8 @@ func TestDiffStyleClaims_ToEmpty(t *testing.T) {
 // From-claim with __empty__ → node was empty, now needs material (SituationAdd).
 func TestDiffStyleClaims_FromEmpty(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -143,7 +143,7 @@ func TestDiffStyleClaims_FromEmpty(t *testing.T) {
 func TestDiffStyleClaims_ToEmptyNewNode(t *testing.T) {
 	diffs := DiffStyleClaims(
 		nil,
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -157,8 +157,8 @@ func TestDiffStyleClaims_ToEmptyNewNode(t *testing.T) {
 // Both from and to have __empty__ → nothing changes (SituationUnchanged).
 func TestDiffStyleClaims_BothEmpty(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -175,8 +175,8 @@ func TestDiffStyleClaims_BothEmpty(t *testing.T) {
 
 func TestDiffStyleClaims_ChangeoverRole_FromSide(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -189,8 +189,8 @@ func TestDiffStyleClaims_ChangeoverRole_FromSide(t *testing.T) {
 
 func TestDiffStyleClaims_ChangeoverRole_ToSide(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -204,8 +204,8 @@ func TestDiffStyleClaims_ChangeoverRole_ToSide(t *testing.T) {
 // Changeover role overrides EvacuateOnChangeover=false — evacuate is forced.
 func TestDiffStyleClaims_ChangeoverRoleOverridesNoEvacuate(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -221,14 +221,14 @@ func TestDiffStyleClaims_ChangeoverRoleOverridesNoEvacuate(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDiffStyleClaims_MultiNode(t *testing.T) {
-	from := []store.StyleNodeClaim{
+	from := []processes.NodeClaim{
 		{CoreNodeName: "SWAP-NODE", PayloadCode: "OLD", Role: "consume"},
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
 		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume"},
 		{CoreNodeName: "DROP-NODE", PayloadCode: "DROP-PART", Role: "consume"},
 		{CoreNodeName: "CO-NODE", PayloadCode: "CO-PART", Role: "changeover"},
 	}
-	to := []store.StyleNodeClaim{
+	to := []processes.NodeClaim{
 		{CoreNodeName: "SWAP-NODE", PayloadCode: "NEW", Role: "consume"},
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
 		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume", EvacuateOnChangeover: true},
@@ -269,7 +269,7 @@ func TestDiffStyleClaims_MultiNode(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDiffStyleClaims_NilFromClaims(t *testing.T) {
-	to := []store.StyleNodeClaim{
+	to := []processes.NodeClaim{
 		{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"},
 		{CoreNodeName: "N2", PayloadCode: "PART-B", Role: "produce"},
 	}
@@ -297,8 +297,8 @@ func TestDiffStyleClaims_NilFromClaims(t *testing.T) {
 
 func TestDiffStyleClaims_RoleChange(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce"}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {
@@ -315,8 +315,8 @@ func TestDiffStyleClaims_RoleChange(t *testing.T) {
 
 func TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange(t *testing.T) {
 	diffs := DiffStyleClaims(
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]store.StyleNodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume", EvacuateOnChangeover: true}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
+		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume", EvacuateOnChangeover: true}},
 	)
 	d := findDiff(diffs, "N1")
 	if d == nil {

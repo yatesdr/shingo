@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 // resolveNodeStaging determines if a destination node should receive bins
 // as "staged" (lineside nodes) or "available" (storage slots under LANEs).
-func (e *Engine) resolveNodeStaging(destNode *store.Node) (staged bool, expiresAt *time.Time) {
+func (e *Engine) resolveNodeStaging(destNode *nodes.Node) (staged bool, expiresAt *time.Time) {
 	isStorage := e.isStorageSlot(destNode.ID)
 	if !isStorage {
 		expiresAt = e.resolveStagingExpiry(destNode)
@@ -27,7 +27,7 @@ func (e *Engine) resolveNodeStaging(destNode *store.Node) (staged bool, expiresA
 
 // resolveStagingExpiry computes the staging expiry time for a node.
 // Returns nil if staging is permanent (ttl=0 or ttl=none).
-func (e *Engine) resolveStagingExpiry(node *store.Node) *time.Time {
+func (e *Engine) resolveStagingExpiry(node *nodes.Node) *time.Time {
 	ttlStr := ""
 
 	// Check node's own property first

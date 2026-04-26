@@ -6,7 +6,7 @@ import (
 	"slices"
 
 	"shingo/protocol"
-	"shingoedge/store"
+	"shingoedge/store/orders"
 )
 
 // LoadBin marks a bin at a manual_swap node as loaded with the given manifest.
@@ -142,7 +142,7 @@ func (e *Engine) ClearBin(nodeID int64) error {
 // RequestEmptyBin requests an empty bin compatible with the given payload to be
 // delivered to a manual_swap produce node. Core queues the order if no empties are
 // immediately available. payloadCode determines bin type compatibility.
-func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order, error) {
+func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Order, error) {
 	node, _, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
@@ -196,7 +196,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*store.Order
 // manual_swap consume node. Core queues the order if no full bins of that
 // payload are available. Unlike RequestEmptyBin, this does NOT check node occupancy
 // — the unloader expects full bins to arrive.
-func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*store.Order, error) {
+func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order, error) {
 	node, _, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err

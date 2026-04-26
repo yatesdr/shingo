@@ -8,8 +8,7 @@ import "time"
 // items (ordered by ID, which is insertion order).
 //
 // In the store/payloads sub-package this type is aliased as
-// payloads.ManifestItem; the outer store/ package re-exports it as
-// store.PayloadManifestItem. The domain name is the fully-qualified
+// payloads.ManifestItem. The domain name is the fully-qualified
 // one so it doesn't collide with the bin-side ManifestEntry.
 type PayloadManifestItem struct {
 	ID          int64     `json:"id"`

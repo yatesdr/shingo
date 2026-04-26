@@ -10,7 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"shingocore/store"
+	"shingocore/store/orders"
+	"shingocore/store/telemetry"
 )
 
 // Characterization tests for handlers_missions.go — the missions page, the
@@ -77,7 +78,7 @@ func TestHandleMissionDetail_UnknownOrder(t *testing.T) {
 // detail page as HTML with the mission-detail.html template.
 func TestHandleMissionDetail_HappyPath(t *testing.T) {
 	h, db := testHandlersForPages(t)
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:   "mission-detail-1",
 		StationID:  "line-x",
 		OrderType:  "move",
@@ -218,7 +219,7 @@ func TestApiGetMission_UnknownOrder(t *testing.T) {
 // {order, telemetry, events, history} with the order object populated.
 func TestApiGetMission_HappyPath(t *testing.T) {
 	h, db := testHandlers(t)
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:   "mission-get-1",
 		StationID:  "line-x",
 		OrderType:  "move",
@@ -266,7 +267,7 @@ func TestApiMissionStats_EmptyDB(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var stats store.MissionStats
+	var stats telemetry.Stats
 	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -285,7 +286,7 @@ func TestApiMissionStats_AcceptsFilters(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
-	var stats store.MissionStats
+	var stats telemetry.Stats
 	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

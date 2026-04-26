@@ -8,8 +8,12 @@
 // higher layers — dispatch, engine, service, www — can depend on a
 // persistence-free package. The store sub-packages retain the names via
 // type aliases (e.g. `type Bin = domain.Bin`), so the full
-// store.Bin / store.Node / store.Order public API is unchanged and every
+// bins.Bin / nodes.Node / orders.Order public API is unchanged and every
 // existing call site compiles without edits.
+//
+// Phase 6.4b (2026-04) removed the outer `store.X` package-level
+// aliases. Callers now reference the sub-package types directly
+// (bins.Bin, nodes.Node, orders.Order, …).
 //
 // Guidelines for this package:
 //

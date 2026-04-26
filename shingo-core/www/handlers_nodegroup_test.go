@@ -16,6 +16,8 @@ import (
 	"shingocore/engine"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 // Characterization tests for handlers_nodegroup.go — pinned before the Stage 1
@@ -27,9 +29,9 @@ import (
 
 // nodeGroupFixture is a minimal NGRP → LANE → slots layout for tests.
 type nodeGroupFixture struct {
-	Grp   *store.Node
-	Lane  *store.Node
-	Slots []*store.Node
+	Grp   *nodes.Node
+	Lane  *nodes.Node
+	Slots []*nodes.Node
 }
 
 // setupNodeGroupFixture builds one NGRP with one LANE under it and slotCount
@@ -47,10 +49,10 @@ func setupNodeGroupFixture(t *testing.T, db *store.DB, prefix string, slotCount 
 		t.Fatalf("add lane: %v", err)
 	}
 
-	slots := make([]*store.Node, slotCount)
+	slots := make([]*nodes.Node, slotCount)
 	for i := 0; i < slotCount; i++ {
 		depth := i + 1
-		slot := &store.Node{
+		slot := &nodes.Node{
 			Name:     fmt.Sprintf("GRP-%s-L1-S%d", prefix, depth),
 			ParentID: &laneID,
 			Enabled:  true,
@@ -80,9 +82,9 @@ func setupNodeGroupFixture(t *testing.T, db *store.DB, prefix string, slotCount 
 // only physical direct-children-of-NGRP (the "shuffle slot" shape used in
 // testdb/compound.go) exercise the order-block guard.
 type reparentFixture struct {
-	SrcGrp      *store.Node
+	SrcGrp      *nodes.Node
 	DstGrpID    int64
-	DirectChild *store.Node
+	DirectChild *nodes.Node
 }
 
 // setupReparentFixture builds a src NGRP + dst NGRP + a non-synthetic node
@@ -97,7 +99,7 @@ func setupReparentFixture(t *testing.T, db *store.DB, prefix string) *reparentFi
 	if err != nil {
 		t.Fatalf("create dst group: %v", err)
 	}
-	child := &store.Node{
+	child := &nodes.Node{
 		Name:     "NODE-" + prefix + "-CHILD",
 		ParentID: &srcID,
 		Enabled:  true,
@@ -119,9 +121,9 @@ func setupReparentFixture(t *testing.T, db *store.DB, prefix string) *reparentFi
 // createActiveOrderRefSource inserts a pending order whose source_node matches
 // the given group name, so the reparent/delete guards' call to
 // ListActiveOrdersBySourceRef returns it.
-func createActiveOrderRefSource(t *testing.T, db *store.DB, uuid, station, sourceName string) *store.Order {
+func createActiveOrderRefSource(t *testing.T, db *store.DB, uuid, station, sourceName string) *orders.Order {
 	t.Helper()
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:     uuid,
 		StationID:    station,
 		OrderType:    "retrieve",
@@ -480,7 +482,7 @@ func TestApiReparentNode_ForceFailsBlockedOrdersEmitsEvents(t *testing.T) {
 			seen[e.OrderID] = e
 		}
 	}
-	for _, o := range []*store.Order{ord1, ord2} {
+	for _, o := range []*orders.Order{ord1, ord2} {
 		e, ok := seen[o.ID]
 		if !ok {
 			t.Errorf("no EventOrderFailed(group_restructured) for order %d", o.ID)
@@ -599,7 +601,7 @@ func TestApiDeleteNodeGroup_ForceFailsBlockedOrdersThenDeletes(t *testing.T) {
 			seen[e.OrderID] = e
 		}
 	}
-	for _, o := range []*store.Order{ord1, ord2} {
+	for _, o := range []*orders.Order{ord1, ord2} {
 		e, ok := seen[o.ID]
 		if !ok {
 			t.Errorf("no EventOrderFailed(group_deleted) for order %d", o.ID)

@@ -8,6 +8,9 @@ import (
 
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // newBinSvc returns a BinService wired with a fresh manifest service.
@@ -17,11 +20,11 @@ func newBinSvc(db *store.DB) *BinService {
 
 // ensureDefaultBinType returns (and lazily creates) the DEFAULT bin type used
 // by the createTestBin helper from bin_manifest_test.go.
-func ensureDefaultBinType(t *testing.T, db *store.DB) *store.BinType {
+func ensureDefaultBinType(t *testing.T, db *store.DB) *bins.BinType {
 	t.Helper()
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
-		bt = &store.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+		bt = &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
 		if err := db.CreateBinType(bt); err != nil {
 			t.Fatalf("create default bin type: %v", err)
 		}
@@ -44,7 +47,7 @@ func TestBinService_Create_AtPhysicalNode(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		BinTypeID: sd.BinType.ID,
 		Label:     "BS-CREATE-1",
 		NodeID:    &sd.StorageNode.ID,
@@ -74,7 +77,7 @@ func TestBinService_Create_NoNode(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		BinTypeID: sd.BinType.ID,
 		Label:     "BS-CREATE-NIL",
 		Status:    "available",
@@ -99,7 +102,7 @@ func TestBinService_Create_FailsWhenPhysicalNodeOccupied(t *testing.T) {
 	// Pre-load the storage node with a bin.
 	createTestBin(t, db, sd.StorageNode.ID, "BS-OCC-1", "", 0)
 
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		BinTypeID: sd.BinType.ID,
 		Label:     "BS-OCC-2",
 		NodeID:    &sd.StorageNode.ID,
@@ -120,7 +123,7 @@ func TestBinService_Create_FailsWhenNodeMissing(t *testing.T) {
 	svc := newBinSvc(db)
 
 	missing := int64(99999)
-	bin := &store.Bin{
+	bin := &bins.Bin{
 		BinTypeID: sd.BinType.ID,
 		Label:     "BS-MISS",
 		NodeID:    &missing,
@@ -135,13 +138,13 @@ func TestBinService_CreateBatch_AtSyntheticNode(t *testing.T) {
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)
 
-	syn := &store.Node{Name: "GRP-BATCH", Enabled: true, IsSynthetic: true}
+	syn := &nodes.Node{Name: "GRP-BATCH", Enabled: true, IsSynthetic: true}
 	if err := db.CreateNode(syn); err != nil {
 		t.Fatalf("create synthetic node: %v", err)
 	}
 
 	svc := newBinSvc(db)
-	template := store.Bin{
+	template := bins.Bin{
 		BinTypeID: bt.ID,
 		NodeID:    &syn.ID,
 		Status:    "available",
@@ -178,7 +181,7 @@ func TestBinService_CreateBatch_RejectsMultipleAtPhysicalNode(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
-	template := store.Bin{
+	template := bins.Bin{
 		BinTypeID: sd.BinType.ID,
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
@@ -200,7 +203,7 @@ func TestBinService_CreateBatch_SingleAtPhysicalNode(t *testing.T) {
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
-	template := store.Bin{
+	template := bins.Bin{
 		BinTypeID: sd.BinType.ID,
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
@@ -224,7 +227,7 @@ func TestBinService_CreateBatch_DefaultsCountToOne(t *testing.T) {
 	svc := newBinSvc(db)
 
 	// count <= 0 should be normalized to 1.
-	template := store.Bin{
+	template := bins.Bin{
 		BinTypeID: sd.BinType.ID,
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
@@ -364,7 +367,7 @@ func TestBinService_LoadPayload_AppliesTemplate(t *testing.T) {
 
 	// Add a manifest item to the standard payload so SetBinManifestFromTemplate
 	// has something concrete to write.
-	item := &store.PayloadManifestItem{
+	item := &payloads.ManifestItem{
 		PayloadID:  sd.Payload.ID,
 		PartNumber: "PART-X",
 		Quantity:   7,
@@ -394,8 +397,8 @@ func TestBinService_Move_HappyPath(t *testing.T) {
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)
 
-	from := &store.Node{Name: "MOVE-FROM", Enabled: true}
-	to := &store.Node{Name: "MOVE-TO", Enabled: true}
+	from := &nodes.Node{Name: "MOVE-FROM", Enabled: true}
+	to := &nodes.Node{Name: "MOVE-TO", Enabled: true}
 	if err := db.CreateNode(from); err != nil {
 		t.Fatalf("create from: %v", err)
 	}
@@ -403,7 +406,7 @@ func TestBinService_Move_HappyPath(t *testing.T) {
 		t.Fatalf("create to: %v", err)
 	}
 
-	bin := &store.Bin{BinTypeID: bt.ID, Label: "BS-MV-1", NodeID: &from.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-1", NodeID: &from.ID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
@@ -450,16 +453,16 @@ func TestBinService_Move_RejectsOccupiedPhysicalDestination(t *testing.T) {
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)
 
-	from := &store.Node{Name: "MV-OCC-FROM", Enabled: true}
-	to := &store.Node{Name: "MV-OCC-TO", Enabled: true}
+	from := &nodes.Node{Name: "MV-OCC-FROM", Enabled: true}
+	to := &nodes.Node{Name: "MV-OCC-TO", Enabled: true}
 	db.CreateNode(from)
 	db.CreateNode(to)
 
-	bin := &store.Bin{BinTypeID: bt.ID, Label: "BS-MV-OCC-1", NodeID: &from.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-OCC-1", NodeID: &from.ID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create source bin: %v", err)
 	}
-	occupant := &store.Bin{BinTypeID: bt.ID, Label: "BS-MV-OCC-OCC", NodeID: &to.ID, Status: "available"}
+	occupant := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-OCC-OCC", NodeID: &to.ID, Status: "available"}
 	if err := db.CreateBin(occupant); err != nil {
 		t.Fatalf("create occupant bin: %v", err)
 	}
@@ -489,18 +492,18 @@ func TestBinService_Move_AllowsSyntheticDestinationWithBins(t *testing.T) {
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)
 
-	from := &store.Node{Name: "MV-SYN-FROM", Enabled: true}
-	syn := &store.Node{Name: "MV-SYN-DEST", Enabled: true, IsSynthetic: true}
+	from := &nodes.Node{Name: "MV-SYN-FROM", Enabled: true}
+	syn := &nodes.Node{Name: "MV-SYN-DEST", Enabled: true, IsSynthetic: true}
 	db.CreateNode(from)
 	db.CreateNode(syn)
 
 	// Pre-load the synthetic destination with a bin.
-	pre := &store.Bin{BinTypeID: bt.ID, Label: "BS-MV-SYN-PRE", NodeID: &syn.ID, Status: "available"}
+	pre := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-SYN-PRE", NodeID: &syn.ID, Status: "available"}
 	if err := db.CreateBin(pre); err != nil {
 		t.Fatalf("pre-load bin: %v", err)
 	}
 
-	bin := &store.Bin{BinTypeID: bt.ID, Label: "BS-MV-SYN-1", NodeID: &from.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-SYN-1", NodeID: &from.ID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
 		t.Fatalf("create bin: %v", err)
 	}
@@ -641,7 +644,7 @@ func TestBinService_Update_AppliesPartialChanges(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-UPD-1", "", 0)
 
 	// Create a second bin type so we can swap.
-	bt2 := &store.BinType{Code: "DEFAULT2", Description: "Second type"}
+	bt2 := &bins.BinType{Code: "DEFAULT2", Description: "Second type"}
 	if err := db.CreateBinType(bt2); err != nil {
 		t.Fatalf("create second bin type: %v", err)
 	}
@@ -777,7 +780,7 @@ func TestBinService_CreateBinType_Persists(t *testing.T) {
 	db := testDB(t)
 	svc := newBinSvc(db)
 
-	bt := &store.BinType{Code: "BS-BT-CR", Description: "create test"}
+	bt := &bins.BinType{Code: "BS-BT-CR", Description: "create test"}
 	if err := svc.CreateBinType(bt); err != nil {
 		t.Fatalf("CreateBinType: %v", err)
 	}
@@ -797,7 +800,7 @@ func TestBinService_GetBinType_RoundTrip(t *testing.T) {
 	db := testDB(t)
 	svc := newBinSvc(db)
 
-	bt := &store.BinType{Code: "BS-BT-GET", Description: "get test"}
+	bt := &bins.BinType{Code: "BS-BT-GET", Description: "get test"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("seed bin type: %v", err)
 	}
@@ -814,7 +817,7 @@ func TestBinService_UpdateBinType_Persists(t *testing.T) {
 	db := testDB(t)
 	svc := newBinSvc(db)
 
-	bt := &store.BinType{Code: "BS-BT-UP", Description: "before"}
+	bt := &bins.BinType{Code: "BS-BT-UP", Description: "before"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("seed bin type: %v", err)
 	}
@@ -832,7 +835,7 @@ func TestBinService_DeleteBinType_Removes(t *testing.T) {
 	db := testDB(t)
 	svc := newBinSvc(db)
 
-	bt := &store.BinType{Code: "BS-BT-DEL", Description: "delete test"}
+	bt := &bins.BinType{Code: "BS-BT-DEL", Description: "delete test"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("seed bin type: %v", err)
 	}
@@ -848,7 +851,7 @@ func TestBinService_ListBinTypes_IncludesCreated(t *testing.T) {
 	db := testDB(t)
 	svc := newBinSvc(db)
 
-	bt := &store.BinType{Code: "BS-BT-LIST", Description: "list test"}
+	bt := &bins.BinType{Code: "BS-BT-LIST", Description: "list test"}
 	if err := db.CreateBinType(bt); err != nil {
 		t.Fatalf("seed bin type: %v", err)
 	}
@@ -877,7 +880,7 @@ func TestBinService_CountBinsByAllNodes_GroupsByNode(t *testing.T) {
 
 	// Two bins at the storage node, one at the line node.
 	mk := func(label string, nodeID int64) {
-		b := &store.Bin{
+		b := &bins.Bin{
 			BinTypeID: sd.BinType.ID,
 			Label:     label,
 			NodeID:    &nodeID,
@@ -891,7 +894,7 @@ func TestBinService_CountBinsByAllNodes_GroupsByNode(t *testing.T) {
 	// "two bins at storage" case has to use a synthetic parent. Seed a
 	// synthetic NGRP node and put two bins there, plus one at the line
 	// node.
-	grp := &store.Node{Name: "CBBAN-GRP", IsSynthetic: true, Enabled: true}
+	grp := &nodes.Node{Name: "CBBAN-GRP", IsSynthetic: true, Enabled: true}
 	if err := db.CreateNode(grp); err != nil {
 		t.Fatalf("create synthetic grp: %v", err)
 	}

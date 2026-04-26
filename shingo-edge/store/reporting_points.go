@@ -6,23 +6,20 @@ package store
 
 import "shingoedge/store/counters"
 
-// ReportingPoint maps a PLC tag to a style for counter tracking.
-type ReportingPoint = counters.ReportingPoint
-
 // ListReportingPoints returns every reporting_point row.
-func (db *DB) ListReportingPoints() ([]ReportingPoint, error) {
+func (db *DB) ListReportingPoints() ([]counters.ReportingPoint, error) {
 	return counters.ListReportingPoints(db.DB)
 }
 
 // ListEnabledReportingPoints returns every enabled reporting_point,
 // joined to styles so callers get the process_id without a per-poll
 // lookup.
-func (db *DB) ListEnabledReportingPoints() ([]ReportingPoint, error) {
+func (db *DB) ListEnabledReportingPoints() ([]counters.ReportingPoint, error) {
 	return counters.ListEnabledReportingPoints(db.DB)
 }
 
 // GetReportingPoint returns one reporting_point by id.
-func (db *DB) GetReportingPoint(id int64) (*ReportingPoint, error) {
+func (db *DB) GetReportingPoint(id int64) (*counters.ReportingPoint, error) {
 	return counters.GetReportingPoint(db.DB, id)
 }
 
@@ -54,11 +51,11 @@ func (db *DB) SetReportingPointManaged(id int64, managed bool) error {
 
 // GetReportingPointByTag looks up a reporting_point by its (plc_name,
 // tag_name) pair.
-func (db *DB) GetReportingPointByTag(plcName, tagName string) (*ReportingPoint, error) {
+func (db *DB) GetReportingPointByTag(plcName, tagName string) (*counters.ReportingPoint, error) {
 	return counters.GetReportingPointByTag(db.DB, plcName, tagName)
 }
 
 // GetReportingPointByStyleID looks up a reporting_point by style_id.
-func (db *DB) GetReportingPointByStyleID(styleID int64) (*ReportingPoint, error) {
+func (db *DB) GetReportingPointByStyleID(styleID int64) (*counters.ReportingPoint, error) {
 	return counters.GetReportingPointByStyleID(db.DB, styleID)
 }

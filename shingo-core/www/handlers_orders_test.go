@@ -15,6 +15,7 @@ import (
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // Characterization tests for handlers_orders.go — pinned before the Stage 1
@@ -58,6 +59,7 @@ func testHandlersWithSim(t *testing.T, sim *simulator.SimulatorBackend) (*Handle
 
 	h := &Handlers{
 		engine:   eng,
+		orchestration: eng,
 		sessions: newSessionStore("test-secret"),
 		tmpls:    make(map[string]*template.Template),
 		eventHub: hub,
@@ -68,9 +70,9 @@ func testHandlersWithSim(t *testing.T, sim *simulator.SimulatorBackend) (*Handle
 
 // makeOrder inserts a pending "move" order with the given vendor_order_id and
 // priority. Returns the persisted order.
-func makeOrder(t *testing.T, db *store.DB, uuid, vendorID string, priority int) *store.Order {
+func makeOrder(t *testing.T, db *store.DB, uuid, vendorID string, priority int) *orders.Order {
 	t.Helper()
-	o := &store.Order{
+	o := &orders.Order{
 		EdgeUUID:   uuid,
 		StationID:  "line-prio",
 		OrderType:  "move",

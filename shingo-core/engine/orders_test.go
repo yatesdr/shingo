@@ -9,7 +9,7 @@ import (
 
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
-	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 // orders_test.go — coverage for orders.go.
@@ -243,7 +243,7 @@ func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
 	setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:  "term-already-done",
 		StationID: "s1",
 		OrderType: "retrieve",
@@ -286,7 +286,7 @@ func TestFailOrderAndEmit_PopulatesEventFromDB(t *testing.T) {
 	setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:  "fail-helper-1",
 		StationID: "edge-stationX",
 		OrderType: "retrieve",

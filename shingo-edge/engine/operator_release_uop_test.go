@@ -6,6 +6,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // TestReleaseOrderWithLineside_WireRemainingUOP_PerDisposition is the
@@ -159,7 +160,7 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T)
 	if claim == nil {
 		t.Fatal("claim lookup returned nil — seed contract changed")
 	}
-	if _, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        claim.StyleID,
 		CoreNodeName:   claim.CoreNodeName,
 		Role:           claim.Role,

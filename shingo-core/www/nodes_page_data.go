@@ -6,7 +6,10 @@ import (
 	"strings"
 
 	"shingocore/service"
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/registry"
+	"shingocore/store/scene"
 )
 
 // nodesPageDataAdapter composes NodeService + BinService so getNodesPageData
@@ -17,12 +20,12 @@ type nodesPageDataAdapter struct {
 	bs *service.BinService
 }
 
-func (a *nodesPageDataAdapter) ListNodes() ([]*store.Node, error)                      { return a.ns.ListNodes() }
+func (a *nodesPageDataAdapter) ListNodes() ([]*nodes.Node, error)                      { return a.ns.ListNodes() }
 func (a *nodesPageDataAdapter) CountBinsByAllNodes() (map[int64]int, error)            { return a.bs.CountBinsByAllNodes() }
-func (a *nodesPageDataAdapter) NodeTileStates() (map[int64]store.NodeTileState, error) { return a.ns.NodeTileStates() }
-func (a *nodesPageDataAdapter) ListScenePoints() ([]*store.ScenePoint, error)          { return a.ns.ListScenePoints() }
-func (a *nodesPageDataAdapter) ListBinTypes() ([]*store.BinType, error)                { return a.bs.ListBinTypes() }
-func (a *nodesPageDataAdapter) ListEdges() ([]store.EdgeRegistration, error)           { return a.ns.ListEdges() }
+func (a *nodesPageDataAdapter) NodeTileStates() (map[int64]bins.NodeTileState, error) { return a.ns.NodeTileStates() }
+func (a *nodesPageDataAdapter) ListScenePoints() ([]*scene.Point, error)          { return a.ns.ListScenePoints() }
+func (a *nodesPageDataAdapter) ListBinTypes() ([]*bins.BinType, error)                { return a.bs.ListBinTypes() }
+func (a *nodesPageDataAdapter) ListEdges() ([]registry.Edge, error)           { return a.ns.ListEdges() }
 func (a *nodesPageDataAdapter) GetSlotDepth(nodeID int64) (int, error)                 { return a.ns.GetSlotDepth(nodeID) }
 
 // nodesPageDataStore is the narrow read surface getNodesPageData needs.
@@ -30,12 +33,12 @@ func (a *nodesPageDataAdapter) GetSlotDepth(nodeID int64) (int, error)          
 // (PR 3a.5.1 absorbed the 5 underlying queries into NodeService /
 // BinService and dropped the corresponding passthroughs).
 type nodesPageDataStore interface {
-	ListNodes() ([]*store.Node, error)
+	ListNodes() ([]*nodes.Node, error)
 	CountBinsByAllNodes() (map[int64]int, error)
-	NodeTileStates() (map[int64]store.NodeTileState, error)
-	ListScenePoints() ([]*store.ScenePoint, error)
-	ListBinTypes() ([]*store.BinType, error)
-	ListEdges() ([]store.EdgeRegistration, error)
+	NodeTileStates() (map[int64]bins.NodeTileState, error)
+	ListScenePoints() ([]*scene.Point, error)
+	ListBinTypes() ([]*bins.BinType, error)
+	ListEdges() ([]registry.Edge, error)
 	GetSlotDepth(nodeID int64) (int, error)
 }
 
@@ -48,15 +51,15 @@ type nodeSceneInfo struct {
 
 // nodesPageData aggregates all data needed to render the nodes page.
 type nodesPageData struct {
-	Nodes       []*store.Node
+	Nodes       []*nodes.Node
 	Counts      map[int64]int
-	TileStates  map[int64]store.NodeTileState
+	TileStates  map[int64]bins.NodeTileState
 	Zones       []string
 	NodeLabels  map[string]string
 	NodeInfo    map[string]*nodeSceneInfo
-	MapGroups   map[string][]*store.ScenePoint
-	BinTypes    []*store.BinType
-	Edges       []store.EdgeRegistration
+	MapGroups   map[string][]*scene.Point
+	BinTypes    []*bins.BinType
+	Edges       []registry.Edge
 	ChildCounts map[int64]int
 	Depths      map[int64]int
 }
@@ -81,7 +84,7 @@ func getNodesPageData(db nodesPageDataStore) (*nodesPageData, error) {
 		log.Printf("nodes page: tile states: %v", err)
 	}
 	if tileStates == nil {
-		tileStates = make(map[int64]store.NodeTileState, len(nodes))
+		tileStates = make(map[int64]bins.NodeTileState, len(nodes))
 	}
 	zoneSet := map[string]bool{}
 	for _, n := range nodes {
@@ -89,7 +92,7 @@ func getNodesPageData(db nodesPageDataStore) (*nodesPageData, error) {
 			zoneSet[n.Zone] = true
 		}
 		if _, ok := tileStates[n.ID]; !ok {
-			tileStates[n.ID] = store.NodeTileState{}
+			tileStates[n.ID] = bins.NodeTileState{}
 		}
 	}
 	zones := make([]string, 0, len(zoneSet))
@@ -103,7 +106,7 @@ func getNodesPageData(db nodesPageDataStore) (*nodesPageData, error) {
 	}
 	nodeLabels := make(map[string]string)
 	nodeInfo := make(map[string]*nodeSceneInfo)
-	mapGroups := make(map[string][]*store.ScenePoint)
+	mapGroups := make(map[string][]*scene.Point)
 	for _, sp := range scenePoints {
 		if sp.ClassName == "GeneralLocation" {
 			nodeLabels[sp.InstanceName] = sp.Label

@@ -7,7 +7,9 @@ import (
 	"strconv"
 
 	"shingo/protocol/auth"
-	"shingoedge/store"
+	"shingoedge/store/processes"
+	"shingoedge/store/shifts"
+	"shingoedge/store/stations"
 )
 
 func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -22,11 +24,11 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
-	shifts, _ := h.engine.ListShifts()
-	if shifts == nil {
-		shifts = []store.Shift{}
+	shiftList, _ := h.engine.ShiftService().List()
+	if shiftList == nil {
+		shiftList = []shifts.Shift{}
 	}
-	shiftsJSON, _ := json.Marshal(shifts)
+	shiftsJSON, _ := json.Marshal(shiftList)
 
 	data := map[string]interface{}{
 		"Page":              "config",
@@ -44,37 +46,37 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
-	processes, _ := h.engine.ListProcesses()
-	styles, _ := h.engine.ListStyles()
-	stations, _ := h.engine.ListOperatorStations()
+	processList, _ := h.engine.ProcessService().List()
+	styles, _ := h.engine.StyleService().List()
+	stationList, _ := h.engine.StationService().List()
 	coreNodes := h.engine.CoreNodes()
 	plcNames := h.engine.PLCManager().PLCNames()
 
-	var activeProcess *store.Process
+	var activeProcess *processes.Process
 	if processParam := r.URL.Query().Get("process"); processParam != "" {
 		if processID, err := strconv.ParseInt(processParam, 10, 64); err == nil {
-			for i := range processes {
-				if processes[i].ID == processID {
-					activeProcess = &processes[i]
+			for i := range processList {
+				if processList[i].ID == processID {
+					activeProcess = &processList[i]
 					break
 				}
 			}
 		}
 	}
-	if activeProcess == nil && len(processes) > 0 {
-		activeProcess = &processes[0]
+	if activeProcess == nil && len(processList) > 0 {
+		activeProcess = &processList[0]
 	}
 
 	var activeProcessID int64
-	var processStyles []store.Style
-	var processStations []store.OperatorStation
-	var processNodes []store.ProcessNode
+	var processStyles []processes.Style
+	var processStations []stations.Station
+	var processNodes []processes.Node
 	stationNodeMap := map[int64][]string{}
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID
-		processStyles, _ = h.engine.ListStylesByProcess(activeProcess.ID)
-		processStations, _ = h.engine.ListOperatorStationsByProcess(activeProcess.ID)
-		processNodes, _ = h.engine.ListProcessNodesByProcess(activeProcess.ID)
+		processStyles, _ = h.engine.StyleService().ListByProcess(activeProcess.ID)
+		processStations, _ = h.engine.StationService().ListByProcess(activeProcess.ID)
+		processNodes, _ = h.engine.ProcessService().ListNodesByProcess(activeProcess.ID)
 	}
 
 	// Derive station→nodes map and claimed-by index from already-fetched processNodes
@@ -98,9 +100,9 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]interface{}{
 		"Page":               "processes",
-		"Processes":          processes,
+		"Processes":          processList,
 		"Styles":             styles,
-		"Stations":           stations,
+		"Stations":           stationList,
 		"CoreNodes":          coreNodes,
 		"PLCNames":           plcNames,
 		"ActiveProcess":      activeProcess,
@@ -130,14 +132,14 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 
-	exists, _ := h.engine.AdminUserExists()
+	exists, _ := h.engine.AdminService().Exists()
 	if !exists {
 		hash, err := auth.HashPassword(password)
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		if _, err := h.engine.CreateAdminUser(username, hash); err != nil {
+		if _, err := h.engine.AdminService().Create(username, hash); err != nil {
 			http.Error(w, "failed to create admin user", http.StatusInternalServerError)
 			return
 		}
@@ -146,7 +148,7 @@ func (h *Handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.engine.GetAdminUser(username)
+	user, err := h.engine.AdminService().Get(username)
 	if err != nil || !auth.CheckPassword(user.PasswordHash, password) {
 		h.renderTemplate(w, r, "login.html", map[string]interface{}{
 			"Page":  "login",

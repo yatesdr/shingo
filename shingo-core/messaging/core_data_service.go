@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/demands"
+	"shingocore/store/nodes"
 )
 
 type coreDataResponder interface {
@@ -17,12 +20,22 @@ type coreDataResponder interface {
 }
 
 type CoreDataService struct {
-	db   *store.DB
-	resp coreDataResponder
+	db        *store.DB
+	tagVerify *service.TagVerifyService
+	resp      coreDataResponder
 }
 
+// newCoreDataService constructs a CoreDataService. The TagVerifyService is
+// built internally from the same *store.DB so the constructor signature
+// stays stable (NewCoreHandler and existing tests don't have to change).
+// Phase 6.4a routed the tag-verify path through the service so the
+// *store.DB.VerifyTag method could be retired.
 func newCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
-	return &CoreDataService{db: db, resp: resp}
+	return &CoreDataService{
+		db:        db,
+		tagVerify: service.NewTagVerifyService(db),
+		resp:      resp,
+	}
 }
 
 func (s *CoreDataService) Handle(env *protocol.Envelope, p *protocol.Data) {
@@ -140,10 +153,10 @@ func (s *CoreDataService) handleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 
 func (s *CoreDataService) handleNodeListRequest(env *protocol.Envelope) {
 	stationID := env.Src.Station
-	nodes, err := s.db.ListNodesForStation(stationID)
-	stationScoped := err == nil && len(nodes) > 0
+	nodeList, err := s.db.ListNodesForStation(stationID)
+	stationScoped := err == nil && len(nodeList) > 0
 	if !stationScoped {
-		nodes, err = s.db.ListNodes()
+		nodeList, err = s.db.ListNodes()
 	}
 	if err != nil {
 		log.Printf("core_handler: list nodes for %s: %v", stationID, err)
@@ -168,7 +181,7 @@ func (s *CoreDataService) handleNodeListRequest(env *protocol.Envelope) {
 
 	var infos []protocol.NodeInfo
 	if stationScoped {
-		for _, n := range nodes {
+		for _, n := range nodeList {
 			name := n.Name
 			if n.ParentID != nil && !n.IsSynthetic && n.ParentName != "" {
 				name = n.ParentName + "." + n.Name
@@ -180,11 +193,11 @@ func (s *CoreDataService) handleNodeListRequest(env *protocol.Envelope) {
 			})
 		}
 	} else {
-		nodeMap := make(map[int64]*store.Node, len(nodes))
-		for _, n := range nodes {
+		nodeMap := make(map[int64]*nodes.Node, len(nodeList))
+		for _, n := range nodeList {
 			nodeMap[n.ID] = n
 		}
-		for _, n := range nodes {
+		for _, n := range nodeList {
 			if n.ParentID == nil {
 				infos = append(infos, protocol.NodeInfo{Name: n.Name, NodeType: n.NodeTypeCode})
 			} else if !n.IsSynthetic {
@@ -226,7 +239,7 @@ func (s *CoreDataService) handleProductionReport(env *protocol.Envelope, rpt *pr
 func (s *CoreDataService) handleTagVerifyRequest(env *protocol.Envelope, req *protocol.TagVerifyRequest) {
 	log.Printf("core_handler: tag verify from %s: uuid=%s tag=%s", env.Src.Station, req.OrderUUID, req.TagID)
 
-	result := s.db.VerifyTag(req.OrderUUID, req.TagID, req.Location)
+	result := s.tagVerify.VerifyTag(req.OrderUUID, req.TagID, req.Location)
 	if !result.Match {
 		log.Printf("core_handler: tag mismatch for order %s: expected=%s (proceeding best-effort)", req.OrderUUID, result.Expected)
 	}
@@ -321,7 +334,7 @@ func (s *CoreDataService) handleClaimSync(env *protocol.Envelope, sync *protocol
 	// in wiring_kanban.go), so the registry row is inert and usually
 	// means an Edge-UI validation gap. Warn-don't-reject keeps this a
 	// belt-and-suspenders check alongside the Edge-side 400.
-	var entries []store.DemandRegistryEntry
+	var entries []demands.RegistryEntry
 	for _, c := range sync.Claims {
 		if c.Role == "consume" {
 			if node, err := s.db.GetNodeByDotName(c.CoreNodeName); err == nil && node != nil && node.ParentID != nil {
@@ -331,7 +344,7 @@ func (s *CoreDataService) handleClaimSync(env *protocol.Envelope, sync *protocol
 			}
 		}
 		for _, pc := range c.AllowedPayloadCodes {
-			entries = append(entries, store.DemandRegistryEntry{
+			entries = append(entries, demands.RegistryEntry{
 				StationID:    stationID,
 				CoreNodeName: c.CoreNodeName,
 				Role:         c.Role,

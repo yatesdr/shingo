@@ -3,7 +3,8 @@ package binresolver
 import (
 	"fmt"
 
-	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
 )
 
 // Order-type string values used by Resolve. Kept as literals (not imports
@@ -18,13 +19,13 @@ const (
 
 // ResolveResult carries the resolved node and optionally a specific bin.
 type ResolveResult struct {
-	Node *store.Node
-	Bin  *store.Bin // set when resolver identified a specific bin
+	Node *nodes.Node
+	Bin  *bins.Bin // set when resolver identified a specific bin
 }
 
 // NodeResolver resolves a synthetic node to a physical child node.
 type NodeResolver interface {
-	Resolve(syntheticNode *store.Node, orderType string, payloadCode string, binTypeID *int64) (*ResolveResult, error)
+	Resolve(syntheticNode *nodes.Node, orderType string, payloadCode string, binTypeID *int64) (*ResolveResult, error)
 }
 
 // DefaultResolver resolves synthetic nodes using the database.
@@ -49,7 +50,7 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 }
 
 // Resolve selects the best physical child of a synthetic node for the given order type.
-func (r *DefaultResolver) Resolve(syntheticNode *store.Node, orderType string, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType string, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(syntheticNode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", syntheticNode.Name, err)
@@ -93,7 +94,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *store.Node, orderType string, p
 }
 
 // resolveRetrieve finds the child node with the oldest unclaimed bin matching the payload code.
-func (r *DefaultResolver) resolveRetrieve(children []*store.Node, payloadCode string) (*store.Node, error) {
+func (r *DefaultResolver) resolveRetrieve(children []*nodes.Node, payloadCode string) (*nodes.Node, error) {
 	for _, child := range children {
 		if !child.Enabled {
 			continue
@@ -114,7 +115,7 @@ func (r *DefaultResolver) resolveRetrieve(children []*store.Node, payloadCode st
 }
 
 // resolveStore finds the best child node for storage (consolidation-first, then emptiest).
-func (r *DefaultResolver) resolveStore(children []*store.Node, payloadCode string) (*store.Node, error) {
+func (r *DefaultResolver) resolveStore(children []*nodes.Node, payloadCode string) (*nodes.Node, error) {
 	var candidates []storageCandidate
 	for _, child := range children {
 		if !child.Enabled || child.IsSynthetic {

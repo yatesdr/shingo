@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 const StatusReshuffling = "reshuffling"
@@ -17,7 +18,7 @@ const reshuffleFailDetail = "reshuffle failed: child order failed"
 
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
 // All children and bin claims are created in a single transaction.
-func (d *Dispatcher) CreateCompoundOrder(parentOrder *store.Order, plan *ReshufflePlan) error {
+func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan) error {
 	if err := d.db.UpdateOrderStatus(parentOrder.ID, StatusReshuffling,
 		fmt.Sprintf("reshuffling: %d steps to unbury bin %d", len(plan.Steps), plan.TargetBin.ID)); err != nil {
 		log.Printf("dispatch: update order %d status to reshuffling: %v", parentOrder.ID, err)
@@ -25,7 +26,7 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *store.Order, plan *Reshuff
 
 	var children []store.CompoundChild
 	for _, step := range plan.Steps {
-		child := &store.Order{
+		child := &orders.Order{
 			EdgeUUID:      fmt.Sprintf("%s-step-%d", parentOrder.EdgeUUID, step.Sequence),
 			StationID:     parentOrder.StationID,
 			OrderType:     OrderTypeMove,
@@ -148,7 +149,7 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 }
 
 // HandleChildOrderComplete is called when a child order completes.
-func (d *Dispatcher) HandleChildOrderComplete(childOrder *store.Order) {
+func (d *Dispatcher) HandleChildOrderComplete(childOrder *orders.Order) {
 	if childOrder.ParentOrderID == nil {
 		return
 	}
@@ -199,7 +200,7 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 // Unlike HandleChildOrderFailure (which only cancels pending/sourcing children),
 // this method also cancels in-flight children (dispatched, in_transit, staged)
 // and their fleet orders. Called when an operator cancels a compound parent directly.
-func (d *Dispatcher) cancelCompoundChildren(parent *store.Order, stationID, reason string) {
+func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, reason string) {
 	children, err := d.db.ListChildOrders(parent.ID)
 	if err != nil {
 		log.Printf("dispatch: cancel compound children for order %d: %v", parent.ID, err)

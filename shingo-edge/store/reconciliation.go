@@ -6,21 +6,14 @@ package store
 
 import "shingoedge/store/reconciliation"
 
-// ReconciliationAnomaly is one observed reconciliation issue.
-type ReconciliationAnomaly = reconciliation.Anomaly
-
-// ReconciliationSummary aggregates anomaly + outbox counts and a
-// derived overall status.
-type ReconciliationSummary = reconciliation.Summary
-
 // ListReconciliationAnomalies returns anomalies for stuck active
 // orders and for delivered-but-unconfirmed orders.
-func (db *DB) ListReconciliationAnomalies() ([]*ReconciliationAnomaly, error) {
+func (db *DB) ListReconciliationAnomalies() ([]*reconciliation.Anomaly, error) {
 	return reconciliation.ListAnomalies(db.DB)
 }
 
 // GetReconciliationSummary returns a Summary with anomaly + outbox
 // counts and a derived overall status.
-func (db *DB) GetReconciliationSummary() (*ReconciliationSummary, error) {
+func (db *DB) GetReconciliationSummary() (*reconciliation.Summary, error) {
 	return reconciliation.GetSummary(db.DB)
 }

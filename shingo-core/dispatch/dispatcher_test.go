@@ -9,6 +9,10 @@ import (
 	"shingocore/fleet"
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // --- Mock emitter ---
@@ -70,7 +74,7 @@ func testDB(t *testing.T) *store.DB {
 	return testdb.Open(t)
 }
 
-func setupTestData(t *testing.T, db *store.DB) (storageNode *store.Node, lineNode *store.Node, bp *store.Payload) {
+func setupTestData(t *testing.T, db *store.DB) (storageNode *nodes.Node, lineNode *nodes.Node, bp *payloads.Payload) {
 	t.Helper()
 	sd := testdb.SetupStandardData(t, db)
 	return sd.StorageNode, sd.LineNode, sd.Payload
@@ -82,7 +86,7 @@ func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "dup-receipt",
 		StationID:    "edge.line1",
 		OrderType:    OrderTypeRetrieve,
@@ -255,7 +259,7 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 	storageNode, lineNode, _ := setupTestData(t, db)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
-	d.RegisterPlanner("custom_transfer", func(order *store.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
+	d.RegisterPlanner("custom_transfer", func(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
 		if err := db.UpdateOrderSourceNode(order.ID, storageNode.Name); err != nil {
 			t.Fatalf("update source node: %v", err)
 		}
@@ -308,7 +312,7 @@ func TestHandleOrderCancel(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &store.Order{EdgeUUID: "uuid-cancel", StationID: "line-1", Status: StatusPending}
+	order := &orders.Order{EdgeUUID: "uuid-cancel", StationID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -335,11 +339,11 @@ func TestHandleOrderCancel_UnclaimsPayloads(t *testing.T) {
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 
-	order := &store.Order{EdgeUUID: "uuid-unclaim", StationID: "line-1", Status: StatusDispatched}
+	order := &orders.Order{EdgeUUID: "uuid-unclaim", StationID: "line-1", Status: StatusDispatched}
 	db.CreateOrder(order)
 
 	// Create a bin at the storage node
-	bin := &store.Bin{BinTypeID: 1, Label: "BIN-UC-1", NodeID: &storageNode.ID, Status: "available"}
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-UC-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin)
 
 	db.SetBinManifest(bin.ID, `{"items":[]}`, bp.Code, 100)
@@ -362,7 +366,7 @@ func TestHandleOrderReceipt(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &store.Order{EdgeUUID: "uuid-receipt", StationID: "line-1", Status: StatusDelivered}
+	order := &orders.Order{EdgeUUID: "uuid-receipt", StationID: "line-1", Status: StatusDelivered}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -385,7 +389,7 @@ func TestHandleOrderCancel_RejectsWrongStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &store.Order{EdgeUUID: "uuid-owned", StationID: "line-1", Status: StatusPending}
+	order := &orders.Order{EdgeUUID: "uuid-owned", StationID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -412,7 +416,7 @@ func TestHandleOrderCancel_AllowsCoreRole(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &store.Order{EdgeUUID: "uuid-core-cancel", StationID: "line-1", Status: StatusPending}
+	order := &orders.Order{EdgeUUID: "uuid-core-cancel", StationID: "line-1", Status: StatusPending}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -438,7 +442,7 @@ func TestHandleOrderCancel_DuplicateCancelledOrderIgnored(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &store.Order{EdgeUUID: "uuid-cancel-dupe", StationID: "edge-1", Status: StatusCancelled}
+	order := &orders.Order{EdgeUUID: "uuid-cancel-dupe", StationID: "edge-1", Status: StatusCancelled}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -466,7 +470,7 @@ func TestHandleOrderReceipt_RejectsWrongStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 
-	order := &store.Order{EdgeUUID: "uuid-receipt-own", StationID: "line-1", Status: StatusDelivered}
+	order := &orders.Order{EdgeUUID: "uuid-receipt-own", StationID: "line-1", Status: StatusDelivered}
 	db.CreateOrder(order)
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -492,7 +496,7 @@ func TestHandleOrderRedirect_RejectsWrongStation(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
-	order := &store.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, SourceNode: lineNode.Name}
+	order := &orders.Order{EdgeUUID: "uuid-redir-own", StationID: "line-1", Status: StatusDispatched, SourceNode: lineNode.Name}
 	db.CreateOrder(order)
 
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
@@ -515,13 +519,13 @@ func TestFIFOPayloadSourceSelection(t *testing.T) {
 	storageNode, _, bp := setupTestData(t, db)
 
 	// Create another storage node
-	s2 := &store.Node{Name: "STORAGE-B1", Enabled: true}
+	s2 := &nodes.Node{Name: "STORAGE-B1", Enabled: true}
 	db.CreateNode(s2)
 
 	// Create bins at each storage node
-	bin1 := &store.Bin{BinTypeID: 1, Label: "BIN-FIFO-1", NodeID: &storageNode.ID, Status: "available"}
+	bin1 := &bins.Bin{BinTypeID: 1, Label: "BIN-FIFO-1", NodeID: &storageNode.ID, Status: "available"}
 	db.CreateBin(bin1)
-	bin2 := &store.Bin{BinTypeID: 1, Label: "BIN-FIFO-2", NodeID: &s2.ID, Status: "available"}
+	bin2 := &bins.Bin{BinTypeID: 1, Label: "BIN-FIFO-2", NodeID: &s2.ID, Status: "available"}
 	db.CreateBin(bin2)
 
 	// Older available bin at storageNode
@@ -589,7 +593,7 @@ func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 
 	// Create order in "dispatched" status (NOT delivered).
 	// ConfirmReceipt requires status == delivered, so this will fail.
-	order := &store.Order{
+	order := &orders.Order{
 		EdgeUUID:     "receipt-err-1",
 		StationID:    "edge.line1",
 		OrderType:    OrderTypeRetrieve,

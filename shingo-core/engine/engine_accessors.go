@@ -41,6 +41,7 @@ func (e *Engine) CMSTransactionService() *service.CMSTransactionService {
 func (e *Engine) InventoryService() *service.InventoryService { return e.inventoryService }
 func (e *Engine) AdminService() *service.AdminService         { return e.adminService }
 func (e *Engine) HealthService() *service.HealthService       { return e.healthService }
+func (e *Engine) TagVerifyService() *service.TagVerifyService { return e.tagVerifyService }
 func (e *Engine) EventBus() *EventBus                         { return e.Events }
 
 // SetCountGroupRunner registers a configured Runner built by the

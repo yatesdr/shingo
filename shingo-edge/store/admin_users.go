@@ -6,11 +6,8 @@ package store
 
 import "shingoedge/store/admin"
 
-// AdminUser is a user who can access the setup page.
-type AdminUser = admin.User
-
 // GetAdminUser returns one admin user by username.
-func (db *DB) GetAdminUser(username string) (*AdminUser, error) {
+func (db *DB) GetAdminUser(username string) (*admin.User, error) {
 	return admin.Get(db.DB, username)
 }
 

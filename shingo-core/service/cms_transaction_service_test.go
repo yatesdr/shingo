@@ -6,13 +6,15 @@ import (
 	"testing"
 
 	"shingocore/store"
+	"shingocore/store/cms"
+	"shingocore/store/nodes"
 )
 
 // seedCMSTxn inserts a single cms_transactions row against nodeID and
 // returns it.
-func seedCMSTxn(t *testing.T, db *store.DB, nodeID int64, catID string, delta int64) *store.CMSTransaction {
+func seedCMSTxn(t *testing.T, db *store.DB, nodeID int64, catID string, delta int64) *cms.Transaction {
 	t.Helper()
-	tx := &store.CMSTransaction{
+	tx := &cms.Transaction{
 		NodeID:     nodeID,
 		NodeName:   "seed-node",
 		TxnType:    "movement",
@@ -22,7 +24,7 @@ func seedCMSTxn(t *testing.T, db *store.DB, nodeID int64, catID string, delta in
 		QtyAfter:   delta,
 		SourceType: "movement",
 	}
-	if err := db.CreateCMSTransactions([]*store.CMSTransaction{tx}); err != nil {
+	if err := db.CreateCMSTransactions([]*cms.Transaction{tx}); err != nil {
 		t.Fatalf("CreateCMSTransactions: %v", err)
 	}
 	if tx.ID == 0 {
@@ -33,11 +35,11 @@ func seedCMSTxn(t *testing.T, db *store.DB, nodeID int64, catID string, delta in
 
 func TestCMSTransactionService_ListByNode_FiltersByNode(t *testing.T) {
 	db := testDB(t)
-	nodeA := &store.Node{Name: "CMS-NA", Enabled: true}
+	nodeA := &nodes.Node{Name: "CMS-NA", Enabled: true}
 	if err := db.CreateNode(nodeA); err != nil {
 		t.Fatalf("create nodeA: %v", err)
 	}
-	nodeB := &store.Node{Name: "CMS-NB", Enabled: true}
+	nodeB := &nodes.Node{Name: "CMS-NB", Enabled: true}
 	if err := db.CreateNode(nodeB); err != nil {
 		t.Fatalf("create nodeB: %v", err)
 	}
@@ -64,7 +66,7 @@ func TestCMSTransactionService_ListByNode_FiltersByNode(t *testing.T) {
 
 func TestCMSTransactionService_ListByNode_RespectsLimitAndOffset(t *testing.T) {
 	db := testDB(t)
-	node := &store.Node{Name: "CMS-PG", Enabled: true}
+	node := &nodes.Node{Name: "CMS-PG", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -103,11 +105,11 @@ func TestCMSTransactionService_ListByNode_RespectsLimitAndOffset(t *testing.T) {
 
 func TestCMSTransactionService_ListAll_SpansNodes(t *testing.T) {
 	db := testDB(t)
-	nodeA := &store.Node{Name: "CMS-ALL-A", Enabled: true}
+	nodeA := &nodes.Node{Name: "CMS-ALL-A", Enabled: true}
 	if err := db.CreateNode(nodeA); err != nil {
 		t.Fatalf("create nodeA: %v", err)
 	}
-	nodeB := &store.Node{Name: "CMS-ALL-B", Enabled: true}
+	nodeB := &nodes.Node{Name: "CMS-ALL-B", Enabled: true}
 	if err := db.CreateNode(nodeB); err != nil {
 		t.Fatalf("create nodeB: %v", err)
 	}

@@ -95,11 +95,11 @@ func (h *Handlers) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	// Hot-reload the affected subsystem
 	switch section {
 	case "database":
-		h.engine.ReconfigureDatabase()
+		h.orchestration.ReconfigureDatabase()
 	case "general", "fleet":
-		h.engine.ReconfigureFleet()
+		h.orchestration.ReconfigureFleet()
 	case "services", "messaging":
-		h.engine.ReconfigureMessaging()
+		h.orchestration.ReconfigureMessaging()
 	}
 
 	log.Printf("config: %s section saved", section)

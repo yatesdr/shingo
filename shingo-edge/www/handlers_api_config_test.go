@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"shingo/protocol"
-	"shingoedge/store"
+	"shingoedge/store/catalog"
+	"shingoedge/store/counters"
+	"shingoedge/store/processes"
 )
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -79,7 +81,7 @@ func TestApiConfig_ListProcesses(t *testing.T) {
 	resp := doRequest(t, router, "GET", "/api/processes", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	var procs []store.Process
+	var procs []processes.Process
 	decodeJSON(t, resp, &procs)
 	if len(procs) < 2 {
 		t.Fatalf("expected at least 2 processes, got %d", len(procs))
@@ -205,7 +207,7 @@ func TestApiConfig_ListProcessStyles(t *testing.T) {
 	resp := doRequest(t, router, "GET", "/api/processes/"+itoa(pid)+"/styles", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	var styles []store.Style
+	var styles []processes.Style
 	decodeJSON(t, resp, &styles)
 	if len(styles) != 2 {
 		t.Fatalf("expected 2 styles, got %d", len(styles))
@@ -232,7 +234,7 @@ func TestApiConfig_StylesCRUD(t *testing.T) {
 	// --- List (empty) ---
 	resp := doRequest(t, router, "GET", "/api/styles", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	var styles []store.Style
+	var styles []processes.Style
 	decodeJSON(t, resp, &styles)
 
 	// --- Create ---
@@ -364,7 +366,7 @@ func TestApiConfig_ReportingPointsCRUD(t *testing.T) {
 	// --- List ---
 	resp = doRequest(t, router, "GET", "/api/reporting-points", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	var rps []store.ReportingPoint
+	var rps []counters.ReportingPoint
 	decodeJSON(t, resp, &rps)
 	found := false
 	for _, r := range rps {
@@ -416,7 +418,7 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 	sid := seedStyle(t, "ClaimStyle", pid)
 
 	// --- Upsert (insert) ---
-	body := store.StyleNodeClaimInput{
+	body := processes.NodeClaimInput{
 		StyleID:       sid,
 		CoreNodeName:  "node-1",
 		Role:          "consume",
@@ -447,14 +449,14 @@ func TestApiConfig_StyleNodeClaimsCRUD(t *testing.T) {
 	// --- List ---
 	resp = doRequest(t, router, "GET", "/api/styles/"+itoa(sid)+"/node-claims", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
-	var claims []store.StyleNodeClaim
+	var claims []processes.NodeClaim
 	decodeJSON(t, resp, &claims)
 	if len(claims) != 1 || claims[0].ID != claimID {
 		t.Errorf("expected 1 claim with id %d, got %v", claimID, claims)
 	}
 
 	// --- Upsert (update same style_id+core_node_name) ---
-	updateBody := store.StyleNodeClaimInput{
+	updateBody := processes.NodeClaimInput{
 		StyleID:       sid,
 		CoreNodeName:  "node-1",
 		Role:          "consume",
@@ -493,7 +495,7 @@ func TestApiConfig_UpsertStyleNodeClaim_MissingStyleID(t *testing.T) {
 	h, router := newAdminRouter(t)
 	cookie := authCookie(t, h)
 
-	body := store.StyleNodeClaimInput{CoreNodeName: "node-x"}
+	body := processes.NodeClaimInput{CoreNodeName: "node-x"}
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "style_id is required")
@@ -506,7 +508,7 @@ func TestApiConfig_UpsertStyleNodeClaim_MissingCoreNodeName(t *testing.T) {
 	pid := seedProcess(t, "ClaimValidationLine")
 	sid := seedStyle(t, "ClaimValStyle", pid)
 
-	body := store.StyleNodeClaimInput{StyleID: sid}
+	body := processes.NodeClaimInput{StyleID: sid}
 	resp := doRequest(t, router, "POST", "/api/style-node-claims", body, cookie)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "core_node_name is required")
@@ -522,17 +524,17 @@ func TestApiConfig_ListPayloadCatalog(t *testing.T) {
 	cookie := authCookie(t, h)
 
 	// Seed catalog entries
-	testDB.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+	testDB.UpsertPayloadCatalog(&catalog.CatalogEntry{
 		ID: 1, Name: "Bin S", Code: "BIN-S", Description: "Small bin", UOPCapacity: 24,
 	})
-	testDB.UpsertPayloadCatalog(&store.PayloadCatalogEntry{
+	testDB.UpsertPayloadCatalog(&catalog.CatalogEntry{
 		ID: 2, Name: "Bin L", Code: "BIN-L", Description: "Large bin", UOPCapacity: 48,
 	})
 
 	resp := doRequest(t, router, "GET", "/api/payload-catalog", nil, cookie)
 	assertStatus(t, resp, http.StatusOK)
 
-	var entries []*store.PayloadCatalogEntry
+	var entries []*catalog.CatalogEntry
 	decodeJSON(t, resp, &entries)
 	if len(entries) < 2 {
 		t.Fatalf("expected at least 2 catalog entries, got %d", len(entries))

@@ -2,12 +2,16 @@
 
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/store/nodes"
+)
 
 func TestNodeProperty_SetGetUpsert(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "PROP-NODE-1", Enabled: true}
+	node := &nodes.Node{Name: "PROP-NODE-1", Enabled: true}
 	if err := db.CreateNode(node); err != nil {
 		t.Fatalf("create node: %v", err)
 	}
@@ -49,7 +53,7 @@ func TestNodeProperty_SetGetUpsert(t *testing.T) {
 func TestNodeProperty_MultipleKeysAndDelete(t *testing.T) {
 	db := testDB(t)
 
-	node := &Node{Name: "PROP-NODE-2", Enabled: true}
+	node := &nodes.Node{Name: "PROP-NODE-2", Enabled: true}
 	db.CreateNode(node)
 
 	db.SetNodeProperty(node.ID, "role", "source")

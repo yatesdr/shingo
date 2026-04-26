@@ -2,6 +2,9 @@ package service
 
 import (
 	"shingocore/store"
+	"shingocore/store/bins"
+	"shingocore/store/nodes"
+	"shingocore/store/payloads"
 )
 
 // PayloadService centralizes payload-template CRUD, manifest-item
@@ -22,22 +25,22 @@ func NewPayloadService(db *store.DB) *PayloadService {
 // --- Payload CRUD ---------------------------------------------------------
 
 // Create inserts a new payload template.
-func (s *PayloadService) Create(p *store.Payload) error {
+func (s *PayloadService) Create(p *payloads.Payload) error {
 	return s.db.CreatePayload(p)
 }
 
 // Get loads a payload template by ID.
-func (s *PayloadService) Get(id int64) (*store.Payload, error) {
+func (s *PayloadService) Get(id int64) (*payloads.Payload, error) {
 	return s.db.GetPayload(id)
 }
 
 // GetByCode loads a payload template by its catalogue code.
-func (s *PayloadService) GetByCode(code string) (*store.Payload, error) {
+func (s *PayloadService) GetByCode(code string) (*payloads.Payload, error) {
 	return s.db.GetPayloadByCode(code)
 }
 
 // Update persists field changes on a payload template.
-func (s *PayloadService) Update(p *store.Payload) error {
+func (s *PayloadService) Update(p *payloads.Payload) error {
 	return s.db.UpdatePayload(p)
 }
 
@@ -47,7 +50,7 @@ func (s *PayloadService) Delete(id int64) error {
 }
 
 // List returns every payload template.
-func (s *PayloadService) List() ([]*store.Payload, error) {
+func (s *PayloadService) List() ([]*payloads.Payload, error) {
 	return s.db.ListPayloads()
 }
 
@@ -55,12 +58,12 @@ func (s *PayloadService) List() ([]*store.Payload, error) {
 
 // ListManifest returns the manifest items defined for a payload
 // template.
-func (s *PayloadService) ListManifest(payloadID int64) ([]*store.PayloadManifestItem, error) {
+func (s *PayloadService) ListManifest(payloadID int64) ([]*payloads.ManifestItem, error) {
 	return s.db.ListPayloadManifest(payloadID)
 }
 
 // CreateManifestItem inserts a manifest item on a payload template.
-func (s *PayloadService) CreateManifestItem(item *store.PayloadManifestItem) error {
+func (s *PayloadService) CreateManifestItem(item *payloads.ManifestItem) error {
 	return s.db.CreatePayloadManifestItem(item)
 }
 
@@ -77,7 +80,7 @@ func (s *PayloadService) DeleteManifestItem(id int64) error {
 
 // ReplaceManifest swaps out the entire manifest item list for a
 // payload template in a single pass.
-func (s *PayloadService) ReplaceManifest(payloadID int64, items []*store.PayloadManifestItem) error {
+func (s *PayloadService) ReplaceManifest(payloadID int64, items []*payloads.ManifestItem) error {
 	return s.db.ReplacePayloadManifest(payloadID, items)
 }
 
@@ -91,7 +94,7 @@ func (s *PayloadService) SetBinTypes(payloadID int64, binTypeIDs []int64) error 
 
 // ListBinTypes returns the bin types compatible with the given
 // payload template.
-func (s *PayloadService) ListBinTypes(payloadID int64) ([]*store.BinType, error) {
+func (s *PayloadService) ListBinTypes(payloadID int64) ([]*bins.BinType, error) {
 	return s.db.ListBinTypesForPayload(payloadID)
 }
 
@@ -99,6 +102,6 @@ func (s *PayloadService) ListBinTypes(payloadID int64) ([]*store.BinType, error)
 
 // ListCompatibleNodes returns the nodes that accept the given payload
 // template (via explicit assignment or inherited-all mode).
-func (s *PayloadService) ListCompatibleNodes(payloadID int64) ([]*store.Node, error) {
+func (s *PayloadService) ListCompatibleNodes(payloadID int64) ([]*nodes.Node, error) {
 	return s.db.ListNodesForPayload(payloadID)
 }

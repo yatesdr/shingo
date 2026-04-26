@@ -3,14 +3,16 @@ package store
 import (
 	"path/filepath"
 	"testing"
+
+	"shingoedge/store/processes"
 )
 
 // seedSwapReadyFixture wires up the minimum rows needed to exercise
-// computeSwapReady: a process with a node, a style with a two_robot claim,
+// ComputeSwapReady: a process with a node, a style with a two_robot claim,
 // two orders whose IDs we track on the runtime, and a runtime row pointing
 // at them. It returns the DB handle plus the bits the caller may want to
 // mutate (claim, runtime, order A id, order B id).
-func seedSwapReadyFixture(t *testing.T) (db *DB, claim *StyleNodeClaim, runtime *ProcessNodeRuntimeState, orderA, orderB int64) {
+func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, runtime *processes.RuntimeState, orderA, orderB int64) {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "sv.db")
 	d, err := Open(dbPath)
@@ -23,7 +25,7 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *StyleNodeClaim, runtime 
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err := d.CreateProcessNode(ProcessNodeInput{
+	nodeID, err := d.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "SWAP-NODE",
 		Code:         "SN1",
@@ -41,7 +43,7 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *StyleNodeClaim, runtime 
 	if err := d.SetActiveStyle(processID, &styleID); err != nil {
 		t.Fatalf("set active style: %v", err)
 	}
-	claimID, err := d.UpsertStyleNodeClaim(StyleNodeClaimInput{
+	claimID, err := d.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "SWAP-NODE",
 		Role:                "produce",
@@ -95,7 +97,7 @@ func TestComputeSwapReady_BothStaged(t *testing.T) {
 	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
 		t.Fatalf("mark B staged: %v", err)
 	}
-	if !computeSwapReady(db, claim, runtime) {
+	if !ComputeSwapReady(db, claim, runtime) {
 		t.Error("expected SwapReady=true when both orders staged")
 	}
 }
@@ -115,7 +117,7 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 	if err := db.UpdateOrderStatus(bID, "in_transit"); err != nil {
 		t.Fatalf("mark B in_transit: %v", err)
 	}
-	if !computeSwapReady(db, claim, runtime) {
+	if !ComputeSwapReady(db, claim, runtime) {
 		t.Error("expected SwapReady=true when one order is staged and the other is non-terminal (relaxed timing-window contract)")
 	}
 }
@@ -133,7 +135,7 @@ func TestComputeSwapReady_OneStagedOneTerminal(t *testing.T) {
 			if err := db.UpdateOrderStatus(bID, terminalStatus); err != nil {
 				t.Fatalf("mark B %s: %v", terminalStatus, err)
 			}
-			if computeSwapReady(db, claim, runtime) {
+			if ComputeSwapReady(db, claim, runtime) {
 				t.Errorf("expected SwapReady=false when sibling is terminal (%s) — cycle is over", terminalStatus)
 			}
 		})
@@ -150,14 +152,14 @@ func TestComputeSwapReady_NonTwoRobotClaim(t *testing.T) {
 	}
 	// Flip the claim mode — SwapReady should only fire for two_robot swaps.
 	claim.SwapMode = "single_robot"
-	if computeSwapReady(db, claim, runtime) {
+	if ComputeSwapReady(db, claim, runtime) {
 		t.Error("expected SwapReady=false for single_robot claim")
 	}
 }
 
 func TestComputeSwapReady_NilClaim(t *testing.T) {
 	db, _, runtime, _, _ := seedSwapReadyFixture(t)
-	if computeSwapReady(db, nil, runtime) {
+	if ComputeSwapReady(db, nil, runtime) {
 		t.Error("expected SwapReady=false when claim is nil")
 	}
 }
@@ -165,8 +167,8 @@ func TestComputeSwapReady_NilClaim(t *testing.T) {
 func TestComputeSwapReady_MissingRuntimeOrders(t *testing.T) {
 	db, claim, _, _, _ := seedSwapReadyFixture(t)
 	// Runtime with no tracked orders.
-	empty := &ProcessNodeRuntimeState{}
-	if computeSwapReady(db, claim, empty) {
+	empty := &processes.RuntimeState{}
+	if ComputeSwapReady(db, claim, empty) {
 		t.Error("expected SwapReady=false when runtime has no tracked orders")
 	}
 }

@@ -7,7 +7,7 @@ import (
 
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
-	"shingocore/store"
+	"shingocore/store/nodes"
 )
 
 // --- Characterization tests for resolveNodeStaging (wiring.go:569-582) ---
@@ -53,13 +53,13 @@ func TestResolveNodeStaging_StorageSlotUnderLane(t *testing.T) {
 		t.Fatalf("get LANE node type: %v", err)
 	}
 
-	laneNode := &store.Node{Name: "LANE-A", Enabled: true, NodeTypeID: &laneType.ID}
+	laneNode := &nodes.Node{Name: "LANE-A", Enabled: true, NodeTypeID: &laneType.ID}
 	if err := db.CreateNode(laneNode); err != nil {
 		t.Fatalf("create lane node: %v", err)
 	}
 
 	// Create a storage slot under the LANE.
-	slotNode := &store.Node{Name: "SLOT-A1", Enabled: true, ParentID: &laneNode.ID}
+	slotNode := &nodes.Node{Name: "SLOT-A1", Enabled: true, ParentID: &laneNode.ID}
 	if err := db.CreateNode(slotNode); err != nil {
 		t.Fatalf("create slot node: %v", err)
 	}
@@ -86,12 +86,12 @@ func TestResolveNodeStaging_NonLaneParent(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 
 	// Create a non-LANE parent (e.g., "AREA" type or no type).
-	parentNode := &store.Node{Name: "AREA-B", Enabled: true}
+	parentNode := &nodes.Node{Name: "AREA-B", Enabled: true}
 	if err := db.CreateNode(parentNode); err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
 
-	childNode := &store.Node{Name: "CHILD-B1", Enabled: true, ParentID: &parentNode.ID}
+	childNode := &nodes.Node{Name: "CHILD-B1", Enabled: true, ParentID: &parentNode.ID}
 	if err := db.CreateNode(childNode); err != nil {
 		t.Fatalf("create child: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestResolveNodeStaging_NoParent(t *testing.T) {
 	sim := simulator.New()
 	eng := newTestEngine(t, db, sim)
 
-	orphanNode := &store.Node{Name: "ORPHAN-1", Enabled: true}
+	orphanNode := &nodes.Node{Name: "ORPHAN-1", Enabled: true}
 	if err := db.CreateNode(orphanNode); err != nil {
 		t.Fatalf("create orphan: %v", err)
 	}

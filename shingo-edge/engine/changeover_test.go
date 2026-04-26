@@ -5,6 +5,8 @@ import (
 
 	"shingoedge/orders"
 	"shingoedge/store"
+	storeorders "shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
 
 // seedChangeoverScenario creates two styles (from/to) with claims on the same
@@ -19,7 +21,7 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "CO-NODE",
 		Code:         "CO1",
@@ -47,7 +49,7 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 
 	// From-claim: consume node WITHOUT OutboundStaging — prevents Phase 3 auto Order B.
 	// OutboundDestination is kept so the manual EmptyNodeForToolChange path still works.
-	fromClaimID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	fromClaimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "CO-NODE",
 		Role:                "consume",
@@ -62,7 +64,7 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	}
 
 	// To-claim: consume node with inbound staging (triggers staged delivery path)
-	toClaimID, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	toClaimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "CO-NODE",
 		Role:           "consume",
@@ -94,7 +96,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "P3-NODE",
 		Code:         "P3N1",
@@ -120,7 +122,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	}
 
 	// From-claim: full staging config — enables Phase 3 swap Order B
-	fromClaimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	fromClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3-NODE",
 		Role:                "consume",
@@ -136,7 +138,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	}
 
 	// To-claim: full staging config
-	_, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "P3-NODE",
 		Role:           "consume",
@@ -158,7 +160,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 
 // startChangeover is a helper that starts a changeover and returns the
 // changeover record and the node task for the single node.
-func startChangeover(t *testing.T, eng *Engine, db *store.DB, processID, toStyleID int64) (*store.ProcessChangeover, *store.ChangeoverNodeTask) {
+func startChangeover(t *testing.T, eng *Engine, db *store.DB, processID, toStyleID int64) (*processes.Changeover, *processes.NodeTask) {
 	t.Helper()
 
 	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "test changeover")
@@ -255,7 +257,7 @@ func TestChangeover_AutoStaging(t *testing.T) {
 
 // getAutoStagedOrder retrieves the staging order that was auto-created by
 // StartProcessChangeover (Phase 2). Returns the order and node task.
-func getAutoStagedOrder(t *testing.T, db *store.DB, changeoverID, nodeID int64) (*store.Order, *store.ChangeoverNodeTask) {
+func getAutoStagedOrder(t *testing.T, db *store.DB, changeoverID, nodeID int64) (*storeorders.Order, *processes.NodeTask) {
 	t.Helper()
 	task, err := db.GetChangeoverNodeTaskByNode(changeoverID, nodeID)
 	if err != nil {
@@ -560,7 +562,7 @@ func seedAddNodeScenario(t *testing.T, db *store.DB) (processID, addNodeID, from
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	addNodeID, err = db.CreateProcessNode(store.ProcessNodeInput{
+	addNodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "ADD-NODE",
 		Code:         "ADD1",
@@ -587,7 +589,7 @@ func seedAddNodeScenario(t *testing.T, db *store.DB) (processID, addNodeID, from
 
 	// From-style has NO claims on ADD-NODE
 	// To-style has a claim on ADD-NODE — this creates SituationAdd
-	_, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "ADD-NODE",
 		Role:           "consume",
@@ -712,7 +714,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err := db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "P3E-NODE",
 		Code:         "P3EN1",
@@ -738,7 +740,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	}
 
 	// From-claim: full staging config, role=consume
-	fromClaimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	fromClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3E-NODE",
 		Role:                "consume",
@@ -754,7 +756,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	}
 
 	// To-claim: same payload code + EvacuateOnChangeover → SituationEvacuate
-	_, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:              toStyleID,
 		CoreNodeName:         "P3E-NODE",
 		Role:                 "consume",
@@ -890,7 +892,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode string) (pr
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
-	nodeID, err = db.CreateProcessNode(store.ProcessNodeInput{
+	nodeID, err = db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
 		CoreNodeName: "KS-NODE",
 		Code:         "KS1",
@@ -916,7 +918,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode string) (pr
 	}
 
 	// From-claim: KeepStaged=true, full staging config
-	fromClaimID, err := db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	fromClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             fromStyleID,
 		CoreNodeName:        "KS-NODE",
 		Role:                "consume",
@@ -934,7 +936,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode string) (pr
 	}
 
 	// To-claim: same staging area
-	_, err = db.UpsertStyleNodeClaim(store.StyleNodeClaimInput{
+	_, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:        toStyleID,
 		CoreNodeName:   "KS-NODE",
 		Role:           "consume",

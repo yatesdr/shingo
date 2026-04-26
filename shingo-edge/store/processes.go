@@ -6,16 +6,13 @@ package store
 
 import "shingoedge/store/processes"
 
-// Process represents a production process (physical production area).
-type Process = processes.Process
-
 // ListProcesses returns every process row sorted by name.
-func (db *DB) ListProcesses() ([]Process, error) {
+func (db *DB) ListProcesses() ([]processes.Process, error) {
 	return processes.List(db.DB)
 }
 
 // GetProcess returns one process by id.
-func (db *DB) GetProcess(id int64) (*Process, error) {
+func (db *DB) GetProcess(id int64) (*processes.Process, error) {
 	return processes.Get(db.DB, id)
 }
 

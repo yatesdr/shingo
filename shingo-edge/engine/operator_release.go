@@ -42,7 +42,7 @@ import (
 	"fmt"
 	"log"
 
-	"shingoedge/store"
+	"shingoedge/store/processes"
 )
 
 // ReleaseDispositionMode controls how a release action interacts with the
@@ -236,7 +236,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 // SendPartialBack falls back to &0 when runtime.RemainingUOP is non-positive
 // (-1 sentinel, never set, etc.) — there's nothing meaningful to preserve in
 // that case, so we may as well declare empty.
-func computeReleaseRemainingUOP(disp ReleaseDisposition, runtime *store.ProcessNodeRuntimeState) *int {
+func computeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState) *int {
 	switch disp.Mode {
 	case DispositionCaptureLineside:
 		zero := 0
@@ -300,7 +300,7 @@ func (e *Engine) isSupplyOrderInActiveTwoRobotSwap(nodeID, orderID int64) bool {
 // should reset UOP against, plus the changeover node task when one is
 // active. For a changeover the target is the to-style claim; otherwise
 // it's the currently-active claim on the node.
-func (e *Engine) resolveReleaseClaim(node *store.ProcessNode, runtime *store.ProcessNodeRuntimeState) (*store.StyleNodeClaim, *store.ChangeoverNodeTask) {
+func (e *Engine) resolveReleaseClaim(node *processes.Node, runtime *processes.RuntimeState) (*processes.NodeClaim, *processes.NodeTask) {
 	if changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
 		if toClaim, err := e.db.GetStyleNodeClaimByNode(changeover.ToStyleID, node.CoreNodeName); err == nil {
 			if task, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, node.ID); err == nil {
@@ -331,7 +331,7 @@ func (e *Engine) resolveReleaseClaim(node *store.ProcessNode, runtime *store.Pro
 // the evacuation robot picks up the old bin moments after release —
 // any further consumption between click and pickup isn't tracked. The
 // operator's intent at click time is the source of truth.
-func (e *Engine) captureLinesideOnRelease(node *store.ProcessNode, toClaim *store.StyleNodeClaim, disp ReleaseDisposition) error {
+func (e *Engine) captureLinesideOnRelease(node *processes.Node, toClaim *processes.NodeClaim, disp ReleaseDisposition) error {
 	pairKey := toClaim.PairedCoreNode
 
 	// Only capture parts when disposition is capture_lineside. Other

@@ -10,6 +10,8 @@ import (
 	"shingocore/fleet"
 	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/nodes"
+	"shingocore/store/orders"
 )
 
 type Dispatcher struct {
@@ -98,7 +100,7 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
 }
 
-func (d *Dispatcher) queueOrder(order *store.Order, env *protocol.Envelope, payloadCode string) {
+func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
 	if err := d.db.UpdateOrderStatus(order.ID, StatusQueued, "awaiting inventory"); err != nil {
 		log.Printf("dispatch: queue order %d: %v", order.ID, err)
 	}
@@ -112,7 +114,7 @@ func (d *Dispatcher) queueOrder(order *store.Order, env *protocol.Envelope, payl
 	d.replies.SendUpdate(env, order.EdgeUUID, StatusQueued, "awaiting inventory")
 }
 
-func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope, sourceNode, destNode *store.Node) {
+func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) {
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
 	req := fleet.TransportOrderRequest{
@@ -152,7 +154,7 @@ func (d *Dispatcher) dispatchToFleet(order *store.Order, env *protocol.Envelope,
 // DispatchDirect dispatches an order to the fleet without a protocol envelope.
 // Used for orders created internally (e.g. direct orders from the UI).
 // Returns the vendor order ID on success.
-func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *store.Node) (string, error) {
+func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
 	req := fleet.TransportOrderRequest{
@@ -188,7 +190,7 @@ func (d *Dispatcher) DispatchDirect(order *store.Order, sourceNode, destNode *st
 
 // checkOwnership verifies the envelope sender owns the order.
 // Core-role senders (e.g. UI-initiated actions) are always allowed.
-func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *store.Order) bool {
+func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *orders.Order) bool {
 	if env.Src.Role == protocol.RoleCore {
 		return true
 	}
@@ -199,7 +201,7 @@ func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *store.Order) 
 // order and true on success, or nil and false if the order was not found or
 // the sender does not own it (with appropriate logging in both cases).
 // Callers handle the false case with their own error response.
-func (d *Dispatcher) getOwnedOrder(env *protocol.Envelope, orderUUID string) (*store.Order, bool) {
+func (d *Dispatcher) getOwnedOrder(env *protocol.Envelope, orderUUID string) (*orders.Order, bool) {
 	order, err := d.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		log.Printf("dispatch: order %s not found: %v", orderUUID, err)
@@ -329,7 +331,7 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 	}
 }
 
-func (d *Dispatcher) failOrder(order *store.Order, env *protocol.Envelope, errorCode, detail string) {
+func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, errorCode, detail string) {
 	stationID := env.Src.Station
 	if err := d.db.FailOrderAtomic(order.ID, detail); err != nil {
 		log.Printf("dispatch: atomic fail order %d: %v", order.ID, err)

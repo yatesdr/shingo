@@ -64,7 +64,7 @@ func TestNewOutboxDrainer_NilClientDebugLogIsSafe(t *testing.T) {
 
 // TestCoreOutboxStore_ListPendingOutbox_ConvertsFields confirms the
 // adapter copies every field (ID, Topic, Payload, MsgType, Retries) from
-// store.OutboxMessage onto outbox.Message. A regression in the field
+// messaging.OutboxMessage onto outbox.Message. A regression in the field
 // mapping would silently drop payloads at the drainer boundary.
 func TestCoreOutboxStore_ListPendingOutbox_ConvertsFields(t *testing.T) {
 	db := testDB(t)

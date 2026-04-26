@@ -6,17 +6,14 @@ package store
 
 import "shingoedge/store/processes"
 
-// ProcessNodeRuntimeState is one row of process_node_runtime_states.
-type ProcessNodeRuntimeState = processes.RuntimeState
-
 // EnsureProcessNodeRuntime returns the runtime row for a process_node,
 // inserting a fresh row when none exists yet.
-func (db *DB) EnsureProcessNodeRuntime(processNodeID int64) (*ProcessNodeRuntimeState, error) {
+func (db *DB) EnsureProcessNodeRuntime(processNodeID int64) (*processes.RuntimeState, error) {
 	return processes.EnsureRuntime(db.DB, processNodeID)
 }
 
 // GetProcessNodeRuntime returns the runtime row for a process_node.
-func (db *DB) GetProcessNodeRuntime(processNodeID int64) (*ProcessNodeRuntimeState, error) {
+func (db *DB) GetProcessNodeRuntime(processNodeID int64) (*processes.RuntimeState, error) {
 	return processes.GetRuntime(db.DB, processNodeID)
 }
 

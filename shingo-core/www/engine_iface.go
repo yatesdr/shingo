@@ -9,21 +9,29 @@ import (
 	"shingocore/service"
 )
 
-// EngineAccess defines the interface that www handlers require from the engine.
-// Consumer-side interface per Go convention. *engine.Engine satisfies it.
+// ServiceAccess is the narrow interface that service-shaped www handlers
+// require from the engine: subsystem accessors + per-domain service
+// accessors + read-only state queries. CRUD-only handlers (admin pages,
+// listings, robot status views) take this as their dependency surface
+// and cannot reach engine-level orchestration verbs.
 //
-// Phase 3a closeout (PR 3a.6) absorbed every DB passthrough into a
-// dedicated service. Handlers now reach *store.DB only through the
-// service accessors below (BinService, OrderService, NodeService,
-// DemandService, PayloadService, MissionService, TestCommandService,
-// CMSTransactionService, AuditService, InventoryService, AdminService,
-// HealthService) plus the existing composite-flow entry points
-// (ApplyCorrection, CreateDirectOrder, TerminateOrder, etc.).
+// Phase 6.5 (2026-04-25) split this out of EngineAccess. The split
+// captures the architectural role distinction: most handlers do pure
+// CRUD through services and have no business reaching engine-level
+// orchestration. ServiceAccess gives those handlers a 25-method surface;
+// orchestration handlers take EngineOrchestration explicitly via
+// h.orchestration.
 //
-// If a new handler needs additional store access, extend the matching
-// service — do not re-introduce named DB methods on Engine.
-type EngineAccess interface {
-	// Subsystem accessors
+// State queries (GetCachedRobotStatus, GetAllCachedRobots,
+// GetNodeOccupancy) live here despite being engine-side because they
+// are pure reads with no side effects — semantically equivalent to
+// service queries from the handler's perspective.
+//
+// See implementation-plan.md "Post-Phase 6 tripwires" for the
+// boundary-creep guard: this split must stay at two interfaces, not
+// drift into N-per-handler.
+type ServiceAccess interface {
+	// ── Subsystem accessors ────────────────────────────────────────
 	AppConfig() *config.Config
 	ConfigPath() string
 	Dispatcher() *dispatch.Dispatcher
@@ -34,7 +42,9 @@ type EngineAccess interface {
 	Reconciliation() *engine.ReconciliationService
 	Recovery() *engine.RecoveryService
 
-	// Service accessors (DB-backed flows live here, not on Engine)
+	// ── Service accessors ──────────────────────────────────────────
+	// Phase 3a: per-domain services. Handlers reach single-aggregate
+	// CRUD via these instead of through named *Engine methods.
 	BinManifest() *service.BinManifestService
 	BinService() *service.BinService
 	OrderService() *service.OrderService
@@ -49,37 +59,57 @@ type EngineAccess interface {
 	AdminService() *service.AdminService
 	HealthService() *service.HealthService
 
-	// Cached robot status
+	// ── Read-only state queries ────────────────────────────────────
+	// These look like orchestration verbs but are pure reads with no
+	// engine-side side effects. Robot status views and node-occupancy
+	// listings need them; those are CRUD-shaped handlers, not
+	// orchestration handlers.
 	GetCachedRobotStatus(vehicleID string) (fleet.RobotStatus, bool)
 	GetAllCachedRobots() []fleet.RobotStatus
+	GetNodeOccupancy() ([]engine.OccupancyEntry, error)
+}
 
-	// Corrections
+// EngineOrchestration is the wide interface for handlers that drive
+// composite-flow business operations spanning multiple subsystems
+// (corrections, direct orders, scene sync, cross-edge messaging,
+// live reconfiguration). Embeds ServiceAccess so orchestration
+// handlers retain access to per-domain services.
+//
+// As services absorb orchestration logic over time, individual verbs
+// migrate from this interface into ServiceAccess (via service
+// accessors) and the surface here shrinks. The architectural terminus
+// is EngineOrchestration becoming empty and being deleted, leaving
+// ServiceAccess as the sole handler dependency.
+type EngineOrchestration interface {
+	ServiceAccess
+
+	// ── Corrections ────────────────────────────────────────────────
 	ApplyCorrection(req engine.ApplyCorrectionRequest) (int64, error)
 	ApplyBatchCorrection(req engine.BatchCorrectionRequest) error
 
-	// Orders
+	// ── Orders ─────────────────────────────────────────────────────
 	CreateDirectOrder(req engine.DirectOrderRequest) (*engine.DirectOrderResult, error)
 	TerminateOrder(orderID int64, actor string) error
 
-	// Node queries
-	GetNodeOccupancy() ([]engine.OccupancyEntry, error)
-
-	// Scene sync
+	// ── Scene sync ─────────────────────────────────────────────────
 	SceneSync() (int, int, int, error)
 	SyncScenePoints(areas []fleet.SceneArea) (int, map[string]string)
 	UpdateNodeZones(locMap map[string]string, overwrite bool)
 
-	// Messaging
+	// ── Messaging ──────────────────────────────────────────────────
 	SendDataToEdge(subject string, stationID string, payload any) error
 
-	// Live reconfiguration
+	// ── Live reconfiguration ───────────────────────────────────────
 	ReconfigureDatabase()
 	ReconfigureFleet()
 	ReconfigureMessaging()
 	ReconfigureCountGroups()
 }
 
-// Compile-time assertion that *engine.Engine satisfies EngineAccess.
-// If this breaks, either add the missing method to *engine.Engine or
-// remove it from the EngineAccess contract above.
-var _ EngineAccess = (*engine.Engine)(nil)
+// Compile-time assertions: *engine.Engine must satisfy both interfaces.
+// EngineOrchestration embeds ServiceAccess, so the second assertion
+// implies the first; both kept here for explicit boundary documentation.
+var (
+	_ ServiceAccess       = (*engine.Engine)(nil)
+	_ EngineOrchestration = (*engine.Engine)(nil)
+)
