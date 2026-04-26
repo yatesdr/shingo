@@ -32,15 +32,37 @@ import (
 // the green path end-to-end; these unit tests fill in the branches
 // that were previously only exercised by production traffic.
 
+// stubLifecycle implements the narrow Lifecycle interface for tests by
+// writing transition calls through to the underlying fake Store. The
+// scanner now routes status changes through lifecycle.MoveToSourcing
+// and lifecycle.Queue rather than calling db.UpdateOrderStatus directly,
+// but tests assert against the fake store's statusUpdates slice. The
+// stub preserves the existing contract: lifecycle calls land in the
+// fake's recorded-update list, so test expectations like "expected 2
+// status updates: Sourcing then Queued" continue to work.
+type stubLifecycle struct {
+	db Store
+}
+
+func (s stubLifecycle) MoveToSourcing(ord *orders.Order, _, reason string) error {
+	return s.db.UpdateOrderStatus(ord.ID, protocol.StatusSourcing, reason)
+}
+
+func (s stubLifecycle) Queue(ord *orders.Order, _, reason string) error {
+	return s.db.UpdateOrderStatus(ord.ID, protocol.StatusQueued, reason)
+}
+
 // newTestScanner builds a Scanner wired to a fake store and no-op
 // callbacks. Dispatcher and resolver are left nil — every test here
-// stays on paths that return before invoking them.
+// stays on paths that return before invoking them. Lifecycle is wired
+// to a stub that writes through to the fake store so transition calls
+// register in the fake's statusUpdates slice for assertion.
 func newTestScanner(t *testing.T, db Store) *Scanner {
 	t.Helper()
 	return NewScanner(
 		db,
 		nil, // dispatcher — not reached on any tested path
-		nil, // lifecycle — not reached on any tested path
+		stubLifecycle{db: db},
 		nil, // resolver — not reached on any tested path
 		func(string, string, any) error { return nil },
 		func(orderID int64, code, detail string) {
