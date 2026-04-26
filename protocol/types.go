@@ -104,36 +104,83 @@ const (
 	StatusStaged       = "staged"
 	StatusFailed       = "failed"
 	StatusCancelled    = "cancelled"
+	StatusReshuffling  = "reshuffling"
 )
-
-// IsTerminal returns true if the status is a terminal state (no further transitions).
-func IsTerminal(status string) bool {
-	return status == StatusConfirmed || status == StatusCancelled || status == StatusFailed
-}
 
 // validTransitions defines the canonical state machine for order status transitions.
 // Edge uses a subset (no sourcing/dispatched); Core uses the full set.
+//
+// IsTerminal is derived from this table: a status is terminal iff it has no
+// outgoing edges (no key in this map). Adding a new non-terminal status
+// requires adding a key with at least one outgoing edge here; the
+// TestEveryKeyHasOutgoingEdge test enforces that invariant.
 var validTransitions = map[string][]string{
-	StatusPending:      {StatusSourcing, StatusSubmitted, StatusCancelled, StatusFailed},
-	StatusSourcing:     {StatusQueued, StatusSubmitted, StatusCancelled, StatusFailed},
-	StatusSubmitted:    {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed},
-	StatusQueued:       {StatusAcknowledged, StatusInTransit, StatusCancelled, StatusFailed},
-	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusCancelled, StatusFailed},
-	StatusDispatched:   {StatusInTransit, StatusDelivered, StatusCancelled, StatusFailed},
-	StatusInTransit:    {StatusDelivered, StatusStaged, StatusCancelled, StatusFailed},
-	StatusStaged:       {StatusInTransit, StatusDelivered, StatusCancelled, StatusFailed},
-	StatusDelivered:    {StatusConfirmed, StatusCancelled, StatusFailed},
+	// Pending → Queued is a fast-path used by fulfillment/scanner.go when
+	// the bin is already known and resolution can be skipped.
+	StatusPending: {StatusSourcing, StatusSubmitted, StatusQueued, StatusReshuffling, StatusCancelled, StatusFailed},
+
+	// Sourcing → Dispatched is the immediate write after fleet.CreateOrder
+	// when inventory is available at planning time and the order skips the
+	// Queued state. Sourcing → Reshuffling is the planning-time pivot when
+	// the resolver detects a buried bin and creates a compound parent.
+	StatusSourcing: {StatusQueued, StatusSubmitted, StatusDispatched, StatusReshuffling, StatusCancelled, StatusFailed},
+
+	StatusSubmitted: {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed},
+
+	// Queued → Dispatched is the immediate write after fleet CreateOrder
+	// returns; Acknowledged is reported asynchronously by the vendor later.
+	// Queued → Sourcing supports the scanner's re-resolve path when an
+	// inflight bin claim becomes invalid.
+	StatusQueued: {StatusAcknowledged, StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFailed},
+
+	// Acknowledged|Dispatched → Sourcing supports PrepareRedirect: the order
+	// is re-resolved against a new delivery node after the vendor leg is
+	// cancelled.
+	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFailed},
+	StatusDispatched:   {StatusInTransit, StatusDelivered, StatusSourcing, StatusCancelled, StatusFailed},
+
+	StatusInTransit:   {StatusDelivered, StatusStaged, StatusCancelled, StatusFailed},
+	StatusStaged:      {StatusInTransit, StatusDelivered, StatusCancelled, StatusFailed},
+	StatusDelivered:   {StatusConfirmed, StatusCancelled, StatusFailed},
+	StatusReshuffling: {StatusConfirmed, StatusCancelled, StatusFailed},
+}
+
+// IsTerminal returns true if the status has no outgoing transitions in
+// validTransitions (i.e. it is not a key in the map). Single source of
+// truth: adding a non-terminal status to the table no longer requires
+// updating this function.
+func IsTerminal(status string) bool {
+	_, hasOutgoing := validTransitions[status]
+	return !hasOutgoing
 }
 
 // IsValidTransition returns true if transitioning from -> to is a valid state change.
-// Terminal states cannot transition.
+// A terminal `from` (no key in validTransitions) returns false via the lookup miss.
 func IsValidTransition(from, to string) bool {
-	if IsTerminal(from) {
-		return false
-	}
 	allowed, ok := validTransitions[from]
 	if !ok {
 		return false
 	}
 	return slices.Contains(allowed, to)
+}
+
+// AllStatuses returns every status defined in this module, used by
+// table-driven tests that exhaustively cover the (from, to) matrix.
+func AllStatuses() []string {
+	return []string{
+		StatusPending, StatusSourcing, StatusQueued, StatusSubmitted,
+		StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged,
+		StatusDelivered, StatusConfirmed, StatusFailed, StatusCancelled,
+		StatusReshuffling,
+	}
+}
+
+// AllValidTransitions returns a copy of the validTransitions map for test
+// use. Returns a copy to prevent test mutation of the canonical table.
+func AllValidTransitions() map[string][]string {
+	out := make(map[string][]string, len(validTransitions))
+	for from, allowed := range validTransitions {
+		out[from] = append([]string(nil), allowed...)
+	}
+	return out
 }

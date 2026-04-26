@@ -181,38 +181,9 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 	return order, p.PayloadCode, nil
 }
 
-func (s *LifecycleService) CancelOrder(order *orders.Order, stationID, reason string) {
-	if order.VendorOrderID != "" && order.Status != StatusConfirmed && order.Status != StatusFailed && order.Status != StatusCancelled {
-		if err := s.backend.CancelOrder(order.VendorOrderID); err != nil {
-			log.Printf("dispatch: cancel vendor order %s: %v", order.VendorOrderID, err)
-			s.dbg("cancel fleet error: vendor_id=%s: %v", order.VendorOrderID, err)
-		} else {
-			s.dbg("cancel fleet ok: vendor_id=%s", order.VendorOrderID)
-		}
-	}
-	if err := s.db.CancelOrderAtomic(order.ID, reason); err != nil {
-		log.Printf("dispatch: atomic cancel order %d: %v", order.ID, err)
-	}
-	s.emitter.EmitOrderCancelled(order.ID, order.EdgeUUID, stationID, reason, order.Status)
-}
-
-func (s *LifecycleService) ConfirmReceipt(order *orders.Order, stationID, receiptType string, finalCount int64) (bool, error) {
-	if order.CompletedAt != nil {
-		s.dbg("delivery receipt: uuid=%s already completed at %s", order.EdgeUUID, order.CompletedAt.UTC().Format(time.RFC3339))
-		return false, nil
-	}
-	if order.Status != StatusDelivered {
-		return false, fmt.Errorf("cannot confirm receipt for order in status %q (expected delivered)", order.Status)
-	}
-	if err := s.db.UpdateOrderStatus(order.ID, StatusConfirmed, fmt.Sprintf("receipt: %s, count: %d", receiptType, finalCount)); err != nil {
-		return false, fmt.Errorf("update order %d status to confirmed: %w", order.ID, err)
-	}
-	if err := s.db.CompleteOrder(order.ID); err != nil {
-		return false, err
-	}
-	s.emitter.EmitOrderCompleted(order.ID, order.EdgeUUID, stationID)
-	return true, nil
-}
+// CancelOrder and ConfirmReceipt now live in lifecycle.go and route
+// through the transition() driver against protocol.validTransitions.
+// They preserve their original signatures for caller compatibility.
 
 func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode string) (*nodes.Node, *nodes.Node, error) {
 	if order.VendorOrderID != "" {
@@ -235,8 +206,8 @@ func (s *LifecycleService) PrepareRedirect(order *orders.Order, newDeliveryNode 
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, StatusSourcing, fmt.Sprintf("redirecting to %s", newDeliveryNode)); err != nil {
-		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	if err := s.MoveToSourcing(order, "system", fmt.Sprintf("redirecting to %s", newDeliveryNode)); err != nil {
+		log.Printf("dispatch: redirect order %d to sourcing: %v", order.ID, err)
 	}
 	return sourceNode, newDest, nil
 }

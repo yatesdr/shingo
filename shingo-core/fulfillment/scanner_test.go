@@ -40,6 +40,7 @@ func newTestScanner(t *testing.T, db Store) *Scanner {
 	return NewScanner(
 		db,
 		nil, // dispatcher — not reached on any tested path
+		nil, // lifecycle — not reached on any tested path
 		nil, // resolver — not reached on any tested path
 		func(string, string, any) error { return nil },
 		func(orderID int64, code, detail string) {

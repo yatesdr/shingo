@@ -46,12 +46,21 @@ func (e *planningError) Unwrap() error {
 
 type PlanningHandler func(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError)
 
+// plannerLifecycle is the narrow lifecycle surface the planning service
+// depends on. *LifecycleService satisfies this interface for free
+// (structural). Declared at the consumer side so the planner's
+// dependency on lifecycle is exactly the methods it actually invokes.
+type plannerLifecycle interface {
+	MoveToSourcing(ord *orders.Order, actor, reason string) error
+}
+
 type PlanningService struct {
 	db          *store.DB
 	resolver    NodeResolver
 	laneLock    *LaneLock
 	binManifest *service.BinManifestService
 	debug       func(string, ...any)
+	lifecycle   plannerLifecycle
 
 	createCompound  func(parentOrder *orders.Order, plan *ReshufflePlan) error
 	advanceCompound func(parentOrderID int64) error
@@ -64,13 +73,14 @@ type PlanningService struct {
 	postFindHook func()
 }
 
-func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, binManifest *service.BinManifestService, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error, advanceCompound func(int64) error) *PlanningService {
+func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock, binManifest *service.BinManifestService, lifecycle plannerLifecycle, debug func(string, ...any), createCompound func(*orders.Order, *ReshufflePlan) error, advanceCompound func(int64) error) *PlanningService {
 	s := &PlanningService{
 		db:              db,
 		resolver:        resolver,
 		laneLock:        laneLock,
 		binManifest:     binManifest,
 		debug:           debug,
+		lifecycle:       lifecycle,
 		createCompound:  createCompound,
 		advanceCompound: advanceCompound,
 		handlers:        make(map[string]PlanningHandler),
@@ -123,8 +133,8 @@ func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payl
 }
 
 func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
-	if err := s.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding source"); err != nil {
-		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	if err := s.lifecycle.MoveToSourcing(order, "planner", "finding source"); err != nil {
+		log.Printf("dispatch: planRetrieve order %d → sourcing: %v", order.ID, err)
 	}
 
 	if order.PayloadDesc == "retrieve_empty" {
@@ -274,9 +284,10 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 		s.laneLock.Unlock(buried.LaneID)
 		return nil, &planningError{Code: "reshuffle_error", Detail: fmt.Sprintf("cannot create compound order: %v", err), Err: err}
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, StatusReshuffling, fmt.Sprintf("reshuffling lane — %d steps", len(plan.Steps))); err != nil {
-		log.Printf("dispatch: update order %d status to reshuffling: %v", order.ID, err)
-	}
+	// createCompound already transitioned the parent to Reshuffling via
+	// lifecycle.BeginReshuffle. The previous code re-wrote the same status
+	// here, which would now fail the protocol.IsValidTransition guard
+	// (Reshuffling → Reshuffling is not a legal edge).
 	s.dbg("retrieve: compound reshuffle created for order %d: %d steps", order.ID, len(plan.Steps))
 	if err := s.advanceCompound(order.ID); err != nil {
 		return nil, &planningError{Code: "reshuffle_error", Detail: err.Error(), Err: err}
@@ -285,8 +296,8 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 }
 
 func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
-	if err := s.db.UpdateOrderStatus(order.ID, StatusSourcing, "validating move"); err != nil {
-		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	if err := s.lifecycle.MoveToSourcing(order, "planner", "validating move"); err != nil {
+		log.Printf("dispatch: planMove order %d → sourcing: %v", order.ID, err)
 	}
 	if order.SourceNode == "" {
 		return nil, &planningError{Code: "missing_source", Detail: "move order requires source_node"}
@@ -408,8 +419,8 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 }
 
 func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
-	if err := s.db.UpdateOrderStatus(order.ID, StatusSourcing, "finding storage destination"); err != nil {
-		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	if err := s.lifecycle.MoveToSourcing(order, "planner", "finding storage destination"); err != nil {
+		log.Printf("dispatch: planStore order %d → sourcing: %v", order.ID, err)
 	}
 	originalDeliveryNode := order.DeliveryNode
 	destNode, err := s.db.FindStorageDestination(payloadCode)

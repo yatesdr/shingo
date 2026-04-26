@@ -18,6 +18,18 @@ type Dispatcher interface {
 	DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error)
 }
 
+// Lifecycle is the narrow lifecycle surface the scanner depends on.
+//
+// Declared consumer-side so *dispatch.LifecycleService satisfies it for
+// free (structural). The scanner only invokes MoveToSourcing and Queue;
+// declaring the interface at the call site lets scanner_test.go stub
+// lifecycle with a two-method fake and keeps the dependency surface
+// minimal.
+type Lifecycle interface {
+	MoveToSourcing(ord *orders.Order, actor, reason string) error
+	Queue(ord *orders.Order, actor, reason string) error
+}
+
 // Resolver is the narrow resolver surface the scanner depends on.
 //
 // Signature mirrors binresolver.NodeResolver (exported via the
@@ -34,4 +46,5 @@ type Resolver interface {
 var (
 	_ Dispatcher = (*dispatch.Dispatcher)(nil)
 	_ Resolver   = (*dispatch.DefaultResolver)(nil)
+	_ Lifecycle  = (*dispatch.LifecycleService)(nil)
 )

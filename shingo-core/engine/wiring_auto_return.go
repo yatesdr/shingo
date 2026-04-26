@@ -50,11 +50,10 @@ func (e *Engine) maybeCreateReturnOrder(order *orders.Order, reason string) {
 		return
 	}
 
-	switch order.Status {
-	case dispatch.StatusDispatched, dispatch.StatusInTransit, dispatch.StatusStaged,
-		dispatch.StatusFailed, dispatch.StatusCancelled:
-		// These are states where the bin may have left its origin
-	default:
+	// In-flight statuses (Dispatched/Acknowledged/InTransit/Staged) plus
+	// terminal Failed/Cancelled — these are the states where the bin may
+	// have left its origin and a return order is meaningful.
+	if !dispatch.IsInFlight(order.Status) && order.Status != dispatch.StatusFailed && order.Status != dispatch.StatusCancelled {
 		return
 	}
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/store/orders"
 )
@@ -80,38 +81,16 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 		return fmt.Errorf("order not found")
 	}
 
-	// Reject terminal statuses — order is already done and cannot be terminated.
-	switch order.Status {
-	case dispatch.StatusDelivered, dispatch.StatusConfirmed,
-		dispatch.StatusCancelled, dispatch.StatusFailed:
+	// Reject terminal AND post-delivery statuses. Once the bin is at the
+	// destination (Delivered/Confirmed) or terminal, terminate is a no-op.
+	if dispatch.IsPostDelivery(order.Status) || protocol.IsTerminal(order.Status) {
 		return fmt.Errorf("cannot terminate order in status %q", order.Status)
 	}
 
-	// Cancel vendor order if active
-	if order.VendorOrderID != "" {
-		if err := e.fleet.CancelOrder(order.VendorOrderID); err != nil {
-			e.logFn("engine: cancel vendor order %s: %v", order.VendorOrderID, err)
-		}
-	}
-
-	// Atomically cancel and release bin claims
-	detail := "cancelled by " + actor
-	previousStatus := order.Status // capture before overwriting
-	if err := e.db.CancelOrderAtomic(orderID, detail); err != nil {
-		return fmt.Errorf("update status: %w", err)
-	}
-
-	e.Events.Emit(Event{
-		Type: EventOrderCancelled,
-		Payload: OrderCancelledEvent{
-			OrderID:        order.ID,
-			EdgeUUID:       order.EdgeUUID,
-			StationID:      order.StationID,
-			Reason:         detail,
-			PreviousStatus: previousStatus,
-		},
-	})
-
+	// Route through lifecycle.CancelOrder for atomic transition + emit.
+	// CancelOrder also cancels the vendor leg if active (no need to call
+	// e.fleet.CancelOrder separately).
+	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, "cancelled by "+actor)
 	return nil
 }
 
@@ -127,24 +106,13 @@ func (e *Engine) TerminateOrder(orderID int64, actor string) error {
 // payload is complete — without these fields populated, the wiring.go
 // handler's notification gate skips the edge push.
 func (e *Engine) failOrderAndEmit(orderID int64, errorCode, detail string) {
-	if err := e.db.FailOrderAtomic(orderID, detail); err != nil {
-		e.logFn("engine: fail order %d (%s): %v", orderID, errorCode, err)
+	order, err := e.db.GetOrder(orderID)
+	if err != nil {
+		e.logFn("engine: load order %d for fail: %v", orderID, err)
 		return
 	}
-	stationID := ""
-	edgeUUID := ""
-	if order, err := e.db.GetOrder(orderID); err == nil {
-		stationID = order.StationID
-		edgeUUID = order.EdgeUUID
+	// Route through lifecycle.Fail for atomic transition + emit.
+	if err := e.dispatcher.Lifecycle().Fail(order, order.StationID, errorCode, detail); err != nil {
+		e.logFn("engine: fail order %d (%s): %v", orderID, errorCode, err)
 	}
-	e.Events.Emit(Event{
-		Type: EventOrderFailed,
-		Payload: OrderFailedEvent{
-			OrderID:   orderID,
-			EdgeUUID:  edgeUUID,
-			StationID: stationID,
-			ErrorCode: errorCode,
-			Detail:    detail,
-		},
-	})
 }

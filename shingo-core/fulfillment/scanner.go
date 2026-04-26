@@ -27,6 +27,7 @@ import (
 type Scanner struct {
 	db         Store
 	dispatcher Dispatcher
+	lifecycle  Lifecycle
 	resolver   Resolver
 	sendToEdge func(msgType, stationID string, payload any) error
 	// failFn fails an order in the DB AND emits EventOrderFailed so the
@@ -53,6 +54,7 @@ type Scanner struct {
 func NewScanner(
 	db Store,
 	dispatcher Dispatcher,
+	lifecycle Lifecycle,
 	resolver Resolver,
 	sendFn func(string, string, any) error,
 	failFn func(orderID int64, code, detail string),
@@ -62,6 +64,7 @@ func NewScanner(
 	return &Scanner{
 		db:         db,
 		dispatcher: dispatcher,
+		lifecycle:  lifecycle,
 		resolver:   resolver,
 		sendToEdge: sendFn,
 		failFn:     failFn,
@@ -266,8 +269,8 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		s.logFn("fulfillment: update source_node for order %d: %v", order.ID, err)
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, protocol.StatusSourcing, "bin found, dispatching"); err != nil {
-		s.logFn("fulfillment: update status to sourcing for order %d: %v", order.ID, err)
+	if err := s.lifecycle.MoveToSourcing(order, "fulfillment", "bin found, dispatching"); err != nil {
+		s.logFn("fulfillment: order %d → sourcing: %v", order.ID, err)
 	}
 
 	// Resolve destination
@@ -275,8 +278,8 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	if err != nil {
 		s.logFn("fulfillment: dest node %q not found for order %d: %v", order.DeliveryNode, order.ID, err)
 		s.db.UnclaimOrderBins(order.ID)
-		if err := s.db.UpdateOrderStatus(order.ID, protocol.StatusQueued, "awaiting inventory"); err != nil {
-			s.logFn("fulfillment: update status to queued for order %d: %v", order.ID, err)
+		if err := s.lifecycle.Queue(order, "fulfillment", "awaiting inventory"); err != nil {
+			s.logFn("fulfillment: order %d → queued: %v", order.ID, err)
 		}
 		return false
 	}
@@ -288,8 +291,8 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	if err != nil {
 		s.logFn("fulfillment: fleet dispatch failed for order %d, re-queuing: %v", order.ID, err)
 		s.db.UnclaimOrderBins(order.ID)
-		if err := s.db.UpdateOrderStatus(order.ID, protocol.StatusQueued, "fleet unavailable, re-queued"); err != nil {
-			s.logFn("fulfillment: update status to queued for order %d: %v", order.ID, err)
+		if err := s.lifecycle.Queue(order, "fulfillment", "fleet unavailable, re-queued"); err != nil {
+			s.logFn("fulfillment: order %d → queued: %v", order.ID, err)
 		}
 		return false
 	}

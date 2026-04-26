@@ -594,3 +594,71 @@ func TestUnknownStatusNotValidTransition(t *testing.T) {
 		t.Error("expected unknown 'to' status to be invalid")
 	}
 }
+
+// TestIsTerminalDerivedFromTable asserts that every key in validTransitions
+// is non-terminal — IsTerminal is now derived from "no key in the map" so
+// any status with at least one outgoing edge MUST report as non-terminal.
+func TestIsTerminalDerivedFromTable(t *testing.T) {
+	for status := range validTransitions {
+		if IsTerminal(status) {
+			t.Errorf("status %q has outgoing edges in validTransitions but IsTerminal returned true", status)
+		}
+	}
+}
+
+// TestEveryKeyHasOutgoingEdge enforces the invariant that no key in
+// validTransitions has an empty []string{} value. An empty edge list would
+// register as "has key but no transitions" — IsTerminal would falsely say
+// false (because the key exists), but no transition would ever validate.
+func TestEveryKeyHasOutgoingEdge(t *testing.T) {
+	for status, edges := range validTransitions {
+		if len(edges) == 0 {
+			t.Errorf("status %q has empty outgoing edge list — either remove the key (making it terminal) or add transitions", status)
+		}
+	}
+}
+
+// TestReshufflingTransitions verifies the StatusReshuffling lifecycle.
+// Per compound.go evidence: parent goes Pending → Reshuffling →
+// {Confirmed | Failed | Cancelled}; children go through their own
+// lifecycle and never hold Reshuffling.
+func TestReshufflingTransitions(t *testing.T) {
+	if !IsValidTransition(StatusPending, StatusReshuffling) {
+		t.Error("Pending → Reshuffling must be valid (compound parent entry)")
+	}
+	for _, to := range []string{StatusConfirmed, StatusFailed, StatusCancelled} {
+		if !IsValidTransition(StatusReshuffling, to) {
+			t.Errorf("Reshuffling → %s must be valid (compound parent terminal)", to)
+		}
+	}
+	for _, to := range []string{StatusSourcing, StatusInTransit, StatusDelivered, StatusStaged} {
+		if IsValidTransition(StatusReshuffling, to) {
+			t.Errorf("Reshuffling → %s must NOT be valid (parent never enters in-flight)", to)
+		}
+	}
+}
+
+// TestAllStatusesCovered asserts every status returned by AllStatuses() is
+// either a key in validTransitions (non-terminal) or has no key (terminal).
+func TestAllStatusesCovered(t *testing.T) {
+	for _, st := range AllStatuses() {
+		_, hasKey := validTransitions[st]
+		if !hasKey && !IsTerminal(st) {
+			t.Errorf("status %q has no key in validTransitions but IsTerminal returned false", st)
+		}
+		if hasKey && IsTerminal(st) {
+			t.Errorf("status %q has a key in validTransitions but IsTerminal returned true", st)
+		}
+	}
+}
+
+// TestAllValidTransitionsIsCopy verifies that AllValidTransitions returns
+// a deep copy — mutating the returned map must not affect the canonical
+// table.
+func TestAllValidTransitionsIsCopy(t *testing.T) {
+	dup := AllValidTransitions()
+	dup[StatusPending] = []string{"some-bogus-status"}
+	if !IsValidTransition(StatusPending, StatusSourcing) {
+		t.Error("AllValidTransitions returned a reference, not a copy — canonical table was mutated")
+	}
+}

@@ -51,8 +51,46 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		return
 	}
 
-	if err := e.db.UpdateOrderStatus(order.ID, newStatus, fmt.Sprintf("fleet: %s -> %s", ev.OldStatus, ev.NewStatus)); err != nil {
-		e.logFn("engine: update order %d status to %s: %v", order.ID, newStatus, err)
+	// Vendor-state-domain mapping has already produced newStatus (a ShinGo
+	// status). Route through the typed lifecycle method matching the
+	// target ShinGo status — the vendor terminal-check at line 81 below
+	// guards against routing terminal vendor states through MarkInTransit/
+	// MarkStaged. Cancel/Fail are dispatched in the post-mapping switch.
+	lc := e.dispatcher.Lifecycle()
+	switch newStatus {
+	case dispatch.StatusInTransit:
+		if err := lc.MarkInTransit(order, effectiveRobotID, "fleet"); err != nil {
+			e.logFn("engine: mark in_transit order %d: %v", order.ID, err)
+		}
+	case dispatch.StatusStaged:
+		if err := lc.MarkStaged(order, "fleet"); err != nil {
+			e.logFn("engine: mark staged order %d: %v", order.ID, err)
+		}
+	case dispatch.StatusDelivered:
+		if err := lc.MarkDelivered(order, "fleet"); err != nil {
+			e.logFn("engine: mark delivered order %d: %v", order.ID, err)
+		}
+	case dispatch.StatusAcknowledged:
+		// TODO(dead-code): unreachable with the current seerrds adapter —
+		// fleet.MapState (mappers.go:12) never returns StatusAcknowledged.
+		// Kept defensive in case a future fleet adapter reports a distinct
+		// ACK phase. Verify before the next refactor.
+		if err := lc.Acknowledge(order, "fleet"); err != nil {
+			e.logFn("engine: acknowledge order %d: %v", order.ID, err)
+		}
+	case dispatch.StatusDispatched:
+		// Fleet shouldn't actually report Dispatched — the dispatcher
+		// writes that status itself after backend.CreateOrder returns.
+		// If we see it from MapState, log and skip rather than silently
+		// re-writing the status.
+		e.logFn("engine: unexpected fleet-reported Dispatched for order %d, skipping", order.ID)
+	case dispatch.StatusFailed, dispatch.StatusCancelled:
+		// Handled by the post-mapping switch below.
+	default:
+		// Unknown/legacy state — fall back to generic write.
+		if err := e.db.UpdateOrderStatus(order.ID, newStatus, fmt.Sprintf("fleet: %s -> %s", ev.OldStatus, ev.NewStatus)); err != nil {
+			e.logFn("engine: update order %d status to %s: %v", order.ID, newStatus, err)
+		}
 	}
 	if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, effectiveRobotID); err != nil {
 		e.logFn("engine: update order %d vendor state: %v", order.ID, err)
@@ -93,30 +131,15 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 }
 
 func (e *Engine) handleFleetOrderFailed(order *orders.Order) {
-	if err := e.db.FailOrderAtomic(order.ID, "fleet order failed"); err != nil {
-		e.logFn("engine: atomic fail order %d: %v", order.ID, err)
+	// lifecycle.Fail handles atomic transition + emit via the action map.
+	if err := e.dispatcher.Lifecycle().Fail(order, order.StationID, "fleet_failed", "fleet order failed"); err != nil {
+		e.logFn("engine: fail order %d: %v", order.ID, err)
 	}
-	e.Events.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
-		OrderID:   order.ID,
-		EdgeUUID:  order.EdgeUUID,
-		StationID: order.StationID,
-		ErrorCode: "fleet_failed",
-		Detail:    "fleet order failed",
-	}})
 }
 
 func (e *Engine) handleFleetOrderCancelled(order *orders.Order) {
-	// order.Status is the in-memory value loaded before UpdateOrderStatus ran,
-	// so it reflects the status prior to the cancellation update.
-	previousStatus := order.Status
-	if err := e.db.CancelOrderAtomic(order.ID, "fleet order stopped"); err != nil {
-		e.logFn("engine: atomic cancel order %d: %v", order.ID, err)
-	}
-	e.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
-		OrderID:        order.ID,
-		EdgeUUID:       order.EdgeUUID,
-		StationID:      order.StationID,
-		Reason:         "fleet order stopped",
-		PreviousStatus: previousStatus,
-	}})
+	// lifecycle.CancelOrder handles fleet-cancel + atomic transition + emit.
+	// PreviousStatus is captured by transition() before the status flip and
+	// passed through to emitCancelled via the Event.
+	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, "fleet order stopped")
 }

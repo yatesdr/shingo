@@ -43,7 +43,7 @@ func NewDispatcher(db *store.DB, backend fleet.Backend, emitter Emitter, station
 	}
 	d.lifecycle = newLifecycleService(db, backend, emitter, resolver, binManifest, d.dbg)
 	d.replies = newReplySender(db, dispatchTopic, stationID, d.dbg)
-	d.planner = newPlanningService(db, resolver, d.laneLock, binManifest, d.dbg, d.CreateCompoundOrder, d.AdvanceCompoundOrder)
+	d.planner = newPlanningService(db, resolver, d.laneLock, binManifest, d.lifecycle, d.dbg, d.CreateCompoundOrder, d.AdvanceCompoundOrder)
 	return d
 }
 
@@ -101,7 +101,7 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 }
 
 func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
-	if err := d.db.UpdateOrderStatus(order.ID, StatusQueued, "awaiting inventory"); err != nil {
+	if err := d.lifecycle.Queue(order, "dispatcher", "awaiting inventory"); err != nil {
 		log.Printf("dispatch: queue order %d: %v", order.ID, err)
 	}
 	if payloadCode != "" && order.PayloadCode == "" {
@@ -141,8 +141,8 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
 		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
 	}
-	if err := d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID)); err != nil {
-		log.Printf("dispatch: update order %d status to dispatched: %v", order.ID, err)
+	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
+		log.Printf("dispatch: order %d → dispatched: %v", order.ID, err)
 	}
 
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
@@ -170,18 +170,17 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
 		log.Printf("dispatch: fleet create order failed: %v", err)
-		if dbErr := d.db.FailOrderAtomic(order.ID, err.Error()); dbErr != nil {
-			log.Printf("dispatch: atomic fail order %d: %v", order.ID, dbErr)
+		if failErr := d.lifecycle.Fail(order, order.StationID, "fleet_failed", err.Error()); failErr != nil {
+			log.Printf("dispatch: fail order %d: %v", order.ID, failErr)
 		}
-		d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, "fleet_failed", err.Error())
 		return "", err
 	}
 
 	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
 		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
 	}
-	if err := d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID)); err != nil {
-		log.Printf("dispatch: update order %d status to dispatched: %v", order.ID, err)
+	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
+		log.Printf("dispatch: order %d → dispatched: %v", order.ID, err)
 	}
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 
@@ -333,10 +332,9 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 
 func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, errorCode, detail string) {
 	stationID := env.Src.Station
-	if err := d.db.FailOrderAtomic(order.ID, detail); err != nil {
-		log.Printf("dispatch: atomic fail order %d: %v", order.ID, err)
+	if err := d.lifecycle.Fail(order, stationID, errorCode, detail); err != nil {
+		log.Printf("dispatch: fail order %d: %v", order.ID, err)
 	}
-	d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, stationID, errorCode, detail)
 	d.sendError(env, order.EdgeUUID, errorCode, detail)
 }
 

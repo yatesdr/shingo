@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingocore/store"
 	"shingocore/store/orders"
 )
-
-const StatusReshuffling = "reshuffling"
 
 // reshuffleFailDetail is shared between the parent's status update and the
 // EmitOrderFailed event payload so they can't drift. Used in
@@ -19,9 +18,9 @@ const reshuffleFailDetail = "reshuffle failed: child order failed"
 // CreateCompoundOrder creates a parent order with child orders for a reshuffle plan.
 // All children and bin claims are created in a single transaction.
 func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *ReshufflePlan) error {
-	if err := d.db.UpdateOrderStatus(parentOrder.ID, StatusReshuffling,
+	if err := d.lifecycle.BeginReshuffle(parentOrder,
 		fmt.Sprintf("reshuffling: %d steps to unbury bin %d", len(plan.Steps), plan.TargetBin.ID)); err != nil {
-		log.Printf("dispatch: update order %d status to reshuffling: %v", parentOrder.ID, err)
+		log.Printf("dispatch: begin reshuffle order %d: %v", parentOrder.ID, err)
 	}
 
 	var children []store.CompoundChild
@@ -75,41 +74,36 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			}
 		}
 
+		// Load parent for both branches.
+		parent, pErr := d.db.GetOrder(parentOrderID)
+		if pErr != nil {
+			log.Printf("dispatch: load parent compound order %d: %v", parentOrderID, pErr)
+		}
+
 		if hasFailed {
 			log.Printf("dispatch: compound order %d has failed children — marking parent failed", parentOrderID)
-			if err := d.db.UpdateOrderStatus(parentOrderID, StatusFailed, reshuffleFailDetail); err != nil {
-				log.Printf("dispatch: update compound order %d status to failed: %v", parentOrderID, err)
+			if parent != nil {
+				if err := d.lifecycle.Fail(parent, parent.StationID, "reshuffle_failed", reshuffleFailDetail); err != nil {
+					log.Printf("dispatch: fail compound order %d: %v", parentOrderID, err)
+				}
 			}
 			d.unlockLaneForCompound(parentOrderID)
-			parent, pErr := d.db.GetOrder(parentOrderID)
-			if pErr == nil {
-				// Emit OrderFailed (was OrderCompleted) so the parent's status in
-				// the event matches its status in the DB. The wrong event type
-				// previously routed failed compound parents through the completion
-				// handler instead of the failure handler — no auto-return, no
-				// edge notification, audit trail showed "completed" for a failed
-				// order.
-				d.emitter.EmitOrderFailed(parentOrderID, parent.EdgeUUID, parent.StationID,
-					"reshuffle_failed", reshuffleFailDetail)
-			}
 			return nil
 		}
 
-		// All children succeeded — compound order is complete
-		if err := d.db.UpdateOrderStatus(parentOrderID, StatusConfirmed, "reshuffle complete"); err != nil {
-			log.Printf("dispatch: update compound order %d status to confirmed: %v", parentOrderID, err)
+		// All children succeeded — compound order is complete.
+		// CompleteCompound handles Reshuffling → Confirmed and fires the
+		// emitCompleted action for engine wiring to react.
+		if parent != nil {
+			if err := d.lifecycle.CompleteCompound(parent); err != nil {
+				log.Printf("dispatch: confirm compound order %d: %v", parentOrderID, err)
+			}
 		}
 		if err := d.db.CompleteOrder(parentOrderID); err != nil {
 			log.Printf("dispatch: complete compound order %d: %v", parentOrderID, err)
 		}
 
-		// Unlock lane
 		d.unlockLaneForCompound(parentOrderID)
-
-		parent, err := d.db.GetOrder(parentOrderID)
-		if err == nil {
-			d.emitter.EmitOrderCompleted(parentOrderID, parent.EdgeUUID, parent.StationID)
-		}
 		return nil
 	}
 
@@ -137,8 +131,8 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 		return d.AdvanceCompoundOrder(parentOrderID)
 	}
 
-	if err = d.db.UpdateOrderStatus(next.ID, StatusSourcing, "dispatching reshuffle step"); err != nil {
-		log.Printf("dispatch: update child order %d status to sourcing: %v", next.ID, err)
+	if err = d.lifecycle.MoveToSourcing(next, "dispatcher", "dispatching reshuffle step"); err != nil {
+		log.Printf("dispatch: child order %d → sourcing: %v", next.ID, err)
 	}
 	log.Printf("dispatch: advancing compound order %d, step %d (seq %d)", parentOrderID, next.ID, next.Sequence)
 
@@ -179,18 +173,17 @@ func (d *Dispatcher) HandleChildOrderFailure(parentOrderID, childOrderID int64) 
 		if child.ID == childOrderID {
 			continue
 		}
-		if child.Status == StatusCancelled || child.Status == StatusConfirmed || child.Status == StatusFailed {
+		if protocol.IsTerminal(child.Status) {
 			continue
 		}
 		d.lifecycle.CancelOrder(child, parent.StationID, cancelReason)
 	}
 
-	// Fail the parent
-	if err := d.db.UpdateOrderStatus(parentOrderID, StatusFailed, fmt.Sprintf("child order %d failed", childOrderID)); err != nil {
-		log.Printf("dispatch: update compound order %d status to failed: %v", parentOrderID, err)
+	// Fail the parent — Fail handles the atomic transition + emit.
+	if err := d.lifecycle.Fail(parent, parent.StationID, "reshuffle_failed",
+		fmt.Sprintf("child order %d failed during reshuffle", childOrderID)); err != nil {
+		log.Printf("dispatch: fail compound parent %d: %v", parentOrderID, err)
 	}
-	d.emitter.EmitOrderFailed(parentOrderID, parent.EdgeUUID, parent.StationID, "reshuffle_failed",
-		fmt.Sprintf("child order %d failed during reshuffle", childOrderID))
 
 	// Unlock lane
 	d.unlockLaneForCompound(parentOrderID)
@@ -209,7 +202,7 @@ func (d *Dispatcher) cancelCompoundChildren(parent *orders.Order, stationID, rea
 
 	cancelReason := fmt.Sprintf("parent order cancelled: %s", reason)
 	for _, child := range children {
-		if child.Status == StatusCancelled || child.Status == StatusConfirmed || child.Status == StatusFailed {
+		if protocol.IsTerminal(child.Status) {
 			continue
 		}
 		d.lifecycle.CancelOrder(child, stationID, cancelReason)

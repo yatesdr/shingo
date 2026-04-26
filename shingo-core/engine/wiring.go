@@ -150,7 +150,7 @@ func (e *Engine) wireEventHandlers() {
 
 		// Skip auto-return for orders that were already delivered/confirmed.
 		// The bin is at the destination, not at the pickup node.
-		if ev.PreviousStatus == dispatch.StatusDelivered || ev.PreviousStatus == dispatch.StatusConfirmed {
+		if dispatch.IsPostDelivery(ev.PreviousStatus) {
 			e.logFn("engine: order %d was %s before cancel, skipping auto-return (bin at destination)", ev.OrderID, ev.PreviousStatus)
 		} else if order, err := e.db.GetOrder(ev.OrderID); err == nil {
 			e.maybeCreateReturnOrder(order, "cancelled")

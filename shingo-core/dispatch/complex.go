@@ -85,8 +85,8 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 
-	if err := d.db.UpdateOrderStatus(order.ID, StatusSourcing, "resolving complex steps"); err != nil {
-		log.Printf("dispatch: update order %d status to sourcing: %v", order.ID, err)
+	if err := d.lifecycle.MoveToSourcing(order, "dispatcher", "resolving complex steps"); err != nil {
+		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
 	}
 
 	if hasWait {
@@ -126,8 +126,8 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
 		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
 	}
-	if err := d.db.UpdateOrderStatus(order.ID, StatusDispatched, fmt.Sprintf("vendor order %s created", vendorOrderID)); err != nil {
-		log.Printf("dispatch: update order %d status to dispatched: %v", order.ID, err)
+	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
+		log.Printf("dispatch: complex order %d → dispatched: %v", order.ID, err)
 	}
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode, deliveryNode)
 	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
@@ -148,7 +148,10 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	if order.Status != StatusStaged {
+	// Precondition check via the protocol table — single source of truth
+	// for legal transitions. Fast-fails before fleet contact and manifest
+	// sync so an un-releasable order doesn't trigger external side effects.
+	if !protocol.IsValidTransition(order.Status, StatusInTransit) {
 		d.sendError(env, p.OrderUUID, "invalid_state", fmt.Sprintf("order must be staged to release, got %s", order.Status))
 		return
 	}
@@ -252,8 +255,16 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		log.Printf("dispatch: update order %d wait_index to %d: %v", order.ID, newWaitIndex, err)
 	}
 
-	if err := d.db.UpdateOrderStatus(order.ID, StatusInTransit, fmt.Sprintf("released from staging (wait %d)", order.WaitIndex)); err != nil {
-		log.Printf("dispatch: update order %d status to in_transit: %v", order.ID, err)
+	if err := d.lifecycle.Release(order, "dispatcher"); err != nil {
+		// Race-window: status was Staged at the precondition check but
+		// changed before the late transition (concurrent cancel, fleet
+		// callback, etc.). The fleet release has already happened —
+		// log loudly and continue; recovery will reconcile.
+		if IsIllegalTransition(err) {
+			log.Printf("dispatch: order %d became un-releasable mid-flight (status=%s): %v", order.ID, order.Status, err)
+		} else {
+			log.Printf("dispatch: release order %d from staging: %v", order.ID, err)
+		}
 	}
 	log.Printf("dispatch: complex order %d released with %d additional blocks (wait %d, complete=%v)",
 		order.ID, len(blocks), order.WaitIndex, complete)
