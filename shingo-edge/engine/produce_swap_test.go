@@ -365,8 +365,18 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FinalizeProduceNode: %v", err)
 	}
-	// Only B is staged; A is still in its initial post-finalize status.
+	// B at staged (lineside robot parked at the wait point). A at
+	// acknowledged — post-dispatch but pre-staged. In production this is
+	// the typical state when Robot A is en route to the supermarket while
+	// Robot B is already at the line. We seed acknowledged rather than
+	// leaving A at the default submitted because Manager.ReleaseOrder has a
+	// pre-dispatch guard (pending/submitted = silent no-op) and the
+	// lifecycle validator rejects submitted->in_transit. Production traffic
+	// reaches at-least acknowledged before B can stage at the line.
 	markStaged(t, db, result.OrderB.ID)
+	if err := db.UpdateOrderStatus(result.OrderA.ID, orders.StatusAcknowledged); err != nil {
+		t.Fatalf("seed A acknowledged: %v", err)
+	}
 
 	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}); err != nil {
 		t.Fatalf("ReleaseStagedOrders: %v", err)
