@@ -102,23 +102,39 @@ func TestComputeSwapReady_BothStaged(t *testing.T) {
 	}
 }
 
-// TestComputeSwapReady_OnlyOneStaged covers the post-2026-04-25 relaxation:
-// the consolidated RELEASE button should appear as soon as the FIRST robot
-// arrives at its wait point (not only when both arrive simultaneously, which
-// in practice almost never happened — robots arrive seconds apart). The
-// late-arriving leg is handled by the auto-release-on-staged hook in
-// wiring.go after the operator clicks. See bug-fix-plan-final-dev-d.md
-// item 2.1.
+// TestComputeSwapReady_OnlyOneStaged covers the post-2026-04-27 contract:
+// SwapReady tracks ONLY the StagedOrderID (Robot B, the lineside removal
+// robot). Order A's status is irrelevant — the consolidated release fans
+// out to both legs regardless. So when B is staged and A is in_transit (or
+// in any non-terminal status), SwapReady is true. Conversely, when A is
+// staged but B is in_transit (the inverse of the old contract's symmetric
+// "at least one staged" rule), SwapReady is false because B isn't parked
+// at the line yet.
 func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 	db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
+
+	// B (StagedOrderID, lineside robot) staged; A (ActiveOrderID) in_transit.
+	// New contract: SwapReady=true — the gating leg is parked.
+	if err := db.UpdateOrderStatus(aID, "in_transit"); err != nil {
+		t.Fatalf("mark A in_transit: %v", err)
+	}
+	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
+		t.Fatalf("mark B staged: %v", err)
+	}
+	if !ComputeSwapReady(db, claim, runtime) {
+		t.Error("expected SwapReady=true when StagedOrderID (B, lineside robot) is at staged — the new gating signal")
+	}
+
+	// Inverse: A staged, B in_transit. Under the new contract this returns
+	// false because B isn't the parked one. The operator should wait for B.
 	if err := db.UpdateOrderStatus(aID, "staged"); err != nil {
 		t.Fatalf("mark A staged: %v", err)
 	}
 	if err := db.UpdateOrderStatus(bID, "in_transit"); err != nil {
 		t.Fatalf("mark B in_transit: %v", err)
 	}
-	if !ComputeSwapReady(db, claim, runtime) {
-		t.Error("expected SwapReady=true when one order is staged and the other is non-terminal (relaxed timing-window contract)")
+	if ComputeSwapReady(db, claim, runtime) {
+		t.Error("expected SwapReady=false when only ActiveOrderID (A) is staged and B has not yet arrived — B is the gate, not A")
 	}
 }
 

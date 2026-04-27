@@ -322,8 +322,12 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	if runtime.RemainingUOP != 0 {
 		t.Errorf("RemainingUOP = %d, want 0 after manual_swap move completion", runtime.RemainingUOP)
 	}
-	if runtime.ActiveOrderID != nil {
-		t.Error("ActiveOrderID should be nil after manual_swap move completion")
+	// handleManualSwapCompletion clears ActiveOrderID then calls tryAutoRequest
+	// which legitimately re-populates it with a new auto-requested order if
+	// the claim has allowed payloads. The relevant invariant is that the
+	// original move order is no longer tracked — not that the slot is empty.
+	if runtime.ActiveOrderID != nil && *runtime.ActiveOrderID == orderID {
+		t.Errorf("ActiveOrderID = %d (the original move order) after completion; manual_swap completion should have cleared the move-order tracking before re-populating with any auto-request", *runtime.ActiveOrderID)
 	}
 }
 
