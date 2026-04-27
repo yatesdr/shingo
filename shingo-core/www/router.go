@@ -97,7 +97,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 		debugLog:      dbg,
 	}
 
-	h.ensureDefaultAdmin(eng.DB())
+	h.ensureDefaultAdmin()
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)

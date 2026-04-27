@@ -19,7 +19,7 @@ import (
 	"shingo/protocol"
 	"shingocore/engine"
 	"shingocore/fleet"
-	"shingocore/store/diagnostics"
+	"shingocore/domain"
 )
 
 // --- Test Orders Page ---
@@ -710,7 +710,7 @@ func (h *Handlers) apiTestCommandSubmit(w http.ResponseWriter, r *http.Request) 
 		GoodsID:       req.GoodsID,
 	})
 
-	tc := &diagnostics.TestCommand{
+	tc := &domain.TestCommand{
 		CommandType: req.CommandType,
 		RobotID:     req.RobotID,
 		Location:    req.Location,

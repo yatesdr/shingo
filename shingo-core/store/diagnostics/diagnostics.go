@@ -13,25 +13,18 @@ package diagnostics
 import (
 	"database/sql"
 	"fmt"
-	"time"
 
+	"shingocore/domain"
 	"shingocore/store/internal/helpers"
 )
 
-// TestCommand is one diagnostics test_commands row.
-type TestCommand struct {
-	ID            int64
-	CommandType   string
-	RobotID       string
-	VendorOrderID string
-	VendorState   string
-	Location      string
-	ConfigID      string
-	Detail        string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	CompletedAt   *time.Time
-}
+// TestCommand is one diagnostics test_commands row. The struct lives
+// in shingocore/domain (Stage 2A.2); this alias keeps the
+// diagnostics.TestCommand name used by scan helpers and the outer
+// store/ re-export, and lets www handlers reference TestCommand via
+// shingocore/domain instead of importing this persistence
+// sub-package.
+type TestCommand = domain.TestCommand
 
 const testCommandCols = `id, command_type, robot_id, vendor_order_id, vendor_state, location, config_id, detail, created_at, updated_at, completed_at`
 

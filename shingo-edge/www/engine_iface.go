@@ -3,12 +3,11 @@ package www
 import (
 	"shingo/protocol"
 	"shingoedge/config"
+	"shingoedge/domain"
 	"shingoedge/engine"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/service"
-	storeorders "shingoedge/store/orders"
-	"shingoedge/store/processes"
 )
 
 // ServiceAccess is the narrow interface that service-shaped www handlers
@@ -82,26 +81,26 @@ type EngineOrchestration interface {
 
 	// ── Material orchestration ─────────────────────────────────────
 	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)
-	ReleaseNodeEmpty(nodeID int64) (*storeorders.Order, error)
-	ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order, error)
+	ReleaseNodeEmpty(nodeID int64) (*domain.Order, error)
+	ReleaseNodePartial(nodeID int64, qty int64) (*domain.Order, error)
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	ConfirmNodeManifest(nodeID int64) error
 	FinalizeProduceNode(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64) error
-	RequestEmptyBin(nodeID int64, payloadCode string) (*storeorders.Order, error)
-	RequestFullBin(nodeID int64, payloadCode string) (*storeorders.Order, error)
+	RequestEmptyBin(nodeID int64, payloadCode string) (*domain.Order, error)
+	RequestFullBin(nodeID int64, payloadCode string) (*domain.Order, error)
 
 	// ── Changeover orchestration ───────────────────────────────────
-	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*processes.Changeover, error)
+	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*domain.Changeover, error)
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
 	ReleaseChangeoverWait(processID int64, calledBy string) error
-	StageNodeChangeoverMaterial(processID, nodeID int64) (*storeorders.Order, error)
-	EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*storeorders.Order, error)
-	ReleaseNodeIntoProduction(processID, nodeID int64) (*storeorders.Order, error)
+	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
+	EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*domain.Order, error)
+	ReleaseNodeIntoProduction(processID, nodeID int64) (*domain.Order, error)
 	SwitchNodeToTarget(processID, nodeID int64) error
 	SwitchOperatorStationToTarget(processID, stationID int64) error
 	SyncProcessCounter(processID int64) error

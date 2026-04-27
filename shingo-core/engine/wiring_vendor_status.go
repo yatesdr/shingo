@@ -87,10 +87,13 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	case dispatch.StatusFailed, dispatch.StatusCancelled:
 		// Handled by the post-mapping switch below.
 	default:
-		// Unknown/legacy state — fall back to generic write.
-		if err := e.db.UpdateOrderStatus(order.ID, newStatus, fmt.Sprintf("fleet: %s -> %s", ev.OldStatus, ev.NewStatus)); err != nil {
-			e.logFn("engine: update order %d status to %s: %v", order.ID, newStatus, err)
-		}
+		// Unknown mapped status — should never fire under the current
+		// seerrds adapter (MapState in fleet/seerrds/mappers.go produces
+		// only the cases handled above). If it does fire, log and skip
+		// rather than silently bypassing the state machine. A mapped
+		// status outside the typed-method list signals an adapter
+		// mismatch that needs investigation, not a generic DB write.
+		e.logFn("engine: unknown mapped status %q for order %d (vendor=%q); skipping write — adapter MapState may be out of sync with dispatch.Status* constants", newStatus, order.ID, ev.NewStatus)
 	}
 	if err := e.db.UpdateOrderVendor(order.ID, order.VendorOrderID, ev.NewStatus, effectiveRobotID); err != nil {
 		e.logFn("engine: update order %d vendor state: %v", order.ID, err)

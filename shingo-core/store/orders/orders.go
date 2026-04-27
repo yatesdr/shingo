@@ -23,18 +23,15 @@ import (
 // Order is the order domain entity. The struct lives in shingocore/domain
 // (Stage 2A); this alias keeps the orders.Order name used by ScanOrder,
 // Create/Update, the filter + list helpers, and the outer store/ orders.go
-// re-export (store.Order). History and Filter stay local to this package —
-// History is a persistence-side event row and Filter is a query DSL,
-// neither pure domain.
+// re-export (store.Order). History also lifted to domain in Stage 2A.2 so
+// www handlers can return order-with-history shapes without importing this
+// sub-package; Filter stays local because it's a query DSL.
 type Order = domain.Order
 
-type History struct {
-	ID        int64     `json:"id"`
-	OrderID   int64     `json:"order_id"`
-	Status    string    `json:"status"`
-	Detail    string    `json:"detail"`
-	CreatedAt time.Time `json:"created_at"`
-}
+// History is the order-history audit row. The struct lives in
+// shingocore/domain (Stage 2A.2); this alias keeps the orders.History
+// name used by store readers and downstream callers.
+type History = domain.OrderHistory
 
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can

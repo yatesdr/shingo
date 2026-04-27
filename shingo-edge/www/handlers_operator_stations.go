@@ -7,10 +7,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine"
-	"shingoedge/store"
-	"shingoedge/store/processes"
-	"shingoedge/store/stations"
 )
 
 func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +41,7 @@ func (h *Handlers) apiGetOperatorStationView(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "station not found")
 		return
 	}
-	views := []store.OperatorStationView{*view}
+	views := []domain.OperatorStationView{*view}
 	enrichViewBinState(h.engine.CoreAPI(), views)
 	view.Nodes = views[0].Nodes
 	_ = h.engine.StationService().Touch(id, "online")
@@ -69,7 +67,7 @@ func (h *Handlers) apiListOperatorStations(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handlers) apiCreateOperatorStation(w http.ResponseWriter, r *http.Request) {
-	var in stations.Input
+	var in domain.StationInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -88,7 +86,7 @@ func (h *Handlers) apiUpdateOperatorStation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var in stations.Input
+	var in domain.StationInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -161,7 +159,7 @@ func (h *Handlers) apiListConfiguredProcessNodesByStation(w http.ResponseWriter,
 }
 
 func (h *Handlers) apiCreateProcessNode(w http.ResponseWriter, r *http.Request) {
-	var in processes.NodeInput
+	var in domain.NodeInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -181,7 +179,7 @@ func (h *Handlers) apiUpdateProcessNode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	var in processes.NodeInput
+	var in domain.NodeInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

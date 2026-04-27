@@ -3,13 +3,12 @@ package www
 import (
 	"net/http"
 
+	"shingoedge/domain"
 	"shingoedge/engine"
-	"shingoedge/store"
-	"shingoedge/store/processes"
 )
 
 // enrichViewBinState fetches bin state from Core and attaches it to each node in the views.
-func enrichViewBinState(coreAPI *engine.CoreClient, views []store.OperatorStationView) {
+func enrichViewBinState(coreAPI *engine.CoreClient, views []domain.OperatorStationView) {
 	if coreAPI == nil || !coreAPI.Available() {
 		return
 	}
@@ -36,7 +35,7 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []store.OperatorStatio
 		for j := range views[i].Nodes {
 			name := views[i].Nodes[j].Node.CoreNodeName
 			if info, ok := binMap[name]; ok {
-				views[i].Nodes[j].BinState = &store.NodeBinState{
+				views[i].Nodes[j].BinState = &domain.NodeBinState{
 					BinLabel:          info.BinLabel,
 					BinTypeCode:       info.BinTypeCode,
 					PayloadCode:       info.PayloadCode,
@@ -51,12 +50,12 @@ func enrichViewBinState(coreAPI *engine.CoreClient, views []store.OperatorStatio
 }
 
 
-func buildStationViews(eng ServiceAccess, activeProcess *processes.Process) []store.OperatorStationView {
+func buildStationViews(eng ServiceAccess, activeProcess *domain.Process) []domain.OperatorStationView {
 	if activeProcess == nil {
 		return nil
 	}
 	stations, _ := eng.StationService().ListByProcess(activeProcess.ID)
-	var views []store.OperatorStationView
+	var views []domain.OperatorStationView
 	for _, station := range stations {
 		if view, err := eng.StationService().BuildView(station.ID); err == nil {
 			views = append(views, *view)

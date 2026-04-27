@@ -12,11 +12,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
+// NodeClaim and NodeClaimInput are the claim-aggregate data types.
+//
 // NodeClaim declares that a style needs a specific core node with a
 // given payload and role. Three roles are supported:
 //   - "consume":   system delivers full bins and removes empties
@@ -36,72 +38,15 @@ import (
 //
 // InboundSource is where inbound material is picked up FROM.
 // OutboundDestination is where outbound material is dropped off TO.
-type NodeClaim struct {
-	ID                   int64     `json:"id"`
-	StyleID              int64     `json:"style_id"`
-	CoreNodeName         string    `json:"core_node_name"`
-	Role                 string    `json:"role"`
-	SwapMode             string    `json:"swap_mode"`
-	PayloadCode          string    `json:"payload_code"`
-	UOPCapacity          int       `json:"uop_capacity"`
-	ReorderPoint         int       `json:"reorder_point"`
-	AutoReorder          bool      `json:"auto_reorder"`
-	InboundStaging       string    `json:"inbound_staging"`
-	OutboundStaging      string    `json:"outbound_staging"`
-	InboundSource        string    `json:"inbound_source"`
-	OutboundDestination  string    `json:"outbound_destination"`
-	AllowedPayloadCodes  []string  `json:"allowed_payload_codes"`
-	AutoRequestPayload   string    `json:"auto_request_payload"`
-	KeepStaged           bool      `json:"keep_staged"`
-	EvacuateOnChangeover bool      `json:"evacuate_on_changeover"`
-	PairedCoreNode       string    `json:"paired_core_node"`
-	AutoConfirm          bool      `json:"auto_confirm"`
-	Sequence             int       `json:"sequence"`
-	// LinesideSoftThreshold is the per-claim soft cap for the release
-	// qty-override prompt. Zero means "off" (default). When >0, the HMI
-	// warns — but doesn't block — if the operator enters a qty greater
-	// than 2× this value, catching typos before they become stranded
-	// inventory.
-	LinesideSoftThreshold int       `json:"lineside_soft_threshold"`
-	CreatedAt             time.Time `json:"created_at"`
-}
-
-// AllowedPayloads returns the effective set of payload codes this claim
-// accepts. For source nodes with an allowed list, returns that list.
-// Otherwise returns a single-element list with the primary payload code.
-func (c *NodeClaim) AllowedPayloads() []string {
-	if len(c.AllowedPayloadCodes) > 0 {
-		return c.AllowedPayloadCodes
-	}
-	if c.PayloadCode != "" {
-		return []string{c.PayloadCode}
-	}
-	return nil
-}
-
-// NodeClaimInput is the input shape for UpsertClaim.
-type NodeClaimInput struct {
-	StyleID              int64    `json:"style_id"`
-	CoreNodeName         string   `json:"core_node_name"`
-	Role                 string   `json:"role"`
-	SwapMode             string   `json:"swap_mode"`
-	PayloadCode          string   `json:"payload_code"`
-	UOPCapacity          int      `json:"uop_capacity"`
-	ReorderPoint         int      `json:"reorder_point"`
-	AutoReorder          bool     `json:"auto_reorder"`
-	InboundStaging       string   `json:"inbound_staging"`
-	OutboundStaging      string   `json:"outbound_staging"`
-	InboundSource        string   `json:"inbound_source"`
-	OutboundDestination  string   `json:"outbound_destination"`
-	AllowedPayloadCodes  []string `json:"allowed_payload_codes"`
-	AutoRequestPayload   string   `json:"auto_request_payload"`
-	KeepStaged           bool     `json:"keep_staged"`
-	EvacuateOnChangeover bool     `json:"evacuate_on_changeover"`
-	PairedCoreNode        string `json:"paired_core_node"`
-	AutoConfirm           bool   `json:"auto_confirm"`
-	Sequence              int    `json:"sequence"`
-	LinesideSoftThreshold int    `json:"lineside_soft_threshold"`
-}
+//
+// The structs (and the NodeClaim.AllowedPayloads method) live in
+// shingoedge/domain (Stage 2A.2); these aliases keep the unprefixed
+// processes.NodeClaim / processes.NodeClaimInput names used by every
+// scan helper, Upsert call site, and the outer store/ re-exports.
+type (
+	NodeClaim      = domain.NodeClaim
+	NodeClaimInput = domain.NodeClaimInput
+)
 
 const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
 	uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,

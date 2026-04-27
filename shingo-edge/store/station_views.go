@@ -1,63 +1,21 @@
 package store
 
 import (
-	"shingoedge/store/lineside"
-	"shingoedge/store/orders"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
-	"shingoedge/store/stations"
 )
 
-// NodeBinState holds Core-side bin information fetched via telemetry.
-type NodeBinState struct {
-	BinLabel          string  `json:"bin_label,omitempty"`
-	BinTypeCode       string  `json:"bin_type_code,omitempty"`
-	PayloadCode       string  `json:"payload_code,omitempty"`
-	UOPRemaining      int     `json:"uop_remaining"`
-	Manifest          *string `json:"manifest,omitempty"`
-	ManifestConfirmed bool    `json:"manifest_confirmed"`
-	Occupied          bool    `json:"occupied"`
-}
-
-type StationNodeView struct {
-	Node           processes.Node              `json:"node"`
-	Runtime        *processes.RuntimeState `json:"runtime,omitempty"`
-	ActiveClaim    *processes.NodeClaim          `json:"active_claim,omitempty"`
-	TargetClaim    *processes.NodeClaim          `json:"target_claim,omitempty"`
-	ChangeoverTask *processes.NodeTask      `json:"changeover_task,omitempty"`
-	Orders         []orders.Order                  `json:"orders"`
-	BinState       *NodeBinState            `json:"bin_state,omitempty"`
-	// SwapReady is true when both tracked orders for a two-robot swap are
-	// in "staged" status — i.e. both robots are holding at their wait
-	// points and a single coordinated release can move both forward.
-	// Non-two-robot nodes always report false.
-	SwapReady bool `json:"swap_ready"`
-	// LinesideActive is the set of buckets currently counting toward
-	// remaining UOP on this node (one row per part for the active style).
-	// Rendered as the "active lineside bar" beneath the node fill-bar.
-	LinesideActive []lineside.Bucket `json:"lineside_active,omitempty"`
-	// LinesideInactive is the set of stranded buckets — parts that were
-	// pulled to lineside under a prior style and haven't been drained or
-	// recalled yet. Rendered as stacked chips that open a detail modal.
-	LinesideInactive []lineside.Bucket `json:"lineside_inactive,omitempty"`
-	// LastReleaseError is set when one of the runtime's tracked orders has
-	// been rolled back to StatusStaged after a Core-side release failure
-	// (e.g. manifest_sync_failed). The operator UI surfaces this as a chip
-	// on the node card with the detail string so the operator knows why
-	// their release didn't take and can click release again to retry.
-	// Empty when no recent release error is pending.
-	LastReleaseError string `json:"last_release_error,omitempty"`
-}
-
-type OperatorStationView struct {
-	Station          stations.Station        `json:"station"`
-	Process          processes.Process                `json:"process"`
-	CurrentStyle     *processes.Style                 `json:"current_style,omitempty"`
-	TargetStyle      *processes.Style                 `json:"target_style,omitempty"`
-	AvailableStyles  []processes.Style                `json:"available_styles,omitempty"`
-	ActiveChangeover *processes.Changeover     `json:"active_changeover,omitempty"`
-	StationTask      *processes.StationTask `json:"station_task,omitempty"`
-	Nodes            []StationNodeView      `json:"nodes"`
-}
+// NodeBinState, StationNodeView, and OperatorStationView are the
+// HMI-facing view types rendered by the operator-station page. The
+// structs live in shingoedge/domain (Stage 2A.2) so www handlers
+// can build response shapes without importing this persistence
+// package; these aliases keep the existing store.X names that
+// service code and the operator-station handlers reference.
+type (
+	NodeBinState        = domain.NodeBinState
+	StationNodeView     = domain.StationNodeView
+	OperatorStationView = domain.OperatorStationView
+)
 
 // BuildOperatorStationView body lives in
 // shingoedge/service/station_service.go::StationService.BuildView

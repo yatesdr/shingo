@@ -5,6 +5,15 @@ on:
     tags:
       - 'v*'
 
+# Tag-triggered releases must NOT cancel mid-build, otherwise a quick
+# follow-up tag push (or a pipeline retry) could orphan a half-built
+# artifact set with the GitHub Release page already created. cancel-
+# in-progress is intentionally false here; the in-flight run completes
+# and the next tag's run queues behind it.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     uses: ./.github/workflows/protocol.yml

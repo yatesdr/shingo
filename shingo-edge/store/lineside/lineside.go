@@ -20,23 +20,17 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
-// Bucket is one row of node_lineside_bucket.
-type Bucket struct {
-	ID         int64     `json:"id"`
-	NodeID     int64     `json:"node_id"`
-	PairKey    string    `json:"pair_key"`
-	StyleID    int64     `json:"style_id"`
-	PartNumber string    `json:"part_number"`
-	Qty        int       `json:"qty"`
-	State      string    `json:"state"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
+// Bucket is one row of node_lineside_bucket. The struct lives in
+// shingoedge/domain (Stage 2A.2) under the more descriptive name
+// LinesideBucket; this alias keeps the lineside.Bucket name used by
+// every scan helper, Activate/Deactivate/Drain call site, and the
+// outer store/ re-export.
+type Bucket = domain.LinesideBucket
 
 // Bucket states.
 const (

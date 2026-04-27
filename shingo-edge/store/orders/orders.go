@@ -12,48 +12,22 @@ import (
 	"log"
 	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
-// Order represents an E-Kanban order.
-type Order struct {
-	ID             int64      `json:"id"`
-	UUID           string     `json:"uuid"`
-	OrderType      string     `json:"order_type"`
-	Status         string     `json:"status"`
-	ProcessNodeID  *int64     `json:"process_node_id,omitempty"`
-	RetrieveEmpty  bool       `json:"retrieve_empty"`
-	Quantity       int64      `json:"quantity"`
-	DeliveryNode   string     `json:"delivery_node"`
-	StagingNode    string     `json:"staging_node"`
-	SourceNode     string     `json:"source_node"`
-	LoadType       string     `json:"load_type"`
-	WaybillID      *string    `json:"waybill_id"`
-	ExternalRef    *string    `json:"external_ref"`
-	FinalCount     *int64     `json:"final_count"`
-	CountConfirmed bool       `json:"count_confirmed"`
-	ETA            *string    `json:"eta"`
-	AutoConfirm    bool       `json:"auto_confirm"`
-	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
-	PayloadCode    string     `json:"payload_code"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-
-	// Joined fields
-	ProcessName     string `json:"process_name"`
-	ProcessNodeName string `json:"process_node_name"`
-	StationName     string `json:"station_name"`
-}
-
-// History records a status transition.
-type History struct {
-	ID        int64     `json:"id"`
-	OrderID   int64     `json:"order_id"`
-	OldStatus string    `json:"old_status"`
-	NewStatus string    `json:"new_status"`
-	Detail    string    `json:"detail"`
-	CreatedAt time.Time `json:"created_at"`
-}
+// Order and History are the edge-order data types. The structs live
+// in shingoedge/domain (Stage 2A.2); these aliases keep the
+// orders.Order / orders.History names used by every scan helper,
+// Insert/Update call site, and the outer store/ re-exports.
+//
+// The domain rename `History` → `OrderHistory` exists so the type is
+// self-describing once outside this package; the alias here keeps
+// the local orders.History name for backward compatibility.
+type (
+	Order   = domain.Order
+	History = domain.OrderHistory
+)
 
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,

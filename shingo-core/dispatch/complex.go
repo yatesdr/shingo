@@ -60,8 +60,8 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
 		return
 	}
-	if err := d.db.UpdateOrderStatus(order.ID, StatusPending, "complex order received"); err != nil {
-		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
+	if err := d.lifecycle.MarkPending(order, "complex order received"); err != nil {
+		log.Printf("dispatch: mark complex order %d pending: %v", order.ID, err)
 	}
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
 

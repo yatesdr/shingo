@@ -8,22 +8,16 @@ package audit
 
 import (
 	"database/sql"
-	"time"
+
+	"shingocore/domain"
 )
 
-// Entry is the audit-log row entity. The type is re-aliased at the outer
-// store/ level as store.AuditEntry so service/audit_service.go and the
-// www handlers compile unchanged.
-type Entry struct {
-	ID         int64     `json:"id"`
-	EntityType string    `json:"entity_type"`
-	EntityID   int64     `json:"entity_id"`
-	Action     string    `json:"action"`
-	OldValue   string    `json:"old_value"`
-	NewValue   string    `json:"new_value"`
-	Actor      string    `json:"actor"`
-	CreatedAt  time.Time `json:"created_at"`
-}
+// Entry is the audit-log row entity. The struct lives in
+// shingocore/domain (Stage 2A.2); this alias keeps the audit.Entry
+// name that every read helper, scan function, and Append call site
+// in this package uses, and that www handlers + the audit service
+// reference for response shapes.
+type Entry = domain.AuditEntry
 
 // Append writes an audit-log row.
 func Append(db *sql.DB, entityType string, entityID int64, action, oldValue, newValue, actor string) error {

@@ -11,6 +11,15 @@ on:
       - 'protocol/**'
   workflow_call:
 
+# Coalesce overlapping runs on the same branch / PR so a quick burst
+# of pushes only consumes one CI slot. The cancel-in-progress flag is
+# safe here because the workflow is idempotent (build + tests with
+# -count=1) and the latest commit's run is always the one that
+# matters for merge gating.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,6 +34,18 @@ jobs:
         working-directory: shingo-core
         run: go build ./...
 
-      - name: Test
+      - name: Test (unit)
         working-directory: shingo-core
         run: go test ./...
+
+      - name: Test (Docker integration)
+        working-directory: shingo-core
+        # testcontainers manages its own Postgres container; the
+        # ubuntu-latest runner provides Docker. -count=1 prevents
+        # stale-cache false positives on integration tests;
+        # -timeout=10m accommodates cold-runner container startup.
+        # TODO(stage-2a.2): tighten -timeout to ~2x the observed
+        # runtime once the workflow has run a few times. Standard
+        # warm-runner integration tests should land well under 5m;
+        # 10m exists today only because we lack measured data.
+        run: go test -tags=docker -timeout=10m -count=1 ./...

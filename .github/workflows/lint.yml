@@ -1,0 +1,60 @@
+name: Lint
+
+on:
+  push:
+    # Skip doc-only changes — lint runs Go-only rules, so a README
+    # tweak shouldn't burn a CI minute. Match this set against
+    # core.yml / edge.yml / protocol.yml's path filters so the lint
+    # gate runs whenever the test gates do.
+    paths:
+      - '**.go'
+      - '.golangci.yml'
+      - '.github/workflows/lint.yml'
+  pull_request:
+    paths:
+      - '**.go'
+      - '.golangci.yml'
+      - '.github/workflows/lint.yml'
+  workflow_call:
+
+permissions:
+  contents: read
+
+# See core.yml for rationale — coalesce burst pushes; the latest
+# commit is the only run that matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  golangci:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [protocol, shingo-core, shingo-edge]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          # Pinned to match the version called out in the .golangci.yml
+          # header. Bump in lockstep when upgrading the linter.
+          version: v2.11.4
+          working-directory: ${{ matrix.module }}
+          # --config points at the repo-root .golangci.yml so all three
+          # modules share the same depguard + forbidigo rules.
+          # --issues-exit-code=1 is the default but stated explicitly
+          # so a future flag-default change can't silently turn lint
+          # into a non-blocking warning.
+          args: --config=${{ github.workspace }}/.golangci.yml --issues-exit-code=1 ./...
+          # The action caches GOMODCACHE + the analysis cache by
+          # default, but stating it explicitly (a) documents the
+          # expectation and (b) prevents a future action default
+          # change from silently turning caching off.
+          cache: true

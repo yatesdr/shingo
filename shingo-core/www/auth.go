@@ -9,7 +9,6 @@ import (
 	"github.com/gorilla/sessions"
 
 	"shingo/protocol/auth"
-	"shingocore/store"
 )
 
 const sessionName = "shingocore-session"
@@ -60,8 +59,12 @@ func (h *Handlers) getUsername(r *http.Request) string {
 	return username
 }
 
-func (h *Handlers) ensureDefaultAdmin(db *store.DB) {
-	exists, err := db.AdminUserExists()
+// ensureDefaultAdmin seeds an "admin" user with password "admin" on a
+// fresh install. Idempotent: returns immediately if any admin user
+// already exists. Routed through AdminService so this file no longer
+// needs a *store.DB.
+func (h *Handlers) ensureDefaultAdmin() {
+	exists, err := h.engine.AdminService().UserExists()
 	if err != nil || exists {
 		return
 	}
@@ -69,7 +72,9 @@ func (h *Handlers) ensureDefaultAdmin(db *store.DB) {
 	if err != nil {
 		return
 	}
-	db.CreateAdminUser("admin", hash)
+	if err := h.engine.AdminService().CreateUser("admin", hash); err != nil {
+		log.Printf("auth: ensureDefaultAdmin: %v", err)
+	}
 }
 
 func (h *Handlers) handleLoginPage(w http.ResponseWriter, r *http.Request) {

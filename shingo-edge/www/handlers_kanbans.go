@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"shingoedge/store/orders"
+	"shingoedge/domain"
 )
 
 func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +24,7 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var activeOrders []orders.Order
+	var activeOrders []domain.Order
 	if activeProcessID > 0 {
 		activeOrders, _ = h.engine.OrderService().ListActiveByProcess(activeProcessID)
 	} else {
@@ -60,7 +60,7 @@ func (h *Handlers) handleKanbansPartial(w http.ResponseWriter, r *http.Request) 
 			activeProcessID = id
 		}
 	}
-	var activeOrders []orders.Order
+	var activeOrders []domain.Order
 	if activeProcessID > 0 {
 		activeOrders, _ = h.engine.OrderService().ListActiveByProcess(activeProcessID)
 	} else {

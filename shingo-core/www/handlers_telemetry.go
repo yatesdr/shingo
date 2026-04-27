@@ -11,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"shingocore/store/bins"
+	"shingocore/domain"
 )
 
 // apiTelemetryNodeBins returns bin state for requested core nodes.
@@ -185,10 +185,10 @@ func (h *Handlers) apiBinLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	bin := binList[0]
 
-	manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(req.Manifest))}
+	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(req.Manifest))}
 	var totalQty int64
 	for i, item := range req.Manifest {
-		manifest.Items[i] = bins.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
+		manifest.Items[i] = domain.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
 		totalQty += item.Quantity
 	}
 	manifestJSON, _ := json.Marshal(manifest)

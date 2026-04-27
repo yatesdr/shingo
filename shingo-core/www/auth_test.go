@@ -41,7 +41,7 @@ func TestEnsureDefaultAdmin_CreatesWhenEmpty(t *testing.T) {
 		t.Fatalf("expected no admin users pre-call")
 	}
 
-	h.ensureDefaultAdmin(db)
+	h.ensureDefaultAdmin()
 
 	u, err := db.GetAdminUser("admin")
 	if err != nil {
@@ -69,7 +69,7 @@ func TestEnsureDefaultAdmin_IdempotentWhenUserExists(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 
-	h.ensureDefaultAdmin(db)
+	h.ensureDefaultAdmin()
 
 	// operator is still there; "admin" should NOT have been created.
 	if _, err := db.GetAdminUser("operator"); err != nil {
@@ -86,8 +86,8 @@ func TestEnsureDefaultAdmin_IdempotentWhenUserExists(t *testing.T) {
 // valid credentials set a session cookie that records
 // {authenticated:true, username:<username>} and redirect 303 to "/".
 func TestHandleLogin_HappyPathSetsSession(t *testing.T) {
-	h, db := testHandlers(t)
-	h.ensureDefaultAdmin(db) // admin/admin
+	h, _ := testHandlers(t)
+	h.ensureDefaultAdmin() // admin/admin
 
 	form := url.Values{}
 	form.Set("username", "admin")
@@ -136,8 +136,8 @@ func TestHandleLogin_HappyPathSetsSession(t *testing.T) {
 // branch: the handler renders the login template with an error (Status 200,
 // NOT a redirect), and no authenticated session is established.
 func TestHandleLogin_WrongPasswordRendersLogin(t *testing.T) {
-	h, db := testHandlers(t)
-	h.ensureDefaultAdmin(db)
+	h, _ := testHandlers(t)
+	h.ensureDefaultAdmin()
 
 	form := url.Values{}
 	form.Set("username", "admin")
@@ -200,8 +200,8 @@ func TestHandleLogin_UnknownUserRendersLogin(t *testing.T) {
 // logout the session's authenticated flag is false, so a follow-up request
 // carrying the rewritten cookie fails isAuthenticated.
 func TestHandleLogout_ClearsAuthenticatedFlag(t *testing.T) {
-	h, db := testHandlers(t)
-	h.ensureDefaultAdmin(db)
+	h, _ := testHandlers(t)
+	h.ensureDefaultAdmin()
 
 	// Establish a logged-in session.
 	loginForm := url.Values{}

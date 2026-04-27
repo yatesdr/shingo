@@ -57,8 +57,8 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
-	if err := e.db.UpdateOrderStatus(order.ID, "pending", req.Desc); err != nil {
-		e.logFn("engine: update direct order %d status: %v", order.ID, err)
+	if err := e.dispatcher.Lifecycle().MarkPending(order, req.Desc); err != nil {
+		e.logFn("engine: mark direct order %d pending: %v", order.ID, err)
 	}
 
 	vendorOrderID, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode)

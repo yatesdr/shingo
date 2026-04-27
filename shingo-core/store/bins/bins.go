@@ -160,14 +160,12 @@ func CountByAllNodes(db *sql.DB) (map[int64]int, error) {
 	return counts, rows.Err()
 }
 
-// NodeTileState holds summary flags for rendering a node tile.
-type NodeTileState struct {
-	HasPayload  bool // bin with a confirmed payload
-	HasEmptyBin bool // bin with no payload or unconfirmed manifest
-	Claimed     bool
-	Staged      bool
-	Maintenance bool // bin in maintenance or flagged
-}
+// NodeTileState holds summary flags for rendering a node tile. The
+// struct lives in shingocore/domain (Stage 2A.2); this alias keeps
+// the bins.NodeTileState name that the NodeTileStates aggregator
+// below and downstream callers (page-data builder, www handlers)
+// reference.
+type NodeTileState = domain.NodeTileState
 
 // NodeTileStates returns per-node tile rendering state for all nodes that have bins.
 func NodeTileStates(db *sql.DB) (map[int64]NodeTileState, error) {

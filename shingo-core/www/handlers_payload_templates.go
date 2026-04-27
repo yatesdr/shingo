@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"shingocore/store/payloads"
+	"shingocore/domain"
 )
 
 func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
@@ -15,7 +15,7 @@ func (h *Handlers) handlePayloadCreate(w http.ResponseWriter, r *http.Request) {
 
 	uop, _ := strconv.Atoi(r.FormValue("uop_capacity"))
 
-	p := &payloads.Payload{
+	p := &domain.Payload{
 		Code:        r.FormValue("code"),
 		Description: r.FormValue("description"),
 		UOPCapacity: uop,
@@ -89,7 +89,7 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	p := &payloads.Payload{
+	p := &domain.Payload{
 		Code:        req.Code,
 		Description: req.Description,
 		UOPCapacity: req.UOPCapacity,
@@ -106,9 +106,9 @@ func (h *Handlers) apiCreatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if len(req.Manifest) > 0 {
-		var items []*payloads.ManifestItem
+		var items []*domain.PayloadManifestItem
 		for _, it := range req.Manifest {
-			items = append(items, &payloads.ManifestItem{
+			items = append(items, &domain.PayloadManifestItem{
 				PartNumber: it.PartNumber,
 				Quantity:   it.Quantity,
 			})
@@ -158,9 +158,9 @@ func (h *Handlers) apiUpdatePayloadTemplate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var items []*payloads.ManifestItem
+	var items []*domain.PayloadManifestItem
 	for _, it := range req.Manifest {
-		items = append(items, &payloads.ManifestItem{
+		items = append(items, &domain.PayloadManifestItem{
 			PartNumber: it.PartNumber,
 			Quantity:   it.Quantity,
 		})
@@ -200,9 +200,9 @@ func (h *Handlers) apiSavePayloadManifestTemplate(w http.ResponseWriter, r *http
 		return
 	}
 
-	var items []*payloads.ManifestItem
+	var items []*domain.PayloadManifestItem
 	for _, it := range req.Items {
-		items = append(items, &payloads.ManifestItem{
+		items = append(items, &domain.PayloadManifestItem{
 			PartNumber:  it.PartNumber,
 			Quantity:    it.Quantity,
 			Description: it.Description,

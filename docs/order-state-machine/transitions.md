@@ -91,44 +91,113 @@ greppable.
 
 ## Bypass paths
 
-Three categories of code do NOT go through `lifecycle.transition()`:
+The following code paths legitimately do NOT route through
+`lifecycle.transition()`. Each is enforced by a `forbidigo` carveout
+in `.golangci.yml`. Adding a new bypass requires a PR-reviewed
+carveout entry alongside an inline comment explaining the reason.
 
-1. **Initial-write Pending.** The `Create*Order` methods write
-   `StatusPending` immediately after `db.CreateOrder` to record the
-   "received" detail in the audit trail. This bypass is acceptable
-   because no source status exists; the lifecycle has nothing to
-   validate. Sites:
-   `dispatch/lifecycle_service.go:98,117,174`,
-   `dispatch/complex.go:63`,
-   `engine/orders.go:59`.
+### Core (shingo-core)
 
-2. **Recovery / reconciliation.** `engine/reconciliation_service.go:120`
-   advances stuck orders from `delivered → confirmed` after a crash. It
-   bypasses lifecycle because the lifecycle's `ConfirmReceipt` is
-   idempotent on `CompletedAt` and the recovery scenario specifically
-   handles the case where the previous run failed mid-way. Documented
-   bypass — see the inline comment.
+1. **Driver implementation.** `shingo-core/dispatch/lifecycle.go` —
+   `transition()` is the state machine; it must call the underlying
+   `db.UpdateOrderStatus` / `FailOrderAtomic` / `CancelOrderAtomic`
+   methods to do its job.
 
-3. **Child compound failure intake.** `dispatch/compound.go:116,124,132`
-   call `FailOrderAtomic` directly on a child order during the
-   AdvanceCompoundOrder loop. These are intake-time validations
-   (missing source/dest node) where the child has no prior state worth
-   validating against — the failure is the intended initial behaviour.
-   Documented bypass.
+2. **Initial-write Pending in the order-intake methods.**
+   `shingo-core/dispatch/lifecycle_service.go`'s `CreateInboundOrder`,
+   `CreateStorageWaybillOrder`, and `CreateIngestStoreOrder` write
+   `StatusPending` immediately after `db.CreateOrder`. No source
+   status exists; the lifecycle has nothing to validate. Sites:
+   `dispatch/lifecycle_service.go:98,117,174`.
 
-A future depguard or forbidigo rule should enforce that direct calls to
-`db.UpdateOrderStatus`, `db.FailOrderAtomic`, and `db.CancelOrderAtomic`
-are confined to:
+   Other order-intake call sites (`dispatch/complex.go`,
+   `engine/orders.go`'s `CreateDirectOrder`) now use
+   `lifecycle.MarkPending(ord, reason)` instead — `MarkPending` is
+   itself a bypass internal to `lifecycle.go` (no source status to
+   validate), but it keeps the intake call sites greppable as
+   lifecycle calls and removes them from the carveout list.
 
-- `shingo-core/dispatch/lifecycle.go` (driver implementation)
-- `shingo-core/dispatch/lifecycle_service.go` (initial-write bypass)
-- `shingo-core/engine/reconciliation_service.go` (recovery bypass)
-- `shingo-core/dispatch/compound.go` (child-intake bypass)
-- `shingo-core/store/orders.go` (the implementations themselves)
+3. **Child compound failure intake.**
+   `shingo-core/dispatch/compound.go:116,124,132` call
+   `FailOrderAtomic` directly on a child order during the
+   `AdvanceCompoundOrder` loop. These are intake-time validations
+   (missing source/dest node) where the child has no prior state
+   worth validating against — the failure is the intended initial
+   behaviour.
 
-That ratchet rule is not yet wired into `.golangci.yml` because the
-existing depguard config operates on imports, not function calls.
-A `forbidigo` configuration is the next-step Phase 7 work.
+4. **Recovery / reconciliation.**
+   `shingo-core/engine/reconciliation_service.go:120` advances stuck
+   orders from `delivered → confirmed` after a crash. It bypasses
+   lifecycle because the lifecycle's `ConfirmReceipt` is idempotent
+   on `CompletedAt` and the recovery scenario specifically handles
+   the case where the previous run failed mid-way.
+
+5. **Service-layer passthrough wrappers.**
+   `shingo-core/service/order_service.go:43,169` are direct
+   passthroughs around `db.UpdateOrderStatus` and
+   `db.FailOrderAtomic`. Slated for removal — callers should go
+   direct to lifecycle. Carveout removable once the file is deleted.
+
+6. **Store implementation.** `shingo-core/store/orders.go` is where
+   the methods themselves live.
+
+### Edge (shingo-edge)
+
+7. **Edge-side lifecycle driver.**
+   `shingo-edge/orders/lifecycle_service.go` — edge's equivalent of
+   the core driver. `TransitionOrder` validates against
+   `protocol.IsValidTransition` and writes through to the edge
+   store. Same role as `shingo-core/dispatch/lifecycle.go`. A
+   parallel typed-method migration on the edge side is a follow-up
+   RFC; for now this file is the single bypass.
+
+8. **Edge store implementation.** `shingo-edge/store/orders.go` is
+   where edge's `UpdateOrderStatus` lives.
+
+### Test files
+
+`*_test.go` files build fixtures by direct DB writes. Permanent
+carveout, no per-file entry needed.
+
+### `forbidigo` configuration notes
+
+The rule lives in `.golangci.yml`. Two implementation gotchas worth
+recording for future config edits:
+
+- **Field name is `pattern:`, not `p:`.** `golangci-lint v2.x`'s
+  `ForbidigoPattern` struct has `yaml:"p"` for output and
+  `mapstructure:"pattern"` for input. Config parsing uses
+  mapstructure, so a `p:` key is silently ignored — the rule
+  defaults to "match everything." Always use `pattern:`.
+- **Patterns match the Go selector expression, not source text.**
+  forbidigo matches against the AST identifier (e.g.
+  `db.UpdateOrderStatus`), not the raw call site including the open
+  paren. A regex ending in `\(` will never match its intended
+  target. Drop the trailing `\(`.
+
+The current rule uses text-based matching (no `analyze-types: true`)
+which is sufficient because only `*store.DB` defines these methods
+in either module — false-positive risk is bounded.
+
+### Enforced via `forbidigo`
+
+The `.golangci.yml` `forbidigo` rule prohibits direct calls to
+`db.UpdateOrderStatus`, `db.FailOrderAtomic`, and
+`db.CancelOrderAtomic` outside the carveout files listed above plus
+the driver itself (`dispatch/lifecycle.go`) and the store
+implementation (`store/orders.go`). Test files are permanently
+exempted.
+
+### Edge-side follow-up
+
+`shingo-edge/orders/lifecycle_service.go`'s `TransitionOrder` is the
+edge-side state-machine entry point. Edge already validates via
+`protocol.IsValidTransition` (see `shingo-edge/orders/types.go:42`),
+but a parallel `forbidigo` rule for edge — preventing direct
+`db.UpdateOrderStatus` calls outside `TransitionOrder` and the
+edge-side intake methods — is a follow-up RFC. It would land when
+edge gets typed lifecycle methods (currently it has just the one
+generic `TransitionOrder`).
 
 ## Test pattern
 

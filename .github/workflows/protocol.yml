@@ -9,6 +9,11 @@ on:
       - 'protocol/**'
   workflow_call:
 
+# See core.yml for rationale — same idempotent burst-coalescing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest

@@ -11,6 +11,11 @@ on:
       - 'protocol/**'
   workflow_call:
 
+# See core.yml for rationale — same idempotent burst-coalescing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,6 +30,18 @@ jobs:
         working-directory: shingo-edge
         run: go build ./...
 
-      - name: Test
+      - name: Test (unit)
         working-directory: shingo-edge
         run: go test ./...
+
+      - name: Test (Docker integration)
+        working-directory: shingo-edge
+        # testcontainers manages its own Postgres container; the
+        # ubuntu-latest runner provides Docker. -count=1 prevents
+        # stale-cache false positives on integration tests;
+        # -timeout=10m accommodates cold-runner container startup.
+        # TODO(stage-2a.2): tighten -timeout to ~2x the observed
+        # runtime once the workflow has run a few times. Standard
+        # warm-runner integration tests should land well under 5m;
+        # 10m exists today only because we lack measured data.
+        run: go test -tags=docker -timeout=10m -count=1 ./...

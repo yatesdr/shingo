@@ -7,9 +7,7 @@ import (
 	"strconv"
 
 	"shingo/protocol/auth"
-	"shingoedge/store/processes"
-	"shingoedge/store/shifts"
-	"shingoedge/store/stations"
+	"shingoedge/domain"
 )
 
 func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +24,7 @@ func (h *Handlers) handleConfig(w http.ResponseWriter, r *http.Request) {
 	anomalies, rpMap := loadAnomalyData(h)
 	shiftList, _ := h.engine.ShiftService().List()
 	if shiftList == nil {
-		shiftList = []shifts.Shift{}
+		shiftList = []domain.Shift{}
 	}
 	shiftsJSON, _ := json.Marshal(shiftList)
 
@@ -52,7 +50,7 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	coreNodes := h.engine.CoreNodes()
 	plcNames := h.engine.PLCManager().PLCNames()
 
-	var activeProcess *processes.Process
+	var activeProcess *domain.Process
 	if processParam := r.URL.Query().Get("process"); processParam != "" {
 		if processID, err := strconv.ParseInt(processParam, 10, 64); err == nil {
 			for i := range processList {
@@ -68,9 +66,9 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var activeProcessID int64
-	var processStyles []processes.Style
-	var processStations []stations.Station
-	var processNodes []processes.Node
+	var processStyles []domain.Style
+	var processStations []domain.Station
+	var processNodes []domain.Node
 	stationNodeMap := map[int64][]string{}
 	if activeProcess != nil {
 		activeProcessID = activeProcess.ID

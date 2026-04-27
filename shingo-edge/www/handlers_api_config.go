@@ -13,7 +13,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/auth"
-	"shingoedge/store/processes"
+	"shingoedge/domain"
 )
 
 // --- Counter Anomalies ---
@@ -517,7 +517,7 @@ func (h *Handlers) apiListStyleNodeClaims(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Request) {
-	var in processes.NodeClaimInput
+	var in domain.NodeClaimInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

@@ -214,15 +214,20 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 					if errors.As(rErr, &structErr) {
 						// Use failFn so the standard EventOrderFailed handler
 						// chain fires (audit, maybeCreateReturnOrder, edge
-						// notification). Bare FailOrderAtomic would leave
-						// the order silently failed in the DB with Edge
-						// still showing it active.
+						// notification). Production wires failFn to
+						// engine.failOrderAndEmit which routes through
+						// lifecycle.Fail. The previous code had a
+						// db.FailOrderAtomic fallback for the failFn==nil
+						// case; that fallback bypassed the state machine
+						// and masked construction bugs. If failFn is nil
+						// here, log loudly and return — a nil failFn in
+						// production is a wiring mistake the operator
+						// should see.
 						if s.failFn != nil {
 							s.failFn(order.ID, "structural", structErr.Error())
 						} else {
-							// Fallback for tests that construct the scanner
-							// without wiring failFn — preserve original behavior.
-							s.db.FailOrderAtomic(order.ID, structErr.Error())
+							s.logFn("fulfillment: order %d structural error but failFn not wired — order left in queued state, fix scanner construction: %v",
+								order.ID, structErr)
 						}
 						s.logFn("fulfillment: order %d terminated — structural: %s",
 							order.ID, structErr.Error())

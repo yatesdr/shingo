@@ -11,19 +11,16 @@ package processes
 
 import (
 	"database/sql"
-	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
-// Style represents a product/recipe style that maps to a BOM.
-type Style struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	ProcessID   int64     `json:"process_id"`
-	CreatedAt   time.Time `json:"created_at"`
-}
+// Style represents a product/recipe style that maps to a BOM. The
+// struct lives in shingoedge/domain (Stage 2A.2); this alias keeps
+// the processes.Style name used by every scan helper, Create/Update
+// call site, and the outer store/ re-export.
+type Style = domain.Style
 
 func scanStyle(scanner interface{ Scan(...interface{}) error }) (Style, error) {
 	var s Style

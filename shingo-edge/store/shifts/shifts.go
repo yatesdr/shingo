@@ -6,16 +6,17 @@
 // delegate methods on *store.DB so external callers see no API change.
 package shifts
 
-import "database/sql"
+import (
+	"database/sql"
 
-// Shift represents a work shift with start/end times.
-type Shift struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	ShiftNumber int    `json:"shift_number"`
-	StartTime   string `json:"start_time"`
-	EndTime     string `json:"end_time"`
-}
+	"shingoedge/domain"
+)
+
+// Shift represents a work shift with start/end times. The struct
+// lives in shingoedge/domain (Stage 2A.2); this alias keeps the
+// shifts.Shift name used by every scan helper, Upsert call site,
+// and the outer store/ re-export.
+type Shift = domain.Shift
 
 // List returns all shifts ordered by shift_number.
 func List(db *sql.DB) ([]Shift, error) {

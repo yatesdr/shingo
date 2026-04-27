@@ -12,19 +12,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"shingocore/domain"
 )
 
-// Edge represents one registered edge station.
-type Edge struct {
-	ID            int64      `json:"id"`
-	StationID     string     `json:"station_id"`
-	Hostname      string     `json:"hostname"`
-	Version       string     `json:"version"`
-	LineIDs       []string   `json:"line_ids"`
-	RegisteredAt  time.Time  `json:"registered_at"`
-	LastHeartbeat *time.Time `json:"last_heartbeat"`
-	Status        string     `json:"status"`
-}
+// Edge represents one registered edge station. The struct lives in
+// shingocore/domain (Stage 2A.2); this alias keeps the registry.Edge
+// name used by every read helper, scan function, and Register /
+// MarkStale call site in this package, plus the outer store/
+// re-export and the page-data builder that surfaces registry status
+// to the admin UI.
+type Edge = domain.RegistryEdge
 
 // Register upserts an edge registration. If the station_id already
 // exists, it updates the record and resets status to active.

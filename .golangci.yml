@@ -21,8 +21,29 @@ linters:
   default: none
   enable:
     - depguard
+    - forbidigo
 
   settings:
+    forbidigo:
+      # State-machine bypass guard (Stage 10 follow-up). Direct calls to
+      # the order-status atomic writes must go through
+      # dispatch.LifecycleService typed methods. Carveouts for legitimate
+      # bypass paths are listed in `exclusions.rules` below alongside the
+      # depguard ratchet entries.
+      #
+      # Text-based matching. The receiver variable is always named `db`
+      # in this codebase and only *store.DB has these methods, so
+      # matching on `db\.<Method>` is sufficient. forbidigo matches the
+      # selector expression (e.g. `db.UpdateOrderStatus`) — do NOT
+      # append `\(` because the parenthesis is syntax, not the identifier.
+      forbid:
+        - pattern: 'db\.UpdateOrderStatus'
+          msg: "Direct UpdateOrderStatus calls bypass the state machine. Use dispatch.LifecycleService typed methods (CancelOrder, ConfirmReceipt, Release, MarkInTransit, MarkStaged, MarkDelivered, Queue, MoveToSourcing, Dispatch, Fail, Acknowledge, BeginReshuffle, CompleteCompound, MarkPending). See docs/order-state-machine/transitions.md."
+        - pattern: 'db\.FailOrderAtomic'
+          msg: "Direct FailOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.Fail."
+        - pattern: 'db\.CancelOrderAtomic'
+          msg: "Direct CancelOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.CancelOrder."
+
     depguard:
       rules:
         www-no-direct-store:
@@ -103,64 +124,70 @@ linters:
         linters:
           - depguard
 
-      # ---- Ratcheted exemptions (remove as handlers migrate) ----------------
-      # Each entry below corresponds to a production file that currently
-      # imports shingocore/store or shingoedge/store directly. Remove the
-      # matching entry in the same PR that migrates the handler to a service
-      # interface. Do NOT leave stale entries: golangci-lint will eventually
-      # flag an exclusion that no longer has a corresponding violation.
+      # ---- State-machine bypass carveouts (forbidigo) ----------------------
+      # Each entry below names a file that legitimately bypasses
+      # LifecycleService.transition. Document the reason inline before
+      # adding to this list. Removable once the bypass is migrated.
       #
-      # Core (10 files — eliminated during Phase 3):
-      - path: "shingo-core/www/auth\\.go"
+      # 1. The driver itself.
+      - path: "shingo-core/dispatch/lifecycle\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/handlers_bins\\.go"
+          - forbidigo
+      # 2. Initial-write Pending in the order-intake methods
+      #    (CreateInboundOrder, CreateStorageWaybillOrder,
+      #    CreateIngestStoreOrder). No source status to validate.
+      - path: "shingo-core/dispatch/lifecycle_service\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/handlers_missions\\.go"
+          - forbidigo
+      # 3. Child-intake validation failures in compound order creation
+      #    (missing source/dest node) — failure is the intended initial
+      #    state, not a transition.
+      - path: "shingo-core/dispatch/compound\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/handlers_nodes\\.go"
+          - forbidigo
+      # 4. Crash-recovery path for orders stuck in Delivered.
+      - path: "shingo-core/engine/reconciliation_service\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/handlers_orders\\.go"
+          - forbidigo
+      # 5. Passthrough wrappers around db.UpdateOrderStatus and
+      #    FailOrderAtomic. Slated for removal — callers should go
+      #    direct to lifecycle. Carveout removable when the file is
+      #    deleted.
+      - path: "shingo-core/service/order_service\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/handlers_payloads\\.go"
+          - forbidigo
+      # 6. Store-level implementations themselves.
+      - path: "shingo-core/store/orders\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/handlers_payload_templates\\.go"
+          - forbidigo
+      # 7. Edge lifecycle driver — equivalent to #1 for the edge module.
+      - path: "shingo-edge/orders/lifecycle_service\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/handlers_telemetry\\.go"
+          - forbidigo
+      # 8. Edge store-level implementation.
+      - path: "shingo-edge/store/orders\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/handlers_test_orders\\.go"
+          - forbidigo
+      # Test files build fixtures by direct DB writes. Permanent.
+      - path: ".*_test\\.go"
         linters:
-          - depguard
-      - path: "shingo-core/www/nodes_page_data\\.go"
-        linters:
-          - depguard
+          - forbidigo
+
+      # No ratcheted www-no-direct-store exemptions remain.
       #
-      # Edge (7 files — eliminated during Phase 4):
-      - path: "shingo-edge/www/helpers\\.go"
-        linters:
-          - depguard
-      - path: "shingo-edge/www/handlers_admin_pages\\.go"
-        linters:
-          - depguard
-      - path: "shingo-edge/www/handlers_api_config\\.go"
-        linters:
-          - depguard
-      - path: "shingo-edge/www/handlers_changeover\\.go"
-        linters:
-          - depguard
-      - path: "shingo-edge/www/handlers_kanbans\\.go"
-        linters:
-          - depguard
-      - path: "shingo-edge/www/handlers_material\\.go"
-        linters:
-          - depguard
-      - path: "shingo-edge/www/handlers_operator_stations\\.go"
-        linters:
-          - depguard
+      # Stage 2A.2 (2026-04) drained the original 17-file ratchet by
+      # extending shingo-core/domain and creating shingo-edge/domain
+      # to hold the data types referenced by www handlers. Handlers
+      # now import the domain package(s) for type names; the store
+      # sub-packages keep `type X = domain.X` aliases so internal
+      # store callers compile unchanged. With no remaining
+      # exemptions, the www-no-direct-store rule is a permanent
+      # architectural guardrail: any new direct
+      # shingocore/store or shingoedge/store import inside www/ fails
+      # CI and the offending PR has to route through a service
+      # interface or domain types.
+      #
+      # If a future change legitimately needs to bypass the rule —
+      # e.g. a temporary migration step — add a new entry here with
+      # an inline comment that explains the reason and a removal
+      # plan. Do not leave undocumented exemptions.

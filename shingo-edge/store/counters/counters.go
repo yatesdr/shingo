@@ -14,44 +14,25 @@ package counters
 
 import (
 	"database/sql"
-	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
-// Snapshot records a PLC counter reading.
-type Snapshot struct {
-	ID                int64     `json:"id"`
-	ReportingPointID  int64     `json:"reporting_point_id"`
-	CountValue        int64     `json:"count_value"`
-	Delta             int64     `json:"delta"`
-	Anomaly           *string   `json:"anomaly"`
-	OperatorConfirmed bool      `json:"operator_confirmed"`
-	RecordedAt        time.Time `json:"recorded_at"`
-}
-
-// HourlyCount represents accumulated production count for one hour.
-type HourlyCount struct {
-	ID        int64  `json:"id"`
-	ProcessID int64  `json:"process_id"`
-	StyleID   int64  `json:"style_id"`
-	CountDate string `json:"count_date"`
-	Hour      int    `json:"hour"`
-	Delta     int64  `json:"delta"`
-}
-
-// ReportingPoint maps a PLC tag to a style for counter tracking.
-type ReportingPoint struct {
-	ID             int64      `json:"id"`
-	PLCName        string     `json:"plc_name"`
-	TagName        string     `json:"tag_name"`
-	StyleID        int64      `json:"style_id"`
-	LastCount      int64      `json:"last_count"`
-	LastPollAt     *time.Time `json:"last_poll_at"`
-	Enabled        bool       `json:"enabled"`
-	WarlinkManaged bool       `json:"warlink_managed"`
-	ProcessID      int64      `json:"process_id"`
-}
+// Snapshot, HourlyCount, and ReportingPoint are the counter-aggregate
+// data types. The structs live in shingoedge/domain (Stage 2A.2);
+// these aliases keep the unprefixed counters.X names used by every
+// scan helper, Insert/Upsert call site, and the outer store/
+// re-exports.
+//
+// The domain rename `Snapshot` → `CounterSnapshot` exists so the
+// type is self-describing once outside this package; the alias here
+// keeps the local counters.Snapshot name for backward compatibility.
+type (
+	Snapshot       = domain.CounterSnapshot
+	HourlyCount    = domain.HourlyCount
+	ReportingPoint = domain.ReportingPoint
+)
 
 // --- counter snapshots ---
 

@@ -9,27 +9,16 @@ package scene
 import (
 	"database/sql"
 	"fmt"
-	"time"
+
+	"shingocore/domain"
 )
 
-// Point is the scene-point entity. The type is re-aliased at the outer
-// store/ level as store.ScenePoint so scenesync, service/node_service.go,
-// and the www handlers compile unchanged.
-type Point struct {
-	ID             int64     `json:"id"`
-	AreaName       string    `json:"area_name"`
-	InstanceName   string    `json:"instance_name"`
-	ClassName      string    `json:"class_name"`
-	PointName      string    `json:"point_name"`
-	GroupName      string    `json:"group_name"`
-	Label          string    `json:"label"`
-	PosX           float64   `json:"pos_x"`
-	PosY           float64   `json:"pos_y"`
-	PosZ           float64   `json:"pos_z"`
-	Dir            float64   `json:"dir"`
-	PropertiesJSON string    `json:"properties_json"`
-	SyncedAt       time.Time `json:"synced_at"`
-}
+// Point is the scene-point entity. The struct lives in
+// shingocore/domain (Stage 2A.2); this alias keeps the scene.Point
+// name used by scan helpers and the outer store/ re-export, and
+// lets the www handlers + node-page builder reference scene points
+// via shingocore/domain instead of this persistence sub-package.
+type Point = domain.ScenePoint
 
 const selectCols = `id, area_name, instance_name, class_name, point_name, group_name, label, pos_x, pos_y, pos_z, dir, properties_json, synced_at`
 

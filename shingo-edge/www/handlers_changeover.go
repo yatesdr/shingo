@@ -3,12 +3,12 @@ package www
 import (
 	"net/http"
 
-	"shingoedge/store/processes"
+	"shingoedge/domain"
 )
 
 // changeoverNodeView enriches a ChangeoverNodeTask with claim details for display.
 type changeoverNodeView struct {
-	processes.NodeTask
+	domain.NodeTask
 	ProcessID       int64  `json:"process_id"`
 	Situation       string `json:"situation"`
 	FromPayload     string `json:"from_payload"`
@@ -20,16 +20,16 @@ type changeoverNodeView struct {
 
 // changeoverViewData holds the common data loaded for changeover views.
 type changeoverViewData struct {
-	Styles           []processes.Style
+	Styles           []domain.Style
 	CurrentStyleName string
-	ActiveChangeover *processes.Changeover
-	StationTasks     []processes.StationTask
+	ActiveChangeover *domain.Changeover
+	StationTasks     []domain.StationTask
 	NodeTaskMap      map[int64][]changeoverNodeView
 	CentralNodeTasks []changeoverNodeView
 	AllNodesComplete bool
 }
 
-func (h *Handlers) buildChangeoverViewData(activeProcess *processes.Process) changeoverViewData {
+func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) changeoverViewData {
 	var d changeoverViewData
 	d.NodeTaskMap = map[int64][]changeoverNodeView{}
 
@@ -119,7 +119,7 @@ func (h *Handlers) handleChangeover(w http.ResponseWriter, r *http.Request) {
 		activeProcessID = activeProcess.ID
 	}
 
-	var changeoverHistory []processes.Changeover
+	var changeoverHistory []domain.Changeover
 	if activeProcess != nil {
 		changeoverHistory, _ = h.engine.ChangeoverService().List(activeProcess.ID)
 		// Filter out the active changeover from history

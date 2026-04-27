@@ -13,63 +13,23 @@ package processes
 import (
 	"database/sql"
 	"strings"
-	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
-// Process represents a production process (physical production area).
-type Process struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description"`
-	ActiveStyleID   *int64    `json:"active_style_id"`
-	TargetStyleID   *int64    `json:"target_style_id,omitempty"`
-	ProductionState string    `json:"production_state"`
-	CounterPLCName  string    `json:"counter_plc_name"`
-	CounterTagName  string    `json:"counter_tag_name"`
-	CounterEnabled  bool      `json:"counter_enabled"`
-	CreatedAt       time.Time `json:"created_at"`
-}
-
-// Node is one row of process_nodes.
-type Node struct {
-	ID                int64     `json:"id"`
-	ProcessID         int64     `json:"process_id"`
-	OperatorStationID *int64    `json:"operator_station_id,omitempty"`
-	CoreNodeName      string    `json:"core_node_name"`
-	Code              string    `json:"code"`
-	Name              string    `json:"name"`
-	Sequence          int       `json:"sequence"`
-	Enabled           bool      `json:"enabled"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	StationName       string    `json:"station_name"`
-	ProcessName       string    `json:"process_name"`
-}
-
-// NodeInput is the input shape for CreateNode / UpdateNode.
-type NodeInput struct {
-	ProcessID         int64  `json:"process_id"`
-	OperatorStationID *int64 `json:"operator_station_id,omitempty"`
-	CoreNodeName      string `json:"core_node_name"`
-	Code              string `json:"code"`
-	Name              string `json:"name"`
-	Sequence          int    `json:"sequence"`
-	Enabled           bool   `json:"enabled"`
-}
-
-// RuntimeState is one row of process_node_runtime_states.
-type RuntimeState struct {
-	ID            int64     `json:"id"`
-	ProcessNodeID int64     `json:"process_node_id"`
-	ActiveClaimID *int64    `json:"active_claim_id,omitempty"`
-	RemainingUOP  int       `json:"remaining_uop"`
-	ActiveOrderID *int64    `json:"active_order_id,omitempty"`
-	StagedOrderID *int64    `json:"staged_order_id,omitempty"`
-	ActivePull    bool      `json:"active_pull"`
-	UpdatedAt     time.Time `json:"updated_at"`
-}
+// Process, Node, NodeInput, and RuntimeState are the process-aggregate
+// data types. The structs live in shingoedge/domain (Stage 2A.2);
+// these aliases keep the unprefixed processes.X names used by every
+// scan helper, Create/Update call site, and the outer store/
+// re-exports. www handlers reference the types via shingoedge/domain
+// instead of importing this persistence sub-package.
+type (
+	Process      = domain.Process
+	Node         = domain.Node
+	NodeInput    = domain.NodeInput
+	RuntimeState = domain.RuntimeState
+)
 
 // --- processes ---
 

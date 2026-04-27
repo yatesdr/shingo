@@ -9,10 +9,8 @@ import (
 	"github.com/google/uuid"
 
 	"shingo/protocol"
+	"shingocore/domain"
 	"shingocore/fleet"
-	"shingocore/store/bins"
-	"shingocore/store/nodes"
-	"shingocore/store/orders"
 )
 
 func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +23,7 @@ func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	svc := h.engine.OrderService()
-	var orders []*orders.Order
+	var orders []*domain.Order
 	var err error
 	switch {
 	case status == "":
@@ -133,14 +131,14 @@ func (h *Handlers) apiGetOrderEnriched(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type enrichedOrder struct {
-		Order        *orders.Order             `json:"order"`
-		History      []*orders.History    `json:"history,omitempty"`
-		Bin          *bins.Bin               `json:"bin,omitempty"`
-		BinManifest  *bins.Manifest       `json:"bin_manifest,omitempty"`
-		SourceNode   *nodes.Node              `json:"source_node,omitempty"`
-		DeliveryNode *nodes.Node              `json:"delivery_node,omitempty"`
-		Children     []*orders.Order           `json:"children,omitempty"`
-		Parent       *orders.Order             `json:"parent,omitempty"`
+		Order        *domain.Order             `json:"order"`
+		History      []*domain.OrderHistory    `json:"history,omitempty"`
+		Bin          *domain.Bin               `json:"bin,omitempty"`
+		BinManifest  *domain.Manifest       `json:"bin_manifest,omitempty"`
+		SourceNode   *domain.Node              `json:"source_node,omitempty"`
+		DeliveryNode *domain.Node              `json:"delivery_node,omitempty"`
+		Children     []*domain.Order           `json:"children,omitempty"`
+		Parent       *domain.Order             `json:"parent,omitempty"`
 		VendorDetail *fleet.VendorOrderDetail `json:"vendor_detail,omitempty"`
 		Robot        *fleet.RobotStatus       `json:"robot,omitempty"`
 	}
@@ -329,7 +327,7 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 		return
 	}
 
-	order := &orders.Order{
+	order := &domain.Order{
 		EdgeUUID:     orderUUID,
 		StationID:    "core-spot",
 		OrderType:    "send_to",
@@ -457,7 +455,7 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 		return
 	}
 
-	order := &orders.Order{
+	order := &domain.Order{
 		EdgeUUID:     orderUUID,
 		StationID:    "core-spot",
 		OrderType:    "move",

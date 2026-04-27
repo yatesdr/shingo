@@ -6,81 +6,34 @@
 // sub-package. The outer store/ keeps type aliases
 // (`store.MissionEvent = telemetry.Event`, etc.) and one-line delegate
 // methods on *store.DB so external callers see no API change.
+//
+// Stage 2A.2 lifted the Event, Mission, Filter, and Stats structs into
+// shingocore/domain so www handlers + service callers can construct
+// query filters and reference response shapes without importing this
+// persistence sub-package. The aliases below preserve every existing
+// telemetry.X identifier; this file remains the only place
+// SQL-touching code for these tables lives.
 package telemetry
 
 import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"time"
+
+	"shingocore/domain"
 )
 
-// Event records a single state transition during a mission, including a
-// robot position snapshot at that moment.
-type Event struct {
-	ID            int64     `json:"id"`
-	OrderID       int64     `json:"order_id"`
-	VendorOrderID string    `json:"vendor_order_id"`
-	OldState      string    `json:"old_state"`
-	NewState      string    `json:"new_state"`
-	RobotID       string    `json:"robot_id"`
-	RobotX        *float64  `json:"robot_x,omitempty"`
-	RobotY        *float64  `json:"robot_y,omitempty"`
-	RobotAngle    *float64  `json:"robot_angle,omitempty"`
-	RobotBattery  *float64  `json:"robot_battery,omitempty"`
-	RobotStation  string    `json:"robot_station"`
-	BlocksJSON    string    `json:"blocks_json"`
-	ErrorsJSON    string    `json:"errors_json"`
-	Detail        string    `json:"detail"`
-	CreatedAt     time.Time `json:"created_at"`
-}
-
-// Mission is the summary row for a completed mission.
-type Mission struct {
-	ID               int64      `json:"id"`
-	OrderID          int64      `json:"order_id"`
-	VendorOrderID    string     `json:"vendor_order_id"`
-	RobotID          string     `json:"robot_id"`
-	StationID        string     `json:"station_id"`
-	OrderType        string     `json:"order_type"`
-	SourceNode       string     `json:"source_node"`
-	DeliveryNode     string     `json:"delivery_node"`
-	TerminalState    string     `json:"terminal_state"`
-	VendorCreated    *time.Time `json:"vendor_created,omitempty"`
-	VendorCompleted  *time.Time `json:"vendor_completed,omitempty"`
-	CoreCreated      *time.Time `json:"core_created,omitempty"`
-	CoreCompleted    *time.Time `json:"core_completed,omitempty"`
-	DurationMS       int64      `json:"duration_ms"`
-	VendorDurationMS int64      `json:"vendor_duration_ms"`
-	BlocksJSON       string     `json:"blocks_json"`
-	ErrorsJSON       string     `json:"errors_json"`
-	WarningsJSON     string     `json:"warnings_json"`
-	NoticesJSON      string     `json:"notices_json"`
-	CreatedAt        time.Time  `json:"created_at"`
-}
-
-// Filter supports filtered queries of mission_telemetry.
-type Filter struct {
-	StationID string
-	RobotID   string
-	State     string
-	Since     *time.Time
-	Until     *time.Time
-	Limit     int
-	Offset    int
-}
-
-// Stats provides aggregated mission metrics.
-type Stats struct {
-	TotalMissions int64   `json:"total_missions"`
-	Completed     int64   `json:"completed"`
-	Failed        int64   `json:"failed"`
-	Cancelled     int64   `json:"cancelled"`
-	AvgDurationMS int64   `json:"avg_duration_ms"`
-	P50DurationMS int64   `json:"p50_duration_ms"`
-	P95DurationMS int64   `json:"p95_duration_ms"`
-	SuccessRate   float64 `json:"success_rate"`
-}
+// Event, Mission, Filter, and Stats are the telemetry data types. The
+// structs live in shingocore/domain (Stage 2A.2); these aliases keep
+// the unprefixed telemetry.X names used by every read helper, scan
+// function, and Insert/List call site in this package, plus the
+// outer store/ re-exports and the www handlers + service callers.
+type (
+	Event   = domain.TelemetryEvent
+	Mission = domain.TelemetryMission
+	Filter  = domain.TelemetryFilter
+	Stats   = domain.TelemetryStats
+)
 
 // InsertEvent writes a mission-event row.
 func InsertEvent(db *sql.DB, e *Event) error {

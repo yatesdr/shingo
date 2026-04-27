@@ -8,11 +8,10 @@ import (
 	"strconv"
 	"strings"
 
+	"shingocore/domain"
 	"shingocore/engine"
 	"shingocore/fleet"
 	"shingocore/service"
-	"shingocore/store/nodes"
-	"shingocore/store/scene"
 )
 
 // parseNodeAssignments pulls the station + bin-type selections out of
@@ -67,7 +66,7 @@ func (h *Handlers) apiScenePoints(w http.ResponseWriter, r *http.Request) {
 	area := r.URL.Query().Get("area")
 
 	var (
-		points []*scene.Point
+		points []*domain.ScenePoint
 		err    error
 	)
 	switch {
@@ -120,7 +119,7 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node := &nodes.Node{
+	node := &domain.Node{
 		Name:     r.FormValue("name"),
 		Zone:     r.FormValue("zone"),
 		Enabled:  r.FormValue("enabled") == "on",
@@ -312,7 +311,7 @@ func (h *Handlers) apiNodeDetail(w http.ResponseWriter, r *http.Request) {
 	binTypeMode := svc.GetNodeProperty(id, "bin_type_mode")
 	stationMode := svc.GetNodeProperty(id, "station_mode")
 
-	var children []*nodes.Node
+	var children []*domain.Node
 	if node.IsSynthetic {
 		children, err = svc.ListChildNodes(id)
 		if err != nil {
@@ -400,7 +399,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 	created := 0
 	for _, d := range defs {
-		n := &nodes.Node{
+		n := &domain.Node{
 			Name:    d.name,
 			Zone:    d.zone,
 			Enabled: true,
@@ -422,7 +421,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 	// Two direct children on the group node.
 	for _, name := range []string{"TEST-NGRP-1-D1", "TEST-NGRP-1-D2"} {
-		child := &nodes.Node{
+		child := &domain.Node{
 			Name:     name,
 			Zone:     "Production",
 			Enabled:  true,
@@ -446,7 +445,7 @@ func (h *Handlers) apiGenerateTestNodes(w http.ResponseWriter, r *http.Request) 
 
 		for i := 1; i <= 4; i++ {
 			slotName := fmt.Sprintf("%s-S%d", laneName, i)
-			slot := &nodes.Node{
+			slot := &domain.Node{
 				Name:     slotName,
 				Zone:     "Production",
 				Enabled:  true,

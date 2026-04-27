@@ -15,43 +15,23 @@ package stations
 import (
 	"database/sql"
 	"strings"
-	"time"
 
+	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
 
-// Station is one row of operator_stations.
-type Station struct {
-	ID               int64      `json:"id"`
-	ProcessID        int64      `json:"process_id"`
-	Code             string     `json:"code"`
-	Name             string     `json:"name"`
-	Note             string     `json:"note"`
-	AreaLabel        string     `json:"area_label"`
-	Sequence         int        `json:"sequence"`
-	ControllerNodeID string     `json:"controller_node_id"`
-	DeviceMode       string     `json:"device_mode"`
-	Enabled          bool       `json:"enabled"`
-	HealthStatus     string     `json:"health_status"`
-	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-
-	ProcessName string `json:"process_name"`
-}
-
-// Input is the input shape for Create / Update.
-type Input struct {
-	ProcessID        int64  `json:"process_id"`
-	Code             string `json:"code"`
-	Name             string `json:"name"`
-	Note             string `json:"note"`
-	AreaLabel        string `json:"area_label"`
-	Sequence         int    `json:"sequence"`
-	ControllerNodeID string `json:"controller_node_id"`
-	DeviceMode       string `json:"device_mode"`
-	Enabled          bool   `json:"enabled"`
-}
+// Station and Input are the operator-station data types. The structs
+// live in shingoedge/domain (Stage 2A.2); these aliases keep the
+// stations.Station / stations.Input names used by every scan helper,
+// Create/Update call site, and the outer store/ re-exports.
+//
+// The domain rename `Input` → `StationInput` exists so the type is
+// self-describing once outside this package; the alias here keeps
+// the local stations.Input name for backward compatibility.
+type (
+	Station = domain.Station
+	Input   = domain.StationInput
+)
 
 const stationSelect = `s.id, s.process_id, s.code, s.name, s.note, s.area_label, s.sequence,
 	s.controller_node_id, s.device_mode, s.enabled, s.health_status,

@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"shingocore/store/telemetry"
+	"shingocore/domain"
 )
 
 func (h *Handlers) handleMissions(w http.ResponseWriter, r *http.Request) {
@@ -95,8 +95,8 @@ func (h *Handlers) apiMissionStats(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stats)
 }
 
-func parseMissionFilter(r *http.Request) telemetry.Filter {
-	f := telemetry.Filter{
+func parseMissionFilter(r *http.Request) domain.TelemetryFilter {
+	f := domain.TelemetryFilter{
 		StationID: r.URL.Query().Get("station_id"),
 		RobotID:   r.URL.Query().Get("robot_id"),
 		State:     r.URL.Query().Get("state"),
