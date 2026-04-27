@@ -261,6 +261,33 @@ func ListActiveByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
 	return scanOrders(rows)
 }
 
+// ListActiveByProcessNodeOrSource returns non-terminal orders that are
+// either tracked at the given process node (process_node_id match) OR
+// source FROM the given source node name (source_node match). Used by
+// the station service so a manual_swap supermarket loader sees demand
+// for orders sourcing FROM it — not just orders directly created at
+// it. Plant test 2026-04-27: line-initiated swap orders source from
+// SMN_001's bin but are tracked at the line node, so the loader UI's
+// "DEMAND" indicator went silent. The OR-query restores that signal.
+//
+// sourceNodeName matches against orders.source_node (the dot-name
+// string Edge stores, not the integer node ID). Pass empty string to
+// skip the source match (degenerates to ListActiveByProcessNode).
+func ListActiveByProcessNodeOrSource(db *sql.DB, processNodeID int64, sourceNodeName string) ([]Order, error) {
+	if sourceNodeName == "" {
+		return ListActiveByProcessNode(db, processNodeID)
+	}
+	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+		WHERE (o.process_node_id = ? OR o.source_node = ?)
+		  AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
+		ORDER BY o.created_at`, processNodeID, sourceNodeName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOrders(rows)
+}
+
 // ListHistory returns the status history for one order, oldest first.
 func ListHistory(db *sql.DB, orderID int64) ([]History, error) {
 	rows, err := db.Query(`SELECT id, order_id, old_status, new_status, detail, created_at FROM order_history WHERE order_id = ? ORDER BY created_at`, orderID)

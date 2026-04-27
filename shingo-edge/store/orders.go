@@ -111,6 +111,15 @@ func (db *DB) ListActiveOrdersByProcessNode(processNodeID int64) ([]orders.Order
 	return orders.ListActiveByProcessNode(db.DB, processNodeID)
 }
 
+// ListActiveOrdersByProcessNodeOrSource returns non-terminal orders that
+// are either tracked at the given process node OR source from the given
+// source node name. The station service uses this so a manual_swap
+// loader sees demand for orders sourcing from its bin even when those
+// orders are tracked at a different (consumer) node.
+func (db *DB) ListActiveOrdersByProcessNodeOrSource(processNodeID int64, sourceNodeName string) ([]orders.Order, error) {
+	return orders.ListActiveByProcessNodeOrSource(db.DB, processNodeID, sourceNodeName)
+}
+
 // ListOrderHistory returns the status history for one order, oldest
 // first.
 func (db *DB) ListOrderHistory(orderID int64) ([]orders.History, error) {

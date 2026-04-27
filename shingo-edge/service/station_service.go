@@ -173,7 +173,15 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 			taskCopy := nodeTask
 			nodeView.ChangeoverTask = &taskCopy
 		}
-		nodeView.Orders, _ = s.db.ListActiveOrdersByProcessNode(node.ID)
+		// Include orders sourcing FROM this node's CoreNode in addition to
+		// orders tracked at this process_node. A manual_swap supermarket
+		// loader (SMN_001 etc.) doesn't directly own orders — the line
+		// operator's REQUEST creates orders tracked at the line node. But
+		// the loader operator still needs to see "demand for my bin" so
+		// they keep it loaded. Plant test 2026-04-27: line-initiated swap
+		// orders went silent on the loader UI after the kanban-spam guard
+		// stopped firing process-node-tracked orders here.
+		nodeView.Orders, _ = s.db.ListActiveOrdersByProcessNodeOrSource(node.ID, node.CoreNodeName)
 		nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime)
 		// Lineside buckets power the active-bar and stranded-chip UI on
 		// the operator station modal. Best-effort — absence of buckets
