@@ -72,7 +72,7 @@ func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
 		Emergency:      r.RbkReport.Emergency,
 		Blocked:        r.RbkReport.Blocked,
 		IsError:        r.IsError,
-		BatteryLevel:   r.RbkReport.BatteryLevel,
+		BatteryLevel:   r.RbkReport.BatteryLevel * 100, // SEER returns 0.0–1.0; we expose 0–100
 		Charging:       r.RbkReport.Charging,
 		CurrentMap:     r.BasicInfo.CurrentMap,
 		Model:          r.BasicInfo.Model,

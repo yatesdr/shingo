@@ -222,7 +222,7 @@ func TestMapRobotStatus_AllFields(t *testing.T) {
 		{"Emergency", got.Emergency, true},
 		{"Blocked", got.Blocked, true},
 		{"IsError", got.IsError, true},
-		{"BatteryLevel", got.BatteryLevel, 0.87},
+		{"BatteryLevel", got.BatteryLevel, 87.0},
 		{"Charging", got.Charging, true},
 		{"CurrentMap", got.CurrentMap, "warehouse_A"},
 		{"Model", got.Model, "JS-200"},
