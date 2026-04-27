@@ -259,15 +259,17 @@ func UnclaimByOrder(db *sql.DB, orderID int64) {
 // and the kanban demand re-fires, producing an order spam loop). Pass 0 to
 // disable exclusion. See SHINGO_TODO.md "Same-node retrieve" entry.
 //
-// Empty-bin definition (post-2026-04-27 fix): manifest_confirmed = false
-// AND COALESCE(payload_code, '') = ''. The previous filter
-// `(manifest IS NULL OR payload_code = '')` was brittle around NULL vs
-// empty-string — a bin with manifest='' (empty string) and payload_code=NULL
-// evaluated to `false OR NULL`, which SQL treats as falsy in WHERE, so
-// genuinely-empty bins were silently rejected. Plant test 2026-04-27
-// (order #462 stuck on 'awaiting inventory' with empties at SMN_002 /
-// SMN_003 visible). manifest_confirmed is the canonical "loaded with
-// payload" flag; payload_code COALESCE handles the NULL-vs-empty edge.
+// Empty-bin definition (post-2026-04-27 fix): COALESCE(payload_code, '') = ''.
+// A bin with no payload_code is empty by definition — manifest is a
+// derived/stale field that's unreliable when bins go through arrival
+// transitions. The previous filter `(manifest IS NULL OR payload_code = '')`
+// was brittle around NULL-vs-empty-string (a bin with manifest='' and
+// payload_code=NULL evaluated to `false OR NULL`, treated as falsy in
+// WHERE, silently rejecting genuinely-empty bins). An earlier attempt
+// added `manifest_confirmed = false` but that's too strict — it requires
+// the operator to have explicitly cleared the confirmation, which doesn't
+// happen on every arrival path. Plant test 2026-04-27 (order #462 stuck
+// on 'awaiting inventory' with empties at SMN_002 / SMN_003 visible).
 func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNodeID int64) (*Bin, error) {
 	// Zone-preferred query
 	if preferZone != "" {
@@ -282,7 +284,6 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 			  AND n.enabled = true
 			  AND n.is_synthetic = false
 			  AND n.zone = $2
-			  AND b.manifest_confirmed = false
 			  AND COALESCE(b.payload_code, '') = ''
 			  AND ($3 = 0 OR b.node_id != $3)
 			ORDER BY b.id ASC
@@ -303,7 +304,6 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 		  AND b.node_id IS NOT NULL
 		  AND n.enabled = true
 		  AND n.is_synthetic = false
-		  AND b.manifest_confirmed = false
 		  AND COALESCE(b.payload_code, '') = ''
 		  AND ($2 = 0 OR b.node_id != $2)
 		ORDER BY b.id ASC
