@@ -209,6 +209,23 @@ func (e *Engine) tryAutoRequest(node *processes.Node, claim *processes.NodeClaim
 	// empty-payload order is simply ignored, and each `payload` we own is
 	// evaluated on its own merits.
 
+	// Node-occupancy guard: if a bin is already physically at this node,
+	// don't request another one. Without this, a kanban demand signal
+	// continues to fire while a bin is parked at the node, generating
+	// retrieve_empty / retrieve_full orders that resolve to "source = this
+	// node" (the bin already here). The fleet cancels each (same-node) and
+	// the demand re-fires, producing an order spam loop. Plant-test
+	// 2026-04-27 produced a dozen cancelled orders for SMN_001 in 4
+	// minutes. The bin loader expects one bin at a time — if one is here,
+	// the demand is satisfied locally and Core's queue handles the next
+	// cycle. Uses nodeIsOccupied which queries Core via coreClient
+	// (Edge doesn't track bin locations directly); fail-closed if Core is
+	// unreachable (assume occupied) so we don't spam orders during outages.
+	if e.nodeIsOccupied(node.CoreNodeName) {
+		log.Printf("manual_swap auto-request: node %s already has a bin — skipping (avoids same-node order loop)", node.Name)
+		return
+	}
+
 	var created int
 	for _, pc := range payloads {
 		if existingPayloads[pc] {
