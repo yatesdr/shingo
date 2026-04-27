@@ -322,12 +322,13 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	if runtime.RemainingUOP != 0 {
 		t.Errorf("RemainingUOP = %d, want 0 after manual_swap move completion", runtime.RemainingUOP)
 	}
-	// handleManualSwapCompletion clears ActiveOrderID then calls tryAutoRequest
-	// which legitimately re-populates it with a new auto-requested order if
-	// the claim has allowed payloads. The relevant invariant is that the
-	// original move order is no longer tracked — not that the slot is empty.
-	if runtime.ActiveOrderID != nil && *runtime.ActiveOrderID == orderID {
-		t.Errorf("ActiveOrderID = %d (the original move order) after completion; manual_swap completion should have cleared the move-order tracking before re-populating with any auto-request", *runtime.ActiveOrderID)
+	// After the side-cycle refactor (commit 4f9212b + tryAutoRequest
+	// removal), handleManualSwapCompletion clears ActiveOrderID without
+	// queueing a follow-up kanban request. New empties are driven by
+	// line REQUESTs through MaybeCreateLoaderEmptyIn, not by
+	// completion-time auto-requests at the loader.
+	if runtime.ActiveOrderID != nil {
+		t.Errorf("ActiveOrderID = %d after manual_swap move completion; expected nil (no more kanban auto-request)", *runtime.ActiveOrderID)
 	}
 }
 

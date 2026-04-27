@@ -180,17 +180,11 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			hb.RequestNodeSync()
 			hb.RequestCatalogSync()
 		}
-		// Sync manual_swap claims to Core's demand registry, then sweep
-		// to create initial orders for any payloads missing demand.
-		// On re-registration (uptime > 30), only ClaimSync — the sweep
-		// is unnecessary because tryAutoRequest dedup would no-op, and
-		// repeated delete+insert on demand_registry is churn on flaky links.
-		go func() {
-			eng.SendClaimSync()
-			if eng.Uptime() <= 30 {
-				eng.StartupSweepManualSwap()
-			}
-		}()
+		// Sync manual_swap claims to Core's demand registry. Pre-side-cycle
+		// this also called StartupSweepManualSwap to seed empty-in orders
+		// at every loader — unnecessary now that empty-ins are driven by
+		// line REQUESTs through MaybeCreateLoaderEmptyIn.
+		go eng.SendClaimSync()
 	})
 	edgeHandler.SetRegisterRequestHandler(func() {
 		hb.SendRegister()
@@ -201,10 +195,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	edgeHandler.SetNodeStructureChangedHandler(func() {
 		hb.RequestNodeSync()
 	})
-	edgeHandler.SetDemandSignalHandler(func(signal *protocol.DemandSignal) {
-		go eng.HandleDemandSignal(signal)
-	})
-
 	if cgHandler != nil {
 		edgeHandler.SetCountGroupCommandHandler(func(cmd protocol.CountGroupCommand) {
 			cgHandler.OnCommand(cmd)

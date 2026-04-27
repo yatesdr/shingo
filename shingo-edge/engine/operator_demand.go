@@ -5,27 +5,8 @@ import (
 	"slices"
 
 	"shingo/protocol"
-	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
-
-// HandleDemandSignal processes a kanban demand signal from Core. It finds
-// the local manual_swap node matching the signal's CoreNodeName and triggers
-// tryAutoRequest to create orders for the demanded payload if none exist.
-func (e *Engine) HandleDemandSignal(signal *protocol.DemandSignal) {
-	matches := e.findManualSwapNodes(signal.CoreNodeName)
-	if len(matches) == 0 {
-		log.Printf("demand signal: no matching manual_swap node for %s", signal.CoreNodeName)
-		return
-	}
-	// matches[0] preserves the original first-match-return behavior — the iteration
-	// order in findManualSwapNodes matches the original loop order (processes → claims → nodes).
-	m := matches[0]
-	e.tryAutoRequest(&m.node, &m.claim)
-	log.Printf("demand signal: triggered auto-request for node %s (payload %s, role %s)",
-		m.node.Name, signal.PayloadCode, signal.Role)
-}
-
 // SendClaimSync builds a ClaimSync message from all manual_swap claims across
 // all active processes and sends it to Core. Core uses this to populate its
 // demand registry for kanban wiring.
@@ -250,110 +231,4 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	}
 	log.Printf("side-cycle: empty-in order %d for loader %s payload %s",
 		order.ID, loader.node.Name, payloadCode)
-}
-
-// StartupSweepManualSwap iterates all manual_swap claims and ensures orders
-// exist for every allowed payload. This kick-starts the kanban loop after a
-// restart — tryAutoRequest is purely event-driven and won't fire until an
-// order completes, so without this sweep, a freshly restarted Edge would have
-// no active demand at manual_swap nodes.
-//
-// Called from the SetRegisteredHandler callback (after SendClaimSync) so that
-// sendFn is wired and Core registration is confirmed.
-func (e *Engine) StartupSweepManualSwap() {
-	matches := e.findManualSwapNodes("") // all manual_swap nodes
-	for i := range matches {
-		e.tryAutoRequest(&matches[i].node, &matches[i].claim)
-	}
-	if len(matches) > 0 {
-		log.Printf("startup sweep: checked %d manual_swap node(s)", len(matches))
-	}
-}
-
-// tryAutoRequest creates orders for all allowed payloads that don't already have
-// a pending order at this node. Role-aware: produce (loader) requests empties,
-// consume (unloader) requests fulls. Fails silently on any error — the next
-// trigger will retry.
-//
-// The check+create is wrapped in BEGIN IMMEDIATE to prevent two concurrent
-// goroutines from both seeing "no existing orders" and creating duplicates.
-func (e *Engine) tryAutoRequest(node *processes.Node, claim *processes.NodeClaim) {
-	payloads := claim.AllowedPayloads()
-	if len(payloads) == 0 {
-		return
-	}
-
-	// BEGIN IMMEDIATE serializes concurrent access at the SQLite level.
-	// If another goroutine holds a write lock, this blocks until it's done.
-	if _, err := e.db.Exec("BEGIN IMMEDIATE"); err != nil {
-		log.Printf("manual_swap auto-request: begin tx for node %s: %v", node.Name, err)
-		return
-	}
-	defer func() {
-			if _, err := e.db.Exec("ROLLBACK"); err != nil {
-				log.Printf("manual_swap auto-request: rollback for node %s: %v", node.Name, err)
-			}
-		}() // no-op if committed
-
-	// Check which payloads already have active (non-terminal) orders at this node.
-	existing, _ := e.db.ListActiveOrdersByProcessNode(node.ID)
-
-	// Build a set of payloads that already have pending orders.
-	existingPayloads := make(map[string]bool)
-	for _, o := range existing {
-		if o.PayloadCode != "" {
-			existingPayloads[o.PayloadCode] = true
-		}
-	}
-
-	// Note: previously we short-circuited when any in-flight order had no
-	// payload_code, on the assumption it was a legacy/manual record that
-	// might collide. That guard blocked every kanban request behind a single
-	// stuck empty-payload order (e.g. a manually-submitted move) and never
-	// re-opened. We now rely on the per-payload existing check below: an
-	// empty-payload order is simply ignored, and each `payload` we own is
-	// evaluated on its own merits.
-
-	// Node-occupancy guard: if a bin is already physically at this node,
-	// don't request another one. Without this, a kanban demand signal
-	// continues to fire while a bin is parked at the node, generating
-	// retrieve_empty / retrieve_full orders that resolve to "source = this
-	// node" (the bin already here). The fleet cancels each (same-node) and
-	// the demand re-fires, producing an order spam loop. Plant-test
-	// 2026-04-27 produced a dozen cancelled orders for SMN_001 in 4
-	// minutes. The bin loader expects one bin at a time — if one is here,
-	// the demand is satisfied locally and Core's queue handles the next
-	// cycle. Uses nodeIsOccupied which queries Core via coreClient
-	// (Edge doesn't track bin locations directly); fail-closed if Core is
-	// unreachable (assume occupied) so we don't spam orders during outages.
-	if e.nodeIsOccupied(node.CoreNodeName) {
-		log.Printf("manual_swap auto-request: node %s already has a bin — skipping (avoids same-node order loop)", node.Name)
-		return
-	}
-
-	var created int
-	for _, pc := range payloads {
-		if existingPayloads[pc] {
-			continue // already have an order for this payload
-		}
-		var order *orders.Order
-		var err error
-		if claim.Role == "consume" {
-			order, err = e.RequestFullBin(node.ID, pc)
-		} else {
-			order, err = e.RequestEmptyBin(node.ID, pc)
-		}
-		if err != nil {
-			log.Printf("manual_swap auto-request for node %s payload %s: %v", node.Name, pc, err)
-			continue
-		}
-		created++
-		log.Printf("manual_swap auto-request: created order %d for node %s (payload %s, role %s)",
-			order.ID, node.Name, pc, claim.Role)
-	}
-	if created > 0 {
-		if _, err := e.db.Exec("COMMIT"); err != nil {
-			log.Printf("manual_swap auto-request: commit for node %s: %v", node.Name, err)
-		}
-	}
 }

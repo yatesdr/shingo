@@ -155,10 +155,11 @@ func (e *Engine) Start() {
 	// Reconcile any in-progress changeover against order statuses
 	e.restoreChangeoverState()
 
-	// NOTE: StartupSweepManualSwap is NOT called here because sendFn
-	// is not wired yet (Start runs before SetSendFunc in main.go).
-	// It is called from the SetRegisteredHandler callback after
-	// registration ack confirms Core connectivity.
+	// Note: pre-side-cycle this had a NOTE about StartupSweepManualSwap.
+	// That sweep, along with HandleDemandSignal and tryAutoRequest, was
+	// removed once the side-cycle (line REQUEST -> loader L1 -> L2) became
+	// the canonical empty-in path. Loaders no longer need a startup-time
+	// kick to begin pulling empties.
 
 	// Start WarLink poller and counter polling
 	if e.cfg.WarLink.Enabled {

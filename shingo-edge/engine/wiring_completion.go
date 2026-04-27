@@ -308,7 +308,9 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 }
 
 // handleManualSwapCompletion handles a move order completing for manual_swap nodes.
-// The bin has been sent to destination, node is vacant — triggers tryAutoRequest.
+// The bin has been sent to destination, node is vacant. Pre-side-cycle
+// this also queued a follow-up empty-in via tryAutoRequest; that path was
+// removed when MaybeCreateLoaderEmptyIn became the only empty-in source.
 func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
 	if ctx.order.OrderType != orders.TypeMove {
 		return false
@@ -324,7 +326,9 @@ func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
 	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
 		log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 	}
-	e.tryAutoRequest(ctx.node, claim)
+	// tryAutoRequest call removed in side-cycle refactor (commit 4f9212b
+	// + this one). Loader empties are now driven by line REQUESTs through
+	// MaybeCreateLoaderEmptyIn, not by post-completion kanban auto-requests.
 	return true
 }
 
@@ -397,11 +401,10 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 		if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
 			log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 		}
-		// Retrieve completion at a manual_swap bin-loader leaves the
-		// node with an empty bin but no follow-up order. Re-evaluate
-		// kanban demand now so the next cycle auto-queues instead of
-		// waiting for a restart or a manual operator action.
-		e.tryAutoRequest(ctx.node, claim)
+		// Pre-side-cycle, this called e.tryAutoRequest to re-evaluate
+		// kanban demand and queue a new empty-in. Removed: the
+		// side-cycle drives empty-in creation from line REQUESTs via
+		// MaybeCreateLoaderEmptyIn, not from completion-time sweeps.
 	}
 
 	// Keep-staged: immediately pre-populate inbound staging for next swap
