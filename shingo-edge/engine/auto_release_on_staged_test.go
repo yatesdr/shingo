@@ -25,26 +25,41 @@ import (
 // operator consent. Caught by Dev B; this table prevents reintroduction.
 func TestHandleAutoReleaseOnStaged_PerSiblingStatus(t *testing.T) {
 	cases := []struct {
-		name           string
-		siblingStatus  string
-		wantFire       bool
-		wantDispMode   ReleaseDispositionMode // when wantFire=true
-		caseDesc       string
+		name            string
+		siblingStatus   string
+		siblingReleased bool                   // insert staged→in_transit history row
+		wantFire        bool
+		wantDispMode    ReleaseDispositionMode // when wantFire=true
+		caseDesc        string
 	}{
 		// --- post-release statuses: SHOULD fire ---
 		{
-			name:          "sibling_in_transit_fires",
-			siblingStatus: orders.StatusInTransit,
-			wantFire:      true,
-			wantDispMode:  DispositionCaptureLineside, // Order B (evac) leg
-			caseDesc:      "operator already released sibling, robot is moving — late arrival auto-fires",
+			name:            "sibling_in_transit_fires",
+			siblingStatus:   orders.StatusInTransit,
+			siblingReleased: true,
+			wantFire:        true,
+			wantDispMode:    DispositionCaptureLineside, // Order B (evac) leg
+			caseDesc:        "operator already released sibling, robot is moving — late arrival auto-fires",
 		},
 		{
-			name:          "sibling_delivered_fires",
-			siblingStatus: orders.StatusDelivered,
-			wantFire:      true,
-			wantDispMode:  DispositionCaptureLineside,
-			caseDesc:      "operator already released sibling, robot completed delivery — late arrival auto-fires",
+			name:            "sibling_delivered_fires",
+			siblingStatus:   orders.StatusDelivered,
+			siblingReleased: true,
+			wantFire:        true,
+			wantDispMode:    DispositionCaptureLineside,
+			caseDesc:        "operator already released sibling, robot completed delivery — late arrival auto-fires",
+		},
+
+		// --- bug 1 regression (plant-test 2026-04-27 AMR-03/AMR-05): sibling
+		//     reached in_transit via the waybill-ack path (no operator press),
+		//     so no staged→in_transit history row exists. Predicate must NOT
+		//     fire even though status alone would have satisfied the old check.
+		{
+			name:            "sibling_in_transit_via_waybill_does_NOT_fire",
+			siblingStatus:   orders.StatusInTransit,
+			siblingReleased: false,
+			wantFire:        false,
+			caseDesc:        "BUG 1 REGRESSION: in_transit reached via Core waybill ack with no operator release — must not auto-fire",
 		},
 
 		// --- pre-staged statuses: MUST NOT fire (this is the Round 4 bug) ---
@@ -103,6 +118,14 @@ func TestHandleAutoReleaseOnStaged_PerSiblingStatus(t *testing.T) {
 			if err := db.UpdateOrderStatus(orderA, tc.siblingStatus); err != nil {
 				t.Fatalf("set sibling status %q: %v", tc.siblingStatus, err)
 			}
+			if tc.siblingReleased {
+				// New predicate looks for a staged→in_transit row in OrderHistory
+				// (the unique fingerprint of Manager.ReleaseOrder). UpdateOrderStatus
+				// alone doesn't write history, so insert it directly.
+				if err := db.InsertOrderHistory(orderA, orders.StatusStaged, orders.StatusInTransit, "released from staging"); err != nil {
+					t.Fatalf("seed sibling release-history row: %v", err)
+				}
+			}
 
 			drainOutbox(t, db)
 
@@ -158,6 +181,10 @@ func TestHandleAutoReleaseOnStaged_OrderASupplyLegSendsEmptyDisposition(t *testi
 	if err := db.UpdateOrderStatus(orderB, orders.StatusInTransit); err != nil {
 		t.Fatalf("set Order B in_transit: %v", err)
 	}
+	// Mark Order B as actually released (predicate now reads OrderHistory).
+	if err := db.InsertOrderHistory(orderB, orders.StatusStaged, orders.StatusInTransit, "released from staging"); err != nil {
+		t.Fatalf("seed Order B release-history row: %v", err)
+	}
 
 	drainOutbox(t, db)
 
@@ -210,6 +237,11 @@ func TestHandleAutoReleaseOnStaged_NonTwoRobotModeNeverFires(t *testing.T) {
 	}
 	if err := db.UpdateOrderStatus(orderA, orders.StatusInTransit); err != nil {
 		t.Fatalf("set A in_transit: %v", err)
+	}
+	// Mark A as released so the new history-based predicate would pass; this
+	// test specifically exercises the swap-mode guard further down.
+	if err := db.InsertOrderHistory(orderA, orders.StatusStaged, orders.StatusInTransit, "released from staging"); err != nil {
+		t.Fatalf("seed A release-history row: %v", err)
 	}
 
 	eng := testEngine(t, db)

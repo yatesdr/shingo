@@ -127,23 +127,27 @@ func (e *Engine) handleAutoReleaseOnStaged(changed OrderStatusChangedEvent) {
 	if err != nil || sibling == nil {
 		return
 	}
-	// Sibling must be in a POST-release status — proves the operator (or a
-	// prior auto-release) actually triggered the consolidated path against
-	// it. The only post-staged-but-not-terminal statuses in the protocol are
-	// in_transit (released, robot moving) and delivered (robot arrived,
-	// pre-confirmation). Anything else means:
-	//   - staged                    → both staged simultaneously, wait for click
-	//   - dispatched / submitted /  → robot hasn't arrived yet; the operator
-	//     acknowledged / sourcing /   hasn't done anything either
-	//     pending
-	//   - confirmed / failed /      → cycle is over, don't fire
-	//     cancelled (terminal)
+	// Predicate: only fire if the sibling has actually been RELEASED from
+	// staged — operator press, or a prior auto-release. Detected via
+	// OrderHistory (a row with old=staged, new=in_transit), NOT current
+	// status, because status alone is unreliable.
 	//
-	// Pre-fix the predicate was "!staged && !terminal", which admitted
-	// dispatched/etc. and would auto-release the FIRST robot to arrive at
-	// staged with no operator consent — circumventing the consolidated
-	// RELEASE button entirely. Caught in Round 4 review (Dev B).
-	if sibling.Status != orders.StatusInTransit && sibling.Status != orders.StatusDelivered {
+	// Why status alone is wrong: in_transit is ALSO reached on Core's
+	// waybill ack (manager.go:511, HandleDispatchReply ReplyWaybill). That
+	// fires automatically when Core dispatches the fleet — no operator
+	// involvement. With a status-only predicate, both swap orders flip to
+	// in_transit on dispatch ack, then the first to stage triggers auto-
+	// release on the second — both robots release without operator consent
+	// and immediately pick the bin right back up. Plant-test failure
+	// 2026-04-27 (AMR-03 / AMR-05).
+	//
+	// Pre-Round-4 the predicate was "!staged && !terminal" (admitted
+	// dispatched/etc.); Round 4 narrowed to {in_transit, delivered}; both
+	// share the same flaw — status doesn't carry release intent. The
+	// staged → in_transit history row does, because Manager.ReleaseOrder
+	// is the only emitter of that exact transition (manager.go:331,
+	// detail "released from staging").
+	if !e.siblingWasReleasedFromStaging(*siblingID) {
 		return
 	}
 	// Confirm two_robot mode via the active claim — defense in depth, since
@@ -168,4 +172,25 @@ func (e *Engine) handleAutoReleaseOnStaged(changed OrderStatusChangedEvent) {
 		return
 	}
 	log.Printf("auto-release-on-staged: released order %d on node %d (sibling %d status=%s)", changed.OrderID, nodeID, *siblingID, sibling.Status)
+}
+
+// siblingWasReleasedFromStaging returns true if the given order has at some
+// point transitioned staged → in_transit. That exact transition is the
+// unique fingerprint of Manager.ReleaseOrder firing (manager.go:331, detail
+// "released from staging"). The waybill-ack path goes acknowledged →
+// in_transit, and other paths don't reach in_transit at all, so this row
+// only exists when an operator press (or a prior auto-release) actually
+// triggered the consolidated release path.
+func (e *Engine) siblingWasReleasedFromStaging(siblingID int64) bool {
+	hist, err := e.db.ListOrderHistory(siblingID)
+	if err != nil {
+		log.Printf("auto-release-on-staged: list sibling %d history: %v", siblingID, err)
+		return false
+	}
+	for _, h := range hist {
+		if h.OldStatus == orders.StatusStaged && h.NewStatus == orders.StatusInTransit {
+			return true
+		}
+	}
+	return false
 }

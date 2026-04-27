@@ -133,7 +133,7 @@ func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int6
 	// Use claim-based release
 	if fromClaim := findActiveClaim(e.db, ctx.node); fromClaim != nil && fromClaim.OutboundStaging != "" {
 		steps := BuildReleaseSteps(fromClaim)
-		order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, "", steps)
+		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", steps)
 		if err != nil {
 			return nil, err
 		}

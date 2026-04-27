@@ -343,3 +343,72 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 			complexAfter.Status)
 	}
 }
+
+// TestRegression_LateConfirmDoesNotTeleportReclaimedBin is the bug 2b
+// regression. Plant-test 2026-04-27 (SMN_001 / SMN_002): an evac order
+// delivered an empty bin to AMRSM (its destination), the fulfillment
+// scanner immediately re-claimed the bin for a queued order and the new
+// order's robot moved it to a third node (the bin loader); then the
+// original order's late CONFIRMED edge receipt arrived and the safety net
+// teleported the bin back to AMRSM — leaving the UI showing the bin at
+// AMRSM while it was physically at the bin loader.
+//
+// Pre-fix the guard at handleOrderCompleted only skipped the safety net
+// when the bin was AT this order's destination. A bin re-claimed and moved
+// to a third node fell through and got clobbered. New guard: skip unless
+// the bin is STILL at this order's source (the only state in which
+// handleOrderDelivered's authoritative move could have failed).
+func TestRegression_LateConfirmDoesNotTeleportReclaimedBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	// Third node — stand-in for the bin-loader (SMN_001) the bin physically
+	// landed at after a newer order re-claimed it.
+	thirdNode := &nodes.Node{Name: "BIN-LOADER", Enabled: true}
+	if err := db.CreateNode(thirdNode); err != nil {
+		t.Fatalf("create third node: %v", err)
+	}
+
+	// Bin currently at the third node (the newer order has already moved it).
+	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, thirdNode.ID, "BIN-RECLAIM")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+
+	// Stale order: source LINE1-IN → dest STORAGE-A1 (the AMRSM in the plant
+	// scenario). Its FINISHED arrival completed; the bin then got re-claimed
+	// elsewhere; now the late CONFIRMED is firing.
+	order := &orders.Order{
+		EdgeUUID:     "regr-late-confirm",
+		StationID:    "line-1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		Status:       "delivered",
+		SourceNode:   sd.LineNode.Name,
+		DeliveryNode: sd.StorageNode.Name,
+		BinID:        &bin.ID,
+		PayloadCode:  sd.Payload.Code,
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	// Sanity: bin starts at the third node.
+	testdb.RequireBinAtNode(t, db, bin.ID, thirdNode.ID)
+
+	eng.handleOrderCompleted(OrderCompletedEvent{
+		OrderID:   order.ID,
+		EdgeUUID:  order.EdgeUUID,
+		StationID: order.StationID,
+	})
+
+	// Critical: bin must STILL be at the third node. If the safety-net guard
+	// regressed, the bin would teleport to STORAGE-A1.
+	after := testdb.RequireBin(t, db, bin.ID)
+	if after.NodeID == nil || *after.NodeID != thirdNode.ID {
+		t.Fatalf("REGRESSION: bin teleported on late confirm — NodeID=%v, want %d (BIN-LOADER). "+
+			"The handleOrderCompleted safety-net guard at wiring_completion.go (single-bin path) "+
+			"is back to checking 'bin at dest' instead of 'bin at source'; a re-claimed bin at a "+
+			"third node is being clobbered by this order's stale arrival.", after.NodeID, thirdNode.ID)
+	}
+}

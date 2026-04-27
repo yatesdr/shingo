@@ -228,10 +228,31 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 	return m.db.GetOrder(orderID)
 }
 
-// CreateComplexOrder creates a new multi-step complex order and enqueues it to the outbox.
-// deliveryNode is stored on the order for downstream logic (e.g., handleOrderCompleted
-// uses it to determine which payload to reset on completion).
+// CreateComplexOrder creates a new multi-step complex order and enqueues
+// it to the outbox. The order is created with auto_confirm=false: it
+// requires an operator HMI press to transition delivered → confirmed.
+// Use this for deliveries whose destination is at the lineside, where an
+// operator can inspect the bin. For deliveries to the supermarket /
+// outbound staging (no operator present), use
+// CreateComplexOrderWithAutoConfirm instead. deliveryNode is stored on
+// the order for downstream logic (e.g., handleOrderCompleted uses it to
+// determine which payload to reset on completion).
 func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, steps, false)
+}
+
+// CreateComplexOrderWithAutoConfirm creates an auto-confirm complex order.
+// Used for orders whose destination is the supermarket / outbound staging,
+// where there is no operator to press CONFIRM. The order auto-transitions
+// delivered → confirmed in handleDelivered the moment the fleet reports
+// FINISHED, eliminating the FINISHED → CONFIRMED race window where the
+// scanner can re-claim a delivered bin and the late confirm clobbers state
+// (the SMN_001 / SMN_002 teleport bug, plant-test 2026-04-27).
+func (m *Manager) CreateComplexOrderWithAutoConfirm(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, steps, true)
+}
+
+func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep, autoConfirm bool) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	stepsJSON, err := json.Marshal(steps)
@@ -243,7 +264,7 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
 		processNodeID, false,
-		quantity, deliveryNode, "", "", "", false, payloadCode)
+		quantity, deliveryNode, "", "", "", autoConfirm, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create complex order: %w", err)
 	}

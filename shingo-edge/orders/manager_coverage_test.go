@@ -1173,3 +1173,45 @@ func TestSubmitOrder_MissingOrder(t *testing.T) {
 		t.Fatal("expected error for missing order")
 	}
 }
+
+// TestCreateComplexOrder_AutoConfirmSplit covers the Bug 2a fix
+// (plant-test 2026-04-27 SMN_001 / SMN_002 teleport): Order B (evac) on
+// a two-robot swap ends at the supermarket / outbound staging where no
+// operator is present to press CONFIRM. Pre-fix, both legs were created
+// with AutoConfirm=false, so Order B sat in `delivered` until something
+// (admin page, global flag) advanced it — leaving a window during which
+// the fulfillment scanner could re-claim the bin and have the late
+// CONFIRMED clobber state.
+//
+// CreateComplexOrderWithAutoConfirm sets the flag to true so handleDelivered
+// instantly transitions delivered → confirmed via Manager.ConfirmDelivery,
+// closing the race window. CreateComplexOrder retains the manual-confirm
+// default for lineside deliveries.
+func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge")
+
+	steps := []protocol.ComplexOrderStep{
+		{Action: "pickup", Node: "LINE1"},
+		{Action: "dropoff", Node: "AMRSM"},
+	}
+
+	manual, err := mgr.CreateComplexOrder(nil, 1, "LINE1", steps)
+	if err != nil {
+		t.Fatalf("CreateComplexOrder: %v", err)
+	}
+	if manual.AutoConfirm {
+		t.Errorf("CreateComplexOrder: AutoConfirm=true, want false (lineside delivery requires operator press)")
+	}
+
+	auto, err := mgr.CreateComplexOrderWithAutoConfirm(nil, 1, "", steps)
+	if err != nil {
+		t.Fatalf("CreateComplexOrderWithAutoConfirm: %v", err)
+	}
+	if !auto.AutoConfirm {
+		t.Errorf("CreateComplexOrderWithAutoConfirm: AutoConfirm=false, want true. "+
+			"Bug 2a regression: evac legs to the supermarket would sit in delivered until "+
+			"manually confirmed, re-opening the FINISHED→CONFIRMED race window where "+
+			"the fulfillment scanner re-claims the bin and the late confirm teleports it back.")
+	}
+}

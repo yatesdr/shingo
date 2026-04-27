@@ -210,7 +210,6 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		return
 	}
 
-	// Skip if bin is already at the destination (normal case after delivery arrival)
 	bin, err := e.db.GetBin(*order.BinID)
 	if err != nil {
 		e.logFn("engine: get bin %d for completion: %v", *order.BinID, err)
@@ -221,17 +220,28 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		e.logFn("engine: dest node %s not found for completion: %v", order.DeliveryNode, err)
 		return
 	}
-	if bin.NodeID != nil && *bin.NodeID == destNode.ID {
-		e.dbg("completion: bin %d already at dest %s — skipping arrival", *order.BinID, order.DeliveryNode)
-		return
-	}
-
-	// Bin not yet at destination — apply arrival as safety net
 	sourceNode, _ := e.db.GetNodeByDotName(order.SourceNode)
 	sourceNodeID := int64(0)
 	if sourceNode != nil {
 		sourceNodeID = sourceNode.ID
 	}
+
+	// Safety-net invariant: only re-apply this order's arrival if the bin is
+	// STILL at source, meaning handleOrderDelivered's authoritative move never
+	// ran. If the bin has moved at all — to dest (normal post-FINISH state),
+	// or to a third node (re-claimed by a newer order during the FINISH →
+	// CONFIRM window) — we have no business re-applying. The previous guard
+	// only checked "bin at dest", so a re-claimed bin at a third node fell
+	// through and got teleported back to this stale order's destination
+	// (SMN_001 → SMN_002 plant-test failure 2026-04-27). The AutoConfirm
+	// split for evac legs collapses the typical race window, but this guard
+	// codes the actual safety-net invariant directly.
+	if bin.NodeID == nil || sourceNode == nil || *bin.NodeID != sourceNode.ID {
+		e.dbg("completion: bin %d not at source %s — skipping safety-net arrival", *order.BinID, order.SourceNode)
+		return
+	}
+
+	// Bin still at source — apply arrival as recovery from a missed FINISH
 
 	staged, expiresAt := e.resolveNodeStaging(destNode)
 
@@ -287,10 +297,26 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 			continue
 		}
 
-		// Idempotency: skip bins already at destination (moved by delivery arrival)
+		// Safety-net invariant: only re-apply this leg's arrival if the bin
+		// is STILL at this leg's source. If the bin has moved at all (to dest,
+		// or to a third node because a newer order re-claimed it during the
+		// FINISH → CONFIRM window), skip — re-applying would clobber
+		// legitimate state. The previous guard only checked "bin at dest" and
+		// teleported re-claimed bins back. See single-bin path comment for the
+		// SMN_001 / SMN_002 plant-test context.
 		bin, err := e.db.GetBin(ob.BinID)
-		if err == nil && bin.NodeID != nil && *bin.NodeID == destNode.ID {
-			e.dbg("multi-bin completion: bin %d already at dest %s — skipping", ob.BinID, ob.DestNode)
+		if err != nil {
+			e.logFn("engine: order %d bin %d get for safety-net guard: %v", order.ID, ob.BinID, err)
+			continue
+		}
+		var legSourceNodeID int64
+		if ob.NodeName != "" {
+			if srcNode, srcErr := e.db.GetNodeByDotName(ob.NodeName); srcErr == nil && srcNode != nil {
+				legSourceNodeID = srcNode.ID
+			}
+		}
+		if bin.NodeID == nil || legSourceNodeID == 0 || *bin.NodeID != legSourceNodeID {
+			e.dbg("multi-bin completion: bin %d not at source %s — skipping safety-net arrival", ob.BinID, ob.NodeName)
 			continue
 		}
 

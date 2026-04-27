@@ -210,7 +210,7 @@ func (e *Engine) createChangeoverOrders(
 		}
 		// Order B: Robot B runs swap with 1 wait
 		swapSteps := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim)
-		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", swapSteps)
+		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", swapSteps)
 		if err != nil {
 			return fmt.Errorf("create swap order: %w", err)
 		}
@@ -247,7 +247,7 @@ func (e *Engine) createChangeoverOrders(
 		}
 		// Order B: Robot B runs evacuate with 2 waits
 		evacSteps := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim)
-		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", evacSteps)
+		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", evacSteps)
 		if err != nil {
 			return fmt.Errorf("create evacuate order: %w", err)
 		}
@@ -279,7 +279,7 @@ func (e *Engine) createChangeoverOrders(
 		if releaseSteps == nil {
 			return nil
 		}
-		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", releaseSteps)
+		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", releaseSteps)
 		if err != nil {
 			return fmt.Errorf("create release order: %w", err)
 		}
@@ -371,7 +371,7 @@ func (e *Engine) createKeepStagedChangeoverOrders(
 		}
 		// Order B: pre-position → wait → evacuate old → clear to final
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", evacSteps)
+		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", evacSteps)
 		if err != nil {
 			return fmt.Errorf("create keep-staged evac order: %w", err)
 		}
@@ -393,7 +393,7 @@ func (e *Engine) createKeepStagedChangeoverOrders(
 		}
 		// Order B: evacuate old material from the line node
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", evacSteps)
+		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", evacSteps)
 		if err != nil {
 			return fmt.Errorf("create keep-staged evac order: %w", err)
 		}
