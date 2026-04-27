@@ -61,16 +61,28 @@ func (d *Dispatcher) CreateCompoundOrder(parentOrder *orders.Order, plan *Reshuf
 func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 	next, err := d.db.GetNextChildOrder(parentOrderID)
 	if err != nil {
-		// No more pending children — check if any failed before confirming
+		// No more PENDING children — but "not pending" doesn't mean "done".
+		// Children that are dispatched / in_transit / staged / delivered are
+		// in flight. We only confirm or fail the compound parent when every
+		// child has reached a terminal status (confirmed / failed / cancelled).
+		// Without this check, redundant child-completion events (sim FINISHED
+		// + HandleOrderReceipt firing back-to-back) can advance through the
+		// pending children fast enough that this branch runs before any
+		// child has actually confirmed — and CompleteCompound then races
+		// ahead of the still-in-flight legs, leaving the lifecycle gate to
+		// reject a later child failure with `confirmed -> failed`.
 		children, listErr := d.db.ListChildOrders(parentOrderID)
 		if listErr != nil {
 			log.Printf("dispatch: list children for compound %d: %v", parentOrderID, listErr)
 		}
 		hasFailed := false
+		allTerminal := true
 		for _, c := range children {
 			if c.Status == StatusFailed {
 				hasFailed = true
-				break
+			}
+			if !protocol.IsTerminal(c.Status) {
+				allTerminal = false
 			}
 		}
 
@@ -91,9 +103,16 @@ func (d *Dispatcher) AdvanceCompoundOrder(parentOrderID int64) error {
 			return nil
 		}
 
-		// All children succeeded — compound order is complete.
-		// CompleteCompound handles Reshuffling → Confirmed and fires the
-		// emitCompleted action for engine wiring to react.
+		// In-flight children remain. Wait for the next real completion or
+		// failure event to call us back. CompleteCompound below would
+		// otherwise transition the parent to Confirmed prematurely.
+		if !allTerminal {
+			return nil
+		}
+
+		// All children reached a terminal status with none failed -> compound
+		// order is complete. CompleteCompound handles Reshuffling -> Confirmed
+		// and fires the emitCompleted action for engine wiring to react.
 		if parent != nil {
 			if err := d.lifecycle.CompleteCompound(parent); err != nil {
 				log.Printf("dispatch: confirm compound order %d: %v", parentOrderID, err)

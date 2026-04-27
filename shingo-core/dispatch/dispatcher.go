@@ -152,7 +152,17 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 }
 
 // DispatchDirect dispatches an order to the fleet without a protocol envelope.
-// Used for orders created internally (e.g. direct orders from the UI).
+// Used for orders created internally (e.g. direct orders from the UI) and
+// from the fulfillment scanner after a bin claim resolves.
+//
+// Callers reach this function with the order in one of three states:
+//   - pending  — direct creation paths (engine.CreateDirectOrder,
+//                www/spot handlers) jump straight from intake to dispatch.
+//                We bridge through queued to satisfy the state machine.
+//   - sourcing — fulfillment.Scanner moves the order to sourcing once a bin
+//                is found; sourcing → dispatched is a valid edge.
+//   - queued   — pre-dispatch holding state for a fully-resolved order.
+//
 // Returns the vendor order ID on success.
 func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
@@ -178,6 +188,17 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 
 	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
 		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
+	}
+
+	// Bridge pending → queued before dispatching. The lifecycle's Dispatch
+	// method only accepts queued/sourcing as source states; direct-creation
+	// callers leave the order in pending. validTransitions allows
+	// pending → queued explicitly as the fast-path edge for callers that
+	// already know the destination.
+	if order.Status == protocol.StatusPending {
+		if err := d.lifecycle.Queue(order, "dispatcher", "direct dispatch"); err != nil {
+			log.Printf("dispatch: order %d → queued: %v", order.ID, err)
+		}
 	}
 	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
 		log.Printf("dispatch: order %d → dispatched: %v", order.ID, err)

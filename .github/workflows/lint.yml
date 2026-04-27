@@ -41,7 +41,9 @@ jobs:
           go-version: '1.25.0'
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # v7 is the first action release that supports golangci-lint v2.x.
+        # v6 errors out with "invalid version string" on any v2.* binary.
+        uses: golangci/golangci-lint-action@v7
         with:
           # Pinned to match the version called out in the .golangci.yml
           # header. Bump in lockstep when upgrading the linter.
@@ -53,8 +55,6 @@ jobs:
           # so a future flag-default change can't silently turn lint
           # into a non-blocking warning.
           args: --config=${{ github.workspace }}/.golangci.yml --issues-exit-code=1 ./...
-          # The action caches GOMODCACHE + the analysis cache by
-          # default, but stating it explicitly (a) documents the
-          # expectation and (b) prevents a future action default
-          # change from silently turning caching off.
-          cache: true
+          # GOMODCACHE + analysis cache are enabled by default in v7.
+          # The opt-out switches are skip-cache / skip-save-cache; we
+          # leave both at default (caching on).
