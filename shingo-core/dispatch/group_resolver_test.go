@@ -671,7 +671,7 @@ func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
 	}
 
 	// GAP PROOF 1: FindEmptyCompatibleBin returns a buried empty (lane-unaware)
-	found, err := db.FindEmptyCompatibleBin(bp.Code, "")
+	found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin returned error: %v — if all empties are buried and the query filtered by accessibility, this would be the starvation scenario", err)
 	}

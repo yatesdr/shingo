@@ -193,12 +193,14 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	if order.PayloadDesc == "retrieve_empty" {
 		// Empty bin retrieval
 		var preferZone string
+		var excludeNodeID int64
 		if order.DeliveryNode != "" {
-			if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil {
+			if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil && destNode != nil {
 				preferZone = destNode.Zone
+				excludeNodeID = destNode.ID
 			}
 		}
-		bin, err = s.db.FindEmptyCompatibleBin(payloadCode, preferZone)
+		bin, err = s.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeNodeID)
 		if err != nil {
 			return false // still no empties
 		}
@@ -240,7 +242,13 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 			}
 		}
 		if bin == nil {
-			bin, err = s.db.FindSourceBinFIFO(payloadCode)
+			var excludeNodeID int64
+			if order.DeliveryNode != "" {
+				if destNode, dErr := s.db.GetNodeByDotName(order.DeliveryNode); dErr == nil && destNode != nil {
+					excludeNodeID = destNode.ID
+				}
+			}
+			bin, err = s.db.FindSourceBinFIFO(payloadCode, excludeNodeID)
 			if err != nil {
 				return false // still no source
 			}

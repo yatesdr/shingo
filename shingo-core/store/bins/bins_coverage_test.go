@@ -547,7 +547,7 @@ func TestFindEmptyCompatible(t *testing.T) {
 	}
 
 	t.Run("prefer_zone_returns_zone_match", func(t *testing.T) {
-		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A")
+		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0)
 		if err != nil {
 			t.Fatalf("bins.FindEmptyCompatible zone A: %v", err)
 		}
@@ -557,7 +557,7 @@ func TestFindEmptyCompatible(t *testing.T) {
 	})
 
 	t.Run("no_zone_returns_first_match", func(t *testing.T) {
-		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "")
+		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
 		if err != nil {
 			t.Fatalf("bins.FindEmptyCompatible no zone: %v", err)
 		}
@@ -568,8 +568,44 @@ func TestFindEmptyCompatible(t *testing.T) {
 	})
 
 	t.Run("unknown_payload_errors", func(t *testing.T) {
-		if _, err := bins.FindEmptyCompatible(db.DB, "DOES-NOT-EXIST", ""); err == nil {
+		if _, err := bins.FindEmptyCompatible(db.DB, "DOES-NOT-EXIST", "", 0); err == nil {
 			t.Error("expected error for unknown payload, got nil")
+		}
+	})
+
+	// Regression for SHINGO_TODO.md "Same-node retrieve" + plant test
+	// 2026-04-27 (orders #434-#445): the bin already at the destination
+	// must NOT be returned when the caller passes destNode.ID as
+	// excludeNodeID. Pre-fix the source-finder was destination-blind, so
+	// it picked the bin sitting at the order's delivery node and the
+	// fleet got a same-node retrieve to cancel.
+	t.Run("excludes_destination_node", func(t *testing.T) {
+		// Both candidate bins exist; the zoneA bin lives at StorageNode and
+		// the other at LineNode. When excludeNodeID = StorageNode.ID, the
+		// finder must return the LineNode bin even though zoneA would have
+		// won by zone preference and id ordering.
+		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", std.StorageNode.ID)
+		if err != nil {
+			t.Fatalf("bins.FindEmptyCompatible with exclude: %v", err)
+		}
+		if got.ID == zoneA.ID {
+			t.Errorf("returned bin %d at excluded node %d — destination-blind regression", got.ID, std.StorageNode.ID)
+		}
+		if got.ID != other.ID {
+			t.Errorf("returned bin %d, want %d (the non-excluded bin)", got.ID, other.ID)
+		}
+	})
+
+	t.Run("exclude_zero_means_no_exclusion", func(t *testing.T) {
+		// Sanity: passing 0 (the documented "no exclude" sentinel) returns
+		// the same result as the original prefer_zone_returns_zone_match
+		// case. Locks down the contract that 0 is not a valid node ID.
+		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0)
+		if err != nil {
+			t.Fatalf("bins.FindEmptyCompatible with 0 exclude: %v", err)
+		}
+		if got.ID != zoneA.ID {
+			t.Errorf("got bin %d with excludeNodeID=0, want %d (zone A match) — 0 must mean no exclusion", got.ID, zoneA.ID)
 		}
 	})
 }
@@ -866,7 +902,7 @@ func TestFindSourceFIFO(t *testing.T) {
 	binNewer := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-FIFO-NEW")
 	_ = binNewer
 
-	got, err := bins.FindSourceFIFO(db.DB, std.Payload.Code)
+	got, err := bins.FindSourceFIFO(db.DB, std.Payload.Code, 0)
 	if err != nil {
 		t.Fatalf("bins.FindSourceFIFO: %v", err)
 	}
@@ -875,7 +911,7 @@ func TestFindSourceFIFO(t *testing.T) {
 	}
 
 	t.Run("unknown_payload_errors", func(t *testing.T) {
-		if _, err := bins.FindSourceFIFO(db.DB, "MISSING-PAYLOAD"); err == nil {
+		if _, err := bins.FindSourceFIFO(db.DB, "MISSING-PAYLOAD", 0); err == nil {
 			t.Error("expected error for unknown payload, got nil")
 		}
 	})

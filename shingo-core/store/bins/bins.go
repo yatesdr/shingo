@@ -252,7 +252,13 @@ func UnclaimByOrder(db *sql.DB, orderID int64) {
 // FindEmptyCompatible finds an unclaimed, available bin with no manifest that is
 // compatible with the given payload code (via payload_bin_types) at an enabled
 // physical node. Prefers bins in the given zone, then falls back to any zone.
-func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string) (*Bin, error) {
+// FindEmptyCompatible looks for an unclaimed empty bin matching payloadCode,
+// preferring preferZone. excludeNodeID > 0 omits bins parked at that node —
+// pass the order's destination node so the caller never receives a same-node
+// bin (would produce a fleet order with src == dst, which the fleet cancels
+// and the kanban demand re-fires, producing an order spam loop). Pass 0 to
+// disable exclusion. See SHINGO_TODO.md "Same-node retrieve" entry.
+func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNodeID int64) (*Bin, error) {
 	// Zone-preferred query
 	if preferZone != "" {
 		row := db.QueryRow(fmt.Sprintf(`%s
@@ -267,8 +273,9 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string) (*Bin, erro
 			  AND n.is_synthetic = false
 			  AND n.zone = $2
 			  AND (b.manifest IS NULL OR b.payload_code = '')
+			  AND ($3 = 0 OR b.node_id != $3)
 			ORDER BY b.id ASC
-			LIMIT 1`, BinJoinQuery), payloadCode, preferZone)
+			LIMIT 1`, BinJoinQuery), payloadCode, preferZone, excludeNodeID)
 		bin, err := ScanBin(row)
 		if err == nil {
 			return bin, nil
@@ -286,8 +293,9 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string) (*Bin, erro
 		  AND n.enabled = true
 		  AND n.is_synthetic = false
 		  AND (b.manifest IS NULL OR b.payload_code = '')
+		  AND ($2 = 0 OR b.node_id != $2)
 		ORDER BY b.id ASC
-		LIMIT 1`, BinJoinQuery), payloadCode)
+		LIMIT 1`, BinJoinQuery), payloadCode, excludeNodeID)
 	return ScanBin(row)
 }
 

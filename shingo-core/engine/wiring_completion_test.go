@@ -260,7 +260,7 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 	}
 
 	// Direct assertion: FindSourceBinFIFO must not return this bin
-	found, err := db.FindSourceBinFIFO(sd.Payload.Code)
+	found, err := db.FindSourceBinFIFO(sd.Payload.Code, 0)
 	if err == nil && found != nil && found.ID == bin.ID {
 		t.Errorf("REGRESSION: FindSourceBinFIFO returned the lineside-staged bin %d — "+
 			"the staged exclusion in bin_manifest.go is not protecting lineside deliveries", bin.ID)

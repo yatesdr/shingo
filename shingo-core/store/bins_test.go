@@ -100,7 +100,7 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 	db.CreateBin(binB)
 
 	// Zone preference: should find binA when preferring zone-a
-	found, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-a")
+	found, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-a", 0)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin zone-a: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 	}
 
 	// Zone preference: should find binB when preferring zone-b
-	found2, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-b")
+	found2, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-b", 0)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin zone-b: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 	}
 
 	// No zone preference: should find one (the first by ID)
-	found3, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "")
+	found3, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "", 0)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin no zone: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 
 	// Claimed bins should be excluded
 	db.ClaimBin(binA.ID, 1)
-	found4, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-a")
+	found4, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-a", 0)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin after claim: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 	db.SetBinManifest(binA.ID, `{"items":[]}`, bp.Code, 100)
 	db.ConfirmBinManifest(binA.ID, "")
 
-	found5, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-a")
+	found5, err := db.FindEmptyCompatibleBin("WIDGET-FEC", "zone-a", 0)
 	if err != nil {
 		t.Fatalf("FindEmptyCompatibleBin after payload: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 	}
 
 	// Incompatible payload should find nothing
-	_, err = db.FindEmptyCompatibleBin("NONEXISTENT", "zone-a")
+	_, err = db.FindEmptyCompatibleBin("NONEXISTENT", "zone-a", 0)
 	if err == nil {
 		t.Error("expected error for nonexistent payload, got nil")
 	}

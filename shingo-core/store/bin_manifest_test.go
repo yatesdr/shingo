@@ -125,7 +125,7 @@ func TestFindSourceBinFIFO(t *testing.T) {
 	db.ConfirmBinManifest(newer.ID, "2024-12-01 00:00:00")
 
 	// FIFO — should pick the oldest confirmed bin
-	found, err := db.FindSourceBinFIFO("PAY-F")
+	found, err := db.FindSourceBinFIFO("PAY-F", 0)
 	if err != nil {
 		t.Fatalf("FindSourceBinFIFO: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestFindSourceBinFIFO(t *testing.T) {
 
 	// Claim the oldest — next FIFO should return middle
 	db.ClaimBin(older.ID, 1)
-	found2, err := db.FindSourceBinFIFO("PAY-F")
+	found2, err := db.FindSourceBinFIFO("PAY-F", 0)
 	if err != nil {
 		t.Fatalf("FindSourceBinFIFO after claim: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestFindSourceBinFIFO(t *testing.T) {
 	}
 
 	// No match for a different payload
-	if _, err := db.FindSourceBinFIFO("NO-SUCH-PAYLOAD"); err == nil {
+	if _, err := db.FindSourceBinFIFO("NO-SUCH-PAYLOAD", 0); err == nil {
 		t.Error("FindSourceBinFIFO(no such) should error")
 	}
 }

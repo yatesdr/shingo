@@ -379,7 +379,9 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 	if payloadCode != "" {
 		switch step.Action {
 		case "pickup":
-			bin, err := d.db.FindSourceBinFIFO(payloadCode)
+			// Global fallback resolver: no order-level destination context here
+			// (we are picking the source), so no node to exclude. Pass 0.
+			bin, err := d.db.FindSourceBinFIFO(payloadCode, 0)
 			if err != nil {
 				return "", fmt.Errorf("no source bin for payload %q: %w", payloadCode, err)
 			}

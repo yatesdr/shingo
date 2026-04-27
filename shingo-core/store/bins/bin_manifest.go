@@ -58,7 +58,11 @@ func GetManifest(db *sql.DB, binID int64) (*Manifest, error) {
 
 // FindSourceFIFO finds the best unclaimed bin at an enabled storage node
 // matching the given payload code, using FIFO ordering.
-func FindSourceFIFO(db *sql.DB, payloadCode string) (*Bin, error) {
+// FindSourceFIFO looks for the FIFO-oldest manifest-confirmed bin matching
+// payloadCode at an enabled storage node. excludeNodeID > 0 skips bins at
+// that node. Pass the order's destination node so a same-node retrieve is
+// impossible. See SHINGO_TODO.md "Same-node retrieve" entry.
+func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.payload_code = $1
 		  AND n.enabled = true
@@ -67,7 +71,8 @@ func FindSourceFIFO(db *sql.DB, payloadCode string) (*Bin, error) {
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
 		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
+		  AND ($2 = 0 OR b.node_id != $2)
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
-		LIMIT 1`, BinJoinQuery), payloadCode)
+		LIMIT 1`, BinJoinQuery), payloadCode, excludeNodeID)
 	return ScanBin(row)
 }

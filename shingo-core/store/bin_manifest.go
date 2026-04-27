@@ -32,9 +32,10 @@ func (db *DB) GetBinManifest(binID int64) (*bins.Manifest, error) {
 }
 
 // FindSourceBinFIFO finds the best unclaimed bin at an enabled storage node
-// matching the given payload code, using FIFO ordering.
-func (db *DB) FindSourceBinFIFO(payloadCode string) (*bins.Bin, error) {
-	return bins.FindSourceFIFO(db.DB, payloadCode)
+// matching the given payload code, using FIFO ordering. excludeNodeID > 0
+// skips bins at that node (pass destination to avoid same-node retrieve).
+func (db *DB) FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error) {
+	return bins.FindSourceFIFO(db.DB, payloadCode, excludeNodeID)
 }
 
 // FindStorageDestination finds the best storage node for a bin. Prefers nodes

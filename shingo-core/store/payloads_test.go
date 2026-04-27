@@ -445,7 +445,7 @@ func TestBinManifestLifecycle(t *testing.T) {
 	db.SetBinManifest(bin3.ID, `{"items":[]}`, bp.Code, 75)
 	db.ConfirmBinManifest(bin3.ID, "")
 
-	fifo, err := db.FindSourceBinFIFO("CRATE-Y")
+	fifo, err := db.FindSourceBinFIFO("CRATE-Y", 0)
 	if err != nil {
 		t.Fatalf("FindSourceBinFIFO: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestConfirmBinManifest_ProducedAt(t *testing.T) {
 	// bin1 has loaded_at = 2 hours ago (Edge time)
 	// bin2 has loaded_at = now (server time)
 	// FIFO should return bin1 first (older)
-	fifo, err := db.FindSourceBinFIFO(bp.Code)
+	fifo, err := db.FindSourceBinFIFO(bp.Code, 0)
 	if err != nil {
 		t.Fatalf("FindSourceBinFIFO: %v", err)
 	}
@@ -596,7 +596,7 @@ func TestConfirmBinManifest_ProducedAt(t *testing.T) {
 
 	// Claim bin1 and verify FIFO falls through to bin2
 	db.ClaimBin(bin1.ID, 999)
-	fifo2, err := db.FindSourceBinFIFO(bp.Code)
+	fifo2, err := db.FindSourceBinFIFO(bp.Code, 0)
 	if err != nil {
 		t.Fatalf("FindSourceBinFIFO after claim: %v", err)
 	}

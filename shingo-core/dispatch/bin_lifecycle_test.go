@@ -181,7 +181,7 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			found, err := db.FindEmptyCompatibleBin(bp.Code, "")
+			found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0)
 			if err != nil {
 				errors[idx] = err
 				return

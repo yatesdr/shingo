@@ -151,7 +151,7 @@ func (f *fakeStore) CountBinsByNode(nodeID int64) (int, error) {
 	return f.binsAtNode[nodeID], nil
 }
 
-func (f *fakeStore) FindEmptyCompatibleBin(payloadCode, preferZone string) (*bins.Bin, error) {
+func (f *fakeStore) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64) (*bins.Bin, error) {
 	f.findEmptyPrefZones = append(f.findEmptyPrefZones, findEmptyCall{
 		PayloadCode: payloadCode,
 		PreferZone:  preferZone,
@@ -162,7 +162,7 @@ func (f *fakeStore) FindEmptyCompatibleBin(payloadCode, preferZone string) (*bin
 	return f.emptyBin, nil
 }
 
-func (f *fakeStore) FindSourceBinFIFO(payloadCode string) (*bins.Bin, error) {
+func (f *fakeStore) FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error) {
 	if f.errFindSourceBinFIFO != nil {
 		return nil, f.errFindSourceBinFIFO
 	}

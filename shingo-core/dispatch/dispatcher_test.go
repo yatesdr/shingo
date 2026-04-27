@@ -536,7 +536,7 @@ func TestFIFOPayloadSourceSelection(t *testing.T) {
 	db.ConfirmBinManifest(bin2.ID, "")
 
 	// FIFO should select oldest (bin1) first
-	source, err := db.FindSourceBinFIFO("PART-A")
+	source, err := db.FindSourceBinFIFO("PART-A", 0)
 	if err != nil {
 		t.Fatalf("FindSourceBinFIFO: %v", err)
 	}

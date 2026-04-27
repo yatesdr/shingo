@@ -714,7 +714,7 @@ func TestCompound_RestockChild_BinStatusAvailable(t *testing.T) {
 	}
 
 	// Verify it's findable by FIFO — this is the critical correctness check
-	fifoBin, err := db.FindSourceBinFIFO(bp.Code)
+	fifoBin, err := db.FindSourceBinFIFO(bp.Code, 0)
 	if err != nil {
 		t.Errorf("FIFO lookup failed after restock: %v — restocked blocker bin is invisible to retrievals", err)
 	} else if fifoBin.ID != blockerBin.ID {

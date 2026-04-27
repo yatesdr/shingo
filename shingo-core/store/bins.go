@@ -46,9 +46,10 @@ func (db *DB) UnclaimBin(binID int64) error { return bins.Unclaim(db.DB, binID) 
 func (db *DB) UnclaimOrderBins(orderID int64) { bins.UnclaimByOrder(db.DB, orderID) }
 
 // FindEmptyCompatibleBin finds an unclaimed, available bin compatible with
-// the given payload code, preferring the given zone.
-func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string) (*bins.Bin, error) {
-	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone)
+// the given payload code, preferring the given zone. excludeNodeID > 0
+// skips bins at that node (pass destination to avoid same-node retrieve).
+func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64) (*bins.Bin, error) {
+	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID)
 }
 
 // UpdateBinStatus sets the status on a bin.

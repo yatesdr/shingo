@@ -173,8 +173,17 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	}
 
 	if source == nil {
+		// Resolve destination first so the source-finder can exclude it —
+		// prevents same-node retrieve when a matching bin is already at the
+		// destination. See SHINGO_TODO.md "Same-node retrieve" entry.
+		var excludeNodeID int64
+		if order.DeliveryNode != "" {
+			if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil && destNode != nil {
+				excludeNodeID = destNode.ID
+			}
+		}
 		var err error
-		source, err = s.db.FindSourceBinFIFO(payloadCode)
+		source, err = s.db.FindSourceBinFIFO(payloadCode, excludeNodeID)
 		if err != nil {
 			s.dbg("retrieve: no source bin for payload=%s, queuing order %d", payloadCode, order.ID)
 			return &PlanningResult{Queued: true}, nil
@@ -210,12 +219,14 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 
 func (s *PlanningService) planRetrieveEmpty(order *orders.Order, payloadCode string) (*PlanningResult, *planningError) {
 	var preferZone string
+	var excludeNodeID int64
 	if order.DeliveryNode != "" {
-		if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil {
+		if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil && destNode != nil {
 			preferZone = destNode.Zone
+			excludeNodeID = destNode.ID
 		}
 	}
-	bin, err := s.db.FindEmptyCompatibleBin(payloadCode, preferZone)
+	bin, err := s.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeNodeID)
 	if err != nil {
 		s.dbg("retrieve_empty: no bin for payload=%s, queuing order %d", payloadCode, order.ID)
 		return &PlanningResult{Queued: true}, nil

@@ -36,8 +36,8 @@ type Store interface {
 
 	// Bin reads.
 	CountBinsByNode(nodeID int64) (int, error)
-	FindEmptyCompatibleBin(payloadCode, preferZone string) (*bins.Bin, error)
-	FindSourceBinFIFO(payloadCode string) (*bins.Bin, error)
+	FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNodeID int64) (*bins.Bin, error)
+	FindSourceBinFIFO(payloadCode string, excludeNodeID int64) (*bins.Bin, error)
 
 	// Mutations performed on the bin/order during fulfillment.
 	ClaimBin(binID, orderID int64) error
