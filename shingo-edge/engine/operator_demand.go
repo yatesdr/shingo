@@ -2,6 +2,7 @@ package engine
 
 import (
 	"log"
+	"slices"
 
 	"shingo/protocol"
 	"shingoedge/store/orders"
@@ -145,6 +146,110 @@ func (e *Engine) findManualSwapNodes(coreNodeName string) []manualSwapNode {
 		}
 	}
 	return results
+}
+
+// FindLoaderForPayload returns the (node, claim) pair for the manual_swap
+// PRODUCER claim that matches the given payload code, or nil if none exists.
+// Producer = bin loader: a station where an operator manually fills empty
+// bins. Consumer manual_swap nodes (unloaders) are NOT returned here; use
+// FindUnloaderForPayload for that side.
+//
+// Used by the side-cycle order generator: when a line REQUEST creates demand
+// for a payload, the engine creates a parallel "empty-in" order tracked at
+// the loader so the loader operator's UI surfaces the demand directly.
+// See SHINGO_TODO.md "Bin loader as active workflow participant".
+func (e *Engine) FindLoaderForPayload(payloadCode string) *manualSwapNode {
+	if payloadCode == "" {
+		return nil
+	}
+	for _, m := range e.findManualSwapNodes("") {
+		if m.claim.Role != "produce" {
+			continue
+		}
+		if !slices.Contains(m.claim.AllowedPayloads(), payloadCode) {
+			continue
+		}
+		return &m
+	}
+	return nil
+}
+
+// FindUnloaderForPayload returns the (node, claim) pair for the manual_swap
+// CONSUMER claim matching the payload, or nil. Symmetric to
+// FindLoaderForPayload — the side-cycle model handles unloaders the same
+// way: when a line evac sends a full bin out, the engine creates a parallel
+// "full-in" order tracked at the unloader so the operator's UI sees it.
+func (e *Engine) FindUnloaderForPayload(payloadCode string) *manualSwapNode {
+	if payloadCode == "" {
+		return nil
+	}
+	for _, m := range e.findManualSwapNodes("") {
+		if m.claim.Role != "consume" {
+			continue
+		}
+		if !slices.Contains(m.claim.AllowedPayloads(), payloadCode) {
+			continue
+		}
+		return &m
+	}
+	return nil
+}
+
+// loaderHasInFlightEmptyIn reports whether the loader at nodeID already has a
+// non-terminal retrieve_empty order for the payload. Used to dedupe so a
+// flurry of line requests doesn't queue a stack of empty-in orders behind a
+// loader that's still working through the previous one.
+func (e *Engine) loaderHasInFlightEmptyIn(nodeID int64, payloadCode string) bool {
+	orderList, err := e.db.ListActiveOrdersByProcessNode(nodeID)
+	if err != nil {
+		// Fail closed: assume there's an in-flight order so we don't pile up.
+		e.logFn("side-cycle: list active orders for node %d: %v", nodeID, err)
+		return true
+	}
+	for _, o := range orderList {
+		if o.PayloadCode == payloadCode && o.RetrieveEmpty {
+			return true
+		}
+	}
+	return false
+}
+
+// MaybeCreateLoaderEmptyIn (L1 of the side-cycle model) creates a
+// retrieve_empty order tracked at the loader for the given payload, if a
+// matching loader exists and doesn't already have an in-flight empty-in.
+// Called from the line REQUEST path: when a line creates supply orders, this
+// fires alongside so the loader operator gains visibility into the demand.
+//
+// L2 (filled-out to supermarket) is created when this order's bin reaches
+// the loader and the operator confirms — see MaybeCreateLoaderFilledOut.
+//
+// The retrieve_empty order's source is left to Core's planner
+// (planRetrieveEmpty) which finds an unclaimed empty bin matching the bin
+// type. Excludes the loader itself via the excludeNodeID guard (commit
+// 7047c5a) so the loader isn't asked to source from itself.
+func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
+	loader := e.FindLoaderForPayload(payloadCode)
+	if loader == nil {
+		return
+	}
+	if e.loaderHasInFlightEmptyIn(loader.node.ID, payloadCode) {
+		e.logFn("side-cycle: loader %s already has in-flight empty-in for %s, skipping",
+			loader.node.Name, payloadCode)
+		return
+	}
+	nodeID := loader.node.ID
+	autoConfirm := loader.claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	order, err := e.orderMgr.CreateRetrieveOrder(
+		&nodeID, true, 1, loader.node.CoreNodeName, "",
+		"standard", payloadCode, autoConfirm,
+	)
+	if err != nil {
+		e.logFn("side-cycle: create empty-in order for loader %s payload %s: %v",
+			loader.node.Name, payloadCode, err)
+		return
+	}
+	log.Printf("side-cycle: empty-in order %d for loader %s payload %s",
+		order.ID, loader.node.Name, payloadCode)
 }
 
 // StartupSweepManualSwap iterates all manual_swap claims and ensures orders

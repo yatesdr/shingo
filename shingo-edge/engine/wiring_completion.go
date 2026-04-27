@@ -91,6 +91,9 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 	if e.handleChangeoverRelease(ctx) {
 		return
 	}
+	if e.handleLoaderEmptyInCompletion(ctx) {
+		return
+	}
 	if e.handleManualSwapCompletion(ctx) {
 		return
 	}
@@ -257,6 +260,49 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
+	}
+	return true
+}
+
+// handleLoaderEmptyInCompletion fires the side-cycle L2 when the L1
+// empty-in retrieve_empty order is confirmed at a manual_swap producer
+// (loader) node. L1 brought an empty to the loader; the operator filled
+// it; CONFIRM means the bin is ready to send back to the supermarket.
+// L2 = a move order from the loader to claim.OutboundDestination.
+//
+// See SHINGO_TODO.md "Bin loader as active workflow participant".
+// Returns true if it handled the order (regardless of L2 success).
+func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
+	if !ctx.order.RetrieveEmpty {
+		return false
+	}
+	claim := findActiveClaim(e.db, ctx.node)
+	if claim == nil || claim.SwapMode != "manual_swap" || claim.Role != "produce" {
+		return false
+	}
+	if claim.OutboundDestination == "" {
+		e.logFn("side-cycle: loader %s has no OutboundDestination — cannot create L2 (filled bin will sit until operator manually moves it)", ctx.node.Name)
+		return false
+	}
+	if claim.OutboundDestination == claim.CoreNodeName {
+		e.logFn("side-cycle: loader %s OutboundDestination same as CoreNode — skipping L2 (would be a same-node move)", ctx.node.Name)
+		return false
+	}
+	nodeID := ctx.node.ID
+	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, autoConfirm)
+	if err != nil {
+		e.logFn("side-cycle: create L2 (filled-out) for loader %s: %v", ctx.node.Name, err)
+		return false
+	}
+	log.Printf("side-cycle: L2 (filled-out) order %d for loader %s → %s", order.ID, ctx.node.Name, claim.OutboundDestination)
+	// Reset runtime so the loader UI clears the L1 order and can show L2 next.
+	claimID := claim.ID
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, 0); err != nil {
+		log.Printf("side-cycle: set runtime for loader %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
+		log.Printf("side-cycle: update runtime orders for loader %d: %v", ctx.node.ID, err)
 	}
 	return true
 }
