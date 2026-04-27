@@ -313,17 +313,20 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 		fromNodeIDs = append(fromNodeIDs, fromNodeID)
 	}
 
-	// Junction rows are NOT deleted here. The Stage 10 action map fires
-	// fireCompleted on (X, delivered) AND on (delivered, confirmed); both
-	// transitions trigger handleOrderCompleted, which routes to this
-	// function. If we delete the junction on the first call, the second
-	// call (and the sibling handleOrderDelivered path on the same status
-	// change) loses the per-bin destination data and falls back to
-	// order.DeliveryNode — which for a multi-step complex order is the
-	// FINAL step's destination, landing all-but-the-last bin at the wrong
-	// node. Leaving the rows in place keeps the multi-bin idempotent path
-	// stable across all completion firings; cascade-on-order-delete in the
-	// schema keeps long-term storage bounded.
+	// Junction rows are deleted only when the order has reached a terminal
+	// status (confirmed / failed / cancelled). The Stage 10 action map
+	// fires fireCompleted on (X, delivered) AND on (delivered, confirmed),
+	// so this handler runs twice per order. Deleting on the first
+	// (delivered) call would lose the per-bin destination data the
+	// sibling handleOrderDelivered path needs on the same status change;
+	// keeping the rows alive until terminal lets every completion firing
+	// take the multi-bin idempotent path consistently. The terminal
+	// transition (handled by HandleOrderReceipt's MarkConfirmed) is the
+	// natural cleanup point — by then no more re-runs of this handler
+	// will fire for the order.
+	if protocol.IsTerminal(order.Status) {
+		defer e.db.DeleteOrderBins(order.ID)
+	}
 
 	if len(instructions) == 0 {
 		e.dbg("multi-bin completion: order %d all bins already at dest — skipping arrival", order.ID)
