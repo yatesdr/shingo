@@ -95,7 +95,7 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 		stopChan: make(chan struct{}),
 		// logFn is initialized to a no-op for tests that exercise diagnostic
 		// logging paths (e.g. ReleaseOrderWithLineside's toClaim==nil case,
-		// releaseIfStaged's pre-staged tolerance branch). Production sets
+		// releaseUnlessTerminal's terminal-skip branch). Production sets
 		// this in engine.New; this fixture mirrors that contract so tests
 		// don't nil-pointer panic on log calls.
 		logFn: func(string, ...interface{}) {},
@@ -335,24 +335,27 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 	}
 }
 
-// TestReleaseStagedOrders_OnlyOneStaged covers two guarantees at once:
+// TestReleaseStagedOrders_OnlyOneStaged covers the post-2026-04-27 contract:
+// when Robot B (the lineside robot, StagedOrderID slot) is at staged and
+// Robot A is still in some pre-staged status, a single click releases BOTH
+// orders. Order A's release fires unconditionally on a non-terminal status
+// because Manager.ReleaseOrder no longer requires staged — it just sends
+// the OrderRelease envelope and transitions to in_transit. Core's
+// HandleOrderRelease handles the rest (queues post-wait blocks for the
+// fleet to pick up at whatever point the robot is at).
 //
-//  1. Pre-staged tolerance (Bug 2 timing-window fix): if the second leg (A,
-//     the delivery robot) hasn't reached staged yet, ReleaseStagedOrders no
-//     longer errors. It releases the staged sibling immediately and skips
-//     the pre-staged one — the auto-release-on-staged hook in wiring.go
-//     picks up A when it later transitions to staged. Pre-2026-04-25
-//     semantic was fail-closed (return error); the relaxed contract makes
-//     the consolidated RELEASE button safe to click before BOTH robots
-//     have arrived.
-//  2. B-before-A ordering: because releaseIfStaged is called on the
-//     StagedOrderID first, B transitions to in_transit before A's check
-//     runs. Observing B's post-call status proves the call order without
-//     relying on SQLite's timestamp resolution.
+// Pre-2026-04-27 the contract was different: A was skipped, and a separate
+// handleAutoReleaseOnStaged hook fired when A later transitioned to staged.
+// That coordination layer was deleted; this test now asserts the simpler
+// shape.
+//
+// B-before-A ordering still matters for disposition: B gets the operator's
+// full disposition first, A gets the zero-value disposition second. We
+// verify both end at in_transit.
 //
 // Scenario: B (removal robot) is staged, A (delivery robot) is still in its
-// initial post-finalize (pre-staged) status. ReleaseStagedOrders should
-// release B, log+skip A, and return nil.
+// initial post-finalize (pre-staged) status. ReleaseStagedOrders releases
+// both.
 func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
@@ -364,30 +367,24 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	}
 	// Only B is staged; A is still in its initial post-finalize status.
 	markStaged(t, db, result.OrderB.ID)
-	aBefore, err := db.GetOrder(result.OrderA.ID)
-	if err != nil {
-		t.Fatalf("read A before release: %v", err)
-	}
 
-	// New contract: pre-staged sibling is tolerated, no error.
 	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}); err != nil {
-		t.Fatalf("ReleaseStagedOrders should succeed when one leg is pre-staged (the auto-release hook covers the late arrival), got: %v", err)
+		t.Fatalf("ReleaseStagedOrders: %v", err)
 	}
 
 	a, _ := db.GetOrder(result.OrderA.ID)
 	b, _ := db.GetOrder(result.OrderB.ID)
-	// B was released (proves B-before-A ordering and the staged leg fired).
 	if b.Status != orders.StatusInTransit {
-		t.Errorf("OrderB status = %q, want in_transit (the staged leg must release immediately)", b.Status)
+		t.Errorf("OrderB status = %q, want in_transit (staged leg releases immediately)", b.Status)
 	}
-	// A's status did not change (proves the pre-staged leg was skipped, not
-	// silently advanced — auto-release-on-staged hook is responsible for it
-	// once A actually reaches staged).
-	if a.Status != aBefore.Status {
-		t.Errorf("OrderA status changed from %q to %q; pre-staged leg should be left alone for the auto-release hook to handle", aBefore.Status, a.Status)
-	}
-	if a.Status == orders.StatusInTransit {
-		t.Error("OrderA should not have been released when it was not in staged status")
+	// New contract: A is also released even though it wasn't at staged. The
+	// release envelope was queued, and Manager.ReleaseOrder transitioned A
+	// to in_transit. If this assertion fails because A's status didn't
+	// change, ReleaseStagedOrders has regressed to its pre-2026-04-27
+	// "skip if not staged" semantic and the auto-release hook would need to
+	// be reintroduced.
+	if a.Status != orders.StatusInTransit {
+		t.Errorf("OrderA status = %q, want in_transit (pre-staged leg should release unconditionally under the new contract)", a.Status)
 	}
 }
 

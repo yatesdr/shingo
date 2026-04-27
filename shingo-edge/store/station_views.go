@@ -93,34 +93,20 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	if claim == nil || claim.SwapMode != "two_robot" {
 		return false
 	}
-	if runtime == nil || runtime.ActiveOrderID == nil || runtime.StagedOrderID == nil {
-		return false
-	}
-	active, err := db.GetOrder(*runtime.ActiveOrderID)
-	if err != nil || active == nil {
+	if runtime == nil || runtime.StagedOrderID == nil {
 		return false
 	}
 	staged, err := db.GetOrder(*runtime.StagedOrderID)
 	if err != nil || staged == nil {
 		return false
 	}
-	// At least one staged + the other in a pre-staged active status. Both
-	// orders must be in non-terminal statuses — if either is confirmed/failed/
-	// cancelled, the swap is over and the consolidated release shouldn't fire.
-	atLeastOneStaged := active.Status == "staged" || staged.Status == "staged"
-	bothNonTerminal := isNonTerminalForSwap(active.Status) && isNonTerminalForSwap(staged.Status)
-	return atLeastOneStaged && bothNonTerminal
-}
-
-// isNonTerminalForSwap reports whether an order status indicates the order is
-// still part of an active two-robot swap — i.e., not yet completed, failed, or
-// cancelled. Statuses "dispatched", "in_transit", "staged", "delivered" all
-// count as still-active for the swap-readiness check.
-func isNonTerminalForSwap(status string) bool {
-	switch status {
-	case "confirmed", "failed", "cancelled":
-		return false
-	}
-	return true
+	// Single check: the lineside robot (StagedOrderID slot — Robot B, the
+	// removal robot whose wait is wait-with-node at the production line) has
+	// reached its wait point and is parked. Order A's status is irrelevant
+	// here — ReleaseStagedOrders releases both unconditionally on click,
+	// regardless of where Order A is in its choreography. This avoids depending
+	// on Order A's bare-wait reliably reaching staged on the seerrds adapter,
+	// which is fragile (see shingo_todo.md and the 2026-04-27 retrospective).
+	return staged.Status == "staged"
 }
 

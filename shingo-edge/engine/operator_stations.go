@@ -284,14 +284,31 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // staged and the operator can retry via the standard per-order release, which
 // the UI re-renders automatically once swap_ready goes false.
 //
-// Lineside (phase 7 fixup): the disposition is forwarded only to the Order B
-// release call. Order B is the evacuation (fires first, before Order A
-// arrives), and ReleaseOrderWithLineside captures buckets, resets UOP, and
-// advances the changeover-task state there. The Order A call gets the
-// zero-value ReleaseDisposition{} (Mode == "" → nil remainingUOP at Core,
-// no manifest action) so we don't re-run capture and don't accidentally
-// clear Order A's freshly-loaded supply bin manifest. The deactivation
-// side-effect is already done by the B release.
+// Disposition routing: Order B (evacuation, StagedOrderID slot) gets the
+// operator's full disposition — capture, UOP sync, audit-via-CalledBy.
+// Order A (supply, ActiveOrderID slot) gets the zero-value
+// ReleaseDisposition{} (Mode == "" → nil remainingUOP at Core, no manifest
+// action) so we don't re-run capture and don't accidentally clear Order A's
+// freshly-loaded supply bin manifest.
+//
+// Status tolerance: both releases fire unconditionally as long as the order
+// is non-terminal. Order B is at "staged" (the UI gate computeSwapReady
+// guarantees it). Order A may be anywhere in its choreography — staged,
+// in_transit, even acknowledged — we don't care. Manager.ReleaseOrder
+// sends the OrderRelease envelope to Core; Core's HandleOrderRelease
+// dispatches the post-wait blocks to the fleet, which appends them. If the
+// robot hasn't reached the (bare) wait yet, the blocks queue and the robot
+// continues straight through. If it's already there, blocks dispatch
+// immediately. Either way the operator's intent ("go") propagates to both
+// legs without needing the auto-release-on-staged coordination dance.
+//
+// This shape replaces the pre-2026-04-27 design where each release required
+// the order to be at "staged" and a separate handleAutoReleaseOnStaged hook
+// had to fire when the late sibling arrived. That coordination layer was
+// fragile (depended on Order A's bare wait reliably reaching staged via
+// the seerrds adapter, which it does not always do) and accumulated a
+// cluster of patches and predicates. See shingo_todo.md and the 2026-04-27
+// retrospective for context.
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
 	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
 	if err != nil {
@@ -315,61 +332,41 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		return fmt.Errorf("node %d: release-staged requires two_robot swap, got %q", nodeID, mode)
 	}
 
-	// Order B (evacuation) gets the operator's full disposition — capture,
-	// UOP sync, audit-via-CalledBy.
-	if err := e.releaseIfStaged(*runtime.StagedOrderID, "B", disp); err != nil {
+	// Order B (evacuation) — full disposition.
+	if err := e.releaseUnlessTerminal(*runtime.StagedOrderID, "B", disp); err != nil {
 		return err
 	}
-	// Order A (supply) gets the zero-value disposition. Mode == "" maps to
-	// nil remainingUOP at Core, leaving the supply bin's manifest untouched.
-	// CalledBy is preserved for the audit log even though no capture happens.
-	if err := e.releaseIfStaged(*runtime.ActiveOrderID, "A", ReleaseDisposition{CalledBy: disp.CalledBy}); err != nil {
+	// Order A (supply) — zero disposition (preserve supply bin manifest).
+	if err := e.releaseUnlessTerminal(*runtime.ActiveOrderID, "A", ReleaseDisposition{CalledBy: disp.CalledBy}); err != nil {
 		return err
 	}
 	return nil
 }
 
-// releaseIfStaged calls ReleaseOrderWithLineside, but treats an order that has
-// already advanced past "staged" as success. An order that hasn't reached
-// "staged" yet (e.g. still "dispatched" or "in_transit_pre_stage") is also
-// treated as success — the auto-release-on-staged hook in wiring.go will
-// fire it later when it lands at staged. This makes the consolidated RELEASE
-// button safe to click before BOTH robots have arrived at their wait points
-// (Bug 2: timing-window fix). Any other validation failure (e.g. order is
-// terminal) is still surfaced.
+// releaseUnlessTerminal calls ReleaseOrderWithLineside on any non-terminal
+// order. Replaces the pre-2026-04-27 releaseIfStaged which only fired on
+// orders currently at "staged" status. The new contract: as long as the
+// order isn't already finished (confirmed / failed / cancelled), fan out
+// the release. Manager.ReleaseOrder + Core's HandleOrderRelease handle the
+// envelope mechanics regardless of where the order is in its lifecycle.
 //
-// Phase 3 (lineside): routed through the lineside-aware release path so the
-// two-robot "RELEASE" button also triggers the UOP reset and changeover-task
-// state transition at click time (not at Order B completion).
-//
-// Phase 7 (lineside): the operator's disposition is forwarded to
-// ReleaseOrderWithLineside. Callers pass the operator's full disposition for
-// the evacuation (Order B) and ReleaseDisposition{} for the supply (Order A)
-// to avoid double-capture and to leave the supply bin's manifest alone.
-func (e *Engine) releaseIfStaged(orderID int64, label string, disp ReleaseDisposition) error {
+// See shingo_todo.md for the pre-dispatch edge case (order has no
+// VendorOrderID yet — in practice doesn't happen because Robot B reaching
+// staged means both orders have been dispatched, but worth a guard
+// eventually).
+func (e *Engine) releaseUnlessTerminal(orderID int64, label string, disp ReleaseDisposition) error {
 	order, err := e.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order %s (%d): %w", label, orderID, err)
 	}
-	switch order.Status {
-	case orders.StatusStaged:
-		if err := e.ReleaseOrderWithLineside(orderID, disp); err != nil {
-			return fmt.Errorf("release order %s (%d): %w", label, orderID, err)
-		}
-		return nil
-	case orders.StatusInTransit, orders.StatusDelivered, orders.StatusConfirmed:
-		// Already moving or further along — release is a no-op.
-		return nil
-	default:
-		// Pre-staged status (e.g. "dispatched") — robot is en route to its wait
-		// point but hasn't arrived yet. Skip rather than erroring; the auto-
-		// release-on-staged hook (handleAutoReleaseOnStaged in wiring.go) will
-		// pick it up when it transitions to staged. The hook keys off the
-		// sibling having already moved past staged — which is true once we
-		// release the staged sibling here.
-		e.logFn("two-robot release: order %s (%d) status=%q not yet staged — will auto-release when it arrives at staged", label, orderID, order.Status)
+	if orders.IsTerminal(order.Status) {
+		e.logFn("two-robot release: order %s (%d) status=%q is terminal — skipping", label, orderID, order.Status)
 		return nil
 	}
+	if err := e.ReleaseOrderWithLineside(orderID, disp); err != nil {
+		return fmt.Errorf("release order %s (%d): %w", label, orderID, err)
+	}
+	return nil
 }
 
 // AbortNodeOrders cancels all non-terminal orders tracked in a node's

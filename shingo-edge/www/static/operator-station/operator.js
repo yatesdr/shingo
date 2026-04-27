@@ -778,20 +778,19 @@ function renderModal(entry) {
             const inFlight = active.find(o => !staged && !delivered);
 
             if (entry.swap_ready) {
-                // Two-robot swap: both robots are holding at their wait
-                // points. One click releases both in B-then-A order.
+                // Two-robot swap: the lineside robot (Robot B) has reached
+                // its wait point at the production node and is parked. One
+                // click releases both legs unconditionally, regardless of
+                // where Order A is in its choreography. swap_ready is the
+                // single gate — see store/station_views.go ComputeSwapReady.
                 html += actionBtn('RELEASE', 'request', true,
                     'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged');
-            } else if (staged && claim && claim.swap_mode === 'two_robot') {
-                // Two-robot swap, only one robot has arrived so far — hold
-                // the release until both are staged so a single click can
-                // move the whole swap forward.
-                html += actionBtn('WAITING FOR OTHER ROBOT', 'close', false, '');
-            } else if (staged) {
-                // Staged — robot waiting, operator must release. Routing
-                // through the release-prompt action so we can capture any
-                // parts the operator pulled to lineside during the swap
-                // before dispatching the bots home (lineside phase 4).
+            } else if (staged && (!claim || claim.swap_mode !== 'two_robot')) {
+                // Sequential or single-robot mode — single staged order,
+                // single per-order release. Two-robot swaps go through the
+                // consolidated path above; if we reach this branch with a
+                // two_robot claim, swap_ready was false (Robot B not parked
+                // yet) so the operator should wait, not click.
                 html += actionBtn('RELEASE', 'request', true,
                     'release-prompt:/api/orders/' + staged.id + '/release');
             } else if (delivered) {

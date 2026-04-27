@@ -60,7 +60,6 @@ func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(func(evt Event) {
 		if changed, ok := evt.Payload.(OrderStatusChangedEvent); ok {
 			e.handleSequentialBackfill(changed)
-			e.handleAutoReleaseOnStaged(changed)
 		}
 	}, EventOrderStatusChanged)
 }

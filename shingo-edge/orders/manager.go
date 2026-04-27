@@ -334,8 +334,17 @@ func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
 	}
-	if order.Status != StatusStaged {
-		return fmt.Errorf("order must be in staged status to release, got %s", order.Status)
+	// Pre-2026-04-27 this required order.Status == StatusStaged. Relaxed to
+	// "non-terminal" because the simplified consolidated-release path
+	// (ReleaseStagedOrders, see operator_stations.go) fans out to both legs
+	// of a two-robot swap regardless of where each leg is in its choreography.
+	// The transition to in_transit below is idempotent (applyTransition no-ops
+	// when old == new), and Core's HandleOrderRelease only needs the order to
+	// have been dispatched (have a VendorOrderID) — which is true once any
+	// status past "acknowledged" is reached. See shingo_todo.md for the
+	// pre-dispatch edge case worth eventually guarding.
+	if IsTerminal(order.Status) {
+		return fmt.Errorf("order is terminal (%s), cannot release", order.Status)
 	}
 
 	if err := m.sender.Queue(protocol.TypeOrderRelease, &protocol.OrderRelease{

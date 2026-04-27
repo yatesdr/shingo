@@ -103,13 +103,22 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 	if claim.InboundStaging == "" {
 		return nil, nil
 	}
-	// Robot A: fetch new material, stage, wait for node clear, then deliver
+	// Robot A: fetch new material, stage, wait for node clear, then deliver.
+	// The wait is wait-with-node at InboundStaging — robot drops the new bin
+	// at staging and holds there. wait-with-node produces an RDS Wait block,
+	// so RDS reports WAITING and the order reliably transitions to "staged"
+	// on Edge. Pre-2026-04-27 this was a bare wait ({Action: "wait"} with no
+	// node), which split the order at the dispatcher level and depended on
+	// the seerrds adapter correctly reporting WAITING on incremental
+	// (complete=false) orders. That path was fragile and Order A would often
+	// stay at in_transit while physically parked, breaking swap_ready and
+	// requiring two RELEASE clicks. See shingo_todo.md.
 	orderA = []protocol.ComplexOrderStep{
-		buildStep("pickup", claim.InboundSource),        // pick new from source
-		{Action: "dropoff", Node: claim.InboundStaging}, // stage new
-		{Action: "wait"},                                // wait for node to be cleared
-		{Action: "pickup", Node: claim.InboundStaging},  // pick new from staging
-		{Action: "dropoff", Node: claim.CoreNodeName},   // deliver to production
+		buildStep("pickup", claim.InboundSource),         // pick new from source
+		{Action: "dropoff", Node: claim.InboundStaging},  // stage new
+		{Action: "wait", Node: claim.InboundStaging},     // hold at staging until line clears
+		{Action: "pickup", Node: claim.InboundStaging},   // pick new from staging
+		{Action: "dropoff", Node: claim.CoreNodeName},    // deliver to production
 	}
 	// Robot B: drive to node and hold, wait for release, remove old to destination
 	orderB = []protocol.ComplexOrderStep{
