@@ -82,7 +82,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	switch claim.SwapMode {
 	case "sequential":
 		steps := BuildSequentialRemovalSteps(claim)
-		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, "", steps) // "" = removal, no UOP reset
+		orderA, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, quantity, "", steps) // "" = removal, no UOP reset
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +112,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 		if err != nil {
 			return nil, err
 		}
-		orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, "", stepsB)
+		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, quantity, "", stepsB)
 		if err != nil {
 			return nil, err
 		}

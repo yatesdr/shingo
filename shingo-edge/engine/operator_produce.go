@@ -101,7 +101,7 @@ func (e *Engine) finalizeProduceSequential(node *processes.Node, runtime *proces
 
 	// Build and dispatch the removal complex order
 	steps := BuildSequentialRemovalSteps(claim)
-	orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", steps)
+	orderA, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", steps)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (e *Engine) finalizeProduceTwoRobot(node *processes.Node, runtime *processe
 	if err != nil {
 		return nil, err
 	}
-	orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, "", stepsB)
+	orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", stepsB)
 	if err != nil {
 		return nil, err
 	}
