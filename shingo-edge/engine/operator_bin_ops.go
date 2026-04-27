@@ -48,32 +48,6 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		return fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
-	// Server-side demand guard: require an active order at this node.
-	// Prevents API bypass of the HMI demand check that protects storage capacity.
-	activeOrders, err := e.db.ListActiveOrdersByProcessNode(nodeID)
-	if err != nil {
-		return fmt.Errorf("check demand at node %s: %w", node.Name, err)
-	}
-	if len(activeOrders) == 0 {
-		return fmt.Errorf("no active demand at node %s — cannot load without a pending order", node.Name)
-	}
-	// Quick fix for multi-payload starvation (see investigation-r2.md):
-	// the per-payload demand check used to require an active order tagged
-	// with the chosen payload, which serialized loading at multi-payload
-	// manual_swap nodes — only the first-in-list payload could be loaded
-	// even when the operator wanted the other one. Any active order at
-	// this node now satisfies demand; the operator's payloadCode argument
-	// (validated against the claim's allowed list above) is the source of
-	// truth for what was actually loaded. Core records the operator's
-	// choice via the LoadBin call below; the order log retains its
-	// original payload tag (audit-trail compromise documented in r2).
-	// Full fix (decoupled empty-bin transport, two-board UI) supersedes
-	// this in the planned redesign.
-	for _, o := range activeOrders {
-		if o.PayloadCode != "" && o.PayloadCode != payloadCode {
-			log.Printf("bin_ops: load at node %s rebound from order payload %q to operator choice %q (order %d)", node.Name, o.PayloadCode, payloadCode, o.ID)
-		}
-	}
 
 	if uopCount <= 0 {
 		for _, item := range manifest {
@@ -158,14 +132,6 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	}
 	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
 		return nil, fmt.Errorf("node %s unavailable: %s", node.Name, reason)
-	}
-
-	// Check that node doesn't already have a bin
-	if e.coreClient.Available() {
-		bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
-		if len(bins) > 0 && bins[0].Occupied {
-			return nil, fmt.Errorf("node %s already has a bin", node.Name)
-		}
 	}
 
 	// Validate payload code against allowed list
