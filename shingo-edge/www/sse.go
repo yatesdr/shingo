@@ -17,6 +17,14 @@ type SSEEvent struct {
 	Data interface{} `json:"data"`
 }
 
+// serverInstance is a per-process identifier emitted on every SSE
+// connect. The HMI compares it across reconnects: if it changes, the
+// edge has been restarted (likely with a new JS bundle) and the tab
+// hard-reloads. Without this, a long-lived operator-station tab keeps
+// the previously-cached ES module graph forever — the cacheBust query
+// param only affects fresh HTML loads.
+var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
+
 type sseClient struct {
 	events chan SSEEvent
 }
@@ -110,8 +118,9 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	h.register(client)
 	defer h.unregister(client)
 
-	// Send connected event
-	fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
+	// Send connected event with the per-process build id so reconnects
+	// after an edge restart trigger a hard-reload on the client.
+	fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\"}\n\n", serverInstance)
 	flusher.Flush()
 
 	keepalive := time.NewTicker(30 * time.Second)

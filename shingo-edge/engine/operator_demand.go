@@ -215,6 +215,47 @@ func (e *Engine) unloaderHasInFlightFullIn(nodeID int64, payloadCode string) boo
 	return false
 }
 
+// loaderHasUsableEmptyPresent reports whether Core telemetry shows an empty
+// bin already physically at the loader. The side-cycle's L1 retrieve_empty
+// is meant to bring an empty TO the loader so the operator can fill it; if
+// one is already there (e.g., a previous retrieve was cancelled but the
+// bin remained), firing another L1 wedges the floor — Core dispatches a
+// retrieve to a station that already has its bin, then later evicts the
+// parked one. Plant 2026-04-28 incident #483→#484 was this pattern.
+//
+// Fails OPEN: if Core is unreachable or returns no data, we fall through to
+// the in-flight order check and assume the floor is empty. False-negative
+// here = one redundant retrieve (caught by the in-flight dedup on the next
+// REQUEST), false-positive = loader sits idle waiting for a bin that's
+// already there. Idle is the worse outcome.
+func (e *Engine) loaderHasUsableEmptyPresent(coreNodeName string) bool {
+	if !e.coreClient.Available() || coreNodeName == "" {
+		return false
+	}
+	bins, _ := e.coreClient.FetchNodeBins([]string{coreNodeName})
+	if len(bins) == 0 {
+		return false
+	}
+	b := bins[0]
+	return b.Occupied && b.PayloadCode == ""
+}
+
+// unloaderHasUsableFullPresent is the consumer-side counterpart: skips the
+// U1 full-in retrieve when Core reports a full bin of the target payload
+// already physically at the unloader. Same fail-open contract as
+// loaderHasUsableEmptyPresent.
+func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) bool {
+	if !e.coreClient.Available() || coreNodeName == "" || payloadCode == "" {
+		return false
+	}
+	bins, _ := e.coreClient.FetchNodeBins([]string{coreNodeName})
+	if len(bins) == 0 {
+		return false
+	}
+	b := bins[0]
+	return b.Occupied && b.PayloadCode == payloadCode
+}
+
 // MaybeCreateLoaderEmptyIn (L1 of the side-cycle model) creates a
 // retrieve_empty order tracked at the loader for the given payload, if a
 // matching loader exists and doesn't already have an in-flight empty-in.
@@ -235,6 +276,11 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	}
 	if e.loaderHasInFlightEmptyIn(loader.node.ID, payloadCode) {
 		e.logFn("side-cycle: loader %s already has in-flight empty-in for %s, skipping",
+			loader.node.Name, payloadCode)
+		return
+	}
+	if e.loaderHasUsableEmptyPresent(loader.node.CoreNodeName) {
+		e.logFn("side-cycle: loader %s already has an empty bin parked, skipping L1 for %s",
 			loader.node.Name, payloadCode)
 		return
 	}
@@ -294,6 +340,11 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	}
 	if e.unloaderHasInFlightFullIn(unloader.node.ID, payloadCode) {
 		e.logFn("side-cycle: unloader %s already has in-flight full-in for %s, skipping",
+			unloader.node.Name, payloadCode)
+		return
+	}
+	if e.unloaderHasUsableFullPresent(unloader.node.CoreNodeName, payloadCode) {
+		e.logFn("side-cycle: unloader %s already has a full bin (%s) parked, skipping U1",
 			unloader.node.Name, payloadCode)
 		return
 	}

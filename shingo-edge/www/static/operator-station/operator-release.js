@@ -205,7 +205,13 @@ async function handleReleasePromptAction(evt) {
     if (action === 'release-submit' || action === 'release-submit-parts') {
         const url = state.url;
         const view = getView();
-        const calledBy = (view && view.station && view.station.name) ? view.station.name : 'operator';
+        // Trim before falling back: a whitespace-only station name (e.g. a
+        // station row created with " ") is truthy in JS, would be sent as
+        // called_by=" ", and rejected by the backend's TrimSpace check —
+        // surfacing as "release requires called_by". Match the server's
+        // TrimSpace semantics here so the fallback always wins.
+        const stationName = (view && view.station && view.station.name) ? String(view.station.name).trim() : '';
+        const calledBy = stationName || 'operator';
         const rt = state.entry && state.entry.runtime;
         const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
         let body;

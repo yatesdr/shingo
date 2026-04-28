@@ -89,7 +89,7 @@ async function startChangeover(toStyleID, styleName) {
     const pid = view.process.id;
     const ok = await postAction('/api/processes/' + pid + '/changeover/start', {
         to_style_id: toStyleID,
-        called_by: view.station.name || 'operator',
+        called_by: (view.station.name && view.station.name.trim()) || 'operator',
         notes: ''
     }, loadViewRef);
     if (ok) showToast('Changeover to ' + styleName + ' started', 'success');

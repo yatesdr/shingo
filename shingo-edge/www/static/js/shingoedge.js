@@ -83,12 +83,27 @@ document.addEventListener('DOMContentLoaded', function() {
     ShingoEdge.createSSE = function(url, handlers) {
         var es = null;
         var reconnectDelay = 1000;
+        // Build id seen on the first 'connected' event after page load.
+        // If a later reconnect reports a different id the edge has been
+        // restarted; force-reload so the tab picks up the new JS bundle
+        // (cacheBust on the HTML only fires on fresh page loads, so a
+        // long-lived operator-station tab would otherwise keep its
+        // stale module graph indefinitely).
+        var seenBuild = null;
 
         function connect() {
             es = new EventSource(url);
 
-            es.addEventListener('connected', function() {
+            es.addEventListener('connected', function(e) {
                 reconnectDelay = 1000;
+                var build = '';
+                try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
+                if (!build) return;
+                if (seenBuild === null) {
+                    seenBuild = build;
+                } else if (seenBuild !== build) {
+                    location.reload();
+                }
             });
 
             // Map camelCase handler names to kebab-case event types

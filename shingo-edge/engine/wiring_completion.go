@@ -82,6 +82,20 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		return
 	}
 
+	// EmitOrderCompleted fires for any terminal status (confirmed, cancelled,
+	// failed) — it's the engine bus's "order reached terminal" signal. Every
+	// handler below is a successful-path responder: UOP reset, runtime turn-
+	// over, side-cycle L2 dispatch, changeover state advancement, keep-staged
+	// pre-stage. Running them on a cancel or fail leaks state forward as if
+	// the bin had arrived. Plant 2026-04-28: a cancelled L1 retrieve_empty
+	// fired the L2 side-cycle move, evicting the empty already parked at the
+	// loader (incident orders #483 → #484). Failure cleanup belongs on
+	// EventOrderFailed (handleNodeOrderFailed) and the cancel/fail paths
+	// themselves — not here.
+	if ctx.order.Status != orders.StatusConfirmed {
+		return
+	}
+
 	if e.handleStagedDelivery(ctx) {
 		return
 	}

@@ -133,6 +133,25 @@ export function renderModal(entry) {
             const delivered = activeOrders.find(o => o.status === 'delivered');
             const inTransit = activeOrders.find(o => o.status === 'in_transit' || o.status === 'acknowledged');
             const queued = activeOrders.filter(o => o.status === 'queued' || o.status === 'pending');
+            // Loader can fill a parked empty bin even without a delivered L1
+            // order. The L1 retrieve_empty is skipped when an empty is already
+            // present (operator_demand.go loaderHasUsableEmptyPresent), so the
+            // demand-card never goes "delivered" — but the bin is right there
+            // ready to fill. LoadBin's no-L1 fallback (operator_bin_ops.go:94)
+            // creates the L2 move-out directly, so any allowed payload is a
+            // valid pick. Treat each card as if it were delivered for the
+            // purpose of click-handling.
+            const parkedEmptyAtLoader = claim.role === 'produce' &&
+                hasBin && binState && !binState.payload_code;
+
+            // Symmetric unloader case: full bin parked at unloader, U1 was
+            // skipped (unloaderHasUsableFullPresent). No operator click action
+            // is needed — the bin drains via PLC counters as parts are pulled
+            // downstream — but the matching payload card should signal "this
+            // is here, ready" instead of leaving the operator to think the
+            // demand is unmet.
+            const parkedFullPayload = (claim.role === 'consume' && hasBin && binState && binState.payload_code)
+                ? binState.payload_code : null;
 
             html += '<div class="os-demand-queue">';
             html += '<div style="font-size:13px;color:#999;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">';
@@ -162,9 +181,15 @@ export function renderModal(entry) {
                 var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
                 var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });
 
+                var parkedFullThisCode = parkedFullPayload === code;
+                var clickable = !!payloadDelivered || parkedEmptyAtLoader;
                 var cardBg, cardBorder, cardOpacity, cardCursor;
                 if (payloadDelivered) {
                     cardBg = '#1a3a1a'; cardBorder = '#2a5a2a'; cardOpacity = '1'; cardCursor = 'pointer';
+                } else if (parkedEmptyAtLoader) {
+                    cardBg = '#1a3a1a'; cardBorder = '#2a5a2a'; cardOpacity = '1'; cardCursor = 'pointer';
+                } else if (parkedFullThisCode) {
+                    cardBg = '#1a3a1a'; cardBorder = '#2a5a2a'; cardOpacity = '1'; cardCursor = 'default';
                 } else if (payloadInTransit) {
                     cardBg = '#2a2a1a'; cardBorder = '#5a5a2a'; cardOpacity = '1'; cardCursor = 'default';
                 } else if (isActive) {
@@ -174,7 +199,7 @@ export function renderModal(entry) {
                 }
                 var cardStyle = 'background:' + cardBg + ';border:1px solid ' + cardBorder + ';opacity:' + cardOpacity + ';cursor:' + cardCursor;
                 html += '<div class="os-demand-card" style="border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;' + cardStyle + '"';
-                if (payloadDelivered) {
+                if (clickable) {
                     html += ' data-action="demand-card:' + esc(code) + '"';
                 }
                 html += '>';
@@ -189,9 +214,17 @@ export function renderModal(entry) {
                 html += '<span style="font-size:18px;font-weight:600;color:' + (isActive ? '#fff' : '#666') + '">' + esc(code) + '</span>';
                 html += '</div>';
 
-                html += '<div style="font-size:12px;color:' + (payloadDelivered ? '#6f6' : payloadInTransit ? '#ff6' : isActive ? '#8af' : '#555') + '">';
+                var labelColor = payloadDelivered || parkedEmptyAtLoader || parkedFullThisCode ? '#6f6'
+                    : payloadInTransit ? '#ff6'
+                    : isActive ? '#8af'
+                    : '#555';
+                html += '<div style="font-size:12px;color:' + labelColor + '">';
                 if (payloadDelivered) {
                     html += 'DELIVERED';
+                } else if (parkedEmptyAtLoader) {
+                    html += 'TAP TO LOAD';
+                } else if (parkedFullThisCode) {
+                    html += 'BIN READY';
                 } else if (payloadInTransit) {
                     html += 'IN TRANSIT';
                 } else if (payloadQueued) {
