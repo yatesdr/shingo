@@ -95,6 +95,13 @@ export async function postAction(url, body, loadView) {
             const text = await res.text();
             let msg;
             try { msg = JSON.parse(text).error || text; } catch { msg = text; }
+            // chi's default unmatched-route response is a bare "404 page
+            // not found". That happens when the URL was built with a
+            // missing/zero param (e.g. confirm-delivery/0 from a half-built
+            // complex order). Map it to an actionable message instead.
+            if (res.status === 404) {
+                msg = 'Order not found — refresh and try again';
+            }
             showToast(msg, 'error');
             return false;
         }

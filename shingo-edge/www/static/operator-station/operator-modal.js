@@ -212,8 +212,18 @@ export function renderModal(entry) {
             html += '</div>'; // close demand queue
 
             if (delivered) {
-                html += actionBtn('CONFIRM DELIVERY', 'request', true,
-                    '/api/confirm-delivery/' + delivered.id);
+                // Guard delivered.id before building the URL: a half-built
+                // complex order (Order B never created) can leave the order
+                // record with a missing/zero ID. Posting that to chi yields
+                // a default 404 from an unmatched route, which surfaces as
+                // a useless "404 page not found" toast. Render the button
+                // disabled so the operator refreshes instead of hammering.
+                if (Number.isInteger(delivered.id) && delivered.id > 0) {
+                    html += actionBtn('CONFIRM DELIVERY', 'request', true,
+                        '/api/confirm-delivery/' + delivered.id);
+                } else {
+                    html += actionBtn('CONFIRM (refresh)', 'close', false, '');
+                }
             }
 
             if (hasBin && remaining > 0) {
@@ -266,8 +276,16 @@ export function renderModal(entry) {
                         console.error('renderModal manifest parse', err);
                     }
                 }
-                html += actionBtn(confirmLabel, 'request', true,
-                    '/api/confirm-delivery/' + delivered.id);
+                if (Number.isInteger(delivered.id) && delivered.id > 0) {
+                    html += actionBtn(confirmLabel, 'request', true,
+                        '/api/confirm-delivery/' + delivered.id);
+                } else {
+                    // Same guard as the manual_swap branch above: a
+                    // half-built complex order can carry a delivered status
+                    // with a missing/zero ID. Render disabled so the operator
+                    // refreshes rather than hits the chi 404 path.
+                    html += actionBtn('CONFIRM (refresh)', 'close', false, '');
+                }
             } else if (inFlight) {
                 html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
             } else {

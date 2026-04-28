@@ -299,10 +299,12 @@ body {
     display: flex;
 }
 
-/* Keypad sits above the load-bin modal because LoadBin opens it for UOP
-   entry. With equal z-index the load-bin modal painted on top (later
-   sibling in DOM order) and trapped focus behind it. */
-#keypad-modal { z-index: 120; }
+/* Keypad sits above ALL other modals because LoadBin (and any future modal)
+   opens it for UOP entry. Using a wide gap above .os-modal-backdrop's z-index
+   so any new modal can't accidentally tie. !important guards against any
+   stray inline style or future overrides. Pre-fix the load-bin modal painted
+   on top (equal z-index, later DOM order) and trapped focus behind it. */
+#keypad-modal { z-index: 1000 !important; }
 
 @keyframes os-fade-in {
     from { opacity: 0; }
