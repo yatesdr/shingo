@@ -527,6 +527,48 @@ func TestListAvailable(t *testing.T) {
 	}
 }
 
+// TestListAvailable_NULLPayloadCode regression-tests that a bin with
+// payload_code=NULL (rather than '') still appears in ListAvailable.
+// Pre-fix the filter was `(b.manifest IS NULL OR b.payload_code = '')`
+// where `payload_code = ''` evaluates to NULL when payload_code is NULL
+// (falsy in WHERE), so a bin with payload_code=NULL only made it through
+// when manifest was also NULL. Post-fix the filter uses
+// COALESCE(payload_code, '') = '' which handles NULL unambiguously.
+//
+// Same bug class as the original FindEmptyCompatible NULL-safety fix
+// (7c274ac / 4337344). Aligned in 2026-04-27 v2.
+func TestListAvailable_NULLPayloadCode(t *testing.T) {
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	// The schema declares payload_code NOT NULL, so we must drop the
+	// constraint to inject a legacy/historical row where payload_code is
+	// NULL — the COALESCE filter must still handle it correctly.
+	if _, err := db.DB.Exec(`ALTER TABLE bins ALTER COLUMN payload_code DROP NOT NULL`); err != nil {
+		t.Fatalf("alter bins.payload_code: %v", err)
+	}
+
+	var binID int64
+	err := db.DB.QueryRow(
+		`INSERT INTO bins (bin_type_id, label, description, node_id, status, payload_code, manifest) VALUES ($1, $2, '', $3, 'available', NULL, NULL) RETURNING id`,
+		std.BinType.ID, "BIN-AVAIL-NULL-PC", std.StorageNode.ID,
+	).Scan(&binID)
+	if err != nil {
+		t.Fatalf("insert NULL payload_code bin: %v", err)
+	}
+
+	got, err := bins.ListAvailable(db.DB)
+	if err != nil {
+		t.Fatalf("bins.ListAvailable: %v", err)
+	}
+	for _, b := range got {
+		if b.ID == binID {
+			return // pass
+		}
+	}
+	t.Errorf("bin %d (NULL payload_code) missing from ListAvailable — NULL-safety regression", binID)
+}
+
 func TestFindEmptyCompatible(t *testing.T) {
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
@@ -567,9 +609,19 @@ func TestFindEmptyCompatible(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown_payload_errors", func(t *testing.T) {
-		if _, err := bins.FindEmptyCompatible(db.DB, "DOES-NOT-EXIST", "", 0); err == nil {
-			t.Error("expected error for unknown payload, got nil")
+	t.Run("unknown_payload_advisory_fallback", func(t *testing.T) {
+		// Post-2026-04-27 advisory enforcement: a payload with no rules in
+		// payload_bin_types means "no restrictions configured" — any
+		// compatible empty bin matches. Previously this asserted err != nil
+		// (strict semantics), which was the cause of the plant starvation:
+		// payloads not yet linked in payload_bin_types produced zero
+		// candidate bins even when empties were available.
+		got, err := bins.FindEmptyCompatible(db.DB, "DOES-NOT-EXIST", "", 0)
+		if err != nil {
+			t.Fatalf("expected advisory fallback to return a bin, got err: %v", err)
+		}
+		if got.ID != zoneA.ID {
+			t.Errorf("got bin %d, want %d (lowest ID, advisory fallback)", got.ID, zoneA.ID)
 		}
 	})
 
@@ -608,6 +660,111 @@ func TestFindEmptyCompatible(t *testing.T) {
 			t.Errorf("got bin %d with excludeNodeID=0, want %d (zone A match) — 0 must mean no exclusion", got.ID, zoneA.ID)
 		}
 	})
+}
+
+// TestFindEmptyCompatible_AdvisoryFallback_NoRules verifies that a payload
+// with NO rows in payload_bin_types matches any compatible empty bin.
+// This is the post-2026-04-27 v2 advisory-enforcement contract: absence of
+// rules in the allow-list table means "no restrictions configured."
+//
+// Regression for the plant starvation: pre-fix, FindEmptyCompatible used
+// hard INNER JOINs to payload_bin_types/payloads which eliminated all
+// candidates when no rules existed. Order #462 stuck on awaiting inventory
+// despite SMN_002 / SMN_003 visibly empty in the supermarket UI.
+func TestFindEmptyCompatible_AdvisoryFallback_NoRules(t *testing.T) {
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	// Note: deliberately NOT calling db.SetPayloadBinTypes — the payload
+	// has no rows in payload_bin_types. Under advisory semantics this
+	// means "no restrictions" and every empty bin is eligible.
+
+	zoneA := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-NORULES-A", NodeID: &std.StorageNode.ID, Status: "available"}
+	if err := bins.Create(db.DB, zoneA); err != nil {
+		t.Fatalf("bins.Create zoneA: %v", err)
+	}
+
+	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+	if err != nil {
+		t.Fatalf("expected advisory match for unconstrained payload, got err: %v", err)
+	}
+	if got.ID != zoneA.ID {
+		t.Errorf("got bin %d, want %d (advisory should match the only empty bin)", got.ID, zoneA.ID)
+	}
+}
+
+// TestFindEmptyCompatible_RulesEnforced_ExcludesIncompatibleType verifies
+// that when payload_bin_types DOES have rows for the payload, only matching
+// bin types are considered. The advisory pattern preserves strict
+// enforcement when rules are present.
+func TestFindEmptyCompatible_RulesEnforced_ExcludesIncompatibleType(t *testing.T) {
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	// Add a second, incompatible bin type and a bin of that type. The
+	// payload's rules will only allow std.BinType (DEFAULT), so the second
+	// bin must NOT be returned even if it's the only empty bin in the
+	// preferred zone.
+	otherType := &bins.BinType{Code: "OTHER", Description: "Incompatible type"}
+	if err := db.CreateBinType(otherType); err != nil {
+		t.Fatalf("CreateBinType OTHER: %v", err)
+	}
+
+	// Rule: PART-A is allowed only in DEFAULT.
+	if err := db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}); err != nil {
+		t.Fatalf("SetPayloadBinTypes: %v", err)
+	}
+
+	// Bin of OTHER type at zone A (would normally win zone preference).
+	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-OTHER-A", NodeID: &std.StorageNode.ID, Status: "available"}
+	if err := bins.Create(db.DB, otherBin); err != nil {
+		t.Fatalf("bins.Create otherBin: %v", err)
+	}
+	// Bin of DEFAULT type at line node (no zone — falls through any-zone fallback).
+	defaultBin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-DEFAULT-LINE", NodeID: &std.LineNode.ID, Status: "available"}
+	if err := bins.Create(db.DB, defaultBin); err != nil {
+		t.Fatalf("bins.Create defaultBin: %v", err)
+	}
+
+	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0)
+	if err != nil {
+		t.Fatalf("FindEmptyCompatible: %v", err)
+	}
+	if got.ID == otherBin.ID {
+		t.Errorf("returned bin %d (OTHER type) — rules-enforced should exclude it", got.ID)
+	}
+	if got.ID != defaultBin.ID {
+		t.Errorf("returned bin %d, want %d (the DEFAULT-type bin)", got.ID, defaultBin.ID)
+	}
+}
+
+// TestFindEmptyCompatible_RulesEnforced_NoMatchReturnsErr verifies that
+// when rules exist for the payload and no bin of an allowed type is empty,
+// the function returns an error (no advisory fallback to incompatible types).
+func TestFindEmptyCompatible_RulesEnforced_NoMatchReturnsErr(t *testing.T) {
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	otherType := &bins.BinType{Code: "OTHER", Description: "Incompatible type"}
+	if err := db.CreateBinType(otherType); err != nil {
+		t.Fatalf("CreateBinType OTHER: %v", err)
+	}
+
+	// Rule: PART-A is allowed only in DEFAULT.
+	if err := db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}); err != nil {
+		t.Fatalf("SetPayloadBinTypes: %v", err)
+	}
+
+	// Only an OTHER-type empty bin exists. Rules say PART-A needs DEFAULT.
+	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-OTHER-A", NodeID: &std.StorageNode.ID, Status: "available"}
+	if err := bins.Create(db.DB, otherBin); err != nil {
+		t.Fatalf("bins.Create otherBin: %v", err)
+	}
+
+	_, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
+	if err == nil {
+		t.Error("expected ErrNoRows when only incompatible-type bins exist with rules in place, got nil")
+	}
 }
 
 func TestHasNotes(t *testing.T) {
@@ -911,10 +1068,108 @@ func TestFindSourceFIFO(t *testing.T) {
 	}
 
 	t.Run("unknown_payload_errors", func(t *testing.T) {
+		// FindSourceFIFO filters by exact payload_code match, so a payload
+		// no bin carries returns ErrNoRows regardless of advisory state.
+		// (Distinct from FindEmptyCompatible's "no rules = match anything"
+		// because empty bins have no payload_code to match against.)
 		if _, err := bins.FindSourceFIFO(db.DB, "MISSING-PAYLOAD", 0); err == nil {
 			t.Error("expected error for unknown payload, got nil")
 		}
 	})
+}
+
+// TestFindSourceFIFO_AdvisoryFallback_NoRules verifies that when
+// payload_bin_types has no rows for the payload, FindSourceFIFO returns
+// any matching full bin regardless of bin type. This is the post-2026-04-27
+// v2 advisory contract, applied symmetrically to the full-bin retrieve path.
+//
+// Pre-fix, FindSourceFIFO ignored payload_bin_types entirely. Post-fix it
+// enforces the advisory pattern, so when rules ARE present the constraint
+// takes effect — but absence of rules continues to allow any compatible
+// bin (preserving the previous behavior for plants that haven't populated
+// the table).
+func TestFindSourceFIFO_AdvisoryFallback_NoRules(t *testing.T) {
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	// Note: deliberately NOT calling SetPayloadBinTypes — payload has no
+	// rules. Advisory fallback should match any full bin of any type.
+
+	// Add a second bin type and load a bin of that type with the payload.
+	// Without rules, FindSourceFIFO should still return this bin.
+	otherType := &bins.BinType{Code: "OTHER", Description: "Other type"}
+	if err := db.CreateBinType(otherType); err != nil {
+		t.Fatalf("CreateBinType OTHER: %v", err)
+	}
+	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-FIFO-OTHER", NodeID: &std.StorageNode.ID, Status: "available"}
+	if err := bins.Create(db.DB, otherBin); err != nil {
+		t.Fatalf("bins.Create otherBin: %v", err)
+	}
+	if err := db.SetBinManifest(otherBin.ID, `{"items":[]}`, std.Payload.Code, 100); err != nil {
+		t.Fatalf("SetBinManifest: %v", err)
+	}
+	if err := db.ConfirmBinManifest(otherBin.ID, ""); err != nil {
+		t.Fatalf("ConfirmBinManifest: %v", err)
+	}
+
+	got, err := bins.FindSourceFIFO(db.DB, std.Payload.Code, 0)
+	if err != nil {
+		t.Fatalf("FindSourceFIFO no-rules: %v", err)
+	}
+	if got.ID != otherBin.ID {
+		t.Errorf("got bin %d, want %d (advisory should match the OTHER-type bin when no rules)", got.ID, otherBin.ID)
+	}
+}
+
+// TestFindSourceFIFO_RulesEnforced verifies that when payload_bin_types DOES
+// have rows for the payload, only matching bin types are returned. A full
+// bin in a non-matching type is filtered out.
+//
+// This is the closing of the prior asymmetry: pre-fix, FindEmptyCompatible
+// strictly enforced these rules but FindSourceFIFO ignored them entirely.
+// A plant could have rules saying "PART-A goes in DEFAULT only" yet
+// accidentally load PART-A into an OTHER-type bin via SetManifest (which
+// has no compat check), and then FindSourceFIFO would happily retrieve it.
+// Post-fix the rules-enforced path is symmetric: that incompatible bin
+// becomes invisible to FindSourceFIFO.
+func TestFindSourceFIFO_RulesEnforced(t *testing.T) {
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	// Rules: PART-A is allowed only in DEFAULT.
+	if err := db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}); err != nil {
+		t.Fatalf("SetPayloadBinTypes: %v", err)
+	}
+
+	// One full bin of OTHER type (forbidden by rules) — must NOT be returned.
+	otherType := &bins.BinType{Code: "OTHER", Description: "Other type"}
+	if err := db.CreateBinType(otherType); err != nil {
+		t.Fatalf("CreateBinType OTHER: %v", err)
+	}
+	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-FIFO-OTHER", NodeID: &std.StorageNode.ID, Status: "available"}
+	if err := bins.Create(db.DB, otherBin); err != nil {
+		t.Fatalf("bins.Create otherBin: %v", err)
+	}
+	if err := db.SetBinManifest(otherBin.ID, `{"items":[]}`, std.Payload.Code, 100); err != nil {
+		t.Fatalf("SetBinManifest other: %v", err)
+	}
+	if err := db.ConfirmBinManifest(otherBin.ID, ""); err != nil {
+		t.Fatalf("ConfirmBinManifest other: %v", err)
+	}
+
+	// One full bin of DEFAULT type (allowed by rules) — should be returned.
+	defaultBin := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-FIFO-DEFAULT")
+
+	got, err := bins.FindSourceFIFO(db.DB, std.Payload.Code, 0)
+	if err != nil {
+		t.Fatalf("FindSourceFIFO rules-enforced: %v", err)
+	}
+	if got.ID == otherBin.ID {
+		t.Errorf("returned bin %d (OTHER type) — rules should exclude it", got.ID)
+	}
+	if got.ID != defaultBin.ID {
+		t.Errorf("returned bin %d, want %d (the DEFAULT-type bin)", got.ID, defaultBin.ID)
+	}
 }
 
 // ---------- node_bin_types.go ----------

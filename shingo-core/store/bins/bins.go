@@ -31,13 +31,40 @@ type Bin = domain.Bin
 // Export as BinJoinQuery so cross-aggregate readers at the outer store/
 // level (which need to add their own WHERE clauses) can reuse it.
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
-	b.payload_code, b.manifest, b.uop_remaining, b.manifest_confirmed,
+	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
 	b.loaded_at, b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, '')
 	FROM bins b
 	JOIN bin_types bt ON bt.id = b.bin_type_id
 	LEFT JOIN nodes n ON n.id = b.node_id`
+
+// PayloadBinTypeAdvisoryClause enforces payload_bin_types as an advisory
+// allow-list: when the table has rules for the payload, only matching bin
+// types are eligible; when no rules exist for the payload, any bin type
+// is eligible. Used by FindEmptyCompatible (empty-bin retrieve) and
+// FindSourceFIFO (full-bin retrieve) so the two readers stay coherent.
+//
+// Both branches reference $1 (payloadCode) — callers must place
+// payloadCode at parameter position $1.
+//
+// Rationale: the allow-list table is sparsely populated in practice. A
+// pre-2026-04-27 hard INNER JOIN on this table starved orders for
+// payloads with no rules even when compatible empty bins existed. Every
+// other reader (FindStorageDestination, SetManifest writes) ignores the
+// table entirely. Advisory enforcement matches that prior practice while
+// preserving the constraint for plants that DO populate the table.
+const PayloadBinTypeAdvisoryClause = `
+	  AND (
+	    b.bin_type_id IN (
+	      SELECT pbt.bin_type_id FROM payload_bin_types pbt
+	      JOIN payloads p ON p.id = pbt.payload_id WHERE p.code = $1
+	    )
+	    OR NOT EXISTS (
+	      SELECT 1 FROM payload_bin_types pbt
+	      JOIN payloads p ON p.id = pbt.payload_id WHERE p.code = $1
+	    )
+	  )`
 
 // ScanBin reads a single bin row (including joined bin_type code + node name).
 // Exported for cross-aggregate readers at the outer store/ level.
@@ -214,9 +241,24 @@ func Move(db *sql.DB, binID, toNodeID int64) error {
 	return nil
 }
 
-// ListAvailable returns bins with no manifest (empty, available for loading).
+// ListAvailable returns bins with no payload (empty, available for loading).
+//
+// Empty-bin definition: COALESCE(b.payload_code, '') = ''. Same NULL-safe
+// form FindEmptyCompatible uses post-2026-04-27. The previous filter
+// `(manifest IS NULL OR payload_code = '')` was the same bug class as
+// the FindEmptyCompatible bug fixed in 7c274ac/4337344: a bin with
+// payload_code=NULL evaluates `payload_code = ''` to NULL (falsy in
+// WHERE), but the OR-clause `manifest IS NULL` could rescue it. The
+// COALESCE form is unambiguous about the NULL case.
+//
+// SetManifest and ClearManifest always set payload_code and manifest
+// together, so under normal operation the two columns are correlated
+// and the simpler payload_code-only filter produces identical results.
+// In partial-write/legacy states where manifest is NULL but payload_code
+// is non-empty, this filter correctly treats the bin as NOT available
+// (it has a payload, even without a manifest blob).
 func ListAvailable(db *sql.DB) ([]*Bin, error) {
-	rows, err := db.Query(fmt.Sprintf(`%s WHERE (b.manifest IS NULL OR b.payload_code = '') ORDER BY b.id`, BinJoinQuery))
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE COALESCE(b.payload_code, '') = '' ORDER BY b.id`, BinJoinQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -270,14 +312,20 @@ func UnclaimByOrder(db *sql.DB, orderID int64) {
 // the operator to have explicitly cleared the confirmation, which doesn't
 // happen on every arrival path. Plant test 2026-04-27 (order #462 stuck
 // on 'awaiting inventory' with empties at SMN_002 / SMN_003 visible).
+//
+// Compatibility enforcement (post-2026-04-27 v2 fix): advisory.
+// payload_bin_types is treated as an allow-list — rows say "this payload IS
+// allowed in this bin type." Absence of rows for a payload means "no
+// restrictions configured" → any bin works. This matches how every other
+// reader treats the table (FindSourceFIFO, FindStorageDestination, SetManifest
+// all ignore it) and how the admin UI populates it. The previous form used
+// hard INNER JOINs to payload_bin_types/payloads which eliminated all
+// candidates when no rules existed — the cause of the 2026-04-27 starvation.
 func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNodeID int64) (*Bin, error) {
 	// Zone-preferred query
 	if preferZone != "" {
 		row := db.QueryRow(fmt.Sprintf(`%s
-			JOIN payload_bin_types pbt ON pbt.bin_type_id = b.bin_type_id
-			JOIN payloads p ON p.id = pbt.payload_id
-			WHERE p.code = $1
-			  AND b.status = 'available'
+			WHERE b.status = 'available'
 			  AND b.claimed_by IS NULL
 			  AND b.locked = false
 			  AND b.node_id IS NOT NULL
@@ -285,29 +333,30 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 			  AND n.is_synthetic = false
 			  AND n.zone = $2
 			  AND COALESCE(b.payload_code, '') = ''
-			  AND ($3 = 0 OR b.node_id != $3)
+			  AND ($3 = 0 OR b.node_id != $3)%s
 			ORDER BY b.id ASC
-			LIMIT 1`, BinJoinQuery), payloadCode, preferZone, excludeNodeID)
+			LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, preferZone, excludeNodeID)
 		bin, err := ScanBin(row)
 		if err == nil {
 			return bin, nil
 		}
+		if err != sql.ErrNoRows {
+			return nil, err
+		}
+		// sql.ErrNoRows: fall through to any-zone query
 	}
 	// Any zone fallback
 	row := db.QueryRow(fmt.Sprintf(`%s
-		JOIN payload_bin_types pbt ON pbt.bin_type_id = b.bin_type_id
-		JOIN payloads p ON p.id = pbt.payload_id
-		WHERE p.code = $1
-		  AND b.status = 'available'
+		WHERE b.status = 'available'
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.node_id IS NOT NULL
 		  AND n.enabled = true
 		  AND n.is_synthetic = false
 		  AND COALESCE(b.payload_code, '') = ''
-		  AND ($2 = 0 OR b.node_id != $2)
+		  AND ($2 = 0 OR b.node_id != $2)%s
 		ORDER BY b.id ASC
-		LIMIT 1`, BinJoinQuery), payloadCode, excludeNodeID)
+		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, excludeNodeID)
 	return ScanBin(row)
 }
 

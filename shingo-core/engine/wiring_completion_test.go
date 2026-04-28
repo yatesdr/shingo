@@ -358,6 +358,16 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 // to a third node fell through and got clobbered. New guard: skip unless
 // the bin is STILL at this order's source (the only state in which
 // handleOrderDelivered's authoritative move could have failed).
+//
+// Phase 2 #10 reconciliation (2026-04-27 v2 direction doc): this test
+// covers the realistic plant-tested race window — late CONFIRMED arrives
+// AFTER a re-claim has moved the bin elsewhere. Dev c's "three race
+// windows" framing (event before / during / after re-claim) breaks down
+// to: before-reclaim isn't a guard-relevant case (bin still at source,
+// safety net's normal path is correct); during-reclaim is a Go-level
+// concurrency case the test harness doesn't model deterministically;
+// after-reclaim is what this test asserts. Existing coverage is adequate;
+// the dev a/c disagreement on Bug 2b is resolved as keep-the-guard.
 func TestRegression_LateConfirmDoesNotTeleportReclaimedBin(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

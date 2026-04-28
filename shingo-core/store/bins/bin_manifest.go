@@ -62,6 +62,17 @@ func GetManifest(db *sql.DB, binID int64) (*Manifest, error) {
 // payloadCode at an enabled storage node. excludeNodeID > 0 skips bins at
 // that node. Pass the order's destination node so a same-node retrieve is
 // impossible. See SHINGO_TODO.md "Same-node retrieve" entry.
+//
+// Compatibility enforcement (post-2026-04-27 v2 fix): advisory.
+// Uses PayloadBinTypeAdvisoryClause to keep this reader coherent with
+// FindEmptyCompatible — when payload_bin_types has rules for the payload,
+// only matching bin types are returned; when no rules exist, any bin
+// matching payload_code is returned. Pre-fix this function ignored the
+// table entirely, producing an asymmetry where the empty-bin retrieve
+// rejected types the full-bin retrieve happily returned. The plant
+// starvation symptom was the empty-bin side; aligning here prevents the
+// inverse footgun (full bin loaded into a type the rules say is forbidden,
+// then sourceable as that incompatible type forever).
 func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.payload_code = $1
@@ -71,8 +82,8 @@ func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, 
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
 		  AND b.status NOT IN ('staged', 'maintenance', 'flagged', 'retired', 'quality_hold')
-		  AND ($2 = 0 OR b.node_id != $2)
+		  AND ($2 = 0 OR b.node_id != $2)%s
 		ORDER BY COALESCE(b.loaded_at, b.created_at) ASC
-		LIMIT 1`, BinJoinQuery), payloadCode, excludeNodeID)
+		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, excludeNodeID)
 	return ScanBin(row)
 }

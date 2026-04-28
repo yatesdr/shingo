@@ -130,6 +130,18 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	if in.SwapMode == "manual_swap" {
 		in.AutoConfirm = true
 	}
+	// two_robot claims require InboundStaging. Robot A drops the new bin
+	// at the staging node and waits there with a wait-with-node step until
+	// Robot B clears the production node. Without InboundStaging the
+	// dispatcher has no hand-off point and BuildTwoRobotSwapSteps returns
+	// (nil, nil) silently — the operator's RELEASE click does nothing and
+	// the failure mode is invisible. Validating at config time means the
+	// runtime no-op at material_orders.go BuildTwoRobotSwapSteps becomes
+	// unreachable defensive code (kept as an assert, not a real branch).
+	// Phase 2 #9 of 2026-04-27 v2 direction doc.
+	if in.SwapMode == "two_robot" && in.InboundStaging == "" {
+		return 0, fmt.Errorf("two_robot claims require inbound_staging to be set")
+	}
 	var existingID int64
 	err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
 		in.StyleID, in.CoreNodeName).Scan(&existingID)

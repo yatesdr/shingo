@@ -150,9 +150,16 @@ func TestFindEmptyCompatibleBin(t *testing.T) {
 		t.Errorf("after payload on binA: got bin %d, want bin %d", found5.ID, binB.ID)
 	}
 
-	// Incompatible payload should find nothing
-	_, err = db.FindEmptyCompatibleBin("NONEXISTENT", "zone-a", 0)
-	if err == nil {
-		t.Error("expected error for nonexistent payload, got nil")
+	// Unknown payload: post-2026-04-27 advisory enforcement means a payload
+	// with no rules in payload_bin_types matches any compatible empty bin.
+	// At this point binA has a manifest (above) so the only empty bin is
+	// binB in zone-b. Zone-a query returns ErrNoRows; any-zone fallback
+	// returns binB.
+	found6, err := db.FindEmptyCompatibleBin("NONEXISTENT", "zone-a", 0)
+	if err != nil {
+		t.Fatalf("expected advisory fallback to return a bin, got err: %v", err)
+	}
+	if found6.ID != binB.ID {
+		t.Errorf("nonexistent payload (advisory): got bin %d, want bin %d (binB still empty)", found6.ID, binB.ID)
 	}
 }

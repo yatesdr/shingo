@@ -195,6 +195,26 @@ func (e *Engine) loaderHasInFlightEmptyIn(nodeID int64, payloadCode string) bool
 	return false
 }
 
+// unloaderHasInFlightFullIn reports whether the unloader at nodeID already
+// has a non-terminal retrieve order (full-bin retrieve) for the payload.
+// Symmetric to loaderHasInFlightEmptyIn — dedupes a flurry of line evac
+// events from queuing a stack of full-in mirror orders at the unloader.
+func (e *Engine) unloaderHasInFlightFullIn(nodeID int64, payloadCode string) bool {
+	orderList, err := e.db.ListActiveOrdersByProcessNode(nodeID)
+	if err != nil {
+		e.logFn("side-cycle: list active orders for node %d: %v", nodeID, err)
+		return true
+	}
+	for _, o := range orderList {
+		// Full-bin retrieve = retrieve order with payload code, NOT marked
+		// as retrieve_empty. The unloader's mirror order shape.
+		if o.PayloadCode == payloadCode && !o.RetrieveEmpty {
+			return true
+		}
+	}
+	return false
+}
+
 // MaybeCreateLoaderEmptyIn (L1 of the side-cycle model) creates a
 // retrieve_empty order tracked at the loader for the given payload, if a
 // matching loader exists and doesn't already have an in-flight empty-in.
@@ -219,7 +239,15 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 		return
 	}
 	nodeID := loader.node.ID
-	autoConfirm := loader.claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	// L1 (Loader Empty In) must NEVER auto-confirm. The loader operator is an
+	// active participant in the side-cycle and must explicitly confirm that
+	// the bin has been filled with parts. Auto-confirming here would
+	// immediately trigger L2 (handleLoaderEmptyInCompletion → CreateMoveOrder)
+	// and send the still-empty bin back to the supermarket. Honoring
+	// loader.claim.AutoConfirm or cfg.Web.AutoConfirm at this layer defeats
+	// the side-cycle model. Plant test 2026-04-27 reproduced this on plants
+	// with global auto-confirm enabled.
+	autoConfirm := false
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, loader.node.CoreNodeName, "",
 		"standard", payloadCode, autoConfirm,
@@ -231,4 +259,66 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	}
 	log.Printf("side-cycle: empty-in order %d for loader %s payload %s",
 		order.ID, loader.node.Name, payloadCode)
+}
+
+// MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
+// counterpart to MaybeCreateLoaderEmptyIn. When the line evacuates a full bin
+// of payloadCode (e.g. during changeover or a partial-release flow), this
+// creates a parallel "full-in" retrieve order tracked at the unloader so the
+// unloader operator's UI surfaces the demand directly. Without this mirror,
+// the unloader sees nothing — the line's evac order is tracked at the LINE's
+// process_node, not the unloader's.
+//
+// U2 (empty-out from the unloader to the supermarket) fires when the unloader
+// operator confirms that the bin's contents have been processed — symmetric
+// to L2 (handleLoaderEmptyInCompletion → CreateMoveOrder). U2 wiring is a
+// follow-up: the unloader's CONFIRM path needs to reach a handler analogous
+// to handleLoaderEmptyInCompletion.
+//
+// Phase 3 #13 of 2026-04-27 v2 direction doc closes the producer/consumer
+// asymmetry that previously left FindUnloaderForPayload without a caller.
+//
+// CALLER WIRING (TODO): the v2 direction doc identifies the trigger point
+// as the line's evacuation/release flow — when ReleaseOrderWithLineside or
+// ReleaseChangeoverWait creates an evac order with a payload code, this
+// function should fire alongside (analogous to the consumer-line REQUEST
+// path at operator_stations.go:50 firing MaybeCreateLoaderEmptyIn). That
+// integration is deliberately not done in this commit — the release flow
+// is its own complexity (see commit 847b259) and warrants its own review.
+// This commit provides the entry point and dedup; the next reviewer wires
+// the call site.
+func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
+	unloader := e.FindUnloaderForPayload(payloadCode)
+	if unloader == nil {
+		return
+	}
+	if e.unloaderHasInFlightFullIn(unloader.node.ID, payloadCode) {
+		e.logFn("side-cycle: unloader %s already has in-flight full-in for %s, skipping",
+			unloader.node.Name, payloadCode)
+		return
+	}
+	nodeID := unloader.node.ID
+	// U1 (Unloader Full In) must NEVER auto-confirm. Same reasoning as L1:
+	// the unloader operator is an active participant — they need to
+	// physically process the bin's contents and confirm explicitly. Auto-
+	// confirming here would immediately fire U2 (empty-out to supermarket)
+	// before any processing has happened, with the bin still full. Honoring
+	// global cfg.Web.AutoConfirm at this layer defeats the side-cycle model.
+	autoConfirm := false
+	// Source is left to Core's planner (FindSourceFIFO) which finds an
+	// unclaimed full bin matching the payload. The unloader's CoreNodeName
+	// is the destination; the line's evac order will move the actual bin.
+	// This mirror order's primary purpose is UI demand surfacing, not
+	// driving robot movement (the line's evac drives that).
+	order, err := e.orderMgr.CreateRetrieveOrder(
+		&nodeID, false, 1, unloader.node.CoreNodeName, "",
+		"standard", payloadCode, autoConfirm,
+	)
+	if err != nil {
+		e.logFn("side-cycle: create full-in order for unloader %s payload %s: %v",
+			unloader.node.Name, payloadCode, err)
+		return
+	}
+	log.Printf("side-cycle: full-in order %d for unloader %s payload %s",
+		order.ID, unloader.node.Name, payloadCode)
 }

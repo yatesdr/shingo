@@ -195,10 +195,25 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	}
 }
 
+// ReleaseNodeEmpty releases the active claim's bin as fully consumed
+// (qty=1). Wrapper around ReleaseNodePartial for the common case where
+// the operator finishes a bin without partial-quantity tracking.
+//
+// 2026-04-27 v2 direction Phase 3 #11: this surface (ReleaseNodeEmpty,
+// ReleaseNodePartial, ReleaseNodeIntoProduction) was reviewed for
+// possible consolidation. All three have production callers via HTTP
+// handlers (apiReleaseNodeEmpty, apiReleaseNodePartial,
+// apiReleaseNodeIntoProduction at handlers_operator_stations.go) plus
+// internal calls from the changeover flow (operator_node_changeover.go).
+// No deletion warranted; surface is intentional.
 func (e *Engine) ReleaseNodeEmpty(nodeID int64) (*storeorders.Order, error) {
 	return e.ReleaseNodePartial(nodeID, 1)
 }
 
+// ReleaseNodePartial releases the active claim's bin with the given
+// quantity consumed. Used both for full releases (via ReleaseNodeEmpty
+// with qty=1) and partial-quantity releases when the operator hands off
+// a bin that wasn't fully consumed.
 func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
