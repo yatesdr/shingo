@@ -243,7 +243,7 @@ function renderJournal(data) {
       data.audit.map(function(e) {
         return h`<div class="timeline-item">
           <div class="time">${{__html:true, value: timeAgo(e.created_at)}} &middot; ${e.actor}</div>
-          <div>${e.action}${(e.old_value || e.new_value) ? h`: ${e.old_value} &rarr; ${e.new_value}` : ''}${e.detail ? h` &mdash; ${e.detail}` : ''}</div>
+          <div>${e.action}${(e.old_value || e.new_value) ? {__html:true, value: h`: ${e.old_value} &rarr; ${e.new_value}`} : ''}${e.detail ? {__html:true, value: h` &mdash; ${e.detail}`} : ''}</div>
         </div>`;
       })
     }</div>`;

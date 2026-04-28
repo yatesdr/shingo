@@ -35,6 +35,11 @@ function escapeHtml(s) {
 // are escaped, arrays joined. Returns a string suitable for innerHTML.
 //
 //   container.innerHTML = h`<div class="x">${name}</div>${rows.map(r => h`<p>${r}</p>`)}`;
+//
+// Nested h`` *outside* an array (e.g. `${cond ? h`...` : ''}`) returns a
+// string that the outer h`` will re-escape — wrap with the __html opt-out:
+// `${cond ? {__html:true, value: h`...`} : ''}`. Arrays of h`` results
+// are joined unescaped and need no wrap.
 function h(strings) {
   var out = strings[0];
   for (var i = 1; i < arguments.length; i++) {

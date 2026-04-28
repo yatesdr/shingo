@@ -212,7 +212,7 @@ function renderOrderModal(data) {
         return h`<li>
           <span class="tl-time">${{__html:true, value: formatTime(ev.created_at)}}</span>
           <span class="badge badge-${ev.status}" style="font-size:0.7rem">${ev.status}</span>
-          ${ev.detail ? h`<span class="tl-detail">${ev.detail}</span>` : ''}
+          ${ev.detail ? {__html:true, value: h`<span class="tl-detail">${ev.detail}</span>`} : ''}
         </li>`;
       })
     }</ul>`;
