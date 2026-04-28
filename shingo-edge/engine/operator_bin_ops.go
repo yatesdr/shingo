@@ -99,7 +99,10 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 	}
 	if claim.OutboundDestination != "" {
-		order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, node.CoreNodeName, claim.OutboundDestination, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
+		// L2 to OutboundDestination is unattended (supermarket node) — must
+		// auto-confirm or it sticks at `delivered` forever. See the same
+		// reasoning in handleLoaderEmptyInCompletion.
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, node.CoreNodeName, claim.OutboundDestination, true)
 		if err != nil {
 			log.Printf("manual_swap: move to outbound for node %s: %v", node.Name, err)
 		} else {

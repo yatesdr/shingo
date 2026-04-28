@@ -277,8 +277,15 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	nodeID := ctx.node.ID
-	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
-	order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, autoConfirm)
+	// L2 always auto-confirms: OutboundDestination is an unattended
+	// supermarket node, so without auto-confirm the order sits at
+	// `delivered` forever (no operator to tap CONFIRM there). This is
+	// independent of claim.AutoConfirm — that flag controls operator-facing
+	// orders at THIS loader, not the side-cycle move that Edge owns end-to-
+	// end. Pre-fix the L2 stuck delivered on Edge while Core auto-confirmed
+	// on its side; the divergence lit up the bin-loader UI as a permanent
+	// "Confirm" button on a move that had already physically completed.
+	order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, true)
 	if err != nil {
 		e.logFn("side-cycle: create L2 (filled-out) for loader %s: %v", ctx.node.Name, err)
 		return false
