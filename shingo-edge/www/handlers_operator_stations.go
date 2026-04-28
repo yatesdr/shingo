@@ -274,25 +274,12 @@ func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	// Same called_by guard as apiReleaseOrder (post-2026-04-27 contract):
-	// every legitimate caller goes through the operator-station release
-	// prompt which sets called_by. A bare body here would produce the
-	// disposition-bypass fingerprint and silently skip lineside capture.
-	var req struct {
-		Disposition string         `json:"disposition"`
-		QtyByPart   map[string]int `json:"qty_by_part"`
-		CalledBy    string         `json:"called_by"`
-	}
-	if r.ContentLength == 0 {
-		writeError(w, http.StatusBadRequest, "release requires a JSON body with called_by")
-		return
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Body validation lives in parseReleaseRequest (handlers_release.go) so
+	// every release endpoint inherits the same post-2026-04-27 guard. See
+	// that function's docstring for the contract.
+	req, err := parseReleaseRequest(r)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if strings.TrimSpace(req.CalledBy) == "" {
-		writeError(w, http.StatusBadRequest, "release requires called_by to identify the caller")
 		return
 	}
 	disp := buildReleaseDisposition(req.Disposition, req.QtyByPart, req.CalledBy)
@@ -508,8 +495,13 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 // through ReleaseOrderWithLineside with a capture_lineside disposition so
 // the bin's manifest is cleared at Core before the fleet picks the bin up.
 // called_by is captured from the body (matching apiStartProcessChangeover's
-// pattern) and threaded through for audit. Body is optional — missing body
-// is treated as no operator identifier.
+// pattern) and threaded through for audit.
+//
+// Post-2026-04-27 contract (cleanup PR): called_by is now REQUIRED. The
+// other two release endpoints (apiReleaseOrder, apiReleaseNodeStagedOrders)
+// adopted this in commit c56ceb9 to surface the disposition-bypass
+// fingerprint. This endpoint had the same shape — empty body silently
+// produced an empty audit trail at Core — and now matches.
 func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
@@ -519,11 +511,17 @@ func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		CalledBy string `json:"called_by"`
 	}
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if r.ContentLength == 0 {
+		writeError(w, http.StatusBadRequest, "release requires a JSON body with called_by")
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.CalledBy) == "" {
+		writeError(w, http.StatusBadRequest, "release requires called_by to identify the caller")
+		return
 	}
 	if err := h.orchestration.ReleaseChangeoverWait(processID, req.CalledBy); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

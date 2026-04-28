@@ -40,7 +40,6 @@ package engine
 
 import (
 	"fmt"
-	"log"
 
 	"shingoedge/store/processes"
 )
@@ -106,7 +105,14 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// Orders without a process node (pure kanban, generic moves) skip
 	// the lineside path entirely. No disposition mapping — Core gets
 	// nil remaining_uop and leaves the bin alone (legacy behavior).
+	//
+	// This is an intentional skip, not a bug — but make it observable.
+	// A "the prompt didn't fire" investigation that lands here without a
+	// log line has nothing to grep for. See the cleanup-2026-04-27
+	// synthesis for the four sites this pattern was added at.
 	if order.ProcessNodeID == nil {
+		e.logFn("release: order=%d disposition=%q — skipping manifest sync: no_process_node",
+			orderID, string(disp.Mode))
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 
@@ -147,7 +153,12 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// Produce nodes don't use lineside buckets — skip capture, skip UOP
 	// reset (produce resets on ingest completion, not release). Pass
 	// nil remaining_uop so Core leaves the produce bin's manifest alone.
+	//
+	// Intentional skip; logged for investigation breadcrumbs (see the
+	// no_process_node site above for the rationale).
 	if toClaim.Role == "produce" {
+		e.logFn("release: order=%d node=%s disposition=%q — skipping manifest sync: produce_role",
+			orderID, node.Name, string(disp.Mode))
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 
@@ -175,8 +186,12 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// path already does this by passing ReleaseDisposition{} for Order A;
 	// this guard is the safety net when the per-order path runs instead.
 	if manifestUOP != nil && isSupply {
-		log.Printf("release: order %d is the supply order in a two-robot swap on node %s — skipping manifest sync to protect supply bin",
-			orderID, node.Name)
+		// Use e.logFn (not the package log) so unit tests can capture
+		// this line via the engine's injected logger. disp.Mode is
+		// included so a future investigation can see which operator-
+		// declared disposition was overridden by the supply-bin guard.
+		e.logFn("release: order=%d node=%s disposition=%q — skipping manifest sync: supply_bin_guard (two-robot swap)",
+			orderID, node.Name, string(disp.Mode))
 		manifestUOP = nil
 	}
 
@@ -211,12 +226,12 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 			return fmt.Errorf("reset runtime on release for node %d: %w", node.ID, err)
 		}
 	} else {
-		log.Printf("release: order %d is the supply order in a two-robot swap on node %s — skipping runtime UOP reset (Order B's release owns the reset)",
+		e.logFn("release: order=%d node=%s — skipping runtime UOP reset: supply_order_in_two_robot_swap (Order B's release owns the reset)",
 			orderID, node.Name)
 	}
 	if nodeTask != nil {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
-			log.Printf("release: update node task %d to released: %v", nodeTask.ID, err)
+			e.logFn("release: update node task %d to released: %v", nodeTask.ID, err)
 		}
 	}
 

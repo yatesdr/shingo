@@ -865,7 +865,8 @@ func TestOperatorStations_CancelChangeover_AsRedirect(t *testing.T) {
 func TestOperatorStations_ReleaseChangeoverWait_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", nil, nil)
+	body := map[string]interface{}{"called_by": "test-station"}
+	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 }
@@ -889,20 +890,29 @@ func TestOperatorStations_ReleaseChangeoverWait_ThreadsCalledBy(t *testing.T) {
 	}
 }
 
-// TestOperatorStations_ReleaseChangeoverWait_EmptyBodyOK verifies the
-// backward-compat path: a missing/empty body (legacy clients) results in
-// an empty CalledBy without rejecting the request.
-func TestOperatorStations_ReleaseChangeoverWait_EmptyBodyOK(t *testing.T) {
-	h, router := newOperatorStationsRouter(t)
+// TestOperatorStations_ReleaseChangeoverWait_RejectsBareBody verifies the
+// post-2026-04-27 contract on the third release endpoint: a missing body
+// or empty called_by produces 400, mirroring apiReleaseOrder and
+// apiReleaseNodeStagedOrders. The original c56ceb9 fix added this guard to
+// the other two release endpoints; this endpoint had the same shape (empty
+// body silently produced an empty audit trail at Core) and was closed
+// during the release-flow cleanup.
+func TestOperatorStations_ReleaseChangeoverWait_RejectsBareBody(t *testing.T) {
+	_, router := newOperatorStationsRouter(t)
 
+	// Bare-body POST -> 400.
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", nil, nil)
-	assertStatus(t, resp, http.StatusOK)
+	assertStatus(t, resp, http.StatusBadRequest)
 
-	stub := h.engine.(*stubEngine)
-	if stub.lastReleaseChangeoverWaitCalledBy != "" {
-		t.Errorf("ReleaseChangeoverWait called_by on empty body: got %q, want empty",
-			stub.lastReleaseChangeoverWaitCalledBy)
-	}
+	// Body with empty called_by -> 400.
+	body := map[string]interface{}{"called_by": ""}
+	resp = doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	// Body with whitespace-only called_by -> 400 (TrimSpace check).
+	body = map[string]interface{}{"called_by": "  "}
+	resp = doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestOperatorStations_CompleteProductionCutover_Success(t *testing.T) {
