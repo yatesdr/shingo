@@ -151,9 +151,15 @@ func List(db *sql.DB) ([]*Bin, error) {
 	return scanBins(rows)
 }
 
-// ListByNode returns all bins at a node ordered by ID descending.
+// ListByNode returns all non-retired bins at a node ordered by ID descending.
+// Retired bins are excluded so operational consumers (node-bins telemetry,
+// occupancy checks, swap-vs-move decision) don't see a retired carrier as
+// occupying its old node. Audit/admin views that need retired bins should
+// query via List + status filter instead. This is a hedge until retirement
+// vacates the operational node entirely (RETIRED_HOLD migration — see
+// SHINGO_TODO.md).
 func ListByNode(db *sql.DB, nodeID int64) ([]*Bin, error) {
-	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.node_id=$1 ORDER BY b.id DESC`, BinJoinQuery), nodeID)
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.node_id=$1 AND b.status != 'retired' ORDER BY b.id DESC`, BinJoinQuery), nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -161,10 +167,11 @@ func ListByNode(db *sql.DB, nodeID int64) ([]*Bin, error) {
 	return scanBins(rows)
 }
 
-// CountByNode returns how many bins sit at the given node.
+// CountByNode returns how many non-retired bins sit at the given node.
+// Same retired-bin exclusion rationale as ListByNode.
 func CountByNode(db *sql.DB, nodeID int64) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM bins WHERE node_id=$1`, nodeID).Scan(&count)
+	err := db.QueryRow(`SELECT COUNT(*) FROM bins WHERE node_id=$1 AND status != 'retired'`, nodeID).Scan(&count)
 	return count, err
 }
 
@@ -203,7 +210,7 @@ func NodeTileStates(db *sql.DB) (map[int64]NodeTileState, error) {
 		MAX(CASE WHEN b.status = 'staged' THEN 1 ELSE 0 END),
 		MAX(CASE WHEN b.status IN ('maintenance', 'flagged', 'quality_hold') THEN 1 ELSE 0 END)
 		FROM bins b
-		WHERE b.node_id IS NOT NULL
+		WHERE b.node_id IS NOT NULL AND b.status != 'retired'
 		GROUP BY b.node_id`)
 	if err != nil {
 		return nil, err
