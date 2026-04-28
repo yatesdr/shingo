@@ -582,12 +582,6 @@ func (m *Manager) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot)
 	return m.lifecycle.ApplyCoreStatusSnapshot(snapshot)
 }
 
-// TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
-func (m *Manager) forceTransitionOrder(orderID int64, newStatus, detail string) error {
-	m.lifecycle.debug = m.DebugLog
-	return m.lifecycle.ForceTransition(orderID, newStatus, detail)
-}
-
 // RollbackForRetry force-transitions an order back to StatusStaged with a
 // friendly detail message. Used for recoverable Core errors (e.g.
 // manifest_sync_failed) where the operator can simply click release again

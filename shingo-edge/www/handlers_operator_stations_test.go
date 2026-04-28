@@ -34,7 +34,6 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Post("/process-nodes/{id}/release-empty", h.apiReleaseNodeEmpty)
 		r.Post("/process-nodes/{id}/release-partial", h.apiReleaseNodePartial)
 		r.Post("/process-nodes/{id}/release-staged", h.apiReleaseNodeStagedOrders)
-		r.Post("/process-nodes/{id}/manifest/confirm", h.apiConfirmNodeManifest)
 		r.Post("/process-nodes/{id}/finalize", h.apiFinalizeProduceNode)
 		r.Post("/process-nodes/{id}/load-bin", h.apiLoadBin)
 		r.Post("/process-nodes/{id}/clear-bin", h.apiClearBin)
@@ -742,14 +741,6 @@ func TestOperatorStations_ReleaseStagedOrders_RejectsBareBody(t *testing.T) {
 	body := map[string]interface{}{"disposition": "capture_lineside", "called_by": ""}
 	resp = doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
-}
-
-func TestOperatorStations_ConfirmNodeManifest_Success(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
-
-	resp := doRequest(t, router, "POST", "/api/process-nodes/1/manifest/confirm", nil, nil)
-	assertStatus(t, resp, http.StatusOK)
-	assertJSONPath(t, resp, "status", "ok")
 }
 
 func TestOperatorStations_FinalizeProduceNode_Success(t *testing.T) {

@@ -349,22 +349,6 @@ func TestUniqueActivePerNodeStylePart(t *testing.T) {
 	}
 }
 
-func TestDeleteRemovesBucket(t *testing.T) {
-	db := openTestDB(t)
-	b, err := Capture(db, 100, "", 10, "P-500", 60)
-	if err != nil {
-		t.Fatalf("Capture: %v", err)
-	}
-	if err := Delete(db, b.ID); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	var count int
-	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket`).Scan(&count)
-	if count != 0 {
-		t.Fatalf("expected 0 rows after delete, got %d", count)
-	}
-}
-
 func TestDeactivateDeletesZeroQtyRows(t *testing.T) {
 	db := openTestDB(t)
 	// Manually seed a zero-qty active row (wouldn't normally exist, but

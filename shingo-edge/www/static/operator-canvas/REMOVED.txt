@@ -1,1 +1,0 @@
-Legacy operator-canvas assets were removed during the operator-station redesign.

@@ -267,13 +267,6 @@ func Drain(db Execer, nodeID, styleID int64, partNumber string, delta int) (int,
 	return take, nil
 }
 
-// Delete removes a bucket by id (used by scrap/repack/recall actions
-// wired up later).
-func Delete(db Execer, id int64) error {
-	_, err := db.Exec(`DELETE FROM node_lineside_bucket WHERE id=?`, id)
-	return err
-}
-
 // --- helpers ---
 
 // Execer is the minimal interface shared by *sql.DB and *sql.Tx.

@@ -251,14 +251,6 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order
 	return order, nil
 }
 
-func (e *Engine) ConfirmNodeManifest(nodeID int64) error {
-	// DEPRECATED: Manifest confirmation moved to ConfirmDelivery (order-level).
-	// The operator HMI now calls /api/confirm-delivery/{orderID} directly.
-	// This endpoint is kept for backward compatibility with older HMI clients.
-	log.Printf("engine: ConfirmNodeManifest called for node %d — this endpoint is deprecated, use ConfirmDelivery", nodeID)
-	return nil
-}
-
 // CanAcceptOrders reports whether a process node can accept new orders.
 // Returns false with a human-readable reason if the node is unavailable.
 // Consolidates all availability checks: active/staged order, changeover.

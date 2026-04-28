@@ -72,8 +72,3 @@ func (db *DB) DrainLinesideBucket(nodeID, styleID int64, partNumber string, delt
 	return lineside.Drain(db.DB, nodeID, styleID, partNumber, delta)
 }
 
-// DeleteLinesideBucket removes a bucket by id (used by scrap/repack/
-// recall actions).
-func (db *DB) DeleteLinesideBucket(id int64) error {
-	return lineside.Delete(db.DB, id)
-}

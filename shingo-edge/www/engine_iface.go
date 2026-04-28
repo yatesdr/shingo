@@ -85,7 +85,6 @@ type EngineOrchestration interface {
 	ReleaseNodePartial(nodeID int64, qty int64) (*domain.Order, error)
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
-	ConfirmNodeManifest(nodeID int64) error
 	FinalizeProduceNode(nodeID int64) (*engine.NodeOrderResult, error)
 	LoadBin(nodeID int64, payloadCode string, uopCount int64, manifest []protocol.IngestManifestItem) error
 	ClearBin(nodeID int64) error
