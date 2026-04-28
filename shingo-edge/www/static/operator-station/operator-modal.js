@@ -234,12 +234,19 @@ export function renderModal(entry) {
                 // store/station_views.go ComputeSwapReady).
                 html += actionBtn('RELEASE', 'request', true,
                     'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged');
-            } else if (claim && claim.swap_mode === 'two_robot') {
-                // Two-robot in progress but swap_ready is false — Robot B
-                // hasn't reached its wait point. Show explicit waiting state
-                // instead of the per-order RELEASE branch (would release one
-                // leg, bypass disposition prompt) or idle FINALIZE/REQUEST
-                // (don't apply mid-swap).
+            } else if (claim && claim.swap_mode === 'two_robot' && active.length >= 2) {
+                // Two-robot swap in progress with BOTH legs still alive but
+                // swap_ready is false — Robot B hasn't reached its wait point.
+                // Show explicit waiting state instead of the per-order RELEASE
+                // branch (would release one leg, bypass disposition prompt) or
+                // idle FINALIZE/REQUEST (don't apply mid-swap).
+                //
+                // The active.length>=2 guard is the recovery surface: if one
+                // leg is cancelled/failed (active drops to <=1 because the
+                // filter on line ~225 strips terminal statuses), there's no
+                // swap to coordinate. Fall through to the surviving leg's
+                // staged/delivered/inFlight branch so the operator isn't
+                // permanently stuck on a disabled WAITING button.
                 html += actionBtn('WAITING FOR OTHER ROBOT', 'close', false, '');
             } else if (staged) {
                 // Sequential / single-robot — single staged, single release.
