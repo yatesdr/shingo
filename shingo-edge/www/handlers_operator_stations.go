@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -273,16 +274,26 @@ func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
+	// Same called_by guard as apiReleaseOrder (post-2026-04-27 contract):
+	// every legitimate caller goes through the operator-station release
+	// prompt which sets called_by. A bare body here would produce the
+	// disposition-bypass fingerprint and silently skip lineside capture.
 	var req struct {
 		Disposition string         `json:"disposition"`
 		QtyByPart   map[string]int `json:"qty_by_part"`
 		CalledBy    string         `json:"called_by"`
 	}
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if r.ContentLength == 0 {
+		writeError(w, http.StatusBadRequest, "release requires a JSON body with called_by")
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.CalledBy) == "" {
+		writeError(w, http.StatusBadRequest, "release requires called_by to identify the caller")
+		return
 	}
 	disp := buildReleaseDisposition(req.Disposition, req.QtyByPart, req.CalledBy)
 	if err := h.orchestration.ReleaseStagedOrders(id, disp); err != nil {

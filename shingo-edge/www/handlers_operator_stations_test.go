@@ -689,7 +689,8 @@ func TestOperatorStations_ReleaseNodePartial_InvalidJSON(t *testing.T) {
 func TestOperatorStations_ReleaseStagedOrders_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", nil, nil)
+	body := map[string]interface{}{"called_by": "test-station"}
+	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 }
@@ -697,7 +698,8 @@ func TestOperatorStations_ReleaseStagedOrders_Success(t *testing.T) {
 func TestOperatorStations_ReleaseStagedOrders_InvalidID(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	resp := doRequest(t, router, "POST", "/api/process-nodes/bad/release-staged", nil, nil)
+	body := map[string]interface{}{"called_by": "test-station"}
+	resp := doRequest(t, router, "POST", "/api/process-nodes/bad/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 	assertJSONPath(t, resp, "error", "invalid node id")
 }
@@ -710,6 +712,7 @@ func TestOperatorStations_ReleaseStagedOrders_AcceptsQtyByPart(t *testing.T) {
 
 	body := map[string]interface{}{
 		"qty_by_part": map[string]int{"PART-A": 5, "PART-B": 2},
+		"called_by":   "test-station",
 	}
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -722,8 +725,22 @@ func TestOperatorStations_ReleaseStagedOrders_BadBody(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
 	// qty_by_part must be a map; sending an int triggers a decode error.
-	body := map[string]interface{}{"qty_by_part": 123}
+	body := map[string]interface{}{"qty_by_part": 123, "called_by": "test-station"}
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
+}
+
+// Post-2026-04-27 guard: a release-staged POST with no body or empty
+// called_by is rejected. Mirrors the same guard on apiReleaseOrder so
+// neither release endpoint accepts the disposition-bypass fingerprint.
+func TestOperatorStations_ReleaseStagedOrders_RejectsBareBody(t *testing.T) {
+	_, router := newOperatorStationsRouter(t)
+
+	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", nil, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	body := map[string]interface{}{"disposition": "capture_lineside", "called_by": ""}
+	resp = doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -287,18 +288,29 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Body is optional — empty body means "release, no lineside capture,
-	// no manifest action" (legacy behavior).
+	// A non-empty body with called_by is now required. Bare-body POSTs were
+	// historically accepted as "legacy behavior" but produced the
+	// disposition-bypass fingerprint (called_by="" + remaining_uop=<nil>)
+	// observed in the 2026-04-27 plant test. Every legitimate first-party
+	// caller (operator.js, kanbans.js) sets called_by; anything posting an
+	// empty body is either an external script or a stale-cached browser and
+	// should fail loudly so the caller is visible.
 	var req struct {
 		Disposition string         `json:"disposition"`
 		QtyByPart   map[string]int `json:"qty_by_part"`
 		CalledBy    string         `json:"called_by"`
 	}
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if r.ContentLength == 0 {
+		writeError(w, http.StatusBadRequest, "release requires a JSON body with called_by")
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if strings.TrimSpace(req.CalledBy) == "" {
+		writeError(w, http.StatusBadRequest, "release requires called_by to identify the caller")
+		return
 	}
 
 	disp := buildReleaseDisposition(req.Disposition, req.QtyByPart, req.CalledBy)

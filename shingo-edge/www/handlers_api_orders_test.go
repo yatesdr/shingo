@@ -447,7 +447,10 @@ func TestApiOrders_ReleaseOrder_Success(t *testing.T) {
 
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
 
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", nil, nil)
+	body := map[string]interface{}{
+		"called_by": "test-station",
+	}
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 	assertJSONPath(t, resp, "status", "ok")
 
@@ -456,6 +459,28 @@ func TestApiOrders_ReleaseOrder_Success(t *testing.T) {
 		t.Errorf("status after release: got %q, want %q",
 			stored.Status, orders.StatusInTransit)
 	}
+}
+
+// TestApiOrders_ReleaseOrder_RejectsBareBody verifies the post-2026-04-27
+// guard: a release POST with no body (or empty called_by) is rejected as
+// 400 instead of silently producing the disposition-bypass fingerprint
+// (called_by="" + remaining_uop=<nil>) that hid the plant-test bug.
+// Every legitimate caller (operator.js, kanbans.js) sends called_by.
+func TestApiOrders_ReleaseOrder_RejectsBareBody(t *testing.T) {
+	_, router := newApiOrdersRouter(t)
+
+	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusStaged)
+
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", nil, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	// Body with empty called_by is also rejected.
+	body := map[string]interface{}{
+		"disposition": "capture_lineside",
+		"called_by":   "",
+	}
+	resp = doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", body, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
 }
 
 func TestApiOrders_ReleaseOrder_InvalidID(t *testing.T) {
@@ -476,7 +501,10 @@ func TestApiOrders_ReleaseOrder_WrongStatus(t *testing.T) {
 	// surfaced as an API error.
 	orderID := seedOrder(t, orders.TypeRetrieve, orders.StatusConfirmed)
 
-	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", nil, nil)
+	body := map[string]interface{}{
+		"called_by": "test-station",
+	}
+	resp := doRequest(t, router, "POST", "/api/orders/"+itoa(orderID)+"/release", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 

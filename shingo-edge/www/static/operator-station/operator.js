@@ -785,12 +785,21 @@ function renderModal(entry) {
                 // single gate — see store/station_views.go ComputeSwapReady.
                 html += actionBtn('RELEASE', 'request', true,
                     'release-prompt:/api/process-nodes/' + entry.node.id + '/release-staged');
-            } else if (staged && (!claim || claim.swap_mode !== 'two_robot')) {
+            } else if (claim && claim.swap_mode === 'two_robot') {
+                // Two-robot swap in progress but swap_ready is false —
+                // Robot B hasn't reached its wait point yet. Show an
+                // explicit waiting state instead of falling through to the
+                // per-order RELEASE branch (which would release only one
+                // leg and bypass the disposition prompt) or to the idle
+                // branch (which shows FINALIZE/REQUEST actions that don't
+                // apply mid-swap). This is the "WAITING FOR OTHER ROBOT"
+                // signal the operator needs to know to hold off clicking.
+                html += actionBtn('WAITING FOR OTHER ROBOT', 'close', false, '');
+            } else if (staged) {
                 // Sequential or single-robot mode — single staged order,
-                // single per-order release. Two-robot swaps go through the
-                // consolidated path above; if we reach this branch with a
-                // two_robot claim, swap_ready was false (Robot B not parked
-                // yet) so the operator should wait, not click.
+                // single per-order release. Two-robot swaps are handled by
+                // the two branches above; reaching this branch with a
+                // two_robot claim is impossible.
                 html += actionBtn('RELEASE', 'request', true,
                     'release-prompt:/api/orders/' + staged.id + '/release');
             } else if (delivered) {
