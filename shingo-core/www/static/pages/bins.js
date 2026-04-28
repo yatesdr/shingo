@@ -108,11 +108,11 @@ function renderContents(data) {
   var html = '';
 
   if (data.manifest && data.manifest.items && data.manifest.items.length > 0) {
-    html += '<table class="table-compact"><thead><tr><th>Cat ID</th><th>Qty</th><th>Notes</th></tr></thead><tbody>';
-    data.manifest.items.forEach(function(item) {
-      html += '<tr><td><code>' + esc(item.catid) + '</code></td><td>' + item.qty + '</td><td>' + esc(item.notes || '') + '</td></tr>';
-    });
-    html += '</tbody></table>';
+    html += h`<table class="table-compact"><thead><tr><th>Cat ID</th><th>Qty</th><th>Notes</th></tr></thead><tbody>${
+      data.manifest.items.map(function(item) {
+        return h`<tr><td><code>${item.catid}</code></td><td>${item.qty}</td><td>${item.notes || ''}</td></tr>`;
+      })
+    }</tbody></table>`;
   } else {
     html += '<p class="text-muted mb-1">No manifest items.</p>';
   }
@@ -239,16 +239,14 @@ function renderJournal(data) {
 
   // Audit entries
   if (data.audit && data.audit.length > 0) {
-    html += '<div class="timeline">';
-    data.audit.forEach(function(e) {
-      html += '<div class="timeline-item">';
-      html += '<div class="time">' + timeAgo(e.created_at) + ' &middot; ' + esc(e.actor) + '</div>';
-      html += '<div>' + esc(e.action);
-      if (e.old_value || e.new_value) html += ': ' + esc(e.old_value) + ' &rarr; ' + esc(e.new_value);
-      if (e.detail) html += ' &mdash; ' + esc(e.detail);
-      html += '</div></div>';
-    });
-    html += '</div>';
+    html += h`<div class="timeline">${
+      data.audit.map(function(e) {
+        return h`<div class="timeline-item">
+          <div class="time">${{__html:true, value: timeAgo(e.created_at)}} &middot; ${e.actor}</div>
+          <div>${e.action}${(e.old_value || e.new_value) ? h`: ${e.old_value} &rarr; ${e.new_value}` : ''}${e.detail ? h` &mdash; ${e.detail}` : ''}</div>
+        </div>`;
+      })
+    }</div>`;
   } else {
     html += '<p class="text-muted">No audit entries.</p>';
   }
@@ -256,13 +254,13 @@ function renderJournal(data) {
   // Recent orders
   if (data.recent_orders && data.recent_orders.length > 0) {
     html += '<h4 style="margin-top:1rem;font-size:0.8rem;text-transform:uppercase;color:var(--text-muted)">Recent Orders</h4>';
-    html += '<table class="table-compact"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Created</th></tr></thead><tbody>';
-    data.recent_orders.forEach(function(o) {
-      html += '<tr><td>' + o.id + '</td><td>' + esc(o.order_type || '') + '</td>';
-      html += '<td><span class="badge badge-' + esc(o.status) + '">' + esc(o.status) + '</span></td>';
-      html += '<td>' + timeAgo(o.created_at) + '</td></tr>';
-    });
-    html += '</tbody></table>';
+    html += h`<table class="table-compact"><thead><tr><th>ID</th><th>Type</th><th>Status</th><th>Created</th></tr></thead><tbody>${
+      data.recent_orders.map(function(o) {
+        return h`<tr><td>${o.id}</td><td>${o.order_type || ''}</td>
+          <td><span class="badge badge-${o.status}">${o.status}</span></td>
+          <td>${{__html:true, value: timeAgo(o.created_at)}}</td></tr>`;
+      })
+    }</tbody></table>`;
   }
 
   document.getElementById('bd-journal').innerHTML = html;
