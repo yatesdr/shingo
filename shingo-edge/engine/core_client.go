@@ -43,9 +43,11 @@ func (c *CoreClient) SetBaseURL(url string) {
 	c.baseURL = strings.TrimRight(url, "/")
 }
 
-// Available returns true if a Core API URL is configured.
+// Available returns true if a Core API URL is configured. Nil-safe so test
+// engines that don't wire a CoreClient still report unavailable rather than
+// panicking through the consume-side completion path (arrivedBinUOP).
 func (c *CoreClient) Available() bool {
-	return c.baseURL != ""
+	return c != nil && c.baseURL != ""
 }
 
 // ManifestItem describes a single line in a payload manifest template.

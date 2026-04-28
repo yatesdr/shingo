@@ -180,7 +180,8 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 		return true // matched the path but claim lookup failed
 	}
 	claimID := toClaim.ID
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+	resetUOP := e.arrivedBinUOP(ctx.node.CoreNodeName, toClaim.UOPCapacity)
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
@@ -207,7 +208,8 @@ func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool 
 	if orderADone {
 		if toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName); err == nil {
 			claimID := toClaim.ID
-			if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+			resetUOP := e.arrivedBinUOP(ctx.node.CoreNodeName, toClaim.UOPCapacity)
+			if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
 				log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 			}
 			if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
@@ -243,7 +245,8 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claimID := toClaim.ID
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, toClaim.UOPCapacity); err != nil {
+	resetUOP := e.arrivedBinUOP(ctx.node.CoreNodeName, toClaim.UOPCapacity)
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
@@ -363,8 +366,12 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	}
 	claimID := claim.ID
 	// Produce nodes receive an empty bin → UOP starts at 0.
-	// Consume nodes receive a full bin → UOP starts at capacity.
-	resetUOP := claim.UOPCapacity
+	// Consume nodes receive a bin from the supermarket — could be full or
+	// partial (operator-released runouts in particular send the remaining
+	// UOP back as a partial). Read the bin's actual UOP from Core rather
+	// than assuming capacity, or the lineside counter starts at the wrong
+	// value and the operator sees phantom available material.
+	resetUOP := e.arrivedBinUOP(ctx.node.CoreNodeName, claim.UOPCapacity)
 	if claim.Role == "produce" {
 		resetUOP = 0
 	}
@@ -450,4 +457,30 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 		}
 		log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
 	}
+}
+
+// arrivedBinUOP reads the actual UOP of the bin currently at coreNodeName
+// from Core's node-bins telemetry, with capacityFallback as the safety net.
+// Used by consume-side completion handlers to set lineside runtime UOP from
+// the bin's real contents (which may be partial — e.g. operator-released
+// runouts return the remaining UOP) rather than blindly assuming capacity.
+//
+// Falls back to capacity when Core is unreachable, the fetch errors, the
+// node reports unoccupied (race: completion event arrived before Core's bin
+// state caught up), or the value is out of range. The fallback is silent
+// today — see SHINGO_TODO.md "Cycle-count signal on lineside UOP fallback"
+// for the operator-visible verify hook.
+func (e *Engine) arrivedBinUOP(coreNodeName string, capacityFallback int) int {
+	if !e.coreClient.Available() {
+		return capacityFallback
+	}
+	bins, err := e.coreClient.FetchNodeBins([]string{coreNodeName})
+	if err != nil || len(bins) == 0 || !bins[0].Occupied {
+		return capacityFallback
+	}
+	uop := bins[0].UOPRemaining
+	if uop < 0 || uop > capacityFallback {
+		return capacityFallback
+	}
+	return uop
 }
