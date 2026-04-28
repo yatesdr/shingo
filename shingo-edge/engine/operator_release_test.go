@@ -24,11 +24,11 @@ func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid str
 	return orderID
 }
 
-// TestReleaseOrderWithLineside_ResetsUOPAndCapturesBuckets verifies that
-// the release-click path sets UOP to capacity, marks the changeover
-// task (if any) as released, and records the parts the operator pulled
-// to lineside in node_lineside_bucket.
-func TestReleaseOrderWithLineside_ResetsUOPAndCapturesBuckets(t *testing.T) {
+// TestReleaseOrderWithLineside_PreservesUOPAndCapturesBuckets verifies that
+// the release-click path leaves the runtime UOP alone (delivery completion
+// owns the reset), marks the changeover task (if any) as released, and
+// records the parts the operator pulled to lineside in node_lineside_bucket.
+func TestReleaseOrderWithLineside_PreservesUOPAndCapturesBuckets(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL", PayloadCode: "PART-R", UOPCapacity: 100, InitialUOP: 8,
@@ -50,10 +50,11 @@ func TestReleaseOrderWithLineside_ResetsUOPAndCapturesBuckets(t *testing.T) {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
-	// UOP should be at capacity.
+	// UOP must remain at the seeded value — release no longer resets;
+	// delivery completion owns the turnover.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 100 {
-		t.Errorf("RemainingUOP = %d, want 100 (capacity) after release", runtime.RemainingUOP)
+	if runtime.RemainingUOP != 8 {
+		t.Errorf("RemainingUOP = %d, want 8 (release must not reset; delivery completion owns the reset)", runtime.RemainingUOP)
 	}
 
 	// Bucket should exist with 12 active units.
@@ -75,10 +76,11 @@ func TestReleaseOrderWithLineside_ResetsUOPAndCapturesBuckets(t *testing.T) {
 	}
 }
 
-// TestReleaseOrderWithLineside_EmptyMapStillResetsUOP verifies that
-// calling release with nothing captured still performs the UOP reset
-// and deactivates stranded buckets for other styles.
-func TestReleaseOrderWithLineside_EmptyMapStillResetsUOP(t *testing.T) {
+// TestReleaseOrderWithLineside_EmptyMapPreservesUOP verifies that
+// calling release with nothing captured leaves runtime UOP untouched
+// (delivery completion owns the reset) and deactivates stranded buckets
+// for other styles.
+func TestReleaseOrderWithLineside_EmptyMapPreservesUOP(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL2", PayloadCode: "PART-R2", UOPCapacity: 50, InitialUOP: 3,
@@ -90,14 +92,14 @@ func TestReleaseOrderWithLineside_EmptyMapStillResetsUOP(t *testing.T) {
 
 	eng := testEngine(t, db)
 	// Empty disposition (legacy / NOTHING-PULLED-with-no-explicit-mode):
-	// should still drive the UOP reset.
+	// must not touch runtime UOP.
 	if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionCaptureLineside}); err != nil {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 50 {
-		t.Errorf("RemainingUOP = %d, want 50 (capacity) after release with empty capture map", runtime.RemainingUOP)
+	if runtime.RemainingUOP != 3 {
+		t.Errorf("RemainingUOP = %d, want 3 (release must not reset; delivery completion owns the reset)", runtime.RemainingUOP)
 	}
 }
 
@@ -247,11 +249,13 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime(t *testing.T
 	}
 }
 
-// TestReleaseOrderWithLineside_TwoRobotEvacResetsRuntime is the
-// counterpart: Order B (the evac) IS allowed to reset the runtime UOP,
-// because that's "prepare the line for the new bin's UOP cycle." Without
-// this, Bug B's fix would over-correct and break the legitimate reset.
-func TestReleaseOrderWithLineside_TwoRobotEvacResetsRuntime(t *testing.T) {
+// TestReleaseOrderWithLineside_TwoRobotEvacDoesNotResetRuntime locks down
+// the post-fix contract: release (Order A or B) must NOT touch runtime UOP.
+// The reset is bound to delivery completion in handleComplexOrderBCompletion
+// /handleChangeoverRelease so the line UI doesn't show a fresh capacity for
+// a bin that hasn't physically arrived (robot fault between release and
+// FINISHED would otherwise leave the operator looking at a phantom turnover).
+func TestReleaseOrderWithLineside_TwoRobotEvacDoesNotResetRuntime(t *testing.T) {
 	db := testEngineDB(t)
 
 	processID, err := db.CreateProcess("TR-EVAC", "two-robot evac test", "active_production", "", "", false)
@@ -306,10 +310,11 @@ func TestReleaseOrderWithLineside_TwoRobotEvacResetsRuntime(t *testing.T) {
 		t.Fatalf("release Order B: %v", err)
 	}
 
-	// Runtime UOP MUST be reset to capacity — that's the "new cycle" signal.
+	// Runtime UOP must remain at the seeded value — release no longer resets;
+	// the delivery completion handler does that when the new bin arrives.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 1200 {
-		t.Errorf("RemainingUOP = %d, want 1200 (Order B's release must reset the runtime UOP for the next cycle)",
+	if runtime.RemainingUOP != 800 {
+		t.Errorf("RemainingUOP = %d, want 800 (release must not reset runtime; delivery completion owns the reset)",
 			runtime.RemainingUOP)
 	}
 }
@@ -356,8 +361,8 @@ func TestComputeReleaseRemainingUOP(t *testing.T) {
 // TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture verifies
 // the SEND PARTIAL BACK disposition: no bucket capture happens (so the
 // operator's leftover stays on the bin instead of being kitted lineside),
-// the runtime UOP still resets to capacity for the next bin, and stranded
-// other-style buckets are still deactivated.
+// runtime UOP is preserved (delivery completion will reset, not release),
+// and stranded other-style buckets are still deactivated.
 func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
@@ -384,10 +389,12 @@ func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
-	// Runtime should reset to capacity for the NEXT bin.
+	// Runtime must remain unchanged on release — delivery completion now
+	// owns the capacity reset.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 1200 {
-		t.Errorf("RemainingUOP = %d, want 1200 (capacity)", runtime.RemainingUOP)
+	if runtime.RemainingUOP != 800 {
+		t.Errorf("RemainingUOP = %d, want 800 (release must not reset runtime; delivery completion owns the reset)",
+			runtime.RemainingUOP)
 	}
 
 	// No active bucket for the operator's part — capture skipped.
@@ -411,25 +418,22 @@ func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.
 	}
 }
 
-// TestHandleComplexOrderBCompletion_SkipsIfAlreadyReleased verifies the
-// idempotent gate: when the release handler already advanced the task
-// to "released" (and reset the counter), Order B completion doesn't
-// clobber the drained counter back to capacity.
-func TestHandleComplexOrderBCompletion_SkipsIfAlreadyReleased(t *testing.T) {
+// TestHandleComplexOrderBCompletion_ResetsOnDelivery locks down the new
+// contract: the runtime UOP turnover happens on delivery completion, not at
+// release click. Even if the operator drained the counter between release
+// and arrival, completion resets to capacity because that's when the new
+// bin is physically present.
+func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-IDEMP", PayloadCode: "PART-IDEMP", UOPCapacity: 100, InitialUOP: 100,
 	})
 
-	// Simulate "release click already happened": UOP at capacity,
-	// then a few counter ticks drained it to 87.
+	// Simulate counter drained to 87 (any value < capacity) before delivery.
 	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 87); err != nil {
 		t.Fatalf("seed drained runtime: %v", err)
 	}
 
-	// There's no changeover in this scenario — handleNormalReplenishment
-	// should see a complex order on a consume node with a live runtime
-	// and skip the reset. Create the completed order.
 	orderID, err := db.CreateOrder("uuid-idemp", orders.TypeComplex,
 		&nodeID, false, 1, "CONSUME-NODE", "", "", "", false, "")
 	if err != nil {
@@ -450,8 +454,8 @@ func TestHandleComplexOrderBCompletion_SkipsIfAlreadyReleased(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 87 {
-		t.Errorf("RemainingUOP = %d, want 87 (release already ran, completion must not clobber)",
+	if runtime.RemainingUOP != 100 {
+		t.Errorf("RemainingUOP = %d, want 100 (delivery completion always resets to capacity)",
 			runtime.RemainingUOP)
 	}
 }

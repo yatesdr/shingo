@@ -51,18 +51,31 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 // but is idempotent — it skips the bin move if already at the destination.
 func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 	if order.SourceNode == "" || order.DeliveryNode == "" {
+		// Bin-stuck-at-source diagnostic: previously a silent skip. Move-order
+		// post-mortem 2026-04-28 traced "delivered but bin still at source"
+		// scenarios that left no log line at all.
+		e.logFn("delivery: order=%d type=%s bin=%v skipped arrival: missing source/delivery (source=%q delivery=%q)",
+			order.ID, order.OrderType, order.BinID, order.SourceNode, order.DeliveryNode)
 		return
 	}
 
 	// Multi-bin path
 	orderBins, _ := e.db.ListOrderBins(order.ID)
 	if len(orderBins) > 0 {
+		e.logFn("delivery: order=%d type=%s taking multi-bin arrival path (%d junction rows)",
+			order.ID, order.OrderType, len(orderBins))
 		e.applyMultiBinArrivalForOrder(order, orderBins)
 		return
 	}
 
 	// Single-bin path
 	if order.BinID == nil {
+		// Bin-stuck-at-source diagnostic: this is the failure mode where
+		// planMove's UpdateOrderBinID didn't persist (or was never called)
+		// but the order still progressed to FINISHED. Without a log here,
+		// the bin silently stays at source and the symptom shows up downstream.
+		e.logFn("delivery: order=%d type=%s skipped arrival: order.BinID is nil (source=%s delivery=%s) — planMove may have failed to persist BinID",
+			order.ID, order.OrderType, order.SourceNode, order.DeliveryNode)
 		return
 	}
 
@@ -87,6 +100,8 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 	// overrides gone, lineside deliveries arrive `staged` and stay protected
 	// until the next claim or operator action.
 
+	e.logFn("delivery: order=%d type=%s bin=%d arriving %s -> %s (staged=%v)",
+		order.ID, order.OrderType, *order.BinID, order.SourceNode, order.DeliveryNode, staged)
 	if err := e.binService.ApplyArrival(*order.BinID, destNode.ID, staged, expiresAt); err != nil {
 		e.logFn("engine: apply bin arrival on delivery for order %d bin %d: %v", order.ID, *order.BinID, err)
 		return

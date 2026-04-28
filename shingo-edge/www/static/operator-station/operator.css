@@ -450,6 +450,24 @@ body {
     outline: 2px solid #fff;
 }
 
+/* Tappable qty display — replaces the number-input arrows on step 2.
+   Mimics the keypad-display look so the operator recognises that tapping
+   it opens the numeric keypad. */
+.os-release-qty-display {
+    width: 100%;
+    background: #0f141a;
+    border: 1px solid var(--os-border);
+    border-radius: 12px;
+    padding: 18px;
+    color: #fff;
+    font-size: 44px;
+    font-weight: 700;
+    text-align: center;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.os-release-qty-display:active { opacity: 0.85; }
+
 /* Soft-cap warning pill shown under the qty input when the operator's
    entered value exceeds 2× the per-claim threshold. Warn-only — never
    blocks the release. */

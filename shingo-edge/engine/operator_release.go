@@ -162,11 +162,9 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 
-	// Compute the manifest-sync UOP from the disposition. Capture the
-	// runtime UOP BEFORE the SetProcessNodeRuntime reset below — otherwise
-	// the reset would clobber the operator's intent. Renamed from
-	// `remainingUOP` to disambiguate from Manager.ReleaseOrder's parameter
-	// of the same name; both flow to the same envelope field but live in
+	// Compute the manifest-sync UOP from the disposition. Renamed from
+	// `remainingUOP` to disambiguate from Manager.ReleaseOrder's parameter of
+	// the same name; both flow to the same envelope field but live in
 	// different scopes.
 	manifestUOP := computeReleaseRemainingUOP(disp, runtime)
 
@@ -201,34 +199,13 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		return err
 	}
 
-	// Two-robot runtime-reset protection (Bug B guard, same plant incident):
-	// in the per-order release path, if Order A (the supply) is released
-	// before Order B (the evac), Order A's release would normally call
-	// SetProcessNodeRuntime to reset RemainingUOP to capacity. That reset
-	// CLOBBERS the runtime UOP that Order B's subsequent release needs to
-	// read for the SEND PARTIAL BACK disposition. Result: Edge sends
-	// remaining_uop=capacity (e.g. 1200) for Order B's evac, Core's
-	// SyncOrClearForReleased writes that bogus value to the bin row,
-	// manifest stays loaded with full UOP, bin lands at OutboundDestination
-	// looking like a fresh full bin — exact ALN_002 → SMN_003 symptom for
-	// the partial-back case.
-	//
-	// The runtime reset's purpose is "prepare the line node's UOP tracking
-	// for the new bin's cycle." That's properly Order B's responsibility:
-	// Order B is what evacuates the old bin and signals the cycle turnover.
-	// Order A delivers the new bin, but until B clears, the old bin's UOP
-	// state is what matters. Skip the reset on Order A's release; Order B's
-	// release (or the consolidated ReleaseStagedOrders path, which does B
-	// then A) will perform it correctly.
-	if !isSupply {
-		claimID := toClaim.ID
-		if err := e.db.SetProcessNodeRuntime(node.ID, &claimID, toClaim.UOPCapacity); err != nil {
-			return fmt.Errorf("reset runtime on release for node %d: %w", node.ID, err)
-		}
-	} else {
-		e.logFn("release: order=%d node=%s — skipping runtime UOP reset: supply_order_in_two_robot_swap (Order B's release owns the reset)",
-			orderID, node.Name)
-	}
+	// Runtime UOP reset moved to delivery completion (handleChangeoverRelease /
+	// handleComplexOrderBCompletion / handleKeepStagedOrderBCompletion). If
+	// the line resets at release-time and the supply bin then fails to arrive
+	// (robot fault, network blip between release and FINISHED), the operator
+	// is left looking at a "fresh" capacity number that doesn't match the
+	// physical bin still on the node. Resetting at delivery binds the UOP
+	// turnover to the moment the new bin is actually present.
 	if nodeTask != nil {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
 			e.logFn("release: update node task %d to released: %v", nodeTask.ID, err)

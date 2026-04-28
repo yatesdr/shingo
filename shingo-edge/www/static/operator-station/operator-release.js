@@ -1,5 +1,6 @@
 import { esc, postAction } from './operator-util.js';
 import { getView, getSelectedNodeID, findNodeByID } from './operator-state.js';
+import { openKeypad } from './operator-keypad.js';
 
 const nodeModal = document.getElementById('node-modal');
 const nodeModalContent = document.getElementById('node-modal-content');
@@ -98,61 +99,51 @@ function renderReleasePromptStep2(code) {
     const state = releasePromptState;
     if (!state) return;
 
+    // Auto-fill qty with the bin's remaining_uop the first time we land on
+    // step 2 for this code. Most of the time the operator pulled the whole
+    // bin to lineside; they can tap the display to dial it down via the
+    // keypad. The keypad is the only path to changing the value, so once
+    // selected[code] is set we leave it alone.
+    if (state.selected[code] == null) {
+        const rt = state.entry && state.entry.runtime;
+        const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
+        if (remainingUOP > 0) state.selected[code] = remainingUOP;
+    }
+
+    const qty = state.selected[code] || 0;
     const softCap = linesideSoftThresholdForEntry(state.entry);
     const warnAt = softCap > 0 ? softCap * 2 : 0;
-
-    // Default to the bin's remaining_uop — most of the time the operator
-    // pulled all that was in the bin to lineside. They can dial it down for
-    // partial pulls. Falls through to '' (empty) when there's nothing
-    // meaningful to suggest.
-    const rt = state.entry && state.entry.runtime;
-    const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
-    let defaultQty = state.selected[code];
-    if (defaultQty == null) {
-        defaultQty = remainingUOP > 0 ? remainingUOP : '';
-    }
+    const showWarn = warnAt > 0 && qty > warnAt;
 
     let html = '';
     html += '<div class="os-modal-header">';
     html += '<div class="os-modal-node-name">Lineside qty: ' + esc(code) + '</div>';
-    html += '<div class="os-modal-payload">How many ' + esc(code) + ' parts did you pull?</div>';
+    html += '<div class="os-modal-payload">Tap the number to change it.</div>';
     html += '</div>';
 
     html += '<div class="os-release-prompt">';
-    html += '<input type="number" id="os-release-qty" min="1" step="1" value="' +
-        defaultQty + '" ' +
-        'style="width:100%;padding:14px;font-size:28px;text-align:center;border-radius:6px;' +
-        'border:1px solid var(--os-gray,#444);background:#111;color:#fff;">';
-    html += '<div id="os-release-softcap-warn" class="os-release-softcap-warn" ' +
-        'data-warn-at="' + warnAt + '" hidden>';
-    html += 'Typo check: this is more than 2\u00D7 the configured lineside soft cap (' +
-        softCap + '). Release anyway if that\u2019s right.';
-    html += '</div>';
+    html += '<button type="button" class="os-release-qty-display" data-action="release-qty-edit:' +
+        esc(code) + '">' + qty + '</button>';
+    if (showWarn) {
+        html += '<div class="os-release-softcap-warn">';
+        html += 'Typo check: this is more than 2\u00D7 the configured lineside soft cap (' +
+            softCap + '). Release anyway if that\u2019s right.';
+        html += '</div>';
+    }
     html += '</div>';
 
     html += '<div class="os-modal-actions">';
     html += '<button type="button" class="os-action-btn close" data-action="release-back">BACK</button>';
-    html += '<button type="button" class="os-action-btn request" data-action="release-qty-ok:' + esc(code) + '">OK</button>';
+    const okDisabled = !(qty > 0);
+    html += '<button type="button" class="os-action-btn request"' +
+        (okDisabled ? ' disabled' : '') +
+        ' data-action="release-qty-ok:' + esc(code) + '">OK</button>';
     html += '</div>';
 
     nodeModalContent.innerHTML = html;
     nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
         btn.addEventListener('click', handleReleasePromptAction);
     });
-    const input = document.getElementById('os-release-qty');
-    const warn = document.getElementById('os-release-softcap-warn');
-    function refreshSoftCapWarn() {
-        if (!warn) return;
-        if (warnAt <= 0) { warn.hidden = true; return; }
-        const v = parseInt(input.value || '0', 10);
-        warn.hidden = !(v > warnAt);
-    }
-    if (input) {
-        input.focus();
-        input.select();
-        input.addEventListener('input', refreshSoftCapWarn);
-        refreshSoftCapWarn();
-    }
 }
 
 async function handleReleasePromptAction(evt) {
@@ -181,15 +172,26 @@ async function handleReleasePromptAction(evt) {
         return;
     }
 
+    if (action.startsWith('release-qty-edit:')) {
+        const code = action.slice('release-qty-edit:'.length);
+        const current = state.selected[code] || 0;
+        openKeypad(0, current, {
+            title: 'Lineside qty: ' + code,
+            onOk: function(_nodeID, qty) {
+                if (qty > 0) {
+                    state.selected[code] = qty;
+                } else {
+                    delete state.selected[code];
+                }
+                renderReleasePromptStep2(code);
+            },
+        });
+        return;
+    }
+
     if (action.startsWith('release-qty-ok:')) {
-        const code = action.slice('release-qty-ok:'.length);
-        const input = document.getElementById('os-release-qty');
-        const qty = input ? parseInt(input.value || '0', 10) : 0;
-        if (qty > 0) {
-            state.selected[code] = qty;
-        } else {
-            delete state.selected[code];
-        }
+        // qty already lives in state.selected (auto-filled on entry, or
+        // overwritten via the keypad). Step 1 handles the picked-state UI.
         renderReleasePromptStep1();
         return;
     }

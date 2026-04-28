@@ -154,10 +154,11 @@ func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
 // Regular: evacuation + delivery in one order → "released".
 // Keep-staged: only evacuates → depends on whether Order A (delivery) also completed.
 //
-// Phase 3 (lineside): ReleaseOrderWithLineside normally resets UOP + advances the
-// task to "released" at the operator's release click. When that path ran, this
-// handler no-ops on the mutation — it's only a safety net for paths that bypass
-// the release handler (e.g. changeover restore, auto-confirm edge cases).
+// UOP reset happens here on delivery completion (not at release click): the
+// release handler only marks the node task "released". Resetting at delivery
+// binds the runtime turnover to the moment the new bin is physically present,
+// so a robot fault between release and arrival doesn't leave the UI showing
+// a "fresh" capacity that the line never received.
 func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	isKeepStaged := false
 	if ctx.nodeTask.FromClaimID != nil {
@@ -170,14 +171,10 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 		return e.handleKeepStagedOrderBCompletion(ctx)
 	}
 
-	// Release handler already ran — nothing to do. Return true so we
-	// don't fall through to handleNormalReplenishment.
-	if ctx.nodeTask.State == "released" {
-		return true
-	}
-
-	// Safety-net path (release handler didn't run): Order B did
-	// evacuation + delivery in one order.
+	// UOP reset on delivery (moved here from release-click handler): release
+	// only marks the node task "released"; the actual runtime UOP turnover
+	// happens when the new bin physically arrives. Always run the reset
+	// regardless of nodeTask.State.
 	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
 	if err != nil {
 		return true // matched the path but claim lookup failed
@@ -200,11 +197,6 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 // operator release handler. This handler still fires if the release never ran
 // (safety net) or if only Order A has completed (→ "line_cleared").
 func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool {
-	// Release handler already ran — nothing to do.
-	if ctx.nodeTask.State == "released" {
-		return true
-	}
-
 	orderADone := true
 	if ctx.nodeTask.NextMaterialOrderID != nil {
 		if orderA, err := e.db.GetOrder(*ctx.nodeTask.NextMaterialOrderID); err == nil && !orders.IsTerminal(orderA.Status) {
@@ -237,19 +229,15 @@ func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool 
 // handleChangeoverRelease handles Order A completing to release staged/replenished
 // material into production during a changeover (non-staging delivery path).
 //
-// Phase 3 (lineside): the operator release click now normally runs the UOP
-// reset + "released" state transition before this event fires. When that
-// happened, this handler no-ops (state is already "released"). It remains as
-// a safety net for restore / auto-release paths that bypass the release
-// handler.
+// UOP reset runs on delivery completion (not at release click). Release only
+// flips the node task to "released"; the runtime turnover is bound to the
+// arrival event so a fault between release and delivery doesn't leave the
+// line UI showing capacity for a bin that hasn't landed.
 func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 	if ctx.nodeTask == nil || ctx.nodeTask.NextMaterialOrderID == nil || *ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
 		return false
 	}
-	// Release handler already ran — nothing to do.
-	if ctx.nodeTask.State == "released" {
-		return true
-	}
+	// UOP reset always runs on delivery — release only marks state="released".
 	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
 	if err != nil {
 		return false
@@ -356,15 +344,8 @@ func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
 
 // handleNormalReplenishment handles standard retrieve/complex order completion.
 // Resets UOP from the active claim (capacity for consume, 0 for produce).
-//
-// Phase 3 (lineside): for complex orders on consume nodes, the release click
-// handler (ReleaseOrderWithLineside) already reset UOP to capacity before
-// dispatch. Re-resetting on completion would wipe any counter ticks that
-// happened during the bots-home leg — that's the drift we're fixing. So the
-// reset is gated: consume + complex with runtime already pointing at this
-// claim and RemainingUOP > 0 is treated as "release already ran, don't
-// clobber." Produce nodes still reset (empty bin arriving), and simple
-// retrieve orders still reset (no release-click prompt exists for them).
+// The reset binds to the delivery event: a fresh bin has physically arrived,
+// so the line's UOP tracking should turn over now.
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
 		return
@@ -381,17 +362,8 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 		resetUOP = 0
 	}
 
-	// Consume + complex: the release-click handler
-	// (ReleaseOrderWithLineside) already reset UOP to capacity before
-	// dispatch. Resetting again here would wipe any counter ticks the
-	// operator ran off during the bots-home leg — exactly the drift
-	// this phase is fixing. Skip the reset for that case; other paths
-	// (retrieve, produce) keep the existing completion-time reset.
-	skipReset := claim.Role == "consume" && ctx.order.OrderType == orders.TypeComplex
-	if !skipReset {
-		if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
-			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
-		}
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
+		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 
 	// manual_swap nodes: clear order slots so CanAcceptOrders and the

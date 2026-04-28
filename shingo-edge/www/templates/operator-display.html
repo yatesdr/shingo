@@ -31,7 +31,7 @@
     <!-- Keypad modal -->
     <div id="keypad-modal" class="os-modal-backdrop" hidden>
         <div class="os-keypad">
-            <div class="os-keypad-title">Enter Remaining Quantity</div>
+            <div class="os-keypad-title" id="keypad-title">Enter Remaining Quantity</div>
             <div class="os-keypad-display" id="keypad-display">0</div>
             <div class="os-keypad-grid">
                 <button type="button" data-key="1">1</button>
@@ -64,7 +64,7 @@
             </div>
             <div id="load-bin-rows" style="margin-bottom:12px"></div>
             <div style="display:flex;gap:8px;justify-content:space-between">
-                <button type="button" class="os-action-btn release-empty" style="font-size:16px;padding:12px 24px" id="load-bin-clear">CLEAR BIN</button>
+                <button type="button" class="os-action-btn release-empty" style="font-size:16px;padding:12px 24px" id="load-bin-clear" hidden>CLEAR BIN</button>
                 <div style="display:flex;gap:8px">
                     <button type="button" class="os-action-btn close" style="font-size:16px;padding:12px 24px" id="load-bin-cancel">CANCEL</button>
                     <button type="button" class="os-action-btn request" style="font-size:16px;padding:12px 24px" id="load-bin-submit">CONFIRM LOAD</button>

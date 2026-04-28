@@ -69,25 +69,64 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		return fmt.Errorf("load bin: %w", err)
 	}
 
-	// Update edge-side runtime state
+	// The operator's tap on LOAD is the explicit confirmation that the L1
+	// retrieve_empty arrived and has been filled. Confirming the L1 here
+	// transitions it delivered → confirmed, sends a delivery receipt to Core,
+	// and emits the OrderCompleted event that handleLoaderEmptyInCompletion
+	// is wired to — that handler creates the L2 (filled-bin → outbound) move
+	// order and updates the loader's runtime. Pre-fix the L1 stayed at
+	// `delivered` indefinitely (Core would auto-confirm on its side, but
+	// Edge had no continuous status sync) and L2 was created here directly,
+	// duplicating the side-cycle handler's responsibility.
+	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(nodeID, uopCount); l1Confirmed {
+		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
+		return nil
+	}
+
+	// Fallback: no L1 in flight (e.g. operator loaded a bin that was placed
+	// at the loader manually rather than via a retrieve_empty). Set runtime
+	// and create L2 directly so the bin still gets dispatched to outbound.
 	claimID := claim.ID
 	if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, int(uopCount)); err != nil {
 		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
-		}
-
-	// If outbound destination is configured, move the loaded bin there
+	}
 	if claim.OutboundDestination != "" {
 		order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, node.CoreNodeName, claim.OutboundDestination, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
 		if err != nil {
 			log.Printf("manual_swap: move to outbound for node %s: %v", node.Name, err)
 		} else {
 			if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
-		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-		}
+				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+			}
 		}
 	}
 
 	return nil
+}
+
+// confirmLoaderL1OnLoad confirms the inbound retrieve_empty (L1) currently
+// tracked on the loader's runtime, treating the operator's LOAD tap as the
+// receipt acknowledgement. Returns (orderID, true) when an L1 was actually
+// confirmed; (0, false) otherwise (no L1, wrong type, wrong status, or the
+// confirm transition itself failed).
+func (e *Engine) confirmLoaderL1OnLoad(nodeID int64, uopCount int64) (int64, bool) {
+	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
+	if err != nil || runtime == nil || runtime.ActiveOrderID == nil {
+		return 0, false
+	}
+	l1ID := *runtime.ActiveOrderID
+	l1Order, err := e.db.GetOrder(l1ID)
+	if err != nil || l1Order == nil {
+		return 0, false
+	}
+	if !l1Order.RetrieveEmpty || l1Order.Status != protocol.StatusDelivered {
+		return 0, false
+	}
+	if err := e.orderMgr.ConfirmDelivery(l1ID, uopCount); err != nil {
+		log.Printf("bin_ops: confirm L1 %d on load: %v", l1ID, err)
+		return 0, false
+	}
+	return l1ID, true
 }
 
 // ClearBin clears the manifest on the bin at a manual_swap node, resetting it
