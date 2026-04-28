@@ -70,11 +70,6 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') { closeNodeModal(); closeOccupancyModal(); closeAddNodeModal(); closeNgrpModal(); closeLaneModal(); }
 });
 
-// Refresh when bins change (loaded, cleared, moved)
-window.onBinUpdate = function() {
-  location.reload();
-};
-
 document.addEventListener('DOMContentLoaded', function() {
   buildHierarchy();
   initDragAndDrop();

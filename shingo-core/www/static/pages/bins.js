@@ -395,9 +395,49 @@ function bulkAction(action) {
       if (failed.length > 0) {
         alert(failed.length + ' failed: ' + failed.map(function(f) { return '#' + f.id + ': ' + f.error; }).join(', '));
       }
-      location.reload();
+      ids.forEach(refreshBinRow);
+      clearSelection();
     })
     .catch(function(e) { alert('Error: ' + (e.error || e)); });
+}
+
+function refreshBinRow(id) {
+  apiGet('/api/bins/detail?id=' + id)
+    .then(function(resp) {
+      var row = document.querySelector('#bin-table tbody tr[data-id="' + id + '"]');
+      if (!row) return;
+      var b = resp.bin;
+      var contents = b.payload_code
+        ? (b.manifest_confirmed ? (b.uop_remaining > 0 ? 'loaded' : 'depleted') : 'unconfirmed')
+        : 'empty';
+      row.dataset.status = b.status;
+      row.dataset.node = b.node_name || '';
+      row.dataset.payload = b.payload_code || '';
+      row.dataset.uop = b.uop_remaining || 0;
+      row.dataset.locked = b.locked ? '1' : '0';
+      row.dataset.claimed = b.claimed_by ? '1' : '0';
+      row.dataset.confirmed = b.manifest_confirmed ? '1' : '0';
+      row.dataset.contents = contents;
+
+      var labelCell = row.querySelector('td:nth-child(' + (row.querySelector('.bin-cb') ? 2 : 1) + ')');
+      if (labelCell) {
+        labelCell.innerHTML = '<span class="bin-dot bin-dot-' + contents + '"></span>'
+          + '<strong><code>' + escapeHtml(b.label) + '</code></strong>';
+      }
+      var tds = row.querySelectorAll('td');
+      var off = row.querySelector('.bin-cb') ? 1 : 0;
+      // Location, Payload, UOP, Status, Flags
+      tds[off + 2].innerHTML = b.node_name ? escapeHtml(b.node_name) : '<span class="text-muted">-</span>';
+      tds[off + 3].innerHTML = b.payload_code ? '<code>' + escapeHtml(b.payload_code) + '</code>' : '<span class="text-muted">-</span>';
+      tds[off + 4].innerHTML = b.payload_code ? String(b.uop_remaining) : '<span class="text-muted">-</span>';
+      tds[off + 5].innerHTML = '<span class="badge badge-' + escapeHtml(b.status) + '">' + escapeHtml(b.status) + '</span>';
+      var flags = '';
+      if (b.locked) flags += '<span title="Locked by ' + escapeHtml(b.locked_by || '') + '">&#128274;</span>';
+      if (b.claimed_by) flags += '<span title="Claimed by order #' + b.claimed_by + '">&#128230;</span>';
+      if (!b.manifest_confirmed && b.payload_code) flags += '<span title="Manifest unconfirmed">&#9888;</span>';
+      tds[off + 6].innerHTML = flags;
+    })
+    .catch(function(err) { console.error('refreshBinRow', id, err); });
 }
 
 function clearSelection() {
