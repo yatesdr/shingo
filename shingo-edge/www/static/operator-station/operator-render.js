@@ -271,14 +271,17 @@ function renderPayloadBoard(entry) {
             queuePos++;
         }
 
-        // Delivered cards always interactive. Queued/in-transit cards also
-        // interactive when an empty bin sits at the node — operator can load
-        // immediately without waiting for the delivery cycle.
+        // Delivered cards interactive only while the bin is still empty —
+        // once payload_code is set the bin is loaded and any further tap
+        // would re-open Load Bin against an already-loaded carrier (server
+        // refuses but the modal would still appear, confusing the operator).
+        // Queued/in-transit cards interactive when an empty bin sits at the
+        // node so operator can load without waiting for the delivery cycle.
         var hasBinState = !!entry.bin_state;
         var binOccupied = hasBinState && entry.bin_state.occupied;
         var binNoPayload = hasBinState && !entry.bin_state.payload_code;
         var binIsEmpty = binOccupied && binNoPayload;
-        var canLoad = payloadDelivered || (binIsEmpty && isActive);
+        var canLoad = (payloadDelivered && binIsEmpty) || (binIsEmpty && isActive);
         if (canLoad) {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {

@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"shingo/protocol"
+	edgeorders "shingoedge/orders"
 	"shingoedge/store/orders"
 )
 
@@ -28,11 +29,18 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		return fmt.Errorf("manifest is empty")
 	}
 
-	// Check that a bin is actually at this node
+	// Check that a bin is actually at this node and that it's empty.
+	// Loading on top of an existing payload would silently overwrite the
+	// manifest and double-trigger the side-cycle (bin already in flight to
+	// outbound). The card stays clickable in stale views — server has to
+	// refuse rather than rely on the UI gate.
 	if e.coreClient.Available() {
 		bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
 		if len(bins) == 0 || !bins[0].Occupied {
 			return fmt.Errorf("no bin at node %s — request an empty bin first", node.Name)
+		}
+		if bins[0].PayloadCode != "" {
+			return fmt.Errorf("bin at node %s already loaded with %s — wait for outbound move", node.Name, bins[0].PayloadCode)
 		}
 	}
 
@@ -104,22 +112,29 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	return nil
 }
 
-// confirmLoaderL1OnLoad confirms the inbound retrieve_empty (L1) currently
-// tracked on the loader's runtime, treating the operator's LOAD tap as the
-// receipt acknowledgement. Returns (orderID, true) when an L1 was actually
-// confirmed; (0, false) otherwise (no L1, wrong type, wrong status, or the
-// confirm transition itself failed).
+// confirmLoaderL1OnLoad confirms the inbound retrieve_empty (L1) at this
+// loader, treating the operator's LOAD tap as the receipt acknowledgement.
+// Returns (orderID, true) when an L1 was actually confirmed; (0, false)
+// otherwise (no delivered L1 found, or the confirm transition itself failed).
+//
+// Searches active orders for the node rather than trusting
+// runtime.ActiveOrderID. The runtime pointer can drift (a prior fallback
+// path that created an L2 directly will have overwritten it with the move
+// order ID), so a direct query is the only reliable way to find the L1.
 func (e *Engine) confirmLoaderL1OnLoad(nodeID int64, uopCount int64) (int64, bool) {
-	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
-	if err != nil || runtime == nil || runtime.ActiveOrderID == nil {
+	active, err := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, edgeorders.TypeRetrieve)
+	if err != nil {
+		log.Printf("bin_ops: list retrieve orders for node %d: %v", nodeID, err)
 		return 0, false
 	}
-	l1ID := *runtime.ActiveOrderID
-	l1Order, err := e.db.GetOrder(l1ID)
-	if err != nil || l1Order == nil {
-		return 0, false
+	var l1ID int64
+	for _, o := range active {
+		if o.RetrieveEmpty && o.Status == protocol.StatusDelivered {
+			l1ID = o.ID
+			break
+		}
 	}
-	if !l1Order.RetrieveEmpty || l1Order.Status != protocol.StatusDelivered {
+	if l1ID == 0 {
 		return 0, false
 	}
 	if err := e.orderMgr.ConfirmDelivery(l1ID, uopCount); err != nil {
