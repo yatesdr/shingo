@@ -42,6 +42,25 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 		return nil, fmt.Errorf("destination node not found")
 	}
 
+	// Pick an unclaimed bin at the source node so the order carries a
+	// concrete BinID. Without it, applyBinArrivalForOrder silently skips on
+	// completion and bins.node_id never reflects the move (CARRIER-0005
+	// stuck-at-source bug).
+	srcBins, err := e.db.ListBinsByNode(req.FromNodeID)
+	if err != nil {
+		return nil, fmt.Errorf("list bins at source: %w", err)
+	}
+	var srcBinID int64
+	for _, b := range srcBins {
+		if b.ClaimedBy == nil {
+			srcBinID = b.ID
+			break
+		}
+	}
+	if srcBinID == 0 {
+		return nil, fmt.Errorf("no unclaimed bin at source node %s", sourceNode.Name)
+	}
+
 	edgeUUID := req.StationID + "-" + uuid.New().String()[:8]
 
 	order := &orders.Order{
@@ -53,9 +72,13 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 		DeliveryNode: destNode.Name,
 		Priority:     req.Priority,
 		PayloadDesc:  req.Desc,
+		BinID:        &srcBinID,
 	}
 	if err := e.db.CreateOrder(order); err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
+	}
+	if err := e.db.ClaimBin(srcBinID, order.ID); err != nil {
+		return nil, fmt.Errorf("claim bin %d: %w", srcBinID, err)
 	}
 	if err := e.dispatcher.Lifecycle().MarkPending(order, req.Desc); err != nil {
 		e.logFn("engine: mark direct order %d pending: %v", order.ID, err)
@@ -63,6 +86,9 @@ func (e *Engine) CreateDirectOrder(req DirectOrderRequest) (*DirectOrderResult, 
 
 	vendorOrderID, err := e.dispatcher.DispatchDirect(order, sourceNode, destNode)
 	if err != nil {
+		if uerr := e.db.UnclaimBin(srcBinID); uerr != nil {
+			e.logFn("engine: unclaim bin %d after dispatch failure: %v", srcBinID, uerr)
+		}
 		return nil, fmt.Errorf("fleet dispatch failed: %w", err)
 	}
 
