@@ -86,10 +86,10 @@ function renderOverview(data) {
     html += bdField('Claimed By', 'Order #' + b.claimed_by);
   }
   if (b.last_counted_at) {
-    html += bdField('Last Counted', timeAgoStr(b.last_counted_at) + ' by ' + esc(b.last_counted_by));
+    html += bdField('Last Counted', timeAgo(b.last_counted_at) + ' by ' + esc(b.last_counted_by));
   }
-  html += bdField('Created', timeAgoStr(b.created_at));
-  html += bdField('Updated', timeAgoStr(b.updated_at));
+  html += bdField('Created', timeAgo(b.created_at));
+  html += bdField('Updated', timeAgo(b.updated_at));
   html += '</div>';
 
   if (data.current_order) {
@@ -241,7 +241,7 @@ function renderJournal(data) {
     html += '<div class="timeline">';
     data.audit.forEach(function(e) {
       html += '<div class="timeline-item">';
-      html += '<div class="time">' + timeAgoStr(e.created_at) + ' &middot; ' + esc(e.actor) + '</div>';
+      html += '<div class="time">' + timeAgo(e.created_at) + ' &middot; ' + esc(e.actor) + '</div>';
       html += '<div>' + esc(e.action);
       if (e.old_value || e.new_value) html += ': ' + esc(e.old_value) + ' &rarr; ' + esc(e.new_value);
       if (e.detail) html += ' &mdash; ' + esc(e.detail);
@@ -259,7 +259,7 @@ function renderJournal(data) {
     data.recent_orders.forEach(function(o) {
       html += '<tr><td>' + o.id + '</td><td>' + esc(o.order_type || '') + '</td>';
       html += '<td><span class="badge badge-' + esc(o.status) + '">' + esc(o.status) + '</span></td>';
-      html += '<td>' + timeAgoStr(o.created_at) + '</td></tr>';
+      html += '<td>' + timeAgo(o.created_at) + '</td></tr>';
     });
     html += '</tbody></table>';
   }
@@ -557,11 +557,6 @@ function uopBar(remaining, template) {
   var pct = Math.min(100, Math.round(remaining / capacity * 100));
   var cls = pct > 25 ? 'uop-ok' : (pct > 5 ? 'uop-low' : 'uop-empty');
   return ' <span class="uop-bar"><span class="uop-bar-fill ' + cls + '" style="width:' + pct + '%"></span></span>';
-}
-
-function timeAgoStr(ts) {
-  if (!ts) return '-';
-  return timeAgo(ts);
 }
 
 // ===== BIN TYPE MODALS =====

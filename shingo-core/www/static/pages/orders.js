@@ -67,12 +67,6 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape' && _orderModalID) closeOrderModal();
 });
 
-function fmtTime(s) {
-  if (!s) return '-';
-  var d = new Date(s);
-  return d.toLocaleString();
-}
-
 function field(label, val, cls) {
   return '<div class="manifest-field' + (cls ? ' ' + cls : '') + '"><label><strong>' + label + '</strong></label><span>' + val + '</span></div>';
 }
@@ -99,9 +93,9 @@ function renderOrderModal(data) {
   }
   // Timestamps
   h += '<div class="manifest-meta">';
-  h += '<span><strong>Created:</strong> ' + fmtTime(o.created_at) + '</span>';
-  h += '<span><strong>Modified:</strong> ' + fmtTime(o.updated_at) + '</span>';
-  if (o.completed_at) h += '<span><strong>Completed:</strong> ' + fmtTime(o.completed_at) + '</span>';
+  h += '<span><strong>Created:</strong> ' + formatTime(o.created_at) + '</span>';
+  h += '<span><strong>Modified:</strong> ' + formatTime(o.updated_at) + '</span>';
+  if (o.completed_at) h += '<span><strong>Completed:</strong> ' + formatTime(o.completed_at) + '</span>';
   if (o.parent_order_id) h += '<span><strong>Parent:</strong> <a href="#" onclick="event.preventDefault();openOrderModal(' + o.parent_order_id + ')">#' + o.parent_order_id + '</a> (step ' + o.sequence + ')</span>';
   h += '</div></div>';
 
@@ -228,7 +222,7 @@ function renderOrderModal(data) {
     for (var i = 0; i < data.history.length; i++) {
       var ev = data.history[i];
       h += '<li>';
-      h += '<span class="tl-time">' + fmtTime(ev.created_at) + '</span>';
+      h += '<span class="tl-time">' + formatTime(ev.created_at) + '</span>';
       h += '<span class="badge badge-' + ev.status + '" style="font-size:0.7rem">' + escapeHtml(ev.status) + '</span>';
       if (ev.detail) h += '<span class="tl-detail">' + escapeHtml(ev.detail) + '</span>';
       h += '</li>';

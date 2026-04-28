@@ -28,37 +28,34 @@ function hideModal(id) {
   document.getElementById(id).classList.remove('active');
 }
 
-// Generic POST/PUT/DELETE with JSON response
-function apiPost(url, body) {
-  return fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {})
-  }).then(function(r) {
-    if (!r.ok) return r.text().then(function(t) { try { throw JSON.parse(t); } catch(e) { if (typeof e === 'object' && e.error) throw e.error; throw t; } });
+// Generic JSON request. Throws the server error string (or parsed object's
+// `error` field) on non-2xx responses; returns parsed JSON on success.
+function api(method, url, body) {
+  var opts = { method: method };
+  if (body !== undefined && body !== null) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  return fetch(url, opts).then(function(r) {
+    if (!r.ok) return r.text().then(function(t) {
+      try { throw JSON.parse(t); }
+      catch(e) {
+        if (typeof e === 'object' && e.error) throw e.error;
+        throw t;
+      }
+    });
     return r.json();
   });
 }
+function apiPost(url, body) { return api('POST', url, body || {}); }
+function apiPut(url, body)  { return api('PUT',  url, body || {}); }
+function apiDelete(url)     { return api('DELETE', url); }
 
-function apiPut(url, body) {
-  return fetch(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {})
-  }).then(function(r) {
-    if (!r.ok) return r.text().then(function(t) { try { throw JSON.parse(t); } catch(e) { if (typeof e === 'object' && e.error) throw e.error; throw t; } });
-    return r.json();
-  });
-}
-
-function apiDelete(url) {
-  return fetch(url, { method: 'DELETE' }).then(function(r) {
-    if (!r.ok) return r.text().then(function(t) { try { throw JSON.parse(t); } catch(e) { if (typeof e === 'object' && e.error) throw e.error; throw t; } });
-    return r.json();
-  });
-}
-
-// Time formatting
+// --- Time formatting ---
+// timeAgo:        relative ("3m ago"), '-' on falsy.
+// formatTime:     local-time string. opts.precision === 'ms' returns
+//                 HH:MM:SS.mmm for high-resolution log views.
+// formatDuration: human-readable elapsed duration in ms.
 function timeAgo(ts) {
   if (!ts) return '-';
   var d = Date.now() - new Date(ts).getTime();
@@ -66,6 +63,29 @@ function timeAgo(ts) {
   if (d < 3600000) return Math.floor(d / 60000) + 'm ago';
   if (d < 86400000) return Math.floor(d / 3600000) + 'h ago';
   return Math.floor(d / 86400000) + 'd ago';
+}
+
+function formatTime(ts, opts) {
+  if (!ts || ts === '0001-01-01T00:00:00Z') return '-';
+  var d = new Date(ts);
+  if (isNaN(d.getTime())) return ts;
+  if (opts && opts.precision === 'ms') {
+    return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  }
+  return d.toLocaleString();
+}
+
+function formatDuration(ms) {
+  if (!ms || ms <= 0) return '-';
+  if (ms < 1000) return ms + 'ms';
+  var s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  var m = Math.floor(s / 60);
+  s = s % 60;
+  if (m < 60) return m + 'm ' + s + 's';
+  var h = Math.floor(m / 60);
+  m = m % 60;
+  return h + 'h ' + m + 'm';
 }
 
 // Convert UTC timestamps to browser local time
@@ -78,47 +98,6 @@ function convertTimestamps() {
   });
 }
 document.addEventListener('DOMContentLoaded', convertTimestamps);
-
-// Theme toggle (3-state: light -> dark -> system)
-function getStoredTheme() {
-  return localStorage.getItem('theme');
-}
-function getEffectiveTheme() {
-  var stored = getStoredTheme();
-  if (stored === 'light' || stored === 'dark') return stored;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-function applyTheme() {
-  var effective = getEffectiveTheme();
-  document.documentElement.dataset.theme = effective;
-  var btn = document.querySelector('.theme-toggle');
-  if (!btn) return;
-  var stored = getStoredTheme();
-  if (stored === 'dark') {
-    btn.textContent = '\u263D'; // moon
-  } else if (stored === 'light') {
-    btn.textContent = '\u2600'; // sun
-  } else {
-    btn.textContent = '\u25D0'; // half-circle (system)
-  }
-}
-function toggleTheme() {
-  var stored = getStoredTheme();
-  if (stored === 'light') {
-    localStorage.setItem('theme', 'dark');
-  } else if (stored === 'dark') {
-    localStorage.removeItem('theme');
-  } else {
-    localStorage.setItem('theme', 'light');
-  }
-  applyTheme();
-}
-document.addEventListener('DOMContentLoaded', function() {
-  applyTheme();
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
-    if (!getStoredTheme()) applyTheme();
-  });
-});
 
 // SSE connection for live updates
 (function() {

@@ -32,14 +32,6 @@ function formatRoute(order) {
   return escapeHtml(order.source_node || '-') + ' &rarr; ' + escapeHtml(order.delivery_node || '-');
 }
 
-function fmtTime(t) {
-  if (!t || t === '0001-01-01T00:00:00Z') return '-';
-  try {
-    var d = new Date(t);
-    return d.toLocaleString();
-  } catch(e) { return t; }
-}
-
 // --- Kafka order field visibility ---
 // move:     source, delivery, payload
 // retrieve: delivery, payload (no source)
@@ -123,7 +115,7 @@ function renderOrdersTable(orders, containerId, isKafka) {
     html += '<td>' + statusBadge(o.vendor_state) + '</td>';
     html += '<td>' + escapeHtml(o.robot_id) + '</td>';
     html += '<td style="font-size:.85rem;">' + formatRoute(o) + '</td>';
-    html += '<td style="font-size:.8rem;">' + fmtTime(o.created_at) + '</td>';
+    html += '<td style="font-size:.8rem;">' + formatTime(o.created_at) + '</td>';
     if (authenticated) {
       html += '<td class="to-actions">';
       html += '<button class="to-btn-sm" onclick="viewHistory(' + o.id + ')">History</button>';
@@ -163,7 +155,7 @@ function renderCommandsTable(cmds) {
     html += '<td>' + escapeHtml(c.Location) + '</td>';
     html += '<td style="font-size:.8rem;">' + escapeHtml(c.VendorOrderID) + '</td>';
     html += '<td>' + statusBadge(c.VendorState) + '</td>';
-    html += '<td style="font-size:.8rem;">' + fmtTime(c.CreatedAt) + '</td>';
+    html += '<td style="font-size:.8rem;">' + formatTime(c.CreatedAt) + '</td>';
     if (authenticated) {
       html += '<td class="to-actions">';
       if (!c.CompletedAt) {
@@ -469,7 +461,7 @@ async function viewHistory(orderId) {
       html += '<table class="table"><thead><tr><th>Status</th><th>Detail</th><th>Time</th></tr></thead><tbody>';
       for (var i = 0; i < data.history.length; i++) {
         var h = data.history[i];
-        html += '<tr><td>' + statusBadge(h.status) + '</td><td style="font-size:.85rem;">' + escapeHtml(h.detail) + '</td><td style="font-size:.8rem;">' + fmtTime(h.created_at) + '</td></tr>';
+        html += '<tr><td>' + statusBadge(h.status) + '</td><td style="font-size:.85rem;">' + escapeHtml(h.detail) + '</td><td style="font-size:.8rem;">' + formatTime(h.created_at) + '</td></tr>';
       }
       html += '</tbody></table>';
     } else {
@@ -493,8 +485,9 @@ function showToast(msg, type) {
 }
 
 // --- SSE ---
-var es = new EventSource('/events');
-es.addEventListener('order-update', function(e) {
+// Routes through the shared EventSource opened in app.js. Setting
+// window.onOrderUpdate replaces app.js's no-op default handler.
+window.onOrderUpdate = function(e) {
   refreshKafkaOrders();
   refreshDirectOrders();
   try {
@@ -503,7 +496,7 @@ es.addEventListener('order-update', function(e) {
       showToast('Order #' + (data.order_id || '?') + ' failed: ' + (data.detail || 'unknown error'), 'error');
     }
   } catch(ex) {}
-});
+};
 
 // --- Init ---
 document.addEventListener('DOMContentLoaded', function() {

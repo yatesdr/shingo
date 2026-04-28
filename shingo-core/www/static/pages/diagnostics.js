@@ -101,12 +101,6 @@
   var recoveryLoaded = false;
   var fireLoaded = false;
 
-  function formatCMSTime(ts) {
-    var d = new Date(ts);
-    if (isNaN(d.getTime())) return ts;
-    return d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
-  }
-
   function makeCMSRow(t) {
     var tr = document.createElement('tr');
     var isPos = t.delta >= 0;
@@ -116,7 +110,7 @@
     var qtyClass = isPos ? 'cms-qty-pos' : 'cms-qty-neg';
     var deltaLabel = isPos ? '+' + t.delta : String(t.delta);
     tr.innerHTML =
-      '<td>' + formatCMSTime(t.created_at) + '</td>' +
+      '<td>' + formatTime(t.created_at, { precision: 'ms' }) + '</td>' +
       '<td>' + escapeHtml(t.node_name || '') + '</td>' +
       '<td>' + escapeHtml(t.txn_type || '') + '</td>' +
       '<td>' + escapeHtml(t.cat_id || '') + '</td>' +

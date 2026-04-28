@@ -14,6 +14,8 @@
     <script src="/static/js/htmx.min.js"></script>
     <script src="/static/js/htmx-sse.js"></script>
     <script src="/static/js/shingoedge.js"></script>
+    <script src="/static/js/theme.js"></script>
+    <script src="/static/js/anomaly-handlers.js"></script>
 </head>
 <body>
     <nav class="navbar">
@@ -79,55 +81,9 @@
             {{else}}
             <a href="/login" class="nav-auth-link">Login</a>
             {{end}}
-            <button class="theme-toggle" onclick="ShingoEdge.toggleTheme()" title="Toggle theme"></button>
+            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"></button>
         </div>
       </div>
     </nav>
     <main class="container">
-
-<script>
-function toggleAnomalyPopover() {
-    var pop = document.getElementById('anomaly-popover');
-    if (pop) pop.style.display = pop.style.display === 'none' ? 'block' : 'none';
-}
-
-// Close popover on outside click
-document.addEventListener('click', function(e) {
-    var wrap = document.querySelector('.anomaly-bell-wrap');
-    var pop = document.getElementById('anomaly-popover');
-    if (wrap && pop && !wrap.contains(e.target)) {
-        pop.style.display = 'none';
-    }
-});
-
-async function confirmAnomaly(id) {
-    try {
-        await ShingoEdge.api.post('/api/confirm-anomaly/' + id, {});
-        var el = document.getElementById('anomaly-' + id);
-        if (el) el.remove();
-        updateAnomalyBadge();
-        ShingoEdge.toast('Anomaly confirmed', 'success');
-    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
-}
-
-async function dismissAnomaly(id) {
-    try {
-        await ShingoEdge.api.post('/api/dismiss-anomaly/' + id, {});
-        var el = document.getElementById('anomaly-' + id);
-        if (el) el.remove();
-        updateAnomalyBadge();
-        ShingoEdge.toast('Anomaly dismissed', 'success');
-    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
-}
-
-function updateAnomalyBadge() {
-    var items = document.querySelectorAll('.anomaly-item');
-    var badge = document.getElementById('anomaly-count');
-    if (badge) badge.textContent = items.length;
-    if (items.length === 0) {
-        var pop = document.getElementById('anomaly-popover');
-        if (pop) pop.style.display = 'none';
-    }
-}
-</script>
 {{end}}

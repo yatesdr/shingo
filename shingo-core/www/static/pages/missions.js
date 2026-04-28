@@ -3,19 +3,6 @@
   var currentLimit = 50;
   var activeState = '';
 
-  function formatDuration(ms) {
-    if (!ms || ms <= 0) return '-';
-    if (ms < 1000) return ms + 'ms';
-    var s = Math.floor(ms / 1000);
-    if (s < 60) return s + 's';
-    var m = Math.floor(s / 60);
-    s = s % 60;
-    if (m < 60) return m + 'm ' + s + 's';
-    var h = Math.floor(m / 60);
-    m = m % 60;
-    return h + 'h ' + m + 'm';
-  }
-
   function stateLabel(state) {
     if (!state) return '-';
     var map = {
@@ -29,17 +16,6 @@
   function stateBadgeClass(state) {
     var label = stateLabel(state);
     return 'badge-' + label;
-  }
-
-  function timeAgo(ts) {
-    if (!ts) return '-';
-    var d = new Date(ts);
-    var now = new Date();
-    var diff = Math.floor((now - d) / 1000);
-    if (diff < 60) return diff + 's ago';
-    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
-    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
-    return Math.floor(diff/86400) + 'd ago';
   }
 
   function formatAbsTime(ts) {

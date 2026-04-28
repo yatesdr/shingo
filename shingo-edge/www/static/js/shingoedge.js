@@ -228,57 +228,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 3000);
     };
 
-    // --- Theme management ---
-    // Stored: 'light', 'dark', or null (system)
-    // Cycle: light -> dark -> system -> light
-    function getStoredTheme() {
-        return localStorage.getItem('theme');
-    }
-
-    function getEffectiveTheme() {
-        var stored = getStoredTheme();
-        if (stored === 'light' || stored === 'dark') return stored;
-        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    }
-
-    function applyTheme() {
-        var effective = getEffectiveTheme();
-        document.documentElement.dataset.theme = effective;
-        var btn = document.querySelector('.theme-toggle');
-        if (!btn) return;
-        var stored = getStoredTheme();
-        if (stored === 'dark') {
-            btn.textContent = '\u263D';
-            btn.title = 'Theme: dark (click for system)';
-        } else if (!stored) {
-            btn.textContent = '\u25D0';
-            btn.title = 'Theme: system (click for light)';
-        } else {
-            btn.textContent = '\u2600';
-            btn.title = 'Theme: light (click for dark)';
-        }
-    }
-
-    ShingoEdge.toggleTheme = function() {
-        var stored = getStoredTheme();
-        if (stored === 'light') {
-            localStorage.setItem('theme', 'dark');
-        } else if (stored === 'dark') {
-            localStorage.removeItem('theme');
-        } else {
-            localStorage.setItem('theme', 'light');
-        }
-        applyTheme();
-    };
-
-    // Auto-init theme
-    document.addEventListener('DOMContentLoaded', function() {
-        applyTheme();
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
-            if (!getStoredTheme()) applyTheme();
-        });
-    });
-
     // --- TagSelect: type-to-filter PLC tag picker ---
     // Usage: ShingoEdge.tagSelect(inputId, plcSelectId)
     // When the PLC <select> changes, fetches tags from /api/plcs/all-tags/{plc}
