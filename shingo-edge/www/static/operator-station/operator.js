@@ -15,7 +15,7 @@ import {
     openModal, closeModal, renderModal, setModalLoadView,
 } from './operator-modal.js';
 import { openLoadBin, setLoadView } from './operator-load-bin.js';
-import { setReleaseRefs } from './operator-release.js';
+import { setReleaseRefs, isReleasePromptOpen } from './operator-release.js';
 
 let refreshTimer = null;
 
@@ -43,7 +43,13 @@ function renderAll() {
     if (sid !== null) {
         const entry = findNodeByID(sid);
         if (entry) {
-            renderModal(entry);
+            // Skip the modal repaint while the release prompt is up — its
+            // step-1/step-2 markup lives in the same node-modal-content
+            // container, so renderModal would clobber the operator's
+            // in-progress selection on every SSE refresh.
+            if (!isReleasePromptOpen()) {
+                renderModal(entry);
+            }
         } else {
             closeModal();
         }

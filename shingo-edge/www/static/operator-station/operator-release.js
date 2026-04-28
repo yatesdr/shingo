@@ -15,6 +15,10 @@ export function setReleaseRefs(refs) {
     loadViewRef = refs.loadView;
 }
 
+export function isReleasePromptOpen() {
+    return releasePromptState !== null;
+}
+
 function allowedPayloadsForEntry(entry) {
     if (!entry) return [];
     const claim = entry.active_claim;
@@ -71,29 +75,16 @@ function renderReleasePromptStep1() {
     }
     html += '</div>';
 
-    // remaining_uop != null guard covers both absent field and explicit
-    // JSON-null. null != null is false so both fall through to 0.
-    const rt = state.entry && state.entry.runtime;
-    const claim = state.entry && (state.entry.active_claim || state.entry.target_claim);
-    const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
-    const capacityUOP = claim && claim.uop_capacity ? claim.uop_capacity : 0;
-    const canSendPartial = remainingUOP > 0;
-
     html += '<div class="os-modal-actions">';
     html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
-    html += '<button type="button" class="os-action-btn empty-tools" data-action="release-submit">NOTHING PULLED</button>';
-    html += '<button type="button" class="os-action-btn"' +
-        (canSendPartial ? '' : ' disabled') +
-        ' data-action="release-submit-partial" title="Return the partial bin to the supermarket without capturing leftovers as lineside inventory. Count is captured at this moment — any further consumption before the robot picks the bin up is not tracked.">' +
-        'SEND PARTIAL BACK' +
-        (capacityUOP > 0
-            ? ' (' + remainingUOP + ' of ' + capacityUOP + ' — at this moment)'
-            : ' (' + remainingUOP + ' — at this moment)') +
-        '</button>';
+    html += '<button type="button" class="os-action-btn release-empty"' +
+        ' data-action="release-submit"' +
+        ' title="No parts were pulled to lineside. If the bin still has UOP left it returns to the supermarket as-is; if the bin is empty the manifest is cleared.">' +
+        'NOTHING PULLED</button>';
     const hasPicks = Object.keys(state.selected).length > 0;
     html += '<button type="button" class="os-action-btn request"' +
         (hasPicks ? '' : ' disabled') +
-        ' data-action="release-submit-parts">CONFIRM & RELEASE</button>';
+        ' data-action="release-submit-parts">PULL PARTS LINESIDE, RELEASE</button>';
     html += '</div>';
 
     nodeModalContent.innerHTML = html;
@@ -110,6 +101,17 @@ function renderReleasePromptStep2(code) {
     const softCap = linesideSoftThresholdForEntry(state.entry);
     const warnAt = softCap > 0 ? softCap * 2 : 0;
 
+    // Default to the bin's remaining_uop — most of the time the operator
+    // pulled all that was in the bin to lineside. They can dial it down for
+    // partial pulls. Falls through to '' (empty) when there's nothing
+    // meaningful to suggest.
+    const rt = state.entry && state.entry.runtime;
+    const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
+    let defaultQty = state.selected[code];
+    if (defaultQty == null) {
+        defaultQty = remainingUOP > 0 ? remainingUOP : '';
+    }
+
     let html = '';
     html += '<div class="os-modal-header">';
     html += '<div class="os-modal-node-name">Lineside qty: ' + esc(code) + '</div>';
@@ -118,7 +120,7 @@ function renderReleasePromptStep2(code) {
 
     html += '<div class="os-release-prompt">';
     html += '<input type="number" id="os-release-qty" min="1" step="1" value="' +
-        (state.selected[code] || '') + '" ' +
+        defaultQty + '" ' +
         'style="width:100%;padding:14px;font-size:28px;text-align:center;border-radius:6px;' +
         'border:1px solid var(--os-gray,#444);background:#111;color:#fff;">';
     html += '<div id="os-release-softcap-warn" class="os-release-softcap-warn" ' +
@@ -192,15 +194,20 @@ async function handleReleasePromptAction(evt) {
         return;
     }
 
-    //   release-submit         "NOTHING PULLED"        → capture_lineside, empty buckets
-    //   release-submit-parts   "CONFIRM & RELEASE"     → capture_lineside, picked buckets
-    //   release-submit-partial "SEND PARTIAL BACK"     → send_partial_back, no buckets
-    if (action === 'release-submit' || action === 'release-submit-parts' || action === 'release-submit-partial') {
+    //   release-submit       "NOTHING PULLED"               → send_partial_back when the bin
+    //                                                         still has UOP (preserve manifest);
+    //                                                         capture_lineside empty when the
+    //                                                         bin is already empty (operator
+    //                                                         confirms zero, manifest cleared).
+    //   release-submit-parts "PULL PARTS LINESIDE, RELEASE" → capture_lineside, picked buckets.
+    if (action === 'release-submit' || action === 'release-submit-parts') {
         const url = state.url;
         const view = getView();
         const calledBy = (view && view.station && view.station.name) ? view.station.name : 'operator';
+        const rt = state.entry && state.entry.runtime;
+        const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
         let body;
-        if (action === 'release-submit-partial') {
+        if (action === 'release-submit' && remainingUOP > 0) {
             body = {
                 disposition: 'send_partial_back',
                 called_by: calledBy,
