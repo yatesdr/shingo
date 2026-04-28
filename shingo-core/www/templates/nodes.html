@@ -251,7 +251,9 @@
 </div>
 
 <div id="page-data" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}" data-bin-types='{{.BinTypesJSON}}' data-edges='{{.EdgesJSON}}'></div>
-<script src="/static/pages/nodes.js"></script>
+<script src="/static/pages/nodes-overview.js"></script>
+<script src="/static/pages/nodes-detail.js"></script>
+<script src="/static/pages/nodes-supermarket.js"></script>
 
 <!-- Node Occupancy Modal -->
 <div id="occupancy-modal" class="modal-overlay" onclick="if(event.target===this)closeOccupancyModal()">
