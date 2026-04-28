@@ -3,8 +3,7 @@ var isAuth = document.getElementById('page-data').dataset.authenticated === 'tru
 function syncOrGenerate(e) {
   if (e.shiftKey) {
     if (!confirm('Delete all TEST- nodes?')) return;
-    fetch('/api/nodes/delete-test', {method:'POST'})
-      .then(function(r) { return r.json(); })
+    apiPost('/api/nodes/delete-test')
       .then(function(data) {
         if (data.error) alert(data.error);
         else location.reload();
@@ -12,8 +11,7 @@ function syncOrGenerate(e) {
       .catch(function(err) { alert('Error: ' + err); });
   } else if (e.ctrlKey || e.metaKey) {
     if (!confirm('Generate test nodes for debugging?\n\nThis creates ~25 TEST- prefixed nodes.')) return;
-    fetch('/api/nodes/generate-test', {method:'POST'})
-      .then(function(r) { return r.json(); })
+    apiPost('/api/nodes/generate-test')
       .then(function(data) {
         if (data.error) alert(data.error);
         else location.reload();
@@ -138,8 +136,7 @@ function loadNodeDetail(nodeID, isSynthetic) {
 
   if (assocDiv) assocDiv.style.display = 'none';
 
-  fetch('/api/nodes/detail?id=' + nodeID)
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  apiGet('/api/nodes/detail?id=' + nodeID)
     .then(function(data) {
       var btMode = data.bin_type_mode || '';
       var stMode = data.station_mode || '';
@@ -179,7 +176,7 @@ function loadNodeDetail(nodeID, isSynthetic) {
         }
       });
     })
-    .catch(function() {});
+    .catch(function(err) { console.error('loadNodeDetail', err); });
 }
 
 /* --- Chip Picker --- */
@@ -312,16 +309,10 @@ function saveAlgorithmProperties() {
   if (!nodeID) return;
   var retrieveAlgo = document.getElementById('nf-retrieve-algo').value;
   var storeAlgo = document.getElementById('nf-store-algo').value;
-  fetch('/api/nodes/properties/set', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({node_id: nodeID, key: 'retrieve_algorithm', value: retrieveAlgo})
-  });
-  fetch('/api/nodes/properties/set', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({node_id: nodeID, key: 'store_algorithm', value: storeAlgo})
-  });
+  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'retrieve_algorithm', value: retrieveAlgo})
+    .catch(function(err) { console.error('saveAlgorithmProperties retrieve', err); });
+  apiPost('/api/nodes/properties/set', {node_id: nodeID, key: 'store_algorithm', value: storeAlgo})
+    .catch(function(err) { console.error('saveAlgorithmProperties store', err); });
 }
 
 function deleteNode() {
@@ -352,8 +343,7 @@ function loadInventory(nodeID) {
   var list = document.getElementById('inv-list');
   var countEl = document.getElementById('inv-count');
   list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Loading...</span>';
-  fetch('/api/nodes/inventory?id=' + nodeID)
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  apiGet('/api/nodes/inventory?id=' + nodeID)
     .then(function(items) {
       if (!items || items.length === 0) {
         countEl.textContent = '0';
@@ -380,7 +370,8 @@ function loadInventory(nodeID) {
       html += '</tbody></table>';
       list.innerHTML = html;
     })
-    .catch(function() {
+    .catch(function(err) {
+      console.error('loadInventory', err);
       list.innerHTML = '<span class="text-muted" style="font-size:0.8rem">Error loading</span>';
     });
 }
@@ -394,8 +385,7 @@ function expandPayloadManifest(payloadID) {
   sec.style.display = '';
   var tbody = document.getElementById('inv-manifest-rows');
   tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Loading...</td></tr>';
-  fetch('/api/payloads/manifest?id=' + payloadID)
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  apiGet('/api/payloads/manifest?id=' + payloadID)
     .then(function(items) {
       tbody.innerHTML = '';
       originalManifest = [];
@@ -415,7 +405,10 @@ function expandPayloadManifest(payloadID) {
         });
       }
     })
-    .catch(function() { tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Error</td></tr>'; });
+    .catch(function(err) {
+      console.error('expandPayloadManifest', err);
+      tbody.innerHTML = '<tr><td colspan="3" class="text-muted">Error</td></tr>';
+    });
 }
 
 function makeEditable(span) {
@@ -523,17 +516,12 @@ function handleNodeSave(e) {
   if (!items) { alert('All rows must have a CATID'); return false; }
   var reason = prompt('Reason for manifest correction:');
   if (!reason) return false;
-  fetch('/api/corrections/batch', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({payload_id: expandedPayloadID, node_id: currentNodeID, reason: reason, items: items})
-  })
-  .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-  .then(function(data) {
-    if (data.error) { alert(data.error); return; }
-    document.getElementById('node-form').submit();
-  })
-  .catch(function(err) { alert('Error saving manifest: ' + err); });
+  apiPost('/api/corrections/batch', {payload_id: expandedPayloadID, node_id: currentNodeID, reason: reason, items: items})
+    .then(function(data) {
+      if (data.error) { alert(data.error); return; }
+      document.getElementById('node-form').submit();
+    })
+    .catch(function(err) { alert('Error saving manifest: ' + err); });
   return false;
 }
 
@@ -550,8 +538,7 @@ document.addEventListener('keydown', function(e) {
 function checkOccupancy() {
   document.getElementById('occupancy-modal').classList.add('active');
   document.getElementById('occupancy-modal-content').innerHTML = '<span class="text-muted">Loading...</span>';
-  fetch('/api/nodes/occupancy')
-    .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  apiGet('/api/nodes/occupancy')
     .then(function(items) {
       if (!items || items.length === 0) {
         document.getElementById('occupancy-modal-content').innerHTML = '<span class="text-muted">No locations found</span>';
@@ -569,7 +556,8 @@ function checkOccupancy() {
       html += '</tbody></table>';
       document.getElementById('occupancy-modal-content').innerHTML = html;
     })
-    .catch(function() {
+    .catch(function(err) {
+      console.error('checkOccupancy', err);
       document.getElementById('occupancy-modal-content').innerHTML = '<span class="text-muted">Error loading occupancy</span>';
     });
 }
@@ -592,18 +580,13 @@ function createNodeGroup() {
   if (!name) { document.getElementById('ngrp-name').focus(); return; }
   var result = document.getElementById('ngrp-result');
   result.textContent = 'Creating...';
-  fetch('/api/nodegroup/create', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ name: name })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + escapeHtml(data.error) + '</span>'; return; }
-    result.innerHTML = '<span style="color:var(--success)">Created!</span>';
-    setTimeout(function() { location.reload(); }, 800);
-  })
-  .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
+  apiPost('/api/nodegroup/create', { name: name })
+    .then(function(data) {
+      if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + escapeHtml(data.error) + '</span>'; return; }
+      result.innerHTML = '<span style="color:var(--success)">Created!</span>';
+      setTimeout(function() { location.reload(); }, 800);
+    })
+    .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
 }
 
 /* --- Lane modal --- */
@@ -620,21 +603,16 @@ function submitAddLane() {
   if (!name) { document.getElementById('lane-name').focus(); return; }
   var result = document.getElementById('lane-result');
   result.textContent = 'Creating...';
-  fetch('/api/nodegroup/add-lane', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      group_id: parseInt(document.getElementById('lane-group-id').value),
-      name: name
+  apiPost('/api/nodegroup/add-lane', {
+    group_id: parseInt(document.getElementById('lane-group-id').value),
+    name: name
+  })
+    .then(function(data) {
+      if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + escapeHtml(data.error) + '</span>'; return; }
+      result.innerHTML = '<span style="color:var(--success)">Created!</span>';
+      setTimeout(function() { location.reload(); }, 800);
     })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(data) {
-    if (data.error) { result.innerHTML = '<span style="color:var(--danger)">' + escapeHtml(data.error) + '</span>'; return; }
-    result.innerHTML = '<span style="color:var(--success)">Created!</span>';
-    setTimeout(function() { location.reload(); }, 800);
-  })
-  .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
+    .catch(function(e) { result.innerHTML = '<span style="color:var(--danger)">Error: ' + e + '</span>'; });
 }
 
 /* --- Add Node modal --- */
@@ -672,8 +650,7 @@ function closeAddNodeModal() {
 function loadGroupLayout(nodeID) {
   var list = document.getElementById('children-list');
   list.innerHTML = '<span class="text-muted">Loading layout...</span>';
-  fetch('/api/nodegroup/layout?id=' + nodeID)
-    .then(function(r) { return r.json(); })
+  apiGet('/api/nodegroup/layout?id=' + nodeID)
     .then(function(data) {
       var lanes = data.lanes || [];
       var directNodes = data.direct_nodes || [];
@@ -716,7 +693,10 @@ function loadGroupLayout(nodeID) {
       html += '</div>';
       list.innerHTML = html;
     })
-    .catch(function() { list.innerHTML = '<span class="text-muted">Error loading group layout</span>'; });
+    .catch(function(err) {
+      console.error('loadGroupLayout', err);
+      list.innerHTML = '<span class="text-muted">Error loading group layout</span>';
+    });
 }
 
 /* --- Drag & Drop --- */
@@ -845,12 +825,7 @@ function onDropGrid(e) {
 }
 
 function reparentNode(nodeID, parentID, position, container, tile, insertIdx) {
-  fetch('/api/nodes/reparent', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ node_id: nodeID, parent_id: parentID, position: position })
-  })
-  .then(function(r) { return r.json(); })
+  apiPost('/api/nodes/reparent', { node_id: nodeID, parent_id: parentID, position: position })
   .then(function(data) {
     if (data.error) { alert('Reparent failed: ' + data.error); return; }
     if (!tile) return;
@@ -889,12 +864,7 @@ function reparentNode(nodeID, parentID, position, container, tile, insertIdx) {
 }
 
 function reorderLane(laneID, orderedIDs, container, draggedTile, insertIdx) {
-  fetch('/api/nodegroup/reorder-lane', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ lane_id: laneID, ordered_ids: orderedIDs })
-  })
-  .then(function(r) { return r.json(); })
+  apiPost('/api/nodegroup/reorder-lane', { lane_id: laneID, ordered_ids: orderedIDs })
   .then(function(data) {
     if (data.error) { alert('Reorder failed: ' + data.error); return; }
     orderedIDs.forEach(function(id) {

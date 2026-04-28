@@ -27,7 +27,7 @@ function formatRoute(order) {
         }
         if (nodes.length > 0) return nodes.join(' &rarr; ');
       }
-    } catch(e) {}
+    } catch(e) { console.error('orderRoute steps parse', e); }
   }
   return escapeHtml(order.source_node || '-') + ' &rarr; ' + escapeHtml(order.delivery_node || '-');
 }
@@ -495,7 +495,7 @@ window.onOrderUpdate = function(e) {
     if (data.type === 'failed') {
       showToast('Order #' + (data.order_id || '?') + ' failed: ' + (data.detail || 'unknown error'), 'error');
     }
-  } catch(ex) {}
+  } catch(ex) { console.error('onOrderUpdate', ex); }
 };
 
 // --- Init ---

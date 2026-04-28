@@ -63,7 +63,7 @@
           }
           if (nodes.length > 0) return nodes.join(' &rarr; ');
         }
-      } catch(e) {}
+      } catch(e) { console.error('orderRoute steps parse', e); }
     }
     // Fallback: source → delivery
     return (order.source_node || '?') + ' &rarr; ' + (order.delivery_node || '?');
@@ -204,7 +204,7 @@
             }
             html += '</div>';
           }
-        } catch(e) {}
+        } catch(e) { console.error('renderEvent blocks parse', e); }
       }
 
       html += '</div></div>';
@@ -275,7 +275,7 @@
       if (String(data.order_id) === String(orderID)) {
         loadMission(); // Reload full data on any event for this mission
       }
-    } catch(err) {}
+    } catch(err) { console.error('onMissionEvent', err); }
   };
 
   loadMission();

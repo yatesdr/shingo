@@ -31,10 +31,8 @@ function filterBins() {
 // ===== DETAIL MODAL =====
 function openBinDetail(id) {
   currentBinId = id;
-  fetch('/api/bins/detail?id=' + id)
-    .then(function(r) { return r.json(); })
+  apiGet('/api/bins/detail?id=' + id)
     .then(function(resp) {
-      if (resp.error) { alert(resp.error); return; }
       currentBinData = resp;
       document.getElementById('bd-title').textContent = resp.bin.label;
       document.getElementById('bd-subtitle').textContent =
@@ -46,7 +44,10 @@ function openBinDetail(id) {
       switchTab('overview');
       showModal('bin-detail-modal');
     })
-    .catch(function(e) { alert('Error loading bin: ' + e); });
+    .catch(function(e) {
+      console.error('openBinDetail', id, e);
+      alert('Error loading bin: ' + ((typeof e === 'string' && e) || (e && e.error) || 'unknown'));
+    });
 }
 
 function closeBinDetail() {
@@ -468,7 +469,7 @@ function ccConfirm() {
   var bin = ccState.bins[ccState.index];
   var actor = document.getElementById('cc-actor').value.trim() || 'cycle_count';
   apiPost('/api/bins/action', { id: bin.id, action: 'record_count', params: { actual_uop: bin.uop, actor: actor } })
-    .catch(function() {});
+    .catch(function(e) { console.error('ccConfirm record_count', bin.id, e); });
   ccState.results.push({ id: bin.id, label: bin.label, result: 'match', expected: bin.uop, actual: bin.uop });
   ccAdvance();
 }
@@ -478,7 +479,7 @@ function ccDiscrepancy() {
   var actual = parseInt(document.getElementById('cc-actual').value) || 0;
   var actor = document.getElementById('cc-actor').value.trim() || 'cycle_count';
   apiPost('/api/bins/action', { id: bin.id, action: 'record_count', params: { actual_uop: actual, actor: actor } })
-    .catch(function() {});
+    .catch(function(e) { console.error('ccDiscrepancy record_count', bin.id, e); });
   ccState.results.push({ id: bin.id, label: bin.label, result: 'discrepancy', expected: bin.uop, actual: actual });
   ccAdvance();
 }
@@ -491,7 +492,8 @@ function ccSkip() {
 
 function ccFlag() {
   var bin = ccState.bins[ccState.index];
-  apiPost('/api/bins/action', { id: bin.id, action: 'flag' }).catch(function() {});
+  apiPost('/api/bins/action', { id: bin.id, action: 'flag' })
+    .catch(function(e) { console.error('ccFlag', bin.id, e); });
   ccState.results.push({ id: bin.id, label: bin.label, result: 'flagged' });
   ccAdvance();
 }

@@ -1,4 +1,15 @@
 // --- Shared utilities ---
+//
+// HTML construction tools available across pages:
+//   h`...`            — tagged-template literal. Interpolated values are
+//                       HTML-escaped automatically; arrays are joined.
+//                       Use for innerHTML output sites; the safety is
+//                       structural, not discipline-based.
+//   el(tag, props,    — DOM-node builder. Use when the result needs
+//      children)        addEventListener wired during construction.
+//   <template>+clone  — for static skeletons reused per render.
+//   escapeHtml(s)     — last resort for legacy string concatenation.
+//                       Prefer h`` for new code.
 
 // Debounce: delays execution until `ms` milliseconds after the last call.
 // Used to prevent SSE event bursts from saturating the browser main thread.
@@ -14,10 +25,65 @@ function debounce(fn, ms) {
 
 // HTML escape (replaces per-page esc/escapeHtml)
 function escapeHtml(s) {
-  if (!s) return '';
+  if (s === null || s === undefined || s === '') return '';
   var d = document.createElement('div');
   d.appendChild(document.createTextNode(s));
   return d.innerHTML;
+}
+
+// Tagged-template HTML builder. Static parts pass through; interpolations
+// are escaped, arrays joined. Returns a string suitable for innerHTML.
+//
+//   container.innerHTML = h`<div class="x">${name}</div>${rows.map(r => h`<p>${r}</p>`)}`;
+function h(strings) {
+  var out = strings[0];
+  for (var i = 1; i < arguments.length; i++) {
+    var v = arguments[i];
+    if (Array.isArray(v)) {
+      out += v.join('');
+    } else if (v === null || v === undefined || v === false) {
+      // skip — lets `${cond && h`...`}` work
+    } else if (typeof v === 'object' && v.__html === true) {
+      out += v.value; // pre-built safe HTML opt-out
+    } else {
+      out += escapeHtml(String(v));
+    }
+    out += strings[i];
+  }
+  return out;
+}
+
+// Element builder. props: attributes (className, dataset, id, ...) and
+// event listeners (onclick, onchange) by camelCase name. children:
+// string, Node, or array of either.
+function el(tag, props, children) {
+  var node = document.createElement(tag);
+  if (props) {
+    for (var key in props) {
+      if (!Object.prototype.hasOwnProperty.call(props, key)) continue;
+      var val = props[key];
+      if (key === 'className') {
+        node.className = val;
+      } else if (key === 'dataset') {
+        for (var dk in val) node.dataset[dk] = val[dk];
+      } else if (key.indexOf('on') === 0 && typeof val === 'function') {
+        node.addEventListener(key.substring(2).toLowerCase(), val);
+      } else if (key === 'style' && typeof val === 'object') {
+        for (var sk in val) node.style[sk] = val[sk];
+      } else if (val !== null && val !== undefined && val !== false) {
+        node.setAttribute(key, val);
+      }
+    }
+  }
+  if (children !== undefined && children !== null) {
+    var list = Array.isArray(children) ? children : [children];
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (c === null || c === undefined || c === false) continue;
+      node.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+    }
+  }
+  return node;
 }
 
 // Generic modal show/hide
@@ -47,6 +113,7 @@ function api(method, url, body) {
     return r.json();
   });
 }
+function apiGet(url)        { return api('GET', url); }
 function apiPost(url, body) { return api('POST', url, body || {}); }
 function apiPut(url, body)  { return api('PUT',  url, body || {}); }
 function apiDelete(url)     { return api('DELETE', url); }

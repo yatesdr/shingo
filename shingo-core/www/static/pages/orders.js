@@ -1,14 +1,14 @@
 function orderControlPost(url, body) {
   var msg = document.getElementById('order-status-msg');
   if (msg) msg.textContent = 'Sending...';
-  fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
-    .then(function(r) { return r.json().then(function(d) { return {ok:r.ok, data:d}; }); })
-    .then(function(r) {
-      if (msg) msg.textContent = r.ok ? 'OK - reloading...' : (r.data.error || 'Error');
-      if (r.ok) setTimeout(function() { location.reload(); }, 800);
+  apiPost(url, body)
+    .then(function() {
+      if (msg) msg.textContent = 'OK - reloading...';
+      setTimeout(function() { location.reload(); }, 800);
     })
     .catch(function(e) {
-      if (msg) msg.textContent = 'Network error';
+      console.error('orderControl', url, e);
+      if (msg) msg.textContent = (typeof e === 'string' && e) ? e : 'Network error';
     });
 }
 
@@ -38,23 +38,17 @@ function openOrderModal(id) {
   errEl.style.display = 'none';
   showModal('order-modal-overlay');
 
-  fetch('/api/orders/enriched?id=' + id)
-    .then(function(r) { return r.json().then(function(d) { return {ok:r.ok, data:d}; }); })
-    .then(function(r) {
-      if (!r.ok) {
-        loading.style.display = 'none';
-        errEl.style.display = '';
-        errEl.textContent = r.data.error || 'Failed to load order';
-        return;
-      }
+  apiGet('/api/orders/enriched?id=' + id)
+    .then(function(data) {
       loading.style.display = 'none';
       content.style.display = '';
-      renderOrderModal(r.data);
+      renderOrderModal(data);
     })
-    .catch(function() {
+    .catch(function(e) {
+      console.error('openOrderModal', id, e);
       loading.style.display = 'none';
       errEl.style.display = '';
-      errEl.textContent = 'Network error';
+      errEl.textContent = (typeof e === 'string' && e) ? e : 'Failed to load order';
     });
 }
 
@@ -248,7 +242,7 @@ window.onOrderUpdate = debounce(function(e) {
     }
     // Refresh order list to reflect status changes
     location.reload();
-  } catch(err) {}
+  } catch(err) { console.error('onOrderUpdate', err); }
 }, 2000);
 
 // --- Spot order modal ---
@@ -281,8 +275,7 @@ function switchSpotTab(name, btn) {
 }
 
 function loadSpotDropdowns() {
-  fetch('/api/nodes')
-    .then(function(r) { return r.json(); })
+  apiGet('/api/nodes')
     .then(function(nodes) {
       var byZone = {};
       for (var i = 0; i < nodes.length; i++) {
@@ -315,10 +308,10 @@ function loadSpotDropdowns() {
       document.getElementById('spot-swap-node').innerHTML = html;
       // Send-to tab
       document.getElementById('spot-sendto-dest').innerHTML = html;
-    });
+    })
+    .catch(function(e) { console.error('loadSpotDropdowns nodes', e); });
 
-  fetch('/api/payloads/templates')
-    .then(function(r) { return r.json(); })
+  apiGet('/api/payloads/templates')
     .then(function(bps) {
       var html = '<option value="">— none —</option>';
       for (var i = 0; i < bps.length; i++) {
@@ -327,14 +320,14 @@ function loadSpotDropdowns() {
       document.getElementById('spot-payload').innerHTML = html;
       document.getElementById('spot-staged-payload').innerHTML = html;
       document.getElementById('spot-swap-payload').innerHTML = html;
-    });
+    })
+    .catch(function(e) { console.error('loadSpotDropdowns payloads', e); });
 
   loadSpotBinDropdown();
 }
 
 function loadSpotBinDropdown() {
-  fetch('/api/bins/available')
-    .then(function(r) { return r.json(); })
+  apiGet('/api/bins/available')
     .then(function(bins) {
       if (!bins || !bins.length) {
         document.getElementById('spot-bin').innerHTML = '<option value="">No available bins</option>';
@@ -363,7 +356,8 @@ function loadSpotBinDropdown() {
         html += '</optgroup>';
       }
       document.getElementById('spot-bin').innerHTML = html;
-    });
+    })
+    .catch(function(e) { console.error('loadSpotBinDropdown', e); });
 }
 
 function spotTransportTypeChanged() {
@@ -466,31 +460,25 @@ function submitSpotOrder() {
   status.style.color = 'var(--text-muted)';
   btn.disabled = true;
 
-  fetch('/api/orders/spot', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
-    .then(function(r) { return r.json().then(function(d) { return {ok:r.ok, data:d}; }); })
-    .then(function(r) {
-      if (!r.ok) {
-        status.textContent = r.data.error || 'Error';
-        status.style.color = 'var(--danger)';
-        btn.disabled = false;
-        return;
-      }
+  apiPost('/api/orders/spot', body)
+    .then(function(data) {
       var msg;
-      if (r.data.count && r.data.count > 1) {
-        msg = r.data.count + ' orders created (first: #' + r.data.order_id + ')';
-      } else if (r.data.store_order_id) {
-        msg = 'Store #' + r.data.store_order_id + ' (' + r.data.store_status + ') + Retrieve #' + r.data.retrieve_order_id + ' (' + r.data.retrieve_status + ')';
+      if (data.count && data.count > 1) {
+        msg = data.count + ' orders created (first: #' + data.order_id + ')';
+      } else if (data.store_order_id) {
+        msg = 'Store #' + data.store_order_id + ' (' + data.store_status + ') + Retrieve #' + data.retrieve_order_id + ' (' + data.retrieve_status + ')';
       } else {
-        msg = 'Order #' + r.data.order_id + ' created (' + r.data.status + ')';
-        if (r.data.error_detail) msg += ' — ' + r.data.error_detail;
+        msg = 'Order #' + data.order_id + ' created (' + data.status + ')';
+        if (data.error_detail) msg += ' — ' + data.error_detail;
       }
       status.textContent = msg;
-      var failed = r.data.status === 'failed' || r.data.store_status === 'failed' || r.data.retrieve_status === 'failed';
+      var failed = data.status === 'failed' || data.store_status === 'failed' || data.retrieve_status === 'failed';
       status.style.color = failed ? 'var(--danger)' : 'var(--success)';
       setTimeout(function() { location.reload(); }, 1200);
     })
-    .catch(function() {
-      status.textContent = 'Network error';
+    .catch(function(e) {
+      console.error('submitSpotOrder', e);
+      status.textContent = (typeof e === 'string' && e) ? e : 'Network error';
       status.style.color = 'var(--danger)';
       btn.disabled = false;
     });

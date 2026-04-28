@@ -21,9 +21,62 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- HTML escaping ---
     ShingoEdge.escapeHtml = function(text) {
+        if (text === null || text === undefined || text === '') return '';
         var div = document.createElement('div');
         div.appendChild(document.createTextNode(text));
         return div.innerHTML;
+    };
+
+    // Tagged-template HTML builder. Interpolated values are escaped,
+    // arrays joined. Returns a string suitable for innerHTML.
+    ShingoEdge.h = function(strings) {
+        var out = strings[0];
+        for (var i = 1; i < arguments.length; i++) {
+            var v = arguments[i];
+            if (Array.isArray(v)) {
+                out += v.join('');
+            } else if (v === null || v === undefined || v === false) {
+                // skip
+            } else if (typeof v === 'object' && v.__html === true) {
+                out += v.value;
+            } else {
+                out += ShingoEdge.escapeHtml(String(v));
+            }
+            out += strings[i];
+        }
+        return out;
+    };
+
+    // Element builder. props: attributes (className, dataset, style obj,
+    // id, ...) and on* event listeners. children: string, Node, or array.
+    ShingoEdge.el = function(tag, props, children) {
+        var node = document.createElement(tag);
+        if (props) {
+            for (var key in props) {
+                if (!Object.prototype.hasOwnProperty.call(props, key)) continue;
+                var val = props[key];
+                if (key === 'className') {
+                    node.className = val;
+                } else if (key === 'dataset') {
+                    for (var dk in val) node.dataset[dk] = val[dk];
+                } else if (key.indexOf('on') === 0 && typeof val === 'function') {
+                    node.addEventListener(key.substring(2).toLowerCase(), val);
+                } else if (key === 'style' && typeof val === 'object') {
+                    for (var sk in val) node.style[sk] = val[sk];
+                } else if (val !== null && val !== undefined && val !== false) {
+                    node.setAttribute(key, val);
+                }
+            }
+        }
+        if (children !== undefined && children !== null) {
+            var list = Array.isArray(children) ? children : [children];
+            for (var i = 0; i < list.length; i++) {
+                var c = list[i];
+                if (c === null || c === undefined || c === false) continue;
+                node.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+            }
+        }
+        return node;
     };
 
     // --- SSE Factory ---
