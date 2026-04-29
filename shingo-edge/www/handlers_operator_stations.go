@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -507,8 +508,8 @@ func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if strings.TrimSpace(req.CalledBy) == "" {
-		writeError(w, http.StatusBadRequest, "release requires called_by to identify the caller")
-		return
+		log.Printf("release-changeover-wait: called_by empty, defaulting to operator_station (process=%d)", processID)
+		req.CalledBy = "operator_station"
 	}
 	if err := h.orchestration.ReleaseChangeoverWait(processID, req.CalledBy); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

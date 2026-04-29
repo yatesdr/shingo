@@ -251,9 +251,14 @@ func (h *Handlers) apiConfirmDelivery(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FinalCount int64 `json:"final_count"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	// Tolerate empty body — operator station's postAction sends {}
+	// when the CONFIRM button has no extra payload. EOF on empty body
+	// is fine: FinalCount defaults to 0.
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	if err := h.engine.OrderManager().ConfirmDelivery(orderID, req.FinalCount); err != nil {

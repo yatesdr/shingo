@@ -25,12 +25,14 @@ func TestParseReleaseRequest_RejectsBareBody(t *testing.T) {
 	}
 }
 
-// TestParseReleaseRequest_RejectsEmptyCalledBy verifies that a well-formed
-// JSON body with a missing or whitespace-only called_by is rejected. The
-// TrimSpace check matters because a client posting `{"called_by": "  "}`
-// would otherwise produce the same empty-audit-trail symptom as a bare
-// body.
-func TestParseReleaseRequest_RejectsEmptyCalledBy(t *testing.T) {
+// TestParseReleaseRequest_DefaultsEmptyCalledBy verifies that a well-formed
+// JSON body with a missing or whitespace-only called_by is defaulted to
+// "operator_station" rather than rejected. The 2026-04-29 hotfix changed this
+// from a hard rejection to a default with a warning log — the audit trail
+// remains attributable (station identity is inferable from the order's
+// process_node and station_id), and blocking the operator's RELEASE click
+// in production is the worse outcome.
+func TestParseReleaseRequest_DefaultsEmptyCalledBy(t *testing.T) {
 	cases := []struct {
 		name string
 		body string
@@ -45,12 +47,12 @@ func TestParseReleaseRequest_RejectsEmptyCalledBy(t *testing.T) {
 				bytes.NewBufferString(tc.body))
 			r.ContentLength = int64(len(tc.body))
 
-			_, err := parseReleaseRequest(r)
-			if err == nil {
-				t.Fatalf("parseReleaseRequest accepted body %q, want error", tc.body)
+			req, err := parseReleaseRequest(r)
+			if err != nil {
+				t.Fatalf("parseReleaseRequest rejected body %q: %v", tc.body, err)
 			}
-			if !strings.Contains(err.Error(), "called_by") {
-				t.Errorf("error %q does not mention called_by", err.Error())
+			if req.CalledBy != "operator_station" {
+				t.Errorf("CalledBy = %q, want %q", req.CalledBy, "operator_station")
 			}
 		})
 	}

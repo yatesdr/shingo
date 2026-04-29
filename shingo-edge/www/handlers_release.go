@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -49,7 +50,8 @@ func parseReleaseRequest(r *http.Request) (releaseRequest, error) {
 		return req, err
 	}
 	if strings.TrimSpace(req.CalledBy) == "" {
-		return req, fmt.Errorf("release requires called_by to identify the caller")
+		log.Printf("release: called_by empty, defaulting to operator_station (url=%s)", r.URL.Path)
+		req.CalledBy = "operator_station"
 	}
 	return req, nil
 }

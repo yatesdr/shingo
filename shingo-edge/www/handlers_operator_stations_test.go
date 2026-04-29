@@ -729,17 +729,13 @@ func TestOperatorStations_ReleaseStagedOrders_BadBody(t *testing.T) {
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
-// Post-2026-04-27 guard: a release-staged POST with no body or empty
-// called_by is rejected. Mirrors the same guard on apiReleaseOrder so
-// neither release endpoint accepts the disposition-bypass fingerprint.
+// Post-2026-04-27 guard: a release-staged POST with no body is rejected
+// (ContentLength == 0). Empty called_by is now defaulted to
+// "operator_station" (2026-04-29 hotfix) rather than rejected.
 func TestOperatorStations_ReleaseStagedOrders_RejectsBareBody(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", nil, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-
-	body := map[string]interface{}{"disposition": "capture_lineside", "called_by": ""}
-	resp = doRequest(t, router, "POST", "/api/process-nodes/1/release-staged", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
@@ -887,22 +883,13 @@ func TestOperatorStations_ReleaseChangeoverWait_ThreadsCalledBy(t *testing.T) {
 // apiReleaseNodeStagedOrders. The original c56ceb9 fix added this guard to
 // the other two release endpoints; this endpoint had the same shape (empty
 // body silently produced an empty audit trail at Core) and was closed
-// during the release-flow cleanup.
+// during the release-flow cleanup. The 2026-04-29 hotfix changed empty
+// called_by from rejection to default — bare body still rejects.
 func TestOperatorStations_ReleaseChangeoverWait_RejectsBareBody(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
 	// Bare-body POST -> 400.
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", nil, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-
-	// Body with empty called_by -> 400.
-	body := map[string]interface{}{"called_by": ""}
-	resp = doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
-
-	// Body with whitespace-only called_by -> 400 (TrimSpace check).
-	body = map[string]interface{}{"called_by": "  "}
-	resp = doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", body, nil)
 	assertStatus(t, resp, http.StatusBadRequest)
 }
 
