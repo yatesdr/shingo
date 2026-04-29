@@ -361,7 +361,7 @@ func (e *Engine) createKeepStagedChangeoverOrders(
 	toClaim := diff.ToClaim
 
 	switch fromClaim.SwapMode {
-	case "two_robot":
+	case "two_robot", "two_robot_press_index":
 		// Split: two robots work in parallel
 		// Order A: fetch new → stage → wait → deliver
 		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)

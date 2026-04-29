@@ -190,7 +190,7 @@ async function loadClaims(styleID) {
             } else {
                 wants = 'Unset';
             }
-            var swapLabel = {'simple': 'Simple', 'sequential': 'Sequential', 'single_robot': '1-Robot', 'two_robot': '2-Robot', 'manual_swap': 'Manual Swap'}[c.swap_mode] || c.swap_mode || 'Simple';
+            var swapLabel = {'simple': 'Simple', 'sequential': 'Sequential', 'single_robot': '1-Robot', 'two_robot': '2-Robot', 'two_robot_press_index': '2-Robot Press Index', 'manual_swap': 'Manual Swap'}[c.swap_mode] || c.swap_mode || 'Simple';
             var flags = [];
             if (c.keep_staged) flags.push('staged');
             if (c.evacuate_on_changeover) flags.push('evac');

@@ -129,6 +129,39 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 	return orderA, orderB
 }
 
+// BuildTwoRobotPressIndexSwapSteps builds steps for a press-indexing two-robot
+// swap. The press has two positions: A (front/output, claim.CoreNodeName) and
+// B (back/input, claim.PairedCoreNode). When A is full:
+//
+//	Robot 1 (R1, multi-bin order):
+//	  wait(A) → pickup(A) → dropoff(OutboundDestination)
+//	         → pickup(InboundSource) → dropoff(B)
+//	Robot 2 (R2, single-bin order):
+//	  wait(B) → pickup(B) → dropoff(A)
+//
+// Both fire on operator release. R1 carries the full bin out then returns
+// with a fresh bin for the back position; R2 indexes the staged bin from B
+// forward into A. Leg sequencing on node A is enforced by the fleet manager
+// (R2's dropoff(A) waits for R1's pickup(A) to clear A).
+func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orderR2 []protocol.ComplexOrderStep) {
+	if claim.PairedCoreNode == "" || claim.OutboundDestination == "" {
+		return nil, nil
+	}
+	orderR1 = []protocol.ComplexOrderStep{
+		{Action: "wait", Node: claim.CoreNodeName},      // park at A, hold for operator release
+		{Action: "pickup", Node: claim.CoreNodeName},    // lift full bin off A
+		buildStep("dropoff", claim.OutboundDestination), // deliver full to outgoing
+		buildStep("pickup", claim.InboundSource),        // fetch fresh bin from incoming
+		{Action: "dropoff", Node: claim.PairedCoreNode}, // drop fresh bin at B (back position)
+	}
+	orderR2 = []protocol.ComplexOrderStep{
+		{Action: "wait", Node: claim.PairedCoreNode},   // park at B, hold for operator release
+		{Action: "pickup", Node: claim.PairedCoreNode}, // lift staged bin off B
+		{Action: "dropoff", Node: claim.CoreNodeName},  // index forward to A
+	}
+	return orderR1, orderR2
+}
+
 // BuildSequentialRemovalSteps builds Order A for sequential mode (removal robot).
 // Robot drives to line and holds, waits for operator release, picks up old bin, delivers to destination.
 //  1. wait(CoreNodeName)            — drive to node + hold (RDS BinTask=Wait)

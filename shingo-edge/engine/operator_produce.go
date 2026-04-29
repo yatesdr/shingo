@@ -38,6 +38,8 @@ func (e *Engine) FinalizeProduceNode(nodeID int64) (*NodeOrderResult, error) {
 		return e.finalizeProduceSingleRobot(node, runtime, claim)
 	case "two_robot":
 		return e.finalizeProduceTwoRobot(node, runtime, claim)
+	case "two_robot_press_index":
+		return e.finalizeProduceTwoRobotPressIndex(node, runtime, claim)
 	default: // "simple" or ""
 		return e.finalizeProduceSimple(node, runtime, claim)
 	}
@@ -211,4 +213,58 @@ func (e *Engine) finalizeProduceTwoRobot(node *processes.Node, runtime *processe
 	}
 	orderB = refreshedB
 	return &NodeOrderResult{CycleMode: "two_robot", OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+}
+
+// finalizeProduceTwoRobotPressIndex handles the press-indexing two-robot swap.
+// R1 is a multi-bin complex order (A → outgoing, then incoming → B); R2 is a
+// single-bin index (B → A). Both fire together on operator release; the fleet
+// manager handles the dropoff(A) timing gate against R1's pickup(A).
+func (e *Engine) finalizeProduceTwoRobotPressIndex(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim) (*NodeOrderResult, error) {
+	nodeID := node.ID
+	if claim.PairedCoreNode == "" {
+		return nil, fmt.Errorf("node %s: two_robot_press_index requires paired_core_node (back position)", node.Name)
+	}
+	if claim.OutboundDestination == "" {
+		return nil, fmt.Errorf("node %s: two_robot_press_index requires outbound_destination", node.Name)
+	}
+
+	if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+		return nil, err
+	}
+
+	ingestOrder, err := e.setProduceManifest(nodeID, node, runtime, claim)
+	if err != nil {
+		return nil, err
+	}
+	_ = ingestOrder
+
+	stepsR1, stepsR2 := BuildTwoRobotPressIndexSwapSteps(claim)
+	orderR1, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.CoreNodeName, stepsR1)
+	if err != nil {
+		return nil, err
+	}
+	orderR2, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", stepsR2)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0); err != nil {
+		log.Printf("produce: set runtime for node %d: %v", nodeID, err)
+	}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderR1.ID, &orderR2.ID); err != nil {
+		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)
+	}
+	refreshedR1, err := e.db.GetOrder(orderR1.ID)
+	if err != nil {
+		log.Printf("produce: re-read order %d after runtime update: %v", orderR1.ID, err)
+		return nil, fmt.Errorf("re-read order %d: %w", orderR1.ID, err)
+	}
+	orderR1 = refreshedR1
+	refreshedR2, err := e.db.GetOrder(orderR2.ID)
+	if err != nil {
+		log.Printf("produce: re-read order %d after runtime update: %v", orderR2.ID, err)
+		return nil, fmt.Errorf("re-read order %d: %w", orderR2.ID, err)
+	}
+	orderR2 = refreshedR2
+	return &NodeOrderResult{CycleMode: "two_robot_press_index", OrderA: orderR1, OrderB: orderR2, ProcessNodeID: nodeID}, nil
 }

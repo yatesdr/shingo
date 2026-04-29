@@ -30,6 +30,8 @@ import (
 //   - "sequential":  backfill while current bin is in transit
 //   - "single_robot": inbound + outbound staging for single-robot swap
 //   - "two_robot":   dual-robot swap with inbound staging
+//   - "two_robot_press_index": dual-robot press-index swap (R1 carries full
+//                    out + replacement in; R2 indexes B→A)
 //   - "manual_swap": operator-driven forklift swap with multi-order queue
 //
 // Routing fields follow a directional convention:
@@ -141,6 +143,19 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	// Phase 2 #9 of 2026-04-27 v2 direction doc.
 	if in.SwapMode == "two_robot" && in.InboundStaging == "" {
 		return 0, fmt.Errorf("two_robot claims require inbound_staging to be set")
+	}
+	// two_robot_press_index claims need PairedCoreNode (back position B) and
+	// OutboundDestination. R1's multi-step ComplexOrder carries the full bin
+	// from A → outbound and the replacement from inbound → B; R2 indexes
+	// B → A. Without either field BuildTwoRobotPressIndexSwapSteps returns
+	// nil and the operator's RELEASE silently no-ops.
+	if in.SwapMode == "two_robot_press_index" {
+		if in.PairedCoreNode == "" {
+			return 0, fmt.Errorf("two_robot_press_index claims require paired_core_node (back position) to be set")
+		}
+		if in.OutboundDestination == "" {
+			return 0, fmt.Errorf("two_robot_press_index claims require outbound_destination to be set")
+		}
 	}
 	var existingID int64
 	err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
