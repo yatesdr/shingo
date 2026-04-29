@@ -20,11 +20,14 @@ import (
 // and moves the bin to its destination immediately so subsequent orders
 // see accurate occupancy.
 func (e *Engine) handleOrderDelivered(order *orders.Order) {
-	// Resolve staged expiry for the delivered message
+	// Resolve staged expiry for the delivered message. Only ship a countdown
+	// when the bin will actually arrive `staged` — for storage destinations
+	// (LANE/NODE_GROUP roots and their children) the bin lands `available`
+	// and an expiry on the order envelope is misleading to the operator UI.
 	var stagedExpireAt *time.Time
 	if order.DeliveryNode != "" {
 		if destNode, err := e.db.GetNodeByDotName(order.DeliveryNode); err == nil {
-			if ea := e.resolveStagingExpiry(destNode); ea != nil {
+			if staged, ea := e.resolveNodeStaging(destNode); staged && ea != nil {
 				stagedExpireAt = ea
 			}
 		}

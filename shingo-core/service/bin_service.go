@@ -118,6 +118,13 @@ func (s *BinService) Release(binID int64) error {
 	return s.db.ReleaseStagedBin(binID)
 }
 
+// Stage marks a bin as staged with no TTL. Operator-driven path used by
+// the bin Actions panel toggle; arrivals go through ApplyArrival which
+// also writes staged_expires_at from the destination's staging policy.
+func (s *BinService) Stage(binID int64) error {
+	return s.db.StageBin(binID, nil)
+}
+
 // Lock acquires a lock on the bin for the given actor. Actor is required.
 func (s *BinService) Lock(binID int64, actor string) error {
 	if actor == "" {

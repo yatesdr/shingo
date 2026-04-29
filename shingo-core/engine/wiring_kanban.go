@@ -63,17 +63,28 @@ func (e *Engine) handleKanbanDemand(ev BinUpdatedEvent) {
 	}
 }
 
-// isStorageSlot returns true if the node is a storage slot (child of a LANE node).
+// isStorageSlot returns true if the node is a storage slot — either a
+// LANE/NODE_GROUP itself, or a direct child of one. NODE_GROUP children
+// added 2026-04-29: plants modeling supermarkets as NODE_GROUP → direct
+// concrete children (no LANE in the path) need those children treated as
+// storage so arriving bins land `available`, not `staged`. Lineside cells
+// remain parented under processes/zones and continue to stage on arrival.
 func (e *Engine) isStorageSlot(nodeID int64) bool {
 	node, err := e.db.GetNode(nodeID)
-	if err != nil || node.ParentID == nil {
+	if err != nil {
+		return false
+	}
+	if node.NodeTypeCode == "LANE" || node.NodeTypeCode == "NODE_GROUP" {
+		return true
+	}
+	if node.ParentID == nil {
 		return false
 	}
 	parent, err := e.db.GetNode(*node.ParentID)
 	if err != nil {
 		return false
 	}
-	return parent.NodeTypeCode == "LANE"
+	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NODE_GROUP"
 }
 
 // sendDemandSignals looks up the demand registry for the given payload code and role,

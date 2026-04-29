@@ -262,6 +262,7 @@ func (h *Handlers) executeBinAction(b *domain.Bin, action string, params json.Ra
 		"maintenance":        h.binMaintenance,
 		"retire":             h.binRetire,
 		"release":            h.binRelease,
+		"stage":              h.binStage,
 		"lock":               h.binLock,
 		"unlock":             h.binUnlock,
 		"load_payload":       h.binLoadPayload,
@@ -344,6 +345,15 @@ func (h *Handlers) binRelease(b *domain.Bin, _ json.RawMessage) error {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "status", "staged", "available", "ui")
+	h.emitBinUpdate(b, "status_changed", "")
+	return nil
+}
+
+func (h *Handlers) binStage(b *domain.Bin, _ json.RawMessage) error {
+	if err := h.engine.BinService().Stage(b.ID); err != nil {
+		return err
+	}
+	h.engine.AuditService().Append("bin", b.ID, "status", b.Status, "staged", "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }

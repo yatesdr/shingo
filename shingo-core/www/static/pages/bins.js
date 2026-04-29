@@ -162,7 +162,12 @@ function renderActions(data) {
   if (b.status !== 'flagged') html += '<button class="btn btn-sm" onclick="doBinAction(\'flag\')">Flag</button> ';
   if (b.status !== 'quality_hold') html += '<button class="btn btn-sm" onclick="doQualityHold()">Quality Hold</button> ';
   if (b.status !== 'maintenance') html += '<button class="btn btn-sm" onclick="doBinAction(\'maintenance\')">Maintenance</button> ';
-  if (b.status === 'staged') html += '<button class="btn btn-sm" onclick="doBinAction(\'release\')">Release</button> ';
+  // Staged toggle: blue when active, default otherwise. Available ↔ staged only.
+  if (b.status === 'available' || b.status === 'staged') {
+    var stagedActive = (b.status === 'staged');
+    html += '<button class="btn btn-sm' + (stagedActive ? ' btn-primary' : '') +
+      '" onclick="doBinAction(\'' + (stagedActive ? 'release' : 'stage') + '\')">Staged</button> ';
+  }
   if (b.status !== 'retired') html += '<button class="btn btn-sm btn-danger" onclick="doBinAction(\'retire\')">Retire</button> ';
   html += '</div>';
 
