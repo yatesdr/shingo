@@ -325,22 +325,19 @@ export function renderModal(entry) {
                 if (claim.role === 'produce' && remaining > 0) {
                     html += actionBtn('FINALIZE', 'finalize', true,
                         '/api/process-nodes/' + entry.node.id + '/finalize');
-                } else if (claim.role === 'produce' && claim.swap_mode === 'manual_swap') {
-                    // Manual-swap produce, no parts yet: operator requests an
-                    // empty bin of an allowed payload to start filling.
+                } else if (claim.role === 'produce') {
+                    // remaining=0: operator brings an empty bin to the press.
+                    // /request-empty issues a retrieve order for an empty
+                    // compatible with one of the allowed payloads.
                     var allowed = claim.allowed_payload_codes || (claim.payload_code ? [claim.payload_code] : []);
                     if (allowed.length > 0) {
                         html += actionBtn('REQUEST EMPTY', 'request', true,
                             '/api/process-nodes/' + entry.node.id + '/request-empty|' + allowed[0]);
                     }
-                } else if (claim.role === 'consume') {
+                } else {
                     html += actionBtn('REQUEST MATERIAL', 'request', true,
                         '/api/process-nodes/' + entry.node.id + '/request');
                 }
-                // Other produce modes (press-index, two_robot, sequential):
-                // the next empty arrives via the swap dispatch when Finalize
-                // fires. No operator action at remaining=0; counter delta
-                // from the PLC drives the cycle.
                 // RELEASE EMPTY and RELEASE PARTIAL removed from operator HMI;
                 // backend endpoints stay for changeover/supervisor use.
             }

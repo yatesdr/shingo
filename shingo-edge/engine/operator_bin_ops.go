@@ -181,9 +181,6 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	if claim.SwapMode != "manual_swap" {
-		return nil, fmt.Errorf("node %s is not a manual_swap node", node.Name)
-	}
 	if claim.Role != protocol.ClaimRoleProduce {
 		return nil, fmt.Errorf("node %s: only produce nodes request empty bins", node.Name)
 	}
