@@ -10,8 +10,15 @@ import (
 )
 
 // ComplexOrderSpec describes a single complex order to be created.
+//
+// ProcessNode is the line node the order belongs to (the node whose claim
+// drove the plan). Distinct from DeliveryNode for swap orders that drop at
+// a supermarket but conceptually "live" at the line. Threaded through to
+// ComplexOrderRequest.ProcessNode so Core can pick the line bin for
+// order.BinID and target the right bin at release-time fallback.
 type ComplexOrderSpec struct {
 	DeliveryNode string
+	ProcessNode  string
 	Steps        []protocol.ComplexOrderStep
 	AutoConfirm  bool
 }

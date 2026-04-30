@@ -60,14 +60,14 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	_ = ingestOrder // tracked at Core via the manifest; not the active order for complex modes
 
 	dispatch := plan.Dispatch
-	orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.AutoConfirmA)
+	orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA)
 	if err != nil {
 		return nil, err
 	}
 
 	var orderB *orders.Order
 	if dispatch.StepsB != nil {
-		orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.AutoConfirmB)
+		orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB)
 		if err != nil {
 			return nil, err
 		}
@@ -114,12 +114,15 @@ func (e *Engine) dispatchProduceIngest(nodeID int64, node *processes.Node, claim
 
 // dispatchComplexLeg issues a single complex order with the right auto-
 // confirm wiring. Direction-agnostic — produce passes quantity=1 (the
-// bin), consume passes the operator-requested quantity.
-func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protocol.ComplexOrderStep, deliveryNode string, autoConfirm bool) (*orders.Order, error) {
+// bin), consume passes the operator-requested quantity. processNodeName
+// is the line node both legs of a swap belong to (= claim.CoreNodeName);
+// threaded into ComplexOrderRequest.ProcessNode so Core picks the line
+// bin for order.BinID.
+func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protocol.ComplexOrderStep, deliveryNode, processNodeName string, autoConfirm bool) (*orders.Order, error) {
 	if autoConfirm {
-		return e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, quantity, "", steps)
+		return e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, quantity, "", processNodeName, steps)
 	}
-	return e.orderMgr.CreateComplexOrder(&nodeID, quantity, deliveryNode, steps)
+	return e.orderMgr.CreateComplexOrder(&nodeID, quantity, deliveryNode, processNodeName, steps)
 }
 
 // resetProduceRuntime drops the node's UOP back to 0 (ready for the next

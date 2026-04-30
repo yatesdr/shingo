@@ -216,13 +216,13 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 					return nil, err
 				}
 			}
-			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.AutoConfirmA)
+			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA)
 			if err != nil {
 				return nil, err
 			}
 			var orderB *orders.Order
 			if dispatch.StepsB != nil {
-				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.AutoConfirmB)
+				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB)
 				if err != nil {
 					return nil, err
 				}

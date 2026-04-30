@@ -56,7 +56,7 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 
 	steps := BuildSequentialBackfillSteps(claim)
 	nodeID := node.ID
-	orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.CoreNodeName, steps) // delivery_node = CoreNodeName → resets UOP
+	orderB, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.CoreNodeName, claim.CoreNodeName, steps) // delivery_node = CoreNodeName → resets UOP
 	if err != nil {
 		log.Printf("sequential backfill for node %s: %v", node.Name, err)
 		return

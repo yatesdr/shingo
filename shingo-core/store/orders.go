@@ -34,10 +34,10 @@ func (db *DB) CreateCompoundChildren(children []CompoundChild) error {
 	for _, c := range children {
 		o := c.Order
 		var id int64
-		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+		err := tx.QueryRow(`INSERT INTO orders (edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, priority, payload_desc, parent_order_id, sequence, steps_json, bin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
 			o.EdgeUUID, o.StationID, o.OrderType, o.Status,
 			o.Quantity,
-			o.SourceNode, o.DeliveryNode, o.Priority, o.PayloadDesc,
+			o.SourceNode, o.DeliveryNode, o.ProcessNode, o.Priority, o.PayloadDesc,
 			helpers.NullableInt64(o.ParentOrderID), o.Sequence, o.StepsJSON,
 			helpers.NullableInt64(o.BinID)).Scan(&id)
 		if err != nil {

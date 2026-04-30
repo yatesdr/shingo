@@ -322,7 +322,7 @@ func TestCreateComplexOrder_PersistsStepsAndQueuesEnvelope(t *testing.T) {
 		{Action: "pickup", Node: "A"},
 		{Action: "dropoff", Node: "B"},
 	}
-	order, err := mgr.CreateComplexOrder(nil, 2, "DEL-C", steps)
+	order, err := mgr.CreateComplexOrder(nil, 2, "DEL-C", "", steps)
 	if err != nil {
 		t.Fatalf("CreateComplexOrder: %v", err)
 	}
@@ -1205,7 +1205,7 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 		{Action: "dropoff", Node: "AMRSM"},
 	}
 
-	manual, err := mgr.CreateComplexOrder(nil, 1, "LINE1", steps)
+	manual, err := mgr.CreateComplexOrder(nil, 1, "LINE1", "LINE1", steps)
 	if err != nil {
 		t.Fatalf("CreateComplexOrder: %v", err)
 	}
@@ -1213,7 +1213,7 @@ func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
 		t.Errorf("CreateComplexOrder: AutoConfirm=true, want false (lineside delivery requires operator press)")
 	}
 
-	auto, err := mgr.CreateComplexOrderWithAutoConfirm(nil, 1, "", steps)
+	auto, err := mgr.CreateComplexOrderWithAutoConfirm(nil, 1, "", "LINE1", steps)
 	if err != nil {
 		t.Fatalf("CreateComplexOrderWithAutoConfirm: %v", err)
 	}

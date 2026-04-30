@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS orders (
     quantity        BIGINT NOT NULL DEFAULT 1,
     source_node     TEXT NOT NULL DEFAULT '',
     delivery_node   TEXT NOT NULL DEFAULT '',
+    process_node    TEXT NOT NULL DEFAULT '',
     vendor_order_id TEXT NOT NULL DEFAULT '',
     vendor_state    TEXT NOT NULL DEFAULT '',
     robot_id        TEXT NOT NULL DEFAULT '',

@@ -89,7 +89,7 @@ func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderS
 	if c.AutoConfirm {
 		create = e.orderMgr.CreateComplexOrderWithAutoConfirm
 	}
-	o, err := create(&nodeID, 1, c.DeliveryNode, c.Steps)
+	o, err := create(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps)
 	if err != nil {
 		return 0, err
 	}

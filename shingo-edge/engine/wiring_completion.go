@@ -493,7 +493,7 @@ func (e *Engine) maybePreStage(node *processes.Node, claim *processes.NodeClaim)
 		return
 	}
 	nodeID := node.ID
-	order, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.InboundStaging, steps)
+	order, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.InboundStaging, claim.CoreNodeName, steps)
 	if err != nil {
 		log.Printf("keep-staged pre-stage for node %s: %v", node.Name, err)
 		return

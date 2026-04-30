@@ -103,7 +103,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	if toClaim.InboundStaging != "" {
 		steps := BuildStageSteps(toClaim)
 		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.InboundStaging, steps)
+			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.InboundStaging, toClaim.CoreNodeName, steps)
 			if err != nil {
 				return nil, err
 			}
@@ -134,7 +134,7 @@ func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int6
 	// Use claim-based release
 	if fromClaim := findActiveClaim(e.db, ctx.node); fromClaim != nil && fromClaim.OutboundStaging != "" {
 		steps := BuildReleaseSteps(fromClaim)
-		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", steps)
+		order, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&ctx.node.ID, 1, "", fromClaim.CoreNodeName, steps)
 		if err != nil {
 			return nil, err
 		}
@@ -175,7 +175,7 @@ func (e *Engine) ReleaseNodeIntoProduction(processID, nodeID int64) (*orders.Ord
 	if toClaim.Role == protocol.ClaimRoleChangeover && toClaim.OutboundStaging != "" {
 		steps := BuildRestoreSteps(toClaim)
 		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, steps)
+			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps)
 			if err != nil {
 				return nil, err
 			}
@@ -187,7 +187,7 @@ func (e *Engine) ReleaseNodeIntoProduction(processID, nodeID int64) (*orders.Ord
 	if toClaim.InboundStaging != "" {
 		steps := BuildStagedDeliverSteps(toClaim)
 		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, steps)
+			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps)
 			if err != nil {
 				return nil, err
 			}

@@ -26,6 +26,7 @@ type Order struct {
 	Quantity      int64      `json:"quantity"`
 	SourceNode    string     `json:"source_node"`
 	DeliveryNode  string     `json:"delivery_node"`
+	ProcessNode   string     `json:"process_node,omitempty"`
 	VendorOrderID string     `json:"vendor_order_id"`
 	VendorState   string     `json:"vendor_state"`
 	RobotID       string     `json:"robot_id"`

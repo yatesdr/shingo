@@ -237,8 +237,15 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 // CreateComplexOrderWithAutoConfirm instead. deliveryNode is stored on
 // the order for downstream logic (e.g., handleOrderCompleted uses it to
 // determine which payload to reset on completion).
-func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, steps, false)
+//
+// processNodeName is the dot-name of the line node the order belongs to
+// (typically claim.CoreNodeName). Threaded through to
+// ComplexOrderRequest.ProcessNode so Core picks the line bin for
+// order.BinID and targets it at release-time fallback. Pass "" when the
+// order has no distinct line node — Core falls back to source-node
+// behavior.
+func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false)
 }
 
 // CreateComplexOrderWithAutoConfirm creates an auto-confirm complex order.
@@ -248,11 +255,11 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 // FINISHED, eliminating the FINISHED → CONFIRMED race window where the
 // scanner can re-claim a delivered bin and the late confirm clobbers state
 // (the SMN_001 / SMN_002 teleport bug, plant-test 2026-04-27).
-func (m *Manager) CreateComplexOrderWithAutoConfirm(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, steps, true)
+func (m *Manager) CreateComplexOrderWithAutoConfirm(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true)
 }
 
-func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode string, steps []protocol.ComplexOrderStep, autoConfirm bool) (*orders.Order, error) {
+func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	stepsJSON, err := json.Marshal(steps)
@@ -278,6 +285,7 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 		PayloadCode: payloadCode,
 		PayloadDesc: payloadDesc,
 		Quantity:    quantity,
+		ProcessNode: processNodeName,
 		Steps:       steps,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)

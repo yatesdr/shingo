@@ -55,8 +55,8 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			return action
 		}
 		swapSteps := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim)
-		action.OrderA = complexSpec(diff.ToClaim.InboundStaging, stageSteps, false)
-		action.OrderB = complexSpec("", swapSteps, true)
+		action.OrderA = complexSpec(diff.ToClaim.InboundStaging, diff.CoreNodeName, stageSteps, false)
+		action.OrderB = complexSpec("", diff.CoreNodeName, swapSteps, true)
 		action.NextState = "staging_requested"
 		action.LogTag = "swap"
 
@@ -77,8 +77,8 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			return action
 		}
 		evacSteps := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim)
-		action.OrderA = complexSpec(diff.ToClaim.InboundStaging, stageSteps, false)
-		action.OrderB = complexSpec("", evacSteps, true)
+		action.OrderA = complexSpec(diff.ToClaim.InboundStaging, diff.CoreNodeName, stageSteps, false)
+		action.OrderB = complexSpec("", diff.CoreNodeName, evacSteps, true)
 		action.NextState = "staging_requested"
 		action.LogTag = "evacuate"
 
@@ -103,7 +103,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		if releaseSteps == nil {
 			return action
 		}
-		action.OrderB = complexSpec("", releaseSteps, true)
+		action.OrderB = complexSpec("", diff.CoreNodeName, releaseSteps, true)
 		action.NextState = "empty_requested"
 		action.LogTag = "drop"
 	}
@@ -116,7 +116,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.NodeClaim, fallbackAutoConfirm bool) changeover.NodeAction {
 	if toClaim.InboundStaging != "" {
 		if steps := BuildStageSteps(toClaim); steps != nil {
-			action.OrderA = complexSpec(toClaim.InboundStaging, steps, false)
+			action.OrderA = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, steps, false)
 			action.NextState = "staging_requested"
 			action.LogTag = "fallback_staging"
 			return action
@@ -143,25 +143,26 @@ func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *proc
 	case "two_robot", "two_robot_press_index":
 		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		action.OrderA = complexSpec(toClaim.InboundStaging, deliverSteps, false)
-		action.OrderB = complexSpec("", evacSteps, true)
+		action.OrderA = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, deliverSteps, false)
+		action.OrderB = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
 		action.NextState = "staging_requested"
 		action.LogTag = "keep_staged_split"
 	default:
 		combinedSteps := BuildKeepStagedCombinedSteps(fromClaim, toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		action.OrderA = complexSpec(toClaim.InboundStaging, combinedSteps, false)
-		action.OrderB = complexSpec("", evacSteps, true)
+		action.OrderA = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, combinedSteps, false)
+		action.OrderB = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
 		action.NextState = "staging_requested"
 		action.LogTag = "keep_staged_combined"
 	}
 	return action
 }
 
-func complexSpec(deliveryNode string, steps []protocol.ComplexOrderStep, autoConfirm bool) *changeover.OrderSpec {
+func complexSpec(deliveryNode, processNode string, steps []protocol.ComplexOrderStep, autoConfirm bool) *changeover.OrderSpec {
 	return &changeover.OrderSpec{
 		Complex: &changeover.ComplexOrderSpec{
 			DeliveryNode: deliveryNode,
+			ProcessNode:  processNode,
 			Steps:        steps,
 			AutoConfirm:  autoConfirm,
 		},

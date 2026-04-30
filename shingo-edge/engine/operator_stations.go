@@ -105,14 +105,14 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 	}
 
 	dispatch := plan.Dispatch
-	orderA, err := e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.AutoConfirmA)
+	orderA, err := e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.ProcessNode, dispatch.AutoConfirmA)
 	if err != nil {
 		return nil, err
 	}
 
 	var orderB *storeorders.Order
 	if dispatch.StepsB != nil {
-		orderB, err = e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsB, "", dispatch.AutoConfirmB)
+		orderB, err = e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsB, "", dispatch.ProcessNode, dispatch.AutoConfirmB)
 		if err != nil {
 			return nil, err
 		}

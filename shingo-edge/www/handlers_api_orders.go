@@ -187,7 +187,7 @@ func (h *Handlers) apiCreateComplexOrder(w http.ResponseWriter, r *http.Request)
 	}
 
 	order, err := h.engine.OrderManager().CreateComplexOrder(
-		processNodeID, req.Quantity, "", req.Steps,
+		processNodeID, req.Quantity, "", "", req.Steps,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

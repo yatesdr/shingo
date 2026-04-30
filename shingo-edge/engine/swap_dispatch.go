@@ -22,12 +22,17 @@ import (
 type SwapDispatch struct {
 	CycleMode string
 
+	// ProcessNode is the line node both legs belong to (= claim.CoreNodeName).
+	// Threaded into ComplexOrderRequest.ProcessNode so Core can pick the
+	// line bin for order.BinID at claim time and at release-time fallback.
+	ProcessNode string
+
 	StepsA        []protocol.ComplexOrderStep
 	DeliveryNodeA string // empty when Core resolves from steps
 	AutoConfirmA  bool
 
-	StepsB        []protocol.ComplexOrderStep
-	AutoConfirmB  bool
+	StepsB       []protocol.ComplexOrderStep
+	AutoConfirmB bool
 
 	// RequiresActiveSwapGuard true when the apply caller must run
 	// guardNoActiveSwap before dispatching. Set by modes that don't tolerate
@@ -50,6 +55,7 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 	case "sequential":
 		return &SwapDispatch{
 			CycleMode:    "sequential",
+			ProcessNode:  claim.CoreNodeName,
 			StepsA:       BuildSequentialRemovalSteps(claim),
 			AutoConfirmA: true,
 		}, nil
@@ -60,6 +66,7 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		}
 		return &SwapDispatch{
 			CycleMode:     "single_robot",
+			ProcessNode:   claim.CoreNodeName,
 			StepsA:        BuildSingleSwapSteps(claim),
 			DeliveryNodeA: claim.CoreNodeName,
 		}, nil
@@ -71,6 +78,7 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
 		return &SwapDispatch{
 			CycleMode:               "two_robot",
+			ProcessNode:             claim.CoreNodeName,
 			StepsA:                  stepsA,
 			DeliveryNodeA:           claim.CoreNodeName,
 			StepsB:                  stepsB,
@@ -88,6 +96,7 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		stepsR1, stepsR2 := BuildTwoRobotPressIndexSwapSteps(claim)
 		return &SwapDispatch{
 			CycleMode:               "two_robot_press_index",
+			ProcessNode:             claim.CoreNodeName,
 			StepsA:                  stepsR1,
 			DeliveryNodeA:           claim.CoreNodeName,
 			StepsB:                  stepsR2,

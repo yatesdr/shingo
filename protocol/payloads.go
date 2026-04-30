@@ -156,12 +156,23 @@ type ComplexOrderStep struct {
 }
 
 // ComplexOrderRequest is a multi-step transport order from edge.
+//
+// ProcessNode names the production node the order belongs to — the line
+// node where the operator releases / confirms and where the "active bin"
+// for manifest sync lives. Distinct from SourceNode (first pickup step,
+// fleet routing) and DeliveryNode (last dropoff). For swap orders that
+// pick up at InboundSource and drop at the line, SourceNode is the
+// supermarket but ProcessNode is the line; Core uses ProcessNode (when
+// non-empty) to pick the bin claimed at the line for order.BinID and for
+// the late-bind manifest fallback at release. Empty for orders without a
+// distinct line node — Core falls back to SourceNode behavior.
 type ComplexOrderRequest struct {
 	OrderUUID   string             `json:"order_uuid"`
 	PayloadCode string             `json:"payload_code,omitempty"`
 	PayloadDesc string             `json:"payload_desc,omitempty"`
 	Quantity    int64              `json:"quantity"`
 	Priority    int                `json:"priority,omitempty"`
+	ProcessNode string             `json:"process_node,omitempty"`
 	Steps       []ComplexOrderStep `json:"steps"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`

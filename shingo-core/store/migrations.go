@@ -72,6 +72,7 @@ func (db *DB) runVersionedMigrations() error {
 		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", db.v11FixPayloadBinTypesFK},
 		{12, "fix payload_manifest FK to reference payloads instead of blueprints", db.v12FixPayloadManifestFK},
 		{13, "fix node_payloads FK to reference payloads instead of blueprints", db.v13FixNodePayloadsFK},
+		{14, "add process_node column to orders", db.v14OrderProcessNode},
 	}
 
 	for _, m := range migrations {
@@ -438,6 +439,20 @@ func (db *DB) v12FixPayloadManifestFK() error {
 // Same root cause as v11/v12 — stale FK referencing blueprints instead of payloads.
 func (db *DB) v13FixNodePayloadsFK() error {
 	return fixPayloadFK(db, "node_payloads", "node_payloads_payload_id_fkey")
+}
+
+// v14OrderProcessNode adds the process_node column to orders. Distinct from
+// source_node (first pickup, fleet routing) — process_node names the line
+// node a swap order belongs to so claimComplexBins can pick the line bin
+// for order.BinID and the release-time fallback can locate the right bin.
+func (db *DB) v14OrderProcessNode() error {
+	if !schema.ColumnExists(db.DB, "orders", "process_node") {
+		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN process_node TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // fixPayloadFK checks if a payload_id FK already references payloads (no-op on fresh DBs)

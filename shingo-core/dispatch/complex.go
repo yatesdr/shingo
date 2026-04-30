@@ -53,6 +53,7 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		PayloadDesc:  p.PayloadDesc,
 		SourceNode:   sourceNode,
 		DeliveryNode: deliveryNode,
+		ProcessNode:  p.ProcessNode,
 		StepsJSON:    string(stepsJSON),
 	}
 
@@ -194,22 +195,26 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 				d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 				return
 			}
-		} else if order.SourceNode != "" {
+		} else if order.ProcessNode != "" || order.SourceNode != "" {
+			fallbackLookup := order.ProcessNode
+			if fallbackLookup == "" {
+				fallbackLookup = order.SourceNode
+			}
 			binID, ok := d.findFallbackBinAtSource(order)
 			if ok {
-				log.Printf("dispatch: release for order %d had nil BinID; fallback located bin %d at source node %s",
-					order.ID, binID, order.SourceNode)
+				log.Printf("dispatch: release for order %d had nil BinID; fallback located bin %d at %s",
+					order.ID, binID, fallbackLookup)
 				if err := d.binManifest.SyncOrClearForReleasedNoOwner(binID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
 					log.Printf("dispatch: fallback manifest sync on release for order %d (bin %d): %v", order.ID, binID, err)
 					d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 					return
 				}
 			} else {
-				log.Printf("dispatch: release for order %d had nil BinID and no fallback bin at source node %s — manifest will not clear",
-					order.ID, order.SourceNode)
+				log.Printf("dispatch: release for order %d had nil BinID and no fallback bin at %s — manifest will not clear",
+					order.ID, fallbackLookup)
 			}
 		} else {
-			log.Printf("dispatch: release for order %d had nil BinID and no SourceNode — manifest will not clear",
+			log.Printf("dispatch: release for order %d had nil BinID and no ProcessNode/SourceNode — manifest will not clear",
 				order.ID)
 		}
 	}
@@ -291,19 +296,28 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		order.ID, len(blocks), order.WaitIndex, complete)
 }
 
-// findFallbackBinAtSource locates the bin currently at the order's source
+// findFallbackBinAtSource locates the bin currently at the order's line
 // node when order.BinID is nil at release time. Returns (binID, true) on
 // success.
 //
+// Prefers ProcessNode (the line) over SourceNode (the first pickup, which
+// for swap orders is the inbound supermarket — wrong target for release-
+// time manifest sync). Falls back to SourceNode for non-swap orders that
+// don't set ProcessNode.
+//
 // Used by HandleOrderRelease's BinID-nil fallback. Selects the first bin
-// at the source node whose payload_code matches the order's payload (so
+// at the lookup node whose payload_code matches the order's payload (so
 // we don't accidentally clear an unrelated bin that happens to share the
 // node — possible at supermarket NGRPs but rare at process nodes). Falls
-// back to "any non-empty bin at the source" if no payload-matching bin
-// exists, since release-time intent is "this evac order's bin needs its
-// manifest synced" and there should only be one bin at the line anyway.
+// back to "any non-empty bin at the lookup node" if no payload-matching
+// bin exists, since release-time intent is "this evac order's bin needs
+// its manifest synced" and there should only be one bin at the line.
 func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (int64, bool) {
-	srcNode, err := d.db.GetNodeByDotName(order.SourceNode)
+	lookupNode := order.ProcessNode
+	if lookupNode == "" {
+		lookupNode = order.SourceNode
+	}
+	srcNode, err := d.db.GetNodeByDotName(lookupNode)
 	if err != nil || srcNode == nil {
 		return 0, false
 	}
@@ -610,10 +624,23 @@ func stepSkipSummaries(skips []pickupSkip) []string {
 // Compound order children (ParentOrderID != nil) never populate the junction
 // table — each child is a single-bin order handled by the legacy path.
 func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep, payloadCode string, remainingUOP *int) error {
-	// Determine the process node name from the order's source metadata.
-	// Only the outgoing bin at the process node gets remainingUOP applied;
-	// all other pickups (e.g. storage pickups) use a plain claim.
-	processNode := order.SourceNode
+	// processNode names the line node whose claim drives this order — the
+	// node where the operator releases / confirms and where the bin used
+	// for late-bind manifest sync lives. Edge sets it explicitly via
+	// ComplexOrderRequest.ProcessNode (= claim.CoreNodeName) for swap
+	// orders; falls back to SourceNode for orders without a distinct line
+	// node (the conventional "first pickup is the line bin" pattern).
+	//
+	// Pre-fix this used SourceNode unconditionally, so for swap orders that
+	// pick up at InboundSource (= SourceNode) and pick up *again* at the
+	// line, only the inbound bin got remainingUOP and order.BinID. The
+	// operator's release-time RemainingUOP=0 then cleared the wrong bin
+	// (the full inbound), and that bin landed at the line with manifest=0.
+	// Plant 2026-04: "bin lineside reset to 0 after one-robot swap".
+	processNode := order.ProcessNode
+	if processNode == "" {
+		processNode = order.SourceNode
+	}
 
 	// Per-step skip-reason capture. We track every pickup step and record a
 	// reason if no bin was claimed for it. Surfaced via log.Printf below so
@@ -693,15 +720,26 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 			order.ID, len(claimed), pickupSteps, len(stepSkips), stepSkipSummaries(stepSkips))
 	}
 
-	// Set Order.BinID to the first claimed bin. This enables the standard
-	// single-bin completion path in wiring.go for simple complex orders.
-	order.BinID = &claimed[0].binID
-	if err := d.db.UpdateOrderBinID(order.ID, claimed[0].binID); err != nil {
+	// Set Order.BinID to the bin claimed at the process (line) node when
+	// one was claimed there — that's the bin the operator releases at the
+	// HMI, and HandleOrderRelease syncs its manifest. For non-swap orders
+	// (no process node distinct from source) and for orders where the
+	// process-node pickup was skipped, fall back to the first claimed bin
+	// — the legacy behavior that was correct for single-pickup orders.
+	primaryIdx := 0
+	for i, c := range claimed {
+		if c.nodeName == processNode {
+			primaryIdx = i
+			break
+		}
+	}
+	order.BinID = &claimed[primaryIdx].binID
+	if err := d.db.UpdateOrderBinID(order.ID, claimed[primaryIdx].binID); err != nil {
 		// Second silent path the late-bind fallback was working around: an
 		// in-memory order.BinID that never made it to the DB row. Surface as
 		// WARNING so it stands out from the per-step skip lines above.
 		d.dbg("complex: WARNING order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
-			order.ID, claimed[0].binID, err)
+			order.ID, claimed[primaryIdx].binID, err)
 	}
 
 	// Multi-bin: populate the order_bins junction table with per-bin destinations.
