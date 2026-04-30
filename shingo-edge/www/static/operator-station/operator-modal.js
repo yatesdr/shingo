@@ -182,12 +182,24 @@ export function renderModal(entry) {
                 var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });
 
                 var parkedFullThisCode = parkedFullPayload === code;
+                // BANDAID — pull this manual-request path when proper demand
+                // signals land for manual_swap loaders / unloaders.
+                //
                 // Idle-state clickability: when there's no bin and no order
                 // for this payload, let the operator tap the card to issue a
                 // Request Empty (produce loader) or Request Full (consume
                 // unloader). Otherwise the manual_swap HMI has no way to
                 // create demand from the station — operators get a wall of
                 // "no demand" cards with nothing actionable.
+                //
+                // Long term, manual_swap demand should flow in automatically
+                // (auto_request_payload, kanban / lineside demand signals,
+                // upstream consume-side reorder), so the operator never has
+                // to manually request a bin from this screen. Once that's
+                // wired up, the canRequest branch — and the matching
+                // /request-empty / /request-full URLs below — becomes dead
+                // code and should be deleted instead of being left as a
+                // permanent escape hatch.
                 var idleNoDemand = !hasBin && !payloadOrders.length && !hasDemand;
                 var canRequest = idleNoDemand;
                 var clickable = !!payloadDelivered || parkedEmptyAtLoader || canRequest;

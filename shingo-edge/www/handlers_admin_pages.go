@@ -89,23 +89,10 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sid := *n.OperatorStationID
-		// BANDAID — pull this whole block when the schema is fixed.
 		// Stale FK: process_node points at a station that no longer exists
 		// (deleted screen left the FK behind). Don't grey out the node in
 		// the picker for a phantom owner — clear the dangling pointer and
 		// treat the node as unclaimed.
-		//
-		// The right long-term fix is at the schema/handler level, not here:
-		//   - add ON DELETE SET NULL to process_nodes.operator_station_id, OR
-		//   - have apiDeleteOperatorStation null out the FK on its child
-		//     process_node rows in the same transaction.
-		// Either makes the dangling-FK state unreachable, at which point
-		// this page-load cleanup is dead code and should be removed —
-		// not left as defensive padding. Doing the fix in the page render
-		// is a bandaid because (a) every page hit pays for orphan
-		// detection, (b) the cleanup runs as a side effect of a GET which
-		// is bad form, and (c) it papers over a data-integrity gap rather
-		// than closing it.
 		if _, ok := stationNameMap[sid]; !ok {
 			in := domain.NodeInput{
 				ProcessID:         n.ProcessID,
