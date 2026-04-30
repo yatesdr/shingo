@@ -3,6 +3,7 @@ package www
 import (
 	"encoding/json"
 	"html/template"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -88,6 +89,25 @@ func (h *Handlers) handleProcesses(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sid := *n.OperatorStationID
+		// Stale FK: process_node points at a station that no longer exists
+		// (deleted screen left the FK behind). Don't grey out the node in
+		// the picker for a phantom owner — clear the dangling pointer and
+		// treat the node as unclaimed.
+		if _, ok := stationNameMap[sid]; !ok {
+			in := domain.NodeInput{
+				ProcessID:         n.ProcessID,
+				OperatorStationID: nil,
+				CoreNodeName:      n.CoreNodeName,
+				Code:              n.Code,
+				Name:              n.Name,
+				Sequence:          n.Sequence,
+				Enabled:           n.Enabled,
+			}
+			if err := h.engine.ProcessService().UpdateNode(n.ID, in); err != nil {
+				log.Printf("clear stale operator_station_id on node %d: %v", n.ID, err)
+			}
+			continue
+		}
 		stationNodeMap[sid] = append(stationNodeMap[sid], n.CoreNodeName)
 		claimedByStation[n.CoreNodeName] = map[string]interface{}{
 			"id":   sid,
