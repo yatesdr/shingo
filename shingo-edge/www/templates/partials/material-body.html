@@ -78,7 +78,9 @@
                     <td style="white-space:nowrap">
                         {{if .ActiveClaim}}
                             {{if eq .ActiveClaim.Role "produce"}}
-                            <button class="btn btn-sm" hx-post="/api/process-nodes/{{.Node.ID}}/request" hx-swap="none" title="Request empty bin">Request Empty</button>
+                            {{if eq .ActiveClaim.SwapMode "manual_swap"}}
+                            <button class="btn btn-sm" onclick='openRequestEmptyModal({{.Node.ID}}, {{json .ActiveClaim.AllowedPayloads}})' title="Request empty bin">Request Empty</button>
+                            {{end}}
                             <button class="btn btn-sm btn-primary" hx-post="/api/process-nodes/{{.Node.ID}}/finalize" hx-swap="none" title="Finalize manifest count and release full bin to storage">Finalize &amp; Release</button>
                             {{else if eq .ActiveClaim.SwapMode "manual_swap"}}
                             {{if not .BinState}}

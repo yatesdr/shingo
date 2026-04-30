@@ -552,6 +552,18 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
+	// Press-index pairing requires the back position to exist as a
+	// process_node so the fleet manager has wait/pickup/dropoff coordinates
+	// for R2's leg. The back node holds no claim of its own, but its
+	// process_node row must exist. Auto-provision it here using the front
+	// node's operator station so the operator doesn't have to add it by
+	// hand in a separate step.
+	if in.SwapMode == "two_robot_press_index" && in.PairedCoreNode != "" {
+		if err := h.ensurePressIndexBackNode(in); err != nil {
+			log.Printf("press-index back-node provisioning for %s (paired %s): %v",
+				in.CoreNodeName, in.PairedCoreNode, err)
+		}
+	}
 	id, err := h.engine.StyleService().UpsertClaim(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -564,6 +576,49 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// logs its own failures and the outbox will retry transient send errors.
 	go h.orchestration.SendClaimSync()
 	writeJSON(w, map[string]int64{"id": id})
+}
+
+// ensurePressIndexBackNode creates a process_node row for the press-index
+// back position (claim.PairedCoreNode) when one doesn't already exist on
+// the same process as the front node. Idempotent — does nothing when the
+// back node is already a process_node.
+func (h *Handlers) ensurePressIndexBackNode(in domain.NodeClaimInput) error {
+	style, err := h.engine.StyleService().Get(in.StyleID)
+	if err != nil || style == nil {
+		return fmt.Errorf("style lookup: %w", err)
+	}
+	nodes, err := h.engine.ProcessService().ListNodesByProcess(style.ProcessID)
+	if err != nil {
+		return fmt.Errorf("list process nodes: %w", err)
+	}
+	var frontNode *domain.Node
+	for i := range nodes {
+		if nodes[i].CoreNodeName == in.PairedCoreNode {
+			return nil // already exists
+		}
+		if nodes[i].CoreNodeName == in.CoreNodeName {
+			n := nodes[i]
+			frontNode = &n
+		}
+	}
+	if frontNode == nil {
+		return fmt.Errorf("front node %s not found in process %d", in.CoreNodeName, style.ProcessID)
+	}
+	backInput := domain.NodeInput{
+		ProcessID:         style.ProcessID,
+		OperatorStationID: frontNode.OperatorStationID,
+		CoreNodeName:      in.PairedCoreNode,
+		Name:              in.PairedCoreNode,
+		Enabled:           true,
+	}
+	newID, err := h.engine.ProcessService().CreateNode(backInput)
+	if err != nil {
+		return fmt.Errorf("create back node: %w", err)
+	}
+	if _, err := h.engine.ProcessService().EnsureNodeRuntime(newID); err != nil {
+		return fmt.Errorf("ensure back-node runtime: %w", err)
+	}
+	return nil
 }
 
 func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Request) {

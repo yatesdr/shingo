@@ -400,6 +400,16 @@ async function saveClaim() {
         ShingoEdge.toast('Swap modes require both inbound and outbound staging', 'warning');
         return;
     }
+    if (swap === 'two_robot_press_index') {
+        if (!document.getElementById('claims-add-paired-node').value) {
+            ShingoEdge.toast('2-Robot Press Index requires a Back Press Node', 'warning');
+            return;
+        }
+        if (!document.getElementById('claims-add-outbound-destination').value) {
+            ShingoEdge.toast('2-Robot Press Index requires an Outbound Destination', 'warning');
+            return;
+        }
+    }
 
     // Build the claim body
     var claimBody = {
@@ -495,10 +505,35 @@ function toggleClaimsAddPayload() {
     document.getElementById('claims-outbound-destination-group').style.display = (isChangeover) ? 'none' : '';
     // Changeover fieldset — not used by manual_swap
     document.getElementById('claims-changeover-fieldset').style.display = isManualSwap ? 'none' : '';
-    // A/B cycling fieldset — consume and produce roles, but not manual_swap
-    var showAB = (role === 'consume' || role === 'produce') && !isManualSwap;
-    document.getElementById('claims-ab-fieldset').style.display = showAB ? '' : 'none';
-    if (!showAB) {
+    // Paired-node fieldset is dual-purposed:
+    //   - two_robot_press_index: required "Back Press Node" (the second press position)
+    //   - other consume/produce modes: optional A/B alternating partner
+    // Manual swap and changeover hide it entirely.
+    var isPressIndex = swap === 'two_robot_press_index';
+    var showPair = (role === 'consume' || role === 'produce') && !isManualSwap;
+    var pairFieldset = document.getElementById('claims-ab-fieldset');
+    pairFieldset.style.display = showPair ? '' : 'none';
+    if (showPair) {
+        var legend = document.getElementById('claims-ab-legend');
+        var help = document.getElementById('claims-ab-help');
+        var label = document.getElementById('claims-ab-label');
+        var pairSelect = document.getElementById('claims-add-paired-node');
+        if (isPressIndex) {
+            legend.textContent = 'Press Index Pairing';
+            help.textContent = 'Second press position. Bins index forward from this node into the active node when the active node releases. Required for 2-Robot Press Index Swap.';
+            label.innerHTML = 'Back Press Node <span style="color:var(--danger,#c33)">*</span>';
+            if (pairSelect.options.length > 0 && pairSelect.options[0].value === '') {
+                pairSelect.options[0].textContent = '-- Select back press node --';
+            }
+        } else {
+            legend.textContent = 'A/B Node Cycling';
+            help.textContent = 'Pair this node with another node for alternating operation. The operator flips which node is active via the station HMI.';
+            label.textContent = 'Paired Node';
+            if (pairSelect.options.length > 0 && pairSelect.options[0].value === '') {
+                pairSelect.options[0].textContent = '-- None (no A/B cycling) --';
+            }
+        }
+    } else {
         document.getElementById('claims-add-paired-node').value = '';
     }
     // Auto-request fieldset — show for manual_swap (all-payload) or standard (single dropdown)
