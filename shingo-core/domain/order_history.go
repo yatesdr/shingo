@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // OrderHistory is one row in the order_history table — a status-change
 // audit trail for a single Order. Every transition through the
@@ -13,8 +17,8 @@ import "time"
 // via `type History = domain.OrderHistory`.
 type OrderHistory struct {
 	ID        int64     `json:"id"`
-	OrderID   int64     `json:"order_id"`
-	Status    string    `json:"status"`
+	OrderID   int64           `json:"order_id"`
+	Status    protocol.Status `json:"status"`
 	Detail    string    `json:"detail"`
 	CreatedAt time.Time `json:"created_at"`
 }

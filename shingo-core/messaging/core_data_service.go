@@ -115,7 +115,7 @@ func (s *CoreDataService) handleCountGroupAck(env *protocol.Envelope, ack *proto
 		env.Src.Station, ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID)
 	detail := fmt.Sprintf("group=%s outcome=%s latency_ms=%d corr=%s station=%s",
 		ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID, env.Src.Station)
-	if err := s.db.AppendAudit("countgroup_ack", 0, ack.Outcome, "", detail, env.Src.Station); err != nil {
+	if err := s.db.AppendAudit("countgroup_ack", 0, string(ack.Outcome), "", detail, env.Src.Station); err != nil {
 		log.Printf("core_handler: countgroup ack audit: %v", err)
 	}
 }
@@ -309,7 +309,7 @@ func (s *CoreDataService) handleOrderStatusRequest(env *protocol.Envelope, req *
 		order, err := s.db.GetOrderByUUID(orderUUID)
 		if err == nil && order != nil {
 			snap.Found = true
-			snap.Status = order.Status
+			snap.Status = string(order.Status)
 			snap.StationID = order.StationID
 			snap.SourceNode = order.SourceNode
 			snap.DeliveryNode = order.DeliveryNode

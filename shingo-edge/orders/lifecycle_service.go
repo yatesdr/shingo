@@ -20,7 +20,7 @@ func newLifecycleService(db *store.DB, emitter EventEmitter, debug DebugLogFunc)
 	return &LifecycleService{db: db, emitter: emitter, debug: debug}
 }
 
-func (s *LifecycleService) Transition(orderID int64, newStatus, detail string) error {
+func (s *LifecycleService) Transition(orderID int64, newStatus protocol.Status, detail string) error {
 	order, err := s.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -37,7 +37,7 @@ func (s *LifecycleService) Transition(orderID int64, newStatus, detail string) e
 	return s.applyTransition(order, newStatus, detail, false)
 }
 
-func (s *LifecycleService) ForceTransition(orderID int64, newStatus, detail string) error {
+func (s *LifecycleService) ForceTransition(orderID int64, newStatus protocol.Status, detail string) error {
 	order, err := s.db.GetOrder(orderID)
 	if err != nil {
 		return err
@@ -48,17 +48,17 @@ func (s *LifecycleService) ForceTransition(orderID int64, newStatus, detail stri
 	return s.applyTransition(order, newStatus, detail, true)
 }
 
-func (s *LifecycleService) applyTransition(order *orders.Order, newStatus, detail string, forced bool) error {
+func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protocol.Status, detail string, forced bool) error {
 	oldStatus := order.Status
 	if forced {
 		s.debug.Log("force transition: id=%d uuid=%s %s->%s", order.ID, order.UUID, oldStatus, newStatus)
 	} else {
 		s.debug.Log("transition: id=%d uuid=%s %s->%s", order.ID, order.UUID, oldStatus, newStatus)
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, newStatus); err != nil {
+	if err := s.db.UpdateOrderStatus(order.ID, string(newStatus)); err != nil {
 		return fmt.Errorf("update order status: %w", err)
 	}
-	if err := s.db.InsertOrderHistory(order.ID, oldStatus, newStatus, detail); err != nil {
+	if err := s.db.InsertOrderHistory(order.ID, string(oldStatus), string(newStatus), detail); err != nil {
 		log.Printf("insert order history: %v", err)
 	}
 	updated, _ := s.db.GetOrder(order.ID)
@@ -66,7 +66,7 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus, detai
 	if updated != nil && updated.ETA != nil {
 		eta = *updated.ETA
 	}
-	s.emitter.EmitOrderStatusChanged(order.ID, order.UUID, order.OrderType, oldStatus, newStatus, eta, nil, order.ProcessNodeID)
+	s.emitter.EmitOrderStatusChanged(order.ID, order.UUID, order.OrderType, string(oldStatus), string(newStatus), eta, nil, order.ProcessNodeID)
 	if IsTerminal(newStatus) {
 		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
 		if newStatus == StatusFailed {
@@ -93,12 +93,13 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 	if err != nil {
 		return err
 	}
-	if !snapshot.Found || snapshot.Status == "" || snapshot.Status == order.Status {
+	snapStatus := protocol.Status(snapshot.Status)
+	if !snapshot.Found || snapStatus == "" || snapStatus == order.Status {
 		return nil
 	}
 
 	detail := "startup reconciliation with core"
-	switch snapshot.Status {
+	switch snapStatus {
 	case StatusConfirmed:
 		if order.Status == StatusDelivered {
 			return s.Transition(order.ID, StatusConfirmed, detail)

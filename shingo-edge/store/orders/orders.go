@@ -12,6 +12,7 @@ import (
 	"log"
 	"time"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
@@ -158,7 +159,7 @@ func GetByUUID(db *sql.DB, uuid string) (*Order, error) {
 }
 
 // Create inserts an order and returns the new row id.
-func Create(db *sql.DB, uuid, orderType string, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
+func Create(db *sql.DB, uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
 	res, err := db.Exec(`
 		INSERT INTO orders (uuid, order_type, process_node_id, retrieve_empty, quantity, delivery_node, staging_node, source_node, load_type, auto_confirm, payload_code)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -260,7 +261,7 @@ func ListStagedByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
 
 // ListActiveByProcessNodeAndType returns non-terminal orders for a
 // process node filtered by order type.
-func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType string) ([]Order, error) {
+func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType protocol.OrderType) ([]Order, error) {
 	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
 		WHERE o.process_node_id = ? AND o.order_type = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
 		ORDER BY o.created_at`, processNodeID, orderType)

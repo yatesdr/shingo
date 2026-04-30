@@ -5,6 +5,7 @@ import (
 	"shingoedge/config"
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/engine/changeover"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/service"
@@ -92,6 +93,7 @@ type EngineOrchestration interface {
 	RequestFullBin(nodeID int64, payloadCode string) (*domain.Order, error)
 
 	// ── Changeover orchestration ───────────────────────────────────
+	PreviewChangeoverPlan(processID, toStyleID int64) (changeover.Plan, error)
 	StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*domain.Changeover, error)
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error

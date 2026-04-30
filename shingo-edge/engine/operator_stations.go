@@ -51,127 +51,107 @@ func (e *Engine) nodeIsOccupied(coreNodeName string) bool {
 }
 
 // requestNodeFromClaim constructs orders using style_node_claims routing.
-// If the node is physically empty (no bin per Core telemetry), a simple move
-// order is created regardless of swap mode — there is nothing to swap out.
+// Builds a ConsumePlan (pure validation + dispatch shape) and applies it.
+// If the node is physically empty (no bin per Core telemetry), the planner
+// downgrades any non-simple swap mode to a simple move — there is nothing
+// to swap out.
 func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64) (*NodeOrderResult, error) {
-	nodeID := node.ID
+	autoConfirm := false
+	if claim != nil {
+		autoConfirm = claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	}
+	occupied := claim == nil || claim.SwapMode == "simple" || claim.SwapMode == "" || e.nodeIsOccupied(claim.CoreNodeName)
 
-	// If the node is not physically occupied, skip swap choreography and just deliver.
-	// This handles cases where a bin was removed manually (e.g. sent to quality hold).
-	if claim.SwapMode != "simple" && !e.nodeIsOccupied(claim.CoreNodeName) {
-		if claim.InboundSource == "" {
-			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
-		}
-		log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery", node.Name, claim.SwapMode)
-		order, err := e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, claim.CoreNodeName, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
-		if err != nil {
-			return nil, err
-		}
-		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
-			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
-		}
-		refreshed, err := e.db.GetOrder(order.ID)
-		if err != nil {
-			e.logFn("station: re-read order %d after runtime update: %v", order.ID, err)
-			return nil, fmt.Errorf("re-read order %d: %w", order.ID, err)
-		}
-		order = refreshed
-		return &NodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: nodeID}, nil
+	plan, err := BuildConsumePlan(node, runtime, claim, quantity, occupied, autoConfirm)
+	if err != nil {
+		return nil, err
+	}
+	if plan.DowngradedFromSwapMode != "" {
+		log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery", node.Name, plan.DowngradedFromSwapMode)
 	}
 
-	switch claim.SwapMode {
-	case "sequential":
-		steps := BuildSequentialRemovalSteps(claim)
-		orderA, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, quantity, "", steps) // "" = removal, no UOP reset
-		if err != nil {
-			return nil, err
-		}
-		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, nil); err != nil {
-			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
-		}
-		refreshedA, err := e.db.GetOrder(orderA.ID)
-		if err != nil {
-			e.logFn("station: re-read order %d after runtime update: %v", orderA.ID, err)
-			return nil, fmt.Errorf("re-read order %d: %w", orderA.ID, err)
-		}
-		orderA = refreshedA
-		return &NodeOrderResult{CycleMode: "sequential", Order: orderA, ProcessNodeID: nodeID}, nil
-
-	case "two_robot":
-		if claim.InboundStaging == "" {
-			return nil, fmt.Errorf("node %s: two-robot swap requires inbound staging node", node.Name)
-		}
-		// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
-		// Edge-runtime-only — Core anomalies don't shut down the line. See
-		// operator_guards.go.
+	// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
+	// Edge-runtime-only — Core anomalies don't shut down the line. See
+	// operator_guards.go.
+	if plan.Dispatch != nil && plan.Dispatch.RequiresActiveSwapGuard {
 		if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
 			return nil, err
 		}
-		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
-		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, claim.CoreNodeName, stepsA)
-		if err != nil {
-			return nil, err
-		}
-		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, quantity, "", stepsB)
-		if err != nil {
-			return nil, err
-		}
-		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, &orderB.ID); err != nil {
-			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
-		}
-		refreshedA, err := e.db.GetOrder(orderA.ID)
-		if err != nil {
-			e.logFn("station: re-read order %d after runtime update: %v", orderA.ID, err)
-			return nil, fmt.Errorf("re-read order %d: %w", orderA.ID, err)
-		}
-		orderA = refreshedA
-		refreshedB, err := e.db.GetOrder(orderB.ID)
-		if err != nil {
-			e.logFn("station: re-read order %d after runtime update: %v", orderB.ID, err)
-			return nil, fmt.Errorf("re-read order %d: %w", orderB.ID, err)
-		}
-		orderB = refreshedB
-		return &NodeOrderResult{CycleMode: "two_robot", OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+	}
 
-	case "single_robot":
-		if claim.InboundStaging == "" || claim.OutboundStaging == "" {
-			return nil, fmt.Errorf("node %s: single-robot swap requires inbound and outbound staging nodes", node.Name)
-		}
-		steps := BuildSingleSwapSteps(claim)
-		order, err := e.orderMgr.CreateComplexOrder(&nodeID, quantity, claim.CoreNodeName, steps)
+	return e.applyConsumePlan(node, plan)
+}
+
+// applyConsumePlan is the impure half of the consume-request pipeline:
+// it issues the move order or planned complex order(s), records the
+// runtime-orders linkage, and re-reads the resulting orders. Direction-
+// specific glue around the shared SwapDispatch.
+func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*NodeOrderResult, error) {
+	nodeID := node.ID
+
+	if plan.SimpleMove {
+		order, err := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, plan.SimpleSource, plan.SimpleDest, plan.AutoConfirm)
 		if err != nil {
 			return nil, err
 		}
 		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
 			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
 		}
-		refreshed, err := e.db.GetOrder(order.ID)
-		if err != nil {
-			e.logFn("station: re-read order %d after runtime update: %v", order.ID, err)
-			return nil, fmt.Errorf("re-read order %d: %w", order.ID, err)
-		}
-		order = refreshed
-		return &NodeOrderResult{CycleMode: "single_robot", Order: order, ProcessNodeID: nodeID}, nil
-
-	default: // "simple"
-		if claim.InboundSource == "" {
-			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
-		}
-		order, err := e.orderMgr.CreateMoveOrder(&nodeID, quantity, claim.InboundSource, claim.CoreNodeName, claim.AutoConfirm || e.cfg.Web.AutoConfirm)
+		order, err = e.refreshOrderStation(order.ID)
 		if err != nil {
 			return nil, err
 		}
-		if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
-			e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
-		}
-		refreshed, err := e.db.GetOrder(order.ID)
-		if err != nil {
-			e.logFn("station: re-read order %d after runtime update: %v", order.ID, err)
-			return nil, fmt.Errorf("re-read order %d: %w", order.ID, err)
-		}
-		order = refreshed
 		return &NodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: nodeID}, nil
 	}
+
+	dispatch := plan.Dispatch
+	orderA, err := e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.AutoConfirmA)
+	if err != nil {
+		return nil, err
+	}
+
+	var orderB *storeorders.Order
+	if dispatch.StepsB != nil {
+		orderB, err = e.dispatchComplexLeg(nodeID, plan.Quantity, dispatch.StepsB, "", dispatch.AutoConfirmB)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var orderBID *int64
+	if orderB != nil {
+		orderBID = &orderB.ID
+	}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
+		e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
+	}
+
+	orderA, err = e.refreshOrderStation(orderA.ID)
+	if err != nil {
+		return nil, err
+	}
+	if orderB != nil {
+		orderB, err = e.refreshOrderStation(orderB.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if orderB == nil {
+		return &NodeOrderResult{CycleMode: dispatch.CycleMode, Order: orderA, ProcessNodeID: nodeID}, nil
+	}
+	return &NodeOrderResult{CycleMode: dispatch.CycleMode, OrderA: orderA, OrderB: orderB, ProcessNodeID: nodeID}, nil
+}
+
+// refreshOrderStation re-reads an order after the runtime-orders write
+// using the consume side's e.logFn diagnostic surface.
+func (e *Engine) refreshOrderStation(orderID int64) (*storeorders.Order, error) {
+	o, err := e.db.GetOrder(orderID)
+	if err != nil {
+		e.logFn("station: re-read order %d after runtime update: %v", orderID, err)
+		return nil, fmt.Errorf("re-read order %d: %w", orderID, err)
+	}
+	return o, nil
 }
 
 // ReleaseNodeEmpty releases the active claim's bin as fully consumed

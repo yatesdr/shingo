@@ -407,7 +407,7 @@ func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stag
 }
 
 // TransitionOrder moves an order to a new status with validation.
-func (m *Manager) TransitionOrder(orderID int64, newStatus, detail string) error {
+func (m *Manager) TransitionOrder(orderID int64, newStatus protocol.Status, detail string) error {
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.Transition(orderID, newStatus, detail)
 }

@@ -71,7 +71,7 @@ type CounterAnomalyEvent struct {
 type OrderCreatedEvent struct {
 	OrderID       int64  `json:"order_id"`
 	OrderUUID     string `json:"order_uuid"`
-	OrderType     string `json:"order_type"`
+	OrderType     protocol.OrderType `json:"order_type"`
 	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
 }
 
@@ -79,7 +79,7 @@ type OrderCreatedEvent struct {
 type OrderStatusChangedEvent struct {
 	OrderID       int64  `json:"order_id"`
 	OrderUUID     string `json:"order_uuid"`
-	OrderType     string `json:"order_type"`
+	OrderType     protocol.OrderType `json:"order_type"`
 	OldStatus     string `json:"old_status"`
 	NewStatus     string `json:"new_status"`
 	ETA           string `json:"eta"`
@@ -90,7 +90,7 @@ type OrderStatusChangedEvent struct {
 type OrderCompletedEvent struct {
 	OrderID       int64  `json:"order_id"`
 	OrderUUID     string `json:"order_uuid"`
-	OrderType     string `json:"order_type"`
+	OrderType     protocol.OrderType `json:"order_type"`
 	ProcessNodeID *int64 `json:"process_node_id,omitempty"`
 }
 
@@ -134,6 +134,6 @@ type CounterReadErrorEvent struct {
 type OrderFailedEvent struct {
 	OrderID   int64  `json:"order_id"`
 	OrderUUID string `json:"order_uuid"`
-	OrderType string `json:"order_type"`
-	Reason    string `json:"reason"`
+	OrderType protocol.OrderType `json:"order_type"`
+	Reason    string             `json:"reason"`
 }

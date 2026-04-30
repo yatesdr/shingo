@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // Process is one production process at the edge — typically a line or
 // cell that runs styles in sequence. Holds the production state
@@ -85,10 +89,10 @@ type RuntimeState struct {
 // staging conventions. The active NodeClaim drives material orders
 // when the Process is running this Style.
 type NodeClaim struct {
-	ID                   int64     `json:"id"`
-	StyleID              int64     `json:"style_id"`
-	CoreNodeName         string    `json:"core_node_name"`
-	Role                 string    `json:"role"`
+	ID                   int64             `json:"id"`
+	StyleID              int64             `json:"style_id"`
+	CoreNodeName         string            `json:"core_node_name"`
+	Role                 protocol.ClaimRole `json:"role"`
 	SwapMode             string    `json:"swap_mode"`
 	PayloadCode          string    `json:"payload_code"`
 	UOPCapacity          int       `json:"uop_capacity"`
@@ -134,9 +138,9 @@ func (c *NodeClaim) AllowedPayloads() []string {
 // NodeClaimInput is the request shape for creating or updating a
 // NodeClaim — the persisted NodeClaim fields minus ID and CreatedAt.
 type NodeClaimInput struct {
-	StyleID               int64    `json:"style_id"`
-	CoreNodeName          string   `json:"core_node_name"`
-	Role                  string   `json:"role"`
+	StyleID               int64             `json:"style_id"`
+	CoreNodeName          string            `json:"core_node_name"`
+	Role                  protocol.ClaimRole `json:"role"`
 	SwapMode              string   `json:"swap_mode"`
 	PayloadCode           string   `json:"payload_code"`
 	UOPCapacity           int      `json:"uop_capacity"`

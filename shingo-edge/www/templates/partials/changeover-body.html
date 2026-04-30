@@ -19,10 +19,21 @@
                 {{end}}
             </select>
         </div>
+        <button class="btn" onclick="previewProcessChangeover()">Preview</button>
         <button class="btn btn-primary" onclick="startProcessChangeover()">Start Changeover</button>
     </div>
     {{end}}
 </div>
+
+{{if not .ActiveChangeover}}
+<div class="card-body" id="changeover-preview" style="display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
+        <strong>Preview — orders that will be created</strong>
+        <button class="btn btn-sm" onclick="document.getElementById('changeover-preview').style.display='none'">Close</button>
+    </div>
+    <div id="changeover-preview-body"></div>
+</div>
+{{end}}
 
 {{if .ActiveChangeover}}
 <div class="card-body">

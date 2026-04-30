@@ -11,7 +11,7 @@ func (h *Handlers) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Count orders by status
 	statusCounts := map[string]int{}
 	for _, o := range activeOrders {
-		statusCounts[o.Status]++
+		statusCounts[string(o.Status)]++
 	}
 
 	// Node stats

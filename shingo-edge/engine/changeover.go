@@ -82,7 +82,7 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 			}
 		case from != nil && from.PayloadCode == "__empty__":
 			situation = SituationAdd // node was empty, now needs material
-		case (from != nil && from.Role == "changeover") || (to != nil && to.Role == "changeover"):
+		case (from != nil && from.Role == protocol.ClaimRoleChangeover) || (to != nil && to.Role == protocol.ClaimRoleChangeover):
 			// Changeover-only nodes always evacuate and restore
 			situation = SituationEvacuate
 		case from.PayloadCode == to.PayloadCode && from.Role == to.Role:

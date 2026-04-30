@@ -25,7 +25,7 @@ func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 	db.SetProcessNodeRuntime(nodeID, &claimID, 50)
 
@@ -68,7 +68,7 @@ func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 	db.SetProcessNodeRuntime(nodeID, &claimID, 0) // was at 0, waiting for empty
 
@@ -163,7 +163,7 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
 	eng.Events.Emit(Event{
@@ -302,7 +302,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
 	eng := testEngine(t, db)

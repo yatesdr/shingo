@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/internal/helpers"
 )
@@ -116,8 +117,8 @@ func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim,
 // role/swap_mode invariants (manual_swap claims must auto-confirm and
 // must declare an outbound destination).
 func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
-	if in.Role != "produce" && in.Role != "changeover" {
-		in.Role = "consume"
+	if in.Role != protocol.ClaimRoleProduce && in.Role != protocol.ClaimRoleChangeover {
+		in.Role = protocol.ClaimRoleConsume
 	}
 	if in.SwapMode == "" {
 		in.SwapMode = "simple"

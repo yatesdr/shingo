@@ -144,7 +144,7 @@ func (e *Engine) FindLoaderForPayload(payloadCode string) *manualSwapNode {
 		return nil
 	}
 	for _, m := range e.findManualSwapNodes("") {
-		if m.claim.Role != "produce" {
+		if m.claim.Role != protocol.ClaimRoleProduce {
 			continue
 		}
 		if !slices.Contains(m.claim.AllowedPayloads(), payloadCode) {
@@ -165,7 +165,7 @@ func (e *Engine) FindUnloaderForPayload(payloadCode string) *manualSwapNode {
 		return nil
 	}
 	for _, m := range e.findManualSwapNodes("") {
-		if m.claim.Role != "consume" {
+		if m.claim.Role != protocol.ClaimRoleConsume {
 			continue
 		}
 		if !slices.Contains(m.claim.AllowedPayloads(), payloadCode) {

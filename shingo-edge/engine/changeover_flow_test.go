@@ -477,9 +477,9 @@ func TestChangeoverFlow_CancelMidRelease(t *testing.T) {
 
 	// Put Order B into in_transit (non-terminal, simulating robot executing)
 	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	db.UpdateOrderStatus(orderB.ID, orders.StatusSubmitted)
-	db.UpdateOrderStatus(orderB.ID, orders.StatusAcknowledged)
-	db.UpdateOrderStatus(orderB.ID, orders.StatusInTransit)
+	db.UpdateOrderStatus(orderB.ID, string(orders.StatusSubmitted))
+	db.UpdateOrderStatus(orderB.ID, string(orders.StatusAcknowledged))
+	db.UpdateOrderStatus(orderB.ID, string(orders.StatusInTransit))
 
 	// Cancel while Order B is mid-flight
 	if err := eng.CancelProcessChangeover(processID); err != nil {
@@ -516,8 +516,8 @@ func TestChangeoverFlow_OrderAFails(t *testing.T) {
 
 	// Fail Order A (staging)
 	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
-	db.UpdateOrderStatus(orderA.ID, orders.StatusSubmitted)
-	db.UpdateOrderStatus(orderA.ID, orders.StatusFailed)
+	db.UpdateOrderStatus(orderA.ID, string(orders.StatusSubmitted))
+	db.UpdateOrderStatus(orderA.ID, string(orders.StatusFailed))
 	emitOrderFailed(eng, orderA.ID, orderA.UUID, orderA.OrderType, "staging failed")
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
@@ -563,8 +563,8 @@ func TestChangeoverFlow_OrderBFails(t *testing.T) {
 
 	// Fail Order B (swap)
 	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	db.UpdateOrderStatus(orderB.ID, orders.StatusSubmitted)
-	db.UpdateOrderStatus(orderB.ID, orders.StatusFailed)
+	db.UpdateOrderStatus(orderB.ID, string(orders.StatusSubmitted))
+	db.UpdateOrderStatus(orderB.ID, string(orders.StatusFailed))
 	emitOrderFailed(eng, orderB.ID, orderB.UUID, orderB.OrderType, "swap failed")
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
@@ -651,8 +651,8 @@ func TestChangeoverFlow_PartialCompletion(t *testing.T) {
 	// Fail node C
 	taskC := findTaskByNode(tasks, "PNODE-C")
 	obC, _ := db.GetOrder(*taskC.OldMaterialReleaseOrderID)
-	db.UpdateOrderStatus(obC.ID, orders.StatusSubmitted)
-	db.UpdateOrderStatus(obC.ID, orders.StatusFailed)
+	db.UpdateOrderStatus(obC.ID, string(orders.StatusSubmitted))
+	db.UpdateOrderStatus(obC.ID, string(orders.StatusFailed))
 	emitOrderFailed(eng, obC.ID, obC.UUID, obC.OrderType, "C failed")
 
 	// tryCompleteProcessChangeover is only triggered via SwitchNodeToTarget.

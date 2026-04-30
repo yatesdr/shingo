@@ -527,12 +527,12 @@ func (h *testHandler) HandleData(env *Envelope, p *Data) {
 }
 
 func TestIsTerminal(t *testing.T) {
-	for _, s := range []string{StatusConfirmed, StatusCancelled, StatusFailed} {
+	for _, s := range []Status{StatusConfirmed, StatusCancelled, StatusFailed} {
 		if !IsTerminal(s) {
 			t.Errorf("IsTerminal(%q) = false, want true", s)
 		}
 	}
-	for _, s := range []string{StatusPending, StatusDelivered, StatusInTransit, StatusStaged, StatusQueued} {
+	for _, s := range []Status{StatusPending, StatusDelivered, StatusInTransit, StatusStaged, StatusQueued} {
 		if IsTerminal(s) {
 			t.Errorf("IsTerminal(%q) = true, want false", s)
 		}
@@ -540,7 +540,7 @@ func TestIsTerminal(t *testing.T) {
 }
 
 func TestValidForwardTransitions(t *testing.T) {
-	tests := []struct{ from, to string }{
+	tests := []struct{ from, to Status }{
 		{StatusPending, StatusSubmitted},
 		{StatusPending, StatusSourcing},
 		{StatusSubmitted, StatusAcknowledged},
@@ -562,7 +562,7 @@ func TestValidForwardTransitions(t *testing.T) {
 }
 
 func TestInvalidBackwardTransitions(t *testing.T) {
-	tests := []struct{ from, to string }{
+	tests := []struct{ from, to Status }{
 		{StatusDelivered, StatusInTransit},
 		{StatusInTransit, StatusAcknowledged},
 		{StatusAcknowledged, StatusSubmitted},
@@ -577,8 +577,8 @@ func TestInvalidBackwardTransitions(t *testing.T) {
 }
 
 func TestTerminalStatesCannotTransition(t *testing.T) {
-	for _, from := range []string{StatusConfirmed, StatusCancelled, StatusFailed} {
-		for _, to := range []string{StatusPending, StatusDelivered, StatusConfirmed} {
+	for _, from := range []Status{StatusConfirmed, StatusCancelled, StatusFailed} {
+		for _, to := range []Status{StatusPending, StatusDelivered, StatusConfirmed} {
 			if IsValidTransition(from, to) {
 				t.Errorf("IsValidTransition(%q, %q) = true, want false (terminal state)", from, to)
 			}
@@ -626,12 +626,12 @@ func TestReshufflingTransitions(t *testing.T) {
 	if !IsValidTransition(StatusPending, StatusReshuffling) {
 		t.Error("Pending → Reshuffling must be valid (compound parent entry)")
 	}
-	for _, to := range []string{StatusConfirmed, StatusFailed, StatusCancelled} {
+	for _, to := range []Status{StatusConfirmed, StatusFailed, StatusCancelled} {
 		if !IsValidTransition(StatusReshuffling, to) {
 			t.Errorf("Reshuffling → %s must be valid (compound parent terminal)", to)
 		}
 	}
-	for _, to := range []string{StatusSourcing, StatusInTransit, StatusDelivered, StatusStaged} {
+	for _, to := range []Status{StatusSourcing, StatusInTransit, StatusDelivered, StatusStaged} {
 		if IsValidTransition(StatusReshuffling, to) {
 			t.Errorf("Reshuffling → %s must NOT be valid (parent never enters in-flight)", to)
 		}
@@ -657,7 +657,7 @@ func TestAllStatusesCovered(t *testing.T) {
 // table.
 func TestAllValidTransitionsIsCopy(t *testing.T) {
 	dup := AllValidTransitions()
-	dup[StatusPending] = []string{"some-bogus-status"}
+	dup[StatusPending] = []Status{"some-bogus-status"}
 	if !IsValidTransition(StatusPending, StatusSourcing) {
 		t.Error("AllValidTransitions returned a reference, not a copy — canonical table was mutated")
 	}

@@ -4,16 +4,17 @@ import (
 	"path/filepath"
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/store"
 )
 
 type testEmitter struct{}
 
-func (testEmitter) EmitOrderCreated(orderID int64, orderUUID, orderType string, payloadID, processNodeID *int64) {}
-func (testEmitter) EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64) {
+func (testEmitter) EmitOrderCreated(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {}
+func (testEmitter) EmitOrderStatusChanged(orderID int64, orderUUID string, orderType protocol.OrderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64) {
 }
-func (testEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType string, payloadID, processNodeID *int64) {}
-func (testEmitter) EmitOrderFailed(orderID int64, orderUUID, orderType, reason string)              {}
+func (testEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {}
+func (testEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {}
 
 func testManagerDB(t *testing.T) *store.DB {
 	t.Helper()
@@ -33,7 +34,7 @@ func TestConfirmDeliveryDoesNotTransitionWhenReceiptEnqueueFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, StatusDelivered); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(StatusDelivered)); err != nil {
 		t.Fatalf("set delivered status: %v", err)
 	}
 
@@ -55,7 +56,7 @@ func TestAbortOrderDoesNotTransitionWhenCancelEnqueueFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, StatusSubmitted); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(StatusSubmitted)); err != nil {
 		t.Fatalf("set submitted status: %v", err)
 	}
 
@@ -76,7 +77,7 @@ func TestRedirectOrderDoesNotPersistWhenRedirectEnqueueFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, StatusSubmitted); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(StatusSubmitted)); err != nil {
 		t.Fatalf("set submitted status: %v", err)
 	}
 
@@ -102,10 +103,10 @@ func TestRegression_TerminalTransitionIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, StatusDelivered); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(StatusDelivered)); err != nil {
 		t.Fatalf("set delivered: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, StatusConfirmed); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(StatusConfirmed)); err != nil {
 		t.Fatalf("set confirmed: %v", err)
 	}
 
@@ -134,7 +135,7 @@ func TestRegression_CancelledToCancelledIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, StatusCancelled); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(StatusCancelled)); err != nil {
 		t.Fatalf("set cancelled: %v", err)
 	}
 
@@ -182,7 +183,7 @@ func TestRegression_FailedToFailedIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, StatusFailed); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(StatusFailed)); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
 

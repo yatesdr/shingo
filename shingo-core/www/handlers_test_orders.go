@@ -117,7 +117,7 @@ func (h *Handlers) apiTestOrderSubmit(w http.ResponseWriter, r *http.Request) {
 
 	orderReq := &protocol.OrderRequest{
 		OrderUUID:       orderUUID,
-		OrderType:       req.OrderType,
+		OrderType:       protocol.OrderType(req.OrderType),
 		PayloadCode: req.PayloadCode,
 		Quantity:        req.Quantity,
 		DeliveryNode:    req.DeliveryNode,

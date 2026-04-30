@@ -53,7 +53,7 @@ func (d *Dispatcher) dbg(format string, args ...any) {
 	}
 }
 
-func (d *Dispatcher) RegisterPlanner(orderType string, handler PlanningHandler) {
+func (d *Dispatcher) RegisterPlanner(orderType protocol.OrderType, handler PlanningHandler) {
 	d.planner.Register(orderType, handler)
 }
 
@@ -111,7 +111,7 @@ func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, pay
 	}
 	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
 	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, env.Src.Station, payloadCode)
-	d.replies.SendUpdate(env, order.EdgeUUID, StatusQueued, "awaiting inventory")
+	d.replies.SendUpdate(env, order.EdgeUUID, string(StatusQueued), "awaiting inventory")
 }
 
 func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) {

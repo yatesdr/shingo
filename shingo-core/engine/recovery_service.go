@@ -3,6 +3,8 @@ package engine
 import (
 	"fmt"
 	"time"
+
+	"shingocore/domain"
 )
 
 type RecoveryService struct {
@@ -93,13 +95,13 @@ func (s *RecoveryService) ReleaseStagedBin(binID int64, actor string) error {
 	if err != nil {
 		return fmt.Errorf("bin not found")
 	}
-	if bin.Status != "staged" {
+	if bin.Status != domain.BinStatusStaged {
 		return fmt.Errorf("bin %d is not staged", binID)
 	}
 	if err := e.db.ReleaseStagedBin(binID); err != nil {
 		return err
 	}
-	e.db.AppendAudit("bin", binID, "recovery.release_staged", "staged", "available", actor)
+	e.db.AppendAudit("bin", binID, "recovery.release_staged", string(domain.BinStatusStaged), string(domain.BinStatusAvailable), actor)
 	e.db.RecordRecoveryAction("release_staged_bin", "bin", binID, "released staged bin back to available", actor)
 	return nil
 }
@@ -110,8 +112,7 @@ func (s *RecoveryService) CancelStuckOrder(orderID int64, actor string) error {
 	if err != nil {
 		return fmt.Errorf("order not found")
 	}
-	switch order.Status {
-	case "confirmed", "cancelled", "failed":
+	if order.Status.IsTerminal() {
 		return fmt.Errorf("order %d is already terminal", orderID)
 	}
 	if err := e.TerminateOrder(orderID, actor); err != nil {

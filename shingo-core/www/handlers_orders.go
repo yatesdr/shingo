@@ -263,7 +263,7 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 			batchUUID := fmt.Sprintf("%s-%d", orderUUID, i)
 			orderReq := &protocol.OrderRequest{
 				OrderUUID:     batchUUID,
-				OrderType:     actualType,
+				OrderType:     protocol.OrderType(actualType),
 				PayloadCode: req.PayloadCode,
 				PayloadDesc:   req.Description,
 				Quantity:      1,
@@ -281,7 +281,7 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 			if i == 1 {
 				if o, err := h.engine.OrderService().GetOrderByUUID(batchUUID); err == nil {
 					firstOrderID = o.ID
-					firstStatus = o.Status
+					firstStatus = string(o.Status)
 				}
 			}
 		}
@@ -295,7 +295,7 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 
 	orderReq := &protocol.OrderRequest{
 		OrderUUID:     orderUUID,
-		OrderType:     actualType,
+		OrderType:     protocol.OrderType(actualType),
 		PayloadCode: req.PayloadCode,
 		PayloadDesc:   req.Description,
 		Quantity:      1,

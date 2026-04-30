@@ -33,6 +33,7 @@ package engine
 import (
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -301,7 +302,7 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.SwapMode != "manual_swap" || claim.Role != "produce" {
+	if claim == nil || claim.SwapMode != "manual_swap" || claim.Role != protocol.ClaimRoleProduce {
 		return false
 	}
 	if claim.OutboundDestination == "" {
@@ -354,7 +355,7 @@ func (e *Engine) handleUnloaderFullInCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.SwapMode != "manual_swap" || claim.Role != "consume" {
+	if claim == nil || claim.SwapMode != "manual_swap" || claim.Role != protocol.ClaimRoleConsume {
 		return false
 	}
 	if claim.OutboundDestination == "" {
@@ -418,7 +419,7 @@ func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.Role != "produce" {
+	if claim == nil || claim.Role != protocol.ClaimRoleProduce {
 		return false
 	}
 	claimID := claim.ID
@@ -455,7 +456,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.BinUOPRemaining != nil {
 		resetUOP = *ctx.order.BinUOPRemaining
 	}
-	if claim.Role == "produce" {
+	if claim.Role == protocol.ClaimRoleProduce {
 		resetUOP = 0
 	}
 

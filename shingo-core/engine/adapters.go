@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingo/protocol"
 	"shingocore/countgroup"
 	"shingocore/fleet"
 	"shingocore/store"
@@ -11,7 +12,7 @@ type dispatchEmitter struct {
 	bus *EventBus
 }
 
-func (e *dispatchEmitter) EmitOrderReceived(orderID int64, edgeUUID, stationID, orderType, payloadCode, deliveryNode string) {
+func (e *dispatchEmitter) EmitOrderReceived(orderID int64, edgeUUID, stationID string, orderType protocol.OrderType, payloadCode, deliveryNode string) {
 	e.bus.Emit(Event{Type: EventOrderReceived, Payload: OrderReceivedEvent{
 		OrderID:      orderID,
 		EdgeUUID:     edgeUUID,

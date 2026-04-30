@@ -17,7 +17,7 @@ type Bin struct {
 	Label             string     `json:"label"`
 	Description       string     `json:"description"`
 	NodeID            *int64     `json:"node_id,omitempty"`
-	Status            string     `json:"status"`
+	Status            BinStatus  `json:"status"`
 	ClaimedBy         *int64     `json:"claimed_by,omitempty"`
 	StagedAt          *time.Time `json:"staged_at,omitempty"`
 	StagedExpiresAt   *time.Time `json:"staged_expires_at,omitempty"`

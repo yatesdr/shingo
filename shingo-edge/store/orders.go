@@ -7,6 +7,7 @@ package store
 import (
 	"time"
 
+	"shingo/protocol"
 	"shingoedge/store/orders"
 )
 
@@ -41,7 +42,7 @@ func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {
 }
 
 // CreateOrder inserts an order and returns the new row id.
-func (db *DB) CreateOrder(uuid, orderType string, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
+func (db *DB) CreateOrder(uuid string, orderType protocol.OrderType, processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, sourceNode, loadType string, autoConfirm bool, payloadCode string) (int64, error) {
 	return orders.Create(db.DB, uuid, orderType, processNodeID, retrieveEmpty, quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
 }
 
@@ -109,7 +110,7 @@ func (db *DB) ListStagedOrdersByProcessNode(processNodeID int64) ([]orders.Order
 
 // ListActiveOrdersByProcessNodeAndType returns non-terminal orders for
 // a process node filtered by order type.
-func (db *DB) ListActiveOrdersByProcessNodeAndType(processNodeID int64, orderType string) ([]orders.Order, error) {
+func (db *DB) ListActiveOrdersByProcessNodeAndType(processNodeID int64, orderType protocol.OrderType) ([]orders.Order, error) {
 	return orders.ListActiveByProcessNodeAndType(db.DB, processNodeID, orderType)
 }
 

@@ -170,7 +170,7 @@ func (h *Handler) OnCommand(cmd protocol.CountGroupCommand) {
 
 // sendAck is a small helper that logs send failures without bubbling —
 // an ack send failure doesn't affect the PLC state, just the audit trail.
-func (h *Handler) sendAck(cmd *protocol.CountGroupCommand, outcome string, latencyMs int64) {
+func (h *Handler) sendAck(cmd *protocol.CountGroupCommand, outcome protocol.AckOutcome, latencyMs int64) {
 	if h.ackSend == nil {
 		return
 	}

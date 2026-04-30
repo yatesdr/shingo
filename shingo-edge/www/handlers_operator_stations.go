@@ -11,6 +11,7 @@ import (
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/engine"
+	"shingoedge/engine/changeover"
 )
 
 func (h *Handlers) handleOperatorStationDisplay(w http.ResponseWriter, r *http.Request) {
@@ -419,6 +420,92 @@ func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
+}
+
+// changeoverPreviewAction is the JSON DTO for one node in a changeover preview.
+// Mirrors changeover.NodeAction but turns the error into a string and flattens
+// the OrderSpec union so the UI can render it without a discriminator dance.
+type changeoverPreviewAction struct {
+	NodeID    int64                  `json:"node_id"`
+	NodeName  string                 `json:"node_name"`
+	Situation string                 `json:"situation"`
+	OrderA    *changeoverPreviewSpec `json:"order_a,omitempty"`
+	OrderB    *changeoverPreviewSpec `json:"order_b,omitempty"`
+	NextState string                 `json:"next_state,omitempty"`
+	LogTag    string                 `json:"log_tag,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+}
+
+type changeoverPreviewSpec struct {
+	Kind         string `json:"kind"` // "complex" or "retrieve"
+	DeliveryNode string `json:"delivery_node,omitempty"`
+	StagingNode  string `json:"staging_node,omitempty"`
+	StepCount    int    `json:"step_count,omitempty"`
+	PayloadCode  string `json:"payload_code,omitempty"`
+	AutoConfirm  bool   `json:"auto_confirm"`
+}
+
+func toPreviewSpec(spec *changeover.OrderSpec) *changeoverPreviewSpec {
+	if spec == nil {
+		return nil
+	}
+	if spec.Complex != nil {
+		return &changeoverPreviewSpec{
+			Kind:         "complex",
+			DeliveryNode: spec.Complex.DeliveryNode,
+			StepCount:    len(spec.Complex.Steps),
+			AutoConfirm:  spec.Complex.AutoConfirm,
+		}
+	}
+	if spec.Retrieve != nil {
+		return &changeoverPreviewSpec{
+			Kind:         "retrieve",
+			DeliveryNode: spec.Retrieve.DeliveryNode,
+			StagingNode:  spec.Retrieve.StagingNode,
+			PayloadCode:  spec.Retrieve.PayloadCode,
+			AutoConfirm:  spec.Retrieve.AutoConfirm,
+		}
+	}
+	return nil
+}
+
+func (h *Handlers) apiPreviewProcessChangeover(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	var req struct {
+		ToStyleID int64 `json:"to_style_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	plan, err := h.orchestration.PreviewChangeoverPlan(processID, req.ToStyleID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	dto := struct {
+		Actions []changeoverPreviewAction `json:"actions"`
+	}{Actions: make([]changeoverPreviewAction, 0, len(plan.Actions))}
+	for _, a := range plan.Actions {
+		out := changeoverPreviewAction{
+			NodeID:    a.NodeID,
+			NodeName:  a.NodeName,
+			Situation: a.Situation,
+			OrderA:    toPreviewSpec(a.OrderA),
+			OrderB:    toPreviewSpec(a.OrderB),
+			NextState: a.NextState,
+			LogTag:    a.LogTag,
+		}
+		if a.Err != nil {
+			out.Error = a.Err.Error()
+		}
+		dto.Actions = append(dto.Actions, out)
+	}
+	writeJSON(w, dto)
 }
 
 func (h *Handlers) apiStartProcessChangeover(w http.ResponseWriter, r *http.Request) {

@@ -37,7 +37,7 @@ func (e *Engine) handleKanbanDemand(ev BinUpdatedEvent) {
 
 	// Bin left a storage slot → supply decreased → tell producers to replenish.
 	if fromMatched {
-		e.sendDemandSignals(ev.PayloadCode, "produce",
+		e.sendDemandSignals(ev.PayloadCode, protocol.ClaimRoleProduce,
 			fmt.Sprintf("bin %d removed from storage (payload %s)", ev.BinID, ev.PayloadCode))
 	} else if ev.FromNodeID != 0 {
 		// Non-storage origin: produce signal intentionally suppressed.
@@ -49,7 +49,7 @@ func (e *Engine) handleKanbanDemand(ev BinUpdatedEvent) {
 
 	// Bin arrived at a storage slot → supply increased → tell consumers material is available.
 	if toMatched {
-		e.sendDemandSignals(ev.PayloadCode, "consume",
+		e.sendDemandSignals(ev.PayloadCode, protocol.ClaimRoleConsume,
 			fmt.Sprintf("bin %d arrived at storage (payload %s)", ev.BinID, ev.PayloadCode))
 	} else if ev.ToNodeID != 0 {
 		// Non-storage destination: consume signal intentionally suppressed.
@@ -89,7 +89,7 @@ func (e *Engine) isStorageSlot(nodeID int64) bool {
 
 // sendDemandSignals looks up the demand registry for the given payload code and role,
 // then sends a DemandSignal to each matching Edge station.
-func (e *Engine) sendDemandSignals(payloadCode, role, reason string) {
+func (e *Engine) sendDemandSignals(payloadCode string, role protocol.ClaimRole, reason string) {
 	entries, err := e.db.LookupDemandRegistry(payloadCode)
 	if err != nil {
 		e.logFn("engine: kanban demand registry lookup for %s: %v", payloadCode, err)

@@ -219,6 +219,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
 
 		// Changeover lifecycle
+		r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 		r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)

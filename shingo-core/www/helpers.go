@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 )
 
@@ -97,18 +98,18 @@ func templateFuncs() template.FuncMap {
 				t.UTC().Format("2006-01-02 15:04:05") + ` UTC</time>`)
 		},
 		"statusColor": func(status string) string {
-			switch status {
-			case "pending", "sourcing":
+			switch protocol.Status(status) {
+			case protocol.StatusPending, protocol.StatusSourcing:
 				return "bg-yellow-100 text-yellow-800"
-			case "dispatched":
+			case protocol.StatusDispatched:
 				return "bg-blue-100 text-blue-800"
-			case "in_transit":
+			case protocol.StatusInTransit:
 				return "bg-indigo-100 text-indigo-800"
-			case "delivered", "confirmed", "completed":
+			case protocol.StatusDelivered, protocol.StatusConfirmed:
 				return "bg-green-100 text-green-800"
-			case "failed":
+			case protocol.StatusFailed:
 				return "bg-red-100 text-red-800"
-			case "cancelled":
+			case protocol.StatusCancelled:
 				return "bg-gray-100 text-gray-800"
 			default:
 				return "bg-gray-100 text-gray-800"

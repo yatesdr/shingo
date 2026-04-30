@@ -3,13 +3,14 @@ package binresolver
 import (
 	"fmt"
 
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
 
 // isBinAvailableForRetrieve checks if a bin can be claimed for retrieval.
 func isBinAvailableForRetrieve(b *bins.Bin, payloadCode string) bool {
-	if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != "available" {
+	if b.ClaimedBy != nil || !b.ManifestConfirmed || b.Status != domain.BinStatusAvailable {
 		return false
 	}
 	if payloadCode != "" && b.PayloadCode != payloadCode {
@@ -58,7 +59,7 @@ func BinUnavailableReason(b *bins.Bin, payloadCode string) string {
 		return fmt.Sprintf("already claimed by order %d", *b.ClaimedBy)
 	}
 	switch b.Status {
-	case "maintenance", "flagged", "retired", "quality_hold":
+	case domain.BinStatusMaintenance, domain.BinStatusFlagged, domain.BinStatusRetired, domain.BinStatusQualityHold:
 		return fmt.Sprintf("status=%q rejects pickup", b.Status)
 	}
 	if payloadCode != "" && b.PayloadCode != "" && b.PayloadCode != payloadCode {

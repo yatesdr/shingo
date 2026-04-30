@@ -74,7 +74,7 @@ func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, orders.StatusStaged); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("transition to staged: %v", err)
 	}
 
@@ -112,7 +112,7 @@ func TestReleaseOrderWithLineside_ProduceRole_LogsSkip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, orders.StatusStaged); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("transition to staged: %v", err)
 	}
 
@@ -171,7 +171,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, orders.StatusStaged); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("transition to staged: %v", err)
 	}
 
@@ -213,7 +213,7 @@ func TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDispositio
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, orders.StatusStaged); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("transition to staged: %v", err)
 	}
 	if err := eng.ReleaseOrderWithLineside(orderID,

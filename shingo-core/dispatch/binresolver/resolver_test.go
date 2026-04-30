@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"shingocore/domain"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -86,7 +87,7 @@ func TestIsAvailableAtConcreteNode_ClaimedBinRejected(t *testing.T) {
 }
 
 func TestIsAvailableAtConcreteNode_BadStatusRejected(t *testing.T) {
-	for _, status := range []string{"maintenance", "flagged", "retired", "quality_hold"} {
+	for _, status := range []domain.BinStatus{domain.BinStatusMaintenance, domain.BinStatusFlagged, domain.BinStatusRetired, domain.BinStatusQualityHold} {
 		bin := &bins.Bin{
 			ID:                5,
 			Status:            status,

@@ -368,7 +368,7 @@ func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNode
 }
 
 // UpdateStatus sets the status on a bin.
-func UpdateStatus(db *sql.DB, binID int64, status string) error {
+func UpdateStatus(db *sql.DB, binID int64, status domain.BinStatus) error {
 	_, err := db.Exec(`UPDATE bins SET status=$1, updated_at=NOW() WHERE id=$2`, status, binID)
 	return err
 }

@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/config"
 	"shingoedge/orders"
 	"shingoedge/service"
@@ -13,10 +14,11 @@ import (
 // testOrderEmitter is a no-op implementation of orders.EventEmitter for testing.
 type testOrderEmitter struct{}
 
-func (testOrderEmitter) EmitOrderCreated(int64, string, string, *int64, *int64)                       {}
-func (testOrderEmitter) EmitOrderStatusChanged(int64, string, string, string, string, string, *int64, *int64) {}
-func (testOrderEmitter) EmitOrderCompleted(int64, string, string, *int64, *int64)                     {}
-func (testOrderEmitter) EmitOrderFailed(int64, string, string, string)                                {}
+func (testOrderEmitter) EmitOrderCreated(int64, string, protocol.OrderType, *int64, *int64) {}
+func (testOrderEmitter) EmitOrderStatusChanged(int64, string, protocol.OrderType, string, string, string, *int64, *int64) {
+}
+func (testOrderEmitter) EmitOrderCompleted(int64, string, protocol.OrderType, *int64, *int64) {}
+func (testOrderEmitter) EmitOrderFailed(int64, string, protocol.OrderType, string)            {}
 
 // seedProduceNode creates a process, process node, style, claim, and runtime
 // suitable for produce-node finalization tests. Returns all the IDs needed.
@@ -298,7 +300,7 @@ func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 // at their wait points without running Core's reply pipeline.
 func markStaged(t *testing.T, db *store.DB, orderID int64) {
 	t.Helper()
-	if err := db.UpdateOrderStatus(orderID, orders.StatusStaged); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("mark order %d staged: %v", orderID, err)
 	}
 }
@@ -374,7 +376,7 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	// lifecycle validator rejects submitted->in_transit. Production traffic
 	// reaches at-least acknowledged before B can stage at the line.
 	markStaged(t, db, result.OrderB.ID)
-	if err := db.UpdateOrderStatus(result.OrderA.ID, orders.StatusAcknowledged); err != nil {
+	if err := db.UpdateOrderStatus(result.OrderA.ID, string(orders.StatusAcknowledged)); err != nil {
 		t.Fatalf("seed A acknowledged: %v", err)
 	}
 
@@ -461,7 +463,7 @@ func TestReleaseStagedOrders_Idempotent(t *testing.T) {
 	}
 	markStaged(t, db, result.OrderA.ID)
 	// B already advanced past staged.
-	if err := db.UpdateOrderStatus(result.OrderB.ID, orders.StatusInTransit); err != nil {
+	if err := db.UpdateOrderStatus(result.OrderB.ID, string(orders.StatusInTransit)); err != nil {
 		t.Fatalf("force B in_transit: %v", err)
 	}
 

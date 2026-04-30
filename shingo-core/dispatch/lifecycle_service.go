@@ -95,7 +95,7 @@ func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.Orde
 	if err := s.db.CreateOrder(order); err != nil {
 		return nil, "", lifecycleErr("internal_error", err.Error(), err)
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, StatusPending, "order received"); err != nil {
+	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
 	}
 	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, payloadCode, p.DeliveryNode)
@@ -114,7 +114,7 @@ func (s *LifecycleService) CreateStorageWaybillOrder(stationID string, p *protoc
 	if err := s.db.CreateOrder(order); err != nil {
 		return nil, lifecycleErr("internal_error", err.Error(), err)
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, StatusPending, "store order received"); err != nil {
+	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "store order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
 	}
 	s.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, p.OrderType, "", p.SourceNode)
@@ -171,7 +171,7 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 	if err := s.db.CreateOrder(order); err != nil {
 		return nil, "", lifecycleErr("internal_error", err.Error(), err)
 	}
-	if err := s.db.UpdateOrderStatus(order.ID, StatusPending, "ingest order received"); err != nil {
+	if err := s.db.UpdateOrderStatus(order.ID, string(StatusPending), "ingest order received"); err != nil {
 		log.Printf("dispatch: update order %d status to pending: %v", order.ID, err)
 	}
 	if err := s.db.ClaimBin(bin.ID, order.ID); err != nil {

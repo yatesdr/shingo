@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/fleet"
+	binsstore "shingocore/store/bins"
 	"shingocore/store/orders"
 )
 
@@ -633,51 +634,28 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 			continue
 		}
 
-		// Per-bin reject reasons for THIS step. If we exit the inner loop
-		// without claiming, summarise these into one log line so the operator
-		// sees every candidate the resolver considered and why each was
-		// rejected. Previously only payload-mismatch was logged (at debug
-		// level), which left already-claimed and status-rejected bins silent.
-		var (
-			stepClaimed = false
-			rejects     []string
-		)
-		for _, bin := range bins {
-			if reason := BinUnavailableReason(bin, payloadCode); reason != "" {
-				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): %s", bin.ID, bin.Label, reason))
-				continue
-			}
-			// Only apply remainingUOP at the process node (outgoing bin).
-			// Storage pickups and other steps get a plain claim (nil).
-			var stepUOP *int
-			if s.Node == processNode {
-				stepUOP = remainingUOP
-			}
-			if err := d.binManifest.ClaimForDispatch(bin.ID, order.ID, stepUOP); err != nil {
-				// Was silently swallowed pre-2026-04-24. ClaimForDispatch
-				// returns informative errors ("bin X is locked, already
-				// claimed, or does not exist") that are exactly the diagnostic
-				// signal the user needs when the late-bind fallback fires.
-				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): ClaimForDispatch failed: %v", bin.ID, bin.Label, err))
-				d.dbg("complex: order %d ClaimForDispatch failed for bin %d at %s — %v",
-					order.ID, bin.ID, s.Node, err)
-				continue
-			}
-			d.dbg("complex: claimed bin %d (%s) at %s for order %d",
-				bin.ID, bin.Label, s.Node, order.ID)
-			d.db.AppendAudit("bin", bin.ID, "claimed",
-				"", fmt.Sprintf("complex order %d pickup at %s", order.ID, s.Node), "system")
-			claimed = append(claimed, claimedBin{binID: bin.ID, stepIndex: i, nodeName: s.Node})
-			stepClaimed = true
-			break
+		// Only apply remainingUOP at the process node (outgoing bin).
+		// Storage pickups and other steps get a plain claim (nil).
+		var stepUOP *int
+		if s.Node == processNode {
+			stepUOP = remainingUOP
 		}
-		if !stepClaimed {
+		picked, rejects := claimFirstAvailable(bins, payloadCode, func(b *binsstore.Bin) error {
+			return d.binManifest.ClaimForDispatch(b.ID, order.ID, stepUOP)
+		})
+		if picked == nil {
 			reason := fmt.Sprintf("no candidate among %d bin(s); rejects: [%s]",
 				len(bins), joinRejects(rejects))
 			d.dbg("complex: order %d pickup step %d at %s — %s",
 				order.ID, i, s.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
+			continue
 		}
+		d.dbg("complex: claimed bin %d (%s) at %s for order %d",
+			picked.ID, picked.Label, s.Node, order.ID)
+		d.db.AppendAudit("bin", picked.ID, "claimed",
+			"", fmt.Sprintf("complex order %d pickup at %s", order.ID, s.Node), "system")
+		claimed = append(claimed, claimedBin{binID: picked.ID, stepIndex: i, nodeName: s.Node})
 	}
 
 	if len(claimed) == 0 {

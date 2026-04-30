@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingocore/domain"
 	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -109,7 +110,12 @@ func (s *BinService) ensurePhysicalNodeEmpty(nodeID int64, addCount int) error {
 // --- Status transitions ---------------------------------------------------
 
 // ChangeStatus updates a bin's status without additional validation.
-func (s *BinService) ChangeStatus(binID int64, status string) error {
+//
+// Validation is intentionally omitted: operators occasionally need to set
+// off-spec states during incident recovery. domain.BinStatus.CanTransitionTo
+// is available for callers (UI, future recovery flows) that want to gate
+// transitions before invoking this.
+func (s *BinService) ChangeStatus(binID int64, status domain.BinStatus) error {
 	return s.db.UpdateBinStatus(binID, status)
 }
 

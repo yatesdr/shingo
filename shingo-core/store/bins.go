@@ -9,6 +9,7 @@ package store
 import (
 	"time"
 
+	"shingocore/domain"
 	"shingocore/store/bins"
 )
 
@@ -53,7 +54,7 @@ func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNode
 }
 
 // UpdateBinStatus sets the status on a bin.
-func (db *DB) UpdateBinStatus(binID int64, status string) error {
+func (db *DB) UpdateBinStatus(binID int64, status domain.BinStatus) error {
 	return bins.UpdateStatus(db.DB, binID, status)
 }
 

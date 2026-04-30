@@ -12,20 +12,20 @@ import (
 func MapState(vendorState string) string {
 	switch rds.OrderState(vendorState) {
 	case rds.StateCreated, rds.StateToBeDispatched:
-		return protocol.StatusDispatched
+		return string(protocol.StatusDispatched)
 	case rds.StateRunning:
-		return protocol.StatusInTransit
+		return string(protocol.StatusInTransit)
 	case rds.StateWaiting:
-		return protocol.StatusStaged
+		return string(protocol.StatusStaged)
 	case rds.StateFinished:
-		return protocol.StatusDelivered
+		return string(protocol.StatusDelivered)
 	case rds.StateFailed:
-		return protocol.StatusFailed
+		return string(protocol.StatusFailed)
 	case rds.StateStopped:
-		return protocol.StatusCancelled
+		return string(protocol.StatusCancelled)
 	default:
 		log.Printf("mapstate: unrecognized RDS state %q, defaulting to dispatched", vendorState)
-		return protocol.StatusDispatched
+		return string(protocol.StatusDispatched)
 	}
 }
 

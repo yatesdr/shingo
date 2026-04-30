@@ -246,6 +246,30 @@ body {
     margin-top: -2px;
 }
 
+.os-node-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    margin-top: 4px;
+    max-width: calc(100% - 16px);
+}
+
+.os-node-status-chip {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.95);
+    background: rgba(0,0,0,0.32);
+    border-radius: 10px;
+    padding: 2px 8px;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .os-node-payload {
     position: absolute;
     bottom: 8px;

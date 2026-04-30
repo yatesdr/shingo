@@ -41,6 +41,7 @@ package engine
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingoedge/store/processes"
 )
 
@@ -173,9 +174,9 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// fan out to the unloader even though they skip Core manifest sync.
 	if !isSupply && disp.Mode == DispositionCaptureLineside {
 		switch toClaim.Role {
-		case "consume":
+		case protocol.ClaimRoleConsume:
 			e.MaybeCreateLoaderEmptyIn(toClaim.PayloadCode)
-		case "produce":
+		case protocol.ClaimRoleProduce:
 			e.MaybeCreateUnloaderFullIn(toClaim.PayloadCode)
 		}
 	}
@@ -186,7 +187,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	//
 	// Intentional skip; logged for investigation breadcrumbs (see the
 	// no_process_node site above for the rationale).
-	if toClaim.Role == "produce" {
+	if toClaim.Role == protocol.ClaimRoleProduce {
 		e.logFn("release: order=%d node=%s disposition=%q — skipping manifest sync: produce_role",
 			orderID, node.Name, string(disp.Mode))
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)

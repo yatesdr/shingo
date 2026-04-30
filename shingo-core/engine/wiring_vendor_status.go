@@ -40,7 +40,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		}
 	}
 
-	newStatus := e.fleet.MapState(ev.NewStatus)
+	newStatus := protocol.Status(e.fleet.MapState(ev.NewStatus))
 	if newStatus == order.Status {
 		// Idempotent path: status unchanged, check if robot ID changed
 		if effectiveRobotID != order.RobotID {
@@ -115,7 +115,7 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 	// Send status update to ShinGo Edge
 	if err := e.sendToEdge(protocol.TypeOrderUpdate, order.StationID, &protocol.OrderUpdate{
 		OrderUUID: order.EdgeUUID,
-		Status:    newStatus,
+		Status:    string(newStatus),
 		Detail:    fmt.Sprintf("fleet state: %s", ev.NewStatus),
 	}); err != nil {
 		e.logFn("engine: status update: %v", err)

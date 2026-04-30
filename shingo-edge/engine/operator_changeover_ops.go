@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingoedge/engine/changeover"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -115,6 +116,21 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	}, nil
 }
 
+// PreviewChangeoverPlan returns the order plan that StartProcessChangeover would
+// execute, without writing anything. Used by the operator dry-run UI so the
+// floor can see exactly which orders will fire on each node before committing.
+//
+// Validation errors (active changeover already running, wrong style, etc.) are
+// returned verbatim — the operator should see the same gating reason a Start
+// would surface.
+func (e *Engine) PreviewChangeoverPlan(processID, toStyleID int64) (changeover.Plan, error) {
+	plan, err := e.planChangeover(processID, toStyleID)
+	if err != nil {
+		return changeover.Plan{}, err
+	}
+	return BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm), nil
+}
+
 // Error handling policy: log and continue. Do not add early returns without understanding the caller contract. See 2567plandiscussion.md.
 func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*processes.Changeover, error) {
 	plan, err := e.planChangeover(processID, toStyleID)
@@ -146,267 +162,10 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 
 	// Create ALL robot orders up front with embedded wait steps.
 	// Operator controls flow by releasing waits, not by triggering individual orders.
-	for _, diff := range plan.diffs {
-		if diff.Situation == SituationUnchanged {
-			continue
-		}
-		node := findNodeByCoreName(plan.nodes, diff.CoreNodeName)
-		if node == nil {
-			continue
-		}
-		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, node.ID)
-		if err != nil {
-			log.Printf("changeover: cannot find node task for %s: %v", diff.CoreNodeName, err)
-			continue
-		}
-		if err := e.createChangeoverOrders(changeover, nodeTask, node, diff); err != nil {
-			log.Printf("changeover: auto-create orders for %s (%s): %v — operator must handle manually",
-				diff.CoreNodeName, diff.Situation, err)
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
-				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
-			}
-		}
-	}
+	orderPlan := BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm)
+	e.applyChangeoverPlan(changeover, orderPlan)
 
 	return e.db.GetActiveProcessChangeover(processID)
-}
-
-// createChangeoverOrders creates the appropriate robot orders for a single node
-// based on its changeover situation. For swap/evacuate nodes, two orders are
-// created: Order A (staging to inbound staging) and Order B (complex swap/evacuate
-// with wait steps). For add/drop situations, only one order is needed.
-func (e *Engine) createChangeoverOrders(
-	changeover *processes.Changeover,
-	nodeTask *processes.NodeTask,
-	node *processes.Node,
-	diff ChangeoverNodeDiff,
-) error {
-	nodeID := node.ID
-
-	switch diff.Situation {
-	case SituationSwap:
-		if diff.FromClaim == nil || diff.ToClaim == nil {
-			return fmt.Errorf("swap requires both from and to claims")
-		}
-		if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
-			// Missing staging config — fall back to simple staging order (manual flow)
-			return e.createFallbackStagingOrder(changeover, nodeTask, node, diff.ToClaim)
-		}
-
-		// Keep-staged: the old style's staging area has a pre-staged bin that
-		// must be cleared before new material can be staged there.
-		if diff.FromClaim.KeepStaged {
-			return e.createKeepStagedChangeoverOrders(nodeTask, node, diff)
-		}
-
-		// Order A: Robot A stages new material to inbound staging
-		stageSteps := BuildStageSteps(diff.ToClaim)
-		if stageSteps == nil {
-			return fmt.Errorf("cannot build staging steps for node %s", node.Name)
-		}
-		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, diff.ToClaim.InboundStaging, stageSteps)
-		if err != nil {
-			return fmt.Errorf("create staging order: %w", err)
-		}
-		// Order B: Robot B runs swap with 1 wait
-		swapSteps := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim)
-		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", swapSteps)
-		if err != nil {
-			return fmt.Errorf("create swap order: %w", err)
-		}
-		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID); err != nil {
-			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
-		}
-		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
-			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
-		}
-		log.Printf("changeover: swap node %s — Order A=%d (staging), Order B=%d (swap w/ wait)", node.Name, orderA.ID, orderB.ID)
-
-	case SituationEvacuate:
-		if diff.FromClaim == nil || diff.ToClaim == nil {
-			return fmt.Errorf("evacuate requires both from and to claims")
-		}
-		if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
-			return e.createFallbackStagingOrder(changeover, nodeTask, node, diff.ToClaim)
-		}
-
-		// Keep-staged evacuate: same as keep-staged swap but with evacuation
-		// wait steps. Route through the same keep-staged handler.
-		if diff.FromClaim.KeepStaged {
-			return e.createKeepStagedChangeoverOrders(nodeTask, node, diff)
-		}
-
-		// Order A: Robot A stages new material
-		stageSteps := BuildStageSteps(diff.ToClaim)
-		if stageSteps == nil {
-			return fmt.Errorf("cannot build staging steps for node %s", node.Name)
-		}
-		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, diff.ToClaim.InboundStaging, stageSteps)
-		if err != nil {
-			return fmt.Errorf("create staging order: %w", err)
-		}
-		// Order B: Robot B runs evacuate with 2 waits
-		evacSteps := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim)
-		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", evacSteps)
-		if err != nil {
-			return fmt.Errorf("create evacuate order: %w", err)
-		}
-		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID); err != nil {
-			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
-		}
-		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
-			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
-		}
-		log.Printf("changeover: evacuate node %s — Order A=%d (staging), Order B=%d (evacuate w/ 2 waits)", node.Name, orderA.ID, orderB.ID)
-
-	case SituationAdd:
-		if diff.ToClaim == nil {
-			return fmt.Errorf("add requires to claim")
-		}
-		// Only staging order needed — no old material to evacuate
-		return e.createFallbackStagingOrder(changeover, nodeTask, node, diff.ToClaim)
-
-	case SituationDrop:
-		if diff.FromClaim == nil {
-			return fmt.Errorf("drop requires from claim")
-		}
-		if diff.FromClaim.OutboundStaging == "" {
-			// No outbound staging — operator must handle manually
-			return nil
-		}
-		// Only evacuation order needed — no new material coming
-		releaseSteps := BuildReleaseSteps(diff.FromClaim)
-		if releaseSteps == nil {
-			return nil
-		}
-		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", releaseSteps)
-		if err != nil {
-			return fmt.Errorf("create release order: %w", err)
-		}
-		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, nil, &orderB.ID); err != nil {
-			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
-		}
-		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "empty_requested"); err != nil {
-			log.Printf("changeover: update node task %d state to empty_requested: %v", nodeTask.ID, err)
-		}
-		log.Printf("changeover: drop node %s — Order B=%d (evacuation)", node.Name, orderB.ID)
-	}
-
-	return nil
-}
-
-// createFallbackStagingOrder creates a simple staging order (Phase 1 behavior)
-// when the full orders-up-front flow cannot be used (e.g., missing staging config).
-func (e *Engine) createFallbackStagingOrder(
-	changeover *processes.Changeover,
-	nodeTask *processes.NodeTask,
-	node *processes.Node,
-	toClaim *processes.NodeClaim,
-) error {
-	nodeID := node.ID
-	if toClaim.InboundStaging != "" {
-		steps := BuildStageSteps(toClaim)
-		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, toClaim.InboundStaging, steps)
-			if err != nil {
-				return err
-			}
-			if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil); err != nil {
-			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
-		}
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
-			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
-		}
-			return nil
-		}
-	}
-	// Direct delivery fallback
-	retrieveEmpty := toClaim.Role == "produce"
-	order, err := e.orderMgr.CreateRetrieveOrder(&nodeID, retrieveEmpty, 1, toClaim.CoreNodeName, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm)
-	if err != nil {
-		return err
-	}
-	if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &order.ID, nil); err != nil {
-			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
-		}
-	if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
-			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
-		}
-	return nil
-}
-
-// createKeepStagedChangeoverOrders handles swap/evacuate changeovers where the
-// old style had keep_staged enabled. The staging area has a pre-staged bin from
-// the old style that must be cleared before new material can stage there.
-//
-// Split mode (two robots):
-//
-//	Order A — BuildKeepStagedDeliverSteps(toClaim): fetch new, stage, wait, deliver (1 wait)
-//	Order B — BuildKeepStagedEvacSteps(fromClaim): pre-position, wait, evacuate old to final (1 wait)
-//
-// Combined mode (single robot):
-//
-//	Order A — BuildKeepStagedCombinedSteps(fromClaim, toClaim): clears old staged
-//	bin back to source, fetches new, stages, waits, delivers (1 wait).
-//	Order B — BuildKeepStagedEvacSteps(fromClaim) for line evacuation.
-//
-// The choice between split and combined is based on the from-claim's SwapMode.
-func (e *Engine) createKeepStagedChangeoverOrders(
-	nodeTask *processes.NodeTask,
-	node *processes.Node,
-	diff ChangeoverNodeDiff,
-) error {
-	nodeID := node.ID
-	fromClaim := diff.FromClaim
-	toClaim := diff.ToClaim
-
-	switch fromClaim.SwapMode {
-	case "two_robot", "two_robot_press_index":
-		// Split: two robots work in parallel
-		// Order A: fetch new → stage → wait → deliver
-		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)
-		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, toClaim.InboundStaging, deliverSteps)
-		if err != nil {
-			return fmt.Errorf("create keep-staged deliver order: %w", err)
-		}
-		// Order B: pre-position → wait → evacuate old → clear to final
-		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", evacSteps)
-		if err != nil {
-			return fmt.Errorf("create keep-staged evac order: %w", err)
-		}
-		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID); err != nil {
-			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
-		}
-		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
-			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
-		}
-		log.Printf("changeover: keep-staged split node %s — Order A=%d (deliver w/ wait), Order B=%d (evac w/ wait)", node.Name, orderA.ID, orderB.ID)
-
-	default:
-		// Combined: single robot handles clearing old staged bin + staging new + delivery
-		// Order A: clear old staged → fetch new → stage → wait → deliver
-		combinedSteps := BuildKeepStagedCombinedSteps(fromClaim, toClaim)
-		orderA, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, toClaim.InboundStaging, combinedSteps)
-		if err != nil {
-			return fmt.Errorf("create keep-staged combined order: %w", err)
-		}
-		// Order B: evacuate old material from the line node
-		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		orderB, err := e.orderMgr.CreateComplexOrderWithAutoConfirm(&nodeID, 1, "", evacSteps)
-		if err != nil {
-			return fmt.Errorf("create keep-staged evac order: %w", err)
-		}
-		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, &orderA.ID, &orderB.ID); err != nil {
-			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
-		}
-		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "staging_requested"); err != nil {
-			log.Printf("changeover: update node task %d state to staging_requested: %v", nodeTask.ID, err)
-		}
-		log.Printf("changeover: keep-staged combined node %s — Order A=%d (combined w/ wait), Order B=%d (evac w/ wait)", node.Name, orderA.ID, orderB.ID)
-	}
-
-	return nil
 }
 
 // findNodeByCoreName finds a process node by its CoreNodeName.

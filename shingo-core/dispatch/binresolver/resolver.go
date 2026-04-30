@@ -3,18 +3,9 @@ package binresolver
 import (
 	"fmt"
 
+	"shingo/protocol"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-)
-
-// Order-type string values used by Resolve. Kept as literals (not imports
-// from dispatch) to keep this package free of a back-reference to
-// dispatch. These must stay in sync with dispatch.OrderTypeRetrieve /
-// dispatch.OrderTypeStore — both are asserted indirectly by the
-// characterization tests in dispatch/.
-const (
-	orderTypeRetrieve = "retrieve"
-	orderTypeStore    = "store"
 )
 
 // ResolveResult carries the resolved node and optionally a specific bin.
@@ -25,7 +16,7 @@ type ResolveResult struct {
 
 // NodeResolver resolves a synthetic node to a physical child node.
 type NodeResolver interface {
-	Resolve(syntheticNode *nodes.Node, orderType string, payloadCode string, binTypeID *int64) (*ResolveResult, error)
+	Resolve(syntheticNode *nodes.Node, orderType protocol.OrderType, payloadCode string, binTypeID *int64) (*ResolveResult, error)
 }
 
 // DefaultResolver resolves synthetic nodes using the database.
@@ -50,7 +41,7 @@ func (r *DefaultResolver) dbg(format string, args ...any) {
 }
 
 // Resolve selects the best physical child of a synthetic node for the given order type.
-func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType string, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
+func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType protocol.OrderType, payloadCode string, binTypeID *int64) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(syntheticNode.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", syntheticNode.Name, err)
@@ -63,21 +54,21 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType string, p
 	if syntheticNode.NodeTypeCode == "NGRP" {
 		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock, DebugLog: r.DebugLog}
 		switch orderType {
-		case orderTypeRetrieve:
+		case protocol.OrderTypeRetrieve:
 			return gr.ResolveRetrieve(syntheticNode, payloadCode)
-		case orderTypeStore:
+		case protocol.OrderTypeStore:
 			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID)
 		}
 	}
 
 	switch orderType {
-	case orderTypeRetrieve:
+	case protocol.OrderTypeRetrieve:
 		node, err := r.resolveRetrieve(children, payloadCode)
 		if err != nil {
 			return nil, err
 		}
 		return &ResolveResult{Node: node}, nil
-	case orderTypeStore:
+	case protocol.OrderTypeStore:
 		node, err := r.resolveStore(children, payloadCode)
 		if err != nil {
 			return nil, err

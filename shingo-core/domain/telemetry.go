@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // TelemetryEvent records a single state transition during a mission,
 // including a robot position snapshot at that moment. Persisted via
@@ -41,7 +45,7 @@ type TelemetryMission struct {
 	VendorOrderID    string     `json:"vendor_order_id"`
 	RobotID          string     `json:"robot_id"`
 	StationID        string     `json:"station_id"`
-	OrderType        string     `json:"order_type"`
+	OrderType        protocol.OrderType `json:"order_type"`
 	SourceNode       string     `json:"source_node"`
 	DeliveryNode     string     `json:"delivery_node"`
 	TerminalState    string     `json:"terminal_state"`

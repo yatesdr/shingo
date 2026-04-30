@@ -45,8 +45,8 @@ type EdgeHeartbeatAck struct {
 
 // OrderRequest is a new transport order from edge.
 type OrderRequest struct {
-	OrderUUID     string `json:"order_uuid"`
-	OrderType     string `json:"order_type"`
+	OrderUUID     string    `json:"order_uuid"`
+	OrderType     OrderType `json:"order_type"`
 	PayloadCode   string `json:"payload_code,omitempty"`
 	PayloadDesc   string `json:"payload_desc,omitempty"`
 	Quantity      int64  `json:"quantity"`
@@ -81,8 +81,8 @@ type OrderRedirect struct {
 
 // OrderStorageWaybill submits a store order.
 type OrderStorageWaybill struct {
-	OrderUUID   string `json:"order_uuid"`
-	OrderType   string `json:"order_type"`
+	OrderUUID   string    `json:"order_uuid"`
+	OrderType   OrderType `json:"order_type"`
 	PayloadDesc string `json:"payload_desc,omitempty"`
 	SourceNode  string `json:"source_node"`
 	FinalCount  int64  `json:"final_count"`
@@ -361,10 +361,10 @@ type NodeStructureChanged struct {
 
 // ClaimSyncEntry represents a single manual_swap claim's config for the demand registry.
 type ClaimSyncEntry struct {
-	CoreNodeName        string   `json:"core_node_name"`
-	Role                string   `json:"role"`                  // "produce" or "consume"
-	AllowedPayloadCodes []string `json:"allowed_payload_codes"` // payloads this node accepts
-	OutboundDestination string   `json:"outbound_destination"`
+	CoreNodeName        string    `json:"core_node_name"`
+	Role                ClaimRole `json:"role"`
+	AllowedPayloadCodes []string  `json:"allowed_payload_codes"` // payloads this node accepts
+	OutboundDestination string    `json:"outbound_destination"`
 }
 
 // ClaimSync is sent by Edge to Core on startup and claim changes.
@@ -377,10 +377,10 @@ type ClaimSync struct {
 // DemandSignal is sent by Core to Edge when a kanban event fires.
 // Edge creates an order for the specified payload at the specified node.
 type DemandSignal struct {
-	CoreNodeName string `json:"core_node_name"` // delivery node for the order
-	PayloadCode  string `json:"payload_code"`   // which payload to request
-	Role         string `json:"role"`            // "produce" or "consume" — determines order type
-	Reason       string `json:"reason"`          // human-readable trigger (e.g., "empty bin returned to storage")
+	CoreNodeName string    `json:"core_node_name"` // delivery node for the order
+	PayloadCode  string    `json:"payload_code"`   // which payload to request
+	Role         ClaimRole `json:"role"`           // determines order type
+	Reason       string    `json:"reason"`         // human-readable trigger (e.g., "empty bin returned to storage")
 }
 
 // CountGroupCommand is sent by Core to Edge when an advanced zone's occupancy state changes.
@@ -403,9 +403,9 @@ type CountGroupCommand struct {
 // Subject: protocol.SubjectCountGroupAck. Outcome ∈ {AckOutcomeAcked,
 // AckOutcomeTimeout, AckOutcomeWarlinkErr}.
 type CountGroupAck struct {
-	CorrelationID string    `json:"corr_id"`
-	Group         string    `json:"group"`
-	Outcome       string    `json:"outcome"`
-	AckLatencyMs  int64     `json:"ack_latency_ms"`
-	Timestamp     time.Time `json:"ts"`
+	CorrelationID string     `json:"corr_id"`
+	Group         string     `json:"group"`
+	Outcome       AckOutcome `json:"outcome"`
+	AckLatencyMs  int64      `json:"ack_latency_ms"`
+	Timestamp     time.Time  `json:"ts"`
 }

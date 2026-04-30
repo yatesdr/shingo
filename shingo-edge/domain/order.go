@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // Order is the edge-side material order. Distinct from
 // shingocore/domain.Order: this row tracks the edge's view of a
@@ -11,8 +15,8 @@ import "time"
 type Order struct {
 	ID             int64      `json:"id"`
 	UUID           string     `json:"uuid"`
-	OrderType      string     `json:"order_type"`
-	Status         string     `json:"status"`
+	OrderType      protocol.OrderType `json:"order_type"`
+	Status         protocol.Status `json:"status"`
 	ProcessNodeID  *int64     `json:"process_node_id,omitempty"`
 	RetrieveEmpty  bool       `json:"retrieve_empty"`
 	Quantity       int64      `json:"quantity"`
@@ -50,8 +54,8 @@ type Order struct {
 type OrderHistory struct {
 	ID        int64     `json:"id"`
 	OrderID   int64     `json:"order_id"`
-	OldStatus string    `json:"old_status"`
-	NewStatus string    `json:"new_status"`
+	OldStatus protocol.Status `json:"old_status"`
+	NewStatus protocol.Status `json:"new_status"`
 	Detail    string    `json:"detail"`
 	CreatedAt time.Time `json:"created_at"`
 }

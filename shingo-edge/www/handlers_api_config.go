@@ -539,7 +539,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// also have lineside trigger points that are legitimately
 	// non-storage (the loader emits fulls back into the supermarket),
 	// so leave produce permissive and only guardrail consume.
-	if in.Role == "consume" {
+	if in.Role == protocol.ClaimRoleConsume {
 		if info, ok := h.engine.CoreNodes()[in.CoreNodeName]; ok {
 			// Empty ParentNodeType means an older Core that hasn't
 			// been upgraded yet — skip the check rather than false-

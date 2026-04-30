@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/store/internal/helpers"
 )
 
@@ -50,7 +51,7 @@ type RegistryEntry struct {
 	ID           int64     `json:"id"`
 	StationID    string    `json:"station_id"`
 	CoreNodeName string    `json:"core_node_name"`
-	Role         string    `json:"role"` // "produce" or "consume"
+	Role         protocol.ClaimRole `json:"role"` // "produce" or "consume"
 	PayloadCode  string    `json:"payload_code"`
 	OutboundDest string    `json:"outbound_dest"`
 	UpdatedAt    time.Time `json:"updated_at"`

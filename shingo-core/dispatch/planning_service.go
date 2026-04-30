@@ -65,7 +65,7 @@ type PlanningService struct {
 	createCompound  func(parentOrder *orders.Order, plan *ReshufflePlan) error
 	advanceCompound func(parentOrderID int64) error
 
-	handlers map[string]PlanningHandler
+	handlers map[protocol.OrderType]PlanningHandler
 
 	// postFindHook is called after a bin lookup succeeds but before the claim.
 	// Nil by default ( no-op in production. Set via SetPostFindHook for tests
@@ -83,7 +83,7 @@ func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock,
 		lifecycle:       lifecycle,
 		createCompound:  createCompound,
 		advanceCompound: advanceCompound,
-		handlers:        make(map[string]PlanningHandler),
+		handlers:        make(map[protocol.OrderType]PlanningHandler),
 	}
 	s.Register(OrderTypeRetrieve, s.planRetrieve)
 	s.Register(OrderTypeMove, s.planMove)
@@ -117,7 +117,7 @@ func (s *PlanningService) dbg(format string, args ...any) {
 	}
 }
 
-func (s *PlanningService) Register(orderType string, handler PlanningHandler) {
+func (s *PlanningService) Register(orderType protocol.OrderType, handler PlanningHandler) {
 	s.handlers[orderType] = handler
 }
 
@@ -367,42 +367,14 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 		}
 	} else {
 		// Concrete source node: claim a bin directly at the node.
-		bins, _ := s.db.ListBinsByNode(sourceNode.ID)
-		binClaimed := false
+		candidates, _ := s.db.ListBinsByNode(sourceNode.ID)
 		remainingUOP := extractRemainingUOP(env)
-		// Per-bin reject reasons. Used in the no_bin/no_payload failure log so
-		// "why" is in the log alongside "what failed" — mirrors the
-		// claimComplexBins skip-reason pattern. Previously only payload
-		// mismatches were logged at debug level, leaving already-claimed and
-		// status-rejected bins silent.
-		var rejects []string
-		for _, bin := range bins {
-			if reason := BinUnavailableReason(bin, payloadCode); reason != "" {
-				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): %s", bin.ID, bin.Label, reason))
-				continue
-			}
-			if err := s.binManifest.ClaimForDispatch(bin.ID, order.ID, remainingUOP); err != nil {
-				// Was silently swallowed before. Surface the SQL-guard error
-				// (locked, claimed_by mismatch, etc.) so the operator can see
-				// why a bin that passed the availability check still couldn't
-				// be claimed.
-				rejects = append(rejects, fmt.Sprintf("bin=%d (%s): ClaimForDispatch failed: %v", bin.ID, bin.Label, err))
-				s.dbg("move: order %d ClaimForDispatch failed for bin %d at %s — %v",
-					order.ID, bin.ID, order.SourceNode, err)
-				continue
-			}
-			order.BinID = &bin.ID
-			if err := s.db.UpdateOrderBinID(order.ID, bin.ID); err != nil {
-				s.dbg("move: WARNING order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
-					order.ID, bin.ID, err)
-			}
-			s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", bin.ID, order.SourceNode, remainingUOP)
-			binClaimed = true
-			break
-		}
-		if !binClaimed {
+		picked, rejects := claimFirstAvailable(candidates, payloadCode, func(b *bins.Bin) error {
+			return s.binManifest.ClaimForDispatch(b.ID, order.ID, remainingUOP)
+		})
+		if picked == nil {
 			detail := fmt.Sprintf("no unclaimed bin at %s for move order %d (evaluated %d bin(s); rejects: [%s])",
-				order.SourceNode, order.ID, len(bins), joinRejects(rejects))
+				order.SourceNode, order.ID, len(candidates), joinRejects(rejects))
 			s.dbg("move: order %d at %s — %s", order.ID, order.SourceNode, detail)
 			if payloadCode != "" {
 				return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
@@ -412,6 +384,12 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 			// bin arrival update (BinID == nil). Fail loudly instead.
 			return nil, &planningError{Code: "no_bin", Detail: detail}
 		}
+		order.BinID = &picked.ID
+		if err := s.db.UpdateOrderBinID(order.ID, picked.ID); err != nil {
+			s.dbg("move: WARNING order %d UpdateOrderBinID(bin=%d) failed — order.BinID will read NULL on next load: %v",
+				order.ID, picked.ID, err)
+		}
+		s.dbg("move: claimed bin=%d at %s (remainingUOP=%v)", picked.ID, order.SourceNode, remainingUOP)
 	}
 
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {

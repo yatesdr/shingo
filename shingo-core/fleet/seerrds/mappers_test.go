@@ -16,13 +16,13 @@ func TestMapState_KnownStates(t *testing.T) {
 		vendorState string
 		want        string
 	}{
-		{"created", string(rds.StateCreated), protocol.StatusDispatched},
-		{"to_be_dispatched", string(rds.StateToBeDispatched), protocol.StatusDispatched},
-		{"running", string(rds.StateRunning), protocol.StatusInTransit},
-		{"waiting", string(rds.StateWaiting), protocol.StatusStaged},
-		{"finished", string(rds.StateFinished), protocol.StatusDelivered},
-		{"failed", string(rds.StateFailed), protocol.StatusFailed},
-		{"stopped", string(rds.StateStopped), protocol.StatusCancelled},
+		{"created", string(rds.StateCreated), string(protocol.StatusDispatched)},
+		{"to_be_dispatched", string(rds.StateToBeDispatched), string(protocol.StatusDispatched)},
+		{"running", string(rds.StateRunning), string(protocol.StatusInTransit)},
+		{"waiting", string(rds.StateWaiting), string(protocol.StatusStaged)},
+		{"finished", string(rds.StateFinished), string(protocol.StatusDelivered)},
+		{"failed", string(rds.StateFailed), string(protocol.StatusFailed)},
+		{"stopped", string(rds.StateStopped), string(protocol.StatusCancelled)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestMapState_Unknown(t *testing.T) {
 	for _, s := range cases {
 		t.Run(s, func(t *testing.T) {
 			got := MapState(s)
-			if got != protocol.StatusDispatched {
+			if got != string(protocol.StatusDispatched) {
 				t.Errorf("MapState(%q) = %q, want fallback %q", s, got, protocol.StatusDispatched)
 			}
 		})

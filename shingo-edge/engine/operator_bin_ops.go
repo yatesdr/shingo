@@ -184,7 +184,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	if claim.SwapMode != "manual_swap" {
 		return nil, fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
-	if claim.Role != "produce" {
+	if claim.Role != protocol.ClaimRoleProduce {
 		return nil, fmt.Errorf("node %s: only produce nodes request empty bins", node.Name)
 	}
 	if ok, reason := e.CanAcceptOrders(nodeID); !ok {
@@ -230,7 +230,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	if claim.SwapMode != "manual_swap" {
 		return nil, fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
-	if claim.Role != "consume" {
+	if claim.Role != protocol.ClaimRoleConsume {
 		return nil, fmt.Errorf("node %s: only consume nodes request full bins", node.Name)
 	}
 	if ok, reason := e.CanAcceptOrders(nodeID); !ok {

@@ -170,9 +170,9 @@ func (h *Handlers) handleBinCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	label := r.FormValue("label_prefix")
-	status := r.FormValue("status")
+	status := domain.BinStatus(r.FormValue("status"))
 	if status == "" {
-		status = "available"
+		status = domain.BinStatusAvailable
 	}
 
 	var nodeID *int64
@@ -284,19 +284,19 @@ func (h *Handlers) executeBinAction(b *domain.Bin, action string, params json.Ra
 // --- Bin action handlers (bound method values used by executeBinAction) ---
 
 func (h *Handlers) binActivate(b *domain.Bin, _ json.RawMessage) error {
-	if err := h.engine.BinService().ChangeStatus(b.ID, "available"); err != nil {
+	if err := h.engine.BinService().ChangeStatus(b.ID, domain.BinStatusAvailable); err != nil {
 		return err
 	}
-	h.engine.AuditService().Append("bin", b.ID, "status", b.Status, "available", "ui")
+	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusAvailable), "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 
 func (h *Handlers) binFlag(b *domain.Bin, _ json.RawMessage) error {
-	if err := h.engine.BinService().ChangeStatus(b.ID, "flagged"); err != nil {
+	if err := h.engine.BinService().ChangeStatus(b.ID, domain.BinStatusFlagged); err != nil {
 		return err
 	}
-	h.engine.AuditService().Append("bin", b.ID, "status", b.Status, "flagged", "ui")
+	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusFlagged), "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
@@ -310,11 +310,11 @@ func (h *Handlers) binQualityHold(b *domain.Bin, params json.RawMessage) error {
 		return fmt.Errorf("invalid params: %w", err)
 	}
 	svc := h.engine.BinService()
-	if err := svc.ChangeStatus(b.ID, "quality_hold"); err != nil {
+	if err := svc.ChangeStatus(b.ID, domain.BinStatusQualityHold); err != nil {
 		return err
 	}
 	actor := h.resolveActor(p.Actor)
-	h.engine.AuditService().Append("bin", b.ID, "status", b.Status, "quality_hold", actor)
+	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusQualityHold), actor)
 	if p.Reason != "" {
 		svc.AddNote(b.ID, "hold", p.Reason, actor)
 	}
@@ -323,19 +323,19 @@ func (h *Handlers) binQualityHold(b *domain.Bin, params json.RawMessage) error {
 }
 
 func (h *Handlers) binMaintenance(b *domain.Bin, _ json.RawMessage) error {
-	if err := h.engine.BinService().ChangeStatus(b.ID, "maintenance"); err != nil {
+	if err := h.engine.BinService().ChangeStatus(b.ID, domain.BinStatusMaintenance); err != nil {
 		return err
 	}
-	h.engine.AuditService().Append("bin", b.ID, "status", b.Status, "maintenance", "ui")
+	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusMaintenance), "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
 
 func (h *Handlers) binRetire(b *domain.Bin, _ json.RawMessage) error {
-	if err := h.engine.BinService().ChangeStatus(b.ID, "retired"); err != nil {
+	if err := h.engine.BinService().ChangeStatus(b.ID, domain.BinStatusRetired); err != nil {
 		return err
 	}
-	h.engine.AuditService().Append("bin", b.ID, "status", b.Status, "retired", "ui")
+	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusRetired), "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
@@ -344,7 +344,7 @@ func (h *Handlers) binRelease(b *domain.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().Release(b.ID); err != nil {
 		return err
 	}
-	h.engine.AuditService().Append("bin", b.ID, "status", "staged", "available", "ui")
+	h.engine.AuditService().Append("bin", b.ID, "status", string(domain.BinStatusStaged), string(domain.BinStatusAvailable), "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }
@@ -353,7 +353,7 @@ func (h *Handlers) binStage(b *domain.Bin, _ json.RawMessage) error {
 	if err := h.engine.BinService().Stage(b.ID); err != nil {
 		return err
 	}
-	h.engine.AuditService().Append("bin", b.ID, "status", b.Status, "staged", "ui")
+	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusStaged), "ui")
 	h.emitBinUpdate(b, "status_changed", "")
 	return nil
 }

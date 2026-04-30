@@ -368,11 +368,28 @@ function createNodeButton(entry) {
             }));
         }
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
+        appendOrderStatusChips(btn, entry);
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
     }
 
     btn.addEventListener('click', () => openModalRef(entry.node.id));
     return btn;
+}
+
+// Renders one chip per active order on the node. Stacked when a two-robot
+// swap has both Order A and Order B in flight.
+function appendOrderStatusChips(btn, entry) {
+    const active = (entry.orders || []).filter(o =>
+        o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+    if (active.length === 0) return;
+    const row = el('div', { className: 'os-node-status' });
+    active.forEach(o => {
+        row.appendChild(el('span', {
+            className: 'os-node-status-chip',
+            textContent: String(o.status || '').replace(/_/g, ' ')
+        }));
+    });
+    btn.appendChild(row);
 }
 
 function nodeColorClass(entry) {

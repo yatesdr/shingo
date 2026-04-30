@@ -1,6 +1,7 @@
 package fulfillment
 
 import (
+	"shingo/protocol"
 	"shingocore/dispatch"
 	"shingocore/dispatch/binresolver"
 	"shingocore/store/nodes"
@@ -37,7 +38,7 @@ type Lifecycle interface {
 // the alias so scanner_test.go does not have to pull in dispatch
 // to stub a fake resolver.
 type Resolver interface {
-	Resolve(syntheticNode *nodes.Node, orderType string, payloadCode string, binTypeID *int64) (*binresolver.ResolveResult, error)
+	Resolve(syntheticNode *nodes.Node, orderType protocol.OrderType, payloadCode string, binTypeID *int64) (*binresolver.ResolveResult, error)
 }
 
 // Compile-time checks that the concrete dispatch types satisfy the

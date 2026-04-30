@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -112,7 +113,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	}
 
 	// Direct delivery if no staging configured
-	retrieveEmpty := toClaim.Role == "produce"
+	retrieveEmpty := toClaim.Role == protocol.ClaimRoleProduce
 	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm)
 	if err != nil {
 		return nil, err
@@ -171,7 +172,7 @@ func (e *Engine) ReleaseNodeIntoProduction(processID, nodeID int64) (*orders.Ord
 	}
 
 	// Changeover-only nodes: restore from outbound staging (where material was evacuated to)
-	if toClaim.Role == "changeover" && toClaim.OutboundStaging != "" {
+	if toClaim.Role == protocol.ClaimRoleChangeover && toClaim.OutboundStaging != "" {
 		steps := BuildRestoreSteps(toClaim)
 		if steps != nil {
 			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, steps)

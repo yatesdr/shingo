@@ -227,7 +227,7 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 	h.DebugLog.Log("order_update uuid=%s status=%s", p.OrderUUID, p.Status)
 	log.Printf("edge_handler: order update: uuid=%s status=%s", p.OrderUUID, p.Status)
 	replyType := orders.ReplyUpdate
-	if p.Status == protocol.StatusQueued {
+	if p.Status == string(protocol.StatusQueued) {
 		replyType = orders.ReplyQueued
 	}
 	if err := h.orderMgr.HandleDispatchReply(p.OrderUUID, replyType, "", p.ETA, p.Detail); err != nil {

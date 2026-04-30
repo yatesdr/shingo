@@ -977,7 +977,7 @@ func TestOrders_HistoryInsertAndList(t *testing.T) {
 	// so SQLite's ORDER BY does not guarantee which comes first.
 	seen := map[string]orders.History{}
 	for _, h := range list {
-		seen[h.NewStatus] = h
+		seen[string(h.NewStatus)] = h
 		if h.OrderID != id {
 			t.Errorf("wrong order_id: %+v", h)
 		}

@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"shingo/protocol"
+)
 
 // Order is a unit of work produced by the edge-station protocol and
 // executed by the fleet. An Order tracks its source and delivery
@@ -17,8 +21,8 @@ type Order struct {
 	ID            int64      `json:"id"`
 	EdgeUUID      string     `json:"edge_uuid"`
 	StationID     string     `json:"station_id"`
-	OrderType     string     `json:"order_type"`
-	Status        string     `json:"status"`
+	OrderType     protocol.OrderType `json:"order_type"`
+	Status        protocol.Status `json:"status"`
 	Quantity      int64      `json:"quantity"`
 	SourceNode    string     `json:"source_node"`
 	DeliveryNode  string     `json:"delivery_node"`

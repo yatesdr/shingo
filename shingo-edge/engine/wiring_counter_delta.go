@@ -10,6 +10,7 @@ package engine
 import (
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/store/processes"
 )
 
@@ -56,7 +57,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		}
 
 		switch claim.Role {
-		case "consume":
+		case protocol.ClaimRoleConsume:
 			// A/B cycling: only decrement the active-pull side.
 			// The inactive side holds staged material.
 			if isInactivePairedNode(claim, runtime) {
@@ -74,7 +75,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			nodeCopy := node
 			e.handleConsumeTick(&nodeCopy, runtime, claim, int(delta.Delta))
 
-		case "produce":
+		case protocol.ClaimRoleProduce:
 			// A/B cycling: only increment the active-pull side.
 			// The inactive side holds its current production.
 			if isInactivePairedNode(claim, runtime) {

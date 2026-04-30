@@ -45,11 +45,11 @@ type stubLifecycle struct {
 }
 
 func (s stubLifecycle) MoveToSourcing(ord *orders.Order, _, reason string) error {
-	return s.db.UpdateOrderStatus(ord.ID, protocol.StatusSourcing, reason)
+	return s.db.UpdateOrderStatus(ord.ID, string(protocol.StatusSourcing), reason)
 }
 
 func (s stubLifecycle) Queue(ord *orders.Order, _, reason string) error {
-	return s.db.UpdateOrderStatus(ord.ID, protocol.StatusQueued, reason)
+	return s.db.UpdateOrderStatus(ord.ID, string(protocol.StatusQueued), reason)
 }
 
 // newTestScanner builds a Scanner wired to a fake store and no-op
@@ -297,10 +297,10 @@ func TestScanner_TryFulfill_DestNodeLookupFails_UnclaimsAndRequeues(t *testing.T
 	if len(f.statusUpdates) != 2 {
 		t.Fatalf("expected 2 status updates, got %d: %v", len(f.statusUpdates), f.statusUpdates)
 	}
-	if f.statusUpdates[0].Status != protocol.StatusSourcing {
+	if f.statusUpdates[0].Status != string(protocol.StatusSourcing) {
 		t.Errorf("first status: got %q, want %q", f.statusUpdates[0].Status, protocol.StatusSourcing)
 	}
-	if f.statusUpdates[1].Status != protocol.StatusQueued {
+	if f.statusUpdates[1].Status != string(protocol.StatusQueued) {
 		t.Errorf("second status: got %q, want %q (re-queue on transient dest miss)",
 			f.statusUpdates[1].Status, protocol.StatusQueued)
 	}

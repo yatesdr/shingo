@@ -2,13 +2,15 @@ package orders
 
 import "shingo/protocol"
 
-// Order types
+// Order types — aliased to the canonical typed constants in protocol so
+// edge and core agree on the wire shape and Go callers get compile-time
+// distinction from raw strings.
 const (
-	TypeRetrieve = "retrieve"
-	TypeStore    = "store"
-	TypeMove     = "move"
-	TypeComplex  = "complex"
-	TypeIngest   = "ingest"
+	TypeRetrieve = protocol.OrderTypeRetrieve
+	TypeStore    = protocol.OrderTypeStore
+	TypeMove     = protocol.OrderTypeMove
+	TypeComplex  = protocol.OrderTypeComplex
+	TypeIngest   = protocol.OrderTypeIngest
 )
 
 // Order statuses aliased from protocol.
@@ -38,11 +40,11 @@ const (
 )
 
 // IsValidTransition delegates to the canonical state machine in protocol.
-func IsValidTransition(from, to string) bool {
+func IsValidTransition(from, to protocol.Status) bool {
 	return protocol.IsValidTransition(from, to)
 }
 
 // IsTerminal delegates to the canonical definition in protocol.
-func IsTerminal(status string) bool {
+func IsTerminal(status protocol.Status) bool {
 	return protocol.IsTerminal(status)
 }

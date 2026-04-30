@@ -42,6 +42,7 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
 		r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
 
+		r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
 		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
 		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
 		r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
@@ -810,6 +811,22 @@ func TestOperatorStations_FlipABNode_InvalidID(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 // Engine passthrough — changeover lifecycle
 // ═══════════════════════════════════════════════════════════════════════
+
+func TestOperatorStations_PreviewChangeover_Success(t *testing.T) {
+	_, router := newOperatorStationsRouter(t)
+
+	body := map[string]interface{}{"to_style_id": 1}
+	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/preview", body, nil)
+	assertStatus(t, resp, http.StatusOK)
+}
+
+func TestOperatorStations_PreviewChangeover_InvalidID(t *testing.T) {
+	_, router := newOperatorStationsRouter(t)
+
+	resp := doRequest(t, router, "POST", "/api/processes/bad/changeover/preview", nil, nil)
+	assertStatus(t, resp, http.StatusBadRequest)
+	assertJSONPath(t, resp, "error", "invalid process id")
+}
 
 func TestOperatorStations_StartChangeover_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)

@@ -30,8 +30,8 @@ func (h *Handlers) handleManualMessage(w http.ResponseWriter, r *http.Request) {
 	for _, o := range orders {
 		orderSummaries = append(orderSummaries, orderSummary{
 			UUID:      o.UUID,
-			OrderType: o.OrderType,
-			Status:    o.Status,
+			OrderType: string(o.OrderType),
+			Status:    string(o.Status),
 		})
 	}
 	ordersJSON, _ := json.Marshal(orderSummaries)

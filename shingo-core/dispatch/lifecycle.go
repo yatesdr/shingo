@@ -31,8 +31,8 @@ import (
 // IllegalTransition is returned when a (from, to) pair is not in
 // protocol.validTransitions. errors.As-friendly.
 type IllegalTransition struct {
-	From string
-	To   string
+	From protocol.Status
+	To   protocol.Status
 }
 
 func (e IllegalTransition) Error() string {
@@ -52,7 +52,7 @@ func IsIllegalTransition(err error) bool {
 type Event struct {
 	Actor          string
 	Reason         string
-	PreviousStatus string // populated by transition() before action dispatch
+	PreviousStatus protocol.Status // populated by transition() before action dispatch
 	StationID      string // for emitter calls that need station context
 	RobotID        string
 	ReceiptType    string
@@ -73,8 +73,8 @@ type Action func(s *LifecycleService, ord *orders.Order, ev Event) error
 
 // transitionKey is (from, to) — the action map key.
 type transitionKey struct {
-	from string
-	to   string
+	from protocol.Status
+	to   protocol.Status
 }
 
 // actionMap registers actions per (from, to) transition. Pure transitions
@@ -137,7 +137,7 @@ var actionMap = map[transitionKey][]Action{
 // Returns IllegalTransition if the transition is not allowed.
 // Returns the store error if persistence fails (status unchanged).
 // Action errors are logged but not returned — the transition has happened.
-func (s *LifecycleService) transition(ord *orders.Order, to string, ev Event) error {
+func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev Event) error {
 	from := ord.Status
 	if !protocol.IsValidTransition(from, to) {
 		return IllegalTransition{From: from, To: to}
@@ -163,7 +163,7 @@ func (s *LifecycleService) transition(ord *orders.Order, to string, ev Event) er
 		if detail == "" {
 			detail = fmt.Sprintf("%s → %s by %s", from, to, ev.Actor)
 		}
-		err = s.db.UpdateOrderStatus(ord.ID, to, detail)
+		err = s.db.UpdateOrderStatus(ord.ID, string(to), detail)
 	}
 	if err != nil {
 		return fmt.Errorf("persist %s→%s: %w", from, to, err)
@@ -365,7 +365,7 @@ func (s *LifecycleService) CompleteCompound(ord *orders.Order) error {
 // order. Entry-point write — no source status, bypasses transition
 // validation. Used only by Create*Order methods at order intake.
 func (s *LifecycleService) MarkPending(ord *orders.Order, reason string) error {
-	if err := s.db.UpdateOrderStatus(ord.ID, StatusPending, reason); err != nil {
+	if err := s.db.UpdateOrderStatus(ord.ID, string(StatusPending), reason); err != nil {
 		return fmt.Errorf("mark pending order %d: %w", ord.ID, err)
 	}
 	ord.Status = StatusPending
@@ -380,7 +380,7 @@ func fireCompleted(s *LifecycleService, ord *orders.Order, ev Event) error {
 }
 
 func fireCancelled(s *LifecycleService, ord *orders.Order, ev Event) error {
-	s.emitter.EmitOrderCancelled(ord.ID, ord.EdgeUUID, ev.StationID, ev.Reason, ev.PreviousStatus)
+	s.emitter.EmitOrderCancelled(ord.ID, ord.EdgeUUID, ev.StationID, ev.Reason, string(ev.PreviousStatus))
 	return nil
 }
 
@@ -402,7 +402,7 @@ func fireFailed(s *LifecycleService, ord *orders.Order, ev Event) error {
 // IsInFlight returns true for statuses where a robot is committed but
 // the order has not reached its destination. Replaces the inline switch
 // in engine/wiring_auto_return.go:54.
-func IsInFlight(status string) bool {
+func IsInFlight(status protocol.Status) bool {
 	switch status {
 	case StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged:
 		return true
@@ -419,6 +419,6 @@ func IsInFlight(status string) bool {
 // destination" semantics don't apply to compound parents in any state.
 // Callers that need to handle compound parents specially should check
 // ParentOrderID != nil first.
-func IsPostDelivery(status string) bool {
+func IsPostDelivery(status protocol.Status) bool {
 	return status == StatusDelivered || status == StatusConfirmed
 }

@@ -90,7 +90,7 @@ func TestReleaseChangeoverWait_RoutesThroughLinesideRelease(t *testing.T) {
 	// production the fleet tracker advances the order to staged when the
 	// robot reports WAITING; the dispatcher-level test has no fleet wiring,
 	// so we set it directly.
-	if err := db.UpdateOrderStatus(orderB.ID, orders.StatusStaged); err != nil {
+	if err := db.UpdateOrderStatus(orderB.ID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("force order B staged: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func TestReleaseChangeoverWait_PartialFailureSurfacesError(t *testing.T) {
 	}
 
 	// Force Order B to staged so ReleaseChangeoverWait will pick it up.
-	if err := db.UpdateOrderStatus(*task.OldMaterialReleaseOrderID, orders.StatusStaged); err != nil {
+	if err := db.UpdateOrderStatus(*task.OldMaterialReleaseOrderID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("force order staged: %v", err)
 	}
 

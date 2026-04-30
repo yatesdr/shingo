@@ -3,6 +3,7 @@ package www
 import (
 	"net/http"
 
+	"shingo/protocol"
 	"shingoedge/domain"
 )
 
@@ -13,8 +14,8 @@ type changeoverNodeView struct {
 	Situation       string `json:"situation"`
 	FromPayload     string `json:"from_payload"`
 	ToPayload       string `json:"to_payload"`
-	FromRole        string `json:"from_role"`
-	ToRole          string `json:"to_role"`
+	FromRole        protocol.ClaimRole `json:"from_role"`
+	ToRole          protocol.ClaimRole `json:"to_role"`
 	LastOrderError  string `json:"last_order_error,omitempty"`
 }
 
@@ -77,7 +78,7 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) change
 			// Check linked orders for failures
 			for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
 				if orderID != nil {
-					if o, err := h.engine.OrderService().Get(*orderID); err == nil && o.Status == "failed" {
+					if o, err := h.engine.OrderService().Get(*orderID); err == nil && o.Status == protocol.StatusFailed {
 						view.LastOrderError = "Order " + o.UUID[:8] + " failed"
 					}
 				}

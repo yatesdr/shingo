@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
@@ -186,7 +187,7 @@ func startChangeover(t *testing.T, eng *Engine, db *store.DB, processID, toStyle
 }
 
 // emitOrderCompleted simulates an order completion event on the event bus.
-func emitOrderCompleted(eng *Engine, orderID int64, orderUUID, orderType string, processNodeID *int64) {
+func emitOrderCompleted(eng *Engine, orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID *int64) {
 	eng.Events.Emit(Event{
 		Type: EventOrderCompleted,
 		Payload: OrderCompletedEvent{
@@ -199,7 +200,7 @@ func emitOrderCompleted(eng *Engine, orderID int64, orderUUID, orderType string,
 }
 
 // emitOrderFailed simulates an order failure event on the event bus.
-func emitOrderFailed(eng *Engine, orderID int64, orderUUID, orderType, reason string) {
+func emitOrderFailed(eng *Engine, orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 	eng.Events.Emit(Event{
 		Type: EventOrderFailed,
 		Payload: OrderFailedEvent{
@@ -214,11 +215,11 @@ func emitOrderFailed(eng *Engine, orderID int64, orderUUID, orderType, reason st
 // markOrderTerminal advances an order to a terminal confirmed status so
 // wiring sees it as completed.
 func markOrderTerminal(db *store.DB, orderID int64) {
-	db.UpdateOrderStatus(orderID, orders.StatusSubmitted)
-	db.UpdateOrderStatus(orderID, orders.StatusAcknowledged)
-	db.UpdateOrderStatus(orderID, orders.StatusInTransit)
-	db.UpdateOrderStatus(orderID, orders.StatusDelivered)
-	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+	db.UpdateOrderStatus(orderID, string(orders.StatusSubmitted))
+	db.UpdateOrderStatus(orderID, string(orders.StatusAcknowledged))
+	db.UpdateOrderStatus(orderID, string(orders.StatusInTransit))
+	db.UpdateOrderStatus(orderID, string(orders.StatusDelivered))
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 }
 
 // TestChangeover_AutoStaging verifies that StartProcessChangeover automatically
@@ -476,8 +477,8 @@ func TestChangeover_OrderFailure(t *testing.T) {
 	stageOrder, _ := getAutoStagedOrder(t, db, changeover.ID, nodeID)
 
 	// Fail the staging order
-	db.UpdateOrderStatus(stageOrder.ID, orders.StatusSubmitted)
-	db.UpdateOrderStatus(stageOrder.ID, orders.StatusFailed)
+	db.UpdateOrderStatus(stageOrder.ID, string(orders.StatusSubmitted))
+	db.UpdateOrderStatus(stageOrder.ID, string(orders.StatusFailed))
 	emitOrderFailed(eng, stageOrder.ID, stageOrder.UUID, stageOrder.OrderType, "test failure")
 
 	// Verify error state
@@ -517,7 +518,7 @@ func TestChangeover_CancelMidStaging(t *testing.T) {
 	stageOrder, _ := getAutoStagedOrder(t, db, changeover.ID, nodeID)
 
 	// Put order into submitted state so it's non-terminal
-	db.UpdateOrderStatus(stageOrder.ID, orders.StatusSubmitted)
+	db.UpdateOrderStatus(stageOrder.ID, string(orders.StatusSubmitted))
 
 	// Cancel the changeover
 	if err := eng.CancelProcessChangeover(processID); err != nil {

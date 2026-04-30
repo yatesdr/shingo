@@ -70,12 +70,17 @@ const (
 	SubjectCountGroupAck     = "countgroup.ack"     // Edge -> Core: PLC ack outcome for a prior command
 )
 
+// AckOutcome is the typed outcome of a CountGroupAck. Wraps string for
+// SQL/JSON-native serialization while gaining compile-time distinction
+// from raw strings and other enum-shaped types in this package.
+type AckOutcome string
+
 // CountGroupAck.Outcome values.
 // Use these constants instead of string literals at every call site.
 const (
-	AckOutcomeAcked      = "acked"        // PLC ladder cleared the request tag.
-	AckOutcomeTimeout    = "ack_timeout"  // PLC did not clear within ack_dead; edge abandoned the request.
-	AckOutcomeWarlinkErr = "warlink_error" // WarLink read or write failed.
+	AckOutcomeAcked      AckOutcome = "acked"         // PLC ladder cleared the request tag.
+	AckOutcomeTimeout    AckOutcome = "ack_timeout"   // PLC did not clear within ack_dead; edge abandoned the request.
+	AckOutcomeWarlinkErr AckOutcome = "warlink_error" // WarLink read or write failed.
 )
 
 // Roles for Address.Role.
@@ -84,28 +89,46 @@ const (
 	RoleCore = "core"
 )
 
+// ClaimRole is the typed role a node plays inside a process style claim:
+// what kind of material flow happens at this node. Distinct from
+// Address.Role (network identity, "edge"/"core") despite sharing the
+// English word "role" — the two are unrelated and using the same type
+// for both would be misleading.
+//
+// Cross-module: this value crosses Edge ↔ Core boundaries via
+// ClaimSyncEntry.Role and DemandSignal.Role; the typed alias keeps
+// JSON serialization byte-identical to the prior untyped string while
+// giving Go callers compile-time distinction from raw strings.
+type ClaimRole string
+
+const (
+	ClaimRoleConsume    ClaimRole = "consume"    // node consumes a material payload from upstream
+	ClaimRoleProduce    ClaimRole = "produce"    // node produces a material payload for downstream
+	ClaimRoleChangeover ClaimRole = "changeover" // node holds material that follows the line through changeover
+)
+
+// OrderType is the typed kind-of-order for fulfillment orders. Used by
+// edge `orders.Order.OrderType` and the core dispatch layer; centralised
+// here so both sides agree on the canonical values and so the JSON wire
+// shape (raw string) stays byte-identical to the prior untyped form.
+//
+// Edge has all five values; core dispatch only emits Retrieve/Store/Move/
+// Complex (Ingest is an edge-internal lifecycle for produce nodes).
+type OrderType string
+
+const (
+	OrderTypeRetrieve OrderType = "retrieve" // pull a payload from a source to a destination
+	OrderTypeStore    OrderType = "store"    // push a payload from a node to storage
+	OrderTypeMove     OrderType = "move"     // generic move; no manifest semantics
+	OrderTypeComplex  OrderType = "complex"  // multi-step order composed of sub-steps
+	OrderTypeIngest   OrderType = "ingest"   // edge-only: produce node ingests a finished bin
+)
+
 // StationBroadcast is the wildcard station value that matches all edge instances.
 const StationBroadcast = "*"
 
 // Protocol version.
 const Version = 1
-
-// Canonical order status constants shared by core and edge.
-const (
-	StatusPending      = "pending"
-	StatusSourcing     = "sourcing"
-	StatusQueued       = "queued"
-	StatusSubmitted    = "submitted"
-	StatusDispatched   = "dispatched"
-	StatusAcknowledged = "acknowledged"
-	StatusInTransit    = "in_transit"
-	StatusDelivered    = "delivered"
-	StatusConfirmed    = "confirmed"
-	StatusStaged       = "staged"
-	StatusFailed       = "failed"
-	StatusCancelled    = "cancelled"
-	StatusReshuffling  = "reshuffling"
-)
 
 // validTransitions defines the canonical state machine for order status transitions.
 // Edge uses a subset (no sourcing/dispatched); Core uses the full set.
@@ -114,7 +137,7 @@ const (
 // outgoing edges (no key in this map). Adding a new non-terminal status
 // requires adding a key with at least one outgoing edge here; the
 // TestEveryKeyHasOutgoingEdge test enforces that invariant.
-var validTransitions = map[string][]string{
+var validTransitions = map[Status][]Status{
 	// Pending → Queued is a fast-path used by fulfillment/scanner.go when
 	// the bin is already known and resolution can be skipped.
 	StatusPending: {StatusSourcing, StatusSubmitted, StatusQueued, StatusReshuffling, StatusCancelled, StatusFailed},
@@ -149,14 +172,14 @@ var validTransitions = map[string][]string{
 // validTransitions (i.e. it is not a key in the map). Single source of
 // truth: adding a non-terminal status to the table no longer requires
 // updating this function.
-func IsTerminal(status string) bool {
+func IsTerminal(status Status) bool {
 	_, hasOutgoing := validTransitions[status]
 	return !hasOutgoing
 }
 
 // IsValidTransition returns true if transitioning from -> to is a valid state change.
 // A terminal `from` (no key in validTransitions) returns false via the lookup miss.
-func IsValidTransition(from, to string) bool {
+func IsValidTransition(from, to Status) bool {
 	allowed, ok := validTransitions[from]
 	if !ok {
 		return false
@@ -164,23 +187,12 @@ func IsValidTransition(from, to string) bool {
 	return slices.Contains(allowed, to)
 }
 
-// AllStatuses returns every status defined in this module, used by
-// table-driven tests that exhaustively cover the (from, to) matrix.
-func AllStatuses() []string {
-	return []string{
-		StatusPending, StatusSourcing, StatusQueued, StatusSubmitted,
-		StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged,
-		StatusDelivered, StatusConfirmed, StatusFailed, StatusCancelled,
-		StatusReshuffling,
-	}
-}
-
 // AllValidTransitions returns a copy of the validTransitions map for test
 // use. Returns a copy to prevent test mutation of the canonical table.
-func AllValidTransitions() map[string][]string {
-	out := make(map[string][]string, len(validTransitions))
+func AllValidTransitions() map[Status][]Status {
+	out := make(map[Status][]Status, len(validTransitions))
 	for from, allowed := range validTransitions {
-		out[from] = append([]string(nil), allowed...)
+		out[from] = append([]Status(nil), allowed...)
 	}
 	return out
 }

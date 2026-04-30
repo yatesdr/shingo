@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -18,7 +19,7 @@ func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid str
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, orders.StatusStaged); err != nil {
+	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("transition to staged: %v", err)
 	}
 	return orderID
@@ -439,7 +440,7 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -464,7 +465,7 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 // (loader or unloader) keyed off the supplied payload code. Used by the
 // side-cycle trigger tests to stand up a downstream loader/unloader that the
 // LINE's release should fan out to.
-func seedManualSwapClaim(t *testing.T, db *store.DB, prefix, role, payloadCode, outbound string) (nodeID, claimID int64) {
+func seedManualSwapClaim(t *testing.T, db *store.DB, prefix string, role protocol.ClaimRole, payloadCode, outbound string) (nodeID, claimID int64) {
 	t.Helper()
 	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" mswap", "active_production", "", "", false)
 	if err != nil {
@@ -581,7 +582,7 @@ func TestHandleUnloaderFullInCompletion_FiresU2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create U1 order: %v", err)
 	}
-	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -627,7 +628,7 @@ func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()

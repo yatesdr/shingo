@@ -74,7 +74,7 @@ func TestCanAcceptOrders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create order: %v", err)
 		}
-		db.UpdateOrderStatus(orderID, orders.StatusSubmitted)
+		db.UpdateOrderStatus(orderID, string(orders.StatusSubmitted))
 		db.EnsureProcessNodeRuntime(nodeID)
 		db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 		eng := &Engine{db: db}
@@ -95,7 +95,7 @@ func TestCanAcceptOrders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create order: %v", err)
 		}
-		db.UpdateOrderStatus(orderID, orders.StatusStaged)
+		db.UpdateOrderStatus(orderID, string(orders.StatusStaged))
 		db.EnsureProcessNodeRuntime(nodeID)
 		db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
 		eng := &Engine{db: db}
@@ -116,7 +116,7 @@ func TestCanAcceptOrders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create order: %v", err)
 		}
-		db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+		db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
 		db.EnsureProcessNodeRuntime(nodeID)
 		db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 		eng := &Engine{db: db}

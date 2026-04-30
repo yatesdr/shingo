@@ -3,6 +3,7 @@ package engine
 import (
 	"time"
 
+	"shingo/protocol"
 	"shingocore/fleet"
 	"shingocore/store/cms"
 )
@@ -36,7 +37,7 @@ type OrderReceivedEvent struct {
 	OrderID      int64
 	EdgeUUID     string
 	StationID    string
-	OrderType    string
+	OrderType    protocol.OrderType
 	PayloadCode  string
 	DeliveryNode string
 }

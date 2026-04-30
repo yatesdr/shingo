@@ -15,12 +15,16 @@
 
 package engine
 
-import "log"
+import (
+	"log"
+
+	"shingo/protocol"
+)
 
 // handleSequentialBackfill watches for sequential Order A going in_transit
 // and auto-creates Order B (backfill) to deliver replacement material.
 func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
-	if changed.NewStatus != "in_transit" || changed.ProcessNodeID == nil {
+	if changed.NewStatus != string(protocol.StatusInTransit) || changed.ProcessNodeID == nil {
 		return
 	}
 	order, err := e.db.GetOrder(changed.OrderID)

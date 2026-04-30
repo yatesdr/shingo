@@ -18,6 +18,7 @@ import (
 	"shingo/protocol/auth"
 	"shingoedge/config"
 	"shingoedge/engine"
+	"shingoedge/engine/changeover"
 	"shingoedge/orders"
 	"shingoedge/plc"
 	"shingoedge/service"
@@ -56,13 +57,14 @@ func TestMain(m *testing.M) {
 // them, so we drop them on the floor.
 type stubOrderEmitter struct{}
 
-func (stubOrderEmitter) EmitOrderCreated(orderID int64, orderUUID, orderType string, payloadID, processNodeID *int64) {
+func (stubOrderEmitter) EmitOrderCreated(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
 }
-func (stubOrderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID, orderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64) {
+func (stubOrderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID string, orderType protocol.OrderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64) {
 }
-func (stubOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID, orderType string, payloadID, processNodeID *int64) {
+func (stubOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
 }
-func (stubOrderEmitter) EmitOrderFailed(orderID int64, orderUUID, orderType, reason string) {}
+func (stubOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
+}
 
 // stubEngine implements both ServiceAccess and EngineOrchestration for
 // tests, since *Handlers now holds two fields of those interface types
@@ -140,6 +142,7 @@ func (s *stubEngine) LoadBin(int64, string, int64, []protocol.IngestManifestItem
 func (s *stubEngine) ClearBin(int64) error                                             { return nil }
 func (s *stubEngine) RequestEmptyBin(int64, string) (*storeorders.Order, error)               { return nil, nil }
 func (s *stubEngine) RequestFullBin(int64, string) (*storeorders.Order, error)                { return nil, nil }
+func (s *stubEngine) PreviewChangeoverPlan(int64, int64) (changeover.Plan, error)            { return changeover.Plan{}, nil }
 func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*processes.Changeover, error) { return nil, nil }
 func (s *stubEngine) CompleteProcessProductionCutover(int64) error                      { return nil }
 func (s *stubEngine) CancelProcessChangeover(int64) error                               { return nil }
@@ -430,16 +433,16 @@ var orderUUIDCounter int64
 // differs from the schema default of "pending") flips its status with
 // UpdateOrderStatus. Returns the new order ID. Used by handlers_api_orders
 // tests that need an existing order in a specific lifecycle state.
-func seedOrder(t *testing.T, orderType, status string) int64 {
+func seedOrder(t *testing.T, orderType protocol.OrderType, status protocol.Status) int64 {
 	t.Helper()
 	n := atomic.AddInt64(&orderUUIDCounter, 1)
-	uuid := fmt.Sprintf("test-uuid-%s-%d", orderType, n)
+	uuid := fmt.Sprintf("test-uuid-%s-%d", string(orderType), n)
 	id, err := testDB.CreateOrder(uuid, orderType, nil, false, 10, "DELIVERY", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("seed order: %v", err)
 	}
-	if status != "" && status != "pending" {
-		if err := testDB.UpdateOrderStatus(id, status); err != nil {
+	if status != "" && status != protocol.StatusPending {
+		if err := testDB.UpdateOrderStatus(id, string(status)); err != nil {
 			t.Fatalf("update seeded order status to %q: %v", status, err)
 		}
 	}

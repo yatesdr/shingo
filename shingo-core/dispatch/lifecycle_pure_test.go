@@ -91,7 +91,8 @@ func TestActionMap_NoNilActions(t *testing.T) {
 // silently skip the notification path.
 func TestActionMap_TerminalCoverage(t *testing.T) {
 	t.Parallel()
-	for from := range protocol.AllValidTransitions() {
+	for fromStr := range protocol.AllValidTransitions() {
+		from := protocol.Status(fromStr)
 		// Every non-terminal status that allows a Cancelled transition
 		// must have an emitCancelled action.
 		if protocol.IsValidTransition(from, StatusCancelled) {
