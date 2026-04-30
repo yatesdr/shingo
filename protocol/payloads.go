@@ -116,13 +116,12 @@ type OrderUpdate struct {
 // OrderDelivered signals fleet delivery complete.
 //
 // BinUOPRemaining snapshots bins.uop_remaining at the moment Core moved
-// the bin to the destination node (after applyBinArrivalForOrder). Edge
-// stores it on the order and uses it in handleNormalReplenishment to
-// reset the lineside counter from the bin's actual contents — partial
-// returns from operator-released runouts, fresh fills from produce, etc.
-// Routing the value through this envelope avoids the
-// arrivedBinUOP/FetchNodeBins HTTP round-trip and the location-telemetry
-// race against AutoConfirm orders.
+// the bin to the destination node. Edge stores it on the order and uses
+// it on completion to reset the lineside counter from the bin's actual
+// contents — partial returns from operator-released runouts, fresh fills
+// from produce, etc. Routing the value through this envelope avoids the
+// location-telemetry race against AutoConfirm orders that an HTTP poll
+// back to Core would lose.
 //
 // Single-bin orders only. Nil for multi-bin orders (those don't drive a
 // single lineside-UOP reset) and nil from older Core builds.

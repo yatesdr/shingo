@@ -34,15 +34,11 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	}
 
 	// Apply bin arrival FIRST so telemetry is accurate immediately and so we
-	// can snapshot bins.uop_remaining for the OrderDelivered envelope. The
-	// previous order — sendToEdge then applyBinArrivalForOrder — created a
-	// race against AutoConfirm Edge orders: Edge would receive the
-	// notification, auto-confirm, fire EventOrderCompleted, and call
-	// arrivedBinUOP / FetchNodeBins before Core's bin-row update committed
-	// at the destination. The fallback to claim.UOPCapacity then masked the
-	// real partial UOP (operator sees full bin instead of the partial they
-	// released). Reordering closes the race; the new BinUOPRemaining field
-	// closes the broader silent-fallback failure mode.
+	// can snapshot bins.uop_remaining into the OrderDelivered envelope. The
+	// previous order — sendToEdge then applyBinArrivalForOrder — let
+	// AutoConfirm Edge orders auto-confirm and reset lineside UOP from
+	// stale Core state before the bin-arrival commit landed, masking
+	// partial-UOP returns from operator-released runouts.
 	e.applyBinArrivalForOrder(order)
 
 	// Snapshot the bin's uop_remaining for the envelope. Single-bin orders

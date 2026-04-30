@@ -45,7 +45,7 @@ func (c *CoreClient) SetBaseURL(url string) {
 
 // Available returns true if a Core API URL is configured. Nil-safe so test
 // engines that don't wire a CoreClient still report unavailable rather than
-// panicking through the consume-side completion path (arrivedBinUOP).
+// panicking through callers that probe Core telemetry.
 func (c *CoreClient) Available() bool {
 	return c != nil && c.baseURL != ""
 }
