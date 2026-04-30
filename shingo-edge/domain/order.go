@@ -27,7 +27,14 @@ type Order struct {
 	ETA            *string    `json:"eta"`
 	AutoConfirm    bool       `json:"auto_confirm"`
 	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
-	PayloadCode    string     `json:"payload_code"`
+	// BinUOPRemaining is the bin's uop_remaining at delivery time, snapshot
+	// from Core via the OrderDelivered envelope (see protocol.OrderDelivered).
+	// handleNormalReplenishment uses this to reset lineside UOP from the
+	// bin's actual contents instead of guessing claim.UOPCapacity. Nil for
+	// multi-bin orders, for older Core builds, and before the order is
+	// delivered.
+	BinUOPRemaining *int   `json:"bin_uop_remaining,omitempty"`
+	PayloadCode     string `json:"payload_code"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 	// Joined fields

@@ -1089,7 +1089,7 @@ func TestHandleDeliveredWithExpiry_StoresStagedExpireAt(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, StatusInTransit)
 
 	future := time.Now().UTC().Add(1 * time.Hour)
-	if err := mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future); err != nil {
+	if err := mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future, nil); err != nil {
 		t.Fatalf("HandleDeliveredWithExpiry: %v", err)
 	}
 	o, _ := db.GetOrder(oid)
@@ -1105,7 +1105,7 @@ func TestHandleDeliveredWithExpiry_MissingOrder(t *testing.T) {
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
-	err := mgr.HandleDeliveredWithExpiry("missing-uuid", "", nil)
+	err := mgr.HandleDeliveredWithExpiry("missing-uuid", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for missing order")
 	}

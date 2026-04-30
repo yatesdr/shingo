@@ -33,19 +33,42 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		}
 	}
 
+	// Apply bin arrival FIRST so telemetry is accurate immediately and so we
+	// can snapshot bins.uop_remaining for the OrderDelivered envelope. The
+	// previous order — sendToEdge then applyBinArrivalForOrder — created a
+	// race against AutoConfirm Edge orders: Edge would receive the
+	// notification, auto-confirm, fire EventOrderCompleted, and call
+	// arrivedBinUOP / FetchNodeBins before Core's bin-row update committed
+	// at the destination. The fallback to claim.UOPCapacity then masked the
+	// real partial UOP (operator sees full bin instead of the partial they
+	// released). Reordering closes the race; the new BinUOPRemaining field
+	// closes the broader silent-fallback failure mode.
+	e.applyBinArrivalForOrder(order)
+
+	// Snapshot the bin's uop_remaining for the envelope. Single-bin orders
+	// only — multi-bin orders don't drive a single lineside-UOP reset on
+	// Edge, and threading per-bin UOP through this envelope would change
+	// the contract. Multi-bin orders leave the field nil; Edge falls back
+	// to its existing logic.
+	var binUOPRemaining *int
+	if order.BinID != nil {
+		orderBins, _ := e.db.ListOrderBins(order.ID)
+		if len(orderBins) == 0 {
+			if bin, err := e.db.GetBin(*order.BinID); err == nil && bin != nil {
+				v := bin.UOPRemaining
+				binUOPRemaining = &v
+			}
+		}
+	}
+
 	if err := e.sendToEdge(protocol.TypeOrderDelivered, order.StationID, &protocol.OrderDelivered{
-		OrderUUID:      order.EdgeUUID,
-		DeliveredAt:    time.Now().UTC(),
-		StagedExpireAt: stagedExpireAt,
+		OrderUUID:       order.EdgeUUID,
+		DeliveredAt:     time.Now().UTC(),
+		StagedExpireAt:  stagedExpireAt,
+		BinUOPRemaining: binUOPRemaining,
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}
-
-	// Move the bin to its destination NOW — the robot has physically completed
-	// the delivery. Waiting for Edge confirmation (the old path) left a window
-	// where telemetry reported the bin at the source node, causing stale
-	// occupancy checks and blocking subsequent orders.
-	e.applyBinArrivalForOrder(order)
 }
 
 // applyBinArrivalForOrder moves the order's bin(s) to the delivery node.

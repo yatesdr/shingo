@@ -76,9 +76,14 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus, detai
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time) error {
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binUOPRemaining *int) error {
 	if stagedExpireAt != nil {
 		s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt)
+	}
+	if binUOPRemaining != nil {
+		if err := s.db.UpdateOrderBinUOPRemaining(order.ID, binUOPRemaining); err != nil {
+			log.Printf("update order bin_uop_remaining: %v", err)
+		}
 	}
 	return s.Transition(order.ID, StatusDelivered, statusDetail)
 }

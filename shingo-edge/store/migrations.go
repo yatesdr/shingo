@@ -141,6 +141,7 @@ func (db *DB) migrate() error {
 	// Legacy order columns
 	db.Exec("ALTER TABLE orders ADD COLUMN steps_json TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE orders ADD COLUMN staged_expire_at TEXT")
+	db.Exec("ALTER TABLE orders ADD COLUMN bin_uop_remaining INTEGER")
 	db.Exec("ALTER TABLE orders ADD COLUMN process_node_id INTEGER REFERENCES process_nodes(id) ON DELETE SET NULL")
 	// Index must come after ALTER in case legacy orders table lacked the column
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_orders_process_node_id ON orders(process_node_id)")
@@ -664,6 +665,7 @@ CREATE TABLE orders (
     auto_confirm    INTEGER NOT NULL DEFAULT 0,
     steps_json      TEXT NOT NULL DEFAULT '',
     staged_expire_at TEXT,
+    bin_uop_remaining INTEGER,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

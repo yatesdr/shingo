@@ -32,7 +32,7 @@ type (
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.payload_code, o.created_at, o.updated_at,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_uop_remaining, o.payload_code, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
 
 const joinClause = `FROM orders o
@@ -91,17 +91,22 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 	for rows.Next() {
 		var o Order
 		var stagedExpireAt sql.NullString
+		var binUOP sql.NullInt64
 		var createdAt, updatedAt string
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &o.PayloadCode, &createdAt, &updatedAt,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binUOP, &o.PayloadCode, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 			return nil, err
 		}
 		if stagedExpireAt.Valid {
 			t := helpers.ScanTime(stagedExpireAt.String)
 			o.StagedExpireAt = &t
+		}
+		if binUOP.Valid {
+			v := int(binUOP.Int64)
+			o.BinUOPRemaining = &v
 		}
 		o.CreatedAt = helpers.ScanTime(createdAt)
 		o.UpdatedAt = helpers.ScanTime(updatedAt)
@@ -112,17 +117,22 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 
 func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error {
 	var stagedExpireAt sql.NullString
+	var binUOP sql.NullInt64
 	var createdAt, updatedAt string
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &o.PayloadCode, &createdAt, &updatedAt,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binUOP, &o.PayloadCode, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 		return err
 	}
 	if stagedExpireAt.Valid {
 		t := helpers.ScanTime(stagedExpireAt.String)
 		o.StagedExpireAt = &t
+	}
+	if binUOP.Valid {
+		v := int(binUOP.Int64)
+		o.BinUOPRemaining = &v
 	}
 	o.CreatedAt = helpers.ScanTime(createdAt)
 	o.UpdatedAt = helpers.ScanTime(updatedAt)
@@ -212,6 +222,19 @@ func UpdateStagedExpireAt(db *sql.DB, id int64, stagedExpireAt *time.Time) error
 		return err
 	}
 	_, err := db.Exec(`UPDATE orders SET staged_expire_at=?, updated_at=datetime('now') WHERE id=?`, stagedExpireAt.UTC().Format(helpers.TimeLayout), id)
+	return err
+}
+
+// UpdateBinUOPRemaining writes the bin's uop_remaining snapshot from the
+// OrderDelivered envelope. nil clears the column (multi-bin orders, older
+// Core builds). handleNormalReplenishment reads this value to reset
+// lineside UOP without a second telemetry round-trip.
+func UpdateBinUOPRemaining(db *sql.DB, id int64, binUOPRemaining *int) error {
+	if binUOPRemaining == nil {
+		_, err := db.Exec(`UPDATE orders SET bin_uop_remaining=NULL, updated_at=datetime('now') WHERE id=?`, id)
+		return err
+	}
+	_, err := db.Exec(`UPDATE orders SET bin_uop_remaining=?, updated_at=datetime('now') WHERE id=?`, *binUOPRemaining, id)
 	return err
 }
 

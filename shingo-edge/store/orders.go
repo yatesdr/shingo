@@ -88,6 +88,14 @@ func (db *DB) UpdateOrderStagedExpireAt(id int64, stagedExpireAt *time.Time) err
 	return orders.UpdateStagedExpireAt(db.DB, id, stagedExpireAt)
 }
 
+// UpdateOrderBinUOPRemaining sets (or clears) the bin_uop_remaining
+// snapshot on an order. Captures the bin's authoritative uop_remaining
+// from Core at delivery so handleNormalReplenishment can reset lineside
+// UOP without guessing claim.UOPCapacity.
+func (db *DB) UpdateOrderBinUOPRemaining(id int64, binUOPRemaining *int) error {
+	return orders.UpdateBinUOPRemaining(db.DB, id, binUOPRemaining)
+}
+
 // InsertOrderHistory writes one order_history row.
 func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail string) error {
 	return orders.InsertHistory(db.DB, orderID, oldStatus, newStatus, detail)

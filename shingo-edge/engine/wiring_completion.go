@@ -28,6 +28,7 @@
 package engine
 
 import (
+	"fmt"
 	"log"
 
 	"shingoedge/orders"
@@ -382,12 +383,22 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	// Produce nodes receive an empty bin → UOP starts at 0.
 	// Consume nodes receive a bin from the supermarket — could be full or
 	// partial (operator-released runouts in particular send the remaining
-	// UOP back as a partial). Read the bin's actual UOP from Core rather
-	// than assuming capacity, or the lineside counter starts at the wrong
-	// value and the operator sees phantom available material.
-	resetUOP := e.arrivedBinUOP(ctx.node.CoreNodeName, claim.UOPCapacity)
-	if claim.Role == "produce" {
+	// UOP back as a partial). Prefer the snapshot Core sent in the
+	// OrderDelivered envelope (order.BinUOPRemaining) — that's authoritative
+	// and avoids the race where Edge's completion handler runs before Core's
+	// bin-arrival commit lands and FetchNodeBins reports the destination as
+	// unoccupied. Fall back to live telemetry when the snapshot is absent
+	// (older Core builds, multi-bin orders, or pre-delivered paths).
+	var resetUOP int
+	switch {
+	case claim.Role == "produce":
 		resetUOP = 0
+	case ctx.order.BinUOPRemaining != nil:
+		resetUOP = *ctx.order.BinUOPRemaining
+		log.Printf("handleNormalReplenishment: node=%s uop=%d (from order.BinUOPRemaining snapshot)",
+			ctx.node.CoreNodeName, resetUOP)
+	default:
+		resetUOP = e.arrivedBinUOP(ctx.node.CoreNodeName, claim.UOPCapacity)
 	}
 
 	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
@@ -481,20 +492,37 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 //
 // Falls back to capacity when Core is unreachable, the fetch errors, the
 // node reports unoccupied (race: completion event arrived before Core's bin
-// state caught up), or the value is out of range. The fallback is silent
-// today — see SHINGO_TODO.md "Cycle-count signal on lineside UOP fallback"
-// for the operator-visible verify hook.
+// state caught up), or the value is out of range. Each fallback path logs
+// so that a plant report of "capacity instead of partial" can be diagnosed
+// from Edge logs without re-reading the code.
 func (e *Engine) arrivedBinUOP(coreNodeName string, capacityFallback int) int {
 	if !e.coreClient.Available() {
+		log.Printf("arrivedBinUOP: node=%s fallback=%d — CoreClient not available",
+			coreNodeName, capacityFallback)
 		return capacityFallback
 	}
 	bins, err := e.coreClient.FetchNodeBins([]string{coreNodeName})
 	if err != nil || len(bins) == 0 || !bins[0].Occupied {
+		reason := "unknown"
+		switch {
+		case err != nil:
+			reason = fmt.Sprintf("fetch error: %v", err)
+		case len(bins) == 0:
+			reason = "no bins returned"
+		case !bins[0].Occupied:
+			reason = "node unoccupied"
+		}
+		log.Printf("arrivedBinUOP: node=%s fallback=%d — %s",
+			coreNodeName, capacityFallback, reason)
 		return capacityFallback
 	}
 	uop := bins[0].UOPRemaining
 	if uop < 0 || uop > capacityFallback {
+		log.Printf("arrivedBinUOP: node=%s uop=%d capacity=%d — out of range, using capacity",
+			coreNodeName, uop, capacityFallback)
 		return capacityFallback
 	}
+	log.Printf("arrivedBinUOP: node=%s uop=%d (from Core telemetry)",
+		coreNodeName, uop)
 	return uop
 }

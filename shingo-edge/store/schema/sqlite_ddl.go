@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS orders (
     auto_confirm    INTEGER NOT NULL DEFAULT 0,
     steps_json      TEXT NOT NULL DEFAULT '',
     staged_expire_at TEXT,
+    bin_uop_remaining INTEGER,
     payload_code    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))

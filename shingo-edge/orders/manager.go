@@ -382,17 +382,21 @@ func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string
 	return nil
 }
 
-// HandleDeliveredWithExpiry processes a delivered reply with optional staged expiry.
-func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time) error {
+// HandleDeliveredWithExpiry processes a delivered reply with optional staged
+// expiry and an optional bin uop snapshot. binUOPRemaining captures the bin's
+// authoritative uop_remaining from Core at delivery (see protocol.OrderDelivered)
+// so handleNormalReplenishment can reset lineside UOP from the bin's actual
+// contents instead of guessing claim.UOPCapacity.
+func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binUOPRemaining *int) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
-	return m.handleDelivered(order, statusDetail, stagedExpireAt)
+	return m.handleDelivered(order, statusDetail, stagedExpireAt, binUOPRemaining)
 }
 
-func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time) error {
-	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt); err != nil {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binUOPRemaining *int) error {
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binUOPRemaining); err != nil {
 		return err
 	}
 	if order.AutoConfirm {
@@ -564,7 +568,7 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		}
 		return nil
 	case ReplyDelivered:
-		return m.handleDelivered(order, statusDetail, nil)
+		return m.handleDelivered(order, statusDetail, nil, nil)
 	case ReplyError:
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
 	case ReplyStaged:
