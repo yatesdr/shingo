@@ -182,7 +182,21 @@ export function renderModal(entry) {
                 var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });
 
                 var parkedFullThisCode = parkedFullPayload === code;
-                var clickable = !!payloadDelivered || parkedEmptyAtLoader;
+                // Idle-state clickability: when there's no bin and no order
+                // for this payload, let the operator tap the card to issue a
+                // Request Empty (produce loader) or Request Full (consume
+                // unloader). Otherwise the manual_swap HMI has no way to
+                // create demand from the station — operators get a wall of
+                // "no demand" cards with nothing actionable.
+                var idleNoDemand = !hasBin && !payloadOrders.length && !hasDemand;
+                var canRequest = idleNoDemand;
+                var clickable = !!payloadDelivered || parkedEmptyAtLoader || canRequest;
+                var requestUrl = '';
+                if (canRequest) {
+                    requestUrl = claim.role === 'produce'
+                        ? '/api/process-nodes/' + entry.node.id + '/request-empty|' + code
+                        : '/api/process-nodes/' + entry.node.id + '/request-full|' + code;
+                }
                 var cardBg, cardBorder, cardOpacity, cardCursor;
                 if (payloadDelivered) {
                     cardBg = '#1a3a1a'; cardBorder = '#2a5a2a'; cardOpacity = '1'; cardCursor = 'pointer';
@@ -194,13 +208,19 @@ export function renderModal(entry) {
                     cardBg = '#2a2a1a'; cardBorder = '#5a5a2a'; cardOpacity = '1'; cardCursor = 'default';
                 } else if (isActive) {
                     cardBg = '#1a2a4a'; cardBorder = '#3a5a8a'; cardOpacity = '1'; cardCursor = 'default';
+                } else if (canRequest) {
+                    cardBg = '#1a1a1a'; cardBorder = '#555'; cardOpacity = '1'; cardCursor = 'pointer';
                 } else {
                     cardBg = '#1a1a1a'; cardBorder = '#333'; cardOpacity = '0.5'; cardCursor = 'default';
                 }
                 var cardStyle = 'background:' + cardBg + ';border:1px solid ' + cardBorder + ';opacity:' + cardOpacity + ';cursor:' + cardCursor;
                 html += '<div class="os-demand-card" style="border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;' + cardStyle + '"';
                 if (clickable) {
-                    html += ' data-action="demand-card:' + esc(code) + '"';
+                    if (canRequest && !payloadDelivered && !parkedEmptyAtLoader) {
+                        html += ' data-action="' + esc(requestUrl) + '"';
+                    } else {
+                        html += ' data-action="demand-card:' + esc(code) + '"';
+                    }
                 }
                 html += '>';
 
@@ -217,6 +237,7 @@ export function renderModal(entry) {
                 var labelColor = payloadDelivered || parkedEmptyAtLoader || parkedFullThisCode ? '#6f6'
                     : payloadInTransit ? '#ff6'
                     : isActive ? '#8af'
+                    : canRequest ? '#aaa'
                     : '#555';
                 html += '<div style="font-size:12px;color:' + labelColor + '">';
                 if (payloadDelivered) {
@@ -231,6 +252,8 @@ export function renderModal(entry) {
                     html += 'QUEUED';
                 } else if (isActive) {
                     html += 'active demand';
+                } else if (canRequest) {
+                    html += claim.role === 'produce' ? 'TAP TO REQUEST EMPTY' : 'TAP TO REQUEST FULL';
                 } else {
                     html += 'no demand';
                 }
