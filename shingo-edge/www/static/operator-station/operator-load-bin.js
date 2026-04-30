@@ -181,7 +181,7 @@ document.getElementById('load-bin-cancel').addEventListener('click', function() 
 document.getElementById('load-bin-submit').addEventListener('click', submitLoadBin);
 
 // CLEAR BIN was hidden in the template — its destructive semantics overlap
-// the release prompt's "NOTHING PULLED" path and presenting it next to
+// the release prompt's RELEASE EMPTY path and presenting it next to
 // CONFIRM LOAD invited misclicks. The handler stays wired for any future
 // re-introduction (a deliberate "wipe bin" surface), but no UI exposes it.
 const clearBtn = document.getElementById('load-bin-clear');

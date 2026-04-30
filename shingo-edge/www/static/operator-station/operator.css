@@ -464,6 +464,26 @@ body {
     margin: 12px 0;
 }
 
+/* Primary path on the release prompt: chip grid + the PULL PARTS button.
+   Wrapped in a faint blue card so the operator's eye lands here first;
+   the partial/empty escape hatch and CANCEL render below in a quieter row. */
+.os-release-primary {
+    margin: 12px 0;
+    padding: 14px;
+    border-radius: 14px;
+    border: 2px solid var(--os-blue);
+    background: rgba(41, 112, 214, 0.10);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.os-release-primary-label {
+    font-size: 13px;
+    color: #cfd6df;
+    line-height: 1.35;
+}
+
 .os-release-part-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

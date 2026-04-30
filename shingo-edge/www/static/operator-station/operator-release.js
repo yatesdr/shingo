@@ -44,30 +44,29 @@ function linesideSoftThresholdForEntry(entry) {
 export function openReleasePrompt(url, entry) {
     const payloads = allowedPayloadsForEntry(entry);
     const selected = {};
-    // Auto-pick the bin's contents on open so the blue button is enabled
-    // by default. The common case is "operator pulled the whole bin to
-    // lineside" — one tap submits. They can still tap a chip to keypad-
-    // edit qty, or hit NOTHING PULLED to bail. Without this the button
-    // is disabled-on-open because operators don't realize the small chip
-    // is tappable.
+    // Pre-populate every allowed-payload chip so the operator sees a qty
+    // on each one and the PULL PARTS button is always enabled. Common case
+    // is "operator pulled the whole bin to lineside" — one tap submits;
+    // tap any chip to keypad-edit qty up or down. Single payload reads
+    // runtime.remaining_uop; multi-payload (manual_swap) reads per-part
+    // from the bin manifest. Anything we don't have a signal for falls
+    // back to 0 — chip stays editable.
+    payloads.forEach(function(code) { selected[code] = 0; });
     if (payloads.length === 1) {
-        // Single payload: claim's primary payload at the runtime UOP count.
         const rt = entry && entry.runtime;
         const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
-        if (remainingUOP > 0) {
-            selected[payloads[0]] = remainingUOP;
-        }
+        selected[payloads[0]] = remainingUOP;
     } else if (payloads.length > 1) {
-        // Multi-payload (manual_swap): use the bin manifest. Each entry has
-        // its own qty since the bin can hold a mix; runtime.remaining_uop is
-        // a single number that doesn't split across parts.
+        // Multi-payload bin holds a mix; runtime.remaining_uop is a single
+        // number that doesn't split across parts, so the manifest is the
+        // only per-part source.
         const binState = entry && entry.bin_state;
         if (binState && binState.manifest) {
             try {
                 const manifest = JSON.parse(binState.manifest);
                 if (Array.isArray(manifest)) {
                     manifest.forEach(item => {
-                        if (item && item.part_number && item.quantity > 0 &&
+                        if (item && item.part_number && item.quantity != null &&
                             payloads.includes(item.part_number)) {
                             selected[item.part_number] = item.quantity;
                         }
@@ -92,31 +91,45 @@ function renderReleasePromptStep1() {
     html += '<div class="os-modal-payload">Anything pulled to lineside during the swap?</div>';
     html += '</div>';
 
-    html += '<div class="os-release-prompt">';
     if (state.payloads.length === 0) {
-        html += '<div style="color:#999;padding:12px 0;font-size:14px">No allowed payloads on this node.</div>';
+        html += '<div class="os-release-prompt"><div style="color:#999;padding:12px 0;font-size:14px">No allowed payloads on this node.</div></div>';
     } else {
+        // Primary group: the chip grid and the PULL PARTS button visually
+        // belong together — the chips show what's about to be captured and
+        // the button submits it. Highlighted so the operator's eye lands
+        // here first; the partial/empty escape hatch and CANCEL sit below
+        // in a quieter row.
+        html += '<div class="os-release-primary">';
+        html += '<div class="os-release-primary-label">Anything pulled to lineside? Tap a part to edit qty.</div>';
         html += '<div class="os-release-part-grid">';
         state.payloads.forEach(function(code) {
-            const picked = state.selected[code] != null;
+            const qty = state.selected[code] != null ? state.selected[code] : 0;
+            const picked = qty > 0;
             html += '<button type="button" class="os-action-btn os-release-part-btn' +
                 (picked ? ' picked' : '') + '" data-action="release-pick:' + esc(code) + '">' +
-                esc(code) + (picked ? ' (' + state.selected[code] + ')' : '') + '</button>';
+                esc(code) + ' (' + qty + ')</button>';
         });
         html += '</div>';
+        html += '<button type="button" class="os-action-btn request"' +
+            ' data-action="release-submit-parts">PULL PARTS LINESIDE, RELEASE</button>';
+        html += '</div>';
     }
-    html += '</div>';
 
     html += '<div class="os-modal-actions">';
-    html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
+    // Label reflects the actual action: bin still has UOP → returns as-is
+    // (partial); bin is at zero → manifest cleared (empty). Same wire
+    // disposition mapping as before; just makes it visible to the operator.
+    const rt = state.entry && state.entry.runtime;
+    const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
+    const submitLabel = remainingUOP > 0 ? 'RELEASE PARTIAL' : 'RELEASE EMPTY';
+    const submitTitle = remainingUOP > 0
+        ? 'No parts pulled to lineside. Bin returns to the supermarket with its current UOP intact.'
+        : 'No parts pulled to lineside. Bin is empty — manifest cleared.';
     html += '<button type="button" class="os-action-btn release-empty"' +
         ' data-action="release-submit"' +
-        ' title="No parts were pulled to lineside. If the bin still has UOP left it returns to the supermarket as-is; if the bin is empty the manifest is cleared.">' +
-        'NOTHING PULLED</button>';
-    const hasPicks = Object.keys(state.selected).length > 0;
-    html += '<button type="button" class="os-action-btn request"' +
-        (hasPicks ? '' : ' disabled') +
-        ' data-action="release-submit-parts">PULL PARTS LINESIDE, RELEASE</button>';
+        ' title="' + esc(submitTitle) + '">' +
+        submitLabel + '</button>';
+    html += '<button type="button" class="os-action-btn close" data-action="release-cancel">CANCEL</button>';
     html += '</div>';
 
     nodeModalContent.innerHTML = html;
@@ -129,17 +142,6 @@ function renderReleasePromptStep1() {
 function renderReleasePromptStep2(code) {
     const state = releasePromptState;
     if (!state) return;
-
-    // Auto-fill qty with the bin's remaining_uop the first time we land on
-    // step 2 for this code. Most of the time the operator pulled the whole
-    // bin to lineside; they can tap the display to dial it down via the
-    // keypad. The keypad is the only path to changing the value, so once
-    // selected[code] is set we leave it alone.
-    if (state.selected[code] == null) {
-        const rt = state.entry && state.entry.runtime;
-        const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
-        if (remainingUOP > 0) state.selected[code] = remainingUOP;
-    }
 
     const qty = state.selected[code] || 0;
     const softCap = linesideSoftThresholdForEntry(state.entry);
@@ -209,11 +211,11 @@ async function handleReleasePromptAction(evt) {
         openKeypad(0, current, {
             title: 'Lineside qty: ' + code,
             onOk: function(_nodeID, qty) {
-                if (qty > 0) {
-                    state.selected[code] = qty;
-                } else {
-                    delete state.selected[code];
-                }
+                // Always store a numeric qty so the chip's "(N)" suffix
+                // stays consistent — pre-population now seeds every chip
+                // with 0, so deleting on qty=0 would orphan that initial
+                // state and the chip would stop showing its number.
+                state.selected[code] = qty > 0 ? qty : 0;
                 renderReleasePromptStep2(code);
             },
         });
@@ -227,11 +229,13 @@ async function handleReleasePromptAction(evt) {
         return;
     }
 
-    //   release-submit       "NOTHING PULLED"               → send_partial_back when the bin
-    //                                                         still has UOP (preserve manifest);
-    //                                                         capture_lineside empty when the
-    //                                                         bin is already empty (operator
-    //                                                         confirms zero, manifest cleared).
+    //   release-submit       "RELEASE PARTIAL" / "RELEASE EMPTY"
+    //                          → send_partial_back when the bin still has UOP
+    //                            (preserve manifest); capture_lineside empty
+    //                            when the bin is already empty (operator
+    //                            confirms zero, manifest cleared). Label is
+    //                            chosen at render time from remaining_uop so
+    //                            the operator sees what they're submitting.
     //   release-submit-parts "PULL PARTS LINESIDE, RELEASE" → capture_lineside, picked buckets.
     if (action === 'release-submit' || action === 'release-submit-parts') {
         const url = state.url;
@@ -252,7 +256,15 @@ async function handleReleasePromptAction(evt) {
                 called_by: calledBy,
             };
         } else {
-            const qtyByPart = (action === 'release-submit') ? {} : (state.selected || {});
+            // Drop zero-qty entries — chips are pre-populated with 0 so
+            // the button is always enabled, but a 0 bucket has no business
+            // hitting the server.
+            const qtyByPart = {};
+            if (action === 'release-submit-parts') {
+                Object.keys(state.selected || {}).forEach(function(code) {
+                    if (state.selected[code] > 0) qtyByPart[code] = state.selected[code];
+                });
+            }
             body = {
                 disposition: 'capture_lineside',
                 qty_by_part: qtyByPart,
