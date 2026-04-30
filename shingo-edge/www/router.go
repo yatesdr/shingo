@@ -152,12 +152,16 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	r.Handle("/favicon.ico", faviconHandler)
 	r.Handle("/static/favicon.ico", faviconHandler)
 
-	// Static files (no auth) — no-cache to force revalidation after deploys.
-	// Files are embedded at compile time, so they only change when the binary
-	// is updated. Browsers will revalidate on each load but use cache if
-	// the content hasn't changed.
+	// Static files (no auth) — ETag keyed on serverInstance + path so every
+	// rebuild invalidates every /static/* URL. Files are embedded at compile
+	// time, but embed.FS reports modtime=0 across the board, so the default
+	// http.ServeContent ETag (name+size+0) survives rebuilds when byte length
+	// happens to match — which is what was leaving the operator-station ES
+	// modules stuck on stale code after a restart. Tying the ETag to
+	// serverInstance forces every request to miss-cache exactly once after
+	// each restart, then revalidate cleanly thereafter.
 	r.Handle("/static/*", http.StripPrefix("/static/",
-		noCacheMiddleware(http.FileServer(http.FS(StaticFS()))),
+		serverInstanceETag(http.FileServer(http.FS(StaticFS()))),
 	))
 
 	// ── SSE (no auth — shop floor) ─────────────────────────
@@ -343,11 +347,27 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 	}
 }
 
-// noCacheMiddleware wraps a handler with Cache-Control headers that force
-// browser revalidation. Used for embedded static assets that change on deploy.
-func noCacheMiddleware(next http.Handler) http.Handler {
+// serverInstanceETag wraps a static-file handler so every response carries
+// an ETag derived from serverInstance + the request path. Each edge restart
+// bumps serverInstance, which invalidates every cached /static/* URL exactly
+// once. Subsequent revalidations within the same process return 304s.
+//
+// Why this exists: the embed.FS package zeros modtimes on all bundled files,
+// so the default http.ServeContent ETag (name+size+0) doesn't change across
+// rebuilds. Browsers happily 304 against the stale ETag and reuse the cache,
+// which is what made the operator-station ES modules stick on old code after
+// restarts despite the cacheBust query string on the parent <script> tag
+// (ES module imports inherit no version query). Tying ETag to serverInstance
+// makes the busting unconditional.
+func serverInstanceETag(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		etag := `"` + serverInstance + `:` + r.URL.Path + `"`
+		w.Header().Set("ETag", etag)
 		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		if match := r.Header.Get("If-None-Match"); match == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
