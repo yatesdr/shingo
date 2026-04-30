@@ -394,6 +394,14 @@ window.claimedByStation = {{json .ClaimedByStation}};
                         {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
                     </select>
                 </div>
+                <div class="form-group" id="claims-add-second-paired-group" style="margin:0.75rem 0 0 0;display:none">
+                    <label>Third Press Position (optional)</label>
+                    <select id="claims-add-second-paired-node" class="form-input">
+                        <option value="">-- None (2-position layout) --</option>
+                        {{range $name, $info := .CoreNodes}}<option value="{{$name}}">{{$name}}</option>{{end}}
+                    </select>
+                    <div style="color:var(--text-muted);font-size:0.8rem;margin-top:0.25rem">Set for a 3-position press where bins index C → B → A. R1 drops fresh empties at C; R2 indexes C → B and B → A. Leave blank for the default 2-position layout (R1 → B, R2 → A).</div>
+                </div>
             </fieldset>
 
             <fieldset id="claims-auto-request-fieldset" style="border:1px solid var(--border);border-radius:6px;padding:0.75rem 1rem;margin-top:0.75rem;display:none">

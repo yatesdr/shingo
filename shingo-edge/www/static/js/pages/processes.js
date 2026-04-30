@@ -247,6 +247,7 @@ function openClaimModal() {
     document.getElementById('claims-add-keep-staged').checked = false;
     document.getElementById('claims-add-evacuate').checked = false;
     document.getElementById('claims-add-paired-node').value = '';
+    document.getElementById('claims-add-second-paired-node').value = '';
     document.getElementById('claims-add-auto-confirm').checked = false;
     document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
     toggleClaimsAddPayload();
@@ -278,6 +279,7 @@ function editClaim(claim) {
     document.getElementById('claims-add-keep-staged').checked = !!claim.keep_staged;
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
     document.getElementById('claims-add-paired-node').value = claim.paired_core_node || '';
+    document.getElementById('claims-add-second-paired-node').value = claim.second_paired_core_node || '';
     document.getElementById('claims-add-auto-confirm').checked = !!claim.auto_confirm;
     document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
     toggleClaimsAddPayload();
@@ -401,13 +403,25 @@ async function saveClaim() {
         return;
     }
     if (swap === 'two_robot_press_index') {
-        if (!document.getElementById('claims-add-paired-node').value) {
+        var pairedNode = document.getElementById('claims-add-paired-node').value;
+        var secondPairedNode = document.getElementById('claims-add-second-paired-node').value;
+        if (!pairedNode) {
             ShingoEdge.toast('2-Robot Press Index requires a Back Press Node', 'warning');
             return;
         }
         if (!document.getElementById('claims-add-outbound-destination').value) {
             ShingoEdge.toast('2-Robot Press Index requires an Outbound Destination', 'warning');
             return;
+        }
+        if (secondPairedNode) {
+            if (secondPairedNode === pairedNode) {
+                ShingoEdge.toast('Third press position must differ from the Back Press Node', 'warning');
+                return;
+            }
+            if (secondPairedNode === node) {
+                ShingoEdge.toast('Third press position must differ from the front (Core Node)', 'warning');
+                return;
+            }
         }
     }
 
@@ -431,6 +445,7 @@ async function saveClaim() {
         keep_staged: document.getElementById('claims-add-keep-staged').checked,
         evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked,
         paired_core_node: document.getElementById('claims-add-paired-node').value,
+        second_paired_core_node: document.getElementById('claims-add-second-paired-node').value,
         auto_confirm: document.getElementById('claims-add-auto-confirm').checked
     };
 
@@ -513,6 +528,7 @@ function toggleClaimsAddPayload() {
     var showPair = (role === 'consume' || role === 'produce') && !isManualSwap;
     var pairFieldset = document.getElementById('claims-ab-fieldset');
     pairFieldset.style.display = showPair ? '' : 'none';
+    var secondGroup = document.getElementById('claims-add-second-paired-group');
     if (showPair) {
         var legend = document.getElementById('claims-ab-legend');
         var help = document.getElementById('claims-ab-help');
@@ -525,6 +541,7 @@ function toggleClaimsAddPayload() {
             if (pairSelect.options.length > 0 && pairSelect.options[0].value === '') {
                 pairSelect.options[0].textContent = '-- Select back press node --';
             }
+            if (secondGroup) secondGroup.style.display = '';
         } else {
             legend.textContent = 'A/B Node Cycling';
             help.textContent = 'Pair this node with another node for alternating operation. The operator flips which node is active via the station HMI.';
@@ -532,9 +549,13 @@ function toggleClaimsAddPayload() {
             if (pairSelect.options.length > 0 && pairSelect.options[0].value === '') {
                 pairSelect.options[0].textContent = '-- None (no A/B cycling) --';
             }
+            if (secondGroup) secondGroup.style.display = 'none';
+            document.getElementById('claims-add-second-paired-node').value = '';
         }
     } else {
         document.getElementById('claims-add-paired-node').value = '';
+        if (secondGroup) secondGroup.style.display = 'none';
+        document.getElementById('claims-add-second-paired-node').value = '';
     }
     // Auto-request fieldset — show for manual_swap (all-payload) or standard (single dropdown)
     document.getElementById('claims-auto-request-fieldset').style.display = isManualSwap ? '' : 'none';

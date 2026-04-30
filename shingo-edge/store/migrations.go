@@ -214,6 +214,12 @@ func (db *DB) migrate() error {
 	// HMI warns if the operator enters a qty greater than 2× this value.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN lineside_soft_threshold INTEGER NOT NULL DEFAULT 0")
 
+	// v18: optional third position for two_robot_press_index. When set,
+	// the press indexes C → B → A every cycle and R1's final dropoff
+	// goes to C instead of B. Empty string means the legacy 2-position
+	// layout (R1 dropoff → B, R2 indexes B → A).
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN second_paired_core_node TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

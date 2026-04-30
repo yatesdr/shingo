@@ -107,6 +107,10 @@ type NodeClaim struct {
 	KeepStaged           bool      `json:"keep_staged"`
 	EvacuateOnChangeover bool      `json:"evacuate_on_changeover"`
 	PairedCoreNode       string    `json:"paired_core_node"`
+	// SecondPairedCoreNode is the optional third (back-most) position for
+	// two_robot_press_index. When set, the layout is C → B → A and R1's
+	// final dropoff goes to C instead of B. Empty = legacy 2-position.
+	SecondPairedCoreNode string    `json:"second_paired_core_node"`
 	AutoConfirm          bool      `json:"auto_confirm"`
 	Sequence             int       `json:"sequence"`
 	// LinesideSoftThreshold is the per-claim soft cap for the release
@@ -155,6 +159,7 @@ type NodeClaimInput struct {
 	KeepStaged            bool     `json:"keep_staged"`
 	EvacuateOnChangeover  bool     `json:"evacuate_on_changeover"`
 	PairedCoreNode        string   `json:"paired_core_node"`
+	SecondPairedCoreNode  string   `json:"second_paired_core_node"`
 	AutoConfirm           bool     `json:"auto_confirm"`
 	Sequence              int      `json:"sequence"`
 	LinesideSoftThreshold int      `json:"lineside_soft_threshold"`

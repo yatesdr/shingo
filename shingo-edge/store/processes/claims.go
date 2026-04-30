@@ -55,7 +55,7 @@ const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code
 	uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
-	lineside_soft_threshold, created_at`
+	lineside_soft_threshold, second_paired_core_node, created_at`
 
 func scanNodeClaim(scanner interface{ Scan(...interface{}) error }) (NodeClaim, error) {
 	var c NodeClaim
@@ -64,7 +64,7 @@ func scanNodeClaim(scanner interface{ Scan(...interface{}) error }) (NodeClaim, 
 		&c.UOPCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
-		&c.LinesideSoftThreshold, &createdAt); err != nil {
+		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode, &createdAt); err != nil {
 		return c, err
 	}
 	c.CreatedAt = helpers.ScanTime(createdAt)
@@ -147,15 +147,26 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	}
 	// two_robot_press_index claims need PairedCoreNode (back position B) and
 	// OutboundDestination. R1's multi-step ComplexOrder carries the full bin
-	// from A → outbound and the replacement from inbound → B; R2 indexes
-	// B → A. Without either field BuildTwoRobotPressIndexSwapSteps returns
-	// nil and the operator's RELEASE silently no-ops.
+	// from A → outbound and the replacement from inbound → B (or C in the
+	// 3-position layout); R2 indexes B → A (and C → B in 3-position).
+	// Without PairedCoreNode or OutboundDestination, BuildTwoRobotPressIndexSwapSteps
+	// returns nil and the operator's RELEASE silently no-ops.
 	if in.SwapMode == "two_robot_press_index" {
 		if in.PairedCoreNode == "" {
 			return 0, fmt.Errorf("two_robot_press_index claims require paired_core_node (back position) to be set")
 		}
 		if in.OutboundDestination == "" {
 			return 0, fmt.Errorf("two_robot_press_index claims require outbound_destination to be set")
+		}
+		// Optional 3-position: SecondPairedCoreNode must be distinct from
+		// the front and the back to avoid a step with pickup == dropoff.
+		if in.SecondPairedCoreNode != "" {
+			if in.SecondPairedCoreNode == in.CoreNodeName {
+				return 0, fmt.Errorf("second_paired_core_node must differ from core_node_name (front position)")
+			}
+			if in.SecondPairedCoreNode == in.PairedCoreNode {
+				return 0, fmt.Errorf("second_paired_core_node must differ from paired_core_node (back position)")
+			}
 		}
 	}
 	var existingID int64
@@ -167,13 +178,13 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 			uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
 			inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
 			keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, auto_confirm=?, sequence=?,
-			lineside_soft_threshold=?
+			lineside_soft_threshold=?, second_paired_core_node=?
 			WHERE id=?`,
 			in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
 			in.InboundStaging, in.OutboundStaging,
 			in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 			in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
-			in.LinesideSoftThreshold, existingID)
+			in.LinesideSoftThreshold, in.SecondPairedCoreNode, existingID)
 		return existingID, err
 	}
 	if in.Sequence <= 0 {
@@ -186,13 +197,13 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
-		lineside_soft_threshold)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		lineside_soft_threshold, second_paired_core_node)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
 		in.UOPCapacity, in.ReorderPoint, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
-		in.LinesideSoftThreshold)
+		in.LinesideSoftThreshold, in.SecondPairedCoreNode)
 	if err != nil {
 		return 0, err
 	}

@@ -552,16 +552,24 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
-	// Press-index pairing requires the back position to exist as a
-	// process_node so the fleet manager has wait/pickup/dropoff coordinates
-	// for R2's leg. The back node holds no claim of its own, but its
-	// process_node row must exist. Auto-provision it here using the front
-	// node's operator station so the operator doesn't have to add it by
-	// hand in a separate step.
-	if in.SwapMode == "two_robot_press_index" && in.PairedCoreNode != "" {
-		if err := h.ensurePressIndexBackNode(in); err != nil {
-			log.Printf("press-index back-node provisioning for %s (paired %s): %v",
-				in.CoreNodeName, in.PairedCoreNode, err)
+	// Press-index pairing requires the back position(s) to exist as
+	// process_nodes so the fleet manager has wait/pickup/dropoff
+	// coordinates for R2's leg. The back nodes hold no claim of their
+	// own, but their process_node rows must exist. Auto-provision them
+	// here using the front node's operator station so the operator
+	// doesn't have to add them by hand in a separate step.
+	if in.SwapMode == "two_robot_press_index" {
+		if in.PairedCoreNode != "" {
+			if err := h.ensurePressIndexBackNode(in, in.PairedCoreNode); err != nil {
+				log.Printf("press-index back-node provisioning for %s (paired %s): %v",
+					in.CoreNodeName, in.PairedCoreNode, err)
+			}
+		}
+		if in.SecondPairedCoreNode != "" {
+			if err := h.ensurePressIndexBackNode(in, in.SecondPairedCoreNode); err != nil {
+				log.Printf("press-index second-back-node provisioning for %s (second paired %s): %v",
+					in.CoreNodeName, in.SecondPairedCoreNode, err)
+			}
 		}
 	}
 	id, err := h.engine.StyleService().UpsertClaim(in)
@@ -578,11 +586,11 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, map[string]int64{"id": id})
 }
 
-// ensurePressIndexBackNode creates a process_node row for the press-index
-// back position (claim.PairedCoreNode) when one doesn't already exist on
-// the same process as the front node. Idempotent — does nothing when the
-// back node is already a process_node.
-func (h *Handlers) ensurePressIndexBackNode(in domain.NodeClaimInput) error {
+// ensurePressIndexBackNode creates a process_node row for the given back
+// position (B or C) when one doesn't already exist on the same process as
+// the front node. Idempotent — does nothing when the back node is already
+// a process_node.
+func (h *Handlers) ensurePressIndexBackNode(in domain.NodeClaimInput, backCoreNodeName string) error {
 	style, err := h.engine.StyleService().Get(in.StyleID)
 	if err != nil || style == nil {
 		return fmt.Errorf("style lookup: %w", err)
@@ -593,7 +601,7 @@ func (h *Handlers) ensurePressIndexBackNode(in domain.NodeClaimInput) error {
 	}
 	var frontNode *domain.Node
 	for i := range nodes {
-		if nodes[i].CoreNodeName == in.PairedCoreNode {
+		if nodes[i].CoreNodeName == backCoreNodeName {
 			return nil // already exists
 		}
 		if nodes[i].CoreNodeName == in.CoreNodeName {
@@ -607,8 +615,8 @@ func (h *Handlers) ensurePressIndexBackNode(in domain.NodeClaimInput) error {
 	backInput := domain.NodeInput{
 		ProcessID:         style.ProcessID,
 		OperatorStationID: frontNode.OperatorStationID,
-		CoreNodeName:      in.PairedCoreNode,
-		Name:              in.PairedCoreNode,
+		CoreNodeName:      backCoreNodeName,
+		Name:              backCoreNodeName,
 		Enabled:           true,
 	}
 	newID, err := h.engine.ProcessService().CreateNode(backInput)

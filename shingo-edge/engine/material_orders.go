@@ -130,34 +130,57 @@ func BuildTwoRobotSwapSteps(claim *processes.NodeClaim) (orderA, orderB []protoc
 }
 
 // BuildTwoRobotPressIndexSwapSteps builds steps for a press-indexing two-robot
-// swap. The press has two positions: A (front/output, claim.CoreNodeName) and
-// B (back/input, claim.PairedCoreNode). When A is full:
+// swap. The press has either two or three positions:
 //
-//	Robot 1 (R1, multi-bin order):
-//	  wait(A) → pickup(A) → dropoff(OutboundDestination)
-//	         → pickup(InboundSource) → dropoff(B)
-//	Robot 2 (R2, single-bin order):
-//	  wait(B) → pickup(B) → dropoff(A)
+//	2-position layout (claim.SecondPairedCoreNode == ""):
+//	  A (front/output, CoreNodeName), B (back/input, PairedCoreNode)
+//	  R1: wait(A) → pickup(A) → dropoff(OutboundDestination)
+//	             → pickup(InboundSource) → dropoff(B)
+//	  R2: wait(B) → pickup(B) → dropoff(A)
 //
-// Both fire on operator release. R1 carries the full bin out then returns
-// with a fresh bin for the back position; R2 indexes the staged bin from B
-// forward into A. Leg sequencing on node A is enforced by the fleet manager
-// (R2's dropoff(A) waits for R1's pickup(A) to clear A).
+//	3-position layout (claim.SecondPairedCoreNode set, = C):
+//	  A (front), B (middle, PairedCoreNode), C (back, SecondPairedCoreNode)
+//	  R1: wait(A) → pickup(A) → dropoff(OutboundDestination)
+//	             → pickup(InboundSource) → dropoff(C)
+//	  R2: wait(B) → pickup(B) → dropoff(A) → pickup(C) → dropoff(B)
+//
+// Both robots fire on operator release. The fleet manager handles cross-leg
+// sequencing on shared nodes (R2's dropoff(A) waits for R1's pickup(A);
+// R1's dropoff(C) waits for R2's pickup(C) in the 3-position case).
 func BuildTwoRobotPressIndexSwapSteps(claim *processes.NodeClaim) (orderR1, orderR2 []protocol.ComplexOrderStep) {
 	if claim.PairedCoreNode == "" || claim.OutboundDestination == "" {
 		return nil, nil
 	}
+	if claim.SecondPairedCoreNode != "" {
+		// 3-position: C → B → A index, R1's final dropoff feeds C.
+		orderR1 = []protocol.ComplexOrderStep{
+			{Action: "wait", Node: claim.CoreNodeName},
+			{Action: "pickup", Node: claim.CoreNodeName},
+			buildStep("dropoff", claim.OutboundDestination),
+			buildStep("pickup", claim.InboundSource),
+			{Action: "dropoff", Node: claim.SecondPairedCoreNode},
+		}
+		orderR2 = []protocol.ComplexOrderStep{
+			{Action: "wait", Node: claim.PairedCoreNode},
+			{Action: "pickup", Node: claim.PairedCoreNode},
+			{Action: "dropoff", Node: claim.CoreNodeName},
+			{Action: "pickup", Node: claim.SecondPairedCoreNode},
+			{Action: "dropoff", Node: claim.PairedCoreNode},
+		}
+		return orderR1, orderR2
+	}
+	// 2-position: B → A index, R1's final dropoff feeds B.
 	orderR1 = []protocol.ComplexOrderStep{
-		{Action: "wait", Node: claim.CoreNodeName},      // park at A, hold for operator release
-		{Action: "pickup", Node: claim.CoreNodeName},    // lift full bin off A
-		buildStep("dropoff", claim.OutboundDestination), // deliver full to outgoing
-		buildStep("pickup", claim.InboundSource),        // fetch fresh bin from incoming
-		{Action: "dropoff", Node: claim.PairedCoreNode}, // drop fresh bin at B (back position)
+		{Action: "wait", Node: claim.CoreNodeName},
+		{Action: "pickup", Node: claim.CoreNodeName},
+		buildStep("dropoff", claim.OutboundDestination),
+		buildStep("pickup", claim.InboundSource),
+		{Action: "dropoff", Node: claim.PairedCoreNode},
 	}
 	orderR2 = []protocol.ComplexOrderStep{
-		{Action: "wait", Node: claim.PairedCoreNode},   // park at B, hold for operator release
-		{Action: "pickup", Node: claim.PairedCoreNode}, // lift staged bin off B
-		{Action: "dropoff", Node: claim.CoreNodeName},  // index forward to A
+		{Action: "wait", Node: claim.PairedCoreNode},
+		{Action: "pickup", Node: claim.PairedCoreNode},
+		{Action: "dropoff", Node: claim.CoreNodeName},
 	}
 	return orderR1, orderR2
 }
