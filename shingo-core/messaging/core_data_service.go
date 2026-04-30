@@ -336,7 +336,7 @@ func (s *CoreDataService) handleClaimSync(env *protocol.Envelope, sync *protocol
 	// belt-and-suspenders check alongside the Edge-side 400.
 	var entries []demands.RegistryEntry
 	for _, c := range sync.Claims {
-		if c.Role == "consume" {
+		if c.Role == protocol.ClaimRoleConsume {
 			if node, err := s.db.GetNodeByDotName(c.CoreNodeName); err == nil && node != nil && node.ParentID != nil {
 				if parent, err := s.db.GetNode(*node.ParentID); err == nil && parent != nil && parent.NodeTypeCode != "LANE" {
 					log.Printf("core_handler: consume claim from %s targets %s (parent node_type=%s, not LANE) — demand signals will be suppressed by wiring_kanban", stationID, c.CoreNodeName, parent.NodeTypeCode)

@@ -330,8 +330,8 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 	order := &domain.Order{
 		EdgeUUID:     orderUUID,
 		StationID:    "core-spot",
-		OrderType:    "send_to",
-		Status:       "pending",
+		OrderType:    protocol.OrderType("send_to"),
+		Status:       protocol.StatusPending,
 		Quantity:     1,
 		DeliveryNode: destNode.Name,
 		Priority:     priority,
@@ -458,8 +458,8 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 	order := &domain.Order{
 		EdgeUUID:     orderUUID,
 		StationID:    "core-spot",
-		OrderType:    "move",
-		Status:       "pending",
+		OrderType:    protocol.OrderTypeMove,
+		Status:       protocol.StatusPending,
 		Quantity:     1,
 		SourceNode:   sourceNode.Name,
 		DeliveryNode: destNode.Name,
@@ -512,7 +512,7 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 	// Store order: pickup from target node
 	storeReq := &protocol.OrderRequest{
 		OrderUUID: storeUUID,
-		OrderType: "store",
+		OrderType: protocol.OrderTypeStore,
 		Quantity:  1,
 		SourceNode: targetNode,
 		Priority:   priority,
@@ -528,7 +528,7 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 	// Retrieve order: deliver to target node with payload
 	retrieveReq := &protocol.OrderRequest{
 		OrderUUID:     retrieveUUID,
-		OrderType:     "retrieve",
+		OrderType:     protocol.OrderTypeRetrieve,
 		PayloadCode: payloadCode,
 		Quantity:      1,
 		DeliveryNode:  targetNode,
