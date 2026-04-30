@@ -42,12 +42,22 @@ function linesideSoftThresholdForEntry(entry) {
 }
 
 export function openReleasePrompt(url, entry) {
-    releasePromptState = {
-        url: url,
-        entry: entry,
-        payloads: allowedPayloadsForEntry(entry),
-        selected: {},
-    };
+    const payloads = allowedPayloadsForEntry(entry);
+    const selected = {};
+    // Auto-pick when there's a single allowed payload and the bin has UOP
+    // remaining: the common case is the operator pulled the whole bin to
+    // lineside, so one tap on the blue button submits. They can still tap
+    // the chip to dial qty down via the keypad, or hit NOTHING PULLED.
+    // Without this the blue button is disabled-on-open because operators
+    // don't realize the small grey chip is a button.
+    if (payloads.length === 1) {
+        const rt = entry && entry.runtime;
+        const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
+        if (remainingUOP > 0) {
+            selected[payloads[0]] = remainingUOP;
+        }
+    }
+    releasePromptState = { url, entry, payloads, selected };
     renderReleasePromptStep1();
 }
 

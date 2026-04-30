@@ -297,26 +297,23 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 // cluster of patches and predicates. See shingo_todo.md and the 2026-04-27
 // retrospective for context.
 func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) error {
-	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
+	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return fmt.Errorf("get runtime for node %d: %w", nodeID, err)
 	}
 	if runtime == nil || runtime.ActiveOrderID == nil || runtime.StagedOrderID == nil {
 		return fmt.Errorf("node %d: expected two tracked orders for two-robot release", nodeID)
 	}
-	if runtime.ActiveClaimID == nil {
-		return fmt.Errorf("node %d: no active claim for two-robot release", nodeID)
+	// findActiveClaim resolves via (active_style_id, core_node_name) — works
+	// even when runtime.active_claim_id hasn't been stamped yet (it only
+	// gets set on order completion in wiring_completion). Press-index and
+	// two_robot share the same R1+R2 release choreography, so both modes
+	// are valid here.
+	if claim == nil {
+		return fmt.Errorf("node %s: no active claim for release", node.Name)
 	}
-	claim, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID)
-	if err != nil {
-		return fmt.Errorf("node %d: load active claim: %w", nodeID, err)
-	}
-	if claim == nil || claim.SwapMode != "two_robot" {
-		mode := "<nil>"
-		if claim != nil {
-			mode = claim.SwapMode
-		}
-		return fmt.Errorf("node %d: release-staged requires two_robot swap, got %q", nodeID, mode)
+	if claim.SwapMode != "two_robot" && claim.SwapMode != "two_robot_press_index" {
+		return fmt.Errorf("node %s: release-staged requires a two-robot swap mode, got %q", node.Name, claim.SwapMode)
 	}
 
 	// Order B (evacuation) — full disposition.
