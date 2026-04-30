@@ -259,11 +259,14 @@ func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) 
 // MaybeCreateLoaderEmptyIn (L1 of the side-cycle model) creates a
 // retrieve_empty order tracked at the loader for the given payload, if a
 // matching loader exists and doesn't already have an in-flight empty-in.
-// Called from the line REQUEST path: when a line creates supply orders, this
-// fires alongside so the loader operator gains visibility into the demand.
+// Called from ReleaseOrderWithLineside on consume-role releases under
+// DispositionCaptureLineside: when the line operator declares a bin
+// emptied, the loader gets a parallel "empty-in" demand so it stays in
+// the workflow. (Pre-2026-04-29 this fired on REQUEST; that over-supplied
+// the loader whenever the line later returned a partial.)
 //
 // L2 (filled-out to supermarket) is created when this order's bin reaches
-// the loader and the operator confirms — see MaybeCreateLoaderFilledOut.
+// the loader and the operator confirms — see handleLoaderEmptyInCompletion.
 //
 // The retrieve_empty order's source is left to Core's planner
 // (planRetrieveEmpty) which finds an unclaimed empty bin matching the bin
@@ -308,8 +311,8 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side
-// counterpart to MaybeCreateLoaderEmptyIn. When the line evacuates a full bin
-// of payloadCode (e.g. during changeover or a partial-release flow), this
+// counterpart to MaybeCreateLoaderEmptyIn. When the line releases a full bin
+// of payloadCode (DispositionCaptureLineside on a produce-role claim), this
 // creates a parallel "full-in" retrieve order tracked at the unloader so the
 // unloader operator's UI surfaces the demand directly. Without this mirror,
 // the unloader sees nothing — the line's evac order is tracked at the LINE's
@@ -317,22 +320,11 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 //
 // U2 (empty-out from the unloader to the supermarket) fires when the unloader
 // operator confirms that the bin's contents have been processed — symmetric
-// to L2 (handleLoaderEmptyInCompletion → CreateMoveOrder). U2 wiring is a
-// follow-up: the unloader's CONFIRM path needs to reach a handler analogous
-// to handleLoaderEmptyInCompletion.
+// to L2. See handleUnloaderFullInCompletion in wiring_completion.go.
 //
-// Phase 3 #13 of 2026-04-27 v2 direction doc closes the producer/consumer
-// asymmetry that previously left FindUnloaderForPayload without a caller.
-//
-// CALLER WIRING (TODO): the v2 direction doc identifies the trigger point
-// as the line's evacuation/release flow — when ReleaseOrderWithLineside or
-// ReleaseChangeoverWait creates an evac order with a payload code, this
-// function should fire alongside (analogous to the consumer-line REQUEST
-// path at operator_stations.go:50 firing MaybeCreateLoaderEmptyIn). That
-// integration is deliberately not done in this commit — the release flow
-// is its own complexity (see commit 847b259) and warrants its own review.
-// This commit provides the entry point and dedup; the next reviewer wires
-// the call site.
+// Caller: ReleaseOrderWithLineside in operator_release.go fires this for
+// produce-role releases under DispositionCaptureLineside, mirroring the L1
+// trigger for consume-role.
 func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	unloader := e.FindUnloaderForPayload(payloadCode)
 	if unloader == nil {

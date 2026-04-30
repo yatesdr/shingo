@@ -29,28 +29,7 @@ func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderRe
 		quantity = 1
 	}
 
-	result, err := e.requestNodeFromClaim(node, runtime, claim, quantity)
-	if err != nil || result == nil {
-		return result, err
-	}
-
-	// Side-cycle (L1): if a manual_swap loader exists for this payload,
-	// create a parallel "empty-in" order tracked at the loader so the
-	// loader operator's UI surfaces the demand directly. Without this the
-	// loader sees nothing while the line's request runs against the
-	// supermarket. See SHINGO_TODO.md "Bin loader as active workflow
-	// participant" for design context. L2 (filled-out to supermarket) is
-	// created on the loader operator's CONFIRM — see wiring_completion.go.
-	//
-	// Consumer line nodes only: PayloadCode here is what the LINE wants.
-	// The loader fills empties with this payload — a clean producer/consumer
-	// pair. Producer nodes (the loaders themselves) skip this; their
-	// finalize path doesn't go through RequestNodeMaterial.
-	if claim.Role == "consume" {
-		e.MaybeCreateLoaderEmptyIn(claim.PayloadCode)
-	}
-
-	return result, nil
+	return e.requestNodeFromClaim(node, runtime, claim, quantity)
 }
 
 // findActiveClaim looks up the style node claim for a process node based on

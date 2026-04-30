@@ -9,11 +9,14 @@
 // Layout:
 //   loadOrderCompletionCtx       – shared lookup for order/node/runtime/changeover
 //   handleNodeOrderCompleted     – dispatcher: staged → Order B → changeover →
-//                                  manual swap → produce ingest → normal replenishment
+//                                  loader/unloader side-cycle → manual swap →
+//                                  produce ingest → normal replenishment
 //   handleStagedDelivery         – Order A → inbound staging
 //   handleOrderBCompletion       – Order B (old material release)
 //   handleComplexOrderBCompletion / handleKeepStagedOrderBCompletion
 //   handleChangeoverRelease      – Order A direct delivery
+//   handleLoaderEmptyInCompletion   – L1 confirm → fire L2 (filled-out)
+//   handleUnloaderFullInCompletion  – U1 confirm → fire U2 (empty-out)
 //   handleManualSwapCompletion   – move order for manual_swap nodes
 //   handleProduceIngestCompletion – ingest order for produce nodes
 //   handleNormalReplenishment    – standard retrieve/complex
@@ -106,6 +109,9 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		return
 	}
 	if e.handleLoaderEmptyInCompletion(ctx) {
+		return
+	}
+	if e.handleUnloaderFullInCompletion(ctx) {
 		return
 	}
 	if e.handleManualSwapCompletion(ctx) {
@@ -328,6 +334,52 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
 		log.Printf("side-cycle: update runtime orders for loader %d: %v", ctx.node.ID, err)
+	}
+	return true
+}
+
+// handleUnloaderFullInCompletion fires the side-cycle U2 when the U1
+// full-in retrieve order is confirmed at a manual_swap consumer
+// (unloader) node. U1 brought a full bin to the unloader; the operator
+// processed its contents; CONFIRM means the (now-empty) bin is ready to
+// send back to the supermarket. U2 = a move order from the unloader to
+// claim.OutboundDestination.
+//
+// Symmetric to handleLoaderEmptyInCompletion (L2). The discriminator
+// between L1 and U1 retrieve orders is the role on the active claim:
+// producer (loader, L1, RetrieveEmpty=true) vs consumer (unloader, U1,
+// full-bin retrieve with PayloadCode).
+func (e *Engine) handleUnloaderFullInCompletion(ctx *orderCompletionCtx) bool {
+	if ctx.order.OrderType != orders.TypeRetrieve || ctx.order.RetrieveEmpty {
+		return false
+	}
+	claim := findActiveClaim(e.db, ctx.node)
+	if claim == nil || claim.SwapMode != "manual_swap" || claim.Role != "consume" {
+		return false
+	}
+	if claim.OutboundDestination == "" {
+		e.logFn("side-cycle: unloader %s has no OutboundDestination — cannot create U2 (empty bin will sit until operator manually moves it)", ctx.node.Name)
+		return false
+	}
+	if claim.OutboundDestination == claim.CoreNodeName {
+		e.logFn("side-cycle: unloader %s OutboundDestination same as CoreNode — skipping U2 (would be a same-node move)", ctx.node.Name)
+		return false
+	}
+	nodeID := ctx.node.ID
+	// U2 always auto-confirms: OutboundDestination is an unattended supermarket
+	// node, no operator there to tap CONFIRM. Same rationale as L2.
+	order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, true)
+	if err != nil {
+		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", ctx.node.Name, err)
+		return false
+	}
+	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s", order.ID, ctx.node.Name, claim.OutboundDestination)
+	claimID := claim.ID
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, 0); err != nil {
+		log.Printf("side-cycle: set runtime for unloader %d: %v", ctx.node.ID, err)
+	}
+	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
+		log.Printf("side-cycle: update runtime orders for unloader %d: %v", ctx.node.ID, err)
 	}
 	return true
 }

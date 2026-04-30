@@ -150,6 +150,36 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
 
+	// Two-robot supply-order detection. The per-order release path
+	// (apiReleaseOrder, /api/orders/{id}/release) doesn't know whether the
+	// order being released is the supply (Order A) or the evac (Order B),
+	// so it forwards the operator's chosen disposition either way. We have
+	// to discriminate server-side based on which order is which in the
+	// runtime's order slots.
+	isSupply := e.isSupplyOrderInActiveTwoRobotSwap(node.ID, orderID)
+
+	// Side-cycle trigger (L1 / U1): fires only when the operator declares the
+	// bin emptied/full (capture_lineside) and only on the line side of a swap
+	// (the supply order in a two-robot swap is suppressed by isSupply). A
+	// SEND PARTIAL BACK release explicitly returns the bin to the
+	// supermarket — no new empty needs to land at the loader, no new full
+	// needs to land at the unloader. Firing on REQUEST instead would
+	// over-supply both side-cycle queues whenever the line returns partials.
+	//
+	//   consume role (line consuming parts) → loader needs an empty bin (L1)
+	//   produce role (line producing parts) → unloader needs the full bin (U1)
+	//
+	// Sits above the produce-role early return so produce-side releases still
+	// fan out to the unloader even though they skip Core manifest sync.
+	if !isSupply && disp.Mode == DispositionCaptureLineside {
+		switch toClaim.Role {
+		case "consume":
+			e.MaybeCreateLoaderEmptyIn(toClaim.PayloadCode)
+		case "produce":
+			e.MaybeCreateUnloaderFullIn(toClaim.PayloadCode)
+		}
+	}
+
 	// Produce nodes don't use lineside buckets — skip capture, skip UOP
 	// reset (produce resets on ingest completion, not release). Pass
 	// nil remaining_uop so Core leaves the produce bin's manifest alone.
@@ -167,14 +197,6 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// the same name; both flow to the same envelope field but live in
 	// different scopes.
 	manifestUOP := computeReleaseRemainingUOP(disp, runtime)
-
-	// Two-robot supply-order detection. The per-order release path
-	// (apiReleaseOrder, /api/orders/{id}/release) doesn't know whether the
-	// order being released is the supply (Order A) or the evac (Order B),
-	// so it forwards the operator's chosen disposition either way. We have
-	// to discriminate server-side based on which order is which in the
-	// runtime's order slots.
-	isSupply := e.isSupplyOrderInActiveTwoRobotSwap(node.ID, orderID)
 
 	// Two-robot supply-bin protection (Bug A guard, ALN_002 plant test
 	// 2026-04-23): if this is the supply order, skip the manifest sync.

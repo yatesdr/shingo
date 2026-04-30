@@ -460,6 +460,156 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 	}
 }
 
+// seedManualSwapClaim creates a separate process holding a manual_swap claim
+// (loader or unloader) keyed off the supplied payload code. Used by the
+// side-cycle trigger tests to stand up a downstream loader/unloader that the
+// LINE's release should fan out to.
+func seedManualSwapClaim(t *testing.T, db *store.DB, prefix, role, payloadCode, outbound string) (nodeID, claimID int64) {
+	t.Helper()
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" mswap", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create mswap process: %v", err)
+	}
+	nodeID, err = db.CreateProcessNode(processes.NodeInput{
+		ProcessID:    processID,
+		CoreNodeName: prefix + "-MSWAP-NODE",
+		Code:         prefix[:3],
+		Name:         prefix + " mswap",
+		Sequence:     1,
+		Enabled:      true,
+	})
+	if err != nil {
+		t.Fatalf("create mswap node: %v", err)
+	}
+	styleID, err := db.CreateStyle(prefix+"-MSWAP-STYLE", prefix+" mswap", processID)
+	if err != nil {
+		t.Fatalf("create mswap style: %v", err)
+	}
+	db.SetActiveStyle(processID, &styleID)
+
+	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID:             styleID,
+		CoreNodeName:        prefix + "-MSWAP-NODE",
+		Role:                role,
+		SwapMode:            "manual_swap",
+		PayloadCode:         payloadCode,
+		UOPCapacity:         100,
+		OutboundDestination: outbound,
+	})
+	if err != nil {
+		t.Fatalf("upsert mswap claim: %v", err)
+	}
+	db.EnsureProcessNodeRuntime(nodeID)
+	return nodeID, claimID
+}
+
+// TestReleaseOrderWithLineside_CaptureLinesideFiresL1 verifies the relocated
+// L1 trigger: when the line operator declares a consume bin emptied
+// (DispositionCaptureLineside), the side-cycle creates a retrieve_empty
+// order at the matching loader. Pre-2026-04-29 this fired on REQUEST
+// regardless of how the bin was eventually returned.
+func TestReleaseOrderWithLineside_CaptureLinesideFiresL1(t *testing.T) {
+	db := testEngineDB(t)
+	_, lineNodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "L1-FIRE", PayloadCode: "PART-L1", UOPCapacity: 100, InitialUOP: 8,
+	})
+	db.SetProcessNodeRuntime(lineNodeID, &claimID, 8)
+	loaderNodeID, _ := seedManualSwapClaim(t, db, "L1-FIRE-LDR", "produce", "PART-L1", "STORAGE-NODE")
+
+	orderID := stageOrderForConsumeNode(t, db, lineNodeID, "uuid-l1-fire")
+	eng := testEngine(t, db)
+	if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionCaptureLineside}); err != nil {
+		t.Fatalf("ReleaseOrderWithLineside: %v", err)
+	}
+
+	loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
+	if err != nil {
+		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+	}
+	var found bool
+	for _, o := range loaderOrders {
+		if o.RetrieveEmpty && o.PayloadCode == "PART-L1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("capture_lineside release on consume node should fire L1 retrieve_empty at loader; got %+v", loaderOrders)
+	}
+}
+
+// TestReleaseOrderWithLineside_SendPartialBackSkipsL1 locks in the central
+// reason for relocating the trigger: when the line returns a partially-
+// consumed bin to the supermarket, no new empty needs to land at the loader.
+// Firing L1 here would over-supply the loader queue.
+func TestReleaseOrderWithLineside_SendPartialBackSkipsL1(t *testing.T) {
+	db := testEngineDB(t)
+	_, lineNodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "L1-SKIP", PayloadCode: "PART-L1S", UOPCapacity: 100, InitialUOP: 30,
+	})
+	db.SetProcessNodeRuntime(lineNodeID, &claimID, 30)
+	loaderNodeID, _ := seedManualSwapClaim(t, db, "L1-SKIP-LDR", "produce", "PART-L1S", "STORAGE-NODE")
+
+	orderID := stageOrderForConsumeNode(t, db, lineNodeID, "uuid-l1-skip")
+	eng := testEngine(t, db)
+	if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionSendPartialBack}); err != nil {
+		t.Fatalf("ReleaseOrderWithLineside: %v", err)
+	}
+
+	loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
+	if err != nil {
+		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+	}
+	for _, o := range loaderOrders {
+		if o.RetrieveEmpty && o.PayloadCode == "PART-L1S" {
+			t.Errorf("send_partial_back must not fire L1; found %+v", o)
+		}
+	}
+}
+
+// TestHandleUnloaderFullInCompletion_FiresU2 verifies the U2 mirror of
+// handleLoaderEmptyInCompletion: when a U1 retrieve order (full bin, role
+// consume, manual_swap) confirms at the unloader, U2 fires as a move from
+// the unloader to claim.OutboundDestination.
+func TestHandleUnloaderFullInCompletion_FiresU2(t *testing.T) {
+	db := testEngineDB(t)
+	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-FIRE", "consume", "PART-U2", "STORAGE-NODE")
+
+	// U1 = retrieve order (NOT retrieve_empty) at the unloader for the payload.
+	orderID, err := db.CreateOrder("uuid-u1-fire", orders.TypeRetrieve,
+		&unloaderNodeID, false, 1, "U2-FIRE-MSWAP-NODE", "", "", "PART-U2", false, "")
+	if err != nil {
+		t.Fatalf("create U1 order: %v", err)
+	}
+	db.UpdateOrderStatus(orderID, orders.StatusConfirmed)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	eng.Events.Emit(Event{
+		Type: EventOrderCompleted,
+		Payload: OrderCompletedEvent{
+			OrderID:       orderID,
+			OrderUUID:     "uuid-u1-fire",
+			OrderType:     orders.TypeRetrieve,
+			ProcessNodeID: &unloaderNodeID,
+		},
+	})
+
+	all, err := db.ListActiveOrdersByProcessNode(unloaderNodeID)
+	if err != nil {
+		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+	}
+	var u2Found bool
+	for _, o := range all {
+		if o.OrderType == orders.TypeMove && o.DeliveryNode == "STORAGE-NODE" {
+			u2Found = true
+		}
+	}
+	if !u2Found {
+		t.Errorf("expected U2 move from unloader to STORAGE-NODE; got %+v", all)
+	}
+}
+
 // TestHandleNormalReplenishment_RetrieveStillResets verifies that simple
 // retrieve orders (no release-click prompt) continue to reset UOP at
 // completion — the gate only applies to complex orders.
