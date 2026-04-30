@@ -44,17 +44,38 @@ function linesideSoftThresholdForEntry(entry) {
 export function openReleasePrompt(url, entry) {
     const payloads = allowedPayloadsForEntry(entry);
     const selected = {};
-    // Auto-pick when there's a single allowed payload and the bin has UOP
-    // remaining: the common case is the operator pulled the whole bin to
-    // lineside, so one tap on the blue button submits. They can still tap
-    // the chip to dial qty down via the keypad, or hit NOTHING PULLED.
-    // Without this the blue button is disabled-on-open because operators
-    // don't realize the small grey chip is a button.
+    // Auto-pick the bin's contents on open so the blue button is enabled
+    // by default. The common case is "operator pulled the whole bin to
+    // lineside" — one tap submits. They can still tap a chip to keypad-
+    // edit qty, or hit NOTHING PULLED to bail. Without this the button
+    // is disabled-on-open because operators don't realize the small chip
+    // is tappable.
     if (payloads.length === 1) {
+        // Single payload: claim's primary payload at the runtime UOP count.
         const rt = entry && entry.runtime;
         const remainingUOP = rt && rt.remaining_uop != null ? rt.remaining_uop : 0;
         if (remainingUOP > 0) {
             selected[payloads[0]] = remainingUOP;
+        }
+    } else if (payloads.length > 1) {
+        // Multi-payload (manual_swap): use the bin manifest. Each entry has
+        // its own qty since the bin can hold a mix; runtime.remaining_uop is
+        // a single number that doesn't split across parts.
+        const binState = entry && entry.bin_state;
+        if (binState && binState.manifest) {
+            try {
+                const manifest = JSON.parse(binState.manifest);
+                if (Array.isArray(manifest)) {
+                    manifest.forEach(item => {
+                        if (item && item.part_number && item.quantity > 0 &&
+                            payloads.includes(item.part_number)) {
+                            selected[item.part_number] = item.quantity;
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error('release prompt manifest parse', e);
+            }
         }
     }
     releasePromptState = { url, entry, payloads, selected };
