@@ -352,7 +352,7 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 	}
 
 	// Force StatusStaged so HandleOrderRelease accepts the release.
-	if err := db.UpdateOrderStatus(order.ID, StatusStaged, "test: simulate robot waiting"); err != nil {
+	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: simulate robot waiting"); err != nil {
 		t.Fatalf("set order staged: %v", err)
 	}
 	order, _ = db.GetOrderByUUID(orderUUID)
@@ -493,7 +493,7 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 	// Force StatusStaged (CreateOrder may default to pending).
-	if err := db.UpdateOrderStatus(order.ID, StatusStaged, "test: fallback scenario"); err != nil {
+	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: fallback scenario"); err != nil {
 		t.Fatalf("set order staged: %v", err)
 	}
 
@@ -550,7 +550,7 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 	if err := db.CreateOrder(order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(order.ID, StatusStaged, "test: fallback partial scenario"); err != nil {
+	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: fallback partial scenario"); err != nil {
 		t.Fatalf("set order staged: %v", err)
 	}
 

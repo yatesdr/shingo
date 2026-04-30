@@ -307,7 +307,7 @@ func seedDemandEntry(t *testing.T, db *store.DB, stationID, coreNodeName, role, 
 	if err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
 		StationID:    stationID,
 		CoreNodeName: coreNodeName,
-		Role:         role,
+		Role:         protocol.ClaimRole(role),
 		PayloadCode:  payloadCode,
 	}}); err != nil {
 		t.Fatalf("sync demand registry %s: %v", stationID, err)

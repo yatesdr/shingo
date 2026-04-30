@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
@@ -219,7 +220,7 @@ func TestHistory_AppendAndList(t *testing.T) {
 	// Assert full ordering (ListHistory returns oldest-first / ascending id)
 	// and set-equality of (status, detail) pairs.
 	for i, got := range hist {
-		if got.Status != events[i].status {
+		if string(got.Status) != events[i].status {
 			t.Errorf("history[%d].Status = %q, want %q", i, got.Status, events[i].status)
 		}
 		if got.Detail != events[i].detail {
@@ -243,7 +244,7 @@ func TestList_FilterByStatus(t *testing.T) {
 
 	mk := func(uuid, status string) {
 		o := newPendingOrder(uuid)
-		o.Status = status
+		o.Status = protocol.Status(status)
 		if err := orders.Create(db, o); err != nil {
 			t.Fatalf("Create %s: %v", uuid, err)
 		}
@@ -310,7 +311,7 @@ func TestListFiltered(t *testing.T) {
 
 	mk := func(uuid, status, station string) int64 {
 		o := newPendingOrder(uuid)
-		o.Status = status
+		o.Status = protocol.Status(status)
 		o.StationID = station
 		if err := orders.Create(db, o); err != nil {
 			t.Fatalf("Create %s: %v", uuid, err)
@@ -540,7 +541,7 @@ func TestCountByDeliveryNode(t *testing.T) {
 
 	mk := func(uuid, status, dest string) int64 {
 		o := newPendingOrder(uuid)
-		o.Status = status
+		o.Status = protocol.Status(status)
 		o.DeliveryNode = dest
 		if err := orders.Create(db, o); err != nil {
 			t.Fatalf("Create %s: %v", uuid, err)
@@ -590,7 +591,7 @@ func TestListDispatchedVendorOrderIDs(t *testing.T) {
 
 	mk := func(uuid, status, vendorID string) int64 {
 		o := newPendingOrder(uuid)
-		o.Status = status
+		o.Status = protocol.Status(status)
 		if err := orders.Create(db, o); err != nil {
 			t.Fatalf("Create %s: %v", uuid, err)
 		}
@@ -638,7 +639,7 @@ func TestListActiveBySourceRef(t *testing.T) {
 
 	mk := func(uuid, status, src string) int64 {
 		o := newPendingOrder(uuid)
-		o.Status = status
+		o.Status = protocol.Status(status)
 		o.SourceNode = src
 		if err := orders.Create(db, o); err != nil {
 			t.Fatalf("Create %s: %v", uuid, err)
@@ -686,7 +687,7 @@ func TestListQueued(t *testing.T) {
 
 	mk := func(uuid, status string) int64 {
 		o := newPendingOrder(uuid)
-		o.Status = status
+		o.Status = protocol.Status(status)
 		if err := orders.Create(db, o); err != nil {
 			t.Fatalf("Create %s: %v", uuid, err)
 		}

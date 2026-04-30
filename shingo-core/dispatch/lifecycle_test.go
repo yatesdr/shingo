@@ -41,7 +41,7 @@ func newLifecycleForTest(t *testing.T, db *store.DB) (*LifecycleService, *mockEm
 // makeOrderAt creates an order with the given starting status. Bypasses
 // the lifecycle's protocol validation (we want to set up arbitrary
 // starting states for matrix coverage).
-func makeOrderAt(t *testing.T, db *store.DB, uuid, status string) *orders.Order {
+func makeOrderAt(t *testing.T, db *store.DB, uuid string, status protocol.Status) *orders.Order {
 	t.Helper()
 	ord := &orders.Order{
 		EdgeUUID:     uuid,
@@ -54,7 +54,7 @@ func makeOrderAt(t *testing.T, db *store.DB, uuid, status string) *orders.Order 
 	if err := db.CreateOrder(ord); err != nil {
 		t.Fatalf("create order at status %s: %v", status, err)
 	}
-	if err := db.UpdateOrderStatus(ord.ID, status, "test fixture"); err != nil {
+	if err := db.UpdateOrderStatus(ord.ID, string(status), "test fixture"); err != nil {
 		t.Fatalf("update fixture status to %s: %v", status, err)
 	}
 	ord.Status = status
@@ -259,9 +259,9 @@ func TestLifecycle_TypedMethods_CorrectTargets(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		fromStatus string
+		fromStatus protocol.Status
 		invoke     func(ord *orders.Order) error
-		wantStatus string
+		wantStatus protocol.Status
 	}{
 		{"Release_StagedToInTransit", StatusStaged,
 			func(o *orders.Order) error { return lc.Release(o, "test") },
@@ -316,9 +316,9 @@ func TestLifecycle_EmitCancelled_PreviousStatusPopulated(t *testing.T) {
 	db := testDB(t)
 	lc, emitter := newLifecycleForTest(t, db)
 
-	for _, from := range []string{StatusInTransit, StatusStaged, StatusDispatched} {
+	for _, from := range []protocol.Status{StatusInTransit, StatusStaged, StatusDispatched} {
 		emitter.cancelled = nil
-		ord := makeOrderAt(t, db, "prev-"+from, from)
+		ord := makeOrderAt(t, db, "prev-"+string(from), from)
 		lc.CancelOrder(ord, "edge.test", "operator cancel")
 		if len(emitter.cancelled) != 1 {
 			t.Errorf("from=%s: expected 1 emit, got %d", from, len(emitter.cancelled))

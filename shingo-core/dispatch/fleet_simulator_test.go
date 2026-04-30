@@ -156,7 +156,7 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 	// In a full engine test the fleet tracker would transition the order to
 	// "staged" when the robot reports WAITING.  This dispatcher-level test has
 	// no engine wiring, so we advance the status manually.
-	if err := db.UpdateOrderStatus(order.ID, StatusStaged, "robot waiting (simulated)"); err != nil {
+	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "robot waiting (simulated)"); err != nil {
 		t.Fatalf("set order staged: %v", err)
 	}
 

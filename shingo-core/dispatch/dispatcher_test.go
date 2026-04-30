@@ -49,7 +49,7 @@ type emitQueued struct {
 	orderID int64
 }
 
-func (m *mockEmitter) EmitOrderReceived(orderID int64, _, _, _, payloadCode, _ string) {
+func (m *mockEmitter) EmitOrderReceived(orderID int64, _, _ string, _ protocol.OrderType, payloadCode, _ string) {
 	m.received = append(m.received, emitReceived{orderID, payloadCode})
 }
 func (m *mockEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, _, _ string) {
@@ -548,7 +548,7 @@ func TestFIFOPayloadSourceSelection(t *testing.T) {
 func TestStatusConstants(t *testing.T) {
 	t.Parallel()
 	// Verify all plan-defined statuses exist
-	statuses := []string{
+	statuses := []protocol.Status{
 		StatusPending, StatusSourcing, StatusSubmitted, StatusDispatched,
 		StatusAcknowledged, StatusInTransit, StatusDelivered, StatusConfirmed,
 		StatusFailed, StatusCancelled,
@@ -559,7 +559,7 @@ func TestStatusConstants(t *testing.T) {
 		"failed", "cancelled",
 	}
 	for i, s := range statuses {
-		if s != expected[i] {
+		if string(s) != expected[i] {
 			t.Errorf("status[%d] = %q, want %q", i, s, expected[i])
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -31,7 +32,7 @@ func TestApplyArrival(t *testing.T) {
 		name      string
 		staged    bool
 		expiresAt *time.Time
-		wantStat  string
+		wantStat  domain.BinStatus
 	}{
 		{"unstaged arrival", false, nil, "available"},
 		{

@@ -51,7 +51,7 @@ func (m *countingBackend) ReleaseOrder(vendorOrderID string, blocks []fleet.Orde
 
 type noopEmitter struct{}
 
-func (noopEmitter) EmitOrderReceived(orderID int64, edgeUUID, stationID, orderType, payloadCode, deliveryNode string) {
+func (noopEmitter) EmitOrderReceived(orderID int64, edgeUUID, stationID string, orderType protocol.OrderType, payloadCode, deliveryNode string) {
 }
 func (noopEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, sourceNode, destNode string) {}
 func (noopEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string)  {}

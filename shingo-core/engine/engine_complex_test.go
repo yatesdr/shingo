@@ -224,7 +224,7 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "DWELLING")
 
 	// Mark order as staged (simulating the dwell callback)
-	if err := db.UpdateOrderStatus(order.ID, dispatch.StatusStaged, "dwelling at lineside"); err != nil {
+	if err := db.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "dwelling at lineside"); err != nil {
 		t.Fatalf("update to staged: %v", err)
 	}
 
@@ -310,7 +310,7 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "DWELLING")
 
-	if err := db.UpdateOrderStatus(order.ID, dispatch.StatusStaged, "dwelling"); err != nil {
+	if err := db.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "dwelling"); err != nil {
 		t.Fatalf("update to staged: %v", err)
 	}
 

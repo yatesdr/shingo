@@ -179,7 +179,7 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 		EdgeUUID:       "",
 		StationID:      "line-1",
 		Reason:         "test cancel",
-		PreviousStatus: dispatch.StatusPending,
+		PreviousStatus: string(dispatch.StatusPending),
 	}})
 
 	// Assertion 1: No cancel message in outbox (Edge was NOT notified)
