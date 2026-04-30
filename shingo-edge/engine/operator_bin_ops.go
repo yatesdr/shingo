@@ -170,11 +170,14 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	return nil
 }
 
-// RequestEmptyBin requests an empty bin compatible with the given payload to be
-// delivered to a manual_swap produce node. Core queues the order if no empties are
-// immediately available. payloadCode determines bin type compatibility.
+// RequestEmptyBin delivers an empty bin to a produce node. Manual_swap and
+// simple modes issue a single retrieve order; multi-step modes (single_robot,
+// two_robot, two_robot_press_index, sequential) reuse the swap dispatch so
+// the robot choreography is identical to a Finalize swap — empties move
+// through the same multi-stop trip a full bin would. Returns the primary
+// order; the second leg (R2) is tracked on the runtime row.
 func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Order, error) {
-	node, _, claim, err := loadActiveNode(e.db, nodeID)
+	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -196,9 +199,47 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 		return nil, fmt.Errorf("payload %q not in allowed list for node %s", payloadCode, node.Name)
 	}
 
-	// Create retrieve order for an empty bin — Core queues if none available.
-	// Use claim-level auto_confirm if set, otherwise fall back to global config.
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+
+	// Multi-step swap modes reuse the same dispatch the consume side uses on
+	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
+	// choreography for empty and full bins; the order shape doesn't depend
+	// on contents.
+	if claim.SwapMode != "" && claim.SwapMode != "simple" && claim.SwapMode != "manual_swap" {
+		dispatch, err := BuildSwapDispatch(node, claim)
+		if err != nil {
+			return nil, err
+		}
+		if dispatch != nil {
+			if dispatch.RequiresActiveSwapGuard {
+				if err := e.guardNoActiveSwap(node, runtime, claim); err != nil {
+					return nil, err
+				}
+			}
+			orderA, err := e.dispatchComplexLeg(nodeID, 1, dispatch.StepsA, dispatch.DeliveryNodeA, dispatch.AutoConfirmA)
+			if err != nil {
+				return nil, err
+			}
+			var orderB *orders.Order
+			if dispatch.StepsB != nil {
+				orderB, err = e.dispatchComplexLeg(nodeID, 1, dispatch.StepsB, "", dispatch.AutoConfirmB)
+				if err != nil {
+					return nil, err
+				}
+			}
+			var orderBID *int64
+			if orderB != nil {
+				orderBID = &orderB.ID
+			}
+			if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
+				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
+			}
+			return orderA, nil
+		}
+	}
+
+	// Simple / manual_swap modes: single retrieve. Core queues if no empty is
+	// immediately available.
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, node.CoreNodeName, "",
 		"standard", payloadCode, autoConfirm,
@@ -208,7 +249,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &order.ID, nil); err != nil {
 		log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
-		}
+	}
 	return order, nil
 }
 
