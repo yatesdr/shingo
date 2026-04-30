@@ -569,4 +569,127 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 	if got.PayloadCode != bp.Code {
 		t.Errorf("PayloadCode = %q, want %q (preserved on partial-back)", got.PayloadCode, bp.Code)
 	}
-} 
+}
+
+// TestHandleOrderRelease_InTransitWithNoMoreSegmentsIsNoOp guards the
+// regression observed at Springfield 2026-04-30 (ALN_002 toast: "order must
+// be staged to release, got in_transit"). Edge's two-robot consolidated
+// release (ReleaseStagedOrders, post-2026-04-27) fans out to both legs of
+// a swap unconditionally; Order A is routinely already in_transit by the
+// time the operator clicks. Core must accept the duplicate and return a
+// no-op success rather than rejecting with an "invalid_state" error that
+// surfaces in the HMI and forces the operator to fail one of the orders.
+//
+// Setup: a single-wait complex order forced into StatusInTransit with
+// WaitIndex=1 (i.e. the only wait was already consumed during a prior
+// release). Release fires; we expect no error reply enqueued and no
+// fleet-side block append (splitSegment returns nil for WaitIndex past
+// the final wait).
+func TestHandleOrderRelease_InTransitWithNoMoreSegmentsIsNoOp(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+	order, _ := stageComplexOrderWithLineBin(t, db, d, lineNode, bp, "uuid-in-transit-noop", "BIN-IN-TRANSIT-NOOP")
+
+	// Simulate the prior release having already happened: order.Status is
+	// in_transit and WaitIndex has advanced past the only wait.
+	if err := db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: prior release consumed the wait"); err != nil {
+		t.Fatalf("force in_transit: %v", err)
+	}
+	if err := db.UpdateOrderWaitIndex(order.ID, 1); err != nil {
+		t.Fatalf("advance wait_index: %v", err)
+	}
+
+	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
+		OrderUUID: "uuid-in-transit-noop",
+		// RemainingUOP nil — Order A path in the consolidated fan-out.
+	})
+
+	msgs, err := db.ListPendingOutbox(10)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	for _, m := range msgs {
+		if m.MsgType == string(protocol.TypeOrderError) {
+			t.Errorf("unexpected error reply enqueued: %s", string(m.Payload))
+		}
+	}
+
+	// WaitIndex must not advance further — there's nothing to dispatch.
+	got, _ := db.GetOrder(order.ID)
+	if got.WaitIndex != 1 {
+		t.Errorf("WaitIndex = %d, want 1 (no-op should not advance past final wait)", got.WaitIndex)
+	}
+	if got.Status != StatusInTransit {
+		t.Errorf("Status = %q, want in_transit (no-op should not change status)", got.Status)
+	}
+}
+
+// TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment verifies
+// that the relaxed precondition still does the right thing for a true
+// multi-wait order: when an in_transit order has more waits to consume,
+// the next segment is dispatched and WaitIndex advances. This exercises
+// the design intent documented at HandleOrderRelease.
+func TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	destNode := &nodes.Node{Name: "MULTI-WAIT-DEST", Enabled: true}
+	if err := db.CreateNode(destNode); err != nil {
+		t.Fatalf("create dest node: %v", err)
+	}
+
+	// Two-wait choreography: wait → pickup → wait → dropoff. WaitIndex=1
+	// means the first wait was already consumed; the next release should
+	// dispatch the segment between wait[1] and end.
+	order := &orders.Order{
+		EdgeUUID:     "uuid-multi-wait",
+		StationID:    "line-1",
+		OrderType:    OrderTypeComplex,
+		Status:       StatusInTransit,
+		Quantity:     1,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: destNode.Name,
+		PayloadCode:  bp.Code,
+		StepsJSON: `[{"action":"wait","node":"` + lineNode.Name + `"},` +
+			`{"action":"pickup","node":"` + lineNode.Name + `"},` +
+			`{"action":"wait"},` +
+			`{"action":"dropoff","node":"` + destNode.Name + `"}]`,
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := db.UpdateOrderVendor(order.ID, "vendor-multi-wait", "DISPATCHED", ""); err != nil {
+		t.Fatalf("set vendor: %v", err)
+	}
+	if err := db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: mid-choreography"); err != nil {
+		t.Fatalf("set in_transit: %v", err)
+	}
+	if err := db.UpdateOrderWaitIndex(order.ID, 1); err != nil {
+		t.Fatalf("set wait_index: %v", err)
+	}
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
+		OrderUUID: "uuid-multi-wait",
+	})
+
+	msgs, err := db.ListPendingOutbox(10)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	for _, m := range msgs {
+		if m.MsgType == string(protocol.TypeOrderError) {
+			t.Errorf("unexpected error reply enqueued: %s", string(m.Payload))
+		}
+	}
+
+	got, _ := db.GetOrder(order.ID)
+	if got.WaitIndex != 2 {
+		t.Errorf("WaitIndex = %d, want 2 (multi-wait re-release should advance)", got.WaitIndex)
+	}
+}

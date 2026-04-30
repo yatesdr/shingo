@@ -149,11 +149,20 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 
-	// Precondition check via the protocol table — single source of truth
-	// for legal transitions. Fast-fails before fleet contact and manifest
-	// sync so an un-releasable order doesn't trigger external side effects.
-	if !protocol.IsValidTransition(order.Status, StatusInTransit) {
-		d.sendError(env, p.OrderUUID, "invalid_state", fmt.Sprintf("order must be staged to release, got %s", order.Status))
+	// Precondition: order must be in a releasable state. Two are valid:
+	//   - StatusStaged: canonical first-wait release (staged → in_transit).
+	//   - StatusInTransit: multi-wait re-release, OR a duplicate fan-out from
+	//     Edge's two-robot consolidated path. Edge's ReleaseStagedOrders
+	//     (operator_stations.go, post-2026-04-27) fans out to both legs of a
+	//     two-robot swap unconditionally; Order A is routinely already
+	//     in_transit by the time the operator clicks. Rejecting here surfaces
+	//     a confusing toast and forces the operator to fail the order. The
+	//     real gate against duplicate dispatch is splitSegment below: when
+	//     WaitIndex has consumed every wait, segment is nil and we return
+	//     a no-op success rather than an error.
+	if order.Status != StatusStaged && order.Status != StatusInTransit {
+		d.sendError(env, p.OrderUUID, "invalid_state",
+			fmt.Sprintf("order must be staged or in_transit to release, got %s", order.Status))
 		return
 	}
 
@@ -215,6 +224,17 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	// Extract the next segment: steps after wait N up to wait N+1 (or end).
 	segment, moreWaits, blockOffset := splitSegment(steps, order.WaitIndex)
 	if segment == nil {
+		// No more segments. For an order already in_transit this is a
+		// duplicate or late release (e.g. the consolidated two-robot fan-out
+		// hitting Order A after its final wait was already consumed) —
+		// treat as a no-op success: the fleet is already executing the last
+		// segment, there is nothing more to dispatch. For a staged order
+		// it's an internal inconsistency and stays an error.
+		if order.Status == StatusInTransit {
+			d.dbg("complex release: order %d already in_transit with wait_index %d past final wait — no-op",
+				order.ID, order.WaitIndex)
+			return
+		}
 		d.sendError(env, p.OrderUUID, "invalid_state",
 			fmt.Sprintf("wait_index %d exceeds number of waits in order", order.WaitIndex))
 		return
