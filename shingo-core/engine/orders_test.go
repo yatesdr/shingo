@@ -25,6 +25,7 @@ import (
 func TestCreateDirectOrder_Success_PersistsAndDispatches(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-DIRECT-OK")
 	eng := newTestEngine(t, db, simulator.New())
 
 	captured := make(chan OrderDispatchedEvent, 2)
@@ -148,6 +149,7 @@ func TestCreateDirectOrder_MissingDestNode(t *testing.T) {
 func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-DIRECT-FAIL")
 	sim := simulator.New(simulator.WithCreateFailure())
 	eng := newTestEngine(t, db, sim)
 
@@ -192,6 +194,7 @@ func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
 func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-TERMINATE")
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Direct order to give us something dispatched.

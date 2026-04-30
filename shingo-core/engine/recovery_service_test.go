@@ -318,6 +318,7 @@ func TestReleaseStagedBin_MissingBin(t *testing.T) {
 func TestCancelStuckOrder_Success(t *testing.T) {
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-STUCK")
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Put an order into dispatched status via CreateDirectOrder, then stall it.
