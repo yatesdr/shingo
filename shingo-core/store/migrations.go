@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	"shingocore/store/schema"
 )
@@ -51,24 +52,61 @@ func (db *DB) migrate() error {
 	return db.runVersionedMigrations()
 }
 
+// migration is one numbered, tracked schema change.
+//
+// fn is the apply function — runs inside a per-version transaction
+// alongside the schema_migrations row insert (see runOneMigration).
+//
+// verify is the post-condition check — given a Querier, returns true
+// iff the schema state the migration is supposed to produce is
+// actually present. Run on startup BEFORE the schema_migrations gate:
+// if a row says "applied" but verify returns false, the runner deletes
+// the row and re-applies the migration. Catches:
+//
+//   - Prior incomplete deploys that recorded the version row but
+//     didn't commit DDL (the ALN_001-class scenario the transactional
+//     wrap above prevents going forward but can't retroactively undo).
+//   - Operator-induced drift: someone DROPped a column, or restored
+//     a backup that predates the migration, leaving schema_migrations
+//     ahead of actual schema.
+//
+// verify may be nil — for migrations whose post-condition is data-
+// shaped (telemetry backfill) or trivial-or-noisy (boolean type
+// conversions, drops). Nil verify means "trust schema_migrations" —
+// same behavior as pre-self-heal.
+//
+// Implementation note: verify must be cheap. It runs on every Core
+// startup for every applied migration. A single information_schema
+// query is fine; a full table scan is not.
+type migration struct {
+	version int
+	name    string
+	fn      func(tx *sql.Tx) error
+	verify  func(q schema.Querier) bool
+}
+
 // runVersionedMigrations runs numbered migrations that are tracked in a
-// schema_migrations table. Each migration runs exactly once.
+// schema_migrations table.
 //
-// Transactional invariant: each migration's DDL/DML AND the
-// schema_migrations row insert run inside the same transaction. Either
-// both commit or neither does. Pre-2026-05 the version row was inserted
-// in a separate db.Exec after the migration returned, so an ALTER TABLE
-// that committed but a follow-up that errored could leave the version
-// row absent (re-run on next start, fine — migrations are idempotent)
-// AND a buggy `ColumnExists` pre-check that wrongly returned `true`
-// could cause the migration to silently no-op while the version row got
-// inserted (NOT fine — ALN_001-class plant deploy where the column the
-// app expected was missing). The transactional wrap closes both.
+// Two correctness layers:
 //
-// Migrations now use `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` style
-// where applicable, so PostgreSQL itself enforces idempotency rather
-// than relying on a Go-side ColumnExists check that can lie under
-// connection-pool / search-path edge cases.
+//  1. **Transactional invariant** (runOneMigration): each migration's
+//     DDL/DML AND the schema_migrations row insert run inside the same
+//     transaction. Either both commit or neither does. Closes the
+//     "DDL committed but version row missing" and "version row
+//     committed but DDL silently no-op'd" failure modes.
+//
+//  2. **Self-heal-on-startup**: for migrations with a non-nil verify,
+//     check the post-condition before trusting the schema_migrations
+//     gate. If the row says "applied" but verify reports the state is
+//     not present, delete the row and re-apply. Recovers plant DBs
+//     from prior-bug damage and from operator drift without needing
+//     manual SQL.
+//
+// Migrations also use `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` style
+// so PostgreSQL itself enforces apply-once idempotency, not a Go-side
+// schema.ColumnExists check that can lie under connection-pool /
+// search_path edge cases.
 func (db *DB) runVersionedMigrations() error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY,
@@ -77,33 +115,63 @@ func (db *DB) runVersionedMigrations() error {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
 
-	migrations := []struct {
-		version int
-		name    string
-		fn      func(tx *sql.Tx) error
-	}{
-		{1, "convert boolean columns to native BOOLEAN", v1BooleanColumns},
-		{2, "add depth column to nodes", v2DepthColumn},
-		{3, "drop dead columns", v3DropDeadColumns},
-		{4, "drop vestigial payload_id from orders", v4DropOrderPayloadID},
-		{5, "backfill mission telemetry for completed orders", v5MissionTelemetryBackfill},
-		{6, "consolidate legacy migrations", v6LegacyConsolidation},
-		{7, "drop vestigial default_manifest_json from payloads", v7DropDefaultManifestJSON},
-		{8, "add payload_code column to orders", v8OrderPayloadCode},
-		{9, "create order_bins junction table for multi-bin complex orders", v9OrderBins},
-		{10, "add wait_index column to orders for multi-wait complex orders", v10OrderWaitIndex},
-		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", v11FixPayloadBinTypesFK},
-		{12, "fix payload_manifest FK to reference payloads instead of blueprints", v12FixPayloadManifestFK},
-		{13, "fix node_payloads FK to reference payloads instead of blueprints", v13FixNodePayloadsFK},
-		{14, "add process_node column to orders", v14OrderProcessNode},
-		{15, "add bin transit synthetic node and bins.anomaly_at", v15BinTransitState},
-		{16, "add queue_reason column to orders", v16OrderQueueReason},
+	migrations := []migration{
+		// v1–v7: legacy migrations. verify=nil — these are old, the
+		// schema they install is varied and partially data-shaped, and
+		// any drift is operator-driven on ancient DBs nobody has
+		// anymore. If a plant ever proves otherwise, add verify here.
+		{1, "convert boolean columns to native BOOLEAN", v1BooleanColumns, nil},
+		{2, "add depth column to nodes", v2DepthColumn, nil},
+		{3, "drop dead columns", v3DropDeadColumns, nil},
+		{4, "drop vestigial payload_id from orders", v4DropOrderPayloadID, nil},
+		{5, "backfill mission telemetry for completed orders", v5MissionTelemetryBackfill, nil},
+		{6, "consolidate legacy migrations", v6LegacyConsolidation, nil},
+		{7, "drop vestigial default_manifest_json from payloads", v7DropDefaultManifestJSON, nil},
+
+		// v8+: simple column-adding migrations. Verify is a single
+		// information_schema query — cheap and reliable.
+		{8, "add payload_code column to orders", v8OrderPayloadCode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "payload_code") }},
+		{9, "create order_bins junction table for multi-bin complex orders", v9OrderBins,
+			func(q schema.Querier) bool { return schema.TableExists(q, "order_bins") }},
+		{10, "add wait_index column to orders for multi-wait complex orders", v10OrderWaitIndex,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "wait_index") }},
+
+		// v11–v13: FK fixes. Verify would inspect
+		// information_schema.referential_constraints which is fiddly
+		// and the failure mode is rare (a wrong FK on a fresh DB).
+		// Leave nil — if a plant hits it, write the verify then.
+		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", v11FixPayloadBinTypesFK, nil},
+		{12, "fix payload_manifest FK to reference payloads instead of blueprints", v12FixPayloadManifestFK, nil},
+		{13, "fix node_payloads FK to reference payloads instead of blueprints", v13FixNodePayloadsFK, nil},
+
+		// v14+: bin-transit-state migrations. These ARE the ones the
+		// plant ALN_001-class deploy bug damaged, so verify is
+		// non-negotiable here.
+		{14, "add process_node column to orders", v14OrderProcessNode,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "process_node") }},
+		{15, "add bin transit synthetic node and bins.anomaly_at", v15BinTransitState,
+			verifyV15BinTransitState},
+		{16, "add queue_reason column to orders", v16OrderQueueReason,
+			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "queue_reason") }},
 	}
 
 	for _, m := range migrations {
-		var exists bool
-		db.QueryRow(`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, m.version).Scan(&exists)
-		if exists {
+		var applied bool
+		db.QueryRow(`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)`, m.version).Scan(&applied)
+
+		// Self-heal check: if recorded as applied but the post-
+		// condition is missing, treat as not-applied so the
+		// transactional re-run below restores it.
+		if applied && m.verify != nil && !m.verify(db.DB) {
+			log.Printf("migrations: v%d (%s) recorded as applied but post-condition fails — re-running",
+				m.version, m.name)
+			if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = $1`, m.version); err != nil {
+				return fmt.Errorf("clear stale schema_migrations row v%d: %w", m.version, err)
+			}
+			applied = false
+		}
+		if applied {
 			continue
 		}
 		if err := db.runOneMigration(m.version, m.name, m.fn); err != nil {
@@ -111,6 +179,19 @@ func (db *DB) runVersionedMigrations() error {
 		}
 	}
 	return nil
+}
+
+// verifyV15BinTransitState checks that BOTH the synthetic _TRANSIT
+// node row AND the bins.anomaly_at column are present. v15 is the only
+// migration that touches more than one piece of schema, so the verify
+// is a small composite rather than a one-liner.
+func verifyV15BinTransitState(q schema.Querier) bool {
+	if !schema.ColumnExists(q, "bins", "anomaly_at") {
+		return false
+	}
+	var exists bool
+	q.QueryRow(`SELECT EXISTS (SELECT 1 FROM nodes WHERE name='_TRANSIT' AND is_synthetic=true)`).Scan(&exists)
+	return exists
 }
 
 // runOneMigration wraps a single migration's DDL/DML and its
