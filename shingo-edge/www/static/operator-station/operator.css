@@ -822,7 +822,12 @@ body {
 .os-board-nodemand {
     background: var(--os-surface);
     border: 2px solid var(--os-border);
-    opacity: 0.4;
+    opacity: 0.65;
+}
+.os-board-requestable {
+    background: var(--os-surface);
+    border: 2px dashed #4a5a72;
+    opacity: 0.95;
 }
 
 .os-board-code {
@@ -831,7 +836,10 @@ body {
     color: #fff;
 }
 .os-board-nodemand .os-board-code {
-    color: #666;
+    color: #99a;
+}
+.os-board-requestable .os-board-code {
+    color: #cdd;
 }
 
 .os-board-tag {
@@ -847,7 +855,8 @@ body {
 .os-board-tag-delivered { background: #1a5a1a; color: #6f6; }
 .os-board-tag-transit { background: #5a5a1a; color: #ff6; }
 .os-board-tag-queued { background: #2a3a6a; color: #8af; }
-.os-board-tag-nodemand { background: #222; color: #555; }
+.os-board-tag-request { background: #2a3a4a; color: #9ac; }
+.os-board-tag-nodemand { background: #2a2f3a; color: #889; }
 
 .os-board-detail {
     font-size: 13px;
@@ -857,6 +866,7 @@ body {
 .os-board-delivered .os-board-detail { color: #9d9; }
 .os-board-transit .os-board-detail { color: #cc9; }
 .os-board-queued .os-board-detail { color: #9ac; }
+.os-board-requestable .os-board-detail { color: #aac; }
 
 .os-board-pos {
     width: 30px;

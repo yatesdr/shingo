@@ -207,6 +207,12 @@ function renderPayloadBoard(entry) {
     var nodeBinIsEmpty = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
     var loadableHere = nodeBinIsEmpty && hasDemand;
 
+    // BANDAID — pull this manual-request path when proper demand signals
+    // land for manual_swap loaders / unloaders. Without it the board is a
+    // wall of greyed cards with nothing actionable when no kanban has
+    // fired yet. Mirrors operator-modal.js (idleNoDemand).
+    var canRequestHere = !hasBin && !hasDemand;
+
     var cardGrid = el('div', { className: 'os-board-cards' });
     var cols = allowed.length <= 3 ? allowed.length : (allowed.length <= 6 ? 3 : 4);
     cardGrid.style.setProperty('--os-board-cols', cols);
@@ -226,6 +232,8 @@ function renderPayloadBoard(entry) {
             card.classList.add('os-board-transit');
         } else if (isActive) {
             card.classList.add('os-board-queued');
+        } else if (canRequestHere) {
+            card.classList.add('os-board-requestable');
         } else {
             card.classList.add('os-board-nodemand');
         }
@@ -242,6 +250,8 @@ function renderPayloadBoard(entry) {
             statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit';
         } else if (isActive) {
             statusText = 'QUEUED'; statusClass = 'os-board-tag-queued';
+        } else if (canRequestHere) {
+            statusText = 'REQUEST'; statusClass = 'os-board-tag-request';
         } else {
             statusText = 'NO DEMAND'; statusClass = 'os-board-tag-nodemand';
         }
@@ -257,6 +267,8 @@ function renderPayloadBoard(entry) {
             detailText = 'Robot en route';
         } else if (isActive) {
             detailText = 'Waiting for robot';
+        } else if (canRequestHere) {
+            detailText = claim.role === 'produce' ? 'Tap to request empty bin' : 'Tap to request full bin';
         } else {
             detailText = 'No kanban signal';
         }
@@ -286,6 +298,14 @@ function renderPayloadBoard(entry) {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
                 openLoadBinRef(entry.node.id, [code], claim.uop_capacity || 0);
+            });
+        } else if (canRequestHere) {
+            card.style.cursor = 'pointer';
+            card.addEventListener('click', function() {
+                var url = claim.role === 'produce'
+                    ? '/api/process-nodes/' + entry.node.id + '/request-empty'
+                    : '/api/process-nodes/' + entry.node.id + '/request-full';
+                postAction(url, { payload_code: code }, loadViewRef);
             });
         }
 
