@@ -175,13 +175,14 @@ func TestNodeList(t *testing.T) {
 	db := testdb.Open(t)
 	sdb := db.DB
 
-	// Fresh DB: list should be empty.
+	// Fresh DB: only the synthetic _TRANSIT node from migration v15
+	// (bin-transit-state Phase 1) should be present.
 	empty, err := nodes.List(sdb)
 	if err != nil {
 		t.Fatalf("nodes.List empty: %v", err)
 	}
-	if len(empty) != 0 {
-		t.Errorf("nodes.List empty len = %d, want 0", len(empty))
+	if len(empty) != 1 || empty[0].Name != "_TRANSIT" {
+		t.Errorf("nodes.List empty = %+v, want only [_TRANSIT]", empty)
 	}
 
 	names := []string{"CHARLIE", "ALPHA", "BRAVO"}
@@ -195,13 +196,15 @@ func TestNodeList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("nodes.List: %v", err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("nodes.List len = %d, want 3", len(got))
+	// 3 created + the _TRANSIT migration row.
+	if len(got) != 4 {
+		t.Fatalf("nodes.List len = %d, want 4 (3 created + _TRANSIT)", len(got))
 	}
-	// Ordered by name ascending.
-	if got[0].Name != "ALPHA" || got[1].Name != "BRAVO" || got[2].Name != "CHARLIE" {
-		t.Errorf("nodes.List order = [%q, %q, %q], want [ALPHA, BRAVO, CHARLIE]",
-			got[0].Name, got[1].Name, got[2].Name)
+	// Ordered by name ascending. Underscore sorts after letters in
+	// PostgreSQL's default collation, so _TRANSIT comes last.
+	if got[0].Name != "ALPHA" || got[1].Name != "BRAVO" || got[2].Name != "CHARLIE" || got[3].Name != "_TRANSIT" {
+		t.Errorf("nodes.List order = [%q, %q, %q, %q], want [ALPHA, BRAVO, CHARLIE, _TRANSIT]",
+			got[0].Name, got[1].Name, got[2].Name, got[3].Name)
 	}
 }
 

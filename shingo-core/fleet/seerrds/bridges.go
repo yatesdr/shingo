@@ -18,6 +18,10 @@ func (b *emitterBridge) EmitOrderStatusChanged(orderID int64, rdsOrderID, oldSta
 	b.emitter.EmitOrderStatusChanged(orderID, rdsOrderID, oldStatus, newStatus, robotID, detail, snapshot)
 }
 
+func (b *emitterBridge) EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string) {
+	b.emitter.EmitBlockCompleted(orderID, rdsOrderID, blockID, location, binTask)
+}
+
 // resolverBridge adapts fleet.OrderIDResolver to rds.OrderIDResolver.
 type resolverBridge struct {
 	resolver fleet.OrderIDResolver

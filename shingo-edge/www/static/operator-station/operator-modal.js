@@ -355,7 +355,24 @@ export function renderModal(entry) {
                     html += actionBtn('CONFIRM (refresh)', 'close', false, '');
                 }
             } else if (inFlight) {
-                html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
+                // Disabled button when any non-staged/non-delivered active
+                // order exists for this node. Catches the duplicate-order
+                // case (operator presses swap, sees nothing happen because
+                // it's queued, presses again) without any backend dedup —
+                // the HMI just won't let them re-submit while one is in
+                // flight. Backend safety-net dedup is a separate Core
+                // concern; this is the cheap visible-to-the-operator fix.
+                //
+                // Status-aware label so a queued order doesn't pretend a
+                // robot is moving when capacity gating is actually what's
+                // holding it. queue_reason isn't on the edge Order today
+                // so we just show "IN QUEUE"; if/when reason gets plumbed
+                // it can become "IN QUEUE: <reason>".
+                if (inFlight.status === 'queued') {
+                    html += actionBtn('IN QUEUE', 'close', false, '');
+                } else {
+                    html += actionBtn('ROBOT IN TRANSIT', 'close', false, '');
+                }
             } else {
                 if (claim.role === 'produce' && remaining > 0) {
                     html += actionBtn('FINALIZE', 'finalize', true,

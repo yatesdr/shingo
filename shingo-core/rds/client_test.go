@@ -264,8 +264,9 @@ func TestOrderStateIsTerminal(t *testing.T) {
 // --- Poller tests ---
 
 type mockPollerEmitter struct {
-	mu     sync.Mutex
-	events []pollerEvent
+	mu          sync.Mutex
+	events      []pollerEvent
+	blockEvents []blockEvent
 }
 
 type pollerEvent struct {
@@ -276,10 +277,24 @@ type pollerEvent struct {
 	robotID    string
 }
 
+type blockEvent struct {
+	orderID    int64
+	rdsOrderID string
+	blockID    string
+	location   string
+	binTask    string
+}
+
 func (m *mockPollerEmitter) EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string, orderDetail *OrderDetail) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, pollerEvent{orderID, rdsOrderID, oldStatus, newStatus, robotID})
+}
+
+func (m *mockPollerEmitter) EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.blockEvents = append(m.blockEvents, blockEvent{orderID, rdsOrderID, blockID, location, binTask})
 }
 
 type mockResolver struct{}

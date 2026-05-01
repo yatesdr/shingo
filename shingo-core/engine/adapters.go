@@ -86,6 +86,16 @@ func (e *pollerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, old
 	}})
 }
 
+func (e *pollerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string) {
+	e.bus.Emit(Event{Type: EventBlockCompleted, Payload: BlockCompletedEvent{
+		OrderID:       orderID,
+		VendorOrderID: vendorOrderID,
+		BlockID:       blockID,
+		Location:      location,
+		BinTask:       binTask,
+	}})
+}
+
 // countGroupEventEmitter bridges the countgroup package's Emitter interface to the EventBus.
 type countGroupEventEmitter struct {
 	bus *EventBus

@@ -610,8 +610,6 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	order := createTestOrder(t, db, sd.LineNode.ID)
 	claimBinForTest(t, db, bin.ID, order.ID)
 
-	originalManifest := *bin.Manifest
-
 	partial := 800
 	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, ""); err != nil {
 		t.Fatalf("SyncOrClearForReleased(800): %v", err)
@@ -624,8 +622,24 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	if got.PayloadCode != bin.PayloadCode {
 		t.Errorf("PayloadCode = %q, want %q (preserved)", got.PayloadCode, bin.PayloadCode)
 	}
-	if got.Manifest == nil || *got.Manifest != originalManifest {
-		t.Error("Manifest changed; want preserved")
+	// Post-#15: the manifest is reconstructed (not preserved unchanged)
+	// to reflect the new uop_remaining. Single-payload normalization
+	// makes this fully recoverable from payload_code + remainingUOP.
+	if got.Manifest == nil {
+		t.Fatal("Manifest = nil; want reconstructed single-payload manifest")
+	}
+	parsed, err := got.ParseManifest()
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if len(parsed.Items) != 1 {
+		t.Fatalf("manifest items = %d, want 1 (single-payload normalization)", len(parsed.Items))
+	}
+	if parsed.Items[0].CatID != bin.PayloadCode {
+		t.Errorf("manifest item CatID = %q, want %q (= payload_code)", parsed.Items[0].CatID, bin.PayloadCode)
+	}
+	if parsed.Items[0].Quantity != int64(partial) {
+		t.Errorf("manifest item Quantity = %d, want %d (= remainingUOP)", parsed.Items[0].Quantity, partial)
 	}
 	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
 		t.Errorf("ClaimedBy = %v, want %d (preserved)", got.ClaimedBy, order.ID)

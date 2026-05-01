@@ -60,6 +60,13 @@ func (e *Engine) GetNodeOccupancy() ([]OccupancyEntry, error) {
 		if n.Name == "" {
 			continue
 		}
+		if n.IsSynthetic {
+			// Synthetic nodes (NGRP, LANE, _TRANSIT) are logical
+			// constructs without fleet-side representation. Listing
+			// them as "shingo_only" discrepancies is noise — they're
+			// expected to be DB-only.
+			continue
+		}
 		if _, ok := locMap[n.Name]; !ok {
 			results = append(results, OccupancyEntry{
 				LocationID:  n.Name,

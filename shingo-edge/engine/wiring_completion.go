@@ -436,8 +436,22 @@ func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
 // Resets UOP from the active claim (capacity for consume, 0 for produce).
 // The reset binds to the delivery event: a fresh bin has physically arrived,
 // so the line's UOP tracking should turn over now.
+//
+// Predicate (post-2026-05): only fire when the order's DeliveryNode is
+// the process node — i.e. the order ACTUALLY DELIVERS a bin to this
+// line. Pre-fix, the function fired for any complex/retrieve whose
+// process_node matched the line, including REMOVAL orders (Order B in
+// two-robot consume, R1 in press-index, sequential-removal step). Those
+// orders take a bin AWAY from the line; their completion should NOT
+// reset the line UOP because the previous bin is still draining.
+// The bug spuriously turned over RemainingUOP to capacity mid-shift,
+// producing phantom inventory swings on the HMI. See uop-test-audit.md
+// and TestRegression_11_RemovalOrderDoesNotResetLineUOP.
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
+		return
+	}
+	if ctx.order.DeliveryNode != ctx.node.CoreNodeName {
 		return
 	}
 	claim := findActiveClaim(e.db, ctx.node)

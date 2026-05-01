@@ -17,6 +17,18 @@ import (
 // gap the old lines-14–31 scope note called out.
 type Dispatcher interface {
 	DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error)
+
+	// DispatchPreparedComplex is the scanner-replay entrypoint for
+	// complex orders queued via HandleComplexOrderRequest. The dispatcher
+	// already has the resolved steps stored on the order (StepsJSON);
+	// this call claims bins, transitions queued → sourcing → dispatched,
+	// and ships blocks to the fleet. Phase 4b of bin-transit-state.
+	//
+	// On failure, the dispatcher transitions the order to terminal
+	// `failed` (via lifecycle.Fail) and emits EventOrderFailed —
+	// scanner doesn't need to do recovery here. The error return lets
+	// the scanner log + skip; it's not actionable beyond that.
+	DispatchPreparedComplex(order *orders.Order) error
 }
 
 // Lifecycle is the narrow lifecycle surface the scanner depends on.

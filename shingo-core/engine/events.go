@@ -29,6 +29,8 @@ const (
 	EventRobotsUpdated
 	EventCMSTransaction
 	EventCountGroupTransition
+	EventBlockCompleted
+	EventBinEnteredTransit
 )
 
 // --- Event payloads ---
@@ -135,4 +137,35 @@ type CountGroupTransitionEvent struct {
 	Robots            []string
 	FailSafeTriggered bool
 	Timestamp         time.Time
+}
+
+// BlockCompletedEvent fires when a single block within a vendor order
+// transitions to FINISHED while the order is still mid-flight. Phase 2
+// of the bin-transit-state project: pickup blocks (BinTask=Load /
+// retrieve / "pickup") drive the bin onto the synthetic _TRANSIT node
+// so the source slot is freed immediately. Other block types (waits,
+// drops) are observable but not currently acted on at this layer.
+//
+// Location is the vendor's physical location string (e.g., the dot-name
+// of the pickup node). BinTask carries the vendor's binTask field
+// ("Load", "Unload", "Wait", or empty for navigation-only blocks).
+type BlockCompletedEvent struct {
+	OrderID       int64
+	VendorOrderID string
+	BlockID       string
+	Location      string
+	BinTask       string
+}
+
+// BinEnteredTransitEvent fires when a bin's NodeID transitions to the
+// synthetic _TRANSIT node — the moment the source slot is freed for
+// new placements. Subscribers: the fulfillment scanner trigger (so
+// queued orders re-check their dispatch eligibility against the now-
+// vacant source slot) and the materials/admin UI for live transit-lane
+// rendering.
+type BinEnteredTransitEvent struct {
+	BinID      int64
+	OrderID    int64  // the order whose pickup drove the transition
+	FromNodeID int64  // the node the bin just left (now vacant)
+	StepIndex  int    // position in the order's pickup sequence (0 for single-pickup)
 }

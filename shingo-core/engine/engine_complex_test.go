@@ -452,9 +452,18 @@ func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
 		t.Errorf("order1 status = %q, want dispatched", order1.Status)
 	}
 
-	// Second order should fail at planning — no bin available
-	if order2.Status != dispatch.StatusFailed {
-		t.Errorf("order2 status = %q, want failed (no bin available after first order claimed it)", order2.Status)
+	// Second order must NOT have claimed the bin — that's the load-bearing
+	// invariant this test guards (no ghost robot, no double-claim). Phase 4
+	// of bin-transit-state changed the failure shape: order1's dispatch
+	// puts an in-flight order at LINE1-IN, so order2 hits the dropoff-
+	// capacity gate (queued) rather than failing immediately at bin claim.
+	// On scanner replay (after order1 confirms / fails / cancels) order2
+	// will reach claimComplexBins, find no bin, and fail. Either terminal
+	// state (failed) or transient state (queued, awaiting retry) is
+	// acceptable for this test — what matters is the bin and the second
+	// order are NOT double-claimed.
+	if order2.Status != dispatch.StatusFailed && order2.Status != dispatch.StatusQueued {
+		t.Errorf("order2 status = %q, want failed or queued (no bin available after first order claimed it)", order2.Status)
 	}
 	if order2.BinID != nil {
 		t.Errorf("order2 should have BinID=nil, got %d", *order2.BinID)

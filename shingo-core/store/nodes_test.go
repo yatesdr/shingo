@@ -51,14 +51,15 @@ func TestNodeCRUD(t *testing.T) {
 		t.Errorf("getByName ID = %d, want %d", got3.ID, n.ID)
 	}
 
-	// List
+	// List — 2 created above + the synthetic _TRANSIT node from
+	// migration v15 (bin-transit-state Phase 1).
 	db.CreateNode(&nodes.Node{Name: "LINE1-IN", Enabled: true})
 	nodes, err := db.ListNodes()
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(nodes) != 2 {
-		t.Errorf("len = %d, want 2", len(nodes))
+	if len(nodes) != 3 {
+		t.Errorf("len = %d, want 3 (2 created + _TRANSIT)", len(nodes))
 	}
 
 	// Delete

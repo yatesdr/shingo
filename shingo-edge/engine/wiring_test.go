@@ -184,6 +184,65 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 	_ = processID
 }
 
+// TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP locks down
+// the BinUOPRemaining branch in handleNormalReplenishment. When Core captured
+// a partial-bin snapshot at delivery (operator sent the bin back with 125
+// UOP via SEND PARTIAL BACK), the runtime must reset to the bin's
+// authoritative value, NOT the claim's UOPCapacity.
+//
+// Sibling to TestWiring_RetrieveCompletion_ConsumeResetsToCapacity which
+// covers the nil-snapshot fall-back-to-capacity branch. Without this paired
+// test a future refactor that drops the BinUOPRemaining branch would only
+// be caught at a plant — the original test still passes because its bin is
+// implicitly full.
+func TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix: "CONSUME-PB", PayloadCode: "PART-PB", UOPCapacity: 200, InitialUOP: 10,
+	})
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// DeliveryNode must match the seeded node's CoreNodeName for the
+	// #11 predicate to fire (handleNormalReplenishment skips orders
+	// whose DeliveryNode != process_node CoreNodeName). Prefix
+	// "CONSUME-PB" → CoreNodeName "CONSUME-PB-NODE".
+	orderID, err := db.CreateOrder("uuid-retrieve-partial", orders.TypeRetrieve,
+		&nodeID, false, 1, "CONSUME-PB-NODE", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
+	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+
+	// Snapshot the bin's authoritative uop_remaining at delivery time.
+	// In production this is set by HandleDeliveredWithExpiry when Core's
+	// OrderDelivered envelope arrives; the dispatcher-level test sets it
+	// directly so handleNormalReplenishment reads the snapshot path.
+	partialUOP := 125
+	if err := db.UpdateOrderBinUOPRemaining(orderID, &partialUOP); err != nil {
+		t.Fatalf("set bin_uop_remaining: %v", err)
+	}
+
+	eng.Events.Emit(Event{
+		Type: EventOrderCompleted,
+		Payload: OrderCompletedEvent{
+			OrderID:       orderID,
+			OrderUUID:     "uuid-retrieve-partial",
+			OrderType:     orders.TypeRetrieve,
+			ProcessNodeID: &nodeID,
+		},
+	})
+
+	runtime, _ := db.GetProcessNodeRuntime(nodeID)
+	if runtime.RemainingUOP != 125 {
+		t.Errorf("RemainingUOP = %d, want 125 (bin's authoritative uop_remaining; not capacity 200)",
+			runtime.RemainingUOP)
+	}
+	_ = processID
+}
+
 // TestWiring_CounterDelta_ProduceIncrementsUOP verifies that counter delta
 // events increment UOP for produce nodes (counting UP toward capacity).
 func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {

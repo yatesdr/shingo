@@ -29,10 +29,12 @@ type Store interface {
 	ListQueuedOrders() ([]*orders.Order, error)
 	GetOrder(id int64) (*orders.Order, error)
 	CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error)
+	CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, excludeID int64) (int, error)
 
 	// Node reads.
 	GetNode(id int64) (*nodes.Node, error)
 	GetNodeByDotName(name string) (*nodes.Node, error)
+	ListChildNodes(parentID int64) ([]*nodes.Node, error)
 
 	// Bin reads.
 	CountBinsByNode(nodeID int64) (int, error)
@@ -45,6 +47,10 @@ type Store interface {
 	UpdateOrderBinID(orderID, binID int64) error
 	UpdateOrderSourceNode(id int64, sourceNode string) error
 	UpdateOrderStatus(id int64, status, detail string) error
+	// SetOrderQueueReason records why an order is sitting queued.
+	// Phase 4 of bin-transit-state — surfaced through the order-status
+	// API so ops can see the blocking node instead of guessing.
+	SetOrderQueueReason(id int64, reason string) error
 
 	// Structural-error fallback path (see scanner.go: only used when
 	// failFn is nil — older tests construct the scanner without it).

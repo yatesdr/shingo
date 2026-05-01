@@ -33,9 +33,15 @@ func (db *DB) IsSlotAccessible(slotNodeID int64) (bool, error) {
 // FindSourceBinInLane finds the shallowest accessible unclaimed bin in a
 // lane matching the given payload code. Cross-aggregate composition
 // (bins ↔ nodes).
+//
+// The is_synthetic = false guard is defense-in-depth: today _TRANSIT
+// has no parent_id so it can't be a lane child, but if a future
+// migration adds a synthetic ghost-slot under a lane, this filter
+// prevents the lane reader from claiming an in-flight bin.
 func (db *DB) FindSourceBinInLane(laneID int64, payloadCode string) (*bins.Bin, error) {
 	query := fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
+		  AND COALESCE(n.is_synthetic, false) = false
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
@@ -77,6 +83,7 @@ func (db *DB) CountBinsInLane(laneID int64) (int, error) {
 func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
+		  AND COALESCE(n.is_synthetic, false) = false
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true
@@ -108,6 +115,7 @@ func (db *DB) FindOldestBuriedBin(laneID int64, payloadCode string) (*bins.Bin, 
 func (db *DB) FindBuriedBin(laneID int64, payloadCode string) (*bins.Bin, *nodes.Node, error) {
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.node_id IN (SELECT id FROM nodes WHERE parent_id = $1)
+		  AND COALESCE(n.is_synthetic, false) = false
 		  AND b.claimed_by IS NULL
 		  AND b.locked = false
 		  AND b.manifest_confirmed = true

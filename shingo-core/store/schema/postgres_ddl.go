@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS bins (
     last_counted_at    TIMESTAMPTZ,
     last_counted_by    TEXT NOT NULL DEFAULT '',
     loaded_at          TIMESTAMPTZ,
+    anomaly_at         TIMESTAMPTZ,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -94,7 +95,8 @@ CREATE TABLE IF NOT EXISTS orders (
     sequence        INTEGER NOT NULL DEFAULT 0,
     bin_id          BIGINT REFERENCES bins(id),
     payload_code    TEXT NOT NULL DEFAULT '',
-    wait_index      INTEGER NOT NULL DEFAULT 0
+    wait_index      INTEGER NOT NULL DEFAULT 0,
+    queue_reason    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_orders_uuid ON orders(edge_uuid);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);

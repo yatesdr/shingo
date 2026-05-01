@@ -384,3 +384,102 @@ func (s *BinService) ApplyArrival(binID, toNodeID int64, staged bool, expiresAt 
 
 	return tx.Commit()
 }
+
+// ── Phase 1 of bin-transit-state: in-transit lifecycle ─────────────
+
+// MoveToTransit moves a bin to the synthetic `_TRANSIT` node, marking
+// it as physically in flight while preserving its `claimed_by` so the
+// owning order still owns it. The source slot is freed for new
+// placements as soon as this commits.
+//
+// Idempotent: if the bin is already at `_TRANSIT`, returns nil with no
+// state change. This handles vendor pickup-event retries.
+//
+// Does NOT touch:
+//   - `claimed_by`: the order still owns this bin until ApplyArrival
+//     unclaims it at the destination (or until FailOrderAtomic /
+//     CancelOrderAtomic clear it on order termination, which is exactly
+//     the signal that creates the transit anomaly).
+//   - `status`: location and readiness are orthogonal. A bin can be
+//     `staged` at source, in transit, then `available` at destination —
+//     the status transition belongs to ApplyArrival.
+func (s *BinService) MoveToTransit(binID int64) error {
+	transitNode, err := s.db.GetNodeByName(domain.TransitNodeName)
+	if err != nil {
+		return fmt.Errorf("lookup transit node %q: %w", domain.TransitNodeName, err)
+	}
+	if _, err := s.db.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`,
+		transitNode.ID, binID); err != nil {
+		return fmt.Errorf("move bin %d to transit: %w", binID, err)
+	}
+	return nil
+}
+
+// MarkAnomaly stamps `bins.anomaly_at = NOW()` for the given bin. Called
+// by the failure-completion path when an order terminates while one of
+// its bins is still at `_TRANSIT`. Idempotent — repeated calls update
+// the timestamp; that's fine because the anomaly state is "still
+// unresolved" rather than "happened at exactly this moment."
+func (s *BinService) MarkAnomaly(binID int64) error {
+	if _, err := s.db.Exec(`UPDATE bins SET anomaly_at=NOW(), updated_at=NOW() WHERE id=$1`, binID); err != nil {
+		return fmt.Errorf("mark bin %d anomaly: %w", binID, err)
+	}
+	return nil
+}
+
+// ListAnomalies returns bins parked at _TRANSIT with no live order
+// claim — the binary anomaly signal. Wraps store/bins.ListAnomalousTransitBins.
+func (s *BinService) ListAnomalies() ([]*bins.Bin, error) {
+	return s.db.ListAnomalousTransitBins()
+}
+
+// ClearAnomaly clears `anomaly_at`. Called by the operator recovery
+// action after a bin has been physically located and reassigned to a
+// real node.
+func (s *BinService) ClearAnomaly(binID int64) error {
+	if _, err := s.db.Exec(`UPDATE bins SET anomaly_at=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
+		return fmt.Errorf("clear bin %d anomaly: %w", binID, err)
+	}
+	return nil
+}
+
+// RecoverTransitAnomaly is the operator's "I found this bin and put it
+// at node X" action: moves the bin out of _TRANSIT to the chosen real
+// node and clears the anomaly flag. Validates that the destination is
+// physical (not _TRANSIT, not synthetic) and currently empty.
+//
+// actor identifies the operator for the recovery_actions audit row.
+func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) error {
+	if actor == "" {
+		return fmt.Errorf("actor is required for recovery")
+	}
+	dest, err := s.db.GetNode(toNodeID)
+	if err != nil {
+		return fmt.Errorf("destination node %d not found: %w", toNodeID, err)
+	}
+	if dest.Name == "_TRANSIT" {
+		return fmt.Errorf("recovery destination cannot be _TRANSIT")
+	}
+	if dest.IsSynthetic {
+		return fmt.Errorf("recovery destination must be a physical node, got synthetic %q", dest.Name)
+	}
+	if err := s.ensurePhysicalNodeEmpty(toNodeID, 1); err != nil {
+		return err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, anomaly_at=NULL, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
+		return fmt.Errorf("move bin to recovery node: %w", err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO recovery_actions (action, target_type, target_id, detail, actor) VALUES ($1, $2, $3, $4, $5)`,
+		"transit_anomaly_recover", "bin", binID,
+		fmt.Sprintf("recovered to node %s", dest.Name), actor); err != nil {
+		return fmt.Errorf("record recovery action: %w", err)
+	}
+	return tx.Commit()
+}

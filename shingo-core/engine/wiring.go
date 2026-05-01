@@ -191,6 +191,10 @@ func (e *Engine) wireEventHandlers() {
 	}, EventBinUpdated)
 
 	// ── Fulfillment scanner triggers ────────────────────────────────
+	// Async trigger for high-volume signals (bin moves, order
+	// completions). The scanner coalesces overlapping triggers via
+	// its `pending` flag; a goroutine here keeps the emitting handler
+	// chain non-blocking.
 	triggerFulfillment := func(Event) {
 		if e.fulfillment != nil {
 			e.fulfillment.Trigger()
@@ -201,6 +205,39 @@ func (e *Engine) wireEventHandlers() {
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCompleted)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderCancelled)
 	e.Events.SubscribeTypes(triggerFulfillment, EventOrderFailed)
+	// EventBinEnteredTransit is the slot-vacancy signal added in Phase 1
+	// of the bin-transit-state project — every pickup that moves a bin
+	// to _TRANSIT frees its source slot, which can unblock queued orders
+	// that needed to drop something there. Subscribing here makes the
+	// scanner re-evaluate without waiting for the order to fully complete.
+	e.Events.SubscribeTypes(triggerFulfillment, EventBinEnteredTransit)
+
+	// Sync trigger for fresh-intake (Phase 4b): EventOrderQueued.
+	// HandleComplexOrderRequest creates new complex orders as queued and
+	// fires this event; the scanner is the single sync point that calls
+	// DispatchPreparedComplex, so capacity decisions are serialized via
+	// scan-mu (no TOCTOU between two concurrent fresh intakes for the
+	// same dropoff). Synchronous so the dispatched-status transition is
+	// observable on return from HandleComplexOrderRequest — the existing
+	// test fixtures rely on that ordering, and operator-facing latency
+	// expectations don't tolerate "queued for ~1ms while a goroutine
+	// gets scheduled."
+	e.Events.SubscribeTypes(func(Event) {
+		if e.fulfillment != nil {
+			e.fulfillment.RunOnce()
+		}
+	}, EventOrderQueued)
+
+	// ── Per-block completion → transit transition ───────────────────
+	// Phase 2 of the bin-transit-state project: pickup blocks (BinTask=Load
+	// or "pickup"-flavoured operations) drive the bin claimed at that step
+	// onto the synthetic _TRANSIT node. The poller diffs per-block state
+	// and fires EventBlockCompleted on the transition into FINISHED; this
+	// handler routes by block kind.
+	e.Events.SubscribeTypes(func(evt Event) {
+		ev := evt.Payload.(BlockCompletedEvent)
+		e.handleBlockCompleted(ev)
+	}, EventBlockCompleted)
 
 	// ── Queued order audit ─────────────────────────────────────────
 	e.Events.SubscribeTypes(func(evt Event) {

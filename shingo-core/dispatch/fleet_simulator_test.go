@@ -37,7 +37,7 @@ func TestSimulator_ComplexOrderBinTasks(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, sim)
 
 	env := testEnvelope()
-	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+	order := submitComplexAndDispatch(t, d, db, env, &protocol.ComplexOrderRequest{
 		OrderUUID:   "complex-tc1",
 		PayloadCode: bp.Code,
 		Quantity:    1,
@@ -46,11 +46,6 @@ func TestSimulator_ComplexOrderBinTasks(t *testing.T) {
 			{Action: "dropoff", Node: lineNode.Name},
 		},
 	})
-
-	order, err := db.GetOrderByUUID("complex-tc1")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
 	if order.VendorOrderID == "" {
 		t.Fatal("order should have a vendor order ID")
 	}
@@ -106,7 +101,7 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, sim)
 
 	env := testEnvelope()
-	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+	order := submitComplexAndDispatch(t, d, db, env, &protocol.ComplexOrderRequest{
 		OrderUUID:   "staged-tc2",
 		PayloadCode: bp.Code,
 		Quantity:    1,
@@ -118,11 +113,6 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 			{Action: "dropoff", Node: storageNode.Name},
 		},
 	})
-
-	order, err := db.GetOrderByUUID("staged-tc2")
-	if err != nil {
-		t.Fatalf("get order: %v", err)
-	}
 
 	// Order should be dispatched
 	if order.Status != StatusDispatched {

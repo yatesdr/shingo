@@ -42,4 +42,5 @@ type Order struct {
 	BinID         *int64     `json:"bin_id,omitempty"`
 	PayloadCode   string     `json:"payload_code"`
 	WaitIndex     int        `json:"wait_index"`
+	QueueReason   string     `json:"queue_reason,omitempty"`
 }

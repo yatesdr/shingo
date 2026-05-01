@@ -36,7 +36,7 @@ type History = domain.OrderHistory
 // SelectCols is exported so cross-aggregate readers at the outer store/
 // level (e.g. ListOrdersByBin, which joins orders from the bin side) can
 // reuse the column list.
-const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index`
+const SelectCols = `id, edge_uuid, station_id, order_type, status, quantity, source_node, delivery_node, process_node, vendor_order_id, vendor_state, robot_id, priority, payload_desc, error_detail, created_at, updated_at, completed_at, parent_order_id, sequence, steps_json, bin_id, payload_code, wait_index, queue_reason`
 
 // ScanOrder reads a single orders row.
 // Exported for cross-aggregate readers at the outer store/ level.
@@ -48,7 +48,7 @@ func ScanOrder(row interface{ Scan(...any) error }) (*Order, error) {
 		&o.Quantity,
 		&o.SourceNode, &o.DeliveryNode, &o.ProcessNode, &o.VendorOrderID, &o.VendorState, &o.RobotID,
 		&o.Priority, &o.PayloadDesc, &o.ErrorDetail, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt,
-		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex)
+		&parentOrderID, &o.Sequence, &o.StepsJSON, &binID, &o.PayloadCode, &o.WaitIndex, &o.QueueReason)
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +132,16 @@ func UpdateStatus(db *sql.DB, id int64, status, detail string) error {
 func UpdateWaitIndex(db *sql.DB, id int64, waitIndex int) error {
 	_, err := db.Exec(`UPDATE orders SET wait_index=$1, updated_at=NOW() WHERE id=$2`,
 		waitIndex, id)
+	return err
+}
+
+// SetQueueReason stores the blocking reason on a queued order. Pass ""
+// to clear (e.g., when a previously-queued order successfully dispatches).
+// Phase 4 of bin-transit-state — exposed via order-status responses so
+// ops can see *why* an order is queued instead of guessing.
+func SetQueueReason(db *sql.DB, id int64, reason string) error {
+	_, err := db.Exec(`UPDATE orders SET queue_reason=$1, updated_at=NOW() WHERE id=$2`,
+		reason, id)
 	return err
 }
 
@@ -352,8 +362,16 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 }
 
 // ListQueued returns all orders in "queued" status, oldest first (FIFO).
+// ListQueued returns all orders in "queued" status. Ordered by priority
+// (highest first) then creation time (FIFO within a priority class) —
+// the priority stub for Phase 4 of bin-transit-state. orders.priority
+// is INTEGER NOT NULL DEFAULT 0, so unset orders fall to FIFO naturally.
+//
+// Future-work hooks (NOT shipped): preemption of in-flight low-priority
+// orders for high-priority new arrivals, fairness across stations,
+// per-station priority caps. Today this is just a sort key.
 func ListQueued(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status = 'queued' ORDER BY created_at ASC`, SelectCols))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status = 'queued' ORDER BY priority DESC, created_at ASC`, SelectCols))
 	if err != nil {
 		return nil, err
 	}
@@ -372,6 +390,18 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed')`, deliveryNode).Scan(&count)
+	return count, err
+}
+
+// CountInFlightByDeliveryNodeExcluding is the same count but excludes
+// a specific order ID. Used by planning-time capacity gates that check
+// from inside the order's own dispatch path — without exclusion the
+// caller's own pending/sourcing row would self-block. Pass excludeID=0
+// to count all orders (no exclusion). Phase 4c of bin-transit-state.
+func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, excludeID int64) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed') AND id != $2`,
+		deliveryNode, excludeID).Scan(&count)
 	return count, err
 }
 

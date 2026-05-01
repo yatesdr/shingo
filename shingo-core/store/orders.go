@@ -77,6 +77,12 @@ func (db *DB) UpdateOrderWaitIndex(id int64, waitIndex int) error {
 	return orders.UpdateWaitIndex(db.DB, id, waitIndex)
 }
 
+// SetOrderQueueReason stores or clears the blocking reason on a queued
+// order. Phase 4 of bin-transit-state.
+func (db *DB) SetOrderQueueReason(id int64, reason string) error {
+	return orders.SetQueueReason(db.DB, id, reason)
+}
+
 func (db *DB) UpdateOrderVendor(id int64, vendorOrderID, vendorState, robotID string) error {
 	return orders.UpdateVendor(db.DB, id, vendorOrderID, vendorState, robotID)
 }
@@ -177,6 +183,18 @@ func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
 	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'failed', $2)`, orderID, detail); err != nil {
 		return err
 	}
+	// Anomaly mark MUST run before claim release: the WHERE filters on
+	// claimed_by=$orderID, which the next statement clears. Bins at
+	// _TRANSIT with no live claim are the binary anomaly signal under
+	// bin-transit-state — operator recovery picks them up via
+	// ListAnomalousTransitBins. COALESCE preserves an earlier stamp if
+	// a bin was already flagged from a prior failure.
+	if _, err := tx.Exec(`
+		UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()), updated_at=NOW()
+		WHERE claimed_by=$1
+		  AND node_id IN (SELECT id FROM nodes WHERE name='_TRANSIT')`, orderID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err
 	}
@@ -201,6 +219,13 @@ func (db *DB) CancelOrderAtomic(orderID int64, detail string) error {
 	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'cancelled', $2)`, orderID, detail); err != nil {
 		return err
 	}
+	// Same anomaly-mark contract as FailOrderAtomic — see comments there.
+	if _, err := tx.Exec(`
+		UPDATE bins SET anomaly_at=COALESCE(anomaly_at, NOW()), updated_at=NOW()
+		WHERE claimed_by=$1
+		  AND node_id IN (SELECT id FROM nodes WHERE name='_TRANSIT')`, orderID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
 		return err
 	}
@@ -214,6 +239,15 @@ func (db *DB) CancelOrderAtomic(orderID int64, detail string) error {
 // orders targeting a delivery node.
 func (db *DB) CountInFlightOrdersByDeliveryNode(deliveryNode string) (int, error) {
 	return orders.CountInFlightByDeliveryNode(db.DB, deliveryNode)
+}
+
+// CountInFlightOrdersByDeliveryNodeExcluding counts in-flight orders for a
+// delivery node, excluding a specific order ID (the caller's own row).
+// Phase 4c of bin-transit-state: planning-time capacity gates need to
+// avoid self-collision when checking from inside the order's own
+// dispatch path.
+func (db *DB) CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, excludeID int64) (int, error) {
+	return orders.CountInFlightByDeliveryNodeExcluding(db.DB, deliveryNode, excludeID)
 }
 
 func (db *DB) UpdateOrderRobotID(id int64, robotID string) error {

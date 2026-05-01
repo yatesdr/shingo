@@ -1,6 +1,7 @@
 package fulfillment
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"sync"
@@ -161,24 +162,53 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Use the fresh copy for all subsequent operations
 	order = current
 
-	// Check delivery node doesn't already have an in-flight delivery
-	if order.DeliveryNode != "" {
-		count, err := s.db.CountInFlightOrdersByDeliveryNode(order.DeliveryNode)
-		if err == nil && count > 0 {
-			return false
+	// Shared dropoff-capacity gate (Phase 4 of bin-transit-state).
+	// Single sync point for capacity decisions across fresh-intake AND
+	// queue-replay: HandleComplexOrderRequest creates orders as queued
+	// and lets the scanner make the dispatch-or-keep-queued call. The
+	// scanner's scan-mu serializes calls, so two concurrent orders for
+	// the same dropoff can't both pass this gate.
+	// excludeOrderID=0: the order is in `queued` status which the in-
+	// flight count already excludes. No self-collision possible.
+	//
+	// Skip the gate when a complex order has an earlier pickup at the
+	// same node as its delivery (swap pattern — the slot frees during
+	// execution before the order's own dropoff reuses it). Without
+	// this, a 9-step swap with pickup(line) → ... → dropoff(line)
+	// would block forever on the line being currently occupied by the
+	// very bin the swap is removing.
+	gateNode := order.DeliveryNode
+	if order.OrderType == protocol.OrderTypeComplex && order.StepsJSON != "" {
+		if pickupBeforeDropoffAt(order.StepsJSON, order.DeliveryNode) {
+			gateNode = ""
 		}
 	}
-
-	// Check delivery node isn't already occupied by a bin. Without this,
-	// a race exists: order A confirmed → operator unloads → scanner sees
-	// 0 in-flight → dispatches order B → robot arrives while the outbound
-	// bin from order A is still physically on the node.
-	if order.DeliveryNode != "" {
-		if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil {
-			if count, err := s.db.CountBinsByNode(destNode.ID); err == nil && count > 0 {
-				return false
+	if blocked, reason := dispatch.CheckDropoffCapacity(s.db, gateNode, 0); blocked {
+		if order.QueueReason != reason {
+			if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
+				s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
 			}
 		}
+		return false
+	}
+
+	// Type-switch: complex orders flow through the dispatcher's prepared
+	// path (resolved steps already on the order from intake). Simple
+	// retrieve / retrieve_empty paths use the per-order bin-finding
+	// logic below — unchanged from pre-Phase-4 except for the now-shared
+	// capacity gate above.
+	if order.OrderType == protocol.OrderTypeComplex {
+		if err := s.dispatcher.DispatchPreparedComplex(order); err != nil {
+			s.logFn("fulfillment: complex order %d dispatch failed: %v", order.ID, err)
+			return false
+		}
+		// Clear stale queue_reason on success (DispatchPreparedComplex
+		// also clears it after Lifecycle.Dispatch, but be defensive
+		// against the rare path where it doesn't run to completion).
+		if order.QueueReason != "" {
+			s.db.SetOrderQueueReason(order.ID, "")
+		}
+		return true
 	}
 
 	payloadCode := order.PayloadCode
@@ -331,4 +361,49 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	}
 
 	return true
+}
+
+// pickupBeforeDropoffAt reports whether the complex order's step list
+// contains a pickup at `node` BEFORE any dropoff at the SAME node.
+// The check is per-target-node — steps targeting other nodes are
+// ignored. Swap-shaped choreographies (pickup line, … , dropoff line)
+// are self-balancing at the line: the line is occupied at intake,
+// gets emptied by the pickup mid-order, and is filled again by the
+// order's own dropoff. Capacity gating those at intake would block
+// them forever on the very bin the swap is designed to replace.
+//
+// Renamed from hasEarlierPickup (2026-05) — the prior name suggested
+// "any earlier pickup anywhere," and a code review misread the function
+// as global cross-node tracking. The per-node filter on line 391
+// makes this strictly local: the loop only sees same-`node` steps.
+//
+// stepsJSON is the persisted form of resolvedSteps as stored by
+// dispatch.HandleComplexOrderRequest. Failure to parse → return false
+// (gate runs, fail-safe toward correctness rather than letting
+// malformed input bypass the gate).
+func pickupBeforeDropoffAt(stepsJSON, node string) bool {
+	if stepsJSON == "" || node == "" {
+		return false
+	}
+	var steps []struct {
+		Action string `json:"action"`
+		Node   string `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
+		return false
+	}
+	pickupSeen := false
+	for _, s := range steps {
+		if s.Node != node {
+			continue
+		}
+		if s.Action == "pickup" {
+			pickupSeen = true
+			continue
+		}
+		if s.Action == "dropoff" && pickupSeen {
+			return true
+		}
+	}
+	return false
 }

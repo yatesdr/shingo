@@ -258,6 +258,141 @@ func TestPollerEmptyActiveSetIsNoOp(t *testing.T) {
 	}
 }
 
+// TestPollerEmitsBlockCompletedOnTransition is the core regression test
+// for the bin-transit-state Phase 2 wiring. The poll snapshot already
+// included per-block state pre-Phase-2 (see rds.OrderDetail.Blocks), but
+// the poller never diffed it. This test asserts: when a block transitions
+// to FINISHED on a subsequent poll, EXACTLY one EmitBlockCompleted fires
+// for that block, with the BlockID/Location/BinTask passed through.
+//
+// Why this is load-bearing: the entire Phase 2 design rests on this
+// being the per-pickup signal. If the diff misses transitions, queued
+// orders never unblock and source slots stay stuck.
+func TestPollerEmitsBlockCompletedOnTransition(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		// First poll: block running. Second poll: block FINISHED, order
+		// still RUNNING (delivery block not yet started). Third poll: order
+		// terminal — but the test only inspects the second.
+		var blockState string
+		switch {
+		case n == 1:
+			blockState = "RUNNING"
+		default:
+			blockState = "FINISHED"
+		}
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-blk","state":"RUNNING","vehicle":"AMB-9","blocks":[
+			{"blockId":"b-pickup","location":"AP-SOURCE","state":"` + blockState + `","binTask":"Load"},
+			{"blockId":"b-deliver","location":"AP-DEST","state":"CREATED","binTask":"Unload"}
+		]}`))
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, 2*time.Second)
+
+	emitter := &mockPollerEmitter{}
+	p := NewPoller(client, emitter, &mockResolver{}, time.Minute)
+	p.Track("rds-blk")
+
+	// Poll once: pickup is RUNNING, no transition yet.
+	p.poll()
+	emitter.mu.Lock()
+	if got := len(emitter.blockEvents); got != 0 {
+		t.Errorf("after first poll: %d block events, want 0 (block was already RUNNING; first sample is a baseline)", got)
+	}
+	emitter.mu.Unlock()
+
+	// Poll again: pickup transitioned to FINISHED. EXACTLY one event.
+	p.poll()
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	if got := len(emitter.blockEvents); got != 1 {
+		t.Fatalf("after second poll: %d block events, want 1", got)
+	}
+	got := emitter.blockEvents[0]
+	if got.blockID != "b-pickup" {
+		t.Errorf("blockID = %q, want b-pickup", got.blockID)
+	}
+	if got.location != "AP-SOURCE" {
+		t.Errorf("location = %q, want AP-SOURCE", got.location)
+	}
+	if got.binTask != "Load" {
+		t.Errorf("binTask = %q, want Load (the kind classifier upstream depends on this)", got.binTask)
+	}
+	if got.orderID != 100 {
+		t.Errorf("orderID = %d, want 100 (mockResolver)", got.orderID)
+	}
+}
+
+// TestPollerBlockCompletedFiresOnce locks down idempotence: even if we
+// poll the same FINISHED state repeatedly, we don't re-emit. The
+// vendor's poll cadence is short (~500ms typical), so a sticky FINISHED
+// state would otherwise flood the engine handler with duplicates and
+// log lines on every cycle.
+func TestPollerBlockCompletedFiresOnce(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Always-FINISHED block, order still RUNNING.
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-once","state":"RUNNING","vehicle":"AMB-9","blocks":[
+			{"blockId":"b-once","location":"AP-X","state":"FINISHED","binTask":"Load"}
+		]}`))
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, 2*time.Second)
+
+	emitter := &mockPollerEmitter{}
+	p := NewPoller(client, emitter, &mockResolver{}, time.Minute)
+	p.Track("rds-once")
+
+	// First poll observes the transition (CREATED→FINISHED in our
+	// internal model — `prev` starts empty). Subsequent polls must not
+	// re-emit because `prev[b-once]==FINISHED` short-circuits the diff.
+	p.poll()
+	p.poll()
+	p.poll()
+
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	if got := len(emitter.blockEvents); got != 1 {
+		t.Errorf("len(blockEvents) = %d after 3 polls, want 1 (sticky FINISHED must not re-emit)", got)
+	}
+}
+
+// TestPollerBlockStateClearedOnTerminal locks down memory hygiene: when
+// the parent order reaches a terminal state, the poller should drop its
+// per-block tracking too. Without this, blockStates would grow
+// unboundedly across the lifetime of the process.
+func TestPollerBlockStateClearedOnTerminal(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := hits.Add(1)
+		state := "RUNNING"
+		blockState := "RUNNING"
+		if n >= 2 {
+			state = "FINISHED" // terminal
+			blockState = "FINISHED"
+		}
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-term","state":"` + state + `","vehicle":"AMB-9","blocks":[
+			{"blockId":"b","location":"AP-Q","state":"` + blockState + `","binTask":"Load"}
+		]}`))
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, 2*time.Second)
+
+	emitter := &mockPollerEmitter{}
+	p := NewPoller(client, emitter, &mockResolver{}, time.Minute)
+	p.Track("rds-term")
+
+	p.poll() // baseline
+	p.poll() // transitions to terminal — order untracked, blockStates dropped
+
+	p.mu.Lock()
+	_, blockStillTracked := p.blockStates["rds-term"]
+	p.mu.Unlock()
+	if blockStillTracked {
+		t.Errorf("blockStates['rds-term'] still present after terminal transition; expected drop alongside p.active")
+	}
+}
+
 func TestPollerConcurrentTrackDuringPoll(t *testing.T) {
 	// Hammers Track/Untrack from a goroutine while poll() runs to ensure
 	// the mutex discipline in poll() doesn't deadlock or race.

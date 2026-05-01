@@ -1,10 +1,36 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"shingocore/store"
 )
+
+// reconstructSinglePayloadManifest builds the manifest JSON for a partial-
+// release sync. The single-payload normalization assumption (one
+// payload_code per bin → consumption distributes evenly across items)
+// makes the manifest fully recoverable from payload_code + uop_remaining:
+//
+//	{"items":[{"catid": payload_code, "qty": uop_remaining}]}
+//
+// Note: ManifestEntry.CatID is the part-catalog identifier; payload_code
+// is the bin's payload type. Equating them here is the normalization
+// assumption — single-payload bins have catid == payload_code at the
+// manifest level. If a future design supports multi-payload-per-bin,
+// this reconstruction is the seam where the assumption breaks.
+func reconstructSinglePayloadManifest(payloadCode string, uop int) (string, error) {
+	payload := map[string]any{
+		"items": []map[string]any{
+			{"catid": payloadCode, "qty": uop},
+		},
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("reconstruct manifest: %w", err)
+	}
+	return string(b), nil
+}
 
 // BinManifestService manages bin manifest lifecycle mutations.
 // All manifest changes flow through this service so that validation,
@@ -180,10 +206,33 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 	if *remainingUOP < 0 {
 		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
 	}
-	// Positive: sync UOP, preserve manifest + claim
+	// Positive: sync UOP AND reconstruct manifest, preserve claim.
+	//
+	// Manifest reconstruction (single-payload normalization assumption):
+	// the bin's manifest is rewritten to {"items":[{"catid": payload_code,
+	// "qty": remaining_uop}]}. Pre-2026-05 this branch only updated
+	// uop_remaining, leaving the manifest carrying the pre-release qty
+	// — the SMN_003/ALN_002 stale-manifest bug class. The reconstruction
+	// is atomic with the UOP update via jsonb_build_object reading
+	// payload_code from the same row, so no read-then-update race.
+	//
+	// The CASE guard preserves the prior manifest if payload_code is
+	// empty (a malformed state — partial-release should always have a
+	// payload). Erroring would be cleaner but risks regressing release
+	// flows in the field; preserving the prior manifest matches the
+	// pre-fix observable behavior for the edge case.
 	res, err := s.db.Exec(`
 		UPDATE bins SET
-			uop_remaining=$1, updated_at=NOW()
+			uop_remaining=$1,
+			manifest=CASE
+				WHEN COALESCE(payload_code, '') = '' THEN manifest
+				ELSE jsonb_build_object(
+					'items', jsonb_build_array(
+						jsonb_build_object('catid', payload_code, 'qty', $1::int)
+					)
+				)
+			END,
+			updated_at=NOW()
 		WHERE id=$2 AND claimed_by=$3 AND locked=false`,
 		*remainingUOP, binID, orderID)
 	if err != nil {
@@ -244,9 +293,21 @@ func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64,
 	if *remainingUOP < 0 {
 		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
 	}
+	// Same manifest-reconstruction logic as SyncOrClearForReleased but
+	// without the claimed_by guard — see the parent method's comment for
+	// the rationale on the JSON shape and the empty-payload_code CASE.
 	res, err := s.db.Exec(`
 		UPDATE bins SET
-			uop_remaining=$1, updated_at=NOW()
+			uop_remaining=$1,
+			manifest=CASE
+				WHEN COALESCE(payload_code, '') = '' THEN manifest
+				ELSE jsonb_build_object(
+					'items', jsonb_build_array(
+						jsonb_build_object('catid', payload_code, 'qty', $1::int)
+					)
+				)
+			END,
+			updated_at=NOW()
 		WHERE id=$2 AND locked=false`,
 		*remainingUOP, binID)
 	if err != nil {

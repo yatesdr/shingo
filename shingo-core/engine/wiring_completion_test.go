@@ -186,6 +186,15 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 	if err := db.CreateOrder(order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
+	// Claim the bin for this order — Phase 3 of bin-transit-state moved the
+	// safety-net guard predicate from "bin.NodeID == sourceNode" to
+	// "bin.ClaimedBy == order.ID". In production the bin is always claimed
+	// by the time delivery fires (ClaimForDispatch at planning time);
+	// without the claim here the safety-net correctly skips because nothing
+	// signals the bin still belongs to this order.
+	if err := db.ClaimBin(bin.ID, order.ID); err != nil {
+		t.Fatalf("claim bin: %v", err)
+	}
 
 	// Verify bin is still at storage node
 	testdb.RequireBinAtNode(t, db, bin.ID, sd.StorageNode.ID)
@@ -237,6 +246,14 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 	}
 	if err := db.UpdateOrderWaitIndex(order.ID, 1); err != nil {
 		t.Fatalf("update wait index: %v", err)
+	}
+	// Phase 3 of bin-transit-state moved the safety-net guard from
+	// node-based to claim-based; in production every dispatched order
+	// has a claimed bin. Mirror that here so the safety net actually
+	// fires and the lineside-staging assertion below has something to
+	// check.
+	if err := db.ClaimBin(bin.ID, order.ID); err != nil {
+		t.Fatalf("claim bin: %v", err)
 	}
 
 	eng.handleOrderCompleted(OrderCompletedEvent{
@@ -303,6 +320,9 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 	if err := db.CreateOrder(emptyOrder); err != nil {
 		t.Fatalf("create empty order: %v", err)
 	}
+	if err := db.ClaimBin(binEmpty.ID, emptyOrder.ID); err != nil {
+		t.Fatalf("claim empty bin: %v", err)
+	}
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID: emptyOrder.ID, EdgeUUID: emptyOrder.EdgeUUID, StationID: emptyOrder.StationID,
 	})
@@ -331,6 +351,9 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 	}
 	if err := db.UpdateOrderWaitIndex(complexOrder.ID, 1); err != nil {
 		t.Fatalf("update wait index: %v", err)
+	}
+	if err := db.ClaimBin(binComplex.ID, complexOrder.ID); err != nil {
+		t.Fatalf("claim complex bin: %v", err)
 	}
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID: complexOrder.ID, EdgeUUID: complexOrder.EdgeUUID, StationID: complexOrder.StationID,

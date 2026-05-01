@@ -133,6 +133,19 @@ func (s *PlanningService) Plan(order *orders.Order, env *protocol.Envelope, payl
 }
 
 func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
+	// Phase 4 of bin-transit-state: dropoff-capacity gate before any
+	// state transition. Self-exclusion (order.ID) prevents the order's
+	// own pending row from counting against itself in the in-flight
+	// tally. If blocked, queue without claiming a source bin — the
+	// fulfillment scanner replays when slot vacancy fires.
+	if blocked, reason := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
+		s.dbg("retrieve: order %d queued — %s", order.ID, reason)
+		if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
+			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, err)
+		}
+		return &PlanningResult{Queued: true}, nil
+	}
+
 	if err := s.lifecycle.MoveToSourcing(order, "planner", "finding source"); err != nil {
 		log.Printf("dispatch: planRetrieve order %d → sourcing: %v", order.ID, err)
 	}
@@ -307,15 +320,39 @@ func (s *PlanningService) planBuriedReshuffle(order *orders.Order, buried *Burie
 }
 
 func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
-	if err := s.lifecycle.MoveToSourcing(order, "planner", "validating move"); err != nil {
-		log.Printf("dispatch: planMove order %d → sourcing: %v", order.ID, err)
-	}
 	if order.SourceNode == "" {
 		return nil, &planningError{Code: "missing_source", Detail: "move order requires source_node"}
 	}
 	sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
 	if err != nil {
 		return nil, &planningError{Code: "invalid_node", Detail: fmt.Sprintf("source node %q not found", order.SourceNode), Err: err}
+	}
+	// Same-node validation must come before the capacity gate: a
+	// same-node move is invalid regardless of capacity (would produce
+	// a fleet order with src == dst, which the fleet cancels). Failing
+	// fast surfaces the bug at submit time rather than letting the
+	// order sit queued forever on a "destination occupied" reason that
+	// would never clear.
+	destPreCheck, dErr := s.db.GetNodeByDotName(order.DeliveryNode)
+	if dErr == nil && destPreCheck != nil && sourceNode.ID == destPreCheck.ID {
+		return nil, &planningError{Code: "same_node", Detail: fmt.Sprintf("source and destination are the same node (%s)", sourceNode.Name)}
+	}
+
+	// Phase 4 of bin-transit-state: dropoff-capacity gate. Move orders
+	// (returns to NGRP supermarkets, side-cycle L2/U2, manual moves,
+	// auto-returns) all flow through this planner; gating here closes
+	// the race they otherwise have with concurrent dispatches to the
+	// same destination.
+	if blocked, reason := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
+		s.dbg("move: order %d queued — %s", order.ID, reason)
+		if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
+			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, err)
+		}
+		return &PlanningResult{Queued: true}, nil
+	}
+
+	if err := s.lifecycle.MoveToSourcing(order, "planner", "validating move"); err != nil {
+		log.Printf("dispatch: planMove order %d → sourcing: %v", order.ID, err)
 	}
 
 	// If the source is a synthetic NGRP (supermarket group), resolve to a
@@ -369,13 +406,20 @@ func (s *PlanningService) planMove(order *orders.Order, env *protocol.Envelope, 
 		// Concrete source node: claim a bin directly at the node.
 		candidates, _ := s.db.ListBinsByNode(sourceNode.ID)
 		remainingUOP := extractRemainingUOP(env)
-		picked, rejects := claimFirstAvailable(candidates, payloadCode, func(b *bins.Bin) error {
+		picked, rejects, raced := claimFirstAvailable(candidates, payloadCode, func(b *bins.Bin) error {
 			return s.binManifest.ClaimForDispatch(b.ID, order.ID, remainingUOP)
 		})
 		if picked == nil {
 			detail := fmt.Sprintf("no unclaimed bin at %s for move order %d (evaluated %d bin(s); rejects: [%s])",
 				order.SourceNode, order.ID, len(candidates), joinRejects(rejects))
 			s.dbg("move: order %d at %s — %s", order.ID, order.SourceNode, detail)
+			// Race-loss vs structural-unavailable discrimination (#4).
+			// claim_failed is retry-eligible; the caller (planning
+			// service plan loop) treats it as a queue signal so the
+			// scanner re-tries on the next tick.
+			if raced {
+				return nil, &planningError{Code: "claim_failed", Detail: detail}
+			}
 			if payloadCode != "" {
 				return nil, &planningError{Code: "no_payload", Detail: fmt.Sprintf("no unclaimed %s bin at %s", payloadCode, order.SourceNode)}
 			}

@@ -59,6 +59,13 @@ type fakeStore struct {
 	statusUpdates      []statusUpdate
 	failedAtomically   []failCall
 	findEmptyPrefZones []findEmptyCall
+	queueReasons       []queueReasonUpdate
+	childrenByParent   map[int64][]*nodes.Node
+}
+
+type queueReasonUpdate struct {
+	OrderID int64
+	Reason  string
 }
 
 type sourceNodeUpdate struct {
@@ -120,6 +127,20 @@ func (f *fakeStore) CountInFlightOrdersByDeliveryNode(deliveryNode string) (int,
 		return 0, f.errCountInFlight
 	}
 	return f.inFlightAt[deliveryNode], nil
+}
+
+func (f *fakeStore) CountInFlightOrdersByDeliveryNodeExcluding(deliveryNode string, excludeID int64) (int, error) {
+	if f.errCountInFlight != nil {
+		return 0, f.errCountInFlight
+	}
+	// Test fakes don't track per-order, so excludeID is informational
+	// only — the same total count applies. Real *store.DB does the
+	// SQL exclusion via WHERE id != $excludeID.
+	return f.inFlightAt[deliveryNode], nil
+}
+
+func (f *fakeStore) ListChildNodes(parentID int64) ([]*nodes.Node, error) {
+	return f.childrenByParent[parentID], nil
 }
 
 func (f *fakeStore) GetNode(id int64) (*nodes.Node, error) {
@@ -204,5 +225,10 @@ func (f *fakeStore) FailOrderAtomic(orderID int64, detail string) error {
 	f.failedAtomically = append(f.failedAtomically, failCall{
 		OrderID: orderID, Detail: detail,
 	})
+	return nil
+}
+
+func (f *fakeStore) SetOrderQueueReason(id int64, reason string) error {
+	f.queueReasons = append(f.queueReasons, queueReasonUpdate{OrderID: id, Reason: reason})
 	return nil
 }

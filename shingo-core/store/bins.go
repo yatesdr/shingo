@@ -20,6 +20,12 @@ func (db *DB) GetBin(id int64) (*bins.Bin, error)              { return bins.Get
 func (db *DB) GetBinByLabel(label string) (*bins.Bin, error)   { return bins.GetByLabel(db.DB, label) }
 func (db *DB) ListBins() ([]*bins.Bin, error)                  { return bins.List(db.DB) }
 func (db *DB) ListBinsByNode(nodeID int64) ([]*bins.Bin, error) { return bins.ListByNode(db.DB, nodeID) }
+func (db *DB) ListBinsByClaim(orderID int64) ([]*bins.Bin, error) {
+	return bins.ListByClaim(db.DB, orderID)
+}
+func (db *DB) ListAnomalousTransitBins() ([]*bins.Bin, error) {
+	return bins.ListAnomalousTransitBins(db.DB)
+}
 func (db *DB) CountBinsByNode(nodeID int64) (int, error)  { return bins.CountByNode(db.DB, nodeID) }
 
 // CountBinsByAllNodes returns a map of node_id -> bin count for all nodes

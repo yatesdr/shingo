@@ -148,6 +148,8 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/orders", h.apiListOrders)
 			r.Get("/orders/detail", h.apiGetOrder)
 			r.Get("/orders/enriched", h.apiGetOrderEnriched)
+			r.Get("/dispatch/preview-capacity", h.apiPreviewDropoffCapacity)
+			r.Get("/dispatch/anomalies", h.apiListTransitAnomalies)
 			r.Get("/missions", h.apiListMissions)
 			r.Get("/missions/stats", h.apiMissionStats)
 			r.Get("/missions/{orderID}", h.apiGetMission)
@@ -273,6 +275,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				r.Post("/orders/terminate", h.apiTerminateOrder)
 				r.Post("/orders/priority", h.apiSetOrderPriority)
 				r.Post("/orders/spot", h.apiSpotOrderSubmit)
+				r.Post("/dispatch/clear-anomaly", h.apiClearTransitAnomaly)
 
 				// Outbox & recovery
 				r.Post("/outbox/replay", h.apiReplayOutbox)

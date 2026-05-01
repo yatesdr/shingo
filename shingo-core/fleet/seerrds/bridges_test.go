@@ -20,6 +20,13 @@ type fakeTrackerEmitter struct {
 	robotID       string
 	detail        string
 	snapshot      *fleet.OrderSnapshot
+
+	blockCalls    int
+	blockOrderID  int64
+	blockVendorID string
+	blockID       string
+	blockLocation string
+	blockBinTask  string
 }
 
 func (f *fakeTrackerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *fleet.OrderSnapshot) {
@@ -31,6 +38,15 @@ func (f *fakeTrackerEmitter) EmitOrderStatusChanged(orderID int64, vendorOrderID
 	f.robotID = robotID
 	f.detail = detail
 	f.snapshot = snapshot
+}
+
+func (f *fakeTrackerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string) {
+	f.blockCalls++
+	f.blockOrderID = orderID
+	f.blockVendorID = vendorOrderID
+	f.blockID = blockID
+	f.blockLocation = location
+	f.blockBinTask = binTask
 }
 
 // TestEmitterBridge_ForwardsArgsAndMapsSnapshot verifies the bridge passes

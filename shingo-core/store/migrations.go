@@ -73,6 +73,8 @@ func (db *DB) runVersionedMigrations() error {
 		{12, "fix payload_manifest FK to reference payloads instead of blueprints", db.v12FixPayloadManifestFK},
 		{13, "fix node_payloads FK to reference payloads instead of blueprints", db.v13FixNodePayloadsFK},
 		{14, "add process_node column to orders", db.v14OrderProcessNode},
+		{15, "add bin transit synthetic node and bins.anomaly_at", db.v15BinTransitState},
+		{16, "add queue_reason column to orders", db.v16OrderQueueReason},
 	}
 
 	for _, m := range migrations {
@@ -450,6 +452,67 @@ func (db *DB) v14OrderProcessNode() error {
 		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN process_node TEXT NOT NULL DEFAULT ''`)
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// v16OrderQueueReason is Phase 4 of the bin-transit-state project. Adds
+// `orders.queue_reason TEXT NOT NULL DEFAULT ''` so queue-on-capacity
+// failures can record the blocking node, surfaced through order-status
+// responses. Cleared on successful dispatch.
+func (db *DB) v16OrderQueueReason() error {
+	if !schema.ColumnExists(db.DB, "orders", "queue_reason") {
+		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN queue_reason TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// v15BinTransitState is Phase 1 of the bin-transit-state project. Two
+// changes that together let bins move into a logical "in flight" state
+// the moment a robot picks them up, freeing their source slot:
+//
+//  1. A single global synthetic node `_TRANSIT` (is_synthetic=true) that
+//     bins occupy while the fleet is carrying them. Synthetic so the
+//     existing `is_synthetic = false` filters in FindSourceFIFO,
+//     FindEmptyCompatible, and lane finders auto-exclude in-flight bins
+//     from claim queries — no new predicates needed.
+//
+//  2. `bins.anomaly_at` timestamp column, stamped when an order fails or
+//     cancels while one of its bins is still at `_TRANSIT`. Anomaly =
+//     `node_id = _TRANSIT AND claimed_by IS NULL` (binary, no TTL —
+//     healthy in-flight orders keep claimed_by set).
+func (db *DB) v15BinTransitState() error {
+	// Idempotent: skip if a node named `_TRANSIT` already exists.
+	// But if it exists with the WRONG flags, fail loudly — silently
+	// accepting a hand-seeded `is_synthetic=false` row would let the
+	// bin transit state code believe a synthetic node exists when the
+	// rest of the system (lane queries, occupancy reports) treats it
+	// as a real node, producing the exact data-corruption shape the
+	// synthetic flag is meant to prevent.
+	var (
+		transitID   int64
+		isSynthetic bool
+	)
+	row := db.QueryRow(`SELECT id, is_synthetic FROM nodes WHERE name = '_TRANSIT'`)
+	if err := row.Scan(&transitID, &isSynthetic); err == nil {
+		if !isSynthetic {
+			return fmt.Errorf("v15 migration: _TRANSIT node id=%d exists with is_synthetic=false; "+
+				"refuse to proceed (manually fix: UPDATE nodes SET is_synthetic=true WHERE id=%d)",
+				transitID, transitID)
+		}
+	} else {
+		if _, err := db.Exec(`INSERT INTO nodes (name, is_synthetic, enabled) VALUES ('_TRANSIT', true, true)`); err != nil {
+			return fmt.Errorf("create _TRANSIT node: %w", err)
+		}
+	}
+
+	if !schema.ColumnExists(db.DB, "bins", "anomaly_at") {
+		if _, err := db.Exec(`ALTER TABLE bins ADD COLUMN anomaly_at TIMESTAMPTZ`); err != nil {
+			return fmt.Errorf("add bins.anomaly_at: %w", err)
 		}
 	}
 	return nil

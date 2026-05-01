@@ -34,8 +34,16 @@ import (
 // Reject strings are diff-stable with the inline loops they replaced so
 // existing log greps and incident postmortems still find the same
 // reason text.
-func claimFirstAvailable(candidates []*bins.Bin, payloadCode string, tryClaim func(b *bins.Bin) error) (*bins.Bin, []string) {
-	var rejects []string
+//
+// raced reports whether any candidate failed in tryClaim — i.e. lost a
+// SQL claimed_by IS NULL race to a concurrent claim. Callers use this
+// to discriminate transient (retry-eligible) from structural (terminal)
+// failures: a structural failure means every candidate was rejected by
+// BinUnavailableReason (payload mismatch, locked, etc.), while a raced
+// failure means at least one candidate looked claimable on read but
+// the write lost — the next scanner tick can succeed without operator
+// intervention.
+func claimFirstAvailable(candidates []*bins.Bin, payloadCode string, tryClaim func(b *bins.Bin) error) (picked *bins.Bin, rejects []string, raced bool) {
 	for _, b := range candidates {
 		if reason := binresolver.BinUnavailableReason(b, payloadCode); reason != "" {
 			rejects = append(rejects, fmt.Sprintf("bin=%d (%s): %s", b.ID, b.Label, reason))
@@ -43,9 +51,10 @@ func claimFirstAvailable(candidates []*bins.Bin, payloadCode string, tryClaim fu
 		}
 		if err := tryClaim(b); err != nil {
 			rejects = append(rejects, fmt.Sprintf("bin=%d (%s): ClaimForDispatch failed: %v", b.ID, b.Label, err))
+			raced = true
 			continue
 		}
-		return b, rejects
+		return b, rejects, raced
 	}
-	return nil, rejects
+	return nil, rejects, raced
 }

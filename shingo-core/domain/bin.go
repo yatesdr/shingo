@@ -31,6 +31,7 @@ type Bin struct {
 	LastCountedAt     *time.Time `json:"last_counted_at,omitempty"`
 	LastCountedBy     string     `json:"last_counted_by"`
 	LoadedAt          *time.Time `json:"loaded_at,omitempty"`
+	AnomalyAt         *time.Time `json:"anomaly_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
 	// Joined fields

@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -14,7 +15,28 @@ import (
 	"shingocore/store/orders"
 )
 
-// HandleComplexOrderRequest processes a multi-step transport order from edge.
+// HandleComplexOrderRequest processes a multi-step transport order from
+// edge. Phase 4b of bin-transit-state moved this from "dispatch
+// synchronously" to "queue-then-let-scanner-dispatch" so that the
+// dropoff-capacity gate in fulfillment.Scanner.tryFulfill is the single
+// sync point for capacity decisions across fresh-intake AND queue-
+// replay paths. See dispatch/capacity.go for the rationale (race
+// between two concurrent fresh intakes + scanner targeting the same
+// dropoff would otherwise have a TOCTOU window).
+//
+// Flow:
+//   1. Validate + resolve steps.
+//   2. Create order with status=queued (was: pending + immediate dispatch).
+//   3. Ack to edge.
+//   4. Emit EventOrderQueued — scanner subscribes and runs immediately.
+//      Scanner.tryFulfill calls Dispatcher.DispatchPreparedComplex when
+//      capacity is green; leaves it queued otherwise.
+//
+// The latency cost on the happy path is ~milliseconds (event-driven
+// scanner trigger, runs synchronously on the emitter goroutine).
+// Complex orders briefly transition through `queued` status even when
+// capacity is fine; consumers that only watch terminal states are
+// unaffected.
 func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protocol.ComplexOrderRequest) {
 	stationID := env.Src.Station
 	d.dbg("complex order request: station=%s uuid=%s steps=%d", stationID, p.OrderUUID, len(p.Steps))
@@ -24,10 +46,13 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 
-	// Resolve payload template
 	payloadCode := p.PayloadCode
 
-	// Resolve steps: validate nodes and resolve synthetic groups
+	// Resolve steps up-front — validation must fail synchronously so the
+	// edge gets an immediate error rather than a queued order that will
+	// fail later. Storing resolved steps on the order also means the
+	// scanner replay doesn't have to re-resolve (NGRP children may shift
+	// between intake and dispatch).
 	resolvedSteps, err := d.resolveComplexSteps(p.Steps, payloadCode, env, p.OrderUUID)
 	if err != nil {
 		return // error already sent to edge
@@ -39,15 +64,13 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		return
 	}
 
-	// Determine pickup and delivery from first and last non-wait steps
 	sourceNode, deliveryNode := extractEndpoints(resolvedSteps)
 
-	// Create order record
 	order := &orders.Order{
 		EdgeUUID:     p.OrderUUID,
 		StationID:    stationID,
 		OrderType:    OrderTypeComplex,
-		Status:       StatusPending,
+		Status:       StatusQueued, // status-first queueing — scanner picks it up
 		Quantity:     p.Quantity,
 		Priority:     p.Priority,
 		PayloadDesc:  p.PayloadDesc,
@@ -62,63 +85,98 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
 		return
 	}
-	if err := d.lifecycle.MarkPending(order, "complex order received"); err != nil {
-		log.Printf("dispatch: mark complex order %d pending: %v", order.ID, err)
-	}
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
 
-	// Claim bins at pickup nodes so they are protected from poaching
-	// while the robot is en route. This closes the gap where complex orders
-	// bypassed the ClaimBin call that simple orders make during planning.
-	if err := d.claimComplexBins(order, resolvedSteps, payloadCode, p.RemainingUOP); err != nil {
-		d.failOrder(order, env, "no_bin", err.Error())
-		return
+	// Ack to edge before triggering the scanner so the edge's order-table
+	// row exists when the dispatched-event fires (if scanner dispatches
+	// synchronously, the edge needs to have already recorded the order ID).
+	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
+
+	// EventOrderQueued is the scanner trigger — wired in engine/wiring.go.
+	// Scanner.RunOnce is invoked synchronously on this goroutine via the
+	// EventBus; if capacity is green and bins claimable, dispatch happens
+	// before this function returns. Otherwise the order sits queued with
+	// queue_reason set to the blocking signal.
+	d.emitter.EmitOrderQueued(order.ID, order.EdgeUUID, stationID, payloadCode)
+}
+
+// DispatchPreparedComplex performs the side-effecting tail of complex-
+// order dispatch: claim bins per pickup step, transition the order
+// queued → sourcing, send blocks to the fleet, transition → dispatched.
+//
+// Idempotent prerequisites: the order must have StepsJSON populated
+// (intake side stores it on creation) and be in StatusQueued. Caller
+// is responsible for the capacity gate — this method assumes green-
+// light and proceeds with the atomic claim + dispatch.
+//
+// Called from:
+//   - fulfillment.Scanner.tryFulfill on EventOrderQueued (fresh intake
+//     just called HandleComplexOrderRequest)
+//   - fulfillment.Scanner.tryFulfill on EventBinUpdated /
+//     EventBinEnteredTransit / EventOrderCompleted etc. (slot vacancy
+//     unblocks a previously-blocked order)
+//
+// Errors land on lifecycle.Fail — the order moves to terminal `failed`
+// rather than back to queued, since these are unrecoverable from the
+// scanner's perspective (steps unparseable, bins unavailable, fleet
+// rejects).
+func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
+	var resolvedSteps []resolvedStep
+	if err := json.Unmarshal([]byte(order.StepsJSON), &resolvedSteps); err != nil {
+		d.failOrderInternal(order, "invalid_steps", fmt.Sprintf("parse stored steps: %v", err))
+		return err
 	}
 
-	// Split steps at the first "wait" action
-	preWait, hasWait := splitAtWait(resolvedSteps)
+	// Claim bins at pickup nodes. RemainingUOP is intentionally nil here
+	// — Edge's `CreateComplexOrder` doesn't thread it through at intake,
+	// and the operator's release-time RemainingUOP arrives via
+	// HandleOrderRelease. If a future Edge starts sending RemainingUOP at
+	// intake we'd persist it on the order row to recover here.
+	if err := d.claimComplexBins(order, resolvedSteps, order.PayloadCode, nil); err != nil {
+		// claim_failed = transient race loss. Don't fail the order;
+		// instead set queue_reason so scanner replays on the next tick
+		// (the winning order will release the bin via completion or
+		// release, freeing it for this order). no_bin and other codes
+		// are terminal.
+		var pe *planningError
+		if errors.As(err, &pe) && pe.Code == "claim_failed" {
+			if serr := d.db.SetOrderQueueReason(order.ID, "claim_failed"); serr != nil {
+				log.Printf("dispatch: set queue_reason claim_failed for order %d: %v", order.ID, serr)
+			}
+			d.dbg("complex: order %d held in queue on claim_failed: %s", order.ID, pe.Detail)
+			return err
+		}
+		d.failOrderInternal(order, "no_bin", err.Error())
+		return err
+	}
 
-	// Build RDS blocks for pre-wait steps
+	preWait, hasWait := splitAtWait(resolvedSteps)
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 	blocks := stepsToBlocks(vendorOrderID, preWait, 0)
 
 	if len(blocks) == 0 {
-		d.failOrder(order, env, "invalid_steps", "no actionable steps before wait")
-		return
+		d.failOrderInternal(order, "invalid_steps", "no actionable steps before wait")
+		return fmt.Errorf("no actionable blocks")
 	}
 
-	if err := d.lifecycle.MoveToSourcing(order, "dispatcher", "resolving complex steps"); err != nil {
+	if err := d.lifecycle.MoveToSourcing(order, "scanner", "complex order ready to dispatch"); err != nil {
 		log.Printf("dispatch: complex order %d → sourcing: %v", order.ID, err)
 	}
 
-	if hasWait {
-		// Incremental order: send initial blocks with complete=false
-		req := fleet.StagedOrderRequest{
-			OrderID:    vendorOrderID,
-			ExternalID: order.EdgeUUID,
-			Blocks:     blocks,
-			Priority:   order.Priority,
-		}
-		d.dbg("complex: creating staged order %s with %d initial blocks", vendorOrderID, len(blocks))
-		if _, err := d.backend.CreateStagedOrder(req); err != nil {
-			log.Printf("dispatch: fleet create staged order failed: %v", err)
-			d.failOrder(order, env, "fleet_failed", err.Error())
-			return
-		}
-	} else {
-		// No wait: send all blocks as a complete order
-		req := fleet.StagedOrderRequest{
-			OrderID:    vendorOrderID,
-			ExternalID: order.EdgeUUID,
-			Blocks:     blocks,
-			Priority:   order.Priority,
-		}
-		if _, err := d.backend.CreateStagedOrder(req); err != nil {
-			log.Printf("dispatch: fleet create order failed: %v", err)
-			d.failOrder(order, env, "fleet_failed", err.Error())
-			return
-		}
-		// Mark complete immediately (no more blocks)
+	req := fleet.StagedOrderRequest{
+		OrderID:    vendorOrderID,
+		ExternalID: order.EdgeUUID,
+		Blocks:     blocks,
+		Priority:   order.Priority,
+	}
+	d.dbg("complex: creating staged order %s with %d initial blocks (hasWait=%v)", vendorOrderID, len(blocks), hasWait)
+	if _, err := d.backend.CreateStagedOrder(req); err != nil {
+		log.Printf("dispatch: fleet create staged order failed: %v", err)
+		d.failOrderInternal(order, "fleet_failed", err.Error())
+		return err
+	}
+	if !hasWait {
+		// No wait — fleet can complete the order immediately.
 		if err := d.backend.ReleaseOrder(vendorOrderID, nil, true); err != nil {
 			log.Printf("dispatch: fleet mark complete failed: %v", err)
 		}
@@ -128,11 +186,29 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
 		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
 	}
-	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
+	if err := d.lifecycle.Dispatch(order, vendorOrderID, "scanner"); err != nil {
 		log.Printf("dispatch: complex order %d → dispatched: %v", order.ID, err)
 	}
-	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode, deliveryNode)
-	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode)
+	// Successful dispatch — clear any stale queue_reason from a prior
+	// blocked replay attempt.
+	if order.QueueReason != "" {
+		if err := d.db.SetOrderQueueReason(order.ID, ""); err != nil {
+			log.Printf("dispatch: clear queue_reason for order %d: %v", order.ID, err)
+		}
+	}
+	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, order.SourceNode, order.DeliveryNode)
+	return nil
+}
+
+// failOrderInternal is the scanner-path failure helper. Same as
+// failOrder but doesn't take an envelope (no edge-bound reply — the
+// edge already has the queued status from intake; it'll learn about
+// the failure via EventOrderFailed → edge_handler.HandleOrderError).
+func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string) {
+	if err := d.lifecycle.Fail(order, order.StationID, code, detail); err != nil {
+		log.Printf("dispatch: fail order %d: %v", order.ID, err)
+	}
+	d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, code, detail)
 }
 
 // HandleOrderRelease processes a release request for a staged (dwelling) order.
@@ -296,23 +372,52 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 		order.ID, len(blocks), order.WaitIndex, complete)
 }
 
-// findFallbackBinAtSource locates the bin currently at the order's line
-// node when order.BinID is nil at release time. Returns (binID, true) on
-// success.
+// findFallbackBinAtSource locates a bin to manifest-sync when the
+// caller's order.BinID is nil at release time. Returns (binID, true)
+// on success.
 //
-// Prefers ProcessNode (the line) over SourceNode (the first pickup, which
-// for swap orders is the inbound supermarket — wrong target for release-
-// time manifest sync). Falls back to SourceNode for non-swap orders that
-// don't set ProcessNode.
+// Lookup order:
 //
-// Used by HandleOrderRelease's BinID-nil fallback. Selects the first bin
-// at the lookup node whose payload_code matches the order's payload (so
-// we don't accidentally clear an unrelated bin that happens to share the
-// node — possible at supermarket NGRPs but rare at process nodes). Falls
-// back to "any non-empty bin at the lookup node" if no payload-matching
-// bin exists, since release-time intent is "this evac order's bin needs
-// its manifest synced" and there should only be one bin at the line.
+//  1. **Claim-first** (Phase 3 of bin-transit-state): query bins where
+//     claimed_by = order.ID. The claim is the canonical "this order's
+//     bin(s)" pointer, independent of where the bin physically sits.
+//     Critical under transit semantics — a bin mid-flight has
+//     node_id=_TRANSIT, not its original source, so a node-only lookup
+//     would miss it. Multi-bin orders may return several rows; if
+//     ProcessNode is set we prefer the bin currently at the line node
+//     (the operator's release target), else the first by ID.
+//
+//  2. **Node fallback**: search bins physically at ProcessNode (the
+//     line) or SourceNode (the first pickup) for orders without an
+//     active claim — pre-existing behavior. Selects payload-matching
+//     bin first, then any non-empty bin at the node.
+//
+// Pre-Phase-3 this was node-only and would silently miss bins that
+// claimComplexBins HAD claimed but UpdateOrderBinID failed to persist
+// (DB-write race), and miss any in-transit bin during the rare case
+// where release fires after pickup has already happened.
 func (d *Dispatcher) findFallbackBinAtSource(order *orders.Order) (int64, bool) {
+	// 1) Claim-first.
+	claimed, err := d.db.ListBinsByClaim(order.ID)
+	if err == nil && len(claimed) > 0 {
+		// Multi-bin orders: prefer the bin at ProcessNode (the line —
+		// where the operator's release intent applies). Falls back to
+		// the first by ID if no per-line preference resolves.
+		if order.ProcessNode != "" && len(claimed) > 1 {
+			if procNode, perr := d.db.GetNodeByDotName(order.ProcessNode); perr == nil && procNode != nil {
+				for _, b := range claimed {
+					if b.NodeID != nil && *b.NodeID == procNode.ID {
+						return b.ID, true
+					}
+				}
+			}
+		}
+		return claimed[0].ID, true
+	}
+
+	// 2) Node fallback — only reached when no bin is claimed by this
+	// order at all (claimComplexBins missed entirely, or order is in
+	// a partial-state we can't reason about from claims).
 	lookupNode := order.ProcessNode
 	if lookupNode == "" {
 		lookupNode = order.SourceNode
@@ -653,6 +758,12 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 		claimed     []claimedBin
 		pickupSteps int
 		stepSkips   []pickupSkip
+		// anyRaced reports whether at least one pickup step lost a SQL
+		// claim race (BinUnavailableReason passed but ClaimForDispatch
+		// failed under the WHERE claimed_by IS NULL guard). Used to
+		// discriminate transient (re-queue) from structural (terminal)
+		// failures when no claim succeeded — see #4 in the UOP audit.
+		anyRaced bool
 	)
 
 	for i, s := range steps {
@@ -687,9 +798,12 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 		if s.Node == processNode {
 			stepUOP = remainingUOP
 		}
-		picked, rejects := claimFirstAvailable(bins, payloadCode, func(b *binsstore.Bin) error {
+		picked, rejects, raced := claimFirstAvailable(bins, payloadCode, func(b *binsstore.Bin) error {
 			return d.binManifest.ClaimForDispatch(b.ID, order.ID, stepUOP)
 		})
+		if raced {
+			anyRaced = true
+		}
 		if picked == nil {
 			reason := fmt.Sprintf("no candidate among %d bin(s); rejects: [%s]",
 				len(bins), joinRejects(rejects))
@@ -706,6 +820,13 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 	}
 
 	if len(claimed) == 0 {
+		// Discriminate transient race losses from structural unavailability:
+		// claim_failed is retry-eligible (next scanner tick may win the
+		// race), no_bin is terminal. See #4 in the UOP audit and the
+		// scanner re-queue branch in DispatchPreparedComplex.
+		if anyRaced {
+			return &planningError{Code: "claim_failed", Detail: fmt.Sprintf("lost claim race at all pickup nodes for order %d", order.ID)}
+		}
 		return &planningError{Code: "no_bin", Detail: fmt.Sprintf("no available bin at pickup node(s) for order %d", order.ID)}
 	}
 

@@ -33,7 +33,7 @@ type Bin = domain.Bin
 const BinJoinQuery = `SELECT b.id, b.bin_type_id, b.label, b.description, b.node_id, b.status, b.claimed_by, b.staged_at, b.staged_expires_at,
 	COALESCE(b.payload_code, ''), b.manifest, b.uop_remaining, b.manifest_confirmed,
 	b.locked, b.locked_by, b.locked_at, b.last_counted_at, b.last_counted_by,
-	b.loaded_at, b.created_at, b.updated_at,
+	b.loaded_at, b.anomaly_at, b.created_at, b.updated_at,
 	bt.code, COALESCE(n.name, '')
 	FROM bins b
 	JOIN bin_types bt ON bt.id = b.bin_type_id
@@ -76,7 +76,7 @@ func ScanBin(row interface{ Scan(...any) error }) (*Bin, error) {
 		&b.StagedAt, &b.StagedExpiresAt,
 		&b.PayloadCode, &manifest, &b.UOPRemaining, &b.ManifestConfirmed,
 		&b.Locked, &b.LockedBy, &b.LockedAt, &b.LastCountedAt, &b.LastCountedBy,
-		&b.LoadedAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName)
+		&b.LoadedAt, &b.AnomalyAt, &b.CreatedAt, &b.UpdatedAt, &b.BinTypeCode, &b.NodeName)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +175,40 @@ func CountByNode(db *sql.DB, nodeID int64) (int, error) {
 	return count, err
 }
 
+// ListByClaim returns all non-retired bins claimed by the given order.
+// Used by HandleOrderRelease's fallback when order.BinID is nil — the
+// claim is the canonical "this order's bin(s)" pointer regardless of
+// where the bin physically sits, which is critical under transit
+// semantics where node_id may be _TRANSIT instead of the original
+// source. Multi-bin complex orders return multiple rows in step order.
+func ListByClaim(db *sql.DB, orderID int64) ([]*Bin, error) {
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.claimed_by=$1 AND b.status != 'retired' ORDER BY b.id`, BinJoinQuery), orderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanBins(rows)
+}
+
+// ListAnomalousTransitBins returns bins parked at the synthetic
+// _TRANSIT node with no live order claim. This is the binary anomaly
+// signal under bin-transit-state Phase 5 — a bin physically in flight
+// (or stuck at _TRANSIT) whose owning order has terminated, so it
+// needs operator recovery to be reassigned to a real node.
+//
+// Filters claimed_by IS NULL because a healthy in-flight bin has
+// claimed_by set to its order (only the failure path clears the
+// claim). Filters by node name "_TRANSIT" rather than ID so the query
+// is robust against fresh-DB ID drift.
+func ListAnomalousTransitBins(db *sql.DB) ([]*Bin, error) {
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE b.claimed_by IS NULL AND n.name = '_TRANSIT' AND b.status != 'retired' ORDER BY b.anomaly_at NULLS LAST, b.id`, BinJoinQuery))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanBins(rows)
+}
+
 // CountByAllNodes returns a map of node_id -> bin count for all nodes that have bins.
 func CountByAllNodes(db *sql.DB) (map[int64]int, error) {
 	rows, err := db.Query(`SELECT node_id, COUNT(*) FROM bins WHERE node_id IS NOT NULL GROUP BY node_id`)
@@ -265,7 +299,15 @@ func Move(db *sql.DB, binID, toNodeID int64) error {
 // is non-empty, this filter correctly treats the bin as NOT available
 // (it has a payload, even without a manifest blob).
 func ListAvailable(db *sql.DB) ([]*Bin, error) {
-	rows, err := db.Query(fmt.Sprintf(`%s WHERE COALESCE(b.payload_code, '') = '' ORDER BY b.id`, BinJoinQuery))
+	// Exclude bins parked at synthetic nodes (notably _TRANSIT). An empty
+	// bin in transit can match COALESCE(payload_code, '') = '' but it is
+	// NOT available — its physical location is mid-flight. Without this
+	// filter, a claim-finding caller could pick an in-flight bin and
+	// double-claim it, the exact failure mode the synthetic node was
+	// introduced to prevent.
+	rows, err := db.Query(fmt.Sprintf(`%s WHERE COALESCE(b.payload_code, '') = ''
+		  AND COALESCE(n.is_synthetic, false) = false
+		ORDER BY b.id`, BinJoinQuery))
 	if err != nil {
 		return nil, err
 	}

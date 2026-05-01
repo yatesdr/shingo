@@ -435,8 +435,12 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 		t.Fatalf("seed drained runtime: %v", err)
 	}
 
+	// DeliveryNode must equal the seeded node's CoreNodeName for the
+	// post-#11 predicate to fire (handleNormalReplenishment skips
+	// orders whose DeliveryNode != process_node CoreNodeName).
+	// Prefix "LSD-IDEMP" → CoreNodeName "LSD-IDEMP-NODE".
 	orderID, err := db.CreateOrder("uuid-idemp", orders.TypeComplex,
-		&nodeID, false, 1, "CONSUME-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "LSD-IDEMP-NODE", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -456,7 +460,7 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	if runtime.RemainingUOP != 100 {
-		t.Errorf("RemainingUOP = %d, want 100 (delivery completion always resets to capacity)",
+		t.Errorf("RemainingUOP = %d, want 100 (delivery completion to process node resets to claim capacity when no BinUOPRemaining snapshot)",
 			runtime.RemainingUOP)
 	}
 }
@@ -612,8 +616,10 @@ func TestHandleUnloaderFullInCompletion_FiresU2(t *testing.T) {
 }
 
 // TestHandleNormalReplenishment_RetrieveStillResets verifies that simple
-// retrieve orders (no release-click prompt) continue to reset UOP at
-// completion — the gate only applies to complex orders.
+// retrieve orders that DELIVER to the process node continue to reset
+// UOP at completion. Post-#11 the predicate also requires DeliveryNode
+// to match the process node's CoreNodeName — see TestRegression_11_*
+// for the negative path (removal-shaped orders).
 func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
@@ -623,8 +629,10 @@ func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 		t.Fatalf("seed runtime: %v", err)
 	}
 
+	// DeliveryNode must equal the seeded node's CoreNodeName for the
+	// post-#11 predicate to fire. Prefix "LSD-RETR" → "LSD-RETR-NODE".
 	orderID, err := db.CreateOrder("uuid-retr", orders.TypeRetrieve,
-		&nodeID, false, 1, "CONSUME-NODE", "", "", "", false, "")
+		&nodeID, false, 1, "LSD-RETR-NODE", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}

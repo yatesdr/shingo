@@ -10,6 +10,7 @@
 package engine
 
 import (
+	"fmt"
 	"time"
 
 	"shingo/protocol"
@@ -113,6 +114,41 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 		sourceNodeID = sourceNode.ID
 	}
 
+	// Claim-based teleport guard (#7): a late-arriving FINISHED for an
+	// order that was meanwhile failed/cancelled (releasing the claim)
+	// or whose bin was reclaimed by a newer order would, without this
+	// guard, move the bin to a stale destination — the same teleport
+	// shape SMN_001 / SMN_002 produced in the completion path. The
+	// completion-time guard at handleOrderCompleted already protects
+	// the safety-net call; this matches the predicate at delivery time.
+	//
+	// Skip the guard for compound order children (ParentOrderID != nil):
+	// a multi-step reshuffle plan intentionally overlaps bin claims —
+	// when CreateCompoundChildren writes claims for all steps in one
+	// transaction, the LAST step's UPDATE wins for any bin that appears
+	// in multiple steps (e.g. an unbury followed by a restock both
+	// touching the same blocker bin). Interim child orders need to move
+	// the bin even though claimed_by points at a sibling child. The
+	// compound dispatcher serializes children sequentially, so the
+	// teleport class this guard prevents (concurrent reclaim) doesn't
+	// apply within a compound family.
+	if order.ParentOrderID == nil {
+		bin, binErr := e.db.GetBin(*order.BinID)
+		if binErr != nil {
+			e.logFn("engine: get bin %d for delivery arrival guard: %v", *order.BinID, binErr)
+			return
+		}
+		if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
+			claimedDesc := "nil"
+			if bin.ClaimedBy != nil {
+				claimedDesc = fmt.Sprintf("%d", *bin.ClaimedBy)
+			}
+			e.logFn("delivery: order=%d bin=%d not claimed by this order (claimed_by=%s) — skipping arrival to avoid teleport",
+				order.ID, *order.BinID, claimedDesc)
+			return
+		}
+	}
+
 	staged, expiresAt := e.resolveNodeStaging(destNode)
 
 	// Note: previously this path forced staged=false for complex orders with
@@ -129,15 +165,18 @@ func (e *Engine) applyBinArrivalForOrder(order *orders.Order) {
 		return
 	}
 
-	bin, binErr := e.db.GetBin(*order.BinID)
-	if binErr != nil {
-		e.logFn("engine: get bin %d for delivery arrival event: %v", *order.BinID, binErr)
+	// Re-read bin for the event payload (post-ApplyArrival state). The
+	// guard's earlier read is pre-arrival; the event needs the new node
+	// and any side-effects from ApplyArrival (e.g. anomaly_at clear).
+	updatedBin, updatedErr := e.db.GetBin(*order.BinID)
+	if updatedErr != nil {
+		e.logFn("engine: get bin %d for delivery arrival event: %v", *order.BinID, updatedErr)
 	}
-	if bin != nil {
+	if updatedBin != nil {
 		e.Events.Emit(Event{Type: EventBinUpdated, Payload: BinUpdatedEvent{
 			Action:      "moved",
-			BinID:       bin.ID,
-			PayloadCode: bin.PayloadCode,
+			BinID:       updatedBin.ID,
+			PayloadCode: updatedBin.PayloadCode,
 			FromNodeID:  sourceNodeID,
 			ToNodeID:    destNode.ID,
 			NodeID:      destNode.ID,
@@ -161,6 +200,33 @@ func (e *Engine) applyMultiBinArrivalForOrder(order *orders.Order, orderBins []*
 	for _, ob := range orderBins {
 		if ob.DestNode == "" {
 			continue
+		}
+		// Claim-based teleport guard (#8): per-bin variant of the same
+		// predicate applyBinArrivalForOrder uses for single-bin orders.
+		// A late-arriving FINISHED on a stale order, or a bin reclaimed
+		// between FINISHED and the engine's processing of it, must NOT
+		// be teleported to the junction-table destination. The
+		// completion-time path (handleMultiBinCompleted) has the same
+		// guard; this matches it at delivery time.
+		//
+		// Compound children (ParentOrderID != nil) skip the guard for
+		// the same overlapping-claim reason documented in
+		// applyBinArrivalForOrder.
+		if order.ParentOrderID == nil {
+			guardBin, err := e.db.GetBin(ob.BinID)
+			if err != nil {
+				e.logFn("engine: order %d bin %d get for delivery guard: %v", order.ID, ob.BinID, err)
+				continue
+			}
+			if guardBin.ClaimedBy == nil || *guardBin.ClaimedBy != order.ID {
+				claimedDesc := "nil"
+				if guardBin.ClaimedBy != nil {
+					claimedDesc = fmt.Sprintf("%d", *guardBin.ClaimedBy)
+				}
+				e.logFn("delivery: order=%d bin=%d not claimed by this order (claimed_by=%s) — skipping multi-bin arrival to avoid teleport",
+					order.ID, ob.BinID, claimedDesc)
+				continue
+			}
 		}
 		destNode, err := e.db.GetNodeByDotName(ob.DestNode)
 		if err != nil {
@@ -263,19 +329,45 @@ func (e *Engine) handleOrderCompleted(ev OrderCompletedEvent) {
 		sourceNodeID = sourceNode.ID
 	}
 
-	// Safety-net invariant: only re-apply this order's arrival if the bin is
-	// STILL at source, meaning handleOrderDelivered's authoritative move never
-	// ran. If the bin has moved at all — to dest (normal post-FINISH state),
-	// or to a third node (re-claimed by a newer order during the FINISH →
-	// CONFIRM window) — we have no business re-applying. The previous guard
-	// only checked "bin at dest", so a re-claimed bin at a third node fell
-	// through and got teleported back to this stale order's destination
-	// (SMN_001 → SMN_002 plant-test failure 2026-04-27). The AutoConfirm
-	// split for evac legs collapses the typical race window, but this guard
-	// codes the actual safety-net invariant directly.
-	if bin.NodeID == nil || sourceNode == nil || *bin.NodeID != sourceNode.ID {
-		e.dbg("completion: bin %d not at source %s — skipping safety-net arrival", *order.BinID, order.SourceNode)
-		return
+	// Safety-net invariant: only re-apply this order's arrival if the bin
+	// is STILL claimed by THIS order. claimed_by is the canonical "this
+	// order owns the bin" pointer; it is cleared atomically in
+	// ApplyArrival (normal post-FINISH state) and in
+	// FailOrderAtomic / CancelOrderAtomic. So:
+	//
+	//   - claimed_by == nil   → ApplyArrival already ran (or order
+	//                           failed/cancelled); arrival happened or
+	//                           is no longer wanted. Skip.
+	//   - claimed_by == other → re-claimed by a newer order during the
+	//                           FINISH → CONFIRM window. Skip — re-
+	//                           applying would clobber the new order
+	//                           (the SMN_001 / SMN_002 teleport bug
+	//                           originally fixed by checking node_id).
+	//   - claimed_by == this  → re-apply. The bin is somewhere
+	//                           (source, _TRANSIT, or stale dest), but
+	//                           it's still ours, and ApplyArrival is
+	//                           idempotent across all of those.
+	//
+	// Pre-Phase-2 this used `bin.NodeID == sourceNode.ID` as a proxy
+	// for "still ours" — true because the bin physically stayed at
+	// source until FINISH. Phase 2 transit semantics break that proxy
+	// (the bin is at _TRANSIT during in-flight, not at source), so the
+	// guard now reads claimed_by directly. Same intent, narrower
+	// invariant — also correctly handles the rare case where the bin
+	// happens to still be at the same source node but has been re-
+	// claimed by another order (which the node-based predicate
+	// would have falsely accepted).
+	//
+	// Compound children (ParentOrderID != nil) skip the guard: the
+	// same multi-step plan that touches a bin in multiple legs claims
+	// it for the LAST leg only, so interim children's safety-net runs
+	// must not check claimed_by. See applyBinArrivalForOrder for the
+	// long-form rationale.
+	if order.ParentOrderID == nil {
+		if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
+			e.dbg("completion: bin %d not claimed by order %d — skipping safety-net arrival", *order.BinID, order.ID)
+			return
+		}
 	}
 
 	// Bin still at source — apply arrival as recovery from a missed FINISH
@@ -334,27 +426,21 @@ func (e *Engine) handleMultiBinCompleted(order *orders.Order, orderBins []*order
 			continue
 		}
 
-		// Safety-net invariant: only re-apply this leg's arrival if the bin
-		// is STILL at this leg's source. If the bin has moved at all (to dest,
-		// or to a third node because a newer order re-claimed it during the
-		// FINISH → CONFIRM window), skip — re-applying would clobber
-		// legitimate state. The previous guard only checked "bin at dest" and
-		// teleported re-claimed bins back. See single-bin path comment for the
-		// SMN_001 / SMN_002 plant-test context.
-		bin, err := e.db.GetBin(ob.BinID)
-		if err != nil {
-			e.logFn("engine: order %d bin %d get for safety-net guard: %v", order.ID, ob.BinID, err)
-			continue
-		}
-		var legSourceNodeID int64
-		if ob.NodeName != "" {
-			if srcNode, srcErr := e.db.GetNodeByDotName(ob.NodeName); srcErr == nil && srcNode != nil {
-				legSourceNodeID = srcNode.ID
+		// Safety-net invariant: only re-apply this leg's arrival if the
+		// bin is STILL claimed by THIS order. Same predicate as the
+		// single-bin path — see the long comment there for the
+		// SMN_001 / Phase 2 transit-semantics rationale. Compound
+		// children skip the guard (overlapping claims by design).
+		if order.ParentOrderID == nil {
+			bin, err := e.db.GetBin(ob.BinID)
+			if err != nil {
+				e.logFn("engine: order %d bin %d get for safety-net guard: %v", order.ID, ob.BinID, err)
+				continue
 			}
-		}
-		if bin.NodeID == nil || legSourceNodeID == 0 || *bin.NodeID != legSourceNodeID {
-			e.dbg("multi-bin completion: bin %d not at source %s — skipping safety-net arrival", ob.BinID, ob.NodeName)
-			continue
+			if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
+				e.dbg("multi-bin completion: bin %d not claimed by order %d — skipping safety-net arrival", ob.BinID, order.ID)
+				continue
+			}
 		}
 
 		staged, expiresAt := e.resolveNodeStaging(destNode)

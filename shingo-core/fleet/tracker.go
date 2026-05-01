@@ -10,8 +10,15 @@ type OrderTracker interface {
 }
 
 // TrackerEmitter receives state transition events from a tracker.
+//
+// EmitBlockCompleted fires when an individual block within an order
+// transitions to FINISHED while the parent order is still mid-flight.
+// This is the per-pickup signal the bin-transit-state design needs.
+// `binTask` carries the vendor's `binTask` field (e.g., "Load",
+// "Unload", "Wait") so the engine handler can route by block kind.
 type TrackerEmitter interface {
 	EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *OrderSnapshot)
+	EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string)
 }
 
 // OrderIDResolver maps vendor order IDs back to ShinGo order IDs.

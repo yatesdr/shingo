@@ -123,6 +123,37 @@ func newTestDispatcher(t *testing.T, db *store.DB, backend fleet.Backend) (*Disp
 	return d, emitter
 }
 
+// submitComplexAndDispatch is the dispatcher-only test harness's
+// stand-in for the production scanner. Phase 4b of bin-transit-state
+// moved complex-order dispatch off the synchronous HandleComplexOrderRequest
+// path: orders are now created in `queued` state and the fulfillment
+// scanner picks them up via EventOrderQueued. Tests that don't wire an
+// engine (i.e., newTestDispatcher) need to drive the dispatch step
+// manually; this helper does both submit and dispatch so test bodies
+// stay focused on what they're asserting.
+//
+// Returns the order after the synchronous dispatch transition. If the
+// order is still queued (capacity blocked), the caller can choose to
+// fail or continue depending on what they're testing.
+func submitComplexAndDispatch(t *testing.T, d *Dispatcher, db *store.DB, env *protocol.Envelope, p *protocol.ComplexOrderRequest) *orders.Order {
+	t.Helper()
+	d.HandleComplexOrderRequest(env, p)
+	o, err := db.GetOrderByUUID(p.OrderUUID)
+	if err != nil {
+		t.Fatalf("get order %s: %v", p.OrderUUID, err)
+	}
+	if o.Status == StatusQueued {
+		if err := d.DispatchPreparedComplex(o); err != nil {
+			t.Fatalf("dispatch prepared complex %s: %v", p.OrderUUID, err)
+		}
+		o, err = db.GetOrderByUUID(p.OrderUUID)
+		if err != nil {
+			t.Fatalf("re-get order after dispatch: %v", err)
+		}
+	}
+	return o
+}
+
 func testEnvelope() *protocol.Envelope {
 	return testdb.Envelope()
 }
