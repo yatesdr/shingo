@@ -1,7 +1,6 @@
 package fulfillment
 
 import (
-	"encoding/json"
 	"errors"
 	"log"
 	"sync"
@@ -162,34 +161,32 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	// Use the fresh copy for all subsequent operations
 	order = current
 
-	// Shared dropoff-capacity gate (Phase 4 of bin-transit-state).
-	// Single sync point for capacity decisions across fresh-intake AND
-	// queue-replay: HandleComplexOrderRequest creates orders as queued
-	// and lets the scanner make the dispatch-or-keep-queued call. The
-	// scanner's scan-mu serializes calls, so two concurrent orders for
-	// the same dropoff can't both pass this gate.
-	// excludeOrderID=0: the order is in `queued` status which the in-
-	// flight count already excludes. No self-collision possible.
+	// Dropoff-capacity gate applies to SIMPLE orders only (retrieve,
+	// move, retrieve_empty). Complex orders bypass entirely — their
+	// resolved step plan is the gate. CheckDropoffCapacity blocks
+	// any order whose destination has a bin currently sitting there,
+	// but in two-robot consume the supply leg's destination (the
+	// line) is by definition occupied by the bin a sibling evac
+	// order is about to remove. Same shape for press-index, single-
+	// robot swap, and any pattern where a complex order coordinates
+	// with the destination's resident bin. Pre-fix the gate ran a
+	// `pickupBeforeDropoffAt` bypass, but that only covered the
+	// single-order swap pattern (same order picks up at the
+	// destination); two-robot supply orders don't pick up at the
+	// line and were left blocked. Plant 2026-05: two-robot supply
+	// stuck queued.
 	//
-	// Skip the gate when a complex order has an earlier pickup at the
-	// same node as its delivery (swap pattern — the slot frees during
-	// execution before the order's own dropoff reuses it). Without
-	// this, a 9-step swap with pickup(line) → ... → dropoff(line)
-	// would block forever on the line being currently occupied by the
-	// very bin the swap is removing.
-	gateNode := order.DeliveryNode
-	if order.OrderType == protocol.OrderTypeComplex && order.StepsJSON != "" {
-		if pickupBeforeDropoffAt(order.StepsJSON, order.DeliveryNode) {
-			gateNode = ""
-		}
-	}
-	if blocked, reason := dispatch.CheckDropoffCapacity(s.db, gateNode, 0); blocked {
-		if order.QueueReason != reason {
-			if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
-				s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
+	// Simple orders keep the gate — single-leg, no choreography, the
+	// gate prevents robot collisions on a shared destination.
+	if order.OrderType != protocol.OrderTypeComplex {
+		if blocked, reason := dispatch.CheckDropoffCapacity(s.db, order.DeliveryNode, 0); blocked {
+			if order.QueueReason != reason {
+				if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
+					s.logFn("fulfillment: set queue_reason for order %d: %v", order.ID, err)
+				}
 			}
+			return false
 		}
-		return false
 	}
 
 	// Type-switch: complex orders flow through the dispatcher's prepared
@@ -363,47 +360,10 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	return true
 }
 
-// pickupBeforeDropoffAt reports whether the complex order's step list
-// contains a pickup at `node` BEFORE any dropoff at the SAME node.
-// The check is per-target-node — steps targeting other nodes are
-// ignored. Swap-shaped choreographies (pickup line, … , dropoff line)
-// are self-balancing at the line: the line is occupied at intake,
-// gets emptied by the pickup mid-order, and is filled again by the
-// order's own dropoff. Capacity gating those at intake would block
-// them forever on the very bin the swap is designed to replace.
-//
-// Renamed from hasEarlierPickup (2026-05) — the prior name suggested
-// "any earlier pickup anywhere," and a code review misread the function
-// as global cross-node tracking. The per-node filter on line 391
-// makes this strictly local: the loop only sees same-`node` steps.
-//
-// stepsJSON is the persisted form of resolvedSteps as stored by
-// dispatch.HandleComplexOrderRequest. Failure to parse → return false
-// (gate runs, fail-safe toward correctness rather than letting
-// malformed input bypass the gate).
-func pickupBeforeDropoffAt(stepsJSON, node string) bool {
-	if stepsJSON == "" || node == "" {
-		return false
-	}
-	var steps []struct {
-		Action string `json:"action"`
-		Node   string `json:"node"`
-	}
-	if err := json.Unmarshal([]byte(stepsJSON), &steps); err != nil {
-		return false
-	}
-	pickupSeen := false
-	for _, s := range steps {
-		if s.Node != node {
-			continue
-		}
-		if s.Action == "pickup" {
-			pickupSeen = true
-			continue
-		}
-		if s.Action == "dropoff" && pickupSeen {
-			return true
-		}
-	}
-	return false
-}
+// pickupBeforeDropoffAt was a swap-pattern bypass for the
+// dropoff-capacity gate. Removed 2026-05 along with the gate's
+// application to complex orders — the bypass only covered single-
+// order swaps (same order picks up at its own delivery), missing
+// two-robot supply where the evac sibling owns the pickup. Complex
+// orders now skip the gate entirely; the step planner is the
+// choreography source of truth.
