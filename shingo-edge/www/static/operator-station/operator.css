@@ -778,27 +778,27 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
+    padding: 24px 28px;
     background: var(--os-header-bg);
     border-bottom: 1px solid var(--os-border);
     border-radius: var(--os-btn-radius);
-    margin-bottom: 12px;
+    margin-bottom: 16px;
 }
 
 .os-board-cards {
     display: grid;
     grid-template-columns: repeat(var(--os-board-cols, 3), 1fr);
-    gap: 12px;
+    gap: 16px;
     flex: 1;
 }
 
 .os-board-card {
-    border-radius: 12px;
-    padding: 20px;
+    border-radius: 14px;
+    padding: 32px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    min-height: 140px;
+    gap: 12px;
+    min-height: 220px;
     transition: background 0.15s, border-color 0.15s;
     cursor: default;
 }
@@ -831,7 +831,7 @@ body {
 }
 
 .os-board-code {
-    font-size: 22px;
+    font-size: 38px;
     font-weight: 700;
     color: #fff;
 }
@@ -844,12 +844,12 @@ body {
 
 .os-board-tag {
     display: inline-block;
-    font-size: 12px;
+    font-size: 22px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    padding: 3px 10px;
-    border-radius: 6px;
+    padding: 6px 16px;
+    border-radius: 8px;
     align-self: flex-start;
 }
 .os-board-tag-delivered { background: #1a5a1a; color: #6f6; }
@@ -859,7 +859,7 @@ body {
 .os-board-tag-nodemand { background: #2a2f3a; color: #889; }
 
 .os-board-detail {
-    font-size: 13px;
+    font-size: 22px;
     color: #999;
     margin-top: auto;
 }
@@ -869,20 +869,45 @@ body {
 .os-board-requestable .os-board-detail { color: #aac; }
 
 .os-board-pos {
-    width: 30px;
-    height: 30px;
+    width: 50px;
+    height: 50px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
-    font-size: 14px;
+    font-size: 22px;
     color: #fff;
     align-self: flex-end;
 }
 .os-board-pos-delivered { background: #2a5a2a; }
 .os-board-pos-transit { background: #5a5a2a; }
 .os-board-pos-queued { background: #3a5a8a; }
+
+/* Bin-loader board mode runs on a 22"+ HMI for a forklift driver. Scale
+   the shared header / footer chrome up so it's legible from the seat. */
+body.os-board-mode-active {
+    --os-header-h: 96px;
+    --os-footer-h: 48px;
+}
+body.os-board-mode-active .os-header-station { font-size: 32px; }
+body.os-board-mode-active .os-header-info { font-size: 22px; }
+body.os-board-mode-active .os-header-btn {
+    padding: 16px 28px;
+    font-size: 22px;
+    min-height: 60px;
+    border-radius: 12px;
+}
+body.os-board-mode-active .os-header-style {
+    padding: 10px 22px;
+    min-height: 60px;
+    max-width: 480px;
+    border-radius: 12px;
+}
+body.os-board-mode-active .os-header-style-label { font-size: 14px; }
+body.os-board-mode-active .os-header-style-value { font-size: 24px; }
+body.os-board-mode-active .os-health-badge { width: 22px; height: 22px; }
+body.os-board-mode-active #os-footer { font-size: 22px; }
 
 /* ===== Responsive: very small screens (≤800px wide, e.g. 800x480) ===== */
 @media (max-width: 800px) {

@@ -43,13 +43,25 @@ export function renderHeader() {
     styleChip.appendChild(styleValue);
     headerActions.appendChild(styleChip);
 
-    if (view.active_changeover) {
-        headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
-    } else {
-        headerActions.appendChild(headerBtn('CHANGEOVER', 'changeover', openChangeoverPicker));
+    // Bin-loader board mode (single manual_swap claim) is operated by a
+    // forklift driver — strip the changeover/cutover buttons. Those flows
+    // belong on a regular operator station, not this view.
+    if (!isBoardMode()) {
+        if (view.active_changeover) {
+            headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
+        } else {
+            headerActions.appendChild(headerBtn('CHANGEOVER', 'changeover', openChangeoverPicker));
+        }
     }
 
     headerActions.appendChild(headerBtn('REFRESH', 'refresh', loadViewRef));
+}
+
+function isBoardMode() {
+    const nodes = claimedNodes();
+    return nodes.length === 1
+        && nodes[0].active_claim
+        && nodes[0].active_claim.swap_mode === 'manual_swap';
 }
 
 function openChangeoverPicker() {
@@ -134,6 +146,8 @@ export function renderGrid() {
     grid.innerHTML = '';
 
     if (nodes.length === 0) {
+        grid.classList.remove('os-board-mode');
+        document.body.classList.remove('os-board-mode-active');
         grid.style.removeProperty('--os-cols');
         grid.style.removeProperty('--os-rows');
         const empty = el('div', { id: 'os-grid-empty', textContent: 'No claimed nodes' });
@@ -147,6 +161,7 @@ export function renderGrid() {
     });
     if (manualSwapNodes.length === 1 && nodes.length === 1) {
         grid.classList.add('os-board-mode');
+        document.body.classList.add('os-board-mode-active');
         grid.style.removeProperty('--os-cols');
         grid.style.removeProperty('--os-rows');
         renderPayloadBoard(manualSwapNodes[0]);
@@ -154,6 +169,7 @@ export function renderGrid() {
     }
 
     grid.classList.remove('os-board-mode');
+    document.body.classList.remove('os-board-mode-active');
     const { cols, rows } = gridDimensions();
     grid.style.setProperty('--os-cols', cols);
     grid.style.setProperty('--os-rows', rows);
@@ -176,14 +192,14 @@ function renderPayloadBoard(entry) {
     var infoBar = el('div', { className: 'os-board-header' });
     infoBar.innerHTML =
         '<div>' +
-            '<div style="font-size:24px;font-weight:700;color:#fff">' + esc(entry.node.name) + ' - ' + roleLabel + '</div>' +
-            '<div style="font-size:13px;color:#888;margin-top:4px">Manual Swap | ' +
+            '<div style="font-size:42px;font-weight:700;color:#fff">' + esc(entry.node.name) + ' - ' + roleLabel + '</div>' +
+            '<div style="font-size:20px;color:#aab;margin-top:6px">Manual Swap | ' +
                 (claim.allowed_payload_codes ? claim.allowed_payload_codes.length : 0) + ' payloads configured</div>' +
         '</div>' +
         '<div style="text-align:right">' +
-            '<div style="font-size:16px;font-weight:600;color:#fff">Bin: ' + esc(binLabel) + '</div>' +
-            (binPayload ? '<div style="font-size:13px;color:#888">' + esc(binPayload) + ' | UOP: ' + remaining + '</div>' : '') +
-            '<div style="display:inline-block;font-size:12px;font-weight:700;padding:4px 12px;border-radius:4px;margin-top:4px;' +
+            '<div style="font-size:28px;font-weight:600;color:#fff">Bin: ' + esc(binLabel) + '</div>' +
+            (binPayload ? '<div style="font-size:20px;color:#aab;margin-top:4px">' + esc(binPayload) + ' | UOP: ' + remaining + '</div>' : '') +
+            '<div style="display:inline-block;font-size:22px;font-weight:700;padding:8px 20px;border-radius:6px;margin-top:8px;' +
                 (hasBin ? (remaining > 0 ? 'background:#1a3a1a;color:#6f6' : 'background:#3a1a1a;color:#f88') : 'background:#2a2a1a;color:#ff6') + '">' +
                 (hasBin ? (remaining > 0 ? 'LOADED' : 'EMPTY') : 'AWAITING BIN') +
             '</div>' +
