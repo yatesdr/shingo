@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 
 	"shingocore/store/schema"
@@ -10,6 +11,10 @@ import (
 // These run BEFORE the baseline DDL because CREATE TABLE IF NOT EXISTS would
 // skip tables whose only divergence from current is column names — leaving the
 // database wedged on the old schema with no way forward.
+//
+// Pre-baseline so we run against the connection pool, not a transaction.
+// Each rename is its own transaction at the DDL level; partial failures
+// are caught by the explicit error return.
 func (db *DB) migrateRenames() error {
 	renames := []struct{ table, oldCol, newCol string }{
 		{"orders", "rds_order_id", "vendor_order_id"},
@@ -48,33 +53,51 @@ func (db *DB) migrate() error {
 
 // runVersionedMigrations runs numbered migrations that are tracked in a
 // schema_migrations table. Each migration runs exactly once.
+//
+// Transactional invariant: each migration's DDL/DML AND the
+// schema_migrations row insert run inside the same transaction. Either
+// both commit or neither does. Pre-2026-05 the version row was inserted
+// in a separate db.Exec after the migration returned, so an ALTER TABLE
+// that committed but a follow-up that errored could leave the version
+// row absent (re-run on next start, fine — migrations are idempotent)
+// AND a buggy `ColumnExists` pre-check that wrongly returned `true`
+// could cause the migration to silently no-op while the version row got
+// inserted (NOT fine — ALN_001-class plant deploy where the column the
+// app expected was missing). The transactional wrap closes both.
+//
+// Migrations now use `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` style
+// where applicable, so PostgreSQL itself enforces idempotency rather
+// than relying on a Go-side ColumnExists check that can lie under
+// connection-pool / search-path edge cases.
 func (db *DB) runVersionedMigrations() error {
-	db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	)`)
+	)`); err != nil {
+		return fmt.Errorf("create schema_migrations: %w", err)
+	}
 
 	migrations := []struct {
 		version int
 		name    string
-		fn      func() error
+		fn      func(tx *sql.Tx) error
 	}{
-		{1, "convert boolean columns to native BOOLEAN", db.v1BooleanColumns},
-		{2, "add depth column to nodes", db.v2DepthColumn},
-		{3, "drop dead columns", db.v3DropDeadColumns},
-		{4, "drop vestigial payload_id from orders", db.v4DropOrderPayloadID},
-		{5, "backfill mission telemetry for completed orders", db.v5MissionTelemetryBackfill},
-		{6, "consolidate legacy migrations", db.v6LegacyConsolidation},
-		{7, "drop vestigial default_manifest_json from payloads", db.v7DropDefaultManifestJSON},
-		{8, "add payload_code column to orders", db.v8OrderPayloadCode},
-		{9, "create order_bins junction table for multi-bin complex orders", db.v9OrderBins},
-		{10, "add wait_index column to orders for multi-wait complex orders", db.v10OrderWaitIndex},
-		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", db.v11FixPayloadBinTypesFK},
-		{12, "fix payload_manifest FK to reference payloads instead of blueprints", db.v12FixPayloadManifestFK},
-		{13, "fix node_payloads FK to reference payloads instead of blueprints", db.v13FixNodePayloadsFK},
-		{14, "add process_node column to orders", db.v14OrderProcessNode},
-		{15, "add bin transit synthetic node and bins.anomaly_at", db.v15BinTransitState},
-		{16, "add queue_reason column to orders", db.v16OrderQueueReason},
+		{1, "convert boolean columns to native BOOLEAN", v1BooleanColumns},
+		{2, "add depth column to nodes", v2DepthColumn},
+		{3, "drop dead columns", v3DropDeadColumns},
+		{4, "drop vestigial payload_id from orders", v4DropOrderPayloadID},
+		{5, "backfill mission telemetry for completed orders", v5MissionTelemetryBackfill},
+		{6, "consolidate legacy migrations", v6LegacyConsolidation},
+		{7, "drop vestigial default_manifest_json from payloads", v7DropDefaultManifestJSON},
+		{8, "add payload_code column to orders", v8OrderPayloadCode},
+		{9, "create order_bins junction table for multi-bin complex orders", v9OrderBins},
+		{10, "add wait_index column to orders for multi-wait complex orders", v10OrderWaitIndex},
+		{11, "fix payload_bin_types FK to reference payloads instead of blueprints", v11FixPayloadBinTypesFK},
+		{12, "fix payload_manifest FK to reference payloads instead of blueprints", v12FixPayloadManifestFK},
+		{13, "fix node_payloads FK to reference payloads instead of blueprints", v13FixNodePayloadsFK},
+		{14, "add process_node column to orders", v14OrderProcessNode},
+		{15, "add bin transit synthetic node and bins.anomaly_at", v15BinTransitState},
+		{16, "add queue_reason column to orders", v16OrderQueueReason},
 	}
 
 	for _, m := range migrations {
@@ -83,16 +106,39 @@ func (db *DB) runVersionedMigrations() error {
 		if exists {
 			continue
 		}
-		if err := m.fn(); err != nil {
-			return fmt.Errorf("migration v%d (%s): %w", m.version, m.name, err)
+		if err := db.runOneMigration(m.version, m.name, m.fn); err != nil {
+			return err
 		}
-		db.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, m.version)
+	}
+	return nil
+}
+
+// runOneMigration wraps a single migration's DDL/DML and its
+// schema_migrations row insert in one transaction. On any error, the
+// transaction rolls back and the migration is re-attempted on the next
+// startup. Migrations are written to be idempotent so re-runs are
+// always safe.
+func (db *DB) runOneMigration(version int, name string, fn func(tx *sql.Tx) error) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migration v%d (%s): begin tx: %w", version, name, err)
+	}
+	defer tx.Rollback() // no-op after Commit
+
+	if err := fn(tx); err != nil {
+		return fmt.Errorf("migration v%d (%s): %w", version, name, err)
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+		return fmt.Errorf("migration v%d (%s): record version: %w", version, name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migration v%d (%s): commit: %w", version, name, err)
 	}
 	return nil
 }
 
 // v1BooleanColumns converts INTEGER boolean columns to native BOOLEAN.
-func (db *DB) v1BooleanColumns() error {
+func v1BooleanColumns(tx *sql.Tx) error {
 	conversions := []struct{ table, column, defVal string }{
 		{"nodes", "is_synthetic", "false"},
 		{"nodes", "enabled", "true"},
@@ -101,36 +147,49 @@ func (db *DB) v1BooleanColumns() error {
 		{"bins", "locked", "false"},
 	}
 	for _, c := range conversions {
-		if !schema.TableExists(db.DB, c.table) || !schema.ColumnExists(db.DB, c.table, c.column) {
+		if !schema.TableExists(tx, c.table) || !schema.ColumnExists(tx, c.table, c.column) {
 			continue
 		}
-		if schema.ColumnType(db.DB, c.table, c.column) == "boolean" {
+		if schema.ColumnType(tx, c.table, c.column) == "boolean" {
 			continue
 		}
-		db.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT`, c.table, c.column))
-		db.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE BOOLEAN USING %s != 0`, c.table, c.column, c.column))
-		db.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s`, c.table, c.column, c.defVal))
+		if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s DROP DEFAULT`, c.table, c.column)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s TYPE BOOLEAN USING %s != 0`, c.table, c.column, c.column)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s`, c.table, c.column, c.defVal)); err != nil {
+			return err
+		}
 	}
-	db.Exec(`DROP INDEX IF EXISTS idx_bins_locked`)
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = true`)
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_bins_locked`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = true`); err != nil {
+		return err
+	}
 	return nil
 }
 
 // v2DepthColumn adds a depth column to nodes and migrates data from node_properties.
-func (db *DB) v2DepthColumn() error {
-	if schema.ColumnExists(db.DB, "nodes", "depth") {
-		return nil
+func v2DepthColumn(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS depth INTEGER`); err != nil {
+		return err
 	}
-	db.Exec(`ALTER TABLE nodes ADD COLUMN depth INTEGER`)
-	db.Exec(`UPDATE nodes SET depth = CAST(np.value AS INTEGER)
+	if _, err := tx.Exec(`UPDATE nodes SET depth = CAST(np.value AS INTEGER)
 		FROM node_properties np
-		WHERE np.node_id = nodes.id AND np.key = 'depth'`)
-	db.Exec(`DELETE FROM node_properties WHERE key = 'depth'`)
+		WHERE np.node_id = nodes.id AND np.key = 'depth' AND nodes.depth IS NULL`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM node_properties WHERE key = 'depth'`); err != nil {
+		return err
+	}
 	return nil
 }
 
 // v3DropDeadColumns removes columns that are no longer used.
-func (db *DB) v3DropDeadColumns() error {
+func v3DropDeadColumns(tx *sql.Tx) error {
 	drops := []struct{ table, column string }{
 		{"orders", "source_node_id"},
 		{"orders", "dest_node_id"},
@@ -138,102 +197,119 @@ func (db *DB) v3DropDeadColumns() error {
 		{"edge_registry", "factory_id"},
 	}
 	for _, d := range drops {
-		if schema.ColumnExists(db.DB, d.table, d.column) {
-			db.Exec(fmt.Sprintf(`ALTER TABLE %s DROP COLUMN IF EXISTS %s`, d.table, d.column))
+		if !schema.TableExists(tx, d.table) {
+			continue
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE %s DROP COLUMN IF EXISTS %s`, d.table, d.column)); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
 // v4DropOrderPayloadID removes the vestigial payload_id column from orders.
-// Orders now reference bins via bin_id; the payload template is accessed through
-// the bin's payload_code field.
-func (db *DB) v4DropOrderPayloadID() error {
-	if schema.ColumnExists(db.DB, "orders", "payload_id") {
-		db.Exec(`ALTER TABLE orders DROP COLUMN IF EXISTS payload_id`)
-	}
-	return nil
+func v4DropOrderPayloadID(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE orders DROP COLUMN IF EXISTS payload_id`)
+	return err
 }
 
-// v7DropDefaultManifestJSON removes the vestigial default_manifest_json column
-// from payloads. Manifest templates are stored in the normalized payload_manifest
-// table; this denormalized blob was never read at runtime.
-func (db *DB) v7DropDefaultManifestJSON() error {
-	if schema.ColumnExists(db.DB, "payloads", "default_manifest_json") {
-		db.Exec(`ALTER TABLE payloads DROP COLUMN default_manifest_json`)
-	}
-	return nil
+// v7DropDefaultManifestJSON removes the vestigial default_manifest_json column.
+func v7DropDefaultManifestJSON(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE payloads DROP COLUMN IF EXISTS default_manifest_json`)
+	return err
 }
 
 // v6LegacyConsolidation runs all legacy (previously unversioned) migrations once.
 // Each sub-migration is idempotent to handle databases of any age.
-func (db *DB) v6LegacyConsolidation() error {
-	if err := db.migrateNodeTypes(); err != nil {
+func v6LegacyConsolidation(tx *sql.Tx) error {
+	if err := migrateNodeTypes(tx); err != nil {
 		return fmt.Errorf("node types: %w", err)
 	}
-	db.migrateShallowLanes()
-	db.migrateVendorLocation()
-	db.migrateIsSynthetic()
-	db.migrateDropCapacity()
-	db.migrateDropNodeType()
-	db.migrateCMSTransactions()
-	db.migrateStepsJSON()
-	db.migrateBinClaiming()
-	db.migrateDeliveryNodeIndex()
-	db.migrateBinsCommandCenter()
+	if err := migrateShallowLanes(tx); err != nil {
+		return fmt.Errorf("shallow lanes: %w", err)
+	}
+	if err := migrateVendorLocation(tx); err != nil {
+		return fmt.Errorf("vendor location: %w", err)
+	}
+	if err := migrateIsSynthetic(tx); err != nil {
+		return fmt.Errorf("is_synthetic: %w", err)
+	}
+	if err := migrateDropCapacity(tx); err != nil {
+		return fmt.Errorf("drop capacity: %w", err)
+	}
+	if err := migrateDropNodeType(tx); err != nil {
+		return fmt.Errorf("drop node_type: %w", err)
+	}
+	if err := migrateCMSTransactions(tx); err != nil {
+		return fmt.Errorf("cms transactions: %w", err)
+	}
+	if err := migrateStepsJSON(tx); err != nil {
+		return fmt.Errorf("steps_json: %w", err)
+	}
+	if err := migrateBinClaiming(tx); err != nil {
+		return fmt.Errorf("bin claiming: %w", err)
+	}
+	if err := migrateDeliveryNodeIndex(tx); err != nil {
+		return fmt.Errorf("delivery node index: %w", err)
+	}
+	if err := migrateBinsCommandCenter(tx); err != nil {
+		return fmt.Errorf("bins command center: %w", err)
+	}
 	return nil
 }
 
 // --- Legacy migrations (idempotent, retained for v6 consolidation) ---
 
-func (db *DB) migrateStepsJSON() {
-	if schema.ColumnExists(db.DB, "orders", "steps_json") {
-		return
-	}
-	db.Exec(`ALTER TABLE orders ADD COLUMN steps_json TEXT NOT NULL DEFAULT ''`)
+func migrateStepsJSON(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS steps_json TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
-func (db *DB) migrateVendorLocation() {
-	if !schema.ColumnExists(db.DB, "nodes", "vendor_location") {
-		return
+func migrateVendorLocation(tx *sql.Tx) error {
+	if !schema.ColumnExists(tx, "nodes", "vendor_location") {
+		return nil
 	}
-	db.Exec(`UPDATE nodes SET name = vendor_location WHERE (name = '' OR name IS NULL) AND vendor_location != ''`)
-	db.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS vendor_location`)
+	if _, err := tx.Exec(`UPDATE nodes SET name = vendor_location WHERE (name = '' OR name IS NULL) AND vendor_location != ''`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS vendor_location`)
+	return err
 }
 
-func (db *DB) migrateIsSynthetic() {
-	if !schema.ColumnExists(db.DB, "nodes", "is_synthetic") {
-		db.Exec(`ALTER TABLE nodes ADD COLUMN is_synthetic BOOLEAN NOT NULL DEFAULT false`)
+func migrateIsSynthetic(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS is_synthetic BOOLEAN NOT NULL DEFAULT false`); err != nil {
+		return err
 	}
-	db.Exec(`UPDATE nodes SET is_synthetic = true WHERE node_type_id IN (SELECT id FROM node_types WHERE is_synthetic = true) AND is_synthetic = false`)
+	_, err := tx.Exec(`UPDATE nodes SET is_synthetic = true WHERE node_type_id IN (SELECT id FROM node_types WHERE is_synthetic = true) AND is_synthetic = false`)
+	return err
 }
 
-func (db *DB) migrateDropCapacity() {
-	if !schema.ColumnExists(db.DB, "nodes", "capacity") {
-		return
-	}
-	db.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS capacity`)
+func migrateDropCapacity(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS capacity`)
+	return err
 }
 
-func (db *DB) migrateDropNodeType() {
-	if !schema.ColumnExists(db.DB, "nodes", "node_type") {
-		return
-	}
-	db.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS node_type`)
+func migrateDropNodeType(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE nodes DROP COLUMN IF EXISTS node_type`)
+	return err
 }
 
-func (db *DB) migrateCMSTransactions() {
-	if !schema.TableExists(db.DB, "cms_transactions") {
-		return
+func migrateCMSTransactions(tx *sql.Tx) error {
+	if !schema.TableExists(tx, "cms_transactions") {
+		return nil
 	}
-	if schema.ColumnExists(db.DB, "cms_transactions", "txn_type") {
-		return
+	if schema.ColumnExists(tx, "cms_transactions", "txn_type") {
+		return nil
 	}
-	if schema.ColumnExists(db.DB, "cms_transactions", "direction") {
-		db.Exec(`ALTER TABLE cms_transactions RENAME COLUMN direction TO txn_type`)
+	if schema.ColumnExists(tx, "cms_transactions", "direction") {
+		if _, err := tx.Exec(`ALTER TABLE cms_transactions RENAME COLUMN direction TO txn_type`); err != nil {
+			return err
+		}
 	}
-	if schema.ColumnExists(db.DB, "cms_transactions", "quantity") {
-		db.Exec(`ALTER TABLE cms_transactions RENAME COLUMN quantity TO delta`)
+	if schema.ColumnExists(tx, "cms_transactions", "quantity") {
+		if _, err := tx.Exec(`ALTER TABLE cms_transactions RENAME COLUMN quantity TO delta`); err != nil {
+			return err
+		}
 	}
 	newCols := []struct{ name, def string }{
 		{"qty_before", "INTEGER NOT NULL DEFAULT 0"},
@@ -241,26 +317,27 @@ func (db *DB) migrateCMSTransactions() {
 		{"bin_label", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, c := range newCols {
-		if !schema.ColumnExists(db.DB, "cms_transactions", c.name) {
-			db.Exec(fmt.Sprintf(`ALTER TABLE cms_transactions ADD COLUMN %s %s`, c.name, c.def))
+		if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE cms_transactions ADD COLUMN IF NOT EXISTS %s %s`, c.name, c.def)); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
-func (db *DB) migrateBinClaiming() {
-	if !schema.ColumnExists(db.DB, "bins", "claimed_by") {
-		db.Exec(`ALTER TABLE bins ADD COLUMN claimed_by BIGINT REFERENCES orders(id)`)
+func migrateBinClaiming(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS claimed_by BIGINT REFERENCES orders(id)`); err != nil {
+		return err
 	}
-	if !schema.ColumnExists(db.DB, "orders", "bin_id") {
-		db.Exec(`ALTER TABLE orders ADD COLUMN bin_id BIGINT REFERENCES bins(id)`)
-	}
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS bin_id BIGINT REFERENCES bins(id)`)
+	return err
 }
 
-func (db *DB) migrateDeliveryNodeIndex() {
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node)`)
+func migrateDeliveryNodeIndex(tx *sql.Tx) error {
+	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_orders_delivery_node ON orders(delivery_node)`)
+	return err
 }
 
-func (db *DB) migrateBinsCommandCenter() {
+func migrateBinsCommandCenter(tx *sql.Tx) error {
 	cols := []struct{ name, def string }{
 		{"locked", "BOOLEAN NOT NULL DEFAULT false"},
 		{"locked_by", "TEXT NOT NULL DEFAULT ''"},
@@ -269,25 +346,23 @@ func (db *DB) migrateBinsCommandCenter() {
 		{"last_counted_by", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, c := range cols {
-		if schema.ColumnExists(db.DB, "bins", c.name) {
-			continue
+		if _, err := tx.Exec(fmt.Sprintf(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS %s %s`, c.name, c.def)); err != nil {
+			return err
 		}
-		db.Exec(fmt.Sprintf(`ALTER TABLE bins ADD COLUMN %s %s`, c.name, c.def))
 	}
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = true`)
-	db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_bins_label_unique ON bins(label) WHERE label != ''`)
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_bins_locked ON bins(locked) WHERE locked = true`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_bins_label_unique ON bins(label) WHERE label != ''`)
+	return err
 }
 
-func (db *DB) migrateNodeTypes() error {
-	if !schema.ColumnExists(db.DB, "nodes", "node_type_id") {
-		if _, err := db.Exec(`ALTER TABLE nodes ADD COLUMN node_type_id BIGINT`); err != nil {
-			return fmt.Errorf("add node_type_id: %w", err)
-		}
+func migrateNodeTypes(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS node_type_id BIGINT`); err != nil {
+		return fmt.Errorf("add node_type_id: %w", err)
 	}
-	if !schema.ColumnExists(db.DB, "nodes", "parent_id") {
-		if _, err := db.Exec(`ALTER TABLE nodes ADD COLUMN parent_id BIGINT REFERENCES nodes(id)`); err != nil {
-			return fmt.Errorf("add parent_id: %w", err)
-		}
+	if _, err := tx.Exec(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS parent_id BIGINT REFERENCES nodes(id)`); err != nil {
+		return fmt.Errorf("add parent_id: %w", err)
 	}
 
 	for _, rename := range [][2]string{
@@ -295,42 +370,57 @@ func (db *DB) migrateNodeTypes() error {
 		{"CHG", "CHRG"}, {"OFL", "OVFL"}, {"STN", "STAG"},
 		{"SMKT", "NGRP"},
 	} {
-		db.Exec(`UPDATE node_types SET code=$1 WHERE code=$2`, rename[1], rename[0])
+		if _, err := tx.Exec(`UPDATE node_types SET code=$1 WHERE code=$2`, rename[1], rename[0]); err != nil {
+			return err
+		}
 	}
 
-	db.Exec(`UPDATE nodes SET node_type_id = NULL WHERE node_type_id IN (SELECT id FROM node_types WHERE code = 'STG')`)
-	db.Exec(`DELETE FROM node_types WHERE code = 'STG'`)
+	if _, err := tx.Exec(`UPDATE nodes SET node_type_id = NULL WHERE node_type_id IN (SELECT id FROM node_types WHERE code = 'STG')`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM node_types WHERE code = 'STG'`); err != nil {
+		return err
+	}
 
 	seeds := []struct{ code, name, desc string }{
 		{"LANE", "Lane", "Lane (groups depth-ordered slots)"},
 		{"NGRP", "Node Group", "Node group (synthetic parent for lanes and direct nodes)"},
 	}
 	for _, s := range seeds {
-		db.Exec(`INSERT INTO node_types (code, name, description, is_synthetic) VALUES ($1, $2, $3, true) ON CONFLICT (code) DO NOTHING`,
-			s.code, s.name, s.desc)
+		if _, err := tx.Exec(`INSERT INTO node_types (code, name, description, is_synthetic) VALUES ($1, $2, $3, true) ON CONFLICT (code) DO NOTHING`,
+			s.code, s.name, s.desc); err != nil {
+			return err
+		}
 	}
 
-	db.Exec(`UPDATE nodes SET node_type_id = NULL WHERE node_type_id IN (SELECT id FROM node_types WHERE is_synthetic = false)`)
+	if _, err := tx.Exec(`UPDATE nodes SET node_type_id = NULL WHERE node_type_id IN (SELECT id FROM node_types WHERE is_synthetic = false)`); err != nil {
+		return err
+	}
 
 	var laneTypeID int64
-	if row := db.QueryRow(`SELECT id FROM node_types WHERE code='LANE'`); row != nil {
-		row.Scan(&laneTypeID)
-	}
+	tx.QueryRow(`SELECT id FROM node_types WHERE code='LANE'`).Scan(&laneTypeID)
 	if laneTypeID > 0 {
-		db.Exec(`UPDATE nodes SET node_type_id = $1 WHERE node_type_id IN (SELECT id FROM node_types WHERE code = 'SHUF')`, laneTypeID)
+		if _, err := tx.Exec(`UPDATE nodes SET node_type_id = $1 WHERE node_type_id IN (SELECT id FROM node_types WHERE code = 'SHUF')`, laneTypeID); err != nil {
+			return err
+		}
 	}
-	db.Exec(`DELETE FROM node_types WHERE code = 'SHUF'`)
+	if _, err := tx.Exec(`DELETE FROM node_types WHERE code = 'SHUF'`); err != nil {
+		return err
+	}
 
 	return nil
 }
 
-func (db *DB) migrateShallowLanes() {
-	rows, err := db.Query(`SELECT np.node_id FROM node_properties np JOIN nodes n ON n.id = np.node_id WHERE np.key = 'shallow' AND np.value = 'true'`)
+// migrateShallowLanes inlines the legacy shallow-lane consolidation as
+// raw SQL so it runs inside the v6 transaction. Pre-2026-05 it called
+// methods on *DB which used the connection pool, escaping the
+// migration's transactional scope.
+func migrateShallowLanes(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT np.node_id FROM node_properties np JOIN nodes n ON n.id = np.node_id WHERE np.key = 'shallow' AND np.value = 'true'`)
 	if err != nil {
-		return
+		// node_properties may not exist on fresh DBs — treat as no-op.
+		return nil
 	}
-	defer rows.Close()
-
 	var shallowLaneIDs []int64
 	for rows.Next() {
 		var id int64
@@ -338,46 +428,55 @@ func (db *DB) migrateShallowLanes() {
 			shallowLaneIDs = append(shallowLaneIDs, id)
 		}
 	}
+	rows.Close()
 
 	for _, laneID := range shallowLaneIDs {
-		lane, err := db.GetNode(laneID)
-		if err != nil || lane.ParentID == nil {
+		var parentID sql.NullInt64
+		if err := tx.QueryRow(`SELECT parent_id FROM nodes WHERE id=$1`, laneID).Scan(&parentID); err != nil {
 			continue
 		}
-		groupID := *lane.ParentID
-
-		children, _ := db.ListChildNodes(laneID)
-		for _, child := range children {
-			if !child.IsSynthetic {
-				db.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW() WHERE id=$2`, groupID, child.ID)
-				db.DeleteNodeProperty(child.ID, "role")
-			}
+		if !parentID.Valid {
+			continue
 		}
-
-		db.Exec(`DELETE FROM node_properties WHERE node_id=$1`, laneID)
-		db.Exec(`DELETE FROM node_stations WHERE node_id=$1`, laneID)
-		db.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, laneID)
-		db.Exec(`DELETE FROM nodes WHERE id=$1`, laneID)
-	}
-}
-
-// v8OrderPayloadCode adds payload_code column to orders for queued order fulfillment.
-func (db *DB) v8OrderPayloadCode() error {
-	if !schema.ColumnExists(db.DB, "orders", "payload_code") {
-		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN payload_code TEXT NOT NULL DEFAULT ''`)
-		return err
+		// Promote non-synthetic children to be direct children of the group.
+		if _, err := tx.Exec(`UPDATE nodes SET parent_id=$1, updated_at=NOW()
+			WHERE parent_id=$2 AND COALESCE(is_synthetic, false) = false`,
+			parentID.Int64, laneID); err != nil {
+			return err
+		}
+		// Clear the role property on those promoted children.
+		if _, err := tx.Exec(`DELETE FROM node_properties
+			WHERE key='role' AND node_id IN (
+				SELECT id FROM nodes WHERE parent_id=$1
+			)`, parentID.Int64); err != nil {
+			return err
+		}
+		// Clean up the lane itself.
+		if _, err := tx.Exec(`DELETE FROM node_properties WHERE node_id=$1`, laneID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM node_stations WHERE node_id=$1`, laneID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM node_payloads WHERE node_id=$1`, laneID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM nodes WHERE id=$1`, laneID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
+// v8OrderPayloadCode adds payload_code column to orders for queued order fulfillment.
+func v8OrderPayloadCode(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
 // v9OrderBins creates the order_bins junction table for multi-bin complex order tracking.
-// Single-bin orders continue using Order.BinID. Multi-pickup complex orders record
-// per-bin destinations so handleOrderCompleted can move each bin to the correct node.
-func (db *DB) v9OrderBins() error {
-	if schema.TableExists(db.DB, "order_bins") {
-		return nil
-	}
-	_, err := db.Exec(`CREATE TABLE order_bins (
+func v9OrderBins(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS order_bins (
 		id          BIGSERIAL PRIMARY KEY,
 		order_id    BIGINT NOT NULL REFERENCES orders(id),
 		bin_id      BIGINT NOT NULL REFERENCES bins(id),
@@ -386,18 +485,19 @@ func (db *DB) v9OrderBins() error {
 		node_name   TEXT NOT NULL,
 		dest_node   TEXT NOT NULL DEFAULT '',
 		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	)`)
-	if err != nil {
+	)`); err != nil {
 		return fmt.Errorf("create order_bins table: %w", err)
 	}
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_order_bins_order ON order_bins(order_id)`)
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_order_bins_bin ON order_bins(bin_id)`)
-	return nil
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_order_bins_order ON order_bins(order_id)`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_order_bins_bin ON order_bins(bin_id)`)
+	return err
 }
 
 // v5MissionTelemetryBackfill creates summary rows for historical completed orders.
-func (db *DB) v5MissionTelemetryBackfill() error {
-	db.Exec(`INSERT INTO mission_telemetry
+func v5MissionTelemetryBackfill(tx *sql.Tx) error {
+	_, err := tx.Exec(`INSERT INTO mission_telemetry
 		(order_id, vendor_order_id, robot_id, station_id, order_type,
 		 source_node, delivery_node, terminal_state,
 		 core_created, core_completed, duration_ms)
@@ -409,66 +509,52 @@ func (db *DB) v5MissionTelemetryBackfill() error {
 		WHERE o.status IN ('confirmed', 'delivered', 'failed', 'cancelled')
 		AND o.vendor_order_id != ''
 		AND NOT EXISTS (SELECT 1 FROM mission_telemetry mt WHERE mt.order_id = o.id)`)
-	return nil
+	return err
 }
 
-// v10OrderWaitIndex adds wait_index column to orders for multi-wait complex orders.
-// Tracks how many wait segments have been released so HandleOrderRelease knows
-// which segment to emit next.
-func (db *DB) v10OrderWaitIndex() error {
-	if !schema.ColumnExists(db.DB, "orders", "wait_index") {
-		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN wait_index INTEGER NOT NULL DEFAULT 0`)
-		return err
-	}
-	return nil
+// v10OrderWaitIndex adds wait_index column to orders.
+func v10OrderWaitIndex(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS wait_index INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 // v11FixPayloadBinTypesFK fixes payload_bin_types.payload_id foreign key.
-// The table was originally created referencing blueprints(id) before the rename
-// to payloads. CREATE TABLE IF NOT EXISTS preserved the stale FK, so inserts
-// fail with FK violations. Drop and recreate the constraint pointing to payloads.
-func (db *DB) v11FixPayloadBinTypesFK() error {
-	return fixPayloadFK(db, "payload_bin_types", "payload_bin_types_payload_id_fkey")
+func v11FixPayloadBinTypesFK(tx *sql.Tx) error {
+	return fixPayloadFK(tx, "payload_bin_types", "payload_bin_types_payload_id_fkey")
 }
 
 // v12FixPayloadManifestFK fixes payload_manifest.payload_id foreign key.
-// Same root cause as v11 — stale FK referencing blueprints instead of payloads.
-func (db *DB) v12FixPayloadManifestFK() error {
-	return fixPayloadFK(db, "payload_manifest", "payload_manifest_payload_id_fkey")
+func v12FixPayloadManifestFK(tx *sql.Tx) error {
+	return fixPayloadFK(tx, "payload_manifest", "payload_manifest_payload_id_fkey")
 }
 
 // v13FixNodePayloadsFK fixes node_payloads.payload_id foreign key.
-// Same root cause as v11/v12 — stale FK referencing blueprints instead of payloads.
-func (db *DB) v13FixNodePayloadsFK() error {
-	return fixPayloadFK(db, "node_payloads", "node_payloads_payload_id_fkey")
+func v13FixNodePayloadsFK(tx *sql.Tx) error {
+	return fixPayloadFK(tx, "node_payloads", "node_payloads_payload_id_fkey")
 }
 
-// v14OrderProcessNode adds the process_node column to orders. Distinct from
-// source_node (first pickup, fleet routing) — process_node names the line
-// node a swap order belongs to so claimComplexBins can pick the line bin
-// for order.BinID and the release-time fallback can locate the right bin.
-func (db *DB) v14OrderProcessNode() error {
-	if !schema.ColumnExists(db.DB, "orders", "process_node") {
-		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN process_node TEXT NOT NULL DEFAULT ''`)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+// v14OrderProcessNode adds the process_node column to orders. Distinct
+// from source_node — process_node names the line node a swap order
+// belongs to so claimComplexBins can pick the line bin for
+// order.BinID and the release-time fallback can locate the right bin.
+//
+// Uses ALTER TABLE ... ADD COLUMN IF NOT EXISTS so PostgreSQL itself
+// enforces idempotency. Pre-2026-05 the migration did a Go-side
+// schema.ColumnExists check then unconditional ALTER ADD COLUMN; if
+// that check returned a stale answer (connection pool / search_path
+// edge case), the migration silently no-op'd while the runner still
+// recorded the version row. The plant ALN_001-class incident traced
+// to this failure mode is what motivated both this DB-level
+// idempotency and the transactional runner above.
+func v14OrderProcessNode(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS process_node TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
-// v16OrderQueueReason is Phase 4 of the bin-transit-state project. Adds
-// `orders.queue_reason TEXT NOT NULL DEFAULT ''` so queue-on-capacity
-// failures can record the blocking node, surfaced through order-status
-// responses. Cleared on successful dispatch.
-func (db *DB) v16OrderQueueReason() error {
-	if !schema.ColumnExists(db.DB, "orders", "queue_reason") {
-		_, err := db.Exec(`ALTER TABLE orders ADD COLUMN queue_reason TEXT NOT NULL DEFAULT ''`)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+// v16OrderQueueReason is Phase 4 of the bin-transit-state project.
+func v16OrderQueueReason(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_reason TEXT NOT NULL DEFAULT ''`)
+	return err
 }
 
 // v15BinTransitState is Phase 1 of the bin-transit-state project. Two
@@ -476,28 +562,22 @@ func (db *DB) v16OrderQueueReason() error {
 // the moment a robot picks them up, freeing their source slot:
 //
 //  1. A single global synthetic node `_TRANSIT` (is_synthetic=true) that
-//     bins occupy while the fleet is carrying them. Synthetic so the
-//     existing `is_synthetic = false` filters in FindSourceFIFO,
-//     FindEmptyCompatible, and lane finders auto-exclude in-flight bins
-//     from claim queries — no new predicates needed.
+//     bins occupy while the fleet is carrying them.
 //
 //  2. `bins.anomaly_at` timestamp column, stamped when an order fails or
-//     cancels while one of its bins is still at `_TRANSIT`. Anomaly =
-//     `node_id = _TRANSIT AND claimed_by IS NULL` (binary, no TTL —
-//     healthy in-flight orders keep claimed_by set).
-func (db *DB) v15BinTransitState() error {
-	// Idempotent: skip if a node named `_TRANSIT` already exists.
-	// But if it exists with the WRONG flags, fail loudly — silently
-	// accepting a hand-seeded `is_synthetic=false` row would let the
-	// bin transit state code believe a synthetic node exists when the
-	// rest of the system (lane queries, occupancy reports) treats it
-	// as a real node, producing the exact data-corruption shape the
-	// synthetic flag is meant to prevent.
+//     cancels while one of its bins is still at `_TRANSIT`.
+func v15BinTransitState(tx *sql.Tx) error {
+	// Idempotent: if a node named `_TRANSIT` already exists with the
+	// correct flag, leave it alone. If it exists with the WRONG flag,
+	// fail loudly — silently accepting a hand-seeded
+	// `is_synthetic=false` row would let the transit-state code
+	// believe a synthetic node exists when the rest of the system
+	// (lane queries, occupancy reports) treats it as a real node.
 	var (
 		transitID   int64
 		isSynthetic bool
 	)
-	row := db.QueryRow(`SELECT id, is_synthetic FROM nodes WHERE name = '_TRANSIT'`)
+	row := tx.QueryRow(`SELECT id, is_synthetic FROM nodes WHERE name = '_TRANSIT'`)
 	if err := row.Scan(&transitID, &isSynthetic); err == nil {
 		if !isSynthetic {
 			return fmt.Errorf("v15 migration: _TRANSIT node id=%d exists with is_synthetic=false; "+
@@ -505,24 +585,22 @@ func (db *DB) v15BinTransitState() error {
 				transitID, transitID)
 		}
 	} else {
-		if _, err := db.Exec(`INSERT INTO nodes (name, is_synthetic, enabled) VALUES ('_TRANSIT', true, true)`); err != nil {
+		if _, err := tx.Exec(`INSERT INTO nodes (name, is_synthetic, enabled) VALUES ('_TRANSIT', true, true)`); err != nil {
 			return fmt.Errorf("create _TRANSIT node: %w", err)
 		}
 	}
 
-	if !schema.ColumnExists(db.DB, "bins", "anomaly_at") {
-		if _, err := db.Exec(`ALTER TABLE bins ADD COLUMN anomaly_at TIMESTAMPTZ`); err != nil {
-			return fmt.Errorf("add bins.anomaly_at: %w", err)
-		}
+	if _, err := tx.Exec(`ALTER TABLE bins ADD COLUMN IF NOT EXISTS anomaly_at TIMESTAMPTZ`); err != nil {
+		return fmt.Errorf("add bins.anomaly_at: %w", err)
 	}
 	return nil
 }
 
 // fixPayloadFK checks if a payload_id FK already references payloads (no-op on fresh DBs)
 // and recreates it if it still points to the old blueprints table.
-func fixPayloadFK(db *DB, table, constraintName string) error {
+func fixPayloadFK(tx *sql.Tx, table, constraintName string) error {
 	var refTable string
-	db.QueryRow(`
+	tx.QueryRow(`
 		SELECT cc.table_name
 		FROM information_schema.table_constraints tc
 		JOIN information_schema.referential_constraints rc ON rc.constraint_name = tc.constraint_name
@@ -532,8 +610,10 @@ func fixPayloadFK(db *DB, table, constraintName string) error {
 	if refTable == "payloads" {
 		return nil
 	}
-	db.Exec(`ALTER TABLE ` + table + ` DROP CONSTRAINT ` + constraintName)
-	_, err := db.Exec(`ALTER TABLE ` + table + ` ADD CONSTRAINT ` + constraintName +
+	if _, err := tx.Exec(`ALTER TABLE ` + table + ` DROP CONSTRAINT IF EXISTS ` + constraintName); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`ALTER TABLE ` + table + ` ADD CONSTRAINT ` + constraintName +
 		` FOREIGN KEY (payload_id) REFERENCES payloads(id) ON DELETE CASCADE`)
 	return err
 }

@@ -9,15 +9,28 @@
 // used by per-version migration funcs to make schema changes
 // idempotent across DBs of any age.
 //
-// All helpers take *sql.DB so they're usable without depending on
-// the outer *store.DB type, keeping the dependency graph one-way:
-// store -> store/schema, never the reverse.
+// Helpers accept the Querier interface so they work equally well
+// with *sql.DB (the connection pool) and *sql.Tx (an in-flight
+// transaction). Migrations run inside a per-version transaction so
+// the migration's DDL and the schema_migrations row insert commit
+// or roll back together — without that, an ALTER TABLE that fails
+// midway can still leave behind a version row that fools the runner
+// into thinking the migration succeeded. (See store.runVersionedMigrations.)
 package schema
 
 import (
 	"database/sql"
 	"fmt"
 )
+
+// Querier is the subset of database/sql methods these helpers need.
+// *sql.DB and *sql.Tx both satisfy it via Go's structural typing,
+// which lets migration code use the same helpers whether it's
+// running against the connection pool or inside a transaction.
+type Querier interface {
+	QueryRow(query string, args ...any) *sql.Row
+	Exec(query string, args ...any) (sql.Result, error)
+}
 
 // Apply executes the baseline DDL, creating all tables and indexes.
 // Every statement uses CREATE ... IF NOT EXISTS, so Apply is safe to
@@ -36,9 +49,9 @@ func Apply(db *sql.DB) error {
 // TableExists reports whether the named table exists in the database's
 // public schema. Returns false on any query error (the table also
 // "doesn't exist" if we can't read information_schema).
-func TableExists(db *sql.DB, table string) bool {
+func TableExists(c Querier, table string) bool {
 	var exists bool
-	db.QueryRow(
+	c.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name=$1)`,
 		table,
 	).Scan(&exists)
@@ -47,9 +60,9 @@ func TableExists(db *sql.DB, table string) bool {
 
 // ColumnExists reports whether the named column exists on the named
 // table. Returns false on any query error or if either name is empty.
-func ColumnExists(db *sql.DB, table, column string) bool {
+func ColumnExists(c Querier, table, column string) bool {
 	var exists bool
-	db.QueryRow(
+	c.QueryRow(
 		`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`,
 		table, column,
 	).Scan(&exists)
@@ -59,9 +72,9 @@ func ColumnExists(db *sql.DB, table, column string) bool {
 // ColumnType returns the SQL data type of the named column (e.g.
 // "boolean", "integer", "text"), or an empty string if the column
 // does not exist or any query error occurs.
-func ColumnType(db *sql.DB, table, column string) string {
+func ColumnType(c Querier, table, column string) string {
 	var dataType string
-	db.QueryRow(
+	c.QueryRow(
 		`SELECT data_type FROM information_schema.columns WHERE table_name=$1 AND column_name=$2`,
 		table, column,
 	).Scan(&dataType)
