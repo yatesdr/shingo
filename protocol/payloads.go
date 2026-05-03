@@ -115,21 +115,45 @@ type OrderUpdate struct {
 
 // OrderDelivered signals fleet delivery complete.
 //
-// BinUOPRemaining snapshots bins.uop_remaining at the moment Core moved
-// the bin to the destination node. Edge stores it on the order and uses
-// it on completion to reset the lineside counter from the bin's actual
-// contents — partial returns from operator-released runouts, fresh fills
-// from produce, etc. Routing the value through this envelope avoids the
-// location-telemetry race against AutoConfirm orders that an HTTP poll
-// back to Core would lose.
-//
-// Single-bin orders only. Nil for multi-bin orders (those don't drive a
-// single lineside-UOP reset) and nil from older Core builds.
+// Item 8 of the bin-as-truth refactor dropped the BinUOPRemaining
+// snapshot field. Pre-Item-8 the snapshot rode through this envelope
+// so Edge could reset the lineside counter from the bin's actual
+// contents on partial returns. Post-Item-8 the runtime cache is the
+// source of truth for "what's in the bin right now"; Edge always
+// resets to claim.UOPCapacity on delivery and the reconciler heals
+// to Core's authoritative value within the next 60s pass. The
+// trade-off — a brief "looks like full bin" UI on partial-back
+// returns until the heal — is SME-accepted.
 type OrderDelivered struct {
-	OrderUUID       string     `json:"order_uuid"`
-	DeliveredAt     time.Time  `json:"delivered_at"`
-	StagedExpireAt  *time.Time `json:"staged_expire_at,omitempty"`
-	BinUOPRemaining *int       `json:"bin_uop_remaining,omitempty"`
+	OrderUUID      string     `json:"order_uuid"`
+	DeliveredAt    time.Time  `json:"delivered_at"`
+	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
+	// BinID carries the bin's Core-side ID so Edge can attribute PLC
+	// tick deltas to the right bin in the Phase 1 bin-as-truth flow.
+	// Nil for multi-bin orders; Phase 1 emits bucket deltas only in
+	// that case and bin attribution waits for the multi-bin handling
+	// refinement. Older Core/Edge builds tolerate either side being
+	// nil.
+	BinID *int64 `json:"bin_id,omitempty"`
+}
+
+// BinPickedUp notifies Edge that a robot has physically picked up a
+// bin from the source location. Item 11 of the bin-as-truth refactor:
+// the SEND PARTIAL BACK flow leaves a partial bin at the line while
+// the cell keeps cycling. PLC ticks during that pickup window must
+// keep attributing to the released bin until the robot actually
+// grabs it. Once picked up, Edge flushes the released bin's delta
+// accumulator and advances the active claim to the next bin.
+//
+// Sent on subject SubjectBinPickedUp. Routed via Core's HandleData.
+// Edge crash during the pickup window is handled by the reconciler:
+// the released bin's count may be biased by a tick or two, accepted
+// per SME (open-items.md Q2'').
+type BinPickedUp struct {
+	OrderUUID  string    `json:"order_uuid"`
+	BinID      int64     `json:"bin_id"`
+	Location   string    `json:"location"`
+	PickedUpAt time.Time `json:"picked_up_at"`
 }
 
 // OrderError signals order failure.
@@ -178,13 +202,87 @@ type ComplexOrderRequest struct {
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
 }
 
+// UOPDispositionKind names the operator's release-time intent. Phase 0c of
+// the UOP bin-as-truth refactor introduces this enum to replace the
+// nil/0/N pointer overload on RemainingUOP. Values map 1:1 to the three
+// release buttons in the operator UI per the SME process map (see
+// shingo-uop-plan-bin-as-truth.md §2.5):
+//
+//   - DispositionPullParts (button: PULL PARTS LINESIDE, RELEASE) — operator
+//     pulled some parts to lineside; bin reduced by sum of captures, lineside
+//     buckets increased. NOT the same as "bin is empty" — Phase 1's delta-
+//     based handler will treat this as a partial decrement, not a wipe.
+//   - DispositionReleasePartial (button: RELEASE PARTIAL) — operator declares
+//     the bin still holds Count parts; bin returns to supermarket as-is with
+//     manifest preserved.
+//   - DispositionReleaseEmpty (button: RELEASE EMPTY) — bin physically empty;
+//     manifest cleared.
+//
+// Wire transition: both this enum and the legacy RemainingUOP pointer ship
+// for one release. Edge populates whichever it knows about; Core prefers the
+// enum when present and falls back to RemainingUOP otherwise. The pointer
+// is removed in Phase 4 cleanup once every Edge in the field is on the new
+// shape.
+type UOPDispositionKind string
+
+const (
+	DispositionPullParts       UOPDispositionKind = "pull_parts"
+	DispositionReleasePartial  UOPDispositionKind = "release_partial"
+	DispositionReleaseEmpty    UOPDispositionKind = "release_empty"
+
+	// DispositionReleaseUnderpack — operator declares the bin is
+	// physically empty even though the system's tracked count is
+	// still positive (bin labeled 1200 actually held 1190; cell
+	// starves at runtime=10). Wire-shape is the same as
+	// DispositionReleaseEmpty (RemainingUOP = &0; manifest cleared
+	// at Core), but the audit row tags as released_underpack so
+	// forensics can trend the missing-inventory pattern. The
+	// before_uop on the audit row carries the system's expected
+	// count at click time; suggested_uop - after_uop = the missing
+	// delta.
+	DispositionReleaseUnderpack UOPDispositionKind = "release_underpack"
+)
+
+// UOPDisposition is the structured release-time disposition that supersedes
+// OrderRelease.RemainingUOP. Count is meaningful only when Kind ==
+// DispositionReleasePartial (the operator-entered "this bin has N left"
+// value); for the other kinds Count is ignored.
+//
+// Captures is meaningful only when Kind == DispositionPullParts. The map
+// is keyed by part number with the per-part captured quantity. Phase 1
+// will route this through LinesideBucketDelta (capture_fill); for Phase 0c
+// the field rides on the wire but Core does not yet act on it.
+//
+// CountSuggested and CapturesSuggested carry the values the system would
+// have shipped without operator intervention — the snapshot from the
+// runtime / manifest at the moment the release modal opened. Core
+// compares them against Count / Captures at release time and writes a
+// bin_uop_audit row whenever they differ, surfacing every operator
+// override (mislabelled bin, upstream overfill, miscount) as forensic
+// evidence. Both fields are populated by UI-aware Edge clients only;
+// legacy clients leave them nil/empty and no override audit is recorded.
+type UOPDisposition struct {
+	Kind              UOPDispositionKind `json:"kind"`
+	Count             int                `json:"count,omitempty"`
+	Captures          map[string]int     `json:"captures,omitempty"`
+	CountSuggested    *int               `json:"count_suggested,omitempty"`
+	CapturesSuggested map[string]int     `json:"captures_suggested,omitempty"`
+}
+
 // OrderRelease signals that a staged (dwelling) order should resume.
 //
-// RemainingUOP late-binds the bin's manifest at the operator's release click:
+// RemainingUOP (legacy shape) late-binds the bin's manifest at the operator's
+// release click:
 //
 //   - nil = no manifest change (legacy/unspecified — preserves pre-release behavior)
 //   - 0   = clear manifest (bin is empty, e.g. NOTHING PULLED disposition)
 //   - >0  = sync UOP, preserve manifest (bin returns as partial, e.g. SEND PARTIAL BACK)
+//
+// Disposition (new shape, Phase 0c) carries the same intent as a typed enum,
+// disambiguating the capture_lineside overload that today serves both
+// "operator pulled parts" and "bin is empty" via the same on-wire value.
+// Phase 0c lands the field; Phase 1 wires Edge to populate it and Core to
+// prefer it. Both shapes are accepted on the wire for one release.
 //
 // Routing on Core mirrors ClaimForDispatch but operates on the already-claimed
 // bin via BinManifestService.SyncOrClearForReleased. See docs on that method.
@@ -194,9 +292,10 @@ type ComplexOrderRequest struct {
 // caller is a system-internal path (wiring completion fallbacks, restore,
 // etc.); Core defaults to "system" in that case.
 type OrderRelease struct {
-	OrderUUID    string `json:"order_uuid"`
-	RemainingUOP *int   `json:"remaining_uop,omitempty"`
-	CalledBy     string `json:"called_by,omitempty"`
+	OrderUUID    string          `json:"order_uuid"`
+	RemainingUOP *int            `json:"remaining_uop,omitempty"`
+	Disposition  *UOPDisposition `json:"disposition,omitempty"`
+	CalledBy     string          `json:"called_by,omitempty"`
 }
 
 // OrderStaged notifies edge that an order is dwelling at a staging node.
@@ -419,4 +518,107 @@ type CountGroupAck struct {
 	Outcome       AckOutcome `json:"outcome"`
 	AckLatencyMs  int64      `json:"ack_latency_ms"`
 	Timestamp     time.Time  `json:"ts"`
+}
+
+// ─── Phase 1 — inventory delta envelopes ─────────────────────────────────
+//
+// Two envelopes carry every count change in the bin-as-truth refactor.
+// Both ride the existing HandleData generic dispatch via subject
+// discriminator (Decision #1 / B1 fix in plan §2.6) — adding new typed
+// methods on MessageHandler would silently no-op through the InboxDedup
+// decorator, so we route on Subject from inside HandleData.
+//
+// Dedup is at the message level via a (station, scope_kind, scope_key,
+// last_seq) table on Core — distinct from inbox dedup which gates
+// at-most-once order processing. SequenceID is monotonically increasing
+// per (station, scope_key); Core ignores any envelope whose SequenceID
+// is ≤ last_seen for its scope.
+
+// BinUOPDeltaReason names the cause of a BinUOPDelta. Stable strings —
+// Core dedup and audit rows reference them, so renames must come with a
+// migration. The set covers every site that mutates bins.uop_remaining
+// in Phase 1+ (cycle count, operator load, partial-back-at-release stay
+// on the legacy direct-write path because they are explicit operator
+// actions, not deltas).
+type BinUOPDeltaReason string
+
+const (
+	// ReasonConsumeTick — a PLC consume tick drained the bin past the
+	// active lineside bucket (or no bucket existed). Always negative
+	// delta. Emitted by drainLinesideFirst's bin-side return.
+	ReasonConsumeTick BinUOPDeltaReason = "consume_tick"
+	// ReasonProduceTick — a PLC produce tick filled the bin. Positive
+	// delta. Emitted by handleProduceTick.
+	ReasonProduceTick BinUOPDeltaReason = "produce_tick"
+	// ReasonABFallthrough — A/B-cycling consume tick attributed to the
+	// inactive node's bin via the runtime-flip path. Always negative.
+	ReasonABFallthrough BinUOPDeltaReason = "ab_fallthrough"
+	// ReasonCaptureReduction — operator pulled parts to lineside on
+	// release. Negative delta equal to the sum of captures. Emitted
+	// by ReleaseOrderWithLineside's capture path.
+	ReasonCaptureReduction BinUOPDeltaReason = "capture_reduction"
+	// ReasonOperatorCorrection — explicit operator-driven correction
+	// path (e.g. cycle-count diff applied as a delta rather than a
+	// direct overwrite). Reserved for Phase 3+; included now so the
+	// schema doesn't churn.
+	ReasonOperatorCorrection BinUOPDeltaReason = "operator_correction"
+)
+
+// LinesideBucketDeltaReason names the cause of a LinesideBucketDelta.
+// Note: NO changeover_deactivate — buckets are location-only (Option C),
+// activation is computed at query time from the active claim, no state
+// to flip. NEVER emitted by manual_swap nodes (no PLC).
+type LinesideBucketDeltaReason string
+
+const (
+	// ReasonCaptureFill — operator pulled parts to lineside on release.
+	// Positive delta. Emitted by ReleaseOrderWithLineside's capture
+	// path, one per (style, part_number) captured.
+	ReasonCaptureFill LinesideBucketDeltaReason = "capture_fill"
+	// ReasonConsumeDrain — PLC consume tick drained the bucket before
+	// reaching the bin. Always negative. Emitted by drainLinesideFirst's
+	// bucket-side return.
+	ReasonConsumeDrain LinesideBucketDeltaReason = "consume_drain"
+)
+
+// BinUOPDelta carries a count change against a specific physical bin.
+// Sent on subject SubjectBinUOPDelta. Core's HandleData routes on
+// subject and applies the delta after dedup against
+// inventory_delta_dedup(station, "bin", strconv(BinID)).
+//
+// PayloadCode lets Core reject mismatched envelopes (a bin's payload
+// shouldn't change underfoot). WindowStart/WindowEnd bracket the
+// accumulator window the delta covers — telemetry and forensics can
+// align deltas to PLC-tick timestamps.
+type BinUOPDelta struct {
+	Station     string            `json:"station"`
+	BinID       int64             `json:"bin_id"`
+	PayloadCode string            `json:"payload_code"`
+	Delta       int               `json:"delta"`
+	Reason      BinUOPDeltaReason `json:"reason"`
+	SequenceID  int64             `json:"sequence_id"`
+	WindowStart time.Time         `json:"window_start"`
+	WindowEnd   time.Time         `json:"window_end"`
+}
+
+// LinesideBucketDelta carries a count change against a specific
+// lineside bucket. Sent on subject SubjectLinesideBucketDelta. Core
+// routes on subject, dedups against
+// inventory_delta_dedup(station, "bucket",
+// "<NodeID>|<PairKey>|<StyleID>|<PartNumber>"), and applies via UPSERT
+// to the lineside_buckets row keyed on
+// (station, node_id, pair_key, style_id, part_number). When qty hits
+// zero Core deletes the row — Option C: active/inactive is computed
+// at query time, so empty buckets carry no useful information.
+type LinesideBucketDelta struct {
+	Station     string                    `json:"station"`
+	NodeID      int64                     `json:"node_id"`
+	PairKey     string                    `json:"pair_key"`
+	StyleID     int64                     `json:"style_id"`
+	PartNumber  string                    `json:"part_number"`
+	Delta       int                       `json:"delta"`
+	Reason      LinesideBucketDeltaReason `json:"reason"`
+	SequenceID  int64                     `json:"sequence_id"`
+	WindowStart time.Time                 `json:"window_start"`
+	WindowEnd   time.Time                 `json:"window_end"`
 }

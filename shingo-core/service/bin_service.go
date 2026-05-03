@@ -6,6 +6,7 @@ import (
 
 	"shingocore/domain"
 	"shingocore/store"
+	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
@@ -148,7 +149,8 @@ func (s *BinService) Unlock(binID int64) error {
 
 // LoadPayload validates that the payload code exists and sets the bin's
 // manifest from the payload template. uopOverride of 0 uses the template's
-// UOP capacity.
+// UOP capacity. Item 19: routes through BinManifestService.SetFromTemplate
+// so the operator load-payload action audits via bin_uop_audit.
 func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride int) error {
 	if payloadCode == "" {
 		return fmt.Errorf("payload_code is required")
@@ -156,7 +158,7 @@ func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride in
 	if _, err := s.db.GetPayloadByCode(payloadCode); err != nil {
 		return fmt.Errorf("payload template %q not found", payloadCode)
 	}
-	return s.db.SetBinManifestFromTemplate(binID, payloadCode, uopOverride)
+	return s.manifest.SetFromTemplate(binID, payloadCode, uopOverride)
 }
 
 // --- Movement -------------------------------------------------------------
@@ -210,10 +212,33 @@ type CountResult struct {
 // RecordCount writes a cycle count for the bin and returns the expected vs.
 // actual counts. Discrepancy notes are written by the caller so the note's
 // actor matches the audit actor convention already used by handlers.
+//
+// Item 19 of the bin-as-truth refactor: the count + bin_uop_audit
+// insert run in one transaction with op=OpCycleCount, before/suggested
+// = the pre-count uop_remaining (system's expected), after =
+// actualUOP. Without this row the Item 10 audit timeline UI would be
+// silent for cycle counts even though they're a primary
+// operator-vs-system divergence signal SCO uses to spot drift.
 func (s *BinService) RecordCount(b *bins.Bin, actualUOP int, actor string) (*CountResult, error) {
 	expected := b.UOPRemaining
-	if err := s.db.RecordBinCount(b.ID, actualUOP, actor); err != nil {
-		return nil, err
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := bins.RecordCount(tx, b.ID, actualUOP, actor); err != nil {
+		return nil, fmt.Errorf("record count bin %d: %w", b.ID, err)
+	}
+	expectedCopy := expected
+	if err := audit.AppendBinUOP(tx, b.ID, &expectedCopy, actualUOP,
+		audit.OpCycleCount, "service/bin_service.go:RecordCount",
+		nil, b.PayloadCode, actor); err != nil {
+		return nil, fmt.Errorf("audit cycle count bin %d: %w", b.ID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit cycle count bin %d: %w", b.ID, err)
 	}
 	return &CountResult{
 		Expected:    expected,

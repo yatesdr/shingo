@@ -69,19 +69,26 @@ type NodeInput struct {
 }
 
 // RuntimeState is the per-process-node runtime row. Tracks the active
-// NodeClaim (which Style is running here), the remaining UOP budget
-// before reorder, and which Order rows are active or staged for the
+// NodeClaim (which Style is running here), the cached UOP value
+// (kept in lockstep with Core's authoritative bins.uop_remaining via
+// the reconciler), and which Order rows are active or staged for the
 // node's two-robot flow. Active/StagedOrderID are the linchpin of the
 // swap-ready computation surfaced in the operator HMI.
+//
+// RemainingUOPCached is a write-through cache of the bin's actual
+// uop_remaining; the reconciler heals drift on every heartbeat tick.
+// Operator UI reads this for instant feedback; authoritative writes
+// flow through the InventoryDeltaReporter → Core → bins.uop_remaining
+// path.
 type RuntimeState struct {
-	ID            int64     `json:"id"`
-	ProcessNodeID int64     `json:"process_node_id"`
-	ActiveClaimID *int64    `json:"active_claim_id,omitempty"`
-	RemainingUOP  int       `json:"remaining_uop"`
-	ActiveOrderID *int64    `json:"active_order_id,omitempty"`
-	StagedOrderID *int64    `json:"staged_order_id,omitempty"`
-	ActivePull    bool      `json:"active_pull"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID                 int64     `json:"id"`
+	ProcessNodeID      int64     `json:"process_node_id"`
+	ActiveClaimID      *int64    `json:"active_claim_id,omitempty"`
+	RemainingUOPCached int       `json:"remaining_uop_cached"`
+	ActiveOrderID      *int64    `json:"active_order_id,omitempty"`
+	StagedOrderID      *int64    `json:"staged_order_id,omitempty"`
+	ActivePull         bool      `json:"active_pull"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // NodeClaim is a per-Style binding to a process Node — declares the

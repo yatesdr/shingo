@@ -1,16 +1,16 @@
 package store
 
 // Stage 2D delegate file: bin manifest Set/Confirm/Clear/Get + FIFO lookup
-// live in store/bins/. SetBinManifestFromTemplate and FindStorageDestination
-// are cross-aggregate composition methods that stay here.
+// live in store/bins/. FindStorageDestination is a cross-aggregate
+// composition method that stays here. (Item 19 retired
+// SetBinManifestFromTemplate from this surface — production callers
+// route through service.BinManifestService.SetFromTemplate for audit.)
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-	"shingocore/store/payloads"
 )
 
 // SetBinManifest populates a bin's contents from a payload template.
@@ -72,35 +72,10 @@ func (db *DB) FindStorageDestination(payloadCode string) (*nodes.Node, error) {
 	return nodes.ScanNode(row)
 }
 
-// SetBinManifestFromTemplate sets a bin's manifest from a payload template's
-// manifest items. Cross-aggregate composition (payloads ↔ bins).
-func (db *DB) SetBinManifestFromTemplate(binID int64, payloadCode string, uopCapacity int) error {
-	p, err := payloads.GetByCode(db.DB, payloadCode)
-	if err != nil {
-		return fmt.Errorf("payload template %q: %w", payloadCode, err)
-	}
-
-	items, err := payloads.ListManifest(db.DB, p.ID)
-	if err != nil {
-		return fmt.Errorf("payload manifest: %w", err)
-	}
-
-	manifest := bins.Manifest{Items: make([]bins.ManifestEntry, len(items))}
-	for i, item := range items {
-		manifest.Items[i] = bins.ManifestEntry{
-			CatID:    item.PartNumber,
-			Quantity: item.Quantity,
-		}
-	}
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
-	}
-
-	uop := uopCapacity
-	if uop == 0 {
-		uop = p.UOPCapacity
-	}
-
-	return bins.SetManifest(db.DB, binID, string(manifestJSON), payloadCode, uop)
-}
+// (Item 19 of the bin-as-truth refactor: SetBinManifestFromTemplate
+// removed from the public *store.DB surface. Production callers
+// route through BinManifestService.SetFromTemplate so the bin write
+// audits via bin_uop_audit. The deleted function bypassed audit;
+// post-Item-10 the audit timeline UI requires every manifest write
+// to surface in bin_uop_audit. Test helpers that need an
+// audit-bypass write path should call bins.SetManifest directly.)

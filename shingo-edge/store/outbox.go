@@ -29,6 +29,14 @@ func (db *DB) ListPendingOutbox(limit int) ([]messaging.Message, error) {
 	return messaging.ListPending(db.DB, limit)
 }
 
+// ListUnsentOutboxByType returns every un-sent outbox message matching
+// any of the given msg_type values. Used at startup to recover
+// in-memory state from durable outbox entries (e.g. inventory delta
+// pending sets after a crash).
+func (db *DB) ListUnsentOutboxByType(msgTypes []string) ([]messaging.Message, error) {
+	return messaging.ListUnsentByType(db.DB, msgTypes)
+}
+
 // ListDeadLetterOutbox returns un-sent messages that have hit
 // MaxOutboxRetries.
 func (db *DB) ListDeadLetterOutbox(limit int) ([]messaging.Message, error) {

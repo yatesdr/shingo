@@ -61,7 +61,7 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	if claim.Role != protocol.ClaimRoleProduce {
 		return nil, fmt.Errorf("node %s is not a produce node", node.Name)
 	}
-	if runtime.RemainingUOP <= 0 {
+	if runtime.RemainingUOPCached <= 0 {
 		return nil, fmt.Errorf("node %s has no parts to finalize", node.Name)
 	}
 
@@ -69,7 +69,7 @@ func BuildProducePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		Manifest: []protocol.IngestManifestItem{
 			{
 				PartNumber:  claim.PayloadCode,
-				Quantity:    int64(runtime.RemainingUOP),
+				Quantity:    int64(runtime.RemainingUOPCached),
 				Description: claim.PayloadCode,
 			},
 		},

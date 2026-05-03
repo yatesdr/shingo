@@ -141,7 +141,9 @@ func (db *DB) migrate() error {
 	// Legacy order columns
 	db.Exec("ALTER TABLE orders ADD COLUMN steps_json TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE orders ADD COLUMN staged_expire_at TEXT")
-	db.Exec("ALTER TABLE orders ADD COLUMN bin_uop_remaining INTEGER")
+	// Core's bin id snapshot at delivery — used for PLC tick
+	// attribution (BinUOPDelta).
+	db.Exec("ALTER TABLE orders ADD COLUMN bin_id INTEGER")
 	db.Exec("ALTER TABLE orders ADD COLUMN process_node_id INTEGER REFERENCES process_nodes(id) ON DELETE SET NULL")
 	// Index must come after ALTER in case legacy orders table lacked the column
 	db.Exec("CREATE INDEX IF NOT EXISTS idx_orders_process_node_id ON orders(process_node_id)")
@@ -534,15 +536,15 @@ func (db *DB) stripLegacyRuntimeStateColumns() error {
 	_, err := db.Exec(`
 ALTER TABLE process_node_runtime_states RENAME TO process_node_runtime_states_old;
 CREATE TABLE process_node_runtime_states (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    process_node_id    INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
-    active_claim_id    INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
-    remaining_uop      INTEGER NOT NULL DEFAULT 0,
-    active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-    staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
-    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_node_id      INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
+    active_claim_id      INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
+    remaining_uop_cached INTEGER NOT NULL DEFAULT 0,
+    active_order_id      INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    staged_order_id      INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
 );
-INSERT INTO process_node_runtime_states (id, process_node_id, remaining_uop, active_order_id, staged_order_id, updated_at)
+INSERT INTO process_node_runtime_states (id, process_node_id, remaining_uop_cached, active_order_id, staged_order_id, updated_at)
 SELECT id, process_node_id, remaining_uop, active_order_id, staged_order_id, updated_at
 FROM process_node_runtime_states_old;
 DROP TABLE process_node_runtime_states_old;
@@ -629,7 +631,7 @@ func (db *DB) rebuildLegacyRuntimeStates() error {
 			continue
 		}
 		_, err = db.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (
-    id, process_node_id, remaining_uop,
+    id, process_node_id, remaining_uop_cached,
     active_order_id, staged_order_id, updated_at
 )
 SELECT id, op_node_id, remaining_uop,
@@ -671,7 +673,6 @@ CREATE TABLE orders (
     auto_confirm    INTEGER NOT NULL DEFAULT 0,
     steps_json      TEXT NOT NULL DEFAULT '',
     staged_expire_at TEXT,
-    bin_uop_remaining INTEGER,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

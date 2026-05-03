@@ -267,6 +267,41 @@ func Drain(db Execer, nodeID, styleID int64, partNumber string, delta int) (int,
 	return take, nil
 }
 
+// SetForReconcile overwrites the bucket qty for (node, pair, style,
+// part) to exactly qty — used by the UOP reconciler's bucket
+// self-heal path to bring Edge in lockstep with Core. qty==0 deletes
+// the row (Option C — empty buckets carry no useful information);
+// positive qty UPSERTs to that exact value (no add — this is a write,
+// not a delta apply). state stays Active because Core's snapshot is
+// already filtered to current-style attribution.
+func SetForReconcile(db Execer, nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error {
+	if qty <= 0 {
+		if _, err := db.Exec(`DELETE FROM node_lineside_bucket
+			WHERE node_id=? AND style_id=? AND part_number=?`,
+			nodeID, styleID, partNumber); err != nil {
+			return fmt.Errorf("lineside: reconcile delete: %w", err)
+		}
+		return nil
+	}
+	res, err := db.Exec(`UPDATE node_lineside_bucket
+		SET qty=?, state=?, updated_at=datetime('now')
+		WHERE node_id=? AND style_id=? AND part_number=?`,
+		qty, StateActive, nodeID, styleID, partNumber)
+	if err != nil {
+		return fmt.Errorf("lineside: reconcile update: %w", err)
+	}
+	if affected, _ := res.RowsAffected(); affected > 0 {
+		return nil
+	}
+	if _, err := db.Exec(`INSERT INTO node_lineside_bucket
+		(node_id, pair_key, style_id, part_number, qty, state)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		nodeID, pairKey, styleID, partNumber, qty, StateActive); err != nil {
+		return fmt.Errorf("lineside: reconcile insert: %w", err)
+	}
+	return nil
+}
+
 // --- helpers ---
 
 // Execer is the minimal interface shared by *sql.DB and *sql.Tx.

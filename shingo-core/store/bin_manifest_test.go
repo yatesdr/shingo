@@ -202,67 +202,7 @@ func TestFindStorageDestination(t *testing.T) {
 	}
 }
 
-func TestSetBinManifestFromTemplate(t *testing.T) {
-	db := testDB(t)
-
-	bt := &bins.BinType{Code: "TMPL-BT", Description: "tmpl tote"}
-	db.CreateBinType(bt)
-
-	node := &nodes.Node{Name: "TMPL-NODE", Enabled: true}
-	db.CreateNode(node)
-
-	// payloads.Payload with a manifest template
-	p := &payloads.Payload{Code: "TMPL-PAY", UOPCapacity: 77}
-	db.CreatePayload(p)
-	db.ReplacePayloadManifest(p.ID, []*payloads.ManifestItem{
-		{PayloadID: p.ID, PartNumber: "PART-X", Quantity: 3},
-		{PayloadID: p.ID, PartNumber: "PART-Y", Quantity: 5},
-	})
-
-	bin := &bins.Bin{BinTypeID: bt.ID, Label: "TMPL-B", NodeID: &node.ID, Status: "available"}
-	db.CreateBin(bin)
-
-	// Apply the template — uopCapacity=0 means use payload's default
-	if err := db.SetBinManifestFromTemplate(bin.ID, p.Code, 0); err != nil {
-		t.Fatalf("SetBinManifestFromTemplate: %v", err)
-	}
-
-	// Verify bin fields
-	got, _ := db.GetBin(bin.ID)
-	if got.PayloadCode != "TMPL-PAY" {
-		t.Errorf("PayloadCode = %q, want TMPL-PAY", got.PayloadCode)
-	}
-	if got.UOPRemaining != 77 {
-		t.Errorf("UOPRemaining = %d, want 77 (payload default)", got.UOPRemaining)
-	}
-
-	// Parsed manifest should mirror the template items
-	m, err := db.GetBinManifest(bin.ID)
-	if err != nil {
-		t.Fatalf("GetBinManifest: %v", err)
-	}
-	if len(m.Items) != 2 {
-		t.Fatalf("items len = %d, want 2", len(m.Items))
-	}
-
-	// CatID maps from PartNumber; Quantity carries through.
-	found := map[string]int64{}
-	for _, e := range m.Items {
-		found[e.CatID] = e.Quantity
-	}
-	if found["PART-X"] != 3 {
-		t.Errorf("PART-X qty = %d, want 3", found["PART-X"])
-	}
-	if found["PART-Y"] != 5 {
-		t.Errorf("PART-Y qty = %d, want 5", found["PART-Y"])
-	}
-
-	// Override uopCapacity
-	if err := db.SetBinManifestFromTemplate(bin.ID, p.Code, 200); err != nil {
-		t.Fatalf("SetBinManifestFromTemplate override: %v", err)
-	}
-	got2, _ := db.GetBin(bin.ID)
-	if got2.UOPRemaining != 200 {
-		t.Errorf("UOPRemaining after override = %d, want 200", got2.UOPRemaining)
-	}
-}
+// (Item 19 deleted *store.DB.SetBinManifestFromTemplate. Coverage of
+// the template-resolution + manifest-write contract moved to
+// service.TestBinManifestService_SetFromTemplate, which exercises
+// the audit-bearing path that production now uses.)

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"shingocore/domain"
+	"shingocore/service"
 )
 
 // apiTelemetryNodeBins returns bin state for requested core nodes.
@@ -65,6 +66,60 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		result = append(result, entry)
 	}
 	h.jsonOK(w, result)
+}
+
+// apiTelemetryUOPState returns the authoritative bin + bucket state
+// Edge needs for reconciliation / self-heal. Two arrays:
+//
+//   - bins: per-bin authoritative uop_remaining for every bin at any
+//     of the requested nodes. Edge's reconciler compares against
+//     local runtime cache and self-heals from this value.
+//   - buckets: per-bucket authoritative qty for the calling station.
+//     Edge compares against its local node_lineside_bucket table to
+//     detect bucket-side drift.
+//
+// GET /api/telemetry/uop-state?station=ALN_001&nodes=NODE-A,NODE-B
+//
+// Read-only — no mutation of bin or bucket state.
+func (h *Handlers) apiTelemetryUOPState(w http.ResponseWriter, r *http.Request) {
+	station := strings.TrimSpace(r.URL.Query().Get("station"))
+	nodesParam := r.URL.Query().Get("nodes")
+
+	type uopStateResponse struct {
+		Bins    []service.BinUOPRow         `json:"bins"`
+		Buckets []service.LinesideBucketRow `json:"buckets"`
+	}
+	resp := uopStateResponse{}
+
+	svc := h.engine.InventoryDeltaService()
+
+	if nodesParam != "" {
+		var names []string
+		for _, name := range strings.Split(nodesParam, ",") {
+			if t := strings.TrimSpace(name); t != "" {
+				names = append(names, t)
+			}
+		}
+		if len(names) > 0 {
+			rows, err := svc.ListBinUOPForNodes(names)
+			if err != nil {
+				h.jsonError(w, "list bin uop: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			resp.Bins = rows
+		}
+	}
+
+	if station != "" {
+		rows, err := svc.ListBucketsForStation(station)
+		if err != nil {
+			h.jsonError(w, "list buckets: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp.Buckets = rows
+	}
+
+	h.jsonOK(w, resp)
 }
 
 // apiTelemetryPayloadManifest returns the default manifest template and UOP capacity for a payload.

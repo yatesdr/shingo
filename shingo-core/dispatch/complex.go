@@ -264,9 +264,44 @@ func (d *Dispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.Orde
 	// sits until release triggers the bot to pick up). Use the no-claim
 	// variant so the WHERE claimed_by guard doesn't block (the bin isn't
 	// claimed by this order if claimComplexBins missed it).
-	if p.RemainingUOP != nil {
+	//
+	// Phase 0b — operator override audit. When the new Disposition shape
+	// is present and carries CountSuggested / CapturesSuggested, log
+	// every divergence between system-suggested and operator-submitted
+	// values to bin_uop_audit before the manifest sync. The audit is
+	// independent of sync success: the operator's decision is a fact
+	// regardless of whether the downstream write commits. Failures here
+	// log-and-continue — losing an audit row is preferable to blocking
+	// the release path.
+	if p.Disposition != nil {
+		var binIDForAudit int64
 		if order.BinID != nil {
-			if err := d.binManifest.SyncOrClearForReleased(*order.BinID, order.ID, p.RemainingUOP, p.CalledBy); err != nil {
+			binIDForAudit = *order.BinID
+		} else if id, ok := d.findFallbackBinAtSource(order); ok {
+			binIDForAudit = id
+		}
+		if binIDForAudit != 0 {
+			if err := d.binManifest.AuditReleaseOverride(binIDForAudit, order.ID, p.Disposition, p.CalledBy); err != nil {
+				log.Printf("dispatch: release override audit for order %d (bin %d): %v",
+					order.ID, binIDForAudit, err)
+			}
+		}
+	}
+
+	if p.RemainingUOP != nil {
+		// Disposition kind threads through so the audit op tag
+		// reflects the operator's intent. Same wire shape (manifest
+		// clear / partial sync) but distinct audit signal — matters
+		// for DispositionReleaseUnderpack which clears at &0 like
+		// RELEASE EMPTY but writes OpReleasedUnderpack so forensics
+		// can trend missing-inventory separately from
+		// system-and-operator-agreed-empty.
+		var kind protocol.UOPDispositionKind
+		if p.Disposition != nil {
+			kind = p.Disposition.Kind
+		}
+		if order.BinID != nil {
+			if err := d.binManifest.SyncOrClearForReleased(*order.BinID, order.ID, p.RemainingUOP, kind, p.CalledBy); err != nil {
 				log.Printf("dispatch: manifest sync on release for order %d: %v", order.ID, err)
 				d.sendError(env, p.OrderUUID, "manifest_sync_failed", err.Error())
 				return

@@ -248,6 +248,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
 		r.Get("/orders/active", h.apiGetActiveOrders)
 
+		// Reconciliation metrics (Item 9)
+		r.Get("/reconciliation/uop", h.apiUOPReconciliation)
+
 		// Lookups
 		r.Get("/node/{name}/children", h.apiNodeChildren)
 		r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
@@ -266,6 +269,9 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/plcs/read-tag", h.apiReadTag)
 			r.Get("/warlink/status", h.apiWarLinkStatus)
 			r.Put("/config/warlink", h.apiUpdateWarLink)
+
+			// UOP backfill (Item 3)
+			r.Post("/admin/uop/backfill", h.apiBackfillBuckets)
 
 			// Reporting points
 			r.Get("/reporting-points", h.apiListReportingPoints)

@@ -40,6 +40,34 @@ type LogFunc func(format string, args ...any)
 // DebugLogFunc is a nil-safe debug logging function.
 type DebugLogFunc = types.DebugLogFunc
 
+// InventoryDeltaSink is the engine's view of the Phase 1
+// InventoryDeltaReporter (shingoedge/messaging). Kept as an interface
+// so engine doesn't import shingoedge/messaging — cycle-safe wiring
+// is the composition root's job (cmd/shingoedge/main.go).
+//
+// nil-safe: callers in the PLC tick path and the release path guard
+// every Record* call with a nil check on Engine.inventoryDelta so
+// tests / off-modes can leave the field unset.
+type InventoryDeltaSink interface {
+	RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason)
+	RecordBucket(nodeID int64, pairKey string, styleID int64, partNumber string, delta int, reason protocol.LinesideBucketDeltaReason)
+	Flush()
+
+	// IsPendingBinDelta / IsPendingBucketDelta let the reconciler skip
+	// healing a scope that has unflushed deltas in the reporter or
+	// unsent entries in the outbox. Without the gate, a reconcile pass
+	// that races with an in-flight delta would stomp the local cache
+	// with a stale Core read.
+	IsPendingBinDelta(binID int64) bool
+	IsPendingBucketDelta(nodeID, styleID int64, partNumber string) bool
+
+	// FlushFailures returns the cumulative count of EnqueueOutbox
+	// failures across the bin and bucket flush paths. Item 9 surfaces
+	// it via the reconciler metrics endpoint for outbox-health
+	// dashboards.
+	FlushFailures() int64
+}
+
 // Engine centralizes all business logic and orchestrates subsystems.
 type Engine struct {
 	cfg         *config.Config
@@ -80,6 +108,17 @@ type Engine struct {
 	catalogSyncFn func()
 	sendFn        func(*protocol.Envelope) error
 	kafkaReconnFn func() error
+
+	// inventoryDelta is the Phase 1 delta sink. Set by the composition
+	// root via SetInventoryDeltaSink. Nil in test contexts that don't
+	// care about delta emission; every call site nil-guards.
+	inventoryDelta InventoryDeltaSink
+
+	// uopReconciler holds Phase 2 reconciler state (since-last-pass
+	// gate, cumulative drift counters). Lazily initialized on first
+	// Reconcile call so test engines that never invoke reconciliation
+	// don't carry the state.
+	uopReconciler *uopReconciler
 
 	Events    *EventBus
 	stopChan  chan struct{}
@@ -130,6 +169,15 @@ func New(c Config) *Engine {
 	e.catalogService = service.NewCatalogService(e.db)
 	e.orderService = service.NewOrderService(e.db)
 	return e
+}
+
+// SetInventoryDeltaSink installs the Phase 1 delta reporter. Called by
+// the composition root (cmd/shingoedge/main.go) after both the engine
+// and the reporter exist. Idempotent; the latest sink wins. Nil
+// disables delta emission — useful in tests that don't care about
+// Phase 1 plumbing.
+func (e *Engine) SetInventoryDeltaSink(s InventoryDeltaSink) {
+	e.inventoryDelta = s
 }
 
 // Start creates all managers, wires event handlers, and starts subsystems.

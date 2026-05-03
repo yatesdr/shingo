@@ -42,8 +42,8 @@ func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
 
 	// Give event handler a moment to process (synchronous in single goroutine)
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after ingest completion", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 after ingest completion", runtime.RemainingUOPCached)
 	}
 	if runtime.ActiveOrderID != nil {
 		t.Error("ActiveOrderID should be nil after ingest completion")
@@ -85,8 +85,8 @@ func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	// Produce node: UOP should reset to 0 (empty bin received, starts at 0)
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 (produce node receives empty bin)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 (produce node receives empty bin)", runtime.RemainingUOPCached)
 	}
 }
 
@@ -178,70 +178,19 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	// Consume node: UOP should reset to capacity (full bin received)
-	if runtime.RemainingUOP != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (consume node UOPCapacity)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 200 {
+		t.Errorf("RemainingUOP = %d, want 200 (consume node UOPCapacity)", runtime.RemainingUOPCached)
 	}
 	_ = processID
 }
 
-// TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP locks down
-// the BinUOPRemaining branch in handleNormalReplenishment. When Core captured
-// a partial-bin snapshot at delivery (operator sent the bin back with 125
-// UOP via SEND PARTIAL BACK), the runtime must reset to the bin's
-// authoritative value, NOT the claim's UOPCapacity.
-//
-// Sibling to TestWiring_RetrieveCompletion_ConsumeResetsToCapacity which
-// covers the nil-snapshot fall-back-to-capacity branch. Without this paired
-// test a future refactor that drops the BinUOPRemaining branch would only
-// be caught at a plant — the original test still passes because its bin is
-// implicitly full.
-func TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP(t *testing.T) {
-	db := testEngineDB(t)
-	processID, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix: "CONSUME-PB", PayloadCode: "PART-PB", UOPCapacity: 200, InitialUOP: 10,
-	})
-
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	// DeliveryNode must match the seeded node's CoreNodeName for the
-	// #11 predicate to fire (handleNormalReplenishment skips orders
-	// whose DeliveryNode != process_node CoreNodeName). Prefix
-	// "CONSUME-PB" → CoreNodeName "CONSUME-PB-NODE".
-	orderID, err := db.CreateOrder("uuid-retrieve-partial", orders.TypeRetrieve,
-		&nodeID, false, 1, "CONSUME-PB-NODE", "", "", "", false, "")
-	if err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
-	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-
-	// Snapshot the bin's authoritative uop_remaining at delivery time.
-	// In production this is set by HandleDeliveredWithExpiry when Core's
-	// OrderDelivered envelope arrives; the dispatcher-level test sets it
-	// directly so handleNormalReplenishment reads the snapshot path.
-	partialUOP := 125
-	if err := db.UpdateOrderBinUOPRemaining(orderID, &partialUOP); err != nil {
-		t.Fatalf("set bin_uop_remaining: %v", err)
-	}
-
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-retrieve-partial",
-			OrderType:     orders.TypeRetrieve,
-			ProcessNodeID: &nodeID,
-		},
-	})
-
-	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 125 {
-		t.Errorf("RemainingUOP = %d, want 125 (bin's authoritative uop_remaining; not capacity 200)",
-			runtime.RemainingUOP)
-	}
-	_ = processID
-}
+// (Item 8 deleted TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP.
+// The BinUOPRemaining-on-the-order branch is gone — runtime now resets
+// to claim.UOPCapacity unconditionally on delivery, and the reconciler
+// heals to Core's authoritative value within ~60s. The existing
+// TestWiring_RetrieveCompletion_ConsumeResetsToCapacity above already
+// covers the capacity-reset contract; the partial-bin test would
+// duplicate it post-Item-8.)
 
 // TestWiring_CounterDelta_ProduceIncrementsUOP verifies that counter delta
 // events increment UOP for produce nodes (counting UP toward capacity).
@@ -262,8 +211,8 @@ func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 15 {
-		t.Errorf("RemainingUOP = %d, want 15 (10 + 5 delta)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 15 {
+		t.Errorf("RemainingUOP = %d, want 15 (10 + 5 delta)", runtime.RemainingUOPCached)
 	}
 }
 
@@ -285,17 +234,24 @@ func TestWiring_CounterDelta_ConsumeDecrementsUOP(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 77 {
-		t.Errorf("RemainingUOP = %d, want 77 (80 - 3 delta)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 77 {
+		t.Errorf("RemainingUOP = %d, want 77 (80 - 3 delta)", runtime.RemainingUOPCached)
 	}
 }
 
 // TestWiring_CounterDelta_ConsumeFloorsAtZero verifies that consume node UOP
 // never goes negative when delta exceeds remaining.
-func TestWiring_CounterDelta_ConsumeFloorsAtZero(t *testing.T) {
+// Item 5.6 changed the contract: consume ticks past the runtime's
+// remaining count drive into negative territory rather than flooring
+// at zero. Real bins overpack — operator runs an extra cycle before
+// noticing — and the cache must mirror that signed reality so it
+// stays in lockstep with Core (which never clamped). The pre-Item-5.6
+// "floors at zero" behavior caused permanent reconciler ping-pong
+// against any negative-Core scope.
+func TestWiring_CounterDelta_ConsumeAllowsNegative(t *testing.T) {
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix: "FLOOR", PayloadCode: "PART-Z", UOPCapacity: 50, InitialUOP: 2,
+		Prefix: "NEG", PayloadCode: "PART-Z", UOPCapacity: 50, InitialUOP: 2,
 	})
 
 	eng := testEngine(t, db)
@@ -308,8 +264,9 @@ func TestWiring_CounterDelta_ConsumeFloorsAtZero(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 (floored at zero)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != -8 {
+		t.Errorf("RemainingUOP = %d, want -8 (2 - 10; signed semantic, no clamp)",
+			runtime.RemainingUOPCached)
 	}
 }
 
@@ -378,8 +335,8 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after manual_swap move completion", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 after manual_swap move completion", runtime.RemainingUOPCached)
 	}
 	// After the side-cycle refactor (commit 4f9212b + tryAutoRequest
 	// removal), handleManualSwapCompletion clears ActiveOrderID without
@@ -549,11 +506,11 @@ func TestWiring_ABCycling_ActiveNodeDecrements(t *testing.T) {
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
 
-	if rtA.RemainingUOP != 75 {
-		t.Errorf("Node A RemainingUOP = %d, want 75 (80 - 5)", rtA.RemainingUOP)
+	if rtA.RemainingUOPCached != 75 {
+		t.Errorf("Node A RemainingUOP = %d, want 75 (80 - 5)", rtA.RemainingUOPCached)
 	}
-	if rtB.RemainingUOP != 80 {
-		t.Errorf("Node B RemainingUOP = %d, want 80 (inactive, should not decrement)", rtB.RemainingUOP)
+	if rtB.RemainingUOPCached != 80 {
+		t.Errorf("Node B RemainingUOP = %d, want 80 (inactive, should not decrement)", rtB.RemainingUOPCached)
 	}
 }
 
@@ -579,11 +536,11 @@ func TestWiring_ABCycling_InactiveNodeSkipped(t *testing.T) {
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
 
-	if rtA.RemainingUOP != 80 {
-		t.Errorf("Node A RemainingUOP = %d, want 80 (inactive, should not decrement)", rtA.RemainingUOP)
+	if rtA.RemainingUOPCached != 80 {
+		t.Errorf("Node A RemainingUOP = %d, want 80 (inactive, should not decrement)", rtA.RemainingUOPCached)
 	}
-	if rtB.RemainingUOP != 70 {
-		t.Errorf("Node B RemainingUOP = %d, want 70 (80 - 10)", rtB.RemainingUOP)
+	if rtB.RemainingUOPCached != 70 {
+		t.Errorf("Node B RemainingUOP = %d, want 70 (80 - 10)", rtB.RemainingUOPCached)
 	}
 }
 
@@ -611,7 +568,7 @@ func TestWiring_ABCycling_FallthroughBothInactive(t *testing.T) {
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
 
 	// One of them should have been decremented as fallback
-	totalRemaining := rtA.RemainingUOP + rtB.RemainingUOP
+	totalRemaining := rtA.RemainingUOPCached + rtB.RemainingUOPCached
 	if totalRemaining != 153 { // 80 + 80 - 7 = 153
 		t.Errorf("total remaining = %d, want 153 (one node decremented by 7 as fallthrough)", totalRemaining)
 	}
@@ -691,8 +648,8 @@ func TestWiring_ABCycling_UnpairedNodeAlwaysDecrements(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 56 {
-		t.Errorf("RemainingUOP = %d, want 56 (unpaired node always decrements)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 56 {
+		t.Errorf("RemainingUOP = %d, want 56 (unpaired node always decrements)", runtime.RemainingUOPCached)
 	}
 }
 
@@ -843,11 +800,11 @@ func TestWiring_ABProducePair_ActiveIncrements(t *testing.T) {
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
 
-	if rtA.RemainingUOP != 15 {
-		t.Errorf("Produce A RemainingUOP = %d, want 15 (10 + 5)", rtA.RemainingUOP)
+	if rtA.RemainingUOPCached != 15 {
+		t.Errorf("Produce A RemainingUOP = %d, want 15 (10 + 5)", rtA.RemainingUOPCached)
 	}
-	if rtB.RemainingUOP != 10 {
-		t.Errorf("Produce B RemainingUOP = %d, want 10 (inactive, should not increment)", rtB.RemainingUOP)
+	if rtB.RemainingUOPCached != 10 {
+		t.Errorf("Produce B RemainingUOP = %d, want 10 (inactive, should not increment)", rtB.RemainingUOPCached)
 	}
 }
 
@@ -871,11 +828,11 @@ func TestWiring_ABFlip_ImmediateDelta(t *testing.T) {
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
 
-	if rtA.RemainingUOP != 80 {
-		t.Errorf("Node A RemainingUOP = %d, want 80 (inactive after flip)", rtA.RemainingUOP)
+	if rtA.RemainingUOPCached != 80 {
+		t.Errorf("Node A RemainingUOP = %d, want 80 (inactive after flip)", rtA.RemainingUOPCached)
 	}
-	if rtB.RemainingUOP != 73 {
-		t.Errorf("Node B RemainingUOP = %d, want 73 (80 - 7, active after flip)", rtB.RemainingUOP)
+	if rtB.RemainingUOPCached != 73 {
+		t.Errorf("Node B RemainingUOP = %d, want 73 (80 - 7, active after flip)", rtB.RemainingUOPCached)
 	}
 }
 
@@ -936,7 +893,7 @@ func TestWiring_ABPairsAcrossStyles(t *testing.T) {
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
 
 	// Both should decrement (unpaired nodes always decrement independently)
-	totalDelta := (80 - rtA.RemainingUOP) + (80 - rtB.RemainingUOP)
+	totalDelta := (80 - rtA.RemainingUOPCached) + (80 - rtB.RemainingUOPCached)
 	if totalDelta != 6 {
 		t.Errorf("after unpairing: total delta = %d, want 6 (each node gets 3 independently)", totalDelta)
 	}
@@ -965,12 +922,12 @@ func TestWiring_AB_AsymmetricPair(t *testing.T) {
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
 
 	// Node A: paired with ASYM-B, ActivePull=true → should decrement
-	if rtA.RemainingUOP != 75 {
-		t.Errorf("Asym A RemainingUOP = %d, want 75 (active paired node)", rtA.RemainingUOP)
+	if rtA.RemainingUOPCached != 75 {
+		t.Errorf("Asym A RemainingUOP = %d, want 75 (active paired node)", rtA.RemainingUOPCached)
 	}
 	// Node B: unpaired (PairedCoreNode="") → always decrements regardless of ActivePull
-	if rtB.RemainingUOP != 75 {
-		t.Errorf("Asym B RemainingUOP = %d, want 75 (unpaired always decrements)", rtB.RemainingUOP)
+	if rtB.RemainingUOPCached != 75 {
+		t.Errorf("Asym B RemainingUOP = %d, want 75 (unpaired always decrements)", rtB.RemainingUOPCached)
 	}
 
 	// Flip: make B active, A inactive
@@ -990,12 +947,12 @@ func TestWiring_AB_AsymmetricPair(t *testing.T) {
 	// because pairedConsumeHandled is never set (Node B is unpaired, doesn't set it).
 	// This documents the asymmetric A/B edge case: fallthrough fires on the inactive
 	// paired node when the unpaired partner doesn't set pairedConsumeHandled.
-	if rtA.RemainingUOP != 72 {
-		t.Errorf("Asym A after flip (inactive, but fallthrough): RemainingUOP = %d, want 72", rtA.RemainingUOP)
+	if rtA.RemainingUOPCached != 72 {
+		t.Errorf("Asym A after flip (inactive, but fallthrough): RemainingUOP = %d, want 72", rtA.RemainingUOPCached)
 	}
 	// Node B: unpaired → always decrements
-	if rtB.RemainingUOP != 72 {
-		t.Errorf("Asym B after flip: RemainingUOP = %d, want 72 (75 - 3, unpaired always decrements)", rtB.RemainingUOP)
+	if rtB.RemainingUOPCached != 72 {
+		t.Errorf("Asym B after flip: RemainingUOP = %d, want 72 (75 - 3, unpaired always decrements)", rtB.RemainingUOPCached)
 	}
 
 	_ = claimAID
@@ -1028,8 +985,8 @@ func TestWiring_CounterDelta_DrainsLinesideBeforeNodeCounter(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 100 {
-		t.Errorf("RemainingUOP = %d, want 100 (drain came from lineside)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 100 {
+		t.Errorf("RemainingUOP = %d, want 100 (drain came from lineside)", runtime.RemainingUOPCached)
 	}
 
 	b, err := db.GetActiveLinesideBucket(nodeID, styleID, "P-500")
@@ -1064,8 +1021,8 @@ func TestWiring_CounterDelta_CarriesRemainderToNodeCounter(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 85 {
-		t.Errorf("RemainingUOP = %d, want 85 (100 - 15 remainder)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 85 {
+		t.Errorf("RemainingUOP = %d, want 85 (100 - 15 remainder)", runtime.RemainingUOPCached)
 	}
 
 	// Bucket should be gone.
@@ -1092,7 +1049,7 @@ func TestWiring_CounterDelta_NoLinesideBucket(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 93 {
-		t.Errorf("RemainingUOP = %d, want 93 (no bucket, full delta hits counter)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 93 {
+		t.Errorf("RemainingUOP = %d, want 93 (no bucket, full delta hits counter)", runtime.RemainingUOPCached)
 	}
 }

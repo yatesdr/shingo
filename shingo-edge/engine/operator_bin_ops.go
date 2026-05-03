@@ -88,6 +88,15 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// duplicating the side-cycle handler's responsibility.
 	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(nodeID, uopCount); l1Confirmed {
 		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
+		// Flush trigger: bin-loader confirm is the produce/manual_swap
+		// loader-side boundary at which the outgoing bin is "done" —
+		// any accumulated deltas attributed to that bin should ship
+		// before the new bin starts driving counts. Periodic 5s flush
+		// would catch them eventually, but firing here makes the audit
+		// trail align with the operator action.
+		if e.inventoryDelta != nil {
+			e.inventoryDelta.Flush()
+		}
 		return nil
 	}
 

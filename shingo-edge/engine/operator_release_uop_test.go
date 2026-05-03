@@ -21,7 +21,7 @@ import (
 //     → Core: no-op, bin manifest untouched.
 //   - DispositionCaptureLineside ("NOTHING PULLED" / "CONFIRM & RELEASE")  → &0
 //     → Core: ClearAndKeepClaim, bin's payload + manifest cleared, UOP=0.
-//   - DispositionSendPartialBack ("SEND PARTIAL BACK")                     → &runtime.RemainingUOP
+//   - DispositionSendPartialBack ("SEND PARTIAL BACK")                     → &runtime.RemainingUOPCached
 //     → Core: SyncUOPAndKeepClaim, manifest preserved, uop_remaining set to
 //       the count Edge tracked at release time.
 //
@@ -134,6 +134,91 @@ func TestReleaseOrderWithLineside_WireRemainingUOP_PerDisposition(t *testing.T) 
 	}
 }
 
+// TestRegression_CaptureReleaseSingleWriter pins Item 6's dual-write
+// retirement: when the operator picks PULL PARTS LINESIDE (capture
+// disposition with a non-empty captures map), Edge no longer ships
+// RemainingUOP=&0 in the OrderRelease envelope. The bin's count
+// change rides exclusively on the BinUOPDelta(capture_reduction)
+// stream; Core's capture-reduction-to-zero trigger
+// (TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse)
+// handles the manifest clear when the bin reaches zero.
+//
+// Pin's two halves:
+//   - the OrderRelease envelope's RemainingUOP is nil (no manifest sync via
+//     that path);
+//   - exactly one BinUOPDelta(capture_reduction) lands on the sink, with
+//     a delta that totals the operator's capture quantities.
+//
+// Empty captures (RELEASE EMPTY semantics) keeps the legacy &0 path —
+// covered by the empty-captures subtest in
+// TestReleaseOrderWithLineside_WireRemainingUOP_PerDisposition.
+func TestRegression_CaptureReleaseSingleWriter(t *testing.T) {
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix:      "REL-SINGLE-WRITER",
+		PayloadCode: "PART-SW",
+		UOPCapacity: 100,
+		InitialUOP:  100,
+	})
+	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 100); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
+
+	const binID int64 = 9001
+	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-single-writer")
+	bid := binID
+	_ = db.UpdateOrderBinID(orderID, &bid)
+	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	sink := &fakeDeltaSink{}
+	eng.SetInventoryDeltaSink(sink)
+
+	// Drain any pre-existing outbox so findOutboxByType is exact.
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	disp := ReleaseDisposition{
+		Mode:            DispositionCaptureLineside,
+		LinesideCapture: map[string]int{"PART-SW": 30},
+		CalledBy:        "test-op",
+	}
+	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
+		t.Fatalf("ReleaseOrderWithLineside: %v", err)
+	}
+
+	// Wire half: RemainingUOP must be nil — the delta stream owns the
+	// count change now.
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 1 {
+		t.Fatalf("OrderRelease envelopes queued = %d, want 1", len(releases))
+	}
+	rel := decodeOrderRelease(t, releases[0])
+	if rel.RemainingUOP != nil {
+		t.Errorf("wire RemainingUOP = %d, want nil (Item 6: capture path is delta-only, no manifest-sync via OrderRelease)",
+			*rel.RemainingUOP)
+	}
+
+	// Delta half: exactly one BinUOPDelta(capture_reduction) for -30
+	// against the bin.
+	if len(sink.binCalls) != 1 {
+		t.Fatalf("bin calls = %d, want 1: %+v", len(sink.binCalls), sink.binCalls)
+	}
+	bc := sink.binCalls[0]
+	if bc.BinID != binID {
+		t.Errorf("bin call BinID = %d, want %d", bc.BinID, binID)
+	}
+	if bc.Delta != -30 {
+		t.Errorf("bin call delta = %d, want -30 (sum of capture qtys)", bc.Delta)
+	}
+	if bc.Reason != protocol.ReasonCaptureReduction {
+		t.Errorf("bin call reason = %q, want %q", bc.Reason, protocol.ReasonCaptureReduction)
+	}
+}
+
 // TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire is the
 // regression test for the supply-bin protection in two-robot swaps. Even
 // when the operator picks DispositionCaptureLineside (which would normally
@@ -209,6 +294,137 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T)
 	// the manifest sync is suppressed.
 	if rel.CalledBy != "test-operator" {
 		t.Errorf("CalledBy = %q, want %q (audit identity must survive the supply-order suppression)", rel.CalledBy, "test-operator")
+	}
+}
+
+// TestReleaseOrderWithLineside_PartialBackUsesOperatorCount pins the
+// Phase 0b SME contract: when the operator sets PartialCount via the
+// keypad, that value supersedes runtime.RemainingUOPCached on the wire — the
+// operator's measurement is ground truth. The runtime read remains the
+// fallback for legacy HTTP clients that don't ship PartialCount.
+//
+// Without this contract the SEND PARTIAL BACK path silently demotes the
+// operator's typed value to whatever the PLC counter says, which is the
+// exact gap finding R4b in shingo-uop-remaining-zero-audit.md was about.
+func TestReleaseOrderWithLineside_PartialBackUsesOperatorCount(t *testing.T) {
+	const (
+		runtimeUOP        = 60 // PLC counter says 60
+		operatorOverride  = 47 // operator typed 47 (label was wrong, partially overfilled, etc.)
+		capacity          = 1200
+	)
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix:      "REL-PARTIAL-OVERRIDE",
+		PayloadCode: "PART-OVR",
+		UOPCapacity: capacity,
+		InitialUOP:  runtimeUOP,
+	})
+	if err := db.SetProcessNodeRuntime(nodeID, &claimID, runtimeUOP); err != nil {
+		t.Fatalf("seed runtime UOP: %v", err)
+	}
+	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-partial-override")
+	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID); err != nil {
+		t.Fatalf("track staged order on runtime: %v", err)
+	}
+
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	eng := testEngine(t, db)
+	override := operatorOverride
+	suggested := runtimeUOP
+	disp := ReleaseDisposition{
+		Mode:                  DispositionSendPartialBack,
+		PartialCount:          &override,
+		PartialCountSuggested: &suggested,
+		CalledBy:              "stephen-station-9",
+	}
+	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
+		t.Fatalf("ReleaseOrderWithLineside: %v", err)
+	}
+
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 1 {
+		t.Fatalf("OrderRelease envelopes: got %d, want 1", len(releases))
+	}
+	rel := decodeOrderRelease(t, releases[0])
+
+	// Legacy pointer still ships — Core's existing manifest sync uses it.
+	// Phase 0b: must reflect the operator's override, not the runtime read.
+	if rel.RemainingUOP == nil || *rel.RemainingUOP != operatorOverride {
+		t.Errorf("RemainingUOP = %v, want &%d (operator-entered count must supersede runtime)",
+			rel.RemainingUOP, operatorOverride)
+	}
+
+	// Disposition carries both the submitted and suggested values for
+	// Core's override-audit comparison.
+	if rel.Disposition == nil {
+		t.Fatal("Disposition = nil; want populated for SEND PARTIAL BACK")
+	}
+	if rel.Disposition.Kind != protocol.DispositionReleasePartial {
+		t.Errorf("Disposition.Kind = %q, want %q",
+			rel.Disposition.Kind, protocol.DispositionReleasePartial)
+	}
+	if rel.Disposition.Count != operatorOverride {
+		t.Errorf("Disposition.Count = %d, want %d", rel.Disposition.Count, operatorOverride)
+	}
+	if rel.Disposition.CountSuggested == nil || *rel.Disposition.CountSuggested != runtimeUOP {
+		t.Errorf("Disposition.CountSuggested = %v, want &%d (system-suggested baseline)",
+			rel.Disposition.CountSuggested, runtimeUOP)
+	}
+}
+
+// TestReleaseOrderWithLineside_PartialBackFallsBackToRuntime pins the
+// legacy-client path: when PartialCount is nil (HTTP body without the
+// override-aware fields), the wire still picks up runtime.RemainingUOPCached
+// the way pre-Phase-0b clients expect. Defends against a refactor that
+// accidentally wires the new field as required.
+func TestReleaseOrderWithLineside_PartialBackFallsBackToRuntime(t *testing.T) {
+	const (
+		runtimeUOP = 75
+		capacity   = 1200
+	)
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix:      "REL-PARTIAL-LEGACY",
+		PayloadCode: "PART-LEG",
+		UOPCapacity: capacity,
+		InitialUOP:  runtimeUOP,
+	})
+	if err := db.SetProcessNodeRuntime(nodeID, &claimID, runtimeUOP); err != nil {
+		t.Fatalf("seed runtime UOP: %v", err)
+	}
+	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-partial-legacy")
+	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID); err != nil {
+		t.Fatalf("track staged order on runtime: %v", err)
+	}
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	eng := testEngine(t, db)
+	disp := ReleaseDisposition{
+		Mode:     DispositionSendPartialBack,
+		CalledBy: "legacy-client",
+	}
+	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
+		t.Fatalf("ReleaseOrderWithLineside: %v", err)
+	}
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 1 {
+		t.Fatalf("OrderRelease envelopes: got %d, want 1", len(releases))
+	}
+	rel := decodeOrderRelease(t, releases[0])
+	if rel.RemainingUOP == nil || *rel.RemainingUOP != runtimeUOP {
+		t.Errorf("RemainingUOP = %v, want &%d (must fall back to runtime when no override)",
+			rel.RemainingUOP, runtimeUOP)
+	}
+	if rel.Disposition == nil || rel.Disposition.CountSuggested != nil {
+		t.Errorf("CountSuggested = %v, want nil (no suggested value when client doesn't ship one)",
+			rel.Disposition)
 	}
 }
 

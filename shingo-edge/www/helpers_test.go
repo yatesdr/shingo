@@ -94,6 +94,16 @@ type stubEngine struct {
 	// site is easy to find.
 	lastReleaseChangeoverWaitCalledBy string
 	lastReleaseOrderDisposition       *engine.ReleaseDisposition
+
+	// Item 3: BucketBackfillNeeded / BackfillBucketsForStation spies.
+	backfillNeeded      bool
+	backfillNeededCalls int
+	backfillEmitted     int
+	backfillCalls       int
+	backfillForce       bool
+
+	// Item 9: ReconcilerMetrics spy.
+	reconcilerMetrics engine.UOPReconcilerMetrics
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
 }
 
@@ -156,7 +166,20 @@ func (s *stubEngine) EmptyNodeForToolChange(int64, int64, int64) (*storeorders.O
 func (s *stubEngine) ReleaseNodeIntoProduction(int64, int64) (*storeorders.Order, error)       { return nil, nil }
 func (s *stubEngine) SwitchNodeToTarget(int64, int64) error                             { return nil }
 func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error                   { return nil }
-func (s *stubEngine) FlipABNode(int64) error                                            { return nil }
+func (s *stubEngine) FlipABNode(int64) error { return nil }
+func (s *stubEngine) ReconcilerMetrics() engine.UOPReconcilerMetrics {
+	return s.reconcilerMetrics
+}
+
+func (s *stubEngine) BackfillBucketsForStation(force bool) (int, error) {
+	s.backfillCalls++
+	s.backfillForce = force
+	return s.backfillEmitted, nil
+}
+func (s *stubEngine) BucketBackfillNeeded() (bool, error) {
+	s.backfillNeededCalls++
+	return s.backfillNeeded, nil
+}
 
 // ── Service accessors (Phase 6.2′) ─────────────────────────────────
 // Each accessor returns a real *service.X backed by the test DB so

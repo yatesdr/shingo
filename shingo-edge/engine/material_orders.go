@@ -20,17 +20,6 @@ func buildStep(action, node string) protocol.ComplexOrderStep {
 	return protocol.ComplexOrderStep{Action: action}
 }
 
-// BuildDeliverSteps builds steps to deliver material to a node.
-// For consume nodes: pickup full bin from source, dropoff at core node.
-// For produce nodes: pickup empty bin from source, dropoff at core node.
-// TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
-func BuildDeliverSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
-	return []protocol.ComplexOrderStep{
-		buildStep("pickup", claim.InboundSource),
-		{Action: "dropoff", Node: claim.CoreNodeName},
-	}
-}
-
 // BuildReleaseSteps builds steps to remove material from a node and send it
 // to the configured outbound destination.
 func BuildReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {

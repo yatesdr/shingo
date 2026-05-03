@@ -11,7 +11,7 @@ import (
 // production uses (the EventCounterDelta subscription dispatches to
 // handleCounterDelta directly). Tests that want to simulate "the line
 // consumed 25 parts in 15 minutes" use processFixture.RunFor instead of
-// mutating runtime.RemainingUOP directly — without this fixture, every
+// mutating runtime.RemainingUOPCached directly — without this fixture, every
 // "did the value change?" test reduces to itself, hiding predicate bugs
 // like the #11 handleNormalReplenishment regression.
 //
@@ -140,7 +140,7 @@ func (f *processFixture) LineUOP(nodeID int64) int {
 	if rt == nil {
 		return -1
 	}
-	return rt.RemainingUOP
+	return rt.RemainingUOPCached
 }
 
 // Emitted reports how many ticks the fixture has driven so far. Useful
@@ -160,7 +160,7 @@ func (f *processFixture) Elapsed() time.Duration { return f.elapsed }
 // =============================================================================
 
 // TestProcessFixture_RunFor_DrivesRealCounterDeltaPath verifies that the
-// fixture decrements runtime.RemainingUOP through handleCounterDelta —
+// fixture decrements runtime.RemainingUOPCached through handleCounterDelta —
 // not via direct mutation. Asserts the fixture is correctly wired into
 // the production code path; if a future refactor moves UOP arithmetic
 // elsewhere, this test goes red and the fixture follows the production

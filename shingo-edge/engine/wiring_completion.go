@@ -135,7 +135,7 @@ func (e *Engine) handleStagedDelivery(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claimID := toClaim.ID
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, ctx.runtime.RemainingUOP); err != nil {
+	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, ctx.runtime.RemainingUOPCached); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "staged"); err != nil {
@@ -201,10 +201,7 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 		return true // matched the path but claim lookup failed
 	}
 	claimID := toClaim.ID
-	resetUOP := toClaim.UOPCapacity
-	if ctx.order.BinUOPRemaining != nil {
-		resetUOP = *ctx.order.BinUOPRemaining
-	}
+	resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity)
 	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
@@ -222,9 +219,11 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 // operator release handler. This handler still fires if the release never ran
 // (safety net) or if only Order A has completed (→ "line_cleared").
 func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool {
-	// Fetch Order A once: we need both its terminal status (to gate the
-	// "released" branch) and its BinUOPRemaining snapshot (the new bin came
-	// in via Order A, not via this evacuate-only Order B).
+	// Fetch Order A once: we need its terminal status to gate the
+	// "released" branch (Order B is evacuate-only, the new bin arrived
+	// via Order A). Item 8 retired the BinUOPRemaining snapshot, so
+	// the reset to claim capacity is unconditional — reconciler heals
+	// the runtime cache to Core's authoritative bin value within ~60s.
 	var orderA *storeorders.Order
 	if ctx.nodeTask.NextMaterialOrderID != nil {
 		if a, err := e.db.GetOrder(*ctx.nodeTask.NextMaterialOrderID); err == nil {
@@ -236,10 +235,7 @@ func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool 
 	if orderADone {
 		if toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName); err == nil {
 			claimID := toClaim.ID
-			resetUOP := toClaim.UOPCapacity
-			if orderA != nil && orderA.BinUOPRemaining != nil {
-				resetUOP = *orderA.BinUOPRemaining
-			}
+			resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity)
 			if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
 				log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 			}
@@ -276,10 +272,7 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claimID := toClaim.ID
-	resetUOP := toClaim.UOPCapacity
-	if ctx.order.BinUOPRemaining != nil {
-		resetUOP = *ctx.order.BinUOPRemaining
-	}
+	resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity)
 	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
@@ -437,21 +430,19 @@ func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
 // The reset binds to the delivery event: a fresh bin has physically arrived,
 // so the line's UOP tracking should turn over now.
 //
-// Predicate (post-2026-05): only fire when the order's DeliveryNode is
-// the process node — i.e. the order ACTUALLY DELIVERS a bin to this
-// line. Pre-fix, the function fired for any complex/retrieve whose
-// process_node matched the line, including REMOVAL orders (Order B in
-// two-robot consume, R1 in press-index, sequential-removal step). Those
-// orders take a bin AWAY from the line; their completion should NOT
-// reset the line UOP because the previous bin is still draining.
-// The bug spuriously turned over RemainingUOP to capacity mid-shift,
-// producing phantom inventory swings on the HMI. See uop-test-audit.md
-// and TestRegression_11_RemovalOrderDoesNotResetLineUOP.
+// Item 7 (post-Item-8): the DeliveryNode != CoreNodeName predicate
+// that previously skipped removal-shaped orders (Order B in two-robot
+// consume, R1 in press-index, sequential-removal step) is gone. Those
+// orders now flow through the reset like any other completion — runtime
+// briefly resets to claim.UOPCapacity. The reconciler observes the
+// now-empty slot (Item 4 empty-slot detection) and heals the runtime
+// to 0 within the next pass (~60s). Brief "looks like full bin" UI
+// during that window is SME-accepted.
+//
+// See TestRegression_RemovalOrderHealsToZeroViaReconciler in
+// uop_regression_test.go for the new mechanism pin.
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
-		return
-	}
-	if ctx.order.DeliveryNode != ctx.node.CoreNodeName {
 		return
 	}
 	claim := findActiveClaim(e.db, ctx.node)
@@ -462,17 +453,11 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	// Produce nodes receive an empty bin → UOP starts at 0.
 	// Consume nodes receive a bin from the supermarket — could be full or
 	// partial (operator-released runouts in particular send the remaining
-	// UOP back as a partial). Read the bin's authoritative uop_remaining
-	// from the OrderDelivered snapshot Core captured at delivery time
-	// (order.BinUOPRemaining). Fall back to capacity for multi-bin orders
-	// where Core leaves the snapshot nil.
-	resetUOP := claim.UOPCapacity
-	if ctx.order.BinUOPRemaining != nil {
-		resetUOP = *ctx.order.BinUOPRemaining
-	}
-	if claim.Role == protocol.ClaimRoleProduce {
-		resetUOP = 0
-	}
+	// UOP back as a partial). Item 8: reset to claim.UOPCapacity here;
+	// the reconciler heals the runtime cache to Core's authoritative
+	// bin value within the next pass (~60s). Brief "looks like full
+	// bin" UI on partial-back returns is SME-accepted.
+	resetUOP := resolveReplenishUOP(claim.Role, claim.UOPCapacity)
 
 	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)

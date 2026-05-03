@@ -136,17 +136,29 @@ func (s *LifecycleService) CreateIngestStoreOrder(stationID string, p *protocol.
 			manifest.Items[i] = bins.ManifestEntry{CatID: item.PartNumber, Quantity: item.Quantity}
 		}
 		manifestJSON, _ := json.Marshal(manifest)
-		if err := s.binManifest.SetForProduction(bin.ID, string(manifestJSON), p.PayloadCode, tmpl.UOPCapacity); err != nil {
+		// Use the operator-measured count Edge captured at finalize time
+		// (carried in p.Quantity == runtime.RemainingUOP from produce_plan.go),
+		// not tmpl.UOPCapacity. UOP is assembly-normalized: a finalized bin may
+		// hold fewer than capacity cycles when the operator finalizes early or
+		// the run wrapped on a non-multiple-of-capacity count. Falls back to
+		// tmpl.UOPCapacity only if the wire value is missing (transitional Edge
+		// builds and the no-Quantity test fixtures).
+		uop := int(p.Quantity)
+		if uop <= 0 {
+			uop = tmpl.UOPCapacity
+		}
+		if err := s.binManifest.SetForProduction(bin.ID, string(manifestJSON), p.PayloadCode, uop); err != nil {
 			return nil, "", lifecycleErr("internal_error", err.Error(), err)
 		}
 	} else {
-		// NOTE: SetBinManifestFromTemplate is a store-level convenience that
-		// resolves the payload template and builds manifest JSON internally.
-		// It bypasses BinManifestService intentionally — template resolution
-		// is a data concern, not a lifecycle concern. If audit logging on this
-		// path becomes a requirement, add a SetFromTemplate wrapper to the
-		// service layer.
-		if err := s.db.SetBinManifestFromTemplate(bin.ID, p.PayloadCode, 0); err != nil {
+		// Item 19 of the bin-as-truth refactor: route through
+		// BinManifestService.SetFromTemplate so the 0→capacity initial
+		// fill audits via bin_uop_audit. Pre-Item-19 this path called
+		// *store.DB.SetBinManifestFromTemplate directly, bypassing
+		// audit; the resulting timeline gap made forensics confusing
+		// because freshly-loaded bins appeared in bin_uop_audit only
+		// at the first downstream delta — missing the load itself.
+		if err := s.binManifest.SetFromTemplate(bin.ID, p.PayloadCode, 0); err != nil {
 			return nil, "", lifecycleErr("internal_error", err.Error(), err)
 		}
 	}

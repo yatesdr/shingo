@@ -2,11 +2,6 @@ package dispatch
 
 import "shingo/protocol"
 
-// TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
-func (d *Dispatcher) coreAddress() protocol.Address {
-	return d.replies.CoreAddress()
-}
-
 func (d *Dispatcher) sendAck(env *protocol.Envelope, orderUUID string, shingoOrderID int64, sourceNode string) {
 	d.replies.SendAck(env, orderUUID, shingoOrderID, sourceNode)
 }

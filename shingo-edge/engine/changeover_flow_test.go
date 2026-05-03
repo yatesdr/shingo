@@ -727,8 +727,8 @@ func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
 	if runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != toClaim.ID {
 		t.Error("runtime active claim should be to-claim")
 	}
-	if runtime.RemainingUOP != 200 {
-		t.Errorf("expected UOP=200 (to-claim capacity), got %d", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 200 {
+		t.Errorf("expected UOP=200 (to-claim capacity), got %d", runtime.RemainingUOPCached)
 	}
 }
 

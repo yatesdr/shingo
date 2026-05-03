@@ -156,6 +156,102 @@ func TestApiInventoryExport_BodyIsValidXLSX(t *testing.T) {
 	}
 }
 
+// --- apiInventoryInvariant (Item 13) ----------------------------------------
+
+// TestApiInventoryInvariant_EmptyDB pins the zero case: with no bins
+// or buckets, the endpoint returns Total=BinSum=BucketSum=0 plus a
+// recent ComputedAt.
+func TestApiInventoryInvariant_EmptyDB(t *testing.T) {
+	h, _ := testHandlers(t)
+
+	rec := getPlain(t, h.apiInventoryInvariant, "/api/inventory/invariant")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got InventoryInvariant
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Total != 0 || got.BinSum != 0 || got.BucketSum != 0 {
+		t.Errorf("empty DB: %+v, want all zero", got)
+	}
+	if got.ComputedAt.IsZero() {
+		t.Errorf("ComputedAt is zero, want a real timestamp")
+	}
+}
+
+// TestApiInventoryInvariant_ReflectsBinAndBucketSums pins the sum
+// math: seed bins + lineside_buckets, hit the endpoint, assert each
+// component reflects the seeded values and Total = BinSum + BucketSum.
+func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	// Two bins: 30 + 40 = 70.
+	if _, err := db.Exec(`UPDATE bins SET uop_remaining = 30 WHERE id = $1`,
+		testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-INV-A").ID); err != nil {
+		t.Fatalf("seed bin A: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE bins SET uop_remaining = 40 WHERE id = $1`,
+		testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-INV-B").ID); err != nil {
+		t.Fatalf("seed bin B: %v", err)
+	}
+	// One bucket of 11.
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, node_id, pair_key, style_id, part_number, qty)
+		VALUES ('STATION-INV', $1, '', 0, 'PART-INV', 11)`, sd.StorageNode.ID); err != nil {
+		t.Fatalf("seed bucket: %v", err)
+	}
+
+	rec := getPlain(t, h.apiInventoryInvariant, "/api/inventory/invariant")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rec.Code)
+	}
+	var got InventoryInvariant
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.BinSum != 70 {
+		t.Errorf("BinSum = %d, want 70 (30 + 40)", got.BinSum)
+	}
+	if got.BucketSum != 11 {
+		t.Errorf("BucketSum = %d, want 11", got.BucketSum)
+	}
+	if got.Total != 81 {
+		t.Errorf("Total = %d, want 81 (70 + 11)", got.Total)
+	}
+}
+
+// TestApiInventoryInvariant_ReportsNegativeBinSum pins the SME-locked
+// signed-bin contract: a bin that overpacks past zero (uop_remaining
+// = -3) shows up in BinSum as negative. Without this property,
+// dashboards built against the endpoint would silently misreport
+// inventory whenever overpack occurred.
+func TestApiInventoryInvariant_ReportsNegativeBinSum(t *testing.T) {
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	// Bin overpacked to -3 (one of the SME-lock examples).
+	if _, err := db.Exec(`UPDATE bins SET uop_remaining = -3 WHERE id = $1`,
+		testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-INV-NEG").ID); err != nil {
+		t.Fatalf("seed bin: %v", err)
+	}
+
+	rec := getPlain(t, h.apiInventoryInvariant, "/api/inventory/invariant")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rec.Code)
+	}
+	var got InventoryInvariant
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.BinSum != -3 {
+		t.Errorf("BinSum = %d, want -3 (signed; overpack must surface as negative)", got.BinSum)
+	}
+	if got.Total != -3 {
+		t.Errorf("Total = %d, want -3 (signed total reflects negative bin sum)", got.Total)
+	}
+}
+
 // --- cell helper ------------------------------------------------------------
 
 // TestCellHelper pins the "A1"-style label generator used by the export path.

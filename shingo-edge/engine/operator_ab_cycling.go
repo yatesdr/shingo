@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 
@@ -45,13 +46,35 @@ func (e *Engine) FlipABNode(nodeID int64) error {
 		return fmt.Errorf("paired node %s not found", claim.PairedCoreNode)
 	}
 
-	// Activate this node, deactivate the partner
-	if err := e.db.SetActivePull(nodeID, true); err != nil {
-		log.Printf("ab_cycling: set active pull for node %d: %v", nodeID, err)
+	// Flush trigger: A/B cycling has no operator action at the
+	// inactive→active transition — the active-pull state flip IS the
+	// boundary. Without flushing here the inactive node's accumulator
+	// would carry residual deltas past the flip and they'd ship under
+	// the wrong active-bin attribution. Fires before the SetActivePull
+	// writes so the outgoing-bin's deltas land before the new bin
+	// starts driving ticks against the now-active node.
+	if e.inventoryDelta != nil {
+		e.inventoryDelta.Flush()
+	}
+
+	// Item 5 atomic wrap: the two SetActivePull writes flip a paired
+	// node's active state. A tick firing between the two writes (with
+	// both sides momentarily seeing themselves inactive, or both
+	// active) would attribute to the wrong bucket. Wrapping the pair
+	// in a single SQLite transaction makes the flip atomic from the
+	// tick path's POV.
+	if err := e.db.Transaction(func(tx *sql.Tx) error {
+		if err := processes.SetActivePull(tx, nodeID, true); err != nil {
+			return fmt.Errorf("set active pull node=%d: %w", nodeID, err)
 		}
-	if err := e.db.SetActivePull(pairedNode.ID, false); err != nil {
-		log.Printf("ab_cycling: set active pull for node %d: %v", pairedNode.ID, err)
+		if err := processes.SetActivePull(tx, pairedNode.ID, false); err != nil {
+			return fmt.Errorf("set active pull paired-node=%d: %w", pairedNode.ID, err)
 		}
+		return nil
+	}); err != nil {
+		log.Printf("ab_cycling: atomic flip node=%d paired=%d: %v", nodeID, pairedNode.ID, err)
+		return err
+	}
 
 	log.Printf("A/B flip: node %s now active, node %s inactive", node.Name, pairedNode.Name)
 
@@ -60,7 +83,7 @@ func (e *Engine) FlipABNode(nodeID int64) error {
 		pairedClaim, _ := e.db.GetStyleNodeClaimByNode(*process.ActiveStyleID, pairedNode.CoreNodeName)
 		pairedRuntime, _ := e.db.GetProcessNodeRuntime(pairedNode.ID)
 		if pairedClaim != nil && pairedRuntime != nil &&
-			pairedClaim.AutoReorder && pairedRuntime.RemainingUOP <= pairedClaim.ReorderPoint {
+			pairedClaim.AutoReorder && pairedRuntime.RemainingUOPCached <= pairedClaim.ReorderPoint {
 			if ok, _ := e.CanAcceptOrders(pairedNode.ID); ok {
 				if _, err := e.RequestNodeMaterial(pairedNode.ID, 1); err != nil {
 					log.Printf("A/B flip auto-reorder for depleted node %s: %v", pairedNode.Name, err)

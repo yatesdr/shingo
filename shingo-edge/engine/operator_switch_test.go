@@ -34,9 +34,9 @@ func TestSwitchNodeToTarget_SkipsUOPResetWhenAlreadyAtTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get runtime: %v", err)
 	}
-	if runtime.RemainingUOP != 137 {
+	if runtime.RemainingUOPCached != 137 {
 		t.Errorf("RemainingUOP = %d, want 137 (switch must not clobber post-release drift)",
-			runtime.RemainingUOP)
+			runtime.RemainingUOPCached)
 	}
 	if runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != toClaimID {
 		t.Errorf("ActiveClaimID not pointing at to-claim after switch: %+v", runtime.ActiveClaimID)
@@ -82,9 +82,9 @@ func TestSwitchNodeToTarget_ResetsUOPWhenRuntimeStillOnFromClaim(t *testing.T) {
 		t.Fatalf("get runtime: %v", err)
 	}
 	// seedChangeoverScenario's to-claim has UOPCapacity=200.
-	if runtime.RemainingUOP != 200 {
+	if runtime.RemainingUOPCached != 200 {
 		t.Errorf("RemainingUOP = %d, want 200 (to-claim capacity, legacy reset path)",
-			runtime.RemainingUOP)
+			runtime.RemainingUOPCached)
 	}
 	if runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != toClaimID {
 		t.Errorf("ActiveClaimID not pointing at to-claim after switch: %+v", runtime.ActiveClaimID)

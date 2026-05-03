@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"shingoedge/orders"
@@ -27,11 +30,18 @@ import (
 // partial value, fire EventOrderCompleted, assert RemainingUOP is
 // unchanged. Pre-fix this would fail because the runtime would be
 // reset to capacity.
-func TestRegression_11_RemovalOrderDoesNotResetLineUOP(t *testing.T) {
+//
+// Item 7 (post-Item-8): the DeliveryNode predicate is gone. Removal
+// orders flow through the reset like any other completion — runtime
+// briefly resets to claim.UOPCapacity. The "different mechanism"
+// that catches removals correctly is the reconciler's empty-slot
+// detection (Item 4): once the bin physically leaves, Core reports
+// no bin at the slot and the reconciler heals runtime to 0. This
+// test now exercises the reconciler-heals path; the brief
+// looks-like-full window is SME-accepted.
+func TestRegression_11_RemovalOrderHealsToZeroViaReconciler(t *testing.T) {
 	db := testEngineDB(t)
-	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix: "REG11", PayloadCode: "PART-R11", UOPCapacity: 200, InitialUOP: 200,
-	})
+	nodeID, _, claimID := seedReconcilerNode(t, db, "REG11", "PART-R11")
 
 	// Drain runtime to a partial value — simulates a half-consumed bin.
 	const partialUOP = 137
@@ -40,13 +50,11 @@ func TestRegression_11_RemovalOrderDoesNotResetLineUOP(t *testing.T) {
 	}
 
 	// Removal order: process_node is the line (REG11-NODE), but
-	// DeliveryNode is OUTBOUND-DEST. This is the shape of Order B
-	// in a two-robot consume swap, of R1 in press-index, of the
-	// removal step in sequential-removal. The order moves the
-	// spent bin AWAY from the line.
+	// DeliveryNode is OUTBOUND-DEST. The order moves the spent bin
+	// AWAY from the line.
 	orderID, err := db.CreateOrder("uuid-reg11-removal", orders.TypeComplex,
 		&nodeID, false, 1,
-		"OUTBOUND-DEST", // DeliveryNode != process_node CoreNodeName
+		"OUTBOUND-DEST",
 		"", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
@@ -56,9 +64,18 @@ func TestRegression_11_RemovalOrderDoesNotResetLineUOP(t *testing.T) {
 	}
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
-	eng := testEngine(t, db)
+	// Mock Core reports no bin at the slot — the bin has physically
+	// left after the removal completed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(UOPStateResponse{Bins: nil})
+	}))
+	defer srv.Close()
+
+	eng, _ := reconcilerTestEngine(t, db, srv.URL)
 	eng.wireEventHandlers()
 
+	// Fire EventOrderCompleted. Without the predicate, this resets
+	// the runtime to capacity (200) — the brief looks-like-full UI.
 	eng.Events.Emit(Event{
 		Type: EventOrderCompleted,
 		Payload: OrderCompletedEvent{
@@ -69,10 +86,14 @@ func TestRegression_11_RemovalOrderDoesNotResetLineUOP(t *testing.T) {
 		},
 	})
 
+	// Reconciler pass — empty-slot detection (Item 4) zeros the
+	// runtime when Core reports no bin at the slot.
+	eng.Reconcile(true)
+
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
-	if rt.RemainingUOP != partialUOP {
-		t.Errorf("RemainingUOP = %d, want %d (removal-shaped order must NOT reset line UOP — DeliveryNode != process_node CoreNodeName)",
-			rt.RemainingUOP, partialUOP)
+	if rt.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 (post-removal: reconciler observes empty slot and heals runtime to 0)",
+			rt.RemainingUOPCached)
 	}
 }
 
@@ -122,61 +143,46 @@ func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
 	})
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
-	if rt.RemainingUOP != 200 {
+	if rt.RemainingUOPCached != 200 {
 		t.Errorf("RemainingUOP = %d, want 200 (delivery order to process node MUST reset line UOP to claim capacity)",
-			rt.RemainingUOP)
+			rt.RemainingUOPCached)
 	}
 }
 
-// TestRegression_11_DeliveryOfPartialBinResetsToBinUOP locks the
-// partial-return loop on the line side. Bin_A coming IN from supermarket
-// can be a partial — its uop_remaining was set by a prior cycle's
-// RELEASE PARTIAL and preserved through transit. When the bin arrives
-// at the line, runtime must reset to the bin's authoritative
-// uop_remaining (captured in OrderDelivered.BinUOPRemaining at delivery
-// time and persisted on the order row), NOT to claim.UOPCapacity.
+// TestRegression_8_DeliveryAlwaysResetsToCapacityPostItem8 pins the
+// post-Item-8 contract: delivery completion ALWAYS resets the runtime
+// cache to claim.UOPCapacity, regardless of the bin's actual
+// uop_remaining at Core. The reconciler heals the cache to Core's
+// authoritative bin value within the next pass (~60s).
 //
-// Without this, a partial bin returning to the line via a swap would
-// land showing fresh-full inventory on the operator HMI while
-// physically holding only the drained value — the same shape as
-// pre-#11 phantom turnovers, but driven from the bin record side
-// instead of the predicate side.
+// Pre-Item-8 the runtime read OrderDelivered.BinUOPRemaining (snapshot
+// of the bin's value at delivery time) and reset to that. Item 8
+// retired the snapshot — Edge's runtime cache, kept in lockstep with
+// Core by the reconciler, is now the source of truth for bin UOP at
+// completion time. The trade-off — a brief "looks like full bin" UI
+// on partial-back returns until the heal — is SME-accepted.
 //
-// Pre-#11: regardless of BinUOPRemaining, runtime reset to capacity.
-// Post-#11: runtime reads BinUOPRemaining if present, falls back to
-// claim.UOPCapacity otherwise. This test pins the BinUOPRemaining
-// branch so a future refactor that drops it surfaces here, not at a
-// plant.
-//
-// Companion to TestWiring_RetrieveCompletion_ConsumePartialBin_ResetsToBinUOP
-// in wiring_test.go which covers the simple-retrieve form. This one
-// covers the complex-order form (Order A in a two-robot consume swap)
-// which is the production-relevant shape.
-func TestRegression_11_DeliveryOfPartialBinResetsToBinUOP(t *testing.T) {
+// This test replaces TestRegression_11_DeliveryOfPartialBinResetsToBinUOP
+// (deleted with Item 8). The companion reconciler-heals-after-arrival
+// behavior is covered by the existing TestRegression_ReconciliationSelfHeal
+// in uop_reconciler_test.go.
+func TestRegression_8_DeliveryAlwaysResetsToCapacityPostItem8(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix: "REG11P", PayloadCode: "PART-R11P", UOPCapacity: 200, InitialUOP: 200,
+		Prefix: "ITEM8", PayloadCode: "PART-I8", UOPCapacity: 200, InitialUOP: 200,
 	})
 
-	// Drained runtime — the line had been consuming from the previous
-	// bin. Pre-arrival of bin_A this is the value the runtime carries.
-	// Seed to a value that's distinct from both capacity (200) and the
-	// expected post-arrival value (125) so a clobber to either is
-	// visible.
+	// Drained runtime — the line was consuming from the previous bin.
+	// Pre-arrival, runtime carries 50.
 	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 50); err != nil {
 		t.Fatalf("seed runtime: %v", err)
 	}
 
-	// Delivery order: bin_A delivers to the line, but bin_A is a
-	// PARTIAL bin from a prior cycle's RELEASE PARTIAL — its
-	// uop_remaining is 125, not capacity. Core captures that value in
-	// OrderDelivered.BinUOPRemaining at FINISHED time; Edge persists
-	// it on the order row via UpdateOrderBinUOPRemaining (production
-	// path: HandleDeliveredWithExpiry).
-	orderID, err := db.CreateOrder("uuid-reg11-partial-in", orders.TypeComplex,
-		&nodeID, false, 1,
-		"REG11P-NODE", // DeliveryNode == process_node CoreNodeName
-		"", "", "", false, "")
+	// Delivery order to the line. Pre-Item-8 the order would have
+	// carried a BinUOPRemaining snapshot; post-Item-8 the field is
+	// gone and the reset goes to claim.UOPCapacity unconditionally.
+	orderID, err := db.CreateOrder("uuid-item8-delivery", orders.TypeComplex,
+		&nodeID, false, 1, "ITEM8-NODE", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -185,15 +191,6 @@ func TestRegression_11_DeliveryOfPartialBinResetsToBinUOP(t *testing.T) {
 	}
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
-	// Snapshot bin_A's authoritative uop_remaining at delivery time.
-	// 125 is < capacity (200) and != the seeded runtime (50), so the
-	// assertion can't be falsely satisfied by a clobber to either.
-	const partialBinUOP = 125
-	v := partialBinUOP
-	if err := db.UpdateOrderBinUOPRemaining(orderID, &v); err != nil {
-		t.Fatalf("set bin_uop_remaining: %v", err)
-	}
-
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -201,18 +198,17 @@ func TestRegression_11_DeliveryOfPartialBinResetsToBinUOP(t *testing.T) {
 		Type: EventOrderCompleted,
 		Payload: OrderCompletedEvent{
 			OrderID:       orderID,
-			OrderUUID:     "uuid-reg11-partial-in",
+			OrderUUID:     "uuid-item8-delivery",
 			OrderType:     orders.TypeComplex,
 			ProcessNodeID: &nodeID,
 		},
 	})
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
-	if rt.RemainingUOP != partialBinUOP {
-		t.Errorf("RemainingUOP = %d, want %d "+
-			"(partial-in delivery: runtime must reset to bin's authoritative uop_remaining "+
-			"from OrderDelivered.BinUOPRemaining snapshot, NOT to claim.UOPCapacity 200; "+
-			"this is the line side of the partial-return loop)",
-			rt.RemainingUOP, partialBinUOP)
+	if rt.RemainingUOPCached != 200 {
+		t.Errorf("RemainingUOP = %d, want 200 "+
+			"(post-Item-8: delivery completion always resets to claim.UOPCapacity; "+
+			"reconciler heals to Core's authoritative bin value within the next pass)",
+			rt.RemainingUOPCached)
 	}
 }

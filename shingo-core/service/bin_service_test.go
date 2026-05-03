@@ -573,6 +573,51 @@ func TestBinService_RecordCount_WithDiscrepancy(t *testing.T) {
 	}
 }
 
+// TestBinService_RecordCount_WritesAuditRow pins the Item 19 audit-
+// completeness contract: every cycle count writes a bin_uop_audit row
+// (op=cycle_count) capturing the operator-vs-system divergence.
+// Pre-Item-19 cycle counts were silent in bin_uop_audit and therefore
+// invisible in Item 10's audit timeline UI.
+func TestBinService_RecordCount_WritesAuditRow(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-CNT-AUDIT", "PART-A", 100)
+	if _, err := svc.RecordCount(bin, 73, "counter-X"); err != nil {
+		t.Fatalf("RecordCount: %v", err)
+	}
+
+	var (
+		op           string
+		beforeUOP    int
+		afterUOP     int
+		actor        string
+		auditCount   int
+	)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+		WHERE bin_id=$1 AND op='cycle_count'`, bin.ID).Scan(&auditCount); err != nil {
+		t.Fatalf("count audit rows: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("cycle_count audit rows = %d, want 1", auditCount)
+	}
+	if err := db.QueryRow(`SELECT op, before_uop, after_uop, actor
+		FROM bin_uop_audit WHERE bin_id=$1 AND op='cycle_count'`,
+		bin.ID).Scan(&op, &beforeUOP, &afterUOP, &actor); err != nil {
+		t.Fatalf("read audit row: %v", err)
+	}
+	if beforeUOP != 100 {
+		t.Errorf("before_uop = %d, want 100 (system's expected count)", beforeUOP)
+	}
+	if afterUOP != 73 {
+		t.Errorf("after_uop = %d, want 73 (operator's submitted count)", afterUOP)
+	}
+	if actor != "counter-X" {
+		t.Errorf("actor = %q, want counter-X", actor)
+	}
+}
+
 func TestBinService_AddNote_RequiresMessage(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)

@@ -9,6 +9,7 @@ import (
 	"shingo/protocol"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
+	"shingocore/store/nodes"
 	"shingocore/store/orders"
 )
 
@@ -184,5 +185,67 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestRegression_ProduceIngestUsesRuntimeNotTemplate pins the Phase 0d fix:
+// CreateIngestStoreOrder must write the operator-measured runtime UOP value
+// (carried in OrderIngestRequest.Quantity from Edge's produce_plan.go) to
+// bins.uop_remaining — NOT the payload template's UOPCapacity. The pre-fix
+// code at dispatch/lifecycle_service.go:139 used tmpl.UOPCapacity, so a
+// finalize that captured 47 cycles on a 100-capacity template would write
+// 100 instead of 47. The plant-wide invariant (sum of bins + buckets equals
+// physical total) requires the count to reflect what the operator actually
+// finalized, not what the bin "should" hold.
+func TestRegression_ProduceIngestUsesRuntimeNotTemplate(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+
+	bp.UOPCapacity = 100
+	if err := db.UpdatePayload(bp); err != nil {
+		t.Fatalf("update payload uop capacity: %v", err)
+	}
+
+	bt, _ := db.GetBinTypeByCode("DEFAULT")
+	if err := db.SetPayloadBinTypes(bp.ID, []int64{bt.ID}); err != nil {
+		t.Fatalf("set payload bin types: %v", err)
+	}
+
+	produceNode := &nodes.Node{Name: "PRODUCE-RUN", Enabled: true}
+	if err := db.CreateNode(produceNode); err != nil {
+		t.Fatalf("create produce node: %v", err)
+	}
+
+	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-RUN-1", NodeID: &produceNode.ID, Status: "available"}
+	if err := db.CreateBin(bin); err != nil {
+		t.Fatalf("create bin: %v", err)
+	}
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	const operatorMeasured = 47
+	d.HandleOrderIngest(testEnvelope(), &protocol.OrderIngestRequest{
+		OrderUUID:   "uuid-ingest-runtime",
+		PayloadCode: bp.Code,
+		BinLabel:    "BIN-RUN-1",
+		SourceNode:  produceNode.Name,
+		Quantity:    operatorMeasured,
+		Manifest: []protocol.IngestManifestItem{
+			{PartNumber: bp.Code, Quantity: operatorMeasured, Description: bp.Code},
+		},
+	})
+
+	got, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("get bin: %v", err)
+	}
+	if got.UOPRemaining != operatorMeasured {
+		t.Errorf("bin.UOPRemaining = %d, want %d (operator-measured runtime, not tmpl.UOPCapacity=%d)",
+			got.UOPRemaining, operatorMeasured, bp.UOPCapacity)
+	}
+	if got.UOPRemaining == bp.UOPCapacity {
+		t.Errorf("bin.UOPRemaining picked up tmpl.UOPCapacity=%d; pre-Phase-0d bug regressed",
+			bp.UOPCapacity)
 	}
 }

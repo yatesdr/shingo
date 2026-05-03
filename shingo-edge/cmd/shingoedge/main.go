@@ -158,9 +158,36 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		return db.CountActiveOrders()
 	})
 	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
+	// Item 1: piggyback the UOP reconciler on the heartbeat cadence.
+	// Apply the configured reconcile interval (defaults to 60s in
+	// config.Defaults) so the gate matches the heartbeat tick rate.
+	eng.SetReconcileInterval(cfg.UOP.ReconcileInterval)
+	hb.SetReconcileFn(func() { eng.Reconcile(false) })
 	hb.Start()
 	// Note: hb.Stop() is not deferred here — it lives for the process lifetime
 	// and is cleaned up by the Kafka client close.
+
+	// Item 3: auto-fire bucket backfill when Core is fresh. Detects
+	// "Core has zero buckets for this station and Edge has rows" —
+	// idempotent re-runs return false once Core is populated. Best
+	// effort; failures (Core unreachable at boot, partial responses)
+	// just log and defer to the next startup or to the admin endpoint.
+	go func() {
+		needed, err := eng.BucketBackfillNeeded()
+		if err != nil {
+			log.Printf("auto-backfill: probe: %v", err)
+			return
+		}
+		if !needed {
+			return
+		}
+		emitted, err := eng.BackfillBucketsForStation(true)
+		if err != nil {
+			log.Printf("auto-backfill: %v", err)
+			return
+		}
+		log.Printf("auto-backfill: seeded %d bucket deltas to Core", emitted)
+	}()
 
 	// ── Handler callbacks (catalog, status, registration) ───────────────
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
@@ -200,6 +227,14 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			cgHandler.OnCommand(cmd)
 		})
 	}
+
+	// Item 11: SEND PARTIAL BACK pickup notification. Fires when Core's
+	// rds.Poller observes the robot finished the pickup block — Edge
+	// flushes the released bin's accumulator and clears the runtime's
+	// active order so subsequent ticks attribute cleanly.
+	edgeHandler.SetBinPickedUpHandler(func(p *protocol.BinPickedUp) {
+		eng.HandleBinPickedUp(p.OrderUUID, p.BinID)
+	})
 
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)
@@ -311,6 +346,19 @@ func main() {
 	}, engine.EventCounterDelta)
 	reporter.Start()
 	defer reporter.Stop()
+
+	// ── Inventory delta reporter ───────────────────────────────────────
+	// Accumulates per-bin / per-bucket UOP changes from the PLC tick
+	// path and the operator release path; flushes through the same
+	// outbox as the production reporter on a 5s cadence plus the
+	// release-click / loader-confirm / A/B-flip flush triggers. Core
+	// applies the deltas authoritatively to bins.uop_remaining /
+	// lineside_buckets via InventoryDeltaService.
+	invReporter := messaging.NewInventoryDeltaReporter(db, stationID)
+	invReporter.DebugLog = messaging.DebugLogFunc(dbg.Func("inventory_delta"))
+	eng.SetInventoryDeltaSink(invReporter)
+	invReporter.Start()
+	defer invReporter.Stop()
 
 	// ── Count-group handler (advanced-zone light alerts) ────────────────
 	// Constructed before Kafka connect so the heartbeat writer can start

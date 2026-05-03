@@ -182,7 +182,7 @@ export function renderGrid() {
 function renderPayloadBoard(entry) {
     const claim = entry.active_claim;
     const runtime = entry.runtime || {};
-    const remaining = runtime.remaining_uop != null ? runtime.remaining_uop : 0;
+    const remaining = runtime.remaining_uop_cached != null ? runtime.remaining_uop_cached : 0;
     const binState = entry.bin_state;
     const hasBin = binState && binState.occupied;
     const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
@@ -350,7 +350,7 @@ function gridDimensions() {
 function createNodeButton(entry) {
     const claim = entry.active_claim;
     const runtime = entry.runtime || {};
-    const remaining = runtime.remaining_uop != null ? runtime.remaining_uop : 0;
+    const remaining = runtime.remaining_uop_cached != null ? runtime.remaining_uop_cached : 0;
     const capacity = claim ? claim.uop_capacity : 0;
 
     const btn = el('div', { className: 'os-node-btn ' + nodeColorClass(entry) });
@@ -431,7 +431,7 @@ function appendOrderStatusChips(btn, entry) {
 function nodeColorClass(entry) {
     const claim = entry.active_claim;
     if (!claim) return 'os-unclaimed';
-    const remaining = entry.runtime ? entry.runtime.remaining_uop : 0;
+    const remaining = entry.runtime ? entry.runtime.remaining_uop_cached : 0;
     if (claim.swap_mode === 'manual_swap') {
         const hasActiveOrder = entry.orders && entry.orders.some(o =>
             o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');

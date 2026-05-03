@@ -154,6 +154,27 @@ func (db *DB) runVersionedMigrations() error {
 			verifyV15BinTransitState},
 		{16, "add queue_reason column to orders", v16OrderQueueReason,
 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "queue_reason") }},
+
+		// v17: UOP bin-as-truth refactor — audit log + delta apply
+		// infrastructure, in final shape. Pre-production rollout
+		// collapsed the staged Phases 0–4 sub-migrations into a
+		// single migration once the design stabilized; the staged
+		// versions never ran against a production DB.
+		//
+		// Net effect of v17 = v17a + v18 + v20 (auth-only) + v21
+		// from the original plan: bin_uop_audit table with metadata
+		// column; lineside_buckets table; inventory_delta_dedup
+		// table. The shadow column / shadow table / per-station
+		// flip flag are absent — they served the rollable cutover
+		// machinery, which we don't need without a production
+		// audience.
+		{17, "uop bin-as-truth: audit log + delta apply infrastructure", v17UOPBinAsTruth,
+			func(q schema.Querier) bool {
+				return schema.TableExists(q, "bin_uop_audit") &&
+					schema.TableExists(q, "lineside_buckets") &&
+					schema.TableExists(q, "inventory_delta_dedup") &&
+					schema.ColumnExists(q, "bin_uop_audit", "metadata")
+			}},
 	}
 
 	for _, m := range migrations {
@@ -636,6 +657,80 @@ func v14OrderProcessNode(tx *sql.Tx) error {
 func v16OrderQueueReason(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS queue_reason TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+// v17UOPBinAsTruth is the consolidated migration for the UOP bin-as-
+// truth refactor. The pre-production rollout cycled through six staged
+// migrations (v17a-v23 in early drafts of this file) — shadow column,
+// shadow table, dedup, per-station flag, then drops — that were never
+// run against a production DB. Collapsed here into the final-shape
+// schema so fresh installs and dev rebuilds get a clean line.
+//
+// Three additions:
+//
+//   - bin_uop_audit table. Append-only forensic log for every write
+//     to bins.uop_remaining via BinManifestService and every operator
+//     override / delta apply. Includes the metadata jsonb column for
+//     override-row context (disposition kind, per-part diff).
+//   - lineside_buckets table. Core mirror of the Edge bucket model;
+//     composite UNIQUE on (station, node_id, pair_key, style_id,
+//     part_number); CHECK (qty >= 0) — empty buckets are deleted
+//     (Option C: location-only, active/inactive computed at query).
+//   - inventory_delta_dedup table. Per-(station, scope_kind, scope_key)
+//     last_seq high-water mark for at-most-once delta application.
+//     Distinct from inbox_dedup (which gates order-message processing).
+func v17UOPBinAsTruth(tx *sql.Tx) error {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS bin_uop_audit (
+		id           BIGSERIAL PRIMARY KEY,
+		bin_id       BIGINT NOT NULL,
+		before_uop   INTEGER,
+		after_uop    INTEGER NOT NULL,
+		op           TEXT NOT NULL,
+		source       TEXT NOT NULL DEFAULT '',
+		order_id     BIGINT,
+		payload_code TEXT NOT NULL DEFAULT '',
+		actor        TEXT NOT NULL DEFAULT '',
+		metadata     JSONB,
+		applied_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`); err != nil {
+		return fmt.Errorf("create bin_uop_audit: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_bin_time ON bin_uop_audit(bin_id, applied_at DESC)`); err != nil {
+		return fmt.Errorf("index bin_uop_audit(bin_id, applied_at): %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_bin_uop_audit_op ON bin_uop_audit(op)`); err != nil {
+		return fmt.Errorf("index bin_uop_audit(op): %w", err)
+	}
+
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS lineside_buckets (
+		id BIGSERIAL PRIMARY KEY,
+		station TEXT NOT NULL,
+		node_id BIGINT NOT NULL,
+		pair_key TEXT NOT NULL,
+		style_id BIGINT NOT NULL,
+		part_number TEXT NOT NULL,
+		qty INTEGER NOT NULL CHECK (qty >= 0),
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE (station, node_id, pair_key, style_id, part_number)
+	)`); err != nil {
+		return fmt.Errorf("create lineside_buckets: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(node_id, style_id)`); err != nil {
+		return fmt.Errorf("index lineside_buckets(node_id, style_id): %w", err)
+	}
+
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS inventory_delta_dedup (
+		station TEXT NOT NULL,
+		scope_kind TEXT NOT NULL,
+		scope_key TEXT NOT NULL,
+		last_seq BIGINT NOT NULL,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		PRIMARY KEY (station, scope_kind, scope_key)
+	)`); err != nil {
+		return fmt.Errorf("create inventory_delta_dedup: %w", err)
+	}
+	return nil
 }
 
 // v15BinTransitState is Phase 1 of the bin-transit-state project. Two

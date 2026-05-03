@@ -28,7 +28,7 @@ func produceClaim(swapMode string) *processes.NodeClaim {
 
 func produceFixtures(swapMode string) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim) {
 	node := &processes.Node{ID: 1, Name: "PRODUCE-NODE"}
-	runtime := &processes.RuntimeState{RemainingUOP: 50}
+	runtime := &processes.RuntimeState{RemainingUOPCached: 50}
 	return node, runtime, produceClaim(swapMode)
 }
 
@@ -124,7 +124,7 @@ func TestBuildProducePlan_PreconditionErrors(t *testing.T) {
 
 	t.Run("zero_uop", func(t *testing.T) {
 		r := *runtime
-		r.RemainingUOP = 0
+		r.RemainingUOPCached = 0
 		if _, err := BuildProducePlan(node, &r, claim, true, fixedNow); err == nil {
 			t.Fatalf("expected error for zero RemainingUOP")
 		}

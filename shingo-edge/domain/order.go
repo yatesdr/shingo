@@ -31,13 +31,13 @@ type Order struct {
 	ETA            *string    `json:"eta"`
 	AutoConfirm    bool       `json:"auto_confirm"`
 	StagedExpireAt *time.Time `json:"staged_expire_at,omitempty"`
-	// BinUOPRemaining is the bin's uop_remaining at delivery time, snapshot
-	// from Core via the OrderDelivered envelope (see protocol.OrderDelivered).
-	// handleNormalReplenishment uses this to reset lineside UOP from the
-	// bin's actual contents instead of guessing claim.UOPCapacity. Nil for
-	// multi-bin orders, for older Core builds, and before the order is
-	// delivered.
-	BinUOPRemaining *int   `json:"bin_uop_remaining,omitempty"`
+	// BinID is Core's ID for the bin associated with this order,
+	// snapshot from OrderDelivered. PLC tick attribution at
+	// consume/produce time looks up runtime.ActiveOrderID, reads its
+	// BinID, and emits BinUOPDelta against that bin. Nil for multi-bin
+	// orders; older Core builds leave it nil and Edge skips bin delta
+	// emission.
+	BinID           *int64 `json:"bin_id,omitempty"`
 	PayloadCode     string `json:"payload_code"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`

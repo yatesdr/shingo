@@ -29,7 +29,7 @@ export function closeModal() {
 export function renderModal(entry) {
     const claim = entry.active_claim;
     const runtime = entry.runtime || {};
-    const remaining = runtime.remaining_uop != null ? runtime.remaining_uop : 0;
+    const remaining = runtime.remaining_uop_cached != null ? runtime.remaining_uop_cached : 0;
     const capacity = claim ? claim.uop_capacity : 0;
     const pct = capacity > 0 ? Math.min(remaining / capacity, 1) : 0;
     const task = entry.changeover_task;

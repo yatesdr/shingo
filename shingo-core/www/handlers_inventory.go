@@ -3,9 +3,43 @@ package www
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/xuri/excelize/v2"
 )
+
+// InventoryInvariant is the Item 13 plant-wide running totals shape.
+// BinSum is signed because the SME lock allows bins to go negative
+// (overpack/underpack); over time the signed sum drifts in either
+// direction as production smooths out, useful as a trend indicator
+// rather than a hard equation. BucketSum stays non-negative by
+// schema CHECK constraint. Total = BinSum + BucketSum, so dashboards
+// can present either the components or the rolled-up plant total.
+type InventoryInvariant struct {
+	Total      int64     `json:"total"`
+	BinSum     int64     `json:"bin_sum"`    // signed; can be negative per SME lock
+	BucketSum  int64     `json:"bucket_sum"` // always >= 0
+	ComputedAt time.Time `json:"computed_at"`
+}
+
+// apiInventoryInvariant returns the plant-wide running totals as JSON.
+// Item 13 invariant probe — dashboards verify the signed sum stays
+// approximately stable (overpack/underpack wash out at the aggregate
+// level). The handler returns sums regardless of sign — clients must
+// not assume non-negative bin_sum.
+func (h *Handlers) apiInventoryInvariant(w http.ResponseWriter, r *http.Request) {
+	inv, err := h.engine.InventoryDeltaService().SumInvariant()
+	if err != nil {
+		h.jsonError(w, "sum invariant: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, InventoryInvariant{
+		Total:      inv.Total,
+		BinSum:     inv.BinSum,
+		BucketSum:  inv.BucketSum,
+		ComputedAt: time.Now().UTC(),
+	})
+}
 
 func (h *Handlers) handleInventory(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{

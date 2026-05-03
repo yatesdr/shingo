@@ -569,6 +569,81 @@ func TestCoreClient_FetchNodeChildren_BadJSON(t *testing.T) {
 	}
 }
 
+// TestCoreClient_BinAtLineside_TriState pins the B2 fix: each of
+// the three Core responses maps to a distinct return shape so the
+// reconciler can distinguish "Core says empty" from "Core says
+// here's the bin" from "Core unreachable, retain prior cached value".
+func TestCoreClient_BinAtLineside_TriState(t *testing.T) {
+	t.Run("found_with_bin", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]NodeBinInfo{
+				{NodeName: "LINE_01", BinLabel: "B-1", PayloadCode: "PART-A", UOPRemaining: 47, Occupied: true},
+			})
+		}))
+		defer srv.Close()
+		c := NewCoreClient(srv.URL)
+
+		bin, found, err := c.BinAtLineside("LINE_01")
+		if err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if !found {
+			t.Errorf("found = false, want true")
+		}
+		if bin == nil || bin.UOPRemaining != 47 {
+			t.Errorf("bin = %+v, want non-nil with UOPRemaining=47", bin)
+		}
+	})
+
+	t.Run("found_empty_node", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode([]NodeBinInfo{
+				{NodeName: "LINE_01", Occupied: false},
+			})
+		}))
+		defer srv.Close()
+		c := NewCoreClient(srv.URL)
+
+		bin, found, err := c.BinAtLineside("LINE_01")
+		if err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if !found {
+			t.Errorf("found = false, want true (Core confirmed the slot exists, just empty)")
+		}
+		if bin != nil {
+			t.Errorf("bin = %+v, want nil for empty slot", bin)
+		}
+	})
+
+	t.Run("core_unreachable_returns_error_not_silent_nil", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "core boom", http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+		c := NewCoreClient(srv.URL)
+
+		bin, found, err := c.BinAtLineside("LINE_01")
+		if err == nil {
+			t.Fatal("err = nil, want non-nil (Core unreachable must surface as error so reconciler retains prior cached value)")
+		}
+		if found {
+			t.Errorf("found = true, want false on error")
+		}
+		if bin != nil {
+			t.Errorf("bin = %+v, want nil on error", bin)
+		}
+	})
+
+	t.Run("unconfigured_url_returns_error", func(t *testing.T) {
+		c := NewCoreClient("")
+		_, _, err := c.BinAtLineside("LINE_01")
+		if err == nil {
+			t.Errorf("err = nil, want non-nil for unconfigured CoreClient")
+		}
+	})
+}
+
 func TestCoreClient_FetchNodeBins(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("nodes"); got != "N1,N2" {

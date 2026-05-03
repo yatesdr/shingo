@@ -2,6 +2,7 @@ package www
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -301,8 +302,15 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	disp := buildReleaseDisposition(req.Disposition, req.QtyByPart, req.CalledBy)
+	disp := buildReleaseDisposition(req)
 	if err := h.orchestration.ReleaseOrderWithLineside(orderID, disp); err != nil {
+		// ErrCountChangePending → 409 Conflict so the operator UI can
+		// distinguish "retry" from "permanent failure" and surface a
+		// retry hint rather than a generic error toast.
+		if errors.Is(err, engine.ErrCountChangePending) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -313,18 +321,35 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 // An unknown or empty disposition string maps to the zero-value disposition
 // (Mode == "") — Core leaves the bin's manifest alone, preserving pre-Phase-8
 // behavior for older clients posting bare bodies.
-func buildReleaseDisposition(mode string, qtyByPart map[string]int, calledBy string) engine.ReleaseDisposition {
-	switch engine.ReleaseDispositionMode(mode) {
+//
+// Phase 0b: threads through the override-audit fields (qty_by_part_suggested,
+// partial_count, partial_count_suggested) so Core can record any divergence
+// between the operator's submission and the system-suggested baseline.
+func buildReleaseDisposition(req releaseRequest) engine.ReleaseDisposition {
+	switch engine.ReleaseDispositionMode(req.Disposition) {
 	case engine.DispositionCaptureLineside:
 		return engine.ReleaseDisposition{
-			Mode:            engine.DispositionCaptureLineside,
-			LinesideCapture: qtyByPart,
-			CalledBy:        calledBy,
+			Mode:                     engine.DispositionCaptureLineside,
+			LinesideCapture:          req.QtyByPart,
+			LinesideCaptureSuggested: req.QtyByPartSuggested,
+			CalledBy:                 req.CalledBy,
 		}
 	case engine.DispositionSendPartialBack:
 		return engine.ReleaseDisposition{
-			Mode:     engine.DispositionSendPartialBack,
-			CalledBy: calledBy,
+			Mode:                  engine.DispositionSendPartialBack,
+			PartialCount:          req.PartialCount,
+			PartialCountSuggested: req.PartialCountSuggested,
+			CalledBy:              req.CalledBy,
+		}
+	case engine.DispositionReleaseUnderpack:
+		// Underpack carries no operator-entered count — the wire
+		// shape is &0 (manifest clear). The disposition string is
+		// what flags the audit op as released_underpack so
+		// forensics can trend missing-inventory separately from
+		// system-and-operator-agreed-empty (RELEASE EMPTY).
+		return engine.ReleaseDisposition{
+			Mode:     engine.DispositionReleaseUnderpack,
+			CalledBy: req.CalledBy,
 		}
 	default:
 		// Empty or unknown disposition — preserve legacy "no manifest action"
@@ -333,10 +358,10 @@ func buildReleaseDisposition(mode string, qtyByPart map[string]int, calledBy str
 		// value that isn't recognised is logged so the failure is visible
 		// rather than silent. Empty mode (legitimate legacy clients posting
 		// bare bodies) is not logged.
-		if mode != "" {
-			log.Printf("apiReleaseOrder: unknown disposition %q from client, treating as no manifest action", mode)
+		if req.Disposition != "" {
+			log.Printf("apiReleaseOrder: unknown disposition %q from client, treating as no manifest action", req.Disposition)
 		}
-		return engine.ReleaseDisposition{CalledBy: calledBy}
+		return engine.ReleaseDisposition{CalledBy: req.CalledBy}
 	}
 }
 

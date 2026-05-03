@@ -112,6 +112,123 @@ func (c *CoreClient) FetchNodeChildren(nodeName string) ([]NodeChildInfo, error)
 	return result, nil
 }
 
+// BinUOPRow mirrors service.BinUOPRow on Core. The reconciler's
+// self-heal path reads it to align local runtime cache with Core's
+// authoritative bin count.
+type BinUOPRow struct {
+	BinID        int64  `json:"bin_id"`
+	NodeName     string `json:"node_name"`
+	PayloadCode  string `json:"payload_code"`
+	UOPRemaining int    `json:"uop_remaining"`
+}
+
+// LinesideBucketRow mirrors service.LinesideBucketRow on Core. Edge
+// compares each row against its local node_lineside_bucket table to
+// surface bucket-side drift. Item 14 (D6) dropped the NodeID field —
+// the reconciler resolves Edge node ids by looking up NodeName in the
+// local nodeByName map, so Core's internal NodeID is decorative
+// here. Core's wire struct keeps it for parity with database joins.
+type LinesideBucketRow struct {
+	NodeName   string `json:"node_name"`
+	PairKey    string `json:"pair_key"`
+	StyleID    int64  `json:"style_id"`
+	PartNumber string `json:"part_number"`
+	Qty        int    `json:"qty"`
+}
+
+// UOPStateResponse is the wire shape for /api/telemetry/uop-state.
+type UOPStateResponse struct {
+	Bins    []BinUOPRow         `json:"bins"`
+	Buckets []LinesideBucketRow `json:"buckets"`
+}
+
+// FetchUOPState returns the authoritative bin + bucket snapshot from
+// Core. Returns nil (no error) when Core is unavailable, matching
+// FetchNodeBins's graceful-degradation contract — a missed
+// reconciliation pass is not worth surfacing.
+func (c *CoreClient) FetchUOPState(station string, nodeNames []string) (*UOPStateResponse, error) {
+	if c.baseURL == "" {
+		return nil, nil
+	}
+	params := url.Values{}
+	if station != "" {
+		params.Set("station", station)
+	}
+	if len(nodeNames) > 0 {
+		params.Set("nodes", strings.Join(nodeNames, ","))
+	}
+	resp, err := c.http.Get(c.baseURL + "/api/telemetry/uop-state?" + params.Encode())
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+	var result UOPStateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, nil
+	}
+	return &result, nil
+}
+
+// BinAtLineside is the tri-state lookup the reconciler needs at
+// the Phase 3 authority flip. Returns:
+//
+//   - (bin, true, nil)  — Core confirms a bin is present at the node;
+//     bin.UOPRemaining is the authoritative count.
+//   - (nil, true, nil)  — Core confirms no bin at the node; the
+//     reconciler should set local runtime to 0.
+//   - (nil, false, err) — Core unreachable (network error, non-200,
+//     decode failure). The reconciler MUST retain the prior cached
+//     value rather than zeroing — otherwise a transient Core blip
+//     would zero every lineside on every retry. This is the B2 fix
+//     from plan §2.6.
+//
+// Replaces the unsafe (nil, nil) collapse from FetchNodeBins for
+// the reconciler self-heal path. FetchNodeBins keeps its existing
+// graceful-degradation contract for non-self-heal callers (HMI
+// telemetry where a temporary nil-vs-occupied flicker is acceptable).
+func (c *CoreClient) BinAtLineside(nodeName string) (*NodeBinInfo, bool, error) {
+	if c.baseURL == "" {
+		return nil, false, fmt.Errorf("core API not configured")
+	}
+	if nodeName == "" {
+		return nil, false, fmt.Errorf("node name is required")
+	}
+	params := url.Values{}
+	params.Set("nodes", nodeName)
+	resp, err := c.http.Get(c.baseURL + "/api/telemetry/node-bins?" + params.Encode())
+	if err != nil {
+		return nil, false, fmt.Errorf("fetch node-bins for %q: %w", nodeName, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("fetch node-bins for %q: HTTP %d", nodeName, resp.StatusCode)
+	}
+	var rows []NodeBinInfo
+	if err := json.NewDecoder(resp.Body).Decode(&rows); err != nil {
+		return nil, false, fmt.Errorf("decode node-bins for %q: %w", nodeName, err)
+	}
+	// Find the row for the requested node. Core returns one row per
+	// requested node even when unoccupied (Occupied=false).
+	for i := range rows {
+		if rows[i].NodeName == nodeName {
+			if !rows[i].Occupied {
+				// Confirmed empty — distinct from Core-unreachable.
+				return nil, true, nil
+			}
+			r := rows[i]
+			return &r, true, nil
+		}
+	}
+	// HTTP succeeded but the requested node didn't appear in the
+	// response. Treat as confirmed empty — Core would have included
+	// the row if the node were known. A typo in the node name lands
+	// here too; surfaces via reconciler "no bin at slot" → set to 0.
+	return nil, true, nil
+}
+
 // FetchNodeBins returns bin state for the given core node names.
 // Returns nil (no error) if Core is unavailable or unreachable.
 func (c *CoreClient) FetchNodeBins(nodeNames []string) ([]NodeBinInfo, error) {

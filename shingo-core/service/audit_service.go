@@ -35,3 +35,20 @@ func (s *AuditService) Append(entityType string, entityID int64, action, oldValu
 func (s *AuditService) ListForEntity(entityType string, entityID int64) ([]*audit.Entry, error) {
 	return s.db.ListEntityAudit(entityType, entityID)
 }
+
+// ListBinUOPByBin / ListBinUOPByOperator / ListBinUOPOverridesByStation
+// expose the read side of bin_uop_audit for the Item 10 audit UI.
+// Handlers call these directly so the UI can render per-bin timelines,
+// per-operator activity, and per-station override-pattern reports
+// without composing SQL in the handler layer.
+func (s *AuditService) ListBinUOPByBin(binID int64, limit, offset int) ([]audit.BinUOPRow, error) {
+	return audit.ListBinUOPByBin(s.db.DB, binID, limit, offset)
+}
+
+func (s *AuditService) ListBinUOPByOperator(actor string, limit, offset int) ([]audit.BinUOPRow, error) {
+	return audit.ListBinUOPByOperator(s.db.DB, actor, limit, offset)
+}
+
+func (s *AuditService) ListBinUOPOverridesByStation(station string, limit, offset int) ([]audit.BinUOPRow, error) {
+	return audit.ListBinUOPOverridesByStation(s.db.DB, station, limit, offset)
+}

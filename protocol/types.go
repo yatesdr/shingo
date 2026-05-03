@@ -68,6 +68,25 @@ const (
 	// Count-group light alerts (advanced-zone occupancy → PLC-driven warning light)
 	SubjectCountGroupCommand = "countgroup.command" // Core -> Edge: requested light state for a zone
 	SubjectCountGroupAck     = "countgroup.ack"     // Edge -> Core: PLC ack outcome for a prior command
+
+	// Inventory delta envelopes. Edge → Core. Carry signed count
+	// changes against bins and lineside buckets. Routed on subject
+	// from CoreHandler.HandleData (the bin-as-truth refactor chose
+	// this over new MessageHandler methods, which would silently
+	// no-op via InboxDedup). Dedup is at the message level via the
+	// inventory_delta_dedup table keyed on
+	// (station, scope_kind, scope_key).
+	SubjectBinUOPDelta         = "inventory.bin_uop_delta"
+	SubjectLinesideBucketDelta = "inventory.lineside_bucket_delta"
+
+	// BinPickedUp — Core notifies Edge when a bin is physically picked
+	// up by a robot. Used by the SEND PARTIAL BACK flow: the operator
+	// releases a partial bin and the cell keeps cycling; ticks during
+	// the pickup window must keep attributing to
+	// the released bin until the robot actually grabs it. BinPickedUp
+	// is the signal that the released-bin's accumulator should flush
+	// and the active claim should advance.
+	SubjectBinPickedUp = "transit.bin_picked_up"
 )
 
 // AckOutcome is the typed outcome of a CountGroupAck. Wraps string for

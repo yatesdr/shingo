@@ -337,7 +337,25 @@ func (m *Manager) CreateIngestOrder(processNodeID *int64, payloadCode, binLabel,
 // "who released this bin" question is answerable from Core's audit_log
 // table. Empty for system/internal paths (wiring fallbacks, restore); Core
 // substitutes "system" in that case.
+//
+// Thin wrapper that ships no Disposition — used by every fallback / early-
+// return release path. Callers that have the structured disposition (the
+// main ReleaseOrderWithLineside path) call ReleaseOrderWithDisposition
+// directly so Core gets the override-audit context.
 func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string) error {
+	return m.ReleaseOrderWithDisposition(orderID, remainingUOP, nil, calledBy)
+}
+
+// ReleaseOrderWithDisposition is the Phase 0b release path that carries
+// the structured UOPDisposition (kind + operator-submitted vs system-
+// suggested values) alongside the legacy RemainingUOP pointer. Core's
+// HandleOrderRelease uses RemainingUOP for the manifest sync (unchanged
+// behavior); Disposition.CountSuggested / CapturesSuggested drive the
+// override audit log.
+//
+// disposition may be nil — callers without an override-aware body
+// (legacy fallback paths) ship only the legacy pointer.
+func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, disposition *protocol.UOPDisposition, calledBy string) error {
 	order, err := m.db.GetOrder(orderID)
 	if err != nil {
 		return fmt.Errorf("get order: %w", err)
@@ -371,6 +389,7 @@ func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string
 	if err := m.sender.Queue(protocol.TypeOrderRelease, &protocol.OrderRelease{
 		OrderUUID:    order.UUID,
 		RemainingUOP: remainingUOP,
+		Disposition:  disposition,
 		CalledBy:     calledBy,
 	}); err != nil {
 		return fmt.Errorf("enqueue release: %w", err)
@@ -386,25 +405,27 @@ func (m *Manager) ReleaseOrder(orderID int64, remainingUOP *int, calledBy string
 	// Single log shape regardless of nil-ness — keeps log-parsing tools
 	// from having to handle two different formats for the same event.
 	// Nil prints as "<nil>" via %v.
-	m.DebugLog.Log("release: id=%d uuid=%s remaining_uop=%v called_by=%q", orderID, order.UUID, remainingUOP, calledBy)
+	m.DebugLog.Log("release: id=%d uuid=%s remaining_uop=%v disposition=%v called_by=%q",
+		orderID, order.UUID, remainingUOP, disposition, calledBy)
 	return nil
 }
 
-// HandleDeliveredWithExpiry processes a delivered reply with optional staged
-// expiry and an optional bin uop snapshot. binUOPRemaining captures the bin's
-// authoritative uop_remaining from Core at delivery (see protocol.OrderDelivered)
-// so handleNormalReplenishment can reset lineside UOP from the bin's actual
-// contents instead of guessing claim.UOPCapacity.
-func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binUOPRemaining *int) error {
+// HandleDeliveredWithExpiry processes a delivered reply with optional
+// staged expiry. binID captures Core's bin id at delivery so the PLC
+// tick path can attribute deltas to the right bin; nil for multi-bin
+// orders. Edge's runtime cache (reconciler-healed from Core) is the
+// source of truth for bin UOP at completion time — the OrderDelivered
+// envelope no longer carries a UOP snapshot.
+func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
-	return m.handleDelivered(order, statusDetail, stagedExpireAt, binUOPRemaining)
+	return m.handleDelivered(order, statusDetail, stagedExpireAt, binID)
 }
 
-func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binUOPRemaining *int) error {
-	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binUOPRemaining); err != nil {
+func (m *Manager) handleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64) error {
+	if err := m.lifecycle.HandleDelivered(order, statusDetail, stagedExpireAt, binID); err != nil {
 		return err
 	}
 	if order.AutoConfirm {

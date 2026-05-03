@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS orders (
     auto_confirm    INTEGER NOT NULL DEFAULT 0,
     steps_json      TEXT NOT NULL DEFAULT '',
     staged_expire_at TEXT,
-    bin_uop_remaining INTEGER,
+    bin_id          INTEGER,
     payload_code    TEXT NOT NULL DEFAULT '',
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     process_node_id    INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
     active_claim_id    INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
-    remaining_uop      INTEGER NOT NULL DEFAULT 0,
+    remaining_uop_cached INTEGER NOT NULL DEFAULT 0,
     active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     active_pull        INTEGER NOT NULL DEFAULT 1,
@@ -273,4 +273,22 @@ CREATE INDEX IF NOT EXISTS idx_lineside_node_state
 
 CREATE INDEX IF NOT EXISTS idx_lineside_pair_state
     ON node_lineside_bucket(pair_key, state) WHERE pair_key != '';
+
+-- Phase 1d of the UOP bin-as-truth refactor — sequence-id allocator
+-- for inventory delta envelopes. One row per (scope_kind, scope_key);
+-- next_seq advances atomically when InventoryDeltaReporter flushes a
+-- non-zero delta for that scope. Edge guarantees monotonic SequenceID
+-- per scope; Core uses inventory_delta_dedup to drop replays.
+--
+-- scope_kind ∈ {"bin", "bucket"}.
+-- scope_key:
+--   bin scope    → strconv(BinID)
+--   bucket scope → "<NodeID>|<PairKey>|<StyleID>|<PartNumber>"
+CREATE TABLE IF NOT EXISTS inventory_delta_seq (
+    scope_kind TEXT NOT NULL,
+    scope_key  TEXT NOT NULL,
+    next_seq   INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (scope_kind, scope_key)
+);
 `

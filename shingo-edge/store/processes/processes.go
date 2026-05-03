@@ -306,7 +306,7 @@ func generateNodeCode(db *sql.DB, processID int64, coreNodeName, name string) (s
 func scanRuntime(scanner interface{ Scan(...interface{}) error }) (RuntimeState, error) {
 	var r RuntimeState
 	var updatedAt string
-	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.RemainingUOP,
+	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.RemainingUOPCached,
 		&r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
@@ -331,7 +331,7 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 
 // GetRuntime returns the runtime row for a process_node.
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
-	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, remaining_uop,
+	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, remaining_uop_cached,
 		active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
@@ -340,13 +340,13 @@ func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 	return &r, nil
 }
 
-// SetRuntime updates the active claim and remaining UOP on a runtime
+// SetRuntime updates the active claim and the cached UOP on a runtime
 // row.
-func SetRuntime(db *sql.DB, processNodeID int64, activeClaimID *int64, remainingUOP int) error {
+func SetRuntime(db *sql.DB, processNodeID int64, activeClaimID *int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
-		active_claim_id=?, remaining_uop=?, updated_at=datetime('now')
+		active_claim_id=?, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,
-		activeClaimID, remainingUOP, processNodeID)
+		activeClaimID, remainingUOPCached, processNodeID)
 	return err
 }
 
@@ -358,16 +358,24 @@ func UpdateRuntimeOrders(db *sql.DB, processNodeID int64, activeOrderID, stagedO
 	return err
 }
 
-// UpdateRuntimeUOP writes the remaining UOP on a runtime row.
-func UpdateRuntimeUOP(db *sql.DB, processNodeID int64, remainingUOP int) error {
-	_, err := db.Exec(`UPDATE process_node_runtime_states SET remaining_uop=?, updated_at=datetime('now') WHERE process_node_id=?`,
-		remainingUOP, processNodeID)
+// UpdateRuntimeUOP writes the cached UOP on a runtime row.
+func UpdateRuntimeUOP(db *sql.DB, processNodeID int64, remainingUOPCached int) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET remaining_uop_cached=?, updated_at=datetime('now') WHERE process_node_id=?`,
+		remainingUOPCached, processNodeID)
 	return err
+}
+
+// activePullExecer is the minimal write-only interface satisfied by
+// both *sql.DB and *sql.Tx. SetActivePull accepts it so the A/B flip
+// path can wrap its two writes in a single transaction (Item 5);
+// callers without a tx pass *sql.DB and get autocommit behavior.
+type activePullExecer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
 }
 
 // SetActivePull marks a node as the active pull point for A/B cycling.
 // Only the active-pull node gets counter delta decrements.
-func SetActivePull(db *sql.DB, processNodeID int64, active bool) error {
+func SetActivePull(db activePullExecer, processNodeID int64, active bool) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET active_pull=?, updated_at=datetime('now') WHERE process_node_id=?`,
 		active, processNodeID)
 	return err

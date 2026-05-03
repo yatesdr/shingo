@@ -132,8 +132,8 @@ func TestProduceSimple_FinalizeIngest(t *testing.T) {
 
 	// Runtime should be reset to UOP=0
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOPCached)
 	}
 	// Active order should be set
 	if runtime.ActiveOrderID == nil {
@@ -162,8 +162,8 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 
 	// Runtime should be reset to UOP=0
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOPCached)
 	}
 	// Active order should be the complex removal order (Order A)
 	if runtime.ActiveOrderID == nil || *runtime.ActiveOrderID != result.Order.ID {
@@ -208,8 +208,8 @@ func TestProduceSingleRobot_TenStepSwap(t *testing.T) {
 
 	// Runtime should be reset to UOP=0
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 after finalize", runtime.RemainingUOPCached)
 	}
 }
 
@@ -249,8 +249,8 @@ func TestProduceTwoRobot_BothOrdersCreated(t *testing.T) {
 	if runtime.StagedOrderID == nil || *runtime.StagedOrderID != result.OrderB.ID {
 		t.Error("StagedOrderID should be OrderB")
 	}
-	if runtime.RemainingUOP != 0 {
-		t.Errorf("RemainingUOP = %d, want 0", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0", runtime.RemainingUOPCached)
 	}
 }
 

@@ -3,8 +3,9 @@ package store
 // Stage 2D delegate file: bin CRUD/lock/stage/claim/count operations live in
 // store/bins/. This file preserves the *store.DB method surface so external
 // callers don't need to change. Cross-aggregate methods (ListOrdersByBin,
-// UpdateOrderBinID, SetBinManifestFromTemplate, FindStorageDestination) live
-// at the outer store/ level in their own files.
+// UpdateOrderBinID, FindStorageDestination) live at the outer store/ level
+// in their own files. SetBinManifestFromTemplate retired Item 19 — see
+// service.BinManifestService.SetFromTemplate for the audit-bearing path.
 
 import (
 	"time"

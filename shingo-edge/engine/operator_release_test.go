@@ -54,8 +54,8 @@ func TestReleaseOrderWithLineside_PreservesUOPAndCapturesBuckets(t *testing.T) {
 	// UOP must remain at the seeded value — release no longer resets;
 	// delivery completion owns the turnover.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 8 {
-		t.Errorf("RemainingUOP = %d, want 8 (release must not reset; delivery completion owns the reset)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 8 {
+		t.Errorf("RemainingUOP = %d, want 8 (release must not reset; delivery completion owns the reset)", runtime.RemainingUOPCached)
 	}
 
 	// Bucket should exist with 12 active units.
@@ -99,8 +99,8 @@ func TestReleaseOrderWithLineside_EmptyMapPreservesUOP(t *testing.T) {
 	}
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 3 {
-		t.Errorf("RemainingUOP = %d, want 3 (release must not reset; delivery completion owns the reset)", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 3 {
+		t.Errorf("RemainingUOP = %d, want 3 (release must not reset; delivery completion owns the reset)", runtime.RemainingUOPCached)
 	}
 }
 
@@ -232,7 +232,7 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime(t *testing.T
 
 	// Release Order A (the supply) with the operator's NOTHING PULLED
 	// disposition. Pre-fix: this would call SetProcessNodeRuntime and
-	// clobber runtime.RemainingUOP from 800 → 1200.
+	// clobber runtime.RemainingUOPCached from 800 → 1200.
 	disp := ReleaseDisposition{
 		Mode:            DispositionCaptureLineside,
 		LinesideCapture: map[string]int{},
@@ -244,9 +244,9 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime(t *testing.T
 	// Runtime UOP must be UNCHANGED — Order B will read it for SEND PARTIAL
 	// BACK or whatever disposition comes next.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != partialUOP {
+	if runtime.RemainingUOPCached != partialUOP {
 		t.Errorf("RemainingUOP = %d, want %d (Order A's release must not reset the runtime UOP for two-robot supply orders — Order B owns the reset)",
-			runtime.RemainingUOP, partialUOP)
+			runtime.RemainingUOPCached, partialUOP)
 	}
 }
 
@@ -314,15 +314,15 @@ func TestReleaseOrderWithLineside_TwoRobotEvacDoesNotResetRuntime(t *testing.T) 
 	// Runtime UOP must remain at the seeded value — release no longer resets;
 	// the delivery completion handler does that when the new bin arrives.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 800 {
+	if runtime.RemainingUOPCached != 800 {
 		t.Errorf("RemainingUOP = %d, want 800 (release must not reset runtime; delivery completion owns the reset)",
-			runtime.RemainingUOP)
+			runtime.RemainingUOPCached)
 	}
 }
 
 // TestComputeReleaseRemainingUOP exercises the disposition → *int routing in
 // isolation so the late-binding contract (empty Mode → nil, capture → &0,
-// partial → &runtime.RemainingUOP, partial-with-non-positive-runtime → &0)
+// partial → &runtime.RemainingUOPCached, partial-with-non-positive-runtime → &0)
 // is locked down without the surrounding HTTP/DB/dispatch machinery.
 func TestComputeReleaseRemainingUOP(t *testing.T) {
 	cases := []struct {
@@ -341,7 +341,7 @@ func TestComputeReleaseRemainingUOP(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rt := &processes.RuntimeState{RemainingUOP: tc.runtimeUOP}
+			rt := &processes.RuntimeState{RemainingUOPCached: tc.runtimeUOP}
 			got := computeReleaseRemainingUOP(ReleaseDisposition{Mode: tc.mode}, rt)
 			if tc.wantNil {
 				if got != nil {
@@ -393,9 +393,9 @@ func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.
 	// Runtime must remain unchanged on release — delivery completion now
 	// owns the capacity reset.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 800 {
+	if runtime.RemainingUOPCached != 800 {
 		t.Errorf("RemainingUOP = %d, want 800 (release must not reset runtime; delivery completion owns the reset)",
-			runtime.RemainingUOP)
+			runtime.RemainingUOPCached)
 	}
 
 	// No active bucket for the operator's part — capture skipped.
@@ -459,9 +459,9 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 100 {
+	if runtime.RemainingUOPCached != 100 {
 		t.Errorf("RemainingUOP = %d, want 100 (delivery completion to process node resets to claim capacity when no BinUOPRemaining snapshot)",
-			runtime.RemainingUOP)
+			runtime.RemainingUOPCached)
 	}
 }
 
@@ -651,8 +651,8 @@ func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 	})
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 100 {
+	if runtime.RemainingUOPCached != 100 {
 		t.Errorf("RemainingUOP = %d, want 100 (simple retrieve should still reset)",
-			runtime.RemainingUOP)
+			runtime.RemainingUOPCached)
 	}
 }

@@ -2,6 +2,7 @@ package messaging
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -20,9 +21,10 @@ type coreDataResponder interface {
 }
 
 type CoreDataService struct {
-	db        *store.DB
-	tagVerify *service.TagVerifyService
-	resp      coreDataResponder
+	db             *store.DB
+	tagVerify      *service.TagVerifyService
+	inventoryDelta *service.InventoryDeltaService
+	resp           coreDataResponder
 }
 
 // newCoreDataService constructs a CoreDataService. The TagVerifyService is
@@ -32,9 +34,10 @@ type CoreDataService struct {
 // *store.DB.VerifyTag method could be retired.
 func newCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
 	return &CoreDataService{
-		db:        db,
-		tagVerify: service.NewTagVerifyService(db),
-		resp:      resp,
+		db:             db,
+		tagVerify:      service.NewTagVerifyService(db),
+		inventoryDelta: service.NewInventoryDeltaService(db, service.NewBinManifestService(db)),
+		resp:           resp,
 	}
 }
 
@@ -101,9 +104,77 @@ func (s *CoreDataService) Handle(env *protocol.Envelope, p *protocol.Data) {
 			return
 		}
 		s.handleCountGroupAck(env, &ack)
+	case protocol.SubjectBinUOPDelta:
+		var d protocol.BinUOPDelta
+		if err := json.Unmarshal(p.Body, &d); err != nil {
+			log.Printf("core_handler: decode bin_uop_delta body: %v", err)
+			return
+		}
+		s.handleBinUOPDelta(env, &d)
+	case protocol.SubjectLinesideBucketDelta:
+		var d protocol.LinesideBucketDelta
+		if err := json.Unmarshal(p.Body, &d); err != nil {
+			log.Printf("core_handler: decode lineside_bucket_delta body: %v", err)
+			return
+		}
+		s.handleLinesideBucketDelta(env, &d)
 	default:
 		log.Printf("core_handler: unhandled data subject: %s", p.Subject)
 	}
+}
+
+// handleBinUOPDelta routes a Phase 1 inventory delta envelope to the
+// InventoryDeltaService. Errors land in the log loud (no Edge reply
+// channel exists for these — they're fire-and-forget from Edge's
+// outbox); a missing target bin or payload mismatch is the
+// dead-letter signal. Replays (already-applied SequenceID) are
+// silently dropped at the dedup step.
+//
+// Core applies deltas authoritatively against bins.uop_remaining;
+// Edge's runtime cache trails authoritative state via the reconciler.
+func (s *CoreDataService) handleBinUOPDelta(env *protocol.Envelope, d *protocol.BinUOPDelta) {
+	// Edge sets the station from its own identity at outbox time. Trust
+	// the envelope source for routing — preserves the two-edge case
+	// where d.Station is set on Edge before the message hits the wire
+	// but we still want to attribute by the verified envelope source.
+	if d.Station == "" {
+		d.Station = env.Src.Station
+	}
+	if err := s.inventoryDelta.ApplyBinUOPDelta(d); err != nil {
+		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
+			s.resp.dbg("bin_uop_delta replay station=%s bin=%d seq=%d — already applied",
+				d.Station, d.BinID, d.SequenceID)
+			return
+		}
+		log.Printf("core_handler: apply BinUOPDelta station=%s bin=%d seq=%d delta=%d reason=%s: %v",
+			d.Station, d.BinID, d.SequenceID, d.Delta, d.Reason, err)
+		return
+	}
+	s.resp.dbg("bin_uop_delta applied station=%s bin=%d seq=%d delta=%d reason=%s",
+		d.Station, d.BinID, d.SequenceID, d.Delta, d.Reason)
+}
+
+// handleLinesideBucketDelta routes a Phase 1 inventory delta envelope
+// to the InventoryDeltaService. Same dead-letter / authoritative-write notes
+// as handleBinUOPDelta apply. Manual-swap nodes never emit bucket
+// deltas (no PLC) — a delta arriving from a manual-swap node would
+// indicate an Edge bug.
+func (s *CoreDataService) handleLinesideBucketDelta(env *protocol.Envelope, d *protocol.LinesideBucketDelta) {
+	if d.Station == "" {
+		d.Station = env.Src.Station
+	}
+	if err := s.inventoryDelta.ApplyLinesideBucketDelta(d); err != nil {
+		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
+			s.resp.dbg("lineside_bucket_delta replay station=%s node=%d part=%q seq=%d — already applied",
+				d.Station, d.NodeID, d.PartNumber, d.SequenceID)
+			return
+		}
+		log.Printf("core_handler: apply LinesideBucketDelta station=%s node=%d part=%q seq=%d delta=%d reason=%s: %v",
+			d.Station, d.NodeID, d.PartNumber, d.SequenceID, d.Delta, d.Reason, err)
+		return
+	}
+	s.resp.dbg("lineside_bucket_delta applied station=%s node=%d part=%q seq=%d delta=%d reason=%s",
+		d.Station, d.NodeID, d.PartNumber, d.SequenceID, d.Delta, d.Reason)
 }
 
 // handleCountGroupAck records an edge's response to a prior CountGroupCommand.

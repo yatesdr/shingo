@@ -190,8 +190,8 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order
 	// Thread the current remaining UOP so Core can atomically sync/clear
 	// the bin's manifest when it claims the bin for this move order.
 	var remainingUOP *int
-	if runtime.RemainingUOP >= 0 {
-		v := runtime.RemainingUOP
+	if runtime.RemainingUOPCached >= 0 {
+		v := runtime.RemainingUOPCached
 		remainingUOP = &v
 	}
 	order, err := e.orderMgr.CreateMoveOrderWithUOP(&nodeID, qty, claim.CoreNodeName, claim.OutboundDestination, remainingUOP, claim.AutoConfirm || e.cfg.Web.AutoConfirm)

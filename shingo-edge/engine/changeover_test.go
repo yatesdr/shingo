@@ -688,8 +688,8 @@ func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 		t.Fatalf("get runtime: %v", err)
 	}
 	// The to-claim has UOPCapacity=200
-	if runtime.RemainingUOP != 200 {
-		t.Errorf("expected UOP=200 after swap release, got %d", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 200 {
+		t.Errorf("expected UOP=200 after swap release, got %d", runtime.RemainingUOPCached)
 	}
 	// Verify active claim switched to to-claim
 	if runtime.ActiveClaimID == nil {
@@ -817,8 +817,8 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 
 	// Verify runtime switched
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 200 {
-		t.Errorf("expected UOP=200, got %d", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 200 {
+		t.Errorf("expected UOP=200, got %d", runtime.RemainingUOPCached)
 	}
 }
 
@@ -1020,8 +1020,8 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 
 	// Verify runtime switched to new claim with full UOP
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOP != 200 {
-		t.Errorf("expected UOP=200, got %d", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 200 {
+		t.Errorf("expected UOP=200, got %d", runtime.RemainingUOPCached)
 	}
 }
 
@@ -1114,7 +1114,7 @@ func TestChangeover_OrderBBeforeOrderA(t *testing.T) {
 	if runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != toClaim.ID {
 		t.Errorf("expected active claim switched to to-claim after Order B completion")
 	}
-	if runtime.RemainingUOP != 200 {
-		t.Errorf("expected UOP=200 after Order B completion, got %d", runtime.RemainingUOP)
+	if runtime.RemainingUOPCached != 200 {
+		t.Errorf("expected UOP=200 after Order B completion, got %d", runtime.RemainingUOPCached)
 	}
 }

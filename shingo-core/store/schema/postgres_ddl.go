@@ -370,4 +370,38 @@ CREATE TABLE IF NOT EXISTS demand_registry (
     UNIQUE(station_id, core_node_name, payload_code)
 );
 CREATE INDEX IF NOT EXISTS idx_demand_registry_payload ON demand_registry(payload_code);
+
+-- Phase 1 of the UOP bin-as-truth refactor — Core mirror of the Edge
+-- bucket model. NO state column (Option C — buckets are location-only;
+-- active/inactive computed at query time). The _shadow sibling that
+-- existed during the staged Phase 1–3 rollout was dropped in v23
+-- after authority flipped plant-wide; only the authoritative table
+-- remains.
+CREATE TABLE IF NOT EXISTS lineside_buckets (
+    id BIGSERIAL PRIMARY KEY,
+    station TEXT NOT NULL,
+    node_id BIGINT NOT NULL,
+    pair_key TEXT NOT NULL,
+    style_id BIGINT NOT NULL,
+    part_number TEXT NOT NULL,
+    qty INTEGER NOT NULL CHECK (qty >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (station, node_id, pair_key, style_id, part_number)
+);
+CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(node_id, style_id);
+
+-- Phase 1 of the UOP bin-as-truth refactor — at-most-once dedup table
+-- for inventory delta envelopes. Distinct from inbox dedup (which gates
+-- order-message processing); this gates the count-change application
+-- carried by the envelope. last_seq is the highest SequenceID Core has
+-- applied for the (station, scope_kind, scope_key) tuple.
+CREATE TABLE IF NOT EXISTS inventory_delta_dedup (
+    station TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_key TEXT NOT NULL,
+    last_seq BIGINT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (station, scope_kind, scope_key)
+);
 `

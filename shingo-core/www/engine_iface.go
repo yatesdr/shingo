@@ -56,6 +56,7 @@ type ServiceAccess interface {
 	TestCommandService() *service.TestCommandService
 	CMSTransactionService() *service.CMSTransactionService
 	InventoryService() *service.InventoryService
+	InventoryDeltaService() *service.InventoryDeltaService
 	AdminService() *service.AdminService
 	HealthService() *service.HealthService
 

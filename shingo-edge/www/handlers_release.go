@@ -15,10 +15,27 @@ import (
 // post; older clients that pre-date the Phase 8 disposition addition send
 // only Disposition-empty bodies with called_by + qty_by_part, which the
 // engine handles via buildReleaseDisposition's empty-Mode branch.
+//
+// Phase 0b override-audit fields (all optional, all nil-safe):
+//
+//   - QtyByPartSuggested: per-part counts the chip grid was pre-populated
+//     with at modal-open. Paired with QtyByPart for capture_lineside —
+//     any (part, qty) where the operator-submitted value differs from the
+//     suggested value writes a bin_uop_audit override row at Core.
+//   - PartialCount, PartialCountSuggested: operator-entered count and
+//     baseline for SEND PARTIAL BACK. PartialCount supersedes the
+//     server-side runtime read for the wire when set; PartialCountSuggested
+//     pairs with it for the override audit.
+//
+// Legacy clients that don't ship these fields just get unmarshalled as
+// nil/zero — Core writes no override audit row.
 type releaseRequest struct {
-	Disposition string         `json:"disposition"`
-	QtyByPart   map[string]int `json:"qty_by_part"`
-	CalledBy    string         `json:"called_by"`
+	Disposition           string         `json:"disposition"`
+	QtyByPart             map[string]int `json:"qty_by_part"`
+	QtyByPartSuggested    map[string]int `json:"qty_by_part_suggested"`
+	PartialCount          *int           `json:"partial_count"`
+	PartialCountSuggested *int           `json:"partial_count_suggested"`
+	CalledBy              string         `json:"called_by"`
 }
 
 // parseReleaseRequest reads and validates the JSON body for any release

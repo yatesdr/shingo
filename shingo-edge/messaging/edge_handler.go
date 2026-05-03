@@ -17,13 +17,13 @@ type EdgeHandler struct {
 	orderMgr               *orders.Manager
 	onCoreNodes            func([]protocol.NodeInfo)
 	onPayloadCatalog       func([]protocol.CatalogPayloadInfo)
-	onNodeState            func([]protocol.NodeStateEntry)
 	onRegistered           func()
 	onRegisterReq          func()
 	onOrderStatuses        func([]protocol.OrderStatusSnapshot)
 	onNodeStructureChanged func()
 	onDemandSignal         func(*protocol.DemandSignal)
 	onCountGroupCommand    func(protocol.CountGroupCommand)
+	onBinPickedUp          func(*protocol.BinPickedUp)
 
 	DebugLog DebugLogFunc
 }
@@ -47,11 +47,6 @@ func (h *EdgeHandler) SetOrderStatusHandler(fn func([]protocol.OrderStatusSnapsh
 	h.onOrderStatuses = fn
 }
 
-// TODO(dead-code): no callers as of 2026-04-17; verify before the next refactor.
-func (h *EdgeHandler) SetNodeStateHandler(fn func([]protocol.NodeStateEntry)) {
-	h.onNodeState = fn
-}
-
 func (h *EdgeHandler) SetRegisteredHandler(fn func()) {
 	h.onRegistered = fn
 }
@@ -72,6 +67,14 @@ func (h *EdgeHandler) SetDemandSignalHandler(fn func(*protocol.DemandSignal)) {
 // count-group command (advanced-zone light state change request).
 func (h *EdgeHandler) SetCountGroupCommandHandler(fn func(protocol.CountGroupCommand)) {
 	h.onCountGroupCommand = fn
+}
+
+// SetBinPickedUpHandler sets the callback for the SubjectBinPickedUp
+// data subject — Item 11. Composition root wires it to
+// engine.HandleBinPickedUp so the released-bin's accumulator can flush
+// when the robot physically grabs the bin.
+func (h *EdgeHandler) SetBinPickedUpHandler(fn func(*protocol.BinPickedUp)) {
+	h.onBinPickedUp = fn
 }
 
 func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
@@ -141,16 +144,6 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 		} else {
 			log.Printf("edge_handler: tag verify: uuid=%s match=false expected=%s detail=%s", resp.OrderUUID, resp.Expected, resp.Detail)
 		}
-	case protocol.SubjectNodeStateResponse:
-		var resp protocol.NodeStateResponse
-		if err := json.Unmarshal(p.Body, &resp); err != nil {
-			log.Printf("edge_handler: decode node state response: %v", err)
-			return
-		}
-		log.Printf("edge_handler: received node state (%d entries)", len(resp.Nodes))
-		if h.onNodeState != nil {
-			h.onNodeState(resp.Nodes)
-		}
 	case protocol.SubjectEdgeRegisterRequest:
 		var req protocol.EdgeRegisterRequest
 		if err := json.Unmarshal(p.Body, &req); err != nil {
@@ -202,6 +195,17 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 		if h.onCountGroupCommand != nil {
 			h.onCountGroupCommand(cmd)
 		}
+	case protocol.SubjectBinPickedUp:
+		var bp protocol.BinPickedUp
+		if err := json.Unmarshal(p.Body, &bp); err != nil {
+			log.Printf("edge_handler: decode bin_picked_up: %v", err)
+			return
+		}
+		log.Printf("edge_handler: bin_picked_up: order=%s bin=%d at=%s",
+			bp.OrderUUID, bp.BinID, bp.Location)
+		if h.onBinPickedUp != nil {
+			h.onBinPickedUp(&bp)
+		}
 	default:
 		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)
 	}
@@ -238,7 +242,7 @@ func (h *EdgeHandler) HandleOrderUpdate(env *protocol.Envelope, p *protocol.Orde
 func (h *EdgeHandler) HandleOrderDelivered(env *protocol.Envelope, p *protocol.OrderDelivered) {
 	h.DebugLog.Log("order_delivered uuid=%s at=%s", p.OrderUUID, p.DeliveredAt)
 	log.Printf("edge_handler: order delivered: uuid=%s at=%s", p.OrderUUID, p.DeliveredAt)
-	if err := h.orderMgr.HandleDeliveredWithExpiry(p.OrderUUID, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinUOPRemaining); err != nil {
+	if err := h.orderMgr.HandleDeliveredWithExpiry(p.OrderUUID, p.DeliveredAt.Format(time.RFC3339), p.StagedExpireAt, p.BinID); err != nil {
 		log.Printf("edge_handler: handle delivered for %s: %v", p.OrderUUID, err)
 	}
 }

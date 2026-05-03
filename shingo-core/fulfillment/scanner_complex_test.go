@@ -67,21 +67,28 @@ func TestScanner_ComplexOrder_DispatchedWhenCapacityGreen(t *testing.T) {
 	}
 }
 
-// TestScanner_ComplexOrder_QueuedWhenCapacityBlocked is the negative
-// test for the same wiring: when CheckDropoffCapacity blocks, the
-// scanner skips DispatchPreparedComplex entirely and writes
-// queue_reason via SetOrderQueueReason. The order stays in the queue
-// for the next replay.
+// TestScanner_ComplexOrder_BypassesCapacityGate is the negative twin
+// of TestScanner_ComplexOrder_DispatchedWhenCapacityGreen and the
+// regression that pins the 2026-05 gate-removal: complex orders now
+// dispatch even when the delivery node has bins sitting on it. The
+// step planner already accounts for destination state during
+// resolution (two-robot supply legs deliver to nodes their evac
+// siblings are about to clear; press-index, single-robot swap, etc.
+// follow the same pattern), so a blanket capacity gate at the
+// scanner layer wrongly blocked them.
 //
-// Per the regression-test rigor pillar this is the negative twin of
-// the test above — predicate flips need both directions exercised.
-func TestScanner_ComplexOrder_QueuedWhenCapacityBlocked(t *testing.T) {
+// Pre-fix this test asserted the opposite: capacity blocked → queued
+// with queue_reason set. The test was rewritten when the gate was
+// scoped to simple orders only. See scanner.go:181-190 for the
+// invariant.
+func TestScanner_ComplexOrder_BypassesCapacityGate(t *testing.T) {
 	f := newFakeStore()
 	dispatcher := &stubDispatcher{}
 	s := newTestScannerWithDispatcher(t, f, dispatcher)
 
-	// Concrete delivery node OCCUPIED — fakeStore.CountBinsByNode
-	// returns the count from binCountsByNode.
+	// Concrete delivery node OCCUPIED. A simple order would queue
+	// here; a complex order must dispatch — the step planner owns
+	// the choreography decision.
 	dest := &nodes.Node{ID: 7, Name: "LINE_01"}
 	f.nodesByDot["LINE_01"] = dest
 	f.binsAtNode = map[int64]int{7: 1}
@@ -98,53 +105,17 @@ func TestScanner_ComplexOrder_QueuedWhenCapacityBlocked(t *testing.T) {
 
 	got := s.RunOnce()
 
-	if got != 0 {
-		t.Errorf("RunOnce returned %d, want 0 (capacity blocked, no dispatch)", got)
+	if got != 1 {
+		t.Errorf("RunOnce returned %d, want 1 (complex order dispatches even with bin at dest)", got)
 	}
-	if len(dispatcher.preparedCalls) != 0 {
-		t.Errorf("DispatchPreparedComplex calls = %v, want none (blocked)", dispatcher.preparedCalls)
+	if len(dispatcher.preparedCalls) != 1 || dispatcher.preparedCalls[0] != 99 {
+		t.Errorf("DispatchPreparedComplex calls = %v, want [99]", dispatcher.preparedCalls)
 	}
-	// queue_reason should have been written.
-	if len(f.queueReasons) != 1 {
-		t.Fatalf("queueReasons = %v, want 1 entry", f.queueReasons)
-	}
-	got0 := f.queueReasons[0]
-	if got0.OrderID != 99 {
-		t.Errorf("queueReason order = %d, want 99", got0.OrderID)
-	}
-	if got0.Reason == "" {
-		t.Errorf("queueReason reason is empty — operators rely on this to see WHY an order is queued")
-	}
-}
-
-// TestScanner_ComplexOrder_QueueReasonNotRewrittenWhenSame avoids
-// noise on the audit trail: if a queued order is re-evaluated and the
-// reason hasn't changed (e.g., scanner periodic sweep), don't write
-// the same reason again.
-func TestScanner_ComplexOrder_QueueReasonNotRewrittenWhenSame(t *testing.T) {
-	f := newFakeStore()
-	dispatcher := &stubDispatcher{}
-	s := newTestScannerWithDispatcher(t, f, dispatcher)
-
-	dest := &nodes.Node{ID: 7, Name: "LINE_01"}
-	f.nodesByDot["LINE_01"] = dest
-	f.binsAtNode = map[int64]int{7: 1}
-
-	const existing = "destination LINE_01 occupied (1 bin(s))"
-	order := &orders.Order{
-		ID:           101,
-		Status:       protocol.StatusQueued,
-		OrderType:    protocol.OrderTypeComplex,
-		DeliveryNode: "LINE_01",
-		PayloadCode:  "PN-X",
-		QueueReason:  existing,
-	}
-	f.queued = append(f.queued, order)
-	f.ordersByID[101] = order
-
-	s.RunOnce()
-
+	// No queue_reason write — the scanner's gate doesn't apply to
+	// complex orders so it has no opinion to record. Operators don't
+	// see a "destination occupied" chip on a complex order that's
+	// in flight.
 	if len(f.queueReasons) != 0 {
-		t.Errorf("queueReasons = %v, want no rewrites (reason unchanged)", f.queueReasons)
+		t.Errorf("queueReasons = %v, want none (complex orders bypass the scanner's capacity gate)", f.queueReasons)
 	}
 }

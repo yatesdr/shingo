@@ -460,11 +460,23 @@ func Unlock(db *sql.DB, binID int64) error {
 	return err
 }
 
-// RecordCount updates UOP and records the count timestamp.
-func RecordCount(db *sql.DB, binID int64, actualUOP int, actor string) error {
+// RecordCount updates UOP and records the count timestamp. Accepts
+// any Execer (*sql.DB or *sql.Tx) so the service layer can wrap the
+// count + bin_uop_audit insert in one transaction. Item 19: cycle
+// counts now write a bin_uop_audit row (OpCycleCount) — see
+// BinService.RecordCount.
+func RecordCount(db RecordCountExecer, binID int64, actualUOP int, actor string) error {
 	_, err := db.Exec(`UPDATE bins SET uop_remaining=$1, last_counted_at=NOW(), last_counted_by=$2, updated_at=NOW() WHERE id=$3`,
 		actualUOP, actor, binID)
 	return err
+}
+
+// RecordCountExecer is the minimal interface satisfied by *sql.DB
+// and *sql.Tx — same shape as audit.BinUOPExecer, kept package-local
+// so callers don't need to import the audit package just to get the
+// interface name.
+type RecordCountExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
 }
 
 // UnconfirmManifest resets the manifest confirmation flag.

@@ -23,6 +23,33 @@ type DB struct {
 	*sql.DB
 }
 
+// Transaction runs fn inside a single SQLite transaction. Commits if
+// fn returns nil; rolls back on any error or panic. Callers that need
+// to compose several store-level mutations atomically wrap them here.
+//
+// SQLite holds a single writer at a time (the busy_timeout DSN param
+// queues concurrent writers); the engine's max-open-conns=1 setting
+// makes that explicit. So nested Transaction calls deadlock — don't.
+func (db *DB) Transaction(fn func(*sql.Tx) error) (err error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if err = fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // Open opens (or creates) a SQLite database and runs migrations.
 func Open(path string) (*DB, error) {
 	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on", path)

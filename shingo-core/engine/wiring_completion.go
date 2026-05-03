@@ -34,35 +34,32 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 		}
 	}
 
-	// Apply bin arrival FIRST so telemetry is accurate immediately and so we
-	// can snapshot bins.uop_remaining into the OrderDelivered envelope. The
+	// Apply bin arrival FIRST so telemetry is accurate immediately. The
 	// previous order — sendToEdge then applyBinArrivalForOrder — let
-	// AutoConfirm Edge orders auto-confirm and reset lineside UOP from
-	// stale Core state before the bin-arrival commit landed, masking
-	// partial-UOP returns from operator-released runouts.
+	// AutoConfirm Edge orders auto-confirm before the bin-arrival
+	// commit landed.
 	e.applyBinArrivalForOrder(order)
 
-	// Snapshot the bin's uop_remaining for the envelope. Single-bin orders
-	// only — multi-bin orders don't drive a single lineside-UOP reset on
-	// Edge, and threading per-bin UOP through this envelope would change
-	// the contract. Multi-bin orders leave the field nil; Edge falls back
-	// to its existing logic.
-	var binUOPRemaining *int
+	// Ship the bin ID so Edge can attribute PLC tick deltas to the
+	// right bin. Single-bin orders only; multi-bin orders leave it
+	// nil. Edge's runtime cache (kept in lockstep with Core by the
+	// reconciler) is the source of truth for bin UOP at completion
+	// time — the snapshot field this envelope used to carry was
+	// retired.
+	var binID *int64
 	if order.BinID != nil {
 		orderBins, _ := e.db.ListOrderBins(order.ID)
 		if len(orderBins) == 0 {
-			if bin, err := e.db.GetBin(*order.BinID); err == nil && bin != nil {
-				v := bin.UOPRemaining
-				binUOPRemaining = &v
-			}
+			v := *order.BinID
+			binID = &v
 		}
 	}
 
 	if err := e.sendToEdge(protocol.TypeOrderDelivered, order.StationID, &protocol.OrderDelivered{
-		OrderUUID:       order.EdgeUUID,
-		DeliveredAt:     time.Now().UTC(),
-		StagedExpireAt:  stagedExpireAt,
-		BinUOPRemaining: binUOPRemaining,
+		OrderUUID:      order.EdgeUUID,
+		DeliveredAt:    time.Now().UTC(),
+		StagedExpireAt: stagedExpireAt,
+		BinID:          binID,
 	}); err != nil {
 		e.logFn("engine: delivered notification: %v", err)
 	}

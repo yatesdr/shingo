@@ -1268,7 +1268,7 @@ func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 	rt, _ := db.GetProcessNodeRuntime(nid)
-	if rt.ActiveClaimID == nil || *rt.ActiveClaimID != 42 || rt.RemainingUOP != 75 {
+	if rt.ActiveClaimID == nil || *rt.ActiveClaimID != 42 || rt.RemainingUOPCached != 75 {
 		t.Errorf("after set: %+v", rt)
 	}
 
@@ -1288,8 +1288,8 @@ func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 		t.Fatalf("update uop: %v", err)
 	}
 	rt3, _ := db.GetProcessNodeRuntime(nid)
-	if rt3.RemainingUOP != 30 {
-		t.Errorf("uop = %d, want 30", rt3.RemainingUOP)
+	if rt3.RemainingUOPCached != 30 {
+		t.Errorf("uop = %d, want 30", rt3.RemainingUOPCached)
 	}
 
 	// SetActivePull

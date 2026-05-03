@@ -1,10 +1,17 @@
 package service
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 
+	"shingo/protocol"
+
+	"shingocore/domain"
 	"shingocore/store"
+	"shingocore/store/audit"
+	"shingocore/store/payloads"
 )
 
 // reconstructSinglePayloadManifest builds the manifest JSON for a partial-
@@ -43,35 +50,135 @@ func NewBinManifestService(db *store.DB) *BinManifestService {
 	return &BinManifestService{db: db}
 }
 
+// readBinUOPInTx returns the bin's current uop_remaining inside a tx,
+// for capture as before_uop on a bin_uop_audit row. Returns nil when the
+// bin row does not exist (a path that's only legitimate for
+// SetForProduction on freshly created bins; every other caller has
+// already validated the bin's presence upstream).
+func readBinUOPInTx(tx *sql.Tx, binID int64) (*int, error) {
+	var v int
+	if err := tx.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, binID).Scan(&v); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read uop bin %d: %w", binID, err)
+	}
+	return &v, nil
+}
+
 // ClearForReuse empties a bin's manifest. The bin becomes visible
-// to FindEmptyCompatibleBin after this call.
+// to FindEmptyCompatibleBin after this call. Owns its transaction.
 func (s *BinManifestService) ClearForReuse(binID int64) error {
-	if err := s.db.ClearBinManifest(binID); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.ClearForReuseTx(tx, binID, audit.OpClearForReuse, "service/bin_manifest.go:ClearForReuse"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ClearForReuseTx performs the same manifest-clear write as
+// ClearForReuse but inside a caller-provided transaction. Used by
+// InventoryDeltaService.ApplyBinUOPDelta so the manifest clear and
+// the bin-update both commit (or roll back) atomically — without it,
+// a half-applied state would leave the bin reachable as "empty" while
+// uop_remaining still carried stale value, or vice versa.
+//
+// The op tag and source are caller-supplied so audit consumers can
+// distinguish the trigger (released_capture_empty vs the direct
+// admin clear_for_reuse).
+func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source string) error {
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE bins SET payload_code='', manifest=NULL, uop_remaining=0,
+		manifest_confirmed=false, loaded_at=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
 		return fmt.Errorf("clear manifest bin %d: %w", binID, err)
+	}
+	if err := audit.AppendBinUOP(tx, binID, before, 0, op, source, nil, "", ""); err != nil {
+		return err
 	}
 	return nil
 }
 
-// SyncUOP updates the remaining UOP on a bin without touching
-// the manifest. Used for partial consumption where the manifest
-// stays valid but the count changes.
-func (s *BinManifestService) SyncUOP(binID int64, remaining int) error {
-	_, err := s.db.Exec(
-		`UPDATE bins SET uop_remaining=$1, updated_at=NOW() WHERE id=$2`,
-		remaining, binID)
+// (Item 14 D8: SyncUOP deleted — zero production callers. Partial-
+// consumption sync goes through ApplyBinUOPDelta in the post-bin-as-
+// truth flow; SyncUOPAndClaim covers the claim-with-uop case
+// directly. The OpSyncUOP audit tag stays in store/audit/bin_uop.go
+// for historical rows.)
+
+// SetFromTemplate resolves a payload template (manifest items + UOP
+// capacity) and writes the bin via SetForProduction. Used by the
+// dispatch ingest path and the operator load-payload action — both
+// previously called the lower-level *store.DB.SetBinManifestFromTemplate
+// which bypassed audit. Item 19 of the bin-as-truth refactor: routing
+// through this service method ensures every manifest write surfaces
+// in bin_uop_audit so the Item 10 audit timeline UI sees the
+// freshly-loaded bin's 0→capacity initial fill alongside the
+// downstream consume / capture deltas.
+//
+// uopOverride of 0 falls back to the template's UOPCapacity. Non-zero
+// uopOverride lets callers (produce ingest, partial-fill operator
+// loads) record an actual count rather than the template default.
+func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride int) error {
+	p, err := payloads.GetByCode(s.db.DB, payloadCode)
 	if err != nil {
-		return fmt.Errorf("sync uop bin %d: %w", binID, err)
+		return fmt.Errorf("payload template %q: %w", payloadCode, err)
 	}
-	return nil
+	items, err := payloads.ListManifest(s.db.DB, p.ID)
+	if err != nil {
+		return fmt.Errorf("payload manifest: %w", err)
+	}
+
+	manifest := domain.Manifest{Items: make([]domain.ManifestEntry, len(items))}
+	for i, item := range items {
+		manifest.Items[i] = domain.ManifestEntry{
+			CatID:    item.PartNumber,
+			Quantity: item.Quantity,
+		}
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+
+	uop := uopOverride
+	if uop == 0 {
+		uop = p.UOPCapacity
+	}
+
+	return s.SetForProduction(binID, string(manifestJSON), payloadCode, uop)
 }
 
 // SetForProduction sets a bin's manifest and UOP from a payload template.
 // Used when a produce node finalizes a bin or a manual_swap node loads a bin.
 func (s *BinManifestService) SetForProduction(binID int64, manifestJSON, payloadCode string, uop int) error {
-	if err := s.db.SetBinManifest(binID, manifestJSON, payloadCode, uop); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE bins SET payload_code=$1, manifest=$2, uop_remaining=$3,
+		manifest_confirmed=false, updated_at=NOW() WHERE id=$4`,
+		payloadCode, manifestJSON, uop, binID); err != nil {
 		return fmt.Errorf("set manifest bin %d: %w", binID, err)
 	}
-	return nil
+	if err := audit.AppendBinUOP(tx, binID, before, uop,
+		audit.OpSetForProduction, "service/bin_manifest.go:SetForProduction",
+		nil, payloadCode, ""); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Confirm marks a bin's manifest as confirmed by an operator or automated process.
@@ -95,7 +202,17 @@ func (s *BinManifestService) Unconfirm(binID int64) error {
 // ClearAndClaim atomically clears manifest and claims the bin for an order.
 // Closes the TOCTOU race where ClaimBin + ClearBinManifest are separate txns.
 func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
-	res, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
+		return err
+	}
+	res, err := tx.Exec(`
 		UPDATE bins SET
 			payload_code='', manifest=NULL, uop_remaining=0,
 			manifest_confirmed=false, loaded_at=NULL,
@@ -109,13 +226,28 @@ func (s *BinManifestService) ClearAndClaim(binID, orderID int64) error {
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}
-	return nil
+	if err := audit.AppendBinUOP(tx, binID, before, 0,
+		audit.OpClearAndClaim, "service/bin_manifest.go:ClearAndClaim",
+		&orderID, "", ""); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SyncUOPAndClaim atomically syncs remaining UOP and claims the bin.
 // For partial consumption: manifest preserved, only uop_remaining updated.
 func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP int) error {
-	res, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
+		return err
+	}
+	res, err := tx.Exec(`
 		UPDATE bins SET
 			uop_remaining=$1, claimed_by=$2, updated_at=NOW()
 		WHERE id=$3 AND locked=false AND claimed_by IS NULL`,
@@ -127,7 +259,12 @@ func (s *BinManifestService) SyncUOPAndClaim(binID, orderID int64, remainingUOP 
 	if n == 0 {
 		return fmt.Errorf("bin %d is locked, already claimed, or does not exist", binID)
 	}
-	return nil
+	if err := audit.AppendBinUOP(tx, binID, before, remainingUOP,
+		audit.OpSyncUOPAndClaim, "service/bin_manifest.go:SyncUOPAndClaim",
+		&orderID, "", ""); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ClaimForDispatch selects the correct bin operation based on remaining UOP
@@ -161,6 +298,12 @@ func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP
 //   - *remainingUOP == 0: clear manifest, keep claim (e.g. NOTHING PULLED disposition)
 //   - *remainingUOP > 0: sync UOP, keep manifest + claim (e.g. SEND PARTIAL BACK)
 //
+// kind is the wire-shape disposition kind that the operator picked. It only
+// affects the audit op tag for the zero path: DispositionReleaseUnderpack
+// writes OpReleasedUnderpack, anything else (including the zero value) writes
+// OpReleasedEmpty. The positive path is always OpReleasedPartial regardless
+// of kind. Pass "" for legacy / non-disposition-aware callers.
+//
 // actor is the operator identity for the audit row (typically the station
 // name from the HTTP request body's called_by field). Empty falls back to
 // "system" so internal callers (wiring fallbacks, etc.) get a consistent
@@ -172,16 +315,35 @@ func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP
 //
 // Idempotent: re-running with the same arguments produces the same row state,
 // so retries after a failed fleet release are safe.
-func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remainingUOP *int, actor string) error {
+func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string) error {
 	if remainingUOP == nil {
 		return nil
 	}
 	if actor == "" {
 		actor = "system"
 	}
+	// Defense in depth: Edge's computeReleaseRemainingUOP guards against
+	// non-positive values reaching this branch, but a direct Core caller
+	// (test, automation, future bypass) could still hand us a negative
+	// pointer. Reject loudly rather than corrupt the bin row.
+	if *remainingUOP < 0 {
+		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
+		return err
+	}
+
 	if *remainingUOP == 0 {
 		// Clear manifest, preserve claim
-		res, err := s.db.Exec(`
+		res, err := tx.Exec(`
 			UPDATE bins SET
 				payload_code='', manifest=NULL, uop_remaining=0,
 				manifest_confirmed=false, loaded_at=NULL,
@@ -195,16 +357,23 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 		if n == 0 {
 			return fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
 		}
-		s.db.AppendAudit("bin", binID, "released_empty",
+		op := audit.OpReleasedEmpty
+		legacyTag := "released_empty"
+		if kind == protocol.DispositionReleaseUnderpack {
+			op = audit.OpReleasedUnderpack
+			legacyTag = "released_underpack"
+		}
+		if err := audit.AppendBinUOP(tx, binID, before, 0,
+			op, "service/bin_manifest.go:SyncOrClearForReleased",
+			&orderID, "", actor); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit clear-for-released bin %d: %w", binID, err)
+		}
+		s.db.AppendAudit("bin", binID, legacyTag,
 			"", fmt.Sprintf("order=%d", orderID), actor)
 		return nil
-	}
-	// Defense in depth: Edge's computeReleaseRemainingUOP guards against
-	// non-positive values reaching this branch, but a direct Core caller
-	// (test, automation, future bypass) could still hand us a negative
-	// pointer. Reject loudly rather than corrupt the bin row.
-	if *remainingUOP < 0 {
-		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
 	}
 	// Positive: sync UOP AND reconstruct manifest, preserve claim.
 	//
@@ -221,7 +390,7 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 	// payload). Erroring would be cleaner but risks regressing release
 	// flows in the field; preserving the prior manifest matches the
 	// pre-fix observable behavior for the edge case.
-	res, err := s.db.Exec(`
+	res, err := tx.Exec(`
 		UPDATE bins SET
 			uop_remaining=$1,
 			manifest=CASE
@@ -241,6 +410,14 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
+	}
+	if err := audit.AppendBinUOP(tx, binID, before, *remainingUOP,
+		audit.OpReleasedPartial, "service/bin_manifest.go:SyncOrClearForReleased",
+		&orderID, "", actor); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit sync-for-released bin %d: %w", binID, err)
 	}
 	s.db.AppendAudit("bin", binID, "released_partial",
 		"", fmt.Sprintf("uop=%d order=%d", *remainingUOP, orderID), actor)
@@ -271,8 +448,23 @@ func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64,
 	if actor == "" {
 		actor = "system"
 	}
+	if *remainingUOP < 0 {
+		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	before, err := readBinUOPInTx(tx, binID)
+	if err != nil {
+		return err
+	}
+
 	if *remainingUOP == 0 {
-		res, err := s.db.Exec(`
+		res, err := tx.Exec(`
 			UPDATE bins SET
 				payload_code='', manifest=NULL, uop_remaining=0,
 				manifest_confirmed=false, loaded_at=NULL,
@@ -286,17 +478,22 @@ func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64,
 		if n == 0 {
 			return fmt.Errorf("bin %d not found or locked (no-owner fallback)", binID)
 		}
+		if err := audit.AppendBinUOP(tx, binID, before, 0,
+			audit.OpReleasedEmptyFallback, "service/bin_manifest.go:SyncOrClearForReleasedNoOwner",
+			&orderID, "", actor); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit clear-for-released bin %d (no-owner fallback): %w", binID, err)
+		}
 		s.db.AppendAudit("bin", binID, "released_empty_fallback",
 			"", fmt.Sprintf("order=%d (source-node fallback)", orderID), actor)
 		return nil
 	}
-	if *remainingUOP < 0 {
-		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
-	}
 	// Same manifest-reconstruction logic as SyncOrClearForReleased but
 	// without the claimed_by guard — see the parent method's comment for
 	// the rationale on the JSON shape and the empty-payload_code CASE.
-	res, err := s.db.Exec(`
+	res, err := tx.Exec(`
 		UPDATE bins SET
 			uop_remaining=$1,
 			manifest=CASE
@@ -317,8 +514,131 @@ func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64,
 	if n == 0 {
 		return fmt.Errorf("bin %d not found or locked (no-owner fallback)", binID)
 	}
+	if err := audit.AppendBinUOP(tx, binID, before, *remainingUOP,
+		audit.OpReleasedPartialFallback, "service/bin_manifest.go:SyncOrClearForReleasedNoOwner",
+		&orderID, "", actor); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit sync-for-released bin %d (no-owner fallback): %w", binID, err)
+	}
 	s.db.AppendAudit("bin", binID, "released_partial_fallback",
 		"", fmt.Sprintf("uop=%d order=%d (source-node fallback)", *remainingUOP, orderID), actor)
 	return nil
+}
+
+// AuditReleaseOverride records operator-override observations for a
+// release-time disposition. Compares the operator-submitted values
+// (Count / Captures) against the system-suggested baseline
+// (CountSuggested / CapturesSuggested) and writes one bin_uop_audit
+// row per divergence.
+//
+// Phase 0b. Independent of the manifest-sync flow: the override audit
+// captures *what the operator decided*, regardless of whether
+// downstream sync succeeds or fails. Called from HandleOrderRelease
+// before SyncOrClearForReleased.
+//
+// Behavior matrix:
+//
+//   - disposition == nil → no-op (legacy Edge clients that don't ship
+//     the new shape).
+//   - Kind == DispositionReleasePartial: if CountSuggested is nil, no
+//     baseline to compare against (legacy UI that hasn't been updated).
+//     If *CountSuggested == Count, no override. Otherwise one row.
+//   - Kind == DispositionPullParts: for every part where
+//     CapturesSuggested[k] != Captures[k], one row. Parts present only
+//     in one map count as a divergence (operator added or skipped a
+//     part the system listed). When CapturesSuggested is nil/empty no
+//     baseline exists and nothing is written.
+//   - Other kinds (DispositionReleaseEmpty): no-op. RELEASE EMPTY is
+//     by definition "system and operator agree the bin is empty";
+//     no override semantic.
+//
+// Each row's metadata column carries the disposition kind plus the
+// full suggested/operator maps so a single row contains the full
+// release context (forensics doesn't need to reconstruct from sibling
+// rows).
+func (s *BinManifestService) AuditReleaseOverride(binID, orderID int64, disposition *protocol.UOPDisposition, actor string) error {
+	if disposition == nil {
+		return nil
+	}
+	if actor == "" {
+		actor = "system"
+	}
+
+	switch disposition.Kind {
+	case protocol.DispositionReleasePartial:
+		if disposition.CountSuggested == nil {
+			return nil
+		}
+		suggested := *disposition.CountSuggested
+		operator := disposition.Count
+		if suggested == operator {
+			return nil
+		}
+		meta, err := json.Marshal(map[string]any{
+			"kind":            string(disposition.Kind),
+			"auto_count":      suggested,
+			"operator_count":  operator,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal override metadata bin=%d: %w", binID, err)
+		}
+		return audit.AppendBinUOPOverride(s.db, binID, suggested, operator,
+			audit.OpOperatorOverrideReleasePartial,
+			"service/bin_manifest.go:AuditReleaseOverride",
+			&orderID, "", actor, meta)
+
+	case protocol.DispositionPullParts:
+		if len(disposition.CapturesSuggested) == 0 {
+			return nil
+		}
+		// Stable order so audit rows / tests don't depend on map iteration.
+		parts := make([]string, 0, len(disposition.CapturesSuggested)+len(disposition.Captures))
+		seen := make(map[string]struct{}, len(parts))
+		add := func(k string) {
+			if _, ok := seen[k]; ok {
+				return
+			}
+			seen[k] = struct{}{}
+			parts = append(parts, k)
+		}
+		for k := range disposition.CapturesSuggested {
+			add(k)
+		}
+		for k := range disposition.Captures {
+			add(k)
+		}
+		sort.Strings(parts)
+
+		for _, part := range parts {
+			suggested := disposition.CapturesSuggested[part]
+			operator := disposition.Captures[part]
+			if suggested == operator {
+				continue
+			}
+			meta, err := json.Marshal(map[string]any{
+				"kind":              string(disposition.Kind),
+				"part_number":       part,
+				"auto_qty":          suggested,
+				"operator_qty":      operator,
+				"auto_captures":     disposition.CapturesSuggested,
+				"operator_captures": disposition.Captures,
+			})
+			if err != nil {
+				return fmt.Errorf("marshal override metadata bin=%d part=%q: %w", binID, part, err)
+			}
+			if err := audit.AppendBinUOPOverride(s.db, binID, suggested, operator,
+				audit.OpOperatorOverridePullParts,
+				"service/bin_manifest.go:AuditReleaseOverride",
+				&orderID, part, actor, meta); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	default:
+		return nil
+	}
 }
 

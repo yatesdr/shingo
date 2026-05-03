@@ -24,7 +24,7 @@ func consumeClaim(swapMode string) *processes.NodeClaim {
 
 func consumeFixtures(swapMode string) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim) {
 	node := &processes.Node{ID: 2, Name: "CONSUME-NODE"}
-	runtime := &processes.RuntimeState{RemainingUOP: 0}
+	runtime := &processes.RuntimeState{RemainingUOPCached: 0}
 	return node, runtime, consumeClaim(swapMode)
 }
 

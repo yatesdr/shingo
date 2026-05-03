@@ -284,7 +284,7 @@ func (h *Handlers) apiReleaseNodeStagedOrders(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	disp := buildReleaseDisposition(req.Disposition, req.QtyByPart, req.CalledBy)
+	disp := buildReleaseDisposition(req)
 	if err := h.orchestration.ReleaseStagedOrders(id, disp); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

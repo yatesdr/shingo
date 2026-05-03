@@ -89,12 +89,12 @@ func (db *DB) UpdateOrderStagedExpireAt(id int64, stagedExpireAt *time.Time) err
 	return orders.UpdateStagedExpireAt(db.DB, id, stagedExpireAt)
 }
 
-// UpdateOrderBinUOPRemaining sets (or clears) the bin_uop_remaining
-// snapshot on an order. Captures the bin's authoritative uop_remaining
-// from Core at delivery so handleNormalReplenishment can reset lineside
-// UOP without guessing claim.UOPCapacity.
-func (db *DB) UpdateOrderBinUOPRemaining(id int64, binUOPRemaining *int) error {
-	return orders.UpdateBinUOPRemaining(db.DB, id, binUOPRemaining)
+// UpdateOrderBinID sets (or clears) the bin_id snapshot on an order.
+// PLC tick attribution at consume/produce time reads the active
+// order's BinID for delta envelope routing. Captured from the
+// OrderDelivered envelope.
+func (db *DB) UpdateOrderBinID(id int64, binID *int64) error {
+	return orders.UpdateBinID(db.DB, id, binID)
 }
 
 // InsertOrderHistory writes one order_history row.

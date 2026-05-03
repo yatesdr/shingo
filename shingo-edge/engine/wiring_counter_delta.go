@@ -95,25 +95,40 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 }
 
 // handleConsumeTick applies a delta to one active-pull consume node:
-// drain lineside first, decrement node UOP (clamped at zero), then trigger
-// auto-reorder if the threshold is crossed and the node accepts orders.
-// Caller is responsible for the A/B inactive-pair check; this is invoked
-// only on the active side.
+// drain lineside first, decrement node UOP, then trigger auto-reorder
+// if the threshold is crossed and the node accepts orders. Caller is
+// responsible for the A/B inactive-pair check; this is invoked only
+// on the active side.
+//
+// The local UpdateProcessNodeUOP write is a write-through cache —
+// Core's bins.uop_remaining is the source of truth (post-bin-as-truth
+// refactor). The local row backs the operator UI (instant feedback)
+// and the reconciler self-heals it from Core periodically. The bucket
+// and bin deltas published below are what move authoritative state.
+//
+// Per SME lock (open-items.md §"Process semantics"): bins can go
+// negative. A real bin nominally rated 1000 might overpack to 1005
+// (operator runs an extra cycle before noticing); the next bin
+// underpacks to 995. Over time these wash out at the inventory
+// aggregate level. Tracking the actual count — including signed
+// values — is the whole point of bin-as-truth. The runtime cache
+// must mirror this; clamping at zero would force a permanent drift
+// against Core (which doesn't clamp) and noisy reconciliation logs
+// as the heal/clamp/heal/clamp loop ping-pongs forever.
 func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
 	// Lineside first: drain the active bucket for this node's primary part
 	// before touching the node counter. The bucket represents parts the
 	// operator pulled to lineside during the last swap, which physically
 	// leave the station before the new bin is tapped. Remainder flows to
 	// the bin counter.
-	remainder := e.drainLinesideFirst(node.ID, claim, delta)
+	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, delta)
 
-	newRemaining := runtime.RemainingUOP - remainder
-	if newRemaining < 0 {
-		newRemaining = 0
-	}
+	newRemaining := runtime.RemainingUOPCached - binRemainder
 	if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
 		log.Printf("update UOP for node %d: %v", node.ID, err)
 	}
+
+	e.emitConsumeTickDeltas(node.ID, runtime, claim, drains, binRemainder)
 
 	// Auto-reorder if threshold reached, enabled, and node can accept orders.
 	if claim.AutoReorder && newRemaining <= claim.ReorderPoint && newRemaining > 0 {
@@ -129,10 +144,20 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 // increment node UOP, then trigger auto-relief (manifest + swap) if the
 // claim has a UOP capacity and the new value reaches it. Caller is
 // responsible for the A/B inactive-pair check.
+//
+// Phase 1: emits BinUOPDelta(produce_tick, +delta) for the bin being
+// filled. No bucket delta — produce nodes don't drain lineside; they
+// fill bins directly via the PLC.
 func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
-	newRemaining := runtime.RemainingUOP + delta
+	newRemaining := runtime.RemainingUOPCached + delta
 	if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
 		log.Printf("update UOP for node %d: %v", node.ID, err)
+	}
+
+	if e.inventoryDelta != nil && delta > 0 {
+		if binID, payload := e.binAtNode(runtime, claim); binID > 0 {
+			e.inventoryDelta.RecordBin(binID, payload, delta, protocol.ReasonProduceTick)
+		}
 	}
 
 	// Auto-relief at capacity: finalize the produce node (manifest + swap).
@@ -149,53 +174,139 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 // existed for a process tick but at least one inactive paired consume node
 // was visible. It decrements the first such fallback node so the count
 // flows to lineside storage instead of being dropped on the floor.
+//
+// Phase 1: emits BinUOPDelta(ab_fallthrough, ...) and bucket deltas
+// against the inactive-paired node's bin and active buckets. The plan
+// (B5 fix) singles this path out — it's the case where neither
+// operator action nor active-pull state surfaces a flush trigger, so
+// the periodic flush is the only signal that captures the change.
 func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runtime *processes.RuntimeState, delta int) {
 	log.Printf("A/B fallthrough: no active-pull node for process %d, decrementing fallback node %s",
 		processID, node.Name)
 
 	// Lineside-first on the fallback node too.
 	claim := findActiveClaim(e.db, node)
-	remainder := delta
+	var drains map[string]int
+	binRemainder := delta
 	if claim != nil {
-		remainder = e.drainLinesideFirst(node.ID, claim, delta)
+		drains, binRemainder = e.drainLinesideFirst(node.ID, claim, delta)
 	}
 
-	newRemaining := runtime.RemainingUOP - remainder
-	if newRemaining < 0 {
-		newRemaining = 0
-	}
+	// Signed-bin semantic mirrors handleConsumeTick (see comment there).
+	newRemaining := runtime.RemainingUOPCached - binRemainder
 	if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
 		log.Printf("update UOP for node %d: %v", node.ID, err)
 	}
+
+	if claim != nil {
+		e.emitFallthroughDeltas(node.ID, runtime, claim, drains, binRemainder)
+	}
+}
+
+// emitConsumeTickDeltas records the bucket and bin deltas for one
+// consume tick. Split out from handleConsumeTick so the same emission
+// shape is reusable for handleABFallthrough's fallback path (which
+// has subtly different reason mapping).
+func (e *Engine) emitConsumeTickDeltas(nodeID int64, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]int, binRemainder int) {
+	if e.inventoryDelta == nil {
+		return
+	}
+	pairKey := claim.PairedCoreNode
+	for part, drained := range drains {
+		if drained > 0 {
+			e.inventoryDelta.RecordBucket(nodeID, pairKey, claim.StyleID, part, -drained, protocol.ReasonConsumeDrain)
+		}
+	}
+	if binRemainder > 0 {
+		if binID, payload := e.binAtNode(runtime, claim); binID > 0 {
+			e.inventoryDelta.RecordBin(binID, payload, -binRemainder, protocol.ReasonConsumeTick)
+		}
+	}
+}
+
+// emitFallthroughDeltas mirrors emitConsumeTickDeltas but tags the
+// bin delta with reason=ab_fallthrough. Bucket deltas keep the
+// consume_drain reason — the bucket physically drained regardless of
+// which side of the A/B pair the count attributed to.
+func (e *Engine) emitFallthroughDeltas(nodeID int64, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]int, binRemainder int) {
+	if e.inventoryDelta == nil {
+		return
+	}
+	pairKey := claim.PairedCoreNode
+	for part, drained := range drains {
+		if drained > 0 {
+			e.inventoryDelta.RecordBucket(nodeID, pairKey, claim.StyleID, part, -drained, protocol.ReasonConsumeDrain)
+		}
+	}
+	if binRemainder > 0 {
+		if binID, payload := e.binAtNode(runtime, claim); binID > 0 {
+			e.inventoryDelta.RecordBin(binID, payload, -binRemainder, protocol.ReasonABFallthrough)
+		}
+	}
+}
+
+// binAtNode resolves the bin currently associated with a node tick.
+// Returns (0, "") when no active order is tracked or the order has no
+// BinID yet — the caller skips bin delta emission in that case.
+//
+// The active order's BinID is the canonical "bin at this slot"
+// signal: at delivery, Core attaches the bin to the order, and the
+// order remains active on the runtime until release. PLC ticks during
+// that window attribute to that bin. payload returns the claim's
+// PayloadCode so Core can validate the wire envelope's payload_code
+// against the bin row.
+func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.NodeClaim) (int64, string) {
+	if runtime == nil || runtime.ActiveOrderID == nil {
+		return 0, ""
+	}
+	order, err := e.db.GetOrder(*runtime.ActiveOrderID)
+	if err != nil || order == nil || order.BinID == nil {
+		return 0, ""
+	}
+	return *order.BinID, claim.PayloadCode
 }
 
 // drainLinesideFirst decrements the active lineside bucket(s) for the
-// claim's parts and returns the remainder that should flow to the node
-// counter. For a single-part claim, the primary PayloadCode is used;
-// the remainder is delta - drained.
+// claim's parts and returns:
 //
-// Multi-part claims (claims with more than one entry in AllowedPayloads)
-// drain each part by up to delta independently, but the node counter
-// still represents one unit of production per tick, so the remainder
-// tracks the *primary* part's drain. The rationale: the node counter is
-// a single integer (one UOP = one assembly), and staging/reorder
-// thresholds key off that value. Secondary part buckets drain so the
-// UI stays honest, even though their draining doesn't affect the node
-// counter arithmetic. If a plant ever ships a claim where secondary
-// parts can deplete independently (e.g. consumables), revisit this.
-func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, delta int) int {
+//   - drains: per-part qty actually drained from each affected bucket.
+//     One entry per (style, part) that drained any non-zero qty.
+//     Empty map (not nil-valued — the caller iterates safely) means
+//     no bucket drained.
+//   - binRemainder: the units that should flow to the node counter
+//     after the primary-part drain. The primary's drain reduces
+//     binRemainder; secondary drains do not (they keep the UI
+//     honest but the node counter is one unit per assembly).
+//
+// The per-part drains are reported as
+// LinesideBucketDelta(consume_drain) by the caller, and the
+// binRemainder becomes a BinUOPDelta(consume_tick).
+//
+// Multi-part claims (claims with more than one entry in
+// AllowedPayloads) drain each part by up to delta independently. The
+// rationale: the node counter is a single integer (one UOP = one
+// assembly), and staging/reorder thresholds key off that value;
+// secondary part buckets drain so the UI stays honest, even though
+// their draining doesn't affect the node counter arithmetic. If a
+// plant ever ships a claim where secondary parts can deplete
+// independently (e.g. consumables), revisit this.
+func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, delta int) (drains map[string]int, binRemainder int) {
+	drains = make(map[string]int)
+	binRemainder = delta
 	if delta <= 0 || claim == nil {
-		return delta
+		return drains, binRemainder
 	}
 
 	// Primary part controls the node-counter math.
-	primaryRemainder := delta
 	if primary := claim.PayloadCode; primary != "" {
 		drained, err := e.db.DrainLinesideBucket(nodeID, claim.StyleID, primary, delta)
 		if err != nil {
 			log.Printf("lineside: drain primary part %q on node %d: %v", primary, nodeID, err)
 		} else {
-			primaryRemainder = delta - drained
+			if drained > 0 {
+				drains[primary] = drained
+			}
+			binRemainder = delta - drained
 		}
 	}
 
@@ -206,10 +317,15 @@ func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, de
 		if part == "" || part == claim.PayloadCode {
 			continue
 		}
-		if _, err := e.db.DrainLinesideBucket(nodeID, claim.StyleID, part, delta); err != nil {
+		drained, err := e.db.DrainLinesideBucket(nodeID, claim.StyleID, part, delta)
+		if err != nil {
 			log.Printf("lineside: drain secondary part %q on node %d: %v", part, nodeID, err)
+			continue
+		}
+		if drained > 0 {
+			drains[part] = drained
 		}
 	}
 
-	return primaryRemainder
+	return drains, binRemainder
 }

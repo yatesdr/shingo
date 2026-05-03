@@ -76,13 +76,18 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 	return nil
 }
 
-func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binUOPRemaining *int) error {
+func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64) error {
 	if stagedExpireAt != nil {
 		s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt)
 	}
-	if binUOPRemaining != nil {
-		if err := s.db.UpdateOrderBinUOPRemaining(order.ID, binUOPRemaining); err != nil {
-			log.Printf("update order bin_uop_remaining: %v", err)
+	// Capture Core's bin id at delivery so the PLC tick path can
+	// attribute deltas to the right bin. Nil for multi-bin orders /
+	// older Core builds. The runtime cache (reconciler-healed from
+	// Core) is the source of truth for bin UOP at completion time;
+	// the OrderDelivered envelope no longer carries a UOP snapshot.
+	if binID != nil {
+		if err := s.db.UpdateOrderBinID(order.ID, binID); err != nil {
+			log.Printf("update order bin_id: %v", err)
 		}
 	}
 	return s.Transition(order.ID, StatusDelivered, statusDetail)

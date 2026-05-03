@@ -17,6 +17,14 @@ func newCoreSyncService(e *Engine) *CoreSyncService {
 func (s *CoreSyncService) StartupReconcile() error {
 	s.engine.RequestNodeSync()
 	s.engine.RequestCatalogSync()
+	// Boot-fast safety: heal the UOP cache from Core authoritative
+	// state before the first heartbeat tick fires (Item 1 wired
+	// Reconcile to the heartbeat at ~60s cadence). If Edge boots
+	// from a stale cache after a crash, the few seconds before the
+	// first heartbeat would otherwise show wrong UI; this call
+	// closes that window. force=false respects the since-last-pass
+	// gate so the heartbeat-driven follow-up coalesces cleanly.
+	s.engine.Reconcile(false)
 	return s.RequestOrderStatusSync()
 }
 

@@ -45,6 +45,10 @@ type ServiceAccess interface {
 	// ── Service accessors ──────────────────────────────────────────
 	// Phase 6.2′: per-domain services. Handlers reach single-aggregate
 	// CRUD via these instead of through 50+ named *Engine methods.
+	// ReconcilerMetrics returns the cumulative UOP reconciliation
+	// counters since process start (Item 9 surface). Read-only.
+	ReconcilerMetrics() engine.UOPReconcilerMetrics
+
 	StationService() *service.StationService
 	ChangeoverService() *service.ChangeoverService
 	AdminService() *service.AdminService
@@ -106,6 +110,12 @@ type EngineOrchestration interface {
 	SwitchOperatorStationToTarget(processID, stationID int64) error
 	SyncProcessCounter(processID int64) error
 	FlipABNode(nodeID int64) error
+
+	// ── UOP backfill (admin) ───────────────────────────────────────
+	// Item 3: seeds Core's lineside_buckets from Edge state. Auto-fires
+	// at startup via main.go; the admin endpoint exists for re-runs.
+	BackfillBucketsForStation(force bool) (int, error)
+	BucketBackfillNeeded() (bool, error)
 
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)

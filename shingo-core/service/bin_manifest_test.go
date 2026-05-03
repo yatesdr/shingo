@@ -9,8 +9,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"shingo/protocol"
+
 	"shingocore/internal/testdb"
 	"shingocore/store"
+	"shingocore/store/audit"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
 )
@@ -135,32 +138,11 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 	}
 }
 
-func TestBinManifestService_SyncUOP_PreservesManifest(t *testing.T) {
-	db := testDB(t)
-	sd := testdb.SetupStandardData(t, db)
-	svc := NewBinManifestService(db)
-
-	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UOP-1", "PART-A", 100)
-
-	originalManifest := *bin.Manifest
-	originalPayloadCode := bin.PayloadCode
-
-	// Sync UOP to partial consumption value
-	if err := svc.SyncUOP(bin.ID, 42); err != nil {
-		t.Fatalf("SyncUOP: %v", err)
-	}
-
-	got, _ := db.GetBin(bin.ID)
-	if got.UOPRemaining != 42 {
-		t.Errorf("UOPRemaining = %d, want 42", got.UOPRemaining)
-	}
-	if got.PayloadCode != originalPayloadCode {
-		t.Errorf("PayloadCode = %q, want %q (should be preserved)", got.PayloadCode, originalPayloadCode)
-	}
-	if got.Manifest == nil || *got.Manifest != originalManifest {
-		t.Errorf("Manifest changed after SyncUOP — should be preserved")
-	}
-}
+// (Item 14 D8: TestBinManifestService_SyncUOP_PreservesManifest deleted
+// alongside the SyncUOP function it exercised. Production has zero
+// callers — partial-consumption sync goes through ApplyBinUOPDelta in
+// the post-bin-as-truth flow. SyncUOPAndClaim covers the
+// claim-with-uop case directly.)
 
 func TestBinManifestService_ClearAndClaim_Atomic(t *testing.T) {
 	db := testDB(t)
@@ -552,7 +534,7 @@ func TestBinManifestService_SyncOrClearForReleased_NilIsNoOp(t *testing.T) {
 	order := createTestOrder(t, db, sd.LineNode.ID)
 	claimBinForTest(t, db, bin.ID, order.ID)
 
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, nil, ""); err != nil {
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, nil, "", ""); err != nil {
 		t.Fatalf("SyncOrClearForReleased(nil): %v", err)
 	}
 
@@ -578,7 +560,7 @@ func TestBinManifestService_SyncOrClearForReleased_ZeroClearsManifest(t *testing
 	claimBinForTest(t, db, bin.ID, order.ID)
 
 	zero := 0
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, ""); err != nil {
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, "", ""); err != nil {
 		t.Fatalf("SyncOrClearForReleased(0): %v", err)
 	}
 
@@ -611,7 +593,7 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	claimBinForTest(t, db, bin.ID, order.ID)
 
 	partial := 800
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, ""); err != nil {
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""); err != nil {
 		t.Fatalf("SyncOrClearForReleased(800): %v", err)
 	}
 
@@ -661,7 +643,7 @@ func TestBinManifestService_SyncOrClearForReleased_WrongOrderRejected(t *testing
 	claimBinForTest(t, db, bin.ID, realOwner.ID)
 
 	zero := 0
-	err := svc.SyncOrClearForReleased(bin.ID, staleOrder.ID, &zero, "")
+	err := svc.SyncOrClearForReleased(bin.ID, staleOrder.ID, &zero, "", "")
 	if err == nil {
 		t.Fatal("expected error when orderID does not match claimed_by, got nil")
 	}
@@ -692,7 +674,7 @@ func TestBinManifestService_SyncOrClearForReleased_LockedRejected(t *testing.T) 
 	}
 
 	zero := 0
-	err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, "")
+	err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, "", "")
 	if err == nil {
 		t.Fatal("expected error when bin is locked, got nil")
 	}
@@ -717,7 +699,7 @@ func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T)
 	orderNamed := createTestOrder(t, db, sd.LineNode.ID)
 	claimBinForTest(t, db, binNamed.ID, orderNamed.ID)
 	zero := 0
-	if err := svc.SyncOrClearForReleased(binNamed.ID, orderNamed.ID, &zero, "stephen-station-7"); err != nil {
+	if err := svc.SyncOrClearForReleased(binNamed.ID, orderNamed.ID, &zero, "", "stephen-station-7"); err != nil {
 		t.Fatalf("SyncOrClearForReleased named actor: %v", err)
 	}
 
@@ -725,7 +707,7 @@ func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T)
 	binSystem := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-ACTOR-S", "PART-A", 100)
 	orderSystem := createTestOrder(t, db, sd.LineNode.ID)
 	claimBinForTest(t, db, binSystem.ID, orderSystem.ID)
-	if err := svc.SyncOrClearForReleased(binSystem.ID, orderSystem.ID, &zero, ""); err != nil {
+	if err := svc.SyncOrClearForReleased(binSystem.ID, orderSystem.ID, &zero, "", ""); err != nil {
 		t.Fatalf("SyncOrClearForReleased empty actor: %v", err)
 	}
 
@@ -770,10 +752,10 @@ func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T)
 	claimBinForTest(t, db, bin.ID, order.ID)
 
 	partial := 250
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, ""); err != nil {
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""); err != nil {
 		t.Fatalf("first SyncOrClearForReleased: %v", err)
 	}
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, ""); err != nil {
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""); err != nil {
 		t.Fatalf("second SyncOrClearForReleased should succeed (idempotent): %v", err)
 	}
 
@@ -783,5 +765,203 @@ func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T)
 	}
 	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
 		t.Errorf("ClaimedBy = %v, want %d (preserved across retries)", got.ClaimedBy, order.ID)
+	}
+}
+
+// TestBinManifestService_SetFromTemplate pins the Item 19 audit-
+// completeness contract: the SetFromTemplate wrapper resolves a
+// payload template AND writes the bin via SetForProduction, which
+// audits via bin_uop_audit. Pre-Item-19 the dispatch ingest path
+// and the operator load-payload action called the lower-level
+// *store.DB.SetBinManifestFromTemplate which bypassed audit; Item
+// 10's UI surface made the audit-bypass a real gap.
+func TestBinManifestService_SetFromTemplate(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TMPL-1", "INITIAL", 0)
+
+	// Apply the template — uopOverride=0 falls back to template's UOPCapacity.
+	if err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, 0); err != nil {
+		t.Fatalf("SetFromTemplate: %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != sd.Payload.Code {
+		t.Errorf("PayloadCode = %q, want %q", got.PayloadCode, sd.Payload.Code)
+	}
+	if got.UOPRemaining != sd.Payload.UOPCapacity {
+		t.Errorf("UOPRemaining = %d, want %d (payload default)",
+			got.UOPRemaining, sd.Payload.UOPCapacity)
+	}
+
+	// Audit row must exist with op=set_for_production.
+	var auditCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+		WHERE bin_id=$1 AND op='set_for_production'`, bin.ID).Scan(&auditCount); err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	if auditCount != 1 {
+		t.Errorf("set_for_production audit rows = %d, want 1 (Item 19: SetFromTemplate must audit)",
+			auditCount)
+	}
+
+	// Override uopOverride.
+	if err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, 50); err != nil {
+		t.Fatalf("SetFromTemplate override: %v", err)
+	}
+	got2, _ := db.GetBin(bin.ID)
+	if got2.UOPRemaining != 50 {
+		t.Errorf("UOPRemaining after override = %d, want 50", got2.UOPRemaining)
+	}
+}
+
+// TestRegression_ReleaseUnderpack_BinClearsToZero pins the
+// underpack release contract on the manifest side: same wire shape
+// as RELEASE EMPTY (RemainingUOP=&0), same end state (manifest
+// cleared, uop=0, claim preserved). The disposition kind doesn't
+// affect the bin write — only the audit op tag.
+func TestRegression_ReleaseUnderpack_BinClearsToZero(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNDERPACK-1", "PART-UP", 1190)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	zero := 0
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero,
+		protocol.DispositionReleaseUnderpack, "operator-x"); err != nil {
+		t.Fatalf("SyncOrClearForReleased underpack: %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty (cleared)", got.PayloadCode)
+	}
+	if got.UOPRemaining != 0 {
+		t.Errorf("UOPRemaining = %d, want 0", got.UOPRemaining)
+	}
+	if got.Manifest != nil {
+		t.Errorf("Manifest = %v, want nil (cleared)", got.Manifest)
+	}
+	if got.ClaimedBy == nil || *got.ClaimedBy != order.ID {
+		t.Errorf("ClaimedBy = %v, want %d (preserved)", got.ClaimedBy, order.ID)
+	}
+}
+
+// TestRegression_ReleaseUnderpack_AuditRecordsMissingDelta pins the
+// audit-row contract: op=released_underpack, before_uop = the bin's
+// pre-release count (the system's expected count == "suggested"),
+// after_uop = 0. The gap (before_uop - after_uop) is the missing-
+// inventory delta forensics will trend.
+//
+// Without the distinct op tag the missing-inventory pattern would
+// be indistinguishable from the system-and-operator-agreed-empty
+// case (RELEASE EMPTY at runtime=0). Forensics need to be able to
+// query for op=released_underpack and find every "labeled bin
+// short-counted by N" event.
+func TestRegression_ReleaseUnderpack_AuditRecordsMissingDelta(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	const expectedAtClick = 12
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNDERPACK-AUDIT", "PART-UPA", expectedAtClick)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	zero := 0
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero,
+		protocol.DispositionReleaseUnderpack, "operator-y"); err != nil {
+		t.Fatalf("SyncOrClearForReleased underpack: %v", err)
+	}
+
+	// The audit row must use OpReleasedUnderpack so a forensics
+	// query can target underpack events specifically.
+	var (
+		op        string
+		beforeUOP int
+		afterUOP  int
+		actor     string
+	)
+	if err := db.QueryRow(`SELECT op, before_uop, after_uop, actor
+		FROM bin_uop_audit WHERE bin_id=$1 AND op=$2`,
+		bin.ID, audit.OpReleasedUnderpack).Scan(&op, &beforeUOP, &afterUOP, &actor); err != nil {
+		t.Fatalf("read released_underpack audit row: %v", err)
+	}
+	if beforeUOP != expectedAtClick {
+		t.Errorf("before_uop = %d, want %d (system's expected count at click time)",
+			beforeUOP, expectedAtClick)
+	}
+	if afterUOP != 0 {
+		t.Errorf("after_uop = %d, want 0", afterUOP)
+	}
+	missing := beforeUOP - afterUOP
+	if missing != expectedAtClick {
+		t.Errorf("missing-inventory delta = %d, want %d (gap forensics will read)",
+			missing, expectedAtClick)
+	}
+	if actor != "operator-y" {
+		t.Errorf("actor = %q, want operator-y", actor)
+	}
+
+	// And NO released_empty audit row should exist for this bin —
+	// underpack is its own thing, not an extra event.
+	var emptyCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bin_uop_audit
+		WHERE bin_id=$1 AND op=$2`, bin.ID, audit.OpReleasedEmpty).Scan(&emptyCount); err != nil {
+		t.Fatalf("count released_empty rows: %v", err)
+	}
+	if emptyCount != 0 {
+		t.Errorf("released_empty rows = %d, want 0 (underpack must not also write released_empty)",
+			emptyCount)
+	}
+}
+
+// TestRegression_ReleaseUnderpack_ManifestClears is the focused
+// manifest-side pin: payload_code, manifest, manifest_confirmed,
+// loaded_at all reset on underpack release (same as RELEASE EMPTY).
+// Companion to the bin-clears test above; this one targets the
+// fields the empty-bin-pool query reads.
+func TestRegression_ReleaseUnderpack_ManifestClears(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := NewBinManifestService(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-UNDERPACK-MANIFEST", "PART-UPM", 47)
+	order := createTestOrder(t, db, sd.LineNode.ID)
+	claimBinForTest(t, db, bin.ID, order.ID)
+
+	// Confirm the manifest first so loaded_at is set; underpack
+	// release must clear that too.
+	if err := svc.Confirm(bin.ID, ""); err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	pre, _ := db.GetBin(bin.ID)
+	if !pre.ManifestConfirmed {
+		t.Fatalf("pre-release ManifestConfirmed = false, want true (Confirm should have set it)")
+	}
+
+	zero := 0
+	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero,
+		protocol.DispositionReleaseUnderpack, "operator-z"); err != nil {
+		t.Fatalf("SyncOrClearForReleased underpack: %v", err)
+	}
+
+	got, _ := db.GetBin(bin.ID)
+	if got.PayloadCode != "" {
+		t.Errorf("PayloadCode = %q, want empty", got.PayloadCode)
+	}
+	if got.Manifest != nil {
+		t.Errorf("Manifest = %v, want nil", got.Manifest)
+	}
+	if got.ManifestConfirmed {
+		t.Error("ManifestConfirmed = true, want false (cleared)")
+	}
+	if got.LoadedAt != nil {
+		t.Errorf("LoadedAt = %v, want nil (cleared)", got.LoadedAt)
 	}
 }

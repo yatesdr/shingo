@@ -40,6 +40,43 @@ func Enqueue(db *sql.DB, payload []byte, msgType string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// ListUnsentByType returns every un-sent outbox message matching one of
+// the given msg_type values. Caller decodes the payload — store stays
+// schema-agnostic. Used by InventoryDeltaReporter at startup to
+// recover the in-memory pending set after a crash where deltas had
+// been enqueued but not yet sent.
+func ListUnsentByType(db *sql.DB, msgTypes []string) ([]Message, error) {
+	if len(msgTypes) == 0 {
+		return nil, nil
+	}
+	placeholders := ""
+	args := make([]any, 0, len(msgTypes))
+	for i, mt := range msgTypes {
+		if i > 0 {
+			placeholders += ","
+		}
+		placeholders += "?"
+		args = append(args, mt)
+	}
+	q := `SELECT id, payload, msg_type, retries, created_at FROM outbox WHERE sent_at IS NULL AND msg_type IN (` + placeholders + `) ORDER BY id`
+	rows, err := db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		var createdAt string
+		if err := rows.Scan(&m.ID, &m.Payload, &m.MsgType, &m.Retries, &createdAt); err != nil {
+			return nil, err
+		}
+		m.CreatedAt = helpers.ScanTime(createdAt)
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
 // ListPending returns the next batch of un-sent messages whose retry
 // count is below MaxRetries.
 func ListPending(db *sql.DB, limit int) ([]Message, error) {

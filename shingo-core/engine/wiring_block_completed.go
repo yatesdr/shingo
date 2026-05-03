@@ -34,6 +34,9 @@ package engine
 
 import (
 	"strings"
+	"time"
+
+	"shingo/protocol"
 )
 
 // handleBlockCompleted is called from wiring.go's EventBlockCompleted
@@ -58,6 +61,22 @@ func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
 
 	e.dbg("transit: bin %d entered _TRANSIT (order %d, block %s @ %s, step %d)",
 		binID, ev.OrderID, ev.BlockID, ev.Location, stepIndex)
+
+	// Item 11: notify Edge that the bin was physically picked up. The
+	// SEND PARTIAL BACK flow needs this signal to flush the released
+	// bin's delta accumulator and advance the active claim. We publish
+	// for every pickup (not just partial-back) — the Edge handler
+	// no-ops gracefully when the order doesn't match a tracked bin.
+	if order, err := e.db.GetOrder(ev.OrderID); err == nil && order != nil && order.StationID != "" {
+		if err := e.SendDataToEdge(protocol.SubjectBinPickedUp, order.StationID, &protocol.BinPickedUp{
+			OrderUUID:  order.EdgeUUID,
+			BinID:      binID,
+			Location:   ev.Location,
+			PickedUpAt: time.Now().UTC(),
+		}); err != nil {
+			e.logFn("transit: send BinPickedUp bin %d order %d: %v", binID, ev.OrderID, err)
+		}
+	}
 
 	e.Events.Emit(Event{Type: EventBinEnteredTransit, Payload: BinEnteredTransitEvent{
 		BinID:      binID,
