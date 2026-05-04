@@ -28,6 +28,10 @@ jobs:
         working-directory: protocol
         run: go build ./...
 
+      - name: Prepare build dir
+        working-directory: protocol
+        run: mkdir -p build
+
       - name: Test
         working-directory: protocol
         run: go test -v -coverprofile=build/coverage ./...

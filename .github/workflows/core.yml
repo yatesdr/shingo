@@ -34,6 +34,10 @@ jobs:
         working-directory: shingo-core
         run: go build ./...
 
+      - name: Prepare build dir
+        working-directory: shingo-core
+        run: mkdir -p build
+
       - name: Test (unit)
         working-directory: shingo-core
         run: go test -coverprofile=build/coverage ./...
