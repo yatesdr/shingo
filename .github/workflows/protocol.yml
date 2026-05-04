@@ -3,13 +3,13 @@ name: Protocol
 on:
   push:
     paths:
-      - 'protocol/**'
+      - "protocol/**"
   pull_request:
     paths:
-      - 'protocol/**'
+      - "protocol/**"
   workflow_call:
 
-# See core.yml for rationale — same idempotent burst-coalescing.
+# See core.yml for rationale - same idempotent burst-coalescing.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.0'
+          go-version: "1.25.0"
 
       - name: Build
         working-directory: protocol
@@ -30,10 +30,8 @@ jobs:
 
       - name: Test
         working-directory: protocol
-        run: go test -v -coverprofile=coverage.out ./...
+        run: go test -v -coverprofile=build/coverage ./...
 
       - name: Coverage report
         working-directory: protocol
-        run: go tool cover -func=coverage.out
-        run: go test -v -coverprofile=build/coverage ./...
         run: go tool cover -func=build/coverage

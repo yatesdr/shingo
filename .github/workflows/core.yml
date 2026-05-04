@@ -3,18 +3,18 @@ name: Core
 on:
   push:
     paths:
-      - 'shingo-core/**'
-      - 'protocol/**'
+      - "shingo-core/**"
+      - "protocol/**"
   pull_request:
     paths:
-      - 'shingo-core/**'
-      - 'protocol/**'
+      - "shingo-core/**"
+      - "protocol/**"
   workflow_call:
 
 # Coalesce overlapping runs on the same branch / PR so a quick burst
 # of pushes only consumes one CI slot. The cancel-in-progress flag is
 # safe here because the workflow is idempotent (build + tests with
-# -count=1) and the latest commit's run is always the one that
+# -count=1) and the latest commit run is always the one that
 # matters for merge gating.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -28,7 +28,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.0'
+          go-version: "1.25.0"
 
       - name: Build
         working-directory: shingo-core
@@ -36,11 +36,11 @@ jobs:
 
       - name: Test (unit)
         working-directory: shingo-core
-        run: go test -coverprofile=coverage.out ./...
+        run: go test -coverprofile=build/coverage ./...
 
       - name: Coverage report (unit)
         working-directory: shingo-core
-        run: go tool cover -func=coverage.out
+        run: go tool cover -func=build/coverage
 
       - name: Test (Docker integration)
         working-directory: shingo-core
@@ -52,12 +52,8 @@ jobs:
         # runtime once the workflow has run a few times. Standard
         # warm-runner integration tests should land well under 5m;
         # 10m exists today only because we lack measured data.
-        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=coverage-docker.out ./...
+        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
 
       - name: Coverage report (Docker)
         working-directory: shingo-core
-        run: go tool cover -func=coverage-docker.out
-        run: go test -coverprofile=build/coverage ./...
-        run: go tool cover -func=build/coverage
-        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
         run: go tool cover -func=build/coverage-docker
