@@ -89,6 +89,9 @@ func (db *DB) migrate() error {
 	if err := db.stripLegacyRuntimeStateColumns(); err != nil {
 		return err
 	}
+	if err := db.renameRemainingUOPCached(); err != nil {
+		return err
+	}
 
 	// Remove vestigial loaded_bin_label and loaded_at columns (safe no-ops if absent)
 	db.Exec("ALTER TABLE process_node_runtime_states DROP COLUMN loaded_bin_label")
@@ -537,6 +540,25 @@ DROP TABLE process_nodes_legacy;
 	}
 
 	return nil
+}
+
+// renameRemainingUOPCached covers an intermediate schema state where
+// effective_style_id was already gone (so stripLegacyRuntimeStateColumns
+// skips its rebuild) but the column was still named remaining_uop.
+// Idempotent: ALTER ADD COLUMN is silently ignored if the new column
+// already exists; the backfill + DROP only runs when the legacy column
+// is still present, so subsequent startups are no-ops.
+func (db *DB) renameRemainingUOPCached() error {
+	hasLegacy, _ := schema.TableHasColumn(db.DB, "process_node_runtime_states", "remaining_uop")
+	if !hasLegacy {
+		return nil
+	}
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN remaining_uop_cached INTEGER NOT NULL DEFAULT 0")
+	if _, err := db.Exec("UPDATE process_node_runtime_states SET remaining_uop_cached = remaining_uop"); err != nil {
+		return err
+	}
+	_, err := db.Exec("ALTER TABLE process_node_runtime_states DROP COLUMN remaining_uop")
+	return err
 }
 
 func (db *DB) stripLegacyRuntimeStateColumns() error {
