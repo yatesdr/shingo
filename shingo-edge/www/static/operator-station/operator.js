@@ -71,7 +71,13 @@ function scheduleRefresh() {
 function handleOrderFailed(data) {
     scheduleRefresh();
     const reason = data && (data.reason || data.Reason || data.detail || data.Detail);
-    const msg = friendlyOrderError(reason) || 'Order failed';
+    let msg = friendlyOrderError(reason) || 'Order failed';
+    if (data && data.order_type) {
+        msg = data.order_type + ': ' + msg;
+    }
+    if (data && data.order_id) {
+        msg += ' (#' + data.order_id + ')';
+    }
     showToast(msg, 'error', { sticky: true });
 }
 

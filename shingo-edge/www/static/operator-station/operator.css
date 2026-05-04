@@ -770,6 +770,20 @@ body {
     .os-action-btn { padding: 12px 16px; font-size: 16px; min-height: 48px; border-radius: 10px; }
 
     #os-footer { font-size: 12px; padding: 0 10px; }
+
+    .os-keypad { width: min(94vw, 420px); padding: 14px; border-radius: 14px; }
+    .os-keypad-title { font-size: 16px; margin-bottom: 8px; }
+    .os-keypad-display { font-size: 32px; padding: 12px; border-radius: 10px; margin-bottom: 8px; }
+    .os-keypad-grid { gap: 8px; }
+    .os-keypad-grid button { padding: 14px 0; font-size: 22px; border-radius: 10px; }
+    .os-keypad-actions { gap: 8px; margin-top: 8px; }
+    .os-keypad-actions button { padding: 12px 0; font-size: 16px; border-radius: 10px; }
+
+    .os-release-primary { padding: 10px; border-radius: 10px; gap: 8px; }
+    .os-release-primary-label { font-size: 12px; }
+    .os-release-part-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+    .os-release-part-btn { font-size: 14px; padding: 10px; min-height: 44px; }
+    .os-release-qty-display { font-size: 32px; padding: 14px; border-radius: 10px; }
 }
 
 /* ===== Payload Board (single manual_swap node) ===== */
@@ -925,4 +939,11 @@ body.os-board-mode-active #os-footer { font-size: 22px; }
     .os-node-remaining { font-size: 30px; }
     .os-node-name { font-size: 12px; }
     .os-node-payload { font-size: 16px; }
+
+    .os-keypad { width: min(96vw, 360px); padding: 10px; }
+    .os-keypad-display { font-size: 26px; padding: 10px; margin-bottom: 6px; }
+    .os-keypad-grid button { padding: 12px 0; font-size: 20px; }
+    .os-keypad-actions button { padding: 10px 0; font-size: 15px; }
+    .os-release-qty-display { font-size: 26px; padding: 10px; }
+    .os-release-part-btn { font-size: 13px; padding: 8px; min-height: 38px; }
 }

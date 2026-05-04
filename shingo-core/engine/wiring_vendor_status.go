@@ -142,15 +142,18 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		// bin-movement happens before the action map's fireCompleted fires
 		// EventOrderCompleted. Nothing left to do here for the delivery case.
 	case dispatch.StatusFailed:
-		e.handleFleetOrderFailed(order)
+		e.handleFleetOrderFailed(order, ev.Detail)
 	case dispatch.StatusCancelled:
 		e.handleFleetOrderCancelled(order)
 	}
 }
 
-func (e *Engine) handleFleetOrderFailed(order *orders.Order) {
-	// lifecycle.Fail handles atomic transition + emit via the action map.
-	if err := e.dispatcher.Lifecycle().Fail(order, order.StationID, "fleet_failed", "fleet order failed"); err != nil {
+func (e *Engine) handleFleetOrderFailed(order *orders.Order, fleetDetail string) {
+	detail := fleetDetail
+	if detail == "" {
+		detail = "fleet order failed"
+	}
+	if err := e.dispatcher.Lifecycle().Fail(order, order.StationID, "fleet_failed", detail); err != nil {
 		e.logFn("engine: fail order %d: %v", order.ID, err)
 	}
 }
