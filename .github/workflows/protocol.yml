@@ -35,3 +35,5 @@ jobs:
       - name: Coverage report
         working-directory: protocol
         run: go tool cover -func=coverage.out
+        run: go test -v -coverprofile=build/coverage ./...
+        run: go tool cover -func=build/coverage

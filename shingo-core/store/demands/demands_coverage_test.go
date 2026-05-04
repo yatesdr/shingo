@@ -1,4 +1,4 @@
-﻿
+
 //go:build docker
 
 package demands_test

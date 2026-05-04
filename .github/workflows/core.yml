@@ -57,3 +57,7 @@ jobs:
       - name: Coverage report (Docker)
         working-directory: shingo-core
         run: go tool cover -func=coverage-docker.out
+        run: go test -coverprofile=build/coverage ./...
+        run: go tool cover -func=build/coverage
+        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
+        run: go tool cover -func=build/coverage-docker
