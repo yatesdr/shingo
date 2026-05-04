@@ -1,4 +1,4 @@
-package countgroup
+﻿package countgroup
 
 import (
 	"context"
@@ -188,30 +188,44 @@ func TestHandlerWarlinkWriteErrorSendsErrorAck(t *testing.T) {
 
 func TestStartedGuardSuppressesHeartbeat(t *testing.T) {
 	p := newFakePLC()
-	h, _ := newTestHandler(p, nil)
+	h, cfg := newTestHandler(p, nil)
 
 	hb := NewHeartbeatWriter(h, nil)
 	hb.Start()
 	defer hb.Stop()
 
 	// Before MarkStarted: heartbeat writer should NOT write to the tag.
-	time.Sleep(80 * time.Millisecond)
+	// Wait 4x HeartbeatInterval so a spurious write would have time to fire.
+	time.Sleep(4 * cfg.HeartbeatInterval)
 	writes := p.writesFor("PLC1", "Heartbeat")
 	if len(writes) != 0 {
 		t.Fatalf("heartbeat wrote %d times before MarkStarted; started guard broken", len(writes))
 	}
 
 	h.MarkStarted()
-	time.Sleep(80 * time.Millisecond)
+	// Poll until at least one heartbeat write appears.
+	eventually(t, 2*time.Second, func() bool {
+		return len(p.writesFor("PLC1", "Heartbeat")) > 0
+	})
 	writes = p.writesFor("PLC1", "Heartbeat")
-	if len(writes) == 0 {
-		t.Fatalf("heartbeat wrote 0 times after MarkStarted; expected monotonic writes")
+}
+
+// eventually polls fn at 2ms intervals until it returns true or timeout.
+func eventually(t *testing.T, timeout time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
+	t.Fatalf("condition not met within %v", timeout)
 }
 
 func TestAckTimeoutSendsTimeoutAckAndAbandons(t *testing.T) {
 	p := newFakePLC()
-	// PLC never clears the tag — ack never arrives. OnCommand writes 1,
+	// PLC never clears the tag â€” ack never arrives. OnCommand writes 1,
 	// fake PLC holds it, ack-poll times out after AckDead (300ms).
 	send, acks := recordingAckSender()
 	h, _ := newTestHandler(p, send)

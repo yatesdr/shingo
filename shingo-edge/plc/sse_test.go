@@ -111,6 +111,19 @@ func newTestServer(restPLCs string, sseHandler func(w http.ResponseWriter, r *ht
 	}))
 }
 
+// eventually polls fn at 2ms intervals until it returns true or timeout.
+func eventually(t *testing.T, timeout time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %v", timeout)
+}
+
 func TestSSE_RESTBootstrapAndValueChange(t *testing.T) {
 	ts := newTestServer(
 		`[{"name":"PLC1","status":"Connected","product_name":"1756-L83E"}]`,
@@ -146,7 +159,15 @@ func TestSSE_RESTBootstrapAndValueChange(t *testing.T) {
 	}
 
 	// Wait for value-change to be processed
-	time.Sleep(300 * time.Millisecond)
+	// Poll until the value-change event is reflected in ReadTag.
+	eventually(t, 2*time.Second, func() bool {
+		val, err := m.ReadTag("PLC1", "Counter1")
+		if err != nil {
+			return false
+		}
+		v, ok := val.(float64)
+		return ok && v == 42
+	})
 
 	val, err := m.ReadTag("PLC1", "Counter1")
 	if err != nil {
@@ -454,8 +475,15 @@ func TestSSE_ValueChangeCreatesUnknownPLC(t *testing.T) {
 	if !emitter.waitFor("warlink_connected", 2*time.Second) {
 		t.Fatal("timed out waiting for warlink_connected")
 	}
-
-	time.Sleep(300 * time.Millisecond)
+	// Poll until the value-change event is reflected in ReadTag.
+	eventually(t, 2*time.Second, func() bool {
+		val, err := m.ReadTag("NewPLC", "Tag1")
+		if err != nil {
+			return false
+		}
+		v, ok := val.(float64)
+		return ok && v == 99
+	})
 
 	val, err := m.ReadTag("NewPLC", "Tag1")
 	if err != nil {

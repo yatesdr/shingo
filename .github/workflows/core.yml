@@ -36,7 +36,11 @@ jobs:
 
       - name: Test (unit)
         working-directory: shingo-core
-        run: go test ./...
+        run: go test -coverprofile=coverage.out ./...
+
+      - name: Coverage report (unit)
+        working-directory: shingo-core
+        run: go tool cover -func=coverage.out
 
       - name: Test (Docker integration)
         working-directory: shingo-core
@@ -48,4 +52,8 @@ jobs:
         # runtime once the workflow has run a few times. Standard
         # warm-runner integration tests should land well under 5m;
         # 10m exists today only because we lack measured data.
-        run: go test -tags=docker -timeout=10m -count=1 ./...
+        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=coverage-docker.out ./...
+
+      - name: Coverage report (Docker)
+        working-directory: shingo-core
+        run: go tool cover -func=coverage-docker.out

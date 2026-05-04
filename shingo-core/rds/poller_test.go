@@ -94,11 +94,11 @@ waitLoop:
 	}
 
 	p.Stop()
-	// Allow any in-flight poll to complete.
+	// Allow any in-flight poll to complete (3x poll interval).
 	time.Sleep(30 * time.Millisecond)
 	beforeQuiet := ch.Count()
 
-	// Post-stop window many times the interval — no new requests should arrive.
+	// Post-stop window: 10x poll interval — no new requests should arrive.
 	time.Sleep(100 * time.Millisecond)
 	afterQuiet := ch.Count()
 

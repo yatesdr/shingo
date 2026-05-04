@@ -197,9 +197,17 @@ func TestDrainer_PurgeOld(t *testing.T) {
 	d := NewDrainer(store, pub, "orders", 1*time.Millisecond, 50)
 	d.Start()
 	defer d.Stop()
-
-	// Wait for ~100 cycles to trigger purge (100 * 1ms = ~100ms)
-	time.Sleep(200 * time.Millisecond)
+	// Poll until purge fires (drainer runs at 1ms interval with purgeAge=50ms).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		if store.purged {
+			store.mu.Unlock()
+			return // test passed
+		}
+		store.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	store.mu.Lock()
 	defer store.mu.Unlock()

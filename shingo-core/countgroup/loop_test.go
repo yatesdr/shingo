@@ -136,7 +136,8 @@ func TestLoopFailSafeOnContinuousRDSError(t *testing.T) {
 	}
 
 	// No second emit while we're still in fail-safe.
-	time.Sleep(200 * time.Millisecond)
+	// Wait 2x FailSafeTimeout so a spurious second emit would have time to fire.
+	time.Sleep(2 * cfg.FailSafeTimeout)
 	if len(em.snapshot()) != 1 {
 		t.Fatalf("fail-safe should emit exactly once, got %d transitions", len(em.snapshot()))
 	}
@@ -149,8 +150,8 @@ func TestLoopSkipsDisabledGroups(t *testing.T) {
 	r := NewRunner(cfg, p, em, nil)
 	r.Start()
 	defer r.Stop()
-
-	time.Sleep(100 * time.Millisecond)
+	// Wait several poll intervals so a poll would have fired if the group were enabled.
+	time.Sleep(5 * cfg.PollInterval)
 	if p.calls != 0 {
 		t.Fatalf("disabled group should not poll, calls=%d", p.calls)
 	}

@@ -383,7 +383,10 @@ func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 	f.onListQueuedOrders = func() { atomic.AddInt32(&scanCount, 1) }
 
 	s.StartPeriodicSweep(5 * time.Millisecond)
-	time.Sleep(25 * time.Millisecond) // allow ~5 ticks
+	// Wait for at least one sweep to fire.
+	eventually(t, 2*time.Second, func() bool {
+		return atomic.LoadInt32(&scanCount) >= 1
+	})
 	s.Stop()
 
 	afterStop := atomic.LoadInt32(&scanCount)
@@ -394,10 +397,23 @@ func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 	// A tick firing concurrent with Stop can race through one more
 	// RunOnce before the stopChan select wins, so tolerate +1 but
 	// no more — otherwise the loop is still running.
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(40 * time.Millisecond) // negative assertion: verify no further sweeps
 	final := atomic.LoadInt32(&scanCount)
 	if final > afterStop+1 {
 		t.Errorf("sweep ran %d extra times after Stop (%d → %d), want ≤ 1",
 			final-afterStop, afterStop, final)
 	}
+}
+
+// eventually polls fn at 2ms intervals until it returns true or timeout.
+func eventually(t *testing.T, timeout time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("condition not met within %v", timeout)
 }

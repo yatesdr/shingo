@@ -30,4 +30,8 @@ jobs:
 
       - name: Test
         working-directory: protocol
-        run: go test ./... -v
+        run: go test -v -coverprofile=coverage.out ./...
+
+      - name: Coverage report
+        working-directory: protocol
+        run: go tool cover -func=coverage.out
