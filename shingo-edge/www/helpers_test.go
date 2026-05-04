@@ -177,6 +177,8 @@ func (s *stubEngine) BucketBackfillNeeded() (bool, error) {
 	return s.backfillNeeded, nil
 }
 
+func (s *stubEngine) AdminAdjustLinesideUOP(int64, int, bool) error { return nil }
+
 // ── Service accessors (Phase 6.2′) ─────────────────────────────────
 // Each accessor returns a real *service.X backed by the test DB so
 // handler tests exercise the full service → *store.DB → SQLite path.

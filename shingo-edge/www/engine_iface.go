@@ -115,6 +115,12 @@ type EngineOrchestration interface {
 	BackfillBucketsForStation(force bool) (int, error)
 	BucketBackfillNeeded() (bool, error)
 
+	// ── Lineside admin (team leader / engineer override) ───────────
+	// Backs the "Lineside Buckets" admin page. clearBin=true nulls the
+	// active_bin_id pointer; clearBin=false applies a capped delta and
+	// updates the runtime UOP cache.
+	AdminAdjustLinesideUOP(nodeID int64, targetUOP int, clearBin bool) error
+
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)
 	ManageReportingPointTag(rpID int64, oldPLC, oldTag string, oldManaged bool, newPLC, newTag string)

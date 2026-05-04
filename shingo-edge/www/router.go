@@ -194,6 +194,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Get("/manual-order", h.handleManualOrder)
 		r.Get("/manual-message", h.handleManualMessage)
 		r.Get("/diagnostics", h.handleDiagnostics)
+		r.Get("/lineside-buckets", h.handleLinesideBuckets)
 	})
 
 	// ── API routes ──────────────────────────────────────────
@@ -343,6 +344,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/manual-message", h.apiSendManualMessage)
 			r.Post("/diagnostics/outbox/replay", h.apiReplayOutbox)
 			r.Post("/diagnostics/orders/sync", h.apiRequestOrderStatusSync)
+
+			// Lineside buckets admin (engineer override — clear slot, edit UOP)
+			r.Post("/admin/lineside/{id}/clear", h.apiAdminClearLinesideSlot)
+			r.Post("/admin/lineside/{id}/uop", h.apiAdminEditLinesideUOP)
 		})
 	})
 

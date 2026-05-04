@@ -1,0 +1,115 @@
+{{template "header" .}}
+
+<div class="flex flex-between mb-2">
+  <h1>Lineside Buckets</h1>
+  <div class="text-muted" style="font-size:0.9rem;">
+    Engineer override — clear or edit lineside material counts. Normal release/drop cycles still drive routine HMI updates.
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Process</th>
+        <th>Station</th>
+        <th>Node</th>
+        <th>Bin</th>
+        <th>Payload</th>
+        <th style="text-align:right;">Count / Capacity</th>
+        <th style="width:220px;">Edit Count</th>
+        <th style="width:120px;">Clear Slot</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Rows}}
+      <tr data-node-id="{{.NodeID}}" data-capacity="{{.Capacity}}">
+        <td>{{.ProcessName}}</td>
+        <td>{{.StationName}}</td>
+        <td title="{{.CoreNodeName}}">{{.NodeName}}</td>
+        <td class="mono">{{.BinLabel}}{{if eq .BinLabel ""}}#{{.BinID}}{{end}}</td>
+        <td class="mono">{{.PayloadCode}}</td>
+        <td style="text-align:right;">
+          <span class="mono">{{.UOPCount}}</span>
+          <span class="text-muted">/ {{if .Capacity}}{{.Capacity}}{{else}}—{{end}}</span>
+        </td>
+        <td>
+          <div class="flex gap-1">
+            <input type="number" min="0" {{if .Capacity}}max="{{.Capacity}}"{{end}} value="{{.UOPCount}}" class="lineside-count-input" style="width:90px;">
+            <button class="btn btn-sm btn-primary" onclick="adminEditLinesideUOP(this)">Apply</button>
+          </div>
+          <div class="lineside-warn text-muted" style="font-size:0.8rem;display:none;"></div>
+        </td>
+        <td>
+          <button class="btn btn-sm btn-danger" onclick="adminClearLinesideSlot(this)">Clear</button>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="8" class="text-muted" style="text-align:center;padding:1rem;">No occupied slots — no bins are currently bound at any node.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function adminEditLinesideUOP(btn) {
+  const tr = btn.closest('tr');
+  const nodeID = tr.getAttribute('data-node-id');
+  const capacity = parseInt(tr.getAttribute('data-capacity') || '0', 10);
+  const input = tr.querySelector('.lineside-count-input');
+  const warn = tr.querySelector('.lineside-warn');
+  let count = parseInt(input.value, 10);
+  if (isNaN(count) || count < 0) {
+    warn.textContent = 'Count must be a non-negative number.';
+    warn.style.display = '';
+    return;
+  }
+  if (capacity > 0 && count > capacity) {
+    if (!confirm('Count ' + count + ' exceeds capacity ' + capacity + '. The server will reject this. Apply anyway?')) {
+      return;
+    }
+  }
+  warn.style.display = 'none';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/admin/lineside/' + encodeURIComponent(nodeID) + '/uop', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({count: count}),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      warn.textContent = body.error || ('HTTP ' + resp.status);
+      warn.style.display = '';
+      return;
+    }
+    location.reload();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function adminClearLinesideSlot(btn) {
+  const tr = btn.closest('tr');
+  const nodeID = tr.getAttribute('data-node-id');
+  if (!confirm('Clear the active bin pointer on this slot? Edge will stop attributing counts to this bin until a new one is delivered.')) {
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/admin/lineside/' + encodeURIComponent(nodeID) + '/clear', {
+      method: 'POST',
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      alert(body.error || ('HTTP ' + resp.status));
+      return;
+    }
+    location.reload();
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+
+{{template "footer" .}}
