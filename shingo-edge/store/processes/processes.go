@@ -12,6 +12,7 @@ package processes
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 
 	"shingoedge/domain"
@@ -316,14 +317,17 @@ func scanRuntime(scanner interface{ Scan(...interface{}) error }) (RuntimeState,
 }
 
 // EnsureRuntime returns the runtime row for a process_node, inserting
-// a fresh row when none exists yet.
+// a fresh row when none exists yet. INSERT OR IGNORE makes the
+// check-then-insert race-safe when concurrent callers (engine tick,
+// HMI handler, station service) hit a node whose runtime row hasn't
+// been materialized yet.
 func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
-	r, err := GetRuntime(db, processNodeID)
-	if err == nil {
+	if r, err := GetRuntime(db, processNodeID); err == nil {
 		return r, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
 	}
-	_, err = db.Exec(`INSERT INTO process_node_runtime_states (process_node_id) VALUES (?)`, processNodeID)
-	if err != nil {
+	if _, err := db.Exec(`INSERT OR IGNORE INTO process_node_runtime_states (process_node_id) VALUES (?)`, processNodeID); err != nil {
 		return nil, err
 	}
 	return GetRuntime(db, processNodeID)

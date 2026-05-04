@@ -185,21 +185,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
 		in.StyleID, in.CoreNodeName).Scan(&existingID)
 	if err == nil {
-		allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
-		_, err = db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
-			uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
-			inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
-			keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, auto_confirm=?, sequence=?,
-			lineside_soft_threshold=?, second_paired_core_node=?,
-			reuse_compatible_bins=?
-			WHERE id=?`,
-			in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
-			in.InboundStaging, in.OutboundStaging,
-			in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
-			in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
-			in.LinesideSoftThreshold, in.SecondPairedCoreNode,
-			in.ReuseCompatibleBins, existingID)
-		return existingID, err
+		return existingID, updateClaim(db, existingID, in)
 	}
 	if in.Sequence <= 0 {
 		var maxSeq int
@@ -207,7 +193,12 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		in.Sequence = maxSeq + 1
 	}
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
-	res, err := db.Exec(`INSERT INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
+	// INSERT OR IGNORE: if a concurrent writer inserted the same
+	// (style_id, core_node_name) between our SELECT above and this
+	// INSERT, RowsAffected==0 and we fall through to UPDATE the
+	// winner's row with our values. Plain INSERT failed here with
+	// UNIQUE constraint on the same race.
+	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
 		uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
@@ -221,7 +212,32 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	if affected, _ := res.RowsAffected(); affected == 1 {
+		return res.LastInsertId()
+	}
+	if err := db.QueryRow(`SELECT id FROM style_node_claims WHERE style_id=? AND core_node_name=?`,
+		in.StyleID, in.CoreNodeName).Scan(&existingID); err != nil {
+		return 0, err
+	}
+	return existingID, updateClaim(db, existingID, in)
+}
+
+func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
+	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
+	_, err := db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
+		uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
+		inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
+		keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, auto_confirm=?, sequence=?,
+		lineside_soft_threshold=?, second_paired_core_node=?,
+		reuse_compatible_bins=?
+		WHERE id=?`,
+		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
+		in.InboundStaging, in.OutboundStaging,
+		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
+		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
+		in.LinesideSoftThreshold, in.SecondPairedCoreNode,
+		in.ReuseCompatibleBins, id)
+	return err
 }
 
 func marshalAllowedPayloads(codes []string) string {

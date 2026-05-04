@@ -191,13 +191,26 @@ func Capture(db Execer, nodeID int64, pairKey string, styleID int64, partNumber 
 		return findOne(db, nodeID, styleID, partNumber)
 	}
 
-	// No row to merge into — insert fresh.
-	_, err = db.Exec(`INSERT INTO node_lineside_bucket
+	// No row to merge into — insert fresh. INSERT OR IGNORE so that a
+	// concurrent caller that bypassed the documented tx wrapper can't
+	// crash us with a UNIQUE collision on idx_lineside_active_unique;
+	// if our INSERT is ignored the row already exists, and we retry
+	// the merge UPDATE to fold our qty into theirs.
+	res, err = db.Exec(`INSERT OR IGNORE INTO node_lineside_bucket
 		(node_id, pair_key, style_id, part_number, qty, state)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		nodeID, pairKey, styleID, partNumber, qty, StateActive)
 	if err != nil {
 		return nil, fmt.Errorf("lineside: capture insert: %w", err)
+	}
+	if affected, _ := res.RowsAffected(); affected > 0 {
+		return findOne(db, nodeID, styleID, partNumber)
+	}
+	if _, err := db.Exec(`UPDATE node_lineside_bucket
+		SET qty = qty + ?, state = ?, updated_at = datetime('now')
+		WHERE node_id=? AND style_id=? AND part_number=?`,
+		qty, StateActive, nodeID, styleID, partNumber); err != nil {
+		return nil, fmt.Errorf("lineside: capture merge retry: %w", err)
 	}
 	return findOne(db, nodeID, styleID, partNumber)
 }
