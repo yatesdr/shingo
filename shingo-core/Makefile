@@ -33,6 +33,13 @@ test:
 test-all:
 	go test -v -tags=docker ./...
 
+# Generate a coverage profile and print a per-package summary table.
+# Requires Docker (for //go:build docker tests) and runs sequentially
+# (-p 1) to avoid container contention.
+cover:
+	go test -tags=docker -count=1 -p 1 -coverprofile=build/coverage.out ./...
+	go run scripts/cover_summary.go build/coverage.out
+
 # Linux builds
 linux: linux-amd64 linux-arm64
 
@@ -99,3 +106,4 @@ help:
 	@echo "  make deps      - Update dependencies"
 	@echo "  make fmt       - Format code"
 	@echo "  make vet       - Vet code"
+	@echo "  make cover     - Generate coverage report by package"
