@@ -78,6 +78,11 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 		orderBID = &orderB.ID
 	}
 	e.resetProduceRuntime(nodeID, runtime, &orderA.ID, orderBID)
+	if orderB != nil {
+		if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
+			log.Printf("produce: link order siblings %d↔%d: %v", orderA.ID, orderB.ID, err)
+		}
+	}
 
 	orderA, err = e.refreshOrder(orderA.ID)
 	if err != nil {

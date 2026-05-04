@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS orders (
     staged_expire_at TEXT,
     bin_id          INTEGER,
     payload_code    TEXT NOT NULL DEFAULT '',
+    sibling_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

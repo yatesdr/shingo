@@ -33,7 +33,7 @@ type (
 const selectCols = `o.id, o.uuid, o.order_type, o.status, o.process_node_id, o.retrieve_empty, o.quantity,
 	o.delivery_node, o.staging_node, o.source_node, o.load_type,
 	o.waybill_id, o.external_ref, o.final_count,
-	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.created_at, o.updated_at,
+	o.count_confirmed, o.eta, o.auto_confirm, o.staged_expire_at, o.bin_id, o.payload_code, o.sibling_order_id, o.created_at, o.updated_at,
 	COALESCE(pl.name, ''), COALESCE(n.name, ''), COALESCE(os.name, '')`
 
 const joinClause = `FROM orders o
@@ -92,12 +92,12 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 	for rows.Next() {
 		var o Order
 		var stagedExpireAt sql.NullString
-		var binID sql.NullInt64
+		var binID, siblingID sql.NullInt64
 		var createdAt, updatedAt string
 		if err := rows.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 			&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 			&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &createdAt, &updatedAt,
+			&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &createdAt, &updatedAt,
 			&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 			return nil, err
 		}
@@ -109,6 +109,10 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 			v := binID.Int64
 			o.BinID = &v
 		}
+		if siblingID.Valid {
+			v := siblingID.Int64
+			o.SiblingOrderID = &v
+		}
 		o.CreatedAt = helpers.ScanTime(createdAt)
 		o.UpdatedAt = helpers.ScanTime(updatedAt)
 		out = append(out, o)
@@ -118,12 +122,12 @@ func scanOrders(rows *sql.Rows) ([]Order, error) {
 
 func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error {
 	var stagedExpireAt sql.NullString
-	var binID sql.NullInt64
+	var binID, siblingID sql.NullInt64
 	var createdAt, updatedAt string
 	if err := scanner.Scan(&o.ID, &o.UUID, &o.OrderType, &o.Status, &o.ProcessNodeID, &o.RetrieveEmpty, &o.Quantity,
 		&o.DeliveryNode, &o.StagingNode, &o.SourceNode, &o.LoadType,
 		&o.WaybillID, &o.ExternalRef, &o.FinalCount,
-		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &createdAt, &updatedAt,
+		&o.CountConfirmed, &o.ETA, &o.AutoConfirm, &stagedExpireAt, &binID, &o.PayloadCode, &siblingID, &createdAt, &updatedAt,
 		&o.ProcessName, &o.ProcessNodeName, &o.StationName); err != nil {
 		return err
 	}
@@ -134,6 +138,10 @@ func scanOrder(o *Order, scanner interface{ Scan(...interface{}) error }) error 
 	if binID.Valid {
 		v := binID.Int64
 		o.BinID = &v
+	}
+	if siblingID.Valid {
+		v := siblingID.Int64
+		o.SiblingOrderID = &v
 	}
 	o.CreatedAt = helpers.ScanTime(createdAt)
 	o.UpdatedAt = helpers.ScanTime(updatedAt)
@@ -236,6 +244,21 @@ func UpdateBinID(db *sql.DB, id int64, binID *int64) error {
 		return err
 	}
 	_, err := db.Exec(`UPDATE orders SET bin_id=?, updated_at=datetime('now') WHERE id=?`, *binID, id)
+	return err
+}
+
+// LinkSiblings sets a bidirectional sibling pointer between two orders
+// in a two-robot swap pair. Idempotent: re-linking the same pair is a
+// no-op. Either order can later be looked up by following its
+// SiblingOrderID; both halves see each other.
+func LinkSiblings(db *sql.DB, orderA, orderB int64) error {
+	if orderA == orderB {
+		return nil
+	}
+	if _, err := db.Exec(`UPDATE orders SET sibling_order_id=?, updated_at=datetime('now') WHERE id=?`, orderB, orderA); err != nil {
+		return err
+	}
+	_, err := db.Exec(`UPDATE orders SET sibling_order_id=?, updated_at=datetime('now') WHERE id=?`, orderA, orderB)
 	return err
 }
 

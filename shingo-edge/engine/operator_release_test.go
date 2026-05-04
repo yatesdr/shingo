@@ -11,11 +11,17 @@ import (
 
 // stageOrderForConsumeNode seeds a staged complex order against the
 // consume node and hangs it on runtime.StagedOrderID so ReleaseOrder
-// behaves as it would in production.
+// behaves as it would in production. delivery_node is set to the
+// node's actual CoreNodeName so the order is recognizable as a supply
+// leg (delivers AT the slot) by the durable supply guard.
 func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid string) int64 {
 	t.Helper()
+	node, err := db.GetProcessNode(nodeID)
+	if err != nil {
+		t.Fatalf("get process node %d: %v", nodeID, err)
+	}
 	orderID, err := db.CreateOrder(uuid, orders.TypeComplex,
-		&nodeID, false, 1, "CONSUME-NODE", "", "", "", false, "")
+		&nodeID, false, 1, node.CoreNodeName, "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -25,11 +31,13 @@ func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid str
 	return orderID
 }
 
-// TestReleaseOrderWithLineside_PreservesUOPAndCapturesBuckets verifies that
-// the release-click path leaves the runtime UOP alone (delivery completion
-// owns the reset), marks the changeover task (if any) as released, and
-// records the parts the operator pulled to lineside in node_lineside_bucket.
-func TestReleaseOrderWithLineside_PreservesUOPAndCapturesBuckets(t *testing.T) {
+// TestReleaseOrderWithLineside_ZeroesUOPAndCapturesBuckets verifies the
+// release-click contract (Stephen 2026-05-04 SME correction): the slot's
+// runtime UOP zeroes immediately at release click — the bin is leaving,
+// the slot has no count attributed until the new bin lands. The cycle's
+// other firing point (new bin dropped) flips the count back to capacity
+// via SetProcessNodeRuntimeWithBin at delivery completion.
+func TestReleaseOrderWithLineside_ZeroesUOPAndCapturesBuckets(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL", PayloadCode: "PART-R", UOPCapacity: 100, InitialUOP: 8,
@@ -51,11 +59,11 @@ func TestReleaseOrderWithLineside_PreservesUOPAndCapturesBuckets(t *testing.T) {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
-	// UOP must remain at the seeded value — release no longer resets;
-	// delivery completion owns the turnover.
+	// UOP must zero at release — bin is leaving, no count attributed
+	// to the slot until the new bin drops (which flips it to capacity).
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 8 {
-		t.Errorf("RemainingUOP = %d, want 8 (release must not reset; delivery completion owns the reset)", runtime.RemainingUOPCached)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 (release zeroes the slot; new-bin-drop flips to capacity)", runtime.RemainingUOPCached)
 	}
 
 	// Bucket should exist with 12 active units.
@@ -77,11 +85,10 @@ func TestReleaseOrderWithLineside_PreservesUOPAndCapturesBuckets(t *testing.T) {
 	}
 }
 
-// TestReleaseOrderWithLineside_EmptyMapPreservesUOP verifies that
-// calling release with nothing captured leaves runtime UOP untouched
-// (delivery completion owns the reset) and deactivates stranded buckets
-// for other styles.
-func TestReleaseOrderWithLineside_EmptyMapPreservesUOP(t *testing.T) {
+// TestReleaseOrderWithLineside_EmptyMapZeroesUOP verifies that release
+// with no captures (RELEASE EMPTY semantics) zeroes the slot at release
+// click and deactivates stranded buckets for other styles.
+func TestReleaseOrderWithLineside_EmptyMapZeroesUOP(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL2", PayloadCode: "PART-R2", UOPCapacity: 50, InitialUOP: 3,
@@ -99,8 +106,8 @@ func TestReleaseOrderWithLineside_EmptyMapPreservesUOP(t *testing.T) {
 	}
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 3 {
-		t.Errorf("RemainingUOP = %d, want 3 (release must not reset; delivery completion owns the reset)", runtime.RemainingUOPCached)
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 (release zeroes the slot; new-bin-drop flips to capacity)", runtime.RemainingUOPCached)
 	}
 }
 
@@ -220,12 +227,19 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime(t *testing.T
 	}
 
 	// Stage two orders against this node. ActiveOrderID = supply (Order A),
-	// StagedOrderID = evac (Order B). The isSupplyOrderInActiveTwoRobotSwap
-	// helper keys off this convention.
+	// StagedOrderID = evac (Order B). Sibling pointer is the durable
+	// signal the supply guard reads — runtime slots can be nulled by
+	// bin-pickup before release, but sibling linkage survives.
+	// Order B's delivery_node points away from the slot (returns to
+	// supermarket), which is how the supply guard differentiates A from B.
 	orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply-A")
 	orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply-B")
+	_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
 	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
 		t.Fatalf("track A+B on runtime: %v", err)
+	}
+	if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
+		t.Fatalf("link siblings: %v", err)
 	}
 
 	eng := testEngine(t, db)
@@ -250,13 +264,15 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime(t *testing.T
 	}
 }
 
-// TestReleaseOrderWithLineside_TwoRobotEvacDoesNotResetRuntime locks down
-// the post-fix contract: release (Order A or B) must NOT touch runtime UOP.
-// The reset is bound to delivery completion in handleComplexOrderBCompletion
-// /handleChangeoverRelease so the line UI doesn't show a fresh capacity for
-// a bin that hasn't physically arrived (robot fault between release and
-// FINISHED would otherwise leave the operator looking at a phantom turnover).
-func TestReleaseOrderWithLineside_TwoRobotEvacDoesNotResetRuntime(t *testing.T) {
+// TestReleaseOrderWithLineside_TwoRobotEvacZeroesRuntime locks down the
+// release-click contract for the EVAC leg of a two-robot swap: when the
+// operator releases Order B (the evac), runtime UOP zeroes immediately —
+// the old bin is leaving, the slot has no count attributed until the
+// supply bin arrives. The companion supply-side test
+// (TestReleaseOrderWithLineside_TwoRobotSupplyDoesNotResetRuntime) pins
+// that Order A (supply) preserves count, since the old bin is still on
+// the slot consuming until B completes.
+func TestReleaseOrderWithLineside_TwoRobotEvacZeroesRuntime(t *testing.T) {
 	db := testEngineDB(t)
 
 	processID, err := db.CreateProcess("TR-EVAC", "two-robot evac test", "active_production", "", "", false)
@@ -311,11 +327,11 @@ func TestReleaseOrderWithLineside_TwoRobotEvacDoesNotResetRuntime(t *testing.T) 
 		t.Fatalf("release Order B: %v", err)
 	}
 
-	// Runtime UOP must remain at the seeded value — release no longer resets;
-	// the delivery completion handler does that when the new bin arrives.
+	// Runtime UOP must zero at release click for the evac order — the old
+	// bin is leaving the slot.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 800 {
-		t.Errorf("RemainingUOP = %d, want 800 (release must not reset runtime; delivery completion owns the reset)",
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 (evac release zeroes the slot)",
 			runtime.RemainingUOPCached)
 	}
 }
@@ -390,11 +406,12 @@ func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
-	// Runtime must remain unchanged on release — delivery completion now
-	// owns the capacity reset.
+	// Runtime UOP zeroes at release — the partial bin is leaving the
+	// slot. The wire-shape RemainingUOP=&runtime preserves the partial
+	// count for Core's manifest, but the slot's local cache zeros.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 800 {
-		t.Errorf("RemainingUOP = %d, want 800 (release must not reset runtime; delivery completion owns the reset)",
+	if runtime.RemainingUOPCached != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 (release zeroes the slot)",
 			runtime.RemainingUOPCached)
 	}
 
@@ -659,5 +676,208 @@ func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 	if runtime.RemainingUOPCached != 100 {
 		t.Errorf("RemainingUOP = %d, want 100 (simple retrieve should still reset)",
 			runtime.RemainingUOPCached)
+	}
+}
+
+// TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes is the
+// systematic guard for the SME release-timing contract (Stephen 2026-05-04):
+//
+//	On operator release click, runtime.RemainingUOPCached for the slot must
+//	zero immediately for every swap mode where the bin being released is
+//	physically leaving the slot. The slot's count flips back to capacity at
+//	the new-bin-drop firing point (delivery completion via
+//	SetProcessNodeRuntimeWithBin), not on a downstream confirm step.
+//
+// Two documented exceptions:
+//
+//	(a) Two-robot SUPPLY order (Order A): the supply bin is incoming; the
+//	    OLD bin is still on the slot consuming until Order B (evac)
+//	    completes. Supply releases must preserve the runtime count so the
+//	    old bin's tally isn't wiped while it's still doing work.
+//
+//	(b) Produce role: produce nodes reset on ingest completion, not
+//	    release. The release path early-returns before the zero so a
+//	    produce release leaves runtime UOP intact.
+//
+// This test was added after a one-robot-swap floor observation where the
+// HMI's lineside count stayed stale until a downstream confirm — the bug
+// was the deferred runtime reset that this contract now disallows. If a
+// future refactor moves the reset back, one of the subtests fails before
+// it reaches the floor.
+//
+// Caveat: the supply-bin guard currently keys on `claim.SwapMode == "two_robot"`
+// (operator_release.go), not "two_robot_press_index" or "sequential". Those
+// modes' release behavior is covered as standalone single-order releases
+// here. A future expansion of the supply guard to additional multi-bin
+// modes should grow this test alongside.
+func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
+	const (
+		seededUOP = 800
+		capacity  = 1200
+	)
+
+	type setup struct {
+		swapMode    string // claim.SwapMode
+		role        string // "consume" or "produce"
+		releaseSide string // "single", "supply", "evac" (which order to release)
+	}
+	type want struct {
+		runtimeUOP int // expected runtime.RemainingUOPCached after release
+	}
+
+	cases := []struct {
+		name  string
+		setup setup
+		disp  ReleaseDispositionMode
+		want  want
+	}{
+		{
+			name:  "simple_consume_zeroes",
+			setup: setup{swapMode: "simple", role: "consume", releaseSide: "single"},
+			disp:  DispositionCaptureLineside,
+			want:  want{runtimeUOP: 0},
+		},
+		{
+			name:  "single_robot_consume_zeroes",
+			setup: setup{swapMode: "single_robot", role: "consume", releaseSide: "single"},
+			disp:  DispositionCaptureLineside,
+			want:  want{runtimeUOP: 0},
+		},
+		{
+			name:  "two_robot_evac_zeroes",
+			setup: setup{swapMode: "two_robot", role: "consume", releaseSide: "evac"},
+			disp:  DispositionCaptureLineside,
+			want:  want{runtimeUOP: 0},
+		},
+		{
+			name:  "two_robot_supply_preserves",
+			setup: setup{swapMode: "two_robot", role: "consume", releaseSide: "supply"},
+			disp:  DispositionCaptureLineside,
+			want:  want{runtimeUOP: seededUOP},
+		},
+		{
+			name:  "two_robot_press_index_zeroes",
+			setup: setup{swapMode: "two_robot_press_index", role: "consume", releaseSide: "single"},
+			disp:  DispositionCaptureLineside,
+			want:  want{runtimeUOP: 0},
+		},
+		{
+			name:  "sequential_consume_zeroes",
+			setup: setup{swapMode: "sequential", role: "consume", releaseSide: "single"},
+			disp:  DispositionCaptureLineside,
+			want:  want{runtimeUOP: 0},
+		},
+		{
+			name:  "send_partial_back_zeroes",
+			setup: setup{swapMode: "simple", role: "consume", releaseSide: "single"},
+			disp:  DispositionSendPartialBack,
+			want:  want{runtimeUOP: 0},
+		},
+		{
+			name:  "produce_role_preserves",
+			setup: setup{swapMode: "simple", role: "produce", releaseSide: "single"},
+			disp:  DispositionCaptureLineside,
+			want:  want{runtimeUOP: seededUOP},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testEngineDB(t)
+
+			// Process + style + node, mode-specific claim.
+			processID, err := db.CreateProcess("REL-MODE-"+tc.name, "", "active_production", "", "", false)
+			if err != nil {
+				t.Fatalf("create process: %v", err)
+			}
+			coreNode := "REL-MODE-" + tc.name + "-NODE"
+			nodeID, err := db.CreateProcessNode(processes.NodeInput{
+				ProcessID:    processID,
+				CoreNodeName: coreNode,
+				Code:         "REL",
+				Name:         "Release Mode " + tc.name,
+				Sequence:     1,
+				Enabled:      true,
+			})
+			if err != nil {
+				t.Fatalf("create node: %v", err)
+			}
+			styleID, err := db.CreateStyle("REL-MODE-STYLE-"+tc.name, "", processID)
+			if err != nil {
+				t.Fatalf("create style: %v", err)
+			}
+			db.SetActiveStyle(processID, &styleID)
+			claimInput := processes.NodeClaimInput{
+				StyleID:        styleID,
+				CoreNodeName:   coreNode,
+				Role:           protocol.ClaimRole(tc.setup.role),
+				SwapMode:       tc.setup.swapMode,
+				PayloadCode:    "PART-MODE",
+				UOPCapacity:    capacity,
+				InboundSource:  "REL-MODE-SOURCE",
+				InboundStaging: "REL-MODE-STAGING",
+			}
+			if tc.setup.swapMode == "two_robot_press_index" {
+				claimInput.PairedCoreNode = coreNode + "-PAIR"
+				claimInput.OutboundDestination = "REL-MODE-OUTBOUND"
+			}
+			claimID, err := db.UpsertStyleNodeClaim(claimInput)
+			if err != nil {
+				t.Fatalf("upsert claim: %v", err)
+			}
+			db.EnsureProcessNodeRuntime(nodeID)
+			if err := db.SetProcessNodeRuntime(nodeID, &claimID, seededUOP); err != nil {
+				t.Fatalf("seed runtime UOP: %v", err)
+			}
+
+			// Stage one or two orders depending on releaseSide. The
+			// supply/evac convention matches isSupplyOrderInActiveTwoRobotSwap:
+			// runtime.ActiveOrderID = supply (A), StagedOrderID = evac (B).
+			var releaseOrderID int64
+			switch tc.setup.releaseSide {
+			case "single":
+				releaseOrderID = stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name)
+				if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &releaseOrderID); err != nil {
+					t.Fatalf("track staged order: %v", err)
+				}
+			case "supply":
+				orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-A")
+				orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-B")
+				_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
+				if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
+					t.Fatalf("track A+B on runtime: %v", err)
+				}
+				if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
+					t.Fatalf("link siblings: %v", err)
+				}
+				releaseOrderID = orderA
+			case "evac":
+				orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-A")
+				orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-B")
+				_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
+				if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
+					t.Fatalf("track A+B on runtime: %v", err)
+				}
+				if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
+					t.Fatalf("link siblings: %v", err)
+				}
+				releaseOrderID = orderB
+			default:
+				t.Fatalf("unknown releaseSide %q", tc.setup.releaseSide)
+			}
+
+			eng := testEngine(t, db)
+			disp := ReleaseDisposition{Mode: tc.disp, CalledBy: "regression-test"}
+			if err := eng.ReleaseOrderWithLineside(releaseOrderID, disp); err != nil {
+				t.Fatalf("ReleaseOrderWithLineside: %v", err)
+			}
+
+			runtime, _ := db.GetProcessNodeRuntime(nodeID)
+			if runtime.RemainingUOPCached != tc.want.runtimeUOP {
+				t.Errorf("runtime.RemainingUOPCached = %d, want %d (mode=%s role=%s side=%s disp=%s)",
+					runtime.RemainingUOPCached, tc.want.runtimeUOP,
+					tc.setup.swapMode, tc.setup.role, tc.setup.releaseSide, tc.disp)
+			}
+		})
 	}
 }

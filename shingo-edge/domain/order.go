@@ -39,6 +39,12 @@ type Order struct {
 	// emission.
 	BinID           *int64 `json:"bin_id,omitempty"`
 	PayloadCode     string `json:"payload_code"`
+	// SiblingOrderID is the id of the paired order in a two-robot swap
+	// (supply ↔ evac). Durable linkage so the supply guard and the
+	// release gate don't depend on volatile runtime slot pointers,
+	// which can be nulled by bin-pickup events before release fires.
+	// Nil for non-paired orders (single-robot, simple, manual_swap).
+	SiblingOrderID *int64 `json:"sibling_order_id,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 	// Joined fields

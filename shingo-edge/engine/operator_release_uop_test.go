@@ -258,11 +258,18 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T)
 		t.Fatalf("promote claim to two_robot: %v", err)
 	}
 
-	// Stage Order A (supply) and Order B (evac), track both on runtime.
+	// Stage Order A (supply) and Order B (evac), track both on runtime,
+	// and link them as siblings (the durable signal the supply guard reads).
+	// Order B's delivery_node points away from the slot — supply identification
+	// requires order.DeliveryNode == node.CoreNodeName, which is true for A only.
 	orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply-A")
 	orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply-B")
+	_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
 	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
 		t.Fatalf("track A+B on runtime: %v", err)
+	}
+	if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
+		t.Fatalf("link siblings: %v", err)
 	}
 
 	pending, _ := db.ListPendingOutbox(100)

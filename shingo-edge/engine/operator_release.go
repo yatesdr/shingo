@@ -44,6 +44,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
@@ -183,10 +184,10 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// Two-robot supply-order detection. The per-order release path
 	// (apiReleaseOrder, /api/orders/{id}/release) doesn't know whether the
 	// order being released is the supply (Order A) or the evac (Order B),
-	// so it forwards the operator's chosen disposition either way. We have
-	// to discriminate server-side based on which order is which in the
-	// runtime's order slots.
-	isSupply := e.isSupplyOrderInActiveTwoRobotSwap(node.ID, orderID)
+	// so it forwards the operator's chosen disposition either way. We
+	// discriminate server-side via the durable sibling pointer set at
+	// order-creation time — see isSupplyOrderInTwoRobotSwap.
+	isSupply := e.isSupplyOrderInTwoRobotSwap(order, node, toClaim)
 
 	// Side-cycle trigger (L1 / U1): fires only when the operator declares the
 	// bin emptied/full (capture_lineside) and only on the line side of a swap
@@ -293,13 +294,35 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		}
 	}
 
-	// Runtime UOP reset moved to delivery completion (handleChangeoverRelease /
-	// handleComplexOrderBCompletion / handleKeepStagedOrderBCompletion). If
-	// the line resets at release-time and the supply bin then fails to arrive
-	// (robot fault, network blip between release and FINISHED), the operator
-	// is left looking at a "fresh" capacity number that doesn't match the
-	// physical bin still on the node. Resetting at delivery binds the UOP
-	// turnover to the moment the new bin is actually present.
+	// Release-time runtime UOP zero (Stephen 2026-05-04 SME correction).
+	// Material handling is cyclical: every release IS an evac of the
+	// outgoing bin AND the kickoff of the new bin's delivery — both are
+	// real HMI updates. The HMI's slot count must reflect "old bin is
+	// gone, no count attributed here" the moment the operator clicks
+	// release; the new bin's arrival then flips the count to the target
+	// claim's capacity via SetProcessNodeRuntimeWithBin at completion
+	// (wiring_completion.go:254 / handleChangeoverRelease).
+	//
+	// Earlier rationale (preserved): the previous reset-to-capacity at
+	// release was defensive against showing fresh capacity for a bin
+	// that didn't arrive (robot fault, network blip). The fix moved the
+	// reset to delivery completion, but that left the HMI showing the
+	// OLD bin's count during the entire transit window — operators
+	// rightly read that as stale, and on 2026-05-04 a one-robot swap
+	// observed on the floor confirmed the gap. Zeroing at release is
+	// honest: 0 = no bin's count attributed, regardless of whether the
+	// new bin arrives. If the new bin fails to land, the slot stays at
+	// 0, which is correct.
+	//
+	// Supply-bin guard: in a two-robot swap's per-order release path,
+	// Order A is the supply bin coming IN; the old bin is still
+	// consuming on the slot until Order B (evac) completes. Skip the
+	// reset for Order A so we don't kill an active count.
+	if !isSupply {
+		if err := e.db.UpdateProcessNodeUOP(node.ID, 0); err != nil {
+			e.logRelease("zero runtime UOP for node %s on release: %v", node.Name, err)
+		}
+	}
 	if nodeTask != nil {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
 			e.logRelease("update node task %d to released: %v", nodeTask.ID, err)
@@ -438,45 +461,42 @@ func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.Runtim
 	}
 }
 
-// isSupplyOrderInActiveTwoRobotSwap reports whether the given order is the
-// supply order (Order A) in a currently-staged two-robot swap on the given
-// node. Used by ReleaseOrderWithLineside to suppress the manifest sync for
-// Order A — the supply bin coming from the supermarket should never have
-// its manifest cleared at release time, only the evac bin (Order B) at the
-// line should.
+// isSupplyOrderInTwoRobotSwap reports whether the given order is the
+// supply leg (Order A) of a two-robot swap pair. Used by
+// ReleaseOrderWithLineside to suppress manifest sync for Order A — the
+// supply bin coming from the supermarket should never have its manifest
+// cleared at release time, only the evac bin (Order B) at the line should.
 //
-// Identification: in a two-robot swap, the runtime tracks both order IDs
-// via UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, &orderB.ID). The
-// first slot (ActiveOrderID) is Order A (supply); the second
-// (StagedOrderID) is Order B (evac). The claim's SwapMode must be
-// "two_robot". All three signals must be present — we don't want this
-// guard firing on non-two-robot orders that happen to share a node ID.
+// Identification uses durable order data only:
+//
+//   - order.SiblingOrderID must be non-nil (a swap pair was established
+//     at order-creation time via LinkOrderSiblings).
+//   - claim.SwapMode must be "two_robot" or "two_robot_press_index"
+//     (the modes that have a supply/evac choreography).
+//   - order.DeliveryNode must equal node.CoreNodeName (supply delivers AT
+//     the slot; evac departs FROM it).
+//
+// Pre-2026-05-04, this function read runtime.ActiveOrderID /
+// StagedOrderID to discriminate. That signal decayed: handler_bin_picked_up
+// nulls ActiveOrderID when the supply bin leaves the supermarket, and
+// any subsequent release of the supply order saw the guard return false
+// → manifest cleared at Core → bin arrived empty at the slot → went
+// negative on consume ticks. Plant incident on ALN_002 (bin 12 reached
+// uop_remaining=-20). The sibling pointer is durable across that event.
 //
 // Returns false on any DB read error (defensive — better to allow the
 // release than block it on a transient lookup failure).
-func (e *Engine) isSupplyOrderInActiveTwoRobotSwap(nodeID, orderID int64) bool {
-	runtime, err := e.db.GetProcessNodeRuntime(nodeID)
-	if err != nil || runtime == nil {
+func (e *Engine) isSupplyOrderInTwoRobotSwap(order *storeorders.Order, node *processes.Node, claim *processes.NodeClaim) bool {
+	if order == nil || node == nil || claim == nil {
 		return false
 	}
-	if runtime.ActiveOrderID == nil || runtime.StagedOrderID == nil {
+	if claim.SwapMode != "two_robot" && claim.SwapMode != "two_robot_press_index" {
 		return false
 	}
-	if *runtime.ActiveOrderID != orderID {
-		// The order being released isn't the supply slot — either it's
-		// the evac order (Order B in StagedOrderID) or an unrelated order
-		// that just shares the node. Manifest sync is fine for the evac
-		// order; that's the path designed to clear the line bin.
+	if order.SiblingOrderID == nil {
 		return false
 	}
-	if runtime.ActiveClaimID == nil {
-		return false
-	}
-	claim, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID)
-	if err != nil || claim == nil {
-		return false
-	}
-	return claim.SwapMode == "two_robot"
+	return order.DeliveryNode == node.CoreNodeName
 }
 
 // resolveReleaseClaim returns the claim whose capacity the release

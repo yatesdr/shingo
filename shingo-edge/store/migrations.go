@@ -241,6 +241,17 @@ func (db *DB) migrate() error {
 	// always-swap behaviour.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN reuse_compatible_bins INTEGER NOT NULL DEFAULT 0")
 
+	// v21: Durable sibling pointer for two-robot swap pairs. The
+	// supply-leg ↔ evac-leg linkage was previously encoded only in the
+	// volatile process_node_runtime_states slots (active_order_id /
+	// staged_order_id), which decay before release fires (e.g.
+	// handler_bin_picked_up nulls active_order_id when the supply bin
+	// leaves the supermarket). The sibling pointer survives bin pickup,
+	// status transitions, and process restarts; ReleaseStagedOrders'
+	// gate and the supply-bin manifest guard read it instead of the
+	// volatile slots so neither depends on race-prone state.
+	db.Exec("ALTER TABLE orders ADD COLUMN sibling_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL")
+
 	return nil
 }
 

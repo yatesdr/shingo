@@ -64,5 +64,8 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, runtime.ActiveOrderID, &orderB.ID); err != nil {
 		log.Printf("update runtime orders for node %d: %v", nodeID, err)
 	}
+	if err := e.db.LinkOrderSiblings(order.ID, orderB.ID); err != nil {
+		log.Printf("link sequential siblings %d↔%d: %v", order.ID, orderB.ID, err)
+	}
 	log.Printf("sequential backfill: created Order B %d for node %s (Order A %d in_transit)", orderB.ID, node.Name, order.ID)
 }

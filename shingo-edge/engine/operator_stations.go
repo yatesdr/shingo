@@ -125,6 +125,15 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
 		e.logFn("station: update runtime orders for node %d: %v", nodeID, err)
 	}
+	// Durable supply ↔ evac linkage. The runtime slots above can be
+	// nulled by handler_bin_picked_up before release fires; the sibling
+	// pointer survives so ReleaseStagedOrders and the supply guard can
+	// still identify the pair.
+	if orderB != nil {
+		if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
+			e.logFn("station: link order siblings %d↔%d: %v", orderA.ID, orderB.ID, err)
+		}
+	}
 
 	orderA, err = e.refreshOrderStation(orderA.ID)
 	if err != nil {
@@ -301,30 +310,88 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	if err != nil {
 		return fmt.Errorf("get runtime for node %d: %w", nodeID, err)
 	}
-	if runtime == nil || runtime.ActiveOrderID == nil || runtime.StagedOrderID == nil {
-		return fmt.Errorf("node %d: expected two tracked orders for two-robot release", nodeID)
+	if claim == nil {
+		return fmt.Errorf("node %s: no active claim for release", node.Name)
 	}
 	// findActiveClaim resolves via (active_style_id, core_node_name) — works
 	// even when runtime.active_claim_id hasn't been stamped yet (it only
 	// gets set on order completion in wiring_completion). Press-index and
 	// two_robot share the same R1+R2 release choreography, so both modes
 	// are valid here.
-	if claim == nil {
-		return fmt.Errorf("node %s: no active claim for release", node.Name)
-	}
 	if claim.SwapMode != "two_robot" && claim.SwapMode != "two_robot_press_index" {
 		return fmt.Errorf("node %s: release-staged requires a two-robot swap mode, got %q", node.Name, claim.SwapMode)
 	}
 
+	// Resolve the swap pair via durable sibling pointer rather than the
+	// volatile runtime slots. handler_bin_picked_up nulls runtime.ActiveOrderID
+	// when the supply bin leaves the supermarket; pre-2026-05-04 the gate
+	// failed any release attempt after that point. Now we accept any
+	// non-nil runtime slot, follow the sibling pointer to find the other
+	// half, and release both. releaseUnlessTerminal handles already-past-
+	// staged orders gracefully so partial states don't block the click.
+	evacOrderID, supplyOrderID, err := e.resolveSwapPair(runtime)
+	if err != nil {
+		return fmt.Errorf("node %s: %w", node.Name, err)
+	}
+
 	// Order B (evacuation) — full disposition.
-	if err := e.releaseUnlessTerminal(*runtime.StagedOrderID, "B", disp); err != nil {
-		return err
+	if evacOrderID != nil {
+		if err := e.releaseUnlessTerminal(*evacOrderID, "B", disp); err != nil {
+			return err
+		}
 	}
 	// Order A (supply) — zero disposition (preserve supply bin manifest).
-	if err := e.releaseUnlessTerminal(*runtime.ActiveOrderID, "A", ReleaseDisposition{CalledBy: disp.CalledBy}); err != nil {
-		return err
+	if supplyOrderID != nil {
+		if err := e.releaseUnlessTerminal(*supplyOrderID, "A", ReleaseDisposition{CalledBy: disp.CalledBy}); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// resolveSwapPair returns the (evac, supply) order IDs for a two-robot
+// swap at this node, following the sibling pointer when one runtime slot
+// is nil. The runtime convention is StagedOrderID=evac (B),
+// ActiveOrderID=supply (A); when one is missing, the other's
+// SiblingOrderID points to it.
+//
+// Returns (nil, nil, error) when no live tracking exists at all — in
+// that case there's nothing for the operator to release.
+func (e *Engine) resolveSwapPair(runtime *processes.RuntimeState) (evacID, supplyID *int64, err error) {
+	if runtime != nil {
+		if runtime.StagedOrderID != nil {
+			id := *runtime.StagedOrderID
+			evacID = &id
+		}
+		if runtime.ActiveOrderID != nil {
+			id := *runtime.ActiveOrderID
+			supplyID = &id
+		}
+	}
+	if evacID == nil && supplyID == nil {
+		return nil, nil, fmt.Errorf("no tracked orders to release")
+	}
+	// If one half is missing, walk the sibling pointer on the half we have.
+	if evacID == nil {
+		supply, err := e.db.GetOrder(*supplyID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get supply order %d: %w", *supplyID, err)
+		}
+		if supply.SiblingOrderID != nil {
+			id := *supply.SiblingOrderID
+			evacID = &id
+		}
+	} else if supplyID == nil {
+		evac, err := e.db.GetOrder(*evacID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get evac order %d: %w", *evacID, err)
+		}
+		if evac.SiblingOrderID != nil {
+			id := *evac.SiblingOrderID
+			supplyID = &id
+		}
+	}
+	return evacID, supplyID, nil
 }
 
 // releaseUnlessTerminal calls ReleaseOrderWithLineside on any non-terminal

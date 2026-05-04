@@ -235,12 +235,16 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 
 	orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-supply-A")
 	orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-supply-B")
+	_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
 	bidA := int64(2001)
 	bidB := int64(2002)
 	_ = db.UpdateOrderBinID(orderA, &bidA)
 	_ = db.UpdateOrderBinID(orderB, &bidB)
 	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
 		t.Fatalf("set A+B: %v", err)
+	}
+	if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
+		t.Fatalf("link siblings: %v", err)
 	}
 
 	eng := testEngine(t, db)

@@ -97,6 +97,14 @@ func (db *DB) UpdateOrderBinID(id int64, binID *int64) error {
 	return orders.UpdateBinID(db.DB, id, binID)
 }
 
+// LinkOrderSiblings writes a bidirectional sibling_order_id pointer
+// between two orders in a two-robot swap pair. Used so the supply
+// guard and release gate can identify the pair without depending on
+// volatile runtime slot pointers.
+func (db *DB) LinkOrderSiblings(orderA, orderB int64) error {
+	return orders.LinkSiblings(db.DB, orderA, orderB)
+}
+
 // InsertOrderHistory writes one order_history row.
 func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail string) error {
 	return orders.InsertHistory(db.DB, orderID, oldStatus, newStatus, detail)

@@ -264,6 +264,11 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 			if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA.ID, orderBID); err != nil {
 				log.Printf("bin_ops: update runtime orders for node %d: %v", nodeID, err)
 			}
+			if orderB != nil {
+				if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
+					log.Printf("bin_ops: link order siblings %d↔%d: %v", orderA.ID, orderB.ID, err)
+				}
+			}
 			return orderA, nil
 		}
 	}
