@@ -340,3 +340,62 @@ func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
 		}
 	}
 }
+
+// The drop_via_staging column landed on some dev DBs via an earlier
+// migration that has since been reverted to a DROP COLUMN. The
+// migration must:
+//   - leave the column off on a fresh DB (the canonical DDL no longer has it)
+//   - succeed in dropping it on a dev DB that has the column
+// Both paths end with the same shape: no drop_via_staging column.
+func TestMigration_DropsDropViaStagingColumn(t *testing.T) {
+	t.Helper()
+
+	t.Run("fresh_db_never_has_column", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "fresh.db")
+		db, err := Open(dbPath)
+		if err != nil {
+			t.Fatalf("open fresh db: %v", err)
+		}
+		defer db.Close()
+
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims') WHERE name='drop_via_staging'`).Scan(&n); err != nil {
+			t.Fatalf("check drop_via_staging: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("fresh DB should not have drop_via_staging column, got %d", n)
+		}
+	})
+
+	t.Run("legacy_db_drops_column", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "legacy.db")
+		// First Open runs the canonical schema as it is today (no
+		// drop_via_staging column), then we ALTER ADD it to simulate a
+		// dev DB that ran the original v19 ADD migration.
+		db, err := Open(dbPath)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		if _, err := db.Exec(`ALTER TABLE style_node_claims ADD COLUMN drop_via_staging INTEGER NOT NULL DEFAULT 0`); err != nil {
+			t.Fatalf("seed legacy column: %v", err)
+		}
+		// Re-run migrate() by closing and re-opening the DB. The DROP
+		// migration should remove the column on the second pass.
+		if err := db.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+		db, err = Open(dbPath)
+		if err != nil {
+			t.Fatalf("re-open: %v", err)
+		}
+		defer db.Close()
+
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims') WHERE name='drop_via_staging'`).Scan(&n); err != nil {
+			t.Fatalf("check drop_via_staging: %v", err)
+		}
+		if n != 0 {
+			t.Fatalf("legacy DB should have drop_via_staging dropped, got %d (expected 0)", n)
+		}
+	})
+}

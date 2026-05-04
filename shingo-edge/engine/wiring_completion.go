@@ -180,16 +180,29 @@ func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
 // binds the runtime turnover to the moment the new bin is physically present,
 // so a robot fault between release and arrival doesn't leave the UI showing
 // a "fresh" capacity that the line never received.
+//
+// For sequential EVAC, OrderB delivers to PairedCoreNode (not to
+// ctx.node.CoreNodeName which is the primary). Route the runtime reset
+// to the paired physical node so each robot's completion resets its
+// own position. handleChangeoverRelease handles the same for OrderA
+// (which delivers to the primary).
 func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	isKeepStaged := false
+	var fromClaim *processes.NodeClaim
 	if ctx.nodeTask.FromClaimID != nil {
-		if fromClaim, err := e.db.GetStyleNodeClaim(*ctx.nodeTask.FromClaimID); err == nil {
-			isKeepStaged = fromClaim.KeepStaged
+		if fc, err := e.db.GetStyleNodeClaim(*ctx.nodeTask.FromClaimID); err == nil {
+			fromClaim = fc
+			isKeepStaged = fc.KeepStaged
 		}
 	}
 
-	if isKeepStaged {
-		return e.handleKeepStagedOrderBCompletion(ctx)
+	// KeepStaged is currently short-circuited (the handler returns false
+	// as a no-op). Fall through to the standard path so legacy claims
+	// with KeepStaged=true behave like normal swaps until the keep-
+	// staged path is rewired. See implementer notes' "Known issue —
+	// TC-77 latent under CO-0b fall-through" for the rewire-time risk.
+	if isKeepStaged && e.handleKeepStagedOrderBCompletion(ctx) {
+		return true
 	}
 
 	// UOP reset on delivery (moved here from release-click handler): release
@@ -200,10 +213,23 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	if err != nil {
 		return true // matched the path but claim lookup failed
 	}
-	claimID := toClaim.ID
 	resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity)
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
-		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+
+	// Sequential EVAC OrderB delivers to PairedCoreNode, not the
+	// primary. Reset the paired physical node's runtime instead of
+	// ctx.node.ID. For other modes (single_robot, two_robot) OrderB
+	// delivers (or its choreography ends) at the primary, so the standard
+	// path stays unchanged.
+	if fromClaim != nil &&
+		fromClaim.SwapMode == "sequential" &&
+		ctx.nodeTask.Situation == "evacuate" &&
+		fromClaim.PairedCoreNode != "" {
+		e.resetSequentialEvacOrderBRuntime(ctx, fromClaim, toClaim, resetUOP)
+	} else {
+		claimID := toClaim.ID
+		if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
+			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+		}
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
@@ -211,48 +237,49 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// handleKeepStagedOrderBCompletion handles keep-staged changeovers where Order B
-// only evacuated old material (no delivery steps).
-// If Order A (delivery) also completed → "released". Otherwise → "line_cleared".
+// resetSequentialEvacOrderBRuntime resets the runtime UOP for the paired
+// physical node at sequential EVAC OrderB completion. Each robot resets
+// its own position; OrderA's completion (handleChangeoverRelease)
+// resets primary, this fires for OrderB's completion to reset paired.
+func (e *Engine) resetSequentialEvacOrderBRuntime(ctx *orderCompletionCtx, fromClaim, toClaim *processes.NodeClaim, resetUOP int) {
+	nodes, err := e.db.ListProcessNodesByProcess(ctx.node.ProcessID)
+	if err != nil {
+		log.Printf("sequential evac OrderB: list process nodes: %v", err)
+		return
+	}
+	var pairedNode *processes.Node
+	for i := range nodes {
+		if nodes[i].CoreNodeName == fromClaim.PairedCoreNode {
+			pairedNode = &nodes[i]
+			break
+		}
+	}
+	if pairedNode == nil {
+		log.Printf("sequential evac OrderB: paired node %q not found", fromClaim.PairedCoreNode)
+		return
+	}
+	pairedClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, fromClaim.PairedCoreNode)
+	if err != nil || pairedClaim == nil {
+		pairedClaim = toClaim
+	}
+	pairedClaimID := pairedClaim.ID
+	if err := e.db.SetProcessNodeRuntime(pairedNode.ID, &pairedClaimID, resetUOP); err != nil {
+		log.Printf("sequential evac OrderB: reset paired runtime for node %d: %v", pairedNode.ID, err)
+	}
+}
+
+// handleKeepStagedOrderBCompletion is a short-circuited no-op.
 //
-// Phase 3 (lineside): the "released" transition is now primarily driven by the
-// operator release handler. This handler still fires if the release never ran
-// (safety net) or if only Order A has completed (→ "line_cleared").
+// KeepStaged is shelved pending a future rewire. The function signature
+// is preserved for call sites; returning false makes the dispatcher in
+// handleComplexOrderBCompletion fall through to the standard non-
+// KeepStaged path (UOP reset on delivery + state → "released"), which
+// is the desired behaviour until KeepStaged is rewired. See implementer
+// notes' "Known issue — TC-77 latent under CO-0b fall-through" for the
+// rewire-time risk this falls through to.
 func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool {
-	// Fetch Order A once: we need its terminal status to gate the
-	// "released" branch (Order B is evacuate-only, the new bin arrived
-	// via Order A). Item 8 retired the BinUOPRemaining snapshot, so
-	// the reset to claim capacity is unconditional — reconciler heals
-	// the runtime cache to Core's authoritative bin value within ~60s.
-	var orderA *storeorders.Order
-	if ctx.nodeTask.NextMaterialOrderID != nil {
-		if a, err := e.db.GetOrder(*ctx.nodeTask.NextMaterialOrderID); err == nil {
-			orderA = a
-		}
-	}
-	orderADone := orderA == nil || orders.IsTerminal(orderA.Status)
-
-	if orderADone {
-		if toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName); err == nil {
-			claimID := toClaim.ID
-			resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity)
-			if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
-				log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
-			}
-			if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
-				log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
-			}
-			return true
-		}
-	}
-
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, ctx.runtime.ActiveClaimID, 0); err != nil {
-		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
-	}
-	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "line_cleared"); err != nil {
-		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
-	}
-	return true
+	_ = ctx
+	return false
 }
 
 // handleChangeoverRelease handles Order A completing to release staged/replenished
@@ -262,24 +289,111 @@ func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool 
 // flips the node task to "released"; the runtime turnover is bound to the
 // arrival event so a fault between release and delivery doesn't leave the
 // line UI showing capacity for a bin that hasn't landed.
+//
+// Sequential SWAP ships as a single complex order with a mid-sequence
+// cutover wait. Its terminal step is the ACTIVE-side dropoff: by then,
+// both physical positions (CoreNodeName and PairedCoreNode) hold new
+// bins, so reset BOTH runtime rows' UOP — otherwise the paired-side
+// runtime cache lies with the old style's UOP value until the
+// reconciler heals (~60s).
 func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 	if ctx.nodeTask == nil || ctx.nodeTask.NextMaterialOrderID == nil || *ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
 		return false
 	}
 	// UOP reset always runs on delivery — release only marks state="released".
+	//
+	// For press-index per-position node tasks, the task's CoreNodeName
+	// is a back/middle position name that ISN'T the primary CoreNodeName
+	// of any claim (only the front position is). GetStyleNodeClaimByNode
+	// looks up by primary core_node_name and won't find the parent
+	// press-index claim. Fall back to the task-stored ToClaimID, which
+	// the fan-out post-processor sets to the parent claim's ID — that's
+	// the persisted authoritative claim even when the synthesized
+	// in-memory claim used different fields for routing.
 	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
-	if err != nil {
-		return false
+	if err != nil || toClaim == nil {
+		if ctx.nodeTask.ToClaimID != nil {
+			if c, lookupErr := e.db.GetStyleNodeClaim(*ctx.nodeTask.ToClaimID); lookupErr == nil && c != nil {
+				toClaim = c
+			} else {
+				return false
+			}
+		} else {
+			return false
+		}
 	}
 	claimID := toClaim.ID
 	resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity)
 	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
+	// Also reset the paired position's runtime when the from-claim has
+	// a PairedCoreNode (sequential SWAP completion delivers to BOTH
+	// positions; runtime UOP must reflect that on both rows immediately,
+	// not wait the reconciler's ~60s heartbeat).
+	e.resetPairedRuntimeUOPForSequentialSwap(ctx, toClaim, resetUOP)
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
 	return true
+}
+
+// resetPairedRuntimeUOPForSequentialSwap resets the runtime UOP for the
+// paired physical node at sequential SWAP completion. The single complex
+// order's terminal step is the active-side dropoff — by then both
+// positions have new bins and both runtime rows need the new claim's
+// UOP capacity. Without this reset, the paired side would keep reading
+// the old style's UOP until the reconciler heals (~60s).
+//
+// Caller is responsible for ensuring this is invoked ONLY on sequential
+// SWAP terminal completion. Sequential EVAC uses a different path —
+// each robot's order resets its own position, so paired isn't reset here
+// (it would create a TC-77 phantom-inventory window if the paired side
+// hadn't been delivered yet).
+//
+// Looks up the paired physical node by CoreNodeName within the task's
+// process. Logs and returns on any lookup failure rather than panicking.
+func (e *Engine) resetPairedRuntimeUOPForSequentialSwap(ctx *orderCompletionCtx, toClaim *processes.NodeClaim, resetUOP int) {
+	if ctx.nodeTask == nil || ctx.nodeTask.FromClaimID == nil {
+		return
+	}
+	fromClaim, err := e.db.GetStyleNodeClaim(*ctx.nodeTask.FromClaimID)
+	if err != nil || fromClaim == nil || fromClaim.PairedCoreNode == "" {
+		return
+	}
+	if fromClaim.SwapMode != "sequential" {
+		return
+	}
+	if ctx.nodeTask.Situation != "swap" {
+		// Sequential EVAC has each robot's order resetting its own
+		// position — paired runtime is reset by OrderB's completion
+		// path (resetSequentialEvacOrderBRuntime), not here.
+		return
+	}
+	nodes, err := e.db.ListProcessNodesByProcess(ctx.node.ProcessID)
+	if err != nil {
+		return
+	}
+	var pairedNode *processes.Node
+	for i := range nodes {
+		if nodes[i].CoreNodeName == fromClaim.PairedCoreNode {
+			pairedNode = &nodes[i]
+			break
+		}
+	}
+	if pairedNode == nil {
+		return
+	}
+	// Sibling claim if the to-style models the pair as two claims;
+	// fall back to the primary toClaim if it's modeled as one.
+	pairedClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, fromClaim.PairedCoreNode)
+	if err != nil || pairedClaim == nil {
+		pairedClaim = toClaim
+	}
+	pairedClaimID := pairedClaim.ID
+	if err := e.db.SetProcessNodeRuntime(pairedNode.ID, &pairedClaimID, resetUOP); err != nil {
+		log.Printf("sequential swap completion: reset paired runtime for node %d: %v", pairedNode.ID, err)
+	}
 }
 
 // handleLoaderEmptyInCompletion fires the side-cycle L2 when the L1
@@ -430,17 +544,15 @@ func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
 // The reset binds to the delivery event: a fresh bin has physically arrived,
 // so the line's UOP tracking should turn over now.
 //
-// Item 7 (post-Item-8): the DeliveryNode != CoreNodeName predicate
-// that previously skipped removal-shaped orders (Order B in two-robot
-// consume, R1 in press-index, sequential-removal step) is gone. Those
-// orders now flow through the reset like any other completion — runtime
-// briefly resets to claim.UOPCapacity. The reconciler observes the
-// now-empty slot (Item 4 empty-slot detection) and heals the runtime
-// to 0 within the next pass (~60s). Brief "looks like full bin" UI
-// during that window is SME-accepted.
+// Removal-shaped orders (Order B in two-robot consume, R1 in press-
+// index, sequential-removal step) flow through the reset like any
+// other completion — runtime briefly resets to claim.UOPCapacity. The
+// reconciler observes the now-empty slot via empty-slot detection and
+// heals the runtime to 0 within the next pass (~60s). Brief "looks
+// like full bin" UI during that window is SME-accepted.
 //
 // See TestRegression_RemovalOrderHealsToZeroViaReconciler in
-// uop_regression_test.go for the new mechanism pin.
+// uop_regression_test.go for the mechanism pin.
 func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
 		return
@@ -451,12 +563,12 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	}
 	claimID := claim.ID
 	// Produce nodes receive an empty bin → UOP starts at 0.
-	// Consume nodes receive a bin from the supermarket — could be full or
-	// partial (operator-released runouts in particular send the remaining
-	// UOP back as a partial). Item 8: reset to claim.UOPCapacity here;
-	// the reconciler heals the runtime cache to Core's authoritative
-	// bin value within the next pass (~60s). Brief "looks like full
-	// bin" UI on partial-back returns is SME-accepted.
+	// Consume nodes receive a bin from the supermarket — could be full
+	// or partial (operator-released runouts in particular send the
+	// remaining UOP back as a partial). Reset to claim.UOPCapacity
+	// here; the reconciler heals the runtime cache to Core's
+	// authoritative bin value within the next pass (~60s). Brief "looks
+	// like full bin" UI on partial-back returns is SME-accepted.
 	resetUOP := resolveReplenishUOP(claim.Role, claim.UOPCapacity)
 
 	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
@@ -480,26 +592,16 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	e.maybePreStage(ctx.node, claim)
 }
 
-// maybePreStage orders the next bin to inbound staging if the claim has
-// keep_staged enabled. This ensures the staging node always has material
-// ready for a fast swap.
+// maybePreStage is a short-circuited no-op.
+//
+// KeepStaged is shelved pending a future rewire. The function signature
+// is preserved for call sites; schema column, planner branches, and
+// step builders stay intact so the rewire is a one-line restore. The
+// previous body fired an automatic pre-stage order after every release;
+// that path was the broken behaviour SME asked to stop.
 func (e *Engine) maybePreStage(node *processes.Node, claim *processes.NodeClaim) {
-	if !claim.KeepStaged || claim.InboundStaging == "" {
-		return
-	}
-	steps := BuildStageSteps(claim)
-	if steps == nil {
-		return
-	}
-	nodeID := node.ID
-	order, err := e.orderMgr.CreateComplexOrder(&nodeID, 1, claim.InboundStaging, claim.CoreNodeName, steps)
-	if err != nil {
-		log.Printf("keep-staged pre-stage for node %s: %v", node.Name, err)
-		return
-	}
-	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &order.ID); err != nil {
-		log.Printf("update runtime orders for node %d: %v", nodeID, err)
-	}
+	_ = node
+	_ = claim
 }
 
 // ── Order failure ───────────────────────────────────────────────────

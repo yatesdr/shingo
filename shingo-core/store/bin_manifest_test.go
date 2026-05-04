@@ -7,7 +7,6 @@ import (
 
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
-	"shingocore/store/payloads"
 )
 
 func TestBinManifestSetConfirmClearGet(t *testing.T) {

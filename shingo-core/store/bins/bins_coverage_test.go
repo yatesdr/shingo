@@ -3,7 +3,9 @@
 package bins_test
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"shingocore/store/bins"
 	"testing"
 	"time"
@@ -1169,6 +1171,66 @@ func TestFindSourceFIFO_RulesEnforced(t *testing.T) {
 	}
 	if got.ID != defaultBin.ID {
 		t.Errorf("returned bin %d, want %d (the DEFAULT-type bin)", got.ID, defaultBin.ID)
+	}
+}
+
+// FindSourceFIFO must reject empty payloadCode at the function
+// boundary. After the bin-as-truth refactor, unattached bins store
+// payload_code = '' instead of NULL; without this guard, a caller
+// passing payloadCode = "" would silently match every unattached bin.
+func TestFindSourceFIFO_RejectsEmptyPayloadCode(t *testing.T) {
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	// Seed a real loaded bin so we'd otherwise have something to match.
+	_ = testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-FIFO-REAL")
+
+	got, err := bins.FindSourceFIFO(db.DB, "", 0)
+	if err == nil {
+		t.Fatalf("expected error for empty payloadCode, got bin %v", got)
+	}
+	if got != nil {
+		t.Errorf("expected nil bin for empty payloadCode, got %+v", got)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expected sql.ErrNoRows for empty payloadCode (mirrors no-match sentinel), got %v", err)
+	}
+}
+
+// The boundary guard alone covers the empty-input path; this covers
+// the inverse — the SQL itself must not collapse '' rows into a non-
+// empty payload search via accidental coercion. An unattached bin
+// (payload_code = '') must not be returned when the caller queries
+// for a real payload.
+func TestFindSourceFIFO_DoesNotMatchUnattachedBins(t *testing.T) {
+	db := testdb.Open(t)
+	std := testdb.SetupStandardData(t, db)
+
+	// Real, manifest-confirmed bin for payload "X".
+	realBin := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-FIFO-REAL")
+
+	// Unattached bin: same node, empty payload_code, manifest unconfirmed.
+	// Mirrors the post-UOP storage shape (payload_code = '' on the row,
+	// not NULL).
+	unattached := &bins.Bin{
+		BinTypeID: std.BinType.ID,
+		Label:     "BIN-FIFO-UNATTACHED",
+		NodeID:    &std.StorageNode.ID,
+		Status:    "available",
+	}
+	if err := bins.Create(db.DB, unattached); err != nil {
+		t.Fatalf("bins.Create unattached: %v", err)
+	}
+	if _, err := db.DB.Exec(`UPDATE bins SET payload_code = '' WHERE id = $1`, unattached.ID); err != nil {
+		t.Fatalf("force unattached payload_code = '': %v", err)
+	}
+
+	got, err := bins.FindSourceFIFO(db.DB, std.Payload.Code, 0)
+	if err != nil {
+		t.Fatalf("FindSourceFIFO(real payload): %v", err)
+	}
+	if got.ID != realBin.ID {
+		t.Errorf("got bin %d (%s), want %d (the real bin) — unattached bin must not match", got.ID, got.Label, realBin.ID)
 	}
 }
 

@@ -161,6 +161,7 @@ func (s *stubEngine) ReleaseChangeoverWait(_ int64, calledBy string) error {
 	s.lastReleaseChangeoverWaitCalledBy = calledBy
 	return nil
 }
+func (s *stubEngine) SequentialChangeoverCutover(int64, int64, string) error { return nil }
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error)     { return nil, nil }
 func (s *stubEngine) EmptyNodeForToolChange(int64, int64, int64) (*storeorders.Order, error)   { return nil, nil }
 func (s *stubEngine) ReleaseNodeIntoProduction(int64, int64) (*storeorders.Order, error)       { return nil, nil }

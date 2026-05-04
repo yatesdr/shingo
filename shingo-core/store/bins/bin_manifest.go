@@ -74,6 +74,15 @@ func GetManifest(db *sql.DB, binID int64) (*Manifest, error) {
 // inverse footgun (full bin loaded into a type the rules say is forbidden,
 // then sourceable as that incompatible type forever).
 func FindSourceFIFO(db *sql.DB, payloadCode string, excludeNodeID int64) (*Bin, error) {
+	// Empty payloadCode is always a bug here. After the bin-as-truth
+	// refactor, unattached bins store payload_code = "" instead of
+	// NULL, so `WHERE b.payload_code = $1` with $1 = "" silently
+	// matches every unattached bin. Reject at the boundary; mirror the
+	// no-match sentinel returned by ScanBin so callers don't need new
+	// error handling.
+	if payloadCode == "" {
+		return nil, sql.ErrNoRows
+	}
 	row := db.QueryRow(fmt.Sprintf(`%s
 		WHERE b.payload_code = $1
 		  AND n.enabled = true

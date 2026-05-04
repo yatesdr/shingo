@@ -235,7 +235,8 @@ function openClaimModal() {
     sel.value = '';
     sel.disabled = false;
     document.getElementById('claims-add-role').value = 'consume';
-    document.getElementById('claims-add-swap').value = 'simple';
+    // Default new claims to single_robot; "simple" is no longer offered.
+    document.getElementById('claims-add-swap').value = 'single_robot';
     document.getElementById('claims-add-payload').selectedIndex = 0;
     document.getElementById('claims-add-capacity').value = '0';
     document.getElementById('claims-add-reorder').value = '0';
@@ -244,8 +245,9 @@ function openClaimModal() {
     document.getElementById('claims-add-outbound').value = '';
     document.getElementById('claims-add-inbound-source').value = '';
     document.getElementById('claims-add-outbound-destination').value = '';
-    document.getElementById('claims-add-keep-staged').checked = false;
+    // No keep-staged checkbox in the editor; nothing to reset for it.
     document.getElementById('claims-add-evacuate').checked = false;
+    document.getElementById('claims-add-reuse-bins').checked = false;
     document.getElementById('claims-add-paired-node').value = '';
     document.getElementById('claims-add-second-paired-node').value = '';
     document.getElementById('claims-add-auto-confirm').checked = false;
@@ -276,8 +278,9 @@ function editClaim(claim) {
     document.getElementById('claims-add-outbound').value = claim.outbound_staging || '';
     document.getElementById('claims-add-inbound-source').value = claim.inbound_source || '';
     document.getElementById('claims-add-outbound-destination').value = claim.outbound_destination || '';
-    document.getElementById('claims-add-keep-staged').checked = !!claim.keep_staged;
+    // KeepStaged is no longer surfaced in the UI; the column persists as a backend safety net for the future rewire.
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
+    document.getElementById('claims-add-reuse-bins').checked = !!claim.reuse_compatible_bins;
     document.getElementById('claims-add-paired-node').value = claim.paired_core_node || '';
     document.getElementById('claims-add-second-paired-node').value = claim.second_paired_core_node || '';
     document.getElementById('claims-add-auto-confirm').checked = !!claim.auto_confirm;
@@ -347,12 +350,6 @@ function validateClaimStaging() {
     // (two_robot still sends old bin to outbound destination via removal robot)
     if (outboundDestGroup) {
         outboundDestGroup.style.display = '';
-    }
-
-    // Clear keep-staged when staging not used
-    if (!usesStaging) {
-        var keepCb = document.getElementById('claims-add-keep-staged');
-        if (keepCb) keepCb.checked = false;
     }
 
     // Clear staging values when not used so they aren't saved
@@ -442,8 +439,10 @@ async function saveClaim() {
         inbound_source: document.getElementById('claims-add-inbound-source').value,
         outbound_destination: document.getElementById('claims-add-outbound-destination').value,
         auto_request_payload: document.getElementById('claims-add-auto-request').value,
-        keep_staged: document.getElementById('claims-add-keep-staged').checked,
+        // New claims always submit keep_staged=false; the editor doesn't surface it.
+        keep_staged: false,
         evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked,
+        reuse_compatible_bins: document.getElementById('claims-add-reuse-bins').checked,
         paired_core_node: document.getElementById('claims-add-paired-node').value,
         second_paired_core_node: document.getElementById('claims-add-second-paired-node').value,
         auto_confirm: document.getElementById('claims-add-auto-confirm').checked
@@ -496,6 +495,27 @@ async function removeClaim(id) {
     }
 }
 
+// Registry of which SwapModes have changeover-only fields (fields
+// needed for a mode's changeover but NOT for its steady-state
+// operation). When non-empty for the selected mode, the claim editor
+// shows the "Changeover Configuration" section.
+//
+// Currently empty for every mode: sequential is direct-trip (no
+// staging hop), so its changeover uses the same fields as steady-state
+// (InboundSource, OutboundDestination, PairedCoreNode). The other
+// modes (single_robot, two_robot, two_robot_press_index) also share
+// fields between steady-state and changeover. Add an entry here when
+// a future mode introduces a field that's needed only during
+// changeover.
+function changeoverOnlyFieldsExistForMode(swapMode) {
+    var registry = {
+        // Example for a hypothetical staging-hop sequential variant:
+        // 'sequential_staging': ['Changeover Inbound Staging'],
+    };
+    var fields = registry[swapMode];
+    return Array.isArray(fields) && fields.length > 0;
+}
+
 function toggleClaimsAddPayload() {
     var role = document.getElementById('claims-add-role').value;
     var swap = document.getElementById('claims-add-swap').value;
@@ -520,6 +540,14 @@ function toggleClaimsAddPayload() {
     document.getElementById('claims-outbound-destination-group').style.display = (isChangeover) ? 'none' : '';
     // Changeover fieldset — not used by manual_swap
     document.getElementById('claims-changeover-fieldset').style.display = isManualSwap ? 'none' : '';
+    // Conditional Changeover Configuration section: shown when the
+    // selected SwapMode declares changeover-only fields via
+    // changeoverOnlyFieldsExistForMode. Currently dormant — every
+    // mode's changeover uses the same fields as steady-state — but
+    // activates the moment a mode declares one (e.g. if a future
+    // staging-hop variant introduces a "changeover staging node" field).
+    var showChangeoverConfig = !isManualSwap && !isChangeover && changeoverOnlyFieldsExistForMode(swap);
+    document.getElementById('claims-changeover-config-fieldset').style.display = showChangeoverConfig ? '' : 'none';
     // Paired-node fieldset is dual-purposed:
     //   - two_robot_press_index: required "Back Press Node" (the second press position)
     //   - other consume/produce modes: optional A/B alternating partner
@@ -542,6 +570,9 @@ function toggleClaimsAddPayload() {
                 pairSelect.options[0].textContent = '-- Select back press node --';
             }
             if (secondGroup) secondGroup.style.display = '';
+            // The reuse-compatible-bins toggle is press-index only.
+            var reuseRow = document.getElementById('claims-add-reuse-bins-row');
+            if (reuseRow) reuseRow.style.display = 'flex';
         } else {
             legend.textContent = 'A/B Node Cycling';
             help.textContent = 'Pair this node with another node for alternating operation. The operator flips which node is active via the station HMI.';
@@ -551,11 +582,17 @@ function toggleClaimsAddPayload() {
             }
             if (secondGroup) secondGroup.style.display = 'none';
             document.getElementById('claims-add-second-paired-node').value = '';
+            var reuseRow2 = document.getElementById('claims-add-reuse-bins-row');
+            if (reuseRow2) reuseRow2.style.display = 'none';
+            document.getElementById('claims-add-reuse-bins').checked = false;
         }
     } else {
         document.getElementById('claims-add-paired-node').value = '';
         if (secondGroup) secondGroup.style.display = 'none';
         document.getElementById('claims-add-second-paired-node').value = '';
+        var reuseRow3 = document.getElementById('claims-add-reuse-bins-row');
+        if (reuseRow3) reuseRow3.style.display = 'none';
+        document.getElementById('claims-add-reuse-bins').checked = false;
     }
     // Auto-request fieldset — show for manual_swap (all-payload) or standard (single dropdown)
     document.getElementById('claims-auto-request-fieldset').style.display = isManualSwap ? '' : 'none';
@@ -575,7 +612,7 @@ function toggleClaimsAddPayload() {
         document.getElementById('claims-add-inbound').value = '';
         document.getElementById('claims-add-outbound').value = '';
         document.getElementById('claims-add-inbound-source').value = '';
-        document.getElementById('claims-add-keep-staged').checked = false;
+        // No keep-staged checkbox to clear here.
         document.getElementById('claims-add-evacuate').checked = false;
         document.getElementById('claims-add-paired-node').value = '';
         buildAllowedPayloadPicker([]);

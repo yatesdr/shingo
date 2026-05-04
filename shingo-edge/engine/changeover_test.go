@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -961,6 +962,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode string) (pr
 // robot) changeover flow. Order A clears old staged bin, fetches new, stages,
 // waits, and delivers. Order B evacuates old material from the line.
 func TestChangeover_KeepStagedCombined(t *testing.T) {
+	t.Skip("KeepStaged short-circuited; runtime hooks no-op'd, planner+builders preserved for rewire")
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedKeepStagedSwapScenario(t, db, "simple")
 	eng := testEngine(t, db)
@@ -1029,6 +1031,7 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 // changeover flow. Order A fetches new and delivers with wait. Order B
 // evacuates old material with wait.
 func TestChangeover_KeepStagedSplit(t *testing.T) {
+	t.Skip("KeepStaged short-circuited; runtime hooks no-op'd, planner+builders preserved for rewire")
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedKeepStagedSwapScenario(t, db, "two_robot")
 	eng := testEngine(t, db)
@@ -1116,5 +1119,196 @@ func TestChangeover_OrderBBeforeOrderA(t *testing.T) {
 	}
 	if runtime.RemainingUOPCached != 200 {
 		t.Errorf("expected UOP=200 after Order B completion, got %d", runtime.RemainingUOPCached)
+	}
+}
+
+// Press-index changeover with Core unavailable refuses to start. Without
+// Core's bin-type catalog, the per-position fan-out post-processor
+// silently treats every payload pair as same-bin-type and would route a
+// real different-bin-type changeover through the wrong choreography.
+// The planner-side gate refuses the start with an operator-readable
+// error so the floor sees the misconfig instead of executing a doomed
+// plan.
+func TestChangeover_PressIndex_CoreUnavailable_RefusesStart(t *testing.T) {
+	db := testEngineDB(t)
+	processID, err := db.CreateProcess("PI-NOCORE", "press-index core down", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	nodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "PI-NODE", Code: "PI", Name: "Press Front", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create process node: %v", err)
+	}
+	pairedNodeID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "PI-NODE-B", Code: "PIB", Name: "Press Back", Sequence: 2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create paired process node: %v", err)
+	}
+	_ = nodeID
+	_ = pairedNodeID
+
+	fromStyleID, err := db.CreateStyle("PI-FROM", "from", processID)
+	if err != nil {
+		t.Fatalf("create from style: %v", err)
+	}
+	toStyleID, err := db.CreateStyle("PI-TO", "to", processID)
+	if err != nil {
+		t.Fatalf("create to style: %v", err)
+	}
+	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
+		t.Fatalf("set active style: %v", err)
+	}
+
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: fromStyleID, CoreNodeName: "PI-NODE", Role: "consume", SwapMode: "two_robot_press_index",
+		PayloadCode: "PART-A", UOPCapacity: 100, InboundSource: "SRC", OutboundDestination: "DEST",
+		PairedCoreNode: "PI-NODE-B",
+	}); err != nil {
+		t.Fatalf("upsert from claim: %v", err)
+	}
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: toStyleID, CoreNodeName: "PI-NODE", Role: "consume", SwapMode: "two_robot_press_index",
+		PayloadCode: "PART-B", UOPCapacity: 200, InboundSource: "SRC", OutboundDestination: "DEST",
+		PairedCoreNode: "PI-NODE-B",
+	}); err != nil {
+		t.Fatalf("upsert to claim: %v", err)
+	}
+
+	// testEngine wires no coreClient → Available() returns false.
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	_, err = eng.StartProcessChangeover(processID, toStyleID, "test", "core down")
+	if err == nil {
+		t.Fatal("expected StartProcessChangeover to refuse with Core unavailable; got nil")
+	}
+	if !strings.Contains(err.Error(), "Core unavailable") {
+		t.Errorf("err = %q, want substring %q", err.Error(), "Core unavailable")
+	}
+	if !strings.Contains(err.Error(), "PI-NODE") {
+		t.Errorf("err = %q, want substring naming the node %q", err.Error(), "PI-NODE")
+	}
+}
+
+// Sequential EVAC OrderB delivers to PairedCoreNode (each robot handles
+// its own physical position). When OrderB completes, the wiring must
+// reset the paired runtime row's UOP — without that, the paired
+// position keeps reading the old style's UOP value until the
+// reconciler heals (~60s) and the line UI lies during the window.
+func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
+	db := testEngineDB(t)
+
+	processID, err := db.CreateProcess("SEQ-EV-PROC", "sequential evac", "active_production", "", "", false)
+	if err != nil {
+		t.Fatalf("create process: %v", err)
+	}
+	primaryID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "SEQ-A", Code: "SQA", Name: "Seq Position A", Sequence: 1, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create primary node: %v", err)
+	}
+	pairedID, err := db.CreateProcessNode(processes.NodeInput{
+		ProcessID: processID, CoreNodeName: "SEQ-B", Code: "SQB", Name: "Seq Position B", Sequence: 2, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("create paired node: %v", err)
+	}
+
+	fromStyleID, err := db.CreateStyle("SEQ-FROM", "from", processID)
+	if err != nil {
+		t.Fatalf("create from style: %v", err)
+	}
+	toStyleID, err := db.CreateStyle("SEQ-TO", "to", processID)
+	if err != nil {
+		t.Fatalf("create to style: %v", err)
+	}
+	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
+		t.Fatalf("set active style: %v", err)
+	}
+
+	// Same payload + EvacuateOnChangeover so the diff resolves to
+	// SituationEvacuate (not Swap), exercising the sequential evacuate
+	// dispatch path and the OrderB→paired-runtime reset.
+	// Sequential is direct-trip; staging fields intentionally omitted
+	// so this test also pins that the planner doesn't divert sequential
+	// claims into the staging-fallback path.
+	fcID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: fromStyleID, CoreNodeName: "SEQ-A", Role: "consume", SwapMode: "sequential",
+		PayloadCode: "PART-SAME", UOPCapacity: 100, InboundSource: "MARKET", OutboundDestination: "DEST",
+		PairedCoreNode: "SEQ-B",
+	})
+	if err != nil {
+		t.Fatalf("upsert from claim: %v", err)
+	}
+	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: toStyleID, CoreNodeName: "SEQ-A", Role: "consume", SwapMode: "sequential",
+		PayloadCode: "PART-SAME", UOPCapacity: 250, InboundSource: "MARKET", OutboundDestination: "DEST",
+		PairedCoreNode: "SEQ-B", EvacuateOnChangeover: true,
+	}); err != nil {
+		t.Fatalf("upsert to claim: %v", err)
+	}
+
+	// Seed both runtimes with the old style's claim and partial UOP so
+	// the assertion can distinguish "reset to new capacity" from "left
+	// alone" or "zeroed".
+	db.EnsureProcessNodeRuntime(primaryID)
+	db.EnsureProcessNodeRuntime(pairedID)
+	db.SetProcessNodeRuntime(primaryID, &fcID, 50)
+	db.SetProcessNodeRuntime(pairedID, &fcID, 30)
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "seq evac paired runtime")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, primaryID)
+	if err != nil {
+		t.Fatalf("get node task: %v", err)
+	}
+	if task.Situation != "evacuate" {
+		t.Fatalf("expected evacuate, got %s", task.Situation)
+	}
+	if task.NextMaterialOrderID == nil || task.OldMaterialReleaseOrderID == nil {
+		t.Fatal("sequential evacuate must populate both order slots")
+	}
+
+	// Complete OrderA — handleChangeoverRelease resets the primary
+	// runtime to the new style's capacity (250).
+	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
+	markOrderTerminal(db, orderA.ID)
+	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &primaryID)
+
+	primaryRT, _ := db.GetProcessNodeRuntime(primaryID)
+	if primaryRT.RemainingUOPCached != 250 {
+		t.Errorf("primary runtime: expected reset to capacity=250 after OrderA, got %d", primaryRT.RemainingUOPCached)
+	}
+	pairedRT, _ := db.GetProcessNodeRuntime(pairedID)
+	if pairedRT.RemainingUOPCached != 30 {
+		t.Errorf("paired runtime should still hold pre-changeover value (30) after OrderA only; got %d", pairedRT.RemainingUOPCached)
+	}
+
+	// Complete OrderB — sequential EVAC routes through the paired-
+	// runtime reset path; paired position now reflects new capacity.
+	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
+	markOrderTerminal(db, orderB.ID)
+	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &primaryID)
+
+	pairedRT, _ = db.GetProcessNodeRuntime(pairedID)
+	if pairedRT.RemainingUOPCached != 250 {
+		t.Errorf("paired runtime: expected reset to capacity=250 after OrderB sequential-evac; got %d", pairedRT.RemainingUOPCached)
+	}
+	pairedToClaim, _ := db.GetStyleNodeClaimByNode(toStyleID, "SEQ-B")
+	if pairedToClaim != nil {
+		// If the to-style modeled paired as its own claim, the runtime
+		// row should now point to that claim.
+		if pairedRT.ActiveClaimID == nil || *pairedRT.ActiveClaimID != pairedToClaim.ID {
+			t.Errorf("paired runtime ActiveClaimID after OrderB: got %v, want %d (paired to-claim)", pairedRT.ActiveClaimID, pairedToClaim.ID)
+		}
 	}
 }

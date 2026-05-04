@@ -125,8 +125,14 @@ type NodeClaim struct {
 	// warns — but doesn't block — if the operator enters a qty greater
 	// than 2× this value, catching typos before they become stranded
 	// inventory.
-	LinesideSoftThreshold int       `json:"lineside_soft_threshold"`
-	CreatedAt             time.Time `json:"created_at"`
+	LinesideSoftThreshold int `json:"lineside_soft_threshold"`
+	// ReuseCompatibleBins opts a press-index node into the no-swap shortcut:
+	// when the next style produces the same payload AND the physical bin
+	// at the node is empty, the planner skips the swap entirely. Saves a
+	// robot trip when the press-index hardware can keep the same bin.
+	// Default false preserves always-swap.
+	ReuseCompatibleBins bool      `json:"reuse_compatible_bins"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // AllowedPayloads returns the effective set of payload codes this claim
@@ -170,6 +176,7 @@ type NodeClaimInput struct {
 	AutoConfirm           bool     `json:"auto_confirm"`
 	Sequence              int      `json:"sequence"`
 	LinesideSoftThreshold int      `json:"lineside_soft_threshold"`
+	ReuseCompatibleBins   bool     `json:"reuse_compatible_bins"`
 }
 
 // NodeTaskInput is the input shape for creating a per-node changeover

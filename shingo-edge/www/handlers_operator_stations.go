@@ -620,6 +620,41 @@ func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r 
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
 }
 
+// apiSequentialChangeoverCutover is the per-node operator-action endpoint
+// for the sequential SWAP mid-sequence cutover. Atomically flips
+// ActivePull to the freshly-stocked previously-inactive side and
+// releases the wait inside the running complex order. Distinct from
+// apiCompleteProcessProductionCutover (the final production-state-flip
+// / changeover-completion call); this one fires mid-changeover,
+// per-node, and only for sequential SWAP tasks.
+func (h *Handlers) apiSequentialChangeoverCutover(w http.ResponseWriter, r *http.Request) {
+	processID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid process id")
+		return
+	}
+	nodeID, err := parseID(r, "nodeID")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	var req struct {
+		CalledBy string `json:"called_by"`
+	}
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	if strings.TrimSpace(req.CalledBy) == "" {
+		req.CalledBy = "operator_station"
+	}
+	if err := h.orchestration.SequentialChangeoverCutover(processID, nodeID, req.CalledBy); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "sequential-cutover"}})
+	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
+}
+
 func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {

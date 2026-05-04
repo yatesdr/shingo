@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"shingoedge/service"
 )
 
 // NodeBinInfo describes the bin state at a single core node.
@@ -58,9 +60,17 @@ type ManifestItem struct {
 }
 
 // PayloadManifestResponse is the full response from Core's manifest endpoint.
+//
+// BinTypeCode lets press-index changeover detect "from bin type → to
+// bin type" changes without a separate Core endpoint. Empty when Core
+// has no payload_bin_types rule for this payload (the existing
+// advisory pattern: no rules = any compatible bin). Empty value is
+// treated by the planner as "unknown bin type" — the comparator falls
+// back to "same" so the existing same-bin-type choreography ships.
 type PayloadManifestResponse struct {
 	UOPCapacity int            `json:"uop_capacity"`
 	Items       []ManifestItem `json:"items"`
+	BinTypeCode string         `json:"bin_type_code,omitempty"`
 }
 
 // FetchPayloadManifest returns the default manifest template and UOP capacity for a payload code.
@@ -298,6 +308,59 @@ func (c *CoreClient) LoadBin(req *BinLoadRequest) (*BinLoadResponse, error) {
 		return nil, fmt.Errorf("%s", detail)
 	}
 	return &result, nil
+}
+
+// PreflightInventory POSTs the to-style's required payload list to Core's
+// /api/inventory/preflight and returns the per-payload availability +
+// missing subset. Used by service.PreflightChecker to gate
+// StartProcessChangeover when bins are missing.
+//
+// Returns service.PreflightCoreResult so the service-package interface
+// PreflightCorePoster can be satisfied without an engine→service→engine
+// import cycle.
+//
+// Unlike the read-only telemetry calls above this returns a hard error on
+// network failure: a preflight that silently degrades to "all available"
+// would defeat the whole point of the gate.
+func (c *CoreClient) PreflightInventory(station string, payloads []string) (*service.PreflightCoreResult, error) {
+	if c.baseURL == "" {
+		return nil, fmt.Errorf("core API not configured")
+	}
+	reqBody := struct {
+		Station  string   `json:"station"`
+		Payloads []string `json:"payloads"`
+	}{Station: station, Payloads: payloads}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal preflight request: %w", err)
+	}
+	resp, err := c.http.Post(c.baseURL+"/api/inventory/preflight", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("preflight request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("preflight: core returned %d", resp.StatusCode)
+	}
+	// Decode into the wire shape that matches Core's JSON. The wire-side
+	// struct is local because it carries the json tags Core sends; copy
+	// fields into the service-package result type for the return.
+	var wire struct {
+		Missing   []string `json:"missing"`
+		Available []struct {
+			PayloadCode string `json:"payload_code"`
+			BinCount    int    `json:"bin_count"`
+		} `json:"available"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return nil, fmt.Errorf("decode preflight response: %w", err)
+	}
+	out := &service.PreflightCoreResult{Missing: wire.Missing}
+	out.Available = make([]service.PreflightCoreAvailability, len(wire.Available))
+	for i, a := range wire.Available {
+		out.Available[i] = service.PreflightCoreAvailability{PayloadCode: a.PayloadCode, BinCount: a.BinCount}
+	}
+	return out, nil
 }
 
 // ClearBin clears the manifest on the bin at a node via Core's HTTP API.

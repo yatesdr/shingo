@@ -1371,6 +1371,40 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 	}
 }
 
+// The press_position SwapMode is the in-memory marker used by the
+// per-position fan-out post-processor. Persisting it to style_node_claims
+// would surface synthesized fragments as if they were real configured
+// claims, so UpsertClaim rejects it (and any other unknown SwapMode).
+func TestUpsertClaim_RejectsPressPositionSwapMode(t *testing.T) {
+	db := coverageDB(t)
+	_, sid := seedProcessStyle(t, db, "P", "S")
+
+	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "N", SwapMode: "press_position", PayloadCode: "PL",
+	})
+	if err == nil {
+		t.Fatal("expected error for swap_mode=press_position; got nil")
+	}
+	if !strings.Contains(err.Error(), "press_position") {
+		t.Errorf("err = %q, want it to name the rejected swap_mode", err)
+	}
+}
+
+// Any unknown swap_mode value (typo, stale import, future-mode) should
+// be rejected at config time so the dispatcher doesn't see surprise
+// modes at plan time.
+func TestUpsertClaim_RejectsUnknownSwapMode(t *testing.T) {
+	db := coverageDB(t)
+	_, sid := seedProcessStyle(t, db, "PU", "SU")
+
+	_, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
+		StyleID: sid, CoreNodeName: "N", SwapMode: "does_not_exist", PayloadCode: "PL",
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown swap_mode")
+	}
+}
+
 func TestStyleNodeClaims_ManualSwapRequiresOutboundDestination(t *testing.T) {
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")

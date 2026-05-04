@@ -2,6 +2,7 @@ package fulfillment
 
 import (
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -165,17 +166,56 @@ func TestScanner_TryFulfill_DestNodeHasBin_Skipped(t *testing.T) {
 	}
 }
 
-func TestScanner_TryFulfill_EmptyPayloadCode_Skipped(t *testing.T) {
+// Empty PayloadCode on a non-complex order is a construction bug. The
+// scanner used to return silently, leaving the order queued forever
+// with no operator-visible signal; the guard routes through failFn so
+// the standard EventOrderFailed handler chain (audit, return order,
+// edge notification) fires.
+func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 4, "dest-04")
 	order.PayloadCode = "" // no payload = nothing to source
-	s := newTestScanner(t, f)
+
+	var failCalls []struct {
+		orderID int64
+		code    string
+		detail  string
+	}
+	s := NewScanner(
+		f,
+		nil,
+		stubLifecycle{db: f},
+		nil,
+		func(string, string, any) error { return nil },
+		func(orderID int64, code, detail string) {
+			failCalls = append(failCalls, struct {
+				orderID int64
+				code    string
+				detail  string
+			}{orderID, code, detail})
+		},
+		t.Logf,
+		nil,
+	)
 
 	if got := s.RunOnce(); got != 0 {
 		t.Fatalf("RunOnce: got %d, want 0 (empty payload)", got)
 	}
 	if len(f.claimedBins) != 0 {
 		t.Errorf("empty-payload order should not claim a bin: %v", f.claimedBins)
+	}
+	if len(failCalls) != 1 {
+		t.Fatalf("failFn should be called exactly once for empty payload, got %d", len(failCalls))
+	}
+	fc := failCalls[0]
+	if fc.orderID != order.ID {
+		t.Errorf("failFn order ID = %d, want %d", fc.orderID, order.ID)
+	}
+	if fc.code != "structural" {
+		t.Errorf("failFn code = %q, want %q", fc.code, "structural")
+	}
+	if !strings.Contains(fc.detail, "empty payload_code") {
+		t.Errorf("failFn detail = %q, want substring %q", fc.detail, "empty payload_code")
 	}
 }
 

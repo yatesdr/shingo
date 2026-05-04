@@ -208,6 +208,7 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     auto_confirm            INTEGER NOT NULL DEFAULT 0,
     sequence                INTEGER NOT NULL DEFAULT 0,
     lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
+    reuse_compatible_bins   INTEGER NOT NULL DEFAULT 0,
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(style_id, core_node_name)
 );

@@ -141,11 +141,26 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		Quantity    int64  `json:"quantity"`
 		Description string `json:"description"`
 	}
+	// Include the canonical bin type code so press-index changeover on
+	// Edge can detect from→to bin type changes without a dedicated
+	// lookup endpoint. Empty when no payload_bin_types rule exists for
+	// this payload (existing advisory pattern: no rules = any
+	// compatible bin); Edge treats empty as "unknown" → falls back to
+	// same-bin-type behaviour.
+	binTypeCode := ""
+	if binTypes, btErr := payloads.ListBinTypes(payload.ID); btErr == nil && len(binTypes) > 0 {
+		// Pick the first bin type as canonical. If a payload accepts
+		// multiple bin types, the press-index detection treats them as
+		// "the same canonical type" — which matches the production
+		// reality (a press only ever runs one bin type at a time).
+		binTypeCode = binTypes[0].Code
+	}
 	items, err := payloads.ListManifest(payload.ID)
 	if err != nil || len(items) == 0 {
 		// No manifest template — return a single entry with the payload code as part number
 		h.jsonOK(w, map[string]interface{}{
-			"uop_capacity": payload.UOPCapacity,
+			"uop_capacity":  payload.UOPCapacity,
+			"bin_type_code": binTypeCode,
 			"items": []manifestItem{
 				{PartNumber: code, Quantity: int64(payload.UOPCapacity), Description: payload.Description},
 			},
@@ -161,8 +176,9 @@ func (h *Handlers) apiTelemetryPayloadManifest(w http.ResponseWriter, r *http.Re
 		}
 	}
 	h.jsonOK(w, map[string]interface{}{
-		"uop_capacity": payload.UOPCapacity,
-		"items":        result,
+		"uop_capacity":  payload.UOPCapacity,
+		"bin_type_code": binTypeCode,
+		"items":         result,
 	})
 }
 

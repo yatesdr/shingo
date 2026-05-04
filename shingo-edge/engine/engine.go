@@ -93,6 +93,7 @@ type Engine struct {
 	// EngineOrchestration (35 verbs, embeds ServiceAccess).
 	stationService    *service.StationService
 	changeoverService *service.ChangeoverService
+	preflightChecker  *service.PreflightChecker
 	adminService      *service.AdminService
 	processService    *service.ProcessService
 	styleService      *service.StyleService
@@ -168,6 +169,7 @@ func New(c Config) *Engine {
 	e.counterService = service.NewCounterService(e.db)
 	e.catalogService = service.NewCatalogService(e.db)
 	e.orderService = service.NewOrderService(e.db)
+	e.preflightChecker = service.NewPreflightChecker(e.db, e.coreClient, e.cfg.StationID())
 	return e
 }
 

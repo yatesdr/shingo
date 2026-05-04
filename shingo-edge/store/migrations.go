@@ -222,6 +222,17 @@ func (db *DB) migrate() error {
 	// layout (R1 dropoff → B, R2 indexes B → A).
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN second_paired_core_node TEXT NOT NULL DEFAULT ''")
 
+	// v19 reverted: drop_via_staging column removed (idempotent — no-op
+	// on fresh DBs that never had the column).
+	db.Exec("ALTER TABLE style_node_claims DROP COLUMN drop_via_staging")
+
+	// v20: per-claim opt-in for "reuse compatible bins". When the next
+	// style produces the same payload at a press-index node and the
+	// physical bin at the node is empty, the planner can skip the swap
+	// entirely (treat as Unchanged). Default false preserves the
+	// always-swap behaviour.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN reuse_compatible_bins INTEGER NOT NULL DEFAULT 0")
+
 	return nil
 }
 

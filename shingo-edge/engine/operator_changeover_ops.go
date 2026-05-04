@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -68,7 +69,10 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	if err != nil {
 		return nil, fmt.Errorf("list to-style claims: %w", err)
 	}
-	diffs := DiffStyleClaims(fromClaims, toClaims)
+	diffs, err := e.applyChangeoverDiffPostProcessors(processID, DiffStyleClaims(fromClaims, toClaims))
+	if err != nil {
+		return nil, err
+	}
 	nodes, err := e.db.ListProcessNodesByProcess(processID)
 	if err != nil {
 		return nil, err
@@ -116,6 +120,68 @@ func (e *Engine) planChangeover(processID, toStyleID int64) (*changeoverPlan, er
 	}, nil
 }
 
+// applyChangeoverDiffPostProcessors is the changeover diff pipeline.
+// It composes every post-processor that mutates the raw diff list
+// before node-task creation, plus the Core-availability check that
+// gates the press-index fan-out.
+//
+// Order matters and is enforced here:
+//
+//  1. Reuse-compatible-bins shortcut. Rewrites Swap/Evacuate to
+//     Unchanged when a press-index claim opts into reuse_compatible_bins,
+//     payloads match, and the physical bin is empty. Runs first so
+//     downstream post-processors see the reduced diff list.
+//
+//  2. Press-index Core-availability gate. Refuses the changeover when
+//     Core is unavailable and any remaining diff is a press-index
+//     swap/evacuate — without Core's bin-type catalog the per-position
+//     fan-out silently degrades to "same bin type" and would route a
+//     real different-bin-type changeover through the wrong choreography.
+//
+//  3. Same-mode different-bin-type fan-out. Expands a press-index
+//     parent diff into per-position diffs when the from- and to-claim
+//     payloads have different bin type codes.
+//
+//  4. Cross-mode / extension-position fan-out. Picks up press-index
+//     extension positions (PairedCoreNode / SecondPairedCoreNode)
+//     that the same-mode pass left alone — cross-mode changeovers
+//     (one side press-index, the other not) and same-mode same-bin-
+//     type position-count deltas. Acts only on positions not already
+//     covered, so step 3 always wins for positions it touched.
+//
+// Add new diff post-processors to this function so the ordering
+// invariants stay in one place. Any new processor needs to declare
+// where it sits in the pipeline relative to the existing four.
+func (e *Engine) applyChangeoverDiffPostProcessors(processID int64, diffs []ChangeoverNodeDiff) ([]ChangeoverNodeDiff, error) {
+	diffs = ApplyReuseCompatibleBinsShortcut(diffs, e.binEmptyAtCoreNode(processID))
+	if err := e.refusePressIndexWhenCoreUnavailable(diffs); err != nil {
+		return nil, err
+	}
+	binTypes := e.binTypeSnapshot(diffs)
+	diffs = FanOutPressIndexDifferentBinType(diffs, binTypes)
+	diffs = FanOutPressIndexCrossMode(diffs)
+	return diffs, nil
+}
+
+// refusePressIndexWhenCoreUnavailable returns an operator-readable error
+// when Core is unavailable AND any diff is a press-index Swap/Evacuate.
+// Without Core's bin-type catalog, the per-position fan-out can't
+// detect different-bin-type changeovers and silently falls back to the
+// same-bin-type choreography (wrong robots, wrong steps).
+func (e *Engine) refusePressIndexWhenCoreUnavailable(diffs []ChangeoverNodeDiff) error {
+	if e.coreClient != nil && e.coreClient.Available() {
+		return nil
+	}
+	for _, d := range diffs {
+		if (d.Situation != SituationSwap && d.Situation != SituationEvacuate) ||
+			d.FromClaim == nil || d.FromClaim.SwapMode != "two_robot_press_index" {
+			continue
+		}
+		return fmt.Errorf("changeover refused: Core unavailable; cannot determine bin types for press-index changeover at %s", d.CoreNodeName)
+	}
+	return nil
+}
+
 // PreviewChangeoverPlan returns the order plan that StartProcessChangeover would
 // execute, without writing anything. Used by the operator dry-run UI so the
 // floor can see exactly which orders will fire on each node before committing.
@@ -128,11 +194,84 @@ func (e *Engine) PreviewChangeoverPlan(processID, toStyleID int64) (changeover.P
 	if err != nil {
 		return changeover.Plan{}, err
 	}
-	return BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm), nil
+	return BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes)), nil
+}
+
+// binTypeSnapshot pre-resolves canonical bin type codes for every
+// payload referenced by from- or to-claims in the diff. Used by the
+// press-index different-bin-type fan-out to detect bin-type changes
+// between styles. The lookup goes through the Core PayloadManifest
+// endpoint, so a single call per unique payload covers the plan.
+// Failures leave the payload out of the map; the comparator treats
+// missing entries as "unknown" and falls back to same-bin-type
+// behaviour. The Core-availability gate refuses press-index
+// changeover starts when this lookup can't resolve, so an empty map
+// here for press-index claims is impossible at this point.
+func (e *Engine) binTypeSnapshot(diffs []ChangeoverNodeDiff) map[string]string {
+	out := make(map[string]string)
+	if e.coreClient == nil || !e.coreClient.Available() {
+		return out
+	}
+	collect := func(claim *processes.NodeClaim) {
+		if claim == nil || claim.PayloadCode == "" {
+			return
+		}
+		if _, seen := out[claim.PayloadCode]; seen {
+			return
+		}
+		// Mark as "looked up but unknown" so we don't retry on the
+		// fallthrough path; an empty value means "no signal".
+		out[claim.PayloadCode] = ""
+		resp, err := e.coreClient.FetchPayloadManifest(claim.PayloadCode)
+		if err != nil || resp == nil {
+			return
+		}
+		if resp.BinTypeCode != "" {
+			out[claim.PayloadCode] = resp.BinTypeCode
+		}
+	}
+	for i := range diffs {
+		collect(diffs[i].FromClaim)
+		collect(diffs[i].ToClaim)
+	}
+	return out
+}
+
+// activePullSnapshot returns a CoreNodeName → bool map from the runtime
+// rows of every process node passed in. Used by the planner so
+// sequential changeover can decide which physical side is "active"
+// (line currently pulling from it) vs "inactive". Nodes whose runtime
+// row is missing or unreadable default to false; the planner's
+// resolveSequentialActivePull tie-break handles the both-false case.
+func (e *Engine) activePullSnapshot(nodes []processes.Node) map[string]bool {
+	out := make(map[string]bool, len(nodes))
+	for i := range nodes {
+		rt, err := e.db.GetProcessNodeRuntime(nodes[i].ID)
+		if err != nil || rt == nil {
+			continue
+		}
+		out[nodes[i].CoreNodeName] = rt.ActivePull
+	}
+	return out
 }
 
 // Error handling policy: log and continue. Do not add early returns without understanding the caller contract. See 2567plandiscussion.md.
 func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, notes string) (*processes.Changeover, error) {
+	// Pre-flight inventory gate: refuse to start if Core reports any
+	// required payload has zero available bins in the supermarket — the
+	// changeover would deadlock at the first retrieve. Run BEFORE
+	// planning so planning-side side effects (DB writes, robot aborts)
+	// don't fire on a doomed start. preflightChecker is wired in tests
+	// that don't care about the gate; nil-skip there.
+	if e.preflightChecker != nil && e.coreClient != nil && e.coreClient.Available() {
+		missing, perr := e.preflightChecker.PreflightInventoryCheck(context.Background(), toStyleID)
+		if perr != nil {
+			return nil, fmt.Errorf("changeover preflight: %w", perr)
+		}
+		if len(missing) > 0 {
+			return nil, fmt.Errorf("changeover refused: missing bins for payloads %v", missing)
+		}
+	}
 	plan, err := e.planChangeover(processID, toStyleID)
 	if err != nil {
 		return nil, err
@@ -162,10 +301,39 @@ func (e *Engine) StartProcessChangeover(processID, toStyleID int64, calledBy, no
 
 	// Create ALL robot orders up front with embedded wait steps.
 	// Operator controls flow by releasing waits, not by triggering individual orders.
-	orderPlan := BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm)
+	orderPlan := BuildChangeoverPlan(plan.diffs, plan.nodes, e.cfg.Web.AutoConfirm, e.activePullSnapshot(plan.nodes))
 	e.applyChangeoverPlan(changeover, orderPlan)
 
 	return e.db.GetActiveProcessChangeover(processID)
+}
+
+// binEmptyAtCoreNode returns a closure that reports whether the physical
+// bin at a CoreNodeName is empty (RemainingUOPCached == 0) for nodes in
+// the given process. The reuse-compatible-bins shortcut uses this to
+// skip press-index swaps when the next style produces the same payload
+// and reuse_compatible_bins is opted in. Errors collapse to "not empty"
+// — defensive, never auto-skip a swap on the basis of a runtime read
+// failure.
+func (e *Engine) binEmptyAtCoreNode(processID int64) func(coreNodeName string) bool {
+	nodes, err := e.db.ListProcessNodesByProcess(processID)
+	if err != nil {
+		return func(string) bool { return false }
+	}
+	idByName := make(map[string]int64, len(nodes))
+	for _, n := range nodes {
+		idByName[n.CoreNodeName] = n.ID
+	}
+	return func(name string) bool {
+		id, ok := idByName[name]
+		if !ok {
+			return false
+		}
+		rt, err := e.db.GetProcessNodeRuntime(id)
+		if err != nil || rt == nil {
+			return false
+		}
+		return rt.RemainingUOPCached == 0
+	}
 }
 
 // findNodeByCoreName finds a process node by its CoreNodeName.
@@ -219,24 +387,131 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, calledBy string) error {
 		if task.Situation == "unchanged" {
 			continue
 		}
-		if task.OldMaterialReleaseOrderID == nil {
-			continue
+		// Sequential evacuate emits TWO orders (one per robot). Both
+		// orders have a wait that gets released by a single operator
+		// click — release both order slots when the operator clicks.
+		// Single-leg evac paths keep NextMaterialOrderID nil, so the
+		// extra release is a no-op for non-sequential cases.
+		orderIDs := []*int64{task.OldMaterialReleaseOrderID}
+		if task.Situation == "evacuate" && task.NextMaterialOrderID != nil {
+			orderIDs = append(orderIDs, task.NextMaterialOrderID)
 		}
-		order, err := e.db.GetOrder(*task.OldMaterialReleaseOrderID)
-		if err != nil {
-			// Couldn't even read the order — log + collect for the rollup.
-			log.Printf("release changeover wait node %s: get order: %v", task.NodeName, err)
-			failures = append(failures, fmt.Errorf("node %s: get order: %w", task.NodeName, err))
-			continue
-		}
-		if order.Status == orders.StatusStaged {
-			if err := e.ReleaseOrderWithLineside(order.ID, disp); err != nil {
-				log.Printf("release changeover wait node %s: %v", task.NodeName, err)
-				failures = append(failures, fmt.Errorf("node %s: %w", task.NodeName, err))
+		for _, oid := range orderIDs {
+			if oid == nil {
+				continue
+			}
+			order, err := e.db.GetOrder(*oid)
+			if err != nil {
+				log.Printf("release changeover wait node %s: get order: %v", task.NodeName, err)
+				failures = append(failures, fmt.Errorf("node %s: get order: %w", task.NodeName, err))
+				continue
+			}
+			if order.Status == orders.StatusStaged {
+				if err := e.ReleaseOrderWithLineside(order.ID, disp); err != nil {
+					log.Printf("release changeover wait node %s: %v", task.NodeName, err)
+					failures = append(failures, fmt.Errorf("node %s: %w", task.NodeName, err))
+				}
 			}
 		}
 	}
 	return errors.Join(failures...)
+}
+
+// SequentialChangeoverCutover is the per-node operator action that gates
+// the active-side swap during a sequential SWAP changeover.
+//
+// Sequential SWAP ships a single complex order with a mid-sequence wait
+// at the active position. The robot has finished swapping the inactive
+// side and is parked at the active position. The operator clicks
+// "cutover" to:
+//
+//  1. Flip ActivePull to the previously-inactive (now freshly-stocked)
+//     side. The line starts pulling from the new bin immediately.
+//  2. Release the wait inside the running complex order so the robot
+//     proceeds to evac the now-inactive side and deliver the new bin.
+//
+// Order matters: flip BEFORE release. If the wait released first, the
+// robot could begin pickup at a position the line is still pulling
+// from. Atomic from the operator's POV (one HTTP call, server-side
+// sequence is internal).
+//
+// nodeID is the changeover task's primary process node (CoreNodeName).
+// The cutover handler re-reads ActivePull at the moment of the click to
+// find which physical side is inactive — the planner-time resolution is
+// not persisted, but ActivePull doesn't change between plan and cutover
+// (the changeover itself doesn't flip; only this handler does).
+func (e *Engine) SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error {
+	changeover, err := e.db.GetActiveProcessChangeover(processID)
+	if err != nil {
+		return fmt.Errorf("sequential cutover: no active changeover for process %d: %w", processID, err)
+	}
+	task, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if err != nil {
+		return fmt.Errorf("sequential cutover: get node task: %w", err)
+	}
+	if task.Situation != "swap" {
+		return fmt.Errorf("sequential cutover: node task situation is %q, not swap", task.Situation)
+	}
+	if task.FromClaimID == nil {
+		return fmt.Errorf("sequential cutover: node task has no from-claim id")
+	}
+	fromClaim, err := e.db.GetStyleNodeClaim(*task.FromClaimID)
+	if err != nil || fromClaim == nil {
+		return fmt.Errorf("sequential cutover: get from-claim: %w", err)
+	}
+	if fromClaim.SwapMode != "sequential" {
+		return fmt.Errorf("sequential cutover: from-claim swap_mode is %q, not sequential", fromClaim.SwapMode)
+	}
+	if fromClaim.PairedCoreNode == "" {
+		return fmt.Errorf("sequential cutover: from-claim has no paired_core_node")
+	}
+	if task.NextMaterialOrderID == nil {
+		return fmt.Errorf("sequential cutover: node task has no tracked complex order")
+	}
+
+	// Resolve inactive/active using the same logic the planner ran. The
+	// inactive-node CoreNodeName names the physical node we're flipping
+	// pull TO (it's been freshly stocked by the pre-cutover steps).
+	processNode, err := e.db.GetProcessNode(task.ProcessNodeID)
+	if err != nil {
+		return fmt.Errorf("sequential cutover: get process node: %w", err)
+	}
+	nodes, err := e.db.ListProcessNodesByProcess(processNode.ProcessID)
+	if err != nil {
+		return fmt.Errorf("sequential cutover: list process nodes: %w", err)
+	}
+	activePull := e.activePullSnapshot(nodes)
+	inactive, _ := resolveSequentialActivePull(fromClaim, activePull)
+	if inactive == "" {
+		return fmt.Errorf("sequential cutover: could not resolve inactive node from active-pull snapshot")
+	}
+	var inactivePhysical *processes.Node
+	for i := range nodes {
+		if nodes[i].CoreNodeName == inactive {
+			inactivePhysical = &nodes[i]
+			break
+		}
+	}
+	if inactivePhysical == nil {
+		return fmt.Errorf("sequential cutover: inactive node %q not found in process %d", inactive, processNode.ProcessID)
+	}
+
+	// 1. Flip first (so when the robot wakes, the line is already pulling
+	// from the freshly-stocked side and the robot can safely evac the
+	// now-stale active side).
+	if err := e.FlipABNode(inactivePhysical.ID); err != nil {
+		return fmt.Errorf("sequential cutover: flip active-pull to %s: %w", inactive, err)
+	}
+
+	// 2. Release the wait. The complex order's mid-sequence wait is at
+	// the active position; releasing it lets the robot proceed.
+	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: calledBy}
+	if err := e.ReleaseOrderWithLineside(*task.NextMaterialOrderID, disp); err != nil {
+		return fmt.Errorf("sequential cutover: release wait on order %d: %w", *task.NextMaterialOrderID, err)
+	}
+	log.Printf("sequential changeover: cutover at node %s (process=%d task=%d) — flipped pull to %s, released order %d",
+		task.NodeName, processID, task.ID, inactive, *task.NextMaterialOrderID)
+	return nil
 }
 
 func (e *Engine) CompleteProcessProductionCutover(processID int64) error {

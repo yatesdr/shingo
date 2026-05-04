@@ -210,6 +210,18 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 
 	payloadCode := order.PayloadCode
 	if payloadCode == "" {
+		// Empty PayloadCode on a non-complex order is a construction
+		// bug — the order was queued without the key the fulfiller
+		// needs. Returning silently here would leave the order forever
+		// queued with no operator-visible signal; route through the
+		// standard failure path so the operator sees it.
+		detail := "order has empty payload_code; cannot match a source bin"
+		if s.failFn != nil {
+			s.failFn(order.ID, "structural", detail)
+		} else {
+			s.logFn("fulfillment: order %d has empty payload_code but failFn not wired — order left in queued state, fix scanner construction",
+				order.ID)
+		}
 		return false
 	}
 
