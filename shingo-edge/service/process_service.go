@@ -2,6 +2,7 @@ package service
 
 import (
 	"shingoedge/store"
+	"shingoedge/store/lineside"
 	"shingoedge/store/processes"
 )
 
@@ -96,6 +97,13 @@ func (s *ProcessService) DeleteNode(id int64) error {
 // inserting a fresh row when none exists yet.
 func (s *ProcessService) EnsureNodeRuntime(processNodeID int64) (*processes.RuntimeState, error) {
 	return s.db.EnsureProcessNodeRuntime(processNodeID)
+}
+
+// ListLinesideBucketsForNode returns every lineside bucket on a node
+// (active and stranded), active rows first. Powers the admin "Lineside
+// Buckets" page where engineers clear stuck chips.
+func (s *ProcessService) ListLinesideBucketsForNode(processNodeID int64) ([]lineside.Bucket, error) {
+	return s.db.ListLinesideBuckets(processNodeID)
 }
 
 // UpdateNodeRuntimeOrders writes the active and staged order ids on

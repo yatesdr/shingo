@@ -3,7 +3,7 @@
 <div class="flex flex-between mb-2">
   <h1>Lineside Buckets</h1>
   <div class="text-muted" style="font-size:0.9rem;">
-    Engineer override — clear or edit lineside material counts. Normal release/drop cycles still drive routine HMI updates.
+    Engineer override — clear or correct lineside bucket qty (the part chips on the operator HMI). Normal capture/drain still drives routine updates.
   </div>
 </div>
 
@@ -14,68 +14,63 @@
         <th>Process</th>
         <th>Station</th>
         <th>Node</th>
-        <th>Bin</th>
-        <th>Payload</th>
-        <th style="text-align:right;">Count / Capacity</th>
-        <th style="width:220px;">Edit Count</th>
-        <th style="width:120px;">Clear Slot</th>
+        <th>Style</th>
+        <th>Part</th>
+        <th>State</th>
+        <th style="text-align:right;">Qty</th>
+        <th style="width:220px;">Edit Qty</th>
+        <th style="width:120px;">Clear</th>
       </tr>
     </thead>
     <tbody>
       {{range .Rows}}
-      <tr data-node-id="{{.NodeID}}" data-capacity="{{.Capacity}}">
+      <tr data-bucket-id="{{.BucketID}}">
         <td>{{.ProcessName}}</td>
         <td>{{.StationName}}</td>
-        <td title="{{.CoreNodeName}}">{{.NodeName}}</td>
-        <td class="mono">{{.BinLabel}}{{if eq .BinLabel ""}}#{{.BinID}}{{end}}</td>
-        <td class="mono">{{.PayloadCode}}</td>
-        <td style="text-align:right;">
-          <span class="mono">{{.UOPCount}}</span>
-          <span class="text-muted">/ {{if .Capacity}}{{.Capacity}}{{else}}—{{end}}</span>
+        <td>{{.NodeName}}</td>
+        <td>{{.StyleName}}</td>
+        <td class="mono">{{.PartNumber}}</td>
+        <td>
+          {{if eq .State "active"}}<span class="badge">active</span>{{else}}<span class="badge text-muted">{{.State}}</span>{{end}}
         </td>
+        <td style="text-align:right;" class="mono">{{.Qty}}</td>
         <td>
           <div class="flex gap-1">
-            <input type="number" min="0" {{if .Capacity}}max="{{.Capacity}}"{{end}} value="{{.UOPCount}}" class="lineside-count-input" style="width:90px;">
-            <button class="btn btn-sm btn-primary" onclick="adminEditLinesideUOP(this)">Apply</button>
+            <input type="number" min="0" value="{{.Qty}}" class="lineside-qty-input" style="width:90px;">
+            <button class="btn btn-sm btn-primary" onclick="adminEditLinesideBucket(this)">Apply</button>
           </div>
           <div class="lineside-warn text-muted" style="font-size:0.8rem;display:none;"></div>
         </td>
         <td>
-          <button class="btn btn-sm btn-danger" onclick="adminClearLinesideSlot(this)">Clear</button>
+          <button class="btn btn-sm btn-danger" onclick="adminClearLinesideBucket(this)">Clear</button>
         </td>
       </tr>
       {{else}}
-      <tr><td colspan="8" class="text-muted" style="text-align:center;padding:1rem;">No occupied slots — no bins are currently bound at any node.</td></tr>
+      <tr><td colspan="9" class="text-muted" style="text-align:center;padding:1rem;">No lineside buckets — no parts currently kitted at any node.</td></tr>
       {{end}}
     </tbody>
   </table>
 </div>
 
 <script>
-async function adminEditLinesideUOP(btn) {
+async function adminEditLinesideBucket(btn) {
   const tr = btn.closest('tr');
-  const nodeID = tr.getAttribute('data-node-id');
-  const capacity = parseInt(tr.getAttribute('data-capacity') || '0', 10);
-  const input = tr.querySelector('.lineside-count-input');
+  const bucketID = tr.getAttribute('data-bucket-id');
+  const input = tr.querySelector('.lineside-qty-input');
   const warn = tr.querySelector('.lineside-warn');
-  let count = parseInt(input.value, 10);
-  if (isNaN(count) || count < 0) {
-    warn.textContent = 'Count must be a non-negative number.';
+  let qty = parseInt(input.value, 10);
+  if (isNaN(qty) || qty < 0) {
+    warn.textContent = 'Qty must be a non-negative number.';
     warn.style.display = '';
     return;
-  }
-  if (capacity > 0 && count > capacity) {
-    if (!confirm('Count ' + count + ' exceeds capacity ' + capacity + '. The server will reject this. Apply anyway?')) {
-      return;
-    }
   }
   warn.style.display = 'none';
   btn.disabled = true;
   try {
-    const resp = await fetch('/api/admin/lineside/' + encodeURIComponent(nodeID) + '/uop', {
+    const resp = await fetch('/api/admin/lineside/buckets/' + encodeURIComponent(bucketID) + '/qty', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({count: count}),
+      body: JSON.stringify({qty: qty}),
     });
     const body = await resp.json().catch(() => ({}));
     if (!resp.ok) {
@@ -89,15 +84,15 @@ async function adminEditLinesideUOP(btn) {
   }
 }
 
-async function adminClearLinesideSlot(btn) {
+async function adminClearLinesideBucket(btn) {
   const tr = btn.closest('tr');
-  const nodeID = tr.getAttribute('data-node-id');
-  if (!confirm('Clear the active bin pointer on this slot? Edge will stop attributing counts to this bin until a new one is delivered.')) {
+  const bucketID = tr.getAttribute('data-bucket-id');
+  if (!confirm('Clear this lineside bucket? Edge will delete the row and emit a delta to Core. Operators will see the chip vanish.')) {
     return;
   }
   btn.disabled = true;
   try {
-    const resp = await fetch('/api/admin/lineside/' + encodeURIComponent(nodeID) + '/clear', {
+    const resp = await fetch('/api/admin/lineside/buckets/' + encodeURIComponent(bucketID) + '/clear', {
       method: 'POST',
     });
     const body = await resp.json().catch(() => ({}));

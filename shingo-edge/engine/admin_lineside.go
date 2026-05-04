@@ -7,79 +7,58 @@ import (
 	"shingo/protocol"
 )
 
-// AdminAdjustLinesideUOP is the admin override for a slot's lineside UOP, exposed
-// via the team-leader / engineer-only "Lineside Buckets" page on edge. Two ops:
+// AdminAdjustLinesideBucket is the engineer / team-leader override for a
+// single lineside bucket, exposed via the edge "Lineside Buckets" admin
+// page. Two ops:
 //
-//   - Edit count (clearBin=false): caps targetUOP to [0, claim.UOPCapacity], emits
-//     a BinUOPDelta with reason ReasonOperatorCorrection so Core's bins.uop_remaining
-//     mirrors, and writes the new count to the runtime row.
+//   - Edit qty (clearBucket=false): set the bucket to targetQty exactly.
+//     Computes a signed delta against the current qty, emits a
+//     LinesideBucketDelta with ReasonOperatorCorrectionBucket so Core's
+//     lineside_buckets mirror tracks, and writes the new qty on edge
+//     (deleting the row when the new qty is 0 — matches the
+//     SetForReconcile contract).
 //
-//   - Clear slot (clearBin=true): nulls active_bin_id and zeroes the runtime cache.
-//     Does NOT emit a bin delta — the engineer is admitting state drift, not asserting
-//     the bin's contents. Bin row on Core stays as-is for inventory purposes.
+//   - Clear bucket (clearBucket=true): targetQty is forced to 0. Same
+//     wire-side mechanics; the bucket row is deleted on edge.
 //
-// Normal release → drop cycles still drive routine HMI updates; this is for
-// unstuck scenarios where edge state diverged and someone needs to realign
-// without restarting flow.
-func (e *Engine) AdminAdjustLinesideUOP(nodeID int64, targetUOP int, clearBin bool) error {
-	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
+// The capture/drain pipeline is the normal source of bucket changes;
+// this admin path is for unstuck scenarios where state has drifted
+// (chip lingering on the HMI after operations the bucket layer didn't
+// observe). Audit trail at Core: bin_uop_audit's bucket equivalent
+// records source, station, and the delta with reason=operator_correction.
+func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearBucket bool) error {
+	bucket, err := e.db.GetLinesideBucket(bucketID)
 	if err != nil {
-		return fmt.Errorf("load node %d: %w", nodeID, err)
+		return fmt.Errorf("get bucket %d: %w", bucketID, err)
 	}
 
-	if clearBin {
-		var nilBin *int64
-		if err := e.db.SetProcessNodeRuntimeWithBin(nodeID, runtime.ActiveClaimID, nilBin, 0); err != nil {
-			return fmt.Errorf("clear runtime for node %s: %w", node.Name, err)
-		}
-		log.Printf("admin_lineside: cleared slot on node %s (was bin=%v, uop=%d)",
-			node.Name, runtime.ActiveBinID, runtime.RemainingUOPCached)
-		return nil
+	if clearBucket {
+		targetQty = 0
+	}
+	if targetQty < 0 {
+		return fmt.Errorf("bucket qty cannot be negative")
 	}
 
-	if claim == nil {
-		return fmt.Errorf("node %s has no active claim — can't edit count", node.Name)
-	}
-	if runtime.ActiveBinID == nil {
-		return fmt.Errorf("node %s has no bin loaded — nothing to edit", node.Name)
-	}
-	if targetUOP < 0 {
-		return fmt.Errorf("uop count cannot be negative")
-	}
-	if targetUOP > claim.UOPCapacity {
-		return fmt.Errorf("uop count %d exceeds capacity %d", targetUOP, claim.UOPCapacity)
+	delta := targetQty - bucket.Qty
+	if delta != 0 && e.inventoryDelta != nil {
+		e.inventoryDelta.RecordBucket(bucket.NodeID, bucket.PairKey, bucket.StyleID, bucket.PartNumber,
+			delta, protocol.ReasonOperatorCorrectionBucket)
 	}
 
-	delta := targetUOP - runtime.RemainingUOPCached
-	if delta == 0 {
-		return nil
+	if err := e.db.SetLinesideBucketForReconcile(bucket.NodeID, bucket.PairKey, bucket.StyleID, bucket.PartNumber, targetQty); err != nil {
+		return fmt.Errorf("update bucket %d: %w", bucketID, err)
 	}
 
-	var payloadCode string
-	if e.coreClient.Available() {
-		bins, _ := e.coreClient.FetchNodeBins([]string{node.CoreNodeName})
-		for _, b := range bins {
-			if b.NodeName == node.CoreNodeName {
-				payloadCode = b.PayloadCode
-				break
-			}
-		}
-	}
-	if payloadCode == "" {
-		return fmt.Errorf("could not resolve payload code for node %s — is Core reachable?", node.Name)
-	}
-
-	if e.inventoryDelta != nil {
-		e.inventoryDelta.RecordBin(*runtime.ActiveBinID, payloadCode, delta, protocol.ReasonOperatorCorrection)
-	}
-	if err := e.db.UpdateProcessNodeUOP(nodeID, targetUOP); err != nil {
-		return fmt.Errorf("update runtime UOP for node %s: %w", node.Name, err)
-	}
 	if e.inventoryDelta != nil {
 		e.inventoryDelta.Flush()
 	}
 
-	log.Printf("admin_lineside: edited node %s bin=%d uop %d→%d delta=%+d",
-		node.Name, *runtime.ActiveBinID, runtime.RemainingUOPCached, targetUOP, delta)
+	op := "edited"
+	if clearBucket {
+		op = "cleared"
+	}
+	log.Printf("admin_lineside_bucket: %s bucket %d (node=%d style=%d part=%q): %d → %d delta=%+d",
+		op, bucketID, bucket.NodeID, bucket.StyleID, bucket.PartNumber,
+		bucket.Qty, targetQty, delta)
 	return nil
 }

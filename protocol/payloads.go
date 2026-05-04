@@ -579,6 +579,13 @@ const (
 	// reaching the bin. Always negative. Emitted by drainLinesideFirst's
 	// bucket-side return.
 	ReasonConsumeDrain LinesideBucketDeltaReason = "consume_drain"
+	// ReasonOperatorCorrectionBucket — engineer/team-leader override
+	// from the edge "Lineside Buckets" admin page (clear or edit qty).
+	// Sign matches the delta (negative for clears / qty reductions,
+	// positive for upward adjustments). Mirrors the bin-side
+	// ReasonOperatorCorrection in intent: a deliberate human correction,
+	// not automated state.
+	ReasonOperatorCorrectionBucket LinesideBucketDeltaReason = "operator_correction"
 )
 
 // BinUOPDelta carries a count change against a specific physical bin.

@@ -345,9 +345,11 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Post("/diagnostics/outbox/replay", h.apiReplayOutbox)
 			r.Post("/diagnostics/orders/sync", h.apiRequestOrderStatusSync)
 
-			// Lineside buckets admin (engineer override — clear slot, edit UOP)
-			r.Post("/admin/lineside/{id}/clear", h.apiAdminClearLinesideSlot)
-			r.Post("/admin/lineside/{id}/uop", h.apiAdminEditLinesideUOP)
+			// Lineside buckets admin (engineer override — clear or edit
+			// the lineside bucket chip the operator HMI shows for parts
+			// pulled to lineside during release).
+			r.Post("/admin/lineside/buckets/{id}/clear", h.apiAdminClearLinesideBucket)
+			r.Post("/admin/lineside/buckets/{id}/qty", h.apiAdminEditLinesideBucketQty)
 		})
 	})
 

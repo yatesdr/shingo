@@ -3,113 +3,68 @@ package www
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
-
-	"shingoedge/domain"
-	"shingoedge/engine"
 )
 
-// linesideBucketRow is the per-slot view-model rendered on the admin
-// "Lineside Buckets" page. One row per process_node that currently has
-// an active_bin_id pointer (i.e., edge believes a bin is at this slot).
+// linesideBucketRow is the per-bucket view-model rendered on the admin
+// "Lineside Buckets" page. One row per node_lineside_bucket entry — the
+// chip the operator HMI shows for parts pulled to lineside during a
+// release. Engineers use this page to clear stuck buckets or correct
+// drifted qtys without restarting the edge service.
 type linesideBucketRow struct {
-	NodeID       int64
-	NodeName     string
-	CoreNodeName string
-	StationName  string
-	ProcessName  string
-	BinID        int64
-	BinLabel     string
-	PayloadCode  string
-	UOPCount     int
-	Capacity     int
+	BucketID    int64
+	NodeID      int64
+	NodeName    string
+	StationName string
+	ProcessName string
+	StyleName   string
+	PartNumber  string
+	PairKey     string
+	Qty         int
+	State       string
 }
 
 func (h *Handlers) handleLinesideBuckets(w http.ResponseWriter, r *http.Request) {
 	processList, _ := h.engine.ProcessService().List()
 	allNodes, _ := h.engine.ProcessService().ListNodes()
 	stations, _ := h.engine.StationService().List()
+	allStyles, _ := h.engine.StyleService().List()
 
 	processName := make(map[int64]string, len(processList))
-	activeStyleByProcess := make(map[int64]int64, len(processList))
 	for _, p := range processList {
 		processName[p.ID] = p.Name
-		if p.ActiveStyleID != nil {
-			activeStyleByProcess[p.ID] = *p.ActiveStyleID
-		}
 	}
-
 	stationName := make(map[int64]string, len(stations))
 	for _, s := range stations {
 		stationName[s.ID] = s.Name
 	}
+	styleName := make(map[int64]string, len(allStyles))
+	for _, s := range allStyles {
+		styleName[s.ID] = s.Name
+	}
 
-	// Build (styleID, coreNodeName) → claim lookup for nodes whose process
-	// has an active style. Capacity comes off the claim.
-	claimByKey := make(map[string]*domain.NodeClaim)
-	for _, p := range processList {
-		if p.ActiveStyleID == nil {
+	rows := make([]linesideBucketRow, 0)
+	for _, n := range allNodes {
+		buckets, err := h.engine.ProcessService().ListLinesideBucketsForNode(n.ID)
+		if err != nil || len(buckets) == 0 {
 			continue
 		}
-		claims, _ := h.engine.StyleService().ListClaims(*p.ActiveStyleID)
-		for i := range claims {
-			c := claims[i]
-			claimByKey[claimKey(*p.ActiveStyleID, c.CoreNodeName)] = &c
-		}
-	}
-
-	// One bulk Core call for bin metadata across every node we'll show.
-	// Edge has no local bins table — bin label / payload code live on Core.
-	occupiedNodes := make([]domain.Node, 0, len(allNodes))
-	occupiedRuntime := make(map[int64]*domain.RuntimeState)
-	for i := range allNodes {
-		n := allNodes[i]
-		rt, err := h.engine.ProcessService().EnsureNodeRuntime(n.ID)
-		if err != nil || rt == nil || rt.ActiveBinID == nil {
-			continue
-		}
-		occupiedNodes = append(occupiedNodes, n)
-		occupiedRuntime[n.ID] = rt
-	}
-
-	binByNode := make(map[string]engine.NodeBinInfo)
-	if len(occupiedNodes) > 0 {
-		names := make([]string, 0, len(occupiedNodes))
-		for _, n := range occupiedNodes {
-			names = append(names, n.CoreNodeName)
-		}
-		bins, _ := h.engine.CoreAPI().FetchNodeBins(names)
-		for _, b := range bins {
-			binByNode[b.NodeName] = b
-		}
-	}
-
-	rows := make([]linesideBucketRow, 0, len(occupiedNodes))
-	for _, n := range occupiedNodes {
-		rt := occupiedRuntime[n.ID]
-		row := linesideBucketRow{
-			NodeID:       n.ID,
-			NodeName:     n.Name,
-			CoreNodeName: n.CoreNodeName,
-			ProcessName:  processName[n.ProcessID],
-			UOPCount:     rt.RemainingUOPCached,
-		}
-		if rt.ActiveBinID != nil {
-			row.BinID = *rt.ActiveBinID
-		}
-		if n.OperatorStationID != nil {
-			row.StationName = stationName[*n.OperatorStationID]
-		}
-		if styleID, ok := activeStyleByProcess[n.ProcessID]; ok {
-			if claim, ok := claimByKey[claimKey(styleID, n.CoreNodeName)]; ok {
-				row.Capacity = claim.UOPCapacity
+		for _, b := range buckets {
+			row := linesideBucketRow{
+				BucketID:    b.ID,
+				NodeID:      n.ID,
+				NodeName:    n.Name,
+				ProcessName: processName[n.ProcessID],
+				StyleName:   styleName[b.StyleID],
+				PartNumber:  b.PartNumber,
+				PairKey:     b.PairKey,
+				Qty:         b.Qty,
+				State:       b.State,
 			}
+			if n.OperatorStationID != nil {
+				row.StationName = stationName[*n.OperatorStationID]
+			}
+			rows = append(rows, row)
 		}
-		if b, ok := binByNode[n.CoreNodeName]; ok {
-			row.BinLabel = b.BinLabel
-			row.PayloadCode = b.PayloadCode
-		}
-		rows = append(rows, row)
 	}
 
 	anomalies, rpMap := loadAnomalyData(h)
@@ -122,42 +77,37 @@ func (h *Handlers) handleLinesideBuckets(w http.ResponseWriter, r *http.Request)
 	h.renderTemplate(w, r, "lineside-buckets.html", data)
 }
 
-func claimKey(styleID int64, coreNodeName string) string {
-	return coreNodeName + "@" + strconv.FormatInt(styleID, 10)
-}
-
-// apiAdminClearLinesideSlot nulls active_bin_id and zeroes the runtime UOP
-// for the given node. Engineer override — does not emit a bin delta.
-func (h *Handlers) apiAdminClearLinesideSlot(w http.ResponseWriter, r *http.Request) {
+// apiAdminClearLinesideBucket sets the bucket qty to 0, deleting the
+// row on edge and emitting a LinesideBucketDelta to Core.
+func (h *Handlers) apiAdminClearLinesideBucket(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid node id")
+		writeError(w, http.StatusBadRequest, "invalid bucket id")
 		return
 	}
-	if err := h.orchestration.AdminAdjustLinesideUOP(id, 0, true); err != nil {
+	if err := h.orchestration.AdminAdjustLinesideBucket(id, 0, true); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshMaterial")
 }
 
-// apiAdminEditLinesideUOP applies a count override to the active bin at the
-// given node. Body: {"count": N}. N is capped to [0, claim.UOPCapacity] in
-// the engine method.
-func (h *Handlers) apiAdminEditLinesideUOP(w http.ResponseWriter, r *http.Request) {
+// apiAdminEditLinesideBucketQty sets the bucket to a specific qty.
+// Body: {"qty": N}. Negative qty is rejected by the engine method.
+func (h *Handlers) apiAdminEditLinesideBucketQty(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid node id")
+		writeError(w, http.StatusBadRequest, "invalid bucket id")
 		return
 	}
 	var body struct {
-		Count int `json:"count"`
+		Qty int `json:"qty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	if err := h.orchestration.AdminAdjustLinesideUOP(id, body.Count, false); err != nil {
+	if err := h.orchestration.AdminAdjustLinesideBucket(id, body.Qty, false); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -116,10 +116,11 @@ type EngineOrchestration interface {
 	BucketBackfillNeeded() (bool, error)
 
 	// ── Lineside admin (team leader / engineer override) ───────────
-	// Backs the "Lineside Buckets" admin page. clearBin=true nulls the
-	// active_bin_id pointer; clearBin=false applies a capped delta and
-	// updates the runtime UOP cache.
-	AdminAdjustLinesideUOP(nodeID int64, targetUOP int, clearBin bool) error
+	// Backs the "Lineside Buckets" admin page. clearBucket=true sets
+	// the bucket qty to 0 (deleting the row); clearBucket=false sets
+	// qty to targetQty exactly. Either way emits a LinesideBucketDelta
+	// with ReasonOperatorCorrectionBucket so Core mirrors.
+	AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearBucket bool) error
 
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)
