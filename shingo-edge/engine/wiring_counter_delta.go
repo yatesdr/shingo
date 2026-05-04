@@ -246,24 +246,25 @@ func (e *Engine) emitFallthroughDeltas(nodeID int64, runtime *processes.RuntimeS
 }
 
 // binAtNode resolves the bin currently associated with a node tick.
-// Returns (0, "") when no active order is tracked or the order has no
-// BinID yet — the caller skips bin delta emission in that case.
+// Returns (0, "") when no bin is tracked at the slot — the caller
+// skips bin delta emission in that case.
 //
-// The active order's BinID is the canonical "bin at this slot"
-// signal: at delivery, Core attaches the bin to the order, and the
-// order remains active on the runtime until release. PLC ticks during
-// that window attribute to that bin. payload returns the claim's
-// PayloadCode so Core can validate the wire envelope's payload_code
-// against the bin row.
+// runtime.ActiveBinID is the canonical "bin physically at this slot"
+// pointer. Set on delivery completion (when the bin arrives at the
+// node), cleared on pickup (when the bin physically leaves). Edge
+// owns this pointer; no order walk is needed. PLC ticks attribute to
+// whatever bin is at the slot regardless of which order delivered it
+// — covering the gap between order completion and the next order's
+// delivery, manual loads, and any other path where a bin is present
+// without a tracking order.
+//
+// payload returns the claim's PayloadCode so Core can validate the
+// wire envelope's payload_code against the bin row.
 func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.NodeClaim) (int64, string) {
-	if runtime == nil || runtime.ActiveOrderID == nil {
+	if runtime == nil || runtime.ActiveBinID == nil {
 		return 0, ""
 	}
-	order, err := e.db.GetOrder(*runtime.ActiveOrderID)
-	if err != nil || order == nil || order.BinID == nil {
-		return 0, ""
-	}
-	return *order.BinID, claim.PayloadCode
+	return *runtime.ActiveBinID, claim.PayloadCode
 }
 
 // drainLinesideFirst decrements the active lineside bucket(s) for the

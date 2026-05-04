@@ -26,7 +26,6 @@
 package messaging
 
 import (
-	"encoding/json"
 	"log"
 	"strconv"
 	"strings"
@@ -96,19 +95,6 @@ type InventoryDeltaReporter struct {
 	bins    sync.Map // map[string]*binDeltaEntry
 	buckets sync.Map // map[string]*bucketDeltaEntry
 
-	// pendingBinIDs / pendingBucketKeys track scopes with deltas
-	// recorded but not yet enqueued to the outbox. The reconciler
-	// queries these via IsPendingBinDelta / IsPendingBucketDelta and
-	// skips healing scopes that are still in flight — without the
-	// guard, a reconciliation pass that races with an unflushed
-	// accumulator would stomp the local cache with a stale Core read
-	// (Core hasn't seen the delta yet). pendingMu guards both maps;
-	// kept separate from flushMu so the record path doesn't contend
-	// with periodic flushes.
-	pendingMu         sync.Mutex
-	pendingBinIDs     map[int64]struct{}
-	pendingBucketKeys map[pendingBucketKey]struct{}
-
 	// flush serializes flush passes against each other (Stop's final
 	// flush must not race with the periodic loop). RecordBin /
 	// RecordBucket do not take this lock.
@@ -141,13 +127,11 @@ type InventoryDeltaReporter struct {
 // their zero values for the production defaults) before calling Start.
 func NewInventoryDeltaReporter(db *store.DB, stationID string) *InventoryDeltaReporter {
 	return &InventoryDeltaReporter{
-		db:                db,
-		stationID:         stationID,
-		interval:          defaultInventoryDeltaInterval,
-		stopCh:            make(chan struct{}),
-		flushSignal:       make(chan struct{}, 1),
-		pendingBinIDs:     make(map[int64]struct{}),
-		pendingBucketKeys: make(map[pendingBucketKey]struct{}),
+		db:          db,
+		stationID:   stationID,
+		interval:    defaultInventoryDeltaInterval,
+		stopCh:      make(chan struct{}),
+		flushSignal: make(chan struct{}, 1),
 	}
 }
 
@@ -217,10 +201,6 @@ func (r *InventoryDeltaReporter) RecordBin(binID int64, payloadCode string, delt
 	e.windowEnd = now
 	e.mu.Unlock()
 
-	r.pendingMu.Lock()
-	r.pendingBinIDs[binID] = struct{}{}
-	r.pendingMu.Unlock()
-
 	r.DebugLog.Log("inventory_delta: bin=%d delta=%+d reason=%s payload=%q",
 		binID, delta, reason, payloadCode)
 }
@@ -257,10 +237,6 @@ func (r *InventoryDeltaReporter) RecordBucket(nodeID int64, pairKey string, styl
 	e.reason = reason
 	e.windowEnd = now
 	e.mu.Unlock()
-
-	r.pendingMu.Lock()
-	r.pendingBucketKeys[pendingBucketKey{nodeID: nodeID, styleID: styleID, partNumber: partNumber}] = struct{}{}
-	r.pendingMu.Unlock()
 
 	r.DebugLog.Log("inventory_delta: bucket node=%d part=%q delta=%+d reason=%s",
 		nodeID, partNumber, delta, reason)
@@ -372,21 +348,6 @@ func (r *InventoryDeltaReporter) flushBins() {
 			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
 			return true
 		}
-		// Enqueue confirmed; clear pending only if no new delta
-		// accumulated during the enqueue. Hold the entry mutex while
-		// checking so a concurrent RecordBin can't slip a +delta in
-		// between the empty-check and the pending-delete (which would
-		// strand the new delta as "not pending" until the next flush
-		// — letting the reconciler heal during a real in-flight
-		// window).
-		e.mu.Lock()
-		drained := e.delta == 0
-		e.mu.Unlock()
-		if drained {
-			r.pendingMu.Lock()
-			delete(r.pendingBinIDs, sBinID)
-			r.pendingMu.Unlock()
-		}
 
 		r.DebugLog.Log("inventory_delta_reporter: flushed bin=%d delta=%+d seq=%d reason=%s",
 			sBinID, sDelta, seq, sReason)
@@ -459,16 +420,6 @@ func (r *InventoryDeltaReporter) flushBuckets() {
 			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
 			return true
 		}
-		// Symmetric to flushBins: only clear pending if no new delta
-		// accumulated during enqueue.
-		e.mu.Lock()
-		drained := e.delta == 0
-		e.mu.Unlock()
-		if drained {
-			r.pendingMu.Lock()
-			delete(r.pendingBucketKeys, pendingBucketKey{nodeID: sNodeID, styleID: sStyleID, partNumber: sPartNumber})
-			r.pendingMu.Unlock()
-		}
 
 		r.DebugLog.Log("inventory_delta_reporter: flushed bucket node=%d part=%q delta=%+d seq=%d reason=%s",
 			sNodeID, sPartNumber, sDelta, seq, sReason)
@@ -522,112 +473,6 @@ func (r *InventoryDeltaReporter) clock() time.Time {
 // metrics endpoint so dashboards can trend outbox health.
 func (r *InventoryDeltaReporter) FlushFailures() int64 {
 	return r.flushFailures.Load()
-}
-
-// IsPendingBinDelta reports whether the reporter has accumulated or
-// in-flight deltas for the given bin id. The reconciler queries this
-// before healing a bin's local cache from Core's authoritative read —
-// while a delta is in flight, Core's snapshot is stale relative to
-// Edge's accumulator (or the outbox), and healing would stomp the
-// local value with stale Core state. Skipping the heal lets the next
-// pass try once the in-flight window closes.
-func (r *InventoryDeltaReporter) IsPendingBinDelta(binID int64) bool {
-	r.pendingMu.Lock()
-	_, ok := r.pendingBinIDs[binID]
-	r.pendingMu.Unlock()
-	return ok
-}
-
-// IsPendingBucketDelta reports whether the reporter has accumulated or
-// in-flight bucket deltas for the given (node, style, part) tuple.
-// The pending set keys on these three fields without the pairKey —
-// matches the reconciler's query signature, which doesn't carry
-// pairKey context, and is conservative (any pair-key for this scope
-// counts as pending).
-func (r *InventoryDeltaReporter) IsPendingBucketDelta(nodeID, styleID int64, partNumber string) bool {
-	r.pendingMu.Lock()
-	defer r.pendingMu.Unlock()
-	_, ok := r.pendingBucketKeys[pendingBucketKey{nodeID: nodeID, styleID: styleID, partNumber: partNumber}]
-	return ok
-}
-
-// LoadPendingFromOutbox seeds the pending sets from outbox entries that
-// were enqueued before the process started but haven't been sent yet.
-// Call once at startup, before the reconciler begins. Without it, a
-// post-crash recovery would fail to gate the first reconciliation
-// pass: deltas already on-disk in the outbox aren't in the in-memory
-// pendingBinIDs map, so the reconciler would happily heal a bin whose
-// in-flight delta hasn't been applied at Core yet.
-//
-// A row that fails to decode is skipped (logged but absorbed) rather
-// than failing the whole load — a partially-loaded pending set still
-// gates the bins it could decode, which is strictly better than empty.
-func (r *InventoryDeltaReporter) LoadPendingFromOutbox() error {
-	msgs, err := r.db.ListUnsentOutboxByType([]string{
-		protocol.SubjectBinUOPDelta,
-		protocol.SubjectLinesideBucketDelta,
-	})
-	if err != nil {
-		return err
-	}
-	r.pendingMu.Lock()
-	defer r.pendingMu.Unlock()
-	// Outbox payload structure: bytes → Envelope (.Payload is a
-	// marshaled Data wrapper) → Data (.Body is the typed delta). Three
-	// layers; the typed-delta unmarshal needs Data.Body, not
-	// Envelope.Payload directly.
-	for _, m := range msgs {
-		var env protocol.Envelope
-		if err := json.Unmarshal(m.Payload, &env); err != nil {
-			log.Printf("inventory_delta_reporter: decode outbox row id=%d: %v", m.ID, err)
-			continue
-		}
-		var data protocol.Data
-		if err := json.Unmarshal(env.Payload, &data); err != nil {
-			log.Printf("inventory_delta_reporter: decode data wrapper row id=%d: %v", m.ID, err)
-			continue
-		}
-		switch m.MsgType {
-		case protocol.SubjectBinUOPDelta:
-			var d protocol.BinUOPDelta
-			if err := json.Unmarshal(data.Body, &d); err != nil {
-				log.Printf("inventory_delta_reporter: decode bin delta row id=%d: %v", m.ID, err)
-				continue
-			}
-			r.pendingBinIDs[d.BinID] = struct{}{}
-		case protocol.SubjectLinesideBucketDelta:
-			var d protocol.LinesideBucketDelta
-			if err := json.Unmarshal(data.Body, &d); err != nil {
-				log.Printf("inventory_delta_reporter: decode bucket delta row id=%d: %v", m.ID, err)
-				continue
-			}
-			r.pendingBucketKeys[pendingBucketKey{nodeID: d.NodeID, styleID: d.StyleID, partNumber: d.PartNumber}] = struct{}{}
-		}
-	}
-	return nil
-}
-
-// pendingBucketKey is the in-memory key for the pending bucket set —
-// node id + style id + part number. Intentionally asymmetric with
-// bucketScopeKey (which carries pairKey for Core's dedup table):
-//
-//   - bucketScopeKey: full (nodeID|pairKey|styleID|partNumber). Stable
-//     wire format pinned by Core's inventory_delta_dedup. Do not change.
-//   - pendingBucketKey: drops pairKey. The reconciler's IsPendingBucketDelta
-//     query signature doesn't carry pairKey context (Core's snapshot
-//     row pairs aren't always meaningful Edge-side), so the gate keys
-//     on what the caller can supply.
-//
-// The asymmetry is deliberate. Resist the urge to "fix" the gate to
-// match the dedup key — treating any pair as pending for a given
-// (node, style, part) scope is the *conservative* gate: false positives
-// are no-op skips that the next pass picks up. False negatives (the
-// alternative if we missed-keyed) would mean healing during an
-// in-flight delta, which is the bug Item 2 was designed to prevent.
-type pendingBucketKey struct {
-	nodeID     int64
-	styleID    int64
-	partNumber string
 }
 
 // bucketScopeKey builds the dedup scope_key for a LinesideBucketDelta.

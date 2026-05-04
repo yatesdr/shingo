@@ -435,16 +435,17 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 		t.Fatalf("seed drained runtime: %v", err)
 	}
 
-	// DeliveryNode must equal the seeded node's CoreNodeName for the
-	// post-#11 predicate to fire (handleNormalReplenishment skips
-	// orders whose DeliveryNode != process_node CoreNodeName).
-	// Prefix "LSD-IDEMP" → CoreNodeName "LSD-IDEMP-NODE".
+	// DeliveryNode must equal the seeded node's CoreNodeName for
+	// binArrivingAt to fire. BinID set so resolveReplenishUOP returns
+	// claim capacity.
 	orderID, err := db.CreateOrder("uuid-idemp", orders.TypeComplex,
 		&nodeID, false, 1, "LSD-IDEMP-NODE", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
+	deliveredBin := int64(404)
+	db.UpdateOrderBinID(orderID, &deliveredBin)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -629,14 +630,18 @@ func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 		t.Fatalf("seed runtime: %v", err)
 	}
 
-	// DeliveryNode must equal the seeded node's CoreNodeName for the
-	// post-#11 predicate to fire. Prefix "LSD-RETR" → "LSD-RETR-NODE".
+	// DeliveryNode must equal the seeded node's CoreNodeName for
+	// binArrivingAt to fire. Prefix "LSD-RETR" → "LSD-RETR-NODE".
+	// BinID must be set so binArrivingAt returns a non-nil pointer
+	// (otherwise resolveReplenishUOP correctly returns 0 — empty slot).
 	orderID, err := db.CreateOrder("uuid-retr", orders.TypeRetrieve,
 		&nodeID, false, 1, "LSD-RETR-NODE", "", "", "", false, "")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
+	deliveredBin := int64(101)
+	db.UpdateOrderBinID(orderID, &deliveredBin)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()

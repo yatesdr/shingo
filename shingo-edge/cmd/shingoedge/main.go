@@ -158,11 +158,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		return db.CountActiveOrders()
 	})
 	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
-	// Item 1: piggyback the UOP reconciler on the heartbeat cadence.
-	// Apply the configured reconcile interval (defaults to 60s in
-	// config.Defaults) so the gate matches the heartbeat tick rate.
-	eng.SetReconcileInterval(cfg.UOP.ReconcileInterval)
-	hb.SetReconcileFn(func() { eng.Reconcile(false) })
 	hb.Start()
 	// Note: hb.Stop() is not deferred here — it lives for the process lifetime
 	// and is cleaned up by the Kafka client close.

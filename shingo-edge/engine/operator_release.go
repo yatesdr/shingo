@@ -41,7 +41,6 @@
 package engine
 
 import (
-	"errors"
 	"fmt"
 
 	"shingo/protocol"
@@ -307,18 +306,13 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		}
 	}
 
-	// Flush boundary + pending-delta guard: drain any accumulated
-	// bin/bucket deltas for this scope to the outbox before shipping
-	// the OrderRelease envelope. After the flush, if the reporter
-	// still reports the bin as pending the enqueue failed transiently
-	// — abort the release so it doesn't race with the next flush
-	// attempt at Core. The operator retries; the periodic loop
-	// recovers the outbox in the meantime.
+	// Flush boundary: drain any accumulated bin/bucket deltas for this
+	// scope to the outbox before shipping the OrderRelease envelope.
+	// Once enqueued, Kafka delivery semantics + Core's inventory_delta_dedup
+	// handle the rest; we trust the bus rather than abort the release on
+	// in-flight state.
 	if e.inventoryDelta != nil {
 		e.inventoryDelta.Flush()
-		if order.BinID != nil && e.inventoryDelta.IsPendingBinDelta(*order.BinID) {
-			return ErrCountChangePending
-		}
 	}
 
 	if err := e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy); err != nil {
@@ -327,13 +321,6 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 
 	return nil
 }
-
-// ErrCountChangePending is returned by ReleaseOrderWithLineside when the
-// reporter still has unflushed deltas for the released bin after a
-// flush attempt. The operator UI surfaces this as "count change
-// pending, please retry" — the in-flight delta needs to land at Core
-// before the manifest-sync release can ship.
-var ErrCountChangePending = errors.New("count change pending — retry release after delta flush completes")
 
 // computeReleaseRemainingUOP turns the operator's declared disposition into
 // the *int that gets sent on the OrderRelease envelope.

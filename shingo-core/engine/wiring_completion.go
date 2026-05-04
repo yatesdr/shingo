@@ -41,18 +41,31 @@ func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	e.applyBinArrivalForOrder(order)
 
 	// Ship the bin ID so Edge can attribute PLC tick deltas to the
-	// right bin. Single-bin orders only; multi-bin orders leave it
-	// nil. Edge's runtime cache (kept in lockstep with Core by the
-	// reconciler) is the source of truth for bin UOP at completion
-	// time — the snapshot field this envelope used to carry was
-	// retired.
+	// right bin. Single-bin orders carry BinID; multi-bin orders leave
+	// it nil and rely on bucket deltas instead. Edge's bin-ownership
+	// flip means active_bin_id at the runtime row is now sourced from
+	// this envelope — without it, Edge can't track tick attribution
+	// for the duration the bin sits at the slot.
 	var binID *int64
+	multiBin := false
 	if order.BinID != nil {
 		orderBins, _ := e.db.ListOrderBins(order.ID)
 		if len(orderBins) == 0 {
 			v := *order.BinID
 			binID = &v
+		} else {
+			multiBin = true
 		}
+	}
+
+	// Diagnostic: surface the missing-bin case so a future "Edge isn't
+	// tracking ticks" investigation can grep for the cause. order.BinID
+	// nil on a single-bin order means planMove never persisted the bin
+	// reference (a known failure mode the bin-stuck-at-source log at
+	// applyBinArrivalForOrder also tracks).
+	if binID == nil && !multiBin {
+		e.logFn("engine: order=%d type=%s shipped order.delivered without bin_id (order.BinID nil at delivery — Edge tick attribution will be silent until next order)",
+			order.ID, order.OrderType)
 	}
 
 	if err := e.sendToEdge(protocol.TypeOrderDelivered, order.StationID, &protocol.OrderDelivered{

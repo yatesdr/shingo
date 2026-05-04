@@ -26,26 +26,18 @@ import (
 	"shingo/protocol"
 )
 
-// resolveReplenishUOP returns the runtime UOP value to set when a bin
-// arrives at a node via a delivery completion (handleNormalReplenishment,
-// handleChangeoverRelease, handleComplexOrderBCompletion, the
-// done-branch of handleKeepStagedOrderBCompletion).
+// resolveReplenishUOP returns the runtime UOP value to set on a delivery
+// completion. Produce nodes start at 0 (line ticks UP into the bin);
+// other roles reset to full claim capacity (line ticks DOWN from there).
 //
-// Decision matrix (post-Item-8):
-//
-//   - role == Produce → 0. A produce node receives an empty bin; the
-//     line ticks UP into it.
-//   - role != Produce → claimCapacity. The runtime is initialized to
-//     "assume a full bin"; the reconciler then heals from Core's
-//     authoritative read on the next pass (typically within 60s).
-//
-// Pre-Item-8 this function consulted an OrderDelivered.BinUOPRemaining
-// snapshot to handle partial-back returns directly. Item 8 retired
-// the snapshot — the runtime cache (kept in lockstep with Core by the
-// reconciler) is now the source of truth. The trade-off — a brief
-// "looks like full bin" UI on partial-back returns until the heal —
-// is SME-accepted.
-func resolveReplenishUOP(role protocol.ClaimRole, claimCapacity int) int {
+// The binID parameter is accepted for symmetry with other completion-
+// path helpers but doesn't affect the value — even when no bin is
+// arriving (removal completion), the cached UOP stays at capacity.
+// active_bin_id (set separately on the same write) carries the
+// "is there a bin here?" signal; binAtNode keys off it so PLC ticks
+// don't attribute to an empty slot regardless of the cached UOP value.
+func resolveReplenishUOP(role protocol.ClaimRole, claimCapacity int, binID *int64) int {
+	_ = binID
 	if role == protocol.ClaimRoleProduce {
 		return 0
 	}

@@ -49,6 +49,22 @@ type orderCompletionCtx struct {
 	nodeTask  *processes.NodeTask // nil when no active changeover
 }
 
+// binArrivingAt returns order.BinID iff the order completes a delivery
+// to the given core node name. Removal-shaped completions (DeliveryNode
+// is the supermarket, not the line) return nil so callers correctly
+// mark the slot empty. Multi-bin orders (BinID nil at Core's
+// order.delivered envelope today) also return nil — bucket deltas
+// govern those flows separately.
+func binArrivingAt(order *storeorders.Order, coreNodeName string) *int64 {
+	if order == nil || order.BinID == nil {
+		return nil
+	}
+	if order.DeliveryNode != coreNodeName {
+		return nil
+	}
+	return order.BinID
+}
+
 // loadOrderCompletionCtx fetches the order, node, runtime, and changeover context.
 // Returns nil if any required lookup fails (order, node, runtime).
 // nodeTask may be nil when no active changeover exists — callers must check.
@@ -162,7 +178,9 @@ func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
 	}
 
 	// Manual path or drop: simple move order — only evacuation done, line cleared.
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, ctx.runtime.ActiveClaimID, 0); err != nil {
+	// Bin physically left the slot; clear active_bin_id so subsequent
+	// PLC ticks don't attribute to a bin that's no longer here.
+	if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, ctx.runtime.ActiveClaimID, nil, 0); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "line_cleared"); err != nil {
@@ -213,7 +231,6 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	if err != nil {
 		return true // matched the path but claim lookup failed
 	}
-	resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity)
 
 	// Sequential EVAC OrderB delivers to PairedCoreNode, not the
 	// primary. Reset the paired physical node's runtime instead of
@@ -224,10 +241,17 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 		fromClaim.SwapMode == "sequential" &&
 		ctx.nodeTask.Situation == "evacuate" &&
 		fromClaim.PairedCoreNode != "" {
-		e.resetSequentialEvacOrderBRuntime(ctx, fromClaim, toClaim, resetUOP)
+		e.resetSequentialEvacOrderBRuntime(ctx, fromClaim, toClaim)
 	} else {
 		claimID := toClaim.ID
-		if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
+		// binArrivingAt returns nil for removal-shaped Order B (DeliveryNode
+		// is the supermarket, not the line) so the slot is correctly marked
+		// empty; non-nil for sequential SWAP where the single complex order
+		// terminates at the line with the new bin. resolveReplenishUOP
+		// returns 0 when binID is nil so the cached UOP matches reality.
+		binID := binArrivingAt(ctx.order, ctx.node.CoreNodeName)
+		resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity, binID)
+		if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, &claimID, binID, resetUOP); err != nil {
 			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 		}
 	}
@@ -241,7 +265,9 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 // physical node at sequential EVAC OrderB completion. Each robot resets
 // its own position; OrderA's completion (handleChangeoverRelease)
 // resets primary, this fires for OrderB's completion to reset paired.
-func (e *Engine) resetSequentialEvacOrderBRuntime(ctx *orderCompletionCtx, fromClaim, toClaim *processes.NodeClaim, resetUOP int) {
+// Computes binID and resetUOP locally against the paired node so an
+// EVAC removal correctly leaves the slot empty (binID nil → resetUOP 0).
+func (e *Engine) resetSequentialEvacOrderBRuntime(ctx *orderCompletionCtx, fromClaim, toClaim *processes.NodeClaim) {
 	nodes, err := e.db.ListProcessNodesByProcess(ctx.node.ProcessID)
 	if err != nil {
 		log.Printf("sequential evac OrderB: list process nodes: %v", err)
@@ -263,7 +289,13 @@ func (e *Engine) resetSequentialEvacOrderBRuntime(ctx *orderCompletionCtx, fromC
 		pairedClaim = toClaim
 	}
 	pairedClaimID := pairedClaim.ID
-	if err := e.db.SetProcessNodeRuntime(pairedNode.ID, &pairedClaimID, resetUOP); err != nil {
+	// Order B might deliver to either the primary (rare) or the paired
+	// (usual EVAC pattern); binArrivingAt against the paired node's name
+	// captures the latter, returning nil otherwise. resolveReplenishUOP
+	// then maps nil → 0 (slot empty) and non-nil → claim capacity.
+	pairedBinID := binArrivingAt(ctx.order, fromClaim.PairedCoreNode)
+	pairedResetUOP := resolveReplenishUOP(pairedClaim.Role, pairedClaim.UOPCapacity, pairedBinID)
+	if err := e.db.SetProcessNodeRuntimeWithBin(pairedNode.ID, &pairedClaimID, pairedBinID, pairedResetUOP); err != nil {
 		log.Printf("sequential evac OrderB: reset paired runtime for node %d: %v", pairedNode.ID, err)
 	}
 }
@@ -323,15 +355,19 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 		}
 	}
 	claimID := toClaim.ID
-	resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity)
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
+	// Order A's terminal step is the active-side dropoff at the line —
+	// binArrivingAt picks up the new bin's ID when DeliveryNode matches.
+	// resolveReplenishUOP maps nil → 0 (slot empty) and non-nil →
+	// claim capacity.
+	binID := binArrivingAt(ctx.order, ctx.node.CoreNodeName)
+	resetUOP := resolveReplenishUOP(toClaim.Role, toClaim.UOPCapacity, binID)
+	if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, &claimID, binID, resetUOP); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 	// Also reset the paired position's runtime when the from-claim has
 	// a PairedCoreNode (sequential SWAP completion delivers to BOTH
-	// positions; runtime UOP must reflect that on both rows immediately,
-	// not wait the reconciler's ~60s heartbeat).
-	e.resetPairedRuntimeUOPForSequentialSwap(ctx, toClaim, resetUOP)
+	// positions; runtime UOP must reflect that on both rows immediately).
+	e.resetPairedRuntimeUOPForSequentialSwap(ctx, toClaim)
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
@@ -353,7 +389,7 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 //
 // Looks up the paired physical node by CoreNodeName within the task's
 // process. Logs and returns on any lookup failure rather than panicking.
-func (e *Engine) resetPairedRuntimeUOPForSequentialSwap(ctx *orderCompletionCtx, toClaim *processes.NodeClaim, resetUOP int) {
+func (e *Engine) resetPairedRuntimeUOPForSequentialSwap(ctx *orderCompletionCtx, toClaim *processes.NodeClaim) {
 	if ctx.nodeTask == nil || ctx.nodeTask.FromClaimID == nil {
 		return
 	}
@@ -391,7 +427,14 @@ func (e *Engine) resetPairedRuntimeUOPForSequentialSwap(ctx *orderCompletionCtx,
 		pairedClaim = toClaim
 	}
 	pairedClaimID := pairedClaim.ID
-	if err := e.db.SetProcessNodeRuntime(pairedNode.ID, &pairedClaimID, resetUOP); err != nil {
+	// Sequential SWAP delivers to BOTH positions in one terminal step;
+	// the order's DeliveryNode could be either the primary or the paired
+	// depending on dispatch shape. binArrivingAt against the paired name
+	// captures the latter case; nil otherwise leaves the paired slot
+	// correctly marked empty until its own delivery completion fires.
+	pairedBinID := binArrivingAt(ctx.order, fromClaim.PairedCoreNode)
+	pairedResetUOP := resolveReplenishUOP(pairedClaim.Role, pairedClaim.UOPCapacity, pairedBinID)
+	if err := e.db.SetProcessNodeRuntimeWithBin(pairedNode.ID, &pairedClaimID, pairedBinID, pairedResetUOP); err != nil {
 		log.Printf("sequential swap completion: reset paired runtime for node %d: %v", pairedNode.ID, err)
 	}
 }
@@ -436,8 +479,11 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 	}
 	log.Printf("side-cycle: L2 (filled-out) order %d for loader %s → %s", order.ID, ctx.node.Name, claim.OutboundDestination)
 	// Reset runtime so the loader UI clears the L1 order and can show L2 next.
+	// L1's empty bin physically arrived at the loader — capture its BinID so
+	// PLC ticks during the L2 outbound move can attribute correctly.
 	claimID := claim.ID
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, 0); err != nil {
+	binID := binArrivingAt(ctx.order, ctx.node.CoreNodeName)
+	if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, &claimID, binID, 0); err != nil {
 		log.Printf("side-cycle: set runtime for loader %d: %v", ctx.node.ID, err)
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
@@ -482,8 +528,11 @@ func (e *Engine) handleUnloaderFullInCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s", order.ID, ctx.node.Name, claim.OutboundDestination)
+	// U1's full bin arrived at the unloader — capture BinID for PLC tick
+	// attribution during the U2 outbound move.
 	claimID := claim.ID
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, 0); err != nil {
+	binID := binArrivingAt(ctx.order, ctx.node.CoreNodeName)
+	if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, &claimID, binID, 0); err != nil {
 		log.Printf("side-cycle: set runtime for unloader %d: %v", ctx.node.ID, err)
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, &order.ID, nil); err != nil {
@@ -505,7 +554,9 @@ func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claimID := claim.ID
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, 0); err != nil {
+	// L2/U2 move completed: bin physically left the slot. Clear the bin
+	// pointer so subsequent PLC ticks don't attribute to the departed bin.
+	if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, &claimID, nil, 0); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
@@ -569,9 +620,15 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	// here; the reconciler heals the runtime cache to Core's
 	// authoritative bin value within the next pass (~60s). Brief "looks
 	// like full bin" UI on partial-back returns is SME-accepted.
-	resetUOP := resolveReplenishUOP(claim.Role, claim.UOPCapacity)
-
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, resetUOP); err != nil {
+	// Set active_bin_id from the order's BinID iff the order delivered to
+	// this node. Removal-shaped orders (Order B in two-robot consume,
+	// sequential-removal step) have DeliveryNode=supermarket so binArrivingAt
+	// returns nil, correctly leaving the slot empty post-removal.
+	// resolveReplenishUOP maps nil → 0 (no bin → no UOP cached) and
+	// non-nil → role-appropriate reset (capacity for consume, 0 for produce).
+	binID := binArrivingAt(ctx.order, ctx.node.CoreNodeName)
+	resetUOP := resolveReplenishUOP(claim.Role, claim.UOPCapacity, binID)
+	if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, &claimID, binID, resetUOP); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 	}
 

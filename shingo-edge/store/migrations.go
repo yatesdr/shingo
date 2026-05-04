@@ -97,6 +97,11 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE process_node_runtime_states DROP COLUMN loaded_bin_label")
 	db.Exec("ALTER TABLE process_node_runtime_states DROP COLUMN loaded_at")
 
+	// Bin-ownership flip: active_bin_id is the canonical "what bin is at
+	// this slot" pointer (Edge-owned while the bin is at lineside).
+	// Idempotent — duplicate ALTER ADD COLUMN fails silently in SQLite.
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_bin_id INTEGER")
+
 	// Drop zombie nodes table (replaced by process_nodes + core node sync)
 	db.Exec("DROP TABLE IF EXISTS nodes")
 

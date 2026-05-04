@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS process_node_runtime_states (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     process_node_id    INTEGER NOT NULL UNIQUE REFERENCES process_nodes(id) ON DELETE CASCADE,
     active_claim_id    INTEGER REFERENCES style_node_claims(id) ON DELETE SET NULL,
+    active_bin_id      INTEGER,
     remaining_uop_cached INTEGER NOT NULL DEFAULT 0,
     active_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     staged_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL,

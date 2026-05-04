@@ -53,18 +53,10 @@ type InventoryDeltaSink interface {
 	RecordBucket(nodeID int64, pairKey string, styleID int64, partNumber string, delta int, reason protocol.LinesideBucketDeltaReason)
 	Flush()
 
-	// IsPendingBinDelta / IsPendingBucketDelta let the reconciler skip
-	// healing a scope that has unflushed deltas in the reporter or
-	// unsent entries in the outbox. Without the gate, a reconcile pass
-	// that races with an in-flight delta would stomp the local cache
-	// with a stale Core read.
-	IsPendingBinDelta(binID int64) bool
-	IsPendingBucketDelta(nodeID, styleID int64, partNumber string) bool
-
 	// FlushFailures returns the cumulative count of EnqueueOutbox
-	// failures across the bin and bucket flush paths. Item 9 surfaces
-	// it via the reconciler metrics endpoint for outbox-health
-	// dashboards.
+	// failures across the bin and bucket flush paths. Surfaces via
+	// engine metrics for outbox-health dashboards — sustained growth
+	// means the bus is wedged and bin-level state will diverge.
 	FlushFailures() int64
 }
 
@@ -114,12 +106,6 @@ type Engine struct {
 	// root via SetInventoryDeltaSink. Nil in test contexts that don't
 	// care about delta emission; every call site nil-guards.
 	inventoryDelta InventoryDeltaSink
-
-	// uopReconciler holds Phase 2 reconciler state (since-last-pass
-	// gate, cumulative drift counters). Lazily initialized on first
-	// Reconcile call so test engines that never invoke reconciliation
-	// don't carry the state.
-	uopReconciler *uopReconciler
 
 	Events    *EventBus
 	stopChan  chan struct{}

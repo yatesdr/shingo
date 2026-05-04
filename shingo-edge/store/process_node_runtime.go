@@ -18,9 +18,24 @@ func (db *DB) GetProcessNodeRuntime(processNodeID int64) (*processes.RuntimeStat
 }
 
 // SetProcessNodeRuntime updates the active claim and remaining UOP on
-// a runtime row.
+// a runtime row. Does not touch active_bin_id — callers that need
+// atomic bin-pointer turnover should use SetProcessNodeRuntimeWithBin.
 func (db *DB) SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error {
 	return processes.SetRuntime(db.DB, processNodeID, activeClaimID, remainingUOP)
+}
+
+// SetProcessNodeRuntimeWithBin updates active_claim_id, active_bin_id,
+// and remaining_uop_cached atomically. Used by completion handlers so
+// the bin pointer turns over at the same instant as the runtime reset.
+func (db *DB) SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error {
+	return processes.SetRuntimeWithBin(db.DB, processNodeID, activeClaimID, activeBinID, remainingUOP)
+}
+
+// SetProcessNodeActiveBinID writes only the active bin pointer on a
+// runtime row. Used by the bin-pickup handler to clear ownership
+// without disturbing the claim or count.
+func (db *DB) SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error {
+	return processes.SetActiveBinID(db.DB, processNodeID, activeBinID)
 }
 
 // UpdateProcessNodeRuntimeOrders writes the active and staged order

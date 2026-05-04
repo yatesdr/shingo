@@ -214,13 +214,19 @@ func emitOrderFailed(eng *Engine, orderID int64, orderUUID string, orderType pro
 }
 
 // markOrderTerminal advances an order to a terminal confirmed status so
-// wiring sees it as completed.
+// wiring sees it as completed. Also sets a default bin_id so the
+// completion handler's binArrivingAt picks it up — without this, every
+// test using this helper would land in the "no bin → reset to 0" path.
+// Tests that exercise the no-bin path explicitly should set bin_id to
+// nil after calling this helper.
 func markOrderTerminal(db *store.DB, orderID int64) {
 	db.UpdateOrderStatus(orderID, string(orders.StatusSubmitted))
 	db.UpdateOrderStatus(orderID, string(orders.StatusAcknowledged))
 	db.UpdateOrderStatus(orderID, string(orders.StatusInTransit))
 	db.UpdateOrderStatus(orderID, string(orders.StatusDelivered))
 	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
+	defaultBin := int64(900000 + orderID) // unique per order to avoid collisions
+	db.UpdateOrderBinID(orderID, &defaultBin)
 }
 
 // TestChangeover_AutoStaging verifies that StartProcessChangeover automatically

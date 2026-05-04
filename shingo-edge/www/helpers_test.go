@@ -102,8 +102,6 @@ type stubEngine struct {
 	backfillCalls       int
 	backfillForce       bool
 
-	// Item 9: ReconcilerMetrics spy.
-	reconcilerMetrics engine.UOPReconcilerMetrics
 	lastReleaseStagedOrdersDisposition *engine.ReleaseDisposition
 }
 
@@ -168,9 +166,6 @@ func (s *stubEngine) ReleaseNodeIntoProduction(int64, int64) (*storeorders.Order
 func (s *stubEngine) SwitchNodeToTarget(int64, int64) error                             { return nil }
 func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error                   { return nil }
 func (s *stubEngine) FlipABNode(int64) error { return nil }
-func (s *stubEngine) ReconcilerMetrics() engine.UOPReconcilerMetrics {
-	return s.reconcilerMetrics
-}
 
 func (s *stubEngine) BackfillBucketsForStation(force bool) (int, error) {
 	s.backfillCalls++

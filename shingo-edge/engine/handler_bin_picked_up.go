@@ -68,6 +68,13 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
 			if err := e.db.UpdateProcessNodeRuntimeOrders(*order.ProcessNodeID, nil, runtime.StagedOrderID); err != nil {
 				e.logFn("bin_picked_up: clear active order node=%d: %v", *order.ProcessNodeID, err)
 			}
+			// Bin physically left the slot — clear the bin pointer so
+			// PLC ticks during the gap before the next delivery don't
+			// attribute to a bin that's no longer here. Symmetric with
+			// the order-pointer clear above; same race guard applies.
+			if err := e.db.SetProcessNodeActiveBinID(*order.ProcessNodeID, nil); err != nil {
+				e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
+			}
 		}
 	}
 

@@ -2,7 +2,6 @@ package www
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -304,13 +303,6 @@ func (h *Handlers) apiReleaseOrder(w http.ResponseWriter, r *http.Request) {
 
 	disp := buildReleaseDisposition(req)
 	if err := h.orchestration.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		// ErrCountChangePending → 409 Conflict so the operator UI can
-		// distinguish "retry" from "permanent failure" and surface a
-		// retry hint rather than a generic error toast.
-		if errors.Is(err, engine.ErrCountChangePending) {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}

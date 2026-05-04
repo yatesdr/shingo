@@ -69,21 +69,27 @@ type NodeInput struct {
 }
 
 // RuntimeState is the per-process-node runtime row. Tracks the active
-// NodeClaim (which Style is running here), the cached UOP value
-// (kept in lockstep with Core's authoritative bins.uop_remaining via
-// the reconciler), and which Order rows are active or staged for the
-// node's two-robot flow. Active/StagedOrderID are the linchpin of the
-// swap-ready computation surfaced in the operator HMI.
+// NodeClaim (which Style is running here), the bin physically present
+// at the slot, the live UOP count, and which Order rows are active or
+// staged for the node's two-robot flow. Active/StagedOrderID are the
+// linchpin of the swap-ready computation surfaced in the operator HMI.
 //
-// RemainingUOPCached is a write-through cache of the bin's actual
-// uop_remaining; the reconciler heals drift on every heartbeat tick.
-// Operator UI reads this for instant feedback; authoritative writes
-// flow through the InventoryDeltaReporter → Core → bins.uop_remaining
-// path.
+// ActiveBinID is the canonical "what bin is physically at this slot"
+// pointer. Set when a delivery completes (the new bin lands), cleared
+// when the bin is picked up. Edge writes UOP changes against this bin
+// directly via the inventory delta path; binAtNode reads from this
+// field, not from the order pointer.
+//
+// RemainingUOPCached is the local write-through cache of the bin's
+// uop_remaining. Edge owns this number while the bin is at the node:
+// PLC ticks decrement here, deltas ship to Core, Core stays in sync.
+// No reverse heal — a stale Core value never overwrites Edge's live
+// number.
 type RuntimeState struct {
 	ID                 int64     `json:"id"`
 	ProcessNodeID      int64     `json:"process_node_id"`
 	ActiveClaimID      *int64    `json:"active_claim_id,omitempty"`
+	ActiveBinID        *int64    `json:"active_bin_id,omitempty"`
 	RemainingUOPCached int       `json:"remaining_uop_cached"`
 	ActiveOrderID      *int64    `json:"active_order_id,omitempty"`
 	StagedOrderID      *int64    `json:"staged_order_id,omitempty"`

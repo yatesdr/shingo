@@ -68,12 +68,13 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	for i, m := range manifest {
 		items[i] = ManifestItem{PartNumber: m.PartNumber, Quantity: m.Quantity, Description: m.Description}
 	}
-	if _, err := e.coreClient.LoadBin(&BinLoadRequest{
+	loadResp, err := e.coreClient.LoadBin(&BinLoadRequest{
 		NodeName:    node.CoreNodeName,
 		PayloadCode: payloadCode,
 		UOPCount:    uopCount,
 		Manifest:    items,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("load bin: %w", err)
 	}
 
@@ -88,6 +89,18 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// duplicating the side-cycle handler's responsibility.
 	if l1ID, l1Confirmed := e.confirmLoaderL1OnLoad(nodeID, uopCount); l1Confirmed {
 		log.Printf("bin_ops: confirmed L1 order %d on operator load at node %d", l1ID, nodeID)
+		// Belt-and-suspenders: set active_bin_id directly from Core's LoadBin
+		// response. handleLoaderEmptyInCompletion will also try to set it
+		// from the L1 order's BinID, but if Core's order.delivered envelope
+		// arrived without bin_id (multi-bin order, or pre-fix Core build)
+		// the event handler ends up with nil. The LoadBin response is the
+		// authoritative pointer at this exact moment.
+		if loadResp != nil && loadResp.BinID > 0 {
+			v := loadResp.BinID
+			if err := e.db.SetProcessNodeActiveBinID(nodeID, &v); err != nil {
+				log.Printf("bin_ops: set active_bin_id for node %d: %v", nodeID, err)
+			}
+		}
 		// Flush trigger: bin-loader confirm is the produce/manual_swap
 		// loader-side boundary at which the outgoing bin is "done" —
 		// any accumulated deltas attributed to that bin should ship
@@ -103,8 +116,16 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	// Fallback: no L1 in flight (e.g. operator loaded a bin that was placed
 	// at the loader manually rather than via a retrieve_empty). Set runtime
 	// and create L2 directly so the bin still gets dispatched to outbound.
+	// active_bin_id comes from Core's LoadBin response — that's the
+	// authoritative pointer to the bin physically at this slot, regardless
+	// of whether any order was tracking it.
 	claimID := claim.ID
-	if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, int(uopCount)); err != nil {
+	var activeBinID *int64
+	if loadResp != nil && loadResp.BinID > 0 {
+		v := loadResp.BinID
+		activeBinID = &v
+	}
+	if err := e.db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, activeBinID, int(uopCount)); err != nil {
 		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 	}
 	if claim.OutboundDestination != "" {

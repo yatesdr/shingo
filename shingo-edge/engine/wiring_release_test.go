@@ -356,61 +356,10 @@ func (s *flushTrackingSink) Flush() {
 	s.mu.Unlock()
 }
 
-// TestRegression_ReleaseRejectsWhenDeltaPending pins the Item 12
-// release-click pending guard. After the release-time Flush, if the
-// reporter still reports the bin as pending (a transient outbox
-// enqueue failure), ReleaseOrderWithLineside must return
-// ErrCountChangePending and decline to ship the OrderRelease envelope.
-// Without the guard, the release would race with the next periodic
-// flush at Core: the manifest sync could land before (or after) the
-// bin delta in unpredictable order, corrupting Core's bin count.
-func TestRegression_ReleaseRejectsWhenDeltaPending(t *testing.T) {
-	db := testEngineDB(t)
-	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix:      "REL-PEND",
-		PayloadCode: "PART-PEND",
-		UOPCapacity: 100,
-		InitialUOP:  100,
-	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 100); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
-	const binID int64 = 8001
-	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-pend")
-	bid := binID
-	_ = db.UpdateOrderBinID(orderID, &bid)
-	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID)
-
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-	// Sink seeded with the bin already pending — survives Flush
-	// because this fake sink doesn't actually drain on Flush, mimicking
-	// the production case where EnqueueOutbox failed transiently and
-	// the entry stays in pendingBinIDs.
-	sink := &flushTrackingSink{
-		fakeDeltaSink: fakeDeltaSink{
-			pendingBins: map[int64]struct{}{binID: {}},
-		},
-	}
-	eng.SetInventoryDeltaSink(sink)
-
-	disp := ReleaseDisposition{
-		Mode:            DispositionCaptureLineside,
-		LinesideCapture: map[string]int{"PART-PEND": 5},
-		CalledBy:        "test-op",
-	}
-	err := eng.ReleaseOrderWithLineside(orderID, disp)
-	if err != ErrCountChangePending {
-		t.Fatalf("ReleaseOrderWithLineside err = %v, want ErrCountChangePending (pending bin must abort release)", err)
-	}
-
-	// The order must NOT have transitioned to in_transit — the abort
-	// happens before orderMgr.ReleaseOrderWithDisposition runs.
-	o, _ := db.GetOrder(orderID)
-	if o.Status == orders.StatusInTransit {
-		t.Errorf("order status = %q, want NOT in_transit (release must not ship when pending)", o.Status)
-	}
-}
+// Pending-delta release guard test removed alongside the reconciler
+// deletion (bin-ownership flip). Trust-the-bus model: Flush enqueues
+// the deltas synchronously, Kafka delivery + Core's inventory_delta_dedup
+// handle ordering. FlushFailures surfaces real outbox wedging.
 
 // TestRegression_ReleaseAcceptsAfterFlush is the positive companion:
 // when the bin is not pending after Flush, the release proceeds

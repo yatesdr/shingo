@@ -95,10 +95,6 @@ func TestRegression_PartialBackTicksAttributeToReleasedBin(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  50,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 50); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
-
 	const binID int64 = 11002
 	const orderUUID = "uuid-bpu-partial"
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
@@ -109,6 +105,9 @@ func TestRegression_PartialBackTicksAttributeToReleasedBin(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 50); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()

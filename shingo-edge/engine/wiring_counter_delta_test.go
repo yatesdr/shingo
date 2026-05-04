@@ -1,9 +1,6 @@
 package engine
 
 import (
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 
@@ -169,57 +166,10 @@ func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
 	}
 }
 
-// TestRegression_ReconcilerNoPingPongOnNegativeRuntime pins the
-// Item 5.6 reconciler-stability invariant: when both Edge and Core
-// agree on a negative runtime value, the reconciler observes zero
-// drift and writes nothing. Pre-Item-5.6 the Edge clamp at zero made
-// every reconcile pass see drift (Core = -3, Edge = 0), heal Edge
-// to -3, then the next consume tick re-clamped to 0, then the next
-// reconcile healed again — a permanent log-spam loop with the
-// BinsHealed counter ticking up forever. Post-fix the cache holds
-// the negative value cleanly and the reconciler sits idle.
-func TestRegression_ReconcilerNoPingPongOnNegativeRuntime(t *testing.T) {
-	db := testEngineDB(t)
-	nodeID, _, claimID := seedReconcilerNode(t, db, "REC-NEG", "PART-RN")
-
-	// Both sides at -3 (post-overpack steady state). Use a real
-	// bin id Core will return so the comparison runs against a
-	// matching scope.
-	const binID int64 = 6101
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, -3); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(UOPStateResponse{
-			Bins: []BinUOPRow{
-				{BinID: binID, NodeName: "REC-NEG-NODE", PayloadCode: "PART-RN", UOPRemaining: -3},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	eng, _ := reconcilerTestEngine(t, db, srv.URL)
-	eng.Reconcile(true)
-
-	rt, _ := db.GetProcessNodeRuntime(nodeID)
-	if rt.RemainingUOPCached != -3 {
-		t.Errorf("runtime.RemainingUOPCached = %d, want -3 (matched values must not move)",
-			rt.RemainingUOPCached)
-	}
-	if eng.ReconcilerMetrics().BinsHealed != 0 {
-		t.Errorf("BinsHealed = %d, want 0 (no drift → no heal; the ping-pong loop must not re-fire on signed steady state)",
-			eng.ReconcilerMetrics().BinsHealed)
-	}
-
-	// Run a second pass to nail the no-ping-pong claim — the heal
-	// counter must STILL be zero.
-	eng.Reconcile(true)
-	if eng.ReconcilerMetrics().BinsHealed != 0 {
-		t.Errorf("BinsHealed after second pass = %d, want 0",
-			eng.ReconcilerMetrics().BinsHealed)
-	}
-}
+// Reconciler ping-pong test removed alongside the reconciler deletion
+// (bin-ownership flip). With no Core→Edge heal path, there is no loop
+// to test against. The signed-cache invariant is still pinned by
+// TestRegression_NegativeRuntimeFromOverpack above.
 
 // TestRegression_DrainLinesideAttribution pins the Phase 1 invariant:
 // when a consume tick fires against a node that has a non-empty
@@ -236,7 +186,8 @@ func TestRegression_DrainLinesideAttribution(t *testing.T) {
 		InitialUOP:  100,
 	})
 
-	// Seed an active order with a BinID — bin attribution requires it.
+	// Seed an active order with a BinID, and pin active_bin_id to the
+	// same value — bin attribution reads from the runtime row directly.
 	const binID int64 = 777
 	orderID, err := db.CreateOrder("uuid-drain-attr", orders.TypeRetrieve,
 		&nodeID, false, 1, "DRAIN-ATTR-NODE", "", "", "", false, "PART-DRAIN")
@@ -249,6 +200,9 @@ func TestRegression_DrainLinesideAttribution(t *testing.T) {
 	}
 	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil); err != nil {
 		t.Fatalf("set runtime orders: %v", err)
+	}
+	if err := db.SetProcessNodeActiveBinID(nodeID, &bid); err != nil {
+		t.Fatalf("set active_bin_id: %v", err)
 	}
 
 	// Seed a lineside bucket with 7 parts. A delta of 10 should drain
@@ -327,6 +281,7 @@ func TestRegression_NoBucketAllToBin(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+	_ = db.SetProcessNodeActiveBinID(nodeID, &bid)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -386,13 +341,13 @@ func TestRegression_NoSinkNoEmissionDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestRegression_BinAttributionRequiresBinID pins the deferred-bin
-// case: when the active order has no BinID set yet (multi-bin order,
-// older Core builds, or pre-delivery), the consume tick still fires
-// the runtime decrement and the bucket delta, but skips the bin
-// delta. The Phase 1 design accepts this as a known gap — the bucket
-// stream alone is enough to validate the wire round-trip.
-func TestRegression_BinAttributionRequiresBinID(t *testing.T) {
+// TestRegression_BinAttributionRequiresActiveBinID pins the
+// no-bin-at-slot case: when the runtime has no active_bin_id (slot
+// physically empty, or bootstrap before first delivery completes),
+// consume ticks must skip the bin delta. The runtime cache still
+// decrements locally — that's harmless drift on an idle slot — but
+// nothing ships to Core because there's no bin to attribute to.
+func TestRegression_BinAttributionRequiresActiveBinID(t *testing.T) {
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "NO-BIN-ID",
@@ -401,14 +356,16 @@ func TestRegression_BinAttributionRequiresBinID(t *testing.T) {
 		InitialUOP:  100,
 	})
 
-	// Active order — but no BinID. Models a delivered order whose
-	// pre-Phase-1 Core build didn't ship the bin id field.
+	// Active order — but explicitly clear active_bin_id (the seed
+	// helper sets a default). This models a delivered order whose
+	// completion hasn't anchored the bin pointer yet.
 	orderID, err := db.CreateOrder("uuid-no-bin-id", orders.TypeRetrieve,
 		&nodeID, false, 1, "NO-BIN-ID-NODE", "", "", "", false, "PART-NBI")
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+	_ = db.SetProcessNodeActiveBinID(nodeID, nil)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -425,7 +382,7 @@ func TestRegression_BinAttributionRequiresBinID(t *testing.T) {
 	})
 
 	if len(sink.binCalls) != 0 {
-		t.Errorf("bin calls = %d, want 0 (no BinID on order, must skip): %+v",
+		t.Errorf("bin calls = %d, want 0 (no active_bin_id, must skip): %+v",
 			len(sink.binCalls), sink.binCalls)
 	}
 }

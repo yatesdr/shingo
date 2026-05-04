@@ -45,9 +45,6 @@ type ServiceAccess interface {
 	// ── Service accessors ──────────────────────────────────────────
 	// Phase 6.2′: per-domain services. Handlers reach single-aggregate
 	// CRUD via these instead of through 50+ named *Engine methods.
-	// ReconcilerMetrics returns the cumulative UOP reconciliation
-	// counters since process start (Item 9 surface). Read-only.
-	ReconcilerMetrics() engine.UOPReconcilerMetrics
 
 	StationService() *service.StationService
 	ChangeoverService() *service.ChangeoverService

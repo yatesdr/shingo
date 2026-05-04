@@ -141,7 +141,14 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 	}
 
 	db.EnsureProcessNodeRuntime(nodeID)
-	db.SetProcessNodeRuntime(nodeID, &claimID, cfg.InitialUOP)
+	// Default seed: a bin is "physically at the slot" so PLC tick tests
+	// emit deltas via binAtNode without each test having to set
+	// active_bin_id explicitly. Delivery-completion tests that exercise
+	// the bin-pointer turnover path either overwrite this via
+	// SetProcessNodeRuntimeWithBin or use a fresh node id; the seed
+	// value is opaque and only matters when the test inspects bin deltas.
+	defaultBin := int64(1)
+	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &defaultBin, cfg.InitialUOP)
 	return processID, nodeID, styleID, claimID
 }
 
@@ -164,6 +171,8 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
+	deliveredBin := int64(42)
+	db.UpdateOrderBinID(orderID, &deliveredBin)
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
 	eng.Events.Emit(Event{

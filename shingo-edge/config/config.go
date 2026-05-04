@@ -28,15 +28,6 @@ type Config struct {
 	Counter     CounterConfig     `yaml:"counter"`
 	Backup      BackupConfig      `yaml:"backup"`
 	CountGroups CountGroupsConfig `yaml:"count_groups"`
-	UOP         UOPConfig         `yaml:"uop"`
-}
-
-// UOPConfig tunes the UOP reconciler. ReconcileInterval is the minimum
-// gap between reconciliation passes — also acts as the cadence cap when
-// the heartbeat-driven trigger calls Reconcile(false) every heartbeat
-// tick (the gate coalesces calls that arrive faster).
-type UOPConfig struct {
-	ReconcileInterval time.Duration `yaml:"reconcile_interval"`
 }
 
 // CountGroupsConfig holds the edge side of the advanced-zone light feature.
@@ -173,9 +164,6 @@ func Defaults() *Config {
 				"off": 2,
 			},
 			Bindings: map[string]Binding{},
-		},
-		UOP: UOPConfig{
-			ReconcileInterval: 60 * time.Second,
 		},
 	}
 }

@@ -307,7 +307,7 @@ func generateNodeCode(db *sql.DB, processID int64, coreNodeName, name string) (s
 func scanRuntime(scanner interface{ Scan(...interface{}) error }) (RuntimeState, error) {
 	var r RuntimeState
 	var updatedAt string
-	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.RemainingUOPCached,
+	err := scanner.Scan(&r.ID, &r.ProcessNodeID, &r.ActiveClaimID, &r.ActiveBinID, &r.RemainingUOPCached,
 		&r.ActiveOrderID, &r.StagedOrderID, &r.ActivePull, &updatedAt)
 	if err != nil {
 		return r, err
@@ -335,7 +335,7 @@ func EnsureRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 
 // GetRuntime returns the runtime row for a process_node.
 func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
-	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, remaining_uop_cached,
+	r, err := scanRuntime(db.QueryRow(`SELECT id, process_node_id, active_claim_id, active_bin_id, remaining_uop_cached,
 		active_order_id, staged_order_id, active_pull, updated_at
 		FROM process_node_runtime_states WHERE process_node_id=?`, processNodeID))
 	if err != nil {
@@ -345,12 +345,43 @@ func GetRuntime(db *sql.DB, processNodeID int64) (*RuntimeState, error) {
 }
 
 // SetRuntime updates the active claim and the cached UOP on a runtime
-// row.
+// row. Does NOT touch active_bin_id — callers that need to set or
+// clear the bin pointer in the same write should use SetRuntimeWithBin
+// (atomic three-field update) instead. Existing code paths that
+// don't have a meaningful bin pointer (test setup, A/B flips, etc.)
+// can keep calling this without churn.
 func SetRuntime(db *sql.DB, processNodeID int64, activeClaimID *int64, remainingUOPCached int) error {
 	_, err := db.Exec(`UPDATE process_node_runtime_states SET
 		active_claim_id=?, remaining_uop_cached=?, updated_at=datetime('now')
 		WHERE process_node_id=?`,
 		activeClaimID, remainingUOPCached, processNodeID)
+	return err
+}
+
+// SetRuntimeWithBin updates active_claim_id, active_bin_id, and
+// remaining_uop_cached in one atomic write. Used by every delivery-
+// completion handler so the bin pointer turns over at the same instant
+// the new bin is logically present. activeBinID is the bin physically
+// arriving at the slot, or nil for removal-shaped completions where
+// the slot ends up empty.
+func SetRuntimeWithBin(db *sql.DB, processNodeID int64, activeClaimID, activeBinID *int64, remainingUOPCached int) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_claim_id=?, active_bin_id=?, remaining_uop_cached=?, updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		activeClaimID, activeBinID, remainingUOPCached, processNodeID)
+	return err
+}
+
+// SetActiveBinID writes only the active_bin_id pointer on a runtime
+// row, leaving the claim, UOP, and order pointers untouched. Used by
+// the bin-pickup handler (clear when bin physically leaves) and any
+// path that needs to update the bin pointer without touching the
+// claim or count.
+func SetActiveBinID(db *sql.DB, processNodeID int64, activeBinID *int64) error {
+	_, err := db.Exec(`UPDATE process_node_runtime_states SET
+		active_bin_id=?, updated_at=datetime('now')
+		WHERE process_node_id=?`,
+		activeBinID, processNodeID)
 	return err
 }
 

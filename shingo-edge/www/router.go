@@ -249,9 +249,6 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
 		r.Get("/orders/active", h.apiGetActiveOrders)
 
-		// Reconciliation metrics (Item 9)
-		r.Get("/reconciliation/uop", h.apiUOPReconciliation)
-
 		// Lookups
 		r.Get("/node/{name}/children", h.apiNodeChildren)
 		r.Get("/payload/{code}/manifest", h.apiPayloadManifest)

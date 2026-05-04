@@ -22,25 +22,10 @@ type Heartbeater struct {
 	startTime    time.Time
 	orderCountFn ActiveOrderCountFunc
 
-	// reconcileFn fires once per heartbeat tick after the heartbeat
-	// envelope ships. Wired from the composition root to engine.Reconcile.
-	// Phase 2's UOP reconciler piggybacks on the heartbeat cadence per
-	// the bin-as-truth plan: no separate goroutine, no separate clock.
-	// Nil-safe — tests that don't care about reconciliation leave it unset.
-	reconcileFn func()
-
 	stopOnce sync.Once
 	stopCh   chan struct{}
 
 	DebugLog DebugLogFunc
-}
-
-// SetReconcileFn installs the per-heartbeat reconciliation callback.
-// Called by the composition root after the engine is ready. Safe to
-// call before Start. Calling with nil disables the trigger (defensive
-// — production wires a real callback).
-func (h *Heartbeater) SetReconcileFn(fn func()) {
-	h.reconcileFn = fn
 }
 
 // NewHeartbeater creates a heartbeater for the given edge identity.
@@ -181,24 +166,6 @@ func (h *Heartbeater) sendHeartbeat() {
 	}
 }
 
-// fireReconcile invokes the per-heartbeat reconcile callback if set.
-// Item 1: the UOP reconciler piggybacks on the heartbeat cadence per
-// the bin-as-truth plan — no separate goroutine, no separate clock.
-// Wrapped in a recover so a reconciler panic doesn't take down the
-// heartbeat loop. Exported only on the package boundary; the loop
-// inside calls it after every successful sendHeartbeat.
-func (h *Heartbeater) fireReconcile() {
-	if h.reconcileFn == nil {
-		return
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("heartbeater: panic in reconcile callback: %v", r)
-		}
-	}()
-	h.reconcileFn()
-}
-
 func (h *Heartbeater) loop() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -214,7 +181,6 @@ func (h *Heartbeater) loop() {
 			return
 		case <-ticker.C:
 			h.sendHeartbeat()
-			h.fireReconcile()
 			tick++
 			if tick%5 == 0 { // re-request node list and payload catalog every ~5 min
 				h.sendNodeListRequest()

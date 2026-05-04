@@ -43,6 +43,9 @@ func TestRegression_MultiBinAtPairedNodes_TicksAttributeCorrectly(t *testing.T) 
 	if err := db.UpdateProcessNodeRuntimeOrders(nodeBID, &orderB, nil); err != nil {
 		t.Fatalf("set B active order: %v", err)
 	}
+	bidA, bidB := binA, binB
+	_ = db.SetProcessNodeActiveBinID(nodeAID, &bidA)
+	_ = db.SetProcessNodeActiveBinID(nodeBID, &bidB)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -87,6 +90,9 @@ func TestRegression_TickDuringABFlip(t *testing.T) {
 	orderB := stageABOrder(t, db, nodeBID, "uuid-abflip-B", "PART-AB", binB)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeAID, &orderA, nil)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeBID, &orderB, nil)
+	bidA, bidB := binA, binB
+	_ = db.SetProcessNodeActiveBinID(nodeAID, &bidA)
+	_ = db.SetProcessNodeActiveBinID(nodeBID, &bidB)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -223,10 +229,6 @@ func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  40,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 40); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
-
 	const binID int64 = 11500
 	const orderUUID = "uuid-pb-pu"
 	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
@@ -237,6 +239,9 @@ func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 40); err != nil {
+		t.Fatalf("seed runtime: %v", err)
+	}
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -301,7 +306,7 @@ func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-	if err := db.SetProcessNodeRuntime(nodeID, &fromClaim.ID, 80); err != nil {
+	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &fromClaim.ID, &bid, 80); err != nil {
 		t.Fatalf("seed runtime: %v", err)
 	}
 
@@ -374,7 +379,8 @@ func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
 	// Order A (supply / new bin), Order B (evac / outgoing bin). On the
 	// runtime row, ActiveOrderID = B (the bin currently at the line),
 	// StagedOrderID = A (the supply on its way in). Ticks must
-	// attribute to B's bin until the swap completes.
+	// attribute to B's bin until the swap completes — pin the bin
+	// pointer to the evac bin since that's what's physically at the slot.
 	const binEvac, binSupply int64 = 5001, 5002
 	orderEvac := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-evac")
 	orderSupply := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply")
@@ -382,6 +388,7 @@ func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
 	_ = db.UpdateOrderBinID(orderEvac, &bidE)
 	_ = db.UpdateOrderBinID(orderSupply, &bidS)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderEvac, &orderSupply)
+	_ = db.SetProcessNodeActiveBinID(nodeID, &bidE)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -433,7 +440,8 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 	orderX1 := stageABOrder(t, db, nodeID, "uuid-x2y-x1", "PART-X", binX1)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderX1, nil)
 	db.SetActiveStyle(processID, &styleX)
-	db.SetProcessNodeRuntime(nodeID, &claimX, 200)
+	bidX1 := binX1
+	db.SetProcessNodeRuntimeWithBin(nodeID, &claimX, &bidX1, 200)
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -457,7 +465,8 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 	orderY := stageABOrder(t, db, nodeID, "uuid-x2y-y", "PART-Y", binY)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderY, nil)
 	db.SetActiveStyle(processID, &styleY)
-	db.SetProcessNodeRuntime(nodeID, &claimY, 150) // Y capacity
+	bidY := binY
+	db.SetProcessNodeRuntimeWithBin(nodeID, &claimY, &bidY, 150) // Y capacity
 
 	// X-style tick: should be ignored (runtime active claim is Y).
 	sink.binCalls = nil
@@ -486,7 +495,8 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 	orderX2 := stageABOrder(t, db, nodeID, "uuid-x2y-x2", "PART-X", binX2)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderX2, nil)
 	db.SetActiveStyle(processID, &styleX)
-	db.SetProcessNodeRuntime(nodeID, &claimX, 200) // fresh X capacity
+	bidX2 := binX2
+	db.SetProcessNodeRuntimeWithBin(nodeID, &claimX, &bidX2, 200) // fresh X capacity
 
 	sink.binCalls = nil
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
@@ -525,8 +535,8 @@ func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T
 	db.SetActiveStyle(xClaim.StyleID, &styleX)
 	db.SetProcessNodeRuntime(nodeID, &claimX, 80)
 
-	// X bin returns. Order has no BinUOPRemaining snapshot anymore
-	// (Item 8 retired the field).
+	// X bin returns. Order has bin_id set so binArrivingAt picks it up
+	// at completion and resolveReplenishUOP returns claim capacity.
 	orderID, err := db.CreateOrder("uuid-back-return", orders.TypeComplex,
 		&nodeID, false, 1, "BACK-NODE", "", "", "", false, "PART-X")
 	if err != nil {
@@ -535,6 +545,8 @@ func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T
 	if err := db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)); err != nil {
 		t.Fatalf("confirm order: %v", err)
 	}
+	returnedBin := int64(7777)
+	_ = db.UpdateOrderBinID(orderID, &returnedBin)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
 	eng := testEngine(t, db)
