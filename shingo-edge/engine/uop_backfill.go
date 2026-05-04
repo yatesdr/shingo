@@ -60,7 +60,7 @@ func (e *Engine) BackfillBucketsForStation(force bool) (int, error) {
 	for _, n := range nodes {
 		buckets, err := e.db.ListLinesideBuckets(n.ID)
 		if err != nil {
-			e.logFn("uop_backfill: list buckets node=%d: %v", n.ID, err)
+			e.logBackfill("list buckets node=%d: %v", n.ID, err)
 			continue
 		}
 		for _, b := range buckets {
@@ -76,7 +76,7 @@ func (e *Engine) BackfillBucketsForStation(force bool) (int, error) {
 	if force {
 		e.inventoryDelta.Flush()
 	}
-	e.logFn("uop_backfill: emitted %d bucket seed deltas", emitted)
+	e.logBackfill("emitted %d bucket seed deltas", emitted)
 	return emitted, nil
 }
 

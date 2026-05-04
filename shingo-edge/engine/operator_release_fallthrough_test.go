@@ -18,15 +18,42 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/debuglog"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
 
 // captureLogs builds a logFn that appends formatted lines to *out. Returns
 // the function so tests can swap it in via eng.logFn = captureLogs(&out).
+//
+// Kept for the few legacy paths still on e.logFn. New release-path
+// breadcrumbs route through e.logRelease (debug-log ring buffer); use
+// captureReleaseLogs for those.
 func captureLogs(out *[]string) func(string, ...interface{}) {
 	return func(format string, args ...interface{}) {
 		*out = append(*out, fmt.Sprintf(format, args...))
+	}
+}
+
+// captureReleaseLogs wires an in-memory debuglog into eng and returns a
+// closure that pulls every "release" subsystem entry as a formatted line.
+// Drop-in replacement for the eng.logFn = captureLogs(&logs) pattern now
+// that release breadcrumbs go through e.logRelease → debugLogger.
+func captureReleaseLogs(t *testing.T, eng *Engine) func() []string {
+	t.Helper()
+	dbg, err := debuglog.New(64, nil)
+	if err != nil {
+		t.Fatalf("debuglog.New: %v", err)
+	}
+	dbg.SetStderr(nil) // keep test output quiet
+	eng.debugLogger = dbg
+	return func() []string {
+		entries := dbg.Entries("release")
+		out := make([]string, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, e.Message)
+		}
+		return out
 	}
 }
 
@@ -65,8 +92,7 @@ func findLogLine(logs []string, needles ...string) string {
 func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	var logs []string
-	eng.logFn = captureLogs(&logs)
+	getLogs := captureReleaseLogs(t, eng)
 
 	// Create a kanban-style order with no process node attached.
 	orderID, err := db.CreateOrder("uuid-no-pn", orders.TypeRetrieve,
@@ -86,7 +112,8 @@ func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
-	line := findLogLine(logs, "release:", "no_process_node",
+	logs := getLogs()
+	line := findLogLine(logs, "no_process_node",
 		"capture_lineside", fmt.Sprintf("order=%d", orderID))
 	if line == "" {
 		t.Errorf("no_process_node log line not found.\nLogs were:\n  %s",
@@ -103,8 +130,7 @@ func TestReleaseOrderWithLineside_ProduceRole_LogsSkip(t *testing.T) {
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "simple")
 	eng := testEngine(t, db)
-	var logs []string
-	eng.logFn = captureLogs(&logs)
+	getLogs := captureReleaseLogs(t, eng)
 
 	// Stage an order against the produce node.
 	orderID, err := db.CreateOrder("uuid-produce-rel", orders.TypeComplex,
@@ -124,7 +150,8 @@ func TestReleaseOrderWithLineside_ProduceRole_LogsSkip(t *testing.T) {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
-	line := findLogLine(logs, "release:", "produce_role",
+	logs := getLogs()
+	line := findLogLine(logs, "produce_role",
 		"send_partial_back", fmt.Sprintf("order=%d", orderID),
 		fmt.Sprintf("node=%s", "Produce Node"))
 	if line == "" {
@@ -176,8 +203,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 	}
 
 	eng := testEngine(t, db)
-	var logs []string
-	eng.logFn = captureLogs(&logs)
+	getLogs := captureReleaseLogs(t, eng)
 
 	disp := ReleaseDisposition{
 		Mode:     DispositionCaptureLineside,
@@ -188,6 +214,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 	}
 
 	// Existing log line shape (pre-cleanup): "toClaim is nil ... disposition %q dropped"
+	logs := getLogs()
 	line := findLogLine(logs, "toClaim is nil", "capture_lineside",
 		fmt.Sprintf("%d", orderID))
 	if line == "" {
@@ -204,8 +231,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 func TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDisposition(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	var logs []string
-	eng.logFn = captureLogs(&logs)
+	getLogs := captureReleaseLogs(t, eng)
 
 	// Drive the no_process_node path.
 	orderID, err := db.CreateOrder("uuid-shape", orders.TypeRetrieve,
@@ -221,6 +247,7 @@ func TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDispositio
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)
 	}
 
+	logs := getLogs()
 	if len(logs) == 0 {
 		t.Fatal("expected at least one fall-through log line, got none")
 	}

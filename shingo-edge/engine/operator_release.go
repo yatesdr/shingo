@@ -142,7 +142,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// log line has nothing to grep for. See the cleanup-2026-04-27
 	// synthesis for the four sites this pattern was added at.
 	if order.ProcessNodeID == nil {
-		e.logFn("release: order=%d disposition=%q — skipping manifest sync: no_process_node",
+		e.logRelease("order=%d disposition=%q — skipping manifest sync: no_process_node",
 			orderID, string(disp.Mode))
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
@@ -176,7 +176,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		if runtime != nil && runtime.ActiveClaimID != nil {
 			activeClaimStr = fmt.Sprintf("%d", *runtime.ActiveClaimID)
 		}
-		e.logFn("release: order %d on node %s — toClaim is nil (runtime.ActiveClaimID=%s), skipping manifest sync; disposition %q dropped",
+		e.logRelease("order %d on node %s — toClaim is nil (runtime.ActiveClaimID=%s), skipping manifest sync; disposition %q dropped",
 			orderID, node.Name, activeClaimStr, string(disp.Mode))
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
@@ -218,7 +218,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// Intentional skip; logged for investigation breadcrumbs (see the
 	// no_process_node site above for the rationale).
 	if toClaim.Role == protocol.ClaimRoleProduce {
-		e.logFn("release: order=%d node=%s disposition=%q — skipping manifest sync: produce_role",
+		e.logRelease("order=%d node=%s disposition=%q — skipping manifest sync: produce_role",
 			orderID, node.Name, string(disp.Mode))
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
@@ -245,11 +245,13 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// path already does this by passing ReleaseDisposition{} for Order A;
 	// this guard is the safety net when the per-order path runs instead.
 	if manifestUOP != nil && isSupply {
-		// Use e.logFn (not the package log) so unit tests can capture
-		// this line via the engine's injected logger. disp.Mode is
-		// included so a future investigation can see which operator-
-		// declared disposition was overridden by the supply-bin guard.
-		e.logFn("release: order=%d node=%s disposition=%q — skipping manifest sync: supply_bin_guard (two-robot swap)",
+		// Routed through e.logRelease so unit tests can capture via the
+		// debug-log ring buffer (subsystem="release"), and so operators
+		// see the breadcrumb in the browser debug-log UI without SSH.
+		// disp.Mode is included so a future investigation can see which
+		// operator-declared disposition was overridden by the
+		// supply-bin guard.
+		e.logRelease("order=%d node=%s disposition=%q — skipping manifest sync: supply_bin_guard (two-robot swap)",
 			orderID, node.Name, string(disp.Mode))
 		manifestUOP = nil
 	}
@@ -301,7 +303,7 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// turnover to the moment the new bin is actually present.
 	if nodeTask != nil {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
-			e.logFn("release: update node task %d to released: %v", nodeTask.ID, err)
+			e.logRelease("update node task %d to released: %v", nodeTask.ID, err)
 		}
 	}
 

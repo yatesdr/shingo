@@ -2,6 +2,7 @@ package debuglog
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"sync"
@@ -27,6 +28,13 @@ type Logger struct {
 	fileLog *log.Logger
 	filter  map[string]bool // nil = all subsystems to file; non-nil = only these
 
+	// stderr mirror: when non-nil, every Log() also writes a single
+	// formatted line here. Default is os.Stderr, set in New(). Lets
+	// engine/dispatch error diagnostics that used to go through
+	// log.Printf reach the ring buffer + browser UI without losing
+	// stderr/journal coverage that ops may grep during incidents.
+	stderr io.Writer
+
 	onEntry func(Entry)
 }
 
@@ -41,6 +49,7 @@ func New(ringSize int, fileFilter []string) (*Logger, error) {
 	l := &Logger{
 		entries: make([]Entry, ringSize),
 		size:    ringSize,
+		stderr:  os.Stderr,
 	}
 
 	if fileFilter != nil {
@@ -79,7 +88,17 @@ func (l *Logger) SetOnEntry(fn func(Entry)) {
 	l.mu.Unlock()
 }
 
-// Log writes an entry to the ring buffer (always) and to the file (if enabled and subsystem passes filter).
+// SetStderr sets (or clears, with nil) the stderr mirror writer. Each Log
+// call writes one formatted line here outside the ring buffer mutex.
+// Defaults to os.Stderr; set to nil in tests that want quiet output.
+func (l *Logger) SetStderr(w io.Writer) {
+	l.mu.Lock()
+	l.stderr = w
+	l.mu.Unlock()
+}
+
+// Log writes an entry to the ring buffer (always), mirrors to stderr (if
+// configured), and writes to the file (if enabled and subsystem passes filter).
 func (l *Logger) Log(subsystem, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	e := Entry{
@@ -95,10 +114,15 @@ func (l *Logger) Log(subsystem, format string, args ...any) {
 		l.full = true
 	}
 	cb := l.onEntry
+	stderr := l.stderr
 	l.mu.Unlock()
 
 	if cb != nil {
 		cb(e)
+	}
+
+	if stderr != nil {
+		fmt.Fprintf(stderr, "%s [%s] %s\n", e.Time.Format("2006-01-02T15:04:05.000Z"), subsystem, msg)
 	}
 
 	if l.file != nil {

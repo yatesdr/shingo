@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/google/uuid"
 
@@ -66,7 +65,7 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	order, payloadCode, lifecycleErr := d.lifecycle.CreateInboundOrder(stationID, p)
 	if lifecycleErr != nil {
 		if lifecycleErr.Err != nil {
-			log.Printf("dispatch: create inbound order %s: %v", p.OrderUUID, lifecycleErr.Err)
+			d.dbg("create inbound order %s: %v", p.OrderUUID, lifecycleErr.Err)
 		}
 		d.replies.SendError(env, p.OrderUUID, lifecycleErr.Code, lifecycleErr.Detail)
 		return
@@ -75,9 +74,9 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 	result, planErr := d.planner.Plan(order, env, payloadCode)
 	if planErr != nil {
 		if planErr.Err != nil {
-			log.Printf("dispatch: plan order %s (%s): %v", p.OrderUUID, p.OrderType, planErr.Err)
+			d.dbg("plan order %s (%s): %v", p.OrderUUID, p.OrderType, planErr.Err)
 		} else {
-			log.Printf("dispatch: plan order %s (%s): %s", p.OrderUUID, p.OrderType, planErr.Detail)
+			d.dbg("plan order %s (%s): %s", p.OrderUUID, p.OrderType, planErr.Detail)
 		}
 		// claim_failed is transient: bins exist but were claimed by a concurrent
 		// order in the TOCTOU gap between FindSourceBinFIFO and ClaimBin. Queue
@@ -102,11 +101,11 @@ func (d *Dispatcher) HandleOrderRequest(env *protocol.Envelope, p *protocol.Orde
 
 func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, payloadCode string) {
 	if err := d.lifecycle.Queue(order, "dispatcher", "awaiting inventory"); err != nil {
-		log.Printf("dispatch: queue order %d: %v", order.ID, err)
+		d.dbg("queue order %d: %v", order.ID, err)
 	}
 	if payloadCode != "" && order.PayloadCode == "" {
 		if err := d.db.UpdateOrderPayloadCode(order.ID, payloadCode); err != nil {
-			log.Printf("dispatch: update payload code order %d: %v", order.ID, err)
+			d.dbg("update payload code order %d: %v", order.ID, err)
 		}
 	}
 	d.dbg("queued: order=%d uuid=%s payload=%s delivery=%s", order.ID, order.EdgeUUID, payloadCode, order.DeliveryNode)
@@ -129,20 +128,18 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 		order.ID, vendorOrderID, sourceNode.Name, destNode.Name, order.Priority)
 
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
-		log.Printf("dispatch: fleet create order failed: %v", err)
-		d.dbg("fleet dispatch failed: %v", err)
+		d.dbg("fleet create order failed: %v", err)
 		d.failOrder(order, env, "fleet_failed", err.Error())
 		return
 	}
 
-	log.Printf("dispatch: order %d dispatched as %s (%s -> %s)", order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
-	d.dbg("fleet dispatch ok: order=%d vendor_id=%s", order.ID, vendorOrderID)
+	d.dbg("order %d dispatched as %s (%s -> %s)", order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 
 	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
-		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
+		d.dbg("update order %d vendor: %v", order.ID, err)
 	}
 	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
-		log.Printf("dispatch: order %d → dispatched: %v", order.ID, err)
+		d.dbg("order %d → dispatched: %v", order.ID, err)
 	}
 
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
@@ -179,15 +176,15 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 		order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
-		log.Printf("dispatch: fleet create order failed: %v", err)
+		d.dbg("fleet create order failed: %v", err)
 		if failErr := d.lifecycle.Fail(order, order.StationID, "fleet_failed", err.Error()); failErr != nil {
-			log.Printf("dispatch: fail order %d: %v", order.ID, failErr)
+			d.dbg("fail order %d: %v", order.ID, failErr)
 		}
 		return "", err
 	}
 
 	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
-		log.Printf("dispatch: update order %d vendor: %v", order.ID, err)
+		d.dbg("update order %d vendor: %v", order.ID, err)
 	}
 
 	// Bridge pending → queued before dispatching. The lifecycle's Dispatch
@@ -197,11 +194,11 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 	// already know the destination.
 	if order.Status == protocol.StatusPending {
 		if err := d.lifecycle.Queue(order, "dispatcher", "direct dispatch"); err != nil {
-			log.Printf("dispatch: order %d → queued: %v", order.ID, err)
+			d.dbg("order %d → queued: %v", order.ID, err)
 		}
 	}
 	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
-		log.Printf("dispatch: order %d → dispatched: %v", order.ID, err)
+		d.dbg("order %d → dispatched: %v", order.ID, err)
 	}
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 
@@ -224,11 +221,11 @@ func (d *Dispatcher) checkOwnership(env *protocol.Envelope, order *orders.Order)
 func (d *Dispatcher) getOwnedOrder(env *protocol.Envelope, orderUUID string) (*orders.Order, bool) {
 	order, err := d.db.GetOrderByUUID(orderUUID)
 	if err != nil {
-		log.Printf("dispatch: order %s not found: %v", orderUUID, err)
+		d.dbg("order %s not found: %v", orderUUID, err)
 		return nil, false
 	}
 	if !d.checkOwnership(env, order) {
-		log.Printf("dispatch: station %s does not own order %s (owner: %s)", env.Src.Station, orderUUID, order.StationID)
+		d.dbg("station %s does not own order %s (owner: %s)", env.Src.Station, orderUUID, order.StationID)
 		return nil, false
 	}
 	return order, true
@@ -270,7 +267,7 @@ func (d *Dispatcher) HandleOrderReceipt(env *protocol.Envelope, p *protocol.Orde
 		return
 	}
 	if _, err := d.lifecycle.ConfirmReceipt(order, stationID, p.ReceiptType, p.FinalCount); err != nil {
-		log.Printf("dispatch: complete order %d: %v", order.ID, err)
+		d.dbg("complete order %d: %v", order.ID, err)
 		return
 	}
 }
@@ -291,7 +288,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 			return
 		}
 		if sourceNode == nil || newDest == nil {
-			log.Printf("dispatch: redirect dest %q not found: %v", p.NewDeliveryNode, err)
+			d.dbg("redirect dest %q not found: %v", p.NewDeliveryNode, err)
 			d.replies.SendError(env, p.OrderUUID, "invalid_node", fmt.Sprintf("redirect destination %q not found", p.NewDeliveryNode))
 			return
 		}
@@ -301,7 +298,7 @@ func (d *Dispatcher) HandleOrderRedirect(env *protocol.Envelope, p *protocol.Ord
 		}
 	}
 	if newDest == nil {
-		log.Printf("dispatch: redirect dest %q not found: %v", p.NewDeliveryNode, err)
+		d.dbg("redirect dest %q not found (post-prepare): %v", p.NewDeliveryNode, err)
 		d.replies.SendError(env, p.OrderUUID, "invalid_node", fmt.Sprintf("redirect destination %q not found", p.NewDeliveryNode))
 		return
 	}
@@ -315,7 +312,7 @@ func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protoc
 
 	order, lifecycleErr := d.lifecycle.CreateStorageWaybillOrder(stationID, p)
 	if lifecycleErr != nil {
-		log.Printf("dispatch: create store order: %v", lifecycleErr.Err)
+		d.dbg("create store order: %v", lifecycleErr.Err)
 		d.replies.SendError(env, p.OrderUUID, lifecycleErr.Code, lifecycleErr.Detail)
 		return
 	}
@@ -354,7 +351,7 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, errorCode, detail string) {
 	stationID := env.Src.Station
 	if err := d.lifecycle.Fail(order, stationID, errorCode, detail); err != nil {
-		log.Printf("dispatch: fail order %d: %v", order.ID, err)
+		d.dbg("fail order %d: %v", order.ID, err)
 	}
 	d.sendError(env, order.EdgeUUID, errorCode, detail)
 }
