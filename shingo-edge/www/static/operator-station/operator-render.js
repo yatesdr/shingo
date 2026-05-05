@@ -253,7 +253,8 @@ function renderPayloadBoard(entry) {
     var queuePos = 1;
     allowed.forEach(function(code) {
         var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
-        var isActive = payloadOrders.length > 0 || loadableHere || (hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+        var hasPayloadDemand = payloadOrders.length > 0 || (hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+        var isActive = hasPayloadDemand || loadableHere;
         var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
         var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
 
@@ -263,7 +264,7 @@ function renderPayloadBoard(entry) {
             card.classList.add('os-board-delivered');
         } else if (payloadInTransit) {
             card.classList.add('os-board-transit');
-        } else if (isActive) {
+        } else if (hasPayloadDemand) {
             card.classList.add('os-board-queued');
         } else if (canLoadEmpty) {
             card.classList.add('os-board-queued');
@@ -275,15 +276,12 @@ function renderPayloadBoard(entry) {
 
         card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
 
-        // Any active (non-terminal) order with no delivered/in-transit sibling
-        // counts as QUEUED — covers pending, sourcing, queued, submitted,
-        // dispatched, staged so cards never silently go inert.
         var statusText, statusClass;
         if (payloadDelivered) {
             statusText = 'DELIVERED'; statusClass = 'os-board-tag-delivered';
         } else if (payloadInTransit) {
             statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit';
-        } else if (isActive) {
+        } else if (hasPayloadDemand) {
             statusText = 'QUEUED'; statusClass = 'os-board-tag-queued';
         } else if (canLoadEmpty) {
             statusText = 'LOAD'; statusClass = 'os-board-tag-queued';
@@ -298,11 +296,11 @@ function renderPayloadBoard(entry) {
         var binIsEmptyForDetail = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
         if (payloadDelivered) {
             detailText = 'Tap to ' + (claim.role === 'produce' ? 'load' : 'unload');
-        } else if (binIsEmptyForDetail && (payloadInTransit || (isActive && !payloadDelivered))) {
+        } else if (binIsEmptyForDetail && (payloadInTransit || (hasPayloadDemand && !payloadDelivered))) {
             detailText = 'Empty bin at node — tap to load';
         } else if (payloadInTransit) {
             detailText = 'Robot en route';
-        } else if (isActive) {
+        } else if (hasPayloadDemand) {
             detailText = 'Waiting for robot';
         } else if (canLoadEmpty) {
             detailText = 'Empty bin parked \u2014 tap to load';
@@ -313,7 +311,7 @@ function renderPayloadBoard(entry) {
         }
         card.appendChild(el('div', { className: 'os-board-detail', textContent: detailText }));
 
-        if (isActive) {
+        if (hasPayloadDemand) {
             var badge = el('span', { className: 'os-board-pos', textContent: String(queuePos) });
             if (payloadDelivered) badge.classList.add('os-board-pos-delivered');
             else if (payloadInTransit) badge.classList.add('os-board-pos-transit');
