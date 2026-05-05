@@ -294,3 +294,5 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 		t.Fatalf("expected 1 history row after replayed receipt (deduped), got %d", len(history))
 	}
 }
+func (noopEmitter) EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)               {}
+func (noopEmitter) EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string)     {}

@@ -153,8 +153,7 @@ func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 	t.Logf("order after FAILED: status=%s", order.Status)
 
 	if order.Status != dispatch.StatusFailed {
-	if order.Status != dispatch.StatusFaulted {
-		t.Errorf("order status = %q, want faulted", order.Status)
+		t.Errorf("order status = %q, want failed", order.Status)
 	}
 
 	// Verify bin claim released

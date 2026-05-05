@@ -250,7 +250,7 @@ func TestSimulator_StateMapping(t *testing.T) {
 		{"RUNNING", "in_transit", false},
 		{"WAITING", "staged", false},
 		{"FINISHED", "delivered", true},
-		{"FAILED", "failed", true},
+		{"FAILED", "faulted", false},
 		{"STOPPED", "cancelled", true},
 	}
 
@@ -310,4 +310,3 @@ func TestSimulator_FleetFailure_NoVendorOrderID(t *testing.T) {
 		t.Errorf("simulator has %d orders, want 0 (fleet rejected creation)", sim.OrderCount())
 	}
 }
- 		{"FAILED", "faulted", false},

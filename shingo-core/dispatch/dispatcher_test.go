@@ -67,6 +67,8 @@ func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string) {
 func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {
 	m.queued = append(m.queued, emitQueued{orderID})
 }
+func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, _ string)   {}
+func (m *mockEmitter) EmitOrderFaultedRecovered(orderID int64, _, _, _ string) {}
 
 // --- Test helpers (thin wrappers delegating to internal/testdb) ---
 
