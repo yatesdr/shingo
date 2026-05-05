@@ -93,7 +93,7 @@ func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderS
 }
 
 func (e *Engine) createRetrieveFromSpec(nodeID int64, r *changeover.RetrieveOrderSpec) (int64, error) {
-	o, err := e.orderMgr.CreateRetrieveOrder(&nodeID, r.RetrieveEmpty, 1, r.DeliveryNode, r.StagingNode, r.LoadType, r.PayloadCode, r.AutoConfirm)
+	o, err := e.orderMgr.CreateRetrieveOrder(&nodeID, r.RetrieveEmpty, 1, r.DeliveryNode, r.StagingNode, r.LoadType, r.PayloadCode, r.AutoConfirm, false)
 	if err != nil {
 		return 0, err
 	}

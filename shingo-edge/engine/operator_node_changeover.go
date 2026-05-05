@@ -114,7 +114,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 
 	// Direct delivery if no staging configured
 	retrieveEmpty := toClaim.Role == protocol.ClaimRoleProduce
-	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm)
+	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm, false)
 	if err != nil {
 		return nil, err
 	}

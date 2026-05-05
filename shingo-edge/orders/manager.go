@@ -106,7 +106,7 @@ func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *pro
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the outbox.
 // If payloadCode is empty and payloadID is set, it is derived from the payload.
-func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, payloadCode string, autoConfirm bool) (*orders.Order, error) {
+func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, payloadCode string, autoConfirm, skipAutoConfirm bool) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
@@ -128,6 +128,7 @@ func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 		DeliveryNode:  deliveryNode,
 		StagingNode:   stagingNode,
 		LoadType:      loadType,
+ 		SkipAutoConfirm: skipAutoConfirm,
 	})
 	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
 

@@ -277,7 +277,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// immediately available.
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, node.CoreNodeName, "",
-		"standard", payloadCode, autoConfirm,
+		"standard", payloadCode, autoConfirm, false,
 	)
 	if err != nil {
 		return nil, err
@@ -322,7 +322,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, false, 1, node.CoreNodeName, "",
-		"standard", payloadCode, autoConfirm,
+		"standard", payloadCode, autoConfirm, false,
 	)
 	if err != nil {
 		return nil, err

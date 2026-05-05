@@ -43,4 +43,5 @@ type Order struct {
 	PayloadCode   string     `json:"payload_code"`
 	WaitIndex     int        `json:"wait_index"`
 	QueueReason   string     `json:"queue_reason,omitempty"`
+ 	SkipAutoConfirm bool    `json:"skip_auto_confirm"`
 }

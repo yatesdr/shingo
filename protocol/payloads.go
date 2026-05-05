@@ -58,6 +58,14 @@ type OrderRequest struct {
 	RetrieveEmpty bool   `json:"retrieve_empty,omitempty"`
 	// RemainingUOP: nil = no sync, 0 = clear manifest, >0 = partial consumption.
 	RemainingUOP *int `json:"remaining_uop,omitempty"`
+ 	// SkipAutoConfirm prevents Core's reconciliation sweep from auto-confirming
+ 	// this order when it is stuck at "delivered". Edge sets this for side-cycle
+ 	// orders (L1 loader empty-in, U1 unloader full-in) where a human operator
+ 	// must explicitly confirm after performing a physical action (loading or
+ 	// unloading the bin). Without this, Core auto-confirms the moment the bin
+ 	// arrives, bypassing the operator and immediately triggering the outbound
+ 	// leg (L2/U2) while the bin is still empty/full.
+ 	SkipAutoConfirm bool `json:"skip_auto_confirm,omitempty"`
 }
 
 // OrderCancel cancels an existing order.

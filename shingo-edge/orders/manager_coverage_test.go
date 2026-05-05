@@ -157,7 +157,7 @@ func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 	emitter := &capturingEmitter{}
 	mgr := NewManager(db, emitter, "edge.station")
 
-	order, err := mgr.CreateRetrieveOrder(nil, false, 7, "LINE-1", "STAGE-1", "LOAD-A", "PL-42", false)
+	order, err := mgr.CreateRetrieveOrder(nil, false, 7, "LINE-1", "STAGE-1", "LOAD-A", "PL-42", false, false)
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 		t.Fatalf("SetActiveStyle: %v", err)
 	}
 
-	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", false)
+	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", false, false)
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
 	}

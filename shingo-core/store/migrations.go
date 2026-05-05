@@ -171,10 +171,12 @@ func (db *DB) runVersionedMigrations() error {
 		{17, "uop bin-as-truth: audit log + delta apply infrastructure", v17UOPBinAsTruth,
 			func(q schema.Querier) bool {
 				return schema.TableExists(q, "bin_uop_audit") &&
-					schema.TableExists(q, "lineside_buckets") &&
-					schema.TableExists(q, "inventory_delta_dedup") &&
-					schema.ColumnExists(q, "bin_uop_audit", "metadata")
-			}},
+				schema.TableExists(q, "lineside_buckets") &&
+				schema.TableExists(q, "inventory_delta_dedup") &&
+				schema.ColumnExists(q, "bin_uop_audit", "metadata")
+		}},
+ 		{18, "add skip_auto_confirm column to orders", v18OrderSkipAutoConfirm,
+ 			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "skip_auto_confirm") }},
 	}
 
 	for _, m := range migrations {
@@ -312,6 +314,12 @@ func v3DropDeadColumns(tx *sql.Tx) error {
 // v4DropOrderPayloadID removes the vestigial payload_id column from orders.
 func v4DropOrderPayloadID(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE orders DROP COLUMN IF EXISTS payload_id`)
+	return err
+}
+// v18OrderSkipAutoConfirm adds skip_auto_confirm to orders so side-cycle
+// L1/U1 orders can opt out of Core's reconciliation auto-confirm sweep.
+func v18OrderSkipAutoConfirm(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS skip_auto_confirm BOOLEAN NOT NULL DEFAULT false`)
 	return err
 }
 

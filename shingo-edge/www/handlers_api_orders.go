@@ -63,7 +63,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 	order, err := h.engine.OrderManager().CreateRetrieveOrder(
 		processNodeID, req.RetrieveEmpty,
 		req.Quantity, req.DeliveryNode, req.StagingNode, req.LoadType, req.PayloadCode,
-		h.engine.AppConfig().Web.AutoConfirm,
+		h.engine.AppConfig().Web.AutoConfirm, false,
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -83,7 +83,7 @@ func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliv
 	for i := 0; i < count; i++ {
 		order, err := h.engine.OrderManager().CreateRetrieveOrder(
 			nil, true, 1, deliveryNode, "", "standard", payloadCode,
-			h.engine.AppConfig().Web.AutoConfirm,
+			h.engine.AppConfig().Web.AutoConfirm, false,
 		)
 		if err != nil {
 			results = append(results, result{Error: err.Error()})

@@ -299,7 +299,7 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	autoConfirm := false
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, loader.node.CoreNodeName, "",
-		"standard", payloadCode, autoConfirm,
+		"standard", payloadCode, autoConfirm, true,
 	)
 	if err != nil {
 		e.logFn("side-cycle: create empty-in order for loader %s payload %s: %v",
@@ -355,7 +355,7 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	// driving robot movement (the line's evac drives that).
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, false, 1, unloader.node.CoreNodeName, "",
-		"standard", payloadCode, autoConfirm,
+		"standard", payloadCode, autoConfirm, true,
 	)
 	if err != nil {
 		e.logFn("side-cycle: create full-in order for unloader %s payload %s: %v",

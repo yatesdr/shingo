@@ -91,6 +91,7 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 		WHERE status = 'delivered'
 		  AND completed_at IS NULL
 		  AND updated_at < NOW() - ($1 * INTERVAL '1 second')
+		  AND NOT skip_auto_confirm
 		ORDER BY updated_at ASC
 		LIMIT 100`, int(timeout.Seconds()))
 	if err != nil {
