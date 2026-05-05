@@ -48,6 +48,7 @@ export function renderHeader() {
     // belong on a regular operator station, not this view.
     if (!isBoardMode()) {
         if (view.active_changeover) {
+            headerActions.appendChild(headerBtn('RELEASE', 'release', confirmReleaseWait));
             headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
         } else {
             headerActions.appendChild(headerBtn('CHANGEOVER', 'changeover', openChangeoverPicker));
@@ -105,6 +106,16 @@ async function startChangeover(toStyleID, styleName) {
         notes: ''
     }, loadViewRef);
     if (ok) showToast('Changeover to ' + styleName + ' started', 'success');
+}
+
+async function confirmReleaseWait() {
+    const view = getView();
+    const pid = view.process.id;
+    const station = (view.station.name && view.station.name.trim()) || 'operator';
+    const ok = await postAction('/api/processes/' + pid + '/changeover/release-wait', {
+        called_by: station
+    }, loadViewRef);
+    if (ok) showToast('Robots released', 'success');
 }
 
 async function confirmCutover() {

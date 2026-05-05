@@ -387,13 +387,13 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, calledBy string) error {
 		if task.Situation == "unchanged" {
 			continue
 		}
-		// Sequential evacuate emits TWO orders (one per robot). Both
-		// orders have a wait that gets released by a single operator
-		// click — release both order slots when the operator clicks.
-		// Single-leg evac paths keep NextMaterialOrderID nil, so the
-		// extra release is a no-op for non-sequential cases.
+		// Two_robot swap and sequential evacuate create both orders up
+		// front with embedded wait steps. Release both order slots on a
+		// single operator click. For single_robot/manual paths,
+		// NextMaterialOrderID completes before Order B exists, so the
+		// extra release is a harmless no-op (order won't be staged).
 		orderIDs := []*int64{task.OldMaterialReleaseOrderID}
-		if task.Situation == "evacuate" && task.NextMaterialOrderID != nil {
+		if task.NextMaterialOrderID != nil {
 			orderIDs = append(orderIDs, task.NextMaterialOrderID)
 		}
 		for _, oid := range orderIDs {
