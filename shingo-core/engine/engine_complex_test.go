@@ -119,8 +119,11 @@ func TestComplexOrder_CancelMidTransit(t *testing.T) {
 // Scenario: A complex order is dispatched, robot starts moving (RUNNING),
 // then the fleet reports FAILED (robot breakdown, obstacle, emergency stop).
 //
-// Expected: Order marked failed. Bin claim released. Auto-return created.
-// Same recovery path as cancel, but triggered by fleet rather than operator.
+// Expected (post failed-order-recovery, commit bdd6f9b): rds.StateFailed
+// maps to StatusFaulted (non-terminal grace-period). Bin claim persists
+// while the order is in grace; auto-return is still suppressed (bin
+// position is uncertain mid-transit). Terminal transition to StatusFailed
+// happens on grace expiry, at which point the bin is released.
 func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -148,21 +151,16 @@ func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FAILED")
 
-	// Give events time to propagate through the engine pipeline
 	order, _ = db.GetOrderByUUID("cx-fail-1")
 	t.Logf("order after FAILED: status=%s", order.Status)
 
-	if order.Status != dispatch.StatusFailed {
-		t.Errorf("order status = %q, want failed", order.Status)
+	if order.Status != dispatch.StatusFaulted {
+		t.Errorf("order status = %q, want faulted (RDS FAILED → grace period)", order.Status)
 	}
 
-	// Verify bin claim released
-	bin, _ = db.GetBin(bin.ID)
-	t.Logf("bin after failure: claimed_by=%v", bin.ClaimedBy)
-
-	// Auto-return is intentionally skipped for complex orders that fail
-	// mid-transit — the bin's physical position is uncertain, so a return
-	// order would target the wrong source node and sit forever.
+	// Auto-return remains suppressed during the faulted grace period —
+	// bin's physical position is still uncertain, so a return order would
+	// target the wrong source node.
 	allOrders, _ := db.ListOrders("", 50)
 	for _, o := range allOrders {
 		if o.PayloadDesc == "auto_return" {
@@ -171,10 +169,12 @@ func TestComplexOrder_FleetFailureMidTransit(t *testing.T) {
 		}
 	}
 
-	// Bin should be unclaimed and left for manual recovery.
+	// Bin claim persists during grace period — released on terminal
+	// transition (grace expiry → Failed). See engine_test.go TC-30 for
+	// the equivalent retrieve-shaped flow.
 	bin, _ = db.GetBin(bin.ID)
-	if bin.ClaimedBy != nil {
-		t.Errorf("bin should be unclaimed after fleet failure, got claimed_by=%d", *bin.ClaimedBy)
+	if bin.ClaimedBy == nil || *bin.ClaimedBy != order.ID {
+		t.Errorf("bin should still be claimed by order %d during grace period, got claimed_by=%v", order.ID, bin.ClaimedBy)
 	}
 }
 
