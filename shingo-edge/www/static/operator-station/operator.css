@@ -109,6 +109,7 @@ body {
 .os-header-btn.refresh { background: #2d4060; }
 .os-header-btn.changeover { background: var(--os-orange); color: #000; }
 .os-header-btn.cutover { background: var(--os-green-bright); color: #000; }
+.os-header-btn.release { background: var(--os-amber); color: #000; }
 
 /* Active-style chip — display-only, sits in the action bar next to the
    changeover button so the operator can see what's running at a glance. */
