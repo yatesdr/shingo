@@ -231,6 +231,19 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 
 	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
 
+	// manual_swap claims (bin loaders/unloaders) require operator confirmation
+	// after physically loading/unloading the bin. Auto-confirming here would
+	// immediately fire L2/U2 (move back to supermarket) before the operator
+	// has finished. claim.AutoConfirm is true on these claims (mandatory for
+	// the robot-drop signal), but that flag means "robot confirms it dropped
+	// the bin", not "operator confirmed they loaded parts". Override both
+	// flags for manual_swap to match MaybeCreateLoaderEmptyIn / MaybeCreateUnloaderFullIn.
+	skipAutoConfirm := false
+	if claim.SwapMode == "manual_swap" {
+		autoConfirm = false
+		skipAutoConfirm = true
+	}
+
 	// Multi-step swap modes reuse the same dispatch the consume side uses on
 	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
 	// choreography for empty and full bins; the order shape doesn't depend
@@ -277,7 +290,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// immediately available.
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, true, 1, node.CoreNodeName, "",
-		"standard", payloadCode, autoConfirm, false,
+		"standard", payloadCode, autoConfirm, skipAutoConfirm,
 	)
 	if err != nil {
 		return nil, err
@@ -319,10 +332,12 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	}
 
 	// Create retrieve order for a full bin — Core queues if none available.
-	autoConfirm := claim.AutoConfirm || e.cfg.Web.AutoConfirm
+	// Same override as RequestEmptyBin: manual_swap unloader requires operator
+	// confirmation (U1 must not auto-confirm, or U2 fires before processing).
+	autoConfirm := false
 	order, err := e.orderMgr.CreateRetrieveOrder(
 		&nodeID, false, 1, node.CoreNodeName, "",
-		"standard", payloadCode, autoConfirm, false,
+		"standard", payloadCode, autoConfirm, true,
 	)
 	if err != nil {
 		return nil, err
