@@ -196,7 +196,23 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			action.Err = fmt.Errorf("add requires to claim")
 			return action
 		}
-		return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+ 		// SituationAdd: the node is empty (new in this style). No swap
+ 		// choreography needed — just deliver a bin directly to the node.
+ 		// Ignore InboundStaging / swap mode entirely; those are for swap
+ 		// coordination where a resident bin must be evacuated first.
+ 		action.OrderA = &changeover.OrderSpec{
+ 			Retrieve: &changeover.RetrieveOrderSpec{
+ 				RetrieveEmpty: diff.ToClaim.Role == protocol.ClaimRoleProduce,
+ 				DeliveryNode:  diff.ToClaim.CoreNodeName,
+ 				StagingNode:   "",
+ 				LoadType:      "standard",
+ 				PayloadCode:   diff.ToClaim.PayloadCode,
+ 				AutoConfirm:   fallbackAutoConfirm,
+ 			},
+ 		}
+ 		action.NextState = "staging_requested"
+ 		action.LogTag = "add"
+ 		return action
 
 	case SituationDrop:
 		if diff.FromClaim == nil {
