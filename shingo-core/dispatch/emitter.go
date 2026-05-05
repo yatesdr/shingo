@@ -10,4 +10,6 @@ type Emitter interface {
 	EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string)
 	EmitOrderCompleted(orderID int64, edgeUUID, stationID string)
 	EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)
+	EmitOrderFaulted(orderID int64, edgeUUID, stationID, reason string)
+	EmitOrderFaultedRecovered(orderID int64, edgeUUID, stationID, robotID string)
 }

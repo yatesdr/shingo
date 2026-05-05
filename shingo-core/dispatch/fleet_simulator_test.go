@@ -310,3 +310,4 @@ func TestSimulator_FleetFailure_NoVendorOrderID(t *testing.T) {
 		t.Errorf("simulator has %d orders, want 0 (fleet rejected creation)", sim.OrderCount())
 	}
 }
+ 		{"FAILED", "faulted", false},

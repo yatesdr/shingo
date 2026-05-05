@@ -19,3 +19,11 @@ func (e *Engine) ReleaseTerminalBinClaim(binID int64, actor string) error {
 func (e *Engine) CancelStuckOrder(orderID int64, actor string) error {
 	return e.recovery.CancelStuckOrder(orderID, actor)
 }
+
+func (e *Engine) RecoverFaultedOrder(orderID int64, actor string) error {
+	return e.recovery.RecoverFaultedOrder(orderID, actor)
+}
+
+func (e *Engine) ReissueTerminate(orderID int64, actor string) error {
+	return e.recovery.ReissueTerminate(orderID, actor)
+}

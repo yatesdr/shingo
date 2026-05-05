@@ -251,7 +251,7 @@ func TestOrderStateIsTerminal(t *testing.T) {
 		{StateRunning, false},
 		{StateWaiting, false},
 		{StateFinished, true},
-		{StateFailed, true},
+		{StateFailed, false},
 		{StateStopped, true},
 	}
 	for _, tt := range tests {
@@ -267,6 +267,18 @@ type mockPollerEmitter struct {
 	mu          sync.Mutex
 	events      []pollerEvent
 	blockEvents []blockEvent
+ 	graceExpired []graceExpiredEvent
+}
+
+type graceExpiredEvent struct {
+	orderID    int64
+	rdsOrderID string
+}
+
+func (m *mockPollerEmitter) EmitGraceExpired(orderID int64, rdsOrderID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.graceExpired = append(m.graceExpired, graceExpiredEvent{orderID, rdsOrderID})
 }
 
 type pollerEvent struct {

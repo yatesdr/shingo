@@ -22,6 +22,7 @@ const (
 	StatusAcknowledged = protocol.StatusAcknowledged
 	StatusInTransit    = protocol.StatusInTransit
 	StatusStaged       = protocol.StatusStaged
+	StatusFaulted      = protocol.StatusFaulted
 	StatusDelivered    = protocol.StatusDelivered
 	StatusConfirmed    = protocol.StatusConfirmed
 	StatusFailed       = protocol.StatusFailed

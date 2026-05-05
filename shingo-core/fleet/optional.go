@@ -102,7 +102,9 @@ type RobotStatus struct {
  	CtrlTemp       float64
  	CtrlHumi       float64
  	CtrlVoltage    float64
- 	Version        string
+	Version        string
+ 	TaskStatus     int
+ 	Suspended      bool
 }
 
 // State returns a computed state string for the robot: offline, error, busy, paused, or ready.

@@ -8,4 +8,5 @@ type EventEmitter interface {
 	EmitOrderStatusChanged(orderID int64, orderUUID string, orderType protocol.OrderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64)
 	EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64)
 	EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string)
+ 	EmitOrderFaulted(orderID int64, orderUUID, reason string)
 }

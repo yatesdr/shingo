@@ -49,6 +49,8 @@ func (f *fakeTrackerEmitter) EmitBlockCompleted(orderID int64, vendorOrderID, bl
 	f.blockBinTask = binTask
 }
 
+func (f *fakeTrackerEmitter) EmitGraceExpired(orderID int64, vendorOrderID string) {}
+
 // TestEmitterBridge_ForwardsArgsAndMapsSnapshot verifies the bridge passes
 // every scalar through unchanged and maps the *rds.OrderDetail to a
 // *fleet.OrderSnapshot with correct fields.

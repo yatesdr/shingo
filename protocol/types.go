@@ -178,11 +178,18 @@ var validTransitions = map[Status][]Status{
 	// Acknowledged|Dispatched → Sourcing supports PrepareRedirect: the order
 	// is re-resolved against a new delivery node after the vendor leg is
 	// cancelled.
-	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFailed},
-	StatusDispatched:   {StatusInTransit, StatusDelivered, StatusSourcing, StatusCancelled, StatusFailed},
+	StatusAcknowledged: {StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
+	StatusDispatched:   {StatusInTransit, StatusDelivered, StatusSourcing, StatusCancelled, StatusFaulted, StatusFailed},
 
-	StatusInTransit:   {StatusDelivered, StatusStaged, StatusCancelled, StatusFailed},
-	StatusStaged:      {StatusInTransit, StatusDelivered, StatusCancelled, StatusFailed},
+	StatusInTransit:   {StatusDelivered, StatusStaged, StatusCancelled, StatusFaulted, StatusFailed},
+	StatusStaged:      {StatusInTransit, StatusDelivered, StatusCancelled, StatusFaulted, StatusFailed},
+
+	// Faulted is the non-terminal grace-period status entered when the fleet
+	// reports a transient failure (RDS FAILED). Orders stay faulted until
+	// either the fleet recovers (faulted→in_transit), the operator manually
+	// finishes (faulted→delivered), or the grace period expires and Core
+	// gives up (faulted→failed) or the operator cancels (faulted→cancelled).
+	StatusFaulted: {StatusInTransit, StatusDelivered, StatusFailed, StatusCancelled},
 	StatusDelivered:   {StatusConfirmed, StatusCancelled, StatusFailed},
 	StatusReshuffling: {StatusConfirmed, StatusCancelled, StatusFailed},
 }

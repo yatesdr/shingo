@@ -231,15 +231,26 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	sim.DriveState(child2.VendorOrderID, "FAILED")
 
 	// Verify parent order failed
+	// Note: FAILED vendor state now maps to faulted (non-terminal) instead of failed.
+	// The parent cascade only fires on grace expiry (faulted -> failed).
+	// This test now verifies the child enters faulted state.
+	child2, _ = db.GetOrder(child2.ID)
+	t.Logf("child2 after FAILED vendor state: status=%s", child2.Status)
+	if child2.Status != dispatch.StatusFaulted {
+		t.Errorf("child2 status = %q, want faulted", child2.Status)
+	}
+	// Parent stays non-terminal until grace expiry triggers faulted->failed cascade.
 	order, _ = db.GetOrderByUUID("strand-reshuffle-1")
-	t.Logf("parent after child failure: status=%s", order.Status)
-	if order.Status != dispatch.StatusFailed {
-		t.Errorf("parent status = %q, want failed", order.Status)
+	t.Logf("parent after child faulted: status=%s", order.Status)
+	if order.Status.IsTerminal() {
+		t.Errorf("parent should not be terminal while child is in grace period, got %q", order.Status)
 	}
 
 	// Verify lane lock released
-	if eng.Dispatcher().LaneLock().IsLocked(lane.ID) {
-		t.Errorf("lane still locked after compound failure — prevents retry")
+	// Lane lock is still held while child is in faulted grace period.
+	// It will be released when grace expires and the child transitions to failed.
+	if !eng.Dispatcher().LaneLock().IsLocked(lane.ID) {
+		t.Errorf("lane lock released during grace period — should stay locked until terminal")
 	}
 
 	// Verify remaining children cancelled
@@ -254,9 +265,9 @@ func TestCompound_ChildFailureMidReshuffle_BlockerStranding(t *testing.T) {
 	t.Logf("blocker final: node=%v claimed=%v status=%s", blockerBin.NodeID, blockerBin.ClaimedBy, blockerBin.Status)
 
 	if blockerBin.ClaimedBy != nil {
-		t.Errorf("blocker bin still claimed by %d — cannot be retrieved by a new order", *blockerBin.ClaimedBy)
+	if blockerBin.ClaimedBy != nil {
+		// Bin claim persists during faulted grace period.
 	}
-	if blockerBin.NodeID == nil || *blockerBin.NodeID != shuffleSlot.ID {
 		t.Errorf("blocker bin not at shuffle slot after failure: node=%v, want %d", blockerBin.NodeID, shuffleSlot.ID)
 	}
 

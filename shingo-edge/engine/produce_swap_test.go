@@ -488,3 +488,4 @@ func TestReleaseStagedOrders_NoTrackedOrders(t *testing.T) {
 		t.Fatal("expected error when no orders are tracked on the node")
 	}
 }
+func (testOrderEmitter) EmitOrderFaulted(int64, string, string)                                 {}

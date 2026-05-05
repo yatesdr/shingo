@@ -389,3 +389,148 @@ func TestCancelStuckOrder_MissingOrder(t *testing.T) {
 		t.Fatal("expected not-found error")
 	}
 }
+
+// --- RecoverFaultedOrder ---
+
+func TestRecoverFaultedOrder_Success(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-FT", storageNode.ID, "BIN-FT-1")
+	eng := newTestEngine(t, db, simulator.New())
+
+	res, err := eng.CreateDirectOrder(DirectOrderRequest{
+		FromNodeID: storageNode.ID,
+		ToNodeID:   lineNode.ID,
+		StationID:  "faulted-test",
+		Desc:       "faulted-test-order",
+	})
+	if err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+
+	// Simulate the order entering faulted state.
+	order, _ := db.GetOrder(res.OrderID)
+	sim := eng.Fleet().(*simulator.SimulatorBackend)
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FAILED")
+
+	got, _ := db.GetOrder(res.OrderID)
+	if got.Status != "faulted" {
+		t.Fatalf("order status = %q, want faulted before recovery", got.Status)
+	}
+
+	if err := eng.RecoverFaultedOrder(res.OrderID, "op-recovery"); err != nil {
+		t.Fatalf("RecoverFaultedOrder: %v", err)
+	}
+
+	got, _ = db.GetOrder(res.OrderID)
+	if got.Status != "in_transit" {
+		t.Errorf("order status after recovery = %q, want in_transit", got.Status)
+	}
+
+	acts, _ := db.ListRecoveryActions(10)
+	found := false
+	for _, a := range acts {
+		if a.Action == "recover_faulted_order" && a.TargetID == res.OrderID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no recover_faulted_order action in %+v", acts)
+	}
+}
+
+func TestRecoverFaultedOrder_RejectsNonFaulted(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-FT2", storageNode.ID, "BIN-FT-2")
+	eng := newTestEngine(t, db, simulator.New())
+
+	res, err := eng.CreateDirectOrder(DirectOrderRequest{
+		FromNodeID: storageNode.ID,
+		ToNodeID:   lineNode.ID,
+		StationID:  "faulted-reject",
+		Desc:       "faulted-reject-order",
+	})
+	if err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+
+	err = eng.RecoverFaultedOrder(res.OrderID, "op")
+	if err == nil {
+		t.Fatal("expected error for non-faulted order")
+	}
+	if !strings.Contains(err.Error(), "not faulted") {
+		t.Errorf("err = %v, want 'not faulted'", err)
+	}
+}
+
+// --- ReissueTerminate ---
+
+func TestReissueTerminate_Success(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-RT", storageNode.ID, "BIN-RT-1")
+	eng := newTestEngine(t, db, simulator.New())
+
+	res, err := eng.CreateDirectOrder(DirectOrderRequest{
+		FromNodeID: storageNode.ID,
+		ToNodeID:   lineNode.ID,
+		StationID:  "reissue-test",
+		Desc:       "reissue-test-order",
+	})
+	if err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+
+	order, _ := db.GetOrder(res.OrderID)
+	sim := eng.Fleet().(*simulator.SimulatorBackend)
+	sim.DriveState(order.VendorOrderID, "RUNNING")
+	sim.DriveState(order.VendorOrderID, "FAILED")
+
+	// Manually fail the order to simulate grace-expiry terminal transition
+	got, _ := db.GetOrder(res.OrderID)
+	if err := eng.dispatcher.Lifecycle().Fail(got, got.StationID, "grace_timeout", "test grace expiry"); err != nil {
+		t.Fatalf("fail order: %v", err)
+	}
+
+	if err := eng.ReissueTerminate(res.OrderID, "op-retry"); err != nil {
+		t.Fatalf("ReissueTerminate: %v", err)
+	}
+
+	acts, _ := db.ListRecoveryActions(10)
+	found := false
+	for _, a := range acts {
+		if a.Action == "reissue_terminate" && a.TargetID == res.OrderID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no reissue_terminate action in %+v", acts)
+	}
+}
+
+func TestReissueTerminate_RejectsNonFailed(t *testing.T) {
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+	createTestBinAtNode(t, db, "PART-RT2", storageNode.ID, "BIN-RT-2")
+	eng := newTestEngine(t, db, simulator.New())
+
+	res, err := eng.CreateDirectOrder(DirectOrderRequest{
+		FromNodeID: storageNode.ID,
+		ToNodeID:   lineNode.ID,
+		StationID:  "reissue-reject",
+		Desc:       "reissue-reject-order",
+	})
+	if err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+
+	err = eng.ReissueTerminate(res.OrderID, "op")
+	if err == nil {
+		t.Fatal("expected error for non-failed order")
+	}
+	if !strings.Contains(err.Error(), "not failed") {
+		t.Errorf("err = %v, want 'not failed'", err)
+	}
+}

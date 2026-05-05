@@ -21,5 +21,5 @@ const (
 )
 
 func (s OrderState) IsTerminal() bool {
-	return s == StateFinished || s == StateFailed || s == StateStopped
+	return s == StateFinished || s == StateStopped
 }

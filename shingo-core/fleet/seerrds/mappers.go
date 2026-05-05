@@ -20,7 +20,7 @@ func MapState(vendorState string) string {
 	case rds.StateFinished:
 		return string(protocol.StatusDelivered)
 	case rds.StateFailed:
-		return string(protocol.StatusFailed)
+		return string(protocol.StatusFaulted)
 	case rds.StateStopped:
 		return string(protocol.StatusCancelled)
 	default:
@@ -95,6 +95,8 @@ func mapRobotStatus(r rds.RobotStatus) fleet.RobotStatus {
  		CtrlTemp:       r.BasicInfo.CtrlTemp,
  		CtrlHumi:       r.BasicInfo.CtrlHumi,
  		CtrlVoltage:    r.BasicInfo.CtrlVoltage,
- 		Version:        r.BasicInfo.Version,
+	 	Version:        r.BasicInfo.Version,
+ 	TaskStatus:     r.RbkReport.TaskStatus,
+ 	Suspended:      false, // Phase 2: parse from undispatchable_reason
 	}
 }

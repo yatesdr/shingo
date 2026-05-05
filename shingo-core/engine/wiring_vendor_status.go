@@ -99,6 +99,10 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		e.logFn("engine: unexpected fleet-reported Dispatched for order %d, skipping", order.ID)
 	case dispatch.StatusFailed, dispatch.StatusCancelled:
 		// Handled by the post-mapping switch below.
+	case dispatch.StatusFaulted:
+		if err := lc.MarkFaulted(order, effectiveRobotID, fmt.Sprintf("fleet state: %s", ev.NewStatus)); err != nil {
+			e.logFn("engine: mark faulted order %d: %v", order.ID, err)
+		}
 	default:
 		// Unknown mapped status — should never fire under the current
 		// seerrds adapter (MapState in fleet/seerrds/mappers.go produces
@@ -163,4 +167,25 @@ func (e *Engine) handleFleetOrderCancelled(order *orders.Order) {
 	// PreviousStatus is captured by transition() before the status flip and
 	// passed through to emitCancelled via the Event.
 	e.dispatcher.Lifecycle().CancelOrder(order, order.StationID, "fleet order stopped")
+}
+func (e *Engine) handleGraceExpired(ev GraceExpiredEvent) {
+	order, err := e.db.GetOrder(ev.OrderID)
+	if err != nil {
+		e.logFn("engine: grace-expiry: load order %d: %v", ev.OrderID, err)
+		return
+	}
+	if protocol.IsTerminal(order.Status) {
+		e.logFn("engine: grace-expiry: order %d already terminal (%s), skipping", order.ID, order.Status)
+		return
+	}
+
+	// Best-effort cancel at the fleet vendor. RDS may be unreachable; we
+	// proceed with the local terminal transition regardless.
+	if err := e.fleet.CancelOrder(order.VendorOrderID); err != nil {
+		e.logFn("engine: terminate order %d (RDS %s): %v — proceeding with local fail", order.ID, order.VendorOrderID, err)
+	}
+
+	if err := e.dispatcher.Lifecycle().Fail(order, order.StationID, "grace_timeout", "grace period expired without fleet recovery"); err != nil {
+		e.logFn("engine: grace-expiry fail order %d: %v", order.ID, err)
+	}
 }

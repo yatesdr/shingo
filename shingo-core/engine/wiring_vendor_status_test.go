@@ -93,31 +93,28 @@ func TestVendorStatus_FailedTerminal(t *testing.T) {
 	db, eng, sim, order, _, _ := dispatchRetrieveOrder(t)
 
 	// Subscribe to capture the failed event.
-	var failedEvt *OrderFailedEvent
+ 	var faultedEvt *OrderFaultedEvent
 	var mu sync.Mutex
 	eng.Events.SubscribeTypes(func(e Event) {
 		mu.Lock()
 		defer mu.Unlock()
-		if payload, ok := e.Payload.(OrderFailedEvent); ok {
-			failedEvt = &payload
+		if payload, ok := e.Payload.(OrderFaultedEvent); ok {
+			faultedEvt = &payload
 		}
-	}, EventOrderFailed)
+	}, EventOrderFaulted)
 
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "FAILED")
 
-	testdb.AssertOrderStatus(t, db, "vs-order-1", "failed")
+	testdb.AssertOrderStatus(t, db, "vs-order-1", "faulted")
 
 	mu.Lock()
 	defer mu.Unlock()
-	if failedEvt == nil {
-		t.Fatal("expected EventOrderFailed to be emitted")
+	if faultedEvt == nil {
+		t.Fatal("expected EventOrderFaulted to be emitted")
 	}
-	if failedEvt.OrderID != order.ID {
-		t.Errorf("failed event order ID: got %d, want %d", failedEvt.OrderID, order.ID)
-	}
-	if failedEvt.ErrorCode != "fleet_failed" {
-		t.Errorf("failed event error code: got %q, want %q", failedEvt.ErrorCode, "fleet_failed")
+	if faultedEvt.OrderID != order.ID {
+		t.Errorf("faulted event order ID: got %d, want %d", faultedEvt.OrderID, order.ID)
 	}
 }
 

@@ -22,6 +22,7 @@ const (
 	StatusDelivered    Status = "delivered"
 	StatusConfirmed    Status = "confirmed"
 	StatusStaged       Status = "staged"
+	StatusFaulted      Status = "faulted"
 	StatusFailed       Status = "failed"
 	StatusCancelled    Status = "cancelled"
 	StatusReshuffling  Status = "reshuffling"
@@ -76,7 +77,7 @@ func AllStatuses() []Status {
 	return []Status{
 		StatusPending, StatusSourcing, StatusQueued, StatusSubmitted,
 		StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged,
-		StatusDelivered, StatusConfirmed, StatusFailed, StatusCancelled,
+		StatusDelivered, StatusConfirmed, StatusFaulted, StatusFailed, StatusCancelled,
 		StatusReshuffling,
 	}
 }

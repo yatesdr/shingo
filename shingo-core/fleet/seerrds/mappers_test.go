@@ -21,7 +21,7 @@ func TestMapState_KnownStates(t *testing.T) {
 		{"running", string(rds.StateRunning), string(protocol.StatusInTransit)},
 		{"waiting", string(rds.StateWaiting), string(protocol.StatusStaged)},
 		{"finished", string(rds.StateFinished), string(protocol.StatusDelivered)},
-		{"failed", string(rds.StateFailed), string(protocol.StatusFailed)},
+		{"failed", string(rds.StateFailed), string(protocol.StatusFaulted)},
 		{"stopped", string(rds.StateStopped), string(protocol.StatusCancelled)},
 	}
 	for _, tc := range cases {
@@ -55,7 +55,7 @@ func TestIsTerminalState(t *testing.T) {
 		want  bool
 	}{
 		{string(rds.StateFinished), true},
-		{string(rds.StateFailed), true},
+		{string(rds.StateFailed), false},
 		{string(rds.StateStopped), true},
 		{string(rds.StateCreated), false},
 		{string(rds.StateToBeDispatched), false},

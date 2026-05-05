@@ -12,7 +12,7 @@ import (
 //
 // EmitBlockCompleted fires once per block transition into FINISHED while
 // the parent order is still mid-flight. This is the per-pickup signal
-// the bin-transit-state design needs — vendor doesn't expose a separate
+// the bin-transit-state design needs â€” vendor doesn't expose a separate
 // "PICKED_UP" order state, but block-level state IS in the poll snapshot
 // (just unused pre-2026-04). For pickup blocks, the engine handler
 // transitions the corresponding bin onto the synthetic _TRANSIT node so
@@ -20,6 +20,7 @@ import (
 type PollerEmitter interface {
 	EmitOrderStatusChanged(orderID int64, rdsOrderID, oldStatus, newStatus, robotID, detail string, orderDetail *OrderDetail)
 	EmitBlockCompleted(orderID int64, rdsOrderID, blockID, location, binTask string)
+	EmitGraceExpired(orderID int64, rdsOrderID string)
 }
 
 // OrderIDResolver maps RDS order IDs back to ShinGo order IDs.
@@ -42,19 +43,31 @@ type Poller struct {
 	// each block. Map: rdsOrderID -> blockID -> last-seen state. Cleared
 	// alongside `active` when the parent order reaches a terminal state.
 	blockStates map[string]map[string]OrderState
+	// faultedDeadline tracks RDS orders currently in FAILED state that
+	// are within the grace period. Map: rdsOrderID -> deadline. Orders
+	// past their deadline are escalated to grace-expiry on the next poll
+	// cycle. Cleared on recovery (FAILED->RUNNING) or terminal transition.
+	faultedDeadline map[string]time.Time
+	graceDuration   time.Duration
 	stopChan    chan struct{}
 	stopOnce    sync.Once
 }
 
-func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, interval time.Duration) *Poller {
+func NewPoller(client *Client, emitter PollerEmitter, resolver OrderIDResolver, interval time.Duration, graceDuration ...time.Duration) *Poller {
+	gd := 10 * time.Minute
+	if len(graceDuration) > 0 && graceDuration[0] > 0 {
+		gd = graceDuration[0]
+	}
 	return &Poller{
-		client:      client,
-		emitter:     emitter,
-		resolver:    resolver,
-		interval:    interval,
-		active:      make(map[string]OrderState),
-		blockStates: make(map[string]map[string]OrderState),
-		stopChan:    make(chan struct{}),
+		client:          client,
+		emitter:         emitter,
+		resolver:        resolver,
+		interval:        interval,
+		active:          make(map[string]OrderState),
+		blockStates:     make(map[string]map[string]OrderState),
+		faultedDeadline: make(map[string]time.Time),
+		graceDuration:   gd,
+		stopChan:        make(chan struct{}),
 	}
 }
 
@@ -79,6 +92,7 @@ func (p *Poller) Untrack(rdsOrderID string) {
 	defer p.mu.Unlock()
 	delete(p.active, rdsOrderID)
 	delete(p.blockStates, rdsOrderID)
+	delete(p.faultedDeadline, rdsOrderID)
 }
 
 // ActiveCount returns the number of orders being polled.
@@ -86,6 +100,20 @@ func (p *Poller) ActiveCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.active)
+}
+
+// FaultedCount returns the number of orders currently in the grace period.
+func (p *Poller) FaultedCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.faultedDeadline)
+}
+
+// SetGraceDuration updates the grace period for future FAILED entries.
+func (p *Poller) SetGraceDuration(d time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.graceDuration = d
 }
 
 func (p *Poller) Start() {
@@ -126,6 +154,8 @@ func (p *Poller) poll() {
 		}
 	}
 
+	p.checkGraceExpiry()
+
 	for _, rdsID := range ids {
 		detail, err := p.client.GetOrderDetails(rdsID)
 		if err != nil {
@@ -157,7 +187,7 @@ func (p *Poller) poll() {
 			oid, err := p.resolver.ResolveRDSOrderID(rdsID)
 			if err != nil {
 				log.Printf("poller: resolve %s: %v", rdsID, err)
-				p.dbg("poll error: resolve(%s): %v — will retry next cycle", rdsID, err)
+				p.dbg("poll error: resolve(%s): %v â€” will retry next cycle", rdsID, err)
 				return 0, false
 			}
 			resolvedOrderID = oid
@@ -168,7 +198,7 @@ func (p *Poller) poll() {
 		// last seen state for that block. Fire EmitBlockCompleted on the
 		// first transition into FINISHED. We do this BEFORE the order-
 		// state transition check so the per-block events arrive in
-		// causally-correct order (block FINISHED → order moves on) — even
+		// causally-correct order (block FINISHED â†’ order moves on) â€” even
 		// though the underlying RDS state field is sampled at one moment.
 		p.diffBlockStates(rdsID, detail, resolveOrderID)
 
@@ -180,23 +210,70 @@ func (p *Poller) poll() {
 
 		orderID, ok := resolveOrderID()
 		if !ok {
-			// Resolution failed — keep the old tracked state so the
+			// Resolution failed â€” keep the old tracked state so the
 			// transition is retried on the next poll cycle instead of
 			// being silently lost.
 			continue
 		}
 
-		// Resolution succeeded — now commit the state transition.
+		// Resolution succeeded â€” now commit the state transition.
 		p.mu.Lock()
-		if newState.IsTerminal() {
+		if newState == StateFailed {
+			// FAILED is no longer terminal per SEER docs. Record grace deadline
+			// and keep polling so the engine can recover or escalate on expiry.
+			p.active[rdsID] = newState
+			if _, hasDeadline := p.faultedDeadline[rdsID]; !hasDeadline {
+				p.faultedDeadline[rdsID] = time.Now().Add(p.graceDuration)
+				p.dbg("faulted: %s entered FAILED, grace deadline in %s", rdsID, p.graceDuration)
+			}
+		} else if newState.IsTerminal() {
 			delete(p.active, rdsID)
 			delete(p.blockStates, rdsID)
+			delete(p.faultedDeadline, rdsID)
 		} else {
 			p.active[rdsID] = newState
+			// Recovery: order left FAILED state, clear any grace deadline.
+			if _, wasFaulted := p.faultedDeadline[rdsID]; wasFaulted {
+				delete(p.faultedDeadline, rdsID)
+				p.dbg("faulted: %s recovered from FAILED", rdsID)
+			}
 		}
 		p.mu.Unlock()
 
 		p.emitter.EmitOrderStatusChanged(orderID, rdsID, string(oldState), string(newState), detail.Vehicle, fmt.Sprintf("fleet state: %s -> %s", oldState, newState), detail)
+	}
+}
+
+// checkGraceExpiry scans faultedDeadline for expired entries and emits
+// grace-expiry events for any orders that exceeded their grace period while
+// still in FAILED state. Expired entries are untracked.
+func (p *Poller) checkGraceExpiry() {
+	now := time.Now()
+	p.mu.Lock()
+	var expired []string
+	for rdsID, deadline := range p.faultedDeadline {
+		if now.After(deadline) {
+			if state, ok := p.active[rdsID]; ok && state == StateFailed {
+				expired = append(expired, rdsID)
+			}
+		}
+	}
+	p.mu.Unlock()
+
+	for _, rdsID := range expired {
+		p.mu.Lock()
+		delete(p.active, rdsID)
+		delete(p.blockStates, rdsID)
+		delete(p.faultedDeadline, rdsID)
+		p.mu.Unlock()
+
+		oid, err := p.resolver.ResolveRDSOrderID(rdsID)
+		if err != nil {
+			log.Printf("poller: resolve expired %s: %v", rdsID, err)
+			continue
+		}
+		p.dbg("faulted: %s grace expired, emitting grace-expiry", rdsID)
+		p.emitter.EmitGraceExpired(oid, rdsID)
 	}
 }
 
@@ -209,9 +286,9 @@ func (p *Poller) poll() {
 // state design uses: a "load" or "unload" block reaching FINISHED means
 // the robot has physically completed that step. The pickup-block case
 // drives a bin's transition onto the synthetic _TRANSIT node (engine
-// handler — see wiring_block_completed.go). Pre-2026-04 the per-block
+// handler â€” see wiring_block_completed.go). Pre-2026-04 the per-block
 // state was already in the poll snapshot but only marshalled into
-// mission_events JSON — never compared, never surfaced as an event.
+// mission_events JSON â€” never compared, never surfaced as an event.
 func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrderID func() (int64, bool)) {
 	if len(detail.Blocks) == 0 {
 		return
@@ -233,7 +310,7 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 			continue
 		}
 		prev[b.BlockID] = b.State
-		// Only fire on the transition INTO FINISHED — once. Subsequent
+		// Only fire on the transition INTO FINISHED â€” once. Subsequent
 		// polls keep `prev[blockID] = FINISHED` so the equality check
 		// above short-circuits.
 		if b.State == StateFinished && old != StateFinished {
@@ -253,7 +330,7 @@ func (p *Poller) diffBlockStates(rdsID string, detail *OrderDetail, resolveOrder
 
 	orderID, ok := resolveOrderID()
 	if !ok {
-		// Resolution failed — drop these block events. They'll be
+		// Resolution failed â€” drop these block events. They'll be
 		// re-emitted next cycle since `prev` was already updated, but
 		// re-emit on the same already-FINISHED state is suppressed by
 		// the equality check. Lose these events but don't loop.

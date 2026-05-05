@@ -65,6 +65,7 @@ func (stubOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orde
 }
 func (stubOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 }
+func (stubOrderEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {}
 
 // stubEngine implements both ServiceAccess and EngineOrchestration for
 // tests, since *Handlers now holds two fields of those interface types

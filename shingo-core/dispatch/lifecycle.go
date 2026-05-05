@@ -112,6 +112,19 @@ var actionMap = map[transitionKey][]Action{
 	{from: StatusDelivered, to: StatusCancelled}:    {fireCancelled},
 	{from: StatusReshuffling, to: StatusCancelled}:  {fireCancelled},
 
+	// Faulted: entered when fleet reports transient failure. Fires the
+	// faulted event so engine wiring can start the grace timer.
+	{from: StatusDispatched, to: StatusFaulted}:   {fireFaulted},
+	{from: StatusAcknowledged, to: StatusFaulted}: {fireFaulted},
+	{from: StatusInTransit, to: StatusFaulted}:    {fireFaulted},
+	{from: StatusStaged, to: StatusFaulted}:       {fireFaulted},
+
+	// Faulted outgoing: reuse existing events.
+	{from: StatusFaulted, to: StatusInTransit}:  {fireFaultedRecovered},
+	{from: StatusFaulted, to: StatusDelivered}: {fireCompleted},
+	{from: StatusFaulted, to: StatusFailed}:    {fireFailed},
+	{from: StatusFaulted, to: StatusCancelled}: {fireCancelled},
+
 	// Failure paths notify engine wiring via the EventBus failure event.
 	// Delivered → Failed covers the rare post-delivery failure (crash
 	// recovery, late detection of bad delivery) — the auto-return guard
@@ -397,6 +410,37 @@ func fireFailed(s *LifecycleService, ord *orders.Order, ev Event) error {
 	return nil
 }
 
+func fireFaulted(s *LifecycleService, ord *orders.Order, ev Event) error {
+	s.emitter.EmitOrderFaulted(ord.ID, ord.EdgeUUID, ev.StationID, ev.Reason)
+	return nil
+}
+
+func fireFaultedRecovered(s *LifecycleService, ord *orders.Order, ev Event) error {
+	s.emitter.EmitOrderFaultedRecovered(ord.ID, ord.EdgeUUID, ev.StationID, ev.RobotID)
+	return nil
+}
+
+// MarkFaulted transitions {Dispatched,Acknowledged,InTransit,Staged} to Faulted
+// when the fleet reports a transient failure. The grace timer is handled by
+// the engine wiring layer.
+func (s *LifecycleService) MarkFaulted(ord *orders.Order, robotID, reason string) error {
+	return s.transition(ord, StatusFaulted, Event{
+		Actor:   "fleet",
+		Reason:  reason,
+		RobotID: robotID,
+	})
+}
+
+// MarkFaultedRecovered transitions Faulted back to InTransit when the fleet
+// recovers within the grace window.
+func (s *LifecycleService) MarkFaultedRecovered(ord *orders.Order, robotID string) error {
+	return s.transition(ord, StatusInTransit, Event{
+		Actor:   "fleet",
+		Reason:  "recovered from faulted",
+		RobotID: robotID,
+	})
+}
+
 // ── Derived status sets (Phase 6) ───────────────────────────────────────
 
 // IsInFlight returns true for statuses where a robot is committed but
@@ -404,7 +448,7 @@ func fireFailed(s *LifecycleService, ord *orders.Order, ev Event) error {
 // in engine/wiring_auto_return.go:54.
 func IsInFlight(status protocol.Status) bool {
 	switch status {
-	case StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged:
+	case StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged, StatusFaulted:
 		return true
 	}
 	return false

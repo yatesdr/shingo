@@ -66,6 +66,8 @@ func (e *capturingEmitter) EmitOrderCompleted(orderID int64, orderUUID string, o
 func (e *capturingEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 	e.failed = append(e.failed, string(orderType)+":"+reason)
 }
+func (e *capturingEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {
+}
 
 // seedProcessStyleNode seeds a process, a style on it, and a process_node
 // for the given core node name. Returns the ids needed for wiring.

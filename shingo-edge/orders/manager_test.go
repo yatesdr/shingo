@@ -196,3 +196,4 @@ func TestRegression_FailedToFailedIdempotent(t *testing.T) {
 		t.Errorf("failed→confirmed should be nil (terminal→terminal), got: %v", err)
 	}
 }
+func (testEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {}

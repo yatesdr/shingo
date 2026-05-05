@@ -33,6 +33,7 @@ const (
 
 	// Core node sync events
 	EventCoreNodesUpdated
+ 	EventOrderFaulted
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -136,4 +137,13 @@ type OrderFailedEvent struct {
 	OrderUUID string `json:"order_uuid"`
 	OrderType protocol.OrderType `json:"order_type"`
 	Reason    string             `json:"reason"`
+}
+
+// OrderFaultedEvent is emitted when an order transitions to faulted state.
+// The HMI shows an amber indicator with elapsed-time-in-state so operators
+// can distinguish a brief blip from an about-to-escalate fault.
+type OrderFaultedEvent struct {
+	OrderID   int64  `json:"order_id"`
+	OrderUUID string `json:"order_uuid"`
+	Reason    string `json:"reason"`
 }

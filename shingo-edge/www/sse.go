@@ -175,6 +175,10 @@ func (h *EventHub) SetupEngineListeners(eng *engine.Engine) {
 			if p, ok := evt.Payload.(engine.OrderFailedEvent); ok {
 				sseEvt = SSEEvent{Type: "order-failed", Data: p}
 			}
+		case engine.EventOrderFaulted:
+			if p, ok := evt.Payload.(engine.OrderFaultedEvent); ok {
+				sseEvt = SSEEvent{Type: "order-faulted", Data: p}
+			}
 		case engine.EventCounterDelta:
 			if p, ok := evt.Payload.(engine.CounterDeltaEvent); ok {
 				sseEvt = SSEEvent{Type: "counter-update", Data: p}

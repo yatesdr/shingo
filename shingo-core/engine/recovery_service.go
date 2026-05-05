@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 )
 
@@ -119,5 +120,49 @@ func (s *RecoveryService) CancelStuckOrder(orderID int64, actor string) error {
 		return err
 	}
 	e.db.RecordRecoveryAction("cancel_stuck_order", "order", orderID, fmt.Sprintf("cancelled stuck order in status %s", order.Status), actor)
+	return nil
+}
+
+// RecoverFaultedOrder pushes a faulted order back to in_transit for operators
+// who have cleared a fault and don't want to wait for the grace timer.
+// Follows the CancelStuckOrder template: status guard, lifecycle method, audit.
+func (s *RecoveryService) RecoverFaultedOrder(orderID int64, actor string) error {
+	e := s.engine
+	order, err := e.db.GetOrder(orderID)
+	if err != nil {
+		return fmt.Errorf("order not found")
+	}
+	if order.Status != protocol.StatusFaulted {
+		return fmt.Errorf("order %d is not faulted (status: %s)", orderID, order.Status)
+	}
+
+	if err := e.dispatcher.Lifecycle().MarkInTransit(order, order.RobotID, "recovery"); err != nil {
+		return fmt.Errorf("mark in_transit: %w", err)
+	}
+
+	e.db.AppendAudit("order", order.ID, "recovery.recover_faulted", "", actor, actor)
+	e.db.RecordRecoveryAction("recover_faulted_order", "order", order.ID, "recovered faulted order to in_transit", actor)
+	return nil
+}
+
+// ReissueTerminate re-fires /terminate for orders that grace-expired but the
+// original best-effort terminate failed. Returns the error from the fleet
+// adapter (NOT log-and-continue; the operator is asking to retry).
+func (s *RecoveryService) ReissueTerminate(orderID int64, actor string) error {
+	e := s.engine
+	order, err := e.db.GetOrder(orderID)
+	if err != nil {
+		return fmt.Errorf("order not found")
+	}
+	if order.Status != protocol.StatusFailed {
+		return fmt.Errorf("order %d is not failed (status: %s)", orderID, order.Status)
+	}
+
+	if err := e.fleet.CancelOrder(order.VendorOrderID); err != nil {
+		return fmt.Errorf("fleet cancel: %w", err)
+	}
+
+	e.db.AppendAudit("order", order.ID, "recovery.reissue_terminate", order.VendorOrderID, actor, actor)
+	e.db.RecordRecoveryAction("reissue_terminate", "order", order.ID, "re-issued terminate to fleet vendor", actor)
 	return nil
 }

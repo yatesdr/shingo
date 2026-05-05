@@ -424,3 +424,95 @@ func TestPollerConcurrentTrackDuringPoll(t *testing.T) {
 		t.Errorf("ActiveCount went negative: %d", p.ActiveCount())
 	}
 }
+
+// TestPollerGraceRecovery verifies RUNNING -> FAILED -> RUNNING within grace
+// results in a recovery transition and the order stays tracked.
+func TestPollerGraceRecovery(t *testing.T) {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		state := "RUNNING"
+		if callCount == 2 {
+			state = "FAILED"
+		}
+		_, _ = w.Write([]byte(fmt.Sprintf(
+			`{"code":0,"msg":"ok","id":"rds-gr","state":"%s","vehicle":"AMB-01"}`, state)))
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, 2*time.Second)
+
+	emitter := &mockPollerEmitter{}
+	p := NewPoller(client, emitter, &mockResolver{}, time.Minute)
+	p.Track("rds-gr")
+
+	// First poll: RUNNING baseline
+	p.poll()
+
+	// Second poll: RUNNING -> FAILED (enters grace period, stays tracked)
+	p.poll()
+	if p.ActiveCount() != 1 {
+		t.Errorf("ActiveCount after FAILED = %d, want 1 (grace period)", p.ActiveCount())
+	}
+	if p.FaultedCount() != 1 {
+		t.Errorf("FaultedCount after FAILED = %d, want 1", p.FaultedCount())
+	}
+
+	// Third poll: FAILED -> RUNNING (recovery within grace)
+	p.poll()
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	recovered := false
+	for _, ev := range emitter.events {
+		if ev.newStatus == "RUNNING" && ev.oldStatus == "FAILED" {
+			recovered = true
+		}
+	}
+	if !recovered {
+		t.Errorf("expected FAILED->RUNNING recovery transition, got events: %+v", emitter.events)
+	}
+	if p.FaultedCount() != 0 {
+		t.Errorf("FaultedCount after recovery = %d, want 0", p.FaultedCount())
+	}
+	if len(emitter.graceExpired) != 0 {
+		t.Errorf("grace expired events = %d, want 0", len(emitter.graceExpired))
+	}
+}
+
+// TestPollerGraceExpiry verifies RUNNING -> FAILED + grace expiry emits GraceExpired
+// and untracks the order.
+func TestPollerGraceExpiry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-exp","state":"FAILED","vehicle":"AMB-01"}`))
+	}))
+	defer srv.Close()
+	client := NewClient(srv.URL, 2*time.Second)
+
+	emitter := &mockPollerEmitter{}
+	// Use a very short grace duration so it expires immediately
+	p := NewPoller(client, emitter, &mockResolver{}, time.Minute, 1*time.Millisecond)
+	p.Track("rds-exp")
+
+	// First poll: baseline (CREATED -> FAILED transition)
+	p.poll()
+	if p.ActiveCount() != 1 {
+		t.Errorf("ActiveCount after FAILED = %d, want 1 (grace period)", p.ActiveCount())
+	}
+
+	// Wait for grace to expire
+	time.Sleep(10 * time.Millisecond)
+
+	// Second poll: still FAILED, grace should have expired
+	p.poll()
+
+	emitter.mu.Lock()
+	defer emitter.mu.Unlock()
+	if len(emitter.graceExpired) != 1 {
+		t.Fatalf("grace expired events = %d, want 1", len(emitter.graceExpired))
+	}
+	if emitter.graceExpired[0].rdsOrderID != "rds-exp" {
+		t.Errorf("grace expired rdsOrderID = %q, want rds-exp", emitter.graceExpired[0].rdsOrderID)
+	}
+	if p.ActiveCount() != 0 {
+		t.Errorf("ActiveCount after grace expiry = %d, want 0", p.ActiveCount())
+	}
+}

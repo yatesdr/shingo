@@ -195,7 +195,7 @@ func (s *SimulatorBackend) MapState(vendorState string) string {
 
 // IsTerminalState returns true for FINISHED, FAILED, STOPPED.
 func (s *SimulatorBackend) IsTerminalState(vendorState string) bool {
-	return vendorState == "FINISHED" || vendorState == "FAILED" || vendorState == "STOPPED"
+	return vendorState == "FINISHED" || vendorState == "STOPPED"
 }
 
 // Reconfigure is a no-op for the simulator.
@@ -215,7 +215,7 @@ func mapStateInternal(vendorState string) string {
 	case "FINISHED":
 		return "delivered"
 	case "FAILED":
-		return "failed"
+		return "faulted"
 	case "STOPPED":
 		return "cancelled"
 	default:

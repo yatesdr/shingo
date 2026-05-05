@@ -19,6 +19,45 @@ func TestStatusIsTerminal(t *testing.T) {
 	}
 }
 
+func TestStatusFaultedIsNonTerminal(t *testing.T) {
+	if StatusFaulted.IsTerminal() {
+		t.Error("StatusFaulted.IsTerminal() = true, want false")
+	}
+}
+
+func TestFaultedTransitions(t *testing.T) {
+	accepted := []struct{ from, to Status }{
+		{StatusDispatched, StatusFaulted},
+		{StatusAcknowledged, StatusFaulted},
+		{StatusInTransit, StatusFaulted},
+		{StatusStaged, StatusFaulted},
+		{StatusFaulted, StatusInTransit},
+		{StatusFaulted, StatusDelivered},
+		{StatusFaulted, StatusFailed},
+		{StatusFaulted, StatusCancelled},
+	}
+	for _, c := range accepted {
+		if !c.from.CanTransitionTo(c.to) {
+			t.Errorf("%s.CanTransitionTo(%s) = false, want true", c.from, c.to)
+		}
+	}
+
+	rejected := []struct{ from, to Status }{
+		{StatusQueued, StatusFaulted},
+		{StatusPending, StatusFaulted},
+		{StatusDelivered, StatusFaulted},
+		{StatusConfirmed, StatusFaulted},
+		{StatusFaulted, StatusQueued},
+		{StatusFaulted, StatusDispatched},
+		{StatusFaulted, StatusPending},
+		{StatusFaulted, StatusConfirmed},
+	}
+	for _, c := range rejected {
+		if c.from.CanTransitionTo(c.to) {
+			t.Errorf("%s.CanTransitionTo(%s) = true, want false", c.from, c.to)
+		}
+	}
+}
 func TestStatusCanTransitionTo(t *testing.T) {
 	cases := []struct {
 		from, to Status

@@ -93,3 +93,9 @@ func (e *orderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderTyp
 		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, Reason: reason,
 	}})
 }
+
+func (e *orderEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {
+	e.bus.Emit(Event{Type: EventOrderFaulted, Payload: OrderFaultedEvent{
+		OrderID: orderID, OrderUUID: orderUUID, Reason: reason,
+	}})
+}

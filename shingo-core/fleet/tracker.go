@@ -19,6 +19,7 @@ type OrderTracker interface {
 type TrackerEmitter interface {
 	EmitOrderStatusChanged(orderID int64, vendorOrderID, oldStatus, newStatus, robotID, detail string, snapshot *OrderSnapshot)
 	EmitBlockCompleted(orderID int64, vendorOrderID, blockID, location, binTask string)
+	EmitGraceExpired(orderID int64, vendorOrderID string)
 }
 
 // OrderIDResolver maps vendor order IDs back to ShinGo order IDs.

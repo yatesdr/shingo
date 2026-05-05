@@ -31,6 +31,9 @@ const (
 	EventCountGroupTransition
 	EventBlockCompleted
 	EventBinEnteredTransit
+	EventOrderFaulted
+	EventOrderFaultedRecovered
+	EventGraceExpired
 )
 
 // --- Event payloads ---
@@ -80,7 +83,7 @@ type OrderCancelledEvent struct {
 	EdgeUUID       string
 	StationID      string
 	Reason         string
-	PreviousStatus string // status before cancellation — used to skip auto-return for delivered/confirmed orders
+	PreviousStatus string // status before cancellation â€” used to skip auto-return for delivered/confirmed orders
 }
 
 type OrderQueuedEvent struct {
@@ -158,7 +161,7 @@ type BlockCompletedEvent struct {
 }
 
 // BinEnteredTransitEvent fires when a bin's NodeID transitions to the
-// synthetic _TRANSIT node — the moment the source slot is freed for
+// synthetic _TRANSIT node â€” the moment the source slot is freed for
 // new placements. Subscribers: the fulfillment scanner trigger (so
 // queued orders re-check their dispatch eligibility against the now-
 // vacant source slot) and the materials/admin UI for live transit-lane
@@ -168,4 +171,30 @@ type BinEnteredTransitEvent struct {
 	OrderID    int64  // the order whose pickup drove the transition
 	FromNodeID int64  // the node the bin just left (now vacant)
 	StepIndex  int    // position in the order's pickup sequence (0 for single-pickup)
+}
+
+// OrderFaultedEvent fires when an order enters the faulted grace-period state.
+// The HMI uses this to show an amber indicator with elapsed-time-in-state so
+// operators can distinguish a brief blip from an about-to-escalate fault.
+type OrderFaultedEvent struct {
+	OrderID   int64
+	EdgeUUID  string
+	StationID string
+	Reason    string
+}
+
+// OrderFaultedRecoveredEvent fires when an order transitions from faulted back
+// to in_transit (fleet recovered within the grace window).
+type OrderFaultedRecoveredEvent struct {
+	OrderID   int64
+	EdgeUUID  string
+	StationID string
+	RobotID   string
+}
+// GraceExpiredEvent fires when the poller detects a faulted order whose
+// grace period has elapsed without fleet recovery. The engine handler
+// calls CancelOrder (best-effort) then Fail() for the local terminal transition.
+type GraceExpiredEvent struct {
+	OrderID       int64
+	VendorOrderID string
 }
