@@ -67,6 +67,18 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 		eta = *updated.ETA
 	}
 	s.emitter.EmitOrderStatusChanged(order.ID, order.UUID, order.OrderType, string(oldStatus), string(newStatus), eta, nil, order.ProcessNodeID)
+	// Delivered fires *before* the terminal-status branch so the runtime
+	// UOP handler binds the cache to the actually-arrived bin the moment
+	// the bin lands, independent of when (or whether) the operator
+	// confirms. Order.BinID is read from the post-transition row because
+	// HandleDelivered may have just stamped Core's resolved bin id.
+	if newStatus == StatusDelivered {
+		var binID *int64
+		if updated != nil {
+			binID = updated.BinID
+		}
+		s.emitter.EmitOrderDelivered(order.ID, order.UUID, order.OrderType, order.ProcessNodeID, binID)
+	}
 	if IsTerminal(newStatus) {
 		s.emitter.EmitOrderCompleted(order.ID, order.UUID, order.OrderType, nil, order.ProcessNodeID)
 		if newStatus == StatusFailed {

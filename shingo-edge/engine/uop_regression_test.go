@@ -52,19 +52,17 @@ func TestRegression_RemovalOrderClearsBinPointer(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-reg11-removal",
-			OrderType:     orders.TypeComplex,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	// Under the new contract the bin pointer clears at pickup, not at
+	// completion. Simulate the pickup directly (HandleBinPickedUp's full
+	// path needs inventoryDelta wired, which test contexts don't).
+	if err := db.SetProcessNodeActiveBinID(nodeID, nil); err != nil {
+		t.Fatalf("simulate pickup clear: %v", err)
+	}
+	emitOrderCompleted(eng, orderID, "uuid-reg11-removal", orders.TypeComplex, &nodeID)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.ActiveBinID != nil {
-		t.Errorf("ActiveBinID = %v, want nil (removal order clears the bin pointer)", *rt.ActiveBinID)
+		t.Errorf("ActiveBinID = %v, want nil (pickup clears the bin pointer for removal flow)", *rt.ActiveBinID)
 	}
 }
 
@@ -106,19 +104,11 @@ func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-reg11-delivery",
-			OrderType:     orders.TypeComplex,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	emitOrderCompleted(eng, orderID, "uuid-reg11-delivery", orders.TypeComplex, &nodeID)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (delivery order to process node MUST reset line UOP to claim capacity)",
+		t.Errorf("RemainingUOP = %d, want 200 (delivery handler fallback to claim capacity)",
 			rt.RemainingUOPCached)
 	}
 }
@@ -159,23 +149,15 @@ func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-item8-delivery",
-			OrderType:     orders.TypeComplex,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	emitOrderCompleted(eng, orderID, "uuid-item8-delivery", orders.TypeComplex, &nodeID)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (delivery with bin → reset to capacity)",
+		t.Errorf("RemainingUOP = %d, want 200 (delivered handler fallback to claim capacity)",
 			rt.RemainingUOPCached)
 	}
 	if rt.ActiveBinID == nil || *rt.ActiveBinID != 303 {
-		t.Errorf("ActiveBinID = %v, want 303 (binArrivingAt threads order.BinID into runtime)",
+		t.Errorf("ActiveBinID = %v, want 303 (delivered handler binds to order.BinID)",
 			rt.ActiveBinID)
 	}
 }

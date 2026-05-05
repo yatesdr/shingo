@@ -90,6 +90,7 @@ type RuntimeState struct {
 	ProcessNodeID      int64     `json:"process_node_id"`
 	ActiveClaimID      *int64    `json:"active_claim_id,omitempty"`
 	ActiveBinID        *int64    `json:"active_bin_id,omitempty"`
+	CachedBinID        *int64    `json:"cached_bin_id,omitempty"`
 	RemainingUOPCached int       `json:"remaining_uop_cached"`
 	ActiveOrderID      *int64    `json:"active_order_id,omitempty"`
 	StagedOrderID      *int64    `json:"staged_order_id,omitempty"`

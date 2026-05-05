@@ -130,13 +130,24 @@ func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protoc
 	return e.orderMgr.CreateComplexOrder(&nodeID, quantity, deliveryNode, processNodeName, steps)
 }
 
-// resetProduceRuntime drops the node's UOP back to 0 (ready for the next
-// empty bin) and stamps the active/staged order IDs. Errors are logged
-// only — the order(s) already shipped, so failing here would leave the
-// caller with no actionable recovery.
+// resetProduceRuntime is the produce-side analog of consume's release
+// click: cache flips to 0 (the next empty bin's UOP is 0 by definition),
+// cached_bin_id flips to nil (the empty bin's id isn't known yet — Core
+// resolves it at the supermarket and we'll learn it at delivery), and
+// the active/staged order pointers stamp the dispatched legs.
+//
+// PLC tick gate: with cached_bin_id=nil and active_bin_id still pointing
+// at the previous filled bin (or nil after pickup), the gap detector
+// keeps PLC ticks from incrementing the cache during the gap. Delivery
+// of the new empty bin sets cached_bin_id=active_bin_id=binID and
+// resumes increments.
+//
+// Errors are logged only — the order(s) already shipped, so failing
+// here would leave the caller with no actionable recovery.
 func (e *Engine) resetProduceRuntime(nodeID int64, runtime *processes.RuntimeState, activeID, stagedID *int64) {
-	if err := e.db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0); err != nil {
-		log.Printf("produce: set runtime for node %d: %v", nodeID, err)
+	_ = runtime // kept for parity with consume call site shape; cache write doesn't need claim id
+	if err := e.db.SetProcessNodeCachedBin(nodeID, nil, 0); err != nil {
+		log.Printf("produce: set runtime cache for node %d: %v", nodeID, err)
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, activeID, stagedID); err != nil {
 		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)

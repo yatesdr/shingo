@@ -56,6 +56,16 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 			continue
 		}
 
+		// manual_swap nodes (loader/unloader) are forklift-managed
+		// staging points, not production cells. They have no PLC tags
+		// directly tied to their bin contents — the line's PLC counts
+		// the parts. Skip cache decrement and Core-side bin delta
+		// emission for these nodes so a forklift-loaded bin's manifest
+		// doesn't drift from the operator-declared count.
+		if claim.SwapMode == "manual_swap" {
+			continue
+		}
+
 		switch claim.Role {
 		case protocol.ClaimRoleConsume:
 			// A/B cycling: only decrement the active-pull side.
@@ -123,14 +133,26 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// the bin counter.
 	drains, binRemainder := e.drainLinesideFirst(node.ID, claim, delta)
 
-	newRemaining := runtime.RemainingUOPCached - binRemainder
-	if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
-		log.Printf("update UOP for node %d: %v", node.ID, err)
+	// Cache decrement is gated on steady state: the cache represents the
+	// bin physically present. During the release→delivery gap the cache
+	// represents the incoming bin which hasn't been consumed yet, so the
+	// decrement is skipped. The Core-side bin delta below still fires —
+	// it attributes to active_bin_id (the old bin still on slot, or
+	// nothing if pickup has happened), keeping Core's manifest honest
+	// for whatever the cell is actually pulling from.
+	newRemaining := runtime.RemainingUOPCached
+	if inSteadyState(runtime) {
+		newRemaining = runtime.RemainingUOPCached - binRemainder
+		if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+			log.Printf("update UOP for node %d: %v", node.ID, err)
+		}
 	}
 
 	e.emitConsumeTickDeltas(node.ID, runtime, claim, drains, binRemainder)
 
 	// Auto-reorder if threshold reached, enabled, and node can accept orders.
+	// During the gap newRemaining is unchanged so the threshold isn't crossed
+	// twice for the same supply event.
 	if claim.AutoReorder && newRemaining <= claim.ReorderPoint && newRemaining > 0 {
 		if ok, _ := e.CanAcceptOrders(node.ID); ok {
 			if _, err := e.RequestNodeMaterial(node.ID, 1); err != nil {
@@ -149,9 +171,18 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 // filled. No bucket delta — produce nodes don't drain lineside; they
 // fill bins directly via the PLC.
 func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, delta int) {
-	newRemaining := runtime.RemainingUOPCached + delta
-	if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
-		log.Printf("update UOP for node %d: %v", node.ID, err)
+	// Cache increment is gated on steady state, mirroring consume. During
+	// the release→delivery gap the cache represents the incoming empty
+	// bin (cached_bin_id != active_bin_id), so we don't increment it for
+	// parts being produced — those parts are going into whatever bin is
+	// physically present (the old filled bin still on slot, or nothing
+	// post-pickup), which the Core-side bin delta below records.
+	newRemaining := runtime.RemainingUOPCached
+	if inSteadyState(runtime) {
+		newRemaining = runtime.RemainingUOPCached + delta
+		if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+			log.Printf("update UOP for node %d: %v", node.ID, err)
+		}
 	}
 
 	if e.inventoryDelta != nil && delta > 0 {
@@ -193,9 +224,13 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 	}
 
 	// Signed-bin semantic mirrors handleConsumeTick (see comment there).
-	newRemaining := runtime.RemainingUOPCached - binRemainder
-	if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
-		log.Printf("update UOP for node %d: %v", node.ID, err)
+	// Same gap-window gating: during release→delivery, cache stays put
+	// while the lineside drain and Core-side bin delta still fire.
+	if inSteadyState(runtime) {
+		newRemaining := runtime.RemainingUOPCached - binRemainder
+		if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
+			log.Printf("update UOP for node %d: %v", node.ID, err)
+		}
 	}
 
 	if claim != nil {
@@ -243,6 +278,24 @@ func (e *Engine) emitFallthroughDeltas(nodeID int64, runtime *processes.RuntimeS
 			e.inventoryDelta.RecordBin(binID, payload, -binRemainder, protocol.ReasonABFallthrough)
 		}
 	}
+}
+
+// inSteadyState reports whether the runtime cache and the physically-
+// present bin describe the same bin. False during the release→delivery
+// gap: cache represents the incoming bin (set at click) but
+// active_bin_id still points at the old bin (or is nil after pickup).
+//
+// PLC ticks during the gap drain lineside and emit Core-side bin deltas
+// against active_bin_id (the old bin physically still consuming, if
+// any), but must NOT decrement the cache — the cache is accounting for
+// the new bin which the cell hasn't touched yet. Once delivery sets
+// active_bin_id := cached_bin_id, the gate flips back to steady state
+// and cache decrements/increments resume.
+func inSteadyState(runtime *processes.RuntimeState) bool {
+	if runtime == nil || runtime.ActiveBinID == nil || runtime.CachedBinID == nil {
+		return false
+	}
+	return *runtime.ActiveBinID == *runtime.CachedBinID
 }
 
 // binAtNode resolves the bin currently associated with a node tick.

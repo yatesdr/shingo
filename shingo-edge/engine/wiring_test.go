@@ -29,22 +29,13 @@ func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 	db.SetProcessNodeRuntime(nodeID, &claimID, 50)
 
-	// Simulate order completion
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-ingest-1",
-			OrderType:     orders.TypeIngest,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	emitOrderCompleted(eng, orderID, "uuid-ingest-1", orders.TypeIngest, &nodeID)
 
-	// Give event handler a moment to process (synchronous in single goroutine)
+	// Cache assertion removed: ingest completion no longer touches
+	// RemainingUOPCached under the new contract — produce cache binding
+	// happens at FinalizeProduceNode (operator click) and at the next
+	// empty bin's delivery. Confirm only clears order pointers.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after ingest completion", runtime.RemainingUOPCached)
-	}
 	if runtime.ActiveOrderID != nil {
 		t.Error("ActiveOrderID should be nil after ingest completion")
 	}
@@ -69,24 +60,17 @@ func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
+	deliveredBin := int64(43)
+	db.UpdateOrderBinID(orderID, &deliveredBin)
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-	db.SetProcessNodeRuntime(nodeID, &claimID, 0) // was at 0, waiting for empty
+	db.SetProcessNodeRuntime(nodeID, &claimID, 0)
 
-	// Simulate order completion
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-retrieve-prod",
-			OrderType:     orders.TypeRetrieve,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	emitOrderCompleted(eng, orderID, "uuid-retrieve-prod", orders.TypeRetrieve, &nodeID)
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	// Produce node: UOP should reset to 0 (empty bin received, starts at 0)
+	// Delivered handler fires; produce-role fallback is 0.
 	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 (produce node receives empty bin)", runtime.RemainingUOPCached)
+		t.Errorf("RemainingUOP = %d, want 0 (produce node, delivered fallback)", runtime.RemainingUOPCached)
 	}
 }
 
@@ -143,12 +127,16 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 	db.EnsureProcessNodeRuntime(nodeID)
 	// Default seed: a bin is "physically at the slot" so PLC tick tests
 	// emit deltas via binAtNode without each test having to set
-	// active_bin_id explicitly. Delivery-completion tests that exercise
-	// the bin-pointer turnover path either overwrite this via
-	// SetProcessNodeRuntimeWithBin or use a fresh node id; the seed
-	// value is opaque and only matters when the test inspects bin deltas.
+	// active_bin_id explicitly. cached_bin_id is set to the same value
+	// so the PLC tick gate sees steady state (active == cached) and
+	// applies the cache decrement / increment. Delivery-completion tests
+	// that exercise the bin-pointer turnover path overwrite via
+	// SetProcessNodeRuntimeForDeliveredBin; gap-window tests overwrite
+	// just one of the pointers via SetProcessNodeCachedBin /
+	// SetProcessNodeActiveBinID.
 	defaultBin := int64(1)
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &defaultBin, cfg.InitialUOP)
+	db.SetProcessNodeCachedBin(nodeID, &defaultBin, cfg.InitialUOP)
 	return processID, nodeID, styleID, claimID
 }
 
@@ -175,20 +163,16 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 	db.UpdateOrderBinID(orderID, &deliveredBin)
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-retrieve-con",
-			OrderType:     orders.TypeRetrieve,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	emitOrderCompleted(eng, orderID, "uuid-retrieve-con", orders.TypeRetrieve, &nodeID)
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	// Consume node: UOP should reset to capacity (full bin received)
+	// New contract: cache flips at delivered, not at confirm. The
+	// emitOrderCompleted helper fires the delivered event first which
+	// invokes handleNodeOrderDelivered → SetProcessNodeRuntimeForDeliveredBin.
+	// Core is unreachable in tests so the fallback (claim.UOPCapacity for
+	// consume) is written.
 	if runtime.RemainingUOPCached != 200 {
-		t.Errorf("RemainingUOP = %d, want 200 (consume node UOPCapacity)", runtime.RemainingUOPCached)
+		t.Errorf("RemainingUOP = %d, want 200 (consume node UOPCapacity, Core-unreachable fallback)", runtime.RemainingUOPCached)
 	}
 	_ = processID
 }
@@ -210,8 +194,10 @@ func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	// Set initial UOP
-	db.SetProcessNodeRuntime(nodeID, &claimID, 10)
+	// Steady-state seed: bin physically present and matches cache.
+	bin := int64(7)
+	db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bin, 10)
+	db.SetProcessNodeCachedBin(nodeID, &bin, 10)
 
 	eng.handleCounterDelta(CounterDeltaEvent{
 		ProcessID: processID,
@@ -333,20 +319,10 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-move-bl",
-			OrderType:     orders.TypeMove,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	emitOrderCompleted(eng, orderID, "uuid-move-bl", orders.TypeMove, &nodeID)
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 0 {
-		t.Errorf("RemainingUOP = %d, want 0 after manual_swap move completion", runtime.RemainingUOPCached)
-	}
+	// Cache binding no longer asserted at confirm under the new contract.
 	// After the side-cycle refactor (commit 4f9212b + tryAutoRequest
 	// removal), handleManualSwapCompletion clears ActiveOrderID without
 	// queueing a follow-up kanban request. New empties are driven by
@@ -486,8 +462,14 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 
 	db.EnsureProcessNodeRuntime(nodeAID)
 	db.EnsureProcessNodeRuntime(nodeBID)
-	db.SetProcessNodeRuntime(nodeAID, &claimAID, 80)
-	db.SetProcessNodeRuntime(nodeBID, &claimBID, 80)
+	// Set both active_bin_id and cached_bin_id so the PLC tick gate sees
+	// steady state (active == cached) and applies the cache decrement.
+	binA := int64(1)
+	binB := int64(2)
+	db.SetProcessNodeRuntimeWithBin(nodeAID, &claimAID, &binA, 80)
+	db.SetProcessNodeRuntimeWithBin(nodeBID, &claimBID, &binB, 80)
+	db.SetProcessNodeCachedBin(nodeAID, &binA, 80)
+	db.SetProcessNodeCachedBin(nodeBID, &binB, 80)
 
 	// Node A starts as active pull, Node B starts as inactive
 	db.SetActivePull(nodeAID, true)
@@ -694,8 +676,12 @@ func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID,
 
 	db.EnsureProcessNodeRuntime(nodeAID)
 	db.EnsureProcessNodeRuntime(nodeBID)
-	db.SetProcessNodeRuntime(nodeAID, &claimAID, 10)
-	db.SetProcessNodeRuntime(nodeBID, &claimBID, 10)
+	binA := int64(21)
+	binB := int64(22)
+	db.SetProcessNodeRuntimeWithBin(nodeAID, &claimAID, &binA, 10)
+	db.SetProcessNodeRuntimeWithBin(nodeBID, &claimBID, &binB, 10)
+	db.SetProcessNodeCachedBin(nodeAID, &binA, 10)
+	db.SetProcessNodeCachedBin(nodeBID, &binB, 10)
 	db.SetActivePull(nodeAID, true)
 	db.SetActivePull(nodeBID, false)
 
@@ -729,8 +715,12 @@ func seedAsymmetricABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeB
 
 	db.EnsureProcessNodeRuntime(nodeAID)
 	db.EnsureProcessNodeRuntime(nodeBID)
-	db.SetProcessNodeRuntime(nodeAID, &claimAID, 80)
-	db.SetProcessNodeRuntime(nodeBID, &claimBID, 80)
+	binA := int64(11)
+	binB := int64(12)
+	db.SetProcessNodeRuntimeWithBin(nodeAID, &claimAID, &binA, 80)
+	db.SetProcessNodeRuntimeWithBin(nodeBID, &claimBID, &binB, 80)
+	db.SetProcessNodeCachedBin(nodeAID, &binA, 80)
+	db.SetProcessNodeCachedBin(nodeBID, &binB, 80)
 	db.SetActivePull(nodeAID, true)
 	db.SetActivePull(nodeBID, false)
 

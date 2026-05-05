@@ -88,6 +88,12 @@ func (e *orderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, order
 	}})
 }
 
+func (e *orderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64) {
+	e.bus.Emit(Event{Type: EventOrderDelivered, Payload: OrderDeliveredEvent{
+		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, ProcessNodeID: processNodeID, BinID: binID,
+	}})
+}
+
 func (e *orderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 	e.bus.Emit(Event{Type: EventOrderFailed, Payload: OrderFailedEvent{
 		OrderID: orderID, OrderUUID: orderUUID, OrderType: orderType, Reason: reason,

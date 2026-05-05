@@ -102,6 +102,14 @@ func (db *DB) migrate() error {
 	// Idempotent — duplicate ALTER ADD COLUMN fails silently in SQLite.
 	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN active_bin_id INTEGER")
 
+	// Runtime UOP binding: cached_bin_id records which bin remaining_uop_cached
+	// is accounting for. Set at release-click (incoming supply bin) and
+	// re-affirmed at delivery (the actually-arrived bin). PLC tick gates
+	// cache decrement on active_bin_id == cached_bin_id (steady state) vs.
+	// !=  (release→delivery gap, where cache represents the next bin and
+	// physical reality is the old bin or nothing).
+	db.Exec("ALTER TABLE process_node_runtime_states ADD COLUMN cached_bin_id INTEGER")
+
 	// Drop zombie nodes table (replaced by process_nodes + core node sync)
 	db.Exec("DROP TABLE IF EXISTS nodes")
 

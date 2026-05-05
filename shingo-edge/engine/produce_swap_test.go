@@ -18,6 +18,7 @@ func (testOrderEmitter) EmitOrderCreated(int64, string, protocol.OrderType, *int
 func (testOrderEmitter) EmitOrderStatusChanged(int64, string, protocol.OrderType, string, string, string, *int64, *int64) {
 }
 func (testOrderEmitter) EmitOrderCompleted(int64, string, protocol.OrderType, *int64, *int64) {}
+func (testOrderEmitter) EmitOrderDelivered(int64, string, protocol.OrderType, *int64, *int64) {}
 func (testOrderEmitter) EmitOrderFailed(int64, string, protocol.OrderType, string)            {}
 
 // seedProduceNode creates a process, process node, style, claim, and runtime

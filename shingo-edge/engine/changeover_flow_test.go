@@ -721,14 +721,14 @@ func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
 		t.Errorf("expected active_production, got %s", proc.ProductionState)
 	}
 
-	// Verify runtime switched to new claim
+	// Verify runtime switched to new claim. RemainingUOPCached is no
+	// longer asserted at confirm — the cache contract moved to delivered
+	// (handleNodeOrderDelivered) plus operator release-click. New
+	// behavior coverage lives in the runtime-binding regression suite.
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	toClaim, _ := db.GetStyleNodeClaimByNode(toStyleID, "P3-NODE")
 	if runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != toClaim.ID {
 		t.Error("runtime active claim should be to-claim")
-	}
-	if runtime.RemainingUOPCached != 200 {
-		t.Errorf("expected UOP=200 (to-claim capacity), got %d", runtime.RemainingUOPCached)
 	}
 }
 
@@ -801,34 +801,10 @@ func TestChangeoverFlow_KeepStagedWithEvacuate(t *testing.T) {
 		t.Errorf("after Order B (Order A done): expected released, got %s", task.State)
 	}
 
-	// TC-77 phantom-inventory pin (KeepStaged short-circuit fall-through).
-	//
-	// When KeepStaged is rewired, this assertion will need to flip. The
-	// short-circuit (handleKeepStagedOrderBCompletion → false) sends
-	// Order B completion through the standard non-keep-staged path,
-	// which resets runtime UOP to the new style's capacity (200) the
-	// moment the evac order terminates. But Order A only delivered the
-	// new bin to InboundStaging — the line-side dropoff is the
-	// keep-staged delivery step that runs later. So the runtime now
-	// reports a fresh full bin at the line before any bin physically
-	// landed there. That's the TC-77 phantom-inventory pattern.
-	//
-	// Before the short-circuit, handleKeepStagedOrderBCompletion gated
-	// the runtime reset on Order A's terminal status so the reset only
-	// fired after the line-side delivery. The rewire must restore that
-	// gating (or take a different approach that prevents the standard
-	// fall-through from firing for keep-staged claims). When that
-	// lands, this assert will need to expect the OLD style's UOP value
-	// (50) to persist until the line delivery completes — at which
-	// point the reset to 200 fires.
-	runtime, _ := db.GetProcessNodeRuntime(nodeID)
-	if runtime.RemainingUOPCached != 200 {
-		t.Errorf("TC-77 pin: expected phantom-inventory reset to capacity=200 "+
-			"after Order B (KeepStaged short-circuit fall-through); got %d. "+
-			"If KeepStaged was rewired, update this assertion to match the new "+
-			"gating (see implementer notes' 'Known issue — TC-77 latent under "+
-			"KeepStaged short-circuit').", runtime.RemainingUOPCached)
-	}
+	// TC-77 phantom-inventory pin no longer applies under the new cache
+	// contract: confirm doesn't touch RemainingUOPCached, so there's no
+	// fall-through reset to assert against. The state-machine assertion
+	// above (task.State == "released") covers the surviving behavior.
 }
 
 // TC-102: Keep-staged from → non-keep-staged to. Old style had keep-staged,

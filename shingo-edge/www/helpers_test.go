@@ -63,6 +63,8 @@ func (stubOrderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID string, 
 }
 func (stubOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
 }
+func (stubOrderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64) {
+}
 func (stubOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 }
 func (stubOrderEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {}

@@ -34,6 +34,16 @@ const (
 	// Core node sync events
 	EventCoreNodesUpdated
  	EventOrderFaulted
+
+	// EventOrderDelivered fires the moment an order transitions to
+	// StatusDelivered — i.e., the bin physically arrived at its
+	// destination node. The runtime UOP cache for the destination slot
+	// (when DeliveryNode == process_node.CoreNodeName) flips to the
+	// delivered bin's authoritative count via handleNodeOrderDelivered.
+	// Distinct from EventOrderCompleted, which fires on terminal status
+	// (Confirmed/Failed/Cancelled) and is reserved for operator-semantic
+	// side-effects (state machine, side-cycle dispatch).
+	EventOrderDelivered
 )
 
 // Event is the envelope emitted by the Engine's EventBus.
@@ -146,4 +156,20 @@ type OrderFaultedEvent struct {
 	OrderID   int64  `json:"order_id"`
 	OrderUUID string `json:"order_uuid"`
 	Reason    string `json:"reason"`
+}
+
+// OrderDeliveredEvent is emitted when an order transitions to
+// StatusDelivered. Carries the BinID Core resolved at delivery time so
+// the delivered handler can look up the bin's authoritative
+// uop_remaining and bind the slot's runtime cache to it. ProcessNodeID
+// is the dispatch-time process node hint; the delivered handler still
+// gates on order.DeliveryNode == process_node.CoreNodeName because
+// removal-shaped orders (e.g., Order B in two-robot consume) attach to
+// the process node for tracking but deliver to the supermarket.
+type OrderDeliveredEvent struct {
+	OrderID       int64              `json:"order_id"`
+	OrderUUID     string             `json:"order_uuid"`
+	OrderType     protocol.OrderType `json:"order_type"`
+	ProcessNodeID *int64             `json:"process_node_id,omitempty"`
+	BinID         *int64             `json:"bin_id,omitempty"`
 }

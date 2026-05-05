@@ -442,6 +442,7 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 	db.SetActiveStyle(processID, &styleX)
 	bidX1 := binX1
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimX, &bidX1, 200)
+	db.SetProcessNodeCachedBin(nodeID, &bidX1, 200) // gate: steady state
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -467,6 +468,7 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 	db.SetActiveStyle(processID, &styleY)
 	bidY := binY
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimY, &bidY, 150) // Y capacity
+	db.SetProcessNodeCachedBin(nodeID, &bidY, 150)               // gate: steady state
 
 	// X-style tick: should be ignored (runtime active claim is Y).
 	sink.binCalls = nil
@@ -497,6 +499,7 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 	db.SetActiveStyle(processID, &styleX)
 	bidX2 := binX2
 	db.SetProcessNodeRuntimeWithBin(nodeID, &claimX, &bidX2, 200) // fresh X capacity
+	db.SetProcessNodeCachedBin(nodeID, &bidX2, 200)               // gate: steady state
 
 	sink.binCalls = nil
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
@@ -552,19 +555,11 @@ func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     "uuid-back-return",
-			OrderType:     orders.TypeComplex,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	emitOrderCompleted(eng, orderID, "uuid-back-return", orders.TypeComplex, &nodeID)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != xClaim.UOPCapacity {
-		t.Errorf("post-arrival runtime = %d, want %d (Item 8: delivery resets to claim.UOPCapacity; reconciler heals to actual)",
+		t.Errorf("post-arrival runtime = %d, want %d (delivered handler fallback to claim.UOPCapacity)",
 			rt.RemainingUOPCached, xClaim.UOPCapacity)
 	}
 }

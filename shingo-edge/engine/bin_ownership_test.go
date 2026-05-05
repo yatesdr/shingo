@@ -146,17 +146,11 @@ func TestBinOwnership_DeliveryThenTickThenPickup(t *testing.T) {
 	sink := &flushTrackingSink{}
 	eng.SetInventoryDeltaSink(sink)
 
-	// Phase 1: delivery completion fires. handleNormalReplenishment runs,
-	// binArrivingAt picks up order.BinID, runtime.ActiveBinID is set.
-	eng.Events.Emit(Event{
-		Type: EventOrderCompleted,
-		Payload: OrderCompletedEvent{
-			OrderID:       orderID,
-			OrderUUID:     orderUUID,
-			OrderType:     orders.TypeRetrieve,
-			ProcessNodeID: &nodeID,
-		},
-	})
+	// Phase 1: delivery handler fires (emitOrderCompleted helper now
+	// emits EventOrderDelivered first under the new contract).
+	// handleNodeOrderDelivered → SetProcessNodeRuntimeForDeliveredBin
+	// sets active_bin_id, cached_bin_id, and remaining_uop_cached.
+	emitOrderCompleted(eng, orderID, orderUUID, orders.TypeRetrieve, &nodeID)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.ActiveBinID == nil || *rt.ActiveBinID != binID {

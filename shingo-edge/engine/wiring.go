@@ -52,6 +52,12 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderCompleted)
 
 	e.Events.SubscribeTypes(func(evt Event) {
+		if delivered, ok := evt.Payload.(OrderDeliveredEvent); ok {
+			e.handleNodeOrderDelivered(delivered)
+		}
+	}, EventOrderDelivered)
+
+	e.Events.SubscribeTypes(func(evt Event) {
 		if failed, ok := evt.Payload.(OrderFailedEvent); ok {
 			e.handleNodeOrderFailed(failed)
 		}

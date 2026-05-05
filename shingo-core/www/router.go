@@ -170,6 +170,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Get("/bins/by-node", h.apiBinsByNode)
 			r.Get("/bins/available", h.apiListAvailableBins)
 			r.Get("/bins/detail", h.apiBinDetail)
+			r.Get("/bins/uop", h.apiBinUOP)
 
 			// Traffic (count groups)
 			r.Get("/traffic/groups", h.apiTrafficGroups)

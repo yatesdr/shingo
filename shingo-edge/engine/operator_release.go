@@ -294,33 +294,47 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		}
 	}
 
-	// Release-time runtime UOP zero (Stephen 2026-05-04 SME correction).
-	// Material handling is cyclical: every release IS an evac of the
-	// outgoing bin AND the kickoff of the new bin's delivery — both are
-	// real HMI updates. The HMI's slot count must reflect "old bin is
-	// gone, no count attributed here" the moment the operator clicks
-	// release; the new bin's arrival then flips the count to the target
-	// claim's capacity via SetProcessNodeRuntimeWithBin at completion
-	// (wiring_completion.go:254 / handleChangeoverRelease).
+	// Release-click runtime cache binding. The slot's accounting flips
+	// to the *incoming* supply bin at the click moment, regardless of
+	// swap mode or which leg of a pair is being released. Both legs of
+	// a two-robot pair land here and write the same value (resolved via
+	// the supply sibling), so the second call is an idempotent rewrite.
 	//
-	// Earlier rationale (preserved): the previous reset-to-capacity at
-	// release was defensive against showing fresh capacity for a bin
-	// that didn't arrive (robot fault, network blip). The fix moved the
-	// reset to delivery completion, but that left the HMI showing the
-	// OLD bin's count during the entire transit window — operators
-	// rightly read that as stale, and on 2026-05-04 a one-robot swap
-	// observed on the floor confirmed the gap. Zeroing at release is
-	// honest: 0 = no bin's count attributed, regardless of whether the
-	// new bin arrives. If the new bin fails to land, the slot stays at
-	// 0, which is correct.
+	// Resolution: if this order delivers to the slot, it IS the supply
+	// leg. Otherwise follow the sibling pointer to find the supply leg.
+	// If no supply leg can be resolved (pure removal / abandoned slot),
+	// cache zeroes — operator's click is "this slot is now empty"
+	// pending whatever physical event clears it. Drift between the
+	// cache and the actual bin is settled by Core via the existing
+	// BinUOPDelta + reconciler self-heal path.
 	//
-	// Supply-bin guard: in a two-robot swap's per-order release path,
-	// Order A is the supply bin coming IN; the old bin is still
-	// consuming on the slot until Order B (evac) completes. Skip the
-	// reset for Order A so we don't kill an active count.
-	if !isSupply {
-		if err := e.db.UpdateProcessNodeUOP(node.ID, 0); err != nil {
-			e.logRelease("zero runtime UOP for node %s on release: %v", node.Name, err)
+	// Failure mode: if the supply bin's id can't be reached at Core
+	// (network blip), the cache is left untouched rather than
+	// overwritten — same B2-fix rationale as BinAtLineside.
+	supplyBinID := e.resolveReleaseSupplyBin(order, node.CoreNodeName)
+	cacheValue := 0
+	var cachedBinID *int64
+	skipCacheWrite := false
+	if supplyBinID != nil {
+		uop, found, lookupErr := e.coreClient.BinByID(*supplyBinID)
+		switch {
+		case lookupErr != nil:
+			// Core unreachable: leave cache untouched. Reconciler
+			// self-heal will re-bind on the next pass.
+			e.logRelease("order=%d node=%s — supply bin %d uop lookup failed (Core unreachable): %v — cache untouched",
+				orderID, node.Name, *supplyBinID, lookupErr)
+			skipCacheWrite = true
+		case !found:
+			// Confirmed missing — operator clicked but the supply bin
+			// is gone. Treat as no supply leg: cache=0, cached_bin_id=nil.
+		default:
+			cacheValue = uop
+			cachedBinID = supplyBinID
+		}
+	}
+	if !skipCacheWrite {
+		if err := e.db.SetProcessNodeCachedBin(node.ID, cachedBinID, cacheValue); err != nil {
+			e.logRelease("set runtime cache for node %s on release: %v", node.Name, err)
 		}
 	}
 	if nodeTask != nil {
@@ -497,6 +511,38 @@ func (e *Engine) isSupplyOrderInTwoRobotSwap(order *storeorders.Order, node *pro
 		return false
 	}
 	return order.DeliveryNode == node.CoreNodeName
+}
+
+// resolveReleaseSupplyBin resolves the BinID of the supply leg for the
+// release-click cache binding. The supply leg is whichever order in the
+// swap pair delivers TO this slot (DeliveryNode == coreNodeName). Three
+// cases:
+//
+//   - this order delivers to the slot → it is the supply, return its BinID
+//   - this order doesn't, but its sibling does → return the sibling's BinID
+//   - neither → return nil (no supply leg; cache flips to 0)
+//
+// Returns nil when the order or sibling has no BinID assigned yet
+// (shouldn't normally happen at release-click time but guards against
+// races with the dispatch path).
+func (e *Engine) resolveReleaseSupplyBin(order *storeorders.Order, coreNodeName string) *int64 {
+	if order == nil {
+		return nil
+	}
+	if order.DeliveryNode == coreNodeName && order.BinID != nil {
+		return order.BinID
+	}
+	if order.SiblingOrderID == nil {
+		return nil
+	}
+	sibling, err := e.db.GetOrder(*order.SiblingOrderID)
+	if err != nil {
+		return nil
+	}
+	if sibling.DeliveryNode == coreNodeName && sibling.BinID != nil {
+		return sibling.BinID
+	}
+	return nil
 }
 
 // resolveReleaseClaim returns the claim whose capacity the release

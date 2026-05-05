@@ -63,6 +63,9 @@ func (e *capturingEmitter) EmitOrderCompleted(orderID int64, orderUUID string, o
 	e.completed = append(e.completed, string(orderType)+":"+orderUUID)
 }
 
+func (e *capturingEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64) {
+}
+
 func (e *capturingEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
 	e.failed = append(e.failed, string(orderType)+":"+reason)
 }
