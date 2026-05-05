@@ -1,4 +1,4 @@
-﻿(function() {
+(function() {
   /* --- Debug Log Beautification --- */
   var body = document.getElementById('debug-log-body');
   var wrap = document.querySelector('.debug-log-wrap');
@@ -6,7 +6,7 @@
   var filterEl = document.getElementById('log-filter');
   var maxRows = 1000;
 
-  // Subsystem → color group
+  // Subsystem ? color group
   var groupMap = {
     kafka: 'messaging',
     protocol: 'protocol', outbox: 'protocol',
@@ -23,6 +23,13 @@
   function groupOf(s) { return groupMap[s || ''] || ''; }
   function groupClass(s) { var g = groupOf(s); return g ? 'group-' + g : ''; }
   function esc(s) { return ShingoEdge.escapeHtml(s); }
+
+  // Strip the first <td>...</td> from an HTML string (time cell)
+  function stripFirstTd(html) {
+    var end = html.indexOf('</' + 'td>');
+    if (end < 0) return html;
+    return html.slice(end + 5);
+  }
 
   // Severity detection from message content
   function detectSeverity(msg) {
@@ -235,7 +242,7 @@
         tr.className = e.cls;
         tr.setAttribute('data-subsystem', e.sub);
         body.appendChild(tr);
-        tr.innerHTML = '<td>' + esc(e.origTime) + '</td>' + entries[runStart].html.slice(4); // skip first <td>
+        tr.innerHTML = '<td>' + esc(e.origTime) + '</td>' + stripFirstTd(entries[runStart].html);
         tr.children[0].textContent = entries[runStart].origTime;
         continue;
       }
@@ -256,7 +263,7 @@
       var tdIdx = firstMsgHtml.indexOf('<td>');
       var lastTdIdx = firstMsgHtml.lastIndexOf('</td>');
       if (tdIdx >= 0 && lastTdIdx > tdIdx) {
-        // Get 3rd td — the message column
+        // Get 3rd td � the message column
         var tdParts = firstMsgHtml.split('</td>');
         if (tdParts.length >= 3) header.children[2].innerHTML = tdParts[2].replace(/^.*?<td[^>]*>/, '');
       }
@@ -268,7 +275,7 @@
         child.className = entries[c].cls + ' debug-group-child';
         child.setAttribute('data-subsystem', entries[c].sub);
         child.style.display = 'none';
-        child.innerHTML = '<td>' + esc(entries[c].origTime) + '</td>' + entries[c].html.slice(4);
+        child.innerHTML = '<td>' + esc(entries[c].origTime) + '</td>' + stripFirstTd(entries[c].html);
         child.children[0].textContent = entries[c].origTime;
         body.appendChild(child);
       }
@@ -309,7 +316,7 @@
         }
       }
 
-      // Check if last row is a standalone in the same group — convert to group
+      // Check if last row is a standalone in the same group � convert to group
       if (lastRow && lastRow.classList.contains('debug-row') && !lastRow.classList.contains('debug-group-header') && !lastRow.classList.contains('debug-group-child')) {
         var lastSub = lastRow.getAttribute('data-subsystem') || '';
         var lastGrp = groupOf(lastSub);

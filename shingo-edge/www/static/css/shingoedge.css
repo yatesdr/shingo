@@ -1,4 +1,4 @@
-/* Shingo Edge Web UI */
+﻿/* Shingo Edge Web UI */
 
 /* === Design Tokens === */
 :root {
@@ -1165,7 +1165,7 @@ textarea.form-input {
 }
 .debug-log-table {
   font-family: "SF Mono", "Menlo", "Consolas", monospace;
-  font-size: 0.8rem;
+  font-size: 0.95rem;
 }
 .debug-log-table thead {
   position: sticky;
@@ -1174,10 +1174,11 @@ textarea.form-input {
   z-index: 1;
 }
 
-/* === Debug Log Beautification â€” color-group tinting === */
+
+/* === Debug Log Beautification — color-group tinting === */
 
 .debug-log-table td {
-    padding: 0.35rem 0.75rem;
+    padding: 0.4rem 0.75rem;
     border-bottom: 1px solid rgba(48,54,61,0.4);
     vertical-align: top;
 }
@@ -1193,107 +1194,107 @@ textarea.form-input {
 /* Subsystem badges */
 .subsystem-badge {
     display: inline-block;
-    font-size: 0.68rem;
+    font-size: 0.88rem;
     font-weight: 600;
     letter-spacing: 0.04em;
     white-space: nowrap;
     text-transform: uppercase;
 }
-.badge-kafka         { color: #4ecdc4; }
-.badge-protocol      { color: #6cb6ff; }
-.badge-outbox        { color: #6cb6ff; }
-.badge-edge_handler  { color: #e879a8; }
-.badge-heartbeat     { color: #e879a8; }
-.badge-engine        { color: #7d8590; }
-.badge-dispatch      { color: #d4952a; }
-.badge-completion    { color: #d4952a; }
-.badge-release       { color: #d4952a; }
-.badge-bin_pickup    { color: #d4952a; }
-.badge-demand        { color: #d4952a; }
-.badge-plc           { color: #4bc962; }
-.badge-reporter      { color: #4bc962; }
-.badge-station       { color: #4bc962; }
-.badge-reconcile     { color: #a78bfa; }
-.badge-backfill      { color: #a78bfa; }
-.badge-changeover    { color: #a78bfa; }
-.badge-side_cycle    { color: #a78bfa; }
-.badge-warlink       { color: #a78bfa; }
+.badge-kafka         { color: #6ef0e6; }
+.badge-protocol      { color: #8ccaff; }
+.badge-outbox        { color: #8ccaff; }
+.badge-edge_handler  { color: #f090bc; }
+.badge-heartbeat     { color: #f090bc; }
+.badge-engine        { color: #a0aab4; }
+.badge-dispatch      { color: #f0a840; }
+.badge-completion    { color: #f0a840; }
+.badge-release       { color: #f0a840; }
+.badge-bin_pickup    { color: #f0a840; }
+.badge-demand        { color: #f0a840; }
+.badge-plc           { color: #66e880; }
+.badge-reporter      { color: #66e880; }
+.badge-station       { color: #66e880; }
+.badge-reconcile     { color: #c4a8ff; }
+.badge-backfill      { color: #c4a8ff; }
+.badge-changeover    { color: #c4a8ff; }
+.badge-side_cycle    { color: #c4a8ff; }
+.badge-warlink       { color: #c4a8ff; }
 
 /* Message inline elements */
-.log-key   { color: #8b949e; font-size: 0.78rem; text-transform: uppercase; }
-.log-prefix { font-weight: 500; text-transform: uppercase; }
-.log-name  { font-weight: 600; text-transform: uppercase; }
-.log-uuid  { font-size: 0.75rem; }
+.log-key   { color: #aeb5bd; font-size: 0.92rem; text-transform: uppercase; }
+.log-prefix { font-weight: 600; text-transform: uppercase; }
+.log-name  { font-weight: 700; text-transform: uppercase; }
+.log-uuid  { font-size: 0.9rem; }
 .log-value { }
 .log-err-kw { font-weight: 700; }
 
 /* Group-tinted prefixes, names, values */
-.group-messaging .log-prefix  { color: #4ecdc4; }
-.group-messaging .log-name    { color: #4aaa9e; }
-.group-messaging .log-value   { color: #6ecdc4; }
-.group-messaging .log-uuid    { color: #3a7a72; }
-.group-messaging .log-err-kw  { color: #ff3b30; }
+.group-messaging .log-prefix  { color: #6ef0e6; }
+.group-messaging .log-name    { color: #5ec8be; }
+.group-messaging .log-value   { color: #8ef0e0; }
+.group-messaging .log-uuid    { color: #5aaa9e; }
+.group-messaging .log-err-kw  { color: #ff5040; }
 
-.group-protocol .log-prefix  { color: #6cb6ff; }
-.group-protocol .log-name    { color: #6a9fd8; }
-.group-protocol .log-value   { color: #8ab4f8; }
-.group-protocol .log-uuid    { color: #4a7098; }
-.group-protocol .log-err-kw  { color: #ff3b30; }
+.group-protocol .log-prefix  { color: #8ccaff; }
+.group-protocol .log-name    { color: #7cb8f0; }
+.group-protocol .log-value   { color: #a8d0ff; }
+.group-protocol .log-uuid    { color: #6a90c0; }
+.group-protocol .log-err-kw  { color: #ff5040; }
 
-.group-edge .log-prefix      { color: #e879a8; }
-.group-edge .log-name        { color: #c86a92; }
-.group-edge .log-value       { color: #e898b8; }
-.group-edge .log-uuid        { color: #8a4a68; }
-.group-edge .log-err-kw      { color: #ff3b30; }
+.group-edge .log-prefix      { color: #f090bc; }
+.group-edge .log-name        { color: #e07aac; }
+.group-edge .log-value       { color: #f0b0cc; }
+.group-edge .log-uuid        { color: #b06888; }
+.group-edge .log-err-kw      { color: #ff5040; }
 
-.group-core .log-prefix      { color: #7d8590; }
-.group-core .log-name        { color: #8b949e; }
-.group-core .log-value       { color: #adbac7; }
-.group-core .log-uuid        { color: #636e7b; }
-.group-core .log-err-kw      { color: #ff3b30; }
+.group-core .log-prefix      { color: #a0aab4; }
+.group-core .log-name        { color: #b0b8c0; }
+.group-core .log-value       { color: #c8d0d8; }
+.group-core .log-uuid        { color: #8090a0; }
+.group-core .log-err-kw      { color: #ff5040; }
 
-.group-lifecycle .log-prefix { color: #c08a30; }
-.group-lifecycle .log-name   { color: #b89030; }
-.group-lifecycle .log-value  { color: #d4a84e; }
-.group-lifecycle .log-uuid   { color: #8a6820; }
-.group-lifecycle .log-err-kw { color: #ff3b30; }
+.group-lifecycle .log-prefix { color: #f0a840; }
+.group-lifecycle .log-name   { color: #e09838; }
+.group-lifecycle .log-value  { color: #f0c060; }
+.group-lifecycle .log-uuid   { color: #b08028; }
+.group-lifecycle .log-err-kw { color: #ff5040; }
 
-.group-plant .log-prefix     { color: #4bc962; }
-.group-plant .log-name       { color: #5aa868; }
-.group-plant .log-value      { color: #7cc98a; }
-.group-plant .log-uuid       { color: #3e7a4a; }
-.group-plant .log-err-kw     { color: #ff3b30; }
+.group-plant .log-prefix     { color: #66e880; }
+.group-plant .log-name       { color: #58d070; }
+.group-plant .log-value      { color: #90f0a0; }
+.group-plant .log-uuid       { color: #509860; }
+.group-plant .log-err-kw     { color: #ff5040; }
 
-.group-sync .log-prefix      { color: #a78bfa; }
-.group-sync .log-name        { color: #9580d0; }
-.group-sync .log-value       { color: #b8a0f0; }
-.group-sync .log-uuid        { color: #6a5898; }
-.group-sync .log-err-kw      { color: #ff3b30; }
+.group-sync .log-prefix      { color: #c4a8ff; }
+.group-sync .log-name        { color: #b498e8; }
+.group-sync .log-value       { color: #d0b8ff; }
+.group-sync .log-uuid        { color: #8870b8; }
+.group-sync .log-err-kw      { color: #ff5040; }
 
-/* Severity overrides â€” error rows */
+/* Severity overrides — error rows */
 .debug-row.debug-error {
     background: #3b1219;
 }
 .debug-row.debug-error:hover { background: #4a1520; }
-.debug-row.debug-error td { color: #e6edf3; }
-.debug-row.debug-error .subsystem-badge { color: #ff3b30; font-weight: 700; }
-.debug-row.debug-error .log-key         { color: #8b949e; }
-.debug-row.debug-error .log-prefix      { color: #ff3b30; }
-.debug-row.debug-error .log-err-kw      { color: #ff3b30; }
+.debug-row.debug-error td { color: #f0f0f0; }
+.debug-row.debug-error .subsystem-badge { color: #ff5040; font-weight: 700; }
+.debug-row.debug-error .log-key         { color: #aeb5bd; }
+.debug-row.debug-error .log-prefix      { color: #ff5040; }
+.debug-row.debug-error .log-err-kw      { color: #ff5040; }
 
-/* Severity overrides â€” warn rows */
+/* Severity overrides — warn rows */
 .debug-row.debug-warn {
     background: #3d2e00;
 }
 .debug-row.debug-warn:hover { background: #4a3700; }
-.debug-row.debug-warn td { color: #e6edf3; }
-.debug-row.debug-warn .subsystem-badge { color: #ff9500; font-weight: 700; }
-.debug-row.debug-warn .log-key         { color: #8b949e; }
-.debug-row.debug-warn .log-prefix      { color: #ff9500; }
-.debug-row.debug-warn .log-err-kw      { color: #ff9500; }
+.debug-row.debug-warn td { color: #f0f0f0; }
+.debug-row.debug-warn .subsystem-badge { color: #ffaa20; font-weight: 700; }
+.debug-row.debug-warn .log-key         { color: #aeb5bd; }
+.debug-row.debug-warn .log-prefix      { color: #ffaa20; }
+.debug-row.debug-warn .log-err-kw      { color: #ffaa20; }
 
-/* Debug (verbose) rows â€” muted */
-.debug-row.debug-debug td { color: #8b949e; }
+/* Debug (verbose) rows — muted */
+.debug-row.debug-debug td { color: #a0aab4; }
 
 /* JSON expand/collapse */
 .raw-expand {
@@ -1303,32 +1304,32 @@ textarea.form-input {
     padding: 0.5rem 0.75rem;
     margin-top: 0.25rem;
     font-family: "SF Mono", "Menlo", "Consolas", monospace;
-    font-size: 0.75rem;
+    font-size: 0.88rem;
     white-space: pre-wrap;
     word-break: break-all;
     line-height: 1.6;
     display: none;
 }
 .raw-expand.open { display: block; }
-.raw-expand .json-key    { color: #5ecdc4; }
-.raw-expand .json-string { color: #adbac7; }
-.raw-expand .json-number { color: #adbac7; }
-.raw-expand .json-bool   { color: #6e7681; }
-.raw-expand .json-null   { color: #6e7681; }
-.raw-expand .json-brace  { color: #484f58; }
-.raw-expand .json-colon  { color: #484f58; }
-.raw-expand .json-comma  { color: #373e47; }
+.raw-expand .json-key    { color: #7ef0e6; }
+.raw-expand .json-string { color: #c8d0d8; }
+.raw-expand .json-number { color: #c8d0d8; }
+.raw-expand .json-bool   { color: #8a9098; }
+.raw-expand .json-null   { color: #8a9098; }
+.raw-expand .json-brace  { color: #606870; }
+.raw-expand .json-colon  { color: #606870; }
+.raw-expand .json-comma  { color: #505860; }
 .json-toggle {
     color: var(--primary);
     cursor: pointer;
-    font-size: 0.72rem;
+    font-size: 0.88rem;
     margin-left: 0.5rem;
     user-select: none;
 }
 .json-toggle:hover { text-decoration: underline; }
 .json-summary {
-    font-size: 0.78rem;
-    color: var(--text-muted);
+    font-size: 0.9rem;
+    color: #b0b8c0;
 }
 
 /* Row grouping */
@@ -1336,10 +1337,10 @@ textarea.form-input {
 .debug-group-header .group-count {
     display: inline-block;
     background: #30363d;
-    color: #8b949e;
-    font-size: 0.65rem;
+    color: #a0aab4;
+    font-size: 0.78rem;
     font-weight: 600;
-    padding: 0 0.35rem;
+    padding: 0 0.4rem;
     border-radius: 3px;
     margin-left: 0.4rem;
     vertical-align: middle;
@@ -1351,5 +1352,5 @@ textarea.form-input {
     opacity: 1;
 }
 .debug-group-child {
-    border-left: 2px solid #30363d;
+    border-left: 2px solid #404850;
 }
