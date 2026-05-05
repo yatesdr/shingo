@@ -200,8 +200,8 @@ function renderPayloadBoard(entry) {
             '<div style="font-size:28px;font-weight:600;color:#fff">Bin: ' + esc(binLabel) + '</div>' +
             (binPayload ? '<div style="font-size:20px;color:#aab;margin-top:4px">' + esc(binPayload) + ' | UOP: ' + remaining + '</div>' : '') +
             '<div style="display:inline-block;font-size:22px;font-weight:700;padding:8px 20px;border-radius:6px;margin-top:8px;' +
-                (hasBin ? (remaining > 0 ? 'background:#1a3a1a;color:#6f6' : 'background:#3a1a1a;color:#f88') : 'background:#2a2a1a;color:#ff6') + '">' +
-                (hasBin ? (remaining > 0 ? 'LOADED' : 'EMPTY') : 'AWAITING BIN') +
+                (hasBin ? (binPayload ? 'background:#1a3a1a;color:#6f6' : 'background:#3a1a1a;color:#f88') : 'background:#2a2a1a;color:#ff6') + '">' +
+                (hasBin ? (binPayload ? 'LOADED' : 'EMPTY') : 'AWAITING BIN') +
             '</div>' +
         '</div>';
     grid.appendChild(infoBar);
@@ -222,6 +222,12 @@ function renderPayloadBoard(entry) {
     // tagged payload could be loaded, serializing manual_swap nodes.
     var nodeBinIsEmpty = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
     var loadableHere = nodeBinIsEmpty && hasDemand;
+
+    // Empty-bin escape hatch: an empty bin is parked at the node but no
+    // demand signal has arrived. Allow the operator to load any allowed
+    // payload — server already permits this (LoadBin only checks bin
+    // presence + empty payload, not demand).
+    var canLoadEmpty = nodeBinIsEmpty && !hasDemand;
 
     // BANDAID — pull this manual-request path when proper demand signals
     // land for manual_swap loaders / unloaders. Without it the board is a
@@ -248,6 +254,8 @@ function renderPayloadBoard(entry) {
             card.classList.add('os-board-transit');
         } else if (isActive) {
             card.classList.add('os-board-queued');
+        } else if (canLoadEmpty) {
+            card.classList.add('os-board-queued');
         } else if (canRequestHere) {
             card.classList.add('os-board-requestable');
         } else {
@@ -266,6 +274,8 @@ function renderPayloadBoard(entry) {
             statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit';
         } else if (isActive) {
             statusText = 'QUEUED'; statusClass = 'os-board-tag-queued';
+        } else if (canLoadEmpty) {
+            statusText = 'LOAD'; statusClass = 'os-board-tag-queued';
         } else if (canRequestHere) {
             statusText = 'REQUEST'; statusClass = 'os-board-tag-request';
         } else {
@@ -283,6 +293,8 @@ function renderPayloadBoard(entry) {
             detailText = 'Robot en route';
         } else if (isActive) {
             detailText = 'Waiting for robot';
+        } else if (canLoadEmpty) {
+            detailText = 'Empty bin parked \u2014 tap to load';
         } else if (canRequestHere) {
             detailText = claim.role === 'produce' ? 'Tap to request empty bin' : 'Tap to request full bin';
         } else {
@@ -309,7 +321,7 @@ function renderPayloadBoard(entry) {
         var binOccupied = hasBinState && entry.bin_state.occupied;
         var binNoPayload = hasBinState && !entry.bin_state.payload_code;
         var binIsEmpty = binOccupied && binNoPayload;
-        var canLoad = (payloadDelivered && binIsEmpty) || (binIsEmpty && isActive);
+        var canLoad = (payloadDelivered && binIsEmpty) || (binIsEmpty && isActive) || canLoadEmpty;
         if (canLoad) {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
