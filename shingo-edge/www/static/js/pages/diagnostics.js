@@ -203,7 +203,6 @@
     var rows = Array.prototype.slice.call(body.querySelectorAll('tr.debug-row'));
     if (rows.length === 0) return;
 
-    // First format them all
     var entries = [];
     for (var i = 0; i < rows.length; i++) {
       var tr = rows[i];
@@ -212,28 +211,22 @@
       if (cells.length < 3) continue;
       var msg = cells[2].textContent || '';
       var sev = detectSeverity(msg);
-      var r = buildRowHtml({ subsystem: sub, message: msg, time: null });
-      entries.push({ sub: sub, sev: sev, group: groupOf(sub), html: r.html, cls: r.cls, origTime: cells[0].textContent || '' });
+      entries.push({ sub: sub, sev: sev, group: groupOf(sub), badgeHtml: '<span class="subsystem-badge ' + badgeClass(sub) + '">' + esc(sub) + '</span>', msgHtml: buildMessageHtml(msg), cls: 'debug-row' + (sev ? ' debug-' + sev : '') + (groupClass(sub) ? ' ' + groupClass(sub) : ''), origTime: cells[0].textContent || '' });
     }
 
-    // Clear and rebuild with grouping
     body.innerHTML = '';
     var i = 0;
     while (i < entries.length) {
       var e = entries[i];
-      // Error/warn never collapse
       if (e.sev === 'error' || e.sev === 'warn' || !e.group) {
         var tr = document.createElement('tr');
         tr.className = e.cls;
         tr.setAttribute('data-subsystem', e.sub);
-        tr.innerHTML = '<td>' + esc(e.origTime) + '</td>' + e.html.replace('<td>', '<td>').replace('</td>', '</td>');
-        // Keep time from server render
-        tr.children[0].textContent = e.origTime;
+        tr.innerHTML = '<td>' + esc(e.origTime) + '</td><td>' + e.badgeHtml + '</td><td>' + e.msgHtml + '</td>';
         body.appendChild(tr);
         i++;
         continue;
       }
-      // Find run of same group + same severity
       var runStart = i;
       while (i < entries.length && entries[i].group === e.group && entries[i].sev === e.sev) i++;
       var runLen = i - runStart;
@@ -241,42 +234,25 @@
         var tr = document.createElement('tr');
         tr.className = e.cls;
         tr.setAttribute('data-subsystem', e.sub);
+        tr.innerHTML = '<td>' + esc(e.origTime) + '</td><td>' + e.badgeHtml + '</td><td>' + e.msgHtml + '</td>';
         body.appendChild(tr);
-        tr.innerHTML = '<td>' + esc(e.origTime) + '</td>' + stripFirstTd(entries[runStart].html);
-        tr.children[0].textContent = entries[runStart].origTime;
         continue;
       }
-      // Build group header + children
       var first = entries[runStart];
       var header = document.createElement('tr');
       header.className = 'debug-row debug-group-header ' + groupClass(first.sub);
       header.setAttribute('data-subsystem', first.sub);
       var headerBadge = '<span class="subsystem-badge ' + badgeClass(first.sub) + '">' + esc(first.sub) + '</span>';
       var countBadge = '<span class="group-count">' + runLen + '</span>';
-      header.innerHTML = '<td>' + esc(first.origTime) + '</td><td>' + headerBadge + ' ' + countBadge + '</td><td class="group-msg">' + buildMessageHtml(entries[runStart + 1] ? entries[runStart + 1].html : '') + '</td>';
-      // Use the message from the second entry as preview (first is shown as header)
-      // Actually just show the first entry message as preview
-      header.children[2].innerHTML = '';
-      header.children[2].className = 'group-msg';
-      // Extract message text from the first entry's html (3rd td content)
-      var firstMsgHtml = first.html;
-      var tdIdx = firstMsgHtml.indexOf('<td>');
-      var lastTdIdx = firstMsgHtml.lastIndexOf('</td>');
-      if (tdIdx >= 0 && lastTdIdx > tdIdx) {
-        // Get 3rd td — the message column
-        var tdParts = firstMsgHtml.split('</td>');
-        if (tdParts.length >= 3) header.children[2].innerHTML = tdParts[2].replace(/^.*?<td[^>]*>/, '');
-      }
+      header.innerHTML = '<td>' + esc(first.origTime) + '</td><td>' + headerBadge + ' ' + countBadge + '</td><td class="group-msg">' + first.msgHtml + '</td>';
       body.appendChild(header);
 
-      // Child rows
       for (var c = runStart; c < runStart + runLen; c++) {
         var child = document.createElement('tr');
         child.className = entries[c].cls + ' debug-group-child';
         child.setAttribute('data-subsystem', entries[c].sub);
         child.style.display = 'none';
-        child.innerHTML = '<td>' + esc(entries[c].origTime) + '</td>' + stripFirstTd(entries[c].html);
-        child.children[0].textContent = entries[c].origTime;
+        child.innerHTML = '<td>' + esc(entries[c].origTime) + '</td><td>' + entries[c].badgeHtml + '</td><td>' + entries[c].msgHtml + '</td>';
         body.appendChild(child);
       }
     }
@@ -316,7 +292,7 @@
         }
       }
 
-      // Check if last row is a standalone in the same group — convert to group
+      // Check if last row is a standalone in the same group ï¿½ convert to group
       if (lastRow && lastRow.classList.contains('debug-row') && !lastRow.classList.contains('debug-group-header') && !lastRow.classList.contains('debug-group-child')) {
         var lastSub = lastRow.getAttribute('data-subsystem') || '';
         var lastGrp = groupOf(lastSub);
@@ -373,7 +349,7 @@
     firstChild.className = standalone.className + ' debug-group-child';
     firstChild.setAttribute('data-subsystem', sub);
     firstChild.style.display = 'none';
-    firstChild.innerHTML = standalone.innerHTML;
+    firstChild.innerHTML = savedHtml;
     header.after(firstChild);
     // Add new entry as second child
     appendChildToGroup(header, entry);
