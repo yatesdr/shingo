@@ -85,11 +85,7 @@ func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec) (i
 }
 
 func (e *Engine) createComplexFromSpec(nodeID int64, c *changeover.ComplexOrderSpec) (int64, error) {
-	create := e.orderMgr.CreateComplexOrder
-	if c.AutoConfirm {
-		create = e.orderMgr.CreateComplexOrderWithAutoConfirm
-	}
-	o, err := create(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps)
+	o, err := e.orderMgr.CreateComplexOrderWithPayload(&nodeID, 1, c.DeliveryNode, c.ProcessNode, c.Steps, c.AutoConfirm, c.PayloadCode)
 	if err != nil {
 		return 0, err
 	}

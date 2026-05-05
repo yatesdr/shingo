@@ -95,12 +95,22 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		}
 		// Direct-trip modes (sequential, per-position press-index) don't
 		// use a staging hop, so they bypass the staging-fallback gate.
-		// Other modes route to the fallback when staging is missing.
+		// two_robot and two_robot_press_index don't use OutboundStaging
+		// (evac goes straight to OutboundDestination), so they only
+		// require InboundStaging. single_robot (and the default
+		// fallthrough) use both InboundStaging and OutboundStaging.
 		// KeepStaged is a single_robot/two_robot/two_robot_press_index
 		// concept; sequential and per-position skip that gate too.
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
-			if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
-				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+			switch diff.FromClaim.SwapMode {
+			case "two_robot", "two_robot_press_index":
+				if diff.ToClaim.InboundStaging == "" {
+					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+				}
+			default:
+				if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
+					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+				}
 			}
 			if diff.FromClaim.KeepStaged {
 				return planKeepStagedAction(action, diff.FromClaim, diff.ToClaim)
@@ -144,8 +154,15 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			return action
 		}
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
-			if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
-				return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+			switch diff.FromClaim.SwapMode {
+			case "two_robot", "two_robot_press_index":
+				if diff.ToClaim.InboundStaging == "" {
+					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+				}
+			default:
+				if diff.ToClaim.InboundStaging == "" || diff.FromClaim.OutboundStaging == "" {
+					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
+				}
 			}
 			if diff.FromClaim.KeepStaged {
 				return planKeepStagedAction(action, diff.FromClaim, diff.ToClaim)
@@ -200,7 +217,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		if releaseSteps == nil {
 			return action
 		}
-		action.OrderB = complexSpec("", diff.CoreNodeName, releaseSteps, true)
+		action.OrderB = complexSpecWithPayload("", diff.CoreNodeName, releaseSteps, true, diff.FromClaim.PayloadCode)
 		action.NextState = "empty_requested"
 		action.LogTag = "drop"
 	}
@@ -274,6 +291,18 @@ func complexSpec(deliveryNode, processNode string, steps []protocol.ComplexOrder
 			ProcessNode:  processNode,
 			Steps:        steps,
 			AutoConfirm:  autoConfirm,
+		},
+	}
+}
+
+func complexSpecWithPayload(deliveryNode, processNode string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode string) *changeover.OrderSpec {
+	return &changeover.OrderSpec{
+		Complex: &changeover.ComplexOrderSpec{
+			DeliveryNode: deliveryNode,
+			ProcessNode:  processNode,
+			Steps:        steps,
+			AutoConfirm:  autoConfirm,
+			PayloadCode:  payloadCode,
 		},
 	}
 }

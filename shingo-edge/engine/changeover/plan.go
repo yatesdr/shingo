@@ -21,6 +21,7 @@ type ComplexOrderSpec struct {
 	ProcessNode  string
 	Steps        []protocol.ComplexOrderStep
 	AutoConfirm  bool
+	PayloadCode  string // when non-empty, overrides lookupPayloadMeta
 }
 
 // RetrieveOrderSpec describes a fallback retrieve order.

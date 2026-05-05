@@ -245,7 +245,7 @@ func (m *Manager) CreateMoveOrderWithUOP(processNodeID *int64, quantity int64, s
 // order has no distinct line node — Core falls back to source-node
 // behavior.
 func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false)
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, false, "")
 }
 
 // CreateComplexOrderWithAutoConfirm creates an auto-confirm complex order.
@@ -256,10 +256,14 @@ func (m *Manager) CreateComplexOrder(processNodeID *int64, quantity int64, deliv
 // scanner can re-claim a delivered bin and the late confirm clobbers state
 // (the SMN_001 / SMN_002 teleport bug, plant-test 2026-04-27).
 func (m *Manager) CreateComplexOrderWithAutoConfirm(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep) (*orders.Order, error) {
-	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true)
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, true, "")
 }
 
-func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool) (*orders.Order, error) {
+func (m *Manager) CreateComplexOrderWithPayload(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadCode string) (*orders.Order, error) {
+	return m.createComplexOrder(processNodeID, quantity, deliveryNode, processNodeName, steps, autoConfirm, payloadCode)
+}
+
+func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliveryNode, processNodeName string, steps []protocol.ComplexOrderStep, autoConfirm bool, payloadOverride string) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	stepsJSON, err := json.Marshal(steps)
@@ -267,7 +271,7 @@ func (m *Manager) createComplexOrder(processNodeID *int64, quantity int64, deliv
 		return nil, fmt.Errorf("marshal steps: %w", err)
 	}
 
-	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, "")
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadOverride)
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeComplex,
 		processNodeID, false,
