@@ -95,8 +95,8 @@ type stubEngine struct {
 	// the values that flowed through. Add new fields here as needed; keep
 	// them named after the method that writes to them so the assertion
 	// site is easy to find.
-	lastReleaseChangeoverWaitCalledBy string
-	lastReleaseOrderDisposition       *engine.ReleaseDisposition
+	lastReleaseChangeoverWaitDisp *engine.ReleaseDisposition
+	lastReleaseOrderDisposition   *engine.ReleaseDisposition
 
 	// Item 3: BucketBackfillNeeded / BackfillBucketsForStation spies.
 	backfillNeeded      bool
@@ -158,9 +158,10 @@ func (s *stubEngine) StartProcessChangeover(int64, int64, string, string) (*proc
 func (s *stubEngine) CompleteProcessProductionCutover(int64) error                      { return nil }
 func (s *stubEngine) CancelProcessChangeover(int64) error                               { return nil }
 func (s *stubEngine) CancelProcessChangeoverRedirect(int64, *int64) error               { return nil }
-func (s *stubEngine) ReleaseChangeoverWait(_ int64, calledBy string) error {
-	s.lastReleaseChangeoverWaitCalledBy = calledBy
-	return nil
+func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error) {
+	d := disp
+	s.lastReleaseChangeoverWaitDisp = &d
+	return engine.ReleaseChangeoverWaitResult{}, nil
 }
 func (s *stubEngine) SequentialChangeoverCutover(int64, int64, string) error { return nil }
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error)     { return nil, nil }

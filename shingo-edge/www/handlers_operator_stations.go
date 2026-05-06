@@ -2,7 +2,6 @@ package www
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 
@@ -566,44 +565,48 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 
 // apiReleaseChangeoverWait gates the changeover wait-points (ready / tooling done).
 //
-// Phase 8: ReleaseChangeoverWait now routes every staged evacuation order
-// through ReleaseOrderWithLineside with a capture_lineside disposition so
-// the bin's manifest is cleared at Core before the fleet picks the bin up.
-// called_by is captured from the body (matching apiStartProcessChangeover's
-// pattern) and threaded through for audit.
+// Body shape (when present) matches apiReleaseOrder /
+// apiReleaseNodeStagedOrders — disposition string + qty_by_part / partial
+// count + called_by. The disposition the operator chose at the modal
+// applies to the EVAC leg of each task; the supply leg is always released
+// with no manifest action regardless of body content (see
+// ReleaseChangeoverWait godoc for the asymmetry rationale).
 //
-// Post-2026-04-27 contract (cleanup PR): called_by is now REQUIRED. The
-// other two release endpoints (apiReleaseOrder, apiReleaseNodeStagedOrders)
-// adopted this in commit c56ceb9 to surface the disposition-bypass
-// fingerprint. This endpoint had the same shape — empty body silently
-// produced an empty audit trail at Core — and now matches.
+// Body / called_by are OPTIONAL on this endpoint. A bare-body POST is
+// accepted and operates with default disposition — evac legs default to
+// capture_lineside (release_empty on the wire), supply legs always no-op.
+// Legacy clients and the current operator-station Release button (which
+// posts only {called_by: ...} with no disposition) keep working
+// unchanged. Empty called_by is logged and replaced with
+// "operator_station" so audit trails remain populated.
 func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
 		return
 	}
-	var req struct {
-		CalledBy string `json:"called_by"`
-	}
-	if r.ContentLength == 0 {
-		writeError(w, http.StatusBadRequest, "release requires a JSON body with called_by")
-		return
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	var req releaseRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if strings.TrimSpace(req.CalledBy) == "" {
-		log.Printf("release-changeover-wait: called_by empty, defaulting to operator_station (process=%d)", processID)
 		req.CalledBy = "operator_station"
 	}
-	if err := h.orchestration.ReleaseChangeoverWait(processID, req.CalledBy); err != nil {
+	disp := buildReleaseDisposition(req)
+	result, err := h.orchestration.ReleaseChangeoverWait(processID, disp)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "wait-released"}})
-	writeJSONWithTrigger(w, r, map[string]string{"status": "ok"}, "refreshChangeover")
+	writeJSONWithTrigger(w, r, map[string]any{
+		"status":   "ok",
+		"released": result.Released,
+		"pending":  result.Pending,
+	}, "refreshChangeover")
 }
 
 func (h *Handlers) apiCompleteProcessProductionCutover(w http.ResponseWriter, r *http.Request) {

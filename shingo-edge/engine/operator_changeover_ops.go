@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/engine/changeover"
 	"shingoedge/orders"
 	"shingoedge/store"
@@ -346,36 +347,80 @@ func findNodeByCoreName(nodes []processes.Node, coreName string) *processes.Node
 	return nil
 }
 
+// ReleaseChangeoverWaitResult reports the outcome of a release-wait click so
+// the frontend can show the operator how much actually happened. Released is
+// the count of legs whose OrderRelease envelopes were queued this call;
+// Pending is the count of legs that exist but weren't in staged status yet
+// (still sourcing / in_transit / etc.) and so were silently skipped — those
+// are the legs the operator may need to come back for on a second click.
+// Already-terminal legs (released earlier, cancelled, failed) are not
+// counted in either field.
+type ReleaseChangeoverWaitResult struct {
+	Released int `json:"released"`
+	Pending  int `json:"pending"`
+}
+
 // ReleaseChangeoverWait releases all evacuation orders that are currently staged
 // (waiting at a wait step). Called once per operator gate:
 //   - First call releases the "ready" wait on all nodes
 //   - For evacuate nodes, orders stage again at the second wait, and the second
 //     call releases "tooling done"
 //
-// Each evacuation order is routed through ReleaseOrderWithLineside with the
-// capture_lineside disposition so the bin's manifest is cleared at Core
-// (via OrderRelease.RemainingUOP=0) before the fleet picks the bin up. Going
-// through the lineside-aware path also runs the deactivation side-effect and
-// the changeover-task state advance — without it, the evacuation bin would
-// land at OutboundDestination still tagged with its old payload (the exact
-// ALN_001 → SLN_002 → SMN_005 incident reported in 2026-04). LinesideCapture
-// is empty here because the operator has already gated through the wait
-// button by the time this is called — there's no per-part prompt at this
-// point. CalledBy is plumbed through for audit.
-func (e *Engine) ReleaseChangeoverWait(processID int64, calledBy string) error {
+// Per-slot disposition: each task carries up to two staged orders — the evac
+// leg (OldMaterialReleaseOrderID) and the supply leg (NextMaterialOrderID).
+// They get DIFFERENT dispositions:
+//
+//   - Evac leg: receives the operator's disposition (release_empty,
+//     send_partial_back, release_underpack, or capture_lineside-with-parts).
+//     Default when caller passes Mode=="" is capture_lineside with empty
+//     captures, which translates to release_empty on the wire — preserves
+//     the 2026-04 ALN_001 fix intent (clears the manifest before pickup so
+//     the evac bin doesn't land at OutboundDestination tagged with its old
+//     payload). When the operator supplies a partial count via the body,
+//     it flows through unchanged.
+//
+//   - Supply leg: receives Mode="" (zero-value) regardless of what the
+//     operator chose. buildProtocolDisposition translates this to nil on the
+//     wire, and Core's SyncOrClearForReleased hits the no-op branch — the
+//     supply bin's manifest is left alone. The supply bin is mid-transit
+//     from the supermarket carrying its real uop_remaining; applying the
+//     evac disposition would zero a manifest that should ride through to
+//     delivery. (Confirmed regression on plant order 682 / 2026-05-06.)
+//
+// TODO: expand evac-leg disposition options at the frontend. Today the
+// click takes one disposition that applies uniformly to every evac in the
+// changeover. If a future plant scenario needs per-bin dispositions
+// (different partial counts on different evac bins in a multi-deactivating
+// changeover), wire a per-task modal flow instead. Engine here is already
+// neutral — it just applies whatever disposition lands on each slot, so
+// the change is purely frontend + handler-shape.
+//
+// disp.CalledBy is plumbed through for audit on both legs.
+func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
+	var result ReleaseChangeoverWaitResult
+
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
-		return err
+		return result, err
 	}
 	tasks, err := e.db.ListChangeoverNodeTasks(changeover.ID)
 	if err != nil {
-		return err
+		return result, err
 	}
 
-	disp := ReleaseDisposition{
-		Mode:     DispositionCaptureLineside,
-		CalledBy: calledBy,
+	// Default Mode for the evac leg when the caller didn't supply one (legacy
+	// callers / no-modal frontend). Matches the pre-2026-05 behaviour:
+	// capture_lineside + empty captures → release_empty on the wire → manifest
+	// cleared. Required for the ALN_001 fix.
+	evacDisp := disp
+	if evacDisp.Mode == "" {
+		evacDisp.Mode = DispositionCaptureLineside
 	}
+	// Supply leg always rides through with no manifest action regardless of
+	// what the operator chose. Empty Mode → buildProtocolDisposition returns
+	// nil → Core no-op. CalledBy still flows for audit.
+	supplyDisp := ReleaseDisposition{CalledBy: disp.CalledBy}
+
 	// Collect per-task failures rather than swallowing them. Pre-fix
 	// behaviour was log-and-continue + return nil, which silently recreated
 	// the original ALN_001 incident on partial failure: one node's manifest
@@ -392,29 +437,63 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, calledBy string) error {
 		// single operator click. For single_robot/manual paths,
 		// NextMaterialOrderID completes before Order B exists, so the
 		// extra release is a harmless no-op (order won't be staged).
-		orderIDs := []*int64{task.OldMaterialReleaseOrderID}
-		if task.NextMaterialOrderID != nil {
-			orderIDs = append(orderIDs, task.NextMaterialOrderID)
+		type slot struct {
+			id   *int64
+			disp ReleaseDisposition
+			kind string // for log/error context only
 		}
-		for _, oid := range orderIDs {
-			if oid == nil {
+		slots := []slot{{id: task.OldMaterialReleaseOrderID, disp: evacDisp, kind: "evac"}}
+		if task.NextMaterialOrderID != nil {
+			slots = append(slots, slot{id: task.NextMaterialOrderID, disp: supplyDisp, kind: "supply"})
+		}
+		for _, s := range slots {
+			if s.id == nil {
 				continue
 			}
-			order, err := e.db.GetOrder(*oid)
+			order, err := e.db.GetOrder(*s.id)
 			if err != nil {
-				log.Printf("release changeover wait node %s: get order: %v", task.NodeName, err)
-				failures = append(failures, fmt.Errorf("node %s: get order: %w", task.NodeName, err))
+				log.Printf("release changeover wait node %s (%s): get order: %v", task.NodeName, s.kind, err)
+				failures = append(failures, fmt.Errorf("node %s (%s): get order: %w", task.NodeName, s.kind, err))
 				continue
 			}
-			if order.Status == orders.StatusStaged {
-				if err := e.ReleaseOrderWithLineside(order.ID, disp); err != nil {
-					log.Printf("release changeover wait node %s: %v", task.NodeName, err)
-					failures = append(failures, fmt.Errorf("node %s: %w", task.NodeName, err))
+			switch {
+			case order.Status == orders.StatusStaged:
+				if err := e.ReleaseOrderWithLineside(order.ID, s.disp); err != nil {
+					log.Printf("release changeover wait node %s (%s): %v", task.NodeName, s.kind, err)
+					failures = append(failures, fmt.Errorf("node %s (%s): %w", task.NodeName, s.kind, err))
+					continue
 				}
+				result.Released++
+			case isPendingOrderStatus(order.Status):
+				// Order exists, expected to stage soon, but isn't there yet —
+				// operator clicked early. Count so the handler can tell them
+				// "released N, still M pending" instead of nothing.
+				result.Pending++
 			}
+			// Terminal statuses (released, delivered, confirmed, cancelled,
+			// failed) deliberately fall through uncounted — they don't need
+			// operator action.
 		}
 	}
-	return errors.Join(failures...)
+	return result, errors.Join(failures...)
+}
+
+// isPendingOrderStatus reports whether the order is alive but not yet at
+// staged — i.e., it's expected to reach staged on its own and the operator
+// would benefit from being told to wait. Conservative: anything that isn't
+// staged AND isn't past-staged counts as pending. (Note: a "released" order
+// transitions to StatusInTransit per orders.Manager — there's no separate
+// StatusReleased to filter out.)
+func isPendingOrderStatus(s protocol.Status) bool {
+	switch s {
+	case orders.StatusInTransit, orders.StatusDelivered, orders.StatusConfirmed,
+		orders.StatusCancelled, orders.StatusFailed:
+		return false
+	case orders.StatusStaged:
+		return false
+	default:
+		return true
+	}
 }
 
 // SequentialChangeoverCutover is the per-node operator action that gates

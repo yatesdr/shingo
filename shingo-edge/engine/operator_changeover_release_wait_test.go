@@ -101,7 +101,7 @@ func TestReleaseChangeoverWait_RoutesThroughLinesideRelease(t *testing.T) {
 		_ = db.AckOutbox(m.ID)
 	}
 
-	if err := eng.ReleaseChangeoverWait(processID, "test-operator"); err != nil {
+	if _, err := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "test-operator"}); err != nil {
 		t.Fatalf("ReleaseChangeoverWait: %v", err)
 	}
 
@@ -153,7 +153,7 @@ func TestReleaseChangeoverWait_NoStagedOrdersIsNoOp(t *testing.T) {
 		_ = db.AckOutbox(m.ID)
 	}
 
-	if err := eng.ReleaseChangeoverWait(processID, "test-operator"); err != nil {
+	if _, err := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "test-operator"}); err != nil {
 		t.Fatalf("ReleaseChangeoverWait: %v", err)
 	}
 
@@ -202,7 +202,7 @@ func TestReleaseChangeoverWait_PartialFailureSurfacesError(t *testing.T) {
 		t.Fatalf("orphan order's process node: %v", err)
 	}
 
-	gotErr := eng.ReleaseChangeoverWait(processID, "test-operator")
+	_, gotErr := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "test-operator"})
 	if gotErr == nil {
 		t.Fatal("expected non-nil error from ReleaseChangeoverWait when a task fails; got nil (the swallow-and-lie regression)")
 	}
@@ -227,4 +227,142 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestReleaseChangeoverWait_SupplyManifestPreserved locks in the
+// evac-vs-supply disposition asymmetry. Plant incident on order 682
+// (2026-05-06): the changeover Release fired on a staged supply leg with
+// disposition=release_empty, zeroing the supply bin's manifest before it
+// arrived at the line. Bin landed empty; lineside runtime cached 0;
+// consume drove the counter negative.
+//
+// Fix: ReleaseChangeoverWait passes the operator's disposition only to
+// the evac slot (OldMaterialReleaseOrderID). The supply slot
+// (NextMaterialOrderID) always gets Mode="" → buildProtocolDisposition
+// returns nil → wire-form omits disposition → Core's
+// SyncOrClearForReleased no-ops the manifest.
+//
+// Regression assertions:
+//   - Two OrderRelease envelopes queued (one per slot).
+//   - Evac envelope: Disposition.Kind == release_partial, Count == 47
+//     (the operator's chosen partial count flows through).
+//   - Supply envelope: Disposition is nil (manifest left alone).
+func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "supply manifest preservation")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+
+	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if err != nil {
+		t.Fatalf("get node task: %v", err)
+	}
+	if task.OldMaterialReleaseOrderID == nil {
+		t.Fatal("expected evac order (OldMaterialReleaseOrderID) to be set after Phase 3 swap start")
+	}
+	if task.NextMaterialOrderID == nil {
+		t.Fatal("expected supply order (NextMaterialOrderID) to be set; this scenario assumes both legs exist")
+	}
+
+	evacOrder, err := db.GetOrder(*task.OldMaterialReleaseOrderID)
+	if err != nil {
+		t.Fatalf("get evac order: %v", err)
+	}
+	supplyOrder, err := db.GetOrder(*task.NextMaterialOrderID)
+	if err != nil {
+		t.Fatalf("get supply order: %v", err)
+	}
+
+	// Force both orders to staged so ReleaseChangeoverWait's per-slot loop
+	// fires on each. In production the fleet tracker advances these as the
+	// robots dwell; the dispatcher-level test has no fleet wiring.
+	if err := db.UpdateOrderStatus(evacOrder.ID, string(orders.StatusStaged)); err != nil {
+		t.Fatalf("force evac staged: %v", err)
+	}
+	if err := db.UpdateOrderStatus(supplyOrder.ID, string(orders.StatusStaged)); err != nil {
+		t.Fatalf("force supply staged: %v", err)
+	}
+
+	// Drain outbox so we can count exactly the envelopes produced by the
+	// release call.
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	// Operator chooses SEND PARTIAL BACK with count 47 — applied to evac.
+	partial := 47
+	disp := ReleaseDisposition{
+		Mode:         DispositionSendPartialBack,
+		PartialCount: &partial,
+		CalledBy:     "test-operator",
+	}
+	result, err := eng.ReleaseChangeoverWait(processID, disp)
+	if err != nil {
+		t.Fatalf("ReleaseChangeoverWait: %v", err)
+	}
+	if result.Released != 2 {
+		t.Errorf("result.Released = %d, want 2 (both legs were staged)", result.Released)
+	}
+	if result.Pending != 0 {
+		t.Errorf("result.Pending = %d, want 0 (no legs were skipped)", result.Pending)
+	}
+
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 2 {
+		t.Fatalf("OrderRelease envelopes queued: got %d, want 2 (one per slot)", len(releases))
+	}
+
+	var evacRel, supplyRel *protocol.OrderRelease
+	for i := range releases {
+		decoded := decodeOrderRelease(t, releases[i])
+		switch decoded.OrderUUID {
+		case evacOrder.UUID:
+			d := decoded
+			evacRel = &d
+		case supplyOrder.UUID:
+			d := decoded
+			supplyRel = &d
+		default:
+			t.Errorf("unexpected OrderRelease for UUID %q", decoded.OrderUUID)
+		}
+	}
+	if evacRel == nil {
+		t.Fatal("no OrderRelease envelope for evac order")
+	}
+	if supplyRel == nil {
+		t.Fatal("no OrderRelease envelope for supply order")
+	}
+
+	// Evac leg: disposition flows through.
+	if evacRel.Disposition == nil {
+		t.Fatal("evac OrderRelease.Disposition = nil; want release_partial with operator's count")
+	}
+	if evacRel.Disposition.Kind != protocol.DispositionReleasePartial {
+		t.Errorf("evac disposition kind = %q, want %q",
+			evacRel.Disposition.Kind, protocol.DispositionReleasePartial)
+	}
+	if evacRel.Disposition.Count != partial {
+		t.Errorf("evac disposition count = %d, want %d (operator's partial count)",
+			evacRel.Disposition.Count, partial)
+	}
+
+	// Supply leg: NO manifest action. Disposition must be nil so Core's
+	// SyncOrClearForReleased no-ops. THIS is the regression lock.
+	if supplyRel.Disposition != nil {
+		t.Errorf("supply OrderRelease.Disposition = %+v, want nil (manifest must NOT be touched on the supply leg)",
+			supplyRel.Disposition)
+	}
+	// Same regression check on RemainingUOP: must be nil for the supply leg.
+	// Anything else (especially &0) is the bug fingerprint that wiped the
+	// bin manifest at Core on order 682 / 2026-05-06.
+	if supplyRel.RemainingUOP != nil {
+		t.Errorf("supply OrderRelease.RemainingUOP = &%d, want nil (manifest preservation contract)",
+			*supplyRel.RemainingUOP)
+	}
 }

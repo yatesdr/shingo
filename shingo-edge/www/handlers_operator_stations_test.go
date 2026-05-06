@@ -888,26 +888,37 @@ func TestOperatorStations_ReleaseChangeoverWait_ThreadsCalledBy(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 
 	stub := h.engine.(*stubEngine)
-	if stub.lastReleaseChangeoverWaitCalledBy != "stephen-station-7" {
-		t.Errorf("ReleaseChangeoverWait called_by: got %q, want %q",
-			stub.lastReleaseChangeoverWaitCalledBy, "stephen-station-7")
+	if stub.lastReleaseChangeoverWaitDisp == nil {
+		t.Fatal("ReleaseChangeoverWait was not called")
+	}
+	if got := stub.lastReleaseChangeoverWaitDisp.CalledBy; got != "stephen-station-7" {
+		t.Errorf("ReleaseChangeoverWait called_by: got %q, want %q", got, "stephen-station-7")
 	}
 }
 
-// TestOperatorStations_ReleaseChangeoverWait_RejectsBareBody verifies the
-// post-2026-04-27 contract on the third release endpoint: a missing body
-// or empty called_by produces 400, mirroring apiReleaseOrder and
-// apiReleaseNodeStagedOrders. The original c56ceb9 fix added this guard to
-// the other two release endpoints; this endpoint had the same shape (empty
-// body silently produced an empty audit trail at Core) and was closed
-// during the release-flow cleanup. The 2026-04-29 hotfix changed empty
-// called_by from rejection to default — bare body still rejects.
-func TestOperatorStations_ReleaseChangeoverWait_RejectsBareBody(t *testing.T) {
-	_, router := newOperatorStationsRouter(t)
+// TestOperatorStations_ReleaseChangeoverWait_AcceptsBareBody verifies the
+// 2026-05-06 relaxation of the body contract: changeover release-wait must
+// accept a bare-body POST and operate with default disposition (evac =
+// capture_lineside, supply = no-op). The other two release endpoints
+// (apiReleaseOrder, apiReleaseNodeStagedOrders) still require called_by
+// because their callers always supply it; this endpoint serves clients
+// (legacy operator station, htmx button) where mandating a body created
+// real operational pain without a corresponding audit benefit.
+func TestOperatorStations_ReleaseChangeoverWait_AcceptsBareBody(t *testing.T) {
+	h, router := newOperatorStationsRouter(t)
 
-	// Bare-body POST -> 400.
 	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-wait", nil, nil)
-	assertStatus(t, resp, http.StatusBadRequest)
+	assertStatus(t, resp, http.StatusOK)
+
+	// Engine still gets called — disposition has the default operator_station
+	// called_by stamped so audits aren't blank.
+	stub := h.engine.(*stubEngine)
+	if stub.lastReleaseChangeoverWaitDisp == nil {
+		t.Fatal("ReleaseChangeoverWait was not called")
+	}
+	if got := stub.lastReleaseChangeoverWaitDisp.CalledBy; got != "operator_station" {
+		t.Errorf("default called_by: got %q, want %q", got, "operator_station")
+	}
 }
 
 func TestOperatorStations_CompleteProductionCutover_Success(t *testing.T) {

@@ -99,7 +99,7 @@ type EngineOrchestration interface {
 	CompleteProcessProductionCutover(processID int64) error
 	CancelProcessChangeover(processID int64) error
 	CancelProcessChangeoverRedirect(processID int64, nextStyleID *int64) error
-	ReleaseChangeoverWait(processID int64, calledBy string) error
+	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
 	EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*domain.Order, error)

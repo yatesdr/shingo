@@ -112,10 +112,88 @@ async function confirmReleaseWait() {
     const view = getView();
     const pid = view.process.id;
     const station = (view.station.name && view.station.name.trim()) || 'operator';
-    const ok = await postAction('/api/processes/' + pid + '/changeover/release-wait', {
-        called_by: station
-    }, loadViewRef);
-    if (ok) showToast('Robots released', 'success');
+
+    // Small picker: optional partial-count input (operator types a number if
+    // any evac bins still have parts), or just RELEASE for the all-empty case.
+    // TODO: expand to a per-bin disposition flow when plant scenarios need
+    //       different dispositions on different evac bins. Engine + handler
+    //       are already disposition-agnostic — this is a frontend-only change
+    //       (open a modal per evac bin instead of a single shared count).
+    //       See plan agile-orbiting-lampson.md item 1 for options A-D.
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title',
+        textContent: 'Release evac bins?' }));
+
+    const inputWrap = el('div', { className: 'os-co-picker-input' });
+    inputWrap.appendChild(el('label', {
+        className: 'os-co-picker-input-label',
+        textContent: 'Partial parts count (leave blank if all empty):'
+    }));
+    const partialInput = el('input', {
+        type: 'number',
+        min: '0',
+        className: 'os-co-picker-input-field',
+    });
+    inputWrap.appendChild(partialInput);
+    panel.appendChild(inputWrap);
+
+    const release = el('button', { className: 'os-co-picker-btn', textContent: 'RELEASE' });
+    release.addEventListener('click', async () => {
+        overlay.remove();
+        const body = { called_by: station };
+        const raw = (partialInput.value || '').trim();
+        if (raw !== '') {
+            const n = parseInt(raw, 10);
+            if (!isNaN(n) && n > 0) {
+                body.disposition = 'send_partial_back';
+                body.partial_count = n;
+            }
+        }
+        await postReleaseWait(pid, body);
+    });
+    panel.appendChild(release);
+
+    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
+    cancel.addEventListener('click', () => overlay.remove());
+    panel.appendChild(cancel);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+}
+
+// postReleaseWait posts the release and toasts based on the {released, pending}
+// counts in the response so the operator knows when only some legs fired.
+async function postReleaseWait(pid, body) {
+    try {
+        const res = await fetch('/api/processes/' + pid + '/changeover/release-wait', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body || {})
+        });
+        if (!res.ok) {
+            const text = await res.text();
+            let msg;
+            try { msg = JSON.parse(text).error || text; } catch { msg = text; }
+            showToast(msg || 'Release failed', 'error');
+            return;
+        }
+        const data = await res.json().catch(() => ({}));
+        const released = data.released | 0;
+        const pending = data.pending | 0;
+        if (loadViewRef) await loadViewRef();
+        if (released === 0 && pending === 0) {
+            showToast('Nothing to release', 'info');
+        } else if (pending === 0) {
+            showToast('Released ' + released + (released === 1 ? ' robot' : ' robots'), 'success');
+        } else {
+            showToast('Released ' + released + ' — ' + pending + ' still en route, click again when ready', 'info');
+        }
+    } catch (err) {
+        console.error('release-wait', err);
+        showToast('Network error', 'error');
+    }
 }
 
 async function confirmCutover() {
