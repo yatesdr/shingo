@@ -28,13 +28,9 @@ Operators request material by payload type. Shingo Core locates the oldest eligi
 
 When a production line switches styles, Shingo orchestrates the material changeover automatically. Core aborts in-flight orders on affected nodes, A/B cycles material slots between old and new styles, dispatches fresh material, and confirms completion. Bins staged at lineside are preserved when the payload is shared between styles (keep-staged).
 
-### Safety Lighting (Count Groups)
+### Plant Integration
 
-Core monitors robot presence in advanced zones — crosswalks, forklift aisles, and other shared spaces — and drives safety indicator lights via PLC. Polling runs at sub-second intervals with asymmetric hysteresis (ON commits faster than OFF) and a fail-safe timeout that forces lights on during communication failures.
-
-### Fire Alarm
-
-Core relays fire alarm activate/clear commands to the fleet backend. RDS owns all robot logic (stop, evacuate, resume). The feature is gated behind configuration and designed for future automation via plant-side input (PLC, building alarm system).
+Edge integrates with plant-floor PLCs through **WarLink**, its PLC client. Reads drive consumption tracking — reporting-point counters tick whenever the line produces a unit. Writes drive plant-side signaling: a heartbeat tag tells the plant Shingo is alive, and zone-output tags drive safety lighting in advanced zones (crosswalks, forklift aisles) based on robot presence reported by the fleet, with asymmetric hysteresis and a fail-safe forced-on timeout. Bindings are configured per-process from the Traffic admin page.
 
 ### Decoupled Architecture
 

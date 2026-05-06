@@ -1,5 +1,543 @@
 # Changelog
 
+## 2026-05-06 — Dispatch Test Coverage & Retrieve-Algorithm Collapse
+
+### Refactoring
+
+- **`dispatch/binresolver/`**: collapsed the FIFO/COST/FAVL retrieve
+  variants into a single algorithm parameterized by sort key, and
+  split the resolver into per-strategy files matching the Stage 5
+  layout. Test gaps in `classifyEmptyGroup`, lane-lock acquire/release,
+  and store-strategy routing closed out at the same time.
+
+## 2026-05-05 — UOP Runtime Cache, Side-Cycle Auto-Confirm Guards, Debug Log UI
+
+### UOP Runtime Cache Binding
+
+The runtime UOP cache (used by the operator HMI to render bin contents
+before the bin record is updated) now binds to **release-click** and
+**OrderDelivered**, not to operator confirm. Confirm-time binding meant
+the HMI could show stale UOP for the entire two-robot delivery window.
+
+- `engine/release.go` snapshots UOP at the click and again on delivery
+- Edge regression test covers the contract end-to-end
+- Failed-order tests realigned to the faulted grace-period semantics
+  introduced 2026-05-04
+
+### Side-Cycle Auto-Confirm Guards
+
+Side-cycle orders (manual\_swap L1/U1 inbound/outbound legs) were being
+auto-confirmed twice — once by the swap dispatcher and again by the
+reconciliation sweep on the next tick.
+
+- `skip_auto_confirm` flag on side-cycle orders prevents reconciliation
+  from re-confirming
+- `RequestEmptyBin` / `RequestFullBin` no longer auto-confirm on
+  manual\_swap nodes
+- Authoritative LOADED badge derived from the bin record, with an
+  empty-bin escape hatch when the operator needs to recover from a
+  partial load
+
+### Two-Robot Changeover
+
+- Operator station gains a RELEASE button for two\_robot swap during
+  changeover (previously only single-robot had one)
+- `SituationAdd` delivers directly to the lineside node, skipping the
+  staging hop that was creating phantom in-flight orders during
+  changeover
+- Two\_robot swap correctly falls back when `OutboundStaging` is empty
+  instead of dispatching a no-op
+
+### UI
+
+- Bin-loader payload cards: render **NO DEMAND** (neutral) instead of
+  a false **QUEUED** badge when no order is sourcing from the loader
+- Debug log beautification: color-grouped by source/level, JSON expand
+  on click, row grouping for repeated messages, brighter palette and
+  larger text for plant-floor monitors
+- Amber background on the changeover RELEASE header button so it
+  reads as the active step
+- Changeover RELEASE row column overflow fixed in grouped views
+
+## 2026-05-04 — Failed Order Recovery, Edge as UOP Authority
+
+### Failed Order Recovery (Faulted Grace Period)
+
+`failed` is no longer terminal. Orders that fail mid-flight enter a
+non-terminal **`faulted`** status with a configurable grace period
+(default 5 minutes) during which:
+
+- The robot can recover and resume — the order transitions back to
+  `in_transit` without operator intervention
+- The bin claim and lineside slot reservation are preserved
+- The HMI shows a faulted toast with a retry affordance
+
+After the grace period, the order transitions to terminal `failed` and
+the claim is released as before. Auto-return is still disabled pending
+redesign (see 2026-04-14).
+
+### UOP Authority Flip
+
+Bins are now the source of truth for `remaining_uop`, with Edge as the
+sole writer; Core's reconciler that re-derived UOP from style claims is
+deleted. This eliminates a class of races where Core and Edge would
+write conflicting UOP values during a two-robot release.
+
+- `remaining_uop_cached` backfill migration for DBs that skipped the
+  earlier rebuild
+- Race-safe upserts on `process_node_runtime_states`,
+  `style_node_claims`, and `node_lineside_bucket` so concurrent edge
+  writes can't lose updates
+- Two-robot release: zero runtime UOP at the click and stash a durable
+  sibling pointer so the partner order can resolve cleanly even after
+  process restart
+
+### Edge Admin
+
+- New **Lineside Buckets** page lets engineering override slot UOP
+  capacity from the admin UI without a YAML edit + restart
+- Operator HMI keypad and release prompt scaled for 7" displays;
+  failure toast now carries the actual error string instead of a
+  generic "order failed"
+
+### Logging & CI
+
+- Engine release errors and core dispatch errors routed through the
+  ring-buffer logger so they show up in the Debug Log UI
+- CI workflow YAML rewritten — earlier patch had introduced duplicate
+  `run:` keys that some YAML parsers accepted silently
+- `mkdir build/` before `go test -coverprofile` so the coverage file
+  has a directory to land in
+- Strip UTF-8 BOMs from Go source files (Go 1.25 rejects them);
+  drop `.out` extension from coverprofile paths
+
+## 2026-05-03 — Coverage Reporting, Fuzz Targets, Changeover Floor Stability
+
+### Tests
+
+- **CI coverage reporting**: `go test -coverprofile` plumbed through
+  for `protocol/`, `shingo-core/`, and `shingo-edge/` with merged
+  HTML output uploaded as a workflow artifact
+- **Store coverage migration**: facade-level tests on the outer
+  `store/` package moved into the per-aggregate sub-packages
+  (`bins/`, `nodes/`, `orders/`, `payloads/`) where the logic actually
+  lives. Coverage numbers are now meaningful per package
+- **Protocol fuzz targets**: `Envelope` decode, `OrderRequest`
+  validation, and waybill round-trip added under `go test -fuzz`
+- **Event-driven test polling**: replaced 23 `time.Sleep` calls in
+  fulfillment, dispatch, and engine tests with channel-based waits
+
+### Changeover
+
+- **Floor stability bundle**: mode-aware step builders (single-robot
+  vs two-robot vs sequential vs press-index produce) consolidated;
+  fan-out for paired produce nodes routed through the same builder
+  so phase-2 reuses phase-1's logic instead of diverging
+
+## 2026-05-02 — UOP Bin-as-Truth Refactor
+
+Foundational refactor that the 2026-05-04 authority flip builds on.
+Bins gain `remaining_uop_cached` so HMI rendering and dispatch
+decisions read from a single column, and the legacy "compute UOP from
+claim + manifest" path is removed from hot paths. Engine still
+recomputes on bin load and on operator confirm; everything else trusts
+the cached value.
+
+## 2026-05-01 — Bin Transit State, Forklift-Scale Bin Loader, Migration Hardening
+
+### Bin Transit State (Phases 1-5)
+
+`bin_transit_state` enum and column on `bins` give Core explicit
+visibility into where a bin is in its delivery cycle:
+
+```
+parked → claimed → en_route → at_destination → released
+```
+
+- Replaces ad-hoc inference from `orders.status` + `bins.node_id`
+- Plumbed through dispatch, completion, fulfillment scanner, and
+  audit log
+- UOP audit at each transition flags drift before it reaches the
+  operator
+- Phases 1-2 add the column and writers; phases 3-4 migrate
+  read-path consumers; phase 5 removes the legacy inference paths
+
+### Operator Station
+
+- **Forklift-scale bin-loader board**: redesigned for tablet-on-fork
+  use — large tap targets, demand grouped by payload, manifest
+  preview before the operator commits
+- **Manual request affordance**: operator can dispatch a load order
+  from the loader UI without going through the material page
+
+### Migrations
+
+- **Per-version transactions**: each migration runs in its own `BEGIN
+  ... COMMIT` so a partial failure leaves the DB at the previous
+  version, not halfway through
+- **Self-heal on startup**: detect and repair migrations that left
+  broken state from before the per-version-tx wrapping (orphan FKs,
+  half-renamed columns)
+
+### Dispatch
+
+- Complex orders now bypass the dropoff-capacity gate. The gate was
+  designed for simple deliveries; complex orders manage their own
+  capacity through the multi-step plan and were getting blocked
+  spuriously when the destination was momentarily full mid-cycle
+
+## 2026-04-30 — Press-Index, Typed Constants, Two-Robot Release Polish
+
+### Press-Index 3-Position Layout
+
+Optional second paired core node for press cells with a back-side
+material position. Configured via `second_paired_core_node` on the
+press's claim — when set, produce-empty dispatches use the back node
+as the secondary destination.
+
+- Auto-provision back-node claim row when paired field is set
+- Pairing UI clarifies primary vs secondary on the processes page
+- Produce-node Request Empty button respects pairing
+
+### Two-Robot Release Polish
+
+- **Multi-payload bins**: release auto-picks the correct bin from the
+  manifest when the lane has bins of different payloads
+- **Press-index two-robot**: release works before the runtime
+  `claim_id` is stamped (was failing on the first cycle of the day)
+- **In-transit acceptance**: dispatch now accepts release on
+  `in_transit` orders so two-robot fan-out can release Robot B while
+  Robot A is still moving
+- **Multi-step produce-empty**: uses the same swap-dispatch builder
+  as resupply; produce-empty button stays visible across all produce
+  modes; `/request` no longer fires from produce nodes
+- **Manual\_swap demand cards**: clickable while idle (were greyed
+  out unless an order was already active)
+
+### Typed Constants Migration
+
+The `string` literals for order status, order type, claim role, and
+bin status across `engine/`, `dispatch/`, and `www/` migrated to typed
+constants from `shingocore/types`. Catches typos at compile time and
+makes call-site dispatch on these values exhaustive-checkable.
+
+- `Plan/Apply` pattern formalized for swap dispatch — `Plan` returns
+  the resolved step set without side effects, `Apply` commits
+- Shared `SwapDispatch` collapses single-robot, two-robot, sequential,
+  and press-index produce paths to one entry point
+- Tests aligned with the typed signatures (no behavior change)
+
+### Other
+
+- **Complex orders**: `ProcessNode` threaded through so multi-bin
+  manifest sync writes against the correct edge process
+- **Static cache**: `/static/*` cache busted on every edge restart
+  via ETag — operators no longer need a hard refresh after a deploy
+- **Stale operator\_station\_id**: cleared when a process is reassigned;
+  stops the phantom-claimed greying on the processes page
+- **Release UX**: explicit labels, always-enabled PULL PARTS button,
+  primary group surfaced first
+
+## 2026-04-29 — Side-Cycle Relocation, Replenishment, Two-Robot Press-Index
+
+### Side-Cycle Trigger Relocation
+
+The L1 trigger (inbound side-cycle on manual\_swap) moved from
+`OrderDelivered` to release-click; U1 and U2 wired symmetrically. This
+makes side-cycle a release-time decision instead of a delivery-time
+one, which lets the operator abort the cycle by not clicking release.
+
+### Replenishment
+
+- **OrderDelivered UOP snapshot**: bin's `uop_remaining` carried in
+  the delivery envelope so replenishment uses the actual arrived UOP
+  instead of looking it up after the fact
+- `arrivedBinUOP` field dropped — the snapshot replaces it
+
+### New Mode
+
+- **`two_robot_press_index`**: produce swap mode for press cells —
+  Robot A pre-stages new material at the back while Robot B is still
+  finishing the previous cycle on the front
+
+### Other
+
+- `NODE_GROUP` and its direct physical children now treated uniformly
+  as storage slots by the dispatcher (closes a gap where a group node
+  was rejected as a destination)
+- `called_by` defaulted on release handlers; empty-body confirms
+  tolerated instead of 400'd
+
+## 2026-04-28 — V2 Side-Cycle Hardening, Floor-Jam Guards, JS/HTML Cleanup
+
+### V2 Side-Cycle Direction (Phases 2-3)
+
+- **`payload_bin_types` advisory enforcement**: dispatch consults the
+  payload→bin-type mapping to filter source bins, but operators can
+  still override via manual claim. Was strict-enforce; advisory matches
+  how the plant actually uses it
+- **Side-cycle hardening**: L2 outbound move always auto-confirms
+  (was sometimes left at `delivered` waiting for an operator click
+  that wasn't coming); LOAD reliably confirms inbound L1; recovery
+  path for cancelled-leg in two-robot swap so the surviving leg
+  doesn't deadlock
+
+### Floor-Jam Guards
+
+- **Manual\_swap stale-bundle guard**: refuses to dispatch a swap
+  bundle when one of the underlying orders has gone terminal between
+  bundle build and dispatch
+- **Half-built complex order guard**: orders with missing manifest
+  or unresolved source no longer reach the dispatcher; rejected at
+  build time with a specific error
+- **Retired bins exclusion**: operational queries (source-finder,
+  empty-finder, manifest verify) skip bins where `retired_at IS NOT
+  NULL` — was leading to phantom bin matches on retired QR codes
+- **Direct-order source claim**: claims source bin so completion can
+  update `bins.node_id` (was leaving direct orders' bins at the old
+  location)
+
+### Operator HMI
+
+- **Bin-loader confirm-on-load**: confirm fires on the `bin.load`
+  receipt, not on a separate operator click
+- **UOP-on-delivery**: UOP populates from the delivery envelope as
+  soon as the robot reports delivered
+- **Release prompt rework**: branching disposition (deplete/return/
+  scrap), no flicker on state transitions, qty autofills from the
+  manifest
+- **Keypad z-index** raised so it actually appears on top of the
+  release prompt (was being hidden under)
+
+### JS/HTML Cleanup Phase 1
+
+- `h/el/apiGet` helpers added to the shared utilities module; raw
+  `fetch()` calls migrated to use them. Silent `.catch()` blocks now
+  surface to the toast logger
+- `operator.js` split into ES modules (one per workflow)
+- `nodes.js` split into overview / detail / supermarket
+- Bins/orders table loops converted from string concat to `h\`\``
+  templates; nested ternaries wrapped to prevent double-escape
+- `location.reload` removed from bulk-action and node-bin SSE paths;
+  now diff the response and patch the DOM
+- **Dead code deletion**: `ConfirmNodeManifest` stack,
+  `forceTransitionOrder`, `DeleteLinesideBucket`, `operator-canvas/`
+  — all unused after the v2 side-cycle landing
+
+### Release Flow
+
+- **Shared validator**: per-mode validation collapsed to one
+  `validateRelease` taking the resolved swap mode
+- **`ChangeoverWait` guard**: refuses release while the changeover is
+  in its wait phase (was racing the changeover sequencer)
+- **`called_by` required**: release endpoints now require the
+  `called_by` field; two-robot UI bypass that wasn't sending it fixed
+- **Fall-through logging**: unhandled release dispositions logged at
+  WARN with the resolved mode so they don't disappear silently
+
+## 2026-04-27 — Architecture Finishing Pass, Side-Cycle Bin Loader
+
+### Architecture (`finish-architecture`)
+
+- **Depguard ratchet drained**: package import rules tightened to
+  match the post-Stages-1-9 architecture; remaining violations all
+  fixed (or moved to a tracked exception list)
+- **Edge wiring split**: `cmd/shingoedge/wiring.go` decomposed by
+  concern matching the Stage 7 / 2C pattern in core
+- **CI hygiene**: lint action upgraded; four state-machine test
+  failures from Stage 10 reconciled; workflow files normalized
+
+### Side-Cycle Bin Loader
+
+Side-cycle replaces the kanban auto-request that was being deleted in
+the same commit. The loader's UI now surfaces line demand for orders
+sourcing **from** this loader node, so the forklift operator sees what
+the line needs without the ops team scheduling a kanban request first.
+
+- **Kanban auto-request deleted** entirely — side-cycle subsumes it
+- **Source-finder destination exclusion**: a node never appears as a
+  source for an order whose destination is itself
+- **Kanban spam block**: when the destination already has a bin,
+  no auto-request fires (was looping on transient empty windows)
+
+### Release Flow Simplification
+
+- **Two-robot release**: gate on Robot B staged, then fan out to both;
+  removes the Robot-A-first ordering that was creating stuck cycles
+- **AutoConfirm split**: extended from system-initiated paths to
+  operator-initiated swap and removal
+- **Two-robot teleport fix**: bin no longer "teleports" to destination
+  on a late confirm — confirm is now bound to the actual delivery
+  receipt, not the order status
+
+### Other
+
+- **`FindEmptyCompatible`**: dropped the `manifest_confirmed` check
+  (too strict; rejected legitimate empties on confirm-races) and
+  made the empty-bin check NULL-safe
+- **`order_bins` junction**: only deleted on terminal status —
+  was deleting mid-flight on cancel-then-recover paths
+- **Edge `RequestEmptyBin` / `LoadBin`**: occupancy and demand guards
+  removed for `manual_swap` nodes (those nodes legitimately accept
+  multiple loads in a row)
+- **Battery level unit**: SEER returns 0.0–1.0; UI was showing
+  decimals. Multiplied by 100 at the mapper for 0–100 display
+
+## 2026-04-26 — Stage 10: Order State Machine + Phase 6/7 Architectural Parity
+
+### Stage 10 — Typed Lifecycle Facade
+
+The order state machine — previously scattered across `engine/orders.go`,
+`engine/wiring.go`, and `dispatch/` — moved behind a typed `Lifecycle`
+facade. Every transition (`pending → sourcing → ... → confirmed`) now
+runs through one entry point with explicit pre/post-conditions.
+
+- Compile-time exhaustive switching on `Status` enum catches missed
+  transitions
+- `Lifecycle.Transition(orderID, from, to)` returns a structured error
+  on invalid transitions instead of silent no-ops
+- All eight `HandleOrder*` methods on `CoreHandler` and the
+  fulfillment scanner refactored to call the facade
+- `scanner_test.go` gains a stub `Lifecycle` so the fake-backed test
+  battery still compiles tag-free
+
+### Phase 6 + Phase 7 — Architectural Parity
+
+Cross-module parity work landed alongside Stage 10:
+
+- Edge module gains the same narrow-interface treatment Core got in
+  Stages 5-9 (resolver, dispatcher, scenesync now defined as
+  consumer-side interfaces in the calling package)
+- Wiring layout aligned across core and edge — same per-concern file
+  decomposition, same naming conventions
+- Phase 7 begins extracting edge's order lifecycle into a sibling
+  `edge/orders/lifecycle.go` matching core's structure
+
+## 2026-04-25 — Two-Robot Release Consolidation
+
+Consolidated release timing across the two-robot fan-out so Robot A
+and Robot B receive their release in a single transaction. Adds a
+**stuck-cycle guard** that fires after a configurable timeout if the
+fan-out hangs (e.g., one robot reports delivered but the other never
+does), and an **admin disposition** path so engineering can manually
+unstick a cycle from the diagnostics page without restarting Core.
+
+## 2026-04-24 — Dispatch Skip-Reason Visibility
+
+`d.dbg`/`s.dbg` ring-buffer routing for the skip-reason logs added in
+2026-04-23 (`ef002a2`) so they appear in the Debug Log UI instead of
+only in stdout. Operators investigating "why didn't this dispatch"
+can now answer the question from the web UI.
+
+## 2026-04-23 — Two-Robot Release Manifest, Supply-Bin Guard
+
+### Bug Fixes
+
+- **Two-robot manifest stuck at `SMN_003`**: bin lookup fallback for
+  manifest sync, plus a runtime-reset guard that prevents the manifest
+  from being re-bound mid-cycle
+- **Per-order safety net**: tracks supply-bin status per order so
+  partial failures roll back the affected order without dragging
+  siblings down. `manifest_sync_failed` rolls back atomically;
+  `CalledBy` audit preserved on partial-failure paths
+- **Late-bind bin manifest**: bind manifest at operator release click
+  rather than at order creation. Lets operators reassign payload right
+  up to release without re-creating the order
+- **Skip-reason diagnostics**: `claimComplexBins` and the planning
+  move-bin loop log specific reasons when they decline to dispatch
+
+## 2026-04-22 — Lineside Inventory, Multi-Payload Manual\_Swap
+
+### Features
+
+- **Lineside inventory + reset-on-release**: edge tracks inventory
+  per lineside slot and resets the bucket counter on release. Engineering
+  can audit consumption per slot per shift instead of inferring from
+  delivery counts
+- **Reporting-point sync on process update**: when a process's PLC
+  reporting point changes, the heartbeat tag/PLC binding updates without
+  a service restart
+
+### UI
+
+- **Manual\_swap node highlighting**: every node with active demand
+  highlights on the operator board (was only highlighting the most
+  recent one)
+- **HMI style chip + bigger payload labels**: style chip rendered on
+  every operator tile; payload code label bumped to a readable size
+  on 7" displays
+
+### Bug Fixes
+
+- **Multi-payload manual\_swap loading**: unblocked — the loader was
+  rejecting loads where the payload didn't match the lineside default,
+  even when the claim's `allowed_payload_codes` listed it
+
+## 2026-04-21 — Architecture Overhaul Phases 1-5, Demand Sync
+
+### Architecture Overhaul (Phases 1-5)
+
+Cross-module structural pass laying the groundwork for Stage 10
+(2026-04-26). Phases 1-5 cover module-boundary cleanup, naming
+alignment between core/edge/protocol, depguard rule introduction,
+and initial extraction of shared lifecycle types. The loader-demand
+fix landed in the same commit — it was the motivating use case.
+
+### Demand Registry
+
+- **`core/demand_registry`**: reaps stale entries when an edge stops
+  reporting; no more phantom demand from a powered-off station
+- **Edge claim sync**: pushes claim upserts/deletes to Core on UI
+  action so Core's view of "what does this edge want" is current
+  without waiting for the next heartbeat
+
+### Bug Fixes
+
+- **Operator board active-status set**: covers the full set of active
+  statuses (was missing `queued` and `faulted`); unstick path for move
+  orders that landed in a transitional state at restart
+- **Cleared bins at concrete lineside nodes**: dispatch now allows
+  a cleared bin (zero UOP, no manifest) to satisfy a manual\_swap
+  request at a concrete lineside node — was rejecting because of an
+  empty-payload check that didn't fire for NGRP children
+- **Kanban guardrail**: consume claims on non-LANE nodes are rejected
+  at claim build time (kanban only makes sense for lane storage)
+
+## 2026-04-19 — Two-Robot Single-Click Release, Toolchain Downgrade
+
+### Two-Robot Coordinated Release
+
+Single click from the operator releases both robots in a two-robot
+swap. Previously each robot needed its own release click — confusing
+when the cycle was visually one swap. The handler now identifies
+sibling orders via the durable claim pointer and fans out the release.
+
+### Toolchain
+
+- **Go 1.26.2 → 1.25.0**: rolled back across `protocol/`,
+  `shingo-core/`, and `shingo-edge/`. The 1.26.2 bump (briefly
+  on `main`) was rejecting BOM-prefixed source files that Windows
+  editors had silently introduced. Coupled with the BOM-strip script
+  this leaves the toolchain stable at 1.25
+- **Protocol BOM strip**: `auth/password.go` had a UTF-8 BOM that
+  blocked the build under 1.26 — stripped explicitly
+
+## 2026-04-18 — E-Maint Robot Telemetry Stub
+
+In addition to the Stages 1-9 architecture refactor (below), the
+following landed late on 2026-04-18:
+
+- **`/api/telemetry/e-maint`** + **`/download`** endpoints expose
+  per-robot maintenance telemetry (odometer, runtime, jack/lift,
+  voltage, current, controller state)
+- **`RbkReport`** + **`RobotBasicInfo`** extended with the new fields;
+  `fleet.RobotStatus` gains 14 telemetry fields and the SEER mapper
+  populates them
+- **E-Maint tab** added to the Diagnostics page with a download
+  button — populated from the in-memory robot cache
+- Tab active-state cleanup for `data-tab` buttons (the previous
+  code only handled `data-target` buttons)
+
 ## 2026-04-18 — Architecture Refactor: Stages 1-9 (shingo-core)
 
 Nine-stage architectural cleanup of `shingo-core`, landed as one squashed
