@@ -176,7 +176,12 @@ export function renderModal(entry) {
             var queuePos = 1;
             allowed.forEach(function(code) {
                 var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
-                var isActive = payloadOrders.length > 0 || (hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+                // Mirror operator-render.js: the no-payload-code fallback is
+                // for the empty-bin-parked demand-signaling phase only. After
+                // load (bin has payload_code) or once any active order has a
+                // payload_code, fall back to the strict per-payload match.
+                var nodeBinIsEmpty = !!(binState && binState.occupied && !binState.payload_code);
+                var isActive = payloadOrders.length > 0 || (nodeBinIsEmpty && hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
                 var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
                 var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
                 var payloadQueued = payloadOrders.find(function(o) { return o.status === 'queued' || o.status === 'pending' || o.status === 'submitted'; });

@@ -196,6 +196,43 @@ func (m *Manager) CreateMoveOrder(processNodeID *int64, quantity int64, sourceNo
 	return m.db.GetOrder(orderID)
 }
 
+// CreateMoveOrderWithPayloadCode is CreateMoveOrder with an explicit payload
+// code instead of falling back to the active claim's primary payload. The
+// manual_swap loader / unloader case needs this: a claim can list multiple
+// allowed_payload_codes and the operator picks one at LoadBin time. Without
+// threading that pick through to L2 / U2, the side-cycle move ends up tagged
+// with claim.PayloadCode (the primary), and operator station tiles — which
+// filter active orders by payload_code per card — show no in-transit state on
+// the loaded payload's tile and may render unrelated tiles as queued via the
+// no-payload-code fallback in operator-render.js / operator-modal.js.
+func (m *Manager) CreateMoveOrderWithPayloadCode(processNodeID *int64, quantity int64, sourceNode, deliveryNode, payloadCode string, autoConfirm bool) (*orders.Order, error) {
+	orderUUID := uuid.New().String()
+
+	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
+
+	orderID, err := m.db.CreateOrder(orderUUID, TypeMove,
+		processNodeID, false,
+		quantity, deliveryNode, "", sourceNode, "", autoConfirm, payloadCode)
+	if err != nil {
+		return nil, fmt.Errorf("create move order: %w", err)
+	}
+
+	env, envErr := m.sender.build(protocol.TypeOrderRequest, &protocol.OrderRequest{
+		OrderUUID:    orderUUID,
+		OrderType:    TypeMove,
+		PayloadDesc:  payloadDesc,
+		PayloadCode:  payloadCode,
+		Quantity:     quantity,
+		DeliveryNode: deliveryNode,
+		SourceNode:   sourceNode,
+	})
+	m.enqueueAndAutoSubmit(orderID, orderUUID, env, envErr)
+
+	m.DebugLog.Log("create: type=%s id=%d uuid=%s source=%s delivery=%s payload=%s", TypeMove, orderID, orderUUID, sourceNode, deliveryNode, payloadCode)
+	m.emitter.EmitOrderCreated(orderID, orderUUID, TypeMove, nil, processNodeID)
+	return m.db.GetOrder(orderID)
+}
+
 // CreateMoveOrderWithUOP creates a move order and threads remainingUOP into the
 // protocol envelope so Core can atomically clear/sync the bin manifest on claim.
 // autoConfirm mirrors CreateMoveOrder so operator-initiated moves at a

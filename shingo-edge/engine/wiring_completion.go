@@ -290,6 +290,22 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	nodeID := ctx.node.ID
+	// Resolve the loaded payload code so the L2 carries the operator's pick
+	// rather than the claim's primary payload. A manual_swap loader's claim
+	// can list several allowed_payload_codes; LoadBin set Core's bin to
+	// whichever one the operator selected before confirming the L1, so
+	// Core's bin state is the authoritative source at this point. Falling
+	// back to claim.PayloadCode (via lookupPayloadMeta's empty-code path)
+	// is acceptable for single-payload claims but mis-tags the L2 on
+	// multi-payload loaders, which then fails to drive the per-tile
+	// IN_TRANSIT render in operator-station (tiles filter active orders by
+	// o.payload_code === code).
+	loadedPayloadCode := ""
+	if e.coreClient != nil && e.coreClient.Available() {
+		if bins, _ := e.coreClient.FetchNodeBins([]string{ctx.node.CoreNodeName}); len(bins) > 0 {
+			loadedPayloadCode = bins[0].PayloadCode
+		}
+	}
 	// L2 always auto-confirms: OutboundDestination is an unattended
 	// supermarket node, so without auto-confirm the order sits at
 	// `delivered` forever (no operator to tap CONFIRM there). This is
@@ -298,12 +314,12 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 	// end. Pre-fix the L2 stuck delivered on Edge while Core auto-confirmed
 	// on its side; the divergence lit up the bin-loader UI as a permanent
 	// "Confirm" button on a move that had already physically completed.
-	order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, true)
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, loadedPayloadCode, true)
 	if err != nil {
 		e.logFn("side-cycle: create L2 (filled-out) for loader %s: %v", ctx.node.Name, err)
 		return false
 	}
-	log.Printf("side-cycle: L2 (filled-out) order %d for loader %s → %s", order.ID, ctx.node.Name, claim.OutboundDestination)
+	log.Printf("side-cycle: L2 (filled-out) order %d for loader %s → %s payload=%q", order.ID, ctx.node.Name, claim.OutboundDestination, loadedPayloadCode)
 	// Runtime cache binding is owned by the delivered handler — L1's
 	// empty bin landing at the loader already wrote active_bin_id /
 	// cached_bin_id / remaining_uop_cached. Confirm only swaps the
@@ -344,12 +360,16 @@ func (e *Engine) handleUnloaderFullInCompletion(ctx *orderCompletionCtx) bool {
 	nodeID := ctx.node.ID
 	// U2 always auto-confirms: OutboundDestination is an unattended supermarket
 	// node, no operator there to tap CONFIRM. Same rationale as L2.
-	order, err := e.orderMgr.CreateMoveOrder(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, true)
+	// U1 (the order being completed) carries the specific payload code that
+	// arrived in the now-empty bin — thread it onto U2 so the operator
+	// station can match the empty-out move to the right tile (otherwise
+	// claim.PayloadCode wins and multi-payload unloaders mis-render).
+	order, err := e.orderMgr.CreateMoveOrderWithPayloadCode(&nodeID, 1, claim.CoreNodeName, claim.OutboundDestination, ctx.order.PayloadCode, true)
 	if err != nil {
 		e.logFn("side-cycle: create U2 (empty-out) for unloader %s: %v", ctx.node.Name, err)
 		return false
 	}
-	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s", order.ID, ctx.node.Name, claim.OutboundDestination)
+	log.Printf("side-cycle: U2 (empty-out) order %d for unloader %s → %s payload=%q", order.ID, ctx.node.Name, claim.OutboundDestination, ctx.order.PayloadCode)
 	// Runtime cache binding is owned by the delivered handler — U1's
 	// full bin landing at the unloader already wrote active_bin_id /
 	// cached_bin_id / remaining_uop_cached. Confirm only swaps the

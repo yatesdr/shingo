@@ -253,7 +253,14 @@ function renderPayloadBoard(entry) {
     var queuePos = 1;
     allowed.forEach(function(code) {
         var payloadOrders = activeOrders.filter(function(o) { return o.payload_code === code; });
-        var hasPayloadDemand = payloadOrders.length > 0 || (hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
+        // The "every order lacks payload_code" fallback is the demand-signaling
+        // bandaid for the empty-bin-parked phase: when an empty is at the node
+        // and there is general demand but no per-payload binding yet, every
+        // allowed payload should light up so the operator can pick. Once a bin
+        // is loaded (payload_code set) or after an L2 has been created with a
+        // specific payload_code, the fallback must NOT fire — otherwise every
+        // tile renders QUEUED while only one payload is actually in flight.
+        var hasPayloadDemand = payloadOrders.length > 0 || (nodeBinIsEmpty && hasDemand && activeOrders.every(function(o) { return !o.payload_code; }));
         var isActive = hasPayloadDemand || loadableHere;
         var payloadDelivered = payloadOrders.find(function(o) { return o.status === 'delivered'; });
         var payloadInTransit = payloadOrders.find(function(o) { return o.status === 'in_transit' || o.status === 'acknowledged'; });
