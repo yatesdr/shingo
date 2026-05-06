@@ -18,12 +18,14 @@ import (
 // --- Mock emitter ---
 
 type mockEmitter struct {
-	received   []emitReceived
-	dispatched []emitDispatched
-	failed     []emitFailed
-	cancelled  []emitCancelled
-	completed  []emitCompleted
-	queued     []emitQueued
+	received         []emitReceived
+	dispatched       []emitDispatched
+	failed           []emitFailed
+	cancelled        []emitCancelled
+	completed        []emitCompleted
+	queued           []emitQueued
+	faulted          []emitFaulted
+	faultedRecovered []emitFaultedRecovered
 }
 
 type emitReceived struct {
@@ -48,6 +50,14 @@ type emitCompleted struct {
 type emitQueued struct {
 	orderID int64
 }
+type emitFaulted struct {
+	orderID int64
+	reason  string
+}
+type emitFaultedRecovered struct {
+	orderID int64
+	robotID string
+}
 
 func (m *mockEmitter) EmitOrderReceived(orderID int64, _, _ string, _ protocol.OrderType, payloadCode, _ string) {
 	m.received = append(m.received, emitReceived{orderID, payloadCode})
@@ -67,8 +77,12 @@ func (m *mockEmitter) EmitOrderCompleted(orderID int64, _, _ string) {
 func (m *mockEmitter) EmitOrderQueued(orderID int64, _, _, _ string) {
 	m.queued = append(m.queued, emitQueued{orderID})
 }
-func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, _ string)   {}
-func (m *mockEmitter) EmitOrderFaultedRecovered(orderID int64, _, _, _ string) {}
+func (m *mockEmitter) EmitOrderFaulted(orderID int64, _, _, reason string) {
+	m.faulted = append(m.faulted, emitFaulted{orderID, reason})
+}
+func (m *mockEmitter) EmitOrderFaultedRecovered(orderID int64, _, _, robotID string) {
+	m.faultedRecovered = append(m.faultedRecovered, emitFaultedRecovered{orderID, robotID})
+}
 
 // --- Test helpers (thin wrappers delegating to internal/testdb) ---
 
@@ -327,7 +341,7 @@ func TestHandleOrderRequest_UnknownStyle(t *testing.T) {
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 
-	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
 	env := testEnvelope()
 	d.HandleOrderRequest(env, &protocol.OrderRequest{
@@ -337,8 +351,22 @@ func TestHandleOrderRequest_UnknownStyle(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 	})
 
-	// Should fail before creating order — no received or failed events from emitter
-	// but an error reply should be enqueued in the outbox
+	// Payload not found: should fail before order creation.
+	if len(emitter.received) != 0 {
+		t.Errorf("received events = %d, want 0 (order should not be created)", len(emitter.received))
+	}
+	if len(emitter.failed) != 0 {
+		t.Errorf("failed events = %d, want 0 (lifecycle Fail is not reached)", len(emitter.failed))
+	}
+
+	// Error reply should be enqueued in the outbox.
+	msgs, err := db.ListPendingOutbox(10)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("outbox messages = %d, want 1 (error reply for unknown payload)", len(msgs))
+	}
 }
 
 func TestHandleOrderCancel(t *testing.T) {
@@ -657,5 +685,200 @@ func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 	// Verify: no completion event emitted
 	if len(emitter.completed) > 0 {
 		t.Errorf("completed events = %d, want 0 (receipt failed, should not complete)", len(emitter.completed))
+	}
+}
+
+func TestDispatchDirect_Retrieve(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+
+	// Create order at pending (simulates direct creation from UI/scanner)
+	order := &orders.Order{
+		EdgeUUID:     "direct-ret-1",
+		StationID:    "edge.line1",
+		OrderType:    OrderTypeRetrieve,
+		Status:       StatusPending,
+		Quantity:     1,
+		DeliveryNode: lineNode.Name,
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"); err != nil {
+		t.Fatalf("set pending: %v", err)
+	}
+	order.Status = StatusPending
+
+	vendorID, err := d.DispatchDirect(order, storageNode, lineNode)
+	if err != nil {
+		t.Fatalf("DispatchDirect: %v", err)
+	}
+	if vendorID == "" {
+		t.Fatal("vendor order ID should be returned")
+	}
+
+	// Verify status bridged pending -> queued -> dispatched
+	persisted, _ := db.GetOrder(order.ID)
+	if persisted.Status != StatusDispatched {
+		t.Errorf("status = %q, want %q", persisted.Status, StatusDispatched)
+	}
+	if persisted.VendorOrderID != vendorID {
+		t.Errorf("vendor order ID = %q, want %q", persisted.VendorOrderID, vendorID)
+	}
+
+	// Verify fleet received the order
+	fleetOrders := backend.Orders()
+	if len(fleetOrders) != 1 {
+		t.Fatalf("fleet orders = %d, want 1", len(fleetOrders))
+	}
+	// Verify the vendor order ID matches what DispatchDirect returned
+	if _, ok := fleetOrders[vendorID]; !ok {
+		t.Errorf("vendor ID %q not in fleet orders (keys: %v)", vendorID, fleetOrders)
+	}
+
+	// Verify dispatched event emitted
+	if len(emitter.dispatched) != 1 {
+		t.Fatalf("dispatched events = %d, want 1", len(emitter.dispatched))
+	}
+	if emitter.dispatched[0].vendorOrderID != vendorID {
+		t.Errorf("emit vendor ID = %q, want %q", emitter.dispatched[0].vendorOrderID, vendorID)
+	}
+}
+
+func TestDispatchDirect_FleetFailure(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, _ := setupTestData(t, db)
+
+	// Use failing backend to simulate fleet error
+	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	order := &orders.Order{
+		EdgeUUID:     "direct-fail-1",
+		StationID:    "edge.line1",
+		OrderType:    OrderTypeRetrieve,
+		Status:       StatusPending,
+		Quantity:     1,
+		DeliveryNode: lineNode.Name,
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"); err != nil {
+		t.Fatalf("set pending: %v", err)
+	}
+	order.Status = StatusPending
+
+	vendorID, err := d.DispatchDirect(order, storageNode, lineNode)
+	if err == nil {
+		t.Fatal("expected error from DispatchDirect with failing backend")
+	}
+	if vendorID != "" {
+		t.Errorf("vendor ID = %q, want empty on failure", vendorID)
+	}
+
+	// Order should be moved to Failed
+	persisted, _ := db.GetOrder(order.ID)
+	if persisted.Status != StatusFailed {
+		t.Errorf("status = %q, want %q", persisted.Status, StatusFailed)
+	}
+
+	// Verify failure event emitted
+	if len(emitter.failed) != 1 {
+		t.Fatalf("failed events = %d, want 1", len(emitter.failed))
+	}
+	if emitter.failed[0].errorCode != "fleet_failed" {
+		t.Errorf("error code = %q, want %q", emitter.failed[0].errorCode, "fleet_failed")
+	}
+}
+
+func TestHandleOrderRedirect_NonexistentDestNode(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+
+	order := &orders.Order{
+		EdgeUUID:     "redir-noexist",
+		StationID:    "edge.line1",
+		Status:       StatusDispatched,
+		SourceNode:   lineNode.Name,
+		DeliveryNode: lineNode.Name,
+		VendorOrderID: "sg-123-test",
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"); err != nil {
+		t.Fatalf("set dispatched: %v", err)
+	}
+
+	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
+
+	env := &protocol.Envelope{
+		Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.line1"},
+		Dst: protocol.Address{Role: protocol.RoleCore},
+	}
+	d.HandleOrderRedirect(env, &protocol.OrderRedirect{
+		OrderUUID:       "redir-noexist",
+		NewDeliveryNode: "NONEXISTENT_NODE",
+	})
+
+	// Should enqueue error reply — order status unchanged
+	persisted, _ := db.GetOrder(order.ID)
+	if persisted.Status != StatusDispatched {
+		t.Errorf("status = %q, want %q (unchanged)", persisted.Status, StatusDispatched)
+	}
+	msgs, err := db.ListPendingOutbox(10)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("expected error reply in outbox, got 0 messages")
+	}
+}
+
+func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, _ := setupTestData(t, db)
+
+	// Order with no source node set — redirect should fail
+	order := &orders.Order{
+		EdgeUUID:     "redir-nosrc",
+		StationID:    "edge.line1",
+		Status:       StatusDispatched,
+		DeliveryNode: lineNode.Name,
+		VendorOrderID: "sg-456-test",
+	}
+	if err := db.CreateOrder(order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	if err := db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"); err != nil {
+		t.Fatalf("set dispatched: %v", err)
+	}
+
+	backend := testdb.NewTrackingBackend()
+	d, _ := newTestDispatcher(t, db, backend)
+
+	env := &protocol.Envelope{
+		Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.line1"},
+		Dst: protocol.Address{Role: protocol.RoleCore},
+	}
+	d.HandleOrderRedirect(env, &protocol.OrderRedirect{
+		OrderUUID:       "redir-nosrc",
+		NewDeliveryNode: lineNode.Name,
+	})
+
+	// Should enqueue error reply — "no source node for redirect"
+	msgs, err := db.ListPendingOutbox(10)
+	if err != nil {
+		t.Fatalf("list outbox: %v", err)
+	}
+	if len(msgs) == 0 {
+		t.Fatal("expected error reply in outbox, got 0 messages")
 	}
 }

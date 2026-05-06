@@ -34,6 +34,23 @@ func IsTerminalState(vendorState string) bool {
 	return rds.OrderState(vendorState).IsTerminal()
 }
 
+// BinTaskForAction maps an abstract dispatch action to the vendor-specific
+// BinTask value for SEER RDS. Dispatch passes action strings ("pickup",
+// "dropoff", "wait"); the adapter translates them so dispatch doesn't depend
+// on vendor-specific vocabulary.
+func BinTaskForAction(action string) string {
+	switch action {
+	case "pickup":
+		return "JackLoad"
+	case "dropoff":
+		return "JackUnload"
+	case "wait":
+		return "Wait"
+	default:
+		return ""
+	}
+}
+
 // mapOrderSnapshot converts an rds.OrderDetail to a fleet.OrderSnapshot.
 func mapOrderSnapshot(d *rds.OrderDetail) *fleet.OrderSnapshot {
 	s := &fleet.OrderSnapshot{

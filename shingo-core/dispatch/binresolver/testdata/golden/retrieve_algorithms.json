@@ -1,0 +1,121 @@
+[
+  {
+    "name": "single_lane_two_bins",
+    "algorithm": "FIFO",
+    "payload": "P1",
+    "result_bin_id": 1001,
+    "result_node": "S1"
+  },
+  {
+    "name": "single_lane_two_bins",
+    "algorithm": "COST",
+    "payload": "P1",
+    "result_bin_id": 1001,
+    "result_node": "S1"
+  },
+  {
+    "name": "single_lane_two_bins",
+    "algorithm": "FAVL",
+    "payload": "P1",
+    "result_bin_id": 1001,
+    "result_node": "S1"
+  },
+  {
+    "name": "two_lanes_oldest_in_back",
+    "algorithm": "FIFO",
+    "payload": "P1",
+    "result_bin_id": 2002,
+    "result_node": "SB"
+  },
+  {
+    "name": "two_lanes_oldest_in_back",
+    "algorithm": "COST",
+    "payload": "P1",
+    "result_bin_id": 2002,
+    "result_node": "SB"
+  },
+  {
+    "name": "two_lanes_oldest_in_back",
+    "algorithm": "FAVL",
+    "payload": "P1",
+    "result_bin_id": 2001,
+    "result_node": "SA"
+  },
+  {
+    "name": "empty_group",
+    "algorithm": "FIFO",
+    "payload": "P1",
+    "error": "no bin of requested payload in node group GRP3"
+  },
+  {
+    "name": "empty_group",
+    "algorithm": "COST",
+    "payload": "P1",
+    "error": "no bin of requested payload in node group GRP3"
+  },
+  {
+    "name": "empty_group",
+    "algorithm": "FAVL",
+    "payload": "P1",
+    "error": "no bin of requested payload in node group GRP3"
+  },
+  {
+    "name": "buried_accessible_mismatch",
+    "algorithm": "FIFO",
+    "payload": "P1",
+    "buried_bin_id": 4002,
+    "buried_lane": 40
+  },
+  {
+    "name": "buried_accessible_mismatch",
+    "algorithm": "COST",
+    "payload": "P1",
+    "buried_bin_id": 4002,
+    "buried_lane": 40
+  },
+  {
+    "name": "buried_accessible_mismatch",
+    "algorithm": "FAVL",
+    "payload": "P1",
+    "error": "no bin of requested payload in node group GRP4"
+  },
+  {
+    "name": "buried_older_behind_accessible",
+    "algorithm": "FIFO",
+    "payload": "P1",
+    "buried_bin_id": 5002,
+    "buried_lane": 50
+  },
+  {
+    "name": "buried_older_behind_accessible",
+    "algorithm": "COST",
+    "payload": "P1",
+    "result_bin_id": 5001,
+    "result_node": "acc"
+  },
+  {
+    "name": "buried_older_behind_accessible",
+    "algorithm": "FAVL",
+    "payload": "P1",
+    "result_bin_id": 5001,
+    "result_node": "acc"
+  },
+  {
+    "name": "locked_lane_buried_bin",
+    "algorithm": "FIFO",
+    "payload": "P1",
+    "error": "no bin of requested payload in node group GRP6"
+  },
+  {
+    "name": "locked_lane_buried_bin",
+    "algorithm": "COST",
+    "payload": "P1",
+    "error": "no bin of requested payload in node group GRP6"
+  },
+  {
+    "name": "locked_lane_buried_bin",
+    "algorithm": "FAVL",
+    "payload": "P1",
+    "error": "no bin of requested payload in node group GRP6"
+  }
+]

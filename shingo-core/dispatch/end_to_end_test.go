@@ -1124,3 +1124,70 @@ func TestDispatcher_MoveOrder_SameNode(t *testing.T) {
 		t.Errorf("fleet orders = %d, want 0 (same-node move should not dispatch)", len(backend.Orders()))
 	}
 }
+
+func TestDispatcher_StorageWaybill_FullLifecycle(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	// Create a bin at the line node (waybill picks up from line)
+	testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-WB-1")
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+
+	env := testEnvelope()
+
+	// Phase 1: Submit storage waybill
+	d.HandleOrderStorageWaybill(env, &protocol.OrderStorageWaybill{
+		OrderUUID:  "waybill-uuid-1",
+		OrderType:  OrderTypeStore,
+		SourceNode: lineNode.Name,
+	})
+
+	if len(emitter.received) != 1 {
+		t.Fatalf("received events = %d, want 1", len(emitter.received))
+	}
+
+	// Order should be dispatched (source=line, dest=storage)
+	order := testdb.AssertOrderStatus(t, db, "waybill-uuid-1", StatusDispatched)
+	if order.SourceNode != lineNode.Name {
+		t.Errorf("source node = %q, want %q", order.SourceNode, lineNode.Name)
+	}
+	if order.DeliveryNode != storageNode.Name {
+		t.Errorf("delivery node = %q, want %q", order.DeliveryNode, storageNode.Name)
+	}
+	if order.VendorOrderID == "" {
+		t.Fatal("vendor order ID should be set")
+	}
+
+	// Verify bin was claimed
+	if order.BinID == nil {
+		t.Fatal("bin should be claimed for storage waybill")
+	}
+	claimedBin, err := db.GetBin(*order.BinID)
+	if err != nil {
+		t.Fatalf("get bin: %v", err)
+	}
+	if claimedBin.ClaimedBy == nil || *claimedBin.ClaimedBy != order.ID {
+		t.Errorf("bin claimed_by = %v, want order %d", claimedBin.ClaimedBy, order.ID)
+	}
+
+	// Phase 2: Simulate fleet delivery
+	db.UpdateOrderStatus(order.ID, string(StatusDelivered), "fleet delivered")
+
+	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
+		OrderUUID:   "waybill-uuid-1",
+		ReceiptType: "confirmed",
+		FinalCount:  1,
+	})
+
+	// Verify order is confirmed
+	order2, _ := db.GetOrder(order.ID)
+	if order2.Status != StatusConfirmed {
+		t.Errorf("status = %q, want %q", order2.Status, StatusConfirmed)
+	}
+	if order2.CompletedAt == nil {
+		t.Error("completed_at should be set")
+	}
+}

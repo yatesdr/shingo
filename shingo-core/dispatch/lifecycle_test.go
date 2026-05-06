@@ -326,3 +326,80 @@ func TestLifecycle_EmitCancelled_PreviousStatusPopulated(t *testing.T) {
 		}
 	}
 }
+
+// ── Faulted state lifecycle ─────────────────────────────────────────────
+
+func TestLifecycle_MarkFaulted_FromEveryLegalSource(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sources := []protocol.Status{StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged}
+	for i, from := range sources {
+		lc, emitter := newLifecycleForTest(t, db)
+		ord := makeOrderAt(t, db, fmt.Sprintf("fault-in-%d", i), from)
+
+		if err := lc.MarkFaulted(ord, "robot-42", "obstacle detected"); err != nil {
+			t.Fatalf("MarkFaulted from %s: %v", from, err)
+		}
+		if ord.Status != StatusFaulted {
+			t.Errorf("from=%s: in-memory status = %q, want %q", from, ord.Status, StatusFaulted)
+		}
+		persisted, _ := db.GetOrder(ord.ID)
+		if persisted.Status != StatusFaulted {
+			t.Errorf("from=%s: persisted status = %q, want %q", from, persisted.Status, StatusFaulted)
+		}
+		if len(emitter.faulted) != 1 {
+			t.Fatalf("from=%s: expected 1 faulted emit, got %d", from, len(emitter.faulted))
+		}
+		if emitter.faulted[0].reason != "obstacle detected" {
+			t.Errorf("from=%s: faulted reason = %q, want %q", from, emitter.faulted[0].reason, "obstacle detected")
+		}
+	}
+}
+
+func TestLifecycle_MarkFaultedRecovered_TransitionsToInTransit(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	lc, emitter := newLifecycleForTest(t, db)
+	ord := makeOrderAt(t, db, "fault-recover-1", StatusFaulted)
+
+	if err := lc.MarkFaultedRecovered(ord, "robot-42"); err != nil {
+		t.Fatalf("MarkFaultedRecovered: %v", err)
+	}
+	if ord.Status != StatusInTransit {
+		t.Errorf("status = %q, want %q", ord.Status, StatusInTransit)
+	}
+	persisted, _ := db.GetOrder(ord.ID)
+	if persisted.Status != StatusInTransit {
+		t.Errorf("persisted status = %q, want %q", persisted.Status, StatusInTransit)
+	}
+	if len(emitter.faultedRecovered) != 1 {
+		t.Fatalf("expected 1 faultedRecovered emit, got %d", len(emitter.faultedRecovered))
+	}
+	if emitter.faultedRecovered[0].robotID != "robot-42" {
+		t.Errorf("robotID = %q, want %q", emitter.faultedRecovered[0].robotID, "robot-42")
+	}
+}
+
+func TestLifecycle_Faulted_IllegalTransitions(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	lc, _ := newLifecycleForTest(t, db)
+
+	illegalTargets := []protocol.Status{StatusConfirmed, StatusPending, StatusSourcing, StatusQueued}
+	for _, to := range illegalTargets {
+		ord := makeOrderAt(t, db, fmt.Sprintf("fault-illegal-%s", to), StatusFaulted)
+		err := lc.transition(ord, to, Event{Actor: "test", Reason: "illegal attempt"})
+		if err == nil {
+			t.Errorf("Faulted → %s was accepted; expected rejection", to)
+			continue
+		}
+		if !IsIllegalTransition(err) {
+			t.Errorf("Faulted → %s: error type %T, want IllegalTransition", to, err)
+		}
+		persisted, _ := db.GetOrder(ord.ID)
+		if persisted.Status != StatusFaulted {
+			t.Errorf("Faulted → %s: persisted status changed to %q", to, persisted.Status)
+		}
+	}
+}

@@ -114,6 +114,21 @@ func (d *Dispatcher) queueOrder(order *orders.Order, env *protocol.Envelope, pay
 }
 
 func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope, sourceNode, destNode *nodes.Node) {
+	vendorOrderID, err := d.dispatchToFleetCore(order, sourceNode, destNode)
+	if err != nil {
+		d.failOrder(order, env, "fleet_failed", err.Error())
+		return
+	}
+
+	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode.Name)
+	_ = vendorOrderID
+}
+
+// dispatchToFleetCore contains the shared fleet dispatch sequence: generate
+// vendor order ID, create transport order, update vendor state, transition
+// lifecycle, emit event. Both dispatchToFleet (Kafka/envelope path) and
+// DispatchDirect (UI/scanner path) call this core.
+func (d *Dispatcher) dispatchToFleetCore(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
 	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
 
 	req := fleet.TransportOrderRequest{
@@ -129,8 +144,7 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 
 	if _, err := d.backend.CreateTransportOrder(req); err != nil {
 		d.dbg("fleet create order failed: %v", err)
-		d.failOrder(order, env, "fleet_failed", err.Error())
-		return
+		return "", err
 	}
 
 	d.dbg("order %d dispatched as %s (%s -> %s)", order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
@@ -143,9 +157,7 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 	}
 
 	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
-
-	// Send ack to ShinGo Edge
-	d.sendAck(env, order.EdgeUUID, order.ID, sourceNode.Name)
+	return vendorOrderID, nil
 }
 
 // DispatchDirect dispatches an order to the fleet without a protocol envelope.
@@ -162,31 +174,6 @@ func (d *Dispatcher) dispatchToFleet(order *orders.Order, env *protocol.Envelope
 //
 // Returns the vendor order ID on success.
 func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *nodes.Node) (string, error) {
-	vendorOrderID := fmt.Sprintf("%s%d-%s", VendorIDPrefix, order.ID, uuid.New().String()[:8])
-
-	req := fleet.TransportOrderRequest{
-		OrderID:    vendorOrderID,
-		ExternalID: order.EdgeUUID,
-		FromLoc:    sourceNode.Name,
-		ToLoc:      destNode.Name,
-		Priority:   order.Priority,
-	}
-
-	d.dbg("fleet dispatch (direct): order=%d vendor_id=%s from=%s to=%s",
-		order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
-
-	if _, err := d.backend.CreateTransportOrder(req); err != nil {
-		d.dbg("fleet create order failed: %v", err)
-		if failErr := d.lifecycle.Fail(order, order.StationID, "fleet_failed", err.Error()); failErr != nil {
-			d.dbg("fail order %d: %v", order.ID, failErr)
-		}
-		return "", err
-	}
-
-	if err := d.db.UpdateOrderVendor(order.ID, vendorOrderID, "CREATED", ""); err != nil {
-		d.dbg("update order %d vendor: %v", order.ID, err)
-	}
-
 	// Bridge pending → queued before dispatching. The lifecycle's Dispatch
 	// method only accepts queued/sourcing as source states; direct-creation
 	// callers leave the order in pending. validTransitions allows
@@ -197,10 +184,14 @@ func (d *Dispatcher) DispatchDirect(order *orders.Order, sourceNode, destNode *n
 			d.dbg("order %d → queued: %v", order.ID, err)
 		}
 	}
-	if err := d.lifecycle.Dispatch(order, vendorOrderID, "dispatcher"); err != nil {
-		d.dbg("order %d → dispatched: %v", order.ID, err)
+
+	vendorOrderID, err := d.dispatchToFleetCore(order, sourceNode, destNode)
+	if err != nil {
+		if failErr := d.lifecycle.Fail(order, order.StationID, "fleet_failed", err.Error()); failErr != nil {
+			d.dbg("fail order %d: %v", order.ID, failErr)
+		}
+		return "", err
 	}
-	d.emitter.EmitOrderDispatched(order.ID, vendorOrderID, sourceNode.Name, destNode.Name)
 
 	return vendorOrderID, nil
 }

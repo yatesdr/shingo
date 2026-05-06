@@ -80,85 +80,54 @@ func (r *GroupResolver) getGroupAlgorithm(groupID int64, key, defaultVal string)
 // ResolveRetrieve finds the best accessible bin across all lanes and direct children.
 func (r *GroupResolver) ResolveRetrieve(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
 	algo := r.getGroupAlgorithm(group.ID, "retrieve_algorithm", RetrieveFIFO)
-	switch algo {
-	case RetrieveFAVL:
-		return r.resolveRetrieveFAVL(group, payloadCode)
-	case RetrieveCOST:
-		return r.resolveRetrieveCOST(group, payloadCode)
-	default:
-		return r.resolveRetrieveFIFO(group, payloadCode)
-	}
+	strategy := retrieveStrategies[algo]
+	return r.scanForBestBin(group, payloadCode, strategy)
 }
 
-// resolveRetrieveFIFO picks the oldest accessible bin by timestamp, with buried-bin reshuffle.
-func (r *GroupResolver) resolveRetrieveFIFO(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodes(group.ID)
-	if err != nil {
-		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
-	}
+// retrieveStrategy controls how a retrieve algorithm scores accessible bins,
+// whether it checks for buried bins, and how it decides between accessible vs buried.
+type retrieveStrategy struct {
+	label       string
+	firstMatch  bool
+	// skipBuriedIfAccessible skips the buried-bin DB scan when an accessible
+	// bin was found. COST sets this because it only reshuffles when no
+	// accessible bin exists; FIFO clears it because it reshuffles even when
+	// an accessible bin is found if the buried bin is older.
+	skipBuriedIfAccessible bool
+	checkBuried            func(r *GroupResolver, children []*nodes.Node, payloadCode string) (buried *bins.Bin, slot *nodes.Node, laneID int64)
+	shouldTriggerBuried    func(buried *bins.Bin, buriedTime time.Time, accessible *bins.Bin, accessibleTime time.Time) bool
+}
 
-	var bestBin *bins.Bin
-	var bestNode *nodes.Node
+var retrieveStrategies = map[string]retrieveStrategy{
+	RetrieveFIFO: {
+		label:       "FIFO",
+		firstMatch:  false,
+		checkBuried: checkOldestBuried,
+		shouldTriggerBuried: func(buried *bins.Bin, buriedTime time.Time, accessible *bins.Bin, accessibleTime time.Time) bool {
+			return accessible == nil || buriedTime.Before(accessibleTime)
+		},
+	},
+	RetrieveCOST: {
+		label:                   "COST",
+		firstMatch:              false,
+		skipBuriedIfAccessible:  true,
+		checkBuried:             checkShallowestBuried,
+		shouldTriggerBuried: func(buried *bins.Bin, buriedTime time.Time, accessible *bins.Bin, accessibleTime time.Time) bool {
+			return accessible == nil
+		},
+	},
+	RetrieveFAVL: {
+		label:      "FAVL",
+		firstMatch: true,
+	},
+}
+
+// checkOldestBuried scans all lanes for the globally oldest buried bin.
+func checkOldestBuried(r *GroupResolver, children []*nodes.Node, payloadCode string) (*bins.Bin, *nodes.Node, int64) {
+	var best *bins.Bin
+	var bestSlot *nodes.Node
+	var bestLaneID int64
 	var bestTime time.Time
-
-	for _, child := range children {
-		if !child.Enabled {
-			continue
-		}
-
-		if child.NodeTypeCode == "LANE" {
-			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-				continue
-			}
-
-			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
-			if err != nil {
-				r.dbg("FIFO: FindSourceBinInLane lane=%s: %v", child.Name, err)
-				continue
-			}
-
-			bTime := b.CreatedAt
-			if b.LoadedAt != nil {
-				bTime = *b.LoadedAt
-			}
-
-			if bestBin == nil || bTime.Before(bestTime) {
-				bestBin = b
-				bestTime = bTime
-				slot, err := r.DB.GetNode(*b.NodeID)
-				if err != nil {
-					r.dbg("FIFO: GetNode for bin %d slot: %v", b.ID, err)
-				}
-				bestNode = slot
-			}
-		} else if !child.IsSynthetic {
-			bins, err := r.DB.ListBinsByNode(child.ID)
-			if err != nil {
-				r.dbg("FIFO: ListBinsByNode node=%s: %v", child.Name, err)
-				continue
-			}
-			for _, b := range bins {
-				if !isBinAvailableForRetrieve(b, payloadCode) {
-					continue
-				}
-				bTime := b.CreatedAt
-				if b.LoadedAt != nil {
-					bTime = *b.LoadedAt
-				}
-				if bestBin == nil || bTime.Before(bestTime) {
-					bestBin = b
-					bestTime = bTime
-					bestNode = child
-				}
-			}
-		}
-	}
-
-	// Phase 2: Scan for the oldest buried bin across all lanes
-	var oldestBuried *bins.Bin
-	var oldestBuriedSlot *nodes.Node
-	var oldestBuriedLaneID int64
-	var oldestBuriedTime time.Time
 
 	for _, child := range children {
 		if !child.Enabled || child.NodeTypeCode != "LANE" {
@@ -171,35 +140,38 @@ func (r *GroupResolver) resolveRetrieveFIFO(group *nodes.Node, payloadCode strin
 		if err != nil || buried == nil {
 			continue
 		}
-		bTime := buried.CreatedAt
-		if buried.LoadedAt != nil {
-			bTime = *buried.LoadedAt
-		}
-		if oldestBuried == nil || bTime.Before(oldestBuriedTime) {
-			oldestBuried = buried
-			oldestBuriedSlot = slot
-			oldestBuriedLaneID = child.ID
-			oldestBuriedTime = bTime
+		bTime := binTimestamp(buried)
+		if best == nil || bTime.Before(bestTime) {
+			best = buried
+			bestSlot = slot
+			bestLaneID = child.ID
+			bestTime = bTime
 		}
 	}
-
-	// Phase 3: If a buried bin is older than the best accessible, trigger reshuffle
-	if oldestBuried != nil && (bestBin == nil || oldestBuriedTime.Before(bestTime)) {
-		r.dbg("FIFO: buried bin %d (%s) is older than best accessible bin, triggering reshuffle in lane %d",
-			oldestBuried.ID, oldestBuriedTime.Format(time.RFC3339), oldestBuriedLaneID)
-		return nil, &BuriedError{Bin: oldestBuried, Slot: oldestBuriedSlot, LaneID: oldestBuriedLaneID}
-	}
-
-	if bestBin != nil {
-		return &ResolveResult{Node: bestNode, Bin: bestBin}, nil
-	}
-
-	return nil, r.classifyEmptyGroup(group, children, payloadCode)
+	return best, bestSlot, bestLaneID
 }
 
-// resolveRetrieveCOST picks the oldest accessible bin by timestamp, with buried-bin reshuffle
-// only when no accessible bins exist. This is the cost-optimized retrieval strategy.
-func (r *GroupResolver) resolveRetrieveCOST(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
+// checkShallowestBuried scans lanes for the shallowest buried bin (cheapest to unblock).
+func checkShallowestBuried(r *GroupResolver, children []*nodes.Node, payloadCode string) (*bins.Bin, *nodes.Node, int64) {
+	for _, child := range children {
+		if !child.Enabled || child.NodeTypeCode != "LANE" {
+			continue
+		}
+		if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
+			continue
+		}
+		buried, slot, err := r.DB.FindBuriedBin(child.ID, payloadCode)
+		if err == nil && buried != nil {
+			return buried, slot, child.ID
+		}
+	}
+	return nil, nil, 0
+}
+
+// scanForBestBin is the shared scanner for all retrieve algorithms. It iterates
+// child nodes, finds accessible bins, optionally probes for buried bins, and
+// delegates the algorithm-specific decisions to the strategy.
+func (r *GroupResolver) scanForBestBin(group *nodes.Node, payloadCode string, s retrieveStrategy) (*ResolveResult, error) {
 	children, err := r.DB.ListChildNodes(group.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
@@ -221,38 +193,39 @@ func (r *GroupResolver) resolveRetrieveCOST(group *nodes.Node, payloadCode strin
 
 			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
 			if err != nil {
-				r.dbg("COST: FindSourceBinInLane lane=%s: %v", child.Name, err)
+				r.dbg("%s: FindSourceBinInLane lane=%s: %v", s.label, child.Name, err)
 				continue
 			}
 
-			bTime := b.CreatedAt
-			if b.LoadedAt != nil {
-				bTime = *b.LoadedAt
+			if s.firstMatch {
+				slot, _ := r.DB.GetNode(*b.NodeID)
+				return &ResolveResult{Node: slot, Bin: b}, nil
 			}
 
+			bTime := binTimestamp(b)
 			if bestBin == nil || bTime.Before(bestTime) {
 				bestBin = b
 				bestTime = bTime
 				slot, err := r.DB.GetNode(*b.NodeID)
 				if err != nil {
-					r.dbg("COST: GetNode for bin %d slot: %v", b.ID, err)
+					r.dbg("%s: GetNode for bin %d slot: %v", s.label, b.ID, err)
 				}
 				bestNode = slot
 			}
 		} else if !child.IsSynthetic {
-			bins, err := r.DB.ListBinsByNode(child.ID)
+			nodeBins, err := r.DB.ListBinsByNode(child.ID)
 			if err != nil {
-				r.dbg("COST: ListBinsByNode node=%s: %v", child.Name, err)
+				r.dbg("%s: ListBinsByNode node=%s: %v", s.label, child.Name, err)
 				continue
 			}
-			for _, b := range bins {
+			for _, b := range nodeBins {
 				if !isBinAvailableForRetrieve(b, payloadCode) {
 					continue
 				}
-				bTime := b.CreatedAt
-				if b.LoadedAt != nil {
-					bTime = *b.LoadedAt
+				if s.firstMatch {
+					return &ResolveResult{Node: child, Bin: b}, nil
 				}
+				bTime := binTimestamp(b)
 				if bestBin == nil || bTime.Before(bestTime) {
 					bestBin = b
 					bestTime = bTime
@@ -262,67 +235,28 @@ func (r *GroupResolver) resolveRetrieveCOST(group *nodes.Node, payloadCode strin
 		}
 	}
 
-	if bestBin != nil {
-		return &ResolveResult{Node: bestNode, Bin: bestBin}, nil
+	if s.checkBuried != nil && !(s.skipBuriedIfAccessible && bestBin != nil) {
+		buried, buriedSlot, buriedLaneID := s.checkBuried(r, children, payloadCode)
+		if buried != nil && s.shouldTriggerBuried(buried, binTimestamp(buried), bestBin, bestTime) {
+			r.dbg("%s: buried bin %d (%s) triggers reshuffle in lane %d",
+				s.label, buried.ID, binTimestamp(buried).Format(time.RFC3339), buriedLaneID)
+			return nil, &BuriedError{Bin: buried, Slot: buriedSlot, LaneID: buriedLaneID}
+		}
 	}
 
-	// No accessible bin found — check if any are buried in lanes
-	for _, child := range children {
-		if !child.Enabled || child.NodeTypeCode != "LANE" {
-			continue
-		}
-		buried, slot, err := r.DB.FindBuriedBin(child.ID, payloadCode)
-		if err == nil && buried != nil {
-			return nil, &BuriedError{Bin: buried, Slot: slot, LaneID: child.ID}
-		}
+	if bestBin != nil {
+		return &ResolveResult{Node: bestNode, Bin: bestBin}, nil
 	}
 
 	return nil, r.classifyEmptyGroup(group, children, payloadCode)
 }
 
-// resolveRetrieveFAVL returns the first available unclaimed bin — no timestamp comparison, no reshuffle.
-func (r *GroupResolver) resolveRetrieveFAVL(group *nodes.Node, payloadCode string) (*ResolveResult, error) {
-	children, err := r.DB.ListChildNodes(group.ID)
-	if err != nil {
-		return nil, fmt.Errorf("list children of %s: %w", group.Name, err)
+// binTimestamp returns the effective timestamp for a bin (LoadedAt if set, else CreatedAt).
+func binTimestamp(b *bins.Bin) time.Time {
+	if b.LoadedAt != nil {
+		return *b.LoadedAt
 	}
-
-	for _, child := range children {
-		if !child.Enabled {
-			continue
-		}
-
-		if child.NodeTypeCode == "LANE" {
-			if r.LaneLock != nil && r.LaneLock.IsLocked(child.ID) {
-				continue
-			}
-
-			b, err := r.DB.FindSourceBinInLane(child.ID, payloadCode)
-			if err != nil {
-				r.dbg("FAVL: FindSourceBinInLane lane=%s: %v", child.Name, err)
-				continue
-			}
-			slot, err := r.DB.GetNode(*b.NodeID)
-			if err != nil {
-				r.dbg("FAVL: GetNode for bin %d slot: %v", b.ID, err)
-			}
-			return &ResolveResult{Node: slot, Bin: b}, nil
-		} else if !child.IsSynthetic {
-			bins, err := r.DB.ListBinsByNode(child.ID)
-			if err != nil {
-				r.dbg("FAVL: ListBinsByNode node=%s: %v", child.Name, err)
-				continue
-			}
-			for _, b := range bins {
-				if !isBinAvailableForRetrieve(b, payloadCode) {
-					continue
-				}
-				return &ResolveResult{Node: child, Bin: b}, nil
-			}
-		}
-	}
-
-	return nil, r.classifyEmptyGroup(group, children, payloadCode)
+	return b.CreatedAt
 }
 
 // classifyEmptyGroup determines whether a group resolution failure is
