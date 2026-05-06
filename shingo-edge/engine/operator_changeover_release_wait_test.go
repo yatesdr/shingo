@@ -51,12 +51,17 @@ func decodeOrderRelease(t *testing.T, msg messaging.Message) protocol.OrderRelea
 
 // TestReleaseChangeoverWait_RoutesThroughLinesideRelease locks down the bug
 // fix from commit 7421c3c. Before that commit, ReleaseChangeoverWait called
-// orderMgr.ReleaseOrder directly with no remaining_uop — Core never cleared
-// the bin manifest, evacuation bins arrived at the supermarket still tagged
-// as loaded, and the bin loader couldn't move them. The fix routes every
-// staged evacuation order through ReleaseOrderWithLineside with the
-// capture_lineside disposition so each release envelope carries
-// remaining_uop=0.
+// orderMgr.ReleaseOrder directly with no remaining_uop — Core never synced
+// the bin manifest, evacuation bins arrived at the supermarket tagged with
+// stale state, and the bin loader couldn't move them. The fix routes every
+// staged evacuation order through ReleaseOrderWithLineside with a real
+// disposition so each release envelope carries the bin's intended state.
+//
+// As of 2026-05-06 the disposition is auto-detected per task from the
+// node's runtime cache: RemainingUOPCached > 0 → send_partial_back with
+// that count; == 0 → release_empty. The seedPhase3SwapScenario sets the
+// runtime to 50, so this test exercises the partial path. The companion
+// TestReleaseChangeoverWait_AutoDetectEmpty exercises the zero path.
 //
 // This test asserts the envelope shape is correct so a future refactor
 // can't silently re-introduce the bypass.
@@ -115,21 +120,82 @@ func TestReleaseChangeoverWait_RoutesThroughLinesideRelease(t *testing.T) {
 	if rel.OrderUUID != orderB.UUID {
 		t.Errorf("released OrderUUID = %q, want %q (Order B)", rel.OrderUUID, orderB.UUID)
 	}
-	// The bug fix: remaining_uop must be present and zero. Without this Core
-	// won't clear the bin's manifest before the fleet picks the bin up — the
-	// exact failure mode the rerouting through ReleaseOrderWithLineside +
-	// DispositionCaptureLineside was meant to close.
+	// Auto-detect: scenario seeded RemainingUOPCached=50, so the evac
+	// envelope should carry remaining_uop=50 and disposition=release_partial.
+	// Without RemainingUOP being non-nil at all, Core can't sync the
+	// manifest — that's the original bypass we lock against.
 	if rel.RemainingUOP == nil {
-		t.Fatal("OrderRelease.RemainingUOP = nil; bug fix expects &0 so Core clears the bin's manifest before fleet release")
+		t.Fatal("OrderRelease.RemainingUOP = nil; manifest sync requires non-nil")
 	}
-	if *rel.RemainingUOP != 0 {
-		t.Errorf("OrderRelease.RemainingUOP = %d, want 0 (capture_lineside disposition)", *rel.RemainingUOP)
+	if *rel.RemainingUOP != 50 {
+		t.Errorf("OrderRelease.RemainingUOP = %d, want 50 (auto-detected from runtime cache)", *rel.RemainingUOP)
+	}
+	if rel.Disposition == nil || rel.Disposition.Kind != protocol.DispositionReleasePartial {
+		t.Errorf("OrderRelease.Disposition = %+v, want kind=release_partial", rel.Disposition)
 	}
 
 	// Order B should now be in_transit (release dispatched).
 	got, _ := db.GetOrder(orderB.ID)
 	if got.Status != orders.StatusInTransit {
 		t.Errorf("order B status = %q, want %q", got.Status, orders.StatusInTransit)
+	}
+}
+
+// TestReleaseChangeoverWait_AutoDetectEmpty exercises the auto-detect path
+// when the line is empty. RemainingUOPCached=0 → evac is sent as
+// release_empty (capture_lineside + empty captures → wire-form release_empty),
+// preserving the 2026-04 ALN_001 fix intent (manifest cleared so evac bin
+// can't land at OutboundDestination tagged with stale payload).
+func TestReleaseChangeoverWait_AutoDetectEmpty(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Override seed: line is empty (operator finished consumption before
+	// changeover).
+	runtime, err := db.GetProcessNodeRuntime(nodeID)
+	if err != nil {
+		t.Fatalf("get runtime: %v", err)
+	}
+	if err := db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0); err != nil {
+		t.Fatalf("set runtime to 0: %v", err)
+	}
+
+	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "auto-detect empty")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if err != nil {
+		t.Fatalf("get task: %v", err)
+	}
+	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
+	if err := db.UpdateOrderStatus(orderB.ID, string(orders.StatusStaged)); err != nil {
+		t.Fatalf("force staged: %v", err)
+	}
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	if _, err := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "test-operator"}); err != nil {
+		t.Fatalf("ReleaseChangeoverWait: %v", err)
+	}
+
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 1 {
+		t.Fatalf("OrderRelease envelopes queued: got %d, want 1", len(releases))
+	}
+	rel := decodeOrderRelease(t, releases[0])
+	if rel.RemainingUOP == nil {
+		t.Fatal("RemainingUOP = nil; expected &0 for release_empty")
+	}
+	if *rel.RemainingUOP != 0 {
+		t.Errorf("RemainingUOP = %d, want 0 (auto-detected empty)", *rel.RemainingUOP)
+	}
+	if rel.Disposition == nil || rel.Disposition.Kind != protocol.DispositionReleaseEmpty {
+		t.Errorf("Disposition = %+v, want kind=release_empty", rel.Disposition)
 	}
 }
 

@@ -108,69 +108,28 @@ async function startChangeover(toStyleID, styleName) {
     if (ok) showToast('Changeover to ' + styleName + ' started', 'success');
 }
 
+// confirmReleaseWait fires the changeover release. The engine auto-detects
+// per-evac-leg disposition from the line's runtime cache — no operator
+// input needed: if the line still has parts (RemainingUOPCached > 0), the
+// evac is sent as send_partial_back with that exact count; otherwise
+// release_empty. Supply legs always pass through with no manifest action.
+//
+// Toast based on the {released, pending} response counts so the operator
+// knows when a click only fired some legs (others not yet staged).
+//
+// TODO: if a future plant scenario needs operator override of the
+// auto-detected count, add a modal here that pre-populates from the
+// runtime and posts disposition + partial_count. Engine accepts the
+// override today; this is a frontend-only addition.
 async function confirmReleaseWait() {
     const view = getView();
     const pid = view.process.id;
     const station = (view.station.name && view.station.name.trim()) || 'operator';
-
-    // Small picker: optional partial-count input (operator types a number if
-    // any evac bins still have parts), or just RELEASE for the all-empty case.
-    // TODO: expand to a per-bin disposition flow when plant scenarios need
-    //       different dispositions on different evac bins. Engine + handler
-    //       are already disposition-agnostic — this is a frontend-only change
-    //       (open a modal per evac bin instead of a single shared count).
-    //       See plan agile-orbiting-lampson.md item 1 for options A-D.
-    const overlay = el('div', { className: 'os-co-picker-overlay' });
-    const panel = el('div', { className: 'os-co-picker' });
-    panel.appendChild(el('div', { className: 'os-co-picker-title',
-        textContent: 'Release evac bins?' }));
-
-    const inputWrap = el('div', { className: 'os-co-picker-input' });
-    inputWrap.appendChild(el('label', {
-        className: 'os-co-picker-input-label',
-        textContent: 'Partial parts count (leave blank if all empty):'
-    }));
-    const partialInput = el('input', {
-        type: 'number',
-        min: '0',
-        className: 'os-co-picker-input-field',
-    });
-    inputWrap.appendChild(partialInput);
-    panel.appendChild(inputWrap);
-
-    const release = el('button', { className: 'os-co-picker-btn', textContent: 'RELEASE' });
-    release.addEventListener('click', async () => {
-        overlay.remove();
-        const body = { called_by: station };
-        const raw = (partialInput.value || '').trim();
-        if (raw !== '') {
-            const n = parseInt(raw, 10);
-            if (!isNaN(n) && n > 0) {
-                body.disposition = 'send_partial_back';
-                body.partial_count = n;
-            }
-        }
-        await postReleaseWait(pid, body);
-    });
-    panel.appendChild(release);
-
-    const cancel = el('button', { className: 'os-co-picker-btn cancel', textContent: 'CANCEL' });
-    cancel.addEventListener('click', () => overlay.remove());
-    panel.appendChild(cancel);
-
-    overlay.appendChild(panel);
-    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
-    document.body.appendChild(overlay);
-}
-
-// postReleaseWait posts the release and toasts based on the {released, pending}
-// counts in the response so the operator knows when only some legs fired.
-async function postReleaseWait(pid, body) {
     try {
         const res = await fetch('/api/processes/' + pid + '/changeover/release-wait', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body || {})
+            body: JSON.stringify({ called_by: station })
         });
         if (!res.ok) {
             const text = await res.text();

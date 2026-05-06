@@ -167,12 +167,6 @@ body {
 }
 .os-co-picker-btn:active { opacity: 0.8; }
 .os-co-picker-btn.cancel { background: #3a3f4e; color: #ccc; }
-.os-co-picker-input { display: flex; flex-direction: column; gap: 6px; }
-.os-co-picker-input-label { font-size: 14px; color: #ccc; }
-.os-co-picker-input-field {
-    padding: 12px; font-size: 18px; border-radius: 8px; border: 1px solid #3a3f4e;
-    background: #0e1219; color: #fff; text-align: center;
-}
 
 /* ===== Grid ===== */
 

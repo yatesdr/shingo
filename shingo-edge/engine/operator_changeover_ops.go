@@ -370,30 +370,34 @@ type ReleaseChangeoverWaitResult struct {
 // leg (OldMaterialReleaseOrderID) and the supply leg (NextMaterialOrderID).
 // They get DIFFERENT dispositions:
 //
-//   - Evac leg: receives the operator's disposition (release_empty,
-//     send_partial_back, release_underpack, or capture_lineside-with-parts).
-//     Default when caller passes Mode=="" is capture_lineside with empty
-//     captures, which translates to release_empty on the wire — preserves
-//     the 2026-04 ALN_001 fix intent (clears the manifest before pickup so
-//     the evac bin doesn't land at OutboundDestination tagged with its old
-//     payload). When the operator supplies a partial count via the body,
-//     it flows through unchanged.
+//   - Evac leg: auto-detected per task from the line's runtime cache. If the
+//     line still has parts (RemainingUOPCached > 0), the evac is sent as
+//     send_partial_back with that exact count — Core syncs the bin's
+//     manifest to the partial value at release time, and the bin arrives at
+//     the supermarket flagged as partial with the right qty. If the line is
+//     empty (RemainingUOPCached == 0), the evac is release_empty — manifest
+//     cleared, preserving the 2026-04 ALN_001 fix intent (bin can't land at
+//     OutboundDestination tagged with stale payload). The operator never
+//     types a number; the system already knows it.
 //
-//   - Supply leg: receives Mode="" (zero-value) regardless of what the
-//     operator chose. buildProtocolDisposition translates this to nil on the
-//     wire, and Core's SyncOrClearForReleased hits the no-op branch — the
-//     supply bin's manifest is left alone. The supply bin is mid-transit
-//     from the supermarket carrying its real uop_remaining; applying the
-//     evac disposition would zero a manifest that should ride through to
+//     The caller's disposition (passed in `disp`) acts as an override: if
+//     they supplied Mode=send_partial_back with a PartialCount, that count
+//     wins over the runtime auto-detect. Useful for future flows where an
+//     operator manually overrides the cached value, but the default path
+//     (no modal, just a click) bypasses operator entry entirely.
+//
+//   - Supply leg: receives Mode="" (zero-value) regardless of anything else.
+//     buildProtocolDisposition translates this to nil on the wire, and
+//     Core's SyncOrClearForReleased hits the no-op branch — the supply
+//     bin's manifest is left alone. The supply bin is mid-transit from the
+//     supermarket carrying its real uop_remaining; applying any evac-leg
+//     disposition would zero a manifest that should ride through to
 //     delivery. (Confirmed regression on plant order 682 / 2026-05-06.)
 //
-// TODO: expand evac-leg disposition options at the frontend. Today the
-// click takes one disposition that applies uniformly to every evac in the
-// changeover. If a future plant scenario needs per-bin dispositions
-// (different partial counts on different evac bins in a multi-deactivating
-// changeover), wire a per-task modal flow instead. Engine here is already
-// neutral — it just applies whatever disposition lands on each slot, so
-// the change is purely frontend + handler-shape.
+// TODO: expand to per-bin disposition flow when a plant scenario needs
+// it (e.g., operator override of the runtime count, or different
+// dispositions per evac bin). Engine is already neutral; this is a
+// frontend + handler-shape change.
 //
 // disp.CalledBy is plumbed through for audit on both legs.
 func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
@@ -408,14 +412,6 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 		return result, err
 	}
 
-	// Default Mode for the evac leg when the caller didn't supply one (legacy
-	// callers / no-modal frontend). Matches the pre-2026-05 behaviour:
-	// capture_lineside + empty captures → release_empty on the wire → manifest
-	// cleared. Required for the ALN_001 fix.
-	evacDisp := disp
-	if evacDisp.Mode == "" {
-		evacDisp.Mode = DispositionCaptureLineside
-	}
 	// Supply leg always rides through with no manifest action regardless of
 	// what the operator chose. Empty Mode → buildProtocolDisposition returns
 	// nil → Core no-op. CalledBy still flows for audit.
@@ -432,6 +428,11 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 		if task.Situation == "unchanged" {
 			continue
 		}
+		// Auto-detect evac disposition from the line's runtime cache for
+		// THIS task's node. Operator override (caller-supplied
+		// SendPartialBack with a count) wins if present.
+		evacDisp := evacDispositionForTask(e, task, disp)
+
 		// Two_robot swap and sequential evacuate create both orders up
 		// front with embedded wait steps. Release both order slots on a
 		// single operator click. For single_robot/manual paths,
@@ -476,6 +477,43 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 		}
 	}
 	return result, errors.Join(failures...)
+}
+
+// evacDispositionForTask picks the right evac-leg disposition. Operator
+// override wins; otherwise auto-detect from the node's runtime cache.
+//
+//   - Caller passed Mode=send_partial_back with PartialCount > 0 → use it.
+//   - Caller passed any other non-empty Mode → use it as-is (escape hatch
+//     for future flows).
+//   - Caller passed Mode="" → look up node runtime. If RemainingUOPCached >
+//     0, send_partial_back with that count; else release_empty
+//     (capture_lineside + empty captures → wire-form release_empty;
+//     preserves the ALN_001 fix).
+//
+// On runtime lookup failure: fall back to release_empty rather than
+// failing the whole release. The whole point of the manifest clear is to
+// prevent stale payload at OutboundDestination — better to clear than to
+// silently no-op when we can't read the current count.
+func evacDispositionForTask(e *Engine, task processes.NodeTask, override ReleaseDisposition) ReleaseDisposition {
+	if override.Mode != "" {
+		return override
+	}
+
+	runtime, err := e.db.GetProcessNodeRuntime(task.ProcessNodeID)
+	if err != nil {
+		log.Printf("release changeover wait node %s: runtime lookup failed (%v); defaulting evac to release_empty", task.NodeName, err)
+		return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
+	}
+
+	if runtime != nil && runtime.RemainingUOPCached > 0 {
+		count := runtime.RemainingUOPCached
+		return ReleaseDisposition{
+			Mode:         DispositionSendPartialBack,
+			PartialCount: &count,
+			CalledBy:     override.CalledBy,
+		}
+	}
+	return ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: override.CalledBy}
 }
 
 // isPendingOrderStatus reports whether the order is alive but not yet at
