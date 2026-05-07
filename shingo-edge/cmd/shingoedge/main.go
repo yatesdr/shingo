@@ -108,7 +108,10 @@ func mustOpenDatabase(path string) *store.DB {
 }
 
 func startHTTPServer(addr string, handler http.Handler) *http.Server {
-	srv := &http.Server{Addr: addr, Handler: handler}
+	// IdleTimeout reaps stale keep-alive slots so SSE goroutines don't
+	// pile up on rapid tab navigation. WriteTimeout is intentionally
+	// unset because SSE responses are long-lived writes by design.
+	srv := &http.Server{Addr: addr, Handler: handler, IdleTimeout: 120 * time.Second}
 	go func() {
 		log.Printf("ShinGo Edge listening on %s", addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -140,6 +140,13 @@ document.addEventListener('DOMContentLoaded', function() {
             connect();
         }
 
+        // Close on navigation so the browser releases the HTTP/1.1
+        // connection slot immediately; otherwise the next page can sit
+        // waiting on the previous /events socket to time out.
+        window.addEventListener('beforeunload', function() {
+            if (es) es.close();
+        });
+
         return { close: function() { if (es) es.close(); } };
     };
 

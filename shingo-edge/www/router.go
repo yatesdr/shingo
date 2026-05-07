@@ -138,218 +138,224 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Compress(5))
 
-	// Favicon: serve with no-cache headers to defeat aggressive browser caching (Safari).
-	faviconData, _ := fs.ReadFile(staticFS, "static/favicon.ico")
-	faviconHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/x-icon")
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		w.Header().Set("Pragma", "no-cache")
-		w.Header().Set("Expires", "0")
-		w.Write(faviconData)
-	})
-	r.Handle("/favicon.ico", faviconHandler)
-	r.Handle("/static/favicon.ico", faviconHandler)
-
-	// Static files (no auth) — ETag keyed on serverInstance + path so every
-	// rebuild invalidates every /static/* URL. Files are embedded at compile
-	// time, but embed.FS reports modtime=0 across the board, so the default
-	// http.ServeContent ETag (name+size+0) survives rebuilds when byte length
-	// happens to match — which is what was leaving the operator-station ES
-	// modules stuck on stale code after a restart. Tying the ETag to
-	// serverInstance forces every request to miss-cache exactly once after
-	// each restart, then revalidate cleanly thereafter.
-	r.Handle("/static/*", http.StripPrefix("/static/",
-		serverInstanceETag(http.FileServer(http.FS(StaticFS()))),
-	))
-
-	// ── SSE (no auth — shop floor) ─────────────────────────
+	// SSE — must be outside compression middleware. Compression buffers
+	// defeat streaming flushes, fill the per-client send queue, and cause
+	// stale connection buildup when navigating between pages.
 	r.Get("/events", h.eventHub.HandleSSE)
 
-	// ── Public pages (shop floor — no auth) ─────────────────
-	r.Get("/", h.handleMaterial)
-	r.Get("/material", h.handleMaterial)
-	r.Get("/kanbans", h.handleKanbans)
-	r.Get("/production", h.handleProduction)
-	r.Get("/changeover", h.handleChangeover)
-	r.Get("/changeover/partial", h.handleChangeoverPartial)
-	r.Get("/kanbans/partial", h.handleKanbansPartial)
-	r.Get("/material/partial", h.handleMaterialPartial)
-
-	// Operator station HMI views are public (shop floor monitors)
-	r.Get("/operator/station/{id}", h.handleOperatorStationDisplay)
-
-	// ── Login/logout ────────────────────────────────────────
-	r.Get("/login", h.handleLoginPage)
-	r.Post("/login", h.handleLogin)
-	r.Post("/logout", h.handleLogout)
-
-	// ── Admin pages (auth required) ─────────────────────────
+	// Everything else gets compressed
 	r.Group(func(r chi.Router) {
-		r.Use(h.adminMiddleware)
-		r.Get("/config", h.handleConfig)
-		r.Get("/traffic", h.handleTraffic)
-		r.Get("/processes", h.handleProcesses)
-		r.Get("/manual-order", h.handleManualOrder)
-		r.Get("/manual-message", h.handleManualMessage)
-		r.Get("/diagnostics", h.handleDiagnostics)
-		r.Get("/lineside-buckets", h.handleLinesideBuckets)
-	})
+		r.Use(middleware.Compress(5))
 
-	// ── API routes ──────────────────────────────────────────
-	r.Route("/api", func(r chi.Router) {
+		// Favicon: serve with no-cache headers to defeat aggressive browser caching (Safari).
+		faviconData, _ := fs.ReadFile(staticFS, "static/favicon.ico")
+		faviconHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/x-icon")
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			w.Write(faviconData)
+		})
+		r.Handle("/favicon.ico", faviconHandler)
+		r.Handle("/static/favicon.ico", faviconHandler)
 
-		// ── Public API (shop floor actions, no auth) ────────
+		// Static files (no auth) — ETag keyed on serverInstance + path so every
+		// rebuild invalidates every /static/* URL. Files are embedded at compile
+		// time, but embed.FS reports modtime=0 across the board, so the default
+		// http.ServeContent ETag (name+size+0) survives rebuilds when byte length
+		// happens to match — which is what was leaving the operator-station ES
+		// modules stuck on stale code after a restart. Tying the ETag to
+		// serverInstance forces every request to miss-cache exactly once after
+		// each restart, then revalidate cleanly thereafter.
+		r.Handle("/static/*", http.StripPrefix("/static/",
+			serverInstanceETag(http.FileServer(http.FS(StaticFS()))),
+		))
 
-		// Delivery confirmation & anomalies
-		r.Post("/confirm-delivery/{orderID}", h.apiConfirmDelivery)
-		r.Post("/confirm-anomaly/{snapshotID}", h.apiConfirmAnomaly)
-		r.Post("/dismiss-anomaly/{snapshotID}", h.apiDismissAnomaly)
+		// ── Public pages (shop floor — no auth) ─────────────────
+		r.Get("/", h.handleMaterial)
+		r.Get("/material", h.handleMaterial)
+		r.Get("/kanbans", h.handleKanbans)
+		r.Get("/production", h.handleProduction)
+		r.Get("/changeover", h.handleChangeover)
+		r.Get("/changeover/partial", h.handleChangeoverPartial)
+		r.Get("/kanbans/partial", h.handleKanbansPartial)
+		r.Get("/material/partial", h.handleMaterialPartial)
 
-		// Operator station views
-		r.Get("/operator-stations/{id}/view", h.apiGetOperatorStationView)
+		// Operator station HMI views are public (shop floor monitors)
+		r.Get("/operator/station/{id}", h.handleOperatorStationDisplay)
 
-		// Process node operations (material request, release, produce, bin ops)
-		r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)
-		r.Post("/process-nodes/{id}/release-empty", h.apiReleaseNodeEmpty)
-		r.Post("/process-nodes/{id}/release-partial", h.apiReleaseNodePartial)
-		r.Post("/process-nodes/{id}/release-staged", h.apiReleaseNodeStagedOrders)
-		r.Post("/process-nodes/{id}/finalize", h.apiFinalizeProduceNode)
-		r.Post("/process-nodes/{id}/load-bin", h.apiLoadBin)
-		r.Post("/process-nodes/{id}/clear-bin", h.apiClearBin)
-		r.Post("/process-nodes/{id}/request-empty", h.apiRequestEmptyBin)
-		r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
-		r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
-		r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
+		// ── Login/logout ────────────────────────────────────────
+		r.Get("/login", h.handleLoginPage)
+		r.Post("/login", h.handleLogin)
+		r.Post("/logout", h.handleLogout)
 
-		// Changeover lifecycle
-		r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
-		r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
-		r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
-		r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
-		r.Post("/processes/{id}/changeover/stage-node/{nodeID}", h.apiStageNodeChangeoverMaterial)
-		r.Post("/processes/{id}/changeover/empty-node/{nodeID}", h.apiEmptyNodeForToolChange)
-		r.Post("/processes/{id}/changeover/release-node/{nodeID}", h.apiReleaseNodeIntoProduction)
-		r.Post("/processes/{id}/changeover/switch-station/{stationID}", h.apiSwitchOperatorStationToTarget)
-		r.Post("/processes/{id}/changeover/switch-node/{nodeID}", h.apiSwitchNodeToTarget)
-		r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
-		r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
-
-		// Orders (create, lifecycle, manual)
-		r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
-		r.Post("/orders/store", h.apiCreateStoreOrder)
-		r.Post("/orders/move", h.apiCreateMoveOrder)
-		r.Post("/orders/complex", h.apiCreateComplexOrder)
-		r.Post("/orders/ingest", h.apiCreateIngestOrder)
-		r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
-		r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
-		r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
-		r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
-		r.Post("/orders/{orderID}/redirect", h.apiRedirectOrder)
-		r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
-		r.Get("/orders/active", h.apiGetActiveOrders)
-
-		// Lookups
-		r.Get("/node/{name}/children", h.apiNodeChildren)
-		r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
-		r.Get("/hourly-counts", h.apiGetHourlyCounts)
-		r.Get("/core-nodes", h.apiGetCoreNodes)
-		r.Get("/payload-catalog", h.apiListPayloadCatalog)
-
-		// ── Admin API (auth required) ───────────────────────
+		// ── Admin pages (auth required) ─────────────────────────
 		r.Group(func(r chi.Router) {
 			r.Use(h.adminMiddleware)
+			r.Get("/config", h.handleConfig)
+			r.Get("/traffic", h.handleTraffic)
+			r.Get("/processes", h.handleProcesses)
+			r.Get("/manual-order", h.handleManualOrder)
+			r.Get("/manual-message", h.handleManualMessage)
+			r.Get("/diagnostics", h.handleDiagnostics)
+			r.Get("/lineside-buckets", h.handleLinesideBuckets)
+		})
 
-			// PLCs / WarLink
-			r.Get("/plcs", h.apiListPLCs)
-			r.Get("/plcs/tags/{name}", h.apiPLCTags)
-			r.Get("/plcs/all-tags/{name}", h.apiPLCAllTags)
-			r.Post("/plcs/read-tag", h.apiReadTag)
-			r.Get("/warlink/status", h.apiWarLinkStatus)
-			r.Put("/config/warlink", h.apiUpdateWarLink)
+		// ── API routes ──────────────────────────────────────────
+		r.Route("/api", func(r chi.Router) {
 
-			// UOP backfill (Item 3)
-			r.Post("/admin/uop/backfill", h.apiBackfillBuckets)
+			// ── Public API (shop floor actions, no auth) ────────
 
-			// Reporting points
-			r.Get("/reporting-points", h.apiListReportingPoints)
-			r.Post("/reporting-points", h.apiCreateReportingPoint)
-			r.Put("/reporting-points/{id}", h.apiUpdateReportingPoint)
-			r.Delete("/reporting-points/{id}", h.apiDeleteReportingPoint)
+			// Delivery confirmation & anomalies
+			r.Post("/confirm-delivery/{orderID}", h.apiConfirmDelivery)
+			r.Post("/confirm-anomaly/{snapshotID}", h.apiConfirmAnomaly)
+			r.Post("/dismiss-anomaly/{snapshotID}", h.apiDismissAnomaly)
 
-			// Processes
-			r.Get("/processes", h.apiListProcesses)
-			r.Post("/processes", h.apiCreateProcess)
-			r.Put("/processes/{id}", h.apiUpdateProcess)
-			r.Delete("/processes/{id}", h.apiDeleteProcess)
-			r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
-			r.Get("/processes/{id}/styles", h.apiListProcessStyles)
+			// Operator station views
+			r.Get("/operator-stations/{id}/view", h.apiGetOperatorStationView)
 
-			// Styles & node claims
-			r.Get("/styles", h.apiListStyles)
-			r.Post("/styles", h.apiCreateStyle)
-			r.Put("/styles/{id}", h.apiUpdateStyle)
-			r.Delete("/styles/{id}", h.apiDeleteStyle)
-			r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
-			r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)
-			r.Delete("/style-node-claims/{id}", h.apiDeleteStyleNodeClaim)
+			// Process node operations (material request, release, produce, bin ops)
+			r.Post("/process-nodes/{id}/request", h.apiRequestNodeMaterial)
+			r.Post("/process-nodes/{id}/release-empty", h.apiReleaseNodeEmpty)
+			r.Post("/process-nodes/{id}/release-partial", h.apiReleaseNodePartial)
+			r.Post("/process-nodes/{id}/release-staged", h.apiReleaseNodeStagedOrders)
+			r.Post("/process-nodes/{id}/finalize", h.apiFinalizeProduceNode)
+			r.Post("/process-nodes/{id}/load-bin", h.apiLoadBin)
+			r.Post("/process-nodes/{id}/clear-bin", h.apiClearBin)
+			r.Post("/process-nodes/{id}/request-empty", h.apiRequestEmptyBin)
+			r.Post("/process-nodes/{id}/request-full", h.apiRequestFullBin)
+			r.Post("/process-nodes/{id}/clear-orders", h.apiClearNodeOrders)
+			r.Post("/process-nodes/{id}/flip-ab", h.apiFlipABNode)
 
-			// Operator stations
-			r.Get("/operator-stations", h.apiListOperatorStations)
-			r.Post("/operator-stations", h.apiCreateOperatorStation)
-			r.Put("/operator-stations/{id}", h.apiUpdateOperatorStation)
-			r.Post("/operator-stations/{id}/move", h.apiMoveOperatorStation)
-			r.Delete("/operator-stations/{id}", h.apiDeleteOperatorStation)
-			r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
-			r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
+			// Changeover lifecycle
+			r.Post("/processes/{id}/changeover/preview", h.apiPreviewProcessChangeover)
+			r.Post("/processes/{id}/changeover/start", h.apiStartProcessChangeover)
+			r.Post("/processes/{id}/changeover/cutover", h.apiCompleteProcessProductionCutover)
+			r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
+			r.Post("/processes/{id}/changeover/stage-node/{nodeID}", h.apiStageNodeChangeoverMaterial)
+			r.Post("/processes/{id}/changeover/empty-node/{nodeID}", h.apiEmptyNodeForToolChange)
+			r.Post("/processes/{id}/changeover/release-node/{nodeID}", h.apiReleaseNodeIntoProduction)
+			r.Post("/processes/{id}/changeover/switch-station/{stationID}", h.apiSwitchOperatorStationToTarget)
+			r.Post("/processes/{id}/changeover/switch-node/{nodeID}", h.apiSwitchNodeToTarget)
+			r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
+			r.Post("/processes/{id}/changeover/sequential-cutover/{nodeID}", h.apiSequentialChangeoverCutover)
 
-			// Process nodes
-			r.Get("/process-nodes", h.apiListConfiguredProcessNodes)
-			r.Get("/process-nodes/station/{stationID}", h.apiListConfiguredProcessNodesByStation)
-			r.Post("/process-nodes", h.apiCreateProcessNode)
-			r.Put("/process-nodes/{id}", h.apiUpdateProcessNode)
-			r.Delete("/process-nodes/{id}", h.apiDeleteProcessNode)
+			// Orders (create, lifecycle, manual)
+			r.Post("/orders/retrieve", h.apiCreateRetrieveOrder)
+			r.Post("/orders/store", h.apiCreateStoreOrder)
+			r.Post("/orders/move", h.apiCreateMoveOrder)
+			r.Post("/orders/complex", h.apiCreateComplexOrder)
+			r.Post("/orders/ingest", h.apiCreateIngestOrder)
+			r.Post("/orders/{orderID}/release", h.apiReleaseOrder)
+			r.Post("/orders/{orderID}/submit", h.apiSubmitOrder)
+			r.Post("/orders/{orderID}/cancel", h.apiCancelOrder)
+			r.Post("/orders/{orderID}/abort", h.apiCancelOrder)
+			r.Post("/orders/{orderID}/redirect", h.apiRedirectOrder)
+			r.Post("/orders/{orderID}/count", h.apiSetOrderCount)
+			r.Get("/orders/active", h.apiGetActiveOrders)
 
-			// Sync (core nodes, payload catalog)
-			r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
-			r.Post("/payload-catalog/sync", h.apiSyncPayloadCatalog)
+			// Lookups
+			r.Get("/node/{name}/children", h.apiNodeChildren)
+			r.Get("/payload/{code}/manifest", h.apiPayloadManifest)
+			r.Get("/hourly-counts", h.apiGetHourlyCounts)
+			r.Get("/core-nodes", h.apiGetCoreNodes)
+			r.Get("/payload-catalog", h.apiListPayloadCatalog)
 
-			// Shifts
-			r.Get("/shifts", h.apiListShifts)
-			r.Put("/shifts", h.apiSaveShifts)
+			// ── Admin API (auth required) ───────────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(h.adminMiddleware)
 
-			// Traffic (count-group bindings)
-			r.Get("/traffic/bindings", h.apiTrafficBindings)
-			r.Put("/traffic/heartbeat", h.apiTrafficSaveHeartbeat)
-			r.Post("/traffic/bindings", h.apiTrafficAddBinding)
-			r.Post("/traffic/bindings/delete", h.apiTrafficDeleteBinding)
+				// PLCs / WarLink
+				r.Get("/plcs", h.apiListPLCs)
+				r.Get("/plcs/tags/{name}", h.apiPLCTags)
+				r.Get("/plcs/all-tags/{name}", h.apiPLCAllTags)
+				r.Post("/plcs/read-tag", h.apiReadTag)
+				r.Get("/warlink/status", h.apiWarLinkStatus)
+				r.Put("/config/warlink", h.apiUpdateWarLink)
 
-			// Config & backups
-			r.Put("/config/core-api", h.apiUpdateCoreAPI)
-			r.Post("/config/core-api/test", h.apiTestCoreAPI)
-			r.Put("/config/messaging", h.apiUpdateMessaging)
-			r.Put("/config/station-id", h.apiUpdateStationID)
-			r.Post("/config/kafka/test", h.apiTestKafka)
-			r.Put("/config/auto-confirm", h.apiUpdateAutoConfirm)
-			r.Post("/config/password", h.apiChangePassword)
-			r.Get("/backups", h.apiListBackups)
-			r.Get("/backups/status", h.apiBackupStatus)
-			r.Put("/backups/config", h.apiUpdateBackupConfig)
-			r.Post("/backups/test", h.apiTestBackupConfig)
-			r.Post("/backups/run", h.apiRunBackup)
-			r.Post("/backups/restore", h.apiStageBackupRestore)
+				// UOP backfill (Item 3)
+				r.Post("/admin/uop/backfill", h.apiBackfillBuckets)
 
-			// Diagnostics & manual tools
-			r.Post("/manual-message", h.apiSendManualMessage)
-			r.Post("/diagnostics/outbox/replay", h.apiReplayOutbox)
-			r.Post("/diagnostics/orders/sync", h.apiRequestOrderStatusSync)
+				// Reporting points
+				r.Get("/reporting-points", h.apiListReportingPoints)
+				r.Post("/reporting-points", h.apiCreateReportingPoint)
+				r.Put("/reporting-points/{id}", h.apiUpdateReportingPoint)
+				r.Delete("/reporting-points/{id}", h.apiDeleteReportingPoint)
 
-			// Lineside buckets admin (engineer override — clear or edit
-			// the lineside bucket chip the operator HMI shows for parts
-			// pulled to lineside during release).
-			r.Post("/admin/lineside/buckets/{id}/clear", h.apiAdminClearLinesideBucket)
-			r.Post("/admin/lineside/buckets/{id}/qty", h.apiAdminEditLinesideBucketQty)
+				// Processes
+				r.Get("/processes", h.apiListProcesses)
+				r.Post("/processes", h.apiCreateProcess)
+				r.Put("/processes/{id}", h.apiUpdateProcess)
+				r.Delete("/processes/{id}", h.apiDeleteProcess)
+				r.Put("/processes/{id}/active-style", h.apiSetActiveStyle)
+				r.Get("/processes/{id}/styles", h.apiListProcessStyles)
+
+				// Styles & node claims
+				r.Get("/styles", h.apiListStyles)
+				r.Post("/styles", h.apiCreateStyle)
+				r.Put("/styles/{id}", h.apiUpdateStyle)
+				r.Delete("/styles/{id}", h.apiDeleteStyle)
+				r.Get("/styles/{id}/node-claims", h.apiListStyleNodeClaims)
+				r.Post("/style-node-claims", h.apiUpsertStyleNodeClaim)
+				r.Delete("/style-node-claims/{id}", h.apiDeleteStyleNodeClaim)
+
+				// Operator stations
+				r.Get("/operator-stations", h.apiListOperatorStations)
+				r.Post("/operator-stations", h.apiCreateOperatorStation)
+				r.Put("/operator-stations/{id}", h.apiUpdateOperatorStation)
+				r.Post("/operator-stations/{id}/move", h.apiMoveOperatorStation)
+				r.Delete("/operator-stations/{id}", h.apiDeleteOperatorStation)
+				r.Get("/operator-stations/{id}/claimed-nodes", h.apiGetStationClaimedNodes)
+				r.Put("/operator-stations/{id}/claimed-nodes", h.apiSetStationClaimedNodes)
+
+				// Process nodes
+				r.Get("/process-nodes", h.apiListConfiguredProcessNodes)
+				r.Get("/process-nodes/station/{stationID}", h.apiListConfiguredProcessNodesByStation)
+				r.Post("/process-nodes", h.apiCreateProcessNode)
+				r.Put("/process-nodes/{id}", h.apiUpdateProcessNode)
+				r.Delete("/process-nodes/{id}", h.apiDeleteProcessNode)
+
+				// Sync (core nodes, payload catalog)
+				r.Post("/core-nodes/sync", h.apiSyncCoreNodes)
+				r.Post("/payload-catalog/sync", h.apiSyncPayloadCatalog)
+
+				// Shifts
+				r.Get("/shifts", h.apiListShifts)
+				r.Put("/shifts", h.apiSaveShifts)
+
+				// Traffic (count-group bindings)
+				r.Get("/traffic/bindings", h.apiTrafficBindings)
+				r.Put("/traffic/heartbeat", h.apiTrafficSaveHeartbeat)
+				r.Post("/traffic/bindings", h.apiTrafficAddBinding)
+				r.Post("/traffic/bindings/delete", h.apiTrafficDeleteBinding)
+
+				// Config & backups
+				r.Put("/config/core-api", h.apiUpdateCoreAPI)
+				r.Post("/config/core-api/test", h.apiTestCoreAPI)
+				r.Put("/config/messaging", h.apiUpdateMessaging)
+				r.Put("/config/station-id", h.apiUpdateStationID)
+				r.Post("/config/kafka/test", h.apiTestKafka)
+				r.Put("/config/auto-confirm", h.apiUpdateAutoConfirm)
+				r.Post("/config/password", h.apiChangePassword)
+				r.Get("/backups", h.apiListBackups)
+				r.Get("/backups/status", h.apiBackupStatus)
+				r.Put("/backups/config", h.apiUpdateBackupConfig)
+				r.Post("/backups/test", h.apiTestBackupConfig)
+				r.Post("/backups/run", h.apiRunBackup)
+				r.Post("/backups/restore", h.apiStageBackupRestore)
+
+				// Diagnostics & manual tools
+				r.Post("/manual-message", h.apiSendManualMessage)
+				r.Post("/diagnostics/outbox/replay", h.apiReplayOutbox)
+				r.Post("/diagnostics/orders/sync", h.apiRequestOrderStatusSync)
+
+				// Lineside buckets admin (engineer override — clear or edit
+				// the lineside bucket chip the operator HMI shows for parts
+				// pulled to lineside during release).
+				r.Post("/admin/lineside/buckets/{id}/clear", h.apiAdminClearLinesideBucket)
+				r.Post("/admin/lineside/buckets/{id}/qty", h.apiAdminEditLinesideBucketQty)
+			})
 		})
 	})
 
