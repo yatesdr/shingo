@@ -256,6 +256,33 @@ func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) 
 	return b.Occupied && b.PayloadCode == payloadCode
 }
 
+// systemBinCountForPayload reports how many bins of payloadCode are
+// available system-wide via Core's preflight count: manifest-confirmed,
+// unclaimed, unlocked, non-special status, at enabled storage. Same
+// eligibility filter FindSourceFIFO uses to pick a source bin.
+//
+// The second return is false when the count couldn't be obtained — Core
+// unreachable or empty payload. Callers fail OPEN at the use site for
+// the same reason loaderHasUsableEmptyPresent does: a missed L1 leaves
+// the loader idle; a redundant L1 is dedup'd by the in-flight guard.
+// Idle is the worse outcome.
+func (e *Engine) systemBinCountForPayload(payloadCode string) (int, bool) {
+	if !e.coreClient.Available() || payloadCode == "" {
+		return 0, false
+	}
+	result, err := e.coreClient.PreflightInventory(e.cfg.StationID(), []string{payloadCode})
+	if err != nil {
+		e.logFn("side-cycle: preflight count for %s: %v", payloadCode, err)
+		return 0, false
+	}
+	for _, a := range result.Available {
+		if a.PayloadCode == payloadCode {
+			return a.BinCount, true
+		}
+	}
+	return 0, true // payload absent from result = 0 bins
+}
+
 // MaybeCreateLoaderEmptyIn (L1 of the side-cycle model) creates a
 // retrieve_empty order tracked at the loader for the given payload, if a
 // matching loader exists and doesn't already have an in-flight empty-in.
@@ -287,6 +314,34 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 			loader.node.Name, payloadCode)
 		return
 	}
+
+	// Kanban reorder point. Only fire L1 when system supply has dropped
+	// to or below the threshold — otherwise the loader gets work for
+	// every release even when the supermarket is full.
+	//
+	// The hardcoded 1 is the starting anchor. This trigger surface is
+	// intended to grow into a true kanban / reorder-point system; the
+	// path forward when that happens:
+	//
+	//   - Move the threshold onto style_node_claim as min_inventory so
+	//     it's configurable per loader/payload (fast-movers vs slow-
+	//     movers can differ).
+	//   - Re-source the trigger from Core's DemandSignal pipeline
+	//     (already half-built in shingo-core/engine/wiring_kanban.go;
+	//     unwired on the edge side at messaging/edge_handler.go:178).
+	//     Bin movements drive L1 then, not just operator releases.
+	//   - Keep MaybeCreateLoaderEmptyIn as the single decision point
+	//     so the threshold guard throttles whichever source feeds it.
+	//
+	// Fails OPEN: if Core can't be reached the L1 fires anyway. Idle is
+	// worse than redundant — the in-flight guard above dedupes duplicates.
+	const reorderPoint = 1
+	if count, ok := e.systemBinCountForPayload(payloadCode); ok && count > reorderPoint {
+		e.logFn("side-cycle: loader %s — %d bins of %s in system (>%d), skipping L1",
+			loader.node.Name, count, payloadCode, reorderPoint)
+		return
+	}
+
 	nodeID := loader.node.ID
 	// L1 (Loader Empty In) must NEVER auto-confirm. The loader operator is an
 	// active participant in the side-cycle and must explicitly confirm that

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -216,6 +217,18 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order
 		return order, nil
 	}
 	order = refreshed
+
+	// Side-cycle trigger: the Material page's Release button routes
+	// through here, not through the disposition-aware ReleaseOrderWithLineside
+	// path. Mirror the consume-role hook from operator_release.go:206-211 so
+	// every consume-side release surface participates in the L1 reorder
+	// check. The decision (threshold, dedup) lives entirely in
+	// MaybeCreateLoaderEmptyIn — same single-decision-point as the other
+	// release surfaces.
+	if claim.Role == protocol.ClaimRoleConsume {
+		e.MaybeCreateLoaderEmptyIn(claim.PayloadCode)
+	}
+
 	return order, nil
 }
 
