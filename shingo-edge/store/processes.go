@@ -17,13 +17,13 @@ func (db *DB) GetProcess(id int64) (*processes.Process, error) {
 }
 
 // CreateProcess inserts a process and returns the new row id.
-func (db *DB) CreateProcess(name, description, productionState string, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
-	return processes.Create(db.DB, name, description, productionState, counterPLC, counterTag, counterEnabled)
+func (db *DB) CreateProcess(name, description, productionState string, counterPLC, counterTag string, counterEnabled, autoCutoverEnabled bool) (int64, error) {
+	return processes.Create(db.DB, name, description, productionState, counterPLC, counterTag, counterEnabled, autoCutoverEnabled)
 }
 
 // UpdateProcess modifies a process row.
-func (db *DB) UpdateProcess(id int64, name, description, productionState string, counterPLC, counterTag string, counterEnabled bool) error {
-	return processes.Update(db.DB, id, name, description, productionState, counterPLC, counterTag, counterEnabled)
+func (db *DB) UpdateProcess(id int64, name, description, productionState string, counterPLC, counterTag string, counterEnabled, autoCutoverEnabled bool) error {
+	return processes.Update(db.DB, id, name, description, productionState, counterPLC, counterTag, counterEnabled, autoCutoverEnabled)
 }
 
 // DeleteProcess removes a process row.

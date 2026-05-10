@@ -34,13 +34,13 @@ func (s *ProcessService) List() ([]processes.Process, error) {
 }
 
 // Create inserts a new process and returns the new row id.
-func (s *ProcessService) Create(name, description, productionState, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
-	return s.db.CreateProcess(name, description, productionState, counterPLC, counterTag, counterEnabled)
+func (s *ProcessService) Create(name, description, productionState, counterPLC, counterTag string, counterEnabled, autoCutoverEnabled bool) (int64, error) {
+	return s.db.CreateProcess(name, description, productionState, counterPLC, counterTag, counterEnabled, autoCutoverEnabled)
 }
 
 // Update modifies an existing process.
-func (s *ProcessService) Update(id int64, name, description, productionState, counterPLC, counterTag string, counterEnabled bool) error {
-	return s.db.UpdateProcess(id, name, description, productionState, counterPLC, counterTag, counterEnabled)
+func (s *ProcessService) Update(id int64, name, description, productionState, counterPLC, counterTag string, counterEnabled, autoCutoverEnabled bool) error {
+	return s.db.UpdateProcess(id, name, description, productionState, counterPLC, counterTag, counterEnabled, autoCutoverEnabled)
 }
 
 // Delete removes a process row by id.

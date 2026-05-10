@@ -16,6 +16,14 @@ type Changeover struct {
 	Notes       string     `json:"notes"`
 	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	// TriggeredBy records the trigger source that drove the row to its
+	// current terminal state. Empty while in_progress; one of
+	// "operator-hmi" | "plc-auto" | "auto-task-terminal" once
+	// completed/cancelled. Audit-only: differentiates operator-driven
+	// cutover from PLC-driven cutover from the B.3 auto-completion
+	// path that fires when terminal task transitions land while the
+	// gate was open.
+	TriggeredBy string     `json:"triggered_by,omitempty"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	// Joined fields
 	ProcessName   string `json:"process_name"`
@@ -52,4 +60,27 @@ type NodeTask struct {
 	UpdatedAt                 time.Time `json:"updated_at"`
 	// Joined fields
 	NodeName string `json:"node_name"`
+}
+
+// IsNodeTaskStateTerminal reports whether a changeover_node_tasks.state
+// represents a clean completion — the task finished its work and the
+// changeover row can advance toward "completed" if all sibling tasks
+// also did.
+//
+// Excludes "error" (operator retry is expected) and "cancelled"
+// (only set by cancelProcessChangeoverInternal, which moves the
+// changeover row to "cancelled" rather than "completed", so the
+// completion gate never reaches a row with cancelled tasks).
+//
+// Single source of truth for the changeover completion gate, the
+// auto-completion path, the node-changeover operator-entry guard, the
+// per-station rollup, and the dashboard's "all nodes complete"
+// indicator. All five care about the same predicate: did this task
+// finish cleanly?
+func IsNodeTaskStateTerminal(state string) bool {
+	switch state {
+	case "switched", "verified", "unchanged", "released":
+		return true
+	}
+	return false
 }

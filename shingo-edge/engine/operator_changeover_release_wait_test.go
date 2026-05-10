@@ -313,6 +313,24 @@ func contains(s, substr string) bool {
 //   - Evac envelope: Disposition.Kind == release_partial, Count == 47
 //     (the operator's chosen partial count flows through).
 //   - Supply envelope: Disposition is nil (manifest left alone).
+// TestReleaseChangeoverWait_SupplyManifestPreserved validates the
+// manifest-preservation contract (the bug fingerprint from order
+// 682 / 2026-05-06: supply leg's manifest was wiped at Core because
+// the wire envelope carried RemainingUOP=&0 instead of nil). The
+// contract must hold for both:
+//  1. The evac leg fired at operator-click time, which carries the
+//     operator's partial count and triggers Core manifest sync.
+//  2. The supply leg fired by the deferred-release chain (F' Phase 2:
+//     evac pickup confirm auto-releases the supply via
+//     handler_bin_picked_up's task lookup), which must carry no
+//     disposition and no RemainingUOP — just a no-op release that
+//     advances the wait point without touching Core's manifest.
+//
+// F' Phase 2 changed the firing model: pre-Phase-2, both legs fired
+// together at click time. Post-Phase-2, only evac fires at click; the
+// supply waits for evac's BinPickedUp envelope to land. The manifest
+// contract is unchanged in either model — this test just exercises
+// the new sequencing.
 func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
@@ -344,9 +362,9 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 		t.Fatalf("get supply order: %v", err)
 	}
 
-	// Force both orders to staged so ReleaseChangeoverWait's per-slot loop
-	// fires on each. In production the fleet tracker advances these as the
-	// robots dwell; the dispatcher-level test has no fleet wiring.
+	// Force both orders to staged. In production the fleet tracker
+	// advances these as the robots dwell at their wait points; the
+	// dispatcher-level test has no fleet wiring.
 	if err := db.UpdateOrderStatus(evacOrder.ID, string(orders.StatusStaged)); err != nil {
 		t.Fatalf("force evac staged: %v", err)
 	}
@@ -354,14 +372,13 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 		t.Fatalf("force supply staged: %v", err)
 	}
 
-	// Drain outbox so we can count exactly the envelopes produced by the
-	// release call.
+	// Drain outbox so we can count exactly the envelopes produced.
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {
 		_ = db.AckOutbox(m.ID)
 	}
 
-	// Operator chooses SEND PARTIAL BACK with count 47 — applied to evac.
+	// ─── Phase 2 step 1: operator clicks Release. Only evac fires. ───
 	partial := 47
 	disp := ReleaseDisposition{
 		Mode:         DispositionSendPartialBack,
@@ -372,40 +389,23 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReleaseChangeoverWait: %v", err)
 	}
-	if result.Released != 2 {
-		t.Errorf("result.Released = %d, want 2 (both legs were staged)", result.Released)
+	if result.Released != 1 {
+		t.Errorf("result.Released = %d, want 1 (evac only at click; supply deferred to pickup-confirm)", result.Released)
 	}
-	if result.Pending != 0 {
-		t.Errorf("result.Pending = %d, want 0 (no legs were skipped)", result.Pending)
+	if result.Pending != 1 {
+		t.Errorf("result.Pending = %d, want 1 (supply leg deferred until evac pickup)", result.Pending)
 	}
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
-	if len(releases) != 2 {
-		t.Fatalf("OrderRelease envelopes queued: got %d, want 2 (one per slot)", len(releases))
+	if len(releases) != 1 {
+		t.Fatalf("OrderRelease envelopes after click: got %d, want 1 (evac only)", len(releases))
+	}
+	evacRel := decodeOrderRelease(t, releases[0])
+	if evacRel.OrderUUID != evacOrder.UUID {
+		t.Errorf("first OrderRelease UUID = %q, want %q (evac)", evacRel.OrderUUID, evacOrder.UUID)
 	}
 
-	var evacRel, supplyRel *protocol.OrderRelease
-	for i := range releases {
-		decoded := decodeOrderRelease(t, releases[i])
-		switch decoded.OrderUUID {
-		case evacOrder.UUID:
-			d := decoded
-			evacRel = &d
-		case supplyOrder.UUID:
-			d := decoded
-			supplyRel = &d
-		default:
-			t.Errorf("unexpected OrderRelease for UUID %q", decoded.OrderUUID)
-		}
-	}
-	if evacRel == nil {
-		t.Fatal("no OrderRelease envelope for evac order")
-	}
-	if supplyRel == nil {
-		t.Fatal("no OrderRelease envelope for supply order")
-	}
-
-	// Evac leg: disposition flows through.
+	// Evac leg: disposition flows through with operator's partial count.
 	if evacRel.Disposition == nil {
 		t.Fatal("evac OrderRelease.Disposition = nil; want release_partial with operator's count")
 	}
@@ -418,17 +418,212 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 			evacRel.Disposition.Count, partial)
 	}
 
-	// Supply leg: NO manifest action. Disposition must be nil so Core's
-	// SyncOrClearForReleased no-ops. THIS is the regression lock.
+	// Drain again before phase 2 so we can count the supply envelope cleanly.
+	pending, _ = db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	// ─── Phase 2 step 2: evac robot picks up. BinPickedUp arrives. ───
+	// HandleBinPickedUp's task-lookup branch fires the deferred supply.
+	eng.HandleBinPickedUp(evacOrder.UUID, 9999 /* binID, irrelevant for this branch */)
+
+	releases = findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 1 {
+		t.Fatalf("OrderRelease envelopes after BinPickedUp: got %d, want 1 (deferred supply)", len(releases))
+	}
+	supplyRel := decodeOrderRelease(t, releases[0])
+	if supplyRel.OrderUUID != supplyOrder.UUID {
+		t.Errorf("auto-release UUID = %q, want %q (supply)", supplyRel.OrderUUID, supplyOrder.UUID)
+	}
+
+	// Supply leg manifest-preservation contract: NO disposition, NO
+	// RemainingUOP. THIS is the regression lock from order 682 /
+	// 2026-05-06 — anything other than nil means we wiped the manifest.
 	if supplyRel.Disposition != nil {
 		t.Errorf("supply OrderRelease.Disposition = %+v, want nil (manifest must NOT be touched on the supply leg)",
 			supplyRel.Disposition)
 	}
-	// Same regression check on RemainingUOP: must be nil for the supply leg.
-	// Anything else (especially &0) is the bug fingerprint that wiped the
-	// bin manifest at Core on order 682 / 2026-05-06.
 	if supplyRel.RemainingUOP != nil {
 		t.Errorf("supply OrderRelease.RemainingUOP = &%d, want nil (manifest preservation contract)",
 			*supplyRel.RemainingUOP)
+	}
+}
+
+// TestReleaseChangeoverWait_FiresEvacOnly_OnNonStagedNonTerminal pins
+// F' Phase 2's collapse of the staged-status switch. Pre-Phase-2,
+// ReleaseChangeoverWait had a `case order.Status == StatusStaged` gate
+// that silently skipped non-staged orders — the Friday-incident
+// fingerprint was operator clicks before R1 reached its wait point
+// becoming no-ops. Phase 2 drops the gate and routes each non-terminal
+// leg through ReleaseOrderWithLineside.
+//
+// This test forces the evac to in_transit (a non-staged, non-terminal
+// state) and asserts release fires. Combined with the deferred-supply
+// behavior pinned in TestReleaseChangeoverWait_SupplyManifestPreserved,
+// this is the regression lock for the Friday stuck-robot bug.
+func TestReleaseChangeoverWait_FiresEvacOnly_OnNonStagedNonTerminal(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "non-staged release")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if err != nil {
+		t.Fatalf("get node task: %v", err)
+	}
+	if task.OldMaterialReleaseOrderID == nil || task.NextMaterialOrderID == nil {
+		t.Fatal("scenario assumes both evac+supply legs exist")
+	}
+
+	// Force evac to in_transit (NOT staged). Pre-Phase-2 the staged-only
+	// switch would silently skip this; post-Phase-2 it must fire.
+	if err := db.UpdateOrderStatus(*task.OldMaterialReleaseOrderID, string(orders.StatusInTransit)); err != nil {
+		t.Fatalf("force evac in_transit: %v", err)
+	}
+	// Supply stays in CREATED (its default after auto-stage, before
+	// dispatch). It should NOT fire at click time — it's deferred for
+	// pickup-confirm regardless of its current status.
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	result, err := eng.ReleaseChangeoverWait(processID, ReleaseDisposition{CalledBy: "phase2-test"})
+	if err != nil {
+		t.Fatalf("ReleaseChangeoverWait: %v", err)
+	}
+	if result.Released != 1 {
+		t.Errorf("result.Released = %d, want 1 (evac fires from in_transit, not just from staged)", result.Released)
+	}
+	if result.Pending != 1 {
+		t.Errorf("result.Pending = %d, want 1 (supply deferred)", result.Pending)
+	}
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 1 {
+		t.Fatalf("OrderRelease envelopes: got %d, want 1 (evac only, supply deferred)", len(releases))
+	}
+	evacOrder, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
+	if rel := decodeOrderRelease(t, releases[0]); rel.OrderUUID != evacOrder.UUID {
+		t.Errorf("OrderRelease UUID = %q, want evac %q", rel.OrderUUID, evacOrder.UUID)
+	}
+}
+
+// TestHandleBinPickedUp_ReleasesDeferredSupply pins the auto-release
+// chain that closes ReleaseChangeoverWait's deferred-supply loop:
+// when Core's BinPickedUp envelope arrives for an evac order that
+// matches a changeover_node_task's OldMaterialReleaseOrderID, the
+// task's NextMaterialOrderID auto-releases.
+func TestHandleBinPickedUp_ReleasesDeferredSupply(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "deferred supply chain")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	evacOrder, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
+	supplyOrder, _ := db.GetOrder(*task.NextMaterialOrderID)
+
+	// Force supply to staged so ReleaseOrder's pre-dispatch guard (silently
+	// skips StatusPending / StatusSubmitted) doesn't drop the auto-release.
+	// In production the fleet tracker advances the order here as the supply
+	// robot reaches its wait point before the operator clicks.
+	if err := db.UpdateOrderStatus(supplyOrder.ID, string(orders.StatusStaged)); err != nil {
+		t.Fatalf("force supply staged: %v", err)
+	}
+
+	// Drain outbox to count exactly the BinPickedUp-driven envelope.
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	eng.HandleBinPickedUp(evacOrder.UUID, 1)
+
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 1 {
+		t.Fatalf("OrderRelease after BinPickedUp: got %d, want 1 (auto-release of supply)", len(releases))
+	}
+	rel := decodeOrderRelease(t, releases[0])
+	if rel.OrderUUID != supplyOrder.UUID {
+		t.Errorf("auto-release UUID = %q, want supply %q", rel.OrderUUID, supplyOrder.UUID)
+	}
+}
+
+// TestHandleBinPickedUp_NoOpForNonChangeoverOrder guards against the
+// auto-release branch firing on operator-station two_robot or other
+// non-changeover paths. The branch lookup is by evac-order-id ONLY on
+// changeover_node_tasks; an order that isn't an evac on any task must
+// produce no OrderRelease envelope.
+//
+// Regression guard for the scoping decision: extending HandleBinPickedUp
+// for changeover-only auto-release must not silently change behavior on
+// other paths that fire BinPickedUp.
+func TestHandleBinPickedUp_NoOpForNonChangeoverOrder(t *testing.T) {
+	db := testEngineDB(t)
+	_, _, _, _ = seedPhase3SwapScenario(t, db) // ensure schema seeded
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	// Create a generic order with no changeover linkage at all.
+	o, err := eng.orderMgr.CreateRetrieveOrder(nil, true, 1, "ANY", "ANY", "fork", "", false, false)
+	if err != nil {
+		t.Fatalf("create generic order: %v", err)
+	}
+
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	eng.HandleBinPickedUp(o.UUID, 1)
+
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 0 {
+		t.Errorf("OrderRelease after BinPickedUp on non-changeover order: got %d, want 0", len(releases))
+	}
+}
+
+// TestHandleBinPickedUp_DoesNotReleaseTerminalSupply guards idempotency:
+// if the supply order is already terminal (released earlier, cancelled,
+// failed, or delivered), the BinPickedUp auto-release path must not
+// re-fire it. releaseUnlessTerminal handles the terminal-skip branch;
+// this test pins that the wiring respects it.
+func TestHandleBinPickedUp_DoesNotReleaseTerminalSupply(t *testing.T) {
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "terminal supply guard")
+	if err != nil {
+		t.Fatalf("start changeover: %v", err)
+	}
+	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	evacOrder, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
+
+	// Force supply to terminal — already cancelled.
+	if err := db.UpdateOrderStatus(*task.NextMaterialOrderID, string(orders.StatusCancelled)); err != nil {
+		t.Fatalf("force supply cancelled: %v", err)
+	}
+
+	pending, _ := db.ListPendingOutbox(100)
+	for _, m := range pending {
+		_ = db.AckOutbox(m.ID)
+	}
+
+	eng.HandleBinPickedUp(evacOrder.UUID, 1)
+
+	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
+	if len(releases) != 0 {
+		t.Errorf("OrderRelease for terminal supply: got %d, want 0 (terminal must not re-fire)", len(releases))
 	}
 }

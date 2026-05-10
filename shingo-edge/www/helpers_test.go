@@ -165,8 +165,8 @@ func (s *stubEngine) ReleaseChangeoverWait(_ int64, disp engine.ReleaseDispositi
 }
 func (s *stubEngine) SequentialChangeoverCutover(int64, int64, string) error { return nil }
 func (s *stubEngine) StageNodeChangeoverMaterial(int64, int64) (*storeorders.Order, error)     { return nil, nil }
-func (s *stubEngine) EmptyNodeForToolChange(int64, int64, int64) (*storeorders.Order, error)   { return nil, nil }
-func (s *stubEngine) ReleaseNodeIntoProduction(int64, int64) (*storeorders.Order, error)       { return nil, nil }
+func (s *stubEngine) EvacuateNode(int64, int64, int64) (*storeorders.Order, error)             { return nil, nil }
+func (s *stubEngine) DeliverNewMaterialForChangeover(int64, int64) (*storeorders.Order, error) { return nil, nil }
 func (s *stubEngine) SwitchNodeToTarget(int64, int64) error                             { return nil }
 func (s *stubEngine) SwitchOperatorStationToTarget(int64, int64) error                   { return nil }
 func (s *stubEngine) FlipABNode(int64) error { return nil }
@@ -393,7 +393,7 @@ func assertJSONPath(t *testing.T, resp *http.Response, path string, want interfa
 // seedProcess creates a process and returns its ID.
 func seedProcess(t *testing.T, name string) int64 {
 	t.Helper()
-	id, err := testDB.CreateProcess(name, "test process", "", "", "", false)
+	id, err := testDB.CreateProcess(name, "test process", "", "", "", false, false)
 	if err != nil {
 		t.Fatalf("seed process %q: %v", name, err)
 	}

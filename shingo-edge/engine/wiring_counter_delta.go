@@ -317,6 +317,15 @@ func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.Nod
 	if runtime == nil || runtime.ActiveBinID == nil {
 		return 0, ""
 	}
+	// Surface gap-window mis-attribution at the emission site: if
+	// ActiveBinID and CachedBinID disagree the runtime cache is lying
+	// (e.g. release/delivery race window). The PLC tick lands on the
+	// active bin regardless, so the operator sees correct counts —
+	// this log just makes the divergence observable in the field.
+	if runtime.CachedBinID != nil && *runtime.CachedBinID != *runtime.ActiveBinID {
+		log.Printf("binAtNode: gap-window mismatch — active=%d cached=%d (claim payload=%s)",
+			*runtime.ActiveBinID, *runtime.CachedBinID, claim.PayloadCode)
+	}
 	return *runtime.ActiveBinID, claim.PayloadCode
 }
 

@@ -12,16 +12,27 @@ import (
 // tracking, and the active/target style pointers used by the
 // changeover flow.
 type Process struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description"`
-	ActiveStyleID   *int64    `json:"active_style_id"`
-	TargetStyleID   *int64    `json:"target_style_id,omitempty"`
-	ProductionState string    `json:"production_state"`
-	CounterPLCName  string    `json:"counter_plc_name"`
-	CounterTagName  string    `json:"counter_tag_name"`
-	CounterEnabled  bool      `json:"counter_enabled"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID                  int64     `json:"id"`
+	Name                string    `json:"name"`
+	Description         string    `json:"description"`
+	ActiveStyleID       *int64    `json:"active_style_id"`
+	TargetStyleID       *int64    `json:"target_style_id,omitempty"`
+	ProductionState     string    `json:"production_state"`
+	CounterPLCName      string    `json:"counter_plc_name"`
+	CounterTagName      string    `json:"counter_tag_name"`
+	CounterEnabled      bool      `json:"counter_enabled"`
+	// AutoCutoverEnabled subscribes to the PLC's Changeover_Active tag
+	// derived from CounterTagName's parent struct. Falling edge (with
+	// 2s debounce) calls CompleteProcessProductionCutover so shingo's
+	// active_style_id follows PLC reality without a separate operator
+	// click. Default false; opt-in per process. Operator still clicks
+	// Start Changeover in shingo first — auto-cutover only drives the
+	// completion side. The Theme B canCompleteChangeover gate provides
+	// the safety net for spurious PLC triggers (PLC restart, fault
+	// recovery): a falling edge with non-terminal tasks is a no-op,
+	// logged.
+	AutoCutoverEnabled  bool      `json:"auto_cutover_enabled"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // Style is a build configuration that a Process can run — typically a
@@ -110,6 +121,22 @@ type NodeClaim struct {
 	SwapMode             string    `json:"swap_mode"`
 	PayloadCode          string    `json:"payload_code"`
 	UOPCapacity          int       `json:"uop_capacity"`
+	// ReorderPoint has role-dependent semantics.
+	//
+	// Consume-role claim: UOP threshold for auto-reorder, "fire at or
+	// below" (≤) — wiring_counter_delta fires RequestNodeMaterial when
+	// remaining UOP drops to ≤ ReorderPoint.
+	//
+	// Produce-role manual_swap claim (bin loader): bin-count
+	// minimum-stock floor, "fire when fewer than" (<) — operator types
+	// the desired minimum number of bins of the loader's payload, and
+	// MaybeCreateLoaderEmptyIn fires the L1 retrieve_empty whenever
+	// the system count drops below that. Zero falls back to a magic-
+	// number floor of 2: strict "queue when fewer than 2 bins in the
+	// system." The future kanban calculator (see
+	// shingo-kanban-calculator-design.md) writes its calculated value
+	// into this same column rather than a parallel "loader threshold"
+	// field.
 	ReorderPoint         int       `json:"reorder_point"`
 	AutoReorder          bool      `json:"auto_reorder"`
 	InboundStaging       string    `json:"inbound_staging"`

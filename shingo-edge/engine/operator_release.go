@@ -189,26 +189,25 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// order-creation time — see isSupplyOrderInTwoRobotSwap.
 	isSupply := e.isSupplyOrderInTwoRobotSwap(order, node, toClaim)
 
-	// Side-cycle trigger (L1 / U1): fires only when the operator declares the
-	// bin emptied/full (capture_lineside) and only on the line side of a swap
-	// (the supply order in a two-robot swap is suppressed by isSupply). A
-	// SEND PARTIAL BACK release explicitly returns the bin to the
-	// supermarket — no new empty needs to land at the loader, no new full
-	// needs to land at the unloader. Firing on REQUEST instead would
-	// over-supply both side-cycle queues whenever the line returns partials.
+	// Side-cycle trigger (U1 only): fires when the operator declares a
+	// produce-side bin full (capture_lineside) on the line side of a
+	// swap (supply orders suppressed by isSupply). A SEND PARTIAL BACK
+	// release explicitly returns the bin to the supermarket — no new
+	// full needs to land at the unloader.
 	//
-	//   consume role (line consuming parts) → loader needs an empty bin (L1)
-	//   produce role (line producing parts) → unloader needs the full bin (U1)
-	//
-	// Sits above the produce-role early return so produce-side releases still
-	// fan out to the unloader even though they skip Core manifest sync.
-	if !isSupply && disp.Mode == DispositionCaptureLineside {
-		switch toClaim.Role {
-		case protocol.ClaimRoleConsume:
-			e.MaybeCreateLoaderEmptyIn(toClaim.PayloadCode)
-		case protocol.ClaimRoleProduce:
-			e.MaybeCreateUnloaderFullIn(toClaim.PayloadCode)
-		}
+	// L1 (consume-side empty-in) used to fire here too. Removed when
+	// Core's wiring_kanban DemandSignal pipeline became the single
+	// trigger source for L1: every release that empties a bin moves it
+	// in Core, Core observes the move at storage, fires DemandSignal
+	// to Edge, Edge fires L1 with current supply count. The release-
+	// driven path created timing weirdness (release evaluated before
+	// Core's bin state settled) and partial coverage (non-release bin
+	// movements didn't fire). U1 stays release-driven because it's
+	// genuinely tied to the release event ("operator just finished a
+	// full bin"); the trigger isn't a count threshold, it's the act of
+	// finishing.
+	if !isSupply && disp.Mode == DispositionCaptureLineside && toClaim.Role == protocol.ClaimRoleProduce {
+		e.MaybeCreateUnloaderFullIn(toClaim.PayloadCode)
 	}
 
 	// Produce nodes don't use lineside buckets — skip capture, skip UOP

@@ -260,6 +260,21 @@ func (db *DB) migrate() error {
 	// volatile slots so neither depends on race-prone state.
 	db.Exec("ALTER TABLE orders ADD COLUMN sibling_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL")
 
+	// v22 (AMR trial 2026-05-08): per-process opt-in for PLC-driven
+	// auto-cutover. The cutover monitor subscribes to the
+	// Changeover_Active tag derived from the process's existing
+	// counter_tag_name parent struct. Default off; operators enable
+	// via the process editor admin UI checkbox.
+	db.Exec("ALTER TABLE processes ADD COLUMN auto_cutover_enabled INTEGER NOT NULL DEFAULT 0")
+
+	// v23 (AMR trial 2026-05-08): audit column for which trigger source
+	// drove the changeover row to its current terminal state. One of
+	// "operator-hmi" | "plc-auto" | "auto-task-terminal". Empty while
+	// in_progress. Differentiates operator-driven cutover from PLC-
+	// driven cutover from B.3 auto-completion when investigating
+	// post-mortem timing questions.
+	db.Exec("ALTER TABLE process_changeovers ADD COLUMN triggered_by TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 

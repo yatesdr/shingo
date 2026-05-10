@@ -10,6 +10,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"shingo/protocol"
+
+	"shingoedge/config"
+	"shingoedge/engine"
+	"shingoedge/messaging"
 	"shingoedge/orders"
 	"shingoedge/store"
 )
@@ -25,6 +30,91 @@ func OpenDB(t *testing.T) *store.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+// Edge bundles a running Edge engine with the message-handler and
+// ingestor layers wired the same way cmd/shingoedge/main.go wires them
+// in production — minus Kafka, the outbox drainer, the heartbeater,
+// the production reporter, and other subsystems integration scenarios
+// don't exercise.
+//
+// Use the Ingestor as harness.EdgeSide.EdgeIngestor when constructing a
+// bus. Call methods on Engine directly to drive the scenario
+// (StartProcessChangeover, ReleaseChangeoverWait, etc). DB is the same
+// store the engine reads/writes, exposed for direct seeding/assertion.
+type Edge struct {
+	Engine      *engine.Engine
+	EdgeHandler *messaging.EdgeHandler
+	Ingestor    *protocol.Ingestor
+	DB          *store.DB
+}
+
+// NewEdge constructs a real Edge engine + EdgeHandler + Ingestor with
+// the message handlers needed for release-path scenarios wired (notably
+// SetBinPickedUpHandler — the load-bearing one for F' Phase 2's
+// deferred-supply chain). Engine.Start() is called; engine.Stop() is
+// registered with t.Cleanup.
+//
+// stationID becomes the ingestor's destination filter — envelopes with
+// Dst.Station == stationID (or StationBroadcast) get delivered. Use the
+// same value when constructing OrderRelease envelopes from the Core side
+// to round-trip cleanly.
+//
+// Subsystems intentionally NOT wired (and the rationale):
+//   - Kafka client, outbox drainer: harness.Bus + pump.go substitute.
+//   - Heartbeater: emits register / heartbeat envelopes Core ignores in
+//     scenarios; adds noise without coverage.
+//   - InventoryDeltaReporter: HandleBinPickedUp's flush call already
+//     guards on nil. Set explicitly via SetInventoryDeltaSink if a
+//     scenario needs delta accumulation tested.
+//   - Production reporter, count-group handler, backup service: not
+//     touched by release-path code.
+//
+// AppConfig is minimal: namespace + line_id are used for station ID
+// derivation and log strings. WarLink stays disabled (default zero-
+// value), so plc.Manager.StartPolling polls an empty reporting-points
+// list — a benign goroutine until eng.Stop closes its stop channel.
+func NewEdge(t *testing.T, stationID string) *Edge {
+	t.Helper()
+	db := OpenDB(t)
+
+	cfg := &config.Config{
+		Namespace: "test",
+		LineID:    "edge-test",
+		Messaging: config.MessagingConfig{
+			StationID: stationID,
+		},
+	}
+	eng := engine.New(engine.Config{
+		AppConfig: cfg,
+		DB:        db,
+		LogFunc:   t.Logf,
+	})
+	eng.Start()
+	t.Cleanup(eng.Stop)
+
+	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(nodes []protocol.NodeInfo) {
+		eng.SetCoreNodes(nodes)
+	})
+	// Mirror cmd/shingoedge/main.go's wiring for the handlers F' Phase 2
+	// scenarios actually exercise. Other Set*Handler callsites in main.go
+	// (catalog, status snapshots, registered/register_request, count-group
+	// commands) are deliberately left unset — scenarios that need them
+	// can wire them on the returned EdgeHandler.
+	edgeHandler.SetBinPickedUpHandler(func(p *protocol.BinPickedUp) {
+		eng.HandleBinPickedUp(p.OrderUUID, p.BinID)
+	})
+
+	ingestor := protocol.NewIngestor(edgeHandler, func(hdr *protocol.RawHeader) bool {
+		return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
+	})
+
+	return &Edge{
+		Engine:      eng,
+		EdgeHandler: edgeHandler,
+		Ingestor:    ingestor,
+		DB:          db,
+	}
 }
 
 // Re-export commonly-needed types so integration callers don't have to

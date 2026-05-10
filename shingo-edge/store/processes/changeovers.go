@@ -43,11 +43,15 @@ type (
 
 // --- changeover header ---
 
+const changeoverSelect = `c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
+		c.started_at, COALESCE(c.completed_at, ''), COALESCE(c.triggered_by, ''), c.updated_at,
+		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')`
+
 func scanChangeover(scanner interface{ Scan(...interface{}) error }) (Changeover, error) {
 	var c Changeover
 	var startedAt, completedAt, updatedAt string
 	err := scanner.Scan(&c.ID, &c.ProcessID, &c.FromStyleID, &c.ToStyleID, &c.State, &c.CalledBy, &c.Notes,
-		&startedAt, &completedAt, &updatedAt, &c.ProcessName, &c.FromStyleName, &c.ToStyleName)
+		&startedAt, &completedAt, &c.TriggeredBy, &updatedAt, &c.ProcessName, &c.FromStyleName, &c.ToStyleName)
 	if err != nil {
 		return c, err
 	}
@@ -63,9 +67,7 @@ func scanChangeover(scanner interface{ Scan(...interface{}) error }) (Changeover
 // ListChangeovers returns every process_changeover for a process,
 // newest first.
 func ListChangeovers(db *sql.DB, processID int64) ([]Changeover, error) {
-	rows, err := db.Query(`SELECT c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
-		c.started_at, COALESCE(c.completed_at, ''), c.updated_at,
-		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')
+	rows, err := db.Query(`SELECT `+changeoverSelect+`
 		FROM process_changeovers c
 		LEFT JOIN processes p ON p.id = c.process_id
 		LEFT JOIN styles fs ON fs.id = c.from_style_id
@@ -90,9 +92,7 @@ func ListChangeovers(db *sql.DB, processID int64) ([]Changeover, error) {
 // GetActiveChangeover returns the active (non-completed,
 // non-cancelled) changeover for a process, if any.
 func GetActiveChangeover(db *sql.DB, processID int64) (*Changeover, error) {
-	c, err := scanChangeover(db.QueryRow(`SELECT c.id, c.process_id, c.from_style_id, c.to_style_id, c.state, c.called_by, c.notes,
-		c.started_at, COALESCE(c.completed_at, ''), c.updated_at,
-		COALESCE(p.name, ''), COALESCE(fs.name, ''), COALESCE(ts.name, '')
+	c, err := scanChangeover(db.QueryRow(`SELECT `+changeoverSelect+`
 		FROM process_changeovers c
 		LEFT JOIN processes p ON p.id = c.process_id
 		LEFT JOIN styles fs ON fs.id = c.from_style_id
@@ -107,14 +107,27 @@ func GetActiveChangeover(db *sql.DB, processID int64) (*Changeover, error) {
 
 // UpdateChangeoverState changes the state on a process_changeover,
 // setting completed_at when transitioning to "completed" or
-// "cancelled".
+// "cancelled". Does NOT touch triggered_by — callers that record a
+// trigger source should call UpdateChangeoverStateWithTrigger.
 func UpdateChangeoverState(db *sql.DB, id int64, state string) error {
+	return UpdateChangeoverStateWithTrigger(db, id, state, "")
+}
+
+// UpdateChangeoverStateWithTrigger writes the state and (when
+// non-empty) the triggered_by audit field together. Empty triggeredBy
+// leaves the existing value untouched, so callers that don't have a
+// source distinction don't blank it out on later state writes.
+func UpdateChangeoverStateWithTrigger(db *sql.DB, id int64, state, triggeredBy string) error {
 	completedAt := sql.NullString{}
 	if state == "completed" || state == "cancelled" {
 		completedAt = sql.NullString{Valid: true, String: time.Now().UTC().Format(helpers.TimeLayout)}
 	}
-	_, err := db.Exec(`UPDATE process_changeovers SET state=?, completed_at=CASE WHEN ? != '' THEN ? ELSE completed_at END, updated_at=datetime('now') WHERE id=?`,
-		state, completedAt.String, completedAt.String, id)
+	_, err := db.Exec(`UPDATE process_changeovers SET state=?,
+		completed_at=CASE WHEN ? != '' THEN ? ELSE completed_at END,
+		triggered_by=CASE WHEN ? != '' THEN ? ELSE triggered_by END,
+		updated_at=datetime('now') WHERE id=?`,
+		state, completedAt.String, completedAt.String,
+		triggeredBy, triggeredBy, id)
 	return err
 }
 
@@ -239,6 +252,66 @@ func GetChangeoverNodeTaskByNode(db *sql.DB, changeoverID, processNodeID int64) 
 		FROM changeover_node_tasks t
 		LEFT JOIN process_nodes n ON n.id = t.process_node_id
 		WHERE t.process_changeover_id=? AND t.process_node_id=? LIMIT 1`, changeoverID, processNodeID))
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// FindChangeoverNodeTaskByOrderID returns the node task that references
+// orderID via NextMaterialOrderID or OldMaterialReleaseOrderID, plus its
+// parent changeover's state.
+//
+// Direct order-ID match — does NOT filter by changeover state, unlike
+// GetActiveProcessChangeover. Used by the orphan-cancellation handler so
+// historical orphans (orders linked to changeover tasks that completed
+// in non-success terminal states outside cancelProcessChangeoverInternal)
+// can be reconciled even when the changeover row itself has already
+// finalized.
+func FindChangeoverNodeTaskByOrderID(db *sql.DB, orderID int64) (*NodeTask, string, error) {
+	row := db.QueryRow(`SELECT t.id, t.process_changeover_id, t.process_node_id,
+		t.from_claim_id, t.to_claim_id, t.situation, t.state,
+		t.next_material_order_id, t.old_material_release_order_id,
+		t.updated_at, COALESCE(n.name, ''), c.state
+		FROM changeover_node_tasks t
+		LEFT JOIN process_nodes n ON n.id = t.process_node_id
+		JOIN process_changeovers c ON c.id = t.process_changeover_id
+		WHERE t.next_material_order_id=? OR t.old_material_release_order_id=?
+		LIMIT 1`, orderID, orderID)
+	var t NodeTask
+	var updatedAt, coState string
+	if err := row.Scan(&t.ID, &t.ProcessChangeoverID, &t.ProcessNodeID,
+		&t.FromClaimID, &t.ToClaimID, &t.Situation, &t.State,
+		&t.NextMaterialOrderID, &t.OldMaterialReleaseOrderID,
+		&updatedAt, &t.NodeName, &coState); err != nil {
+		return nil, "", err
+	}
+	t.UpdatedAt = helpers.ScanTime(updatedAt)
+	return &t, coState, nil
+}
+
+// GetChangeoverNodeTaskByEvacOrderID returns the node task that
+// references orderID via OldMaterialReleaseOrderID (the evac leg) only.
+// Distinct from FindChangeoverNodeTaskByOrderID, which OR-matches both
+// legs for the orphan-cancellation use case.
+//
+// Used by handler_bin_picked_up.go's deferred-supply auto-release: when
+// the picked-up order is an evac, the paired supply (NextMaterialOrderID
+// on the same task) is the one to release. Matching evac only avoids a
+// degenerate case where a pickup on the supply leg would re-trigger
+// release on itself.
+//
+// Returns sql.ErrNoRows when the order isn't an evac on any task —
+// that's the normal case for non-changeover orders, and callers treat
+// it as "no auto-release to do, move on."
+func GetChangeoverNodeTaskByEvacOrderID(db *sql.DB, orderID int64) (*NodeTask, error) {
+	t, err := scanNodeTask(db.QueryRow(`SELECT t.id, t.process_changeover_id, t.process_node_id,
+		t.from_claim_id, t.to_claim_id, t.situation, t.state,
+		t.next_material_order_id, t.old_material_release_order_id,
+		t.updated_at, COALESCE(n.name, '')
+		FROM changeover_node_tasks t
+		LEFT JOIN process_nodes n ON n.id = t.process_node_id
+		WHERE t.old_material_release_order_id=? LIMIT 1`, orderID))
 	if err != nil {
 		return nil, err
 	}

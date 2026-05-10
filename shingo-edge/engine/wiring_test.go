@@ -91,7 +91,7 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 		prefix = "CONSUME"
 	}
 
-	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" test", "active_production", "", "", false)
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" test", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestWiring_CounterDelta_ConsumeAllowsNegative(t *testing.T) {
 func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 	db := testEngineDB(t)
 
-	processID, err := db.CreateProcess("BL-PROC", "manual swap test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("BL-PROC", "manual swap test", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestHandlePayloadCatalog_PruneDeletedEntries(t *testing.T) {
 func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("AB-PROC", "a/b cycling test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("AB-PROC", "a/b cycling test", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -652,7 +652,7 @@ func TestWiring_ABCycling_UnpairedNodeAlwaysDecrements(t *testing.T) {
 func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
 	t.Helper()
 
-	processID, _ = db.CreateProcess("ABP-PROC", "a/b produce test", "active_production", "", "", false)
+	processID, _ = db.CreateProcess("ABP-PROC", "a/b produce test", "active_production", "", "", false, false)
 	nodeAID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ABP-A", Code: "PA1", Name: "Produce A", Sequence: 1, Enabled: true,
 	})
@@ -692,7 +692,7 @@ func seedABProducePair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID,
 func seedAsymmetricABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleID, claimAID, claimBID int64) {
 	t.Helper()
 
-	processID, _ = db.CreateProcess("ASYM-PROC", "asymmetric a/b", "active_production", "", "", false)
+	processID, _ = db.CreateProcess("ASYM-PROC", "asymmetric a/b", "active_production", "", "", false, false)
 	nodeAID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: "ASYM-A", Code: "AA1", Name: "Asym A", Sequence: 1, Enabled: true,
 	})
@@ -862,10 +862,28 @@ func TestWiring_ABPairsAcrossStyles(t *testing.T) {
 		t.Fatalf("start changeover: %v", err)
 	}
 
-	// All nodes unchanged (same payload codes are different: PART-AB vs PART-X)
-	// Actually they're swap (PART-AB → PART-X). Complete the changeover via cutover.
-	_ = co
-	eng.CompleteProcessProductionCutover(processID)
+	// Both node tasks are "swap" (PART-AB → PART-X). Satisfy the cutover
+	// gate (canCompleteChangeover) by stamping linked orders to terminal
+	// and tasks to "released" directly — bypassing the wiring event path
+	// because this test exercises post-cutover counter behavior, not
+	// changeover-flow side effects.
+	tasks, _ := db.ListChangeoverNodeTasks(co.ID)
+	for _, task := range tasks {
+		for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
+			if orderID == nil {
+				continue
+			}
+			db.UpdateOrderStatus(*orderID, string(orders.StatusSubmitted))
+			db.UpdateOrderStatus(*orderID, string(orders.StatusAcknowledged))
+			db.UpdateOrderStatus(*orderID, string(orders.StatusInTransit))
+			db.UpdateOrderStatus(*orderID, string(orders.StatusDelivered))
+			db.UpdateOrderStatus(*orderID, string(orders.StatusConfirmed))
+		}
+		db.UpdateChangeoverNodeTaskState(task.ID, "released")
+	}
+	if err := eng.CompleteProcessProductionCutover(processID); err != nil {
+		t.Fatalf("cutover: %v", err)
+	}
 
 	// After cutover, active style is style2. Claims have no PairedCoreNode.
 	// Counter delta should decrement BOTH nodes (unpaired behavior).

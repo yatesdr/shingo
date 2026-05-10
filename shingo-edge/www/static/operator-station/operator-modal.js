@@ -415,11 +415,11 @@ export function renderModal(entry) {
 
         html += actionBtn('EMPTY FOR TOOL CHANGE', 'empty-tools',
             task.state === 'staging_requested',
-            '/api/processes/' + pid + '/changeover/empty-node/' + nid);
+            '/api/processes/' + pid + '/changeover/evacuate-node/' + nid);
 
         html += actionBtn('RELEASE INTO PRODUCTION', 'release-production',
             task.state === 'empty_requested',
-            '/api/processes/' + pid + '/changeover/release-node/' + nid);
+            '/api/processes/' + pid + '/changeover/deliver-material/' + nid);
 
         html += actionBtn('SWITCH TO TARGET', 'switch-target',
             task.state === 'release_requested' || task.state === 'released',

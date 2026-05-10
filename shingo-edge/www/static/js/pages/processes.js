@@ -77,7 +77,8 @@ async function saveProcess() {
             production_state: document.getElementById('process-production-state').value,
             counter_plc_name: document.getElementById('counter-plc') ? document.getElementById('counter-plc').value : '',
             counter_tag_name: document.getElementById('counter-tag') ? document.getElementById('counter-tag').value.trim() : '',
-            counter_enabled: document.getElementById('counter-enabled') ? document.getElementById('counter-enabled').checked : false
+            counter_enabled: document.getElementById('counter-enabled') ? document.getElementById('counter-enabled').checked : false,
+            auto_cutover_enabled: document.getElementById('auto-cutover-enabled') ? document.getElementById('auto-cutover-enabled').checked : false
         });
         ShingoEdge.toast('Process saved', 'success');
         location.reload();

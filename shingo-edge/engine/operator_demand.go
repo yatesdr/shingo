@@ -315,30 +315,37 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 		return
 	}
 
-	// Kanban reorder point. Only fire L1 when system supply has dropped
-	// to or below the threshold — otherwise the loader gets work for
-	// every release even when the supermarket is full.
+	// Kanban minimum-stock floor. Only fire L1 when system bin count is
+	// strictly below the configured floor — otherwise the loader gets
+	// work for every release even when the supermarket is full.
 	//
-	// The hardcoded 1 is the starting anchor. This trigger surface is
-	// intended to grow into a true kanban / reorder-point system; the
-	// path forward when that happens:
+	// Floor lives on the loader's claim as ReorderPoint. ReorderPoint
+	// has role-dependent semantics:
+	//   - consume-role: UOP threshold for auto-reorder, "fire at or
+	//     below" (≤) — wiring_counter_delta.go.
+	//   - produce-role (this loader path): bin-count minimum-stock
+	//     floor, "fire when fewer than" (<). Operator types "2" meaning
+	//     "I want at least 2 bins of this payload in the system at all
+	//     times" and the gate fires L1 whenever count drops to 1 or 0.
 	//
-	//   - Move the threshold onto style_node_claim as min_inventory so
-	//     it's configurable per loader/payload (fast-movers vs slow-
-	//     movers can differ).
-	//   - Re-source the trigger from Core's DemandSignal pipeline
-	//     (already half-built in shingo-core/engine/wiring_kanban.go;
-	//     unwired on the edge side at messaging/edge_handler.go:178).
-	//     Bin movements drive L1 then, not just operator releases.
-	//   - Keep MaybeCreateLoaderEmptyIn as the single decision point
-	//     so the threshold guard throttles whichever source feeds it.
+	// Zero falls back to a magic-number floor of 2: strict "queue when
+	// fewer than 2 bins in the system."
+	//
+	// The future kanban calculator (shingo-kanban-calculator-design.md)
+	// writes its computed loop-size output into this same ReorderPoint
+	// column, so operator-set values today and calculator-driven values
+	// tomorrow share one read site. The doc explicitly warns against a
+	// parallel "loader threshold" column to prevent divergence.
 	//
 	// Fails OPEN: if Core can't be reached the L1 fires anyway. Idle is
 	// worse than redundant — the in-flight guard above dedupes duplicates.
-	const reorderPoint = 1
-	if count, ok := e.systemBinCountForPayload(payloadCode); ok && count > reorderPoint {
-		e.logFn("side-cycle: loader %s — %d bins of %s in system (>%d), skipping L1",
-			loader.node.Name, count, payloadCode, reorderPoint)
+	minStock := loader.claim.ReorderPoint
+	if minStock <= 0 {
+		minStock = 2
+	}
+	if count, ok := e.systemBinCountForPayload(payloadCode); ok && count >= minStock {
+		e.logFn("side-cycle: loader %s — %d bins of %s in system (>=%d minimum), skipping L1",
+			loader.node.Name, count, payloadCode, minStock)
 		return
 	}
 

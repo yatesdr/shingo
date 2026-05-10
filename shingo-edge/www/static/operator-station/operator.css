@@ -110,6 +110,7 @@ body {
 .os-header-btn.changeover { background: var(--os-orange); color: #000; }
 .os-header-btn.cutover { background: var(--os-green-bright); color: #000; }
 .os-header-btn.release { background: var(--os-amber); color: #000; }
+.os-header-btn.cancel-changeover { background: #6b1f1f; color: #fff; }
 
 /* Active-style chip — display-only, sits in the action bar next to the
    changeover button so the operator can see what's running at a glance. */
@@ -160,6 +161,9 @@ body {
 .os-co-picker-title {
     font-size: 18px; font-weight: 700; text-align: center; color: #fff; margin-bottom: 4px;
 }
+.os-co-picker-subtitle {
+    font-size: 13px; text-align: center; color: #a8b3c4; margin-bottom: 8px; line-height: 1.4;
+}
 .os-co-picker-btn {
     border: none; border-radius: 10px; padding: 14px 20px; font-size: 16px;
     font-weight: 700; cursor: pointer; touch-action: manipulation;
@@ -167,6 +171,7 @@ body {
 }
 .os-co-picker-btn:active { opacity: 0.8; }
 .os-co-picker-btn.cancel { background: #3a3f4e; color: #ccc; }
+.os-co-picker-btn.danger { background: #6b1f1f; color: #fff; }
 
 /* ===== Grid ===== */
 
@@ -305,6 +310,17 @@ body {
 /* Changeover task pending — orange border */
 .os-node-btn.os-changeover {
     border-color: var(--os-orange);
+}
+
+/* HMI Tier 1 — release-ready cue. Fires when an order on this node is
+   dispatched and not yet released (acknowledged / in_transit / staged).
+   Layered on top of os-changeover so the orange border stays present;
+   the blue glow signals "click to release now" without obscuring the
+   changeover indicator. Pulse draws the operator's eye away from the
+   nodes that aren't ready yet. */
+.os-node-btn.os-release-ready {
+    box-shadow: 0 0 0 4px var(--os-blue), 0 0 18px 2px var(--os-blue);
+    animation: os-pulse 1.6s ease-in-out infinite;
 }
 
 /* ===== Modal Backdrop ===== */
@@ -898,6 +914,43 @@ body {
 .os-board-pos-delivered { background: #2a5a2a; }
 .os-board-pos-transit { background: #5a5a2a; }
 .os-board-pos-queued { background: #3a5a8a; }
+
+/* Load-now cue — an empty bin is parked at the loader and this payload
+   has outstanding demand. The forklift driver picks the bin up and loads
+   it as this payload. Green border + pulse layered on top of the base
+   state class so it stands out from queued/in-transit cards that also
+   have demand. */
+.os-board-load-now {
+    border-color: var(--os-green-bright) !important;
+    box-shadow: 0 0 0 4px var(--os-green-bright), 0 0 22px 4px rgba(106, 220, 106, 0.55);
+    animation: os-pulse 1.4s ease-in-out infinite;
+}
+
+/* Demand count — outstanding L1 orders queued for this payload. Sized
+   so a forklift driver can read it from the seat. Lives on every
+   queued/in-transit/delivered card with non-zero demand. */
+.os-board-demand {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 4px;
+    align-self: flex-start;
+}
+.os-board-demand-num {
+    font-size: 44px;
+    font-weight: 800;
+    color: #fff;
+    line-height: 1;
+}
+.os-board-demand-label {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #aab;
+    text-transform: uppercase;
+}
+.os-board-load-now .os-board-demand-num { color: #6f6; }
+.os-board-load-now .os-board-demand-label { color: #9d9; }
 
 /* Bin-loader board mode runs on a 22"+ HMI for a forklift driver. Scale
    the shared header / footer chrome up so it's legible from the seat. */

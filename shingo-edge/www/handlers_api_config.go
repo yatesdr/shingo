@@ -383,12 +383,13 @@ func (h *Handlers) apiListProcesses(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name            string `json:"name"`
-		Description     string `json:"description"`
-		ProductionState string `json:"production_state"`
-		CounterPLCName  string `json:"counter_plc_name"`
-		CounterTagName  string `json:"counter_tag_name"`
-		CounterEnabled  bool   `json:"counter_enabled"`
+		Name               string `json:"name"`
+		Description        string `json:"description"`
+		ProductionState    string `json:"production_state"`
+		CounterPLCName     string `json:"counter_plc_name"`
+		CounterTagName     string `json:"counter_tag_name"`
+		CounterEnabled     bool   `json:"counter_enabled"`
+		AutoCutoverEnabled bool   `json:"auto_cutover_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -398,7 +399,7 @@ func (h *Handlers) apiCreateProcess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	id, err := h.engine.ProcessService().Create(req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled)
+	id, err := h.engine.ProcessService().Create(req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled, req.AutoCutoverEnabled)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -414,18 +415,19 @@ func (h *Handlers) apiUpdateProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name            string `json:"name"`
-		Description     string `json:"description"`
-		ProductionState string `json:"production_state"`
-		CounterPLCName  string `json:"counter_plc_name"`
-		CounterTagName  string `json:"counter_tag_name"`
-		CounterEnabled  bool   `json:"counter_enabled"`
+		Name               string `json:"name"`
+		Description        string `json:"description"`
+		ProductionState    string `json:"production_state"`
+		CounterPLCName     string `json:"counter_plc_name"`
+		CounterTagName     string `json:"counter_tag_name"`
+		CounterEnabled     bool   `json:"counter_enabled"`
+		AutoCutoverEnabled bool   `json:"auto_cutover_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.engine.ProcessService().Update(id, req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled); err != nil {
+	if err := h.engine.ProcessService().Update(id, req.Name, req.Description, req.ProductionState, req.CounterPLCName, req.CounterTagName, req.CounterEnabled, req.AutoCutoverEnabled); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

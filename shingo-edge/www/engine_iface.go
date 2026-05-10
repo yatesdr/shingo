@@ -102,8 +102,8 @@ type EngineOrchestration interface {
 	ReleaseChangeoverWait(processID int64, disp engine.ReleaseDisposition) (engine.ReleaseChangeoverWaitResult, error)
 	SequentialChangeoverCutover(processID, nodeID int64, calledBy string) error
 	StageNodeChangeoverMaterial(processID, nodeID int64) (*domain.Order, error)
-	EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*domain.Order, error)
-	ReleaseNodeIntoProduction(processID, nodeID int64) (*domain.Order, error)
+	EvacuateNode(processID, nodeID int64, partialQty int64) (*domain.Order, error)
+	DeliverNewMaterialForChangeover(processID, nodeID int64) (*domain.Order, error)
 	SwitchNodeToTarget(processID, nodeID int64) error
 	SwitchOperatorStationToTarget(processID, stationID int64) error
 	SyncProcessCounter(processID int64) error

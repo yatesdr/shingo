@@ -203,6 +203,12 @@ func (e *Engine) Start() {
 	}
 	e.plcMgr.StartPolling()
 
+	// PLC-driven changeover-completion monitor: subscribes to each
+	// auto-cutover-enabled process's Changeover_Active tag and fires
+	// CompleteProcessProductionCutover on debounced falling edges. No-op
+	// when no processes have the flag set.
+	e.startCutoverMonitor()
+
 	e.startedAt = time.Now()
 	e.logFn("Engine started: namespace=%s line_id=%s", e.cfg.Namespace, e.cfg.LineID)
 }

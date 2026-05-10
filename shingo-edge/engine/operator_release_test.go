@@ -307,7 +307,7 @@ func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
 // LINE's release should fan out to.
 func seedManualSwapClaim(t *testing.T, db *store.DB, prefix string, role protocol.ClaimRole, payloadCode, outbound string) (nodeID, claimID int64) {
 	t.Helper()
-	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" mswap", "active_production", "", "", false)
+	processID, err := db.CreateProcess(prefix+"-PROC", prefix+" mswap", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create mswap process: %v", err)
 	}
@@ -344,67 +344,49 @@ func seedManualSwapClaim(t *testing.T, db *store.DB, prefix string, role protoco
 	return nodeID, claimID
 }
 
-// TestReleaseOrderWithLineside_CaptureLinesideFiresL1 verifies the relocated
-// L1 trigger: when the line operator declares a consume bin emptied
-// (DispositionCaptureLineside), the side-cycle creates a retrieve_empty
-// order at the matching loader. Pre-2026-04-29 this fired on REQUEST
-// regardless of how the bin was eventually returned.
-func TestReleaseOrderWithLineside_CaptureLinesideFiresL1(t *testing.T) {
-	db := testEngineDB(t)
-	_, lineNodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix: "L1-FIRE", PayloadCode: "PART-L1", UOPCapacity: 100, InitialUOP: 8,
-	})
-	db.SetProcessNodeRuntime(lineNodeID, &claimID, 8)
-	loaderNodeID, _ := seedManualSwapClaim(t, db, "L1-FIRE-LDR", "produce", "PART-L1", "STORAGE-NODE")
+// TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1 pins the
+// post-AMR-trial architecture: the consume-side release path no longer
+// creates an L1 retrieve_empty at the loader. L1 is owned by Core's
+// wiring_kanban DemandSignal pipeline (Core observes the bin movement
+// at storage, emits to Edge, Edge fires L1 with current supply count).
+//
+// Both DispositionCaptureLineside and DispositionSendPartialBack are
+// covered: neither releases of the consume side should fire L1, since
+// the trigger is the system's filled-bin count, not the operator's
+// release event.
+func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
+	cases := []struct {
+		name string
+		mode ReleaseDispositionMode
+	}{
+		{"capture_lineside", DispositionCaptureLineside},
+		{"send_partial_back", DispositionSendPartialBack},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := testEngineDB(t)
+			_, lineNodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+				Prefix: "L1-NOFIRE-" + tc.name, PayloadCode: "PART-" + tc.name, UOPCapacity: 100, InitialUOP: 8,
+			})
+			db.SetProcessNodeRuntime(lineNodeID, &claimID, 8)
+			loaderNodeID, _ := seedManualSwapClaim(t, db, "LDR-"+tc.name, "produce", "PART-"+tc.name, "STORAGE-NODE")
 
-	orderID := stageOrderForConsumeNode(t, db, lineNodeID, "uuid-l1-fire")
-	eng := testEngine(t, db)
-	if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionCaptureLineside}); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+			orderID := stageOrderForConsumeNode(t, db, lineNodeID, "uuid-"+tc.name)
+			eng := testEngine(t, db)
+			if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: tc.mode}); err != nil {
+				t.Fatalf("ReleaseOrderWithLineside: %v", err)
+			}
 
-	loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
-	if err != nil {
-		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
-	}
-	var found bool
-	for _, o := range loaderOrders {
-		if o.RetrieveEmpty && o.PayloadCode == "PART-L1" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("capture_lineside release on consume node should fire L1 retrieve_empty at loader; got %+v", loaderOrders)
-	}
-}
-
-// TestReleaseOrderWithLineside_SendPartialBackSkipsL1 locks in the central
-// reason for relocating the trigger: when the line returns a partially-
-// consumed bin to the supermarket, no new empty needs to land at the loader.
-// Firing L1 here would over-supply the loader queue.
-func TestReleaseOrderWithLineside_SendPartialBackSkipsL1(t *testing.T) {
-	db := testEngineDB(t)
-	_, lineNodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
-		Prefix: "L1-SKIP", PayloadCode: "PART-L1S", UOPCapacity: 100, InitialUOP: 30,
-	})
-	db.SetProcessNodeRuntime(lineNodeID, &claimID, 30)
-	loaderNodeID, _ := seedManualSwapClaim(t, db, "L1-SKIP-LDR", "produce", "PART-L1S", "STORAGE-NODE")
-
-	orderID := stageOrderForConsumeNode(t, db, lineNodeID, "uuid-l1-skip")
-	eng := testEngine(t, db)
-	if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionSendPartialBack}); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
-
-	loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
-	if err != nil {
-		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
-	}
-	for _, o := range loaderOrders {
-		if o.RetrieveEmpty && o.PayloadCode == "PART-L1S" {
-			t.Errorf("send_partial_back must not fire L1; found %+v", o)
-		}
+			loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
+			if err != nil {
+				t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+			}
+			for _, o := range loaderOrders {
+				if o.RetrieveEmpty && o.PayloadCode == "PART-"+tc.name {
+					t.Errorf("consume-side release (%s) must not fire L1 — owned by DemandSignal now; found %+v", tc.name, o)
+				}
+			}
+		})
 	}
 }
 
@@ -586,7 +568,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 			db := testEngineDB(t)
 
 			// Process + style + node, mode-specific claim.
-			processID, err := db.CreateProcess("REL-MODE-"+tc.name, "", "active_production", "", "", false)
+			processID, err := db.CreateProcess("REL-MODE-"+tc.name, "", "active_production", "", "", false, false)
 			if err != nil {
 				t.Fatalf("create process: %v", err)
 			}

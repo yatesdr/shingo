@@ -88,15 +88,24 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 
 	// EmitOrderCompleted fires for any terminal status (confirmed, cancelled,
 	// failed) — it's the engine bus's "order reached terminal" signal. Every
-	// handler below is a successful-path responder: UOP reset, runtime turn-
-	// over, side-cycle L2 dispatch, changeover state advancement, keep-staged
-	// pre-stage. Running them on a cancel or fail leaks state forward as if
-	// the bin had arrived. Plant 2026-04-28: a cancelled L1 retrieve_empty
-	// fired the L2 side-cycle move, evicting the empty already parked at the
-	// loader (incident orders #483 → #484). Failure cleanup belongs on
-	// EventOrderFailed (handleNodeOrderFailed) and the cancel/fail paths
-	// themselves — not here.
+	// success-path handler below assumes a delivered bin: UOP reset, runtime
+	// turnover, side-cycle L2 dispatch, changeover state advancement,
+	// keep-staged pre-stage. Running them on a cancel or fail leaks state
+	// forward as if the bin had arrived. Plant 2026-04-28: a cancelled L1
+	// retrieve_empty fired the L2 side-cycle move, evicting the empty already
+	// parked at the loader (incident orders #483 → #484).
+	//
+	// Non-success terminal (cancelled or failed) on an order linked to a
+	// changeover_node_task takes a separate path so the linked task is
+	// stamped to a final disposition instead of being left at
+	// staging_requested. Failure cleanup also flows through the existing
+	// EventOrderFailed → handleNodeOrderFailed; the orphan handler
+	// composes with that for the StatusCancelled gap, where
+	// EventOrderFailed does not fire.
 	if ctx.order.Status != orders.StatusConfirmed {
+		if ctx.order.Status == orders.StatusCancelled || ctx.order.Status == orders.StatusFailed {
+			e.handleOrphanedTaskOrderCompleted(ctx.order)
+		}
 		return
 	}
 
@@ -140,6 +149,9 @@ func (e *Engine) handleStagedDelivery(ctx *orderCompletionCtx) bool {
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "staged"); err != nil {
 		log.Printf("update node task %d to staged: %v", ctx.nodeTask.ID, err)
+	}
+	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
+		log.Printf("changeover: try-complete after staged delivery for process %d: %v", ctx.node.ProcessID, err)
 	}
 	return true
 }
@@ -213,6 +225,9 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
+	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
+		log.Printf("changeover: try-complete after complex Order B for process %d: %v", ctx.node.ProcessID, err)
+	}
 	return true
 }
 
@@ -261,6 +276,9 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 	// fires for each).
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
+	}
+	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
+		log.Printf("changeover: try-complete after release for process %d: %v", ctx.node.ProcessID, err)
 	}
 	return true
 }
@@ -472,6 +490,48 @@ func (e *Engine) maybePreStage(node *processes.Node, claim *processes.NodeClaim)
 	_ = claim
 }
 
+// handleOrphanedTaskOrderCompleted reconciles a changeover_node_task
+// whose linked order reached cancelled/failed outside
+// cancelProcessChangeoverInternal — for example the operator's per-order
+// cancel button at apiCancelOrder, or a Core-side cancellation. Without
+// this handler the task is left at its prior non-terminal state
+// (staging_requested, release_requested, …) because the success-path
+// handler bails on Status != Confirmed and EventOrderFailed only fires
+// for StatusFailed.
+//
+// Direct order-ID lookup (FindChangeoverNodeTaskByOrderID) bypasses
+// GetActiveProcessChangeover so historical orphans whose changeover
+// already finalized are still reconcilable. The completed/cancelled
+// changeover-state guard (B.6 in the v2 plan) lives here rather than on
+// handleNodeOrderFailed, where GetActiveProcessChangeover would already
+// have filtered finalized rows.
+func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
+	task, changeoverState, err := e.db.FindChangeoverNodeTaskByOrderID(order.ID)
+	if err != nil {
+		return
+	}
+	if changeoverState == "completed" || changeoverState == "cancelled" {
+		log.Printf("orphan: skip task %d stamp — changeover %d already %s", task.ID, task.ProcessChangeoverID, changeoverState)
+		return
+	}
+	newState := "cancelled"
+	if order.Status == orders.StatusFailed {
+		newState = "error"
+	}
+	if err := e.db.UpdateChangeoverNodeTaskState(task.ID, newState); err != nil {
+		log.Printf("orphan: update task %d to %s: %v", task.ID, newState, err)
+		return
+	}
+	log.Printf("orphan: task %d stamped %s for order %d (%s)", task.ID, newState, order.ID, order.Status)
+	node, err := e.db.GetProcessNode(task.ProcessNodeID)
+	if err != nil {
+		return
+	}
+	if err := e.tryCompleteProcessChangeover(node.ProcessID); err != nil {
+		log.Printf("orphan: try-complete after stamp for process %d: %v", node.ProcessID, err)
+	}
+}
+
 // ── Order failure ───────────────────────────────────────────────────
 
 // handleNodeOrderFailed marks a changeover node task as "error" when one
@@ -509,6 +569,9 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 			log.Printf("update node task %d to error: %v", nodeTask.ID, err)
 		}
 		log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
+		if err := e.tryCompleteProcessChangeover(node.ProcessID); err != nil {
+			log.Printf("changeover: try-complete after order-failure for process %d: %v", node.ProcessID, err)
+		}
 	}
 }
 

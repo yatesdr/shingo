@@ -76,7 +76,7 @@ func (e *capturingEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason str
 // for the given core node name. Returns the ids needed for wiring.
 func seedProcessStyleNode(t *testing.T, db *store.DB, procName, styleName, coreNode string) (processID, styleID, nodeID int64) {
 	t.Helper()
-	pid, err := db.CreateProcess(procName, "", "active_production", "", "", false)
+	pid, err := db.CreateProcess(procName, "", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("CreateProcess: %v", err)
 	}

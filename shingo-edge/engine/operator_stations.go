@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 
-	"shingo/protocol"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -169,12 +168,17 @@ func (e *Engine) refreshOrderStation(orderID int64) (*storeorders.Order, error) 
 // the operator finishes a bin without partial-quantity tracking.
 //
 // 2026-04-27 v2 direction Phase 3 #11: this surface (ReleaseNodeEmpty,
-// ReleaseNodePartial, ReleaseNodeIntoProduction) was reviewed for
+// ReleaseNodePartial, DeliverNewMaterialForChangeover) was reviewed for
 // possible consolidation. All three have production callers via HTTP
 // handlers (apiReleaseNodeEmpty, apiReleaseNodePartial,
-// apiReleaseNodeIntoProduction at handlers_operator_stations.go) plus
+// apiDeliverNewMaterialForChangeover at handlers_operator_stations.go) plus
 // internal calls from the changeover flow (operator_node_changeover.go).
-// No deletion warranted; surface is intentional.
+// No deletion warranted; surface is intentional. F' renamed two methods:
+// ReleaseNodeIntoProduction → DeliverNewMaterialForChangeover (creates a
+// new staged-deliver/restore order, not a /addBlocks release), and
+// EmptyNodeForToolChange → EvacuateNode (the wizard's middle step,
+// renamed away from "release" so it doesn't compete with the per-node
+// Release modal that fires ReleaseOrderWithLineside on the evac order).
 func (e *Engine) ReleaseNodeEmpty(nodeID int64) (*storeorders.Order, error) {
 	return e.ReleaseNodePartial(nodeID, 1)
 }
@@ -218,16 +222,11 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order
 	}
 	order = refreshed
 
-	// Side-cycle trigger: the Material page's Release button routes
-	// through here, not through the disposition-aware ReleaseOrderWithLineside
-	// path. Mirror the consume-role hook from operator_release.go:206-211 so
-	// every consume-side release surface participates in the L1 reorder
-	// check. The decision (threshold, dedup) lives entirely in
-	// MaybeCreateLoaderEmptyIn — same single-decision-point as the other
-	// release surfaces.
-	if claim.Role == protocol.ClaimRoleConsume {
-		e.MaybeCreateLoaderEmptyIn(claim.PayloadCode)
-	}
+	// L1 (consume-side empty-in) used to fire here too, mirroring the
+	// hook in operator_release.go. Removed when Core's wiring_kanban
+	// DemandSignal pipeline became the single trigger source for L1.
+	// See the same explanation in operator_release.go's side-cycle
+	// comment block.
 
 	return order, nil
 }

@@ -156,7 +156,7 @@ func TestRuntimeBinding_ReleaseClickFallsBackToZero(t *testing.T) {
 // legs land on the same value; idempotent rewrite.
 func TestRuntimeBinding_ReleaseClickResolvesSupplyViaSibling(t *testing.T) {
 	db := testEngineDB(t)
-	processID, err := db.CreateProcess("RC-SIB", "two-robot sibling", "active_production", "", "", false)
+	processID, err := db.CreateProcess("RC-SIB", "two-robot sibling", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
@@ -532,7 +532,7 @@ func TestRuntimeBinding_ConfirmDoesNotTouchCache(t *testing.T) {
 // managed; PLC tick deltas must not affect bin counts on those nodes.
 func TestRuntimeBinding_ManualSwapNodesSkipPLCTicks(t *testing.T) {
 	db := testEngineDB(t)
-	processID, err := db.CreateProcess("MS-SKIP", "manual swap skip", "active_production", "", "", false)
+	processID, err := db.CreateProcess("MS-SKIP", "manual swap skip", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

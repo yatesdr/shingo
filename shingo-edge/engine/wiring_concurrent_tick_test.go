@@ -593,7 +593,7 @@ func stageABOrder(t *testing.T, db *store.DB, nodeID int64, uuid, payload string
 // from from-style while preparing the to-style switch.
 func seedRunoutScenario(t *testing.T, db *store.DB, prefix string) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
-	processID, _ = db.CreateProcess(prefix+"-PROC", prefix+" runout", "active_production", "", "", false)
+	processID, _ = db.CreateProcess(prefix+"-PROC", prefix+" runout", "active_production", "", "", false, false)
 	nodeID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: prefix + "-NODE",
 		Code: prefix[:3], Name: prefix + " Node", Sequence: 1, Enabled: true,
@@ -621,7 +621,7 @@ func seedRunoutScenario(t *testing.T, db *store.DB, prefix string) (processID, n
 // styles for changeover scenarios.
 func seedTwoStyleNode(t *testing.T, db *store.DB, prefix string) (processID, nodeID, styleX, styleY, claimX, claimY int64) {
 	t.Helper()
-	processID, _ = db.CreateProcess(prefix+"-PROC", prefix+" two style", "active_production", "", "", false)
+	processID, _ = db.CreateProcess(prefix+"-PROC", prefix+" two style", "active_production", "", "", false, false)
 	nodeID, _ = db.CreateProcessNode(processes.NodeInput{
 		ProcessID: processID, CoreNodeName: prefix + "-NODE",
 		Code: prefix[:3], Name: prefix + " Node", Sequence: 1, Enabled: true,

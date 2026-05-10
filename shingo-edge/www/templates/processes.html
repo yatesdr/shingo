@@ -86,6 +86,14 @@
                 </fieldset>
 
                 <fieldset style="border:1px solid var(--border);border-radius:6px;padding:0.75rem 1rem;margin-bottom:1rem">
+                    <legend style="font-weight:600;font-size:0.9rem;padding:0 0.5rem">PLC-Driven Cutover</legend>
+                    <label style="display:flex;align-items:center;gap:0.5rem">
+                        <input type="checkbox" id="auto-cutover-enabled" {{if .ActiveProcess.AutoCutoverEnabled}}checked{{end}}>
+                        <span>Auto-complete changeover when the PLC's <code>Changeover_Active</code> tag falls (2s debounce). Tag is derived from the counter tag's parent struct (e.g. <code>MES_P42_Spot_Nut_Farm_2.Changeover_Active</code>). Operator still clicks Start Changeover in shingo first; this only drives the completion side. Requires the production counter above to be configured.</span>
+                    </label>
+                </fieldset>
+
+                <fieldset style="border:1px solid var(--border);border-radius:6px;padding:0.75rem 1rem;margin-bottom:1rem">
                     <legend style="font-weight:600;font-size:0.9rem;padding:0 0.5rem">Styles</legend>
                     <table class="table" style="margin:0 0 0.75rem 0">
                         <thead>

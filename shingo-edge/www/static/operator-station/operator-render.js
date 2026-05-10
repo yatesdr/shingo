@@ -46,10 +46,35 @@ export function renderHeader() {
     // Bin-loader board mode (single manual_swap claim) is operated by a
     // forklift driver — strip the changeover/cutover buttons. Those flows
     // belong on a regular operator station, not this view.
+    //
+    // HMI Tier 2 (post-F'-Phase-2): the changeover-wide RELEASE header
+    // button was removed. Each node tile is the release surface during
+    // changeover — operator clicks the tile, gets the same production
+    // release modal, picks disposition (or accepts the auto-detected
+    // pre-fill), submits. Phase 2's deferred-supply chain auto-releases
+    // the supply leg when the evac robot picks up.
+    //
+    // CUTOVER button: shown only when the process does NOT have PLC-
+    // driven cutover enabled (Theme C's auto_cutover_enabled flag). On
+    // auto-cutover processes, the PLC's falling edge on Changeover_Active
+    // fires CompleteProcessProductionCutoverFromPLC automatically — a
+    // manual button creates ambiguity about who's "really" in charge of
+    // cutover, and a stuck PLC bit is something to investigate, not to
+    // mask with a manual override. Theme B's gate is the safety net for
+    // both paths.
     if (!isBoardMode()) {
         if (view.active_changeover) {
-            headerActions.appendChild(headerBtn('RELEASE', 'release', confirmReleaseWait));
-            headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
+            if (!view.process.auto_cutover_enabled) {
+                headerActions.appendChild(headerBtn('CUTOVER', 'cutover', confirmCutover));
+            }
+            // CANCEL during active changeover: aborts every in-flight evac+
+            // supply order on the process's node tasks, marks the changeover
+            // row cancelled, and resets the process back to active_production
+            // on the from-style. Core handles safe resolution of orders
+            // already mid-route (queued → disappears, loaded robot → store-
+            // order rerouted to a safe drop). Operator wraps this in a
+            // confirmation modal because the action is destructive.
+            headerActions.appendChild(headerBtn('CANCEL', 'cancel-changeover', confirmCancelChangeover));
         } else {
             headerActions.appendChild(headerBtn('CHANGEOVER', 'changeover', openChangeoverPicker));
         }
@@ -108,51 +133,33 @@ async function startChangeover(toStyleID, styleName) {
     if (ok) showToast('Changeover to ' + styleName + ' started', 'success');
 }
 
-// confirmReleaseWait fires the changeover release. The engine auto-detects
-// per-evac-leg disposition from the line's runtime cache — no operator
-// input needed: if the line still has parts (RemainingUOPCached > 0), the
-// evac is sent as send_partial_back with that exact count; otherwise
-// release_empty. Supply legs always pass through with no manifest action.
-//
-// Toast based on the {released, pending} response counts so the operator
-// knows when a click only fired some legs (others not yet staged).
-//
-// TODO: if a future plant scenario needs operator override of the
-// auto-detected count, add a modal here that pre-populates from the
-// runtime and posts disposition + partial_count. Engine accepts the
-// override today; this is a frontend-only addition.
-async function confirmReleaseWait() {
+
+async function confirmCancelChangeover() {
     const view = getView();
     const pid = view.process.id;
-    const station = (view.station.name && view.station.name.trim()) || 'operator';
-    try {
-        const res = await fetch('/api/processes/' + pid + '/changeover/release-wait', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ called_by: station })
-        });
-        if (!res.ok) {
-            const text = await res.text();
-            let msg;
-            try { msg = JSON.parse(text).error || text; } catch { msg = text; }
-            showToast(msg || 'Release failed', 'error');
-            return;
-        }
-        const data = await res.json().catch(() => ({}));
-        const released = data.released | 0;
-        const pending = data.pending | 0;
-        if (loadViewRef) await loadViewRef();
-        if (released === 0 && pending === 0) {
-            showToast('Nothing to release', 'info');
-        } else if (pending === 0) {
-            showToast('Released ' + released + (released === 1 ? ' robot' : ' robots'), 'success');
-        } else {
-            showToast('Released ' + released + ' — ' + pending + ' still en route, click again when ready', 'info');
-        }
-    } catch (err) {
-        console.error('release-wait', err);
-        showToast('Network error', 'error');
-    }
+    const co = view.active_changeover;
+    const overlay = el('div', { className: 'os-co-picker-overlay' });
+    const panel = el('div', { className: 'os-co-picker' });
+    panel.appendChild(el('div', { className: 'os-co-picker-title',
+        textContent: 'Cancel changeover to ' + (co.to_style_name || 'target') + '?' }));
+    panel.appendChild(el('div', { className: 'os-co-picker-subtitle',
+        textContent: 'In-flight robots will be recalled. Loaded bins are routed to safe storage.' }));
+
+    const confirm = el('button', { className: 'os-co-picker-btn danger', textContent: 'CANCEL CHANGEOVER' });
+    confirm.addEventListener('click', async () => {
+        overlay.remove();
+        const ok = await postAction('/api/processes/' + pid + '/changeover/cancel', {}, loadViewRef);
+        if (ok) showToast('Changeover cancelled', 'success');
+    });
+    panel.appendChild(confirm);
+
+    const dismiss = el('button', { className: 'os-co-picker-btn cancel', textContent: 'KEEP CHANGEOVER' });
+    dismiss.addEventListener('click', () => overlay.remove());
+    panel.appendChild(dismiss);
+
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', evt => { if (evt.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
 }
 
 async function confirmCutover() {
@@ -304,6 +311,13 @@ function renderPayloadBoard(entry) {
 
         var card = el('div', { className: 'os-board-card' });
 
+        // "Load now" — empty bin physically sitting at the loader AND there's
+        // demand for this specific payload. This is the action moment for the
+        // operator: an empty has arrived, the system wants this payload,
+        // operator picks the bin up and stuffs it. Green glow + pulse layered
+        // over the base state class so the operator's eye is drawn here.
+        var loadNow = nodeBinIsEmpty && hasPayloadDemand;
+
         if (payloadDelivered) {
             card.classList.add('os-board-delivered');
         } else if (payloadInTransit) {
@@ -317,8 +331,22 @@ function renderPayloadBoard(entry) {
         } else {
             card.classList.add('os-board-nodemand');
         }
+        if (loadNow) card.classList.add('os-board-load-now');
 
         card.appendChild(el('div', { className: 'os-board-code', textContent: code }));
+
+        // Demand count — number of outstanding L1 orders for this payload.
+        // Renders large + prominent so a forklift driver can see at a glance
+        // how many bins are queued behind this card. Hidden when 0 (the
+        // "no kanban demand" case carries its own NO DEMAND tag).
+        if (payloadOrders.length > 0) {
+            var demandBox = el('div', { className: 'os-board-demand' });
+            demandBox.appendChild(el('div', { className: 'os-board-demand-num',
+                textContent: String(payloadOrders.length) }));
+            demandBox.appendChild(el('div', { className: 'os-board-demand-label',
+                textContent: payloadOrders.length === 1 ? 'BIN QUEUED' : 'BINS QUEUED' }));
+            card.appendChild(demandBox);
+        }
 
         var statusText, statusClass;
         if (payloadDelivered) {
@@ -423,6 +451,13 @@ function createNodeButton(entry) {
     if (isReplenishing(entry)) btn.classList.add('os-replenishing');
     if (entry.changeover_task) btn.classList.add('os-changeover');
 
+    // HMI Tier 1: light up blue when the click is ready to do something.
+    // Same screen handles production and changeover; the gate behind the
+    // click is different, isReleaseReady picks the right one per context.
+    if (isReleaseReady(entry)) {
+        btn.classList.add('os-release-ready');
+    }
+
     btn.appendChild(el('span', { className: 'os-node-name', textContent: entry.node.name }));
 
     const icon = statusIcon(entry);
@@ -491,6 +526,51 @@ function appendOrderStatusChips(btn, entry) {
         }));
     });
     btn.appendChild(row);
+}
+
+// isReleaseReady drives the os-release-ready blue glow. Same screen
+// handles both production and changeover; the gate behind the operator's
+// click differs per context, so this function picks the right gate.
+//
+// Changeover context (entry.changeover_task present):
+//   - Phase 2 model. Click fires evac via ReleaseOrderWithLineside; the
+//     supply leg auto-fires on evac pickup-confirm via HandleBinPickedUp's
+//     deferred-supply branch.
+//   - Paired evac+supply: glow when evac is at `staged` (robot at slot
+//     wait point) AND supply is at `in_transit` or `staged` (dispatched,
+//     past Manager.ReleaseOrder's pre-dispatch guard — supply has a
+//     VendorOrderID so the auto-release will fire cleanly when evac
+//     picks up). If supply is still `acknowledged` or earlier, clicking
+//     would fire evac but the supply auto-release would silently no-op
+//     against the pre-dispatch supply order; the glow waits past that.
+//   - Standalone evac (no paired supply, e.g. drop-situation tasks):
+//     glow when evac is at `staged`. No supply chain to coordinate.
+//
+// Production context (no changeover_task):
+//   - Two-robot swap mid-cycle. Click fires ReleaseStagedOrders which
+//     releases both legs at once — needs both robots at wait points.
+//     entry.swap_ready (computed in store/station_views.go ComputeSwapReady)
+//     already encodes that condition. Single source of truth: defer to
+//     it for the production gate.
+//
+// Returns false otherwise (pre-dispatch, terminal, single-robot consume
+// where Release is always available without a "ready" moment, etc.).
+function isReleaseReady(entry) {
+    const task = entry.changeover_task;
+    if (task) {
+        const orders = entry.orders || [];
+        const byID = (id) => id == null ? null : orders.find(o => o.id === id) || null;
+        const evac = byID(task.old_material_release_order_id);
+        const supply = byID(task.next_material_order_id);
+        if (!evac) return false;
+        if (evac.status !== 'staged') return false;
+        if (supply) {
+            return supply.status === 'in_transit' || supply.status === 'staged';
+        }
+        return true;
+    }
+    // Production context — defer to the existing swap_ready flag.
+    return !!entry.swap_ready;
 }
 
 function nodeColorClass(entry) {

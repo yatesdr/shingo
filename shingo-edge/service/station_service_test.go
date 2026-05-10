@@ -23,7 +23,7 @@ func TestStation_SetNodes(t *testing.T) {
 	db := testdb.Open(t)
 	svc := NewStationService(db)
 
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
 	id, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	// Initial set.
@@ -83,7 +83,7 @@ func TestStation_SetNodesDisablesRatherThanDeletesWhenOrdersActive(t *testing.T)
 	db := testdb.Open(t)
 	svc := NewStationService(db)
 
-	pid, _ := db.CreateProcess("P", "", "", "", "", false)
+	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
 	id, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	svc.SetNodes(id, []string{"N-KEEP"})

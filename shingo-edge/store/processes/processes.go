@@ -37,16 +37,18 @@ type (
 func scanProcess(scanner interface{ Scan(...interface{}) error }) (Process, error) {
 	var p Process
 	var createdAt string
-	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &createdAt); err != nil {
+	if err := scanner.Scan(&p.ID, &p.Name, &p.Description, &p.ActiveStyleID, &p.TargetStyleID, &p.ProductionState, &p.CounterPLCName, &p.CounterTagName, &p.CounterEnabled, &p.AutoCutoverEnabled, &createdAt); err != nil {
 		return p, err
 	}
 	p.CreatedAt = helpers.ScanTime(createdAt)
 	return p, nil
 }
 
+const processSelect = `id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, auto_cutover_enabled, created_at`
+
 // List returns every process row sorted by name.
 func List(db *sql.DB) ([]Process, error) {
-	rows, err := db.Query(`SELECT id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, created_at FROM processes ORDER BY name`)
+	rows, err := db.Query(`SELECT ` + processSelect + ` FROM processes ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +66,7 @@ func List(db *sql.DB) ([]Process, error) {
 
 // Get returns one process by id.
 func Get(db *sql.DB, id int64) (*Process, error) {
-	l, err := scanProcess(db.QueryRow(`SELECT id, name, description, active_style_id, target_style_id, production_state, counter_plc_name, counter_tag_name, counter_enabled, created_at FROM processes WHERE id = ?`, id))
+	l, err := scanProcess(db.QueryRow(`SELECT `+processSelect+` FROM processes WHERE id = ?`, id))
 	if err != nil {
 		return nil, err
 	}
@@ -72,12 +74,12 @@ func Get(db *sql.DB, id int64) (*Process, error) {
 }
 
 // Create inserts a process and returns the new row id.
-func Create(db *sql.DB, name, description, productionState string, counterPLC, counterTag string, counterEnabled bool) (int64, error) {
+func Create(db *sql.DB, name, description, productionState string, counterPLC, counterTag string, counterEnabled, autoCutoverEnabled bool) (int64, error) {
 	if productionState == "" {
 		productionState = "active_production"
 	}
-	res, err := db.Exec(`INSERT INTO processes (name, description, production_state, counter_plc_name, counter_tag_name, counter_enabled) VALUES (?, ?, ?, ?, ?, ?)`,
-		name, description, productionState, counterPLC, counterTag, counterEnabled)
+	res, err := db.Exec(`INSERT INTO processes (name, description, production_state, counter_plc_name, counter_tag_name, counter_enabled, auto_cutover_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		name, description, productionState, counterPLC, counterTag, counterEnabled, autoCutoverEnabled)
 	if err != nil {
 		return 0, err
 	}
@@ -85,12 +87,12 @@ func Create(db *sql.DB, name, description, productionState string, counterPLC, c
 }
 
 // Update modifies a process row.
-func Update(db *sql.DB, id int64, name, description, productionState string, counterPLC, counterTag string, counterEnabled bool) error {
+func Update(db *sql.DB, id int64, name, description, productionState string, counterPLC, counterTag string, counterEnabled, autoCutoverEnabled bool) error {
 	if productionState == "" {
 		productionState = "active_production"
 	}
-	_, err := db.Exec(`UPDATE processes SET name=?, description=?, production_state=?, counter_plc_name=?, counter_tag_name=?, counter_enabled=? WHERE id=?`,
-		name, description, productionState, counterPLC, counterTag, counterEnabled, id)
+	_, err := db.Exec(`UPDATE processes SET name=?, description=?, production_state=?, counter_plc_name=?, counter_tag_name=?, counter_enabled=?, auto_cutover_enabled=? WHERE id=?`,
+		name, description, productionState, counterPLC, counterTag, counterEnabled, autoCutoverEnabled, id)
 	return err
 }
 

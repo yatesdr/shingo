@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 	"shingoedge/orders"
 	"shingoedge/store"
@@ -400,6 +402,36 @@ type ReleaseChangeoverWaitResult struct {
 // frontend + handler-shape change.
 //
 // disp.CalledBy is plumbed through for audit on both legs.
+//
+// F' Phase 2 — evac-first sequencing for paired tasks.
+//
+// When a task has both an evac leg (OldMaterialReleaseOrderID) and a
+// supply leg (NextMaterialOrderID), only the evac fires at click time.
+// The supply leg auto-releases mid-evac, when the evac robot finishes
+// picking up the bin and starts moving away from the slot. This is
+// NOT when the evac order is fully complete (drop at outbound is later);
+// it's when the pickup block within the evac order transitions to
+// FINISHED, which is precisely the moment the slot is physically clear
+// for the supply robot. Core's RDS poller emits the per-block FINISHED
+// transition and publishes BinPickedUp; handler_bin_picked_up.go's
+// HandleBinPickedUp looks up the paired supply order via
+// GetChangeoverNodeTaskByEvacOrderID (NOT SiblingOrderID — that's used
+// by operator-station two-robot paths and is intentionally untouched
+// here) and calls releaseUnlessTerminal on it. This eliminates the
+// crash-race window where the supply robot could arrive at the slot
+// before the evac robot has cleared it.
+//
+// Pre-Phase-2 behaviour: both legs fired together, gated on
+// Status==Staged. If the operator clicked the changeover-wide release
+// before R1 was at its wait point, the staged-only switch made the
+// click a no-op — but flipping to "release any non-terminal" without
+// the evac-first defer would race R2 to the slot. Phase 2 collapses
+// the staged-only switch (Friday-incident fix) AND adds the defer
+// (the safer architecture the collapse demands).
+//
+// Result.Pending: includes both deferred-supply legs (non-terminal,
+// will fire on evac pickup) and any standalone-leg orders we skipped
+// because they weren't in a releasable state at click time.
 func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition) (ReleaseChangeoverWaitResult, error) {
 	var result ReleaseChangeoverWaitResult
 
@@ -433,20 +465,27 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 		// SendPartialBack with a count) wins if present.
 		evacDisp := evacDispositionForTask(e, task, disp)
 
-		// Two_robot swap and sequential evacuate create both orders up
-		// front with embedded wait steps. Release both order slots on a
-		// single operator click. For single_robot/manual paths,
-		// NextMaterialOrderID completes before Order B exists, so the
-		// extra release is a harmless no-op (order won't be staged).
+		hasEvac := task.OldMaterialReleaseOrderID != nil
+		hasSupply := task.NextMaterialOrderID != nil
+		pairedEvacSupply := hasEvac && hasSupply
+
 		type slot struct {
 			id   *int64
 			disp ReleaseDisposition
 			kind string // for log/error context only
 		}
-		slots := []slot{{id: task.OldMaterialReleaseOrderID, disp: evacDisp, kind: "evac"}}
-		if task.NextMaterialOrderID != nil {
+		var slots []slot
+		if hasEvac {
+			slots = append(slots, slot{id: task.OldMaterialReleaseOrderID, disp: evacDisp, kind: "evac"})
+		}
+		// Supply leg fires at click time ONLY when there's no paired evac
+		// (e.g., add-situation tasks). When paired with evac, we defer to
+		// HandleBinPickedUp which fires the sibling release on evac pickup
+		// confirm — see Phase 2 docstring above.
+		if hasSupply && !pairedEvacSupply {
 			slots = append(slots, slot{id: task.NextMaterialOrderID, disp: supplyDisp, kind: "supply"})
 		}
+
 		for _, s := range slots {
 			if s.id == nil {
 				continue
@@ -457,23 +496,27 @@ func (e *Engine) ReleaseChangeoverWait(processID int64, disp ReleaseDisposition)
 				failures = append(failures, fmt.Errorf("node %s (%s): get order: %w", task.NodeName, s.kind, err))
 				continue
 			}
-			switch {
-			case order.Status == orders.StatusStaged:
-				if err := e.ReleaseOrderWithLineside(order.ID, s.disp); err != nil {
-					log.Printf("release changeover wait node %s (%s): %v", task.NodeName, s.kind, err)
-					failures = append(failures, fmt.Errorf("node %s (%s): %w", task.NodeName, s.kind, err))
-					continue
-				}
-				result.Released++
-			case isPendingOrderStatus(order.Status):
-				// Order exists, expected to stage soon, but isn't there yet —
-				// operator clicked early. Count so the handler can tell them
-				// "released N, still M pending" instead of nothing.
+			if orders.IsTerminal(order.Status) {
+				// Already released earlier, cancelled, or failed. No
+				// operator action required.
+				continue
+			}
+			if err := e.ReleaseOrderWithLineside(order.ID, s.disp); err != nil {
+				log.Printf("release changeover wait node %s (%s): %v", task.NodeName, s.kind, err)
+				failures = append(failures, fmt.Errorf("node %s (%s): %w", task.NodeName, s.kind, err))
+				continue
+			}
+			result.Released++
+		}
+
+		// Count deferred supply legs (paired-with-evac) so the operator
+		// HMI can show "released N, M deferred for pickup-confirm." Skip
+		// counting if the supply is already terminal.
+		if pairedEvacSupply {
+			supply, err := e.db.GetOrder(*task.NextMaterialOrderID)
+			if err == nil && !orders.IsTerminal(supply.Status) {
 				result.Pending++
 			}
-			// Terminal statuses (released, delivered, confirmed, cancelled,
-			// failed) deliberately fall through uncounted — they don't need
-			// operator action.
 		}
 	}
 	return result, errors.Join(failures...)
@@ -631,15 +674,114 @@ func (e *Engine) SequentialChangeoverCutover(processID, nodeID int64, calledBy s
 	return nil
 }
 
+// canCompleteChangeover reports whether a changeover row may transition to
+// "completed". Both checks are required:
+//
+//  1. Every changeover_node_tasks row must be in a terminal state (per
+//     domain.IsNodeTaskStateTerminal).
+//  2. Every order referenced by a node task (NextMaterialOrderID,
+//     OldMaterialReleaseOrderID) must be in a terminal status (per
+//     protocol.IsTerminal).
+//
+// Pinning both checks keeps the gate honest if either state machine
+// drifts independently of the other. Returns (false, reasons, nil) when
+// blocked, with one human-readable line per blocker — the HMI handler
+// surfaces these so operators see "task at node ALN_002 in
+// staging_requested; order 703 in in_transit" rather than a generic 500.
+func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []string, error) {
+	tasks, err := e.db.ListChangeoverNodeTasks(changeoverID)
+	if err != nil {
+		return false, nil, err
+	}
+	var reasons []string
+	for _, task := range tasks {
+		if !domain.IsNodeTaskStateTerminal(task.State) {
+			reasons = append(reasons, fmt.Sprintf("task at node %s in %s", task.NodeName, task.State))
+		}
+	}
+	seen := map[int64]struct{}{}
+	for _, task := range tasks {
+		for _, orderID := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
+			if orderID == nil {
+				continue
+			}
+			if _, dup := seen[*orderID]; dup {
+				continue
+			}
+			seen[*orderID] = struct{}{}
+			order, err := e.db.GetOrder(*orderID)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				return false, nil, err
+			}
+			if !protocol.IsTerminal(order.Status) {
+				reasons = append(reasons, fmt.Sprintf("order %d in %s", order.ID, order.Status))
+			}
+		}
+	}
+	if len(reasons) > 0 {
+		return false, reasons, nil
+	}
+	return true, nil, nil
+}
+
+// CompleteProcessProductionCutover runs the operator-driven cutover:
+// gate → flip active style → finalize. Trigger source is recorded as
+// "operator-hmi" on the changeover row.
 func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
+	return e.completeCutover(processID, "operator-hmi")
+}
+
+// CompleteProcessProductionCutoverFromPLC is the entry point used by
+// the PLC-driven cutover monitor. Identical to the operator-driven
+// path except the changeover row records "plc-auto" as the trigger
+// source for audit/postmortem.
+func (e *Engine) CompleteProcessProductionCutoverFromPLC(processID int64) error {
+	return e.completeCutover(processID, "plc-auto")
+}
+
+func (e *Engine) completeCutover(processID int64, triggeredBy string) error {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
 	if err != nil {
 		return err
+	}
+	// Gate must run before any of the five mutations below. The function
+	// flips active_style_id (line below) before writing the completed row;
+	// inserting the gate after the flip would leave the system on the
+	// to-style with an still-in-progress changeover row if the gate
+	// blocked. findActiveClaim resolves from process.ActiveStyleID, so
+	// that order is unrecoverable without operator intervention.
+	if ok, reasons, err := e.canCompleteChangeover(changeover.ID); err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("cannot cutover: %s", strings.Join(reasons, "; "))
 	}
 	toStyleID := changeover.ToStyleID
 	if err := e.db.SetActiveStyle(processID, &toStyleID); err != nil {
 		return err
 	}
+	return e.finalizeChangeoverRow(processID, changeover.ID, triggeredBy)
+}
+
+// finalizeChangeoverRow runs the post-gate, post-flip steps shared by
+// CompleteProcessProductionCutover and tryCompleteProcessChangeover:
+// clear target style, mark production active, sync the counter
+// reporting-point's style_id, and write the completed row.
+//
+// Step order is load-bearing: restoreChangeoverState reads
+// (active_style, changeover.state) jointly during crash recovery and the
+// invariant it relies on is "active_style flipped ⇒ changeover writeable
+// to completed." Reordering would break that recovery contract.
+//
+// SyncProcessCounter is included here so the auto-completion path
+// (tryCompleteProcessChangeover) keeps the reporting point's style_id
+// in sync — without this, a PLC- or event-driven cutover via the auto
+// path would land with the reporting point still pointing at the
+// from-style.
+func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredBy string) error {
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {
 		return err
 	}
@@ -649,7 +791,7 @@ func (e *Engine) CompleteProcessProductionCutover(processID int64) error {
 	if err := e.SyncProcessCounter(processID); err != nil {
 		return err
 	}
-	return e.db.UpdateProcessChangeoverState(changeover.ID, "completed")
+	return e.db.UpdateProcessChangeoverStateWithTrigger(changeoverID, "completed", triggeredBy)
 }
 
 func (e *Engine) CancelProcessChangeover(processID int64) error {
@@ -737,40 +879,32 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 	if process.ActiveStyleID == nil || *process.ActiveStyleID != changeover.ToStyleID {
 		return nil
 	}
+	// Gate before the station-task force-switch. Today's auto-completion
+	// path checked node-task terminality only; the broader gate also
+	// requires linked orders to be terminal so a late-arriving order
+	// completion doesn't leave a node task stranded after the row is
+	// closed.
+	ok, _, err := e.canCompleteChangeover(changeover.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
 	tasks, err := e.db.ListChangeoverStationTasks(changeover.ID)
 	if err != nil {
 		return err
-	}
-	allNodeTasks, err := e.db.ListChangeoverNodeTasks(changeover.ID)
-	if err != nil {
-		return err
-	}
-	allDone := true
-	for _, nodeTask := range allNodeTasks {
-		if nodeTask.State != "switched" && nodeTask.State != "unchanged" && nodeTask.State != "verified" && nodeTask.State != "released" {
-			allDone = false
-			break
-		}
-	}
-	if !allDone {
-		return nil
 	}
 	for _, task := range tasks {
 		if err := e.db.UpdateChangeoverStationTaskState(task.ID, "switched"); err != nil {
 			log.Printf("changeover: update station task state: %v", err)
 		}
 	}
-	if err := e.db.SetTargetStyle(processID, nil); err != nil {
-		return err
-	}
-	if err := e.db.SetProcessProductionState(processID, "active_production"); err != nil {
-		return err
-	}
-	return e.db.UpdateProcessChangeoverState(changeover.ID, "completed")
+	return e.finalizeChangeoverRow(processID, changeover.ID, "auto-task-terminal")
 }
 
 func isNodeTaskTerminal(task *processes.NodeTask) bool {
-	return task.State == "switched" || task.State == "verified" || task.State == "unchanged"
+	return domain.IsNodeTaskStateTerminal(task.State)
 }
 
 func ensureNodeTaskCanRequestOrder(orderID *int64, action string, db *store.DB) error {

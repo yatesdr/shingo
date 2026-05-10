@@ -32,16 +32,48 @@ package engine
 // Best-effort — failures log and continue rather than rejecting the
 // envelope; the reconciler heals any miscount on the next pass.
 func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
-	if e.inventoryDelta == nil {
-		// Nothing to flush; reporter not wired (test contexts).
-		return
-	}
-
 	order, err := e.db.GetOrderByUUID(orderUUID)
 	if err != nil || order == nil {
 		// Unknown order — Edge may have GC'd a terminal order, or the
 		// envelope is for a different station. Log and move on.
 		e.logFn("bin_picked_up: order uuid=%s not found", orderUUID)
+		return
+	}
+
+	// F' Phase 2 — deferred-supply release on evac pickup confirm.
+	//
+	// When the picked-up order is the evac leg of a changeover node
+	// task (matched via task.OldMaterialReleaseOrderID = order.ID),
+	// release the paired supply leg (task.NextMaterialOrderID) now
+	// that the evac robot has the old bin and is moving away from the
+	// slot. The evac order itself is still RUNNING (it has dropoff
+	// blocks remaining at outbound) — we trigger on the pickup block's
+	// FINISHED transition mid-order, NOT on evac order completion.
+	// The pickup-block-done moment is the only one that matters: it
+	// means the slot is physically clear for the supply robot to come
+	// in. ReleaseChangeoverWait deliberately defers the supply leg at
+	// click time precisely so this auto-release closes the loop
+	// deterministically — no slot-collision race.
+	//
+	// Scoped to changeover paths only via the task lookup. Operator-
+	// station two-robot paths (operator_stations.go, operator_produce,
+	// operator_bin_ops) use SiblingOrderID for their own supply↔evac
+	// pairing and continue to rely on operator-click release; we don't
+	// touch them here.
+	//
+	// Runs before the inventoryDelta-nil early-return so the chain
+	// works whether or not the delta reporter is wired (the chain is
+	// orthogonal to delta flushing). releaseUnlessTerminal is
+	// idempotent against terminal supply orders.
+	if task, terr := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); terr == nil && task != nil && task.NextMaterialOrderID != nil {
+		supplyDisp := ReleaseDisposition{CalledBy: "auto-evac-pickup"}
+		if rerr := e.releaseUnlessTerminal(*task.NextMaterialOrderID, "deferred-supply-after-evac-pickup", supplyDisp); rerr != nil {
+			e.logFn("bin_picked_up: deferred-supply release order %d for evac %s: %v", *task.NextMaterialOrderID, orderUUID, rerr)
+		}
+	}
+
+	if e.inventoryDelta == nil {
+		// Nothing to flush; reporter not wired (test contexts).
 		return
 	}
 

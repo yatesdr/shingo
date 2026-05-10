@@ -48,8 +48,8 @@ func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
 		r.Post("/processes/{id}/changeover/cancel", h.apiCancelProcessChangeover)
 		r.Post("/processes/{id}/changeover/release-wait", h.apiReleaseChangeoverWait)
 		r.Post("/processes/{id}/changeover/stage-node/{nodeID}", h.apiStageNodeChangeoverMaterial)
-		r.Post("/processes/{id}/changeover/empty-node/{nodeID}", h.apiEmptyNodeForToolChange)
-		r.Post("/processes/{id}/changeover/release-node/{nodeID}", h.apiReleaseNodeIntoProduction)
+		r.Post("/processes/{id}/changeover/evacuate-node/{nodeID}", h.apiEvacuateNode)
+		r.Post("/processes/{id}/changeover/deliver-material/{nodeID}", h.apiDeliverNewMaterialForChangeover)
 		r.Post("/processes/{id}/changeover/switch-station/{stationID}", h.apiSwitchOperatorStationToTarget)
 		r.Post("/processes/{id}/changeover/switch-node/{nodeID}", h.apiSwitchNodeToTarget)
 
@@ -944,18 +944,18 @@ func TestOperatorStations_StageNodeChangeoverMaterial_InvalidNodeID(t *testing.T
 	assertJSONPath(t, resp, "error", "invalid node id")
 }
 
-func TestOperatorStations_EmptyNodeForToolChange_Success(t *testing.T) {
+func TestOperatorStations_EvacuateNode_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
 	body := map[string]int64{"qty": 3}
-	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/empty-node/2", body, nil)
+	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/evacuate-node/2", body, nil)
 	assertStatus(t, resp, http.StatusOK)
 }
 
-func TestOperatorStations_ReleaseNodeIntoProduction_Success(t *testing.T) {
+func TestOperatorStations_DeliverNewMaterialForChangeover_Success(t *testing.T) {
 	_, router := newOperatorStationsRouter(t)
 
-	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/release-node/2", nil, nil)
+	resp := doRequest(t, router, "POST", "/api/processes/1/changeover/deliver-material/2", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
 }
 

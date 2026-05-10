@@ -565,6 +565,29 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 
 // apiReleaseChangeoverWait gates the changeover wait-points (ready / tooling done).
 //
+// HMI ORPHAN as of 2026-05-10 (HMI Tier 2). The operator-station
+// changeover-wide RELEASE header button was removed and per-node release
+// (apiReleaseOrder on the evac order, with HandleBinPickedUp auto-firing
+// the supply on pickup-confirm) became the only operator-driven release
+// path during changeover. No HMI surface currently posts to this
+// endpoint. Two reasons it's intentionally kept rather than deleted:
+//
+//   1. Future bulk shortcut. If floor pushes back on per-node click count
+//      for happy-path multi-node changeovers, a "Release All Ready Nodes"
+//      button can repurpose this endpoint with a single confirmation
+//      modal upfront (vs the toast-after-batch pattern we removed).
+//
+//   2. ReleaseChangeoverWait still has an audit-driven contract worth
+//      preserving — Phase 2's evac-first sequencing + pending-supply
+//      counter — so the engine method stays as a future composition
+//      target. Deleting the HTTP wrapper would force a re-derivation if
+//      either need surfaces.
+//
+// If neither condition pans out within a reasonable window, this
+// endpoint + handler + the router registration are safe to remove
+// together. Until then: marked dead so a reader doesn't waste time
+// chasing why the HMI doesn't hit it.
+//
 // Body shape (when present) matches apiReleaseOrder /
 // apiReleaseNodeStagedOrders — disposition string + qty_by_part / partial
 // count + called_by. The disposition the operator chose at the modal
@@ -575,10 +598,8 @@ func (h *Handlers) apiCancelProcessChangeover(w http.ResponseWriter, r *http.Req
 // Body / called_by are OPTIONAL on this endpoint. A bare-body POST is
 // accepted and operates with default disposition — evac legs default to
 // capture_lineside (release_empty on the wire), supply legs always no-op.
-// Legacy clients and the current operator-station Release button (which
-// posts only {called_by: ...} with no disposition) keep working
-// unchanged. Empty called_by is logged and replaced with
-// "operator_station" so audit trails remain populated.
+// Empty called_by is logged and replaced with "operator_station" so
+// audit trails remain populated if a future caller posts without it.
 func (h *Handlers) apiReleaseChangeoverWait(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
@@ -678,7 +699,7 @@ func (h *Handlers) apiStageNodeChangeoverMaterial(w http.ResponseWriter, r *http
 	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 
-func (h *Handlers) apiEmptyNodeForToolChange(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiEvacuateNode(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
@@ -693,16 +714,16 @@ func (h *Handlers) apiEmptyNodeForToolChange(w http.ResponseWriter, r *http.Requ
 		Qty int64 `json:"qty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	order, err := h.orchestration.EmptyNodeForToolChange(processID, nodeID, req.Qty)
+	order, err := h.orchestration.EvacuateNode(processID, nodeID, req.Qty)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "empty-for-tool-change"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "evacuate-node"}})
 	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 
-func (h *Handlers) apiReleaseNodeIntoProduction(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiDeliverNewMaterialForChangeover(w http.ResponseWriter, r *http.Request) {
 	processID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid process id")
@@ -713,12 +734,12 @@ func (h *Handlers) apiReleaseNodeIntoProduction(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.orchestration.ReleaseNodeIntoProduction(processID, nodeID)
+	order, err := h.orchestration.DeliverNewMaterialForChangeover(processID, nodeID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "release-into-production"}})
+	h.eventHub.Broadcast(SSEEvent{Type: "changeover-update", Data: map[string]string{"action": "deliver-new-material"}})
 	writeJSONWithTrigger(w, r, order, "refreshChangeover")
 }
 

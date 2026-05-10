@@ -234,6 +234,36 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		eng.HandleBinPickedUp(p.OrderUUID, p.BinID)
 	})
 
+	// Kanban demand signals from Core's wiring_kanban driver. EdgeHandler
+	// already decodes the protocol.SubjectDemandSignal payload; without
+	// this setter the decoder logs and drops it. Produce-role signals
+	// translate to L1 retrieve_empty creation at the loader serving the
+	// signaled payload (MaybeCreateLoaderEmptyIn handles dedupe and the
+	// reorder-point gate). Consume-role signals are dropped here; the
+	// unloader-side U1 path is fired from operator releases on the line,
+	// not from Core demand, and adding a second entry point would
+	// double-fire.
+	//
+	// Long-term refactor target. This is the convergence point for the
+	// L1 trigger architecture. Today: event-driven via Core's
+	// wiring_kanban (Core observes bin movements at storage, emits
+	// DemandSignal). If the kanban model evolves — Edge-side periodic
+	// sweep over loader payloads, push the gate decision elsewhere,
+	// per-payload thresholds via the kanban calculator
+	// (shingo-kanban-calculator-design.md), or a Core-side sweep
+	// instead of event-driven — this handler is the single trigger
+	// surface to refactor from. Pre-this branch L1 also fired from
+	// operator_release.go and operator_stations.go release-time hooks;
+	// those were removed once DemandSignal became reliable, leaving
+	// this as the sole entry point.
+	edgeHandler.SetDemandSignalHandler(func(s *protocol.DemandSignal) {
+		if s == nil || s.Role != protocol.ClaimRoleProduce {
+			return
+		}
+		eng.MaybeCreateLoaderEmptyIn(s.PayloadCode)
+	})
+	log.Printf("kanban: demand-signal handler wired — produce-role signals route to MaybeCreateLoaderEmptyIn")
+
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)
 	}

@@ -26,7 +26,7 @@ func (testOrderEmitter) EmitOrderFailed(int64, string, protocol.OrderType, strin
 func seedProduceNode(t *testing.T, db *store.DB, swapMode string) (processID, nodeID, styleID, claimID int64) {
 	t.Helper()
 
-	processID, err := db.CreateProcess("PRODUCE-PROC", "produce test", "active_production", "", "", false)
+	processID, err := db.CreateProcess("PRODUCE-PROC", "produce test", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

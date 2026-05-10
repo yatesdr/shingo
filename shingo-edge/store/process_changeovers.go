@@ -39,6 +39,14 @@ func (db *DB) UpdateProcessChangeoverState(id int64, state string) error {
 	return processes.UpdateChangeoverState(db.DB, id, state)
 }
 
+// UpdateProcessChangeoverStateWithTrigger changes the state and records
+// the trigger source ("operator-hmi" | "plc-auto" | "auto-task-terminal")
+// on a process_changeover. Empty triggeredBy preserves the existing
+// audit value, so multi-step finalize paths don't blank it out.
+func (db *DB) UpdateProcessChangeoverStateWithTrigger(id int64, state, triggeredBy string) error {
+	return processes.UpdateChangeoverStateWithTrigger(db.DB, id, state, triggeredBy)
+}
+
 // ListChangeoverStationTasks returns every changeover_station_task
 // for one changeover.
 func (db *DB) ListChangeoverStationTasks(changeoverID int64) ([]processes.StationTask, error) {
@@ -72,6 +80,20 @@ func (db *DB) ListChangeoverNodeTasksByStation(changeoverID, stationID int64) ([
 // (changeover, node) pair.
 func (db *DB) GetChangeoverNodeTaskByNode(changeoverID, processNodeID int64) (*processes.NodeTask, error) {
 	return processes.GetChangeoverNodeTaskByNode(db.DB, changeoverID, processNodeID)
+}
+
+// FindChangeoverNodeTaskByOrderID returns the node task that references
+// orderID and its parent changeover's state. Direct order-ID match
+// without changeover-state filtering — see processes.FindChangeoverNodeTaskByOrderID.
+func (db *DB) FindChangeoverNodeTaskByOrderID(orderID int64) (*processes.NodeTask, string, error) {
+	return processes.FindChangeoverNodeTaskByOrderID(db.DB, orderID)
+}
+
+// GetChangeoverNodeTaskByEvacOrderID returns the node task that
+// references orderID via OldMaterialReleaseOrderID (evac leg only).
+// See processes.GetChangeoverNodeTaskByEvacOrderID.
+func (db *DB) GetChangeoverNodeTaskByEvacOrderID(orderID int64) (*processes.NodeTask, error) {
+	return processes.GetChangeoverNodeTaskByEvacOrderID(db.DB, orderID)
 }
 
 // UpdateChangeoverNodeTaskState writes the state on a node task.

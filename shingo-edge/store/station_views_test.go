@@ -21,7 +21,7 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, run
 	}
 	t.Cleanup(func() { d.Close() })
 
-	processID, err := d.CreateProcess("SWAP-PROC", "swap test", "active_production", "", "", false)
+	processID, err := d.CreateProcess("SWAP-PROC", "swap test", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -20,7 +21,7 @@ type changeoverNodeCtx struct {
 }
 
 // loadChangeoverNodeCtx loads and validates the common data needed by
-// StageNodeChangeoverMaterial, EmptyNodeForToolChange, and ReleaseNodeIntoProduction.
+// StageNodeChangeoverMaterial, EvacuateNode, and DeliverNewMaterialForChangeover.
 // Each caller adds its own ensureNodeTaskCanRequestOrder check after this returns.
 func (e *Engine) loadChangeoverNodeCtx(processID, nodeID int64) (*changeoverNodeCtx, error) {
 	changeover, err := e.db.GetActiveProcessChangeover(processID)
@@ -122,7 +123,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	return order, nil
 }
 
-func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int64) (*orders.Order, error) {
+func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*orders.Order, error) {
 	ctx, err := e.loadChangeoverNodeCtx(processID, nodeID)
 	if err != nil {
 		return nil, err
@@ -156,7 +157,7 @@ func (e *Engine) EmptyNodeForToolChange(processID, nodeID int64, partialQty int6
 	return order, nil
 }
 
-func (e *Engine) ReleaseNodeIntoProduction(processID, nodeID int64) (*orders.Order, error) {
+func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orders.Order, error) {
 	ctx, err := e.loadChangeoverNodeCtx(processID, nodeID)
 	if err != nil {
 		return nil, err
@@ -254,7 +255,7 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 					stationNodeTasks, _ := e.db.ListChangeoverNodeTasksByStation(changeover.ID, stationTask.OperatorStationID)
 					allDone := true
 					for _, snt := range stationNodeTasks {
-						if snt.State != "switched" && snt.State != "unchanged" && snt.State != "verified" {
+						if !domain.IsNodeTaskStateTerminal(snt.State) {
 							allDone = false
 							break
 						}

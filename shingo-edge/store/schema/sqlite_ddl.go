@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS processes (
     counter_plc_name    TEXT NOT NULL DEFAULT '',
     counter_tag_name    TEXT NOT NULL DEFAULT '',
     counter_enabled     INTEGER NOT NULL DEFAULT 0,
+    auto_cutover_enabled INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -225,6 +226,7 @@ CREATE TABLE IF NOT EXISTS process_changeovers (
     notes           TEXT NOT NULL DEFAULT '',
     started_at      TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at    TEXT,
+    triggered_by    TEXT NOT NULL DEFAULT '',
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

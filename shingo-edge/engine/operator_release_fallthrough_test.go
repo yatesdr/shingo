@@ -174,7 +174,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 	// Process + node with no claim. Mirrors a misconfigured-station
 	// scenario: the node row exists but no claim row points at it, so
 	// runtime.ActiveClaimID is nil and resolveReleaseClaim returns nil.
-	processID, err := db.CreateProcess("ORPHAN-PROC", "orphan", "active_production", "", "", false)
+	processID, err := db.CreateProcess("ORPHAN-PROC", "orphan", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}

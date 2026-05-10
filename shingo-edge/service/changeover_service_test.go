@@ -17,7 +17,7 @@ import (
 // package-private to package store.
 func seedProcessStyle(t *testing.T, db *store.DB, procName, styleName string) (int64, int64) {
 	t.Helper()
-	pid, err := db.CreateProcess(procName, "desc", "active_production", "", "", false)
+	pid, err := db.CreateProcess(procName, "desc", "active_production", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create process: %v", err)
 	}
