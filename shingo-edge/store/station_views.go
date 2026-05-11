@@ -90,24 +90,34 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 //
 // Non-two-robot claims always return false — their single staged order is
 // still released via the per-order /api/orders/{id}/release endpoint.
-func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.RuntimeState) bool {
+func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.RuntimeState, task *processes.NodeTask) bool {
 	if claim == nil || (claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex) {
 		return false
 	}
-	if runtime == nil {
-		return false
-	}
-	// Resolve the evac (B) order via runtime.StagedOrderID — the canonical
-	// slot — falling back to the supply leg's durable SiblingOrderID when
-	// StagedOrderID has been nulled by a downstream handler. This mirrors
-	// resolveSwapPair in engine/operator_stations.go and keeps the UI gate
-	// aligned with what ReleaseStagedOrders itself can resolve.
-	evacOrderID := runtime.StagedOrderID
-	if evacOrderID == nil && runtime.ActiveOrderID != nil {
-		supply, err := db.GetOrder(*runtime.ActiveOrderID)
-		if err == nil && supply != nil && supply.SiblingOrderID != nil {
-			evacOrderID = supply.SiblingOrderID
+	// Resolve the evac (B) order via three fallbacks, in order of canonicality:
+	//  1. runtime.StagedOrderID — the canonical evac slot.
+	//  2. supply leg's durable SiblingOrderID — when StagedOrderID got nulled
+	//     but ActiveOrderID survived (mirrors resolveSwapPair in
+	//     engine/operator_stations.go).
+	//  3. changeover node task's OldMaterialReleaseOrderID — when BOTH runtime
+	//     pointers are nil. This pointer is set by the planner at order-
+	//     creation time and not cleared by runtime mutations, so it survives
+	//     handler_bin_picked_up and other clears that strip the runtime
+	//     pointers. Plant 2026-05-11 (SNF2 ALN_001): both runtime pointers
+	//     were nil at release time despite Core showing the evac at staged,
+	//     so the modal showed WAITING FOR OTHER ROBOT with no escape.
+	var evacOrderID *int64
+	if runtime != nil {
+		evacOrderID = runtime.StagedOrderID
+		if evacOrderID == nil && runtime.ActiveOrderID != nil {
+			supply, err := db.GetOrder(*runtime.ActiveOrderID)
+			if err == nil && supply != nil && supply.SiblingOrderID != nil {
+				evacOrderID = supply.SiblingOrderID
+			}
 		}
+	}
+	if evacOrderID == nil && task != nil && task.OldMaterialReleaseOrderID != nil {
+		evacOrderID = task.OldMaterialReleaseOrderID
 	}
 	if evacOrderID == nil {
 		return false

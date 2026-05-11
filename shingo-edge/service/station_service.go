@@ -182,7 +182,7 @@ func (s *StationService) BuildView(stationID int64) (*store.OperatorStationView,
 		// orders went silent on the loader UI after the kanban-spam guard
 		// stopped firing process-node-tracked orders here.
 		nodeView.Orders, _ = s.db.ListActiveOrdersByProcessNodeOrSource(node.ID, node.CoreNodeName)
-		nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime)
+		nodeView.SwapReady = store.ComputeSwapReady(s.db, nodeView.ActiveClaim, runtime, nodeView.ChangeoverTask)
 		// Lineside buckets power the active-bar and stranded-chip UI on
 		// the operator station modal. Best-effort — absence of buckets
 		// just means the node has nothing pulled to lineside yet.

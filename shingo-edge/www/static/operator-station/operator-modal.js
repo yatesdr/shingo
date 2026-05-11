@@ -401,7 +401,26 @@ export function renderModal(entry) {
         }
     }
 
-    if (task) {
+    // 4-step CO ladder (STAGE → EMPTY → RELEASE → SWITCH) only renders for
+    // tool-change-style flows where the operator must manually advance each
+    // phase. For a regular swap with no tool change, the top-region RELEASE
+    // (swap_ready path) does the whole thing in one click; showing the ladder
+    // implies a workflow the operator shouldn't be doing and makes EMPTY FOR
+    // TOOL CHANGE clickable when no tool change is actually required.
+    //
+    // Marker logic:
+    //   - situation='evacuate': by construction the to-claim has
+    //     EvacuateOnChangeover=true (that's what makes a swap into an
+    //     evacuate per changeover.go:91). Always show.
+    //   - situation='drop' + from-claim has EvacuateOnChangeover=true: the
+    //     operator marked this node for tool-change-style evacuation
+    //     (piece-1 fix keeps the task at empty_requested until pickup).
+    //   - Otherwise: hide. The simple top-region RELEASE covers the case.
+    const needsToolChangeFlow = task && (
+        task.situation === 'evacuate' ||
+        (task.situation === 'drop' && claim && claim.evacuate_on_changeover)
+    );
+    if (task && needsToolChangeFlow) {
         const view = getView();
         const pid = view.process.id;
         const nid = entry.node.id;

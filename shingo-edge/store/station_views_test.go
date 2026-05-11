@@ -97,7 +97,7 @@ func TestComputeSwapReady_BothStaged(t *testing.T) {
 	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
 		t.Fatalf("mark B staged: %v", err)
 	}
-	if !ComputeSwapReady(db, claim, runtime) {
+	if !ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=true when both orders staged")
 	}
 }
@@ -121,7 +121,7 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
 		t.Fatalf("mark B staged: %v", err)
 	}
-	if !ComputeSwapReady(db, claim, runtime) {
+	if !ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=true when StagedOrderID (B, lineside robot) is at staged — the new gating signal")
 	}
 
@@ -133,7 +133,7 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 	if err := db.UpdateOrderStatus(bID, "in_transit"); err != nil {
 		t.Fatalf("mark B in_transit: %v", err)
 	}
-	if ComputeSwapReady(db, claim, runtime) {
+	if ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=false when only ActiveOrderID (A) is staged and B has not yet arrived — B is the gate, not A")
 	}
 }
@@ -151,7 +151,7 @@ func TestComputeSwapReady_OneStagedOneTerminal(t *testing.T) {
 			if err := db.UpdateOrderStatus(bID, terminalStatus); err != nil {
 				t.Fatalf("mark B %s: %v", terminalStatus, err)
 			}
-			if ComputeSwapReady(db, claim, runtime) {
+			if ComputeSwapReady(db, claim, runtime, nil) {
 				t.Errorf("expected SwapReady=false when sibling is terminal (%s) — cycle is over", terminalStatus)
 			}
 		})
@@ -168,14 +168,14 @@ func TestComputeSwapReady_NonTwoRobotClaim(t *testing.T) {
 	}
 	// Flip the claim mode — SwapReady should only fire for two_robot swaps.
 	claim.SwapMode = "single_robot"
-	if ComputeSwapReady(db, claim, runtime) {
+	if ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=false for single_robot claim")
 	}
 }
 
 func TestComputeSwapReady_NilClaim(t *testing.T) {
 	db, _, runtime, _, _ := seedSwapReadyFixture(t)
-	if ComputeSwapReady(db, nil, runtime) {
+	if ComputeSwapReady(db, nil, runtime, nil) {
 		t.Error("expected SwapReady=false when claim is nil")
 	}
 }
@@ -184,7 +184,43 @@ func TestComputeSwapReady_MissingRuntimeOrders(t *testing.T) {
 	db, claim, _, _, _ := seedSwapReadyFixture(t)
 	// Runtime with no tracked orders.
 	empty := &processes.RuntimeState{}
-	if ComputeSwapReady(db, claim, empty) {
+	if ComputeSwapReady(db, claim, empty, nil) {
 		t.Error("expected SwapReady=false when runtime has no tracked orders")
+	}
+}
+
+// Plant 2026-05-11 (SNF2 ALN_001): both runtime pointers were nil at release
+// time but the changeover node task still pointed at the evac order, which
+// was at staged in the DB. ComputeSwapReady must fall back to the task's
+// durable OldMaterialReleaseOrderID so the operator gets RELEASE instead of
+// being parked on WAITING FOR OTHER ROBOT with no escape.
+func TestComputeSwapReady_TaskFallbackWhenRuntimePointersNil(t *testing.T) {
+	db, claim, _, _, bID := seedSwapReadyFixture(t)
+	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
+		t.Fatalf("mark B staged: %v", err)
+	}
+	// Runtime with no tracked orders — simulates handler_bin_picked_up or
+	// other clears that nulled both ActiveOrderID and StagedOrderID.
+	empty := &processes.RuntimeState{}
+	// Node task with OldMaterialReleaseOrderID pointing at the evac (B).
+	// The planner stamps this at order-creation time; it's the durable
+	// pointer that survives runtime mutations.
+	task := &processes.NodeTask{OldMaterialReleaseOrderID: &bID}
+	if !ComputeSwapReady(db, claim, empty, task) {
+		t.Error("expected SwapReady=true via task.OldMaterialReleaseOrderID fallback when both runtime pointers are nil")
+	}
+}
+
+// Symmetric guard: task fallback must still require B at staged. If the
+// task points at the evac but the evac isn't actually parked yet, no release.
+func TestComputeSwapReady_TaskFallbackRequiresStaged(t *testing.T) {
+	db, claim, _, _, bID := seedSwapReadyFixture(t)
+	if err := db.UpdateOrderStatus(bID, "in_transit"); err != nil {
+		t.Fatalf("mark B in_transit: %v", err)
+	}
+	empty := &processes.RuntimeState{}
+	task := &processes.NodeTask{OldMaterialReleaseOrderID: &bID}
+	if ComputeSwapReady(db, claim, empty, task) {
+		t.Error("expected SwapReady=false when task-fallback evac is not yet at staged")
 	}
 }
