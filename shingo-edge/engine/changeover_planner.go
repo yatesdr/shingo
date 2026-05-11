@@ -200,7 +200,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
  		// choreography needed — just deliver a bin directly to the node.
  		// Ignore InboundStaging / swap mode entirely; those are for swap
  		// coordination where a resident bin must be evacuated first.
- 		action.OrderA = &changeover.OrderSpec{
+ 		action.SupplyOrder = &changeover.OrderSpec{
  			Retrieve: &changeover.RetrieveOrderSpec{
  				RetrieveEmpty: diff.ToClaim.Role == protocol.ClaimRoleProduce,
  				DeliveryNode:  diff.ToClaim.CoreNodeName,
@@ -236,7 +236,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		// AutoConfirm=false so the staged-release flow gates on the operator's
 		// release click at the lineside. The operator confirms partial count
 		// via the standard release-prompt dialog before the robot picks up.
-		action.OrderB = complexSpecWithPayload("", diff.CoreNodeName, releaseSteps, false, diff.FromClaim.PayloadCode)
+		action.EvacOrder = complexSpecWithPayload("", diff.CoreNodeName, releaseSteps, false, diff.FromClaim.PayloadCode)
 		action.LogTag = "drop"
 		// EvacuateOnChangeover gates whether cutover waits for this drop.
 		// When false, the bin can be retrieved at leisure; cutover does
@@ -262,13 +262,13 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.NodeClaim, fallbackAutoConfirm bool) changeover.NodeAction {
 	if toClaim.InboundStaging != "" {
 		if steps := BuildStageSteps(toClaim); steps != nil {
-			action.OrderA = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, steps, false)
+			action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, steps, false)
 			action.NextState = "staging_requested"
 			action.LogTag = "fallback_staging"
 			return action
 		}
 	}
-	action.OrderA = &changeover.OrderSpec{
+	action.SupplyOrder = &changeover.OrderSpec{
 		Retrieve: &changeover.RetrieveOrderSpec{
 			RetrieveEmpty: toClaim.Role == protocol.ClaimRoleProduce,
 			DeliveryNode:  toClaim.CoreNodeName,
@@ -289,30 +289,30 @@ func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *proc
 	case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex:
 		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		action.OrderA = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, deliverSteps, false)
-		action.OrderB = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
+		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, deliverSteps, false)
+		action.EvacOrder = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
 		action.NextState = "staging_requested"
 		action.LogTag = "keep_staged_split"
 	default:
 		combinedSteps := BuildKeepStagedCombinedSteps(fromClaim, toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
-		action.OrderA = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, combinedSteps, false)
-		action.OrderB = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
+		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, combinedSteps, false)
+		action.EvacOrder = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
 		action.NextState = "staging_requested"
 		action.LogTag = "keep_staged_combined"
 	}
 	return action
 }
 
-// assignDispatch wires a ChangeoverDispatch into NodeAction.OrderA/OrderB.
+// assignDispatch wires a ChangeoverDispatch into NodeAction.SupplyOrder/EvacOrder.
 // processNode is the line node both legs belong to (CoreNodeName); empty
-// DeliveryNode for OrderB lets Core resolve from the steps.
+// DeliveryNode for the evac order lets Core resolve from the steps.
 func assignDispatch(action *changeover.NodeAction, processNode string, d ChangeoverDispatch) {
 	if d.StepsA != nil {
-		action.OrderA = complexSpec(d.DeliveryNodeA, processNode, d.StepsA, d.AutoConfirmA)
+		action.SupplyOrder = complexSpec(d.DeliveryNodeA, processNode, d.StepsA, d.AutoConfirmA)
 	}
 	if d.StepsB != nil {
-		action.OrderB = complexSpec("", processNode, d.StepsB, d.AutoConfirmB)
+		action.EvacOrder = complexSpec("", processNode, d.StepsB, d.AutoConfirmB)
 	}
 }
 

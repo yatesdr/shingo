@@ -43,15 +43,20 @@ type OrderSpec struct {
 // NodeAction is the per-node plan: zero, one, or two orders to create plus
 // the post-creation node-task state. If Err is non-nil the applier records
 // the failure (and sets the node task to "error") without creating orders.
+//
+// SupplyOrder and EvacOrder are positional, not robot identities. A drop
+// fills only EvacOrder (single robot, evac steps with a staged-wait gate).
+// A swap fills both (resupply + removal). The names describe what the
+// order does, not which "side" of a two-robot pair it belongs to.
 type NodeAction struct {
-	NodeID    int64
-	NodeName  string
-	Situation string
-	OrderA    *OrderSpec // "next material" — typically the staging order
-	OrderB    *OrderSpec // "old material release" — swap/evac/release
-	NextState string     // node-task state to set on success
-	LogTag    string     // short tag used in success log line
-	Err       error      // pre-flight validation failure (planning-time)
+	NodeID       int64
+	NodeName     string
+	Situation    string
+	SupplyOrder  *OrderSpec // "next material" — staging / delivery order. nil for drops.
+	EvacOrder    *OrderSpec // "old material release" — swap/evac/release order. nil for adds.
+	NextState    string     // node-task state to set on success
+	LogTag       string     // short tag used in success log line
+	Err          error      // pre-flight validation failure (planning-time)
 }
 
 // Plan is the full set of per-node actions for a changeover.

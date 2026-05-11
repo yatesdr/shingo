@@ -34,34 +34,34 @@ func (e *Engine) applyChangeoverPlan(co *processes.Changeover, plan changeover.P
 func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover.NodeAction) {
 	nodeID := action.NodeID
 
-	var orderAID, orderBID *int64
-	if action.OrderA != nil {
-		id, err := e.createPlannedOrder(nodeID, action.OrderA)
+	var supplyID, evacID *int64
+	if action.SupplyOrder != nil {
+		id, err := e.createPlannedOrder(nodeID, action.SupplyOrder)
 		if err != nil {
-			log.Printf("changeover: auto-create orders for %s (%s): create order A: %v — operator must handle manually",
+			log.Printf("changeover: auto-create orders for %s (%s): create supply order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
 			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
 				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
 			}
 			return
 		}
-		orderAID = &id
+		supplyID = &id
 	}
-	if action.OrderB != nil {
-		id, err := e.createPlannedOrder(nodeID, action.OrderB)
+	if action.EvacOrder != nil {
+		id, err := e.createPlannedOrder(nodeID, action.EvacOrder)
 		if err != nil {
-			log.Printf("changeover: auto-create orders for %s (%s): create order B: %v — operator must handle manually",
+			log.Printf("changeover: auto-create orders for %s (%s): create evac order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
 			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
 				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
 			}
 			return
 		}
-		orderBID = &id
+		evacID = &id
 	}
 
-	if orderAID != nil || orderBID != nil {
-		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, orderAID, orderBID); err != nil {
+	if supplyID != nil || evacID != nil {
+		if err := e.db.LinkChangeoverNodeOrders(nodeTask.ID, supplyID, evacID); err != nil {
 			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
 		}
 	}
@@ -77,10 +77,10 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// Same fingerprint as the 2026-04-23 ALN_002 incident
 	// (operator_release.go:497-498), fixed for the operator-initiated
 	// path but never backported here.
-	if orderAID != nil && orderBID != nil {
-		if err := e.db.LinkOrderSiblings(*orderAID, *orderBID); err != nil {
+	if supplyID != nil && evacID != nil {
+		if err := e.db.LinkOrderSiblings(*supplyID, *evacID); err != nil {
 			log.Printf("changeover: link order siblings %d↔%d for node task %d: %v",
-				*orderAID, *orderBID, nodeTask.ID, err)
+				*supplyID, *evacID, nodeTask.ID, err)
 		}
 	}
 	if action.NextState != "" {
@@ -89,7 +89,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		}
 	}
 
-	logChangeoverAction(action, orderAID, orderBID)
+	logChangeoverAction(action, supplyID, evacID)
 }
 
 func (e *Engine) createPlannedOrder(nodeID int64, spec *changeover.OrderSpec) (int64, error) {
@@ -118,18 +118,18 @@ func (e *Engine) createRetrieveFromSpec(nodeID int64, r *changeover.RetrieveOrde
 	return o.ID, nil
 }
 
-func logChangeoverAction(action changeover.NodeAction, orderAID, orderBID *int64) {
+func logChangeoverAction(action changeover.NodeAction, supplyID, evacID *int64) {
 	switch action.LogTag {
 	case "swap":
-		log.Printf("changeover: swap node %s — Order A=%d (staging), Order B=%d (swap w/ wait)", action.NodeName, derefID(orderAID), derefID(orderBID))
+		log.Printf("changeover: swap node %s — supply=%d (staging), evac=%d (swap w/ wait)", action.NodeName, derefID(supplyID), derefID(evacID))
 	case "evacuate":
-		log.Printf("changeover: evacuate node %s — Order A=%d (staging), Order B=%d (evacuate w/ 2 waits)", action.NodeName, derefID(orderAID), derefID(orderBID))
+		log.Printf("changeover: evacuate node %s — supply=%d (staging), evac=%d (evacuate w/ 2 waits)", action.NodeName, derefID(supplyID), derefID(evacID))
 	case "drop":
-		log.Printf("changeover: drop node %s — Order B=%d (evacuation)", action.NodeName, derefID(orderBID))
+		log.Printf("changeover: drop node %s — evac=%d (single-robot release w/ staged wait)", action.NodeName, derefID(evacID))
 	case "keep_staged_split":
-		log.Printf("changeover: keep-staged split node %s — Order A=%d (deliver w/ wait), Order B=%d (evac w/ wait)", action.NodeName, derefID(orderAID), derefID(orderBID))
+		log.Printf("changeover: keep-staged split node %s — supply=%d (deliver w/ wait), evac=%d (evac w/ wait)", action.NodeName, derefID(supplyID), derefID(evacID))
 	case "keep_staged_combined":
-		log.Printf("changeover: keep-staged combined node %s — Order A=%d (combined w/ wait), Order B=%d (evac w/ wait)", action.NodeName, derefID(orderAID), derefID(orderBID))
+		log.Printf("changeover: keep-staged combined node %s — supply=%d (combined w/ wait), evac=%d (evac w/ wait)", action.NodeName, derefID(supplyID), derefID(evacID))
 	}
 }
 

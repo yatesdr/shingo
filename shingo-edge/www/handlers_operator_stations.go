@@ -449,14 +449,14 @@ func (h *Handlers) apiClearNodeOrders(w http.ResponseWriter, r *http.Request) {
 // Mirrors changeover.NodeAction but turns the error into a string and flattens
 // the OrderSpec union so the UI can render it without a discriminator dance.
 type changeoverPreviewAction struct {
-	NodeID    int64                  `json:"node_id"`
-	NodeName  string                 `json:"node_name"`
-	Situation string                 `json:"situation"`
-	OrderA    *changeoverPreviewSpec `json:"order_a,omitempty"`
-	OrderB    *changeoverPreviewSpec `json:"order_b,omitempty"`
-	NextState string                 `json:"next_state,omitempty"`
-	LogTag    string                 `json:"log_tag,omitempty"`
-	Error     string                 `json:"error,omitempty"`
+	NodeID      int64                  `json:"node_id"`
+	NodeName    string                 `json:"node_name"`
+	Situation   string                 `json:"situation"`
+	SupplyOrder *changeoverPreviewSpec `json:"supply_order,omitempty"`
+	EvacOrder   *changeoverPreviewSpec `json:"evac_order,omitempty"`
+	NextState   string                 `json:"next_state,omitempty"`
+	LogTag      string                 `json:"log_tag,omitempty"`
+	Error       string                 `json:"error,omitempty"`
 }
 
 type changeoverPreviewSpec struct {
@@ -515,13 +515,13 @@ func (h *Handlers) apiPreviewProcessChangeover(w http.ResponseWriter, r *http.Re
 	}{Actions: make([]changeoverPreviewAction, 0, len(plan.Actions))}
 	for _, a := range plan.Actions {
 		out := changeoverPreviewAction{
-			NodeID:    a.NodeID,
-			NodeName:  a.NodeName,
-			Situation: a.Situation,
-			OrderA:    toPreviewSpec(a.OrderA),
-			OrderB:    toPreviewSpec(a.OrderB),
-			NextState: a.NextState,
-			LogTag:    a.LogTag,
+			NodeID:      a.NodeID,
+			NodeName:    a.NodeName,
+			Situation:   a.Situation,
+			SupplyOrder: toPreviewSpec(a.SupplyOrder),
+			EvacOrder:   toPreviewSpec(a.EvacOrder),
+			NextState:   a.NextState,
+			LogTag:      a.LogTag,
 		}
 		if a.Err != nil {
 			out.Error = a.Err.Error()

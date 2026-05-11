@@ -46,11 +46,11 @@ function renderChangeoverPreview(plan) {
                 '<td class="mono">' + a.node_name + err + '</td>' +
                 '<td>' + a.situation + '</td>' +
                 '<td>' + (a.log_tag || '') + '</td>' +
-                '<td>' + orderCell(a.order_a) + '</td>' +
-                '<td>' + orderCell(a.order_b) + '</td>' +
+                '<td>' + orderCell(a.supply_order) + '</td>' +
+                '<td>' + orderCell(a.evac_order) + '</td>' +
                 '</tr>';
         }).join('');
-        body.innerHTML = '<table class="table"><thead><tr><th>Node</th><th>Situation</th><th>Plan</th><th>Order A</th><th>Order B</th></tr></thead><tbody>' + rows + '</tbody></table>';
+        body.innerHTML = '<table class="table"><thead><tr><th>Node</th><th>Situation</th><th>Plan</th><th>Supply</th><th>Evac</th></tr></thead><tbody>' + rows + '</tbody></table>';
     }
     panel.style.display = '';
 }

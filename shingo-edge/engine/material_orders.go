@@ -230,9 +230,9 @@ func BuildSequentialBackfillSteps(claim *processes.NodeClaim) []protocol.Complex
 
 // ChangeoverDispatch is the per-mode shape returned by the SwapMode-aware
 // changeover step builders. It packages the two complex-order step lists
-// (Order A and Order B) along with their per-order flags so the planner
-// glue can assemble NodeAction.OrderA / OrderB directly without duplicating
-// the per-mode switch on the planner side.
+// (supply and evac) along with their per-order flags so the planner glue
+// can assemble NodeAction.SupplyOrder / EvacOrder directly without
+// duplicating the per-mode switch on the planner side.
 //
 // Single-robot modes: StepsA holds a stage list, StepsB holds the full
 // 7-step swap (or 8-step evacuate). Multi-robot modes: StepsA and StepsB

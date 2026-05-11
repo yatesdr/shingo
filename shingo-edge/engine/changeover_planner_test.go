@@ -37,20 +37,20 @@ func TestPlanNodeAction_Swap(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.OrderA == nil || action.OrderA.Complex == nil {
-		t.Fatal("expected OrderA complex spec")
+	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
+		t.Fatal("expected supply order complex spec")
 	}
-	if action.OrderA.Complex.DeliveryNode != "ISTG_N1" {
-		t.Errorf("OrderA delivery = %q, want ISTG_N1", action.OrderA.Complex.DeliveryNode)
+	if action.SupplyOrder.Complex.DeliveryNode != "ISTG_N1" {
+		t.Errorf("supply order delivery = %q, want ISTG_N1", action.SupplyOrder.Complex.DeliveryNode)
 	}
-	if action.OrderA.Complex.AutoConfirm {
-		t.Error("OrderA must not auto-confirm (operator stages)")
+	if action.SupplyOrder.Complex.AutoConfirm {
+		t.Error("supply order must not auto-confirm (operator stages)")
 	}
-	if action.OrderB == nil || action.OrderB.Complex == nil {
-		t.Fatal("expected OrderB complex spec")
+	if action.EvacOrder == nil || action.EvacOrder.Complex == nil {
+		t.Fatal("expected evac order complex spec")
 	}
-	if !action.OrderB.Complex.AutoConfirm {
-		t.Error("OrderB must auto-confirm (robot completes)")
+	if !action.EvacOrder.Complex.AutoConfirm {
+		t.Error("evac order must auto-confirm (robot completes)")
 	}
 	if action.NextState != "staging_requested" {
 		t.Errorf("NextState = %q, want staging_requested", action.NextState)
@@ -73,17 +73,17 @@ func TestPlanNodeAction_Drop(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.OrderA != nil {
-		t.Error("Drop should not produce OrderA")
+	if action.SupplyOrder != nil {
+		t.Error("Drop should not produce supply order")
 	}
-	if action.OrderB == nil || action.OrderB.Complex == nil {
-		t.Fatal("Drop should produce OrderB (release)")
+	if action.EvacOrder == nil || action.EvacOrder.Complex == nil {
+		t.Fatal("Drop should produce evac order (release)")
 	}
 	// AutoConfirm=false: the drop order uses the staged-release pattern
 	// (wait-at-line → operator releases with partial count → pickup →
 	// dropoff). The operator's release click at the lineside is the gate.
-	if action.OrderB.Complex.AutoConfirm {
-		t.Error("Drop OrderB must NOT auto-confirm — operator releases with partial count at lineside")
+	if action.EvacOrder.Complex.AutoConfirm {
+		t.Error("Drop evac order must NOT auto-confirm — operator releases with partial count at lineside")
 	}
 	// Default drop (no EvacuateOnChangeover marker): terminal from plan
 	// time so cutover doesn't wait. Bin retrieval still runs but isn't on
@@ -137,7 +137,7 @@ func TestPlanNodeAction_DropWithoutOutbound_FailsLoudly(t *testing.T) {
 	if msg := action.Err.Error(); !strings.Contains(msg, "no outbound destination configured") {
 		t.Errorf("err message = %q, want substring %q", msg, "no outbound destination configured")
 	}
-	if action.OrderA != nil || action.OrderB != nil {
+	if action.SupplyOrder != nil || action.EvacOrder != nil {
 		t.Error("Drop with config error must dispatch no orders")
 	}
 }
@@ -225,8 +225,8 @@ func TestPlanNodeAction_Sequential_EmptyStagingStillDispatchesSequential(t *test
 	if action.LogTag != "swap_sequential" {
 		t.Errorf("LogTag = %q, want swap_sequential (must NOT route through fallback_staging or fallback_retrieve)", action.LogTag)
 	}
-	if action.OrderA == nil || action.OrderA.Complex == nil {
-		t.Fatal("expected sequential complex order; got no OrderA")
+	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
+		t.Fatal("expected sequential complex order; got no supply order")
 	}
 }
 
@@ -247,19 +247,19 @@ func TestPlanNodeAction_Swap_Sequential(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.OrderA == nil {
-		t.Fatal("expected single-order OrderA at plan time")
+	if action.SupplyOrder == nil {
+		t.Fatal("expected single-order supply order at plan time")
 	}
-	if action.OrderB != nil {
-		t.Error("OrderB must be nil — sequential SWAP is a single-order shape")
+	if action.EvacOrder != nil {
+		t.Error("evac order must be nil — sequential SWAP is a single-order shape")
 	}
 	if action.LogTag != "swap_sequential" {
 		t.Errorf("LogTag = %q, want swap_sequential", action.LogTag)
 	}
 	// Tie-break: empty active-pull snapshot → CoreNodeName=inactive.
-	// First pickup in OrderA's steps should target N1 (inactive); the
+	// First pickup in supply order's steps should target N1 (inactive); the
 	// cutover wait should target N1B (active).
-	steps := action.OrderA.Complex.Steps
+	steps := action.SupplyOrder.Complex.Steps
 	if len(steps) < 5 {
 		t.Fatalf("expected at least 5 steps, got %d", len(steps))
 	}
@@ -289,7 +289,7 @@ func TestBuildChangeoverPlan_Sequential_ActiveOnB_SwapsAFirst(t *testing.T) {
 	if len(plan.Actions) != 1 || plan.Actions[0].Err != nil {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
-	steps := plan.Actions[0].OrderA.Complex.Steps
+	steps := plan.Actions[0].SupplyOrder.Complex.Steps
 	if steps[0].Node != "N1" {
 		t.Errorf("active=N1B → swap N1 (inactive) first; got first pickup at %q", steps[0].Node)
 	}
@@ -313,7 +313,7 @@ func TestBuildChangeoverPlan_Sequential_ActiveOnA_SwapsBFirst(t *testing.T) {
 	if len(plan.Actions) != 1 || plan.Actions[0].Err != nil {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
-	steps := plan.Actions[0].OrderA.Complex.Steps
+	steps := plan.Actions[0].SupplyOrder.Complex.Steps
 	if steps[0].Node != "N1B" {
 		t.Errorf("active=N1 → swap N1B (inactive) first; got first pickup at %q", steps[0].Node)
 	}
@@ -322,7 +322,7 @@ func TestBuildChangeoverPlan_Sequential_ActiveOnA_SwapsBFirst(t *testing.T) {
 	}
 }
 
-// Sequential Evacuate emits both OrderA and OrderB at plan time
+// Sequential Evacuate emits both supply order and evac order at plan time
 // (each robot evacs its position then fetches new + waits + delivers).
 // LogTag = "evacuate_sequential".
 func TestPlanNodeAction_Evacuate_Sequential(t *testing.T) {
@@ -343,18 +343,18 @@ func TestPlanNodeAction_Evacuate_Sequential(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.OrderA == nil || action.OrderB == nil {
-		t.Fatal("sequential evacuate emits both OrderA and OrderB at plan time")
+	if action.SupplyOrder == nil || action.EvacOrder == nil {
+		t.Fatal("sequential evacuate emits both supply order and evac order at plan time")
 	}
 	if action.LogTag != "evacuate_sequential" {
 		t.Errorf("LogTag = %q, want evacuate_sequential", action.LogTag)
 	}
 	// Each robot's order has 5 steps with a bare wait at index 3.
-	if len(action.OrderA.Complex.Steps) != 5 {
-		t.Errorf("OrderA: expected 5 steps (backfill shape), got %d", len(action.OrderA.Complex.Steps))
+	if len(action.SupplyOrder.Complex.Steps) != 5 {
+		t.Errorf("supply order: expected 5 steps (backfill shape), got %d", len(action.SupplyOrder.Complex.Steps))
 	}
-	if len(action.OrderB.Complex.Steps) != 5 {
-		t.Errorf("OrderB: expected 5 steps (backfill shape), got %d", len(action.OrderB.Complex.Steps))
+	if len(action.EvacOrder.Complex.Steps) != 5 {
+		t.Errorf("evac order: expected 5 steps (backfill shape), got %d", len(action.EvacOrder.Complex.Steps))
 	}
 }
 
@@ -381,7 +381,7 @@ func TestPlanNodeAction_Sequential_RequiresPairedCoreNode(t *testing.T) {
 		if action.Err != nil && !strings.Contains(action.Err.Error(), "Paired Core Node") {
 			t.Errorf("situation=%s: err message = %q, want substring %q", situation, action.Err.Error(), "Paired Core Node")
 		}
-		if action.OrderA != nil || action.OrderB != nil {
+		if action.SupplyOrder != nil || action.EvacOrder != nil {
 			t.Errorf("situation=%s: misconfigured plan must dispatch no orders", situation)
 		}
 	}
@@ -400,8 +400,8 @@ func TestPlanNodeAction_Add_FallsBackToStaging(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.OrderA == nil {
-		t.Fatal("Add should produce a fallback OrderA")
+	if action.SupplyOrder == nil {
+		t.Fatal("Add should produce a fallback supply order")
 	}
 	if action.NextState != "staging_requested" {
 		t.Errorf("NextState = %q, want staging_requested", action.NextState)
@@ -418,13 +418,13 @@ func TestPlanNodeAction_AddNoStaging_RetrieveFallback(t *testing.T) {
 	node := &processes.Node{ID: 42, Name: "N1"}
 	action := planNodeAction(diff, node, true, nil)
 
-	if action.OrderA == nil || action.OrderA.Retrieve == nil {
+	if action.SupplyOrder == nil || action.SupplyOrder.Retrieve == nil {
 		t.Fatal("expected retrieve fallback")
 	}
-	if !action.OrderA.Retrieve.RetrieveEmpty {
+	if !action.SupplyOrder.Retrieve.RetrieveEmpty {
 		t.Error("produce role should retrieve empty bins")
 	}
-	if !action.OrderA.Retrieve.AutoConfirm {
+	if !action.SupplyOrder.Retrieve.AutoConfirm {
 		t.Error("retrieve fallback should honour fallbackAutoConfirm=true")
 	}
 }
@@ -446,7 +446,7 @@ func TestPlanNodeAction_KeepStagedSplit(t *testing.T) {
 	if action.LogTag != "keep_staged_split" {
 		t.Errorf("LogTag = %q, want keep_staged_split", action.LogTag)
 	}
-	if action.OrderA == nil || action.OrderB == nil {
+	if action.SupplyOrder == nil || action.EvacOrder == nil {
 		t.Fatal("keep-staged split needs both orders")
 	}
 }
@@ -510,7 +510,7 @@ func TestPlanNodeAction_PressIndex_SameBinType_RoutesToStandardDispatch(t *testi
 	if action.Err != nil {
 		t.Fatalf("expected no error in default inert mode, got %v", action.Err)
 	}
-	if action.OrderA == nil || action.OrderB == nil {
+	if action.SupplyOrder == nil || action.EvacOrder == nil {
 		t.Fatal("expected R1+R2 orders for same-bin-type press-index Swap")
 	}
 }
@@ -554,13 +554,13 @@ func TestPlanNodeAction_PressPosition_SwapRoutesToPerPositionBuilder(t *testing.
 	if action.Err != nil {
 		t.Fatalf("unexpected NodeAction.Err: %v", action.Err)
 	}
-	if action.OrderA == nil || action.OrderA.Complex == nil {
-		t.Fatal("expected OrderA with the per-position 4-step list")
+	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
+		t.Fatal("expected supply order with the per-position 4-step list")
 	}
-	if action.OrderB != nil {
-		t.Error("OrderB must be nil — per-position is single-order shape")
+	if action.EvacOrder != nil {
+		t.Error("evac order must be nil — per-position is single-order shape")
 	}
-	steps := action.OrderA.Complex.Steps
+	steps := action.SupplyOrder.Complex.Steps
 	if len(steps) != 4 {
 		t.Fatalf("expected 4 steps, got %d", len(steps))
 	}
@@ -597,11 +597,11 @@ func TestPlanNodeAction_PressPosition_EvacuateRoutesToPerPositionBuilder(t *test
 	if action.Err != nil {
 		t.Fatalf("unexpected NodeAction.Err: %v", action.Err)
 	}
-	if action.OrderA == nil || action.OrderA.Complex == nil {
-		t.Fatal("expected OrderA with the per-position 4-step list")
+	if action.SupplyOrder == nil || action.SupplyOrder.Complex == nil {
+		t.Fatal("expected supply order with the per-position 4-step list")
 	}
-	if len(action.OrderA.Complex.Steps) != 4 {
-		t.Errorf("expected 4 steps, got %d", len(action.OrderA.Complex.Steps))
+	if len(action.SupplyOrder.Complex.Steps) != 4 {
+		t.Errorf("expected 4 steps, got %d", len(action.SupplyOrder.Complex.Steps))
 	}
 }
 
