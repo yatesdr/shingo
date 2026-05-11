@@ -244,3 +244,23 @@ func TestComputeSwapReady_DropSituationSkipsFallback(t *testing.T) {
 		t.Error("expected SwapReady=false for drop tasks even with staged evac (drops are single-leg, swap_ready doesn't apply)")
 	}
 }
+
+// Drop tasks must also be blocked when the drop's evac order is reachable
+// via fallback 1 (runtime.StagedOrderID) or fallback 2 (sibling via
+// runtime.ActiveOrderID). The earlier guard on fallback 3 only covered the
+// task-pointer path; runtime slots can carry stale or unrelated order ids
+// from a prior cycle on the same node, so they need the same protection.
+// The top-level Situation=="drop" short-circuit in ComputeSwapReady handles
+// all three fallbacks at once.
+func TestComputeSwapReady_DropSituationSkipsRuntimeFallback(t *testing.T) {
+	db, claim, runtime, _, bID := seedSwapReadyFixture(t)
+	// Fixture wires runtime.StagedOrderID=bID. Mark B staged so fallback 1
+	// would otherwise report swap_ready=true.
+	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
+		t.Fatalf("mark B staged: %v", err)
+	}
+	dropTask := &processes.NodeTask{Situation: "drop"}
+	if ComputeSwapReady(db, claim, runtime, dropTask) {
+		t.Error("expected SwapReady=false for drop tasks even with runtime.StagedOrderID populated (single-leg flows are never swap_ready)")
+	}
+}

@@ -94,6 +94,20 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	if claim == nil || (claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex) {
 		return false
 	}
+	// Drops are single-leg by construction (only OrderB is created, no sibling
+	// pointer linked — see changeover_planner.go SituationDrop and
+	// changeover_applier.go which skips LinkOrderSiblings when orderAID is nil).
+	// The claim's SwapMode reflects node policy and can be two_robot even when
+	// the task at hand is a drop (e.g. old style's claim inherited into the
+	// from-claim). Trusting it here lets the runtime/sibling fallbacks below
+	// resolve the drop's evac order, which steers the modal to /release-staged.
+	// resolveSwapPair then rejects with "no tracked orders to release" because
+	// there's no pair. The task's Situation is the authoritative discriminator,
+	// so short-circuit before any fallback runs. The Situation guard on
+	// fallback 3 below is redundant after this but kept as defense in depth.
+	if task != nil && task.Situation == "drop" {
+		return false
+	}
 	// Resolve the evac (B) order via three fallbacks, in order of canonicality:
 	//  1. runtime.StagedOrderID — the canonical evac slot.
 	//  2. supply leg's durable SiblingOrderID — when StagedOrderID got nulled
