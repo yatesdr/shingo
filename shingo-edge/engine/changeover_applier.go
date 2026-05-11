@@ -65,6 +65,24 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 			log.Printf("changeover: link orders for node task %d: %v", nodeTask.ID, err)
 		}
 	}
+	// Durable supply ↔ evac sibling linkage for two-robot swap pairs.
+	// Mirrors operator_stations.go:134 (the operator-initiated path) —
+	// without it, isSupplyOrderInTwoRobotSwap can't identify the supply
+	// leg via SiblingOrderID, and the supply_bin_guard at
+	// operator_release.go:246-256 misses. Plant 2026-05-11 (SNF2 ALN_001):
+	// changeover-driven two-robot swap's supply bin (3600 parts) was
+	// wiped on a per-order admin release because the guard couldn't
+	// identify it as supply without the sibling pointer.
+	//
+	// Same fingerprint as the 2026-04-23 ALN_002 incident
+	// (operator_release.go:497-498), fixed for the operator-initiated
+	// path but never backported here.
+	if orderAID != nil && orderBID != nil {
+		if err := e.db.LinkOrderSiblings(*orderAID, *orderBID); err != nil {
+			log.Printf("changeover: link order siblings %d↔%d for node task %d: %v",
+				*orderAID, *orderBID, nodeTask.ID, err)
+		}
+	}
 	if action.NextState != "" {
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, action.NextState); err != nil {
 			log.Printf("changeover: update node task %d state to %s: %v", nodeTask.ID, action.NextState, err)
