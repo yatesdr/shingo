@@ -58,3 +58,14 @@ jobs:
           # GOMODCACHE + analysis cache are enabled by default in v7.
           # The opt-out switches are skip-cache / skip-save-cache; we
           # leave both at default (caching on).
+
+  swap-mode-literals:
+    # Guards against raw swap-mode strings outside protocol/swap_mode.go
+    # and tests. forbidigo can only match identifier expressions, so
+    # this grep-based check enforces "use the typed constants" instead.
+    # See scripts/check-swap-mode-literals.sh.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check
+        run: bash scripts/check-swap-mode-literals.sh

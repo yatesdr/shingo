@@ -296,7 +296,7 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.SwapMode != "manual_swap" || claim.Role != protocol.ClaimRoleProduce {
+	if claim == nil || claim.SwapMode != protocol.SwapModeManualSwap || claim.Role != protocol.ClaimRoleProduce {
 		return false
 	}
 	if claim.OutboundDestination == "" {
@@ -364,7 +364,7 @@ func (e *Engine) handleUnloaderFullInCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.SwapMode != "manual_swap" || claim.Role != protocol.ClaimRoleConsume {
+	if claim == nil || claim.SwapMode != protocol.SwapModeManualSwap || claim.Role != protocol.ClaimRoleConsume {
 		return false
 	}
 	if claim.OutboundDestination == "" {
@@ -407,7 +407,7 @@ func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.SwapMode != "manual_swap" {
+	if claim == nil || claim.SwapMode != protocol.SwapModeManualSwap {
 		return false
 	}
 	// L2/U2 move arrived at the supermarket — the bin physically left
@@ -464,7 +464,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	// manual_swap nodes: clear order slots so CanAcceptOrders and the
 	// multi-order queue don't see stale IDs. Standard consume/produce
 	// nodes manage order slots via complex order progression.
-	if claim.SwapMode == "manual_swap" {
+	if claim.SwapMode == protocol.SwapModeManualSwap {
 		if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
 			log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 		}

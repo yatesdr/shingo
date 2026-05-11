@@ -43,6 +43,11 @@ linters:
           msg: "Direct FailOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.Fail."
         - pattern: 'db\.CancelOrderAtomic'
           msg: "Direct CancelOrderAtomic calls bypass the state machine. Use dispatch.LifecycleService.CancelOrder."
+        # Note on swap-mode constants: forbidigo can only match identifier
+        # expressions (selector exprs like `db.UpdateOrderStatus`), not
+        # string literals. The swap-mode raw-string guard is enforced by
+        # `scripts/check-swap-mode-literals.sh` instead — see that script
+        # and protocol/swap_mode.go.
 
     depguard:
       rules:

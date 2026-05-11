@@ -331,7 +331,7 @@ func (h *Handlers) apiDirectOrdersList(w http.ResponseWriter, r *http.Request) {
 // apiDirectComplexOrderSubmit creates complex orders directly through the dispatcher (no Kafka).
 func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CycleMode    string `json:"cycle_mode"`
+		CycleMode    protocol.SwapMode `json:"cycle_mode"`
 		Location     string `json:"location"`
 		InboundStaging       string `json:"inbound_staging"`
 		OutboundStaging      string `json:"outbound_staging"`
@@ -348,7 +348,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if req.CycleMode == "" {
-		req.CycleMode = "sequential"
+		req.CycleMode = protocol.SwapModeSequential
 	}
 
 	src := protocol.Address{Role: protocol.RoleEdge, Station: "core-direct"}
@@ -357,7 +357,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 	var results []map[string]any
 
 	switch req.CycleMode {
-	case "sequential":
+	case protocol.SwapModeSequential:
 		steps := []protocol.ComplexOrderStep{
 			{Action: "dropoff", Node: req.Location},
 			{Action: "wait"},
@@ -365,9 +365,9 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			dropoffStep(req.OutboundDestination),
 		}
 		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority)
-		results = append(results, map[string]any{"role": "sequential", "order_uuid": uid})
+		results = append(results, map[string]any{"role": string(protocol.SwapModeSequential), "order_uuid": uid})
 
-	case "two_robot":
+	case protocol.SwapModeTwoRobot:
 		if req.InboundStaging == "" {
 			h.jsonError(w, "inbound_staging is required for two robot", http.StatusBadRequest)
 			return
@@ -393,7 +393,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 		uid2 := h.dispatchComplex(src, dst, req.PayloadCode, removalSteps, req.Priority)
 		results = append(results, map[string]any{"role": "removal", "order_uuid": uid2})
 
-	case "single_robot":
+	case protocol.SwapModeSingleRobot:
 		if req.InboundStaging == "" || req.OutboundStaging == "" {
 			h.jsonError(w, "inbound_staging and outbound_staging required for single robot", http.StatusBadRequest)
 			return
@@ -411,7 +411,7 @@ func (h *Handlers) apiDirectComplexOrderSubmit(w http.ResponseWriter, r *http.Re
 			dropoffStep(req.OutboundDestination),
 		}
 		uid := h.dispatchComplex(src, dst, req.PayloadCode, steps, req.Priority)
-		results = append(results, map[string]any{"role": "single_robot", "order_uuid": uid})
+		results = append(results, map[string]any{"role": string(protocol.SwapModeSingleRobot), "order_uuid": uid})
 
 	default:
 		h.jsonError(w, "invalid cycle_mode", http.StatusBadRequest)
@@ -475,7 +475,7 @@ func (h *Handlers) publishComplex(src, dst protocol.Address, payloadCode string,
 // apiKafkaComplexOrderSubmit builds complex order steps and publishes via Kafka.
 func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		CycleMode    string `json:"cycle_mode"`
+		CycleMode    protocol.SwapMode `json:"cycle_mode"`
 		Location     string `json:"location"`
 		InboundStaging       string `json:"inbound_staging"`
 		OutboundStaging      string `json:"outbound_staging"`
@@ -492,7 +492,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if req.CycleMode == "" {
-		req.CycleMode = "sequential"
+		req.CycleMode = protocol.SwapModeSequential
 	}
 
 	cfg := h.engine.AppConfig()
@@ -502,7 +502,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 	var results []map[string]any
 
 	switch req.CycleMode {
-	case "sequential":
+	case protocol.SwapModeSequential:
 		steps := []protocol.ComplexOrderStep{
 			{Action: "dropoff", Node: req.Location},
 			{Action: "wait"},
@@ -514,9 +514,9 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		results = append(results, map[string]any{"role": "sequential", "order_uuid": uid})
+		results = append(results, map[string]any{"role": string(protocol.SwapModeSequential), "order_uuid": uid})
 
-	case "two_robot":
+	case protocol.SwapModeTwoRobot:
 		if req.InboundStaging == "" {
 			h.jsonError(w, "inbound_staging is required for two robot", http.StatusBadRequest)
 			return
@@ -548,7 +548,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 		}
 		results = append(results, map[string]any{"role": "removal", "order_uuid": uid2})
 
-	case "single_robot":
+	case protocol.SwapModeSingleRobot:
 		if req.InboundStaging == "" || req.OutboundStaging == "" {
 			h.jsonError(w, "inbound_staging and outbound_staging required for single robot", http.StatusBadRequest)
 			return
@@ -570,7 +570,7 @@ func (h *Handlers) apiKafkaComplexOrderSubmit(w http.ResponseWriter, r *http.Req
 			h.jsonError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		results = append(results, map[string]any{"role": "single_robot", "order_uuid": uid})
+		results = append(results, map[string]any{"role": string(protocol.SwapModeSingleRobot), "order_uuid": uid})
 
 	default:
 		h.jsonError(w, "invalid cycle_mode", http.StatusBadRequest)

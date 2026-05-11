@@ -118,7 +118,7 @@ type NodeClaim struct {
 	StyleID              int64             `json:"style_id"`
 	CoreNodeName         string            `json:"core_node_name"`
 	Role                 protocol.ClaimRole `json:"role"`
-	SwapMode             string    `json:"swap_mode"`
+	SwapMode             protocol.SwapMode `json:"swap_mode"`
 	PayloadCode          string    `json:"payload_code"`
 	UOPCapacity          int       `json:"uop_capacity"`
 	// ReorderPoint has role-dependent semantics.
@@ -192,7 +192,7 @@ type NodeClaimInput struct {
 	StyleID               int64             `json:"style_id"`
 	CoreNodeName          string            `json:"core_node_name"`
 	Role                  protocol.ClaimRole `json:"role"`
-	SwapMode              string   `json:"swap_mode"`
+	SwapMode              protocol.SwapMode `json:"swap_mode"`
 	PayloadCode           string   `json:"payload_code"`
 	UOPCapacity           int      `json:"uop_capacity"`
 	ReorderPoint          int      `json:"reorder_point"`

@@ -7,7 +7,7 @@ import (
 	"shingoedge/store/processes"
 )
 
-func dispatchClaim(swapMode string) *processes.NodeClaim {
+func dispatchClaim(swapMode protocol.SwapMode) *processes.NodeClaim {
 	return &processes.NodeClaim{
 		Role:                protocol.ClaimRoleProduce,
 		SwapMode:            swapMode,
@@ -27,9 +27,9 @@ func dispatchNode() *processes.Node {
 
 func TestBuildSwapDispatch_Simple(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []string{"", "simple", "unknown_mode"} {
+	for _, mode := range []protocol.SwapMode{"", protocol.SwapModeSimple, "unknown_mode"} {
 		mode := mode
-		t.Run(mode, func(t *testing.T) {
+		t.Run(string(mode), func(t *testing.T) {
 			d, err := BuildSwapDispatch(dispatchNode(), dispatchClaim(mode))
 			if err != nil {
 				t.Fatalf("BuildSwapDispatch(%q): %v", mode, err)

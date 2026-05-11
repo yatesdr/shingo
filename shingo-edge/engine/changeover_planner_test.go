@@ -581,7 +581,7 @@ func TestPlanNodeAction_PressPosition_EvacuateRoutesToPerPositionBuilder(t *test
 func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 	cases := []struct {
 		name        string
-		fromMode    string
+		fromMode protocol.SwapMode
 		from        processes.NodeClaim
 		to          processes.NodeClaim
 		wantSubstr  []string // substrings that must appear in formatMissingFields

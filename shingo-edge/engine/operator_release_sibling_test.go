@@ -39,7 +39,7 @@ import (
 // node: Order A (supply, delivery_node=slot), Order B (evac,
 // delivery_node!=slot), runtime tracking populated, sibling pointer
 // linked. Returns (orderA, orderB).
-func seedTwoRobotPair(t *testing.T, db *store.DB, nodeID int64, prefix, swapMode string) (int64, int64) {
+func seedTwoRobotPair(t *testing.T, db *store.DB, nodeID int64, prefix string, swapMode protocol.SwapMode) (int64, int64) {
 	t.Helper()
 	node, err := db.GetProcessNode(nodeID)
 	if err != nil {

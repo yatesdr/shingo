@@ -20,7 +20,7 @@ import (
 // arity with which flags?" — the produce and consume planners both call
 // BuildSwapDispatch instead of duplicating the switch.
 type SwapDispatch struct {
-	CycleMode string
+	CycleMode protocol.SwapMode
 
 	// ProcessNode is the line node both legs belong to (= claim.CoreNodeName).
 	// Threaded into ComplexOrderRequest.ProcessNode so Core can pick the
@@ -52,32 +52,32 @@ type SwapDispatch struct {
 // messages stay diff-stable across the refactor.
 func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapDispatch, error) {
 	switch claim.SwapMode {
-	case "sequential":
+	case protocol.SwapModeSequential:
 		return &SwapDispatch{
-			CycleMode:    "sequential",
+			CycleMode:    protocol.SwapModeSequential,
 			ProcessNode:  claim.CoreNodeName,
 			StepsA:       BuildSequentialRemovalSteps(claim),
 			AutoConfirmA: true,
 		}, nil
 
-	case "single_robot":
+	case protocol.SwapModeSingleRobot:
 		if claim.InboundStaging == "" || claim.OutboundStaging == "" {
 			return nil, fmt.Errorf("node %s: single-robot swap requires inbound and outbound staging nodes", node.Name)
 		}
 		return &SwapDispatch{
-			CycleMode:     "single_robot",
+			CycleMode:     protocol.SwapModeSingleRobot,
 			ProcessNode:   claim.CoreNodeName,
 			StepsA:        BuildSingleSwapSteps(claim),
 			DeliveryNodeA: claim.CoreNodeName,
 		}, nil
 
-	case "two_robot":
+	case protocol.SwapModeTwoRobot:
 		if claim.InboundStaging == "" {
 			return nil, fmt.Errorf("node %s: two-robot swap requires inbound staging node", node.Name)
 		}
 		stepsA, stepsB := BuildTwoRobotSwapSteps(claim)
 		return &SwapDispatch{
-			CycleMode:               "two_robot",
+			CycleMode:               protocol.SwapModeTwoRobot,
 			ProcessNode:             claim.CoreNodeName,
 			StepsA:                  stepsA,
 			DeliveryNodeA:           claim.CoreNodeName,
@@ -86,7 +86,7 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 			RequiresActiveSwapGuard: true,
 		}, nil
 
-	case "two_robot_press_index":
+	case protocol.SwapModeTwoRobotPressIndex:
 		if claim.PairedCoreNode == "" {
 			return nil, fmt.Errorf("node %s: two_robot_press_index requires paired_core_node (back position)", node.Name)
 		}
@@ -95,7 +95,7 @@ func BuildSwapDispatch(node *processes.Node, claim *processes.NodeClaim) (*SwapD
 		}
 		stepsR1, stepsR2 := BuildTwoRobotPressIndexSwapSteps(claim)
 		return &SwapDispatch{
-			CycleMode:               "two_robot_press_index",
+			CycleMode:               protocol.SwapModeTwoRobotPressIndex,
 			ProcessNode:             claim.CoreNodeName,
 			StepsA:                  stepsR1,
 			DeliveryNodeA:           claim.CoreNodeName,

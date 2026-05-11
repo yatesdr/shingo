@@ -501,7 +501,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 	)
 
 	type setup struct {
-		swapMode    string // claim.SwapMode
+		swapMode protocol.SwapMode // claim.SwapMode
 		role        string // "consume" or "produce"
 		releaseSide string // "single", "supply", "evac" (which order to release)
 	}

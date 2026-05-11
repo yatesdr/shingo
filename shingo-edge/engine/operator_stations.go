@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"log"
 
+	"shingo/protocol"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
 
 type NodeOrderResult struct {
-	CycleMode     string       `json:"cycle_mode"`
+	CycleMode     protocol.SwapMode `json:"cycle_mode"`
 	Order         *storeorders.Order `json:"order,omitempty"`
 	OrderA        *storeorders.Order `json:"order_a,omitempty"`
 	OrderB        *storeorders.Order `json:"order_b,omitempty"`
@@ -60,7 +61,7 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	if claim != nil {
 		autoConfirm = claim.AutoConfirm || e.cfg.Web.AutoConfirm
 	}
-	occupied := claim == nil || claim.SwapMode == "simple" || claim.SwapMode == "" || e.nodeIsOccupied(claim.CoreNodeName)
+	occupied := claim == nil || claim.SwapMode == protocol.SwapModeSimple || claim.SwapMode == "" || e.nodeIsOccupied(claim.CoreNodeName)
 
 	plan, err := BuildConsumePlan(node, runtime, claim, quantity, occupied, autoConfirm)
 	if err != nil {
@@ -101,7 +102,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 		if err != nil {
 			return nil, err
 		}
-		return &NodeOrderResult{CycleMode: "simple", Order: order, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, Order: order, ProcessNodeID: nodeID}, nil
 	}
 
 	dispatch := plan.Dispatch
@@ -253,7 +254,7 @@ func (e *Engine) CanAcceptOrders(nodeID int64) (bool, string) {
 
 	// manual_swap nodes use a multi-order queue — skip the serial order constraint.
 	if runtime.ActiveClaimID != nil {
-		if claim, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID); err == nil && claim.SwapMode == "manual_swap" {
+		if claim, err := e.db.GetStyleNodeClaim(*runtime.ActiveClaimID); err == nil && claim.SwapMode == protocol.SwapModeManualSwap {
 			return true, ""
 		}
 	}
@@ -330,7 +331,7 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// gets set on order completion in wiring_completion). Press-index and
 	// two_robot share the same R1+R2 release choreography, so both modes
 	// are valid here.
-	if claim.SwapMode != "two_robot" && claim.SwapMode != "two_robot_press_index" {
+	if claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return fmt.Errorf("node %s: release-staged requires a two-robot swap mode, got %q", node.Name, claim.SwapMode)
 	}
 

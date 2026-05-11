@@ -177,7 +177,7 @@ func (e *Engine) refusePressIndexWhenCoreUnavailable(diffs []ChangeoverNodeDiff)
 	}
 	for _, d := range diffs {
 		if (d.Situation != SituationSwap && d.Situation != SituationEvacuate) ||
-			d.FromClaim == nil || d.FromClaim.SwapMode != "two_robot_press_index" {
+			d.FromClaim == nil || d.FromClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 			continue
 		}
 		return fmt.Errorf("changeover refused: Core unavailable; cannot determine bin types for press-index changeover at %s", d.CoreNodeName)
@@ -619,7 +619,7 @@ func (e *Engine) SequentialChangeoverCutover(processID, nodeID int64, calledBy s
 	if err != nil || fromClaim == nil {
 		return fmt.Errorf("sequential cutover: get from-claim: %w", err)
 	}
-	if fromClaim.SwapMode != "sequential" {
+	if fromClaim.SwapMode != protocol.SwapModeSequential {
 		return fmt.Errorf("sequential cutover: from-claim swap_mode is %q, not sequential", fromClaim.SwapMode)
 	}
 	if fromClaim.PairedCoreNode == "" {

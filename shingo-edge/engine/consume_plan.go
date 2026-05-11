@@ -33,7 +33,7 @@ type ConsumePlan struct {
 	// Mutually exclusive with Dispatch.
 	SimpleMove                            bool
 	SimpleSource, SimpleDest              string
-	DowngradedFromSwapMode                string // empty unless this is the case-2 downgrade
+	DowngradedFromSwapMode                protocol.SwapMode // empty unless this is the case-2 downgrade
 
 	// Dispatch is the shared swap-mode dispatch for sequential / single_robot
 	// / two_robot / two_robot_press_index. Nil when SimpleMove is true.
@@ -44,9 +44,9 @@ type ConsumePlan struct {
 // NodeOrderResult.CycleMode. "simple" for the move branch (including the
 // node-empty downgrade — matches today's behavior at operator_stations.go);
 // the dispatch's CycleMode otherwise.
-func (p *ConsumePlan) CycleMode() string {
+func (p *ConsumePlan) CycleMode() protocol.SwapMode {
 	if p.SimpleMove || p.Dispatch == nil {
-		return "simple"
+		return protocol.SwapModeSimple
 	}
 	return p.Dispatch.CycleMode
 }
@@ -84,7 +84,7 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 
 	// Node-empty downgrade: nothing physically present to swap out, so
 	// any non-simple mode collapses to a delivery move.
-	if claim.SwapMode != "simple" && claim.SwapMode != "" && !nodeOccupied {
+	if claim.SwapMode != protocol.SwapModeSimple && claim.SwapMode != "" && !nodeOccupied {
 		if claim.InboundSource == "" {
 			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 		}

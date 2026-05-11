@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol"
 	"shingoedge/store/processes"
 )
 
@@ -654,7 +655,7 @@ func crossModeFromPressIndex(payload, core, paired, second string) processes.Nod
 
 // crossModeNonPressIndex builds a non-press-index claim (single_robot,
 // two_robot, or sequential) at a given CoreNodeName.
-func crossModeNonPressIndex(core, payload, swapMode string) processes.NodeClaim {
+func crossModeNonPressIndex(core, payload string, swapMode protocol.SwapMode) processes.NodeClaim {
 	return processes.NodeClaim{
 		CoreNodeName:        core,
 		PayloadCode:         payload,

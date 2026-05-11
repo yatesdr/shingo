@@ -123,26 +123,27 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 		in.Role = protocol.ClaimRoleConsume
 	}
 	if in.SwapMode == "" {
-		in.SwapMode = "simple"
+		in.SwapMode = protocol.SwapModeSimple
 	}
 	// SwapMode allowlist. The "press_position" value used by the
 	// per-position fan-out post-processor is in-memory only and must
 	// never be persisted; an explicit allowlist also rejects typos /
 	// stale values from imports.
 	switch in.SwapMode {
-	case "simple", "single_robot", "two_robot", "two_robot_press_index", "sequential", "manual_swap":
+	case protocol.SwapModeSimple, protocol.SwapModeSingleRobot, protocol.SwapModeTwoRobot,
+		protocol.SwapModeTwoRobotPressIndex, protocol.SwapModeSequential, protocol.SwapModeManualSwap:
 		// allowed
 	default:
 		return 0, fmt.Errorf("unknown swap_mode %q", in.SwapMode)
 	}
 	// manual_swap claims require OutboundDestination — without it the
 	// post-swap bin has nowhere to go and the node deadlocks.
-	if in.SwapMode == "manual_swap" && in.OutboundDestination == "" {
+	if in.SwapMode == protocol.SwapModeManualSwap && in.OutboundDestination == "" {
 		return 0, fmt.Errorf("manual_swap claims require outbound_destination to be set")
 	}
 	// manual_swap claims must auto-confirm delivery (operator action IS
 	// the acknowledgement).
-	if in.SwapMode == "manual_swap" {
+	if in.SwapMode == protocol.SwapModeManualSwap {
 		in.AutoConfirm = true
 	}
 	// two_robot claims require InboundStaging. Robot A drops the new bin
@@ -154,7 +155,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	// runtime no-op at material_orders.go BuildTwoRobotSwapSteps becomes
 	// unreachable defensive code (kept as an assert, not a real branch).
 	// Phase 2 #9 of 2026-04-27 v2 direction doc.
-	if in.SwapMode == "two_robot" && in.InboundStaging == "" {
+	if in.SwapMode == protocol.SwapModeTwoRobot && in.InboundStaging == "" {
 		return 0, fmt.Errorf("two_robot claims require inbound_staging to be set")
 	}
 	// two_robot_press_index claims need PairedCoreNode (back position B) and
@@ -163,7 +164,7 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	// 3-position layout); R2 indexes B → A (and C → B in 3-position).
 	// Without PairedCoreNode or OutboundDestination, BuildTwoRobotPressIndexSwapSteps
 	// returns nil and the operator's RELEASE silently no-ops.
-	if in.SwapMode == "two_robot_press_index" {
+	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
 		if in.PairedCoreNode == "" {
 			return 0, fmt.Errorf("two_robot_press_index claims require paired_core_node (back position) to be set")
 		}

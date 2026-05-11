@@ -248,11 +248,11 @@ type ChangeoverDispatch struct {
 // ignore the values.
 func BuildSwapChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inactiveNode, activeNode string) ChangeoverDispatch {
 	switch fromClaim.SwapMode {
-	case "two_robot":
+	case protocol.SwapModeTwoRobot:
 		return buildTwoRobotChangeoverSwap(fromClaim, toClaim)
-	case "two_robot_press_index":
+	case protocol.SwapModeTwoRobotPressIndex:
 		return buildPressIndexChangeoverSwap(fromClaim, toClaim, false /* tooling */)
-	case "sequential":
+	case protocol.SwapModeSequential:
 		return buildSequentialChangeoverSwap(fromClaim, toClaim, inactiveNode, activeNode)
 	case pressPositionSwapMode:
 		// Synthesized per-position diff from the press-index different-
@@ -283,11 +283,11 @@ func BuildEvacuateChangeoverSteps(fromClaim, toClaim *processes.NodeClaim, inact
 	_ = inactiveNode
 	_ = activeNode
 	switch fromClaim.SwapMode {
-	case "two_robot":
+	case protocol.SwapModeTwoRobot:
 		return buildTwoRobotChangeoverSwap(fromClaim, toClaim)
-	case "two_robot_press_index":
+	case protocol.SwapModeTwoRobotPressIndex:
 		return buildPressIndexChangeoverSwap(fromClaim, toClaim, true)
-	case "sequential":
+	case protocol.SwapModeSequential:
 		return buildSequentialChangeoverEvacuate(fromClaim, toClaim)
 	case pressPositionSwapMode:
 		// Per-position dispatch: the parent evacuate situation drives the

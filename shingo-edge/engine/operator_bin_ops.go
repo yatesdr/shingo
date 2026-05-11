@@ -22,7 +22,7 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 	if claim == nil {
 		return fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	if claim.SwapMode != "manual_swap" {
+	if claim.SwapMode != protocol.SwapModeManualSwap {
 		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
 	if len(manifest) == 0 {
@@ -190,7 +190,7 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	if claim == nil {
 		return fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	if claim.SwapMode != "manual_swap" {
+	if claim.SwapMode != protocol.SwapModeManualSwap {
 		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
 	if err := e.coreClient.ClearBin(node.CoreNodeName); err != nil {
@@ -242,7 +242,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// the bin", not "operator confirmed they loaded parts". Override both
 	// flags for manual_swap to match MaybeCreateLoaderEmptyIn / MaybeCreateUnloaderFullIn.
 	skipAutoConfirm := false
-	if claim.SwapMode == "manual_swap" {
+	if claim.SwapMode == protocol.SwapModeManualSwap {
 		autoConfirm = false
 		skipAutoConfirm = true
 	}
@@ -251,7 +251,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
 	// choreography for empty and full bins; the order shape doesn't depend
 	// on contents.
-	if claim.SwapMode != "" && claim.SwapMode != "simple" && claim.SwapMode != "manual_swap" {
+	if claim.SwapMode != "" && claim.SwapMode != protocol.SwapModeSimple && claim.SwapMode != protocol.SwapModeManualSwap {
 		dispatch, err := BuildSwapDispatch(node, claim)
 		if err != nil {
 			return nil, err
@@ -316,7 +316,7 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
-	if claim.SwapMode != "manual_swap" {
+	if claim.SwapMode != protocol.SwapModeManualSwap {
 		return nil, fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
 	if claim.Role != protocol.ClaimRoleConsume {

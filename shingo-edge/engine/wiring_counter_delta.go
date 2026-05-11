@@ -62,7 +62,7 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 		// the parts. Skip cache decrement and Core-side bin delta
 		// emission for these nodes so a forklift-loaded bin's manifest
 		// doesn't drift from the operator-declared count.
-		if claim.SwapMode == "manual_swap" {
+		if claim.SwapMode == protocol.SwapModeManualSwap {
 			continue
 		}
 

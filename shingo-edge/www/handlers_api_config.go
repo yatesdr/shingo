@@ -560,7 +560,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// own, but their process_node rows must exist. Auto-provision them
 	// here using the front node's operator station so the operator
 	// doesn't have to add them by hand in a separate step.
-	if in.SwapMode == "two_robot_press_index" {
+	if in.SwapMode == protocol.SwapModeTwoRobotPressIndex {
 		if in.PairedCoreNode != "" {
 			if err := h.ensurePressIndexBackNode(in, in.PairedCoreNode); err != nil {
 				log.Printf("press-index back-node provisioning for %s (paired %s): %v",

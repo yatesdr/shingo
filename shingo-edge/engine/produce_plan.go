@@ -37,9 +37,9 @@ type ProducePlan struct {
 // CycleMode returns the mode tag the apply caller surfaces in
 // NodeOrderResult.CycleMode. "simple" for the ingest-only branch; the
 // dispatch's CycleMode for every other mode.
-func (p *ProducePlan) CycleMode() string {
+func (p *ProducePlan) CycleMode() protocol.SwapMode {
 	if p.SimpleOnly || p.Dispatch == nil {
-		return "simple"
+		return protocol.SwapModeSimple
 	}
 	return p.Dispatch.CycleMode
 }

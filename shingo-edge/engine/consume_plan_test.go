@@ -7,7 +7,7 @@ import (
 	"shingoedge/store/processes"
 )
 
-func consumeClaim(swapMode string) *processes.NodeClaim {
+func consumeClaim(swapMode protocol.SwapMode) *processes.NodeClaim {
 	return &processes.NodeClaim{
 		Role:                protocol.ClaimRoleConsume,
 		SwapMode:            swapMode,
@@ -22,7 +22,7 @@ func consumeClaim(swapMode string) *processes.NodeClaim {
 	}
 }
 
-func consumeFixtures(swapMode string) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim) {
+func consumeFixtures(swapMode protocol.SwapMode) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim) {
 	node := &processes.Node{ID: 2, Name: "CONSUME-NODE"}
 	runtime := &processes.RuntimeState{RemainingUOPCached: 0}
 	return node, runtime, consumeClaim(swapMode)

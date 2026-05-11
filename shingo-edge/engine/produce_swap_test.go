@@ -23,7 +23,7 @@ func (testOrderEmitter) EmitOrderFailed(int64, string, protocol.OrderType, strin
 
 // seedProduceNode creates a process, process node, style, claim, and runtime
 // suitable for produce-node finalization tests. Returns all the IDs needed.
-func seedProduceNode(t *testing.T, db *store.DB, swapMode string) (processID, nodeID, styleID, claimID int64) {
+func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (processID, nodeID, styleID, claimID int64) {
 	t.Helper()
 
 	processID, err := db.CreateProcess("PRODUCE-PROC", "produce test", "active_production", "", "", false, false)

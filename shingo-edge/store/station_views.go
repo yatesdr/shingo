@@ -1,6 +1,7 @@
 package store
 
 import (
+	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
@@ -90,7 +91,7 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 // Non-two-robot claims always return false — their single staged order is
 // still released via the per-order /api/orders/{id}/release endpoint.
 func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.RuntimeState) bool {
-	if claim == nil || (claim.SwapMode != "two_robot" && claim.SwapMode != "two_robot_press_index") {
+	if claim == nil || (claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex) {
 		return false
 	}
 	if runtime == nil || runtime.StagedOrderID == nil {

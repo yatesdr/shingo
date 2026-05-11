@@ -54,8 +54,8 @@ func BuildChangeoverPlan(diffs []ChangeoverNodeDiff, nodes []processes.Node, fal
 // also direct-trip. Modes outside this set use the staging hop and
 // fall through to planFallbackStagingAction when their staging
 // fields are missing.
-func directTripChangeoverMode(swapMode string) bool {
-	return swapMode == "sequential" || swapMode == pressPositionSwapMode
+func directTripChangeoverMode(swapMode protocol.SwapMode) bool {
+	return swapMode == protocol.SwapModeSequential || swapMode == pressPositionSwapMode
 }
 
 // resolveSequentialActivePull computes inactive/active node names for a
@@ -103,7 +103,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		// concept; sequential and per-position skip that gate too.
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 			switch diff.FromClaim.SwapMode {
-			case "two_robot", "two_robot_press_index":
+			case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex:
 				if diff.ToClaim.InboundStaging == "" {
 					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
 				}
@@ -128,7 +128,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		// For sequential, resolve inactive/active node names from the
 		// active-pull snapshot. Other modes ignore them.
 		var inactive, active string
-		if diff.FromClaim.SwapMode == "sequential" {
+		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 			inactive, active = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
 		}
 		disp := BuildSwapChangeoverSteps(diff.FromClaim, diff.ToClaim, inactive, active)
@@ -142,7 +142,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		}
 		assignDispatch(&action, diff.CoreNodeName, disp)
 		action.NextState = "staging_requested"
-		if diff.FromClaim.SwapMode == "sequential" {
+		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 			action.LogTag = "swap_sequential"
 		} else {
 			action.LogTag = "swap"
@@ -155,7 +155,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		}
 		if !directTripChangeoverMode(diff.FromClaim.SwapMode) {
 			switch diff.FromClaim.SwapMode {
-			case "two_robot", "two_robot_press_index":
+			case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex:
 				if diff.ToClaim.InboundStaging == "" {
 					return planFallbackStagingAction(action, diff.ToClaim, fallbackAutoConfirm)
 				}
@@ -175,7 +175,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			return action
 		}
 		var einactive, eactive string
-		if diff.FromClaim.SwapMode == "sequential" {
+		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 			einactive, eactive = resolveSequentialActivePull(diff.FromClaim, activePullByCoreNode)
 		}
 		disp := BuildEvacuateChangeoverSteps(diff.FromClaim, diff.ToClaim, einactive, eactive)
@@ -185,7 +185,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		}
 		assignDispatch(&action, diff.CoreNodeName, disp)
 		action.NextState = "staging_requested"
-		if diff.FromClaim.SwapMode == "sequential" {
+		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 			action.LogTag = "evacuate_sequential"
 		} else {
 			action.LogTag = "evacuate"
@@ -270,7 +270,7 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 // planKeepStagedAction mirrors createKeepStagedChangeoverOrders.
 func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *processes.NodeClaim) changeover.NodeAction {
 	switch fromClaim.SwapMode {
-	case "two_robot", "two_robot_press_index":
+	case protocol.SwapModeTwoRobot, protocol.SwapModeTwoRobotPressIndex:
 		deliverSteps := BuildKeepStagedDeliverSteps(toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
 		action.OrderA = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, deliverSteps, false)
@@ -364,7 +364,7 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 	}
 	var missing []missingField
 	switch fromClaim.SwapMode {
-	case "single_robot":
+	case protocol.SwapModeSingleRobot:
 		// buildSingleRobotChangeoverSwap: stage + line-side swap.
 		// Needs InboundStaging on to-claim (stage destination),
 		// OutboundStaging on from-claim (mid-swap park), and
@@ -378,7 +378,7 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 		if fromClaim.OutboundDestination == "" {
 			missing = append(missing, missingField{Side: "from", Name: "Outbound Destination"})
 		}
-	case "two_robot":
+	case protocol.SwapModeTwoRobot:
 		// buildTwoRobotChangeoverSwap: pre-stage + ready wait +
 		// deliver / evac to destination. Same fields as single_robot
 		// minus OutboundStaging (Order B goes straight to destination).
@@ -388,7 +388,7 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 		if fromClaim.OutboundDestination == "" {
 			missing = append(missing, missingField{Side: "from", Name: "Outbound Destination"})
 		}
-	case "two_robot_press_index":
+	case protocol.SwapModeTwoRobotPressIndex:
 		// Same-bin-type press-index needs PairedCoreNode and
 		// OutboundDestination. The different-bin-type case fans out
 		// to per-position "press_position" claims before this
@@ -417,7 +417,7 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 		if toClaim.InboundSource == "" {
 			missing = append(missing, missingField{Side: "to", Name: "Inbound Source"})
 		}
-	case "sequential":
+	case protocol.SwapModeSequential:
 		// Direct trips, no staging hop. Needs PairedCoreNode (A/B
 		// paired model), OutboundDestination (where evacuated bins
 		// go), and InboundSource on to-claim (where new bins come
@@ -431,7 +431,7 @@ func requiredChangeoverFields(fromClaim, toClaim *processes.NodeClaim) []missing
 		if toClaim.InboundSource == "" {
 			missing = append(missing, missingField{Side: "to", Name: "Inbound Source"})
 		}
-	case "manual_swap":
+	case protocol.SwapModeManualSwap:
 		// manual_swap nodes don't go through changeover (per Locked
 		// Decision 4 — UI removal landed in 62ad397). Don't validate;
 		// if a manual_swap claim somehow gets here the existing

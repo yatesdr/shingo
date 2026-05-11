@@ -912,7 +912,7 @@ func TestChangeover_SituationAdd(t *testing.T) {
 // seedKeepStagedSwapScenario creates a swap changeover scenario where the
 // from-claim has KeepStaged=true. This means there's a pre-staged bin at
 // InboundStaging from the old style that must be cleared during changeover.
-func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode string) (processID, nodeID, fromStyleID, toStyleID int64) {
+func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
 
 	processID, err := db.CreateProcess("KS-PROC", "keep-staged swap test", "active_production", "", "", false, false)

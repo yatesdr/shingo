@@ -35,7 +35,7 @@ func (e *Engine) SendClaimSync() {
 			continue
 		}
 		for _, c := range nodeClaims {
-			if c.SwapMode != "manual_swap" {
+			if c.SwapMode != protocol.SwapModeManualSwap {
 				continue
 			}
 			payloads := c.AllowedPayloads()
@@ -104,7 +104,7 @@ func (e *Engine) findManualSwapNodes(coreNodeName string) []manualSwapNode {
 		var nodes []processes.Node
 		var nodesFetched bool
 		for _, claim := range claims {
-			if claim.SwapMode != "manual_swap" {
+			if claim.SwapMode != protocol.SwapModeManualSwap {
 				continue
 			}
 			if coreNodeName != "" && claim.CoreNodeName != coreNodeName {

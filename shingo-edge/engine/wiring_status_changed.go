@@ -50,7 +50,7 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 	}
 
 	claim := findActiveClaim(e.db, node)
-	if claim == nil || claim.SwapMode != "sequential" {
+	if claim == nil || claim.SwapMode != protocol.SwapModeSequential {
 		return
 	}
 

@@ -117,7 +117,7 @@ func DiffStyleClaims(fromClaims, toClaims []processes.NodeClaim) []ChangeoverNod
 // list for a single planChangeover call and never get persisted to
 // style_node_claims, so the schema's swap_mode column never sees this
 // value and steady-state code paths don't need to know it exists.
-const pressPositionSwapMode = "press_position"
+const pressPositionSwapMode protocol.SwapMode = "press_position"
 
 // FanOutPressIndexDifferentBinType rewrites a press-index Swap/Evacuate
 // diff into one per-position diff whenever the from-claim's payload bin
@@ -172,7 +172,7 @@ func shouldFanOutPressIndex(d ChangeoverNodeDiff, binTypes map[string]string) bo
 	if d.FromClaim == nil || d.ToClaim == nil {
 		return false
 	}
-	if d.FromClaim.SwapMode != "two_robot_press_index" {
+	if d.FromClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return false
 	}
 	fromBT := binTypes[d.FromClaim.PayloadCode]
@@ -360,11 +360,11 @@ func FanOutPressIndexCrossMode(diffs []ChangeoverNodeDiff) []ChangeoverNodeDiff 
 	}
 	for i := range diffs {
 		d := &diffs[i]
-		if fc := d.FromClaim; fc != nil && fc.SwapMode == "two_robot_press_index" {
+		if fc := d.FromClaim; fc != nil && fc.SwapMode == protocol.SwapModeTwoRobotPressIndex {
 			noteFrom(fc.PairedCoreNode, fc)
 			noteFrom(fc.SecondPairedCoreNode, fc)
 		}
-		if tc := d.ToClaim; tc != nil && tc.SwapMode == "two_robot_press_index" {
+		if tc := d.ToClaim; tc != nil && tc.SwapMode == protocol.SwapModeTwoRobotPressIndex {
 			noteTo(tc.PairedCoreNode, tc)
 			noteTo(tc.SecondPairedCoreNode, tc)
 		}
@@ -442,7 +442,7 @@ func ApplyReuseCompatibleBinsShortcut(diffs []ChangeoverNodeDiff, isEmpty func(c
 		if d.Situation != SituationSwap && d.Situation != SituationEvacuate {
 			continue
 		}
-		if d.FromClaim.SwapMode != "two_robot_press_index" {
+		if d.FromClaim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 			continue
 		}
 		if !d.FromClaim.ReuseCompatibleBins {

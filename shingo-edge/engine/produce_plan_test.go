@@ -12,7 +12,7 @@ import (
 // timestamp comparisons are deterministic.
 var fixedNow = time.Date(2026, 4, 29, 14, 0, 0, 0, time.UTC)
 
-func produceClaim(swapMode string) *processes.NodeClaim {
+func produceClaim(swapMode protocol.SwapMode) *processes.NodeClaim {
 	return &processes.NodeClaim{
 		Role:                protocol.ClaimRoleProduce,
 		SwapMode:            swapMode,
@@ -26,7 +26,7 @@ func produceClaim(swapMode string) *processes.NodeClaim {
 	}
 }
 
-func produceFixtures(swapMode string) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim) {
+func produceFixtures(swapMode protocol.SwapMode) (*processes.Node, *processes.RuntimeState, *processes.NodeClaim) {
 	node := &processes.Node{ID: 1, Name: "PRODUCE-NODE"}
 	runtime := &processes.RuntimeState{RemainingUOPCached: 50}
 	return node, runtime, produceClaim(swapMode)

@@ -503,7 +503,7 @@ func (e *Engine) isSupplyOrderInTwoRobotSwap(order *storeorders.Order, node *pro
 	if order == nil || node == nil || claim == nil {
 		return false
 	}
-	if claim.SwapMode != "two_robot" && claim.SwapMode != "two_robot_press_index" {
+	if claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex {
 		return false
 	}
 	if order.SiblingOrderID == nil {
