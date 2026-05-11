@@ -18,29 +18,50 @@ async function submitOrder(orderID) {
 }
 
 async function releaseOrder(orderID) {
-    // Lineside phase 4: the kanbans admin view doesn't know which parts
-    // were pulled to lineside (that's captured at the operator station
-    // modal). Ask the operator to confirm they intend to release
-    // without capturing anything first — if they did pull parts, the
-    // operator-station UI is the right place to enter quantities.
-    const msg = 'Release this order?\n\n' +
-        'If you pulled parts to lineside during the swap, cancel and\n' +
-        'use the operator station to record them. Releasing here\n' +
-        'dispatches the bots without capturing anything.';
-    if (!await ShingoEdge.confirm(msg)) return;
+    // Prompt the operator for the remaining-parts count on the bin being
+    // released. The number drives the disposition:
+    //
+    //   - empty input or 0   → DispositionCaptureLineside (manifest cleared)
+    //   - positive integer N → DispositionSendPartialBack with PartialCount=N
+    //                          (manifest synced to N, bin returns partial)
+    //
+    // Plant 2026-05-11 (SNF2 ALN_001): pre-fix this button hardcoded
+    // capture_lineside with empty captures regardless of bin state, which
+    // wiped manifests on partial bins when operators used this as an HMI
+    // workaround. A bin with 3600 parts arrived at supermarket empty.
+    // Prompting forces the operator to declare the count rather than
+    // silently assuming empty.
+    //
+    // Lineside-pull contract (unchanged from pre-fix): the kanbans admin
+    // view doesn't know which parts were pulled to lineside (that's
+    // captured at the operator station modal). If the operator pulled
+    // parts, they should cancel here and use the operator-station UI to
+    // record per-part quantities — this prompt only handles the bin's
+    // remaining total, not per-part captures.
+    const input = window.prompt(
+        'How many parts remain in this bin?\n\n' +
+        'Enter 0 (or leave blank) to release as EMPTY (manifest cleared).\n' +
+        'Enter a positive number to release as PARTIAL (manifest preserved\n' +
+        'with that count).\n\n' +
+        'If you pulled parts to lineside during the swap, cancel and use\n' +
+        'the operator station to record per-part captures.',
+        ''
+    );
+    if (input === null) return; // operator cancelled
+    const trimmed = String(input).trim();
+    const partial = trimmed === '' ? 0 : Number(trimmed);
+    if (!Number.isInteger(partial) || partial < 0) {
+        ShingoEdge.toast('Invalid count: enter 0, blank, or a positive whole number', 'error');
+        return;
+    }
+    const body = partial > 0
+        ? { disposition: 'send_partial_back', partial_count: partial, called_by: 'admin-ui' }
+        : { disposition: 'capture_lineside', qty_by_part: {}, called_by: 'admin-ui' };
     try {
-        // Send explicit capture_lineside disposition so Core clears the bin's
-        // manifest. Pre-fix this POST sent no disposition, which fell through
-        // to "no manifest action" — bin landed at supermarket with stale UOP
-        // and the bin loader treated it as full. See bug-fix-review-plan.md
-        // item 1.1; fingerprint of the bug was called_by="" remaining_uop=<nil>
-        // in the orders subsystem log.
-        await ShingoEdge.api.post('/api/orders/' + orderID + '/release', {
-            disposition: 'capture_lineside',
-            qty_by_part: {},
-            called_by: 'admin-ui',
-        });
-        ShingoEdge.toast('Order released', 'success');
+        await ShingoEdge.api.post('/api/orders/' + orderID + '/release', body);
+        ShingoEdge.toast(partial > 0
+            ? 'Order released — partial (' + partial + ' parts preserved)'
+            : 'Order released — empty (manifest cleared)', 'success');
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }

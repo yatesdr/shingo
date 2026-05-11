@@ -309,37 +309,47 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	if loader == nil {
 		return
 	}
+	// Each demand signal triggers a full sweep across all of the loader's
+	// allowed payloads, not just the signaled one. A multi-payload loader
+	// (e.g., A, B, C, D each with ReorderPoint=2) may have several payloads
+	// in deficit at once; we want the queue to reflect that all at once so
+	// the operator sees the full demand rather than discovering it one signal
+	// at a time. The signaled payload is what tells us which loader to
+	// evaluate; what to queue is computed per-payload from current state.
+	for _, code := range loader.claim.AllowedPayloads() {
+		e.refillLoaderForPayload(loader, code)
+	}
+}
+
+// refillLoaderForPayload tops the per-payload empty-in queue at one loader
+// up to (ReorderPoint - currentCount - inFlight) orders. Per-payload helper
+// so MaybeCreateLoaderEmptyIn can sweep across all allowed payloads.
+//
+// ReorderPoint semantics (produce-role): bin-count minimum-stock floor —
+// "I want at least N bins of this payload in the system." The gate fires
+// L1s whenever the count of available bins drops below N. Zero falls back
+// to a magic-number floor of 2.
+//
+// The future kanban calculator (shingo-kanban-calculator-design.md) writes
+// its computed loop-size output into this same ReorderPoint column, so
+// operator-set values today and calculator-driven values tomorrow share one
+// read site.
+//
+// Fails OPEN on the system-count lookup: if Core can't be reached we treat
+// currentCount as zero and top the queue up to ReorderPoint. Idle is worse
+// than redundant.
+func (e *Engine) refillLoaderForPayload(loader *manualSwapNode, payloadCode string) {
 	if e.loaderHasUsableEmptyPresent(loader.node.CoreNodeName) {
+		// Skip-on-parked-empty applies per-loader, not per-payload — a
+		// parked empty bin can be filled with any of the loader's allowed
+		// payloads. Plant 2026-04-28 #483→#484 was the wedge we're guarding
+		// against; until that's revisited for the multi-payload case, keep
+		// the conservative behavior.
 		e.logFn("side-cycle: loader %s already has an empty bin parked, skipping L1 for %s",
 			loader.node.Name, payloadCode)
 		return
 	}
 
-	// Kanban minimum-stock floor. Fire enough L1s on each signal to top
-	// the in-flight queue up to (ReorderPoint - currentCount) — operators
-	// see the full demand at once instead of one queue per signal cycle.
-	//
-	// Floor lives on the loader's claim as ReorderPoint. ReorderPoint
-	// has role-dependent semantics:
-	//   - consume-role: UOP threshold for auto-reorder, "fire at or
-	//     below" (≤) — wiring_counter_delta.go.
-	//   - produce-role (this loader path): bin-count minimum-stock
-	//     floor, "fire when fewer than" (<). Operator types "2" meaning
-	//     "I want at least 2 bins of this payload in the system at all
-	//     times" and the gate fires L1 whenever count drops to 1 or 0.
-	//
-	// Zero falls back to a magic-number floor of 2: strict "queue when
-	// fewer than 2 bins in the system."
-	//
-	// The future kanban calculator (shingo-kanban-calculator-design.md)
-	// writes its computed loop-size output into this same ReorderPoint
-	// column, so operator-set values today and calculator-driven values
-	// tomorrow share one read site. The doc explicitly warns against a
-	// parallel "loader threshold" column to prevent divergence.
-	//
-	// Fails OPEN on the system-count lookup: if Core can't be reached we
-	// treat currentCount as zero and top the queue up to ReorderPoint.
-	// Idle is worse than redundant.
 	minStock := loader.claim.ReorderPoint
 	if minStock <= 0 {
 		minStock = 2
