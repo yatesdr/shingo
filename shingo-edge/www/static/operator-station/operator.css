@@ -302,25 +302,44 @@ body {
     50% { opacity: 0.55; }
 }
 
-/* Replenishing overlay — blue inset ring */
+/* Replenishing — blue inset ring stays as a "robot in motion at this
+   node" cue. Doesn't conflict with the priority states below since it's
+   an inset ring (border-style), not a background. */
 .os-node-btn.os-replenishing {
     box-shadow: inset 0 0 0 4px var(--os-blue);
 }
 
-/* Changeover task pending — orange border */
+/* Priority states — solid backgrounds replace the fill-level color so
+   the operator gets one clear cue per tile. Pulse draws the eye toward
+   the node that needs action. CSS priority: release-ready and changeover
+   are mutually exclusive (the JS picks one; release-ready wins) and
+   override the .os-full / .os-mid / .os-low background rules above by
+   selector specificity (single-class to single-class — JS controls which
+   class is on the element). */
 .os-node-btn.os-changeover {
-    border-color: var(--os-orange);
+    background: var(--os-orange);
 }
 
-/* HMI Tier 1 — release-ready cue. Fires when an order on this node is
-   dispatched and not yet released (acknowledged / in_transit / staged).
-   Layered on top of os-changeover so the orange border stays present;
-   the blue glow signals "click to release now" without obscuring the
-   changeover indicator. Pulse draws the operator's eye away from the
-   nodes that aren't ready yet. */
+/* Release-ready: solid blue + pulse. "Click to release now" cue. */
 .os-node-btn.os-release-ready {
-    box-shadow: 0 0 0 4px var(--os-blue), 0 0 18px 2px var(--os-blue);
+    background: var(--os-blue);
     animation: os-pulse 1.6s ease-in-out infinite;
+}
+
+/* Banner label rendered inside the tile under the node name when the
+   tile is in a priority state. Sized to grab attention without
+   obscuring the count below. */
+.os-node-banner {
+    display: block;
+    margin: 4px 0 8px;
+    padding: 4px 10px;
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.28);
+    border-radius: 6px;
+    text-align: center;
 }
 
 /* ===== Modal Backdrop ===== */

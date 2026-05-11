@@ -446,22 +446,43 @@ function createNodeButton(entry) {
     const remaining = runtime.remaining_uop_cached != null ? runtime.remaining_uop_cached : 0;
     const capacity = claim ? claim.uop_capacity : 0;
 
-    const btn = el('div', { className: 'os-node-btn ' + nodeColorClass(entry) });
+    // Tile background by priority: release-ready (blue) > changeover
+    // (orange) > fill state (full/mid/low/empty). Higher-priority states
+    // replace the underlying state color so the operator gets a single
+    // clear cue per tile rather than a stack of overlays. Replenishing
+    // stays as an inset ring (separate "robot in motion" signal that
+    // doesn't compete with the click-to-act vs CO-context cues).
+    const releaseReady = isReleaseReady(entry);
+    const inChangeover = !!entry.changeover_task;
+    let stateClass;
+    if (releaseReady) {
+        stateClass = 'os-release-ready';
+    } else if (inChangeover) {
+        stateClass = 'os-changeover';
+    } else {
+        stateClass = nodeColorClass(entry);
+    }
+    const btn = el('div', { className: 'os-node-btn ' + stateClass });
 
     if (isReplenishing(entry)) btn.classList.add('os-replenishing');
-    if (entry.changeover_task) btn.classList.add('os-changeover');
-
-    // HMI Tier 1: light up blue when the click is ready to do something.
-    // Same screen handles production and changeover; the gate behind the
-    // click is different, isReleaseReady picks the right one per context.
-    if (isReleaseReady(entry)) {
-        btn.classList.add('os-release-ready');
-    }
 
     btn.appendChild(el('span', { className: 'os-node-name', textContent: entry.node.name }));
 
+    // Banner label for the priority states. The full-tile background
+    // already signals "something is up"; the label says what.
+    if (releaseReady) {
+        btn.appendChild(el('span', { className: 'os-node-banner', textContent: 'RELEASE READY' }));
+    } else if (inChangeover) {
+        btn.appendChild(el('span', { className: 'os-node-banner', textContent: 'CHANGEOVER' }));
+    }
+
+    // [REP] corner badge stays for replenishing (different signal — bin
+    // move in flight). [CO] badge is suppressed because the full-tile
+    // CHANGEOVER banner makes it redundant.
     const icon = statusIcon(entry);
-    if (icon) btn.appendChild(el('span', { className: 'os-node-icon', textContent: icon }));
+    if (icon && icon === '[REP]') {
+        btn.appendChild(el('span', { className: 'os-node-icon', textContent: icon }));
+    }
 
     if (claim && claim.swap_mode === 'manual_swap') {
         const binState = entry.bin_state;
