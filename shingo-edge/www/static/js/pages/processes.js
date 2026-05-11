@@ -197,8 +197,6 @@ async function loadClaims(styleID) {
             if (c.evacuate_on_changeover) flags.push('evac');
             if (c.auto_reorder) flags.push('auto');
             var flagStr = flags.length ? ' <span style="color:var(--text-muted);font-size:0.75rem">' + flags.join(', ') + '</span>' : '';
-            // Store claim data for edit
-            var claimJSON = ShingoEdge.escapeHtml(JSON.stringify(c));
             tr.innerHTML =
                 '<td class="mono">' + ShingoEdge.escapeHtml(c.core_node_name) + '</td>' +
                 '<td><span class="status-badge">' + ({consume:'Consume',produce:'Produce',changeover:'Changeover'}[c.role] || c.role) + '</span>' + flagStr + '</td>' +
@@ -210,14 +208,34 @@ async function loadClaims(styleID) {
                 '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.outbound_destination || '\u2014') + '</td>' +
                 '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.paired_core_node || '\u2014') + '</td>' +
                 '<td style="white-space:nowrap">' +
-                    '<button class="btn btn-sm" onclick=\'editClaim(' + JSON.stringify(c).replace(/'/g, "&#39;") + ')\'>Edit</button> ' +
-                    '<button class="btn btn-sm btn-danger" onclick="removeClaim(' + c.id + ')">Remove</button>' +
+                    '<button class="btn btn-sm" data-action="edit-claim" data-claim-id="' + c.id + '">Edit</button> ' +
+                    '<button class="btn btn-sm btn-danger" data-action="remove-claim" data-claim-id="' + c.id + '">Remove</button>' +
                 '</td>';
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
         list.appendChild(table);
+        ensureClaimsListDelegation(list);
     } catch (_) {}
+}
+
+// Single delegated click listener on the claims-list container. The list
+// is wiped/refilled by loadClaims, but the container persists, so we
+// attach once (idempotent via a sentinel dataset flag).
+function ensureClaimsListDelegation(list) {
+    if (!list || list.dataset.delegated === '1') return;
+    list.dataset.delegated = '1';
+    list.addEventListener('click', function(e) {
+        var btn = e.target.closest && e.target.closest('[data-action]');
+        if (!btn || !list.contains(btn)) return;
+        var id = parseInt(btn.dataset.claimId, 10);
+        if (btn.dataset.action === 'edit-claim') {
+            var claim = _currentClaims.find(function(c) { return c.id === id; });
+            if (claim) editClaim(claim);
+        } else if (btn.dataset.action === 'remove-claim') {
+            removeClaim(id);
+        }
+    });
 }
 
 function openClaimModal() {
