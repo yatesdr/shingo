@@ -226,7 +226,31 @@ func (h *Handlers) apiReleaseNodeEmpty(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
-	order, err := h.orchestration.ReleaseNodeEmpty(id)
+	// Optional body — if present and has a non-nil partial_count, the
+	// operator has declared the bin's actual remaining count via prompt
+	// (Material page Release flow). Route through the explicit-override
+	// path so a stale runtime cache can't silently wipe a partial bin.
+	// Empty body or missing field falls through to the legacy
+	// cache-driven path used by code paths that don't expose a prompt.
+	var req struct {
+		PartialCount *int `json:"partial_count,omitempty"`
+	}
+	if r.Body != nil {
+		// Body is optional — ignore decode errors (empty body etc.) and
+		// fall through to the legacy ReleaseNodeEmpty path.
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	var order *domain.Order
+	if req.PartialCount != nil {
+		count := *req.PartialCount
+		if count < 0 {
+			writeError(w, http.StatusBadRequest, "partial_count must be >= 0")
+			return
+		}
+		order, err = h.orchestration.ReleaseNodeWithRemainingUOP(id, 1, count)
+	} else {
+		order, err = h.orchestration.ReleaseNodeEmpty(id)
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

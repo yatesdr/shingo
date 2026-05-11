@@ -131,6 +131,7 @@ func (s *stubEngine) CleanupReportingPointTag(int64, string, string, bool) {}
 func (s *stubEngine) RequestNodeMaterial(int64, int64) (*engine.NodeOrderResult, error) { return nil, nil }
 func (s *stubEngine) ReleaseNodeEmpty(int64) (*storeorders.Order, error)                     { return nil, nil }
 func (s *stubEngine) ReleaseNodePartial(int64, int64) (*storeorders.Order, error)             { return nil, nil }
+func (s *stubEngine) ReleaseNodeWithRemainingUOP(int64, int64, int) (*storeorders.Order, error) { return nil, nil }
 // ReleaseOrderWithLineside stub forwards to orderMgr.ReleaseOrder so
 // existing release-flow tests (TestApiOrders_ReleaseOrder_Success, etc.)
 // still exercise the status-transition + lifecycle-error paths. The

@@ -37,6 +37,38 @@
     </div>
 </div>
 <script>
+// Material page Release prompt — mirrors kanbans.js releaseOrder. Asks
+// operator to declare bin's remaining parts so the manifest sync at Core
+// uses the declared count rather than runtime.RemainingUOPCached, which
+// may be stale or zeroed (e.g. by a prior release-click on the slot).
+// Empty/0 → bin released as empty (manifest cleared); positive integer
+// → manifest preserved with that count.
+async function releaseNodeWithPrompt(nodeID) {
+    var input = window.prompt(
+        'How many parts remain in this bin?\n\n' +
+        'Enter 0 (or leave blank) to release as EMPTY (manifest cleared).\n' +
+        'Enter a positive number to release as PARTIAL (manifest preserved\n' +
+        'with that count).',
+        ''
+    );
+    if (input === null) return; // operator cancelled
+    var trimmed = String(input).trim();
+    var partial = trimmed === '' ? 0 : Number(trimmed);
+    if (!Number.isInteger(partial) || partial < 0) {
+        ShingoEdge.toast('Invalid count: enter 0, blank, or a positive whole number', 'error');
+        return;
+    }
+    try {
+        await ShingoEdge.api.post('/api/process-nodes/' + nodeID + '/release-empty',
+            { partial_count: partial });
+        ShingoEdge.toast(partial > 0
+            ? 'Released — partial (' + partial + ' parts preserved)'
+            : 'Released — empty (manifest cleared)', 'success');
+    } catch(e) {
+        ShingoEdge.toast('Error: ' + e, 'error');
+    }
+}
+
 function viewBinContents(binState) {
     document.getElementById('view-bin-title').textContent = 'Bin: ' + (binState.bin_label || 'Unknown');
     var body = document.getElementById('view-bin-body');

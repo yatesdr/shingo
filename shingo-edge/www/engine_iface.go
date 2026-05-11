@@ -85,6 +85,7 @@ type EngineOrchestration interface {
 	RequestNodeMaterial(nodeID int64, quantity int64) (*engine.NodeOrderResult, error)
 	ReleaseNodeEmpty(nodeID int64) (*domain.Order, error)
 	ReleaseNodePartial(nodeID int64, qty int64) (*domain.Order, error)
+	ReleaseNodeWithRemainingUOP(nodeID int64, qty int64, remainingUOP int) (*domain.Order, error)
 	ReleaseOrderWithLineside(orderID int64, disp engine.ReleaseDisposition) error
 	ReleaseStagedOrders(nodeID int64, disp engine.ReleaseDisposition) error
 	FinalizeProduceNode(nodeID int64) (*engine.NodeOrderResult, error)

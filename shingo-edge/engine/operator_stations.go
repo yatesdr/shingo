@@ -188,7 +188,31 @@ func (e *Engine) ReleaseNodeEmpty(nodeID int64) (*storeorders.Order, error) {
 // quantity consumed. Used both for full releases (via ReleaseNodeEmpty
 // with qty=1) and partial-quantity releases when the operator hands off
 // a bin that wasn't fully consumed.
+//
+// Manifest sync threads runtime.RemainingUOPCached to Core. If the cache
+// is stale or has been zeroed by a prior release-click on the slot, this
+// silently wipes the bin's manifest on Core's claim. Use
+// ReleaseNodeWithRemainingUOP when the operator has just declared the
+// bin's actual remaining count and the cache shouldn't be trusted.
 func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order, error) {
+	return e.releaseNodeInternal(nodeID, qty, nil)
+}
+
+// ReleaseNodeWithRemainingUOP is ReleaseNodePartial with an explicit
+// remaining-UOP override that supersedes runtime.RemainingUOPCached for
+// the manifest sync. Use this from operator paths that prompt for the
+// count (Material page Release prompt) so a stale or zeroed cache
+// doesn't silently wipe a partial bin at Core.
+//
+// remainingUOP is the bin's actual remaining count, NOT the order quantity.
+// Pass 0 to declare the bin empty (manifest cleared); positive N preserves
+// the manifest with that count.
+func (e *Engine) ReleaseNodeWithRemainingUOP(nodeID int64, qty int64, remainingUOP int) (*storeorders.Order, error) {
+	v := remainingUOP
+	return e.releaseNodeInternal(nodeID, qty, &v)
+}
+
+func (e *Engine) releaseNodeInternal(nodeID int64, qty int64, overrideRemainingUOP *int) (*storeorders.Order, error) {
 	node, runtime, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
 		return nil, err
@@ -202,10 +226,16 @@ func (e *Engine) ReleaseNodePartial(nodeID int64, qty int64) (*storeorders.Order
 	if claim.OutboundDestination == "" {
 		return nil, fmt.Errorf("node %s has no outbound destination configured", node.Name)
 	}
-	// Thread the current remaining UOP so Core can atomically sync/clear
-	// the bin's manifest when it claims the bin for this move order.
+	// Manifest sync UOP — operator override (if provided) supersedes cache.
+	// The override path is the safe one for the Material page Release flow
+	// where the operator has declared the bin's actual count via prompt;
+	// the cache fallback is the legacy path used by code paths that don't
+	// expose a count input.
 	var remainingUOP *int
-	if runtime.RemainingUOPCached >= 0 {
+	if overrideRemainingUOP != nil {
+		v := *overrideRemainingUOP
+		remainingUOP = &v
+	} else if runtime.RemainingUOPCached >= 0 {
 		v := runtime.RemainingUOPCached
 		remainingUOP = &v
 	}
