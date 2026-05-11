@@ -116,7 +116,15 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 			}
 		}
 	}
-	if evacOrderID == nil && task != nil && task.OldMaterialReleaseOrderID != nil {
+	// Task-based fallback only applies when the task represents an actual
+	// swap pair. Drops are single-leg (evac only, no supply coordination),
+	// so swap_ready doesn't apply — falling back for a drop steers the
+	// modal to the swap-ready RELEASE button which posts to release-staged,
+	// and resolveSwapPair rejects with "no tracked orders to release"
+	// since runtime has no pair. Plant 2026-05-11: ALN_002's from-claim
+	// happened to be two_robot mode from the old style, so the outer
+	// SwapMode gate passed and the fallback fired on the staged drop order.
+	if evacOrderID == nil && task != nil && task.OldMaterialReleaseOrderID != nil && task.Situation != "drop" {
 		evacOrderID = task.OldMaterialReleaseOrderID
 	}
 	if evacOrderID == nil {

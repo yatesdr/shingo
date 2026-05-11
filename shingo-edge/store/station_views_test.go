@@ -224,3 +224,23 @@ func TestComputeSwapReady_TaskFallbackRequiresStaged(t *testing.T) {
 		t.Error("expected SwapReady=false when task-fallback evac is not yet at staged")
 	}
 }
+
+// Drop tasks must NOT trigger the task-fallback even when the from-claim
+// is two_robot mode (the old style's swap mode persists on the active
+// claim during a drop). Drops are single-leg; routing them to swap_ready
+// steers the modal to /release-staged which rejects with "no tracked
+// orders to release". Plant 2026-05-11 (SNF2 ALN_002) plant test.
+func TestComputeSwapReady_DropSituationSkipsFallback(t *testing.T) {
+	db, claim, _, _, bID := seedSwapReadyFixture(t)
+	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
+		t.Fatalf("mark B staged: %v", err)
+	}
+	empty := &processes.RuntimeState{}
+	dropTask := &processes.NodeTask{
+		OldMaterialReleaseOrderID: &bID,
+		Situation:                 "drop",
+	}
+	if ComputeSwapReady(db, claim, empty, dropTask) {
+		t.Error("expected SwapReady=false for drop tasks even with staged evac (drops are single-leg, swap_ready doesn't apply)")
+	}
+}
