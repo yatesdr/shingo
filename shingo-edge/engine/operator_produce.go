@@ -79,8 +79,10 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	}
 	e.resetProduceRuntime(nodeID, runtime, &orderA.ID, orderBID)
 	if orderB != nil {
+		// Return-error on failure: see comment in
+		// operator_stations.go:LinkOrderSiblings call site.
 		if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
-			log.Printf("produce: link order siblings %d↔%d: %v", orderA.ID, orderB.ID, err)
+			return nil, fmt.Errorf("link order siblings %d↔%d: %w", orderA.ID, orderB.ID, err)
 		}
 	}
 

@@ -130,9 +130,16 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 	// nulled by handler_bin_picked_up before release fires; the sibling
 	// pointer survives so ReleaseStagedOrders and the supply guard can
 	// still identify the pair.
+	//
+	// Return-error on failure: ComputeSwapReady's order-graph predicate
+	// keys on the sibling pointer. A silent linkage miss here would
+	// leave the operator with a pair the system can't recognize as
+	// coordinated — swap_ready stays false, modal shows WAITING FOR
+	// OTHER ROBOT with no escape. Aborting is the safer failure mode
+	// because orderA/orderB are still recoverable via admin orders.
 	if orderB != nil {
 		if err := e.db.LinkOrderSiblings(orderA.ID, orderB.ID); err != nil {
-			e.logFn("station: link order siblings %d↔%d: %v", orderA.ID, orderB.ID, err)
+			return nil, fmt.Errorf("link order siblings %d↔%d: %w", orderA.ID, orderB.ID, err)
 		}
 	}
 

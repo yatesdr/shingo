@@ -77,6 +77,19 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 	// Same fingerprint as the 2026-04-23 ALN_002 incident
 	// (operator_release.go:497-498), fixed for the operator-initiated
 	// path but never backported here.
+	// LinkOrderSiblings is log-and-continue here (unlike the three
+	// operator-initiated sites in operator_stations.go / operator_bin_ops.go
+	// / operator_produce.go which return-error). Rationale:
+	//   - Orders are already persisted by createPlannedOrder above; we'd
+	//     need a rollback to abort cleanly.
+	//   - applyChangeoverPlan iterates per-node and a single node's
+	//     failure must not abort the rest of the plan (see comment at
+	//     applyChangeoverPlan: "log and continue").
+	// Residual risk: a silent linkage failure here leaves a changeover
+	// two-robot pair without sibling pointers, which makes
+	// ComputeSwapReady return false (operator gets WAITING FOR OTHER
+	// ROBOT with no escape). SHINGO_TODO.md "Residual risk" entry tracks
+	// the mitigation (on-read repair or startup audit).
 	if supplyID != nil && evacID != nil {
 		if err := e.db.LinkOrderSiblings(*supplyID, *evacID); err != nil {
 			log.Printf("changeover: link order siblings %d↔%d for node task %d: %v",

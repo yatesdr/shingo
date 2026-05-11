@@ -64,6 +64,14 @@ func (e *Engine) handleSequentialBackfill(changed OrderStatusChangedEvent) {
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, runtime.ActiveOrderID, &orderB.ID); err != nil {
 		log.Printf("update runtime orders for node %d: %v", nodeID, err)
 	}
+	// LinkOrderSiblings is log-and-continue here (unlike the three
+	// operator-initiated sites which return-error). Rationale:
+	//   - This runs in the OrderStatusChanged event handler loop; one
+	//     handler failing must not abort message processing.
+	//   - The backfill is opportunistic; if linkage fails, the L1/L2
+	//     side-cycle still works for the operator (only the consolidated
+	//     swap_ready RELEASE coordinates via siblings, and sequential
+	//     mode is excluded from that path by the SwapMode gate).
 	if err := e.db.LinkOrderSiblings(order.ID, orderB.ID); err != nil {
 		log.Printf("link sequential siblings %d↔%d: %v", order.ID, orderB.ID, err)
 	}
