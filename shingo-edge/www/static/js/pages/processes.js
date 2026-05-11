@@ -62,7 +62,9 @@ async function createProcess() {
             await ShingoEdge.api.put('/api/processes/' + res.id + '/active-style', {
                 style_id: style.id
             });
-        } catch (_) { /* non-fatal */ }
+        } catch (e) {
+            ShingoEdge.toast('Process created but default style setup failed: ' + e, 'warning');
+        }
         window.location = '/processes?process=' + res.id;
     } catch (e) {
         ShingoEdge.toast('Error: ' + e, 'error');
@@ -216,7 +218,9 @@ async function loadClaims(styleID) {
         table.appendChild(tbody);
         list.appendChild(table);
         ensureClaimsListDelegation(list);
-    } catch (_) {}
+    } catch (e) {
+        ShingoEdge.toast('Error loading claims: ' + e, 'error');
+    }
 }
 
 // Single delegated click listener on the claims-list container. The list
@@ -808,8 +812,9 @@ async function editStation(station) {
     try {
         var nodes = await ShingoEdge.api.get('/api/operator-stations/' + station.id + '/claimed-nodes');
         resetNodePicker(Array.isArray(nodes) ? nodes : []);
-    } catch (_) {
+    } catch (e) {
         resetNodePicker([]);
+        ShingoEdge.toast('Could not load claimed nodes: ' + e, 'error');
     }
     showProcessTab('stations');
     document.getElementById('station-modal-title').textContent = 'Edit Operator Screen';
