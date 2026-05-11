@@ -518,27 +518,6 @@ async function removeClaim(id) {
     }
 }
 
-// Registry of which SwapModes have changeover-only fields (fields
-// needed for a mode's changeover but NOT for its steady-state
-// operation). When non-empty for the selected mode, the claim editor
-// shows the "Changeover Configuration" section.
-//
-// Currently empty for every mode: sequential is direct-trip (no
-// staging hop), so its changeover uses the same fields as steady-state
-// (InboundSource, OutboundDestination, PairedCoreNode). The other
-// modes (single_robot, two_robot, two_robot_press_index) also share
-// fields between steady-state and changeover. Add an entry here when
-// a future mode introduces a field that's needed only during
-// changeover.
-function changeoverOnlyFieldsExistForMode(swapMode) {
-    var registry = {
-        // Example for a hypothetical staging-hop sequential variant:
-        // 'sequential_staging': ['Changeover Inbound Staging'],
-    };
-    var fields = registry[swapMode];
-    return Array.isArray(fields) && fields.length > 0;
-}
-
 function toggleClaimsAddPayload() {
     var role = document.getElementById('claims-add-role').value;
     var swap = document.getElementById('claims-add-swap').value;
@@ -563,14 +542,6 @@ function toggleClaimsAddPayload() {
     document.getElementById('claims-outbound-destination-group').style.display = (isChangeover) ? 'none' : '';
     // Changeover fieldset — not used by manual_swap
     document.getElementById('claims-changeover-fieldset').style.display = isManualSwap ? 'none' : '';
-    // Conditional Changeover Configuration section: shown when the
-    // selected SwapMode declares changeover-only fields via
-    // changeoverOnlyFieldsExistForMode. Currently dormant — every
-    // mode's changeover uses the same fields as steady-state — but
-    // activates the moment a mode declares one (e.g. if a future
-    // staging-hop variant introduces a "changeover staging node" field).
-    var showChangeoverConfig = !isManualSwap && !isChangeover && changeoverOnlyFieldsExistForMode(swap);
-    document.getElementById('claims-changeover-config-fieldset').style.display = showChangeoverConfig ? '' : 'none';
     // Paired-node fieldset is dual-purposed:
     //   - two_robot_press_index: required "Back Press Node" (the second press position)
     //   - other consume/produce modes: optional A/B alternating partner

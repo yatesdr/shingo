@@ -390,23 +390,6 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 </label>
             </fieldset>
 
-            <!-- Conditional Changeover Configuration section. Houses fields a
-                 SwapMode needs ONLY for changeover (not for steady-state).
-                 Currently dormant: every shipping SwapMode shares its
-                 steady-state fields with its changeover. JS show/hide is
-                 driven by changeoverOnlyFieldsExistForMode(); when a future
-                 mode adds changeover-only fields, populate this section and
-                 the JS function returns true for that mode. -->
-            <fieldset id="claims-changeover-config-fieldset" style="border:1px solid var(--border);border-radius:6px;padding:0.75rem 1rem;margin-top:0.75rem;background:var(--bg-subtle, #f7f7f7);display:none">
-                <legend style="font-weight:600;font-size:0.9rem;padding:0 0.5rem">Changeover Configuration</legend>
-                <div style="color:var(--text-muted);font-size:0.85rem;margin-bottom:0.5rem">
-                    Configure these only if this node will swap between styles. These fields aren't used during normal production.
-                </div>
-                <div id="claims-changeover-config-fields">
-                    <!-- Per-mode changeover-only fields render here when JS populates them. Empty today. -->
-                </div>
-            </fieldset>
-
             <fieldset id="claims-ab-fieldset" style="border:1px solid var(--border);border-radius:6px;padding:0.75rem 1rem;margin-top:0.75rem;display:none">
                 <legend id="claims-ab-legend" style="font-weight:600;font-size:0.9rem;padding:0 0.5rem">A/B Node Cycling</legend>
                 <div id="claims-ab-help" style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.5rem">Pair this node with another node for alternating operation. The operator flips which node is active via the station HMI.</div>
