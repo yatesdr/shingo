@@ -77,10 +77,18 @@ type NodeTask struct {
 // per-station rollup, and the dashboard's "all nodes complete"
 // indicator. All five care about the same predicate: did this task
 // finish cleanly?
-func IsNodeTaskStateTerminal(state string) bool {
+//
+// `line_cleared` is terminal only for drop situations. For swap/evacuate
+// it's an intermediate state ("Order B finished evacuating, waiting for
+// Order A to deliver"), but for drop there is no Order A — once the line
+// is clear, the task is done. Cutover and downstream gates should not
+// wait for the bin's onward journey to the supermarket.
+func IsNodeTaskStateTerminal(state, situation string) bool {
 	switch state {
 	case "switched", "verified", "unchanged", "released":
 		return true
+	case "line_cleared":
+		return situation == "drop"
 	}
 	return false
 }

@@ -79,11 +79,41 @@ func TestPlanNodeAction_Drop(t *testing.T) {
 	if action.OrderB == nil || action.OrderB.Complex == nil {
 		t.Fatal("Drop should produce OrderB (release)")
 	}
-	if !action.OrderB.Complex.AutoConfirm {
-		t.Error("Drop OrderB must auto-confirm")
+	// AutoConfirm=false: the drop order uses the staged-release pattern
+	// (wait-at-line → operator releases with partial count → pickup →
+	// dropoff). The operator's release click at the lineside is the gate.
+	if action.OrderB.Complex.AutoConfirm {
+		t.Error("Drop OrderB must NOT auto-confirm — operator releases with partial count at lineside")
+	}
+	// Default drop (no EvacuateOnChangeover marker): terminal from plan
+	// time so cutover doesn't wait. Bin retrieval still runs but isn't on
+	// the critical path.
+	if action.NextState != "line_cleared" {
+		t.Errorf("NextState = %q, want line_cleared (terminal from plan for non-evac drop)", action.NextState)
+	}
+}
+
+// Drops with EvacuateOnChangeover=true on the from-claim represent
+// tool-change-style evacuations — cutover should wait until the bin
+// physically leaves the line. Task stays at empty_requested at plan
+// time and advances to line_cleared on the pickup event (handled in
+// handler_bin_picked_up).
+func TestPlanNodeAction_Drop_WithEvacuateMarker(t *testing.T) {
+	from := fullSwapClaim("N1", "PART-A", "consume")
+	from.EvacuateOnChangeover = true
+	diff := ChangeoverNodeDiff{
+		CoreNodeName: "N1",
+		Situation:    SituationDrop,
+		FromClaim:    &from,
+	}
+	node := &processes.Node{ID: 42, Name: "N1"}
+	action := planNodeAction(diff, node, false, nil)
+
+	if action.Err != nil {
+		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
 	if action.NextState != "empty_requested" {
-		t.Errorf("NextState = %q, want empty_requested", action.NextState)
+		t.Errorf("NextState = %q, want empty_requested (evac-marked drop blocks cutover until pickup)", action.NextState)
 	}
 }
 

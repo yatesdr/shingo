@@ -176,23 +176,28 @@ func (e *Engine) FindUnloaderForPayload(payloadCode string) *manualSwapNode {
 	return nil
 }
 
-// loaderHasInFlightEmptyIn reports whether the loader at nodeID already has a
-// non-terminal retrieve_empty order for the payload. Used to dedupe so a
-// flurry of line requests doesn't queue a stack of empty-in orders behind a
-// loader that's still working through the previous one.
-func (e *Engine) loaderHasInFlightEmptyIn(nodeID int64, payloadCode string) bool {
+// countLoaderInFlightEmptyIn returns the number of non-terminal
+// retrieve_empty orders the loader at nodeID has for the payload.
+// MaybeCreateLoaderEmptyIn uses this against ReorderPoint to top up the
+// in-flight queue to (ReorderPoint - currentCount) instead of capping at
+// one — operators get the full demand visible at once rather than one
+// queue per demand signal.
+//
+// Returns -1 on a DB error so callers can fail closed (treat as "already
+// at cap, don't fire more") and avoid piling up if Core is unreachable.
+func (e *Engine) countLoaderInFlightEmptyIn(nodeID int64, payloadCode string) int {
 	orderList, err := e.db.ListActiveOrdersByProcessNode(nodeID)
 	if err != nil {
-		// Fail closed: assume there's an in-flight order so we don't pile up.
 		e.logFn("side-cycle: list active orders for node %d: %v", nodeID, err)
-		return true
+		return -1
 	}
+	n := 0
 	for _, o := range orderList {
 		if o.PayloadCode == payloadCode && o.RetrieveEmpty {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }
 
 // unloaderHasInFlightFullIn reports whether the unloader at nodeID already
@@ -304,20 +309,15 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	if loader == nil {
 		return
 	}
-	if e.loaderHasInFlightEmptyIn(loader.node.ID, payloadCode) {
-		e.logFn("side-cycle: loader %s already has in-flight empty-in for %s, skipping",
-			loader.node.Name, payloadCode)
-		return
-	}
 	if e.loaderHasUsableEmptyPresent(loader.node.CoreNodeName) {
 		e.logFn("side-cycle: loader %s already has an empty bin parked, skipping L1 for %s",
 			loader.node.Name, payloadCode)
 		return
 	}
 
-	// Kanban minimum-stock floor. Only fire L1 when system bin count is
-	// strictly below the configured floor — otherwise the loader gets
-	// work for every release even when the supermarket is full.
+	// Kanban minimum-stock floor. Fire enough L1s on each signal to top
+	// the in-flight queue up to (ReorderPoint - currentCount) — operators
+	// see the full demand at once instead of one queue per signal cycle.
 	//
 	// Floor lives on the loader's claim as ReorderPoint. ReorderPoint
 	// has role-dependent semantics:
@@ -337,15 +337,33 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	// tomorrow share one read site. The doc explicitly warns against a
 	// parallel "loader threshold" column to prevent divergence.
 	//
-	// Fails OPEN: if Core can't be reached the L1 fires anyway. Idle is
-	// worse than redundant — the in-flight guard above dedupes duplicates.
+	// Fails OPEN on the system-count lookup: if Core can't be reached we
+	// treat currentCount as zero and top the queue up to ReorderPoint.
+	// Idle is worse than redundant.
 	minStock := loader.claim.ReorderPoint
 	if minStock <= 0 {
 		minStock = 2
 	}
-	if count, ok := e.systemBinCountForPayload(payloadCode); ok && count >= minStock {
+	currentCount := 0
+	if count, ok := e.systemBinCountForPayload(payloadCode); ok {
+		currentCount = count
+	}
+	if currentCount >= minStock {
 		e.logFn("side-cycle: loader %s — %d bins of %s in system (>=%d minimum), skipping L1",
-			loader.node.Name, count, payloadCode, minStock)
+			loader.node.Name, currentCount, payloadCode, minStock)
+		return
+	}
+	inFlight := e.countLoaderInFlightEmptyIn(loader.node.ID, payloadCode)
+	if inFlight < 0 {
+		// DB error — fail closed; the next signal will retry.
+		e.logFn("side-cycle: loader %s — in-flight count lookup failed for %s, skipping",
+			loader.node.Name, payloadCode)
+		return
+	}
+	needed := minStock - currentCount - inFlight
+	if needed <= 0 {
+		e.logFn("side-cycle: loader %s — %d in-flight + %d in system >= %d minimum, skipping L1 for %s",
+			loader.node.Name, inFlight, currentCount, minStock, payloadCode)
 		return
 	}
 
@@ -359,17 +377,19 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	// the side-cycle model. Plant test 2026-04-27 reproduced this on plants
 	// with global auto-confirm enabled.
 	autoConfirm := false
-	order, err := e.orderMgr.CreateRetrieveOrder(
-		&nodeID, true, 1, loader.node.CoreNodeName, "",
-		"standard", payloadCode, autoConfirm, true,
-	)
-	if err != nil {
-		e.logFn("side-cycle: create empty-in order for loader %s payload %s: %v",
-			loader.node.Name, payloadCode, err)
-		return
+	for i := 0; i < needed; i++ {
+		order, err := e.orderMgr.CreateRetrieveOrder(
+			&nodeID, true, 1, loader.node.CoreNodeName, "",
+			"standard", payloadCode, autoConfirm, true,
+		)
+		if err != nil {
+			e.logFn("side-cycle: create empty-in order %d/%d for loader %s payload %s: %v",
+				i+1, needed, loader.node.Name, payloadCode, err)
+			return
+		}
+		log.Printf("side-cycle: empty-in order %d (%d/%d) for loader %s payload %s",
+			order.ID, i+1, needed, loader.node.Name, payloadCode)
 	}
-	log.Printf("side-cycle: empty-in order %d for loader %s payload %s",
-		order.ID, loader.node.Name, payloadCode)
 }
 
 // MaybeCreateUnloaderFullIn (U1 of the side-cycle model) is the consumer-side

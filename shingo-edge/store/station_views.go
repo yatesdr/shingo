@@ -94,20 +94,35 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 	if claim == nil || (claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex) {
 		return false
 	}
-	if runtime == nil || runtime.StagedOrderID == nil {
+	if runtime == nil {
 		return false
 	}
-	staged, err := db.GetOrder(*runtime.StagedOrderID)
+	// Resolve the evac (B) order via runtime.StagedOrderID — the canonical
+	// slot — falling back to the supply leg's durable SiblingOrderID when
+	// StagedOrderID has been nulled by a downstream handler. This mirrors
+	// resolveSwapPair in engine/operator_stations.go and keeps the UI gate
+	// aligned with what ReleaseStagedOrders itself can resolve.
+	evacOrderID := runtime.StagedOrderID
+	if evacOrderID == nil && runtime.ActiveOrderID != nil {
+		supply, err := db.GetOrder(*runtime.ActiveOrderID)
+		if err == nil && supply != nil && supply.SiblingOrderID != nil {
+			evacOrderID = supply.SiblingOrderID
+		}
+	}
+	if evacOrderID == nil {
+		return false
+	}
+	staged, err := db.GetOrder(*evacOrderID)
 	if err != nil || staged == nil {
 		return false
 	}
-	// Single check: the lineside robot (StagedOrderID slot — Robot B, the
-	// removal robot whose wait is wait-with-node at the production line) has
-	// reached its wait point and is parked. Order A's status is irrelevant
-	// here — ReleaseStagedOrders releases both unconditionally on click,
-	// regardless of where Order A is in its choreography. This avoids depending
-	// on Order A's bare-wait reliably reaching staged on the seerrds adapter,
-	// which is fragile (see shingo_todo.md and the 2026-04-27 retrospective).
+	// Single check: the lineside robot (Robot B, the removal robot whose wait
+	// is wait-with-node at the production line) has reached its wait point and
+	// is parked. Order A's status is irrelevant here — ReleaseStagedOrders
+	// releases both unconditionally on click, regardless of where Order A is in
+	// its choreography. This avoids depending on Order A's bare-wait reliably
+	// reaching staged on the seerrds adapter, which is fragile (see
+	// shingo_todo.md and the 2026-04-27 retrospective).
 	return staged.Status == "staged"
 }
 

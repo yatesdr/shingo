@@ -255,7 +255,7 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 					stationNodeTasks, _ := e.db.ListChangeoverNodeTasksByStation(changeover.ID, stationTask.OperatorStationID)
 					allDone := true
 					for _, snt := range stationNodeTasks {
-						if !domain.IsNodeTaskStateTerminal(snt.State) {
+						if !domain.IsNodeTaskStateTerminal(snt.State, snt.Situation) {
 							allDone = false
 							break
 						}

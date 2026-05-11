@@ -29,6 +29,27 @@ func BuildReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
 	}
 }
 
+// BuildStagedReleaseSteps is BuildReleaseSteps with a leading wait-with-node
+// at the source. The robot drives to the lineside, parks, and the order
+// reaches status=staged before pickup — giving the operator a chance to
+// inspect the partial bin and enter the remaining count at the standard
+// release-prompt dialog. After release, the bin is picked up and routed to
+// the outbound destination unattended.
+//
+// Used by the drop planner so a partial bin removed during a changeover gets
+// the same release-with-count gate the swap-evac path uses, rather than
+// silently disappearing. EvacuateNode (the manual EMPTY FOR TOOL CHANGE path)
+// still uses BuildReleaseSteps directly because the operator has already
+// confirmed the partial count at the EMPTY click; no second confirmation
+// needed.
+func BuildStagedReleaseSteps(claim *processes.NodeClaim) []protocol.ComplexOrderStep {
+	return []protocol.ComplexOrderStep{
+		{Action: "wait", Node: claim.CoreNodeName},
+		{Action: "pickup", Node: claim.CoreNodeName},
+		buildStep("dropoff", claim.OutboundDestination),
+	}
+}
+
 // BuildStageSteps builds steps to pre-stage material at the inbound staging
 // node in preparation for a swap. Material is fetched and placed at the
 // inbound staging node but NOT yet delivered to the production node.

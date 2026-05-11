@@ -229,13 +229,29 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			action.Err = fmt.Errorf("node %s has no outbound destination configured for evacuate; cannot proceed", node.Name)
 			return action
 		}
-		releaseSteps := BuildReleaseSteps(diff.FromClaim)
+		releaseSteps := BuildStagedReleaseSteps(diff.FromClaim)
 		if releaseSteps == nil {
 			return action
 		}
-		action.OrderB = complexSpecWithPayload("", diff.CoreNodeName, releaseSteps, true, diff.FromClaim.PayloadCode)
-		action.NextState = "empty_requested"
+		// AutoConfirm=false so the staged-release flow gates on the operator's
+		// release click at the lineside. The operator confirms partial count
+		// via the standard release-prompt dialog before the robot picks up.
+		action.OrderB = complexSpecWithPayload("", diff.CoreNodeName, releaseSteps, false, diff.FromClaim.PayloadCode)
 		action.LogTag = "drop"
+		// EvacuateOnChangeover gates whether cutover waits for this drop.
+		// When false, the bin can be retrieved at leisure; cutover does
+		// not depend on it, so the task is terminal from plan time. The
+		// drop order still runs (operator confirms partial count at the
+		// lineside release prompt and the robot returns the bin), it just
+		// isn't on the cutover critical path. When true, the operator
+		// marked this node as needing tool-change-style evacuation before
+		// cutover; the task stays at empty_requested until the bin
+		// physically leaves the line (handled in the pickup hook).
+		if diff.FromClaim.EvacuateOnChangeover {
+			action.NextState = "empty_requested"
+		} else {
+			action.NextState = "line_cleared"
+		}
 	}
 
 	return action

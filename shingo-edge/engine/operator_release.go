@@ -156,6 +156,29 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		return fmt.Errorf("ensure runtime for node %d: %w", node.ID, err)
 	}
 
+	// Drop CO release fast-path. A drop has no to-style claim by definition
+	// (the new style abandons this node), so the normal toClaim-based
+	// bookkeeping (UOP reset for the next bin, lineside bucket capture,
+	// node-task state advance) doesn't apply — there's no next bin and no
+	// new style claiming the slot. But the operator's disposition still
+	// needs to flow to Core so the returning bin's manifest reflects the
+	// partial count instead of arriving empty.
+	//
+	// Detect via the node task (situation="drop" with this order on
+	// OldMaterialReleaseOrderID) and pass the disposition through directly.
+	// Skipping the normal path avoids the toClaim-nil silent-drop at the
+	// resolution fallback (plant incident 2026-05-11: ALN_002 drop bin
+	// arrived empty at supermarket because resolveReleaseClaim returned nil
+	// and the disposition was discarded; root cause was runtime ambiguity
+	// in the fallback rather than a clean drop path).
+	if dropTask, _ := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); dropTask != nil && dropTask.Situation == "drop" {
+		manifestUOP := computeReleaseRemainingUOP(disp, runtime)
+		wireDisposition := buildProtocolDisposition(disp, runtime)
+		e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
+			orderID, node.Name, string(disp.Mode))
+		return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy)
+	}
+
 	// Resolve the target claim: if a changeover is active, use the
 	// to-style claim; otherwise use the currently-active claim.
 	toClaim, nodeTask := e.resolveReleaseClaim(node, runtime)

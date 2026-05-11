@@ -34,6 +34,7 @@ import (
 	"log"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -178,6 +179,13 @@ func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
 	// PLC ticks don't attribute to a bin that's no longer here.
 	if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, ctx.runtime.ActiveClaimID, nil, 0); err != nil {
 		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	}
+	// Drop tasks without the evacuate marker were stamped terminal
+	// (line_cleared) at plan time — the cutover never depended on this
+	// completion event. Skip the state mutation so we don't churn the
+	// updated_at timestamp; the task is already at line_cleared.
+	if domain.IsNodeTaskStateTerminal(ctx.nodeTask.State, ctx.nodeTask.Situation) {
+		return true
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "line_cleared"); err != nil {
 		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)

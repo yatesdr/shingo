@@ -179,6 +179,13 @@ func findTaskByNode(tasks []processes.NodeTask, coreName string) *processes.Node
 // ===========================================================================
 
 // TC-91: SituationDrop lifecycle — evacuation-only order, no Order A.
+//
+// Default drop (no EvacuateOnChangeover marker): task is terminal-from-plan
+// at line_cleared so cutover doesn't wait on the bin's return trip. The
+// order still runs (operator releases with partial count at the lineside,
+// robot returns the bin), it just isn't on the critical path. Plant
+// 2026-05-11 fix: ALN_002 cutover stuck in line_cleared because the gate
+// treated drop's intermediate state as non-terminal.
 func TestChangeoverFlow_SituationDrop(t *testing.T) {
 	db := testEngineDB(t)
 	processID, nodeID, fromStyleID, toStyleID := seedDropScenario(t, db)
@@ -212,17 +219,20 @@ func TestChangeoverFlow_SituationDrop(t *testing.T) {
 	if orderB.OrderType != orders.TypeComplex {
 		t.Errorf("Order B type: expected complex, got %s", orderB.OrderType)
 	}
-	if task.State != "empty_requested" {
-		t.Errorf("expected empty_requested, got %s", task.State)
+	// Without the EvacuateOnChangeover marker, the task is terminal from
+	// plan time so cutover doesn't wait.
+	if task.State != "line_cleared" {
+		t.Errorf("expected line_cleared at plan time (non-evac drop), got %s", task.State)
 	}
 
-	// Complete Order B → line_cleared
+	// Complete Order B → task already terminal, wiring_completion skips
+	// the redundant state mutation. State stays at line_cleared.
 	markOrderTerminal(db, orderB.ID)
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 	if task.State != "line_cleared" {
-		t.Errorf("after Order B complete: expected line_cleared, got %s", task.State)
+		t.Errorf("after Order B complete: expected line_cleared (stable), got %s", task.State)
 	}
 }
 

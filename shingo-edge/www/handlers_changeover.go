@@ -95,13 +95,13 @@ func (h *Handlers) buildChangeoverViewData(activeProcess *domain.Process) change
 	d.AllNodesComplete = true
 	for _, tasks := range d.NodeTaskMap {
 		for _, t := range tasks {
-			if !domain.IsNodeTaskStateTerminal(t.State) {
+			if !domain.IsNodeTaskStateTerminal(t.State, t.Situation) {
 				d.AllNodesComplete = false
 			}
 		}
 	}
 	for _, t := range d.CentralNodeTasks {
-		if !domain.IsNodeTaskStateTerminal(t.State) {
+		if !domain.IsNodeTaskStateTerminal(t.State, t.Situation) {
 			d.AllNodesComplete = false
 		}
 	}

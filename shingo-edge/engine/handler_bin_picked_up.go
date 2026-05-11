@@ -28,6 +28,8 @@
 // reconciler heals the count within the next 60s pass.
 package engine
 
+import "shingoedge/domain"
+
 // HandleBinPickedUp processes a Core BinPickedUp notification.
 // Best-effort — failures log and continue rather than rejecting the
 // envelope; the reconciler heals any miscount on the next pass.
@@ -65,10 +67,27 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
 	// works whether or not the delta reporter is wired (the chain is
 	// orthogonal to delta flushing). releaseUnlessTerminal is
 	// idempotent against terminal supply orders.
-	if task, terr := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); terr == nil && task != nil && task.NextMaterialOrderID != nil {
-		supplyDisp := ReleaseDisposition{CalledBy: "auto-evac-pickup"}
-		if rerr := e.releaseUnlessTerminal(*task.NextMaterialOrderID, "deferred-supply-after-evac-pickup", supplyDisp); rerr != nil {
-			e.logFn("bin_picked_up: deferred-supply release order %d for evac %s: %v", *task.NextMaterialOrderID, orderUUID, rerr)
+	if task, terr := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); terr == nil && task != nil {
+		if task.NextMaterialOrderID != nil {
+			supplyDisp := ReleaseDisposition{CalledBy: "auto-evac-pickup"}
+			if rerr := e.releaseUnlessTerminal(*task.NextMaterialOrderID, "deferred-supply-after-evac-pickup", supplyDisp); rerr != nil {
+				e.logFn("bin_picked_up: deferred-supply release order %d for evac %s: %v", *task.NextMaterialOrderID, orderUUID, rerr)
+			}
+		}
+		// Drop tasks with the evacuate marker stay non-terminal until the
+		// line is physically clear — the operator opted in to "wait for
+		// this node to be evacuated before cutover." Pickup is that
+		// moment; the bin's onward trip to the supermarket is just a
+		// logistics move and doesn't gate cutover. Advance the task to
+		// line_cleared (terminal for drop, per IsNodeTaskStateTerminal)
+		// so the cutover guard and downstream rollups unblock immediately
+		// rather than waiting for order completion at the destination.
+		// Non-evac drops were stamped terminal at plan time, so the
+		// !terminal guard makes this a no-op for them.
+		if task.Situation == "drop" && !domain.IsNodeTaskStateTerminal(task.State, task.Situation) {
+			if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "line_cleared"); err != nil {
+				e.logFn("bin_picked_up: advance drop task %d to line_cleared: %v", task.ID, err)
+			}
 		}
 	}
 

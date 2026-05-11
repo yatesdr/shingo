@@ -695,7 +695,7 @@ func (e *Engine) canCompleteChangeover(changeoverID int64) (bool, []string, erro
 	}
 	var reasons []string
 	for _, task := range tasks {
-		if !domain.IsNodeTaskStateTerminal(task.State) {
+		if !domain.IsNodeTaskStateTerminal(task.State, task.Situation) {
 			reasons = append(reasons, fmt.Sprintf("task at node %s in %s", task.NodeName, task.State))
 		}
 	}
@@ -904,7 +904,7 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 }
 
 func isNodeTaskTerminal(task *processes.NodeTask) bool {
-	return domain.IsNodeTaskStateTerminal(task.State)
+	return domain.IsNodeTaskStateTerminal(task.State, task.Situation)
 }
 
 func ensureNodeTaskCanRequestOrder(orderID *int64, action string, db *store.DB) error {
