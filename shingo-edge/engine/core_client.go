@@ -407,6 +407,63 @@ func (c *CoreClient) PreflightInventory(station string, payloads []string) (*ser
 	return out, nil
 }
 
+// SystemBinCount POSTs a payload list to Core's /api/inventory/system-count
+// and returns the per-payload total bin count using the "in the kanban
+// loop" inclusion policy (see shingo-core/service/inventory_system_count.go).
+//
+// This intentionally answers a different question than PreflightInventory:
+// total physical bins in circulation regardless of location or pickability,
+// not just bins-available-to-source-right-now. Used by kanban demand math
+// (refillLoaderForPayload) where a bin staged at the consumer line still
+// counts as inventory.
+//
+// Returns ([]PayloadSystemCount, true) on success, (nil, false) when Core
+// is unreachable or returns an error. Callers fail OPEN at the use site
+// (treat as zero) for the same reason loaderHasUsableEmptyPresent does:
+// a missed signal leaves the loader idle; a redundant signal is dedup'd
+// by the in-flight guard. Idle is the worse outcome.
+func (c *CoreClient) SystemBinCount(payloads []string) ([]PayloadSystemCount, bool) {
+	if c.baseURL == "" || len(payloads) == 0 {
+		return nil, false
+	}
+	reqBody := struct {
+		Payloads []string `json:"payloads"`
+	}{Payloads: payloads}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, false
+	}
+	resp, err := c.http.Post(c.baseURL+"/api/inventory/system-count", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+	var wire struct {
+		Counts []struct {
+			PayloadCode string `json:"payload_code"`
+			BinCount    int    `json:"bin_count"`
+		} `json:"counts"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil {
+		return nil, false
+	}
+	out := make([]PayloadSystemCount, len(wire.Counts))
+	for i, c := range wire.Counts {
+		out[i] = PayloadSystemCount{PayloadCode: c.PayloadCode, BinCount: c.BinCount}
+	}
+	return out, true
+}
+
+// PayloadSystemCount is the Edge-side mirror of Core's
+// PayloadSystemCount — total bins of one payload in the kanban loop.
+type PayloadSystemCount struct {
+	PayloadCode string
+	BinCount    int
+}
+
 // ClearBin clears the manifest on the bin at a node via Core's HTTP API.
 func (c *CoreClient) ClearBin(nodeName string) error {
 	if c.baseURL == "" {

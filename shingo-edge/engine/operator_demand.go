@@ -261,28 +261,39 @@ func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) 
 	return b.Occupied && b.PayloadCode == payloadCode
 }
 
-// systemBinCountForPayload reports how many bins of payloadCode are
-// available system-wide via Core's preflight count: manifest-confirmed,
-// unclaimed, unlocked, non-special status, at enabled storage. Same
-// eligibility filter FindSourceFIFO uses to pick a source bin.
+// systemBinCountForPayload reports how many bins of payloadCode are in
+// the kanban loop system-wide via Core's /api/inventory/system-count
+// endpoint (see shingo-core/service/inventory_system_count.go). This
+// counts bins in any state EXCEPT flagged, maintenance, quality_hold,
+// and retired — staged bins at consumer lines, in-transit bins, and
+// empty carriers at the loader all count toward kanban inventory.
+//
+// This is INTENTIONALLY NOT PreflightInventory. Pre-2026-05-11 this
+// helper called PreflightInventory, which has "available for sourcing
+// right now" semantics: it excludes staged bins, claimed bins, and
+// non-storage nodes. That mismatch caused the SNF2 plant incident
+// (76682-6TA0A.06 at ReorderPoint=2, system held 2 bins total but
+// PreflightInventory only saw 1 of them — the one at storage — so L1
+// kept firing). System-count answers the question the kanban math
+// actually wants: how many physical bins are still in the loop.
 //
 // The second return is false when the count couldn't be obtained — Core
-// unreachable or empty payload. Callers fail OPEN at the use site for
-// the same reason loaderHasUsableEmptyPresent does: a missed L1 leaves
-// the loader idle; a redundant L1 is dedup'd by the in-flight guard.
-// Idle is the worse outcome.
+// unreachable, empty payload, or HTTP error. Callers fail OPEN at the
+// use site (treat as zero) for the same reason loaderHasUsableEmptyPresent
+// does: a missed L1 leaves the loader idle; a redundant L1 is dedup'd by
+// the in-flight guard. Idle is the worse outcome.
 func (e *Engine) systemBinCountForPayload(payloadCode string) (int, bool) {
 	if !e.coreClient.Available() || payloadCode == "" {
 		return 0, false
 	}
-	result, err := e.coreClient.PreflightInventory(e.cfg.StationID(), []string{payloadCode})
-	if err != nil {
-		e.logFn("side-cycle: preflight count for %s: %v", payloadCode, err)
+	counts, ok := e.coreClient.SystemBinCount([]string{payloadCode})
+	if !ok {
+		e.logFn("side-cycle: system-count for %s: core unreachable or error", payloadCode)
 		return 0, false
 	}
-	for _, a := range result.Available {
-		if a.PayloadCode == payloadCode {
-			return a.BinCount, true
+	for _, c := range counts {
+		if c.PayloadCode == payloadCode {
+			return c.BinCount, true
 		}
 	}
 	return 0, true // payload absent from result = 0 bins
@@ -326,9 +337,19 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 // so MaybeCreateLoaderEmptyIn can sweep across all allowed payloads.
 //
 // ReorderPoint semantics (produce-role): bin-count minimum-stock floor —
-// "I want at least N bins of this payload in the system." The gate fires
-// L1s whenever the count of available bins drops below N. Zero falls back
-// to a magic-number floor of 2.
+// "I want at least N bins of this payload in the kanban loop." currentCount
+// is `systemBinCountForPayload`, which counts bins in any state except
+// flagged/maintenance/quality_hold/retired (so staged-at-line, in-transit,
+// and at-loader bins all count). The gate fires L1s only when total
+// in-loop inventory drops below N. Zero ReorderPoint falls back to a
+// magic-number floor of 2.
+//
+// Pre-2026-05-11 this used PreflightInventory's "available for sourcing"
+// count, which excluded staged bins at non-storage nodes — so a bin
+// staged at the consumer line didn't count toward inventory, and L1
+// fired even when total system inventory was at the floor. SNF2 plant
+// incident (76682-6TA0A.06, 2 bins in system, ReorderPoint=2, kept
+// firing L1) was that drift.
 //
 // The future kanban calculator (shingo-kanban-calculator-design.md) writes
 // its computed loop-size output into this same ReorderPoint column, so
