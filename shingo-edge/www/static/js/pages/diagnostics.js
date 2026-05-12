@@ -259,7 +259,12 @@
         continue;
       }
       var runStart = i;
-      while (i < entries.length && entries[i].group === e.group && entries[i].sev === e.sev) i++;
+      // Collapse consecutive rows by EXACT subsystem, not by group-name.
+      // Previously runs spanned a whole group (e.g. dispatch/completion/release
+      // all collapsed under the first row's badge as "lifecycle"), which
+      // misrepresented the count. Subsystem-level grouping makes
+      // "protocol 3" mean exactly 3 protocol lines.
+      while (i < entries.length && entries[i].sub === e.sub && entries[i].sev === e.sev) i++;
       var runLen = i - runStart;
       if (runLen === 1) {
         var tr = document.createElement('tr');
@@ -306,28 +311,29 @@
       var sev = detectSeverity(entry.message);
       var grp = groupOf(sub);
 
-      // Error/warn or ungrouped: always standalone
+      // Error/warn: always standalone (don't hide failures inside a collapsed
+      // group). Subsystems without a known group also render standalone —
+      // grouping only kicks in for subsystems we recognise, so unknown
+      // entries stay maximally visible.
       if (sev === 'error' || sev === 'warn' || !grp) {
         appendStandalone(entry);
         continue;
       }
 
-      // Check if last row is a group header for the same group
+      // Match on EXACT subsystem, not group-name (see comment in
+      // groupExistingRows for the rationale). Bursts of the same subsystem
+      // collapse; lifecycle bounces across dispatch/completion/release
+      // render as separate rows.
       var lastRow = body.lastElementChild;
       if (lastRow && lastRow.classList.contains('debug-group-header')) {
-        var lastGroup = groupOf(lastRow.getAttribute('data-subsystem') || '');
-        if (lastGroup === grp) {
-          // Append as child
+        if ((lastRow.getAttribute('data-subsystem') || '') === sub) {
           appendChildToGroup(lastRow, entry);
           continue;
         }
       }
 
-      // Check if last row is a standalone in the same group � convert to group
       if (lastRow && lastRow.classList.contains('debug-row') && !lastRow.classList.contains('debug-group-header') && !lastRow.classList.contains('debug-group-child')) {
-        var lastSub = lastRow.getAttribute('data-subsystem') || '';
-        var lastGrp = groupOf(lastSub);
-        if (lastGrp === grp) {
+        if ((lastRow.getAttribute('data-subsystem') || '') === sub) {
           convertToGroup(lastRow, entry);
           continue;
         }
