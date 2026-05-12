@@ -390,6 +390,54 @@ func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
 	}
 }
 
+// TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires pins the
+// 2026-05-12 contract: L1 retrieve_empty creation no longer hard-blocks
+// on a parked empty bin at the loader. Pre-change, loaderHasUsableEmptyPresent
+// short-circuited refillLoaderForPayload across ALL allowed payloads
+// whenever Core telemetry reported any empty bin at the loader node. That
+// gated the operator-visible queue, not just the physical dispatch — during
+// a changeover swap the loader saw no incoming demand even though the math
+// said it should.
+//
+// New contract: L1 creation is gated only by the ReorderPoint vs.
+// (systemBinCount + inFlight) math. The "don't physically dispatch into
+// an occupied loader" safety net moved to Core's dispatch.CheckDropoffCapacity
+// (capacity.go:86), which queues the order with a queue_reason until the
+// parked bin clears. Fulfillment scanner re-plans on every BinUpdatedEvent
+// (core/engine/wiring.go:228), so the queued L1 dispatches when there's
+// room — no wedge.
+//
+// This test pins the positive direction: calling MaybeCreateLoaderEmptyIn
+// creates ReorderPoint=2 worth of L1 orders at the loader, regardless of
+// Core-side state. A future regression that re-introduces the
+// loader-bin-present gate at order-creation time will fail this test
+// (zero orders created when the test doesn't simulate a "no bin
+// present" Core response).
+func TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires(t *testing.T) {
+	db := testEngineDB(t)
+	loaderNodeID, _ := seedManualSwapClaim(t, db, "L1-CREATE", "produce", "PART-CREATE", "STORAGE-NODE")
+	eng := testEngine(t, db)
+
+	eng.MaybeCreateLoaderEmptyIn("PART-CREATE")
+
+	loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
+	if err != nil {
+		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+	}
+	created := 0
+	for _, o := range loaderOrders {
+		if o.RetrieveEmpty && o.PayloadCode == "PART-CREATE" {
+			created++
+		}
+	}
+	// seedManualSwapClaim doesn't set ReorderPoint, so refillLoaderForPayload's
+	// magic-number fallback applies: minStock=2. With currentCount=0 and
+	// inFlight=0, needed=2.
+	if created != 2 {
+		t.Errorf("expected 2 L1 retrieve_empty orders created at loader, got %d", created)
+	}
+}
+
 // TestHandleUnloaderFullInCompletion_FiresU2 verifies the U2 mirror of
 // handleLoaderEmptyInCompletion: when a U1 retrieve order (full bin, role
 // consume, manual_swap) confirms at the unloader, U2 fires as a move from

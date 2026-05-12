@@ -153,13 +153,14 @@ export function renderModal(entry) {
             const inTransit = activeOrders.find(o => o.status === 'in_transit' || o.status === 'acknowledged');
             const queued = activeOrders.filter(o => o.status === 'queued' || o.status === 'pending');
             // Loader can fill a parked empty bin even without a delivered L1
-            // order. The L1 retrieve_empty is skipped when an empty is already
-            // present (operator_demand.go loaderHasUsableEmptyPresent), so the
-            // demand-card never goes "delivered" — but the bin is right there
-            // ready to fill. LoadBin's no-L1 fallback (operator_bin_ops.go:94)
-            // creates the L2 move-out directly, so any allowed payload is a
-            // valid pick. Treat each card as if it were delivered for the
-            // purpose of click-handling.
+            // order. Post-2026-05-12, L1 retrieve_empty IS created when demand
+            // fires but Core queues it (dropoff-capacity gate) until the
+            // parked bin clears — so the demand-card sits in 'queued', not
+            // 'delivered', while the bin is right there ready to fill.
+            // LoadBin's no-L1 fallback (operator_bin_ops.go:94) creates the
+            // L2 move-out directly, so any allowed payload is a valid pick.
+            // Treat each card as if it were delivered for the purpose of
+            // click-handling.
             const parkedEmptyAtLoader = claim.role === 'produce' &&
                 hasBin && binState && !binState.payload_code;
 

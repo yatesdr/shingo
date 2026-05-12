@@ -220,35 +220,11 @@ func (e *Engine) unloaderHasInFlightFullIn(nodeID int64, payloadCode string) boo
 	return false
 }
 
-// loaderHasUsableEmptyPresent reports whether Core telemetry shows an empty
-// bin already physically at the loader. The side-cycle's L1 retrieve_empty
-// is meant to bring an empty TO the loader so the operator can fill it; if
-// one is already there (e.g., a previous retrieve was cancelled but the
-// bin remained), firing another L1 wedges the floor — Core dispatches a
-// retrieve to a station that already has its bin, then later evicts the
-// parked one. Plant 2026-04-28 incident #483→#484 was this pattern.
-//
-// Fails OPEN: if Core is unreachable or returns no data, we fall through to
-// the in-flight order check and assume the floor is empty. False-negative
-// here = one redundant retrieve (caught by the in-flight dedup on the next
-// REQUEST), false-positive = loader sits idle waiting for a bin that's
-// already there. Idle is the worse outcome.
-func (e *Engine) loaderHasUsableEmptyPresent(coreNodeName string) bool {
-	if !e.coreClient.Available() || coreNodeName == "" {
-		return false
-	}
-	bins, _ := e.coreClient.FetchNodeBins([]string{coreNodeName})
-	if len(bins) == 0 {
-		return false
-	}
-	b := bins[0]
-	return b.Occupied && b.PayloadCode == ""
-}
-
-// unloaderHasUsableFullPresent is the consumer-side counterpart: skips the
-// U1 full-in retrieve when Core reports a full bin of the target payload
-// already physically at the unloader. Same fail-open contract as
-// loaderHasUsableEmptyPresent.
+// unloaderHasUsableFullPresent is the consumer-side counterpart to the
+// removed loaderHasUsableEmptyPresent: skips the U1 full-in retrieve when
+// Core reports a full bin of the target payload already physically at the
+// unloader. Fails OPEN — if Core is unreachable or returns no data, falls
+// through to the in-flight order check and assumes the floor is empty.
 func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) bool {
 	if !e.coreClient.Available() || coreNodeName == "" || payloadCode == "" {
 		return false
@@ -361,17 +337,24 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 // currentCount as zero and top the queue up to ReorderPoint. Idle is worse
 // than redundant.
 func (e *Engine) refillLoaderForPayload(loader *manualSwapNode, payloadCode string) {
-	if e.loaderHasUsableEmptyPresent(loader.node.CoreNodeName) {
-		// Skip-on-parked-empty applies per-loader, not per-payload — a
-		// parked empty bin can be filled with any of the loader's allowed
-		// payloads. Plant 2026-04-28 #483→#484 was the wedge we're guarding
-		// against; until that's revisited for the multi-payload case, keep
-		// the conservative behavior.
-		e.logFn("side-cycle: loader %s already has an empty bin parked, skipping L1 for %s",
-			loader.node.Name, payloadCode)
-		return
-	}
-
+	// Pre-2026-05-12: a parked empty bin at the loader hard-blocked L1
+	// creation across all payloads. The intent was to prevent a second
+	// physical retrieve from wedging the floor (plant 2026-04-28 #483→#484:
+	// Core dispatched a retrieve to a loader that already had its bin, then
+	// later evicted the parked one). That gated the queue, not just the
+	// dispatch — operators couldn't see incoming demand, and during a
+	// changeover swap nothing fired at all (plant 2026-05-12).
+	//
+	// The dispatch-side safety net already exists at Core:
+	// dispatch.CheckDropoffCapacity (capacity.go:86) blocks every retrieve
+	// whose delivery node has an existing bin, putting the order in
+	// `queued` status with a queue_reason. The fulfillment scanner
+	// re-plans queued orders on every BinUpdatedEvent (wiring.go:228), so
+	// when the parked bin clears, the queued L1 dispatches automatically.
+	//
+	// With that downstream gate proven, we let L1 creation proceed
+	// freely: the operator HMI shows the queued demand, no robot moves
+	// to the loader until there's room, no wedge.
 	minStock := loader.claim.ReorderPoint
 	if minStock <= 0 {
 		minStock = 2
@@ -398,6 +381,8 @@ func (e *Engine) refillLoaderForPayload(loader *manualSwapNode, payloadCode stri
 			loader.node.Name, inFlight, currentCount, minStock, payloadCode)
 		return
 	}
+	e.logFn("side-cycle: loader %s — creating %d L1 retrieve_empty for %s (minStock=%d currentCount=%d inFlight=%d)",
+		loader.node.Name, needed, payloadCode, minStock, currentCount, inFlight)
 
 	nodeID := loader.node.ID
 	// L1 (Loader Empty In) must NEVER auto-confirm. The loader operator is an

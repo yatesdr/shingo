@@ -419,9 +419,9 @@ func (c *CoreClient) PreflightInventory(station string, payloads []string) (*ser
 //
 // Returns ([]PayloadSystemCount, true) on success, (nil, false) when Core
 // is unreachable or returns an error. Callers fail OPEN at the use site
-// (treat as zero) for the same reason loaderHasUsableEmptyPresent does:
-// a missed signal leaves the loader idle; a redundant signal is dedup'd
-// by the in-flight guard. Idle is the worse outcome.
+// (treat as zero): a missed signal leaves the loader idle; a redundant
+// signal is dedup'd by the in-flight guard plus Core's dropoff-capacity
+// gate. Idle is the worse outcome.
 func (c *CoreClient) SystemBinCount(payloads []string) ([]PayloadSystemCount, bool) {
 	if c.baseURL == "" || len(payloads) == 0 {
 		return nil, false
