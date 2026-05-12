@@ -1334,6 +1334,17 @@ textarea.form-input {
 
 /* Row grouping */
 .debug-group-header { cursor: pointer; }
+.debug-group-header .group-chevron {
+    display: inline-block;
+    width: 0.9rem;
+    color: #7e8893;
+    font-size: 0.85rem;
+    user-select: none;
+    transition: transform 0.1s ease-out;
+}
+.debug-group-header:hover .group-chevron {
+    color: var(--primary);
+}
 .debug-group-header .group-count {
     display: inline-block;
     background: #30363d;

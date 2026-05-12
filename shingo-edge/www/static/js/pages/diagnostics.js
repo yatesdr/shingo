@@ -85,22 +85,40 @@
     }
   }
 
+  // summarizeValue produces a compact human-readable string for any JSON
+  // value. Default-stringifying nested objects yields "[object Object]"
+  // which is the source of the SRC=[object Object] / DST=[object Object]
+  // bug — we now recognise the routing-endpoint shape ({role, station})
+  // and render it as role/station, matching the header: log line. Other
+  // objects fall back to JSON.stringify so at least the keys are visible.
+  function summarizeValue(v) {
+    if (v === null || v === undefined) return String(v);
+    if (typeof v !== 'object') return String(v);
+    // Endpoint shape: {role: "edge", station: "plant-a.line-1"} → "edge/plant-a.line-1"
+    if (typeof v.role === 'string' && typeof v.station === 'string') {
+      return v.role + '/' + v.station;
+    }
+    try {
+      return JSON.stringify(v);
+    } catch (e) {
+      return '[unserializable]';
+    }
+  }
+
   function jsonSummary(obj) {
     var parts = [];
     var fields = ['type', 'subject', 'src', 'dst', 'size'];
     for (var i = 0; i < fields.length; i++) {
       if (obj[fields[i]] !== undefined) {
         parts.push('<span class="log-key">' + esc(fields[i]).toUpperCase() + '=</span>' +
-          '<span class="log-value">' + esc(String(obj[fields[i]])) + '</span>');
+          '<span class="log-value">' + esc(summarizeValue(obj[fields[i]])) + '</span>');
       }
     }
     if (obj.data && typeof obj.data === 'object') {
       var keys = Object.keys(obj.data);
       for (var j = 0; j < keys.length && j < 6; j++) {
-        var v = obj.data[keys[j]];
-        var vs = (typeof v === 'object') ? JSON.stringify(v) : String(v);
         parts.push('<span class="log-key">' + esc(keys[j]).toUpperCase() + '=</span>' +
-          '<span class="log-value">' + esc(vs) + '</span>');
+          '<span class="log-value">' + esc(summarizeValue(obj.data[keys[j]])) + '</span>');
       }
       if (keys.length > 6) parts.push('<span class="log-key">+' + (keys.length - 6) + ' more</span>');
     }
@@ -183,9 +201,22 @@
 
   // --- Row grouping ---
 
+  // groupHeaderCells builds the three <td>s for a group-header row.
+  // The leading ▶ chevron is the visual affordance for "click to expand"
+  // — previously the only hint was `cursor: pointer`, which operators
+  // missed and read as "the rest of the run is just gone". CSS flips
+  // the chevron to ▼ when the header carries .expanded.
+  function groupHeaderCells(origTime, badgeHtml, countBadgeHtml, messageHtml) {
+    return '<td><span class="group-chevron">&#9656;</span> ' + esc(origTime) + '</td>' +
+      '<td>' + badgeHtml + ' ' + countBadgeHtml + '</td>' +
+      '<td class="group-msg">' + messageHtml + '</td>';
+  }
+
   // Toggle a group header open/closed
   function toggleGroup(header) {
     var expanded = header.classList.toggle('expanded');
+    var chevron = header.querySelector('.group-chevron');
+    if (chevron) chevron.innerHTML = expanded ? '&#9662;' : '&#9656;';
     var n = header.nextElementSibling;
     while (n && n.classList.contains('debug-group-child')) {
       n.style.display = expanded ? 'table-row' : 'none';
@@ -244,7 +275,7 @@
       header.setAttribute('data-subsystem', first.sub);
       var headerBadge = '<span class="subsystem-badge ' + badgeClass(first.sub) + '">' + esc(first.sub) + '</span>';
       var countBadge = '<span class="group-count">' + runLen + '</span>';
-      header.innerHTML = '<td>' + esc(first.origTime) + '</td><td>' + headerBadge + ' ' + countBadge + '</td><td class="group-msg">' + first.msgHtml + '</td>';
+      header.innerHTML = groupHeaderCells(first.origTime, headerBadge, countBadge, first.msgHtml);
       body.appendChild(header);
 
       for (var c = runStart; c < runStart + runLen; c++) {
@@ -333,25 +364,33 @@
 
   function convertToGroup(standalone, entry) {
     var sub = standalone.getAttribute('data-subsystem') || '';
-    var sev = detectSeverity(entry.message);
-    // Create header from standalone
+    // Snapshot the standalone's content BEFORE replacing it. The original
+    // code referenced an undefined `savedHtml`, so the first child of a
+    // freshly-converted group rendered as the literal string "undefined" —
+    // operators saw a count of 2 but only one row's worth of content on
+    // expand. Capture row state up-front.
+    var standaloneClass = standalone.className;
+    var origTime = standalone.children[0].textContent;
+    var savedMessageHtml = standalone.children[2].innerHTML;
+
     var header = document.createElement('tr');
-    header.className = standalone.className + ' debug-group-header';
+    header.className = standaloneClass + ' debug-group-header';
     header.setAttribute('data-subsystem', sub);
     var badge = '<span class="subsystem-badge ' + badgeClass(sub) + '">' + esc(sub) + '</span>';
     var countBadge = '<span class="group-count">2</span>';
-    // Preserve time from standalone
-    var origTime = standalone.children[0].textContent;
-    header.innerHTML = '<td>' + esc(origTime) + '</td><td>' + badge + ' ' + countBadge + '</td><td class="group-msg">' + standalone.children[2].innerHTML + '</td>';
+    header.innerHTML = groupHeaderCells(origTime, badge, countBadge, savedMessageHtml);
     standalone.replaceWith(header);
-    // Make original standalone the first child
+
+    // First child is the original standalone, re-rendered as a hidden
+    // child of the new group. badge cell is rebuilt without the count
+    // marker so children look like normal rows when expanded.
     var firstChild = document.createElement('tr');
-    firstChild.className = standalone.className + ' debug-group-child';
+    firstChild.className = standaloneClass + ' debug-group-child';
     firstChild.setAttribute('data-subsystem', sub);
     firstChild.style.display = 'none';
-    firstChild.innerHTML = savedHtml;
+    firstChild.innerHTML = '<td>' + esc(origTime) + '</td><td>' + badge + '</td><td>' + savedMessageHtml + '</td>';
     header.after(firstChild);
-    // Add new entry as second child
+
     appendChildToGroup(header, entry);
   }
 
