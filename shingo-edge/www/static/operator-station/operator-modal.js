@@ -6,6 +6,7 @@ import {
 import { openLoadBin } from './operator-load-bin.js';
 import { openKeypad } from './operator-keypad.js';
 import { openReleasePrompt, openStrandedStub } from './operator-release.js';
+import { isActive } from './order-status.js';
 
 const nodeModal = document.getElementById('node-modal');
 const nodeModalContent = document.getElementById('node-modal-content');
@@ -86,7 +87,7 @@ export function renderModal(entry) {
     }
 
     if (isReplenishing(entry)) {
-        const activeOrders = (entry.orders || []).filter(o => o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+        const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
         const statusText = activeOrders.length > 0
             ? activeOrders.map(o => o.order_type + ': ' + o.status).join(', ')
             : 'Order in progress';
@@ -146,8 +147,7 @@ export function renderModal(entry) {
                 ? claim.allowed_payload_codes
                 : (claim.payload_code ? [claim.payload_code] : []);
 
-            const activeOrders = (entry.orders || []).filter(o =>
-                o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+            const activeOrders = (entry.orders || []).filter(o => isActive(o.status));
             const hasDemand = activeOrders.length > 0;
             const delivered = activeOrders.find(o => o.status === 'delivered');
             const inTransit = activeOrders.find(o => o.status === 'in_transit' || o.status === 'acknowledged');
@@ -324,7 +324,7 @@ export function renderModal(entry) {
             }
         } else {
             const orders = entry.orders || [];
-            const active = orders.filter(o => o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+            const active = orders.filter(o => isActive(o.status));
             const staged = active.find(o => o.status === 'staged');
             const delivered = active.find(o => o.status === 'delivered');
             const inFlight = active.find(o => !staged && !delivered);

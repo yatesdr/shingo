@@ -1,5 +1,6 @@
 import { el, esc, fillColor, postAction, showToast } from './operator-util.js';
 import { getView, claimedNodes, isReplenishing } from './operator-state.js';
+import { isActive } from './order-status.js';
 
 const grid = document.getElementById('os-grid');
 const headerInfo = document.getElementById('os-header-info');
@@ -266,7 +267,7 @@ function renderPayloadBoard(entry) {
         : (claim.payload_code ? [claim.payload_code] : []);
 
     var activeOrders = (entry.orders || []).filter(function(o) {
-        return o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed';
+        return isActive(o.status);
     });
     var hasDemand = activeOrders.length > 0;
 
@@ -502,8 +503,7 @@ function createNodeButton(entry) {
         // "Awaiting stock" = any non-terminal order. Just 'queued' lost the
         // indicator the moment the order advanced (sourcing, dispatched,
         // in_transit, delivered-awaiting-confirm).
-        const hasActiveOrder = (entry.orders || []).some(o =>
-            o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+        const hasActiveOrder = (entry.orders || []).some(o => isActive(o.status));
         let statusText;
         if (hasActiveOrder) {
             statusText = 'AWAITING STOCK';
@@ -547,8 +547,7 @@ function createNodeButton(entry) {
 // Renders one chip per active order on the node. Stacked when a two-robot
 // swap has both Order A and Order B in flight.
 function appendOrderStatusChips(btn, entry) {
-    const active = (entry.orders || []).filter(o =>
-        o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+    const active = (entry.orders || []).filter(o => isActive(o.status));
     if (active.length === 0) return;
     const row = el('div', { className: 'os-node-status' });
     active.forEach(o => {
@@ -610,8 +609,7 @@ function nodeColorClass(entry) {
     if (!claim) return 'os-unclaimed';
     const remaining = entry.runtime ? entry.runtime.remaining_uop_cached : 0;
     if (claim.swap_mode === 'manual_swap') {
-        const hasActiveOrder = entry.orders && entry.orders.some(o =>
-            o.status !== 'confirmed' && o.status !== 'cancelled' && o.status !== 'failed');
+        const hasActiveOrder = entry.orders && entry.orders.some(o => isActive(o.status));
         if (hasActiveOrder) return 'os-mid';
         return remaining > 0 ? 'os-full' : 'os-empty';
     }
