@@ -264,9 +264,10 @@ func (e *Engine) unloaderHasUsableFullPresent(coreNodeName, payloadCode string) 
 // systemBinCountForPayload reports how many bins of payloadCode are in
 // the kanban loop system-wide via Core's /api/inventory/system-count
 // endpoint (see shingo-core/service/inventory_system_count.go). This
-// counts bins in any state EXCEPT flagged, maintenance, quality_hold,
-// and retired — staged bins at consumer lines, in-transit bins, and
-// empty carriers at the loader all count toward kanban inventory.
+// counts bins anywhere in the active lifecycle (available, staged) —
+// at storage, in transit, staged at consumer lines, being filled at
+// loaders. Excludes bins production can't rely on: flagged,
+// maintenance, quality_hold, retired.
 //
 // This is INTENTIONALLY NOT PreflightInventory. Pre-2026-05-11 this
 // helper called PreflightInventory, which has "available for sourcing
@@ -338,11 +339,11 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 //
 // ReorderPoint semantics (produce-role): bin-count minimum-stock floor —
 // "I want at least N bins of this payload in the kanban loop." currentCount
-// is `systemBinCountForPayload`, which counts bins in any state except
-// flagged/maintenance/quality_hold/retired (so staged-at-line, in-transit,
-// and at-loader bins all count). The gate fires L1s only when total
-// in-loop inventory drops below N. Zero ReorderPoint falls back to a
-// magic-number floor of 2.
+// is `systemBinCountForPayload`, which counts bins anywhere in the active
+// lifecycle (at storage, in transit, staged at consumer lines, being
+// filled at loaders) excluding flagged/maintenance/quality_hold/retired.
+// The gate fires L1s only when total in-loop inventory drops below N.
+// Zero ReorderPoint falls back to a magic-number floor of 2.
 //
 // Pre-2026-05-11 this used PreflightInventory's "available for sourcing"
 // count, which excluded staged bins at non-storage nodes — so a bin

@@ -8,14 +8,21 @@
 // regardless of whether they're parked at storage, en route, or staged
 // at a consumer line?"
 //
-// Inclusion policy (decided 2026-05-11 with plant lead):
-//   - Include  : available, staged
-//   - Exclude  : flagged, maintenance, quality_hold, retired
+// Inclusion policy (decided 2026-05-11 with plant lead): count bins
+// anywhere in the active lifecycle — at storage, in transit, staged at
+// a consumer line, or being filled at a loader. A bin partway through
+// being consumed at the line is still inventory; it can come back as a
+// partial.
 //
-// A staged bin at the consumer line still represents physical inventory
-// (it may even return as a partial bin). A flagged bin is under
-// investigation and shouldn't be assumed to come back. Maintenance and
-// quality_hold are out of circulation. Retired is terminal.
+//   - Include  : available, staged — bins still in productive
+//                circulation
+//   - Exclude  : flagged, maintenance, quality_hold, retired — bins
+//                that production can't rely on
+//
+// Flagged means the operator marked it for investigation; not assumed
+// to return. Maintenance and quality_hold are off the line and shouldn't
+// be counted as available capacity — production has to plan around them.
+// Retired is terminal.
 //
 // No node filter — bins anywhere count, including the loader itself
 // (an empty carrier sitting at the loader still represents capacity).
