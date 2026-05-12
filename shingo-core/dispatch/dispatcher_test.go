@@ -21,6 +21,7 @@ type mockEmitter struct {
 	received         []emitReceived
 	dispatched       []emitDispatched
 	failed           []emitFailed
+	skipped          []emitSkipped
 	cancelled        []emitCancelled
 	completed        []emitCompleted
 	queued           []emitQueued
@@ -37,6 +38,10 @@ type emitDispatched struct {
 	vendorOrderID string
 }
 type emitFailed struct {
+	orderID   int64
+	errorCode string
+}
+type emitSkipped struct {
 	orderID   int64
 	errorCode string
 }
@@ -67,6 +72,9 @@ func (m *mockEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, _, _ str
 }
 func (m *mockEmitter) EmitOrderFailed(orderID int64, _, _, errorCode, _ string) {
 	m.failed = append(m.failed, emitFailed{orderID, errorCode})
+}
+func (m *mockEmitter) EmitOrderSkipped(orderID int64, _, _, errorCode, _ string) {
+	m.skipped = append(m.skipped, emitSkipped{orderID, errorCode})
 }
 func (m *mockEmitter) EmitOrderCancelled(orderID int64, _, _, reason, _ string) {
 	m.cancelled = append(m.cancelled, emitCancelled{orderID, reason})

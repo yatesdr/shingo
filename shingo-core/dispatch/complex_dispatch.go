@@ -131,18 +131,30 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 	// HandleOrderRelease. If a future Edge starts sending RemainingUOP at
 	// intake we'd persist it on the order row to recover here.
 	if err := d.claimComplexBins(order, resolvedSteps, order.PayloadCode, nil); err != nil {
-		// claim_failed = transient race loss. Don't fail the order;
-		// instead set queue_reason so scanner replays on the next tick
-		// (the winning order will release the bin via completion or
-		// release, freeing it for this order). no_bin and other codes
-		// are terminal.
+		// Three terminal outcomes, distinguished by planningError.Code:
+		//   - claim_failed: transient race loss. Don't fail the order;
+		//     queue_reason="claim_failed" replays on the next scanner tick.
+		//   - no_source_bin: every pickup node was empty. The work was
+		//     never needed (e.g. evac for a bin that was removed to
+		//     quality hold before dispatch). Route to lifecycle.Skip so
+		//     the operator surface treats it as a no-op rather than an
+		//     alarm; Edge's HandleOrderSkipped advances the linked
+		//     changeover node task to its post-completion state.
+		//   - no_bin (default): bins existed but were unclaimable
+		//     (already-claimed, payload mismatch, status). Terminal Fail.
 		var pe *planningError
-		if errors.As(err, &pe) && pe.Code == "claim_failed" {
-			if serr := d.db.SetOrderQueueReason(order.ID, "claim_failed"); serr != nil {
-				log.Printf("dispatch: set queue_reason claim_failed for order %d: %v", order.ID, serr)
+		if errors.As(err, &pe) {
+			switch pe.Code {
+			case "claim_failed":
+				if serr := d.db.SetOrderQueueReason(order.ID, "claim_failed"); serr != nil {
+					log.Printf("dispatch: set queue_reason claim_failed for order %d: %v", order.ID, serr)
+				}
+				d.dbg("complex: order %d held in queue on claim_failed: %s", order.ID, pe.Detail)
+				return err
+			case "no_source_bin":
+				d.skipOrderInternal(order, "no_source_bin", pe.Detail)
+				return err
 			}
-			d.dbg("complex: order %d held in queue on claim_failed: %s", order.ID, pe.Detail)
-			return err
 		}
 		d.failOrderInternal(order, "no_bin", err.Error())
 		return err
@@ -207,4 +219,17 @@ func (d *Dispatcher) failOrderInternal(order *orders.Order, code, detail string)
 		log.Printf("dispatch: fail order %d: %v", order.ID, err)
 	}
 	d.emitter.EmitOrderFailed(order.ID, order.EdgeUUID, order.StationID, code, detail)
+}
+
+// skipOrderInternal is the scanner-path "the work was never needed" helper.
+// Parallel shape to failOrderInternal but routes through lifecycle.Skip
+// (which writes status='skipped' via SkipOrderAtomic, no anomaly mark on
+// any leaked claims) and emits EventOrderSkipped. Edge subscribes via
+// HandleOrderSkipped and advances the linked changeover node task without
+// surfacing a failure to the operator.
+func (d *Dispatcher) skipOrderInternal(order *orders.Order, code, detail string) {
+	if err := d.lifecycle.Skip(order, order.StationID, code, detail); err != nil {
+		log.Printf("dispatch: skip order %d: %v", order.ID, err)
+	}
+	d.emitter.EmitOrderSkipped(order.ID, order.EdgeUUID, order.StationID, code, detail)
 }

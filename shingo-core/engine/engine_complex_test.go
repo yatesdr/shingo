@@ -342,12 +342,24 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 // --- Test: Ghost robot — claimComplexBins finds no bin (TC-49) ---
 //
 // Scenario: A complex order specifies a pickup at a node, but the node
-// has no bins matching the payload (or all bins are already claimed).
-// claimComplexBins returns a planningError with code "no_bin", and the
-// order is failed at the planning stage — no robot is dispatched.
+// has no bins at all — the source was emptied externally before this
+// dispatch tick (plant case: operator pulled the bin to quality hold
+// after the order was queued but before the scanner picked it up).
+//
+// Expected (post no_source_bin refactor): claimComplexBins returns a
+// planningError with code "no_source_bin", and DispatchPreparedComplex
+// routes it to lifecycle.Skip → StatusSkipped (terminal, distinct from
+// Failed). No robot is dispatched. The semantic distinction matters
+// operationally — Skipped feeds Edge's auto-advance path on the linked
+// changeover node task instead of surfacing a sticky red error toast.
+//
+// The "bin existed but unclaimable" case (already claimed, payload
+// mismatch, status) still routes to Failed — see
+// TestDispatchPreparedComplex_BinClaimedElsewhereFails in
+// dispatch/bin_lifecycle_test.go.
 //
 // Expected:
-// 1. Order status = failed
+// 1. Order status = skipped (was failed pre-refactor)
 // 2. BinID = nil
 // 3. No vendor order created (no fleet interaction)
 // 4. No auto-return order created
@@ -378,9 +390,11 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 
 	order := testdb.RequireOrder(t, db, "cx-ghost-1")
 
-	// Order should fail at planning — no bin available
-	if order.Status != dispatch.StatusFailed {
-		t.Fatalf("status = %q, want failed (no bin at pickup should fail at planning)", order.Status)
+	// Source genuinely empty → Skip terminal (not Fail). Pins the new
+	// no_source_bin path: bins absent at every pickup node means the
+	// work was never needed, not that the system errored.
+	if order.Status != dispatch.StatusSkipped {
+		t.Fatalf("status = %q, want skipped (empty source must route to Skip via no_source_bin)", order.Status)
 	}
 	if order.BinID != nil {
 		t.Errorf("expected BinID=nil (no bin at pickup), got %d", *order.BinID)

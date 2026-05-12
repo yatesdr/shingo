@@ -82,7 +82,7 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 			continue
 		}
 		if len(bins) == 0 {
-			reason := "no bins at node"
+			reason := emptyNodeSkipReason
 			d.dbg("complex: order %d pickup step %d at %s — %s", order.ID, i, s.Node, reason)
 			stepSkips = append(stepSkips, pickupSkip{i, s.Node, reason})
 			continue
@@ -116,12 +116,27 @@ func (d *Dispatcher) claimComplexBins(order *orders.Order, steps []resolvedStep,
 	}
 
 	if len(claimed) == 0 {
-		// Discriminate transient race losses from structural unavailability:
-		// claim_failed is retry-eligible (next scanner tick may win the
-		// race), no_bin is terminal. See #4 in the UOP audit and the
-		// scanner re-queue branch in DispatchPreparedComplex.
+		// Discriminate three terminal cases by the per-step skip reasons
+		// already captured in stepSkips:
+		//   - claim_failed: at least one step lost a SQL claim race (the
+		//     bin existed and matched, but ClaimForDispatch failed under
+		//     the claimed_by IS NULL guard). Retry-eligible: a winning
+		//     order's completion or release frees the bin for the next
+		//     scanner tick.
+		//   - no_source_bin: every step reported "no bins at node" — the
+		//     source nodes are genuinely empty. This is the "work was
+		//     never needed" condition (bin removed externally before
+		//     dispatch, e.g. quality hold). DispatchPreparedComplex routes
+		//     this to lifecycle.Skip instead of Fail so the operator
+		//     surface treats it as a no-op rather than an alarm.
+		//   - no_bin: bins existed but were rejected for other reasons
+		//     (already claimed, payload mismatch, status). Terminal
+		//     failure — operator must reconcile.
 		if anyRaced {
 			return &planningError{Code: "claim_failed", Detail: fmt.Sprintf("lost claim race at all pickup nodes for order %d", order.ID)}
+		}
+		if allStepSkipsAreEmptyNode(stepSkips) {
+			return &planningError{Code: "no_source_bin", Detail: fmt.Sprintf("no bin at pickup node(s) for order %d — source was emptied externally", order.ID)}
 		}
 		return &planningError{Code: "no_bin", Detail: fmt.Sprintf("no available bin at pickup node(s) for order %d", order.ID)}
 	}

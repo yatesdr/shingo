@@ -101,6 +101,12 @@ func (db *DB) UpdateChangeoverNodeTaskState(id int64, state string) error {
 	return processes.UpdateChangeoverNodeTaskState(db.DB, id, state)
 }
 
+// SetChangeoverNodeTaskSkipNote writes the operator-facing skip message
+// on a node task. Pass "" to clear.
+func (db *DB) SetChangeoverNodeTaskSkipNote(id int64, note string) error {
+	return processes.SetChangeoverNodeTaskSkipNote(db.DB, id, note)
+}
+
 // LinkChangeoverNodeOrders associates the next/old material order ids
 // with a node task.
 func (db *DB) LinkChangeoverNodeOrders(id int64, nextOrderID, oldOrderID *int64) error {

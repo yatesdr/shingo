@@ -204,6 +204,38 @@ func (db *DB) FailOrderAtomic(orderID int64, detail string) error {
 	return tx.Commit()
 }
 
+// SkipOrderAtomic transitions an order to "skipped" and releases all bin
+// claims in a single transaction. Same atomic-write rationale as
+// FailOrderAtomic. Distinct from Fail by intent: skipped means "the work
+// was never needed" (the world already advanced past the order's purpose,
+// e.g. complex evac with no bin at any pickup node). Bins are NOT marked
+// anomalous — the missing inventory is the expected condition, not a leak
+// to investigate. Cross-aggregate.
+func (db *DB) SkipOrderAtomic(orderID int64, detail string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE orders SET status='skipped', error_detail=$1, updated_at=NOW() WHERE id=$2`, detail, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO order_history (order_id, status, detail) VALUES ($1, 'skipped', $2)`, orderID, detail); err != nil {
+		return err
+	}
+	// Release any bin claims this order took during dispatch. In the
+	// no_source_bin path that produces today's sole Skip, zero bins were
+	// claimed so this is a no-op — included for symmetry with Fail/Cancel
+	// and to keep future Skip producers safe by default.
+	if _, err := tx.Exec(`UPDATE bins SET claimed_by=NULL, updated_at=NOW() WHERE claimed_by=$1`, orderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM order_bins WHERE order_id=$1`, orderID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // CancelOrderAtomic transitions an order to "cancelled" and releases all bin
 // claims in a single transaction. Same rationale as FailOrderAtomic.
 // Cross-aggregate.

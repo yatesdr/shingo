@@ -193,6 +193,7 @@ func scanNodeTask(scanner interface{ Scan(...interface{}) error }) (NodeTask, er
 	if err := scanner.Scan(&t.ID, &t.ProcessChangeoverID, &t.ProcessNodeID,
 		&t.FromClaimID, &t.ToClaimID, &t.Situation, &t.State,
 		&t.NextMaterialOrderID, &t.OldMaterialReleaseOrderID,
+		&t.SkipNote,
 		&updatedAt, &t.NodeName); err != nil {
 		return t, err
 	}
@@ -204,6 +205,7 @@ func listNodeTasksQuery(db *sql.DB, changeoverID int64, extraWhere string, extra
 	query := `SELECT t.id, t.process_changeover_id, t.process_node_id,
 		t.from_claim_id, t.to_claim_id, t.situation, t.state,
 		t.next_material_order_id, t.old_material_release_order_id,
+		COALESCE(t.skip_note, ''),
 		t.updated_at, COALESCE(n.name, '')
 		FROM changeover_node_tasks t
 		LEFT JOIN process_nodes n ON n.id = t.process_node_id
@@ -248,6 +250,7 @@ func GetChangeoverNodeTaskByNode(db *sql.DB, changeoverID, processNodeID int64) 
 	t, err := scanNodeTask(db.QueryRow(`SELECT t.id, t.process_changeover_id, t.process_node_id,
 		t.from_claim_id, t.to_claim_id, t.situation, t.state,
 		t.next_material_order_id, t.old_material_release_order_id,
+		COALESCE(t.skip_note, ''),
 		t.updated_at, COALESCE(n.name, '')
 		FROM changeover_node_tasks t
 		LEFT JOIN process_nodes n ON n.id = t.process_node_id
@@ -272,6 +275,7 @@ func FindChangeoverNodeTaskByOrderID(db *sql.DB, orderID int64) (*NodeTask, stri
 	row := db.QueryRow(`SELECT t.id, t.process_changeover_id, t.process_node_id,
 		t.from_claim_id, t.to_claim_id, t.situation, t.state,
 		t.next_material_order_id, t.old_material_release_order_id,
+		COALESCE(t.skip_note, ''),
 		t.updated_at, COALESCE(n.name, ''), c.state
 		FROM changeover_node_tasks t
 		LEFT JOIN process_nodes n ON n.id = t.process_node_id
@@ -283,6 +287,7 @@ func FindChangeoverNodeTaskByOrderID(db *sql.DB, orderID int64) (*NodeTask, stri
 	if err := row.Scan(&t.ID, &t.ProcessChangeoverID, &t.ProcessNodeID,
 		&t.FromClaimID, &t.ToClaimID, &t.Situation, &t.State,
 		&t.NextMaterialOrderID, &t.OldMaterialReleaseOrderID,
+		&t.SkipNote,
 		&updatedAt, &t.NodeName, &coState); err != nil {
 		return nil, "", err
 	}
@@ -308,6 +313,7 @@ func GetChangeoverNodeTaskByEvacOrderID(db *sql.DB, orderID int64) (*NodeTask, e
 	t, err := scanNodeTask(db.QueryRow(`SELECT t.id, t.process_changeover_id, t.process_node_id,
 		t.from_claim_id, t.to_claim_id, t.situation, t.state,
 		t.next_material_order_id, t.old_material_release_order_id,
+		COALESCE(t.skip_note, ''),
 		t.updated_at, COALESCE(n.name, '')
 		FROM changeover_node_tasks t
 		LEFT JOIN process_nodes n ON n.id = t.process_node_id
@@ -321,6 +327,14 @@ func GetChangeoverNodeTaskByEvacOrderID(db *sql.DB, orderID int64) (*NodeTask, e
 // UpdateChangeoverNodeTaskState writes the state on a node task.
 func UpdateChangeoverNodeTaskState(db *sql.DB, id int64, state string) error {
 	_, err := db.Exec(`UPDATE changeover_node_tasks SET state=?, updated_at=datetime('now') WHERE id=?`, state, id)
+	return err
+}
+
+// SetChangeoverNodeTaskSkipNote writes the operator-facing skip message on
+// a node task. Pass the empty string to clear it (e.g. when the next
+// state-advancing operator action makes the chip stale).
+func SetChangeoverNodeTaskSkipNote(db *sql.DB, id int64, note string) error {
+	_, err := db.Exec(`UPDATE changeover_node_tasks SET skip_note=?, updated_at=datetime('now') WHERE id=?`, note, id)
 	return err
 }
 

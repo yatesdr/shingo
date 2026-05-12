@@ -12,6 +12,7 @@ import (
 	"shingo/protocol/types"
 	"shingoedge/store"
 	"shingoedge/store/orders"
+	"shingoedge/store/processes"
 )
 
 // DebugLogFunc is a nil-safe debug logging function.
@@ -642,6 +643,13 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 		return m.handleDelivered(order, statusDetail, nil, nil)
 	case ReplyError:
 		return m.TransitionOrder(order.ID, StatusFailed, statusDetail)
+	case ReplySkipped:
+		// "Work was never needed" terminal — distinct from ReplyError.
+		// The post-skip cleanup (advancing a linked changeover node task
+		// and writing the operator-facing note) happens in the edge_handler
+		// HandleOrderSkipped path before this; here we only persist the
+		// order's local status.
+		return m.TransitionOrder(order.ID, StatusSkipped, statusDetail)
 	case ReplyStaged:
 		return m.TransitionOrder(order.ID, StatusStaged, statusDetail)
 	case ReplyCancelled:
@@ -655,6 +663,84 @@ func (m *Manager) HandleDispatchReply(orderUUID, replyType, waybillID, eta, stat
 func (m *Manager) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatusSnapshot) error {
 	m.lifecycle.debug = m.DebugLog
 	return m.lifecycle.ApplyCoreStatusSnapshot(snapshot)
+}
+
+// HandleSkipped processes Core's terminal "the work was never needed"
+// notification for an order. Today the sole producer is the complex-order
+// dispatcher's no_source_bin path (every pickup node was genuinely empty,
+// e.g. evac for a bin that was pulled to quality hold before dispatch).
+//
+// Three-step write, in order:
+//
+//  1. Transition the local order row to StatusSkipped via the standard
+//     dispatch-reply path — keeps lifecycle audit consistent with every
+//     other terminal reply.
+//  2. Look up the changeover_node_tasks row linked to this order (either
+//     leg). If found, advance its state to the post-completion state a
+//     successful run would have produced — line_cleared for an evac leg,
+//     released for a supply leg. This unsticks the changeover state
+//     machine without requiring operator intervention.
+//  3. Write skip_note on the same node task so the HMI surfaces a chip
+//     ("evac skipped: bin missing — recover manually if needed") instead
+//     of a sticky red error toast.
+//
+// Idempotent: a duplicate skip on an already-skipped order lands on a
+// terminal row (TransitionOrder no-op) and the node-task updates are
+// last-writer-wins on the same row.
+func (m *Manager) HandleSkipped(orderUUID, errorCode, detail string) error {
+	m.DebugLog.Log("dispatch reply: uuid=%s type=skipped code=%s", orderUUID, errorCode)
+	order, err := m.db.GetOrderByUUID(orderUUID)
+	if err != nil {
+		return fmt.Errorf("order %s not found: %w", orderUUID, err)
+	}
+	if err := m.TransitionOrder(order.ID, StatusSkipped, detail); err != nil {
+		return err
+	}
+	task, _, terr := m.db.FindChangeoverNodeTaskByOrderID(order.ID)
+	if terr != nil || task == nil {
+		// Not a changeover-linked order — nothing more to advance.
+		return nil
+	}
+	postState := skippedTerminalState(task, order.ID)
+	if err := m.db.UpdateChangeoverNodeTaskState(task.ID, postState); err != nil {
+		log.Printf("orders: advance node task %d to %s on skip: %v", task.ID, postState, err)
+	}
+	note := formatSkipNote(task, errorCode, detail)
+	if err := m.db.SetChangeoverNodeTaskSkipNote(task.ID, note); err != nil {
+		log.Printf("orders: set skip_note on node task %d: %v", task.ID, err)
+	}
+	return nil
+}
+
+// skippedTerminalState picks the post-completion node-task state that a
+// successful run of the skipped order would have produced. Mirrors the
+// completion-handler shape in wiring_completion.go:
+//
+//   - evac leg (OldMaterialReleaseOrderID == orderID): line_cleared
+//   - supply leg (NextMaterialOrderID == orderID): released
+//   - neither matches (shouldn't happen — FindChangeoverNodeTaskByOrderID
+//     OR-matches): default to released to keep the state machine moving.
+func skippedTerminalState(task *processes.NodeTask, orderID int64) string {
+	if task.OldMaterialReleaseOrderID != nil && *task.OldMaterialReleaseOrderID == orderID {
+		return "line_cleared"
+	}
+	return "released"
+}
+
+// formatSkipNote builds the operator-facing chip text. Keep it short —
+// the HMI renders it on a small chip; the full Detail string is logged
+// elsewhere for forensics.
+func formatSkipNote(task *processes.NodeTask, errorCode, detail string) string {
+	leg := "order"
+	if task.OldMaterialReleaseOrderID != nil {
+		leg = "evac"
+	} else if task.NextMaterialOrderID != nil {
+		leg = "supply"
+	}
+	if errorCode == "no_source_bin" {
+		return leg + " skipped: bin missing at " + task.NodeName
+	}
+	return leg + " skipped: " + detail
 }
 
 // RollbackForRetry force-transitions an order back to StatusStaged with a

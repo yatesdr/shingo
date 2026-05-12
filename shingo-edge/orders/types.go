@@ -25,6 +25,7 @@ const (
 	StatusConfirmed    = protocol.StatusConfirmed
 	StatusCancelled    = protocol.StatusCancelled
 	StatusFailed       = protocol.StatusFailed
+	StatusSkipped      = protocol.StatusSkipped
 )
 
 // Dispatch reply types — used by HandleDispatchReply and edge_handler.
@@ -34,6 +35,7 @@ const (
 	ReplyUpdate    = "update"
 	ReplyDelivered = "delivered"
 	ReplyError     = "error"
+	ReplySkipped   = "skipped"
 	ReplyStaged    = "staged"
 	ReplyCancelled = "cancelled"
 	ReplyQueued    = "queued"

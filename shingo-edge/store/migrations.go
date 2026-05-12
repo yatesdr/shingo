@@ -578,6 +578,14 @@ DROP TABLE process_nodes_legacy;
 		return err
 	}
 
+	// skip_note carries the operator-facing message when a linked complex
+	// order reached terminal "skipped" (e.g. evac for a bin that was
+	// removed externally before dispatch). Surfaced as a chip on the node
+	// tile via StationNodeView.SkipNote. Idempotent ADD COLUMN; the
+	// rebuildLegacyChangeoverNodeTasks() path above already creates the
+	// column on fresh schemas.
+	db.Exec("ALTER TABLE changeover_node_tasks ADD COLUMN skip_note TEXT NOT NULL DEFAULT ''")
+
 	return nil
 }
 
@@ -789,6 +797,7 @@ CREATE TABLE IF NOT EXISTS changeover_node_tasks (
     state                      TEXT NOT NULL DEFAULT 'pending',
     next_material_order_id     INTEGER REFERENCES orders(id) ON DELETE SET NULL,
     old_material_release_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL,
+    skip_note                  TEXT NOT NULL DEFAULT '',
     updated_at                 TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(process_changeover_id, process_node_id)
 );

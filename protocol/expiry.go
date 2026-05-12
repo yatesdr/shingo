@@ -18,6 +18,7 @@ var defaultTTLs = map[string]time.Duration{
 	TypeOrderReceipt:   30 * time.Minute,
 	TypeOrderWaybill:   30 * time.Minute,
 	TypeOrderError:     30 * time.Minute,
+	TypeOrderSkipped:   30 * time.Minute,
 	TypeOrderCancelled: 30 * time.Minute,
 
 	TypeOrderDelivered: 60 * time.Minute,

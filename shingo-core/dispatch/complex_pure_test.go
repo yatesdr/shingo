@@ -40,6 +40,37 @@ func TestJoinRejects_Short(t *testing.T) {
 	}
 }
 
+// TestAllStepSkipsAreEmptyNode pins the gate that separates "skip the
+// order, the work was never needed" from "fail the order, bins are
+// available but unclaimable". The string match on emptyNodeSkipReason
+// is the contract; this test guards against drift.
+func TestAllStepSkipsAreEmptyNode(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   []pickupSkip
+		want bool
+	}{
+		{"all empty", []pickupSkip{
+			{0, "STOR-A", emptyNodeSkipReason},
+			{1, "STOR-B", emptyNodeSkipReason},
+		}, true},
+		{"one empty, one rejected", []pickupSkip{
+			{0, "STOR-A", emptyNodeSkipReason},
+			{1, "STOR-B", "no candidate among 2 bin(s); rejects: [already claimed by order 99]"},
+		}, false},
+		{"none empty", []pickupSkip{
+			{0, "STOR-A", "no candidate among 1 bin(s); rejects: [payload mismatch]"},
+		}, false},
+		{"empty input — zero pickup steps is not a skip case", nil, false},
+	}
+	for _, c := range cases {
+		if got := allStepSkipsAreEmptyNode(c.in); got != c.want {
+			t.Errorf("%s: allStepSkipsAreEmptyNode = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestJoinRejects_Truncation(t *testing.T) {
 	t.Parallel()
 	rejects := make([]string, 10)

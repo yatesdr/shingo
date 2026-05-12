@@ -42,6 +42,16 @@ func (e *dispatchEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, er
 	}})
 }
 
+func (e *dispatchEmitter) EmitOrderSkipped(orderID int64, edgeUUID, stationID, errorCode, detail string) {
+	e.bus.Emit(Event{Type: EventOrderSkipped, Payload: OrderSkippedEvent{
+		OrderID:   orderID,
+		EdgeUUID:  edgeUUID,
+		StationID: stationID,
+		ErrorCode: errorCode,
+		Detail:    detail,
+	}})
+}
+
 func (e *dispatchEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string) {
 	e.bus.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
 		OrderID:        orderID,

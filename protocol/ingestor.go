@@ -36,6 +36,7 @@ type MessageHandler interface {
 	HandleOrderError(env *Envelope, p *OrderError)
 	HandleOrderCancelled(env *Envelope, p *OrderCancelled)
 	HandleOrderStaged(env *Envelope, p *OrderStaged)
+	HandleOrderSkipped(env *Envelope, p *OrderSkipped)
 }
 
 // Ingestor performs two-phase decode and dispatches to a MessageHandler.
@@ -137,6 +138,8 @@ func (ing *Ingestor) HandleRaw(data []byte) {
 		decodeAndCall(ing.handler.HandleOrderCancelled, &env, ing.dbg)
 	case TypeOrderStaged:
 		decodeAndCall(ing.handler.HandleOrderStaged, &env, ing.dbg)
+	case TypeOrderSkipped:
+		decodeAndCall(ing.handler.HandleOrderSkipped, &env, ing.dbg)
 	default:
 		log.Printf("protocol: unknown message type: %s", env.Type)
 	}

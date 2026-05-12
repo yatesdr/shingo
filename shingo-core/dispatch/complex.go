@@ -48,3 +48,26 @@ func stepSkipSummaries(skips []pickupSkip) []string {
 	}
 	return out
 }
+
+// emptyNodeSkipReason is the literal reason string set in claimComplexBins
+// when ListBinsByNode returns zero rows for a pickup step. allStepSkipsAreEmptyNode
+// keys on this exact value to distinguish "source was emptied externally"
+// (terminal-skip) from "bins were there but rejected" (terminal-fail).
+const emptyNodeSkipReason = "no bins at node"
+
+// allStepSkipsAreEmptyNode reports whether every pickup-step skip was the
+// "no bins at node" empty-source case — the signal that the order can be
+// safely skipped rather than failed. Returns false for an empty input
+// (zero skips means zero pickup steps, which is a different bug — the
+// dispatcher should surface that as a malformed order, not auto-skip).
+func allStepSkipsAreEmptyNode(skips []pickupSkip) bool {
+	if len(skips) == 0 {
+		return false
+	}
+	for _, s := range skips {
+		if s.reason != emptyNodeSkipReason {
+			return false
+		}
+	}
+	return true
+}

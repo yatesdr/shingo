@@ -28,6 +28,7 @@ const (
 	StatusFailed       = protocol.StatusFailed
 	StatusCancelled    = protocol.StatusCancelled
 	StatusReshuffling  = protocol.StatusReshuffling
+	StatusSkipped      = protocol.StatusSkipped
 )
 
 // VendorIDPrefix is prepended to fleet transport order IDs for traceability.

@@ -171,6 +171,17 @@ type OrderError struct {
 	Detail    string `json:"detail"`
 }
 
+// OrderSkipped signals an order reached a terminal "skipped" state — the
+// work was never needed, distinct from a failure. Today the sole producer
+// is the complex-order dispatcher detecting "no bins at any pickup node"
+// (the source was emptied externally before the order dispatched). Wire
+// shape mirrors OrderError so handlers stay parallel.
+type OrderSkipped struct {
+	OrderUUID string `json:"order_uuid"`
+	ErrorCode string `json:"error_code"`
+	Detail    string `json:"detail"`
+}
+
 // OrderCancelled confirms order cancellation.
 type OrderCancelled struct {
 	OrderUUID string `json:"order_uuid"`

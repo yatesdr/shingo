@@ -140,6 +140,14 @@ var actionMap = map[transitionKey][]Action{
 	{from: StatusStaged, to: StatusFailed}:       {fireFailed},
 	{from: StatusDelivered, to: StatusFailed}:    {fireFailed},
 	{from: StatusReshuffling, to: StatusFailed}:  {fireFailed},
+
+	// Skipped: dispatcher-side terminal for "the work was never needed".
+	// Only the pre-fleet statuses can reach this — once the fleet owns the
+	// order (Acknowledged onward) the resolution is fail or cancel.
+	{from: StatusPending, to: StatusSkipped}:   {fireSkipped},
+	{from: StatusSourcing, to: StatusSkipped}:  {fireSkipped},
+	{from: StatusSubmitted, to: StatusSkipped}: {fireSkipped},
+	{from: StatusQueued, to: StatusSkipped}:    {fireSkipped},
 }
 
 // transition is the shared driver. Validates (from, to) against
@@ -171,6 +179,16 @@ func (s *LifecycleService) transition(ord *orders.Order, to protocol.Status, ev 
 			detail = ev.Reason
 		}
 		err = s.db.FailOrderAtomic(ord.ID, detail)
+	case StatusSkipped:
+		// SkipOrderAtomic writes status='skipped' AND releases bin claims
+		// atomically. Same atomic-write rationale as Cancel/Fail — bin
+		// claims taken during dispatch must be released even though the
+		// order didn't reach a fleet leg.
+		detail := ev.ErrorDetail
+		if detail == "" {
+			detail = ev.Reason
+		}
+		err = s.db.SkipOrderAtomic(ord.ID, detail)
 	default:
 		detail := ev.Reason
 		if detail == "" {
@@ -349,6 +367,24 @@ func (s *LifecycleService) Fail(ord *orders.Order, stationID, errorCode, detail 
 	})
 }
 
+// Skip transitions a dispatcher-side status (Pending|Sourcing|Submitted|Queued)
+// to Skipped — the "the work was never needed" terminal. Distinct from Fail
+// because skipped orders are not alarms: the world already advanced past
+// the order's purpose (e.g. complex evac with no bin at any pickup node).
+// Same atomic-write + bin-claim-release semantics as Fail (SkipOrderAtomic).
+func (s *LifecycleService) Skip(ord *orders.Order, stationID, errorCode, detail string) error {
+	if protocol.IsTerminal(ord.Status) {
+		return IllegalTransition{From: ord.Status, To: StatusSkipped}
+	}
+	return s.transition(ord, StatusSkipped, Event{
+		Actor:       "system:" + stationID,
+		Reason:      detail,
+		ErrorCode:   errorCode,
+		ErrorDetail: detail,
+		StationID:   stationID,
+	})
+}
+
 // BeginReshuffle transitions {Pending, Sourcing} → Reshuffling for a
 // compound parent order. Called from Pending when planning detects a
 // buried bin at order intake; called from Sourcing when the planner has
@@ -407,6 +443,19 @@ func fireFailed(s *LifecycleService, ord *orders.Order, ev Event) error {
 		detail = ev.Reason
 	}
 	s.emitter.EmitOrderFailed(ord.ID, ord.EdgeUUID, ev.StationID, code, detail)
+	return nil
+}
+
+func fireSkipped(s *LifecycleService, ord *orders.Order, ev Event) error {
+	code := ev.ErrorCode
+	if code == "" {
+		code = "lifecycle_skipped"
+	}
+	detail := ev.ErrorDetail
+	if detail == "" {
+		detail = ev.Reason
+	}
+	s.emitter.EmitOrderSkipped(ord.ID, ord.EdgeUUID, ev.StationID, code, detail)
 	return nil
 }
 

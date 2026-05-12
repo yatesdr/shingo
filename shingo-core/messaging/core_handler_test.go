@@ -55,6 +55,7 @@ func (noopEmitter) EmitOrderReceived(orderID int64, edgeUUID, stationID string, 
 }
 func (noopEmitter) EmitOrderDispatched(orderID int64, vendorOrderID, sourceNode, destNode string) {}
 func (noopEmitter) EmitOrderFailed(orderID int64, edgeUUID, stationID, errorCode, detail string)  {}
+func (noopEmitter) EmitOrderSkipped(orderID int64, edgeUUID, stationID, errorCode, detail string) {}
 func (noopEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason, previousStatus string) {}
 func (noopEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string)                  {}
 func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)        {}

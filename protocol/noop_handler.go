@@ -20,6 +20,7 @@ func (NoOpHandler) HandleOrderDelivered(*Envelope, *OrderDelivered)           {}
 func (NoOpHandler) HandleOrderError(*Envelope, *OrderError)                   {}
 func (NoOpHandler) HandleOrderCancelled(*Envelope, *OrderCancelled)           {}
 func (NoOpHandler) HandleOrderStaged(*Envelope, *OrderStaged)                 {}
+func (NoOpHandler) HandleOrderSkipped(*Envelope, *OrderSkipped)               {}
 
 // Compile-time check that NoOpHandler implements MessageHandler.
 var _ MessageHandler = NoOpHandler{}

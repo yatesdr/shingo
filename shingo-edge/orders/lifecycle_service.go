@@ -126,6 +126,8 @@ func (s *LifecycleService) ApplyCoreStatusSnapshot(snapshot protocol.OrderStatus
 		return s.ForceTransition(order.ID, StatusCancelled, detail)
 	case StatusFailed:
 		return s.ForceTransition(order.ID, StatusFailed, detail)
+	case StatusSkipped:
+		return s.ForceTransition(order.ID, StatusSkipped, detail)
 	case StatusDelivered:
 		return s.ForceTransition(order.ID, StatusDelivered, detail)
 	case StatusStaged:

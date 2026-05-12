@@ -114,6 +114,25 @@ export function renderModal(entry) {
             '</div>';
     }
 
+    // Skip-note chip: surfaces when a linked changeover complex order
+    // reached terminal "skipped" — Core's no_source_bin path (the source
+    // node was emptied externally, e.g. operator pulled the bin to quality
+    // hold before the evac dispatched). The changeover state machine has
+    // already advanced past this leg; the chip exists so the operator
+    // knows the auto-skip happened and can recover manually if the
+    // physical world doesn't actually match. Cleared by the next
+    // state-advancing operator action.
+    const skipNote = entry.changeover_task && entry.changeover_task.skip_note;
+    if (skipNote) {
+        html += '<div class="os-skip-note-chip" style="' +
+            'margin:8px 0;padding:10px 14px;border-radius:6px;' +
+            'background:#2a2410;color:#f5d97a;border:1px solid #5a4a1a;' +
+            'font-size:13px;line-height:1.4">' +
+            '<strong>Auto-skipped:</strong> ' + esc(skipNote) +
+            ' — recover manually if needed.' +
+            '</div>';
+    }
+
     // Actions — state machine: only show the next step in the cycle.
     // Consume:  IDLE → REQUEST MATERIAL → (stage) → RELEASE → (drop) → CONFIRM
     // Produce:  same but FINALIZE instead of REQUEST when node has parts.

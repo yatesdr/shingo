@@ -804,3 +804,128 @@ func TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment(t *testing.T
 		t.Errorf("WaitIndex = %d, want 2 (multi-wait re-release should advance)", got.WaitIndex)
 	}
 }
+
+// TestDispatchPreparedComplex_NoSourceBinSkipsNotFails pins the new
+// architecture: a complex order whose every pickup node is empty (the
+// "bin was removed externally before dispatch" condition) lands in
+// terminal StatusSkipped via SkipOrderAtomic, NOT StatusFailed via
+// FailOrderAtomic. The semantic difference matters operationally —
+// Skipped feeds the changeover-task auto-advance path on Edge instead
+// of surfacing a sticky red error to the operator.
+func TestDispatchPreparedComplex_NoSourceBinSkipsNotFails(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	// Source and destination nodes exist; source has NO bin (the bin was
+	// pulled to quality hold before this dispatch tick).
+	sourceNode := &nodes.Node{Name: "ALN-EMPTY-1", Enabled: true}
+	if err := db.CreateNode(sourceNode); err != nil {
+		t.Fatalf("create source node: %v", err)
+	}
+	destNode := &nodes.Node{Name: "SMN-OUT-1", Enabled: true}
+	if err := db.CreateNode(destNode); err != nil {
+		t.Fatalf("create dest node: %v", err)
+	}
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	// Stage a complex evac order at the empty source. Shape matches the
+	// changeover_planner.go BuildStagedReleaseSteps output: wait → pickup
+	// → dropoff. lineNode here stands in for the unused but required
+	// "process node" tracking context.
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID:   "uuid-evac-empty",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		ProcessNode: sourceNode.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "wait", Node: sourceNode.Name},
+			{Action: "pickup", Node: sourceNode.Name},
+			{Action: "dropoff", Node: destNode.Name},
+		},
+	})
+	_ = lineNode
+
+	order, err := db.GetOrderByUUID("uuid-evac-empty")
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if order.Status != StatusQueued {
+		t.Fatalf("pre-dispatch status = %q, want %q", order.Status, StatusQueued)
+	}
+
+	// Now drive the dispatcher. Source is empty → no_source_bin → Skip.
+	_ = d.DispatchPreparedComplex(order)
+
+	got, err := db.GetOrderByUUID("uuid-evac-empty")
+	if err != nil {
+		t.Fatalf("re-get order: %v", err)
+	}
+	if got.Status != StatusSkipped {
+		t.Errorf("status = %q, want %q (no_source_bin must route to Skip, not Fail)", got.Status, StatusSkipped)
+	}
+	if got.ErrorDetail == "" {
+		t.Error("ErrorDetail should be populated with the planning-error detail")
+	}
+}
+
+// TestDispatchPreparedComplex_BinClaimedElsewhereFails complements the test
+// above: when bins ARE at the source but every one is rejected (claimed
+// by another order, payload mismatch, etc.), the order still terminates
+// as Failed — that's an alarm, not a no-op. Pins the gate so a future
+// refactor can't accidentally collapse the two cases.
+func TestDispatchPreparedComplex_BinClaimedElsewhereFails(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, _, bp := setupTestData(t, db)
+
+	sourceNode := &nodes.Node{Name: "ALN-CLAIMED-1", Enabled: true}
+	if err := db.CreateNode(sourceNode); err != nil {
+		t.Fatalf("create source node: %v", err)
+	}
+	destNode := &nodes.Node{Name: "SMN-OUT-2", Enabled: true}
+	if err := db.CreateNode(destNode); err != nil {
+		t.Fatalf("create dest node: %v", err)
+	}
+
+	// Bin at source, but claimed by a different order (id=999 — doesn't
+	// matter that the row doesn't exist; the dispatcher only looks at the
+	// claim_by pointer for the unavailability check).
+	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-CLAIMED-1", NodeID: &sourceNode.ID, Status: "staged"}
+	if err := db.CreateBin(bin); err != nil {
+		t.Fatalf("create bin: %v", err)
+	}
+	if err := db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":50}]}`, bp.Code, 50); err != nil {
+		t.Fatalf("set manifest: %v", err)
+	}
+	if err := db.ConfirmBinManifest(bin.ID, ""); err != nil {
+		t.Fatalf("confirm manifest: %v", err)
+	}
+	bogusOrderID := int64(999999)
+	if _, err := db.DB.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, bogusOrderID, bin.ID); err != nil {
+		t.Fatalf("set claimed_by: %v", err)
+	}
+
+	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
+
+	d.HandleComplexOrderRequest(testEnvelope(), &protocol.ComplexOrderRequest{
+		OrderUUID:   "uuid-evac-claimed",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		ProcessNode: sourceNode.Name,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "wait", Node: sourceNode.Name},
+			{Action: "pickup", Node: sourceNode.Name},
+			{Action: "dropoff", Node: destNode.Name},
+		},
+	})
+
+	order, _ := db.GetOrderByUUID("uuid-evac-claimed")
+	_ = d.DispatchPreparedComplex(order)
+
+	got, _ := db.GetOrderByUUID("uuid-evac-claimed")
+	if got.Status != StatusFailed {
+		t.Errorf("status = %q, want %q (bin present but unclaimable must Fail, not Skip)", got.Status, StatusFailed)
+	}
+}

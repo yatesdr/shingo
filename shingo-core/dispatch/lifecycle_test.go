@@ -236,6 +236,64 @@ func TestLifecycle_Fail_PersistsFailed(t *testing.T) {
 	}
 }
 
+func TestLifecycle_Skip_PersistsSkipped(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	lc, emitter := newLifecycleForTest(t, db)
+	ord := makeOrderAt(t, db, "skip-1", StatusQueued)
+
+	if err := lc.Skip(ord, "edge.test", "no_source_bin", "bin missing at ALN_002"); err != nil {
+		t.Fatalf("Skip: %v", err)
+	}
+	persisted, _ := db.GetOrder(ord.ID)
+	if persisted.Status != StatusSkipped {
+		t.Errorf("after Skip, status = %q, want %q", persisted.Status, StatusSkipped)
+	}
+	if len(emitter.skipped) != 1 {
+		t.Fatalf("expected 1 skipped emit, got %d", len(emitter.skipped))
+	}
+	if emitter.skipped[0].errorCode != "no_source_bin" {
+		t.Errorf("emit errorCode = %q, want %q", emitter.skipped[0].errorCode, "no_source_bin")
+	}
+	// Distinct from Fail — must NOT have emitted on the failed channel.
+	if len(emitter.failed) != 0 {
+		t.Errorf("Skip emitted on failed channel: %d events", len(emitter.failed))
+	}
+}
+
+func TestLifecycle_Skip_RejectsTerminal(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	lc, _ := newLifecycleForTest(t, db)
+	ord := makeOrderAt(t, db, "skip-term-1", StatusConfirmed)
+
+	err := lc.Skip(ord, "edge.test", "no_source_bin", "should not apply")
+	if !IsIllegalTransition(err) {
+		t.Errorf("Skip on terminal: error = %v, want IllegalTransition", err)
+	}
+	persisted, _ := db.GetOrder(ord.ID)
+	if persisted.Status != StatusConfirmed {
+		t.Errorf("status changed despite rejection: %q", persisted.Status)
+	}
+}
+
+// TestLifecycle_Skip_RejectsInFlight pins the boundary: once the fleet
+// owns the order (Acknowledged onward), Skip is not allowed. The
+// resolution at that point must be Fail or Cancel — skipping a
+// mid-flight order would silently strand a robot.
+func TestLifecycle_Skip_RejectsInFlight(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	lc, _ := newLifecycleForTest(t, db)
+	for _, from := range []protocol.Status{StatusAcknowledged, StatusDispatched, StatusInTransit, StatusStaged} {
+		ord := makeOrderAt(t, db, "skip-inflight-"+string(from), from)
+		err := lc.Skip(ord, "edge.test", "no_source_bin", "in flight, must not skip")
+		if !IsIllegalTransition(err) {
+			t.Errorf("Skip from %s: error = %v, want IllegalTransition", from, err)
+		}
+	}
+}
+
 func TestLifecycle_Fail_RejectsTerminal(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

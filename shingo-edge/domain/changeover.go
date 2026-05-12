@@ -57,6 +57,12 @@ type NodeTask struct {
 	State                     string    `json:"state"`
 	NextMaterialOrderID       *int64    `json:"next_material_order_id,omitempty"`
 	OldMaterialReleaseOrderID *int64    `json:"old_material_release_order_id,omitempty"`
+	// SkipNote is the operator-facing message set when a linked complex
+	// order reached terminal "skipped" (Core's no_source_bin path) —
+	// typically "evac skipped: bin missing at <node>". Empty when no
+	// skip has been recorded. Cleared by the next state-advancing
+	// operator action so the chip disappears once recovery happens.
+	SkipNote                  string    `json:"skip_note,omitempty"`
 	UpdatedAt                 time.Time `json:"updated_at"`
 	// Joined fields
 	NodeName string `json:"node_name"`

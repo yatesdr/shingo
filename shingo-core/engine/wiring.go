@@ -116,6 +116,30 @@ func (e *Engine) wireEventHandlers() {
 		}
 	}, EventOrderFailed)
 
+	// ── Order skipped ────────────────────────────────────────────────────
+	// Mirrors the failure handler above but for the "work was never needed"
+	// terminal. No return order, no anomaly audit — the operator-facing
+	// surface treats this as a clean no-op. Edge advances the linked
+	// changeover node task via HandleOrderSkipped.
+	e.Events.SubscribeTypes(func(evt Event) {
+		ev := evt.Payload.(OrderSkippedEvent)
+		e.logFn("engine: order %d skipped: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
+		e.db.AppendAudit("order", ev.OrderID, "skipped", "", ev.Detail, "system")
+
+		if ev.StationID != "" && ev.EdgeUUID != "" {
+			if err := e.sendToEdge(protocol.TypeOrderSkipped, ev.StationID,
+				&protocol.OrderSkipped{
+					OrderUUID: ev.EdgeUUID,
+					ErrorCode: ev.ErrorCode,
+					Detail:    ev.Detail,
+				}); err != nil {
+				e.logFn("engine: skip notification to edge: %v", err)
+			} else {
+				e.dbg("skip notification sent to edge: station=%s uuid=%s", ev.StationID, ev.EdgeUUID)
+			}
+		}
+	}, EventOrderSkipped)
+
 	// â”€â”€ Order completion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	e.Events.SubscribeTypes(func(evt Event) {
 		ev := evt.Payload.(OrderCompletedEvent)

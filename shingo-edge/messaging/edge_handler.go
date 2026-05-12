@@ -270,6 +270,34 @@ func (h *EdgeHandler) HandleOrderError(env *protocol.Envelope, p *protocol.Order
 	}
 }
 
+// HandleOrderSkipped processes Core's "the work was never needed" terminal
+// notification. Today's sole producer is DispatchPreparedComplex's
+// no_source_bin path — a complex evac order whose source nodes were
+// emptied externally before dispatch (e.g. operator pulled the bin to
+// quality hold). The handler:
+//
+//  1. Transitions the local order row to StatusSkipped (terminal, distinct
+//     from Failed — same atomic-write semantics on Core).
+//  2. Looks up the linked changeover_node_tasks row and advances its state
+//     to the same completion state a successful run would have produced
+//     (line_cleared for evac, released for supply). This keeps the
+//     changeover state machine progressing without operator intervention.
+//  3. Records the operator-facing reason on the node task's skip_note so
+//     the HMI surfaces a "bin missing, manual recovery if needed" chip
+//     instead of a sticky red error toast.
+//
+// Idempotent — duplicate skip notifications for an already-skipped order
+// land on a terminal row, the HandleDispatchReply path is no-op-safe, and
+// the node-task updates are last-writer-wins on the same row.
+func (h *EdgeHandler) HandleOrderSkipped(env *protocol.Envelope, p *protocol.OrderSkipped) {
+	h.DebugLog.Log("order_skipped uuid=%s code=%s", p.OrderUUID, p.ErrorCode)
+	log.Printf("edge_handler: order skipped: uuid=%s code=%s detail=%s", p.OrderUUID, p.ErrorCode, p.Detail)
+
+	if err := h.orderMgr.HandleSkipped(p.OrderUUID, p.ErrorCode, p.Detail); err != nil {
+		log.Printf("edge_handler: handle skipped for %s: %v", p.OrderUUID, err)
+	}
+}
+
 func (h *EdgeHandler) HandleOrderCancelled(env *protocol.Envelope, p *protocol.OrderCancelled) {
 	h.DebugLog.Log("order_cancelled uuid=%s reason=%s", p.OrderUUID, p.Reason)
 	log.Printf("edge_handler: order cancelled: uuid=%s reason=%s", p.OrderUUID, p.Reason)

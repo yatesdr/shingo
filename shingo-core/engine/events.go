@@ -15,6 +15,7 @@ const (
 	EventOrderStatusChanged
 	EventOrderCompleted
 	EventOrderFailed
+	EventOrderSkipped
 	EventOrderCancelled
 	EventOrderQueued
 	EventBinUpdated
@@ -73,6 +74,19 @@ type OrderCompletedEvent struct {
 type OrderFailedEvent struct {
 	OrderID  int64
 	EdgeUUID string
+	StationID string
+	ErrorCode string
+	Detail    string
+}
+
+// OrderSkippedEvent signals an order reached terminal "skipped" — the work
+// was never needed (e.g. complex evac order with no bin at any pickup
+// node). Mirrors OrderFailedEvent fields; engine wiring serializes this
+// to the protocol.OrderSkipped envelope so Edge can advance the linked
+// changeover node task without surfacing a failure to the operator.
+type OrderSkippedEvent struct {
+	OrderID   int64
+	EdgeUUID  string
 	StationID string
 	ErrorCode string
 	Detail    string

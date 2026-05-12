@@ -5,7 +5,7 @@ import (
 )
 
 func TestStatusIsTerminal(t *testing.T) {
-	terminals := []Status{StatusConfirmed, StatusCancelled, StatusFailed}
+	terminals := []Status{StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped}
 	for _, s := range terminals {
 		if !s.IsTerminal() {
 			t.Errorf("%s.IsTerminal() = false, want true", s)

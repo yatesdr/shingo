@@ -527,7 +527,7 @@ func (h *testHandler) HandleData(env *Envelope, p *Data) {
 }
 
 func TestIsTerminal(t *testing.T) {
-	for _, s := range []Status{StatusConfirmed, StatusCancelled, StatusFailed} {
+	for _, s := range []Status{StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped} {
 		if !IsTerminal(s) {
 			t.Errorf("IsTerminal(%q) = false, want true", s)
 		}
@@ -577,12 +577,34 @@ func TestInvalidBackwardTransitions(t *testing.T) {
 }
 
 func TestTerminalStatesCannotTransition(t *testing.T) {
-	for _, from := range []Status{StatusConfirmed, StatusCancelled, StatusFailed} {
+	for _, from := range []Status{StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped} {
 		for _, to := range []Status{StatusPending, StatusDelivered, StatusConfirmed} {
 			if IsValidTransition(from, to) {
 				t.Errorf("IsValidTransition(%q, %q) = true, want false (terminal state)", from, to)
 			}
 		}
+	}
+}
+
+// TestSkippedTransitions verifies that the dispatcher-side path (Pending,
+// Sourcing, Submitted, Queued) can move to Skipped, while in-flight states
+// (Acknowledged, Dispatched, InTransit, Staged) cannot — by then the fleet
+// owns the order and the resolution is fail or cancel, not skip.
+func TestSkippedTransitions(t *testing.T) {
+	canSkip := []Status{StatusPending, StatusSourcing, StatusSubmitted, StatusQueued}
+	for _, from := range canSkip {
+		if !IsValidTransition(from, StatusSkipped) {
+			t.Errorf("%s → Skipped must be valid (dispatcher-side skip)", from)
+		}
+	}
+	cannotSkip := []Status{StatusAcknowledged, StatusDispatched, StatusInTransit, StatusStaged, StatusDelivered, StatusFaulted, StatusReshuffling}
+	for _, from := range cannotSkip {
+		if IsValidTransition(from, StatusSkipped) {
+			t.Errorf("%s → Skipped must NOT be valid (in-flight; fail or cancel instead)", from)
+		}
+	}
+	if !IsTerminal(StatusSkipped) {
+		t.Error("StatusSkipped must be terminal (no outgoing edges)")
 	}
 }
 

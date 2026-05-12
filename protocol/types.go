@@ -29,6 +29,7 @@ const (
 	TypeOrderError     = "order.error"
 	TypeOrderCancelled = "order.cancelled"
 	TypeOrderStaged    = "order.staged"
+	TypeOrderSkipped   = "order.skipped"
 )
 
 // Data channel subject constants.
@@ -159,21 +160,23 @@ const Version = 1
 var validTransitions = map[Status][]Status{
 	// Pending → Queued is a fast-path used by fulfillment/scanner.go when
 	// the bin is already known and resolution can be skipped.
-	StatusPending: {StatusSourcing, StatusSubmitted, StatusQueued, StatusReshuffling, StatusCancelled, StatusFailed},
+	StatusPending: {StatusSourcing, StatusSubmitted, StatusQueued, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
 
 	// Sourcing → Dispatched is the immediate write after fleet.CreateOrder
 	// when inventory is available at planning time and the order skips the
 	// Queued state. Sourcing → Reshuffling is the planning-time pivot when
 	// the resolver detects a buried bin and creates a compound parent.
-	StatusSourcing: {StatusQueued, StatusSubmitted, StatusDispatched, StatusReshuffling, StatusCancelled, StatusFailed},
+	StatusSourcing: {StatusQueued, StatusSubmitted, StatusDispatched, StatusReshuffling, StatusCancelled, StatusFailed, StatusSkipped},
 
-	StatusSubmitted: {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed},
+	StatusSubmitted: {StatusAcknowledged, StatusQueued, StatusCancelled, StatusFailed, StatusSkipped},
 
 	// Queued → Dispatched is the immediate write after fleet CreateOrder
 	// returns; Acknowledged is reported asynchronously by the vendor later.
 	// Queued → Sourcing supports the scanner's re-resolve path when an
 	// inflight bin claim becomes invalid.
-	StatusQueued: {StatusAcknowledged, StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFailed},
+	// Queued → Skipped is fired by DispatchPreparedComplex when claimComplexBins
+	// finds zero bins at every pickup node — the work was never needed.
+	StatusQueued: {StatusAcknowledged, StatusDispatched, StatusInTransit, StatusSourcing, StatusCancelled, StatusFailed, StatusSkipped},
 
 	// Acknowledged|Dispatched → Sourcing supports PrepareRedirect: the order
 	// is re-resolved against a new delivery node after the vendor leg is
