@@ -81,6 +81,15 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, run
 	if err := d.UpdateProcessNodeRuntimeOrders(nodeID, &aID, &bID); err != nil {
 		t.Fatalf("update runtime orders: %v", err)
 	}
+	// Sibling-link the pair — mirrors what every site that creates a
+	// two-robot pair does in production (operator_stations.go:134,
+	// operator_bin_ops.go, operator_produce.go, changeover_applier.go,
+	// wiring_status_changed.go). ComputeSwapReady's order-graph predicate
+	// requires this pointer; tests that exercise the happy path need it
+	// set the same way real flows would.
+	if err := d.LinkOrderSiblings(aID, bID); err != nil {
+		t.Fatalf("link siblings: %v", err)
+	}
 	rt, err := d.GetProcessNodeRuntime(nodeID)
 	if err != nil {
 		t.Fatalf("get runtime: %v", err)
@@ -225,15 +234,31 @@ func TestComputeSwapReady_TaskFallbackRequiresStaged(t *testing.T) {
 	}
 }
 
-// Drop tasks must NOT trigger the task-fallback even when the from-claim
-// is two_robot mode (the old style's swap mode persists on the active
-// claim during a drop). Drops are single-leg; routing them to swap_ready
-// steers the modal to /release-staged which rejects with "no tracked
-// orders to release". Plant 2026-05-11 (SNF2 ALN_002) plant test.
-func TestComputeSwapReady_DropSituationSkipsFallback(t *testing.T) {
+// Drops are single-leg by construction: changeover_applier.go's
+// applyNodeAction skips LinkOrderSiblings when supplyID is nil, and
+// drops only create the evac order (changeover_planner.go SituationDrop).
+// So the drop's evac order has no sibling pointer, and ComputeSwapReady's
+// order-graph predicate returns false naturally — no per-situation
+// guard needed.
+//
+// Plant 2026-05-11 (SNF2 ALN_002): drop on a node whose from-claim
+// inherited SwapMode=two_robot. Pre-refactor ComputeSwapReady would
+// resolve the staged drop order via the task-fallback (or runtime
+// pointers depending on cycle state) and report swap_ready=true,
+// steering the modal to /release-staged which rejected with "no
+// tracked orders to release". Post-refactor: evac.SiblingOrderID==nil
+// short-circuits before the staged check.
+func TestComputeSwapReady_DropHasNoSibling_ViaTaskPointer(t *testing.T) {
 	db, claim, _, _, bID := seedSwapReadyFixture(t)
 	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
 		t.Fatalf("mark B staged: %v", err)
+	}
+	// Simulate a drop: clear the sibling pointer that the fixture set
+	// up for the standard two-robot pair. A real drop never gets one
+	// because the applier skips LinkOrderSiblings when only the evac
+	// order is created.
+	if err := db.ClearOrderSibling(bID); err != nil {
+		t.Fatalf("clear sibling: %v", err)
 	}
 	empty := &processes.RuntimeState{}
 	dropTask := &processes.NodeTask{
@@ -241,26 +266,48 @@ func TestComputeSwapReady_DropSituationSkipsFallback(t *testing.T) {
 		Situation:                 "drop",
 	}
 	if ComputeSwapReady(db, claim, empty, dropTask) {
-		t.Error("expected SwapReady=false for drop tasks even with staged evac (drops are single-leg, swap_ready doesn't apply)")
+		t.Error("expected SwapReady=false for drop via task-pointer fallback when evac has no sibling")
 	}
 }
 
-// Drop tasks must also be blocked when the drop's evac order is reachable
-// via fallback 1 (runtime.StagedOrderID) or fallback 2 (sibling via
-// runtime.ActiveOrderID). The earlier guard on fallback 3 only covered the
-// task-pointer path; runtime slots can carry stale or unrelated order ids
-// from a prior cycle on the same node, so they need the same protection.
-// The top-level Situation=="drop" short-circuit in ComputeSwapReady handles
-// all three fallbacks at once.
-func TestComputeSwapReady_DropSituationSkipsRuntimeFallback(t *testing.T) {
+// Same shape via the runtime-pointer path. Stale runtime state from a
+// prior cycle (or a tool-change staging that touched this node) can
+// leave runtime.StagedOrderID populated when the current task is a
+// drop. The order-graph predicate handles this without needing a
+// Situation check.
+func TestComputeSwapReady_DropHasNoSibling_ViaRuntimePointer(t *testing.T) {
 	db, claim, runtime, _, bID := seedSwapReadyFixture(t)
-	// Fixture wires runtime.StagedOrderID=bID. Mark B staged so fallback 1
-	// would otherwise report swap_ready=true.
 	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
 		t.Fatalf("mark B staged: %v", err)
 	}
+	if err := db.ClearOrderSibling(bID); err != nil {
+		t.Fatalf("clear sibling: %v", err)
+	}
 	dropTask := &processes.NodeTask{Situation: "drop"}
 	if ComputeSwapReady(db, claim, runtime, dropTask) {
-		t.Error("expected SwapReady=false for drop tasks even with runtime.StagedOrderID populated (single-leg flows are never swap_ready)")
+		t.Error("expected SwapReady=false when runtime points at an order without a sibling (drop on a two-robot-mode node)")
+	}
+}
+
+// Pin the structural failure mode the refactor introduces: a pair that
+// SHOULD have been sibling-linked but wasn't (e.g., LinkOrderSiblings
+// silently failed) reads as not-coordinated. This is the cost of
+// removing the Situation guards — silent linkage failures become
+// operator-visible as WAITING FOR OTHER ROBOT. The three operator-
+// initiated sites that create pairs now return-error on linkage
+// failure to prevent reaching this state. The two event-loop sites
+// stay log-and-continue with a residual risk tracked in SHINGO_TODO.md.
+func TestComputeSwapReady_PairWithoutSiblingPointer(t *testing.T) {
+	db, claim, runtime, _, bID := seedSwapReadyFixture(t)
+	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
+		t.Fatalf("mark B staged: %v", err)
+	}
+	// Simulate a silent LinkOrderSiblings failure: clear the pointer
+	// the fixture set.
+	if err := db.ClearOrderSibling(bID); err != nil {
+		t.Fatalf("clear sibling: %v", err)
+	}
+	if ComputeSwapReady(db, claim, runtime, nil) {
+		t.Error("expected SwapReady=false when the pair is missing sibling linkage (silent LinkOrderSiblings failure)")
 	}
 }

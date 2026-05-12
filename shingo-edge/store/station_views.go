@@ -74,87 +74,95 @@ func LookupLastReleaseError(db *DB, runtime *processes.RuntimeState) string {
 	return ""
 }
 
-// ComputeSwapReady returns true when a two-robot swap can be released via the
-// consolidated single-click path. Both tracked orders must exist; at least one
-// must be in "staged" status; the other must be in a pre-staged active status
-// (dispatched or in_transit) — meaning it's en route and will reach staged
-// soon. The companion auto-release-on-staged hook in wiring then picks up the
-// second order when it arrives, so the operator's single click covers both.
+// ComputeSwapReady returns true when a two-robot swap can be released via
+// the consolidated single-click path: a sibling-linked pair of orders
+// exists at this node and the lineside leg is parked at staged.
 //
-// Pre-2026-04-25 semantic: required BOTH orders simultaneously staged. In
-// practice the two robots arrive at their wait points seconds apart, so the
-// simultaneous-staged window often did not exist when the operator looked.
-// Operators fell back to the admin orders page (which has its own bug — see
-// kanbans.js:32 fix), losing the coordinated B-then-A ordering and the proper
-// disposition handling.
+// The predicate keys on the **order graph** — specifically the durable
+// sibling pointer set at order-creation time by every site that creates
+// a pair (LinkOrderSiblings). This is the structural answer to "is there
+// a second robot involved here?" Single-leg flows (drops, manual single,
+// sequential — though sequential is also excluded by the SwapMode gate
+// for disposition-routing reasons) have no sibling pointer and naturally
+// short-circuit. Pre-2026-05-11 this function keyed on claim.SwapMode
+// and task.Situation, which are policy/intent signals; they're correct
+// 80% of the time but disagree with the order graph during changeovers
+// where a drop on a two_robot node creates only an evac order without
+// a sibling. Three patches landed trying to filter for that case (the
+// task-fallback drop guard in 1ed6e18, the top-of-function drop guard
+// added 2026-05-11). The order-graph predicate makes those guards
+// structurally unnecessary: a drop has no sibling, so it can never read
+// as a coordinated pair.
 //
-// Non-two-robot claims always return false — their single staged order is
-// still released via the per-order /api/orders/{id}/release endpoint.
+// SwapMode outer gate is preserved because it still does real work:
+//   - Excludes sequential, which has sibling-linked pairs but uses
+//     per-order release semantics (different disposition routing).
+//   - Excludes manual_swap, which doesn't create pairs at all.
+//
+// Pre-staged-status semantic preserved: Order A's status is irrelevant.
+// ReleaseStagedOrders fans out to both legs unconditionally regardless
+// of where each leg is in its choreography. See the 2026-04-27
+// retrospective for why the symmetric "both at staged" check was
+// replaced with this single-check shape.
+//
+// Non-two-robot claims always return false — their single staged order
+// is released via the per-order /api/orders/{id}/release endpoint.
 func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.RuntimeState, task *processes.NodeTask) bool {
 	if claim == nil || (claim.SwapMode != protocol.SwapModeTwoRobot && claim.SwapMode != protocol.SwapModeTwoRobotPressIndex) {
 		return false
 	}
-	// Drops are single-leg by construction (only OrderB is created, no sibling
-	// pointer linked — see changeover_planner.go SituationDrop and
-	// changeover_applier.go which skips LinkOrderSiblings when orderAID is nil).
-	// The claim's SwapMode reflects node policy and can be two_robot even when
-	// the task at hand is a drop (e.g. old style's claim inherited into the
-	// from-claim). Trusting it here lets the runtime/sibling fallbacks below
-	// resolve the drop's evac order, which steers the modal to /release-staged.
-	// resolveSwapPair then rejects with "no tracked orders to release" because
-	// there's no pair. The task's Situation is the authoritative discriminator,
-	// so short-circuit before any fallback runs. The Situation guard on
-	// fallback 3 below is redundant after this but kept as defense in depth.
-	if task != nil && task.Situation == "drop" {
-		return false
-	}
-	// Resolve the evac (B) order via three fallbacks, in order of canonicality:
-	//  1. runtime.StagedOrderID — the canonical evac slot.
-	//  2. supply leg's durable SiblingOrderID — when StagedOrderID got nulled
-	//     but ActiveOrderID survived (mirrors resolveSwapPair in
-	//     engine/operator_stations.go).
-	//  3. changeover node task's OldMaterialReleaseOrderID — when BOTH runtime
-	//     pointers are nil. This pointer is set by the planner at order-
-	//     creation time and not cleared by runtime mutations, so it survives
-	//     handler_bin_picked_up and other clears that strip the runtime
-	//     pointers. Plant 2026-05-11 (SNF2 ALN_001): both runtime pointers
-	//     were nil at release time despite Core showing the evac at staged,
-	//     so the modal showed WAITING FOR OTHER ROBOT with no escape.
-	var evacOrderID *int64
-	if runtime != nil {
-		evacOrderID = runtime.StagedOrderID
-		if evacOrderID == nil && runtime.ActiveOrderID != nil {
-			supply, err := db.GetOrder(*runtime.ActiveOrderID)
-			if err == nil && supply != nil && supply.SiblingOrderID != nil {
-				evacOrderID = supply.SiblingOrderID
-			}
-		}
-	}
-	// Task-based fallback only applies when the task represents an actual
-	// swap pair. Drops are single-leg (evac only, no supply coordination),
-	// so swap_ready doesn't apply — falling back for a drop steers the
-	// modal to the swap-ready RELEASE button which posts to release-staged,
-	// and resolveSwapPair rejects with "no tracked orders to release"
-	// since runtime has no pair. Plant 2026-05-11: ALN_002's from-claim
-	// happened to be two_robot mode from the old style, so the outer
-	// SwapMode gate passed and the fallback fired on the staged drop order.
-	if evacOrderID == nil && task != nil && task.OldMaterialReleaseOrderID != nil && task.Situation != "drop" {
-		evacOrderID = task.OldMaterialReleaseOrderID
-	}
+	evacOrderID := resolveEvacOrderID(db, runtime, task)
 	if evacOrderID == nil {
 		return false
 	}
-	staged, err := db.GetOrder(*evacOrderID)
-	if err != nil || staged == nil {
+	evac, err := db.GetOrder(*evacOrderID)
+	if err != nil || evac == nil {
 		return false
 	}
-	// Single check: the lineside robot (Robot B, the removal robot whose wait
-	// is wait-with-node at the production line) has reached its wait point and
-	// is parked. Order A's status is irrelevant here — ReleaseStagedOrders
-	// releases both unconditionally on click, regardless of where Order A is in
-	// its choreography. This avoids depending on Order A's bare-wait reliably
-	// reaching staged on the seerrds adapter, which is fragile (see
-	// shingo_todo.md and the 2026-04-27 retrospective).
-	return staged.Status == "staged"
+	// Order graph check: a sibling pointer proves this is a coordinated
+	// pair (set at order-creation time by every site that creates one —
+	// changeover_applier.go, operator_stations.go, operator_bin_ops.go,
+	// operator_produce.go, wiring_status_changed.go). Single-leg flows
+	// (drops, manual single, etc.) have no sibling and short-circuit.
+	if evac.SiblingOrderID == nil {
+		return false
+	}
+	// Lineside leg parked at staged → release-ready.
+	return evac.Status == "staged"
+}
+
+// resolveEvacOrderID locates the evac (lineside) order's ID via three
+// fallbacks in order of canonicality:
+//
+//  1. runtime.StagedOrderID — the canonical evac slot.
+//  2. runtime.ActiveOrderID's sibling pointer — when StagedOrderID got
+//     nulled but ActiveOrderID survived. Mirrors resolveSwapPair's
+//     fallback in engine/operator_stations.go.
+//  3. task.OldMaterialReleaseOrderID — when BOTH runtime pointers are
+//     nil. The planner stamps this pointer at order-creation time and
+//     runtime mutations don't clear it, so it survives
+//     handler_bin_picked_up and other clears that strip the runtime
+//     pointers. Plant 2026-05-11 (SNF2 ALN_001): both runtime pointers
+//     were nil at release time despite Core showing the evac at staged.
+//
+// The caller checks SiblingOrderID on the resolved order — if the task
+// pointer happens to identify a single-leg drop, the sibling check
+// returns false naturally. No Situation guard needed here.
+func resolveEvacOrderID(db *DB, runtime *processes.RuntimeState, task *processes.NodeTask) *int64 {
+	if runtime != nil {
+		if runtime.StagedOrderID != nil {
+			return runtime.StagedOrderID
+		}
+		if runtime.ActiveOrderID != nil {
+			supply, err := db.GetOrder(*runtime.ActiveOrderID)
+			if err == nil && supply != nil && supply.SiblingOrderID != nil {
+				return supply.SiblingOrderID
+			}
+		}
+	}
+	if task != nil && task.OldMaterialReleaseOrderID != nil {
+		return task.OldMaterialReleaseOrderID
+	}
+	return nil
 }
 

@@ -105,6 +105,13 @@ func (db *DB) LinkOrderSiblings(orderA, orderB int64) error {
 	return orders.LinkSiblings(db.DB, orderA, orderB)
 }
 
+// ClearOrderSibling unidirectionally nulls the sibling pointer on one
+// order. Test-only helper for simulating single-leg flows or silent
+// linkage failures.
+func (db *DB) ClearOrderSibling(orderID int64) error {
+	return orders.ClearSibling(db.DB, orderID)
+}
+
 // InsertOrderHistory writes one order_history row.
 func (db *DB) InsertOrderHistory(orderID int64, oldStatus, newStatus, detail string) error {
 	return orders.InsertHistory(db.DB, orderID, oldStatus, newStatus, detail)

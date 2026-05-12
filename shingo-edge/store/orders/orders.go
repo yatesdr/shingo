@@ -262,6 +262,15 @@ func LinkSiblings(db *sql.DB, orderA, orderB int64) error {
 	return err
 }
 
+// ClearSibling unidirectionally nulls the sibling pointer on one order.
+// Used by tests that simulate single-leg flows or silent LinkSiblings
+// failures. Production code should not need this — ON DELETE SET NULL
+// on the FK handles dangling pointers when the sibling is removed.
+func ClearSibling(db *sql.DB, orderID int64) error {
+	_, err := db.Exec(`UPDATE orders SET sibling_order_id=NULL, updated_at=datetime('now') WHERE id=?`, orderID)
+	return err
+}
+
 // InsertHistory writes one order_history row.
 func InsertHistory(db *sql.DB, orderID int64, oldStatus, newStatus, detail string) error {
 	_, err := db.Exec(`INSERT INTO order_history (order_id, old_status, new_status, detail) VALUES (?, ?, ?, ?)`,

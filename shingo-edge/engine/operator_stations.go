@@ -405,8 +405,13 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 // ActiveOrderID=supply (A); when one is missing, the other's
 // SiblingOrderID points to it.
 //
-// Returns (nil, nil, error) when no live tracking exists at all — in
-// that case there's nothing for the operator to release.
+// Returns (nil, nil, error) when no live tracking exists OR when the
+// orders found don't form a coordinated pair (no sibling pointer
+// linking them). The sibling check is defense-in-depth against stale
+// HMI clients posting /release-staged for single-leg flows (drops,
+// manual single-robot). The HMI-side ComputeSwapReady predicate
+// already prevents the swap-ready RELEASE button from rendering in
+// those cases, but the backend shouldn't trust the client.
 func (e *Engine) resolveSwapPair(runtime *processes.RuntimeState) (evacID, supplyID *int64, err error) {
 	if runtime != nil {
 		if runtime.StagedOrderID != nil {
@@ -430,6 +435,11 @@ func (e *Engine) resolveSwapPair(runtime *processes.RuntimeState) (evacID, suppl
 		if supply.SiblingOrderID != nil {
 			id := *supply.SiblingOrderID
 			evacID = &id
+		} else {
+			// Supply has no sibling — this isn't a coordinated pair.
+			// Reject rather than partial-release a single-leg flow as
+			// if it were half of a swap.
+			return nil, nil, fmt.Errorf("order %d has no sibling — not a coordinated pair", *supplyID)
 		}
 	} else if supplyID == nil {
 		evac, err := e.db.GetOrder(*evacID)
@@ -439,6 +449,12 @@ func (e *Engine) resolveSwapPair(runtime *processes.RuntimeState) (evacID, suppl
 		if evac.SiblingOrderID != nil {
 			id := *evac.SiblingOrderID
 			supplyID = &id
+		} else {
+			// Evac has no sibling — single-leg (drop, etc). The HMI's
+			// ComputeSwapReady should have prevented routing here; if
+			// we got here, the client is stale or hitting the API
+			// directly. Reject.
+			return nil, nil, fmt.Errorf("order %d has no sibling — not a coordinated pair (single-leg flow should use per-order release)", *evacID)
 		}
 	}
 	return evacID, supplyID, nil
