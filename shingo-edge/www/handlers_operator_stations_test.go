@@ -13,9 +13,11 @@ import (
 )
 
 // ═══════════════════════════════════════════════════════════════════════
-// Test router — mirrors the routes from router.go that bind to
-// handlers_operator_stations.go. Routes unrelated to this file are
-// deliberately omitted. Tests use this router exclusively.
+// Test router — mirrors the routes from router.go for the operator-
+// station family of handlers (station CRUD, process-node CRUD, operator
+// actions, bin ops, changeover actions, station claims). Routes
+// unrelated to that family are deliberately omitted. Tests use this
+// router exclusively.
 // ═══════════════════════════════════════════════════════════════════════
 
 func newOperatorStationsRouter(t *testing.T) (*Handlers, *chi.Mux) {
