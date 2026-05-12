@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/orders"
+	"shingoedge/store"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -372,6 +373,19 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 		return fmt.Errorf("node %s: release-staged requires a two-robot swap mode, got %q", node.Name, claim.SwapMode)
 	}
 
+	// Load the active changeover node task so ResolveSwapPair can fall
+	// back to task.OldMaterialReleaseOrderID when both runtime pointers
+	// are nil. The HMI's ComputeSwapReady predicate already keys on this
+	// pointer (store/station_views.go); without the symmetric fallback
+	// here, the RELEASE button renders but every click bounces with
+	// "no tracked orders to release". Plant 2026-05-11 (SNF2 ALN_001)
+	// hit this loop until release was unreachable.
+	//
+	// Task loading is best-effort: a missing task or absent changeover
+	// just means the resolver falls through to the runtime-pointer path,
+	// which is the pre-2026-05-12 behavior for non-changeover swaps.
+	task := loadReleaseSwapNodeTask(e.db, node)
+
 	// Resolve the swap pair via durable sibling pointer rather than the
 	// volatile runtime slots. handler_bin_picked_up nulls runtime.ActiveOrderID
 	// when the supply bin leaves the supermarket; pre-2026-05-04 the gate
@@ -379,7 +393,7 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	// non-nil runtime slot, follow the sibling pointer to find the other
 	// half, and release both. releaseUnlessTerminal handles already-past-
 	// staged orders gracefully so partial states don't block the click.
-	evacOrderID, supplyOrderID, err := e.resolveSwapPair(runtime)
+	evacOrderID, supplyOrderID, err := store.ResolveSwapPair(e.db, runtime, task)
 	if err != nil {
 		return fmt.Errorf("node %s: %w", node.Name, err)
 	}
@@ -399,65 +413,21 @@ func (e *Engine) ReleaseStagedOrders(nodeID int64, disp ReleaseDisposition) erro
 	return nil
 }
 
-// resolveSwapPair returns the (evac, supply) order IDs for a two-robot
-// swap at this node, following the sibling pointer when one runtime slot
-// is nil. The runtime convention is StagedOrderID=evac (B),
-// ActiveOrderID=supply (A); when one is missing, the other's
-// SiblingOrderID points to it.
-//
-// Returns (nil, nil, error) when no live tracking exists OR when the
-// orders found don't form a coordinated pair (no sibling pointer
-// linking them). The sibling check is defense-in-depth against stale
-// HMI clients posting /release-staged for single-leg flows (drops,
-// manual single-robot). The HMI-side ComputeSwapReady predicate
-// already prevents the swap-ready RELEASE button from rendering in
-// those cases, but the backend shouldn't trust the client.
-func (e *Engine) resolveSwapPair(runtime *processes.RuntimeState) (evacID, supplyID *int64, err error) {
-	if runtime != nil {
-		if runtime.StagedOrderID != nil {
-			id := *runtime.StagedOrderID
-			evacID = &id
-		}
-		if runtime.ActiveOrderID != nil {
-			id := *runtime.ActiveOrderID
-			supplyID = &id
-		}
+// loadReleaseSwapNodeTask fetches the active changeover node task for
+// this node, used as the third-fallback evac pointer by
+// store.ResolveSwapPair. Best-effort: no active changeover, no node
+// task, or any DB error → return nil and let the resolver fall through
+// to the runtime-pointer path.
+func loadReleaseSwapNodeTask(db *store.DB, node *processes.Node) *processes.NodeTask {
+	co, err := db.GetActiveProcessChangeover(node.ProcessID)
+	if err != nil || co == nil {
+		return nil
 	}
-	if evacID == nil && supplyID == nil {
-		return nil, nil, fmt.Errorf("no tracked orders to release")
+	task, err := db.GetChangeoverNodeTaskByNode(co.ID, node.ID)
+	if err != nil {
+		return nil
 	}
-	// If one half is missing, walk the sibling pointer on the half we have.
-	if evacID == nil {
-		supply, err := e.db.GetOrder(*supplyID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("get supply order %d: %w", *supplyID, err)
-		}
-		if supply.SiblingOrderID != nil {
-			id := *supply.SiblingOrderID
-			evacID = &id
-		} else {
-			// Supply has no sibling — this isn't a coordinated pair.
-			// Reject rather than partial-release a single-leg flow as
-			// if it were half of a swap.
-			return nil, nil, fmt.Errorf("order %d has no sibling — not a coordinated pair", *supplyID)
-		}
-	} else if supplyID == nil {
-		evac, err := e.db.GetOrder(*evacID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("get evac order %d: %w", *evacID, err)
-		}
-		if evac.SiblingOrderID != nil {
-			id := *evac.SiblingOrderID
-			supplyID = &id
-		} else {
-			// Evac has no sibling — single-leg (drop, etc). The HMI's
-			// ComputeSwapReady should have prevented routing here; if
-			// we got here, the client is stale or hitting the API
-			// directly. Reject.
-			return nil, nil, fmt.Errorf("order %d has no sibling — not a coordinated pair (single-leg flow should use per-order release)", *evacID)
-		}
-	}
-	return evacID, supplyID, nil
+	return task
 }
 
 // releaseUnlessTerminal calls ReleaseOrderWithLineside on any non-terminal

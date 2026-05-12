@@ -1,6 +1,8 @@
 package store
 
 import (
+	"fmt"
+
 	"shingo/protocol"
 	"shingoedge/domain"
 	"shingoedge/store/processes"
@@ -136,8 +138,8 @@ func ComputeSwapReady(db *DB, claim *processes.NodeClaim, runtime *processes.Run
 //
 //  1. runtime.StagedOrderID — the canonical evac slot.
 //  2. runtime.ActiveOrderID's sibling pointer — when StagedOrderID got
-//     nulled but ActiveOrderID survived. Mirrors resolveSwapPair's
-//     fallback in engine/operator_stations.go.
+//     nulled but ActiveOrderID survived. Mirrors ResolveSwapPair's
+//     fallback for the missing supply half.
 //  3. task.OldMaterialReleaseOrderID — when BOTH runtime pointers are
 //     nil. The planner stamps this pointer at order-creation time and
 //     runtime mutations don't clear it, so it survives
@@ -164,5 +166,68 @@ func resolveEvacOrderID(db *DB, runtime *processes.RuntimeState, task *processes
 		return task.OldMaterialReleaseOrderID
 	}
 	return nil
+}
+
+// ResolveSwapPair returns the (evac, supply) order IDs for a two-robot
+// swap, walking the same three-fallback ladder as resolveEvacOrderID
+// (StagedOrderID → ActiveOrderID's sibling → task.OldMaterialReleaseOrderID)
+// and then resolving the supply half via the durable sibling pointer.
+//
+// This is the canonical resolver used by both the HMI render-side
+// (ComputeSwapReady, indirectly via resolveEvacOrderID) and the
+// engine release path (engine.ReleaseStagedOrders). Pre-2026-05-12 the
+// two sides used different resolvers — the HMI had the task fallback,
+// the engine didn't — so a node with both runtime pointers nil but a
+// good task pointer would render RELEASE in the HMI and then bounce
+// with "no tracked orders to release" when clicked. Plant SNF2 ALN_001
+// hit this repeatedly during the 2026-05-11 swap cycle.
+//
+// Returns an error when no evac can be resolved or when the resolved
+// pair is single-leg (one half has no sibling). Single-leg flows
+// (drops, manual single, sequential) must use per-order release.
+func ResolveSwapPair(db *DB, runtime *processes.RuntimeState, task *processes.NodeTask) (evacID, supplyID *int64, err error) {
+	if runtime != nil {
+		if runtime.StagedOrderID != nil {
+			id := *runtime.StagedOrderID
+			evacID = &id
+		}
+		if runtime.ActiveOrderID != nil {
+			id := *runtime.ActiveOrderID
+			supplyID = &id
+		}
+	}
+	// Task fallback when both runtime pointers are nil. The planner
+	// stamps task.OldMaterialReleaseOrderID at order-creation time and
+	// runtime mutations don't clear it.
+	if evacID == nil && supplyID == nil && task != nil && task.OldMaterialReleaseOrderID != nil {
+		id := *task.OldMaterialReleaseOrderID
+		evacID = &id
+	}
+	if evacID == nil && supplyID == nil {
+		return nil, nil, fmt.Errorf("no tracked orders to release")
+	}
+	// Walk the sibling pointer for the half we don't have.
+	if evacID == nil {
+		supply, err := db.GetOrder(*supplyID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get supply order %d: %w", *supplyID, err)
+		}
+		if supply.SiblingOrderID == nil {
+			return nil, nil, fmt.Errorf("order %d has no sibling — not a coordinated pair", *supplyID)
+		}
+		id := *supply.SiblingOrderID
+		evacID = &id
+	} else if supplyID == nil {
+		evac, err := db.GetOrder(*evacID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get evac order %d: %w", *evacID, err)
+		}
+		if evac.SiblingOrderID == nil {
+			return nil, nil, fmt.Errorf("order %d has no sibling — not a coordinated pair (single-leg flow should use per-order release)", *evacID)
+		}
+		id := *evac.SiblingOrderID
+		supplyID = &id
+	}
+	return evacID, supplyID, nil
 }
 

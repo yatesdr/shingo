@@ -311,3 +311,83 @@ func TestComputeSwapReady_PairWithoutSiblingPointer(t *testing.T) {
 		t.Error("expected SwapReady=false when the pair is missing sibling linkage (silent LinkOrderSiblings failure)")
 	}
 }
+
+// Both runtime pointers populated → walk no siblings, return as-is.
+func TestResolveSwapPair_RuntimeBothPresent(t *testing.T) {
+	db, _, runtime, aID, bID := seedSwapReadyFixture(t)
+	evac, supply, err := ResolveSwapPair(db, runtime, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if evac == nil || *evac != bID {
+		t.Errorf("expected evac=%d, got %v", bID, evac)
+	}
+	if supply == nil || *supply != aID {
+		t.Errorf("expected supply=%d, got %v", aID, supply)
+	}
+}
+
+// StagedOrderID nil but ActiveOrderID's sibling resolves the evac.
+// Mirrors handler_bin_picked_up clearing StagedOrderID while ActiveOrderID
+// survives.
+func TestResolveSwapPair_RuntimeStagedNilSiblingWalk(t *testing.T) {
+	db, _, _, aID, bID := seedSwapReadyFixture(t)
+	rt := &processes.RuntimeState{ActiveOrderID: &aID}
+	evac, supply, err := ResolveSwapPair(db, rt, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if evac == nil || *evac != bID {
+		t.Errorf("expected evac=%d via sibling walk, got %v", bID, evac)
+	}
+	if supply == nil || *supply != aID {
+		t.Errorf("expected supply=%d, got %v", aID, supply)
+	}
+}
+
+// Plant 2026-05-11 (SNF2 ALN_001): both runtime pointers nil. Pre-fix
+// resolveSwapPair in engine/operator_stations.go rejected with "no
+// tracked orders to release" while ComputeSwapReady on the HMI happily
+// fell back to task.OldMaterialReleaseOrderID and rendered RELEASE.
+// ResolveSwapPair now uses the same task fallback so both sides agree.
+func TestResolveSwapPair_TaskFallbackWhenRuntimePointersNil(t *testing.T) {
+	db, _, _, aID, bID := seedSwapReadyFixture(t)
+	empty := &processes.RuntimeState{}
+	task := &processes.NodeTask{OldMaterialReleaseOrderID: &bID}
+	evac, supply, err := ResolveSwapPair(db, empty, task)
+	if err != nil {
+		t.Fatalf("resolve via task fallback: %v", err)
+	}
+	if evac == nil || *evac != bID {
+		t.Errorf("expected evac=%d via task fallback, got %v", bID, evac)
+	}
+	// Supply walked from evac's sibling pointer.
+	if supply == nil || *supply != aID {
+		t.Errorf("expected supply=%d via sibling walk from task-fallback evac, got %v", aID, supply)
+	}
+}
+
+// No runtime, no task → "no tracked orders to release". The render-side
+// equivalent: ComputeSwapReady returns false without erroring.
+func TestResolveSwapPair_EmptyRuntimeAndTask(t *testing.T) {
+	db, _, _, _, _ := seedSwapReadyFixture(t)
+	_, _, err := ResolveSwapPair(db, &processes.RuntimeState{}, nil)
+	if err == nil {
+		t.Error("expected error when both runtime and task are empty")
+	}
+}
+
+// Task fallback hits a drop (single-leg, no sibling). Reject rather
+// than partial-release. The HMI's ComputeSwapReady would have already
+// short-circuited via the sibling check, so this is defense-in-depth.
+func TestResolveSwapPair_TaskFallbackSingleLegRejected(t *testing.T) {
+	db, _, _, _, bID := seedSwapReadyFixture(t)
+	if err := db.ClearOrderSibling(bID); err != nil {
+		t.Fatalf("clear sibling: %v", err)
+	}
+	task := &processes.NodeTask{OldMaterialReleaseOrderID: &bID, Situation: "drop"}
+	_, _, err := ResolveSwapPair(db, &processes.RuntimeState{}, task)
+	if err == nil {
+		t.Error("expected single-leg rejection when task-fallback evac has no sibling")
+	}
+}
