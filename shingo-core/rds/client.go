@@ -32,6 +32,28 @@ func (c *Client) dbg(format string, args ...any) {
 	}
 }
 
+// slowResponseThreshold is the latency cutoff above which the response
+// body is included in success-path debug logs. Hot endpoints like
+// /robotsStatus return 200 in ~2ms with a ~4KB body that's the same
+// shape every poll — dumping it on every tick buries every other event
+// in the diagnostics log. Bodies are still logged unconditionally on
+// non-200 responses (where the body is the error envelope) and on slow
+// successes (where the body might explain the slowdown).
+const slowResponseThreshold = 1 * time.Second
+
+// logResponse emits the success/slow trace line: URL + status + timing
+// always; body only when the status is non-200 or the elapsed time
+// exceeds slowResponseThreshold. Centralises the body-or-not gate so
+// all four request paths (get, post, getRaw, postRaw) stay in lockstep.
+func (c *Client) logResponse(method, path string, statusCode int, elapsed time.Duration, data []byte) {
+	if statusCode != 200 || elapsed > slowResponseThreshold {
+		c.dbg("<- %s %s %d after %dms body=%s",
+			method, path, statusCode, elapsed.Milliseconds(), truncate(data, 2048))
+		return
+	}
+	c.dbg("<- %s %s %d after %dms", method, path, statusCode, elapsed.Milliseconds())
+}
+
 func (c *Client) url(path string) string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -54,7 +76,7 @@ func (c *Client) get(path string, result any) error {
 	if err != nil {
 		return fmt.Errorf("rds read body: %w", err)
 	}
-	c.dbg("<- GET %s %d after %dms body=%s", path, resp.StatusCode, time.Since(start).Milliseconds(), truncate(data, 2048))
+	c.logResponse("GET", path, resp.StatusCode, time.Since(start), data)
 
 	return c.decodeBytes(data, resp.StatusCode, result)
 }
@@ -86,7 +108,7 @@ func (c *Client) post(path string, body any, result any) error {
 	if err != nil {
 		return fmt.Errorf("rds read body: %w", err)
 	}
-	c.dbg("<- POST %s %d after %dms body=%s", path, resp.StatusCode, time.Since(start).Milliseconds(), truncate(data, 2048))
+	c.logResponse("POST", path, resp.StatusCode, time.Since(start), data)
 
 	return c.decodeBytes(data, resp.StatusCode, result)
 }
@@ -118,7 +140,7 @@ func (c *Client) getRaw(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rds read body: %w", err)
 	}
-	c.dbg("<- GET %s %d after %dms body=%s", path, resp.StatusCode, time.Since(start).Milliseconds(), truncate(data, 2048))
+	c.logResponse("GET", path, resp.StatusCode, time.Since(start), data)
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("rds HTTP %d: %s", resp.StatusCode, string(data))
@@ -142,7 +164,7 @@ func (c *Client) postRaw(path string, contentType string, body io.Reader, result
 	if err != nil {
 		return fmt.Errorf("rds read body: %w", err)
 	}
-	c.dbg("<- POST %s %d after %dms body=%s", path, resp.StatusCode, time.Since(start).Milliseconds(), truncate(data, 2048))
+	c.logResponse("POST", path, resp.StatusCode, time.Since(start), data)
 
 	return c.decodeBytes(data, resp.StatusCode, result)
 }

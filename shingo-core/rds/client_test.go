@@ -408,3 +408,69 @@ func TestPollerRemovesTerminal(t *testing.T) {
 		t.Errorf("count after terminal = %d, want 0", p.ActiveCount())
 	}
 }
+
+// TestLogResponse_BodySuppressedOnFastSuccess pins the gate that makes
+// /robotsStatus and other hot success-path traces compact. Fast 200
+// responses log URL + status + timing only — body is suppressed because
+// it's pure noise at poll-tick volume. A future refactor that drops
+// the gate would re-introduce the multi-KB-per-tick log spam.
+func TestLogResponse_BodySuppressedOnFastSuccess(t *testing.T) {
+	t.Parallel()
+	var captured []string
+	client := &Client{
+		DebugLog: func(format string, args ...any) {
+			captured = append(captured, fmt.Sprintf(format, args...))
+		},
+	}
+	body := []byte(`{"hot":"body","that":"should not appear"}`)
+	client.logResponse("GET", "/robotsStatus", 200, 5*time.Millisecond, body)
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(captured), captured)
+	}
+	if got := captured[0]; got != "<- GET /robotsStatus 200 after 5ms" {
+		t.Errorf("line = %q, want compact (no body)", got)
+	}
+}
+
+func TestLogResponse_BodyIncludedOnNon200(t *testing.T) {
+	t.Parallel()
+	var captured []string
+	client := &Client{
+		DebugLog: func(format string, args ...any) {
+			captured = append(captured, fmt.Sprintf(format, args...))
+		},
+	}
+	body := []byte(`{"code":400,"msg":"bad group"}`)
+	client.logResponse("POST", "/robotsInCountGroup", 400, 5*time.Millisecond, body)
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(captured), captured)
+	}
+	if !contains(captured[0], `body={"code":400,"msg":"bad group"}`) {
+		t.Errorf("line = %q, want body included on non-200", captured[0])
+	}
+}
+
+func TestLogResponse_BodyIncludedOnSlowSuccess(t *testing.T) {
+	t.Parallel()
+	var captured []string
+	client := &Client{
+		DebugLog: func(format string, args ...any) {
+			captured = append(captured, fmt.Sprintf(format, args...))
+		},
+	}
+	body := []byte(`{"slow":"response"}`)
+	client.logResponse("GET", "/orderDetails/X", 200, 2*time.Second, body)
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(captured), captured)
+	}
+	if !contains(captured[0], "body=") {
+		t.Errorf("line = %q, want body included on slow success", captured[0])
+	}
+}
+
+func TestLogResponse_NilDebugLogIsNoop(t *testing.T) {
+	t.Parallel()
+	client := &Client{DebugLog: nil}
+	// Must not panic — c.dbg's nil-check handles it.
+	client.logResponse("GET", "/x", 200, 5*time.Millisecond, []byte("body"))
+}
