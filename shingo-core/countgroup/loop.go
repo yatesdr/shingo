@@ -33,6 +33,12 @@ type Runner struct {
 	warnedNever    map[string]bool // true once we've logged WARN
 	erroredNever   map[string]bool // true once we've logged ERROR
 	enabledAt      time.Time
+
+	// outage collapses per-tick poll-failure spam (one line per group
+	// per tick) into open/summary/close triples. Keyed by group name
+	// so each affected group reports independently — partial outages
+	// (one group's RDS endpoint dead, others fine) still surface.
+	outage *outageLogger
 }
 
 // NewRunner creates a Runner. Call Start to launch goroutines.
@@ -49,6 +55,7 @@ func NewRunner(cfg config.CountGroupsConfig, poller Poller, emitter Emitter, log
 		lastNonEmptyAt: make(map[string]time.Time),
 		warnedNever:    make(map[string]bool),
 		erroredNever:   make(map[string]bool),
+		outage:         newOutageLogger(60 * time.Second),
 	}
 }
 
@@ -90,12 +97,20 @@ func (r *Runner) groupLoop(g config.CountGroupConfig) {
 
 	r.startupProbe(g.Name)
 
-	interval := r.cfg.PollInterval
-	if interval <= 0 {
-		interval = 500 * time.Millisecond
+	baseInterval := r.cfg.PollInterval
+	if baseInterval <= 0 {
+		baseInterval = 500 * time.Millisecond
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	// maxBackoff caps the per-group failure interval so the loop still
+	// polls often enough to detect recovery quickly when RDS comes back,
+	// while keeping the per-group failure rate at one request every
+	// maxBackoff seconds during a sustained outage. 10s × N groups is
+	// well below RDS's healthy-load ceiling even with dozens of groups.
+	const maxBackoff = 10 * time.Second
+	currentInterval := baseInterval
+
+	timer := time.NewTimer(currentInterval)
+	defer timer.Stop()
 
 	r.logFn("countgroup: group %s starting debounce fill (%d/%d samples needed for on/off)",
 		g.Name, r.cfg.OnThreshold, r.cfg.OffThreshold)
@@ -107,12 +122,23 @@ func (r *Runner) groupLoop(g config.CountGroupConfig) {
 	for {
 		select {
 		case <-r.stopChan:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			robots, err := r.poller.GetRobotsInCountGroup(g.Name)
 			if err != nil {
 				// Failure path: hold state; advance fail-safe timer.
-				r.logFn("countgroup: group %s poll error: %v", g.Name, err)
+				// Log is collapsed by outageLogger (one open, periodic
+				// summaries at 60s, one close on recovery) — no per-tick
+				// spam. The poll interval also backs off so a recovering
+				// RDS isn't getting hammered by N groups × every-tick.
+				r.outage.Failure(g.Name, r.logFn, "group "+g.Name+" poll", err)
+				currentInterval = nextBackoff(currentInterval, maxBackoff)
 				if !failSafeActive && time.Since(lastSuccess) > r.cfg.FailSafeTimeout {
 					if deb.forceOn() {
 						failSafeActive = true
@@ -127,10 +153,13 @@ func (r *Runner) groupLoop(g config.CountGroupConfig) {
 							g.Name, r.cfg.FailSafeTimeout)
 					}
 				}
+				timer.Reset(currentInterval)
 				continue
 			}
 
-			// Success path: reset fail-safe timer; update last-non-empty tracker.
+			// Success path: reset fail-safe timer, backoff, and last-non-empty.
+			r.outage.Success(g.Name, r.logFn, "group "+g.Name+" poll")
+			currentInterval = baseInterval
 			lastSuccess = time.Now()
 			failSafeActive = false
 			if len(robots) > 0 {
@@ -144,23 +173,33 @@ func (r *Runner) groupLoop(g config.CountGroupConfig) {
 			// counter and the off transition becomes unreachable. The
 			// debouncer itself already returns changed=false for steady
 			// state, which is the correct place to suppress emits.
-			_, changed := deb.feed(len(robots) > 0)
-			if !changed {
-				continue
+			if _, changed := deb.feed(len(robots) > 0); changed {
+				desired := "off"
+				if len(robots) > 0 {
+					desired = "on"
+				}
+				r.emitter.Emit(Transition{
+					Group:             g.Name,
+					Desired:           desired,
+					Robots:            robots,
+					FailSafeTriggered: false,
+					Timestamp:         time.Now(),
+				})
 			}
-			desired := "off"
-			if len(robots) > 0 {
-				desired = "on"
-			}
-			r.emitter.Emit(Transition{
-				Group:             g.Name,
-				Desired:           desired,
-				Robots:            robots,
-				FailSafeTriggered: false,
-				Timestamp:         time.Now(),
-			})
+			timer.Reset(currentInterval)
 		}
 	}
+}
+
+// nextBackoff doubles the current interval up to maxBackoff. Linear
+// (e.g. 500ms → 1s → 2s → 4s → 8s → 10s cap) so a recovering RDS
+// gets exponentially decreasing load until traffic stabilises.
+func nextBackoff(current, max time.Duration) time.Duration {
+	doubled := current * 2
+	if doubled > max {
+		return max
+	}
+	return doubled
 }
 
 // startupProbe posts each configured group once before the tick loop

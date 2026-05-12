@@ -28,6 +28,12 @@ type HeartbeatWriter struct {
 	wg       sync.WaitGroup
 
 	counter int64 // single-writer (the loop goroutine) — no atomic needed
+
+	// outage rolls per-tick failure logs (heartbeat write + per-group
+	// ack-check read) into open/summary/close triples instead of one
+	// line per tick. Source keys: "heartbeat" for the write, "ack:<group>"
+	// for ack-check reads.
+	outage *outageLogger
 }
 
 func NewHeartbeatWriter(h *Handler, logFn func(string, ...any)) *HeartbeatWriter {
@@ -38,6 +44,7 @@ func NewHeartbeatWriter(h *Handler, logFn func(string, ...any)) *HeartbeatWriter
 		h:        h,
 		logFn:    logFn,
 		stopChan: make(chan struct{}),
+		outage:   newOutageLogger(60 * time.Second),
 	}
 }
 
@@ -94,12 +101,15 @@ func (w *HeartbeatWriter) tick() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	what := "heartbeat write to PLC " + w.h.cfg.HeartbeatPLC + " (deadman will trip if sustained)"
 	if err := w.h.plc.WriteTagValue(ctx, w.h.cfg.HeartbeatPLC,
 		w.h.cfg.HeartbeatTag, w.counter); err != nil {
-		// A heartbeat write failure means the PLC deadman will trip
-		// shortly. Log at INFO, not ERROR — this is expected during
-		// WarLink outages and we don't want to spam the log.
-		w.logFn("countgroup: heartbeat write failed (deadman will trip): %v", err)
+		// Per-tick failure during a WarLink/PLC outage. outageLogger
+		// collapses to one open, periodic summaries, one close —
+		// preserves forensic signal without per-second log spam.
+		w.outage.Failure("heartbeat", w.logFn, what, err)
+	} else {
+		w.outage.Success("heartbeat", w.logFn, "heartbeat write to PLC "+w.h.cfg.HeartbeatPLC)
 	}
 
 	// Piggyback ack-polling on the heartbeat tick.
@@ -127,9 +137,15 @@ func (w *HeartbeatWriter) checkAcks(ctx context.Context) {
 		val, err := h.plc.ReadTagValue(ctx, p.PLC, p.Tag)
 		if err != nil {
 			// Transient read error; leave in-flight for next tick.
-			h.logFn("countgroup: group=%s ack-check read failed: %v", p.Group, err)
+			// Per-tick spam during PLC outage suppressed by outageLogger —
+			// per-group source so each affected group still gets its own
+			// open/close pair if only some are unreachable.
+			w.outage.Failure("ack:"+p.Group, h.logFn,
+				"ack-check read for group "+p.Group, err)
 			continue
 		}
+		w.outage.Success("ack:"+p.Group, h.logFn,
+			"ack-check read for group "+p.Group)
 
 		if isZero(val) {
 			// Ack confirmed.
