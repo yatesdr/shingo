@@ -17,8 +17,10 @@ package reconciliation
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
+	"shingo/protocol"
 	"shingoedge/store/internal/helpers"
 	"shingoedge/store/messaging"
 )
@@ -57,11 +59,15 @@ type Summary struct {
 func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	var anomalies []*Anomaly
 
-	rows, err := db.Query(`SELECT id, uuid, status, updated_at
+	// Edge sees a subset of the state machine (no 'sourcing' or 'dispatched',
+	// which are Core-only stages — see protocol/types.go), so the IN list is
+	// a superset of what edge data will actually carry. Safe to splice the
+	// shared predicate.
+	rows, err := db.Query(fmt.Sprintf(`SELECT id, uuid, status, updated_at
 		FROM orders
-		WHERE status IN ('pending', 'submitted', 'acknowledged', 'in_transit', 'staged')
+		WHERE status IN (%s)
 		  AND updated_at < datetime('now', ?)
-		ORDER BY updated_at ASC`, "-30 minutes")
+		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()), "-30 minutes")
 	if err != nil {
 		return nil, err
 	}

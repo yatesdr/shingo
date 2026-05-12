@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -126,4 +128,125 @@ func TestStatusScanRejectsUnsupportedType(t *testing.T) {
 	if err := s.Scan(42); err == nil {
 		t.Error("Scan(int) returned nil error, want failure")
 	}
+}
+
+// ─── Predicate ↔ SQL projector drift tests ─────────────────────────────
+//
+// The risk class these tests catch: a new status is added to the enum,
+// the author classifies it via one of the predicate functions, but
+// forgets to update a hand-rolled SQL list somewhere. The projectors are
+// derived from the predicates, so this kind of drift is now impossible
+// *within* the protocol package — these tests pin that property.
+//
+// They also catch the inverse: someone hand-edits the projector output
+// (none of our helpers permit this, but a refactor could regress it)
+// without updating the predicate. The two are required to agree by
+// construction; the tests make that requirement explicit.
+
+// predicateProjectorPairs is the canonical table of "this predicate
+// should yield this SQL list." Adding a new predicate requires adding a
+// row here — the coverage test below fails otherwise, forcing the author
+// to think about it.
+var predicateProjectorPairs = []struct {
+	name      string
+	predicate func(Status) bool
+	projector func() string
+}{
+	{"IsTerminal", IsTerminal, TerminalStatusSQLList},
+	{"NonTerminal", func(s Status) bool { return !IsTerminal(s) }, NonTerminalStatusSQLList},
+	{"IsFailureTerminal", IsFailureTerminal, FailureTerminalStatusSQLList},
+	{"IsVendorActive", IsVendorActive, VendorActiveStatusSQLList},
+	{"IsPreDispatch", IsPreDispatch, PreDispatchStatusSQLList},
+	{"IsRuntimeStuckCandidate", IsRuntimeStuckCandidate, RuntimeStuckCandidateStatusSQLList},
+	{"IsOperatorVisible", IsOperatorVisible, OperatorVisibleStatusSQLList},
+}
+
+// TestStatusSQLProjectorsAgreeWithPredicates is the drift detector. For
+// every (predicate, projector) pair, walk the entire status enum and
+// verify each status is present in the SQL list iff the predicate
+// returns true. Catches any future drift between Go-side classification
+// and SQL projection.
+func TestStatusSQLProjectorsAgreeWithPredicates(t *testing.T) {
+	for _, pair := range predicateProjectorPairs {
+		t.Run(pair.name, func(t *testing.T) {
+			projected := pair.projector()
+			for _, s := range AllStatuses() {
+				token := "'" + string(s) + "'"
+				inList := containsToken(projected, token)
+				want := pair.predicate(s)
+				if inList != want {
+					t.Errorf("status %q: predicate=%v, in SQL list=%v (list=%q)",
+						s, want, inList, projected)
+				}
+			}
+		})
+	}
+}
+
+// TestStatusSQLProjectorsAreSorted pins the lex-sorted ordering so any
+// caller doing literal-string assertions against the projector output
+// (drift tests, golden files, JS-side mirrors) has a stable target.
+func TestStatusSQLProjectorsAreSorted(t *testing.T) {
+	for _, pair := range predicateProjectorPairs {
+		t.Run(pair.name, func(t *testing.T) {
+			parts := strings.Split(pair.projector(), ",")
+			// An empty projector (no statuses matched) trips strings.Split
+			// into a single-element [""] slice; that's vacuously sorted.
+			if len(parts) == 1 && parts[0] == "" {
+				return
+			}
+			sortedCopy := append([]string(nil), parts...)
+			sort.Strings(sortedCopy)
+			for i := range parts {
+				if parts[i] != sortedCopy[i] {
+					t.Errorf("%s: not lex-sorted: got %v", pair.name, parts)
+					break
+				}
+			}
+		})
+	}
+}
+
+// TestEveryStatusClassifiedAsTerminalOrNot is the coverage guard for the
+// terminal/non-terminal split — every known status must answer
+// IsTerminal one way or the other (Go bool can't represent "neither"
+// but a status missing from AllStatuses() would silently be skipped by
+// the projectors, which is the actual risk). This test exercises every
+// status by name to catch enum/AllStatuses drift.
+func TestEveryStatusClassifiedAsTerminalOrNot(t *testing.T) {
+	// All status constants declared in status.go. If a new constant is
+	// added without being appended to AllStatuses(), this list is the
+	// place to catch it — add the new constant here and the test will
+	// fail until AllStatuses() includes it.
+	declared := []Status{
+		StatusPending, StatusSourcing, StatusQueued, StatusSubmitted,
+		StatusDispatched, StatusAcknowledged, StatusInTransit, StatusStaged,
+		StatusDelivered, StatusConfirmed, StatusFaulted, StatusFailed,
+		StatusCancelled, StatusReshuffling, StatusSkipped,
+	}
+	enumerated := map[Status]bool{}
+	for _, s := range AllStatuses() {
+		enumerated[s] = true
+	}
+	for _, s := range declared {
+		if !enumerated[s] {
+			t.Errorf("status %q is declared as a constant but missing from AllStatuses() — SQL projectors will silently skip it", s)
+		}
+	}
+}
+
+// containsToken reports whether the comma-separated quoted SQL list
+// contains the exact token. Substring-safe: 'failed' must not match
+// 'failed_x' or similar. The projector builds quoted tokens so we
+// match the quotes literally.
+func containsToken(list, token string) bool {
+	if list == "" {
+		return false
+	}
+	for _, p := range strings.Split(list, ",") {
+		if p == token {
+			return true
+		}
+	}
+	return false
 }

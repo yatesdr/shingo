@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/store/messaging"
 )
 
@@ -65,11 +66,11 @@ type Summary struct {
 // ListOrderCompletionAnomalies surfaces high-risk drift between
 // terminal orders and bin claim state.
 func ListOrderCompletionAnomalies(db *sql.DB) ([]*CompletionAnomaly, error) {
-	rows, err := db.Query(`
+	rows, err := db.Query(fmt.Sprintf(`
 		SELECT o.id AS order_id, b.id AS bin_id, o.status AS order_status, b.status AS bin_status, 'terminal_order_still_claims_bin' AS issue
 		FROM orders o
 		JOIN bins b ON b.claimed_by = o.id
-		WHERE o.completed_at IS NOT NULL OR o.status IN ('cancelled', 'failed')
+		WHERE o.completed_at IS NOT NULL OR o.status IN (%s)
 		UNION ALL
 		SELECT o.id AS order_id, NULL::bigint AS bin_id, o.status AS order_status, '' AS bin_status, 'completed_order_missing_bin' AS issue
 		FROM orders o
@@ -79,7 +80,7 @@ func ListOrderCompletionAnomalies(db *sql.DB) ([]*CompletionAnomaly, error) {
 		FROM orders o
 		LEFT JOIN bins b ON b.id = o.bin_id
 		WHERE o.status = 'confirmed' AND o.completed_at IS NULL
-		ORDER BY order_id, issue`)
+		ORDER BY order_id, issue`, protocol.FailureTerminalStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
@@ -128,12 +129,12 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		})
 	}
 
-	rows, err := db.Query(`
+	rows, err := db.Query(fmt.Sprintf(`
 		SELECT id, status, updated_at
 		FROM orders
-		WHERE status IN ('pending','sourcing','submitted','acknowledged','dispatched','in_transit','staged')
+		WHERE status IN (%s)
 		  AND updated_at < NOW() - ($1 * INTERVAL '1 second')
-		ORDER BY updated_at ASC`, int(stuckOrderAge.Seconds()))
+		ORDER BY updated_at ASC`, protocol.RuntimeStuckCandidateStatusSQLList()), int(stuckOrderAge.Seconds()))
 	if err != nil {
 		return nil, err
 	}
@@ -274,15 +275,15 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 	// Detect bins with speculative manifest but no active claiming order.
 	// This is informational only — manifest represents physical reality and
 	// should NOT be cleared. The detection surfaces these bins for review.
-	rows, err = db.Query(`
+	rows, err = db.Query(fmt.Sprintf(`
 		SELECT b.id, b.label, b.status, b.claimed_by,
 		       COALESCE(o.status, 'no_order') AS order_status
 		FROM bins b
 		LEFT JOIN orders o ON o.id = b.claimed_by
 		WHERE b.manifest IS NOT NULL
 		  AND (b.claimed_by IS NULL
-		       OR o.status IN ('confirmed', 'failed', 'cancelled', 'skipped'))
-		ORDER BY b.id`)
+		       OR o.status IN (%s))
+		ORDER BY b.id`, protocol.TerminalStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
@@ -367,14 +368,14 @@ func GetSummary(db *sql.DB) (*Summary, error) {
 // leaked past the atomic status transitions (e.g. due to a process
 // crash mid-transaction). Returns the number of claims released.
 func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
-	result, err := db.Exec(`
+	result, err := db.Exec(fmt.Sprintf(`
 		UPDATE bins
 		SET claimed_by = NULL, updated_at = NOW()
 		WHERE claimed_by IS NOT NULL
 		  AND claimed_by IN (
 		    SELECT id FROM orders
-		    WHERE status IN ('confirmed', 'failed', 'cancelled', 'skipped')
-		  )`)
+		    WHERE status IN (%s)
+		  )`, protocol.TerminalStatusSQLList()))
 	if err != nil {
 		return 0, err
 	}

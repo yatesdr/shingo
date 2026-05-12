@@ -9,6 +9,7 @@ package orders
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"time"
 
@@ -51,11 +52,14 @@ func List(db *sql.DB) ([]Order, error) {
 	return scanOrders(rows)
 }
 
-// ListActive returns every non-terminal order, newest first.
+// ListActive returns every order operator-visible on the edge HMI —
+// excludes confirmed/cancelled/skipped (operator has nothing to do
+// with these) but keeps failed visible so the operator can retry or
+// acknowledge. See protocol.IsOperatorVisible for the predicate doc.
 func ListActive(db *sql.DB) ([]Order, error) {
-	rows, err := db.Query(`SELECT ` + selectCols + ` ` + joinClause + `
-		WHERE o.status NOT IN ('confirmed', 'cancelled')
-		ORDER BY o.created_at DESC`)
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.status IN (%s)
+		ORDER BY o.created_at DESC`, protocol.OperatorVisibleStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
@@ -64,22 +68,25 @@ func ListActive(db *sql.DB) ([]Order, error) {
 }
 
 // CountActive returns the count of non-terminal orders. Logs and
-// returns 0 on error to keep dashboards alive.
+// returns 0 on error to keep dashboards alive. Semantically distinct
+// from ListActive — this is the "still being worked on" count (excludes
+// failed), not the operator-visible-things-on-screen count.
 func CountActive(db *sql.DB) int {
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE status NOT IN ('confirmed', 'cancelled', 'failed')`).Scan(&count); err != nil {
+	if err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE status NOT IN (%s)`, protocol.TerminalStatusSQLList())).Scan(&count); err != nil {
 		log.Printf("count active orders: %v", err)
 		return 0
 	}
 	return count
 }
 
-// ListActiveByProcess returns non-terminal orders for one process.
+// ListActiveByProcess returns operator-visible orders for one process.
+// Mirrors ListActive's predicate (failed stays visible for retry).
 func ListActiveByProcess(db *sql.DB, processID int64) ([]Order, error) {
-	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.status NOT IN ('confirmed', 'cancelled')
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.status IN (%s)
 		AND pl.id = ?
-		ORDER BY o.created_at DESC`, processID)
+		ORDER BY o.created_at DESC`, protocol.OperatorVisibleStatusSQLList()), processID)
 	if err != nil {
 		return nil, err
 	}
@@ -294,9 +301,9 @@ func ListStagedByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
 // ListActiveByProcessNodeAndType returns non-terminal orders for a
 // process node filtered by order type.
 func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType protocol.OrderType) ([]Order, error) {
-	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.process_node_id = ? AND o.order_type = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
-		ORDER BY o.created_at`, processNodeID, orderType)
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.process_node_id = ? AND o.order_type = ? AND o.status NOT IN (%s)
+		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()), processNodeID, orderType)
 	if err != nil {
 		return nil, err
 	}
@@ -307,9 +314,9 @@ func ListActiveByProcessNodeAndType(db *sql.DB, processNodeID int64, orderType p
 // ListActiveByProcessNode returns non-terminal orders for a process
 // node.
 func ListActiveByProcessNode(db *sql.DB, processNodeID int64) ([]Order, error) {
-	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
-		WHERE o.process_node_id = ? AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
-		ORDER BY o.created_at`, processNodeID)
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
+		WHERE o.process_node_id = ? AND o.status NOT IN (%s)
+		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()), processNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -333,10 +340,10 @@ func ListActiveByProcessNodeOrSource(db *sql.DB, processNodeID int64, sourceNode
 	if sourceNodeName == "" {
 		return ListActiveByProcessNode(db, processNodeID)
 	}
-	rows, err := db.Query(`SELECT `+selectCols+` `+joinClause+`
+	rows, err := db.Query(fmt.Sprintf(`SELECT `+selectCols+` `+joinClause+`
 		WHERE (o.process_node_id = ? OR o.source_node = ?)
-		  AND o.status NOT IN ('confirmed', 'cancelled', 'failed')
-		ORDER BY o.created_at`, processNodeID, sourceNodeName)
+		  AND o.status NOT IN (%s)
+		ORDER BY o.created_at`, protocol.TerminalStatusSQLList()), processNodeID, sourceNodeName)
 	if err != nil {
 		return nil, err
 	}

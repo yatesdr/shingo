@@ -3,6 +3,8 @@ package nodes
 import (
 	"database/sql"
 	"fmt"
+
+	"shingo/protocol"
 )
 
 // ListLaneSlots returns all child nodes of a lane, ordered by depth (ascending).
@@ -67,10 +69,10 @@ func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders o
 			WHERE o.delivery_node = n.name
-			  AND o.status NOT IN ('confirmed', 'failed', 'cancelled', 'skipped')
+			  AND o.status NOT IN (%s)
 		  )
 		ORDER BY COALESCE(n.depth, 0) DESC
-		LIMIT 1`, SelectCols, FromClause), laneID)
+		LIMIT 1`, SelectCols, FromClause, protocol.TerminalStatusSQLList()), laneID)
 	n, err := ScanNode(row)
 	if err != nil {
 		return nil, fmt.Errorf("no empty slot in lane %d", laneID)

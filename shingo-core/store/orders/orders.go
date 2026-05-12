@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/domain"
 	"shingocore/store/internal/helpers"
 )
@@ -270,7 +271,7 @@ func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
 
 // ListActive returns all orders in non-terminal statuses.
 func ListActive(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN ('confirmed', 'failed', 'cancelled', 'skipped') ORDER BY id DESC`, SelectCols))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN (%s) ORDER BY id DESC`, SelectCols, protocol.TerminalStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
@@ -316,14 +317,14 @@ func ListByStation(db *sql.DB, stationID string, limit int) ([]*Order, error) {
 // CountActiveByDeliveryNode counts non-terminal orders targeting a delivery node.
 func CountActiveByDeliveryNode(db *sql.DB, nodeName string) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node=$1 AND status NOT IN ('confirmed','failed','cancelled','skipped')`, nodeName).Scan(&count)
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node=$1 AND status NOT IN (%s)`, protocol.TerminalStatusSQLList()), nodeName).Scan(&count)
 	return count, err
 }
 
 // ListDispatchedVendorOrderIDs returns vendor order IDs for orders currently
 // dispatched, in transit, or staged.
 func ListDispatchedVendorOrderIDs(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN ('dispatched', 'in_transit', 'staged')`)
+	rows, err := db.Query(fmt.Sprintf(`SELECT vendor_order_id FROM orders WHERE vendor_order_id != '' AND status IN (%s)`, protocol.VendorActiveStatusSQLList()))
 	if err != nil {
 		return nil, err
 	}
@@ -352,8 +353,8 @@ func ListActiveBySourceRef(db *sql.DB, names []string) ([]*Order, error) {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = n
 	}
-	q := fmt.Sprintf(`SELECT %s FROM orders WHERE source_node IN (%s) AND status IN ('pending', 'sourcing', 'queued') ORDER BY created_at ASC`,
-		SelectCols, strings.Join(placeholders, ","))
+	q := fmt.Sprintf(`SELECT %s FROM orders WHERE source_node IN (%s) AND status IN (%s) ORDER BY created_at ASC`,
+		SelectCols, strings.Join(placeholders, ","), protocol.PreDispatchStatusSQLList())
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -390,7 +391,10 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 // targeting a delivery node.
 func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed', 'skipped')`, deliveryNode).Scan(&count)
+	// "In-flight" = not terminal AND not queued. The queued exclusion is
+	// composed inline rather than baked into a predicate because no other
+	// site needs this combo.
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN (%s) AND status != 'queued'`, protocol.TerminalStatusSQLList()), deliveryNode).Scan(&count)
 	return count, err
 }
 
@@ -401,7 +405,7 @@ func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 // to count all orders (no exclusion). Phase 4c of bin-transit-state.
 func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, excludeID int64) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed', 'skipped') AND id != $2`,
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN (%s) AND status != 'queued' AND id != $2`, protocol.TerminalStatusSQLList()),
 		deliveryNode, excludeID).Scan(&count)
 	return count, err
 }

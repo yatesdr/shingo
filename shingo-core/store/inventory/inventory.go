@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/store/internal/helpers"
 )
 
@@ -59,7 +60,10 @@ type Correction struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-const inventorySQL = `
+// inventorySQL is computed once at package init so the terminal-status
+// list is injected from protocol.TerminalStatusSQLList() rather than
+// being hand-rolled here.
+var inventorySQL = fmt.Sprintf(`
 WITH bin_items AS (
     -- Bins with manifest items
     SELECT b.id AS bin_id, b.label AS bin_label, bt.code AS bin_type,
@@ -116,9 +120,9 @@ LEFT JOIN nodes grp ON grp.id = COALESCE(
 )
 LEFT JOIN node_types grp_type ON grp_type.id = grp.node_type_id AND grp_type.code = 'NGRP'
 LEFT JOIN orders o ON o.id = bi.claimed_by
-    AND o.status NOT IN ('confirmed', 'failed', 'cancelled', 'skipped')
+    AND o.status NOT IN (%s)
 ORDER BY group_name, lane_name, COALESCE(n.depth, 0), node_name, bi.bin_label, bi.cat_id
-`
+`, protocol.TerminalStatusSQLList())
 
 // List returns one denormalized inventory row per (bin, manifest item).
 func List(db *sql.DB) ([]Row, error) {
