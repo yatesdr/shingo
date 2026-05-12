@@ -32,6 +32,7 @@ package engine
 
 import (
 	"log"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -573,13 +574,54 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	}
 	if (nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID) ||
 		(nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID) {
-		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
-			log.Printf("update node task %d to error: %v", nodeTask.ID, err)
+		newState := "error"
+		// Drop auto-skip: for a drop, "could not claim a bin at the
+		// pickup" satisfies the changeover's intent (or there was
+		// nothing to remove). Core's no_source_bin code already routes
+		// to lifecycle.Skip via HandleOrderSkipped; this branch covers
+		// the parallel no_bin case (bins present but unclaimable —
+		// e.g. payload mismatch, orphan claim from a previous
+		// changeover) which Core still routes to Fail. Pre-fix this
+		// stranded the operator at an error tile that required hunting
+		// down the /changeover supervisor page to clear. Swap-evac
+		// failures stay at "error" because the new bin can't move in
+		// until the old one leaves.
+		if nodeTask.Situation == "drop" && isNoBinFailure(failed.Reason) {
+			newState = "line_cleared"
 		}
-		log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, newState); err != nil {
+			log.Printf("update node task %d to %s: %v", nodeTask.ID, newState, err)
+		}
+		if newState == "line_cleared" {
+			note := "evac auto-cleared: no bin to remove at " + nodeTask.NodeName
+			if err := e.db.SetChangeoverNodeTaskSkipNote(nodeTask.ID, note); err != nil {
+				log.Printf("changeover: set skip_note on drop auto-clear for task %d: %v", nodeTask.ID, err)
+			}
+			log.Printf("changeover: drop auto-cleared for node %s — order %d failed with %q", node.Name, order.ID, failed.Reason)
+		} else {
+			log.Printf("changeover: order failed for node %s, marked as error — manual retry needed", node.Name)
+		}
 		if err := e.tryCompleteProcessChangeover(node.ProcessID); err != nil {
 			log.Printf("changeover: try-complete after order-failure for process %d: %v", node.ProcessID, err)
 		}
 	}
+}
+
+// isNoBinFailure recognizes Core's bin-claim failure shape on
+// OrderFailedEvent.Reason. Core's planning error codes ("no_bin",
+// "no_source_bin") are not preserved end-to-end through the wire — only
+// the detail string is — so we match on the detail. Substrings cover
+// both shapes:
+//
+//   - no_bin     "no available bin at pickup node(s) for order N"
+//   - no_source_bin (defensive — Core routes this to Skip today, but
+//     a future regression could route it here)
+//     "no bin at pickup node(s) for order N — source was emptied externally"
+//
+// Strings are stable in complex_claims.go:139/141. If those move, add
+// the new wording here or plumb the code through OrderFailedEvent.
+func isNoBinFailure(reason string) bool {
+	return strings.Contains(reason, "no available bin at pickup") ||
+		strings.Contains(reason, "no bin at pickup")
 }
 

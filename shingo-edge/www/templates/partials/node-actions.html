@@ -37,9 +37,14 @@
     <button class="btn btn-sm" disabled style="opacity:0.5">2. Release &#10003;</button>
     <button class="btn btn-sm" disabled style="opacity:0.5">3. Deliver...</button>
 {{else if eq .State "error"}}
+    {{/* Drop has no staging leg — retrying via stage-node calls GetStyleNodeClaimByNode on a target style that doesn't claim this node and errors "no claim for target style on node". Re-fire the evac order instead. */}}
+    {{if eq .Situation "drop"}}
+    <button class="btn btn-sm btn-danger" hx-post="/api/processes/{{.ProcessID}}/changeover/evacuate-node/{{.ProcessNodeID}}" hx-swap="none">Retry Evac</button>
+    {{else}}
     <button class="btn btn-sm btn-danger" hx-post="/api/processes/{{.ProcessID}}/changeover/stage-node/{{.ProcessNodeID}}" hx-swap="none">Retry</button>
     <button class="btn btn-sm" disabled>2. Release</button>
     <button class="btn btn-sm" disabled>3. Deliver</button>
+    {{end}}
     <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/switch-node/{{.ProcessNodeID}}" hx-swap="none" style="margin-left:0.5rem">Skip</button>
 {{else if eq .State "cancelled"}}
     <button class="btn btn-sm" disabled style="opacity:0.5">Cancelled</button>

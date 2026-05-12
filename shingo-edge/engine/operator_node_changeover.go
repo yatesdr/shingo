@@ -217,6 +217,28 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	if node.ProcessID != processID {
 		return fmt.Errorf("node does not belong to process")
 	}
+
+	// Drop check before claim lookup: a drop node has no to-claim by
+	// design (the new style doesn't use this position), so
+	// GetStyleNodeClaimByNode returns ErrNoRows and bails the whole
+	// Switch / Complete-Station action. Stamp line_cleared (terminal for
+	// drop, per IsNodeTaskStateTerminal) without touching runtime, then
+	// run the station rollup so an all-drop station still completes.
+	changeover, coErr := e.db.GetActiveProcessChangeover(processID)
+	if coErr == nil {
+		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+		if err == nil && nodeTask.Situation == "drop" {
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared"); err != nil {
+				log.Printf("switch_node: update drop task state for task %d: %v", nodeTask.ID, err)
+			}
+			e.rollupStationTaskAfterNodeSwitch(changeover.ID, node)
+			if err := e.tryCompleteProcessChangeover(processID); err != nil {
+				log.Printf("switch_node: complete changeover check for process %d after dropping node %d: %v", processID, nodeID, err)
+			}
+			return nil
+		}
+	}
+
 	claim, err := e.db.GetStyleNodeClaimByNode(*process.TargetStyleID, node.CoreNodeName)
 	if err != nil {
 		return fmt.Errorf("target style claim not found for node")
@@ -240,37 +262,13 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 		}
 	}
 
-	changeover, err := e.db.GetActiveProcessChangeover(processID)
-	if err == nil {
+	if coErr == nil {
 		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 		if err == nil {
 			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "switched"); err != nil {
 				log.Printf("switch_node: update node task state for task %d: %v", nodeTask.ID, err)
 			}
-
-			// If this node belongs to an operator station, update that station task
-			if node.OperatorStationID != nil {
-				stationTask, stErr := e.db.GetChangeoverStationTaskByStation(changeover.ID, *node.OperatorStationID)
-				if stErr == nil {
-					stationNodeTasks, _ := e.db.ListChangeoverNodeTasksByStation(changeover.ID, stationTask.OperatorStationID)
-					allDone := true
-					for _, snt := range stationNodeTasks {
-						if !domain.IsNodeTaskStateTerminal(snt.State, snt.Situation) {
-							allDone = false
-							break
-						}
-					}
-					if allDone {
-						if err := e.db.UpdateChangeoverStationTaskState(stationTask.ID, "switched"); err != nil {
-							log.Printf("switch_node: update station task state (all done) for task %d: %v", stationTask.ID, err)
-						}
-					} else {
-						if err := e.db.UpdateChangeoverStationTaskState(stationTask.ID, "in_progress"); err != nil {
-							log.Printf("switch_node: update station task state (partial) for task %d: %v", stationTask.ID, err)
-						}
-					}
-				}
-			}
+			e.rollupStationTaskAfterNodeSwitch(changeover.ID, node)
 		}
 		if err := e.tryCompleteProcessChangeover(processID); err != nil {
 			log.Printf("switch_node: complete changeover check for process %d after switching node %d: %v", processID, nodeID, err)
@@ -279,6 +277,44 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	return nil
 }
 
+// rollupStationTaskAfterNodeSwitch updates the parent station task state
+// after a per-node switch / drop. Called by both the non-drop "switched"
+// path and the drop "line_cleared" early-return so the station tile
+// reflects partial vs. all-nodes-terminal regardless of which leg
+// finished the last node. No-op for nodes not assigned to a station.
+func (e *Engine) rollupStationTaskAfterNodeSwitch(changeoverID int64, node *processes.Node) {
+	if node.OperatorStationID == nil {
+		return
+	}
+	stationTask, err := e.db.GetChangeoverStationTaskByStation(changeoverID, *node.OperatorStationID)
+	if err != nil {
+		return
+	}
+	stationNodeTasks, _ := e.db.ListChangeoverNodeTasksByStation(changeoverID, stationTask.OperatorStationID)
+	allDone := true
+	for _, snt := range stationNodeTasks {
+		if !domain.IsNodeTaskStateTerminal(snt.State, snt.Situation) {
+			allDone = false
+			break
+		}
+	}
+	newState := "in_progress"
+	if allDone {
+		newState = "switched"
+	}
+	if err := e.db.UpdateChangeoverStationTaskState(stationTask.ID, newState); err != nil {
+		log.Printf("switch_node: update station task state (%s) for task %d: %v", newState, stationTask.ID, err)
+	}
+}
+
+// SwitchOperatorStationToTarget switches every node assigned to a
+// station. Per-node errors are logged and skipped rather than aborting
+// the whole station — pre-fix, a single misconfigured node (most
+// commonly a drop whose target style has no claim, before the drop
+// branch was added above) stranded every other node behind it. The
+// underlying recovery for a stuck node still happens via the per-node
+// HMI, but the station-level "Complete Station" action stops being a
+// hostage to one bad row.
 func (e *Engine) SwitchOperatorStationToTarget(processID, stationID int64) error {
 	nodes, err := e.db.ListProcessNodesByStation(stationID)
 	if err != nil {
@@ -286,7 +322,7 @@ func (e *Engine) SwitchOperatorStationToTarget(processID, stationID int64) error
 	}
 	for _, node := range nodes {
 		if err := e.SwitchNodeToTarget(processID, node.ID); err != nil {
-			return err
+			log.Printf("switch_station: node %d (process %d): %v — continuing", node.ID, processID, err)
 		}
 	}
 	return nil
