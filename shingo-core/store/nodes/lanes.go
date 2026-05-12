@@ -67,7 +67,7 @@ func FindStoreSlotInLane(db *sql.DB, laneID int64) (*Node, error) {
 		  AND NOT EXISTS (
 			SELECT 1 FROM orders o
 			WHERE o.delivery_node = n.name
-			  AND o.status NOT IN ('confirmed', 'failed', 'cancelled')
+			  AND o.status NOT IN ('confirmed', 'failed', 'cancelled', 'skipped')
 		  )
 		ORDER BY COALESCE(n.depth, 0) DESC
 		LIMIT 1`, SelectCols, FromClause), laneID)

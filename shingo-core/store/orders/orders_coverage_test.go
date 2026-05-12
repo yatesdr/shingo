@@ -297,8 +297,37 @@ func TestList_FilterByStatus(t *testing.T) {
 		t.Errorf("active len = %d, want 3", len(active))
 	}
 	for _, o := range active {
-		if o.Status == "confirmed" || o.Status == "failed" || o.Status == "cancelled" {
+		if o.Status == "confirmed" || o.Status == "failed" || o.Status == "cancelled" || o.Status == "skipped" {
 			t.Errorf("ListActive returned terminal status %q", o.Status)
+		}
+	}
+}
+
+// Plant 2026-05-12: order 796 (ALN_002 evac) was terminated via SkipOrderAtomic
+// on the dispatcher's no_source_bin path. Core's dashboard kept showing it as
+// active because ListActive's NOT IN list predated the addition of
+// StatusSkipped to the protocol state machine. Pin the regression.
+func TestListActive_ExcludesSkipped(t *testing.T) {
+	d := testdb.Open(t)
+	db := d.DB
+
+	mk := func(uuid, status string) {
+		o := newPendingOrder(uuid)
+		o.Status = protocol.Status(status)
+		if err := orders.Create(db, o); err != nil {
+			t.Fatalf("Create %s: %v", uuid, err)
+		}
+	}
+	mk("p", "pending")
+	mk("s", "skipped")
+
+	active, err := orders.ListActive(db)
+	if err != nil {
+		t.Fatalf("ListActive: %v", err)
+	}
+	for _, o := range active {
+		if o.Status == "skipped" {
+			t.Errorf("ListActive returned skipped order %s — skipped is terminal", o.EdgeUUID)
 		}
 	}
 }

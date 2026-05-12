@@ -693,7 +693,23 @@ func (m *Manager) HandleSkipped(orderUUID, errorCode, detail string) error {
 	if err != nil {
 		return fmt.Errorf("order %s not found: %w", orderUUID, err)
 	}
-	if err := m.TransitionOrder(order.ID, StatusSkipped, detail); err != nil {
+	// Force-transition rather than validate against the state machine.
+	// Core is authoritative on Skipped: its planner decided the work was
+	// never needed and the order will never dispatch to the fleet. Edge's
+	// local order may have already advanced past the protocol's allowed
+	// "skippable" pre-set (e.g. Acknowledged) due to event-ordering races
+	// between OrderAck and OrderSkipped, leaving the validated transition
+	// rejected and the HMI stuck on Acknowledged while Core shows Skipped
+	// (plant 2026-05-12, ALN_002). The protocol intentionally disallows
+	// Acknowledged→Skipped for Edge-initiated transitions (don't let a
+	// stale client drop in-flight work) but Core-driven skip is an
+	// authority override. Log loudly so we have an audit trail.
+	if order.Status != StatusSkipped && !IsValidTransition(order.Status, StatusSkipped) {
+		log.Printf("orders: core-driven skip overriding local status: uuid=%s old=%s -> skipped detail=%q",
+			order.UUID, order.Status, detail)
+	}
+	m.lifecycle.debug = m.DebugLog
+	if err := m.lifecycle.ForceTransition(order.ID, StatusSkipped, detail); err != nil {
 		return err
 	}
 	task, _, terr := m.db.FindChangeoverNodeTaskByOrderID(order.ID)

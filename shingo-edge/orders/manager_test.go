@@ -127,6 +127,45 @@ func TestRegression_TerminalTransitionIdempotent(t *testing.T) {
 	}
 }
 
+// Plant 2026-05-12 (ALN_002): Core marked the complex order Skipped via
+// SkipOrderAtomic on the no_source_bin path, but Edge's local view had
+// already advanced to Acknowledged by the time the OrderSkipped envelope
+// arrived. Pre-fix, HandleSkipped called TransitionOrder which validated
+// the transition against the protocol state machine — and Acknowledged →
+// Skipped is intentionally disallowed for client-initiated transitions
+// (don't let a stale client drop in-flight work). So Edge stayed at
+// Acknowledged while Core showed Skipped; the HMI faithfully rendered
+// Edge's stuck status. The fix routes HandleSkipped through
+// ForceTransition: Core's planner is authoritative for "the work was
+// never needed" and the local status machine must yield.
+func TestHandleSkipped_OverridesAcknowledged(t *testing.T) {
+	db := testManagerDB(t)
+	mgr := NewManager(db, testEmitter{}, "edge.station")
+
+	orderID, err := db.CreateOrder("uuid-skip-ack", TypeRetrieve, nil, false, 1, "LINE-1", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	// Walk to Acknowledged the way real flow would: pending → submitted →
+	// acknowledged. UpdateOrderStatus bypasses the state machine; that's
+	// fine here — we just need the row at acknowledged when HandleSkipped fires.
+	if err := db.UpdateOrderStatus(orderID, string(StatusAcknowledged)); err != nil {
+		t.Fatalf("set acknowledged: %v", err)
+	}
+
+	if err := mgr.HandleSkipped("uuid-skip-ack", "no_source_bin", "every pickup empty"); err != nil {
+		t.Fatalf("HandleSkipped: %v", err)
+	}
+
+	got, err := db.GetOrder(orderID)
+	if err != nil {
+		t.Fatalf("get order: %v", err)
+	}
+	if got.Status != StatusSkipped {
+		t.Errorf("status = %q, want %q (Core authority must override the state-machine rejection of acknowledged→skipped)", got.Status, StatusSkipped)
+	}
+}
+
 // Verify cancelled→cancelled is also idempotent (Bug 6 — cancel spam)
 func TestRegression_CancelledToCancelledIdempotent(t *testing.T) {
 	db := testManagerDB(t)

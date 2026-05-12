@@ -281,7 +281,7 @@ func ListAnomalies(db *sql.DB) ([]*Anomaly, error) {
 		LEFT JOIN orders o ON o.id = b.claimed_by
 		WHERE b.manifest IS NOT NULL
 		  AND (b.claimed_by IS NULL
-		       OR o.status IN ('confirmed', 'failed', 'cancelled'))
+		       OR o.status IN ('confirmed', 'failed', 'cancelled', 'skipped'))
 		ORDER BY b.id`)
 	if err != nil {
 		return nil, err
@@ -373,7 +373,7 @@ func ReleaseOrphanedClaims(db *sql.DB) (int, error) {
 		WHERE claimed_by IS NOT NULL
 		  AND claimed_by IN (
 		    SELECT id FROM orders
-		    WHERE status IN ('confirmed', 'failed', 'cancelled')
+		    WHERE status IN ('confirmed', 'failed', 'cancelled', 'skipped')
 		  )`)
 	if err != nil {
 		return 0, err

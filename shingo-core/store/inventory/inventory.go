@@ -116,7 +116,7 @@ LEFT JOIN nodes grp ON grp.id = COALESCE(
 )
 LEFT JOIN node_types grp_type ON grp_type.id = grp.node_type_id AND grp_type.code = 'NGRP'
 LEFT JOIN orders o ON o.id = bi.claimed_by
-    AND o.status NOT IN ('confirmed', 'failed', 'cancelled')
+    AND o.status NOT IN ('confirmed', 'failed', 'cancelled', 'skipped')
 ORDER BY group_name, lane_name, COALESCE(n.depth, 0), node_name, bi.bin_label, bi.cat_id
 `
 

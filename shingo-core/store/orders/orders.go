@@ -270,7 +270,7 @@ func ListFiltered(db *sql.DB, f Filter) ([]*Order, error) {
 
 // ListActive returns all orders in non-terminal statuses.
 func ListActive(db *sql.DB) ([]*Order, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN ('confirmed', 'failed', 'cancelled') ORDER BY id DESC`, SelectCols))
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM orders WHERE status NOT IN ('confirmed', 'failed', 'cancelled', 'skipped') ORDER BY id DESC`, SelectCols))
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +316,7 @@ func ListByStation(db *sql.DB, stationID string, limit int) ([]*Order, error) {
 // CountActiveByDeliveryNode counts non-terminal orders targeting a delivery node.
 func CountActiveByDeliveryNode(db *sql.DB, nodeName string) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node=$1 AND status NOT IN ('confirmed','failed','cancelled')`, nodeName).Scan(&count)
+	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node=$1 AND status NOT IN ('confirmed','failed','cancelled','skipped')`, nodeName).Scan(&count)
 	return count, err
 }
 
@@ -390,7 +390,7 @@ func UpdatePayloadCode(db *sql.DB, orderID int64, payloadCode string) error {
 // targeting a delivery node.
 func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed')`, deliveryNode).Scan(&count)
+	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed', 'skipped')`, deliveryNode).Scan(&count)
 	return count, err
 }
 
@@ -401,7 +401,7 @@ func CountInFlightByDeliveryNode(db *sql.DB, deliveryNode string) (int, error) {
 // to count all orders (no exclusion). Phase 4c of bin-transit-state.
 func CountInFlightByDeliveryNodeExcluding(db *sql.DB, deliveryNode string, excludeID int64) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed') AND id != $2`,
+	err := db.QueryRow(`SELECT COUNT(*) FROM orders WHERE delivery_node = $1 AND status NOT IN ('queued', 'confirmed', 'cancelled', 'failed', 'skipped') AND id != $2`,
 		deliveryNode, excludeID).Scan(&count)
 	return count, err
 }
