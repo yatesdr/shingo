@@ -393,6 +393,41 @@ func TestBinService_LoadPayload_AppliesTemplate(t *testing.T) {
 	}
 }
 
+func TestBinService_LoadPayload_RejectsIncompatibleBinType(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	otherBT := &bins.BinType{Code: "OTHER-BT", Description: "non-default test bin type"}
+	if err := db.CreateBinType(otherBT); err != nil {
+		t.Fatalf("create other bin type: %v", err)
+	}
+	if err := db.SetPayloadBinTypes(sd.Payload.ID, []int64{otherBT.ID}); err != nil {
+		t.Fatalf("SetPayloadBinTypes: %v", err)
+	}
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-INCOMPAT", "", 0)
+	err := svc.LoadPayload(bin.ID, sd.Payload.Code, 0)
+	if err == nil {
+		t.Fatal("expected LoadPayload to reject payload not compatible with bin type")
+	}
+	if !strings.Contains(err.Error(), "not compatible") {
+		t.Errorf("error = %q, want 'not compatible'", err.Error())
+	}
+}
+
+func TestBinService_LoadPayload_AllowsWhenAllowlistEmpty(t *testing.T) {
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	// No SetPayloadBinTypes → empty allow-list → unrestricted (advisory semantics).
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-EMPTYCOMPAT", "", 0)
+	if err := svc.LoadPayload(bin.ID, sd.Payload.Code, 0); err != nil {
+		t.Fatalf("LoadPayload with empty compat list should succeed: %v", err)
+	}
+}
+
 func TestBinService_Move_HappyPath(t *testing.T) {
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)

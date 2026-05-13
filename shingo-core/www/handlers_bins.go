@@ -129,19 +129,39 @@ func (h *Handlers) handleBins(w http.ResponseWriter, r *http.Request) {
 		log.Printf("bins page: check bin notes: %v", err)
 	}
 
-	// JSON-encode nodes and payloads for JS consumption
+	// Per-payload bin-type allow-list (keyed by payload code). Empty list = unrestricted,
+	// matching the advisory semantics used by FindSourceFIFO / FindEmptyCompatible.
+	payloadBinTypeIDs := make(map[string][]int64, len(payloads))
+	for _, p := range payloads {
+		btList, btErr := h.engine.PayloadService().ListBinTypes(p.ID)
+		if btErr != nil {
+			log.Printf("bins page: list bin types for payload %d: %v", p.ID, btErr)
+			continue
+		}
+		ids := make([]int64, len(btList))
+		for i, bt := range btList {
+			ids[i] = bt.ID
+		}
+		payloadBinTypeIDs[p.Code] = ids
+	}
+
+	// JSON-encode nodes, payloads, bin types, and compat map for JS consumption
 	nodesJSON, _ := json.Marshal(nodes)
 	payloadsJSON, _ := json.Marshal(payloads)
+	binTypesJSON, _ := json.Marshal(binTypes)
+	payloadBinTypesJSON, _ := json.Marshal(payloadBinTypeIDs)
 
 	data := map[string]any{
-		"Page":        "bins",
-		"Bins":        bins,
-		"BinTypes":    binTypes,
-		"Nodes":       nodes,
-		"Payloads":    payloads,
-		"BinHasNotes": binHasNotes,
-		"NodesJSON":   template.JS(nodesJSON),
-		"PayloadsJSON": template.JS(payloadsJSON),
+		"Page":                "bins",
+		"Bins":                bins,
+		"BinTypes":            binTypes,
+		"Nodes":               nodes,
+		"Payloads":            payloads,
+		"BinHasNotes":         binHasNotes,
+		"NodesJSON":           template.JS(nodesJSON),
+		"PayloadsJSON":        template.JS(payloadsJSON),
+		"BinTypesJSON":        template.JS(binTypesJSON),
+		"PayloadBinTypesJSON": template.JS(payloadBinTypesJSON),
 	}
 	h.render(w, r, "bins.html", data)
 }

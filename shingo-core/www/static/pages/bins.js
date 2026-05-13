@@ -120,11 +120,15 @@ function renderContents(data) {
   if (PAGE_AUTH) {
     html += '<hr style="margin:1rem 0;border:none;border-top:1px solid var(--border)">';
 
-    // Load Payload
+    // Load Payload — filter to payloads whose bin-type allow-list is empty
+    // (unrestricted) or includes this bin's type. Mirrors backend advisory
+    // enforcement in BinService.LoadPayload.
     html += '<div class="action-group"><h4>Load Payload</h4>';
     html += '<div class="inline-form">';
     html += '<div class="form-group"><label>Payload</label><select id="bd-load-payload" style="width:200px"><option value="">-- Select --</option>';
     (PAGE_PAYLOADS || []).forEach(function(p) {
+      var allowed = (PAGE_PAYLOAD_BIN_TYPES || {})[p.code];
+      if (allowed && allowed.length > 0 && allowed.indexOf(b.bin_type_id) === -1) return;
       html += '<option value="' + esc(p.code) + '">' + esc(p.code) + '</option>';
     });
     html += '</select></div>';
@@ -210,6 +214,12 @@ function renderActions(data) {
   html += '<div class="inline-form">';
   html += '<div class="form-group"><label>Label</label><input type="text" id="bd-edit-label" value="' + esc(b.label) + '" style="width:150px"></div>';
   html += '<div class="form-group"><label>Description</label><input type="text" id="bd-edit-desc" value="' + esc(b.description || '') + '" style="width:200px"></div>';
+  html += '<div class="form-group"><label>Bin Type</label><select id="bd-edit-bin-type" style="width:160px">';
+  (PAGE_BIN_TYPES || []).forEach(function(bt) {
+    var sel = (bt.id === b.bin_type_id) ? ' selected' : '';
+    html += '<option value="' + bt.id + '"' + sel + '>' + esc(bt.code) + '</option>';
+  });
+  html += '</select></div>';
   html += '<button class="btn btn-sm" onclick="updateBinProps()">Save</button>';
   html += '</div></div>';
 
@@ -330,7 +340,10 @@ function recordCount() {
 function updateBinProps() {
   var label = document.getElementById('bd-edit-label').value.trim();
   var desc = document.getElementById('bd-edit-desc').value.trim();
-  doBinAction('update', { label: label, description: desc });
+  var binTypeID = parseInt(document.getElementById('bd-edit-bin-type').value, 10);
+  var params = { label: label, description: desc };
+  if (binTypeID) params.bin_type_id = binTypeID;
+  doBinAction('update', params);
 }
 
 function doQualityHold() {

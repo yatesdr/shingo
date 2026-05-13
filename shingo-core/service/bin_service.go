@@ -147,16 +147,46 @@ func (s *BinService) Unlock(binID int64) error {
 
 // --- Payload loading ------------------------------------------------------
 
-// LoadPayload validates that the payload code exists and sets the bin's
+// LoadPayload validates that the payload code exists, that the payload's
+// bin-type allow-list (if any) admits this bin's type, and sets the bin's
 // manifest from the payload template. uopOverride of 0 uses the template's
 // UOP capacity. Item 19: routes through BinManifestService.SetFromTemplate
 // so the operator load-payload action audits via bin_uop_audit.
+//
+// Compat semantics mirror PayloadBinTypeAdvisoryClause used by FindSourceFIFO
+// / FindEmptyCompatible: payload_bin_types is treated as an allow-list when
+// populated, ignored when empty.
 func (s *BinService) LoadPayload(binID int64, payloadCode string, uopOverride int) error {
 	if payloadCode == "" {
 		return fmt.Errorf("payload_code is required")
 	}
-	if _, err := s.db.GetPayloadByCode(payloadCode); err != nil {
+	p, err := s.db.GetPayloadByCode(payloadCode)
+	if err != nil {
 		return fmt.Errorf("payload template %q not found", payloadCode)
+	}
+	b, err := s.db.GetBin(binID)
+	if err != nil {
+		return fmt.Errorf("bin not found")
+	}
+	compat, err := s.db.ListBinTypesForPayload(p.ID)
+	if err != nil {
+		return fmt.Errorf("check payload bin-type compat: %w", err)
+	}
+	if len(compat) > 0 {
+		ok := false
+		for _, bt := range compat {
+			if bt.ID == b.BinTypeID {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			codes := make([]string, len(compat))
+			for i, bt := range compat {
+				codes[i] = bt.Code
+			}
+			return fmt.Errorf("payload %q not compatible with bin type %q (allowed: %v)", payloadCode, b.BinTypeCode, codes)
+		}
 	}
 	return s.manifest.SetFromTemplate(binID, payloadCode, uopOverride)
 }
