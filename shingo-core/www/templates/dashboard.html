@@ -60,7 +60,7 @@
           <th>ID</th>
           <th>Station</th>
           <th>Type</th>
-          <th>Payload Type</th>
+          <th>Payload</th>
           <th>Status</th>
           <th>Robot</th>
           <th>Created</th>
@@ -72,7 +72,11 @@
           <td><a href="/orders/detail?id={{.ID}}">{{.ID}}</a></td>
           <td>{{.StationID}}</td>
           <td>{{.OrderType}}</td>
-          <td>{{.PayloadDesc}}</td>
+          <td>
+            {{if .PayloadCode}}<code>{{.PayloadCode}}</code>{{end}}
+            {{if .PayloadDesc}}<div class="text-muted" style="font-size:0.8rem">{{.PayloadDesc}}</div>{{end}}
+            {{if and (not .PayloadCode) (not .PayloadDesc)}}<span class="text-muted">-</span>{{end}}
+          </td>
           <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
           <td>{{.RobotID}}</td>
           <td>{{formatTime .CreatedAt}}</td>
