@@ -86,6 +86,7 @@ func newPlanningService(db *store.DB, resolver NodeResolver, laneLock *LaneLock,
 		handlers:        make(map[protocol.OrderType]PlanningHandler),
 	}
 	s.Register(OrderTypeRetrieve, s.planRetrieve)
+	s.Register(OrderTypeRetrieveEmpty, s.planRetrieveEmpty)
 	s.Register(OrderTypeMove, s.planMove)
 	s.Register(OrderTypeStore, s.planStore)
 	return s
@@ -148,10 +149,6 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 
 	if err := s.lifecycle.MoveToSourcing(order, "planner", "finding source"); err != nil {
 		log.Printf("dispatch: planRetrieve order %d → sourcing: %v", order.ID, err)
-	}
-
-	if order.PayloadDesc == "retrieve_empty" {
-		return s.planRetrieveEmpty(order, payloadCode)
 	}
 
 	var source *bins.Bin
@@ -230,7 +227,25 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }
 
-func (s *PlanningService) planRetrieveEmpty(order *orders.Order, payloadCode string) (*PlanningResult, *planningError) {
+// planRetrieveEmpty is registered against OrderTypeRetrieveEmpty. The env
+// parameter is part of the PlanningHandler contract and is unused here —
+// retrieve_empty has no envelope fields beyond what's already on the order.
+func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
+	// Same prelude as planRetrieve: dropoff-capacity gate + sourcing transition.
+	// Used to ride on planRetrieve's prelude when retrieve_empty was a payload_desc
+	// sniff; now that it's registered as its own handler it needs its own.
+	if blocked, reason := CheckDropoffCapacity(s.db, order.DeliveryNode, order.ID); blocked {
+		s.dbg("retrieve_empty: order %d queued — %s", order.ID, reason)
+		if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
+			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, err)
+		}
+		return &PlanningResult{Queued: true}, nil
+	}
+
+	if err := s.lifecycle.MoveToSourcing(order, "planner", "finding source"); err != nil {
+		log.Printf("dispatch: planRetrieveEmpty order %d → sourcing: %v", order.ID, err)
+	}
+
 	var preferZone string
 	var excludeNodeID int64
 	if order.DeliveryNode != "" {

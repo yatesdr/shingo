@@ -137,11 +137,12 @@ const (
 type OrderType string
 
 const (
-	OrderTypeRetrieve OrderType = "retrieve" // pull a payload from a source to a destination
-	OrderTypeStore    OrderType = "store"    // push a payload from a node to storage
-	OrderTypeMove     OrderType = "move"     // generic move; no manifest semantics
-	OrderTypeComplex  OrderType = "complex"  // multi-step order composed of sub-steps
-	OrderTypeIngest   OrderType = "ingest"   // edge-only: produce node ingests a finished bin
+	OrderTypeRetrieve      OrderType = "retrieve"       // pull a loaded bin matching a payload to a destination
+	OrderTypeRetrieveEmpty OrderType = "retrieve_empty" // pull an empty bin compatible with a payload to a destination
+	OrderTypeStore         OrderType = "store"          // push a payload from a node to storage
+	OrderTypeMove          OrderType = "move"           // generic move; no manifest semantics
+	OrderTypeComplex       OrderType = "complex"        // multi-step order composed of sub-steps
+	OrderTypeIngest        OrderType = "ingest"         // edge-only: produce node ingests a finished bin
 )
 
 // StationBroadcast is the wildcard station value that matches all edge instances.

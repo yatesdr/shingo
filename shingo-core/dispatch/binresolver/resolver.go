@@ -54,7 +54,11 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType protocol.
 	if syntheticNode.NodeTypeCode == "NGRP" {
 		gr := &GroupResolver{DB: r.DB, LaneLock: r.LaneLock, DebugLog: r.DebugLog}
 		switch orderType {
-		case protocol.OrderTypeRetrieve:
+		// OrderTypeRetrieveEmpty currently flows through FindEmptyCompatibleBin in
+		// the planner and doesn't reach the resolver, but accept it here as
+		// insurance — if a future path does land here, it should resolve the same
+		// way as a regular retrieve.
+		case protocol.OrderTypeRetrieve, protocol.OrderTypeRetrieveEmpty:
 			return gr.ResolveRetrieve(syntheticNode, payloadCode)
 		case protocol.OrderTypeStore:
 			return gr.ResolveStore(syntheticNode, payloadCode, binTypeID)
@@ -62,7 +66,7 @@ func (r *DefaultResolver) Resolve(syntheticNode *nodes.Node, orderType protocol.
 	}
 
 	switch orderType {
-	case protocol.OrderTypeRetrieve:
+	case protocol.OrderTypeRetrieve, protocol.OrderTypeRetrieveEmpty:
 		node, err := r.resolveRetrieve(children, payloadCode)
 		if err != nil {
 			return nil, err

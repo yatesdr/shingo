@@ -309,13 +309,12 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 	emptyOrder := &orders.Order{
 		EdgeUUID:     "lss-retrieve-empty",
 		StationID:    "line-1",
-		OrderType:    dispatch.OrderTypeRetrieve,
+		OrderType:    dispatch.OrderTypeRetrieveEmpty,
 		Status:       "delivered",
 		SourceNode:   sd.StorageNode.Name,
 		DeliveryNode: sd.LineNode.Name,
 		BinID:        &binEmpty.ID,
 		PayloadCode:  sd.Payload.Code,
-		PayloadDesc:  "retrieve_empty",
 	}
 	if err := db.CreateOrder(emptyOrder); err != nil {
 		t.Fatalf("create empty order: %v", err)

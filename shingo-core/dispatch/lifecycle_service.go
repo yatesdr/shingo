@@ -57,20 +57,24 @@ func (s *LifecycleService) dbg(format string, args ...any) {
 
 func (s *LifecycleService) CreateInboundOrder(stationID string, p *protocol.OrderRequest) (*orders.Order, string, *lifecycleError) {
 	payloadCode := p.PayloadCode
-	payloadDesc := p.PayloadDesc
+	// Wire-protocol normalization: edge may send OrderTypeRetrieve + RetrieveEmpty=true.
+	// Promote that pair to the canonical OrderTypeRetrieveEmpty so downstream code
+	// dispatches on a single field. Preserves p.PayloadDesc as the operator's note;
+	// it used to be clobbered with the literal string "retrieve_empty" here.
+	orderType := p.OrderType
 	if p.RetrieveEmpty && p.OrderType == OrderTypeRetrieve {
-		payloadDesc = "retrieve_empty"
+		orderType = OrderTypeRetrieveEmpty
 	}
 	order := &orders.Order{
 		EdgeUUID:     p.OrderUUID,
 		StationID:    stationID,
-		OrderType:    p.OrderType,
+		OrderType:    orderType,
 		Status:       StatusPending,
 		Quantity:     p.Quantity,
 		SourceNode:   p.SourceNode,
 		DeliveryNode: p.DeliveryNode,
 		Priority:     p.Priority,
-		PayloadDesc:  payloadDesc,
+		PayloadDesc:  p.PayloadDesc,
 		PayloadCode:  payloadCode,
  		SkipAutoConfirm: p.SkipAutoConfirm,
 	}

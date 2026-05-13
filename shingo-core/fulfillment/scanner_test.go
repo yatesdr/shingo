@@ -222,7 +222,7 @@ func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
 func TestScanner_TryFulfill_RetrieveEmpty_NoBinAvailable_UsesDestZone(t *testing.T) {
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 5, "dest-05")
-	order.PayloadDesc = "retrieve_empty"
+	order.OrderType = protocol.OrderTypeRetrieveEmpty
 	// delivery node has Zone="ZONE-A" already — preferZone should
 	// derive from it.
 	f.errFindEmptyBin = errors.New("no empties available")

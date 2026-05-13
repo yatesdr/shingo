@@ -177,6 +177,7 @@ func (db *DB) runVersionedMigrations() error {
 		}},
  		{18, "add skip_auto_confirm column to orders", v18OrderSkipAutoConfirm,
  			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "skip_auto_confirm") }},
+		{19, "promote retrieve_empty from payload_desc magic string to OrderType", v19PromoteRetrieveEmptyOrderType, nil},
 	}
 
 	for _, m := range migrations {
@@ -320,6 +321,24 @@ func v4DropOrderPayloadID(tx *sql.Tx) error {
 // L1/U1 orders can opt out of Core's reconciliation auto-confirm sweep.
 func v18OrderSkipAutoConfirm(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE orders ADD COLUMN IF NOT EXISTS skip_auto_confirm BOOLEAN NOT NULL DEFAULT false`)
+	return err
+}
+
+// v19PromoteRetrieveEmptyOrderType moves the retrieve_empty signal off the
+// payload_desc free-text field and onto a first-class OrderType value. Before
+// this migration, retrieve_empty orders had order_type='retrieve' and
+// payload_desc='retrieve_empty' (a magic string sniffed by planner + scanner).
+// After: order_type='retrieve_empty' and payload_desc cleared on those rows
+// so the column reverts to its single purpose (operator-supplied note).
+//
+// Historical rows in mission_telemetry and other denormalized order_type
+// columns are intentionally NOT backfilled — telemetry is read-only stats
+// and the inconsistency doesn't affect behavior. New rows written post-
+// migration will carry the correct OrderType going forward. See
+// SHINGO_TODO.md "Refactor: collapse single-bin OrderTypes" for the larger
+// follow-up that would obviate this column entirely.
+func v19PromoteRetrieveEmptyOrderType(tx *sql.Tx) error {
+	_, err := tx.Exec(`UPDATE orders SET order_type = 'retrieve_empty', payload_desc = '' WHERE payload_desc = 'retrieve_empty' AND order_type = 'retrieve'`)
 	return err
 }
 

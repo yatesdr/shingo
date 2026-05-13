@@ -52,7 +52,11 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 		if err != nil {
 			return "", fmt.Errorf("node %q not found", step.Node)
 		}
-		// Auto-detect group nodes and resolve to a concrete slot
+		// Auto-detect group nodes and resolve to a concrete slot.
+		// Pickup steps are always resolved as OrderTypeRetrieve — complex orders
+		// don't currently model retrieve_empty sub-steps (retrieve_empty arises
+		// only as a top-level changeover concept on shingo-edge). If that changes,
+		// step.Action would need to carry the empty-vs-full distinction.
 		if node.IsSynthetic && node.NodeTypeCode == "NGRP" && d.resolver != nil {
 			orderType := OrderTypeRetrieve
 			if step.Action == "dropoff" {

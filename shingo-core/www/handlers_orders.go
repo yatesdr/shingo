@@ -244,33 +244,31 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Transport types: move, retrieve, retrieve_empty, store
-	actualType := req.OrderType
-	retrieveEmpty := false
-	if req.OrderType == "retrieve_empty" {
-		actualType = "retrieve"
-		retrieveEmpty = true
-	}
+	// Transport types: move, retrieve, retrieve_empty, store. retrieve_empty
+	// is now a first-class OrderType — pass it through as-is. (Pre-cleanup
+	// this site translated retrieve_empty → retrieve + RetrieveEmpty bool;
+	// lifecycle_service still normalizes the bool form for old edge callers,
+	// but core's own forms emit the typed value directly.)
+	orderType := protocol.OrderType(req.OrderType)
 
 	// Batch retrieve: create N independent orders
 	if req.Quantity > 20 {
 		req.Quantity = 20
 	}
-	if req.Quantity > 1 && (req.OrderType == "retrieve" || req.OrderType == "retrieve_empty") {
+	if req.Quantity > 1 && (orderType == protocol.OrderTypeRetrieve || orderType == protocol.OrderTypeRetrieveEmpty) {
 		var firstOrderID int64
 		var firstStatus string
 		for i := 1; i <= req.Quantity; i++ {
 			batchUUID := fmt.Sprintf("%s-%d", orderUUID, i)
 			orderReq := &protocol.OrderRequest{
-				OrderUUID:     batchUUID,
-				OrderType:     protocol.OrderType(actualType),
-				PayloadCode: req.PayloadCode,
-				PayloadDesc:   req.Description,
-				Quantity:      1,
-				SourceNode:    req.SourceNode,
-				DeliveryNode:  req.DeliveryNode,
-				Priority:      req.Priority,
-				RetrieveEmpty: retrieveEmpty,
+				OrderUUID:    batchUUID,
+				OrderType:    orderType,
+				PayloadCode:  req.PayloadCode,
+				PayloadDesc:  req.Description,
+				Quantity:     1,
+				SourceNode:   req.SourceNode,
+				DeliveryNode: req.DeliveryNode,
+				Priority:     req.Priority,
 			}
 			env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, orderReq)
 			if err != nil {
@@ -294,15 +292,14 @@ func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orderReq := &protocol.OrderRequest{
-		OrderUUID:     orderUUID,
-		OrderType:     protocol.OrderType(actualType),
-		PayloadCode: req.PayloadCode,
-		PayloadDesc:   req.Description,
-		Quantity:      1,
-		SourceNode:    req.SourceNode,
-		DeliveryNode:  req.DeliveryNode,
-		Priority:      req.Priority,
-		RetrieveEmpty: retrieveEmpty,
+		OrderUUID:    orderUUID,
+		OrderType:    orderType,
+		PayloadCode:  req.PayloadCode,
+		PayloadDesc:  req.Description,
+		Quantity:     1,
+		SourceNode:   req.SourceNode,
+		DeliveryNode: req.DeliveryNode,
+		Priority:     req.Priority,
 	}
 
 	env, err := protocol.NewEnvelope(protocol.TypeOrderRequest, src, dst, orderReq)

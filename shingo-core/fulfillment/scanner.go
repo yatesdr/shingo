@@ -229,7 +229,7 @@ func (s *Scanner) tryFulfill(order *orders.Order) bool {
 	var bin *bins.Bin
 	var sourceNode *nodes.Node
 
-	if order.PayloadDesc == "retrieve_empty" {
+	if order.OrderType == protocol.OrderTypeRetrieveEmpty {
 		// Empty bin retrieval
 		var preferZone string
 		var excludeNodeID int64
