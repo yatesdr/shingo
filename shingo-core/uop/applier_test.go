@@ -1,6 +1,6 @@
 //go:build docker
 
-package uop
+package uop_test
 
 import (
 	"errors"
@@ -10,7 +10,9 @@ import (
 	"shingo/protocol"
 
 	"shingocore/internal/testdb"
+	"shingocore/service"
 	"shingocore/store/audit"
+	"shingocore/uop"
 )
 
 func makeBinDelta(binID int64, payloadCode string, delta int, seq int64, reason protocol.BinUOPDeltaReason) *protocol.BinUOPDelta {
@@ -49,7 +51,7 @@ func makeBucketDelta(nodeID int64, pairKey string, styleID int64, partNumber str
 func TestInventoryDelta_BinUOPDelta_AppliesToAuthoritative(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-1", "PART-A", 100)
 
@@ -77,7 +79,7 @@ func TestInventoryDelta_BinUOPDelta_AppliesToAuthoritative(t *testing.T) {
 func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-DUP", "PART-A", 100)
 
@@ -86,12 +88,12 @@ func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 		t.Fatalf("apply first time: %v", err)
 	}
 	// Replay the exact same envelope.
-	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, ErrInventoryDeltaSkipped) {
-		t.Errorf("replay error = %v, want ErrInventoryDeltaSkipped", err)
+	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 	// And a re-replay just to be sure the second skip didn't advance state.
-	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, ErrInventoryDeltaSkipped) {
-		t.Errorf("third replay error = %v, want ErrInventoryDeltaSkipped", err)
+	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+		t.Errorf("third replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 
 	var got int
@@ -112,15 +114,15 @@ func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 func TestInventoryDelta_BinUOPDelta_OutOfOrderRejectsLowerSeq(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-ORD", "PART-A", 100)
 
 	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -5, 10, protocol.ReasonConsumeTick)); err != nil {
 		t.Fatalf("apply seq=10: %v", err)
 	}
-	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -7, 5, protocol.ReasonConsumeTick)); !errors.Is(err, ErrInventoryDeltaSkipped) {
-		t.Errorf("seq=5 (older) error = %v, want ErrInventoryDeltaSkipped", err)
+	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -7, 5, protocol.ReasonConsumeTick)); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+		t.Errorf("seq=5 (older) error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 
 	var got int
@@ -138,7 +140,7 @@ func TestInventoryDelta_BinUOPDelta_OutOfOrderRejectsLowerSeq(t *testing.T) {
 func TestInventoryDelta_BinUOPDelta_RejectsMismatchedPayload(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-MIS", "PART-A", 100)
 
@@ -161,7 +163,7 @@ func TestInventoryDelta_BinUOPDelta_RejectsMismatchedPayload(t *testing.T) {
 func TestInventoryDelta_BinUOPDelta_RejectsUnknownBin(t *testing.T) {
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	if err := svc.ApplyBinUOPDelta(makeBinDelta(999999999, "PART-A", -1, 1, protocol.ReasonConsumeTick)); err == nil {
 		t.Fatal("expected unknown-bin error, got nil")
@@ -175,7 +177,7 @@ func TestInventoryDelta_BinUOPDelta_RejectsUnknownBin(t *testing.T) {
 func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T) {
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(5, "L1|U1", 100, "PART-A", 47, 1, protocol.ReasonCaptureFill)); err != nil {
 		t.Fatalf("capture_fill: %v", err)
@@ -211,7 +213,7 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(7, "L2|U2", 200, "PART-B", 5, 1, protocol.ReasonCaptureFill)); err != nil {
 		t.Fatalf("capture_fill: %v", err)
@@ -236,14 +238,14 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	d := makeBucketDelta(8, "L1|U1", 300, "PART-C", 10, 1, protocol.ReasonCaptureFill)
 	if err := svc.ApplyLinesideBucketDelta(d); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
-	if err := svc.ApplyLinesideBucketDelta(d); !errors.Is(err, ErrInventoryDeltaSkipped) {
-		t.Errorf("replay error = %v, want ErrInventoryDeltaSkipped", err)
+	if err := svc.ApplyLinesideBucketDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
+		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
 
 	var qty int
@@ -262,7 +264,7 @@ func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(9, "L1|U1", 400, "PART-D", 5, 1, protocol.ReasonCaptureFill)); err != nil {
 		t.Fatalf("part D apply: %v", err)
@@ -292,7 +294,7 @@ func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
 func TestInventoryDelta_ListBinUOPForNodes_ReturnsAuthoritative(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-RECONC", "PART-R", 100)
 	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-R", -7, 1, protocol.ReasonConsumeTick)); err != nil {
@@ -322,7 +324,7 @@ func TestInventoryDelta_ListBinUOPForNodes_ReturnsAuthoritative(t *testing.T) {
 func TestInventoryDelta_ListBucketsForStation_FiltersByStation(t *testing.T) {
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	apply := func(d *protocol.LinesideBucketDelta) {
 		if err := svc.ApplyLinesideBucketDelta(d); err != nil {
@@ -364,7 +366,7 @@ func TestInventoryDelta_ListBucketsForStation_FiltersByStation(t *testing.T) {
 func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-CAP-CLEAR", "PART-CC", 25)
 
@@ -414,7 +416,7 @@ func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T)
 func TestApplyBinUOPDelta_ConsumeTickToZeroDoesNotFireClearForReuse(t *testing.T) {
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
-	svc := NewInventoryDeltaService(db, NewBinManifestService(db))
+	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TICK-NOCLR", "PART-TNC", 5)
 
