@@ -30,6 +30,7 @@ import (
 	"shingoedge/service"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
+	"shingoedge/uop"
 )
 
 // ── Types & struct ──────────────────────────────────────────────────
@@ -40,25 +41,20 @@ type LogFunc func(format string, args ...any)
 // DebugLogFunc is a nil-safe debug logging function.
 type DebugLogFunc = types.DebugLogFunc
 
-// InventoryDeltaSink is the engine's view of the Phase 1
-// InventoryDeltaReporter (shingoedge/messaging). Kept as an interface
-// so engine doesn't import shingoedge/messaging — cycle-safe wiring
-// is the composition root's job (cmd/shingoedge/main.go).
+// InventoryDeltaSink is the engine's view of the UOP mutator
+// (shingoedge/uop.Mutator). Now aliased to uop.Sink which composes
+// the segregated sub-interfaces (Ticker, SlotWriter, Capturer,
+// Pickup, Boundary, Backfiller) plus the legacy four-method shim.
+//
+// Engine functions that only consume one slice (e.g., the PLC tick
+// path) can take a uop.Ticker parameter directly rather than the
+// full Sink. Test fakes can satisfy a single sub-interface when they
+// only exercise one concern.
 //
 // nil-safe: callers in the PLC tick path and the release path guard
-// every Record* call with a nil check on Engine.inventoryDelta so
+// every verb call with a nil check on Engine.inventoryDelta so
 // tests / off-modes can leave the field unset.
-type InventoryDeltaSink interface {
-	RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason)
-	RecordBucket(nodeID int64, pairKey string, styleID int64, partNumber string, delta int, reason protocol.LinesideBucketDeltaReason)
-	Flush()
-
-	// FlushFailures returns the cumulative count of EnqueueOutbox
-	// failures across the bin and bucket flush paths. Surfaces via
-	// engine metrics for outbox-health dashboards — sustained growth
-	// means the bus is wedged and bin-level state will diverge.
-	FlushFailures() int64
-}
+type InventoryDeltaSink = uop.Sink
 
 // Engine centralizes all business logic and orchestrates subsystems.
 type Engine struct {

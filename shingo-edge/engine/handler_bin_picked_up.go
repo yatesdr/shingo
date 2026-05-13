@@ -24,15 +24,19 @@
 //
 // SME-accepted small bias: if Edge crashes during the pickup window,
 // a tick or two recorded after the physical pickup but before the
-// flush may attribute to a bin that's no longer at the slot. The
-// reconciler heals the count within the next 60s pass.
+// flush may attribute to a bin that's no longer at the slot. Post-flip
+// (commit 6d226d1) no reconciler exists to heal this; the miscount is
+// bounded by the pickup-to-restart window and surfaces via
+// FlushFailures if it ever causes a Core-side delta rejection.
 package engine
 
 import "shingoedge/domain"
 
 // HandleBinPickedUp processes a Core BinPickedUp notification.
 // Best-effort — failures log and continue rather than rejecting the
-// envelope; the reconciler heals any miscount on the next pass.
+// envelope. Post-flip there is no reconciler to heal silent failures;
+// the FlushFailures gauge is the operational signal if attribution
+// goes wrong.
 func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
 	order, err := e.db.GetOrderByUUID(orderUUID)
 	if err != nil || order == nil {
@@ -101,7 +105,9 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
 	// active claim advances or the runtime clears, otherwise
 	// post-flush ticks attribute against a bin that's no longer at
 	// the slot.
-	e.inventoryDelta.Flush()
+	if err := e.inventoryDelta.OnBinPickedUp(order.ProcessNodeID); err != nil {
+		e.logFn("bin_picked_up: flush failed: %v", err)
+	}
 
 	// Advance: clear the runtime's ActiveOrderID for whichever node
 	// the order was tied to so the next tick attribution lands cleanly
@@ -123,8 +129,10 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
 			// PLC ticks during the gap before the next delivery don't
 			// attribute to a bin that's no longer here. Symmetric with
 			// the order-pointer clear above; same race guard applies.
-			if err := e.db.SetProcessNodeActiveBinID(*order.ProcessNodeID, nil); err != nil {
-				e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
+			if e.inventoryDelta != nil {
+				if err := e.inventoryDelta.ClearActiveBin(*order.ProcessNodeID); err != nil {
+					e.logFn("bin_picked_up: clear active bin node=%d: %v", *order.ProcessNodeID, err)
+				}
 			}
 		}
 	}

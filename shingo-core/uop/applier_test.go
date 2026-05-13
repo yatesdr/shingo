@@ -1,6 +1,6 @@
 //go:build docker
 
-package service
+package uop
 
 import (
 	"errors"

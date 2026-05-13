@@ -94,9 +94,9 @@ func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail str
 	}
 	// Capture Core's bin id at delivery so the PLC tick path can
 	// attribute deltas to the right bin. Nil for multi-bin orders /
-	// older Core builds. The runtime cache (reconciler-healed from
-	// Core) is the source of truth for bin UOP at completion time;
-	// the OrderDelivered envelope no longer carries a UOP snapshot.
+	// older Core builds. Post-flip (6d226d1) Edge's runtime cache is
+	// authoritative for at-node bin UOP; the OrderDelivered envelope
+	// no longer carries a UOP snapshot.
 	if binID != nil {
 		if err := s.db.UpdateOrderBinID(order.ID, binID); err != nil {
 			log.Printf("update order bin_id: %v", err)

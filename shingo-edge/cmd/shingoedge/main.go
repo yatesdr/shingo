@@ -40,6 +40,7 @@ import (
 	"shingoedge/engine"
 	"shingoedge/messaging"
 	"shingoedge/store"
+	"shingoedge/uop"
 	"shingoedge/www"
 )
 
@@ -375,18 +376,20 @@ func main() {
 	reporter.Start()
 	defer reporter.Stop()
 
-	// ── Inventory delta reporter ───────────────────────────────────────
+	// ── UOP mutator (Phase 1: accumulator wrapper) ─────────────────────
 	// Accumulates per-bin / per-bucket UOP changes from the PLC tick
 	// path and the operator release path; flushes through the same
 	// outbox as the production reporter on a 5s cadence plus the
 	// release-click / loader-confirm / A/B-flip flush triggers. Core
 	// applies the deltas authoritatively to bins.uop_remaining /
-	// lineside_buckets via InventoryDeltaService.
-	invReporter := messaging.NewInventoryDeltaReporter(db, stationID)
-	invReporter.DebugLog = messaging.DebugLogFunc(dbg.Func("inventory_delta"))
-	eng.SetInventoryDeltaSink(invReporter)
-	invReporter.Start()
-	defer invReporter.Stop()
+	// lineside_buckets via InventoryDeltaService. Phase 3 will grow
+	// this Mutator with intent verbs (Consumed, Produced, CaptureToLineside,
+	// etc.) — wiring here does not change.
+	uopMutator := uop.New(db, stationID, db, db, db)
+	uopMutator.SetDebugLog(uop.DebugLogFunc(dbg.Func("inventory_delta")))
+	eng.SetInventoryDeltaSink(uopMutator)
+	uopMutator.Start()
+	defer uopMutator.Stop()
 
 	// ── Count-group handler (advanced-zone light alerts) ────────────────
 	// Constructed before Kafka connect so the heartbeat writer can start

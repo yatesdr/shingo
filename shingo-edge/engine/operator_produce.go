@@ -148,8 +148,10 @@ func (e *Engine) dispatchComplexLeg(nodeID int64, quantity int64, steps []protoc
 // here would leave the caller with no actionable recovery.
 func (e *Engine) resetProduceRuntime(nodeID int64, runtime *processes.RuntimeState, activeID, stagedID *int64) {
 	_ = runtime // kept for parity with consume call site shape; cache write doesn't need claim id
-	if err := e.db.SetProcessNodeCachedBin(nodeID, nil, 0); err != nil {
-		log.Printf("produce: set runtime cache for node %d: %v", nodeID, err)
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.ClearCache(nodeID); err != nil {
+			log.Printf("produce: set runtime cache for node %d: %v", nodeID, err)
+		}
 	}
 	if err := e.db.UpdateProcessNodeRuntimeOrders(nodeID, activeID, stagedID); err != nil {
 		log.Printf("produce: update runtime orders for node %d: %v", nodeID, err)

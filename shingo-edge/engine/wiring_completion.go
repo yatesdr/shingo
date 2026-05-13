@@ -146,8 +146,10 @@ func (e *Engine) handleStagedDelivery(ctx *orderCompletionCtx) bool {
 		return false
 	}
 	claimID := toClaim.ID
-	if err := e.db.SetProcessNodeRuntime(ctx.node.ID, &claimID, ctx.runtime.RemainingUOPCached); err != nil {
-		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.SetClaimAndCount(ctx.node.ID, &claimID, ctx.runtime.RemainingUOPCached); err != nil {
+			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+		}
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "staged"); err != nil {
 		log.Printf("update node task %d to staged: %v", ctx.nodeTask.ID, err)
@@ -178,8 +180,10 @@ func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
 	// Manual path or drop: simple move order — only evacuation done, line cleared.
 	// Bin physically left the slot; clear active_bin_id so subsequent
 	// PLC ticks don't attribute to a bin that's no longer here.
-	if err := e.db.SetProcessNodeRuntimeWithBin(ctx.node.ID, ctx.runtime.ActiveClaimID, nil, 0); err != nil {
-		log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.ClearActiveAndReset(ctx.node.ID, ctx.runtime.ActiveClaimID); err != nil {
+			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+		}
 	}
 	// Drop tasks without the evacuate marker were stamped terminal
 	// (line_cleared) at plan time — the cutover never depended on this
@@ -266,8 +270,9 @@ func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool 
 // cutover wait. Its terminal step is the ACTIVE-side dropoff: by then,
 // both physical positions (CoreNodeName and PairedCoreNode) hold new
 // bins, so reset BOTH runtime rows' UOP — otherwise the paired-side
-// runtime cache lies with the old style's UOP value until the
-// reconciler heals (~60s).
+// runtime cache would lie with the old style's UOP value indefinitely.
+// Post-flip (6d226d1) Edge is authoritative for at-node bins; no
+// reconciler exists to heal a stale cache.
 func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 	if ctx.nodeTask == nil || ctx.nodeTask.NextMaterialOrderID == nil || *ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
 		return false

@@ -106,6 +106,14 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 	eng.hourlyTracker = NewHourlyTracker(db, "")
 	eng.stationService = service.NewStationService(db)
 	eng.changeoverService = service.NewChangeoverService(db)
+	// Phase 3a: default sink that does real DB writes so tests
+	// exercising state-mutation verbs (PrepareIncoming, ClearCache,
+	// BindActiveBin, ClearActiveBin, etc.) see post-state correctly
+	// without each test injecting its own sink. Tests that need to
+	// assert on recorded calls (binCalls, bucketCalls, boundaryCalls,
+	// prepareIncomingCalls, etc.) override this by calling
+	// eng.SetInventoryDeltaSink(...) themselves.
+	eng.SetInventoryDeltaSink(&fakeDeltaSink{db: db})
 	return eng
 }
 

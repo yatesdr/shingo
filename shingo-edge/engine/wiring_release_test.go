@@ -61,7 +61,7 @@ func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Capture target-style parts to lineside — bucket fills attribute to
@@ -121,7 +121,7 @@ func TestRegression_CaptureReleaseFlushBoundary(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Operator pulls 30 of PART-CAP to lineside.
@@ -182,7 +182,7 @@ func TestRegression_ReleasePartialEmitsNoBinDelta(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	disp := ReleaseDisposition{
@@ -249,7 +249,7 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Operator picks capture_lineside on Order A — the supply leg.
@@ -328,7 +328,7 @@ func TestRegression_ABInactivePairFlush(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Pre-condition: zero flushes so far.
@@ -349,6 +349,8 @@ func TestRegression_ABInactivePairFlush(t *testing.T) {
 
 // flushTrackingSink extends fakeDeltaSink with a Flush counter so
 // release-path tests can assert the explicit flush triggers fire.
+// MarkAttributionBoundary also bumps the counter — it's a named
+// flush, semantically equivalent for "did the flush trigger fire."
 type flushTrackingSink struct {
 	fakeDeltaSink
 	flushes int
@@ -358,6 +360,22 @@ func (s *flushTrackingSink) Flush() {
 	s.mu.Lock()
 	s.flushes++
 	s.mu.Unlock()
+}
+
+func (s *flushTrackingSink) MarkAttributionBoundary(nodeID int64) error {
+	s.mu.Lock()
+	s.flushes++
+	s.boundaryCalls = append(s.boundaryCalls, nodeID)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *flushTrackingSink) OnBinPickedUp(nodeID *int64) error {
+	s.mu.Lock()
+	s.flushes++
+	s.onBinPickedUpCalls = append(s.onBinPickedUpCalls, nodeID)
+	s.mu.Unlock()
+	return nil
 }
 
 // Pending-delta release guard test removed alongside the reconciler
@@ -389,7 +407,7 @@ func TestRegression_ReleaseAcceptsAfterFlush(t *testing.T) {
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 	// Sink with no pending entries — release must succeed.
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	disp := ReleaseDisposition{
@@ -445,7 +463,7 @@ func TestRegression_ReleaseUnderpack_WireShape(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Drain pre-existing outbox.

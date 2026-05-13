@@ -46,59 +46,24 @@ import (
 	"shingo/protocol"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
+	"shingoedge/uop"
 )
 
-// ReleaseDispositionMode controls how a release action interacts with the
-// bin's manifest at Core. See operator_release.go for a full discussion.
-type ReleaseDispositionMode string
+// Backward-compat re-exports for the release disposition types.
+// The canonical home is shingoedge/uop (Phase 2 move). Engine callers
+// can keep using engine.ReleaseDisposition etc. until Phase 3a finishes
+// pushing the verb interfaces to all callers; new code should reference
+// uop.ReleaseDisposition directly.
+type (
+	ReleaseDisposition     = uop.ReleaseDisposition
+	ReleaseDispositionMode = uop.ReleaseDispositionMode
+)
 
 const (
-	// DispositionCaptureLineside is the default operator-confirmed-empty
-	// disposition: any pulled parts are captured as lineside buckets and
-	// Core clears the bin's manifest (remaining_uop=0).
-	DispositionCaptureLineside ReleaseDispositionMode = "capture_lineside"
-	// DispositionSendPartialBack returns the partially-consumed bin to the
-	// supermarket with its current UOP count. No bucket capture; Core syncs
-	// uop_remaining and preserves the manifest.
-	DispositionSendPartialBack ReleaseDispositionMode = "send_partial_back"
-	// DispositionReleaseUnderpack — operator declares the bin is
-	// physically empty before the tracked count reaches zero (e.g.
-	// bin labeled 1200 actually held 1190; cell starves at
-	// runtime=10). Wire shape mirrors RELEASE EMPTY (RemainingUOP =
-	// &0, manifest cleared); the disposition tag carries the
-	// "physical inventory was less than tracked" signal forward so
-	// Core's audit row records released_underpack instead of
-	// released_empty. Forensics trend the missing-inventory delta
-	// from suggested_uop - after_uop in bin_uop_audit.
-	DispositionReleaseUnderpack ReleaseDispositionMode = "release_underpack"
+	DispositionCaptureLineside  = uop.DispositionCaptureLineside
+	DispositionSendPartialBack  = uop.DispositionSendPartialBack
+	DispositionReleaseUnderpack = uop.DispositionReleaseUnderpack
 )
-
-// ReleaseDisposition carries the operator's release-time intent from the HTTP
-// handler down through ReleaseOrderWithLineside to the order manager. The
-// zero value (all fields zero/nil) is the backward-compat default — no
-// manifest change at Core.
-//
-// Phase 0b adds the operator-override audit fields. The HTTP handler
-// captures whichever values the system would have suggested at modal-open
-// time and threads them through here so Core can record divergences:
-//
-//   - LinesideCaptureSuggested: per-part baseline for the capture path
-//     (chip pre-population came from runtime.RemainingUOPCached / manifest qtys).
-//   - PartialCount, PartialCountSuggested: operator-entered count and the
-//     pre-populated baseline for the SEND PARTIAL BACK path. PartialCount
-//     supersedes runtime.RemainingUOPCached for the wire when set.
-//
-// Suggested fields are nil-safe — legacy HTTP clients that don't ship
-// the override-aware body just don't populate them, and Core writes no
-// override audit row.
-type ReleaseDisposition struct {
-	Mode                     ReleaseDispositionMode
-	LinesideCapture          map[string]int // qty per part — only valid when Mode == DispositionCaptureLineside
-	LinesideCaptureSuggested map[string]int // system-suggested per-part qty at modal-open (Phase 0b)
-	PartialCount             *int           // operator-entered count for SEND PARTIAL BACK (Phase 0b); supersedes runtime when set
-	PartialCountSuggested    *int           // system-suggested count at modal-open for SEND PARTIAL BACK (Phase 0b)
-	CalledBy                 string         // operator identity for audit
-}
 
 // ReleaseOrderWithLineside performs the operator's release click:
 //
@@ -278,20 +243,12 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		manifestUOP = nil
 	}
 
-	// Capture lineside buckets (conditional on disposition) and always
-	// deactivate other styles on this node.
-	capturedTotal, err := e.captureLinesideOnRelease(node, toClaim, disp)
-	if err != nil {
-		return err
-	}
-
-	// Emit BinUOPDelta(capture_reduction) for the released bin. The
-	// bucket fills already shipped via captureLinesideOnRelease; this
-	// is the paired bin-side decrement. Suppressed on supply orders
-	// (Order A in two-robot swaps): a fresh supply bin had nothing
-	// pulled from it, so applying capture_reduction would corrupt the
-	// authoritative count. Same isSupply gate the manifestUOP
-	// suppression uses.
+	// Capture lineside buckets (conditional on disposition), always
+	// deactivate other styles on this node, and emit the paired bin
+	// capture_reduction delta when capture happened. The verb owns the
+	// atomic emit-pair (bucket fills + bin reduction) so the magnitude
+	// of capture_reduction always matches the sum of capture_fill
+	// emissions.
 	//
 	// PayloadCode comes from the order, not the claim. The bin being
 	// captured-from is the order's bin (delivered or evac); its payload
@@ -302,17 +259,34 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// inventory_delta_service.ApplyBinUOPDelta and the delta would be
 	// silently rejected.
 	//
-	// IMPORTANT: this rides ALONGSIDE the legacy RemainingUOP=&0 send
-	// (which Core's existing manifest-sync still applies). The legacy
-	// send and the capture_reduction delta both target the same
+	// SuppressBinDelta gates the capture_reduction emit on the supply
+	// leg (Order A in two-robot swaps): a fresh supply bin had nothing
+	// pulled from it, so applying capture_reduction would corrupt the
+	// authoritative count. Same isSupply gate the manifestUOP
+	// suppression uses.
+	//
+	// IMPORTANT: capture_reduction rides ALONGSIDE the legacy
+	// RemainingUOP=&0 send (which Core's existing manifest-sync still
+	// applies). The legacy send and the delta both target the same
 	// authoritative bins.uop_remaining; net result is correct because
-	// the legacy send wipes-then-the-delta-reduces and "no manifest
-	// = no bin" semantics make the resulting count consistent. The
+	// the legacy send wipes-then-the-delta-reduces and "no manifest =
+	// no bin" semantics make the resulting count consistent. The
 	// dual-write removal is a future cleanup item.
-	if e.inventoryDelta != nil && capturedTotal > 0 && !isSupply {
+	if e.inventoryDelta != nil {
+		var binID int64
 		if order.BinID != nil {
-			e.inventoryDelta.RecordBin(*order.BinID, order.PayloadCode,
-				-capturedTotal, protocol.ReasonCaptureReduction)
+			binID = *order.BinID
+		}
+		if _, err := e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
+			NodeID:           node.ID,
+			StyleID:          toClaim.StyleID,
+			PairKey:          toClaim.PairedCoreNode,
+			Disposition:      disp,
+			BinID:            binID,
+			PayloadCode:      order.PayloadCode,
+			SuppressBinDelta: isSupply,
+		}); err != nil {
+			return err
 		}
 	}
 
@@ -326,13 +300,13 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	// leg. Otherwise follow the sibling pointer to find the supply leg.
 	// If no supply leg can be resolved (pure removal / abandoned slot),
 	// cache zeroes — operator's click is "this slot is now empty"
-	// pending whatever physical event clears it. Drift between the
-	// cache and the actual bin is settled by Core via the existing
-	// BinUOPDelta + reconciler self-heal path.
+	// pending whatever physical event clears it. Post-flip (6d226d1)
+	// Edge is authoritative for the at-node count; subsequent ticks
+	// emit signed deltas keeping Core in step. No reconciler.
 	//
 	// Failure mode: if the supply bin's id can't be reached at Core
 	// (network blip), the cache is left untouched rather than
-	// overwritten — same B2-fix rationale as BinAtLineside.
+	// overwritten with a guessed value — better stale than wrong.
 	supplyBinID := e.resolveReleaseSupplyBin(order, node.CoreNodeName)
 	cacheValue := 0
 	var cachedBinID *int64
@@ -341,8 +315,9 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		uop, found, lookupErr := e.coreClient.BinByID(*supplyBinID)
 		switch {
 		case lookupErr != nil:
-			// Core unreachable: leave cache untouched. Reconciler
-			// self-heal will re-bind on the next pass.
+			// Core unreachable: leave cache untouched. Subsequent
+			// PLC ticks will continue to attribute against the
+			// current cached_bin_id; no reconciler exists to re-bind.
 			e.logRelease("order=%d node=%s — supply bin %d uop lookup failed (Core unreachable): %v — cache untouched",
 				orderID, node.Name, *supplyBinID, lookupErr)
 			skipCacheWrite = true
@@ -355,8 +330,19 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		}
 	}
 	if !skipCacheWrite {
-		if err := e.db.SetProcessNodeCachedBin(node.ID, cachedBinID, cacheValue); err != nil {
-			e.logRelease("set runtime cache for node %s on release: %v", node.Name, err)
+		// PrepareIncoming when we have a resolved supply bin;
+		// ClearCache when both pointer and count fall back to nil/0
+		// (no supply leg resolved — pure removal / abandoned slot).
+		if e.inventoryDelta != nil {
+			var err error
+			if cachedBinID != nil {
+				err = e.inventoryDelta.PrepareIncoming(node.ID, *cachedBinID, cacheValue)
+			} else {
+				err = e.inventoryDelta.ClearCache(node.ID)
+			}
+			if err != nil {
+				e.logRelease("set runtime cache for node %s on release: %v", node.Name, err)
+			}
 		}
 	}
 	if nodeTask != nil {
@@ -381,120 +367,16 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 	return nil
 }
 
-// computeReleaseRemainingUOP turns the operator's declared disposition into
-// the *int that gets sent on the OrderRelease envelope.
-//
-// The empty-Mode case returns nil deliberately: it preserves the
-// pre-disposition behavior for callers that don't opt in (Order A in
-// two-robot swaps, fallback paths, older HTTP clients posting bare bodies).
-// Without this gate, any zero-value ReleaseDisposition would silently
-// start sending remaining_uop=0 and clearing manifests Core has never
-// touched on release before — including Order A's freshly-loaded supply bin.
-//
-// SendPartialBack source priority (Phase 0b):
-//  1. disp.PartialCount (operator-entered via the keypad) when set and >0.
-//     Per the SME contract (plan §2.5) the operator's count is ground truth.
-//  2. runtime.RemainingUOPCached when >0. Fallback for legacy HTTP clients that
-//     don't ship the override-aware body shape.
-//  3. &0 otherwise — no positive baseline to preserve, declare empty.
+// computeReleaseRemainingUOP / buildProtocolDisposition moved to
+// shingoedge/uop in Phase 2. These thin shims preserve the existing
+// call sites in this file until Phase 3a inlines them at the
+// Capturer.CaptureToLineside verb boundary.
 func computeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState) *int {
-	switch disp.Mode {
-	case DispositionCaptureLineside:
-		// RELEASE EMPTY (no captures, just operator-confirmed empty)
-		// keeps the legacy &0 path: Core's SyncOrClearForReleased(0)
-		// wipes the manifest and audits as released_empty.
-		//
-		// PULL PARTS LINESIDE (with captures) returns nil — the
-		// BinUOPDelta(capture_reduction) is now the single writer to
-		// bins.uop_remaining; Core's capture-reduction-to-zero
-		// trigger handles the manifest clear and audits as
-		// released_capture_empty. Item 6 of the bin-as-truth refactor
-		// retires the dual-write at this site.
-		if len(disp.LinesideCapture) == 0 {
-			zero := 0
-			return &zero
-		}
-		return nil
-	case DispositionSendPartialBack:
-		if disp.PartialCount != nil && *disp.PartialCount > 0 {
-			v := *disp.PartialCount
-			return &v
-		}
-		if runtime != nil && runtime.RemainingUOPCached > 0 {
-			v := runtime.RemainingUOPCached
-			return &v
-		}
-		// Non-positive runtime UOP: nothing to preserve, fall through to empty.
-		zero := 0
-		return &zero
-	case DispositionReleaseUnderpack:
-		// Same wire shape as RELEASE EMPTY — bin physically empty,
-		// manifest cleared at Core. The audit-tag distinction lives
-		// in the disposition Kind (released_underpack) which
-		// buildProtocolDisposition threads to Core.
-		zero := 0
-		return &zero
-	default:
-		// "" / unknown mode → backward-compat: no manifest action.
-		return nil
-	}
+	return uop.ComputeReleaseRemainingUOP(disp, runtime)
 }
 
-// buildProtocolDisposition translates the Edge-side ReleaseDisposition
-// into the wire-shape protocol.UOPDisposition. Phase 0b: rides alongside
-// the legacy RemainingUOP field on OrderRelease and carries the
-// suggested baselines for Core's override audit.
-//
-// Mode mapping:
-//
-//   - DispositionCaptureLineside with non-empty captures → DispositionPullParts
-//   - DispositionCaptureLineside with no captures → DispositionReleaseEmpty
-//     (matches the current "RELEASE EMPTY" UI body shape: capture_lineside
-//     with an empty qty_by_part map)
-//   - DispositionSendPartialBack → DispositionReleasePartial. Count comes
-//     from PartialCount when set, else from runtime.RemainingUOPCached — same
-//     priority as computeReleaseRemainingUOP.
-//   - "" (zero Mode) → nil. Legacy callers ship no Disposition.
-//
-// Returns nil when there's nothing meaningful to ship (preserves the
-// "no manifest action" semantic).
 func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.RuntimeState) *protocol.UOPDisposition {
-	switch disp.Mode {
-	case DispositionCaptureLineside:
-		// Empty captures map === RELEASE EMPTY in the current UI.
-		if len(disp.LinesideCapture) == 0 {
-			return &protocol.UOPDisposition{Kind: protocol.DispositionReleaseEmpty}
-		}
-		return &protocol.UOPDisposition{
-			Kind:              protocol.DispositionPullParts,
-			Captures:          disp.LinesideCapture,
-			CapturesSuggested: disp.LinesideCaptureSuggested,
-		}
-	case DispositionSendPartialBack:
-		d := &protocol.UOPDisposition{Kind: protocol.DispositionReleasePartial}
-		switch {
-		case disp.PartialCount != nil && *disp.PartialCount > 0:
-			d.Count = *disp.PartialCount
-		case runtime != nil && runtime.RemainingUOPCached > 0:
-			d.Count = runtime.RemainingUOPCached
-		}
-		d.CountSuggested = disp.PartialCountSuggested
-		return d
-	case DispositionReleaseUnderpack:
-		// CountSuggested carries the system's expected count (the
-		// runtime cache at click time). Core's bin_uop_audit row
-		// will pick up before_uop = current bins.uop_remaining,
-		// after_uop = 0; the suggested_uop - after_uop gap is the
-		// missing-inventory delta forensics read.
-		d := &protocol.UOPDisposition{Kind: protocol.DispositionReleaseUnderpack}
-		if runtime != nil {
-			v := runtime.RemainingUOPCached
-			d.CountSuggested = &v
-		}
-		return d
-	default:
-		return nil
-	}
+	return uop.BuildProtocolDisposition(disp, runtime)
 }
 
 // isSupplyOrderInTwoRobotSwap reports whether the given order is the
@@ -590,48 +472,7 @@ func (e *Engine) resolveReleaseClaim(node *processes.Node, runtime *processes.Ru
 	return claim, nil
 }
 
-// captureLinesideOnRelease records any parts the operator pulled to
-// lineside (only when the disposition is capture_lineside) and always
-// deactivates buckets for other styles on this node. The deactivation
-// fires on every disposition because the release click is the "this
-// node is running this style now" moment regardless of where the bin
-// is heading.
-//
-// Note: count for the SEND PARTIAL BACK disposition is captured at
-// release-click time, not at robot-pickup time. For two-robot swaps,
-// the evacuation robot picks up the old bin moments after release —
-// any further consumption between click and pickup isn't tracked. The
-// operator's intent at click time is the source of truth.
-//
-// Emits one LinesideBucketDelta(capture_fill, +qty) per captured
-// (style, part). Returns the sum of captured qty so the caller can
-// emit the paired BinUOPDelta(capture_reduction) after the supply-bin
-// guard resolves.
-func (e *Engine) captureLinesideOnRelease(node *processes.Node, toClaim *processes.NodeClaim, disp ReleaseDisposition) (capturedTotal int, err error) {
-	pairKey := toClaim.PairedCoreNode
-
-	// Only capture parts when disposition is capture_lineside. Other
-	// dispositions (send_partial_back, empty/default) skip the bucket loop
-	// entirely.
-	if disp.Mode == DispositionCaptureLineside {
-		for part, qty := range disp.LinesideCapture {
-			if qty <= 0 || part == "" {
-				continue
-			}
-			if _, err := e.db.CaptureLinesideBucket(node.ID, pairKey, toClaim.StyleID, part, qty); err != nil {
-				return capturedTotal, fmt.Errorf("capture lineside bucket (node=%d style=%d part=%s): %w",
-					node.ID, toClaim.StyleID, part, err)
-			}
-			if e.inventoryDelta != nil {
-				e.inventoryDelta.RecordBucket(node.ID, pairKey, toClaim.StyleID, part, qty, protocol.ReasonCaptureFill)
-			}
-			capturedTotal += qty
-		}
-	}
-
-	// Always deactivate other styles on this node.
-	if err := e.db.DeactivateOtherLinesideStyles(node.ID, toClaim.StyleID); err != nil {
-		return capturedTotal, fmt.Errorf("deactivate other lineside styles on node %d: %w", node.ID, err)
-	}
-	return capturedTotal, nil
-}
+// captureLinesideOnRelease moved into uop.Mutator.CaptureToLineside
+// (Phase 3a wedge 10). The verb owns the atomic bucket-fill + bin-
+// reduction emit pair; engine resolves order/claim/sibling context
+// and passes it in via uop.CaptureEvent.

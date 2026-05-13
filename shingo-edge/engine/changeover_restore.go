@@ -72,9 +72,11 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 					if toStyleID > 0 && coreNodeName != "" {
 						if toClaim, err := e.db.GetStyleNodeClaimByNode(toStyleID, coreNodeName); err == nil {
 							claimID := toClaim.ID
-							if err := e.db.SetProcessNodeRuntime(task.ProcessNodeID, &claimID, 0); err != nil {
-				log.Printf("changeover: set runtime for node %d: %v", task.ProcessNodeID, err)
-				}
+							if e.inventoryDelta != nil {
+								if err := e.inventoryDelta.SetClaimAndCount(task.ProcessNodeID, &claimID, 0); err != nil {
+									log.Printf("changeover: set runtime for node %d: %v", task.ProcessNodeID, err)
+								}
+							}
 						}
 					}
 					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "staged"); err != nil {

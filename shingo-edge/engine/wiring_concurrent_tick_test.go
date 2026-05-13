@@ -49,7 +49,7 @@ func TestRegression_MultiBinAtPairedNodes_TicksAttributeCorrectly(t *testing.T) 
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	eng.Events.Emit(Event{
@@ -96,7 +96,7 @@ func TestRegression_TickDuringABFlip(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Pre-flip tick → A's bin.
@@ -162,7 +162,7 @@ func TestRegression_TickDuringPullPartsLinesideWindow(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Operator pulls 20 parts to lineside.
@@ -245,7 +245,7 @@ func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	// During-window: 3 ticks, all attribute to the released bin.
@@ -312,7 +312,7 @@ func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Fire ticks under from-style — these are pre-release runout ticks.
@@ -392,7 +392,7 @@ func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Ticks during the swap (R1 enroute, hasn't picked up yet) attribute
@@ -446,7 +446,7 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	// 30 units consumed under X.

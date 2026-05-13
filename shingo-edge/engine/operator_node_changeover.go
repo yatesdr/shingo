@@ -257,8 +257,10 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 		runtime.ActiveClaimID == nil || *runtime.ActiveClaimID != claimID
 	if needsUOPReset {
 		uop := claim.UOPCapacity
-		if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, uop); err != nil {
-			return err
+		if e.inventoryDelta != nil {
+			if err := e.inventoryDelta.SetClaimAndCount(nodeID, &claimID, uop); err != nil {
+				return err
+			}
 		}
 	}
 

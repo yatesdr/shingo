@@ -39,18 +39,14 @@ func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearB
 		return fmt.Errorf("bucket qty cannot be negative")
 	}
 
-	delta := targetQty - bucket.Qty
-	if delta != 0 && e.inventoryDelta != nil {
-		e.inventoryDelta.RecordBucket(bucket.NodeID, bucket.PairKey, bucket.StyleID, bucket.PartNumber,
-			delta, protocol.ReasonOperatorCorrectionBucket)
-	}
-
-	if err := e.db.SetLinesideBucketForReconcile(bucket.NodeID, bucket.PairKey, bucket.StyleID, bucket.PartNumber, targetQty); err != nil {
-		return fmt.Errorf("update bucket %d: %w", bucketID, err)
-	}
-
 	if e.inventoryDelta != nil {
-		e.inventoryDelta.Flush()
+		if err := e.inventoryDelta.AdjustBucket(
+			bucket.NodeID, bucket.PairKey, bucket.StyleID, bucket.PartNumber,
+			bucket.Qty, targetQty,
+			protocol.ReasonOperatorCorrectionBucket,
+		); err != nil {
+			return fmt.Errorf("adjust bucket %d: %w", bucketID, err)
+		}
 	}
 
 	op := "edited"
@@ -59,6 +55,6 @@ func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearB
 	}
 	log.Printf("admin_lineside_bucket: %s bucket %d (node=%d style=%d part=%q): %d → %d delta=%+d",
 		op, bucketID, bucket.NodeID, bucket.StyleID, bucket.PartNumber,
-		bucket.Qty, targetQty, delta)
+		bucket.Qty, targetQty, targetQty-bucket.Qty)
 	return nil
 }

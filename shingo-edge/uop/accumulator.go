@@ -1,13 +1,13 @@
-// inventory_delta_reporter.go — bin-as-truth signed-delta accumulator.
+// accumulator.go — bin-as-truth signed-delta accumulator.
 //
-// Edge accumulates per-bin and per-bucket signed UOP changes from the
-// PLC tick path and the operator release path, then periodically
-// flushes the running totals as BinUOPDelta / LinesideBucketDelta
-// envelopes through the existing outbox.
+// Internal implementation of UOP delta accumulation. The public surface
+// is in mutator.go; this file owns the per-scope sync.Map state, the
+// periodic flush goroutine, the outbox enqueue path, and the
+// restore-on-failure semantics.
 //
 // Concurrency: sync.Map for the per-scope accumulator with a
 // per-entry sync.Mutex protecting the composite metadata. Hot path
-// is RecordBin / RecordBucket; flush goroutine ranges across the map
+// is recordBin / recordBucket; flush goroutine ranges across the map
 // and atomically swaps each entry's running delta to zero. The
 // mutex is contended only when record and flush hit the same scope
 // simultaneously — vanishingly rare given PLC tick cadence is
@@ -23,7 +23,7 @@
 // a load (produce/manual_swap side), A/B active-pull state flip
 // (paired-node runtime flip), and BinPickedUp arrival (SEND PARTIAL
 // BACK pickup window).
-package messaging
+package uop
 
 import (
 	"log"
@@ -46,8 +46,8 @@ const (
 	invDeltaScopeBucket = "bucket"
 
 	// defaultInventoryDeltaInterval is the periodic flush cadence used
-	// when the caller leaves Interval unset. 5s matches plan
-	// Decision #2; YAML-configurable per the rollout plan.
+	// when the caller leaves interval unset. 5s matches the original
+	// rollout plan; YAML-configurable.
 	defaultInventoryDeltaInterval = 5 * time.Second
 )
 
@@ -80,11 +80,10 @@ type bucketDeltaEntry struct {
 	windowEnd   time.Time
 }
 
-// InventoryDeltaReporter accumulates BinUOPDelta and
-// LinesideBucketDelta count changes and flushes them to the outbox on
-// a periodic cadence. Mirrors ProductionReporter's lifecycle (Start /
-// Stop) and outbox plumbing.
-type InventoryDeltaReporter struct {
+// accumulator accumulates BinUOPDelta and LinesideBucketDelta count
+// changes and flushes them to the outbox on a periodic cadence.
+// Package-private — exposed through Mutator (see mutator.go).
+type accumulator struct {
 	db        *store.DB
 	stationID string
 	interval  time.Duration
@@ -95,38 +94,37 @@ type InventoryDeltaReporter struct {
 	bins    sync.Map // map[string]*binDeltaEntry
 	buckets sync.Map // map[string]*bucketDeltaEntry
 
-	// flush serializes flush passes against each other (Stop's final
-	// flush must not race with the periodic loop). RecordBin /
-	// RecordBucket do not take this lock.
+	// flushMu serializes flush passes against each other (stop's final
+	// flush must not race with the periodic loop). recordBin /
+	// recordBucket do not take this lock.
 	flushMu sync.Mutex
 
 	// flushFailures counts EnqueueOutbox failures across the bin and
-	// bucket flush paths. Item 9 surfaces this via the reconciler
-	// metrics HTTP endpoint — sustained non-zero growth signals the
-	// outbox is wedged (full disk, schema mismatch, etc.) and the
-	// pending-delta guard will start blocking releases.
+	// bucket flush paths. Surfaces via FlushFailures() for outbox-health
+	// dashboards — sustained non-zero growth signals the outbox is
+	// wedged (full disk, schema mismatch, Kafka unavailable, etc.).
 	flushFailures atomic.Int64
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
 
-	// flushed is closed once after every flush attempt completes.
-	// Tests use TriggerFlush to drive a synchronous flush; production
+	// flushSignal is published-to once after every flush attempt completes.
+	// Tests use the channel to drive a synchronous flush; production
 	// code does not read this channel.
 	flushSignal chan struct{}
 
 	// now is overridable for tests. Production callers leave it nil
-	// and the reporter uses time.Now().UTC().
+	// and the accumulator uses time.Now().UTC().
 	now func() time.Time
 
-	DebugLog DebugLogFunc
+	debugLog DebugLogFunc
 }
 
-// NewInventoryDeltaReporter constructs a reporter for the given Edge
-// identity. Caller wires DebugLog and Interval (or leaves them at
-// their zero values for the production defaults) before calling Start.
-func NewInventoryDeltaReporter(db *store.DB, stationID string) *InventoryDeltaReporter {
-	return &InventoryDeltaReporter{
+// newAccumulator constructs an accumulator for the given Edge identity.
+// Caller wires debugLog and interval via the Mutator wrapper before
+// calling start.
+func newAccumulator(db *store.DB, stationID string) *accumulator {
+	return &accumulator{
 		db:          db,
 		stationID:   stationID,
 		interval:    defaultInventoryDeltaInterval,
@@ -135,36 +133,36 @@ func NewInventoryDeltaReporter(db *store.DB, stationID string) *InventoryDeltaRe
 	}
 }
 
-// SetInterval overrides the periodic flush cadence. Intended for the
+// setInterval overrides the periodic flush cadence. Intended for the
 // composition root reading the YAML config; unsafe to call after
-// Start (the running goroutine will not pick up the change).
-func (r *InventoryDeltaReporter) SetInterval(d time.Duration) {
+// start (the running goroutine will not pick up the change).
+func (r *accumulator) setInterval(d time.Duration) {
 	if d > 0 {
 		r.interval = d
 	}
 }
 
-// Start begins the periodic flush loop. Idempotent: a second Start
-// after Stop is a no-op (the stopOnce / stopCh contract assumes a
-// single lifecycle per reporter instance).
-func (r *InventoryDeltaReporter) Start() {
+// start begins the periodic flush loop. Idempotent: a second start
+// after stop is a no-op (the stopOnce / stopCh contract assumes a
+// single lifecycle per accumulator instance).
+func (r *accumulator) start() {
 	go r.loop()
 }
 
-// Stop halts the periodic loop and runs one final flush so any
+// stop halts the periodic loop and runs one final flush so any
 // accumulated deltas in flight at shutdown still reach the outbox.
 // Idempotent.
-func (r *InventoryDeltaReporter) Stop() {
+func (r *accumulator) stop() {
 	r.stopOnce.Do(func() {
 		close(r.stopCh)
-		r.Flush()
+		r.flush()
 	})
 }
 
-// RecordBin accumulates a signed delta against a specific bin under
+// recordBin accumulates a signed delta against a specific bin under
 // the given reason. payloadCode is required (Core validates it
 // against the bin row); window timestamps are taken from the
-// reporter's clock.
+// accumulator's clock.
 //
 // Multiple deltas in the same window for the same bin sum into a
 // single envelope on the next flush; reason is the most recent value
@@ -173,7 +171,7 @@ func (r *InventoryDeltaReporter) Stop() {
 // state ticks) the audit trail at Core uses the latest reason. A
 // future refinement could split per-reason at the cost of one
 // SequenceID per (bin, reason).
-func (r *InventoryDeltaReporter) RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason) {
+func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason) {
 	if delta == 0 {
 		return
 	}
@@ -201,16 +199,16 @@ func (r *InventoryDeltaReporter) RecordBin(binID int64, payloadCode string, delt
 	e.windowEnd = now
 	e.mu.Unlock()
 
-	r.DebugLog.Log("inventory_delta: bin=%d delta=%+d reason=%s payload=%q",
+	r.debugLog.Log("inventory_delta: bin=%d delta=%+d reason=%s payload=%q",
 		binID, delta, reason, payloadCode)
 }
 
-// RecordBucket accumulates a signed delta against a specific lineside
+// recordBucket accumulates a signed delta against a specific lineside
 // bucket. NEVER called from manual_swap nodes — the plan locks
 // "manual swap nodes never emit bucket deltas" because they have no
 // PLC and their count-change events are operator actions on the bin,
 // not the bucket.
-func (r *InventoryDeltaReporter) RecordBucket(nodeID int64, pairKey string, styleID int64, partNumber string, delta int, reason protocol.LinesideBucketDeltaReason) {
+func (r *accumulator) recordBucket(nodeID int64, pairKey string, styleID int64, partNumber string, delta int, reason protocol.LinesideBucketDeltaReason) {
 	if delta == 0 {
 		return
 	}
@@ -238,11 +236,11 @@ func (r *InventoryDeltaReporter) RecordBucket(nodeID int64, pairKey string, styl
 	e.windowEnd = now
 	e.mu.Unlock()
 
-	r.DebugLog.Log("inventory_delta: bucket node=%d part=%q delta=%+d reason=%s",
+	r.debugLog.Log("inventory_delta: bucket node=%d part=%q delta=%+d reason=%s",
 		nodeID, partNumber, delta, reason)
 }
 
-// Flush performs one synchronous flush pass. Boundary triggers call
+// flush performs one synchronous flush pass. Boundary triggers call
 // this in addition to the periodic loop:
 //
 //   - OrderRelease envelope sent (consume-side)
@@ -251,7 +249,7 @@ func (r *InventoryDeltaReporter) RecordBucket(nodeID int64, pairKey string, styl
 //   - BinPickedUp arrival (SEND PARTIAL BACK pickup window)
 //
 // Safe to call from any goroutine; serialized via flushMu.
-func (r *InventoryDeltaReporter) Flush() {
+func (r *accumulator) flush() {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
 	r.flushBins()
@@ -266,7 +264,7 @@ func (r *InventoryDeltaReporter) Flush() {
 	}
 }
 
-func (r *InventoryDeltaReporter) loop() {
+func (r *accumulator) loop() {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
 	for {
@@ -274,7 +272,7 @@ func (r *InventoryDeltaReporter) loop() {
 		case <-r.stopCh:
 			return
 		case <-ticker.C:
-			r.Flush()
+			r.flush()
 		}
 	}
 }
@@ -283,13 +281,13 @@ func (r *InventoryDeltaReporter) loop() {
 // running delta, allocates a SequenceID, and enqueues the envelope.
 // Restores the delta on enqueue failure so a transient outbox blip
 // doesn't drop count changes.
-func (r *InventoryDeltaReporter) flushBins() {
+func (r *accumulator) flushBins() {
 	r.bins.Range(func(key, value any) bool {
 		k := key.(string)
 		e := value.(*binDeltaEntry)
 
 		// Sweep: capture and zero the running delta + window in one
-		// critical section so concurrent RecordBin starts a fresh
+		// critical section so concurrent recordBin starts a fresh
 		// window cleanly. Extract fields explicitly rather than
 		// copying the struct — the embedded sync.Mutex must not be
 		// duplicated.
@@ -311,7 +309,7 @@ func (r *InventoryDeltaReporter) flushBins() {
 
 		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBin, k)
 		if err != nil {
-			log.Printf("inventory_delta_reporter: allocate bin seq key=%s: %v", k, err)
+			log.Printf("uop accumulator: allocate bin seq key=%s: %v", k, err)
 			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
 			return true
 		}
@@ -332,31 +330,31 @@ func (r *InventoryDeltaReporter) flushBins() {
 			},
 		)
 		if encErr != nil {
-			log.Printf("inventory_delta_reporter: build bin envelope key=%s: %v", k, encErr)
+			log.Printf("uop accumulator: build bin envelope key=%s: %v", k, encErr)
 			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
 			return true
 		}
 		data, encErr := env.Encode()
 		if encErr != nil {
-			log.Printf("inventory_delta_reporter: encode bin envelope key=%s: %v", k, encErr)
+			log.Printf("uop accumulator: encode bin envelope key=%s: %v", k, encErr)
 			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
 			return true
 		}
 		if _, err := r.db.EnqueueOutbox(data, protocol.SubjectBinUOPDelta); err != nil {
 			r.flushFailures.Add(1)
-			log.Printf("ERROR: inventory_delta_reporter: enqueue bin envelope key=%s, restoring: %v", k, err)
+			log.Printf("ERROR: uop accumulator: enqueue bin envelope key=%s, restoring: %v", k, err)
 			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
 			return true
 		}
 
-		r.DebugLog.Log("inventory_delta_reporter: flushed bin=%d delta=%+d seq=%d reason=%s",
+		r.debugLog.Log("uop accumulator: flushed bin=%d delta=%+d seq=%d reason=%s",
 			sBinID, sDelta, seq, sReason)
 		return true
 	})
 }
 
 // flushBuckets is the bucket-side mirror of flushBins.
-func (r *InventoryDeltaReporter) flushBuckets() {
+func (r *accumulator) flushBuckets() {
 	r.buckets.Range(func(key, value any) bool {
 		k := key.(string)
 		e := value.(*bucketDeltaEntry)
@@ -381,7 +379,7 @@ func (r *InventoryDeltaReporter) flushBuckets() {
 
 		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBucket, k)
 		if err != nil {
-			log.Printf("inventory_delta_reporter: allocate bucket seq key=%s: %v", k, err)
+			log.Printf("uop accumulator: allocate bucket seq key=%s: %v", k, err)
 			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
 			return true
 		}
@@ -404,30 +402,30 @@ func (r *InventoryDeltaReporter) flushBuckets() {
 			},
 		)
 		if encErr != nil {
-			log.Printf("inventory_delta_reporter: build bucket envelope key=%s: %v", k, encErr)
+			log.Printf("uop accumulator: build bucket envelope key=%s: %v", k, encErr)
 			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
 			return true
 		}
 		data, encErr := env.Encode()
 		if encErr != nil {
-			log.Printf("inventory_delta_reporter: encode bucket envelope key=%s: %v", k, encErr)
+			log.Printf("uop accumulator: encode bucket envelope key=%s: %v", k, encErr)
 			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
 			return true
 		}
 		if _, err := r.db.EnqueueOutbox(data, protocol.SubjectLinesideBucketDelta); err != nil {
 			r.flushFailures.Add(1)
-			log.Printf("ERROR: inventory_delta_reporter: enqueue bucket envelope key=%s, restoring: %v", k, err)
+			log.Printf("ERROR: uop accumulator: enqueue bucket envelope key=%s, restoring: %v", k, err)
 			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
 			return true
 		}
 
-		r.DebugLog.Log("inventory_delta_reporter: flushed bucket node=%d part=%q delta=%+d seq=%d reason=%s",
+		r.debugLog.Log("uop accumulator: flushed bucket node=%d part=%q delta=%+d seq=%d reason=%s",
 			sNodeID, sPartNumber, sDelta, seq, sReason)
 		return true
 	})
 }
 
-func (r *InventoryDeltaReporter) restoreBinDelta(e *binDeltaEntry, delta int, reason protocol.BinUOPDeltaReason, windowStart, windowEnd time.Time, payloadCode string) {
+func (r *accumulator) restoreBinDelta(e *binDeltaEntry, delta int, reason protocol.BinUOPDeltaReason, windowStart, windowEnd time.Time, payloadCode string) {
 	e.mu.Lock()
 	if e.delta == 0 {
 		// Window was empty — restore the original window bounds too
@@ -446,7 +444,7 @@ func (r *InventoryDeltaReporter) restoreBinDelta(e *binDeltaEntry, delta int, re
 	e.mu.Unlock()
 }
 
-func (r *InventoryDeltaReporter) restoreBucketDelta(e *bucketDeltaEntry, delta int, reason protocol.LinesideBucketDeltaReason, windowStart, windowEnd time.Time) {
+func (r *accumulator) restoreBucketDelta(e *bucketDeltaEntry, delta int, reason protocol.LinesideBucketDeltaReason, windowStart, windowEnd time.Time) {
 	e.mu.Lock()
 	if e.delta == 0 {
 		e.windowStart = windowStart
@@ -461,18 +459,11 @@ func (r *InventoryDeltaReporter) restoreBucketDelta(e *bucketDeltaEntry, delta i
 	e.mu.Unlock()
 }
 
-func (r *InventoryDeltaReporter) clock() time.Time {
+func (r *accumulator) clock() time.Time {
 	if r.now != nil {
 		return r.now()
 	}
 	return time.Now().UTC()
-}
-
-// FlushFailures returns the cumulative count of EnqueueOutbox failures
-// since process start. Item 9 surfaces this via the engine's reconciler
-// metrics endpoint so dashboards can trend outbox health.
-func (r *InventoryDeltaReporter) FlushFailures() int64 {
-	return r.flushFailures.Load()
 }
 
 // bucketScopeKey builds the dedup scope_key for a LinesideBucketDelta.

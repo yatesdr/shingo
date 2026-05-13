@@ -1,4 +1,4 @@
-package messaging
+package uop
 
 import (
 	"encoding/json"
@@ -60,7 +60,7 @@ func pendingOutboxByType[T any](t *testing.T, db *store.DB, subject string) []T 
 // envelope with the summed delta and a monotonic SequenceID.
 func TestInventoryDeltaReporter_BinAccumulationAndFlush(t *testing.T) {
 	db := newReporterTestDB(t)
-	r := NewInventoryDeltaReporter(db, "ALN_001")
+	r := New(db, "ALN_001", nil, nil, nil)
 
 	r.RecordBin(42, "PART-A", -3, protocol.ReasonConsumeTick)
 	r.RecordBin(42, "PART-A", -2, protocol.ReasonConsumeTick)
@@ -97,7 +97,7 @@ func TestInventoryDeltaReporter_BinAccumulationAndFlush(t *testing.T) {
 // consume_drain accumulate, sequence advances monotonically.
 func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
 	db := newReporterTestDB(t)
-	r := NewInventoryDeltaReporter(db, "SMN_003")
+	r := New(db, "SMN_003", nil, nil, nil)
 
 	r.RecordBucket(5, "L1|U1", 100, "PART-A", 47, protocol.ReasonCaptureFill)
 	r.Flush()
@@ -135,7 +135,7 @@ func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
 // that always allocates would fail this test before it ships.
 func TestInventoryDeltaReporter_ZeroDeltaNoFlush(t *testing.T) {
 	db := newReporterTestDB(t)
-	r := NewInventoryDeltaReporter(db, "ALN_001")
+	r := New(db, "ALN_001", nil, nil, nil)
 
 	r.RecordBin(7, "PART-X", 5, protocol.ReasonProduceTick)
 	r.RecordBin(7, "PART-X", -5, protocol.ReasonConsumeTick)
@@ -161,7 +161,7 @@ func TestInventoryDeltaReporter_ZeroDeltaNoFlush(t *testing.T) {
 // SequenceID stream.
 func TestInventoryDeltaReporter_ScopeKeysIndependent(t *testing.T) {
 	db := newReporterTestDB(t)
-	r := NewInventoryDeltaReporter(db, "ALN_001")
+	r := New(db, "ALN_001", nil, nil, nil)
 
 	r.RecordBin(11, "PART-A", -1, protocol.ReasonConsumeTick)
 	r.RecordBin(22, "PART-B", -2, protocol.ReasonConsumeTick)
@@ -198,7 +198,7 @@ func TestInventoryDeltaReporter_ScopeKeysIndependent(t *testing.T) {
 // We force failure by closing the underlying DB before flush.
 func TestInventoryDeltaReporter_RestoreOnEnqueueFailure(t *testing.T) {
 	db := newReporterTestDB(t)
-	r := NewInventoryDeltaReporter(db, "ALN_001")
+	r := New(db, "ALN_001", nil, nil, nil)
 
 	r.RecordBin(99, "PART-Z", -7, protocol.ReasonConsumeTick)
 
@@ -207,7 +207,7 @@ func TestInventoryDeltaReporter_RestoreOnEnqueueFailure(t *testing.T) {
 	r.Flush()
 
 	// The entry must still hold -7.
-	v, ok := r.bins.Load("99")
+	v, ok := r.acc.bins.Load("99")
 	if !ok {
 		t.Fatal("bin entry disappeared after failed flush — must be restored")
 	}
@@ -227,7 +227,7 @@ func TestInventoryDeltaReporter_RestoreOnEnqueueFailure(t *testing.T) {
 // data races (run with -race in CI).
 func TestInventoryDeltaReporter_ConcurrentRecordsThenFlush(t *testing.T) {
 	db := newReporterTestDB(t)
-	r := NewInventoryDeltaReporter(db, "ALN_001")
+	r := New(db, "ALN_001", nil, nil, nil)
 
 	const goroutines = 100
 	const perGoroutine = 10
@@ -261,7 +261,7 @@ func TestInventoryDeltaReporter_ConcurrentRecordsThenFlush(t *testing.T) {
 // in-flight delta.
 func TestInventoryDeltaReporter_StopFlushesPending(t *testing.T) {
 	db := newReporterTestDB(t)
-	r := NewInventoryDeltaReporter(db, "ALN_001")
+	r := New(db, "ALN_001", nil, nil, nil)
 	r.SetInterval(1 * time.Hour) // never auto-flush
 	r.Start()
 

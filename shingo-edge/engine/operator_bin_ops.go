@@ -96,9 +96,10 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		// the event handler ends up with nil. The LoadBin response is the
 		// authoritative pointer at this exact moment.
 		if loadResp != nil && loadResp.BinID > 0 {
-			v := loadResp.BinID
-			if err := e.db.SetProcessNodeActiveBinID(nodeID, &v); err != nil {
-				log.Printf("bin_ops: set active_bin_id for node %d: %v", nodeID, err)
+			if e.inventoryDelta != nil {
+				if err := e.inventoryDelta.BindActiveBin(nodeID, loadResp.BinID); err != nil {
+					log.Printf("bin_ops: bind active bin for node %d: %v", nodeID, err)
+				}
 			}
 		}
 		// Flush trigger: bin-loader confirm is the produce/manual_swap
@@ -125,8 +126,10 @@ func (e *Engine) LoadBin(nodeID int64, payloadCode string, uopCount int64, manif
 		v := loadResp.BinID
 		activeBinID = &v
 	}
-	if err := e.db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, activeBinID, int(uopCount)); err != nil {
-		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.ManualLoad(nodeID, &claimID, activeBinID, int(uopCount)); err != nil {
+			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
+		}
 	}
 	if claim.OutboundDestination != "" {
 		// L2 to OutboundDestination is unattended (supermarket node) — must
@@ -197,9 +200,11 @@ func (e *Engine) ClearBin(nodeID int64) error {
 		return fmt.Errorf("clear bin: %w", err)
 	}
 	claimID := claim.ID
-	if err := e.db.SetProcessNodeRuntime(nodeID, &claimID, 0); err != nil {
-		log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.SetClaimAndCount(nodeID, &claimID, 0); err != nil {
+			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
+	}
 	return nil
 }
 

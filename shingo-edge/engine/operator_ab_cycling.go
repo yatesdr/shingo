@@ -46,15 +46,21 @@ func (e *Engine) FlipABNode(nodeID int64) error {
 		return fmt.Errorf("paired node %s not found", claim.PairedCoreNode)
 	}
 
-	// Flush trigger: A/B cycling has no operator action at the
+	// Attribution boundary: A/B cycling has no operator action at the
 	// inactive→active transition — the active-pull state flip IS the
 	// boundary. Without flushing here the inactive node's accumulator
 	// would carry residual deltas past the flip and they'd ship under
 	// the wrong active-bin attribution. Fires before the SetActivePull
 	// writes so the outgoing-bin's deltas land before the new bin
 	// starts driving ticks against the now-active node.
+	//
+	// MarkAttributionBoundary is synchronous — a returned error means
+	// the flush failed and we must NOT proceed with the SetActivePull
+	// swap (pending deltas would land under the wrong attribution).
 	if e.inventoryDelta != nil {
-		e.inventoryDelta.Flush()
+		if err := e.inventoryDelta.MarkAttributionBoundary(nodeID); err != nil {
+			return fmt.Errorf("attribution boundary flush failed: %w", err)
+		}
 	}
 
 	// Item 5 atomic wrap: the two SetActivePull writes flip a paired

@@ -12,6 +12,7 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/store/processes"
+	"shingoedge/uop"
 )
 
 // handleCounterDelta processes a production counter tick:
@@ -110,11 +111,13 @@ func (e *Engine) handleCounterDelta(delta CounterDeltaEvent) {
 // responsible for the A/B inactive-pair check; this is invoked only
 // on the active side.
 //
-// The local UpdateProcessNodeUOP write is a write-through cache —
-// Core's bins.uop_remaining is the source of truth (post-bin-as-truth
-// refactor). The local row backs the operator UI (instant feedback)
-// and the reconciler self-heals it from Core periodically. The bucket
-// and bin deltas published below are what move authoritative state.
+// Post-May-4 (commit 6d226d1) Edge is authoritative for the count of
+// any bin physically at one of its nodes. The local UpdateProcessNodeUOP
+// write is the durable truth for at-node bins, not a write-through
+// cache — there is no reconciler healing back from Core. Core mirrors
+// via the bucket and bin deltas published below. If a delta is rejected
+// at Core (e.g., payload_code mismatch), FlushFailures surfaces the
+// drift; no automatic heal exists.
 //
 // Per SME lock (open-items.md §"Process semantics"): bins can go
 // negative. A real bin nominally rated 1000 might overpack to 1005
@@ -186,9 +189,15 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	}
 
 	if e.inventoryDelta != nil && delta > 0 {
-		if binID, payload := e.binAtNode(runtime, claim); binID > 0 {
-			e.inventoryDelta.RecordBin(binID, payload, delta, protocol.ReasonProduceTick)
-		}
+		binID, payload := e.binAtNode(runtime, claim)
+		_ = e.inventoryDelta.Produced(uop.TickEvent{
+			NodeID:       node.ID,
+			StyleID:      claim.StyleID,
+			PairKey:      claim.PairedCoreNode,
+			BinID:        binID,
+			PayloadCode:  payload,
+			BinRemainder: delta, // produce delta carried via BinRemainder for type symmetry
+		})
 	}
 
 	// Auto-relief at capacity: finalize the produce node (manifest + swap).
@@ -239,45 +248,44 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 }
 
 // emitConsumeTickDeltas records the bucket and bin deltas for one
-// consume tick. Split out from handleConsumeTick so the same emission
-// shape is reusable for handleABFallthrough's fallback path (which
-// has subtly different reason mapping).
+// consume tick. Resolves the bin context via binAtNode, then delegates
+// the actual emission to uop.Mutator.Consumed which locks in the
+// reason taxonomy (consume_drain + consume_tick).
 func (e *Engine) emitConsumeTickDeltas(nodeID int64, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]int, binRemainder int) {
 	if e.inventoryDelta == nil {
 		return
 	}
-	pairKey := claim.PairedCoreNode
-	for part, drained := range drains {
-		if drained > 0 {
-			e.inventoryDelta.RecordBucket(nodeID, pairKey, claim.StyleID, part, -drained, protocol.ReasonConsumeDrain)
-		}
-	}
-	if binRemainder > 0 {
-		if binID, payload := e.binAtNode(runtime, claim); binID > 0 {
-			e.inventoryDelta.RecordBin(binID, payload, -binRemainder, protocol.ReasonConsumeTick)
-		}
-	}
+	binID, payload := e.binAtNode(runtime, claim)
+	_ = e.inventoryDelta.Consumed(uop.TickEvent{
+		NodeID:       nodeID,
+		StyleID:      claim.StyleID,
+		PairKey:      claim.PairedCoreNode,
+		BinID:        binID,
+		PayloadCode:  payload,
+		Drains:       drains,
+		BinRemainder: binRemainder,
+	})
 }
 
-// emitFallthroughDeltas mirrors emitConsumeTickDeltas but tags the
-// bin delta with reason=ab_fallthrough. Bucket deltas keep the
-// consume_drain reason — the bucket physically drained regardless of
-// which side of the A/B pair the count attributed to.
+// emitFallthroughDeltas mirrors emitConsumeTickDeltas but routes through
+// uop.Mutator.Fallthrough which tags the bin delta with ab_fallthrough
+// while keeping consume_drain on the bucket deltas (the bucket
+// physically drained regardless of which side of the A/B pair the
+// count attributed to).
 func (e *Engine) emitFallthroughDeltas(nodeID int64, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]int, binRemainder int) {
 	if e.inventoryDelta == nil {
 		return
 	}
-	pairKey := claim.PairedCoreNode
-	for part, drained := range drains {
-		if drained > 0 {
-			e.inventoryDelta.RecordBucket(nodeID, pairKey, claim.StyleID, part, -drained, protocol.ReasonConsumeDrain)
-		}
-	}
-	if binRemainder > 0 {
-		if binID, payload := e.binAtNode(runtime, claim); binID > 0 {
-			e.inventoryDelta.RecordBin(binID, payload, -binRemainder, protocol.ReasonABFallthrough)
-		}
-	}
+	binID, payload := e.binAtNode(runtime, claim)
+	_ = e.inventoryDelta.Fallthrough(uop.TickEvent{
+		NodeID:       nodeID,
+		StyleID:      claim.StyleID,
+		PairKey:      claim.PairedCoreNode,
+		BinID:        binID,
+		PayloadCode:  payload,
+		Drains:       drains,
+		BinRemainder: binRemainder,
+	})
 }
 
 // inSteadyState reports whether the runtime cache and the physically-

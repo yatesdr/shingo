@@ -46,7 +46,7 @@ func TestBinOwnership_BinAtNodeReadsRuntimeActiveBinID(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	eng.Events.Emit(Event{
@@ -101,7 +101,7 @@ func TestBinOwnership_PickupClearsActiveBinID(t *testing.T) {
 	}
 
 	eng := testEngine(t, db)
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	eng.HandleBinPickedUp(orderUUID, binID)
@@ -143,7 +143,7 @@ func TestBinOwnership_DeliveryThenTickThenPickup(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Phase 1: delivery handler fires (emitOrderCompleted helper now

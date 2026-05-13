@@ -27,11 +27,7 @@
 // returns false in the populated case so re-boots are no-ops.
 package engine
 
-import (
-	"fmt"
-
-	"shingo/protocol"
-)
+import "fmt"
 
 // BackfillBucketsForStation walks every local node_lineside_bucket
 // row this station knows about and emits a
@@ -51,33 +47,7 @@ func (e *Engine) BackfillBucketsForStation(force bool) (int, error) {
 	if e.inventoryDelta == nil {
 		return 0, fmt.Errorf("inventory delta sink not configured; backfill requires a reporter")
 	}
-	nodes, err := e.db.ListProcessNodes()
-	if err != nil {
-		return 0, fmt.Errorf("list process nodes: %w", err)
-	}
-
-	emitted := 0
-	for _, n := range nodes {
-		buckets, err := e.db.ListLinesideBuckets(n.ID)
-		if err != nil {
-			e.logBackfill("list buckets node=%d: %v", n.ID, err)
-			continue
-		}
-		for _, b := range buckets {
-			if b.Qty <= 0 {
-				continue
-			}
-			e.inventoryDelta.RecordBucket(b.NodeID, b.PairKey, b.StyleID, b.PartNumber,
-				b.Qty, protocol.ReasonCaptureFill)
-			emitted++
-		}
-	}
-
-	if force {
-		e.inventoryDelta.Flush()
-	}
-	e.logBackfill("emitted %d bucket seed deltas", emitted)
-	return emitted, nil
+	return e.inventoryDelta.Backfill(force)
 }
 
 // BucketBackfillNeeded returns true when Core reports zero buckets for

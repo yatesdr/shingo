@@ -456,9 +456,11 @@ func (m *Manager) ReleaseOrderWithDisposition(orderID int64, remainingUOP *int, 
 // HandleDeliveredWithExpiry processes a delivered reply with optional
 // staged expiry. binID captures Core's bin id at delivery so the PLC
 // tick path can attribute deltas to the right bin; nil for multi-bin
-// orders. Edge's runtime cache (reconciler-healed from Core) is the
-// source of truth for bin UOP at completion time — the OrderDelivered
-// envelope no longer carries a UOP snapshot.
+// orders. Post-flip (6d226d1) Edge's runtime cache is authoritative for
+// at-node bin UOP; the OrderDelivered envelope no longer carries a UOP
+// snapshot. The cache is seeded at release click and reaffirmed at
+// delivery from Core's BinByID lookup (with a fallback to capacity if
+// Core is unreachable — see wiring_delivered.go).
 func (m *Manager) HandleDeliveredWithExpiry(orderUUID, statusDetail string, stagedExpireAt *time.Time, binID *int64) error {
 	order, err := m.db.GetOrderByUUID(orderUUID)
 	if err != nil {

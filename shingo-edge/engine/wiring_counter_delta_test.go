@@ -6,6 +6,9 @@ import (
 
 	"shingo/protocol"
 	"shingoedge/orders"
+	"shingoedge/store/lineside"
+	"shingoedge/store/processes"
+	"shingoedge/uop"
 )
 
 // fakeDeltaSink captures every Record* call so tests can assert on the
@@ -20,7 +23,8 @@ type fakeDeltaSink struct {
 	// pendingBins / pendingBuckets let tests pre-stage which scopes
 	// the reconciler should treat as in-flight. Leaving them nil
 	// (default) means IsPending* returns false for everything —
-	// matches pre-Item-2 behavior.
+	// matches pre-Item-2 behavior. (Pre-flip carry-over; the
+	// reconciler is deleted but the test fake methods remain unused.)
 	pendingBins    map[int64]struct{}
 	pendingBuckets map[fakePendingBucketKey]struct{}
 
@@ -28,6 +32,51 @@ type fakeDeltaSink struct {
 	// reporter's atomic counter — tests that exercise the metrics
 	// surface stuff a value here.
 	flushFailures int64
+
+	// flushCount counts Flush + MarkAttributionBoundary invocations.
+	// boundaryCalls records the nodeIDs MarkAttributionBoundary was
+	// called with so tests can assert FlipABNode flushed before
+	// SetActivePull.
+	flushCount    int
+	boundaryCalls []int64
+
+	// bindCalls / clearActiveCalls record BindActiveBin and
+	// ClearActiveBin invocations for tests that assert on slot-pointer
+	// lifecycle.
+	bindCalls                []fakeBindCall
+	clearActiveCalls         []int64
+	prepareIncomingCalls     []fakePrepareIncomingCall
+	clearCacheCalls          []int64
+	clearActiveAndResetCalls []fakeClearActiveAndResetCall
+	setClaimAndCountCalls    []fakeSetClaimAndCountCall
+	onDeliveredCalls         []fakeOnDeliveredCall
+	manualLoadCalls          []fakeManualLoadCall
+	onBinPickedUpCalls       []*int64
+	adjustBucketCalls        []fakeAdjustBucketCall
+	backfillCalls            int
+	captureToLinesideCalls   []uop.CaptureEvent
+
+	// db (optional) — when set, BindActiveBin / ClearActiveBin also
+	// perform the underlying runtime-row write via *store.DB so tests
+	// asserting on post-state see the side effect. Tests that only
+	// care about the recorded calls can leave this nil. Untyped so
+	// this test file doesn't need to import store; tests construct
+	// with the concrete *store.DB which satisfies the writeActiveBinIDer
+	// behaviour via duck typing.
+	db writeActiveBinIDer
+}
+
+// writeActiveBinIDer is the fake's narrow view of *store.DB — just the
+// methods the verb implementations delegate to. Defined locally so this
+// test file doesn't take a hard dep on store/processes. *store.DB
+// satisfies it.
+type writeActiveBinIDer interface {
+	SetProcessNodeActiveBinID(processNodeID int64, activeBinID *int64) error
+	SetProcessNodeCachedBin(processNodeID int64, cachedBinID *int64, remainingUOP int) error
+	SetProcessNodeRuntimeWithBin(processNodeID int64, activeClaimID, activeBinID *int64, remainingUOP int) error
+	SetProcessNodeRuntime(processNodeID int64, activeClaimID *int64, remainingUOP int) error
+	SetProcessNodeRuntimeForDeliveredBin(processNodeID int64, activeClaimID *int64, binID int64, remainingUOP int) error
+	SetLinesideBucketForReconcile(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) error
 }
 
 type fakeBinCall struct {
@@ -58,7 +107,320 @@ func (s *fakeDeltaSink) RecordBucket(nodeID int64, pairKey string, styleID int64
 	s.mu.Unlock()
 }
 
-func (s *fakeDeltaSink) Flush() {}
+func (s *fakeDeltaSink) Flush() {
+	s.mu.Lock()
+	s.flushCount++
+	s.mu.Unlock()
+}
+
+// MarkAttributionBoundary records the boundary-flush call. Tests that
+// want to assert FlipABNode flushed before SetActivePull can read
+// boundaryCalls. The implementation flushes (consistent with the real
+// Mutator) so any deltas accumulated mid-test still flow through.
+func (s *fakeDeltaSink) MarkAttributionBoundary(nodeID int64) error {
+	s.mu.Lock()
+	s.boundaryCalls = append(s.boundaryCalls, nodeID)
+	s.flushCount++
+	s.mu.Unlock()
+	return nil
+}
+
+// BindActiveBin / ClearActiveBin record the pointer writes. Tests
+// asserting on slot lifecycle can read bindCalls / clearActiveCalls
+// to verify which (nodeID, binID) pairs were bound or cleared.
+type fakeBindCall struct {
+	NodeID int64
+	BinID  int64
+}
+
+func (s *fakeDeltaSink) BindActiveBin(nodeID, binID int64) error {
+	s.mu.Lock()
+	s.bindCalls = append(s.bindCalls, fakeBindCall{nodeID, binID})
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeActiveBinID(nodeID, &binID)
+	}
+	return nil
+}
+
+func (s *fakeDeltaSink) ClearActiveBin(nodeID int64) error {
+	s.mu.Lock()
+	s.clearActiveCalls = append(s.clearActiveCalls, nodeID)
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeActiveBinID(nodeID, nil)
+	}
+	return nil
+}
+
+type fakePrepareIncomingCall struct {
+	NodeID int64
+	BinID  int64
+	UOP    int
+}
+
+func (s *fakeDeltaSink) PrepareIncoming(nodeID, binID int64, uop int) error {
+	s.mu.Lock()
+	s.prepareIncomingCalls = append(s.prepareIncomingCalls, fakePrepareIncomingCall{nodeID, binID, uop})
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeCachedBin(nodeID, &binID, uop)
+	}
+	return nil
+}
+
+func (s *fakeDeltaSink) ClearCache(nodeID int64) error {
+	s.mu.Lock()
+	s.clearCacheCalls = append(s.clearCacheCalls, nodeID)
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeCachedBin(nodeID, nil, 0)
+	}
+	return nil
+}
+
+type fakeClearActiveAndResetCall struct {
+	NodeID  int64
+	ClaimID *int64
+}
+
+func (s *fakeDeltaSink) ClearActiveAndReset(nodeID int64, activeClaimID *int64) error {
+	s.mu.Lock()
+	s.clearActiveAndResetCalls = append(s.clearActiveAndResetCalls, fakeClearActiveAndResetCall{nodeID, activeClaimID})
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeRuntimeWithBin(nodeID, activeClaimID, nil, 0)
+	}
+	return nil
+}
+
+type fakeSetClaimAndCountCall struct {
+	NodeID  int64
+	ClaimID *int64
+	UOP     int
+}
+
+func (s *fakeDeltaSink) SetClaimAndCount(nodeID int64, activeClaimID *int64, uop int) error {
+	s.mu.Lock()
+	s.setClaimAndCountCalls = append(s.setClaimAndCountCalls, fakeSetClaimAndCountCall{nodeID, activeClaimID, uop})
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeRuntime(nodeID, activeClaimID, uop)
+	}
+	return nil
+}
+
+type fakeOnDeliveredCall struct {
+	NodeID  int64
+	ClaimID *int64
+	BinID   int64
+	UOP     int
+}
+
+func (s *fakeDeltaSink) OnDelivered(nodeID int64, activeClaimID *int64, binID int64, uop int) error {
+	s.mu.Lock()
+	s.onDeliveredCalls = append(s.onDeliveredCalls, fakeOnDeliveredCall{nodeID, activeClaimID, binID, uop})
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeRuntimeForDeliveredBin(nodeID, activeClaimID, binID, uop)
+	}
+	return nil
+}
+
+type fakeManualLoadCall struct {
+	NodeID  int64
+	ClaimID *int64
+	BinID   *int64
+	UOP     int
+}
+
+func (s *fakeDeltaSink) ManualLoad(nodeID int64, activeClaimID *int64, binID *int64, uop int) error {
+	s.mu.Lock()
+	s.manualLoadCalls = append(s.manualLoadCalls, fakeManualLoadCall{nodeID, activeClaimID, binID, uop})
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetProcessNodeRuntimeWithBin(nodeID, activeClaimID, binID, uop)
+	}
+	return nil
+}
+
+func (s *fakeDeltaSink) OnBinPickedUp(nodeID *int64) error {
+	s.mu.Lock()
+	s.onBinPickedUpCalls = append(s.onBinPickedUpCalls, nodeID)
+	s.flushCount++
+	s.mu.Unlock()
+	return nil
+}
+
+type fakeAdjustBucketCall struct {
+	NodeID                int64
+	PairKey               string
+	StyleID               int64
+	PartNumber            string
+	CurrentQty, NewQty    int
+	Reason                protocol.LinesideBucketDeltaReason
+}
+
+// CaptureToLineside records the call + mirrors the real verb's
+// emission shape onto bucketCalls / binCalls when db is set.
+// Performs the bucket DB writes via the real *store.DB so tests
+// asserting on post-state see the bucket rows update.
+func (s *fakeDeltaSink) CaptureToLineside(ev uop.CaptureEvent) (int, error) {
+	s.mu.Lock()
+	s.captureToLinesideCalls = append(s.captureToLinesideCalls, ev)
+	db := s.db
+	s.mu.Unlock()
+	type captureWriter interface {
+		CaptureLinesideBucket(nodeID int64, pairKey string, styleID int64, partNumber string, qty int) (*lineside.Bucket, error)
+		DeactivateOtherLinesideStyles(nodeID int64, styleID int64) error
+	}
+	var cw captureWriter
+	if db != nil {
+		cw, _ = db.(captureWriter)
+	}
+	capturedTotal := 0
+	if ev.Disposition.Mode == uop.DispositionCaptureLineside {
+		for part, qty := range ev.Disposition.LinesideCapture {
+			if qty <= 0 || part == "" {
+				continue
+			}
+			if cw != nil {
+				if _, err := cw.CaptureLinesideBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, qty); err != nil {
+					return capturedTotal, err
+				}
+			}
+			s.mu.Lock()
+			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, ev.StyleID, part, qty, protocol.ReasonCaptureFill})
+			s.mu.Unlock()
+			capturedTotal += qty
+		}
+	}
+	if cw != nil {
+		if err := cw.DeactivateOtherLinesideStyles(ev.NodeID, ev.StyleID); err != nil {
+			return capturedTotal, err
+		}
+	}
+	if capturedTotal > 0 && !ev.SuppressBinDelta && ev.BinID > 0 {
+		s.mu.Lock()
+		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction})
+		s.mu.Unlock()
+	}
+	return capturedTotal, nil
+}
+
+// Consumed / Produced / Fallthrough delegate to the underlying
+// accumulator-equivalent: append fakeBinCall / fakeBucketCall entries
+// matching what the real verb would emit. Lets existing tests asserting
+// on binCalls / bucketCalls keep working without modification.
+func (s *fakeDeltaSink) Consumed(ev uop.TickEvent) error {
+	s.mu.Lock()
+	for part, drained := range ev.Drains {
+		if drained > 0 {
+			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, ev.StyleID, part, -drained, protocol.ReasonConsumeDrain})
+		}
+	}
+	if ev.BinRemainder > 0 && ev.BinID > 0 {
+		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonConsumeTick})
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *fakeDeltaSink) Produced(ev uop.TickEvent) error {
+	s.mu.Lock()
+	if ev.BinRemainder > 0 && ev.BinID > 0 {
+		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, ev.BinRemainder, protocol.ReasonProduceTick})
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *fakeDeltaSink) Fallthrough(ev uop.TickEvent) error {
+	s.mu.Lock()
+	for part, drained := range ev.Drains {
+		if drained > 0 {
+			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, ev.StyleID, part, -drained, protocol.ReasonConsumeDrain})
+		}
+	}
+	if ev.BinRemainder > 0 && ev.BinID > 0 {
+		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -ev.BinRemainder, protocol.ReasonABFallthrough})
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+// Backfill mirrors the real Mutator's Backfill when db is set: walk
+// every node's non-empty buckets, record a bucket call per row with
+// reason=capture_fill. When db is unset, returns (0, nil) — tests
+// that don't care about backfill output can leave db unset.
+func (s *fakeDeltaSink) Backfill(force bool) (int, error) {
+	s.mu.Lock()
+	s.backfillCalls++
+	if force {
+		s.flushCount++
+	}
+	db := s.db
+	s.mu.Unlock()
+	if db == nil {
+		return 0, nil
+	}
+	// Use the same db field for the read surface (writeActiveBinIDer is
+	// a write-shape interface; the listing methods are on *store.DB
+	// directly so we cast through the lister interface below).
+	type backfillLister interface {
+		ListProcessNodes() ([]processes.Node, error)
+		ListLinesideBuckets(nodeID int64) ([]lineside.Bucket, error)
+	}
+	lister, ok := db.(backfillLister)
+	if !ok {
+		return 0, nil
+	}
+	nodes, err := lister.ListProcessNodes()
+	if err != nil {
+		return 0, err
+	}
+	emitted := 0
+	for _, n := range nodes {
+		buckets, err := lister.ListLinesideBuckets(n.ID)
+		if err != nil {
+			continue
+		}
+		for _, b := range buckets {
+			if b.Qty <= 0 {
+				continue
+			}
+			s.mu.Lock()
+			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{b.NodeID, b.PairKey, b.StyleID, b.PartNumber, b.Qty, protocol.ReasonCaptureFill})
+			s.mu.Unlock()
+			emitted++
+		}
+	}
+	return emitted, nil
+}
+
+func (s *fakeDeltaSink) AdjustBucket(nodeID int64, pairKey string, styleID int64, partNumber string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error {
+	s.mu.Lock()
+	s.adjustBucketCalls = append(s.adjustBucketCalls, fakeAdjustBucketCall{nodeID, pairKey, styleID, partNumber, currentQty, newQty, reason})
+	delta := newQty - currentQty
+	if delta != 0 {
+		s.bucketCalls = append(s.bucketCalls, fakeBucketCall{nodeID, pairKey, styleID, partNumber, delta, reason})
+	}
+	s.flushCount++
+	db := s.db
+	s.mu.Unlock()
+	if db != nil {
+		return db.SetLinesideBucketForReconcile(nodeID, pairKey, styleID, partNumber, newQty)
+	}
+	return nil
+}
 
 // IsPendingBinDelta / IsPendingBucketDelta return whatever the test
 // stuffs into pendingBins / pendingBuckets. Tests that don't care

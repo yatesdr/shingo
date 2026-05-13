@@ -34,7 +34,7 @@ func TestPhase3Backfill_InFlightBuckets(t *testing.T) {
 	}
 
 	eng := testEngine(t, db)
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	emitted, err := eng.BackfillBucketsForStation(false)
@@ -80,7 +80,7 @@ func TestPhase3Backfill_EmptyBucketsNotEmitted(t *testing.T) {
 	}
 
 	eng := testEngine(t, db)
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	emitted, err := eng.BackfillBucketsForStation(false)
@@ -180,7 +180,10 @@ func TestBucketBackfillNeeded_EmptyEdgeReturnsFalse(t *testing.T) {
 func TestPhase3Backfill_NoSinkErrors(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	// Deliberately do NOT call SetInventoryDeltaSink.
+	// Deliberately clear the default sink testEngine wires — this test
+	// pins the precondition that backfill without a reporter wired
+	// returns an error rather than silently emitting into the void.
+	eng.SetInventoryDeltaSink(nil)
 
 	if _, err := eng.BackfillBucketsForStation(false); err == nil {
 		t.Error("err = nil, want non-nil when reporter unset")

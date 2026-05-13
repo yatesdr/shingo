@@ -35,7 +35,7 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
 	eng := testEngine(t, db)
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Pre-condition: zero flushes recorded.
@@ -65,7 +65,7 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 func TestBinPickedUp_HandlesMissingOrder(t *testing.T) {
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
-	sink := &flushTrackingSink{}
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
 	// No order seeded — handler must early-return cleanly.
@@ -111,7 +111,7 @@ func TestRegression_PartialBackTicksAttributeToReleasedBin(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Phase 1: 2 ticks during the pickup window — both must attribute

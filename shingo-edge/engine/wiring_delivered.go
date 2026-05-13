@@ -37,11 +37,14 @@ import (
 //
 // Core-unreachable fallback: the cache + bin pointers still get written,
 // but with claim.UOPCapacity (consume) / 0 (produce) instead of the
-// authoritative bin value. The reconciler self-heal will rewrite the
-// cache to the actual bin count on the next pass once Core is reachable.
-// This keeps the slot accounting honest about which bin is present
-// (active_bin_id / cached_bin_id) even during a Core blip — better than
-// leaving the bin pointers stale-pointing at a previous bin.
+// looked-up bin value. Post-flip (6d226d1) Edge is authoritative for
+// at-node bins; there is no reconciler to rewrite the fallback value
+// when Core comes back. The fallback is bounded — subsequent PLC ticks
+// emit signed deltas that Core applies to whatever value its row holds,
+// so arithmetic stays consistent even if Edge's initial cache value
+// disagreed with Core. Operator UI may display the fallback value
+// briefly; this is the accepted bias (see Risk: Gap A in the refactor
+// plan / architecture doc).
 func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 	if delivered.ProcessNodeID == nil || delivered.BinID == nil {
 		return
@@ -79,8 +82,10 @@ func (e *Engine) handleNodeOrderDelivered(delivered OrderDeliveredEvent) {
 		cacheValue = 0
 	}
 	claimID := claim.ID
-	if err := e.db.SetProcessNodeRuntimeForDeliveredBin(node.ID, &claimID, *delivered.BinID, cacheValue); err != nil {
-		log.Printf("delivered: set runtime for node %d bin %d: %v", node.ID, *delivered.BinID, err)
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.OnDelivered(node.ID, &claimID, *delivered.BinID, cacheValue); err != nil {
+			log.Printf("delivered: set runtime for node %d bin %d: %v", node.ID, *delivered.BinID, err)
+		}
 	}
 }
 

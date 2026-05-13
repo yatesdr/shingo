@@ -172,7 +172,7 @@ func TestRegression_CaptureReleaseSingleWriter(t *testing.T) {
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
-	sink := &fakeDeltaSink{}
+	sink := &fakeDeltaSink{db: db}
 	eng.SetInventoryDeltaSink(sink)
 
 	// Drain any pre-existing outbox so findOutboxByType is exact.
