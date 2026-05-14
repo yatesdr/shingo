@@ -459,18 +459,27 @@ function createNodeButton(entry) {
     const capacity = claim ? claim.uop_capacity : 0;
 
     // Tile background by priority: release-ready (blue) > changeover
-    // (orange) > fill state (full/mid/low/empty). Higher-priority states
-    // replace the underlying state color so the operator gets a single
-    // clear cue per tile rather than a stack of overlays. Replenishing
-    // stays as an inset ring (separate "robot in motion" signal that
-    // doesn't compete with the click-to-act vs CO-context cues).
+    // (orange) > in-transit (purple) > fill state (full/mid/low/empty).
+    // Higher-priority states replace the underlying state color so the
+    // operator gets a single clear cue per tile rather than a stack of
+    // overlays. Replenishing stays as an inset ring (separate "robot in
+    // motion" signal that doesn't compete with the click-to-act vs
+    // CO-context cues). In-transit covers staged too — staged is a
+    // robot parked at its wait point during a two-robot swap, still
+    // inbound from the operator's POV; hiding purple at staged would
+    // make the tile flicker color right when the robot is closest.
     const releaseReady = isReleaseReady(entry);
     const inChangeover = !!entry.changeover_task;
+    const inboundOrders = (entry.orders || []).filter(o =>
+        o.status === 'in_transit' || o.status === 'staged'
+    );
     let stateClass;
     if (releaseReady) {
         stateClass = 'os-release-ready';
     } else if (inChangeover) {
         stateClass = 'os-changeover';
+    } else if (inboundOrders.length > 0) {
+        stateClass = 'os-in-transit';
     } else {
         stateClass = nodeColorClass(entry);
     }
@@ -536,7 +545,7 @@ function createNodeButton(entry) {
             }));
         }
         const payloadText = claim ? (claim.payload_code || 'Unassigned') : '';
-        appendOrderStatusChips(btn, entry);
+        appendETAPills(btn, inboundOrders);
         btn.appendChild(el('span', { className: 'os-node-payload', textContent: payloadText }));
     }
 
@@ -544,19 +553,56 @@ function createNodeButton(entry) {
     return btn;
 }
 
-// Renders one chip per active order on the node. Stacked when a two-robot
-// swap has both Order A and Order B in flight.
-function appendOrderStatusChips(btn, entry) {
-    const active = (entry.orders || []).filter(o => isActive(o.status));
-    if (active.length === 0) return;
-    const row = el('div', { className: 'os-node-status' });
-    active.forEach(o => {
+// Renders one ETA pill per inbound order (in_transit or staged). On a
+// two-robot swap with both legs inbound, stacks two pills (Order A on
+// top, Order B below). The tile is already purple via os-in-transit, so
+// the pill answers the operator's natural follow-up question ("how
+// soon?") rather than restating "in transit".
+//
+// inboundOrders is the same list used by the color-priority decision in
+// createNodeButton — passed in rather than recomputed so the pill row
+// and the background color can't disagree.
+function appendETAPills(btn, inboundOrders) {
+    if (!inboundOrders || inboundOrders.length === 0) return;
+    const displays = inboundOrders.map(o => formatETA(o.eta)).filter(d => !d.empty);
+    if (displays.length === 0) return;
+    const row = el('div', { className: 'os-node-eta' });
+    displays.forEach(display => {
         row.appendChild(el('span', {
-            className: 'os-node-status-chip',
-            textContent: String(o.status || '').replace(/_/g, ' ')
+            className: 'os-node-eta-pill' + (display.overdue ? ' overdue' : ''),
+            textContent: display.text,
         }));
     });
     btn.appendChild(row);
+}
+
+// Bucket boundaries match the user-approved display rules:
+//   < 45s   → "Arriving"
+//   45–90s  → "ETA: ~1 min"
+//   ≥ 90s   → "ETA: ~N min" rounded to nearest whole minute
+//   overdue by > 60s → "Running late" + amber pill
+// No sub-minute precision past the first bucket — fake precision was the
+// thing Uber's UX research dropped. If the order has no ETA yet (Core
+// hasn't stamped one, e.g. mid-transition or backfill pending) we show
+// nothing rather than a placeholder; the purple background already says
+// "robot inbound", the pill is the time-detail layer.
+function formatETA(etaStr) {
+    if (!etaStr) return { text: '', overdue: false, empty: true };
+    const etaMs = Date.parse(etaStr);
+    if (isNaN(etaMs)) return { text: '', overdue: false, empty: true };
+    const remainingSec = (etaMs - Date.now()) / 1000;
+    const graceSec = 60;
+    if (remainingSec < -graceSec) {
+        return { text: 'Running late', overdue: true };
+    }
+    if (remainingSec < 45) {
+        return { text: 'Arriving', overdue: false };
+    }
+    if (remainingSec < 90) {
+        return { text: 'ETA: ~1 min', overdue: false };
+    }
+    const mins = Math.round(remainingSec / 60);
+    return { text: 'ETA: ~' + mins + ' min', overdue: false };
 }
 
 // isReleaseReady drives the os-release-ready blue glow. Same screen

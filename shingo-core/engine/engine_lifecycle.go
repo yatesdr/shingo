@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"database/sql"
 	"time"
 
+	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/dispatch/eta"
 	"shingocore/fleet"
 	"shingocore/fulfillment"
 )
@@ -81,7 +84,82 @@ func (e *Engine) Start() {
 		e.logFn("engine: count-group runner started")
 	}
 
+	// ETA medians cache — initial refresh + 10-min background refresh.
+	// Errors are logged but non-fatal: a cold-start failure leaves the
+	// cache empty, the in-transit OrderUpdate path falls back to the
+	// global p70 (also empty on cold start) and then to the static
+	// default. Plant runs as before, just without per-route ETAs until
+	// the next refresh succeeds.
+	if err := e.etaCache.Start(e.stopChan); err != nil {
+		e.logFn("engine: eta cache initial refresh failed: %v (will retry in %s)", err, "10m")
+	}
+	e.backfillETAsForInTransitOrders()
+
 	e.logFn("engine: started")
+}
+
+// backfillETAsForInTransitOrders re-stamps ETAs for orders that are
+// already in_transit (or staged) at boot. Without this, an order that
+// was mid-delivery when Core restarted would lose its ETA pill on the
+// HMI until it next transitioned status — by which point it would be
+// delivered and the pill irrelevant anyway. The fix is to look up each
+// order's last in_transit timestamp in order_history and ship a fresh
+// OrderUpdate so Edge can re-populate the pill.
+//
+// Skips orders that are already overdue past the grace window — those
+// would render as "running late" immediately and the operator already
+// knows the system is degraded; a backwards-pointing ETA adds noise.
+func (e *Engine) backfillETAsForInTransitOrders() {
+	if e.etaCache == nil {
+		return
+	}
+	const q = `
+SELECT o.id, o.edge_uuid, o.station_id, o.source_node, o.delivery_node, o.status,
+       (SELECT MAX(created_at) FROM order_history
+            WHERE order_id = o.id AND status = 'in_transit') AS last_in_transit_at
+FROM orders o
+WHERE o.status IN ('in_transit', 'staged')
+`
+	rows, err := e.db.Query(q)
+	if err != nil {
+		e.logFn("engine: eta backfill query: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	const grace = 60 * time.Second
+	var sent int
+	for rows.Next() {
+		var (
+			id                                                       int64
+			edgeUUID, stationID, sourceNode, deliveryNode, status    string
+			inTransitAt                                              sql.NullTime
+		)
+		if err := rows.Scan(&id, &edgeUUID, &stationID, &sourceNode, &deliveryNode, &status, &inTransitAt); err != nil {
+			e.logFn("engine: eta backfill scan: %v", err)
+			continue
+		}
+		if !inTransitAt.Valid {
+			continue
+		}
+		etaStr := eta.StampFrom(e.etaCache, sourceNode, deliveryNode, inTransitAt.Time, grace)
+		if etaStr == "" {
+			continue
+		}
+		if err := e.sendToEdge(protocol.TypeOrderUpdate, stationID, &protocol.OrderUpdate{
+			OrderUUID: edgeUUID,
+			Status:    status,
+			Detail:    "eta restored on boot",
+			ETA:       etaStr,
+		}); err != nil {
+			e.logFn("engine: eta backfill send for order %d (%s): %v", id, edgeUUID, err)
+			continue
+		}
+		sent++
+	}
+	if sent > 0 {
+		e.logFn("engine: backfilled ETA for %d in-transit orders on boot", sent)
+	}
 }
 
 func (e *Engine) Stop() {

@@ -290,6 +290,43 @@ body {
     text-align: center;
 }
 
+/* ETA pill row — one pill per active in-transit order. Two-robot swap
+   stacks two pills (Order A on top, Order B below). Sits between the UOP
+   count and the bottom-anchored payload code. Only rendered when at least
+   one order on the tile is in_transit/staged; hidden otherwise so idle
+   tiles stay clean. */
+.os-node-eta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    max-width: calc(100% - 16px);
+}
+
+.os-node-eta-pill {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.34);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 12px;
+    padding: 3px 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+/* Overdue: now > eta + grace. Honest "running late" cue rather than a
+   countdown ticking past zero. Amber matches the existing low-stock /
+   warning palette so it reads as "something to keep an eye on", not
+   alarm-level. */
+.os-node-eta-pill.overdue {
+    background: var(--os-amber);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
 /* Fill level colors */
 .os-node-btn.os-full { background: var(--os-green); }
 .os-node-btn.os-mid { background: var(--os-amber); }
@@ -324,6 +361,15 @@ body {
 .os-node-btn.os-release-ready {
     background: var(--os-blue);
     animation: os-pulse 1.6s ease-in-out infinite;
+}
+
+/* In-transit: purple. Priority sits between changeover (orange) and the
+   fill-state colors — when a robot is en route the operator's eye should
+   leave fill level behind and lock onto "stock is coming". CO and
+   release-ready still override (they need a click). The UOP number stays
+   visible in text so fill level isn't lost, just demoted. */
+.os-node-btn.os-in-transit {
+    background: var(--os-purple);
 }
 
 /* Banner label rendered inside the tile under the node name when the
@@ -798,6 +844,7 @@ body {
     .os-node-remaining { font-size: 36px; }
     .os-node-capacity { font-size: 14px; }
     .os-node-payload { font-size: 19px; bottom: 6px; left: 8px; right: 8px; }
+    .os-node-eta-pill { font-size: 15px; padding: 2px 10px; }
     .os-node-btn { padding: 8px 10px; border-radius: 10px; }
 
     .os-modal { padding: 16px; border-radius: 14px; }
@@ -1012,6 +1059,7 @@ body.os-board-mode-active #os-footer { font-size: 22px; }
     .os-node-remaining { font-size: 30px; }
     .os-node-name { font-size: 12px; }
     .os-node-payload { font-size: 16px; }
+    .os-node-eta-pill { font-size: 13px; padding: 2px 8px; }
 
     .os-keypad { width: min(96vw, 360px); padding: 10px; }
     .os-keypad-display { font-size: 26px; padding: 10px; margin-bottom: 6px; }

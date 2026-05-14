@@ -27,6 +27,7 @@ import (
 	"shingocore/config"
 	"shingocore/countgroup"
 	"shingocore/dispatch"
+	"shingocore/dispatch/eta"
 	"shingocore/fleet"
 	"shingocore/fulfillment"
 	"shingocore/messaging"
@@ -77,6 +78,7 @@ type Engine struct {
 	healthService   *service.HealthService
 	tagVerifyService *service.TagVerifyService
 	inventoryDeltaService *service.InventoryDeltaService
+	etaCache        *eta.Cache
 	stopChan        chan struct{}
 	stopOnce        sync.Once
 	sceneSyncing    atomic.Bool
@@ -128,6 +130,7 @@ func New(c Config) *Engine {
 	e.healthService = service.NewHealthService(e.db)
 	e.tagVerifyService = service.NewTagVerifyService(e.db)
 	e.inventoryDeltaService = service.NewInventoryDeltaService(e.db, e.binManifest)
+	e.etaCache = eta.NewCache(e.db.DB)
 	return e
 }
 

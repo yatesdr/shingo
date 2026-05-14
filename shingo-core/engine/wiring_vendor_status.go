@@ -13,6 +13,7 @@ import (
 
 	"shingo/protocol"
 	"shingocore/dispatch"
+	"shingocore/dispatch/eta"
 	"shingocore/store/orders"
 )
 
@@ -116,12 +117,23 @@ func (e *Engine) handleVendorStatusChange(ev OrderStatusChangedEvent) {
 		e.logFn("engine: update order %d vendor state: %v", order.ID, err)
 	}
 
-	// Send status update to ShinGo Edge
-	if err := e.sendToEdge(protocol.TypeOrderUpdate, order.StationID, &protocol.OrderUpdate{
+	// Send status update to ShinGo Edge. On transitions INTO in_transit
+	// we compute a per-route ETA from the medians cache and include it
+	// on the update; Edge stores it and the operator HMI renders an ETA
+	// pill on the node tile. On any other status the ETA is left nil
+	// (Edge doesn't render pills on pre-in-transit statuses and treats
+	// terminal statuses as pill-hidden — see operator-render.js).
+	update := &protocol.OrderUpdate{
 		OrderUUID: order.EdgeUUID,
 		Status:    string(newStatus),
 		Detail:    fmt.Sprintf("fleet state: %s", ev.NewStatus),
-	}); err != nil {
+	}
+	if newStatus == dispatch.StatusInTransit {
+		if etaStr := eta.Stamp(e.etaCache, order.SourceNode, order.DeliveryNode); etaStr != "" {
+			update.ETA = etaStr
+		}
+	}
+	if err := e.sendToEdge(protocol.TypeOrderUpdate, order.StationID, update); err != nil {
 		e.logFn("engine: status update: %v", err)
 	}
 
