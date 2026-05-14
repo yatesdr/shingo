@@ -35,9 +35,25 @@ type ConsumePlan struct {
 	SimpleSource, SimpleDest              string
 	DowngradedFromSwapMode                protocol.SwapMode // empty unless this is the case-2 downgrade
 
+	// PrimePairedPositions are additional simple deliveries emitted
+	// alongside SimpleMove for the two_robot_press_index empty-station
+	// downgrade. When the head node is empty AND the paired positions
+	// (PairedCoreNode / SecondPairedCoreNode) are also empty, one prime
+	// per empty paired position is added so the next swap cycle has bins
+	// to cascade. Each entry produces one CreateMoveOrder. Order tracking
+	// stays on the head node's runtime; primes are not sibling-linked.
+	PrimePairedPositions                  []SimplePrime
+
 	// Dispatch is the shared swap-mode dispatch for sequential / single_robot
 	// / two_robot / two_robot_press_index. Nil when SimpleMove is true.
 	Dispatch *SwapDispatch
+}
+
+// SimplePrime describes one fire-and-forget delivery move emitted as
+// part of the press-index empty-station downgrade.
+type SimplePrime struct {
+	Source string
+	Dest   string
 }
 
 // CycleMode returns the mode tag the apply caller surfaces in
@@ -55,18 +71,25 @@ func (p *ConsumePlan) CycleMode() protocol.SwapMode {
 // composes the consume-request plan for the claim's swap mode. Pure — no
 // DB, fleet, or order-manager calls.
 //
-// nodeOccupied is the result of the apply caller's pre-check against
-// Core's telemetry (engine.nodeIsOccupied). When false, the planner
-// downgrades any non-simple swap mode to a SimpleMove — matching the
-// existing operator_stations.go behavior — so a manually removed bin
-// doesn't strand the operator behind a swap that has nothing to swap out.
+// occupancy maps core node names to their telemetry-reported occupied
+// state (from engine.claimOccupancy / FetchNodeBins). When the head
+// node (claim.CoreNodeName) is reported empty, the planner downgrades
+// any non-simple swap mode to a SimpleMove — matching the existing
+// operator_stations.go behavior — so a manually removed bin doesn't
+// strand the operator behind a swap that has nothing to swap out.
+//
+// For two_robot_press_index downgrades, the planner also consults
+// occupancy for PairedCoreNode and SecondPairedCoreNode and emits one
+// prime delivery (PrimePairedPositions) per empty paired position so
+// the next cycle has bins to cascade. Paired entries missing from the
+// map default to occupied=true (safe — no prime emitted).
 //
 // autoConfirm is the merged claim.AutoConfirm || cfg.Web.AutoConfirm
 // signal — surfaced as a parameter so the planner stays config-free.
 //
 // Validation errors are returned verbatim (no additional wrapping) so
 // apply-time error surfaces stay diff-stable.
-func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64, nodeOccupied bool, autoConfirm bool) (*ConsumePlan, error) {
+func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, quantity int64, occupancy map[string]bool, autoConfirm bool) (*ConsumePlan, error) {
 	if claim == nil {
 		return nil, fmt.Errorf("node %s has no active claim", node.Name)
 	}
@@ -84,7 +107,8 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 
 	// Node-empty downgrade: nothing physically present to swap out, so
 	// any non-simple mode collapses to a delivery move.
-	if claim.SwapMode != protocol.SwapModeSimple && claim.SwapMode != "" && !nodeOccupied {
+	headOccupied := isOccupied(occupancy, claim.CoreNodeName)
+	if claim.SwapMode != protocol.SwapModeSimple && claim.SwapMode != "" && !headOccupied {
 		if claim.InboundSource == "" {
 			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 		}
@@ -92,6 +116,22 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		plan.SimpleSource = claim.InboundSource
 		plan.SimpleDest = claim.CoreNodeName
 		plan.DowngradedFromSwapMode = claim.SwapMode
+		// Press-index cascade needs B (and C, on 3-position layouts) to
+		// hold bins before the next swap cycle. Prime any empty paired
+		// position from the same InboundSource. Partial-empty cases
+		// where the head is full but a paired position is empty are
+		// intentionally out of scope here — they don't trigger this
+		// downgrade and need a separate decision (refuse vs. auto-prime).
+		if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
+			if claim.PairedCoreNode != "" && !isOccupied(occupancy, claim.PairedCoreNode) {
+				plan.PrimePairedPositions = append(plan.PrimePairedPositions,
+					SimplePrime{Source: claim.InboundSource, Dest: claim.PairedCoreNode})
+			}
+			if claim.SecondPairedCoreNode != "" && !isOccupied(occupancy, claim.SecondPairedCoreNode) {
+				plan.PrimePairedPositions = append(plan.PrimePairedPositions,
+					SimplePrime{Source: claim.InboundSource, Dest: claim.SecondPairedCoreNode})
+			}
+		}
 		return plan, nil
 	}
 
@@ -111,4 +151,19 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	}
 	plan.Dispatch = dispatch
 	return plan, nil
+}
+
+// isOccupied reads the occupancy map with the same missing-entry-means-
+// occupied default the apply caller applies to Core telemetry failures.
+// Keeps the downgrade trigger and the paired-prime check on identical
+// semantics so a Core blip can't half-fire the downgrade.
+func isOccupied(occupancy map[string]bool, coreNodeName string) bool {
+	if coreNodeName == "" {
+		return true
+	}
+	occ, ok := occupancy[coreNodeName]
+	if !ok {
+		return true
+	}
+	return occ
 }

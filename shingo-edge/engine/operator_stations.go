@@ -12,11 +12,16 @@ import (
 )
 
 type NodeOrderResult struct {
-	CycleMode     protocol.SwapMode `json:"cycle_mode"`
-	Order         *storeorders.Order `json:"order,omitempty"`
-	OrderA        *storeorders.Order `json:"order_a,omitempty"`
-	OrderB        *storeorders.Order `json:"order_b,omitempty"`
-	ProcessNodeID int64        `json:"process_node_id"`
+	CycleMode     protocol.SwapMode    `json:"cycle_mode"`
+	Order         *storeorders.Order   `json:"order,omitempty"`
+	OrderA        *storeorders.Order   `json:"order_a,omitempty"`
+	OrderB        *storeorders.Order   `json:"order_b,omitempty"`
+	// PrimeOrders are additional simple deliveries emitted alongside Order
+	// when a press-index empty-station downgrade prime-filled the paired
+	// positions. Empty for non-press-index requests and for press-index
+	// downgrades where the paired positions were already occupied.
+	PrimeOrders   []*storeorders.Order `json:"prime_orders,omitempty"`
+	ProcessNodeID int64                `json:"process_node_id"`
 }
 
 func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderResult, error) {
@@ -34,22 +39,51 @@ func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderRe
 	return e.requestNodeFromClaim(node, runtime, claim, quantity)
 }
 
-// findActiveClaim looks up the style node claim for a process node based on
-// the process's active style and the node's core_node_name.
-// nodeIsOccupied checks Core's telemetry to see if a physical bin is at the node.
-// Returns true if occupied OR if Core is unreachable (safe default — assume bin present).
-func (e *Engine) nodeIsOccupied(coreNodeName string) bool {
+// claimOccupancy resolves Core-telemetry occupancy for the head node plus
+// any paired positions on the claim. Returns a map keyed by core node
+// name. Missing entries (Core unreachable or node not returned) are
+// treated as occupied by isOccupied — safe default that suppresses both
+// the downgrade and any paired-prime emission so a Core blip can't
+// dispatch phantom deliveries.
+//
+// Simple / unset swap modes short-circuit to the head-only occupied=true
+// map: BuildConsumePlan ignores occupancy on those paths anyway.
+func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
+	occ := map[string]bool{}
+	if claim == nil {
+		return occ
+	}
+	if claim.SwapMode == protocol.SwapModeSimple || claim.SwapMode == "" {
+		occ[claim.CoreNodeName] = true
+		return occ
+	}
+	names := []string{claim.CoreNodeName}
+	if claim.SwapMode == protocol.SwapModeTwoRobotPressIndex {
+		if claim.PairedCoreNode != "" {
+			names = append(names, claim.PairedCoreNode)
+		}
+		if claim.SecondPairedCoreNode != "" {
+			names = append(names, claim.SecondPairedCoreNode)
+		}
+	}
 	if !e.coreClient.Available() {
-		log.Printf("[occupied-check] core API not configured, assuming occupied")
-		return true
+		log.Printf("[occupied-check] core API not configured, assuming occupied for %v", names)
+		for _, n := range names {
+			occ[n] = true
+		}
+		return occ
 	}
-	bins, _ := e.coreClient.FetchNodeBins([]string{coreNodeName})
-	if len(bins) == 0 {
-		log.Printf("[occupied-check] node %s: no data from core, assuming occupied", coreNodeName)
-		return true
+	bins, _ := e.coreClient.FetchNodeBins(names)
+	for _, b := range bins {
+		occ[b.NodeName] = b.Occupied
 	}
-	log.Printf("[occupied-check] node %s: occupied=%v bin_label=%q", coreNodeName, bins[0].Occupied, bins[0].BinLabel)
-	return bins[0].Occupied
+	for _, n := range names {
+		if _, ok := occ[n]; !ok {
+			log.Printf("[occupied-check] node %s: no data from core, assuming occupied", n)
+			occ[n] = true
+		}
+	}
+	return occ
 }
 
 // requestNodeFromClaim constructs orders using style_node_claims routing.
@@ -62,14 +96,23 @@ func (e *Engine) requestNodeFromClaim(node *processes.Node, runtime *processes.R
 	if claim != nil {
 		autoConfirm = claim.AutoConfirm || e.cfg.Web.AutoConfirm
 	}
-	occupied := claim == nil || claim.SwapMode == protocol.SwapModeSimple || claim.SwapMode == "" || e.nodeIsOccupied(claim.CoreNodeName)
+	occupancy := e.claimOccupancy(claim)
 
-	plan, err := BuildConsumePlan(node, runtime, claim, quantity, occupied, autoConfirm)
+	plan, err := BuildConsumePlan(node, runtime, claim, quantity, occupancy, autoConfirm)
 	if err != nil {
 		return nil, err
 	}
 	if plan.DowngradedFromSwapMode != "" {
-		log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery", node.Name, plan.DowngradedFromSwapMode)
+		if len(plan.PrimePairedPositions) > 0 {
+			dests := make([]string, 0, len(plan.PrimePairedPositions))
+			for _, p := range plan.PrimePairedPositions {
+				dests = append(dests, p.Dest)
+			}
+			log.Printf("[request-material] node %s empty + paired empty: priming %v alongside %s delivery (downgraded from %s)",
+				node.Name, dests, claim.CoreNodeName, plan.DowngradedFromSwapMode)
+		} else {
+			log.Printf("[request-material] node %s is empty (no bin), downgrading %s to simple delivery", node.Name, plan.DowngradedFromSwapMode)
+		}
 	}
 
 	// Bug 3 guard: refuse to start a second swap on top of an in-flight one.
@@ -103,7 +146,25 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 		if err != nil {
 			return nil, err
 		}
-		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, Order: order, ProcessNodeID: nodeID}, nil
+		// Press-index empty-station primes: attributed to the head node
+		// for ownership/audit, NOT tracked in runtime slots (those belong
+		// to the head's serial-order machinery for swap cycles). Failure
+		// of any single prime is logged and surfaced — the head order is
+		// already created and we don't roll it back, but we do return the
+		// error so the operator sees that priming was incomplete.
+		var primes []*storeorders.Order
+		for _, p := range plan.PrimePairedPositions {
+			po, perr := e.orderMgr.CreateMoveOrder(&nodeID, plan.Quantity, p.Source, p.Dest, plan.AutoConfirm)
+			if perr != nil {
+				return nil, fmt.Errorf("prime %s: %w", p.Dest, perr)
+			}
+			refreshed, perr := e.refreshOrderStation(po.ID)
+			if perr != nil {
+				return nil, perr
+			}
+			primes = append(primes, refreshed)
+		}
+		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}
 
 	dispatch := plan.Dispatch
