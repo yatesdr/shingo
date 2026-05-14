@@ -155,9 +155,13 @@ func (s *PlanningService) planRetrieve(order *orders.Order, env *protocol.Envelo
 	var sourceNode *nodes.Node
 
 	if order.SourceNode != "" && s.resolver != nil {
-		sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
-		if err == nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" {
-			result, err := s.resolver.Resolve(sourceNode, OrderTypeRetrieve, payloadCode, nil)
+		// `srcGroup` (not `sourceNode`) so the success-path write at the
+		// bottom of this block lands in the outer `sourceNode` rather than
+		// a shadow — the shadow form panicked on `sourceNode.Name` below
+		// once unloader auto-push lit up the NGRP retrieve path.
+		srcGroup, err := s.db.GetNodeByDotName(order.SourceNode)
+		if err == nil && srcGroup.IsSynthetic && srcGroup.NodeTypeCode == "NGRP" {
+			result, err := s.resolver.Resolve(srcGroup, OrderTypeRetrieve, payloadCode, nil)
 			if err != nil {
 				var buriedErr *BuriedError
 				if errors.As(err, &buriedErr) {

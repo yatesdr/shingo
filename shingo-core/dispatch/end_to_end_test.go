@@ -909,6 +909,58 @@ func TestHandleOrderIngest(t *testing.T) {
 	}
 }
 
+// TestDispatcher_RetrieveOrder_NGRPSource verifies that a retrieve_full order
+// with an NGRP (supermarket group) as the source resolves to a concrete slot,
+// claims the target bin, and dispatches. Regression for the shadowed-sourceNode
+// panic in planRetrieve: when the NGRP resolver succeeded, the inner `:=`
+// declaration shadowed the outer `sourceNode` and the subsequent
+// `sourceNode.Name` deref nil-panicked, leaving the order stranded at
+// `sourcing`. Lit up in production by unloader auto-push passing
+// claim.InboundSource as SourceNode for retrieve_full orders.
+func TestDispatcher_RetrieveOrder_NGRPSource(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{
+		Prefix:   "RTNGRP",
+		NumSlots: 1, // accessible target, no blockers
+	})
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+	resolver := &DefaultResolver{DB: db, LaneLock: d.LaneLock(), DebugLog: d.dbg}
+	d2 := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+
+	env := testEnvelope()
+
+	d2.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-ngrp-1",
+		OrderType:    OrderTypeRetrieve,
+		PayloadCode:  sc.Payload.Code,
+		SourceNode:   sc.Grp.Name, // NGRP — the auto-push scenario
+		DeliveryNode: sc.LineNode.Name,
+		Quantity:     1,
+	})
+
+	order := testdb.RequireOrderStatus(t, db, "retrieve-ngrp-1", StatusDispatched)
+
+	if order.BinID == nil {
+		t.Fatal("BinID nil — planRetrieve must claim a bin via NGRP resolver")
+	}
+	if *order.BinID != sc.TargetBin.ID {
+		t.Errorf("BinID = %d, want %d (target bin in NGRP lane)", *order.BinID, sc.TargetBin.ID)
+	}
+	if order.SourceNode == sc.Grp.Name {
+		t.Errorf("SourceNode = %q, want resolved to concrete slot %q", order.SourceNode, sc.Slots[0].Name)
+	}
+	if order.SourceNode != sc.Slots[0].Name {
+		t.Errorf("SourceNode = %q, want %q", order.SourceNode, sc.Slots[0].Name)
+	}
+	if len(backend.Orders()) != 1 {
+		t.Fatalf("fleet orders = %d, want 1", len(backend.Orders()))
+	}
+}
+
 // TestDispatcher_MoveOrder_NGRPSource verifies that a move order with an NGRP
 // (supermarket group) as the source node correctly resolves to a concrete slot,
 // claims the bin, and dispatches. This is the bug scenario from "request material"
