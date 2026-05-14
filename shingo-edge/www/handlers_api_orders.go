@@ -23,6 +23,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 		RetrieveEmpty bool   `json:"retrieve_empty"`
 		Quantity      int64  `json:"quantity"`
 		DeliveryNode  string `json:"delivery_node"`
+		SourceNode    string `json:"source_node"` // optional supermarket group; "" = Core's global FIFO
 		StagingNode   string `json:"staging_node"`
 		LoadType      string `json:"load_type"`
 		Count         int    `json:"count"` // >1 creates a batch of empty bin orders
@@ -56,13 +57,13 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "payload_code and delivery_node required for batch")
 			return
 		}
-		h.createRetrieveBatch(w, req.PayloadCode, req.DeliveryNode, count)
+		h.createRetrieveBatch(w, req.PayloadCode, req.DeliveryNode, req.SourceNode, count)
 		return
 	}
 
 	order, err := h.engine.OrderManager().CreateRetrieveOrder(
 		processNodeID, req.RetrieveEmpty,
-		req.Quantity, req.DeliveryNode, req.StagingNode, req.LoadType, req.PayloadCode,
+		req.Quantity, req.DeliveryNode, req.SourceNode, req.StagingNode, req.LoadType, req.PayloadCode,
 		h.engine.AppConfig().Web.AutoConfirm, false,
 	)
 	if err != nil {
@@ -72,7 +73,7 @@ func (h *Handlers) apiCreateRetrieveOrder(w http.ResponseWriter, r *http.Request
 	writeJSON(w, order)
 }
 
-func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliveryNode string, count int) {
+func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliveryNode, sourceNode string, count int) {
 	type result struct {
 		OrderID int64  `json:"order_id,omitempty"`
 		UUID    string `json:"uuid,omitempty"`
@@ -82,7 +83,7 @@ func (h *Handlers) createRetrieveBatch(w http.ResponseWriter, payloadCode, deliv
 	created := 0
 	for i := 0; i < count; i++ {
 		order, err := h.engine.OrderManager().CreateRetrieveOrder(
-			nil, true, 1, deliveryNode, "", "standard", payloadCode,
+			nil, true, 1, deliveryNode, sourceNode, "", "standard", payloadCode,
 			h.engine.AppConfig().Web.AutoConfirm, false,
 		)
 		if err != nil {

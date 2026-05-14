@@ -395,8 +395,12 @@ func (e *Engine) refillLoaderForPayload(loader *manualSwapNode, payloadCode stri
 	// with global auto-confirm enabled.
 	autoConfirm := false
 	for i := 0; i < needed; i++ {
+		// Source group: loader.claim.InboundSource — the supermarket the
+		// loader is configured to pull empties from. Without this Core's
+		// planRetrieveEmpty falls back to a global FIFO scan and may pull
+		// an empty bin out of the empty-tote return area instead.
 		order, err := e.orderMgr.CreateRetrieveOrder(
-			&nodeID, true, 1, loader.node.CoreNodeName, "",
+			&nodeID, true, 1, loader.node.CoreNodeName, loader.claim.InboundSource, "",
 			"standard", payloadCode, autoConfirm, true,
 		)
 		if err != nil {
@@ -447,13 +451,15 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	// before any processing has happened, with the bin still full. Honoring
 	// global cfg.Web.AutoConfirm at this layer defeats the side-cycle model.
 	autoConfirm := false
-	// Source is left to Core's planner (FindSourceFIFO) which finds an
-	// unclaimed full bin matching the payload. The unloader's CoreNodeName
-	// is the destination; the line's evac order will move the actual bin.
+	// Source group: unloader.claim.InboundSource — the FG supermarket the
+	// unloader pulls full bins from. Empty falls back to Core's global FIFO
+	// (the historical behaviour, preserved when InboundSource isn't set).
 	// This mirror order's primary purpose is UI demand surfacing, not
-	// driving robot movement (the line's evac drives that).
+	// driving robot movement (the line's evac drives that), but the source
+	// still needs to be group-aware so multi-supermarket plants don't
+	// surface demand against the wrong store.
 	order, err := e.orderMgr.CreateRetrieveOrder(
-		&nodeID, false, 1, unloader.node.CoreNodeName, "",
+		&nodeID, false, 1, unloader.node.CoreNodeName, unloader.claim.InboundSource, "",
 		"standard", payloadCode, autoConfirm, true,
 	)
 	if err != nil {
@@ -463,4 +469,71 @@ func (e *Engine) MaybeCreateUnloaderFullIn(payloadCode string) {
 	}
 	log.Printf("side-cycle: full-in order %d for unloader %s payload %s",
 		order.ID, unloader.node.Name, payloadCode)
+}
+
+// MaybePushUnloader is the auto-push trigger for consume manual_swap (unloader)
+// claims with AutoPush=true. It walks the unloader's allowed payloads and
+// fires a U1 retrieve_full for any payload not already in-flight or parked
+// at the window. Unlike MaybeCreateUnloaderFullIn (which is called from line
+// evac and targets ONE specific payload that just left the line), this push
+// is window-driven: it asks "given this unloader is free, is there ANY allowed
+// payload available upstream to pull in?" and creates orders accordingly.
+//
+// Trigger sites:
+//   - ClearBin completion (operator confirmed unload — window just freed).
+//   - handleManualSwapCompletion U2-arrived (empty returned to supermarket
+//     — window confirmed clear).
+//   - SweepPushUnloaders on Edge startup / registration ack — catches windows
+//     that became free while Edge was offline.
+//
+// No-op if claim isn't AutoPush, isn't manual_swap consume, or all allowed
+// payloads are already covered. Dedupe relies on the same in-flight /
+// usable-present checks MaybeCreateUnloaderFullIn uses; we delegate to it.
+//
+// nodeID names a specific unloader (typically the one whose window just
+// freed). Pass 0 for an "any unloader" sweep — see SweepPushUnloaders.
+func (e *Engine) MaybePushUnloader(nodeID int64) {
+	matches := e.findManualSwapNodes("")
+	for _, m := range matches {
+		if nodeID != 0 && m.node.ID != nodeID {
+			continue
+		}
+		if m.claim.Role != protocol.ClaimRoleConsume {
+			continue
+		}
+		if !m.claim.AutoPush {
+			continue
+		}
+		// Each allowed payload gets its own MaybeCreateUnloaderFullIn pass.
+		// That helper already short-circuits on in-flight + window-occupied.
+		// One payload per allowed code at most — the unloader window holds
+		// a single bin, but the multi-order queue lets us stage the next
+		// few in Core and dispatch them as the window frees.
+		for _, code := range m.claim.AllowedPayloads() {
+			e.MaybeCreateUnloaderFullIn(code)
+		}
+	}
+}
+
+// SweepPushUnloaders walks every active consume manual_swap claim with
+// AutoPush=true and fires MaybePushUnloader. Intended for Edge startup
+// (after registration ack, mirroring SendClaimSync). Catches the case
+// where the unloader was empty when Edge went down and supply became
+// available while it was offline — without this, the window stays empty
+// until the next ClearBin/U2 completion.
+func (e *Engine) SweepPushUnloaders() {
+	matches := e.findManualSwapNodes("")
+	swept := 0
+	for _, m := range matches {
+		if m.claim.Role != protocol.ClaimRoleConsume || !m.claim.AutoPush {
+			continue
+		}
+		for _, code := range m.claim.AllowedPayloads() {
+			e.MaybeCreateUnloaderFullIn(code)
+		}
+		swept++
+	}
+	if swept > 0 {
+		log.Printf("auto-push: startup sweep covered %d unloader claim(s)", swept)
+	}
 }

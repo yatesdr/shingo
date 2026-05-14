@@ -28,10 +28,16 @@ type ComplexOrderSpec struct {
 type RetrieveOrderSpec struct {
 	RetrieveEmpty bool
 	DeliveryNode  string
-	StagingNode   string
-	LoadType      string
-	PayloadCode   string
-	AutoConfirm   bool
+	// SourceNode names the supermarket node group Core should pull from.
+	// Empty falls back to Core's global FIFO scan (legacy behaviour).
+	// Changeover specs populate this from diff.ToClaim.InboundSource so
+	// fallback retrieves honour the configured supermarket — same fix as
+	// the bin_loader retrieve plumbing in orders/manager.go.
+	SourceNode  string
+	StagingNode string
+	LoadType    string
+	PayloadCode string
+	AutoConfirm bool
 }
 
 // OrderSpec is one of Complex / Retrieve. Exactly one field is set.

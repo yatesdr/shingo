@@ -60,6 +60,13 @@ func (db *DB) FindEmptyCompatibleBin(payloadCode, preferZone string, excludeNode
 	return bins.FindEmptyCompatible(db.DB, payloadCode, preferZone, excludeNodeID)
 }
 
+// FindEmptyCompatibleBinInGroup is FindEmptyCompatibleBin scoped to descendants
+// of a synthetic group node. See bins.FindEmptyCompatibleInGroup for the full
+// rationale. Used by planRetrieveEmpty's source-group branch.
+func (db *DB) FindEmptyCompatibleBinInGroup(payloadCode string, groupNodeID, excludeNodeID int64) (*bins.Bin, error) {
+	return bins.FindEmptyCompatibleInGroup(db.DB, payloadCode, groupNodeID, excludeNodeID)
+}
+
 // UpdateBinStatus sets the status on a bin.
 func (db *DB) UpdateBinStatus(binID int64, status domain.BinStatus) error {
 	return bins.UpdateStatus(db.DB, binID, status)

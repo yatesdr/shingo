@@ -185,6 +185,11 @@ func (e *Engine) confirmLoaderL1OnLoad(nodeID int64, uopCount int64) (int64, boo
 
 // ClearBin clears the manifest on the bin at a manual_swap node, resetting it
 // to empty. Used by unloaders after physical removal and for fixing mis-loads.
+//
+// Post-clear, if the claim has AutoPush enabled, MaybePushUnloader is called
+// to fire the next U1 retrieve_full immediately — push-driven unloaders
+// don't wait for a kanban demand signal, so the clear-event IS the next-bin
+// trigger.
 func (e *Engine) ClearBin(nodeID int64) error {
 	node, _, claim, err := loadActiveNode(e.db, nodeID)
 	if err != nil {
@@ -204,6 +209,11 @@ func (e *Engine) ClearBin(nodeID int64) error {
 		if err := e.inventoryDelta.SetClaimAndCount(nodeID, &claimID, 0); err != nil {
 			log.Printf("bin_ops: set runtime for node %d: %v", nodeID, err)
 		}
+	}
+	// Push-driven unloader: bin just left the window, fire the next pull.
+	// Gated inside MaybePushUnloader so non-push claims are no-ops.
+	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
+		e.MaybePushUnloader(nodeID)
 	}
 	return nil
 }
@@ -298,8 +308,15 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 
 	// Simple / manual_swap modes: single retrieve. Core queues if no empty is
 	// immediately available.
+	//
+	// Source group is the loader's claim.InboundSource (the supermarket the
+	// operator is configured to pull empties from). Without this, Core's
+	// planRetrieveEmpty falls back to a global FIFO scan and can return a
+	// payload-matching empty bin from anywhere — including the empty-tote
+	// return area (Hopkinsville, 2026-05-14, Mission #51 pulled SMN_07
+	// instead of from Supermarket Area).
 	order, err := e.orderMgr.CreateRetrieveOrder(
-		&nodeID, true, 1, node.CoreNodeName, "",
+		&nodeID, true, 1, node.CoreNodeName, claim.InboundSource, "",
 		"standard", payloadCode, autoConfirm, skipAutoConfirm,
 	)
 	if err != nil {
@@ -344,9 +361,14 @@ func (e *Engine) RequestFullBin(nodeID int64, payloadCode string) (*orders.Order
 	// Create retrieve order for a full bin — Core queues if none available.
 	// Same override as RequestEmptyBin: manual_swap unloader requires operator
 	// confirmation (U1 must not auto-confirm, or U2 fires before processing).
+	//
+	// Source group is claim.InboundSource (the FG supermarket the unloader
+	// pulls full bins from). Without this, Core's planRetrieve falls back to
+	// global FIFO and can pull from the wrong supermarket. Same root cause
+	// as the empty-side bug above.
 	autoConfirm := false
 	order, err := e.orderMgr.CreateRetrieveOrder(
-		&nodeID, false, 1, node.CoreNodeName, "",
+		&nodeID, false, 1, node.CoreNodeName, claim.InboundSource, "",
 		"standard", payloadCode, autoConfirm, true,
 	)
 	if err != nil {

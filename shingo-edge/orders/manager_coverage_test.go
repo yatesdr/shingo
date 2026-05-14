@@ -157,7 +157,7 @@ func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 	emitter := &capturingEmitter{}
 	mgr := NewManager(db, emitter, "edge.station")
 
-	order, err := mgr.CreateRetrieveOrder(nil, false, 7, "LINE-1", "STAGE-1", "LOAD-A", "PL-42", false, false)
+	order, err := mgr.CreateRetrieveOrder(nil, false, 7, "LINE-1", "SRC-A", "STAGE-1", "LOAD-A", "PL-42", false, false)
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 	if order.Status != StatusSubmitted {
 		t.Errorf("Status: got %q, want %q (auto-submit)", order.Status, StatusSubmitted)
 	}
-	if order.Quantity != 7 || order.DeliveryNode != "LINE-1" || order.StagingNode != "STAGE-1" || order.LoadType != "LOAD-A" {
+	if order.Quantity != 7 || order.DeliveryNode != "LINE-1" || order.SourceNode != "SRC-A" || order.StagingNode != "STAGE-1" || order.LoadType != "LOAD-A" {
 		t.Errorf("order fields wrong: %+v", order)
 	}
 	if order.PayloadCode != "PL-42" {
@@ -182,7 +182,7 @@ func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 	if req.OrderUUID != order.UUID || req.OrderType != TypeRetrieve || req.Quantity != 7 {
 		t.Errorf("OrderRequest fields wrong: %+v", req)
 	}
-	if req.DeliveryNode != "LINE-1" || req.StagingNode != "STAGE-1" || req.LoadType != "LOAD-A" {
+	if req.DeliveryNode != "LINE-1" || req.SourceNode != "SRC-A" || req.StagingNode != "STAGE-1" || req.LoadType != "LOAD-A" {
 		t.Errorf("OrderRequest routing fields wrong: %+v", req)
 	}
 
@@ -205,7 +205,7 @@ func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 		t.Fatalf("SetActiveStyle: %v", err)
 	}
 
-	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", false, false)
+	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", "", false, false)
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
 	}

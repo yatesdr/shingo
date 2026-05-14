@@ -204,6 +204,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
  			Retrieve: &changeover.RetrieveOrderSpec{
  				RetrieveEmpty: diff.ToClaim.Role == protocol.ClaimRoleProduce,
  				DeliveryNode:  diff.ToClaim.CoreNodeName,
+ 				SourceNode:    diff.ToClaim.InboundSource,
  				StagingNode:   "",
  				LoadType:      "standard",
  				PayloadCode:   diff.ToClaim.PayloadCode,
@@ -272,6 +273,7 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 		Retrieve: &changeover.RetrieveOrderSpec{
 			RetrieveEmpty: toClaim.Role == protocol.ClaimRoleProduce,
 			DeliveryNode:  toClaim.CoreNodeName,
+			SourceNode:    toClaim.InboundSource,
 			StagingNode:   "",
 			LoadType:      "standard",
 			PayloadCode:   toClaim.PayloadCode,

@@ -246,18 +246,50 @@ func (s *PlanningService) planRetrieveEmpty(order *orders.Order, _ *protocol.Env
 		log.Printf("dispatch: planRetrieveEmpty order %d → sourcing: %v", order.ID, err)
 	}
 
+	var bin *bins.Bin
+
+	// Destination resolution is shared by both source-group and fallback
+	// paths — used for excludeNodeID (prevent same-node retrieve) and
+	// preferZone (zone-preferring fallback). Hoisted out of the inner
+	// branches so the fallback can reuse it without re-querying.
 	var preferZone string
 	var excludeNodeID int64
 	if order.DeliveryNode != "" {
-		if destNode, err := s.db.GetNodeByDotName(order.DeliveryNode); err == nil && destNode != nil {
+		if destNode, derr := s.db.GetNodeByDotName(order.DeliveryNode); derr == nil && destNode != nil {
 			preferZone = destNode.Zone
 			excludeNodeID = destNode.ID
 		}
 	}
-	bin, err := s.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeNodeID)
-	if err != nil {
-		s.dbg("retrieve_empty: no bin for payload=%s, queuing order %d", payloadCode, order.ID)
-		return &PlanningResult{Queued: true}, nil
+
+	// Source-group resolution. When the edge sends order.SourceNode (e.g. a
+	// bin_loader claim's InboundSource), restrict the empty-bin search to
+	// descendants of that NGRP. Without this a Hopkinsville-style multi-
+	// supermarket setup pulls empties from whichever supermarket has the
+	// lowest bins.id — including the empty-tote return area instead of the
+	// configured pickup. Uses a dedicated group-scoped reader rather than
+	// reusing GroupResolver.ResolveRetrieve, because that path applies the
+	// payload-match-required semantics of isBinAvailableForRetrieve, which
+	// rejects empties (PayloadCode == "" != payloadCode).
+	if order.SourceNode != "" {
+		sourceNode, err := s.db.GetNodeByDotName(order.SourceNode)
+		if err == nil && sourceNode != nil && sourceNode.IsSynthetic && sourceNode.NodeTypeCode == "NGRP" {
+			groupBin, gerr := s.db.FindEmptyCompatibleBinInGroup(payloadCode, sourceNode.ID, excludeNodeID)
+			if gerr != nil {
+				s.dbg("retrieve_empty: no empty in group %s for payload=%s, queuing order %d",
+					order.SourceNode, payloadCode, order.ID)
+				return &PlanningResult{Queued: true}, nil
+			}
+			bin = groupBin
+		}
+	}
+
+	if bin == nil {
+		var err error
+		bin, err = s.db.FindEmptyCompatibleBin(payloadCode, preferZone, excludeNodeID)
+		if err != nil {
+			s.dbg("retrieve_empty: no bin for payload=%s, queuing order %d", payloadCode, order.ID)
+			return &PlanningResult{Queued: true}, nil
+		}
 	}
 	s.dbg("retrieve_empty: found bin=%d label=%s at node=%s", bin.ID, bin.Label, bin.NodeName)
 

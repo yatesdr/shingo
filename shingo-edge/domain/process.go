@@ -165,8 +165,16 @@ type NodeClaim struct {
 	// at the node is empty, the planner skips the swap entirely. Saves a
 	// robot trip when the press-index hardware can keep the same bin.
 	// Default false preserves always-swap.
-	ReuseCompatibleBins bool      `json:"reuse_compatible_bins"`
-	CreatedAt           time.Time `json:"created_at"`
+	ReuseCompatibleBins bool `json:"reuse_compatible_bins"`
+	// AutoPush opts a consume manual_swap (unloader) claim into push-driven
+	// dispatch: when the unloader window is free and a full bin of an allowed
+	// payload exists in InboundSource, Edge fires a U1 retrieve_full without
+	// waiting for a kanban demand signal. Useful for finished-goods unloaders
+	// that should drain the FG supermarket continuously rather than wait for
+	// downstream consumption. Default false preserves the kanban-driven model
+	// (DemandSignal-only). See engine/operator_demand.go MaybePushUnloader.
+	AutoPush  bool      `json:"auto_push"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // AllowedPayloads returns the effective set of payload codes this claim
@@ -211,6 +219,7 @@ type NodeClaimInput struct {
 	Sequence              int      `json:"sequence"`
 	LinesideSoftThreshold int      `json:"lineside_soft_threshold"`
 	ReuseCompatibleBins   bool     `json:"reuse_compatible_bins"`
+	AutoPush              bool     `json:"auto_push"`
 }
 
 // NodeTaskInput is the input shape for creating a per-node changeover

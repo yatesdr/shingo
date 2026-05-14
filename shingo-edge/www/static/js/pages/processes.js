@@ -304,6 +304,7 @@ function editClaim(claim) {
     // KeepStaged is no longer surfaced in the UI; the column persists as a backend safety net for the future rewire.
     document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
     document.getElementById('claims-add-reuse-bins').checked = !!claim.reuse_compatible_bins;
+    document.getElementById('claims-add-auto-push').checked = !!claim.auto_push;
     document.getElementById('claims-add-paired-node').value = claim.paired_core_node || '';
     document.getElementById('claims-add-second-paired-node').value = claim.second_paired_core_node || '';
     document.getElementById('claims-add-auto-confirm').checked = !!claim.auto_confirm;
@@ -466,6 +467,7 @@ async function saveClaim() {
         keep_staged: false,
         evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked,
         reuse_compatible_bins: document.getElementById('claims-add-reuse-bins').checked,
+        auto_push: document.getElementById('claims-add-auto-push').checked,
         paired_core_node: document.getElementById('claims-add-paired-node').value,
         second_paired_core_node: document.getElementById('claims-add-second-paired-node').value,
         auto_confirm: document.getElementById('claims-add-auto-confirm').checked
@@ -592,6 +594,16 @@ function toggleClaimsAddPayload() {
     document.getElementById('claims-auto-request-fieldset').style.display = isManualSwap ? '' : 'none';
     document.getElementById('claims-auto-request-manual-swap').style.display = isManualSwap ? '' : 'none';
     document.getElementById('claims-auto-request-standard').style.display = isManualSwap ? 'none' : '';
+    // Auto-push toggle — only meaningful for consume manual_swap (unloader). Hidden
+    // and forced false otherwise so a stale checked state can't carry across role flips.
+    var autoPushRow = document.getElementById('claims-add-auto-push-row');
+    if (autoPushRow) {
+        var showAutoPush = isManualSwap && role === 'consume';
+        autoPushRow.style.display = showAutoPush ? 'flex' : 'none';
+        if (!showAutoPush) {
+            document.getElementById('claims-add-auto-push').checked = false;
+        }
+    }
     if (isChangeover) {
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-capacity').value = '0';

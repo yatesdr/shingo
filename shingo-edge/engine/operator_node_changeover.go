@@ -113,9 +113,11 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 		}
 	}
 
-	// Direct delivery if no staging configured
+	// Direct delivery if no staging configured. Source group: toClaim.InboundSource
+	// so the changeover retrieve honours the configured supermarket; empty
+	// preserves Core's global FIFO fallback for legacy claims.
 	retrieveEmpty := toClaim.Role == protocol.ClaimRoleProduce
-	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm, false)
+	order, err := e.orderMgr.CreateRetrieveOrder(&ctx.node.ID, retrieveEmpty, 1, toClaim.CoreNodeName, toClaim.InboundSource, "", "standard", toClaim.PayloadCode, e.cfg.Web.AutoConfirm, false)
 	if err != nil {
 		return nil, err
 	}

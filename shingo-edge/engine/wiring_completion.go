@@ -437,6 +437,14 @@ func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
 	// tryAutoRequest call removed in side-cycle refactor (commit 4f9212b
 	// + this one). Loader empties are now driven by line REQUESTs through
 	// MaybeCreateLoaderEmptyIn, not by post-completion kanban auto-requests.
+	//
+	// Push-driven unloader: U2 just landed (empty returned to supermarket),
+	// the unloader window is confirmed free. Fire the next U1 if the claim
+	// is auto-push. MaybePushUnloader gates internally on AutoPush so this
+	// is a no-op for kanban-driven unloaders.
+	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
+		e.MaybePushUnloader(ctx.node.ID)
+	}
 	return true
 }
 

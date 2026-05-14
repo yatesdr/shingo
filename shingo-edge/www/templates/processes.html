@@ -419,6 +419,10 @@ window.claimedByStation = {{json .ClaimedByStation}};
                 <div id="claims-auto-request-manual-swap" style="display:none">
                     <div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.5rem">Demand signals automatically create orders for all allowed payloads. When a bin is consumed downstream, the system requests replenishment for that payload.</div>
                     <div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.25rem">Auto-confirm delivery is always enabled for manual swap nodes.</div>
+                    <label id="claims-add-auto-push-row" style="display:none;align-items:center;gap:0.5rem;margin-top:0.75rem">
+                        <input type="checkbox" id="claims-add-auto-push">
+                        <span>Auto-push full bins from inbound source whenever the unloader window is free (continuous drain — no kanban demand needed)</span>
+                    </label>
                 </div>
                 <div id="claims-auto-request-standard" style="display:none">
                     <div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:0.5rem">When the node becomes vacant after a loaded bin is moved out, automatically request a new empty bin for this payload.</div>

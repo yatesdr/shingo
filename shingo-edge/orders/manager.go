@@ -107,14 +107,22 @@ func (m *Manager) enqueueAndAutoSubmit(orderID int64, orderUUID string, env *pro
 
 // CreateRetrieveOrder creates a new retrieve order and enqueues it to the outbox.
 // If payloadCode is empty and payloadID is set, it is derived from the payload.
-func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, stagingNode, loadType, payloadCode string, autoConfirm, skipAutoConfirm bool) (*orders.Order, error) {
+//
+// sourceNode names the supermarket node group (or specific node) that Core
+// should pull the bin from. Empty string falls back to Core's global FIFO
+// search (legacy behaviour). For bin_loader manual_swap claims this MUST be
+// claim.InboundSource — otherwise the planner happily pulls a payload-matching
+// empty/full bin from anywhere in the system, including the empty-tote return
+// area instead of the configured supermarket. See planRetrieveEmpty in
+// shingo-core/dispatch/planning_service.go for the resolver branch.
+func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, quantity int64, deliveryNode, sourceNode, stagingNode, loadType, payloadCode string, autoConfirm, skipAutoConfirm bool) (*orders.Order, error) {
 	orderUUID := uuid.New().String()
 
 	payloadDesc, payloadCode := m.lookupPayloadMeta(processNodeID, payloadCode)
 
 	orderID, err := m.db.CreateOrder(orderUUID, TypeRetrieve,
 		processNodeID, retrieveEmpty,
-		quantity, deliveryNode, stagingNode, "", loadType, autoConfirm, payloadCode)
+		quantity, deliveryNode, stagingNode, sourceNode, loadType, autoConfirm, payloadCode)
 	if err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
@@ -127,6 +135,7 @@ func (m *Manager) CreateRetrieveOrder(processNodeID *int64, retrieveEmpty bool, 
 		RetrieveEmpty: retrieveEmpty,
 		Quantity:      quantity,
 		DeliveryNode:  deliveryNode,
+		SourceNode:    sourceNode,
 		StagingNode:   stagingNode,
 		LoadType:      loadType,
  		SkipAutoConfirm: skipAutoConfirm,

@@ -275,6 +275,14 @@ func (db *DB) migrate() error {
 	// post-mortem timing questions.
 	db.Exec("ALTER TABLE process_changeovers ADD COLUMN triggered_by TEXT NOT NULL DEFAULT ''")
 
+	// v24 (Hopkinsville 2026-05-14): per-claim opt-in for unloader auto-push.
+	// When true on a consume manual_swap claim, Edge fires a U1 retrieve_full
+	// whenever the unloader window is free and a full bin of an allowed
+	// payload exists in claim.InboundSource — no kanban demand signal
+	// required. Default false preserves the existing kanban-driven model.
+	// See engine/operator_demand.go MaybePushUnloader for the trigger logic.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_push INTEGER NOT NULL DEFAULT 0")
+
 	return nil
 }
 

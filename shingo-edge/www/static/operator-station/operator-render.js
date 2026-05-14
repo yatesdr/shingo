@@ -285,6 +285,17 @@ function renderPayloadBoard(entry) {
     // presence + empty payload, not demand).
     var canLoadEmpty = nodeBinIsEmpty && !hasDemand;
 
+    // Loaded-bin escape hatch (unloader symmetry): a LOADED bin is parked
+    // at a consume manual_swap (unloader) node but no active order references
+    // it. Common after a role-flip from produce, after a manual LoadBin, or
+    // when an unloader's U1 cycle is missing because demand never fired.
+    // Server-side ClearBin only requires manual_swap + claim presence — no
+    // active order needed — so the UI gap is purely "which card surfaces
+    // the action". The symmetric tile is the one whose code matches the
+    // parked bin's payload_code, which is checked per-card below.
+    var nodeBinIsLoaded = entry.bin_state && entry.bin_state.occupied && !!entry.bin_state.payload_code;
+    var canClearLoadedHere = claim.role === 'consume' && nodeBinIsLoaded;
+
     // BANDAID — pull this manual-request path when proper demand signals
     // land for manual_swap loaders / unloaders. Without it the board is a
     // wall of greyed cards with nothing actionable when no kanban has
@@ -319,7 +330,18 @@ function renderPayloadBoard(entry) {
         // over the base state class so the operator's eye is drawn here.
         var loadNow = nodeBinIsEmpty && hasPayloadDemand;
 
+        // canClearThisPayload: the loaded bin's payload matches THIS card's
+        // code. Only the matching card lights up — other allowed payloads
+        // stay greyed because there's nothing to do with them while a
+        // different bin holds the window.
+        var canClearThisPayload = canClearLoadedHere && entry.bin_state.payload_code === code;
+
         if (payloadDelivered) {
+            card.classList.add('os-board-delivered');
+        } else if (canClearThisPayload) {
+            // Same visual treatment as payloadDelivered — bin is at the node
+            // and the operator's tap completes the cycle, just on the unload
+            // side instead of the load side.
             card.classList.add('os-board-delivered');
         } else if (payloadInTransit) {
             card.classList.add('os-board-transit');
@@ -363,6 +385,8 @@ function renderPayloadBoard(entry) {
         var statusText, statusClass;
         if (payloadDelivered) {
             statusText = 'DELIVERED'; statusClass = 'os-board-tag-delivered';
+        } else if (canClearThisPayload) {
+            statusText = 'UNLOAD'; statusClass = 'os-board-tag-delivered';
         } else if (payloadInTransit) {
             statusText = 'IN TRANSIT'; statusClass = 'os-board-tag-transit';
         } else if (hasPayloadDemand) {
@@ -380,6 +404,8 @@ function renderPayloadBoard(entry) {
         var binIsEmptyForDetail = entry.bin_state && entry.bin_state.occupied && !entry.bin_state.payload_code;
         if (payloadDelivered) {
             detailText = 'Tap to ' + (claim.role === 'produce' ? 'load' : 'unload');
+        } else if (canClearThisPayload) {
+            detailText = 'Loaded bin parked — tap to unload';
         } else if (binIsEmptyForDetail && (payloadInTransit || (hasPayloadDemand && !payloadDelivered))) {
             detailText = 'Empty bin at node — tap to load';
         } else if (payloadInTransit) {
@@ -419,6 +445,15 @@ function renderPayloadBoard(entry) {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
                 openLoadBinRef(entry.node.id, [code], claim.uop_capacity || 0);
+            });
+        } else if (canClearThisPayload) {
+            // Unloader symmetry: tap clears the manifest on the parked bin via
+            // the apiClearBin endpoint. Bypasses the load-bin modal because the
+            // operator action is single-step (CLEAR BIN) — no UOP / lot fields
+            // to collect. Server validates manual_swap + claim presence.
+            card.style.cursor = 'pointer';
+            card.addEventListener('click', function() {
+                postAction('/api/process-nodes/' + entry.node.id + '/clear-bin', undefined, loadViewRef);
             });
         } else if (canRequestHere) {
             card.style.cursor = 'pointer';

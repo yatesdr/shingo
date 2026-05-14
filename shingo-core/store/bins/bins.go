@@ -370,6 +370,44 @@ func UnclaimByOrder(db *sql.DB, orderID int64) {
 // all ignore it) and how the admin UI populates it. The previous form used
 // hard INNER JOINs to payload_bin_types/payloads which eliminated all
 // candidates when no rules existed — the cause of the 2026-04-27 starvation.
+// FindEmptyCompatibleInGroup is FindEmptyCompatible scoped to descendants of
+// a synthetic group node (NGRP / LANE). Used by planRetrieveEmpty when the
+// edge sends a source-group constraint, so an empty-bin retrieve picks from
+// the configured supermarket instead of any compatible empty in the system.
+//
+// Mirrors FindEmptyCompatible's availability gates (status='available',
+// claimed_by IS NULL, locked=false, n.enabled, non-synthetic node, empty
+// payload_code, payload-bin-type advisory) but adds a recursive descendant
+// filter rooted at groupNodeID. excludeNodeID > 0 skips bins at that node
+// (typically the destination — same-node retrieve guard).
+//
+// Bug origin: pre-fix planRetrieveEmpty called the unscoped FindEmptyCompatible
+// regardless of order.SourceNode, so a multi-supermarket plant (Hopkinsville,
+// 2026-05-14) saw retrieve_empty pull empties from whichever supermarket had
+// the lowest bins.id — typically the empty-tote return area, not the
+// configured Inbound supermarket.
+func FindEmptyCompatibleInGroup(db *sql.DB, payloadCode string, groupNodeID, excludeNodeID int64) (*Bin, error) {
+	row := db.QueryRow(fmt.Sprintf(`
+		WITH RECURSIVE descendants(id) AS (
+			SELECT id FROM nodes WHERE parent_id = $2
+			UNION ALL
+			SELECT n2.id FROM nodes n2 JOIN descendants d ON n2.parent_id = d.id
+		)
+		%s
+		WHERE b.status = 'available'
+		  AND b.claimed_by IS NULL
+		  AND b.locked = false
+		  AND b.node_id IS NOT NULL
+		  AND n.enabled = true
+		  AND n.is_synthetic = false
+		  AND COALESCE(b.payload_code, '') = ''
+		  AND b.node_id IN (SELECT id FROM descendants)
+		  AND ($3 = 0 OR b.node_id != $3)%s
+		ORDER BY b.id ASC
+		LIMIT 1`, BinJoinQuery, PayloadBinTypeAdvisoryClause), payloadCode, groupNodeID, excludeNodeID)
+	return ScanBin(row)
+}
+
 func FindEmptyCompatible(db *sql.DB, payloadCode, preferZone string, excludeNodeID int64) (*Bin, error) {
 	// Zone-preferred query
 	if preferZone != "" {
