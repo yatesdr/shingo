@@ -64,17 +64,21 @@ func (e *Engine) handleKanbanDemand(ev BinUpdatedEvent) {
 }
 
 // isStorageSlot returns true if the node is a storage slot — either a
-// LANE/NODE_GROUP itself, or a direct child of one. NODE_GROUP children
-// added 2026-04-29: plants modeling supermarkets as NODE_GROUP → direct
-// concrete children (no LANE in the path) need those children treated as
-// storage so arriving bins land `available`, not `staged`. Lineside cells
-// remain parented under processes/zones and continue to stage on arrival.
+// LANE/NGRP itself, or a direct child of one. NGRP children added
+// 2026-04-29: plants modeling supermarkets as an NGRP → direct concrete
+// children (no LANE in the path) need those children treated as storage
+// so arriving bins land `available`, not `staged`. Lineside cells remain
+// parented under processes/zones and continue to stage on arrival.
+//
+// The string was "NODE_GROUP" until the SMKT→NGRP rename (commit 3e3fb4a)
+// dropped the legacy code — anything still comparing to "NODE_GROUP" is
+// a dead branch.
 func (e *Engine) isStorageSlot(nodeID int64) bool {
 	node, err := e.db.GetNode(nodeID)
 	if err != nil {
 		return false
 	}
-	if node.NodeTypeCode == "LANE" || node.NodeTypeCode == "NODE_GROUP" {
+	if node.NodeTypeCode == "LANE" || node.NodeTypeCode == "NGRP" {
 		return true
 	}
 	if node.ParentID == nil {
@@ -84,7 +88,7 @@ func (e *Engine) isStorageSlot(nodeID int64) bool {
 	if err != nil {
 		return false
 	}
-	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NODE_GROUP"
+	return parent.NodeTypeCode == "LANE" || parent.NodeTypeCode == "NGRP"
 }
 
 // sendDemandSignals looks up the demand registry for the given payload code and role,

@@ -183,8 +183,17 @@ func (e *Engine) confirmLoaderL1OnLoad(nodeID int64, uopCount int64) (int64, boo
 	return l1ID, true
 }
 
-// ClearBin clears the manifest on the bin at a manual_swap node, resetting it
-// to empty. Used by unloaders after physical removal and for fixing mis-loads.
+// ClearBin clears the manifest on the bin at a manual_swap node and, for
+// consume-role nodes, confirms the active U1 retrieve_full so the side-cycle
+// progresses to U2. Used by unloaders after physical removal and for fixing
+// mis-loads.
+//
+// Symmetric to LoadBin's confirmLoaderL1OnLoad: the operator's tap IS the
+// explicit confirmation that the inbound order completed. Without confirming,
+// the U1 sits at `delivered` forever and handleUnloaderFullInCompletion never
+// fires — bin cleared physically but order lifecycle stuck. Mis-load case (no
+// active U1) is preserved: the confirm helper returns ok=false and ClearBin
+// proceeds with the manifest clear only.
 //
 // Post-clear, if the claim has AutoPush enabled, MaybePushUnloader is called
 // to fire the next U1 retrieve_full immediately — push-driven unloaders
@@ -201,6 +210,16 @@ func (e *Engine) ClearBin(nodeID int64) error {
 	if claim.SwapMode != protocol.SwapModeManualSwap {
 		return fmt.Errorf("node %s is not a manual_swap node", node.Name)
 	}
+	// Confirm U1 BEFORE the bin clear so handleUnloaderFullInCompletion
+	// sees a coherent (still-loaded) bin and the U2 it creates carries the
+	// right PayloadCode from the U1 order row. The bin manifest clear that
+	// follows is purely physical state — order-lifecycle progression is
+	// owned by the confirm + OrderCompleted event handler.
+	if claim.Role == protocol.ClaimRoleConsume {
+		if u1ID, ok := e.confirmUnloaderU1OnClear(nodeID); ok {
+			log.Printf("bin_ops: confirmed U1 order %d on operator clear at node %d", u1ID, nodeID)
+		}
+	}
 	if err := e.coreClient.ClearBin(node.CoreNodeName); err != nil {
 		return fmt.Errorf("clear bin: %w", err)
 	}
@@ -216,6 +235,39 @@ func (e *Engine) ClearBin(nodeID int64) error {
 		e.MaybePushUnloader(nodeID)
 	}
 	return nil
+}
+
+// confirmUnloaderU1OnClear confirms the inbound retrieve_full (U1) at this
+// unloader, treating the operator's CLEAR tap as the receipt acknowledgement.
+// Returns (orderID, true) when a U1 was actually confirmed; (0, false)
+// otherwise (no delivered U1 found, or the confirm transition itself failed).
+//
+// Mirror of confirmLoaderL1OnLoad — the discriminator vs L1 is RetrieveEmpty:
+// L1 = retrieve with RetrieveEmpty=true, U1 = retrieve with RetrieveEmpty=false.
+// Passes 0 for finalCount: an unloader's bin is empty after the operator
+// processes the contents, which matches the inventoryDelta zero-out a few
+// lines below in ClearBin.
+func (e *Engine) confirmUnloaderU1OnClear(nodeID int64) (int64, bool) {
+	active, err := e.db.ListActiveOrdersByProcessNodeAndType(nodeID, edgeorders.TypeRetrieve)
+	if err != nil {
+		log.Printf("bin_ops: list retrieve orders for node %d: %v", nodeID, err)
+		return 0, false
+	}
+	var u1ID int64
+	for _, o := range active {
+		if !o.RetrieveEmpty && o.Status == protocol.StatusDelivered {
+			u1ID = o.ID
+			break
+		}
+	}
+	if u1ID == 0 {
+		return 0, false
+	}
+	if err := e.orderMgr.ConfirmDelivery(u1ID, 0); err != nil {
+		log.Printf("bin_ops: confirm U1 %d on clear: %v", u1ID, err)
+		return 0, false
+	}
+	return u1ID, true
 }
 
 // RequestEmptyBin delivers an empty bin to a produce node. Manual_swap and

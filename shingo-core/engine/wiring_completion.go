@@ -23,7 +23,7 @@ import (
 func (e *Engine) handleOrderDelivered(order *orders.Order) {
 	// Resolve staged expiry for the delivered message. Only ship a countdown
 	// when the bin will actually arrive `staged` — for storage destinations
-	// (LANE/NODE_GROUP roots and their children) the bin lands `available`
+	// (LANE/NGRP roots and their children) the bin lands `available`
 	// and an expiry on the order envelope is misleading to the operator UI.
 	var stagedExpireAt *time.Time
 	if order.DeliveryNode != "" {

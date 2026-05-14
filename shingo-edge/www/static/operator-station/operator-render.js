@@ -440,17 +440,31 @@ function renderPayloadBoard(entry) {
         var binOccupied = hasBinState && entry.bin_state.occupied;
         var binNoPayload = hasBinState && !entry.bin_state.payload_code;
         var binIsEmpty = binOccupied && binNoPayload;
-        var canLoad = (payloadDelivered && binIsEmpty) || (binIsEmpty && isActive) || canLoadEmpty;
+        // canLoad must be role-gated: a consume-role (unloader) card has
+        // nothing to load. Pre-fix the Load Bin modal opened on any
+        // payloadDelivered+binIsEmpty card regardless of role — operator saw
+        // "Tap to unload" but got the Load Bin modal because canLoad won
+        // over the canClearThisPayload branch. Now consume-role taps fall
+        // through to the unload branch below.
+        var canLoad = ((payloadDelivered && binIsEmpty) || (binIsEmpty && isActive) || canLoadEmpty)
+                      && claim.role !== 'consume';
+        // canUnload covers both the parked-loaded escape hatch
+        // (canClearThisPayload) AND the standard delivered-U1 case for a
+        // consume manual_swap. ClearBin server-side now confirms the active
+        // delivered U1 (symmetric to LoadBin confirming L1) before clearing
+        // the bin, so a single tap drives the operator's whole-cycle
+        // intent — process bin, signal done — through one endpoint.
+        var canUnload = canClearThisPayload || (payloadDelivered && claim.role === 'consume');
         if (canLoad) {
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
                 openLoadBinRef(entry.node.id, [code], claim.uop_capacity || 0);
             });
-        } else if (canClearThisPayload) {
-            // Unloader symmetry: tap clears the manifest on the parked bin via
-            // the apiClearBin endpoint. Bypasses the load-bin modal because the
-            // operator action is single-step (CLEAR BIN) — no UOP / lot fields
-            // to collect. Server validates manual_swap + claim presence.
+        } else if (canUnload) {
+            // Unloader: tap fires apiClearBin. Server clears the manifest
+            // (if any) and confirms the active U1 retrieve_full, which
+            // emits OrderCompleted → handleUnloaderFullInCompletion → U2.
+            // Single-step from the operator's POV.
             card.style.cursor = 'pointer';
             card.addEventListener('click', function() {
                 postAction('/api/process-nodes/' + entry.node.id + '/clear-bin', undefined, loadViewRef);
