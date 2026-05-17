@@ -4,19 +4,22 @@ import (
 	"fmt"
 	"time"
 
-	"shingocore/store"
 	"shingocore/store/messaging"
 	"shingocore/store/reconciliation"
 	"shingocore/store/recovery"
 )
 
+// ReconciliationService runs the periodic reconciliation loop plus
+// auto-confirm-stuck-delivered logic. db is declared as the
+// ReconciliationStore interface (see reconciliation_store.go); *store.DB
+// satisfies it structurally so engine wiring is unchanged.
 type ReconciliationService struct {
-	db               *store.DB
+	db               ReconciliationStore
 	logFn            LogFunc
 	onOrderCompleted func(orderID int64, edgeUUID, stationID string) // called after auto-confirm to trigger bin movement
 }
 
-func newReconciliationService(db *store.DB, logFn LogFunc) *ReconciliationService {
+func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
 	return &ReconciliationService{db: db, logFn: logFn}
 }
 

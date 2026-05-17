@@ -9,9 +9,7 @@ import (
 	"shingo/protocol"
 
 	"shingocore/domain"
-	"shingocore/store"
 	"shingocore/store/audit"
-	"shingocore/store/payloads"
 )
 
 // reconstructSinglePayloadManifest builds the manifest JSON for a partial-
@@ -42,11 +40,15 @@ func reconstructSinglePayloadManifest(payloadCode string, uop int) (string, erro
 // BinManifestService manages bin manifest lifecycle mutations.
 // All manifest changes flow through this service so that validation,
 // audit logging, and event emission are centralized.
+//
+// The db dependency is declared as the BinManifestStore interface
+// (see bin_manifest_store.go) rather than *store.DB. *store.DB
+// satisfies it structurally; engine wiring is unchanged.
 type BinManifestService struct {
-	db *store.DB
+	db BinManifestStore
 }
 
-func NewBinManifestService(db *store.DB) *BinManifestService {
+func NewBinManifestService(db BinManifestStore) *BinManifestService {
 	return &BinManifestService{db: db}
 }
 
@@ -126,11 +128,11 @@ func (s *BinManifestService) ClearForReuseTx(tx *sql.Tx, binID int64, op, source
 // uopOverride lets callers (produce ingest, partial-fill operator
 // loads) record an actual count rather than the template default.
 func (s *BinManifestService) SetFromTemplate(binID int64, payloadCode string, uopOverride int) error {
-	p, err := payloads.GetByCode(s.db.DB, payloadCode)
+	p, err := s.db.GetPayloadByCode(payloadCode)
 	if err != nil {
 		return fmt.Errorf("payload template %q: %w", payloadCode, err)
 	}
-	items, err := payloads.ListManifest(s.db.DB, p.ID)
+	items, err := s.db.ListPayloadManifest(p.ID)
 	if err != nil {
 		return fmt.Errorf("payload manifest: %w", err)
 	}

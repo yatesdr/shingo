@@ -89,6 +89,22 @@ func (db *DB) LockBin(binID int64, actor string) error { return bins.Lock(db.DB,
 // UnlockBin clears the lock on a bin.
 func (db *DB) UnlockBin(binID int64) error { return bins.Unlock(db.DB, binID) }
 
+// MoveBinToTransit moves a bin to the synthetic _TRANSIT node. Idempotent.
+func (db *DB) MoveBinToTransit(binID, transitNodeID int64) error {
+	return bins.MoveToTransit(db.DB, binID, transitNodeID)
+}
+
+// MarkBinAnomaly stamps bins.anomaly_at = NOW().
+func (db *DB) MarkBinAnomaly(binID int64) error { return bins.MarkAnomaly(db.DB, binID) }
+
+// ClearBinAnomaly clears bins.anomaly_at.
+func (db *DB) ClearBinAnomaly(binID int64) error { return bins.ClearAnomaly(db.DB, binID) }
+
+// RecoverBinToNode moves a bin to toNodeID and clears anomaly_at atomically.
+func (db *DB) RecoverBinToNode(binID, toNodeID int64) error {
+	return bins.RecoverToNode(db.DB, binID, toNodeID)
+}
+
 // RecordBinCount updates UOP and records the count timestamp.
 func (db *DB) RecordBinCount(binID int64, actualUOP int, actor string) error {
 	return bins.RecordCount(db.DB, binID, actualUOP, actor)

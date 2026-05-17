@@ -89,7 +89,7 @@ func (s *InventoryService) SystemBinCount(ctx context.Context, payloads []string
 		  AND status NOT IN ('flagged', 'maintenance', 'quality_hold', 'retired')
 		GROUP BY payload_code`
 
-	rows, err := s.db.DB.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return result, fmt.Errorf("system-count: query: %w", err)
 	}
@@ -188,7 +188,7 @@ func (s *InventoryService) SystemUOPForPayload(ctx context.Context, payloads []s
 		WHERE payload_code IN (` + in + `)
 		  AND status NOT IN ('flagged', 'maintenance', 'quality_hold', 'retired')
 		GROUP BY payload_code`
-	binRows, err := s.db.DB.QueryContext(ctx, binQuery, args...)
+	binRows, err := s.db.QueryContext(ctx, binQuery, args...)
 	if err != nil {
 		return result, fmt.Errorf("system-uop: bins query: %w", err)
 	}
@@ -213,7 +213,7 @@ func (s *InventoryService) SystemUOPForPayload(ctx context.Context, payloads []s
 		FROM lineside_buckets
 		WHERE payload_code IN (` + in + `)
 		GROUP BY payload_code`
-	bucketRows, err := s.db.DB.QueryContext(ctx, bucketQuery, args...)
+	bucketRows, err := s.db.QueryContext(ctx, bucketQuery, args...)
 	if err != nil {
 		return result, fmt.Errorf("system-uop: buckets query: %w", err)
 	}

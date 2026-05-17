@@ -1,7 +1,6 @@
 package service
 
 import (
-	"shingocore/store"
 	"shingocore/store/inventory"
 )
 
@@ -13,11 +12,14 @@ import (
 // (PR 3a.6). Kept as a standalone service because inventory rollups
 // cross bins / payloads / nodes and don't cleanly belong to any one
 // entity-specific service.
+//
+// The db dependency is InventoryQueryStore (see inventory_query_store.go);
+// *store.DB satisfies it structurally.
 type InventoryService struct {
-	db *store.DB
+	db InventoryQueryStore
 }
 
-func NewInventoryService(db *store.DB) *InventoryService {
+func NewInventoryService(db InventoryQueryStore) *InventoryService {
 	return &InventoryService{db: db}
 }
 

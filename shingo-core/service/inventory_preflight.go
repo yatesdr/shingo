@@ -85,7 +85,7 @@ func (s *InventoryService) PreflightAvailability(ctx context.Context, station st
 		  AND n.is_synthetic = false
 		GROUP BY b.payload_code`
 
-	rows, err := s.db.DB.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return result, fmt.Errorf("preflight: query: %w", err)
 	}

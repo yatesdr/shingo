@@ -463,8 +463,7 @@ func (s *BinService) MoveToTransit(binID int64) error {
 	if err != nil {
 		return fmt.Errorf("lookup transit node %q: %w", domain.TransitNodeName, err)
 	}
-	if _, err := s.db.Exec(`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`,
-		transitNode.ID, binID); err != nil {
+	if err := s.db.MoveBinToTransit(binID, transitNode.ID); err != nil {
 		return fmt.Errorf("move bin %d to transit: %w", binID, err)
 	}
 	return nil
@@ -476,7 +475,7 @@ func (s *BinService) MoveToTransit(binID int64) error {
 // the timestamp; that's fine because the anomaly state is "still
 // unresolved" rather than "happened at exactly this moment."
 func (s *BinService) MarkAnomaly(binID int64) error {
-	if _, err := s.db.Exec(`UPDATE bins SET anomaly_at=NOW(), updated_at=NOW() WHERE id=$1`, binID); err != nil {
+	if err := s.db.MarkBinAnomaly(binID); err != nil {
 		return fmt.Errorf("mark bin %d anomaly: %w", binID, err)
 	}
 	return nil
@@ -492,7 +491,7 @@ func (s *BinService) ListAnomalies() ([]*bins.Bin, error) {
 // action after a bin has been physically located and reassigned to a
 // real node.
 func (s *BinService) ClearAnomaly(binID int64) error {
-	if _, err := s.db.Exec(`UPDATE bins SET anomaly_at=NULL, updated_at=NOW() WHERE id=$1`, binID); err != nil {
+	if err := s.db.ClearBinAnomaly(binID); err != nil {
 		return fmt.Errorf("clear bin %d anomaly: %w", binID, err)
 	}
 	return nil
@@ -504,6 +503,11 @@ func (s *BinService) ClearAnomaly(binID int64) error {
 // physical (not _TRANSIT, not synthetic) and currently empty.
 //
 // actor identifies the operator for the recovery_actions audit row.
+//
+// Sequencing matches sibling RecoveryService recovery actions: mutate
+// first, then record the recovery_actions row. If the audit write fails
+// the bin move is durable but the error is returned so the operator sees
+// the failure.
 func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) error {
 	if actor == "" {
 		return fmt.Errorf("actor is required for recovery")
@@ -522,19 +526,13 @@ func (s *BinService) RecoverTransitAnomaly(binID, toNodeID int64, actor string) 
 		return err
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE bins SET node_id=$1, anomaly_at=NULL, updated_at=NOW() WHERE id=$2`, toNodeID, binID); err != nil {
+	if err := s.db.RecoverBinToNode(binID, toNodeID); err != nil {
 		return fmt.Errorf("move bin to recovery node: %w", err)
 	}
-	if _, err := tx.Exec(
-		`INSERT INTO recovery_actions (action, target_type, target_id, detail, actor) VALUES ($1, $2, $3, $4, $5)`,
+	if err := s.db.RecordRecoveryAction(
 		"transit_anomaly_recover", "bin", binID,
 		fmt.Sprintf("recovered to node %s", dest.Name), actor); err != nil {
 		return fmt.Errorf("record recovery action: %w", err)
 	}
-	return tx.Commit()
+	return nil
 }

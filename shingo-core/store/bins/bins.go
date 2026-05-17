@@ -498,6 +498,44 @@ func Unlock(db *sql.DB, binID int64) error {
 	return err
 }
 
+// MoveToTransit moves a bin to the synthetic _TRANSIT node identified by
+// transitNodeID. Idempotent: if the bin is already at transitNodeID, the
+// row is left unchanged and nil is returned. Distinct from Move (which
+// errors on a no-op same-node move) because vendor pickup events legitimately
+// retry. Does not touch claimed_by or status — see BinService.MoveToTransit
+// for the design rationale.
+func MoveToTransit(db *sql.DB, binID, transitNodeID int64) error {
+	_, err := db.Exec(
+		`UPDATE bins SET node_id=$1, updated_at=NOW() WHERE id=$2 AND (node_id IS NULL OR node_id != $1)`,
+		transitNodeID, binID)
+	return err
+}
+
+// MarkAnomaly stamps bins.anomaly_at = NOW(). Idempotent — repeated calls
+// just bump the timestamp, since the anomaly state is "still unresolved"
+// rather than "happened at exactly this moment."
+func MarkAnomaly(db *sql.DB, binID int64) error {
+	_, err := db.Exec(`UPDATE bins SET anomaly_at=NOW(), updated_at=NOW() WHERE id=$1`, binID)
+	return err
+}
+
+// ClearAnomaly clears bins.anomaly_at.
+func ClearAnomaly(db *sql.DB, binID int64) error {
+	_, err := db.Exec(`UPDATE bins SET anomaly_at=NULL, updated_at=NOW() WHERE id=$1`, binID)
+	return err
+}
+
+// RecoverToNode moves a bin to toNodeID and clears its anomaly flag in a
+// single UPDATE — the persistence side of the operator's transit-anomaly
+// recovery action. Caller validates that the destination is physical and
+// empty.
+func RecoverToNode(db *sql.DB, binID, toNodeID int64) error {
+	_, err := db.Exec(
+		`UPDATE bins SET node_id=$1, anomaly_at=NULL, updated_at=NOW() WHERE id=$2`,
+		toNodeID, binID)
+	return err
+}
+
 // RecordCount updates UOP and records the count timestamp. Accepts
 // any Execer (*sql.DB or *sql.Tx) so the service layer can wrap the
 // count + bin_uop_audit insert in one transaction. Item 19: cycle
