@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/store"
 	"shingoedge/store/messaging"
 	"shingoedge/store/processes"
@@ -136,15 +137,11 @@ func decodeOnlyOutboxPayload(t *testing.T, db *store.DB, msgType string, target 
 		t.Fatalf("outbox: got %d %s messages, want 1 (all types: %v)", len(matches), msgType, types)
 	}
 	var env protocol.Envelope
-	if err := json.Unmarshal(matches[0].Payload, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(matches[0].Payload, &env), "unmarshal envelope")
 	if env.Type != msgType {
 		t.Fatalf("envelope.Type: got %q, want %q", env.Type, msgType)
 	}
-	if err := env.DecodePayload(target); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
+	testutil.MustNoErr(t, env.DecodePayload(target), "decode payload")
 	return env
 }
 
@@ -153,6 +150,7 @@ func decodeOnlyOutboxPayload(t *testing.T, db *store.DB, msgType string, target 
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	emitter := &capturingEmitter{}
 	mgr := NewManager(db, emitter, "edge.station")
@@ -195,15 +193,14 @@ func TestCreateRetrieveOrder_HappyPath(t *testing.T) {
 }
 
 func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	pid, sid, nid := seedProcessStyleNode(t, db, "P1", "S1", "CN-A")
 	_ = seedClaim(t, db, sid, "CN-A", "PL-AUTO")
 	active := sid
-	if err := db.SetActiveStyle(pid, &active); err != nil {
-		t.Fatalf("SetActiveStyle: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &active), "SetActiveStyle")
 
 	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", "", false, false)
 	if err != nil {
@@ -224,6 +221,7 @@ func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 }
 
 func TestCreateStoreOrder_DoesNotAutoSubmit(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -247,6 +245,7 @@ func TestCreateStoreOrder_DoesNotAutoSubmit(t *testing.T) {
 }
 
 func TestSubmitStoreOrder_EmitsWaybillAndTransitions(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -255,9 +254,7 @@ func TestSubmitStoreOrder_EmitsWaybillAndTransitions(t *testing.T) {
 		t.Fatalf("CreateStoreOrder: %v", err)
 	}
 
-	if err := mgr.SubmitStoreOrder(order.ID, 42); err != nil {
-		t.Fatalf("SubmitStoreOrder: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.SubmitStoreOrder(order.ID, 42), "SubmitStoreOrder")
 
 	updated, err := db.GetOrder(order.ID)
 	if err != nil {
@@ -281,6 +278,7 @@ func TestSubmitStoreOrder_EmitsWaybillAndTransitions(t *testing.T) {
 }
 
 func TestCreateMoveOrder_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -305,6 +303,7 @@ func TestCreateMoveOrder_HappyPath(t *testing.T) {
 }
 
 func TestCreateMoveOrderWithUOP_ThreadsRemainingUOP(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -320,6 +319,7 @@ func TestCreateMoveOrderWithUOP_ThreadsRemainingUOP(t *testing.T) {
 }
 
 func TestCreateComplexOrder_PersistsStepsAndQueuesEnvelope(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -346,6 +346,7 @@ func TestCreateComplexOrder_PersistsStepsAndQueuesEnvelope(t *testing.T) {
 }
 
 func TestCreateIngestOrder_QueuesIngestEnvelope(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -381,6 +382,7 @@ func TestCreateIngestOrder_QueuesIngestEnvelope(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestHandleDispatchReply_Ack(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -388,13 +390,9 @@ func TestHandleDispatchReply_Ack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := db.UpdateOrderStatus(oid, string(StatusSubmitted)); err != nil {
-		t.Fatalf("set submitted: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(oid, string(StatusSubmitted)), "set submitted")
 
-	if err := mgr.HandleDispatchReply("uuid-ack", ReplyAck, "", "", "core ack"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-ack", ReplyAck, "", "", "core ack"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusAcknowledged {
 		t.Errorf("Status: got %q, want %q", o.Status, StatusAcknowledged)
@@ -402,6 +400,7 @@ func TestHandleDispatchReply_Ack(t *testing.T) {
 }
 
 func TestHandleDispatchReply_Waybill_PersistsIDAndETA(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -409,9 +408,7 @@ func TestHandleDispatchReply_Waybill_PersistsIDAndETA(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
 
-	if err := mgr.HandleDispatchReply("uuid-wb", ReplyWaybill, "WB-123", "2026-01-01T00:00:00Z", "dispatched"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-wb", ReplyWaybill, "WB-123", "2026-01-01T00:00:00Z", "dispatched"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusInTransit {
 		t.Errorf("Status: got %q, want %q", o.Status, StatusInTransit)
@@ -425,15 +422,14 @@ func TestHandleDispatchReply_Waybill_PersistsIDAndETA(t *testing.T) {
 }
 
 func TestHandleDispatchReply_Queued(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	oid, _ := db.CreateOrder("uuid-q", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 
-	if err := mgr.HandleDispatchReply("uuid-q", ReplyQueued, "", "", "awaiting inventory"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-q", ReplyQueued, "", "", "awaiting inventory"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusQueued {
 		t.Errorf("Status: got %q, want %q", o.Status, StatusQueued)
@@ -441,6 +437,7 @@ func TestHandleDispatchReply_Queued(t *testing.T) {
 }
 
 func TestHandleDispatchReply_Update_ETAOnlyDoesNotTouchWaybill(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -451,9 +448,7 @@ func TestHandleDispatchReply_Update_ETAOnlyDoesNotTouchWaybill(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
 	// waybillID arg is IGNORED on update — this confirms the non-touch.
-	if err := mgr.HandleDispatchReply("uuid-upd", ReplyUpdate, "IGNORED-WB", "NEW-ETA", "status"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-upd", ReplyUpdate, "IGNORED-WB", "NEW-ETA", "status"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusInTransit {
 		t.Errorf("Status should be unchanged on update: got %q", o.Status)
@@ -467,6 +462,7 @@ func TestHandleDispatchReply_Update_ETAOnlyDoesNotTouchWaybill(t *testing.T) {
 }
 
 func TestHandleDispatchReply_Update_EmptyETAIsNoop(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -474,9 +470,7 @@ func TestHandleDispatchReply_Update_EmptyETAIsNoop(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 	_ = db.UpdateOrderWaybill(oid, "WB-stay", "ETA-stay")
 
-	if err := mgr.HandleDispatchReply("uuid-upd2", ReplyUpdate, "", "", ""); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-upd2", ReplyUpdate, "", "", ""), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.ETA == nil || *o.ETA != "ETA-stay" {
 		t.Errorf("ETA should remain: got %v", o.ETA)
@@ -484,6 +478,7 @@ func TestHandleDispatchReply_Update_EmptyETAIsNoop(t *testing.T) {
 }
 
 func TestHandleDispatchReply_Delivered_NoAutoConfirm(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -492,9 +487,7 @@ func TestHandleDispatchReply_Delivered_NoAutoConfirm(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusAcknowledged))
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
-	if err := mgr.HandleDispatchReply("uuid-del", ReplyDelivered, "", "", "delivered to line"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-del", ReplyDelivered, "", "", "delivered to line"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusDelivered {
 		t.Errorf("Status: got %q, want delivered", o.Status)
@@ -509,6 +502,7 @@ func TestHandleDispatchReply_Delivered_NoAutoConfirm(t *testing.T) {
 }
 
 func TestHandleDispatchReply_Delivered_AutoConfirmsAndQueuesReceipt(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -517,9 +511,7 @@ func TestHandleDispatchReply_Delivered_AutoConfirmsAndQueuesReceipt(t *testing.T
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
-	if err := mgr.HandleDispatchReply("uuid-ac", ReplyDelivered, "", "", "delivered"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-ac", ReplyDelivered, "", "", "delivered"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusConfirmed {
 		t.Errorf("Status: got %q, want confirmed (auto_confirm=true)", o.Status)
@@ -536,6 +528,7 @@ func TestHandleDispatchReply_Delivered_AutoConfirmsAndQueuesReceipt(t *testing.T
 }
 
 func TestHandleDispatchReply_Error_FailsAndEmits(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	emitter := &capturingEmitter{}
 	mgr := NewManager(db, emitter, "edge")
@@ -543,9 +536,7 @@ func TestHandleDispatchReply_Error_FailsAndEmits(t *testing.T) {
 	oid, _ := db.CreateOrder("uuid-err", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 
-	if err := mgr.HandleDispatchReply("uuid-err", ReplyError, "", "", "rack offline"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-err", ReplyError, "", "", "rack offline"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusFailed {
 		t.Errorf("Status: got %q, want failed", o.Status)
@@ -559,6 +550,7 @@ func TestHandleDispatchReply_Error_FailsAndEmits(t *testing.T) {
 }
 
 func TestHandleDispatchReply_Staged(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -566,9 +558,7 @@ func TestHandleDispatchReply_Staged(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
-	if err := mgr.HandleDispatchReply("uuid-stg", ReplyStaged, "", "", "dwell"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-stg", ReplyStaged, "", "", "dwell"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusStaged {
 		t.Errorf("Status: got %q, want staged", o.Status)
@@ -576,15 +566,14 @@ func TestHandleDispatchReply_Staged(t *testing.T) {
 }
 
 func TestHandleDispatchReply_Cancelled(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	oid, _ := db.CreateOrder("uuid-can", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 
-	if err := mgr.HandleDispatchReply("uuid-can", ReplyCancelled, "", "", "stopped"); err != nil {
-		t.Fatalf("HandleDispatchReply: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDispatchReply("uuid-can", ReplyCancelled, "", "", "stopped"), "HandleDispatchReply")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusCancelled {
 		t.Errorf("Status: got %q, want cancelled", o.Status)
@@ -592,6 +581,7 @@ func TestHandleDispatchReply_Cancelled(t *testing.T) {
 }
 
 func TestHandleDispatchReply_UnknownType(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -609,6 +599,7 @@ func TestHandleDispatchReply_UnknownType(t *testing.T) {
 }
 
 func TestHandleDispatchReply_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -627,6 +618,7 @@ func TestHandleDispatchReply_MissingOrder(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApplyCoreStatusSnapshot_NotFoundIsNoop(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -644,6 +636,7 @@ func TestApplyCoreStatusSnapshot_NotFoundIsNoop(t *testing.T) {
 }
 
 func TestApplyCoreStatusSnapshot_SameStatusIsNoop(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -658,6 +651,7 @@ func TestApplyCoreStatusSnapshot_SameStatusIsNoop(t *testing.T) {
 }
 
 func TestApplyCoreStatusSnapshot_DeliveredToConfirmed_UsesNormalTransition(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -678,6 +672,7 @@ func TestApplyCoreStatusSnapshot_DeliveredToConfirmed_UsesNormalTransition(t *te
 }
 
 func TestApplyCoreStatusSnapshot_ForceConfirmedFromNonDelivered(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -697,6 +692,7 @@ func TestApplyCoreStatusSnapshot_ForceConfirmedFromNonDelivered(t *testing.T) {
 }
 
 func TestApplyCoreStatusSnapshot_AllForcedStatusPaths(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		target string
@@ -732,6 +728,7 @@ func TestApplyCoreStatusSnapshot_AllForcedStatusPaths(t *testing.T) {
 }
 
 func TestApplyCoreStatusSnapshot_UnknownStatusIsNoop(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -749,6 +746,7 @@ func TestApplyCoreStatusSnapshot_UnknownStatusIsNoop(t *testing.T) {
 }
 
 func TestApplyCoreStatusSnapshot_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -766,6 +764,7 @@ func TestApplyCoreStatusSnapshot_MissingOrder(t *testing.T) {
 // ───────────────────────────────────────────────────────────────────────
 
 func TestLookupPayloadMeta_NilProcessNode_NoLookup(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -781,15 +780,14 @@ func TestLookupPayloadMeta_NilProcessNode_NoLookup(t *testing.T) {
 }
 
 func TestLookupPayloadMeta_ActiveStyleOnly(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	pid, sid, nid := seedProcessStyleNode(t, db, "P-LM", "S-LM", "CN-LM")
 	_ = seedClaim(t, db, sid, "CN-LM", "PL-ACTIVE")
 	active := sid
-	if err := db.SetActiveStyle(pid, &active); err != nil {
-		t.Fatalf("SetActiveStyle: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &active), "SetActiveStyle")
 
 	if _, err := mgr.CreateMoveOrder(&nid, 1, "S", "D", false); err != nil {
 		t.Fatalf("CreateMoveOrder: %v", err)
@@ -802,6 +800,7 @@ func TestLookupPayloadMeta_ActiveStyleOnly(t *testing.T) {
 }
 
 func TestLookupPayloadMeta_TargetStyleOverridesActiveDuringChangeover(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -830,6 +829,7 @@ func TestLookupPayloadMeta_TargetStyleOverridesActiveDuringChangeover(t *testing
 }
 
 func TestLookupPayloadMeta_NoActiveStyleFallsThrough(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -851,6 +851,7 @@ func TestLookupPayloadMeta_NoActiveStyleFallsThrough(t *testing.T) {
 // ───────────────────────────────────────────────────────────────────────
 
 func TestReleaseOrder_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -859,9 +860,7 @@ func TestReleaseOrder_HappyPath(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 	_ = db.UpdateOrderStatus(oid, string(StatusStaged))
 
-	if err := mgr.ReleaseOrder(oid, nil, ""); err != nil {
-		t.Fatalf("ReleaseOrder: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, ""), "ReleaseOrder")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusInTransit {
 		t.Errorf("Status: got %q, want in_transit", o.Status)
@@ -884,6 +883,7 @@ func TestReleaseOrder_HappyPath(t *testing.T) {
 // envelope so Core's bin audit can record operator identity instead of
 // always writing actor=system.
 func TestReleaseOrder_ThreadsCalledBy(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -892,9 +892,7 @@ func TestReleaseOrder_ThreadsCalledBy(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 	_ = db.UpdateOrderStatus(oid, string(StatusStaged))
 
-	if err := mgr.ReleaseOrder(oid, nil, "stephen-station-7"); err != nil {
-		t.Fatalf("ReleaseOrder: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, "stephen-station-7"), "ReleaseOrder")
 	var rel protocol.OrderRelease
 	decodeOnlyOutboxPayload(t, db, protocol.TypeOrderRelease, &rel)
 	if rel.CalledBy != "stephen-station-7" {
@@ -907,6 +905,7 @@ func TestReleaseOrder_ThreadsCalledBy(t *testing.T) {
 // values to cover Core's nil/zero/positive routing semantics in
 // BinManifestService.SyncOrClearForReleased.
 func TestReleaseOrder_ThreadsRemainingUOP(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		uop  *int
@@ -925,9 +924,7 @@ func TestReleaseOrder_ThreadsRemainingUOP(t *testing.T) {
 			_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 			_ = db.UpdateOrderStatus(oid, string(StatusStaged))
 
-			if err := mgr.ReleaseOrder(oid, tc.uop, ""); err != nil {
-				t.Fatalf("ReleaseOrder: %v", err)
-			}
+			testutil.MustNoErr(t, mgr.ReleaseOrder(oid, tc.uop, ""), "ReleaseOrder")
 			var rel protocol.OrderRelease
 			decodeOnlyOutboxPayload(t, db, protocol.TypeOrderRelease, &rel)
 			switch {
@@ -950,15 +947,14 @@ func TestReleaseOrder_ThreadsRemainingUOP(t *testing.T) {
 // returns nil; the operator's intent is preserved (Order B's release fired)
 // without aborting the whole call. Terminal statuses still error.
 func TestReleaseOrder_PreDispatchSkip(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	oid, _ := db.CreateOrder("uuid-rns", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 
-	if err := mgr.ReleaseOrder(oid, nil, ""); err != nil {
-		t.Fatalf("ReleaseOrder on pre-dispatch (submitted) should be a silent no-op, got: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.ReleaseOrder(oid, nil, ""), "ReleaseOrder on pre-dispatch (submitted) should be a silent no-op, got")
 
 	// Status didn't change — no envelope queued, no transition.
 	o, _ := db.GetOrder(oid)
@@ -968,6 +964,7 @@ func TestReleaseOrder_PreDispatchSkip(t *testing.T) {
 }
 
 func TestReleaseOrder_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -978,6 +975,7 @@ func TestReleaseOrder_MissingOrder(t *testing.T) {
 }
 
 func TestAbortOrder_HappyPath_QueuesCancelAndTransitions(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	emitter := &capturingEmitter{}
 	mgr := NewManager(db, emitter, "edge")
@@ -985,9 +983,7 @@ func TestAbortOrder_HappyPath_QueuesCancelAndTransitions(t *testing.T) {
 	oid, _ := db.CreateOrder("uuid-abrt", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
 	_ = db.UpdateOrderStatus(oid, string(StatusSubmitted))
 
-	if err := mgr.AbortOrder(oid); err != nil {
-		t.Fatalf("AbortOrder: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.AbortOrder(oid), "AbortOrder")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusCancelled {
 		t.Errorf("Status: got %q, want cancelled", o.Status)
@@ -1004,6 +1000,7 @@ func TestAbortOrder_HappyPath_QueuesCancelAndTransitions(t *testing.T) {
 }
 
 func TestAbortOrder_RejectsTerminal(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1020,6 +1017,7 @@ func TestAbortOrder_RejectsTerminal(t *testing.T) {
 }
 
 func TestAbortOrder_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1030,6 +1028,7 @@ func TestAbortOrder_MissingOrder(t *testing.T) {
 }
 
 func TestRedirectOrder_HappyPath_UpdatesDeliveryAndQueues(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1051,6 +1050,7 @@ func TestRedirectOrder_HappyPath_UpdatesDeliveryAndQueues(t *testing.T) {
 }
 
 func TestRedirectOrder_RejectsTerminal(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1063,6 +1063,7 @@ func TestRedirectOrder_RejectsTerminal(t *testing.T) {
 }
 
 func TestRedirectOrder_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1072,13 +1073,12 @@ func TestRedirectOrder_MissingOrder(t *testing.T) {
 }
 
 func TestTransitionOrder_DelegatesToLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	oid, _ := db.CreateOrder("uuid-t", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
-	if err := mgr.TransitionOrder(oid, StatusSubmitted, "test"); err != nil {
-		t.Fatalf("TransitionOrder: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.TransitionOrder(oid, StatusSubmitted, "test"), "TransitionOrder")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusSubmitted {
 		t.Errorf("Status: got %q, want submitted", o.Status)
@@ -1086,6 +1086,7 @@ func TestTransitionOrder_DelegatesToLifecycle(t *testing.T) {
 }
 
 func TestHandleDeliveredWithExpiry_StoresStagedExpireAt(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1094,9 +1095,7 @@ func TestHandleDeliveredWithExpiry_StoresStagedExpireAt(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 
 	future := time.Now().UTC().Add(1 * time.Hour)
-	if err := mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future, nil); err != nil {
-		t.Fatalf("HandleDeliveredWithExpiry: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleDeliveredWithExpiry("uuid-he", "dwell", &future, nil), "HandleDeliveredWithExpiry")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusDelivered {
 		t.Errorf("Status: got %q, want delivered", o.Status)
@@ -1107,6 +1106,7 @@ func TestHandleDeliveredWithExpiry_StoresStagedExpireAt(t *testing.T) {
 }
 
 func TestHandleDeliveredWithExpiry_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1117,6 +1117,7 @@ func TestHandleDeliveredWithExpiry_MissingOrder(t *testing.T) {
 }
 
 func TestConfirmDelivery_RequiresDelivered(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1133,6 +1134,7 @@ func TestConfirmDelivery_RequiresDelivered(t *testing.T) {
 }
 
 func TestConfirmDelivery_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1141,9 +1143,7 @@ func TestConfirmDelivery_HappyPath(t *testing.T) {
 	_ = db.UpdateOrderStatus(oid, string(StatusInTransit))
 	_ = db.UpdateOrderStatus(oid, string(StatusDelivered))
 
-	if err := mgr.ConfirmDelivery(oid, 9); err != nil {
-		t.Fatalf("ConfirmDelivery: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.ConfirmDelivery(oid, 9), "ConfirmDelivery")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusConfirmed {
 		t.Errorf("Status: got %q, want confirmed", o.Status)
@@ -1160,13 +1160,12 @@ func TestConfirmDelivery_HappyPath(t *testing.T) {
 }
 
 func TestSubmitOrder_RetrieveDoesNotBuildWaybill(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
 	oid, _ := db.CreateOrder("uuid-so", TypeRetrieve, nil, false, 1, "X", "", "", "", false, "")
-	if err := mgr.SubmitOrder(oid); err != nil {
-		t.Fatalf("SubmitOrder: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.SubmitOrder(oid), "SubmitOrder")
 	o, _ := db.GetOrder(oid)
 	if o.Status != StatusSubmitted {
 		t.Errorf("Status: got %q, want submitted", o.Status)
@@ -1180,6 +1179,7 @@ func TestSubmitOrder_RetrieveDoesNotBuildWaybill(t *testing.T) {
 }
 
 func TestSubmitOrder_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 
@@ -1202,6 +1202,7 @@ func TestSubmitOrder_MissingOrder(t *testing.T) {
 // closing the race window. CreateComplexOrder retains the manual-confirm
 // default for lineside deliveries.
 func TestCreateComplexOrder_AutoConfirmSplit(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge")
 

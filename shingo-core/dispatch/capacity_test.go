@@ -48,6 +48,7 @@ func (f *fakeCapacityDB) ListChildNodes(int64) ([]*nodes.Node, error) {
 // on a path that should pass through). Per the regression-test rigor
 // pillar: positive AND negative cases for the predicate.
 func TestCheckDropoffCapacity(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name         string
 		deliveryNode string

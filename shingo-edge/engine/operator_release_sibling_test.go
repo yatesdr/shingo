@@ -31,6 +31,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -76,15 +77,9 @@ func seedTwoRobotPair(t *testing.T, db *store.DB, nodeID int64, prefix string, s
 
 	orderA := stageOrderForConsumeNode(t, db, nodeID, prefix+"-A")
 	orderB := stageOrderForConsumeNode(t, db, nodeID, prefix+"-B")
-	if err := db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST"); err != nil {
-		t.Fatalf("update orderB delivery_node: %v", err)
-	}
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
-		t.Fatalf("track A+B on runtime: %v", err)
-	}
-	if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
-		t.Fatalf("link siblings: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST"), "update orderB delivery_node")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "track A+B on runtime")
+	testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
 	return orderA, orderB
 }
 
@@ -92,6 +87,7 @@ func seedTwoRobotPair(t *testing.T, db *store.DB, nodeID int64, prefix string, s
 // contract: writing the link sets both halves' SiblingOrderID, so a
 // sibling lookup from either order finds the other.
 func TestRegression_SiblingLinkBidirectional(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "SIB-LINK", PayloadCode: "PART-LINK", UOPCapacity: 1200, InitialUOP: 800,
@@ -115,6 +111,7 @@ func TestRegression_SiblingLinkBidirectional(t *testing.T) {
 // have failed → manifest sync sent → Core wipes supply bin. With the
 // durable sibling-pointer guard, manifest sync stays suppressed.
 func TestRegression_SupplyGuardFiresWhenActiveOrderCleared(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "SIB-CLEARED", PayloadCode: "PART-CLR", UOPCapacity: 1200, InitialUOP: 800,
@@ -123,9 +120,7 @@ func TestRegression_SupplyGuardFiresWhenActiveOrderCleared(t *testing.T) {
 
 	// Simulate handler_bin_picked_up: supply bin left the supermarket,
 	// ActiveOrderID nulled. StagedOrderID stays.
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderB); err != nil {
-		t.Fatalf("simulate bin-pickup null: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderB), "simulate bin-pickup null")
 
 	// Drain outbox so findOutboxByType is exact.
 	pending, _ := db.ListPendingOutbox(100)
@@ -135,9 +130,7 @@ func TestRegression_SupplyGuardFiresWhenActiveOrderCleared(t *testing.T) {
 
 	eng := testEngine(t, db)
 	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "test-op"}
-	if err := eng.ReleaseOrderWithLineside(orderA, disp); err != nil {
-		t.Fatalf("release supply order A: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderA, disp), "release supply order A")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -155,6 +148,7 @@ func TestRegression_SupplyGuardFiresWhenActiveOrderCleared(t *testing.T) {
 // follows the sibling pointer on Order B to find Order A and proceeds.
 // Pre-fix this returned "expected two tracked orders" and refused.
 func TestRegression_ReleaseStagedOrdersWorksAfterActiveOrderCleared(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "SIB-GATE", PayloadCode: "PART-GATE", UOPCapacity: 1200, InitialUOP: 800,
@@ -162,14 +156,10 @@ func TestRegression_ReleaseStagedOrdersWorksAfterActiveOrderCleared(t *testing.T
 	orderA, orderB := seedTwoRobotPair(t, db, nodeID, "uuid-gate", "two_robot")
 
 	// Same simulated bin-pickup null.
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderB); err != nil {
-		t.Fatalf("simulate bin-pickup null: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderB), "simulate bin-pickup null")
 
 	eng := testEngine(t, db)
-	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "test-op"}); err != nil {
-		t.Fatalf("ReleaseStagedOrders after ActiveOrderID cleared: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "test-op"}), "ReleaseStagedOrders after ActiveOrderID cleared")
 
 	// Both orders should have advanced past staged.
 	a, _ := db.GetOrder(orderA)
@@ -186,20 +176,17 @@ func TestRegression_ReleaseStagedOrdersWorksAfterActiveOrderCleared(t *testing.T
 // mirror case: StagedOrderID nulled but ActiveOrderID intact. The gate
 // follows Order A's sibling pointer to find Order B.
 func TestRegression_ReleaseStagedOrdersWorksAfterStagedOrderCleared(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "SIB-GATE-EVAC", PayloadCode: "PART-GE", UOPCapacity: 1200, InitialUOP: 800,
 	})
 	orderA, orderB := seedTwoRobotPair(t, db, nodeID, "uuid-gate-evac", "two_robot")
 
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, nil); err != nil {
-		t.Fatalf("null staged_order_id: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, nil), "null staged_order_id")
 
 	eng := testEngine(t, db)
-	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "test-op"}); err != nil {
-		t.Fatalf("ReleaseStagedOrders after StagedOrderID cleared: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "test-op"}), "ReleaseStagedOrders after StagedOrderID cleared")
 
 	a, _ := db.GetOrder(orderA)
 	b, _ := db.GetOrder(orderB)
@@ -217,6 +204,7 @@ func TestRegression_ReleaseStagedOrdersWorksAfterStagedOrderCleared(t *testing.T
 // against a future refactor that accidentally treats unlinked orders
 // as part of a swap pair.
 func TestRegression_SupplyGuardSkipsForOrderWithoutSibling(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "SIB-NOLINK", PayloadCode: "PART-NL", UOPCapacity: 1200, InitialUOP: 800,
@@ -246,9 +234,7 @@ func TestRegression_SupplyGuardSkipsForOrderWithoutSibling(t *testing.T) {
 	}
 
 	eng := testEngine(t, db)
-	if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionCaptureLineside}); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionCaptureLineside}), "release")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -269,6 +255,7 @@ func TestRegression_SupplyGuardSkipsForOrderWithoutSibling(t *testing.T) {
 // matched literal "two_robot", leaving press_index supply bins exposed
 // to the manifest-wipe class of bug.
 func TestRegression_SupplyGuardFiresForPressIndexMode(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "SIB-PRESS", PayloadCode: "PART-PI", UOPCapacity: 1200, InitialUOP: 800,
@@ -281,9 +268,7 @@ func TestRegression_SupplyGuardFiresForPressIndexMode(t *testing.T) {
 	}
 
 	eng := testEngine(t, db)
-	if err := eng.ReleaseOrderWithLineside(orderA, ReleaseDisposition{Mode: DispositionCaptureLineside}); err != nil {
-		t.Fatalf("release press_index supply: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderA, ReleaseDisposition{Mode: DispositionCaptureLineside}), "release press_index supply")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	rel := decodeOrderRelease(t, releases[0])

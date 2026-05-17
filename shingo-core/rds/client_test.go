@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"shingo/protocol/testutil"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ func testServer(handler http.HandlerFunc) (*httptest.Server, *Client) {
 }
 
 func TestCreateJoinOrder(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/setOrder" {
 			t.Errorf("path = %q, want /setOrder", r.URL.Path)
@@ -52,6 +54,7 @@ func TestCreateJoinOrder(t *testing.T) {
 }
 
 func TestCreateJoinOrder_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "order already exists"})
 	})
@@ -64,6 +67,7 @@ func TestCreateJoinOrder_Error(t *testing.T) {
 }
 
 func TestGetOrderDetails(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/orderDetails/order-123" {
 			t.Errorf("path = %q, want /orderDetails/order-123", r.URL.Path)
@@ -89,6 +93,7 @@ func TestGetOrderDetails(t *testing.T) {
 }
 
 func TestGetOrderDetails_NotFound(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"code":1,"msg":"not found"}`))
 	})
@@ -101,6 +106,7 @@ func TestGetOrderDetails_NotFound(t *testing.T) {
 }
 
 func TestTerminateOrder(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/terminate" {
 			t.Errorf("path = %q, want /terminate", r.URL.Path)
@@ -114,13 +120,11 @@ func TestTerminateOrder(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.TerminateOrder(&TerminateRequest{ID: "order-456"})
-	if err != nil {
-		t.Fatalf("TerminateOrder: %v", err)
-	}
+	testutil.MustNoErr(t, client.TerminateOrder(&TerminateRequest{ID: "order-456"}), "TerminateOrder")
 }
 
 func TestListOrders(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/orders" {
 			t.Errorf("path = %q, want /orders", r.URL.Path)
@@ -153,6 +157,7 @@ func TestListOrders(t *testing.T) {
 }
 
 func TestSetPriority(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/setPriority" {
 			t.Errorf("path = %q, want /setPriority", r.URL.Path)
@@ -169,13 +174,11 @@ func TestSetPriority(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.SetPriority("order-789", 10)
-	if err != nil {
-		t.Fatalf("SetPriority: %v", err)
-	}
+	testutil.MustNoErr(t, client.SetPriority("order-789", 10), "SetPriority")
 }
 
 func TestPing(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/ping" {
 			t.Errorf("path = %q, want /ping", r.URL.Path)
@@ -194,6 +197,7 @@ func TestPing(t *testing.T) {
 }
 
 func TestGetRobotsStatus(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/robotsStatus" {
 			t.Errorf("path = %q, want /robotsStatus", r.URL.Path)
@@ -220,6 +224,7 @@ func TestGetRobotsStatus(t *testing.T) {
 }
 
 func TestHTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("server error"))
@@ -233,6 +238,7 @@ func TestHTTPError(t *testing.T) {
 }
 
 func TestCheckResponse(t *testing.T) {
+	t.Parallel()
 	if err := checkResponse(&Response{Code: 0, Msg: "ok"}); err != nil {
 		t.Errorf("code 0 should not error: %v", err)
 	}
@@ -242,6 +248,7 @@ func TestCheckResponse(t *testing.T) {
 }
 
 func TestOrderStateIsTerminal(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		state    OrderState
 		terminal bool
@@ -316,6 +323,7 @@ func (m *mockResolver) ResolveRDSOrderID(rdsOrderID string) (int64, error) {
 }
 
 func TestPollerTrackUntrack(t *testing.T) {
+	t.Parallel()
 	client := NewClient("http://localhost:9999", time.Second)
 	emitter := &mockPollerEmitter{}
 	resolver := &mockResolver{}
@@ -349,6 +357,7 @@ func TestPollerTrackUntrack(t *testing.T) {
 }
 
 func TestPollerDetectsStateTransition(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
@@ -392,6 +401,7 @@ func TestPollerDetectsStateTransition(t *testing.T) {
 }
 
 func TestPollerRemovesTerminal(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-2","state":"FINISHED"}`))
 	})

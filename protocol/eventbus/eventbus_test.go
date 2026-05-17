@@ -13,6 +13,7 @@ const (
 )
 
 func TestNew(t *testing.T) {
+	t.Parallel()
 	bus := New[testEventType]()
 	if bus == nil {
 		t.Fatal("New returned nil")
@@ -20,6 +21,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestSubscribe_Emit(t *testing.T) {
+	t.Parallel()
 	bus := New[testEventType]()
 	var received atomic.Int32
 
@@ -38,6 +40,7 @@ func TestSubscribe_Emit(t *testing.T) {
 }
 
 func TestSubscribeTypes_Filter(t *testing.T) {
+	t.Parallel()
 	bus := New[testEventType]()
 	var countA, countB atomic.Int32
 
@@ -62,6 +65,7 @@ func TestSubscribeTypes_Filter(t *testing.T) {
 }
 
 func TestUnsubscribe(t *testing.T) {
+	t.Parallel()
 	bus := New[testEventType]()
 	var count atomic.Int32
 
@@ -79,6 +83,7 @@ func TestUnsubscribe(t *testing.T) {
 }
 
 func TestEmit_AutoTimestamp(t *testing.T) {
+	t.Parallel()
 	bus := New[testEventType]()
 	var ts int64
 
@@ -94,6 +99,7 @@ func TestEmit_AutoTimestamp(t *testing.T) {
 }
 
 func TestEmit_PanicRecovery(t *testing.T) {
+	t.Parallel()
 	bus := New[testEventType]()
 	var afterPanic atomic.Int32
 
@@ -116,6 +122,7 @@ func TestEmit_PanicRecovery(t *testing.T) {
 }
 
 func TestEmit_MultipleSubscribers(t *testing.T) {
+	t.Parallel()
 	bus := New[testEventType]()
 	var count atomic.Int32
 

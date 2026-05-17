@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
@@ -27,6 +28,7 @@ import (
 // populated CompletedAt timestamp. If a refactor bypassed the lifecycle and
 // only ran UpdateOrderStatus, CompletedAt would not be set.
 func TestApiDirectOrderReceipt_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	// Seed an order already in the "delivered" state — the only status from
@@ -38,9 +40,7 @@ func TestApiDirectOrderReceipt_HappyPath(t *testing.T) {
 		Status:    "delivered",
 		Quantity:  1,
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
 	rec := postJSON(t, h.apiDirectOrderReceipt, "/api/direct-order/receipt",
 		map[string]any{
@@ -56,9 +56,7 @@ func TestApiDirectOrderReceipt_HappyPath(t *testing.T) {
 		Status    string `json:"status"`
 		OrderUUID string `json:"order_uuid"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Status != "confirmed" || resp.OrderUUID != o.EdgeUUID {
 		t.Errorf("response: got %+v, want status=confirmed order_uuid=%s", resp, o.EdgeUUID)
 	}
@@ -77,6 +75,7 @@ func TestApiDirectOrderReceipt_HappyPath(t *testing.T) {
 // contract most characterization refactors would preserve by accident, but
 // it's worth pinning explicitly since the default is a visible API behavior.
 func TestApiDirectOrderReceipt_DefaultsReceiptType(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	o := &orders.Order{
@@ -86,9 +85,7 @@ func TestApiDirectOrderReceipt_DefaultsReceiptType(t *testing.T) {
 		Status:    "delivered",
 		Quantity:  1,
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
 	rec := postJSON(t, h.apiDirectOrderReceipt, "/api/direct-order/receipt",
 		map[string]any{"order_uuid": o.EdgeUUID, "final_count": int64(1)})
@@ -100,6 +97,7 @@ func TestApiDirectOrderReceipt_DefaultsReceiptType(t *testing.T) {
 // TestApiDirectOrderReceipt_MissingOrderUUID pins the validation branch: no
 // order_uuid → 400 without touching the DB.
 func TestApiDirectOrderReceipt_MissingOrderUUID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiDirectOrderReceipt, "/api/direct-order/receipt",
@@ -111,6 +109,7 @@ func TestApiDirectOrderReceipt_MissingOrderUUID(t *testing.T) {
 
 // TestApiDirectOrderReceipt_OrderNotFound pins the GetOrderByUUID miss → 404.
 func TestApiDirectOrderReceipt_OrderNotFound(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiDirectOrderReceipt, "/api/direct-order/receipt",
@@ -126,6 +125,7 @@ func TestApiDirectOrderReceipt_OrderNotFound(t *testing.T) {
 // with the error message in the body. Critically, the order's status and
 // CompletedAt MUST remain untouched.
 func TestApiDirectOrderReceipt_WrongStatusReturns500(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	o := &orders.Order{
@@ -135,9 +135,7 @@ func TestApiDirectOrderReceipt_WrongStatusReturns500(t *testing.T) {
 		Status:    "pending",
 		Quantity:  1,
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
 	rec := postJSON(t, h.apiDirectOrderReceipt, "/api/direct-order/receipt",
 		map[string]any{"order_uuid": o.EdgeUUID, "receipt_type": "full"})
@@ -159,6 +157,7 @@ func TestApiDirectOrderReceipt_WrongStatusReturns500(t *testing.T) {
 // returns (false, nil) and the handler surfaces 400 "order already completed"
 // — NOT a 5xx. This guards against refactors that flip the ok/err check.
 func TestApiDirectOrderReceipt_AlreadyCompleted(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	o := &orders.Order{
@@ -168,13 +167,9 @@ func TestApiDirectOrderReceipt_AlreadyCompleted(t *testing.T) {
 		Status:    "confirmed",
 		Quantity:  1,
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	// Mark as completed so ConfirmReceipt short-circuits to (false, nil).
-	if err := db.CompleteOrder(o.ID); err != nil {
-		t.Fatalf("complete order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CompleteOrder(o.ID), "complete order")
 
 	rec := postJSON(t, h.apiDirectOrderReceipt, "/api/direct-order/receipt",
 		map[string]any{"order_uuid": o.EdgeUUID, "receipt_type": "full"})

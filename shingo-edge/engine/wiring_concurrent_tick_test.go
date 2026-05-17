@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -29,6 +30,7 @@ import (
 // the more complex during-flip / during-swap tests build on; if this
 // fails, the others can't be trusted.
 func TestRegression_MultiBinAtPairedNodes_TicksAttributeCorrectly(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
 
@@ -37,12 +39,8 @@ func TestRegression_MultiBinAtPairedNodes_TicksAttributeCorrectly(t *testing.T) 
 	const binA, binB int64 = 1001, 1002
 	orderA := stageABOrder(t, db, nodeAID, "uuid-multibin-A", "PART-AB", binA)
 	orderB := stageABOrder(t, db, nodeBID, "uuid-multibin-B", "PART-AB", binB)
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeAID, &orderA, nil); err != nil {
-		t.Fatalf("set A active order: %v", err)
-	}
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeBID, &orderB, nil); err != nil {
-		t.Fatalf("set B active order: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeAID, &orderA, nil), "set A active order")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeBID, &orderB, nil), "set B active order")
 	bidA, bidB := binA, binB
 	_ = db.SetProcessNodeActiveBinID(nodeAID, &bidA)
 	_ = db.SetProcessNodeActiveBinID(nodeBID, &bidB)
@@ -82,6 +80,7 @@ func TestRegression_MultiBinAtPairedNodes_TicksAttributeCorrectly(t *testing.T) 
 // the correct active side. We exercise the boundary by firing ticks
 // before, during (interleaved by re-issue), and after the flip.
 func TestRegression_TickDuringABFlip(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
 
@@ -107,9 +106,7 @@ func TestRegression_TickDuringABFlip(t *testing.T) {
 	// Flip A → B. FlipABNode flushes before swapping active-pull; the
 	// flush ensures any pre-flip deltas are sealed against the old
 	// active context.
-	if err := eng.FlipABNode(nodeBID); err != nil {
-		t.Fatalf("FlipABNode: %v", err)
-	}
+	testutil.MustNoErr(t, eng.FlipABNode(nodeBID), "FlipABNode")
 
 	// Post-flip tick → B's bin.
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{
@@ -143,6 +140,7 @@ func TestRegression_TickDuringABFlip(t *testing.T) {
 // show as bin drains against whatever is at the slot, corrupting
 // attribution.
 func TestRegression_TickDuringPullPartsLinesideWindow(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "TICK-PPL",
@@ -150,9 +148,7 @@ func TestRegression_TickDuringPullPartsLinesideWindow(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  100,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 100); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 100), "seed runtime")
 
 	const binID int64 = 3001
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-ppl")
@@ -171,9 +167,7 @@ func TestRegression_TickDuringPullPartsLinesideWindow(t *testing.T) {
 		LinesideCapture: map[string]int{"PART-PPL": 20},
 		CalledBy:        "test-op",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
 	// Reset sink so we focus assertions on post-release ticks.
 	sink.bucketCalls = nil
@@ -222,6 +216,7 @@ func TestRegression_TickDuringPullPartsLinesideWindow(t *testing.T) {
 // via the public Engine surface so a future dispatch-layer refactor
 // can't silently break during-pickup-window attribution.
 func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "PB-PICKUP",
@@ -239,9 +234,7 @@ func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 40); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 40), "seed runtime")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -287,6 +280,7 @@ func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
 // resolveReleaseClaim → toClaim transition only fires on release; until
 // then the active claim drives attribution.
 func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, fromStyleID, toStyleID := seedRunoutScenario(t, db, "RUNOUT")
 
@@ -306,9 +300,7 @@ func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &fromClaim.ID, &bid, 80); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &fromClaim.ID, &bid, 80), "seed runtime")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -355,6 +347,7 @@ func TestRegression_TickDuringChangeoverRunout(t *testing.T) {
 // bin's UOP (snapshot value or capacity) and ticks attribute to the new
 // bin via the now-current order.
 func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "TR-SWAP",
@@ -362,9 +355,7 @@ func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  60,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 60); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 60), "seed runtime")
 	// Promote claim to two_robot so the supply-bin guard is exercised.
 	claim, _ := db.GetStyleNodeClaimByNode(styleID, "TR-SWAP-NODE")
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
@@ -432,6 +423,7 @@ func TestRegression_TickDuringTwoRobotSwap(t *testing.T) {
 // bin, and the runtime starts from the new bin's count, not Y's
 // residue or X's prior session.
 func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleX, styleY, claimX, claimY := seedTwoStyleNode(t, db, "X2Y")
 
@@ -526,6 +518,7 @@ func TestRegression_ChangeoverDoesNotCarryUOPAcrossStyles(t *testing.T) {
 // (covered by TestRegression_ReconciliationSelfHeal in
 // uop_reconciler_test.go).
 func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, styleX, _, claimX, _ := seedTwoStyleNode(t, db, "BACK")
 
@@ -545,9 +538,7 @@ func TestRegression_ChangeoverBackToStyle_ResetsToCapacityPostItem8(t *testing.T
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)); err != nil {
-		t.Fatalf("confirm order: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "confirm order")
 	returnedBin := int64(7777)
 	_ = db.UpdateOrderBinID(orderID, &returnedBin)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
@@ -579,12 +570,8 @@ func stageABOrder(t *testing.T, db *store.DB, nodeID int64, uuid, payload string
 		t.Fatalf("create order %s: %v", uuid, err)
 	}
 	bid := binID
-	if err := db.UpdateOrderBinID(orderID, &bid); err != nil {
-		t.Fatalf("set bin id: %v", err)
-	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)); err != nil {
-		t.Fatalf("confirm: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &bid), "set bin id")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "confirm")
 	return orderID
 }
 

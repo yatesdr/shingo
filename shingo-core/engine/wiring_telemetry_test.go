@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet"
 	"shingocore/fleet/simulator"
@@ -41,9 +42,7 @@ func makeTelemetryOrder(t *testing.T, db *store.DB, edgeUUID, station string) *o
 		SourceNode:    "STORAGE-A1",
 		DeliveryNode:  "LINE1-IN",
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	return o
 }
 
@@ -53,6 +52,7 @@ func makeTelemetryOrder(t *testing.T, db *store.DB, edgeUUID, station string) *o
 // lands in mission_events and the Blocks/Errors JSON columns are
 // populated from the OrderSnapshot.
 func TestRecordMissionEvent_InsertsRowWithSnapshotJSON(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -99,18 +99,14 @@ func TestRecordMissionEvent_InsertsRowWithSnapshotJSON(t *testing.T) {
 
 	// Blocks JSON should round-trip the snapshot block.
 	var blocks []fleet.BlockSnapshot
-	if err := json.Unmarshal([]byte(me.BlocksJSON), &blocks); err != nil {
-		t.Fatalf("decode BlocksJSON: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal([]byte(me.BlocksJSON), &blocks), "decode BlocksJSON")
 	if len(blocks) != 1 || blocks[0].BlockID != "B1" {
 		t.Errorf("BlocksJSON content = %+v", blocks)
 	}
 
 	// Errors JSON likewise.
 	var errs []fleet.OrderMessage
-	if err := json.Unmarshal([]byte(me.ErrorsJSON), &errs); err != nil {
-		t.Fatalf("decode ErrorsJSON: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal([]byte(me.ErrorsJSON), &errs), "decode ErrorsJSON")
 	if len(errs) != 1 || errs[0].Code != 42 {
 		t.Errorf("ErrorsJSON content = %+v", errs)
 	}
@@ -125,6 +121,7 @@ func TestRecordMissionEvent_InsertsRowWithSnapshotJSON(t *testing.T) {
 // Snapshot is supplied, the function must still write the row, with
 // the JSON columns falling back to the "[]" defaults.
 func TestRecordMissionEvent_DefaultsToEmptyJSONWithoutSnapshot(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -156,6 +153,7 @@ func TestRecordMissionEvent_DefaultsToEmptyJSONWithoutSnapshot(t *testing.T) {
 // finalizeMissionTelemetry runs and a mission_telemetry row is upserted
 // with vendor durations + snapshot JSON populated.
 func TestRecordMissionEvent_TerminalStateWritesTelemetrySummary(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -224,16 +222,12 @@ func TestRecordMissionEvent_TerminalStateWritesTelemetrySummary(t *testing.T) {
 
 	// Snapshot JSON columns rolled into the summary.
 	var blocks []fleet.BlockSnapshot
-	if err := json.Unmarshal([]byte(mt.BlocksJSON), &blocks); err != nil {
-		t.Fatalf("decode BlocksJSON: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal([]byte(mt.BlocksJSON), &blocks), "decode BlocksJSON")
 	if len(blocks) != 1 || blocks[0].BlockID != "B-final" {
 		t.Errorf("blocks summary = %+v", blocks)
 	}
 	var warns []fleet.OrderMessage
-	if err := json.Unmarshal([]byte(mt.WarningsJSON), &warns); err != nil {
-		t.Fatalf("decode WarningsJSON: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal([]byte(mt.WarningsJSON), &warns), "decode WarningsJSON")
 	if len(warns) != 1 || warns[0].Code != 7 {
 		t.Errorf("warnings summary = %+v", warns)
 	}
@@ -243,6 +237,7 @@ func TestRecordMissionEvent_TerminalStateWritesTelemetrySummary(t *testing.T) {
 // be loaded, the helper logs and returns without panicking, and crucially
 // does NOT write a telemetry row.
 func TestFinalizeMissionTelemetry_MissingOrderIsNoOp(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -262,6 +257,7 @@ func TestFinalizeMissionTelemetry_MissingOrderIsNoOp(t *testing.T) {
 // allowed; the row is still written with default empty JSON arrays and
 // duration computed from CoreCreated/CoreCompleted only.
 func TestFinalizeMissionTelemetry_HandlesNilSnapshot(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 

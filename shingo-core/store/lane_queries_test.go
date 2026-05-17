@@ -37,6 +37,7 @@ func laneFixture(t *testing.T, db *DB, prefix string) (laneID int64, slot1ID, sl
 }
 
 func TestFindOldestBuriedBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	laneID, slot1ID, slot2ID, slot3ID := laneFixture(t, db, "OLD")
@@ -87,6 +88,7 @@ func TestFindOldestBuriedBin(t *testing.T) {
 }
 
 func TestListLaneSlotsEmpty(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	// Non-existent lane id — list should come back empty, no error.
 	slots, err := db.ListLaneSlots(99999)
@@ -108,6 +110,7 @@ func TestListLaneSlotsEmpty(t *testing.T) {
 }
 
 func TestFindSourceBinInLane_NoMatch(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	laneID, _, _, _ := laneFixture(t, db, "NOM")
 
@@ -131,6 +134,7 @@ func TestFindSourceBinInLane_NoMatch(t *testing.T) {
 }
 
 func TestLaneSlotAccessibility(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	laneID, slot1ID, slot2ID, slot3ID := laneFixture(t, db, "ACC")
 
@@ -188,6 +192,7 @@ func TestLaneSlotAccessibility(t *testing.T) {
 }
 
 func TestFindBuriedBin_NoBuried(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	laneID, slot1ID, _, _ := laneFixture(t, db, "NOB")
 

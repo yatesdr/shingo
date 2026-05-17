@@ -22,6 +22,7 @@ func findDiff(diffs []ChangeoverNodeDiff, nodeName string) *ChangeoverNodeDiff {
 // ---------------------------------------------------------------------------
 
 func TestDiffStyleClaims_Swap(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume"}},
@@ -39,6 +40,7 @@ func TestDiffStyleClaims_Swap(t *testing.T) {
 }
 
 func TestDiffStyleClaims_Evacuate(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", EvacuateOnChangeover: true}},
@@ -53,6 +55,7 @@ func TestDiffStyleClaims_Evacuate(t *testing.T) {
 }
 
 func TestDiffStyleClaims_Unchanged(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
@@ -67,6 +70,7 @@ func TestDiffStyleClaims_Unchanged(t *testing.T) {
 }
 
 func TestDiffStyleClaims_Add(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		nil, // no from-style claims
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
@@ -87,6 +91,7 @@ func TestDiffStyleClaims_Add(t *testing.T) {
 }
 
 func TestDiffStyleClaims_Drop(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		nil,
@@ -112,6 +117,7 @@ func TestDiffStyleClaims_Drop(t *testing.T) {
 
 // To-claim with __empty__ → explicitly clear the node (SituationDrop).
 func TestDiffStyleClaims_ToEmpty(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
@@ -127,6 +133,7 @@ func TestDiffStyleClaims_ToEmpty(t *testing.T) {
 
 // From-claim with __empty__ → node was empty, now needs material (SituationAdd).
 func TestDiffStyleClaims_FromEmpty(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
@@ -142,6 +149,7 @@ func TestDiffStyleClaims_FromEmpty(t *testing.T) {
 
 // New node with __empty__ → node was empty, stays empty (SituationUnchanged).
 func TestDiffStyleClaims_ToEmptyNewNode(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		nil,
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
@@ -157,6 +165,7 @@ func TestDiffStyleClaims_ToEmptyNewNode(t *testing.T) {
 
 // Both from and to have __empty__ → nothing changes (SituationUnchanged).
 func TestDiffStyleClaims_BothEmpty(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "__empty__", Role: "consume"}},
@@ -175,6 +184,7 @@ func TestDiffStyleClaims_BothEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDiffStyleClaims_ChangeoverRole_FromSide(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
@@ -189,6 +199,7 @@ func TestDiffStyleClaims_ChangeoverRole_FromSide(t *testing.T) {
 }
 
 func TestDiffStyleClaims_ChangeoverRole_ToSide(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
@@ -204,6 +215,7 @@ func TestDiffStyleClaims_ChangeoverRole_ToSide(t *testing.T) {
 
 // Changeover role overrides EvacuateOnChangeover=false — evacuate is forced.
 func TestDiffStyleClaims_ChangeoverRoleOverridesNoEvacuate(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
@@ -222,6 +234,7 @@ func TestDiffStyleClaims_ChangeoverRoleOverridesNoEvacuate(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDiffStyleClaims_MultiNode(t *testing.T) {
+	t.Parallel()
 	from := []processes.NodeClaim{
 		{CoreNodeName: "SWAP-NODE", PayloadCode: "OLD", Role: "consume"},
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
@@ -270,6 +283,7 @@ func TestDiffStyleClaims_MultiNode(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDiffStyleClaims_NilFromClaims(t *testing.T) {
+	t.Parallel()
 	to := []processes.NodeClaim{
 		{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"},
 		{CoreNodeName: "N2", PayloadCode: "PART-B", Role: "produce"},
@@ -297,6 +311,7 @@ func TestDiffStyleClaims_NilFromClaims(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDiffStyleClaims_RoleChange(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "produce"}},
@@ -315,6 +330,7 @@ func TestDiffStyleClaims_RoleChange(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange(t *testing.T) {
+	t.Parallel()
 	diffs := DiffStyleClaims(
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
 		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume", EvacuateOnChangeover: true}},
@@ -335,6 +351,7 @@ func TestDiffStyleClaims_EvacuateFlagIgnoredOnPayloadChange(t *testing.T) {
 // Press-index Swap with matching payload + reuse flag set + empty bin →
 // Unchanged (skip the swap entirely).
 func TestApplyReuseCompatibleBinsShortcut_SkipsWhenAllConditionsMet(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
 	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
@@ -349,6 +366,7 @@ func TestApplyReuseCompatibleBinsShortcut_SkipsWhenAllConditionsMet(t *testing.T
 
 // Reuse flag false → no shortcut, Swap stays Swap.
 func TestApplyReuseCompatibleBinsShortcut_FlagFalseStillSwaps(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: false}
 	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
@@ -363,6 +381,7 @@ func TestApplyReuseCompatibleBinsShortcut_FlagFalseStillSwaps(t *testing.T) {
 
 // Bin not empty → no shortcut.
 func TestApplyReuseCompatibleBinsShortcut_BinNotEmptyStillSwaps(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
 	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
@@ -377,6 +396,7 @@ func TestApplyReuseCompatibleBinsShortcut_BinNotEmptyStillSwaps(t *testing.T) {
 
 // Non press-index mode → never shortcuts.
 func TestApplyReuseCompatibleBinsShortcut_NonPressIndexIgnored(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot", ReuseCompatibleBins: true}
 	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot"}
 	diffs := []ChangeoverNodeDiff{
@@ -391,6 +411,7 @@ func TestApplyReuseCompatibleBinsShortcut_NonPressIndexIgnored(t *testing.T) {
 
 // Different payloads → never shortcuts even with flag set + empty bin.
 func TestApplyReuseCompatibleBinsShortcut_DifferentPayloadStillSwaps(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
 	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "consume", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
@@ -405,6 +426,7 @@ func TestApplyReuseCompatibleBinsShortcut_DifferentPayloadStillSwaps(t *testing.
 
 // nil isEmpty accessor → defensive default, no shortcut applied.
 func TestApplyReuseCompatibleBinsShortcut_NilAccessorPreservesSwap(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index", ReuseCompatibleBins: true}
 	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "two_robot_press_index"}
 	diffs := []ChangeoverNodeDiff{
@@ -442,6 +464,7 @@ func pressIndexFanOutClaim(payload, core, paired, second string) processes.NodeC
 // per-position diffs, all SituationSwap with synthesized claims at
 // pressPositionSwapMode.
 func TestFanOutPressIndexDifferentBinType_3PosTo3Pos_Emits3Diffs(t *testing.T) {
+	t.Parallel()
 	from := pressIndexFanOutClaim("PART-A", "FRONT", "MID", "BACK")
 	to := pressIndexFanOutClaim("PART-B", "FRONT", "MID", "BACK")
 	diffs := []ChangeoverNodeDiff{
@@ -489,6 +512,7 @@ func TestFanOutPressIndexDifferentBinType_3PosTo3Pos_Emits3Diffs(t *testing.T) {
 // 3-pos to 2-pos: third position evacs but doesn't refill — emitted as
 // a SituationDrop diff so the existing planner Drop branch handles it.
 func TestFanOutPressIndexDifferentBinType_3PosTo2Pos_ThirdPositionDropOnly(t *testing.T) {
+	t.Parallel()
 	from := pressIndexFanOutClaim("PART-A", "FRONT", "MID", "BACK")
 	to := pressIndexFanOutClaim("PART-B", "FRONT", "MID", "")
 	diffs := []ChangeoverNodeDiff{
@@ -520,6 +544,7 @@ func TestFanOutPressIndexDifferentBinType_3PosTo2Pos_ThirdPositionDropOnly(t *te
 // 2-pos to 3-pos: third position refills but didn't evac — emitted as
 // SituationAdd so the existing planner Add branch handles it.
 func TestFanOutPressIndexDifferentBinType_2PosTo3Pos_ThirdPositionAddOnly(t *testing.T) {
+	t.Parallel()
 	from := pressIndexFanOutClaim("PART-A", "FRONT", "MID", "")
 	to := pressIndexFanOutClaim("PART-B", "FRONT", "MID", "BACK")
 	diffs := []ChangeoverNodeDiff{
@@ -550,6 +575,7 @@ func TestFanOutPressIndexDifferentBinType_2PosTo3Pos_ThirdPositionAddOnly(t *tes
 
 // Same bin type → no fan-out, parent diff stays untouched.
 func TestFanOutPressIndexDifferentBinType_SameBinType_NoFanOut(t *testing.T) {
+	t.Parallel()
 	from := pressIndexFanOutClaim("PART-A", "FRONT", "MID", "BACK")
 	to := pressIndexFanOutClaim("PART-B", "FRONT", "MID", "BACK")
 	diffs := []ChangeoverNodeDiff{
@@ -570,6 +596,7 @@ func TestFanOutPressIndexDifferentBinType_SameBinType_NoFanOut(t *testing.T) {
 // has no rule) → fall through to no-fan-out (the conservative
 // "treat as same-bin-type" fallback).
 func TestFanOutPressIndexDifferentBinType_MissingEntries_NoFanOut(t *testing.T) {
+	t.Parallel()
 	from := pressIndexFanOutClaim("PART-A", "FRONT", "MID", "BACK")
 	to := pressIndexFanOutClaim("PART-B", "FRONT", "MID", "BACK")
 	diffs := []ChangeoverNodeDiff{
@@ -592,6 +619,7 @@ func TestFanOutPressIndexDifferentBinType_MissingEntries_NoFanOut(t *testing.T) 
 // Non-press-index diffs are passed through unchanged regardless of bin
 // type signal — the post-processor only fans out two_robot_press_index.
 func TestFanOutPressIndexDifferentBinType_NonPressIndexUnchanged(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{
 		CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume", SwapMode: "single_robot",
 	}
@@ -613,6 +641,7 @@ func TestFanOutPressIndexDifferentBinType_NonPressIndexUnchanged(t *testing.T) {
 // Synthesized claim ID matches parent so node-task creation can persist
 // references that resolve back to the real persisted claim.
 func TestFanOutPressIndexDifferentBinType_SynthesizedClaimRetainsParentID(t *testing.T) {
+	t.Parallel()
 	from := pressIndexFanOutClaim("PART-A", "FRONT", "MID", "BACK")
 	from.ID = 42
 	to := pressIndexFanOutClaim("PART-B", "FRONT", "MID", "BACK")
@@ -678,6 +707,7 @@ func crossModeNonPressIndex(core, payload string, swapMode protocol.SwapMode) pr
 // cross-mode fan-out synthesizes Drops so those bins evac to
 // OutboundDestination.
 func TestFanOutCrossMode_PressIndex3PosToSingleRobot_SynthesizesBackMiddleDrops(t *testing.T) {
+	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "BACK")
 	to := crossModeNonPressIndex("FRONT", "PART-B", "single_robot")
 	diffs := []ChangeoverNodeDiff{
@@ -733,6 +763,7 @@ func TestFanOutCrossMode_PressIndex3PosToSingleRobot_SynthesizesBackMiddleDrops(
 // the to-claim's extension fields; the cross-mode fan-out synthesizes
 // Adds so new bins get delivered to those positions from InboundSource.
 func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_SynthesizesBackMiddleAdds(t *testing.T) {
+	t.Parallel()
 	from := crossModeNonPressIndex("FRONT", "PART-A", "single_robot")
 	to := crossModeFromPressIndex("PART-B", "FRONT", "MIDDLE", "BACK")
 	diffs := []ChangeoverNodeDiff{
@@ -780,6 +811,7 @@ func TestFanOutCrossMode_SingleRobotToPressIndex3Pos_SynthesizesBackMiddleAdds(t
 // implementation switches on "two_robot_press_index" only — any other
 // SwapMode triggers the cross-mode fan-out the same way.
 func TestFanOutCrossMode_PressIndex3PosToTwoRobot_SynthesizesBackMiddleDrops(t *testing.T) {
+	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "BACK")
 	to := crossModeNonPressIndex("FRONT", "PART-B", "two_robot")
 	diffs := []ChangeoverNodeDiff{
@@ -807,6 +839,7 @@ func TestFanOutCrossMode_PressIndex3PosToTwoRobot_SynthesizesBackMiddleDrops(t *
 // 2-pos, to-style is 3-pos: BACK only appears in to-claim's extension,
 // so the cross-mode fan-out synthesizes Add for it.
 func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_SynthesizesAddForNewPosition(t *testing.T) {
+	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "")
 	to := crossModeFromPressIndex("PART-B", "FRONT", "MIDDLE", "BACK")
 	diffs := []ChangeoverNodeDiff{
@@ -848,6 +881,7 @@ func TestFanOutCrossMode_PressIndex2PosToPressIndex3Pos_SynthesizesAddForNewPosi
 // Direction C reverse: 3-pos to 2-pos same bin type. BACK is on
 // from-claim's extension only; cross-mode fan-out emits Drop.
 func TestFanOutCrossMode_PressIndex3PosToPressIndex2Pos_SynthesizesDropForRetiredPosition(t *testing.T) {
+	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "BACK")
 	to := crossModeFromPressIndex("PART-B", "FRONT", "MIDDLE", "")
 	diffs := []ChangeoverNodeDiff{
@@ -876,6 +910,7 @@ func TestFanOutCrossMode_PressIndex3PosToPressIndex2Pos_SynthesizesDropForRetire
 // trigger the cross-mode fan-out. Both sides claim FRONT/MIDDLE/BACK;
 // everything matches — no synthesized diffs.
 func TestFanOutCrossMode_NotCrossMode_NoExtraDiffs(t *testing.T) {
+	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "BACK")
 	to := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "BACK") // same payload
 	diffs := []ChangeoverNodeDiff{
@@ -893,6 +928,7 @@ func TestFanOutCrossMode_NotCrossMode_NoExtraDiffs(t *testing.T) {
 // mode fan-out then sees those positions in the covered set and adds
 // nothing — no double-fan-out.
 func TestFanOutCrossMode_AfterSameModeFanOut_NoOverlap(t *testing.T) {
+	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "BACK")
 	to := crossModeFromPressIndex("PART-B", "FRONT", "MIDDLE", "BACK")
 	diffs := []ChangeoverNodeDiff{
@@ -916,6 +952,7 @@ func TestFanOutCrossMode_AfterSameModeFanOut_NoOverlap(t *testing.T) {
 // emitted a Drop for CoreNodeName. The cross-mode fan-out still
 // expands the extension-only positions.
 func TestFanOutCrossMode_PressIndexFullDrop_FansOutExtensions(t *testing.T) {
+	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "BACK")
 	// Diff list represents "front gets dropped" with no to-claim.
 	diffs := []ChangeoverNodeDiff{
@@ -940,6 +977,7 @@ func TestFanOutCrossMode_PressIndexFullDrop_FansOutExtensions(t *testing.T) {
 // to the persisted parent claim (same property the same-mode fan-out
 // ensures).
 func TestFanOutCrossMode_SynthesizedClaimRetainsParentID(t *testing.T) {
+	t.Parallel()
 	from := crossModeFromPressIndex("PART-A", "FRONT", "MIDDLE", "BACK")
 	from.ID = 91
 	to := crossModeNonPressIndex("FRONT", "PART-B", "single_robot")

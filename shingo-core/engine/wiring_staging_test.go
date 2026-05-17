@@ -5,6 +5,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
@@ -20,7 +21,7 @@ import (
 // These tests call resolveNodeStaging directly on a real Engine to characterize
 // the branching behavior with real DB state.
 
-// TC-RS-1: Normal lineside node (no parent) → staged=true.
+// Normal lineside node (no parent) → staged=true.
 func TestResolveNodeStaging_LinesideNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -38,7 +39,7 @@ func TestResolveNodeStaging_LinesideNode(t *testing.T) {
 	}
 }
 
-// TC-RS-2: Storage slot under a LANE parent → staged=false.
+// Storage slot under a LANE parent → staged=false.
 func TestResolveNodeStaging_StorageSlotUnderLane(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -54,15 +55,11 @@ func TestResolveNodeStaging_StorageSlotUnderLane(t *testing.T) {
 	}
 
 	laneNode := &nodes.Node{Name: "LANE-A", Enabled: true, NodeTypeID: &laneType.ID}
-	if err := db.CreateNode(laneNode); err != nil {
-		t.Fatalf("create lane node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(laneNode), "create lane node")
 
 	// Create a storage slot under the LANE.
 	slotNode := &nodes.Node{Name: "SLOT-A1", Enabled: true, ParentID: &laneNode.ID}
-	if err := db.CreateNode(slotNode); err != nil {
-		t.Fatalf("create slot node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(slotNode), "create slot node")
 
 	// Re-fetch to populate joined fields (NodeTypeCode on parent).
 	slotNode, _ = db.GetNode(slotNode.ID)
@@ -76,7 +73,7 @@ func TestResolveNodeStaging_StorageSlotUnderLane(t *testing.T) {
 	}
 }
 
-// TC-RS-3: Node with non-LANE parent → staged=true (treated as lineside).
+// Node with non-LANE parent → staged=true (treated as lineside).
 func TestResolveNodeStaging_NonLaneParent(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -87,14 +84,10 @@ func TestResolveNodeStaging_NonLaneParent(t *testing.T) {
 
 	// Create a non-LANE parent (e.g., "AREA" type or no type).
 	parentNode := &nodes.Node{Name: "AREA-B", Enabled: true}
-	if err := db.CreateNode(parentNode); err != nil {
-		t.Fatalf("create parent: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(parentNode), "create parent")
 
 	childNode := &nodes.Node{Name: "CHILD-B1", Enabled: true, ParentID: &parentNode.ID}
-	if err := db.CreateNode(childNode); err != nil {
-		t.Fatalf("create child: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(childNode), "create child")
 	childNode, _ = db.GetNode(childNode.ID)
 
 	staged, _ := eng.resolveNodeStaging(childNode)
@@ -103,7 +96,7 @@ func TestResolveNodeStaging_NonLaneParent(t *testing.T) {
 	}
 }
 
-// TC-RS-3b: NGRP root itself → staged=false (storage container).
+// NGRP root itself → staged=false (storage container).
 // Regression for the dead-string bug: the v6 SMKT→NGRP rename (commit
 // 3e3fb4a) left isStorageSlot's `NodeTypeCode == "NODE_GROUP"` check
 // matching nothing. Concrete symptom: a loader's L2 to an NGRP outbound
@@ -123,9 +116,7 @@ func TestResolveNodeStaging_NGRPRoot(t *testing.T) {
 		t.Fatalf("get NGRP node type: %v", err)
 	}
 	grpNode := &nodes.Node{Name: "SMKT-AREA-A", Enabled: true, IsSynthetic: true, NodeTypeID: &grpType.ID}
-	if err := db.CreateNode(grpNode); err != nil {
-		t.Fatalf("create NGRP: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(grpNode), "create NGRP")
 	grpNode, _ = db.GetNode(grpNode.ID)
 
 	staged, _ := eng.resolveNodeStaging(grpNode)
@@ -134,7 +125,7 @@ func TestResolveNodeStaging_NGRPRoot(t *testing.T) {
 	}
 }
 
-// TC-RS-3c: Direct child of an NGRP → staged=false. The loader L2 path
+// Direct child of an NGRP → staged=false. The loader L2 path
 // resolves its NGRP delivery to a concrete child via the resolver at
 // order creation; that child must be recognized as storage so the bin
 // lands `available`.
@@ -151,14 +142,10 @@ func TestResolveNodeStaging_NGRPDirectChild(t *testing.T) {
 		t.Fatalf("get NGRP node type: %v", err)
 	}
 	grpNode := &nodes.Node{Name: "SMKT-AREA-C", Enabled: true, IsSynthetic: true, NodeTypeID: &grpType.ID}
-	if err := db.CreateNode(grpNode); err != nil {
-		t.Fatalf("create NGRP: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(grpNode), "create NGRP")
 
 	slotNode := &nodes.Node{Name: "SMKT-AREA-C-S1", Enabled: true, ParentID: &grpNode.ID}
-	if err := db.CreateNode(slotNode); err != nil {
-		t.Fatalf("create direct-child slot: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(slotNode), "create direct-child slot")
 	slotNode, _ = db.GetNode(slotNode.ID)
 
 	staged, expiresAt := eng.resolveNodeStaging(slotNode)
@@ -170,7 +157,7 @@ func TestResolveNodeStaging_NGRPDirectChild(t *testing.T) {
 	}
 }
 
-// TC-RS-4: Node with no parent ID → staged=true (lineside default).
+// Node with no parent ID → staged=true (lineside default).
 func TestResolveNodeStaging_NoParent(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -180,9 +167,7 @@ func TestResolveNodeStaging_NoParent(t *testing.T) {
 	eng := newTestEngine(t, db, sim)
 
 	orphanNode := &nodes.Node{Name: "ORPHAN-1", Enabled: true}
-	if err := db.CreateNode(orphanNode); err != nil {
-		t.Fatalf("create orphan: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(orphanNode), "create orphan")
 	orphanNode, _ = db.GetNode(orphanNode.ID)
 
 	staged, _ := eng.resolveNodeStaging(orphanNode)

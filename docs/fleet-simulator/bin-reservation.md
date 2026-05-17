@@ -6,14 +6,18 @@ Bin claiming protects bins from being dispatched by multiple orders simultaneous
 
 ## Test files
 
-- `engine/engine_test.go` — claiming, staging, quality hold (TC-13, 21, 23 cluster, 25, 28, 30, 36, 37, 80)
-- `engine/engine_concurrent_test.go` — staging expiry vs active claim (TC-37)
+- `engine/engine_claim_test.go` — claim hand-off and store/move guards (TC-13, 23a, 25)
+- `engine/engine_quality_test.go` — quality-hold dispatch (TC-21)
+- `engine/engine_linechangeover_test.go` — changeover with in-flight move (TC-23d)
+- `engine/engine_terminal_test.go` — cancel and fleet-failure return-claim transfer (TC-23b, 30, 36)
+- `engine/engine_reconciliation_test.go` — orphaned bin claim sweep (TC-80)
+- `engine/engine_concurrent_test.go` — concurrent retrieve + staging expiry vs active claim (TC-28, 37)
 
 Run this domain's tests:
 
 ```bash
 cd shingo-core
-go test -v -run "TestClaimBin|TestTC21|TestTC23|TestTC25|TestTC28|TestTC30|TestTC36|TestTC37|TestTC80" ./engine/ -timeout 60s
+go test -v -run "TestClaimBin|TestDispatch_QualityHoldBin|TestMoveBin|TestCancel_ClaimTransfers|TestLineChangeover|TestStoreOrder_ClaimsStagedBin|TestConcurrentRetrieve|TestFailedOrder_TransfersReturnClaim|TestRetrieveClaimFailure|TestStagingExpiry|TestOrphanedBinClaim" ./engine/ -timeout 60s
 ```
 
 ## Index
@@ -56,7 +60,7 @@ UPDATE bins SET claimed_by=$1 WHERE id=$2 AND locked=false AND claimed_by IS NUL
 
 **Status:** Fixed. The second claim now returns an error: `"bin 1 is locked, already claimed, or does not exist"`.
 
-**Test:** `engine/engine_test.go` — `TestClaimBin_SilentOverwrite`
+**Test:** `engine/engine_claim_test.go` — `TestClaimBin_SilentOverwrite`
 
 ---
 
@@ -88,7 +92,7 @@ case dispatch.StatusFailed:
 
 **Status:** Fixed. The failure handler now calls `UnclaimOrderBins` before emitting the failure event, matching the cancel handler's behavior.
 
-**Test:** `engine/engine_test.go` — `TestTC30_FailedOrderReturnClaimTransfer`
+**Test:** `engine/engine_terminal_test.go` — `TestFailedOrder_TransfersReturnClaim`
 
 ---
 
@@ -122,7 +126,7 @@ d.failOrder(order, env, planErr.Code, planErr.Detail)
 
 **Status:** Fixed. `HandleOrderRequest` now checks for `planErr.Code == "claim_failed"` and calls `queueOrder` instead of `failOrder`. The fulfillment scanner retries on its next sweep. The same pattern exists in `planRetrieveEmpty` (empty bin retrieval) — both paths are covered by the fix in `HandleOrderRequest`.
 
-**Test:** `engine/engine_test.go` — `TestTC36_RetrieveClaimFailure_QueueNotFail`
+**Test:** `engine/engine_concurrent_test.go` — `TestRetrieveClaimFailure_QueueSurvives`
 
 ---
 
@@ -152,7 +156,7 @@ WHERE status='staged' AND claimed_by IS NULL AND staged_expires_at IS NOT NULL A
 
 **Status:** Fixed. The staging sweep now checks `claimed_by IS NULL` before releasing expired bins.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestTC37_StagingExpiryVsActiveClaim`
+**Test:** `engine/engine_concurrent_test.go` — `TestStagingExpiry_DoesNotExpireActiveClaim`
 
 ---
 
@@ -192,7 +196,7 @@ Three-layer fix:
 
 **Status:** Fixed. Reconciliation page will show the anomaly, and the periodic sweep auto-heals it.
 
-**Test:** `engine/engine_test.go` — `TestTC80_OrphanedBinClaim_ReconciliationDetectsAndSweepFixes`
+**Test:** `engine/engine_reconciliation_test.go` — `TestOrphanedBinClaim_ReconciliationDetectsAndFixes`
 
 ## Verified scenarios
 
@@ -204,7 +208,7 @@ Three-layer fix:
 
 **Result:** PASS. `FindSourceBinFIFO` correctly filters out bins with `status = 'quality_hold'`. The order is queued with no bin assigned, no robot dispatched. The bin remains untouched at its node.
 
-**Test:** `engine/engine_test.go` — `TestTC21_QualityHoldBinNotDispatched`
+**Test:** `engine/engine_quality_test.go` — `TestDispatch_QualityHoldBin_QueuedNotFailed`
 
 ---
 
@@ -216,7 +220,7 @@ Three-layer fix:
 
 **Result:** PASS. The second order claimed a different bin. The first order's bin was correctly protected by its `claimed_by` value.
 
-**Test:** `engine/engine_test.go` — `TestTC23a_MoveClaimedStagedBin`
+**Test:** `engine/engine_claim_test.go` — `TestMoveBin_StoreOrderCannotStealClaimedBin`
 
 ---
 
@@ -228,7 +232,7 @@ Three-layer fix:
 
 **Result:** PASS. Bin claim correctly transferred from cancelled order 1 → return order 2. The third store order claimed a different bin and did not steal from the return order.
 
-**Test:** `engine/engine_test.go` — `TestTC23b_CancelThenMoveBin`
+**Test:** `engine/engine_terminal_test.go` — `TestCancel_ClaimTransfersToReturnOrder`
 
 ---
 
@@ -240,7 +244,7 @@ Three-layer fix:
 
 **Result:** PASS. The changeover orders correctly skipped the in-flight bin and claimed the other 2. No overlapping claims detected.
 
-**Test:** `engine/engine_test.go` — `TestTC23d_ChangeoverWhileMoveInFlight`
+**Test:** `engine/engine_linechangeover_test.go` — `TestLineChangeover_WhileMoveInFlight`
 
 ---
 
@@ -252,7 +256,7 @@ Investigated whether `planStore`/`planMove` could "poach" a staged bin at a line
 
 The `staged` status correctly protects against `FindSourceBinFIFO` (retrieve orders don't pull from lineside), while remaining visible to `planStore`/`planMove` (operator-initiated releases). This is working as intended.
 
-**Test:** `engine/engine_test.go` — `TestTC25_StoreOrderClaimsStagedBinAtCoreNode` (positive assertion that store order correctly claims staged bin)
+**Test:** `engine/engine_claim_test.go` — `TestStoreOrder_ClaimsStagedBinAtCoreNode` (positive assertion that store order correctly claims staged bin)
 
 ---
 
@@ -266,4 +270,4 @@ The `staged` status correctly protects against `FindSourceBinFIFO` (retrieve ord
 
 **Note:** This validates the sequential case (same goroutine). A true concurrent race (two goroutines dispatching simultaneously) could still hit a TOCTOU gap where `FindSourceBinFIFO` and `ClaimBin` target the same bin. In that case, `planRetrieve` returns `claim_failed` instead of retrying with a different bin. In production, orders arrive over the network and get serialized through the event bus, so the sequential test reflects real behavior.
 
-**Test:** `engine/engine_test.go` — `TestTC28_ConcurrentRetrieveSamePart`
+**Test:** `engine/engine_concurrent_test.go` — `TestConcurrentRetrieve_SamePart`

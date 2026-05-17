@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
@@ -11,6 +12,7 @@ import (
 // Disposition field. Required so a Phase 0c-aware Core does not see a
 // "Disposition is set" signal from an old-Edge envelope.
 func TestOrderRelease_LegacyShapeRoundTrip(t *testing.T) {
+	t.Parallel()
 	zero := 0
 	for _, tc := range []struct {
 		name string
@@ -31,9 +33,7 @@ func TestOrderRelease_LegacyShapeRoundTrip(t *testing.T) {
 				t.Fatalf("marshal: %v", err)
 			}
 			var got OrderRelease
-			if err := json.Unmarshal(b, &got); err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
+			testutil.MustNoErr(t, json.Unmarshal(b, &got), "unmarshal")
 			if got.OrderUUID != src.OrderUUID {
 				t.Errorf("OrderUUID = %q, want %q", got.OrderUUID, src.OrderUUID)
 			}
@@ -51,6 +51,7 @@ func TestOrderRelease_LegacyShapeRoundTrip(t *testing.T) {
 // each of the three operator-intent kinds round-trips correctly with the
 // fields they care about.
 func TestOrderRelease_NewShapeRoundTrip(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		disp UOPDisposition
@@ -108,9 +109,7 @@ func TestOrderRelease_NewShapeRoundTrip(t *testing.T) {
 				t.Fatalf("marshal: %v", err)
 			}
 			var got OrderRelease
-			if err := json.Unmarshal(b, &got); err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
+			testutil.MustNoErr(t, json.Unmarshal(b, &got), "unmarshal")
 			if got.Disposition == nil {
 				t.Fatalf("Disposition = nil after round-trip; want %+v", tc.disp)
 			}
@@ -152,6 +151,7 @@ func TestOrderRelease_NewShapeRoundTrip(t *testing.T) {
 // both are present (per the OrderRelease doc comment); this test only
 // pins that the two fields are independently preserved on the wire.
 func TestOrderRelease_BothShapesCoexist(t *testing.T) {
+	t.Parallel()
 	uop := 42
 	src := &OrderRelease{
 		OrderUUID:    "uuid-both",
@@ -167,9 +167,7 @@ func TestOrderRelease_BothShapesCoexist(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	var got OrderRelease
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(b, &got), "unmarshal")
 	if got.RemainingUOP == nil || *got.RemainingUOP != 42 {
 		t.Errorf("RemainingUOP = %v, want *42", deref(got.RemainingUOP))
 	}

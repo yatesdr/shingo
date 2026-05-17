@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"shingo/protocol/outbox"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 )
 
@@ -26,6 +27,7 @@ func newOutboxTestClient() *Client {
 // returned *outbox.Drainer. A nil DebugLog on the client must still
 // produce a usable drainer (DebugLogFunc is nil-safe).
 func TestNewOutboxDrainer_ReturnsNonNilWithDebugLog(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	client := newOutboxTestClient()
 
@@ -51,6 +53,7 @@ func TestNewOutboxDrainer_ReturnsNonNilWithDebugLog(t *testing.T) {
 // client has no DebugLog set, the drainer's DebugLog does not panic when
 // invoked (DebugLogFunc.Log is nil-safe by contract).
 func TestNewOutboxDrainer_NilClientDebugLogIsSafe(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	client := newOutboxTestClient() // DebugLog is nil
 
@@ -67,15 +70,12 @@ func TestNewOutboxDrainer_NilClientDebugLogIsSafe(t *testing.T) {
 // messaging.OutboxMessage onto outbox.Message. A regression in the field
 // mapping would silently drop payloads at the drainer boundary.
 func TestCoreOutboxStore_ListPendingOutbox_ConvertsFields(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	adapter := &coreOutboxStore{db: db}
 
-	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{"a":1}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
-	if err := db.EnqueueOutbox("other.topic", []byte(`{"b":2}`), "order.update", "line-2"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{"a":1}`), "order.ack", "line-1"), "enqueue")
+	testutil.MustNoErr(t, db.EnqueueOutbox("other.topic", []byte(`{"b":2}`), "order.update", "line-2"), "enqueue")
 
 	msgs, err := adapter.ListPendingOutbox(10)
 	if err != nil {
@@ -116,6 +116,7 @@ func TestCoreOutboxStore_ListPendingOutbox_ConvertsFields(t *testing.T) {
 // TestCoreOutboxStore_ListPendingOutbox_EmptyTable covers the empty-table
 // edge: the adapter must return a non-nil zero-length slice and no error.
 func TestCoreOutboxStore_ListPendingOutbox_EmptyTable(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	adapter := &coreOutboxStore{db: db}
 
@@ -136,6 +137,7 @@ func TestCoreOutboxStore_ListPendingOutbox_EmptyTable(t *testing.T) {
 // TestCoreOutboxStore_ListPendingOutbox_HonoursLimit makes sure the limit
 // is forwarded through to the underlying store query.
 func TestCoreOutboxStore_ListPendingOutbox_HonoursLimit(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	adapter := &coreOutboxStore{db: db}
 
@@ -157,15 +159,12 @@ func TestCoreOutboxStore_ListPendingOutbox_HonoursLimit(t *testing.T) {
 // TestCoreOutboxStore_AckOutbox_RemovesFromPending confirms ack marks the
 // message as sent so it no longer shows up in ListPendingOutbox.
 func TestCoreOutboxStore_AckOutbox_RemovesFromPending(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	adapter := &coreOutboxStore{db: db}
 
-	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
-	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
+	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
 
 	msgs, err := adapter.ListPendingOutbox(10)
 	if err != nil {
@@ -175,9 +174,7 @@ func TestCoreOutboxStore_AckOutbox_RemovesFromPending(t *testing.T) {
 		t.Fatalf("pre-ack pending = %d, want 2", len(msgs))
 	}
 
-	if err := adapter.AckOutbox(msgs[0].ID); err != nil {
-		t.Fatalf("ack: %v", err)
-	}
+	testutil.MustNoErr(t, adapter.AckOutbox(msgs[0].ID), "ack")
 
 	after, err := adapter.ListPendingOutbox(10)
 	if err != nil {
@@ -194,26 +191,19 @@ func TestCoreOutboxStore_AckOutbox_RemovesFromPending(t *testing.T) {
 // TestCoreOutboxStore_IncrementOutboxRetries_BumpsRetries verifies retries
 // increments by exactly one per call (not reset, not doubled).
 func TestCoreOutboxStore_IncrementOutboxRetries_BumpsRetries(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	adapter := &coreOutboxStore{db: db}
 
-	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
 	initial, err := adapter.ListPendingOutbox(1)
 	if err != nil || len(initial) != 1 {
 		t.Fatalf("list pending: len=%d err=%v", len(initial), err)
 	}
 
-	if err := adapter.IncrementOutboxRetries(initial[0].ID); err != nil {
-		t.Fatalf("increment 1: %v", err)
-	}
-	if err := adapter.IncrementOutboxRetries(initial[0].ID); err != nil {
-		t.Fatalf("increment 2: %v", err)
-	}
-	if err := adapter.IncrementOutboxRetries(initial[0].ID); err != nil {
-		t.Fatalf("increment 3: %v", err)
-	}
+	testutil.MustNoErr(t, adapter.IncrementOutboxRetries(initial[0].ID), "increment 1")
+	testutil.MustNoErr(t, adapter.IncrementOutboxRetries(initial[0].ID), "increment 2")
+	testutil.MustNoErr(t, adapter.IncrementOutboxRetries(initial[0].ID), "increment 3")
 
 	after, err := adapter.ListPendingOutbox(1)
 	if err != nil || len(after) != 1 {
@@ -232,24 +222,19 @@ func TestCoreOutboxStore_IncrementOutboxRetries_BumpsRetries(t *testing.T) {
 // store purged. The int64->int cast in the adapter is load-bearing — a
 // regression would silently truncate the count.
 func TestCoreOutboxStore_PurgeOldOutbox_RemovesSentMessages(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	adapter := &coreOutboxStore{db: db}
 
 	// Two messages: one acked, one pending.
-	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
-	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
+	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
 
 	pending, err := adapter.ListPendingOutbox(10)
 	if err != nil || len(pending) != 2 {
 		t.Fatalf("list pending: len=%d err=%v", len(pending), err)
 	}
-	if err := adapter.AckOutbox(pending[0].ID); err != nil {
-		t.Fatalf("ack: %v", err)
-	}
+	testutil.MustNoErr(t, adapter.AckOutbox(pending[0].ID), "ack")
 
 	// The underlying store formats the cutoff to second precision, so
 	// using a negative duration (cutoff = now + margin) is the most
@@ -280,19 +265,16 @@ func TestCoreOutboxStore_PurgeOldOutbox_RemovesSentMessages(t *testing.T) {
 // complement to the "purge removes" test above: the int conversion path
 // must also handle n=0.
 func TestCoreOutboxStore_PurgeOldOutbox_PreservesRecentSends(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	adapter := &coreOutboxStore{db: db}
 
-	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
 	pending, err := adapter.ListPendingOutbox(10)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("list pending: len=%d err=%v", len(pending), err)
 	}
-	if err := adapter.AckOutbox(pending[0].ID); err != nil {
-		t.Fatalf("ack: %v", err)
-	}
+	testutil.MustNoErr(t, adapter.AckOutbox(pending[0].ID), "ack")
 
 	n, err := adapter.PurgeOldOutbox(24 * time.Hour)
 	if err != nil {
@@ -308,6 +290,7 @@ func TestCoreOutboxStore_PurgeOldOutbox_PreservesRecentSends(t *testing.T) {
 // method or renames one, this test will fail to compile — drawing attention
 // to the adapter instead of silently falling back on implicit conformance.
 func TestCoreOutboxStore_SatisfiesOutboxStoreInterface(t *testing.T) {
+	t.Parallel()
 	var _ outbox.Store = (*coreOutboxStore)(nil)
 }
 
@@ -316,18 +299,18 @@ func TestCoreOutboxStore_SatisfiesOutboxStoreInterface(t *testing.T) {
 // never been connected. This is the cold-start / degraded-Kafka path —
 // the whole point of the outbox is to survive exactly this state.
 func TestNewOutboxDrainer_DrainIsNoOpWhenPublisherNotConnected(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	client := newOutboxTestClient() // never Connect()'d
 	adapter := &coreOutboxStore{db: db}
 
-	if err := db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
 
 	// Start the drainer briefly. Because client.IsConnected() is false,
 	// drain() should short-circuit without touching the table.
 	drainer := NewOutboxDrainer(db, client, 2*time.Millisecond)
 	drainer.Start()
+	// KEEP: negative assertion — drainer must not touch the table while client is disconnected.
 	time.Sleep(20 * time.Millisecond)
 	drainer.Stop()
 

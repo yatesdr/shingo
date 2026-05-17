@@ -45,6 +45,7 @@ func (m *mockWarlinkClient) OpenEventStream(ctx context.Context) (io.ReadCloser,
 }
 
 func TestWarlinkPollTreatsConnectionLevelTagErrorsAsDisconnected(t *testing.T) {
+	t.Parallel()
 	cfg := config.Defaults()
 	emitter := &mockEmitter{}
 	mgr := NewManager(nil, cfg, emitter)
@@ -73,6 +74,7 @@ func TestWarlinkPollTreatsConnectionLevelTagErrorsAsDisconnected(t *testing.T) {
 }
 
 func TestConnectionErrorFromTagsRequiresAllTagsToFailAtConnectionLevel(t *testing.T) {
+	t.Parallel()
 	tags := map[string]WarlinkTag{
 		"a": {Error: "ReadMultiple: SendUnitDataTransaction: not connected"},
 		"b": {Value: 12},

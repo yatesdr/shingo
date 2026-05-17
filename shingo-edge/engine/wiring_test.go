@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
@@ -14,6 +15,7 @@ import (
 // order completes for a produce node, the runtime UOP is reset to 0, order
 // IDs are cleared, and the node is ready for the next empty bin.
 func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedProduceNode(t, db, "simple")
 	eng := testEngine(t, db)
@@ -48,6 +50,7 @@ func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
 // retrieve/complex order completes for a produce node, UOP resets to 0
 // (not to capacity, which is the consume-node behavior).
 func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedProduceNode(t, db, "simple")
 	eng := testEngine(t, db)
@@ -144,6 +147,7 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 // retrieve/complex order completes for a consume node, UOP resets to the
 // claim's UOPCapacity (full bin received).
 func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "CONSUME", PayloadCode: "PART-X", UOPCapacity: 200, InitialUOP: 10,
@@ -188,6 +192,7 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 // TestWiring_CounterDelta_ProduceIncrementsUOP verifies that counter delta
 // events increment UOP for produce nodes (counting UP toward capacity).
 func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedProduceNode(t, db, "simple")
 
@@ -214,6 +219,7 @@ func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
 // TestWiring_CounterDelta_ConsumeDecrementsUOP verifies that counter delta
 // events decrement UOP for consume nodes (counting DOWN from capacity).
 func TestWiring_CounterDelta_ConsumeDecrementsUOP(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "DELTA-CON", PayloadCode: "PART-Y", UOPCapacity: 100, InitialUOP: 80,
@@ -244,6 +250,7 @@ func TestWiring_CounterDelta_ConsumeDecrementsUOP(t *testing.T) {
 // "floors at zero" behavior caused permanent reconciler ping-pong
 // against any negative-Core scope.
 func TestWiring_CounterDelta_ConsumeAllowsNegative(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "NEG", PayloadCode: "PART-Z", UOPCapacity: 50, InitialUOP: 2,
@@ -268,6 +275,7 @@ func TestWiring_CounterDelta_ConsumeAllowsNegative(t *testing.T) {
 // TestWiring_MoveCompletion_ManualSwap verifies that when a move order completes
 // for a manual_swap node, runtime resets UOP to 0 and clears order tracking.
 func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	processID, err := db.CreateProcess("BL-PROC", "manual swap test", "active_production", "", "", false, false)
@@ -338,6 +346,7 @@ func TestWiring_MoveCompletion_ManualSwap(t *testing.T) {
 // are pruned from the local catalog. This prevents stale deleted payloads from
 // appearing in edge's UI after a sync.
 func TestHandlePayloadCatalog_PruneDeletedEntries(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	// Seed local catalog with two entries as if they were previously synced from core
@@ -361,9 +370,7 @@ func TestHandlePayloadCatalog_PruneDeletedEntries(t *testing.T) {
 
 	// Prune entries not in core's active set
 	activeIDs := []int64{1}
-	if err := db.DeleteStalePayloadCatalogEntries(activeIDs); err != nil {
-		t.Fatalf("prune stale entries: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteStalePayloadCatalogEntries(activeIDs), "prune stale entries")
 
 	// Verify PART-A still exists
 	entryA, err := db.GetPayloadCatalogByCode("PART-A")
@@ -481,6 +488,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 // TestWiring_ABCycling_ActiveNodeDecrements verifies that counter delta only
 // decrements the active-pull node in an A/B pair.
 func TestWiring_ABCycling_ActiveNodeDecrements(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
 
@@ -508,6 +516,7 @@ func TestWiring_ABCycling_ActiveNodeDecrements(t *testing.T) {
 // TestWiring_ABCycling_InactiveNodeSkipped verifies that the inactive side of
 // an A/B pair is NOT decremented by counter deltas.
 func TestWiring_ABCycling_InactiveNodeSkipped(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
 
@@ -539,6 +548,7 @@ func TestWiring_ABCycling_InactiveNodeSkipped(t *testing.T) {
 // nor B has active_pull=true, the fallthrough logic still decrements one of
 // them (the "count to lineside storage" safety net).
 func TestWiring_ABCycling_FallthroughBothInactive(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
 
@@ -568,15 +578,14 @@ func TestWiring_ABCycling_FallthroughBothInactive(t *testing.T) {
 // TestWiring_FlipABNode_SwitchesActivePull verifies that FlipABNode correctly
 // sets active_pull=true on the target and active_pull=false on the partner.
 func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeAID, nodeBID, _, _, _ := seedABPair(t, db)
 
 	eng := testEngine(t, db)
 
 	// Initially A=active, B=inactive. Flip to B.
-	if err := eng.FlipABNode(nodeBID); err != nil {
-		t.Fatalf("FlipABNode to B: %v", err)
-	}
+	testutil.MustNoErr(t, eng.FlipABNode(nodeBID), "FlipABNode to B")
 
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ := db.GetProcessNodeRuntime(nodeBID)
@@ -589,9 +598,7 @@ func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
 	}
 
 	// Flip back to A
-	if err := eng.FlipABNode(nodeAID); err != nil {
-		t.Fatalf("FlipABNode to A: %v", err)
-	}
+	testutil.MustNoErr(t, eng.FlipABNode(nodeAID), "FlipABNode to A")
 
 	rtA, _ = db.GetProcessNodeRuntime(nodeAID)
 	rtB, _ = db.GetProcessNodeRuntime(nodeBID)
@@ -607,6 +614,7 @@ func TestWiring_FlipABNode_SwitchesActivePull(t *testing.T) {
 // TestWiring_FlipABNode_RejectsUnpairedNode verifies that FlipABNode returns
 // an error when called on a node without PairedCoreNode.
 func TestWiring_FlipABNode_RejectsUnpairedNode(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "NOPAIR", PayloadCode: "PART-NP", UOPCapacity: 100, InitialUOP: 50,
@@ -624,6 +632,7 @@ func TestWiring_FlipABNode_RejectsUnpairedNode(t *testing.T) {
 // consume nodes (PairedCoreNode="") always decrement regardless of active_pull,
 // maintaining backward compatibility.
 func TestWiring_ABCycling_UnpairedNodeAlwaysDecrements(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "UNPAIR", PayloadCode: "PART-UP", UOPCapacity: 100, InitialUOP: 60,
@@ -727,8 +736,9 @@ func seedAsymmetricABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeB
 	return
 }
 
-// TC-104: Flip during active changeover — flip succeeds but auto-reorder blocked.
+// Flip during active changeover — flip succeeds but auto-reorder blocked.
 func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, claimAID, _ := seedABPair(t, db)
 
@@ -751,9 +761,7 @@ func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
 	}
 
 	// Flip should succeed (FlipABNode doesn't check changeover state)
-	if err := eng.FlipABNode(nodeBID); err != nil {
-		t.Fatalf("FlipABNode during changeover: %v", err)
-	}
+	testutil.MustNoErr(t, eng.FlipABNode(nodeBID), "FlipABNode during changeover")
 
 	// Verify flip happened
 	rtA, _ := db.GetProcessNodeRuntime(nodeAID)
@@ -781,8 +789,9 @@ func TestWiring_ABFlip_DuringChangeover(t *testing.T) {
 	_ = claimAID
 }
 
-// TC-105: A/B pair with produce role — active node increments, inactive skipped.
+// A/B pair with produce role — active node increments, inactive skipped.
 func TestWiring_ABProducePair_ActiveIncrements(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, _, _ := seedABProducePair(t, db)
 
@@ -807,8 +816,9 @@ func TestWiring_ABProducePair_ActiveIncrements(t *testing.T) {
 	}
 }
 
-// TC-106: Flip + immediate counter delta — verify race-free sequencing.
+// Flip + immediate counter delta — verify race-free sequencing.
 func TestWiring_ABFlip_ImmediateDelta(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, _, _ := seedABPair(t, db)
 
@@ -835,8 +845,9 @@ func TestWiring_ABFlip_ImmediateDelta(t *testing.T) {
 	}
 }
 
-// TC-107: A/B pair across styles — pairing changes after changeover.
+// A/B pair across styles — pairing changes after changeover.
 func TestWiring_ABPairsAcrossStyles(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, _, style1ID, _, _ := seedABPair(t, db)
 
@@ -881,9 +892,7 @@ func TestWiring_ABPairsAcrossStyles(t *testing.T) {
 		}
 		db.UpdateChangeoverNodeTaskState(task.ID, "released")
 	}
-	if err := eng.CompleteProcessProductionCutover(processID); err != nil {
-		t.Fatalf("cutover: %v", err)
-	}
+	testutil.MustNoErr(t, eng.CompleteProcessProductionCutover(processID), "cutover")
 
 	// After cutover, active style is style2. Claims have no PairedCoreNode.
 	// Counter delta should decrement BOTH nodes (unpaired behavior).
@@ -920,8 +929,9 @@ func TestWiring_ABPairsAcrossStyles(t *testing.T) {
 	_ = style1ID
 }
 
-// TC-108: Asymmetric A/B pair — only A names B as partner.
+// Asymmetric A/B pair — only A names B as partner.
 func TestWiring_AB_AsymmetricPair(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeAID, nodeBID, styleID, claimAID, _ := seedAsymmetricABPair(t, db)
 
@@ -981,6 +991,7 @@ func TestWiring_AB_AsymmetricPair(t *testing.T) {
 // counter deltas decrement an active lineside bucket before touching
 // RemainingUOP on the node.
 func TestWiring_CounterDelta_DrainsLinesideBeforeNodeCounter(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-DRAIN", PayloadCode: "P-500", UOPCapacity: 100, InitialUOP: 100,
@@ -1019,6 +1030,7 @@ func TestWiring_CounterDelta_DrainsLinesideBeforeNodeCounter(t *testing.T) {
 // when a delta exceeds the bucket qty, the bucket drains to zero (and
 // is deleted) and the remainder flows to the node counter.
 func TestWiring_CounterDelta_CarriesRemainderToNodeCounter(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-CARRY", PayloadCode: "P-600", UOPCapacity: 100, InitialUOP: 100,
@@ -1051,6 +1063,7 @@ func TestWiring_CounterDelta_CarriesRemainderToNodeCounter(t *testing.T) {
 // TestWiring_CounterDelta_NoLinesideBucket verifies that when no bucket
 // exists, the full delta hits the node counter as before.
 func TestWiring_CounterDelta_NoLinesideBucket(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-NONE", PayloadCode: "P-700", UOPCapacity: 100, InitialUOP: 100,

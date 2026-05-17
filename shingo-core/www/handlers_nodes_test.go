@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 )
@@ -50,6 +51,7 @@ func postForm(t *testing.T, handler http.HandlerFunc, path string, values url.Va
 // with both station_mode=specific and bin_type_mode=specific. Each side-table
 // must be populated and the NodeUpdated(created) event emitted.
 func TestHandleNodeCreate_HappyPathSpecificModes(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -136,6 +138,7 @@ func TestHandleNodeCreate_HappyPathSpecificModes(t *testing.T) {
 // calls SetNodeStations(nil) (and likewise for bin types). A refactor that
 // elides the clear when the mode changes would leave stale assignments.
 func TestHandleNodeCreate_NonSpecificModesClearAssignments(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	form := url.Values{}
@@ -196,6 +199,7 @@ func TestHandleNodeCreate_NonSpecificModesClearAssignments(t *testing.T) {
 // UpdateNode + 4-write chain for the update path. Existing station/bin-type
 // assignments must be replaced (not appended) by the new values.
 func TestHandleNodeUpdate_HappyPathRewritesAssignments(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -203,21 +207,11 @@ func TestHandleNodeUpdate_HappyPathRewritesAssignments(t *testing.T) {
 	// station_mode=specific so the assignments are visible through
 	// effective-stations queries too.
 	node := &nodes.Node{Name: "STORAGE-UPD-1", Zone: "A", Enabled: true}
-	if err := db.CreateNode(node); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
-	if err := db.SetNodeProperty(node.ID, "station_mode", "specific"); err != nil {
-		t.Fatalf("set station_mode: %v", err)
-	}
-	if err := db.SetNodeStations(node.ID, []string{"line-old"}); err != nil {
-		t.Fatalf("seed stations: %v", err)
-	}
-	if err := db.SetNodeProperty(node.ID, "bin_type_mode", "specific"); err != nil {
-		t.Fatalf("set bin_type_mode: %v", err)
-	}
-	if err := db.SetNodeBinTypes(node.ID, []int64{sd.BinType.ID}); err != nil {
-		t.Fatalf("seed bin types: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(node), "create node")
+	testutil.MustNoErr(t, db.SetNodeProperty(node.ID, "station_mode", "specific"), "set station_mode")
+	testutil.MustNoErr(t, db.SetNodeStations(node.ID, []string{"line-old"}), "seed stations")
+	testutil.MustNoErr(t, db.SetNodeProperty(node.ID, "bin_type_mode", "specific"), "set bin_type_mode")
+	testutil.MustNoErr(t, db.SetNodeBinTypes(node.ID, []int64{sd.BinType.ID}), "seed bin types")
 
 	snap := captureNodeUpdated(t, h.engine.EventBus())
 
@@ -274,6 +268,7 @@ func TestHandleNodeUpdate_HappyPathRewritesAssignments(t *testing.T) {
 
 // TestHandleNodeUpdate_MissingIDReturns400 pins the validation branch.
 func TestHandleNodeUpdate_MissingIDReturns400(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	form := url.Values{}
@@ -287,6 +282,7 @@ func TestHandleNodeUpdate_MissingIDReturns400(t *testing.T) {
 
 // TestHandleNodeUpdate_NotFoundReturns404 pins the GetNode-miss branch.
 func TestHandleNodeUpdate_NotFoundReturns404(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	form := url.Values{}
@@ -305,12 +301,11 @@ func TestHandleNodeUpdate_NotFoundReturns404(t *testing.T) {
 // node disappears, NodeUpdated(deleted) is emitted with the original name
 // (captured BEFORE DeleteNode runs), and the response is 303 to /nodes.
 func TestHandleNodeDelete_HappyPathEmitsEvent(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	node := &nodes.Node{Name: "STORAGE-DEL-1", Zone: "A", Enabled: true}
-	if err := db.CreateNode(node); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 	snap := captureNodeUpdated(t, h.engine.EventBus())
 
 	form := url.Values{}
@@ -343,6 +338,7 @@ func TestHandleNodeDelete_HappyPathEmitsEvent(t *testing.T) {
 
 // TestHandleNodeDelete_MissingIDReturns400 pins the validation branch.
 func TestHandleNodeDelete_MissingIDReturns400(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	form := url.Values{}
@@ -354,6 +350,7 @@ func TestHandleNodeDelete_MissingIDReturns400(t *testing.T) {
 
 // TestHandleNodeDelete_NotFoundReturns404 pins the GetNode-miss branch.
 func TestHandleNodeDelete_NotFoundReturns404(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	form := url.Values{}

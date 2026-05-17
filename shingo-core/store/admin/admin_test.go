@@ -10,6 +10,7 @@ import (
 )
 
 func TestCoverage_AdminUserExists_Empty(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	exists, err := admin.AnyExists(db.DB)
 	if err != nil { t.Fatalf("AnyExists empty: %v", err) }
@@ -17,6 +18,7 @@ func TestCoverage_AdminUserExists_Empty(t *testing.T) {
 }
 
 func TestCoverage_CreateAdminUserAndGet(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := admin.Create(db.DB, "alice", "hash-alice"); err != nil { t.Fatalf("Create: %v", err) }
 	got, err := admin.Get(db.DB, "alice")
@@ -31,12 +33,14 @@ func TestCoverage_CreateAdminUserAndGet(t *testing.T) {
 }
 
 func TestCoverage_GetAdminUser_Miss(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	_, err := admin.Get(db.DB, "nobody")
 	if err == nil { t.Error("Get miss should return error, got nil") }
 }
 
 func TestCoverage_CreateAdminUser_MultipleUsers(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := admin.Create(db.DB, "alice", "h1"); err != nil { t.Fatalf("create alice: %v", err) }
 	if err := admin.Create(db.DB, "bob", "h2"); err != nil { t.Fatalf("create bob: %v", err) }

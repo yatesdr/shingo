@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 )
 
 func TestCreateBin_CRUD(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -25,9 +27,7 @@ func TestCreateBin_CRUD(t *testing.T) {
 		NodeID:      &std.StorageNode.ID,
 		Status:      "available",
 	}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 	if bin.ID == 0 {
 		t.Fatalf("bins.Create: expected ID set, got 0")
 	}
@@ -65,9 +65,7 @@ func TestCreateBin_CRUD(t *testing.T) {
 		bin.Label = "BIN-CRUD-1B"
 		bin.Description = "renamed"
 		bin.Status = "maintenance"
-		if err := bins.Update(db.DB, bin); err != nil {
-			t.Fatalf("bins.Update: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Update(db.DB, bin), "bins.Update")
 		got, err := bins.Get(db.DB, bin.ID)
 		if err != nil {
 			t.Fatalf("bins.Get after update: %v", err)
@@ -84,9 +82,7 @@ func TestCreateBin_CRUD(t *testing.T) {
 	})
 
 	t.Run("Delete_removes_bin", func(t *testing.T) {
-		if err := bins.Delete(db.DB, bin.ID); err != nil {
-			t.Fatalf("bins.Delete: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Delete(db.DB, bin.ID), "bins.Delete")
 		if _, err := bins.Get(db.DB, bin.ID); err == nil {
 			t.Error("bins.Get after bins.Delete: expected error, got nil")
 		}
@@ -94,6 +90,7 @@ func TestCreateBin_CRUD(t *testing.T) {
 }
 
 func TestList_And_ListByNode_And_Counts(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -166,18 +163,15 @@ func TestList_And_ListByNode_And_Counts(t *testing.T) {
 }
 
 func TestMove(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-MOVE-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 
 	t.Run("move_to_different_node", func(t *testing.T) {
-		if err := bins.Move(db.DB, bin.ID, std.LineNode.ID); err != nil {
-			t.Fatalf("bins.Move: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Move(db.DB, bin.ID, std.LineNode.ID), "bins.Move")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.NodeID == nil || *got.NodeID != std.LineNode.ID {
 			t.Errorf("after bins.Move, NodeID = %v, want %d", got.NodeID, std.LineNode.ID)
@@ -193,18 +187,15 @@ func TestMove(t *testing.T) {
 }
 
 func TestClaim_And_Unclaim(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 
 	t.Run("Claim_sets_claimed_by", func(t *testing.T) {
-		if err := bins.Claim(db.DB, bin.ID, 42); err != nil {
-			t.Fatalf("bins.Claim: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Claim(db.DB, bin.ID, 42), "bins.Claim")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.ClaimedBy == nil || *got.ClaimedBy != 42 {
 			t.Errorf("ClaimedBy = %v, want 42", got.ClaimedBy)
@@ -218,9 +209,7 @@ func TestClaim_And_Unclaim(t *testing.T) {
 	})
 
 	t.Run("Unclaim_clears_claim", func(t *testing.T) {
-		if err := bins.Unclaim(db.DB, bin.ID); err != nil {
-			t.Fatalf("bins.Unclaim: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Unclaim(db.DB, bin.ID), "bins.Unclaim")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.ClaimedBy != nil {
 			t.Errorf("ClaimedBy after bins.Unclaim = %v, want nil", got.ClaimedBy)
@@ -230,18 +219,10 @@ func TestClaim_And_Unclaim(t *testing.T) {
 	t.Run("UnclaimByOrder_clears_all_for_order", func(t *testing.T) {
 		bin2 := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-2", NodeID: &std.StorageNode.ID, Status: "available"}
 		bin3 := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-3", NodeID: &std.StorageNode.ID, Status: "available"}
-		if err := bins.Create(db.DB, bin2); err != nil {
-			t.Fatalf("bins.Create bin2: %v", err)
-		}
-		if err := bins.Create(db.DB, bin3); err != nil {
-			t.Fatalf("bins.Create bin3: %v", err)
-		}
-		if err := bins.Claim(db.DB, bin2.ID, 777); err != nil {
-			t.Fatalf("bins.Claim bin2: %v", err)
-		}
-		if err := bins.Claim(db.DB, bin3.ID, 777); err != nil {
-			t.Fatalf("bins.Claim bin3: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Create(db.DB, bin2), "bins.Create bin2")
+		testutil.MustNoErr(t, bins.Create(db.DB, bin3), "bins.Create bin3")
+		testutil.MustNoErr(t, bins.Claim(db.DB, bin2.ID, 777), "bins.Claim bin2")
+		testutil.MustNoErr(t, bins.Claim(db.DB, bin3.ID, 777), "bins.Claim bin3")
 		bins.UnclaimByOrder(db.DB, 777)
 		g2, _ := bins.Get(db.DB, bin2.ID)
 		g3, _ := bins.Get(db.DB, bin3.ID)
@@ -252,12 +233,8 @@ func TestClaim_And_Unclaim(t *testing.T) {
 
 	t.Run("Claim_locked_bin_errors", func(t *testing.T) {
 		bin4 := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CLM-LOCKED", NodeID: &std.StorageNode.ID, Status: "available"}
-		if err := bins.Create(db.DB, bin4); err != nil {
-			t.Fatalf("bins.Create bin4: %v", err)
-		}
-		if err := bins.Lock(db.DB, bin4.ID, "tester"); err != nil {
-			t.Fatalf("bins.Lock: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Create(db.DB, bin4), "bins.Create bin4")
+		testutil.MustNoErr(t, bins.Lock(db.DB, bin4.ID, "tester"), "bins.Lock")
 		if err := bins.Claim(db.DB, bin4.ID, 1); err == nil {
 			t.Error("bins.Claim of locked bin: expected error, got nil")
 		}
@@ -265,17 +242,14 @@ func TestClaim_And_Unclaim(t *testing.T) {
 }
 
 func TestLock_And_Unlock(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-LOCK-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 
-	if err := bins.Lock(db.DB, bin.ID, "alice"); err != nil {
-		t.Fatalf("bins.Lock: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Lock(db.DB, bin.ID, "alice"), "bins.Lock")
 	got, _ := bins.Get(db.DB, bin.ID)
 	if !got.Locked {
 		t.Error("Locked = false, want true")
@@ -294,9 +268,7 @@ func TestLock_And_Unlock(t *testing.T) {
 	})
 
 	t.Run("Unlock_clears", func(t *testing.T) {
-		if err := bins.Unlock(db.DB, bin.ID); err != nil {
-			t.Fatalf("bins.Unlock: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Unlock(db.DB, bin.ID), "bins.Unlock")
 		got2, _ := bins.Get(db.DB, bin.ID)
 		if got2.Locked {
 			t.Error("Locked after bins.Unlock = true, want false")
@@ -308,16 +280,13 @@ func TestLock_And_Unlock(t *testing.T) {
 }
 
 func TestUpdateStatus(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-STATUS-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
-	if err := bins.UpdateStatus(db.DB, bin.ID, "flagged"); err != nil {
-		t.Fatalf("bins.UpdateStatus: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
+	testutil.MustNoErr(t, bins.UpdateStatus(db.DB, bin.ID, "flagged"), "bins.UpdateStatus")
 	got, _ := bins.Get(db.DB, bin.ID)
 	if got.Status != "flagged" {
 		t.Errorf("Status = %q, want %q", got.Status, "flagged")
@@ -325,18 +294,15 @@ func TestUpdateStatus(t *testing.T) {
 }
 
 func TestStage_Release_And_ReleaseExpired(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-STAGE-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 
 	t.Run("Stage_no_expiry", func(t *testing.T) {
-		if err := bins.Stage(db.DB, bin.ID, nil); err != nil {
-			t.Fatalf("bins.Stage: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Stage(db.DB, bin.ID, nil), "bins.Stage")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.Status != "staged" {
 			t.Errorf("Status after bins.Stage = %q, want %q", got.Status, "staged")
@@ -350,9 +316,7 @@ func TestStage_Release_And_ReleaseExpired(t *testing.T) {
 	})
 
 	t.Run("ReleaseStaged_clears", func(t *testing.T) {
-		if err := bins.ReleaseStaged(db.DB, bin.ID); err != nil {
-			t.Fatalf("bins.ReleaseStaged: %v", err)
-		}
+		testutil.MustNoErr(t, bins.ReleaseStaged(db.DB, bin.ID), "bins.ReleaseStaged")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.Status != "available" {
 			t.Errorf("Status after bins.ReleaseStaged = %q, want %q", got.Status, "available")
@@ -366,20 +330,12 @@ func TestStage_Release_And_ReleaseExpired(t *testing.T) {
 		// One bin staged with expiry in the past, one with expiry in the future.
 		expired := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-STAGE-EXP", NodeID: &std.StorageNode.ID, Status: "available"}
 		future := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-STAGE-FUT", NodeID: &std.StorageNode.ID, Status: "available"}
-		if err := bins.Create(db.DB, expired); err != nil {
-			t.Fatalf("bins.Create expired: %v", err)
-		}
-		if err := bins.Create(db.DB, future); err != nil {
-			t.Fatalf("bins.Create future: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Create(db.DB, expired), "bins.Create expired")
+		testutil.MustNoErr(t, bins.Create(db.DB, future), "bins.Create future")
 		past := time.Now().Add(-1 * time.Hour)
 		soon := time.Now().Add(1 * time.Hour)
-		if err := bins.Stage(db.DB, expired.ID, &past); err != nil {
-			t.Fatalf("bins.Stage expired: %v", err)
-		}
-		if err := bins.Stage(db.DB, future.ID, &soon); err != nil {
-			t.Fatalf("bins.Stage future: %v", err)
-		}
+		testutil.MustNoErr(t, bins.Stage(db.DB, expired.ID, &past), "bins.Stage expired")
+		testutil.MustNoErr(t, bins.Stage(db.DB, future.ID, &soon), "bins.Stage future")
 
 		n, err := bins.ReleaseExpiredStaged(db.DB)
 		if err != nil {
@@ -400,24 +356,17 @@ func TestStage_Release_And_ReleaseExpired(t *testing.T) {
 }
 
 func TestRecordCount_And_UnconfirmManifest(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-CNT-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
-	if err := bins.SetManifest(db.DB, bin.ID, `{"items":[]}`, std.Payload.Code, 100); err != nil {
-		t.Fatalf("bins.SetManifest: %v", err)
-	}
-	if err := bins.ConfirmManifest(db.DB, bin.ID, ""); err != nil {
-		t.Fatalf("bins.ConfirmManifest: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
+	testutil.MustNoErr(t, bins.SetManifest(db.DB, bin.ID, `{"items":[]}`, std.Payload.Code, 100), "bins.SetManifest")
+	testutil.MustNoErr(t, bins.ConfirmManifest(db.DB, bin.ID, ""), "bins.ConfirmManifest")
 
 	t.Run("RecordCount_updates_uop_and_actor", func(t *testing.T) {
-		if err := bins.RecordCount(db.DB, bin.ID, 73, "operator-1"); err != nil {
-			t.Fatalf("bins.RecordCount: %v", err)
-		}
+		testutil.MustNoErr(t, bins.RecordCount(db.DB, bin.ID, 73, "operator-1"), "bins.RecordCount")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.UOPRemaining != 73 {
 			t.Errorf("UOPRemaining = %d, want 73", got.UOPRemaining)
@@ -436,9 +385,7 @@ func TestRecordCount_And_UnconfirmManifest(t *testing.T) {
 		if !got.ManifestConfirmed {
 			t.Fatal("expected ManifestConfirmed=true before bins.UnconfirmManifest")
 		}
-		if err := bins.UnconfirmManifest(db.DB, bin.ID); err != nil {
-			t.Fatalf("bins.UnconfirmManifest: %v", err)
-		}
+		testutil.MustNoErr(t, bins.UnconfirmManifest(db.DB, bin.ID), "bins.UnconfirmManifest")
 		got2, _ := bins.Get(db.DB, bin.ID)
 		if got2.ManifestConfirmed {
 			t.Error("ManifestConfirmed after bins.UnconfirmManifest = true, want false")
@@ -447,29 +394,20 @@ func TestRecordCount_And_UnconfirmManifest(t *testing.T) {
 }
 
 func TestNodeTileStates(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	// bins.Bin with confirmed manifest at storage node.
 	loaded := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-TILE-LOADED", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, loaded); err != nil {
-		t.Fatalf("bins.Create loaded: %v", err)
-	}
-	if err := bins.SetManifest(db.DB, loaded.ID, `{"items":[]}`, std.Payload.Code, 50); err != nil {
-		t.Fatalf("bins.SetManifest loaded: %v", err)
-	}
-	if err := bins.ConfirmManifest(db.DB, loaded.ID, ""); err != nil {
-		t.Fatalf("bins.ConfirmManifest loaded: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, loaded), "bins.Create loaded")
+	testutil.MustNoErr(t, bins.SetManifest(db.DB, loaded.ID, `{"items":[]}`, std.Payload.Code, 50), "bins.SetManifest loaded")
+	testutil.MustNoErr(t, bins.ConfirmManifest(db.DB, loaded.ID, ""), "bins.ConfirmManifest loaded")
 
 	// Empty (no manifest) bin at line node, claimed by an order.
 	empty := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-TILE-EMPTY", NodeID: &std.LineNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, empty); err != nil {
-		t.Fatalf("bins.Create empty: %v", err)
-	}
-	if err := bins.Claim(db.DB, empty.ID, 11); err != nil {
-		t.Fatalf("bins.Claim empty: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, empty), "bins.Create empty")
+	testutil.MustNoErr(t, bins.Claim(db.DB, empty.ID, 11), "bins.Claim empty")
 
 	states, err := bins.NodeTileStates(db.DB)
 	if err != nil {
@@ -492,20 +430,15 @@ func TestNodeTileStates(t *testing.T) {
 }
 
 func TestListAvailable(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	empty := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-AVAIL-EMPTY", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, empty); err != nil {
-		t.Fatalf("bins.Create empty: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, empty), "bins.Create empty")
 	loaded := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-AVAIL-LOADED", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, loaded); err != nil {
-		t.Fatalf("bins.Create loaded: %v", err)
-	}
-	if err := bins.SetManifest(db.DB, loaded.ID, `{"items":[]}`, std.Payload.Code, 50); err != nil {
-		t.Fatalf("bins.SetManifest: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, loaded), "bins.Create loaded")
+	testutil.MustNoErr(t, bins.SetManifest(db.DB, loaded.ID, `{"items":[]}`, std.Payload.Code, 50), "bins.SetManifest")
 
 	got, err := bins.ListAvailable(db.DB)
 	if err != nil {
@@ -540,6 +473,7 @@ func TestListAvailable(t *testing.T) {
 // Same bug class as the original FindEmptyCompatible NULL-safety fix
 // (7c274ac / 4337344). Aligned in 2026-04-27 v2.
 func TestListAvailable_NULLPayloadCode(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -572,23 +506,18 @@ func TestListAvailable_NULLPayloadCode(t *testing.T) {
 }
 
 func TestFindEmptyCompatible(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	// Link payload to bin type so the JOIN matches.
-	if err := db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}); err != nil {
-		t.Fatalf("SetPayloadBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}), "SetPayloadBinTypes")
 
 	// Empty bin in zone A (storage), empty bin at line node (no zone).
 	zoneA := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-FEC-A", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, zoneA); err != nil {
-		t.Fatalf("bins.Create zoneA: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, zoneA), "bins.Create zoneA")
 	other := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-FEC-B", NodeID: &std.LineNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, other); err != nil {
-		t.Fatalf("bins.Create other: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, other), "bins.Create other")
 
 	t.Run("prefer_zone_returns_zone_match", func(t *testing.T) {
 		got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0)
@@ -674,6 +603,7 @@ func TestFindEmptyCompatible(t *testing.T) {
 // candidates when no rules existed. Order #462 stuck on awaiting inventory
 // despite SMN_002 / SMN_003 visibly empty in the supermarket UI.
 func TestFindEmptyCompatible_AdvisoryFallback_NoRules(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -682,9 +612,7 @@ func TestFindEmptyCompatible_AdvisoryFallback_NoRules(t *testing.T) {
 	// means "no restrictions" and every empty bin is eligible.
 
 	zoneA := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-NORULES-A", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, zoneA); err != nil {
-		t.Fatalf("bins.Create zoneA: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, zoneA), "bins.Create zoneA")
 
 	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
 	if err != nil {
@@ -700,6 +628,7 @@ func TestFindEmptyCompatible_AdvisoryFallback_NoRules(t *testing.T) {
 // bin types are considered. The advisory pattern preserves strict
 // enforcement when rules are present.
 func TestFindEmptyCompatible_RulesEnforced_ExcludesIncompatibleType(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -708,25 +637,17 @@ func TestFindEmptyCompatible_RulesEnforced_ExcludesIncompatibleType(t *testing.T
 	// bin must NOT be returned even if it's the only empty bin in the
 	// preferred zone.
 	otherType := &bins.BinType{Code: "OTHER", Description: "Incompatible type"}
-	if err := db.CreateBinType(otherType); err != nil {
-		t.Fatalf("CreateBinType OTHER: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(otherType), "CreateBinType OTHER")
 
 	// Rule: PART-A is allowed only in DEFAULT.
-	if err := db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}); err != nil {
-		t.Fatalf("SetPayloadBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}), "SetPayloadBinTypes")
 
 	// Bin of OTHER type at zone A (would normally win zone preference).
 	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-OTHER-A", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, otherBin); err != nil {
-		t.Fatalf("bins.Create otherBin: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, otherBin), "bins.Create otherBin")
 	// Bin of DEFAULT type at line node (no zone — falls through any-zone fallback).
 	defaultBin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-DEFAULT-LINE", NodeID: &std.LineNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, defaultBin); err != nil {
-		t.Fatalf("bins.Create defaultBin: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, defaultBin), "bins.Create defaultBin")
 
 	got, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "A", 0)
 	if err != nil {
@@ -744,24 +665,19 @@ func TestFindEmptyCompatible_RulesEnforced_ExcludesIncompatibleType(t *testing.T
 // when rules exist for the payload and no bin of an allowed type is empty,
 // the function returns an error (no advisory fallback to incompatible types).
 func TestFindEmptyCompatible_RulesEnforced_NoMatchReturnsErr(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	otherType := &bins.BinType{Code: "OTHER", Description: "Incompatible type"}
-	if err := db.CreateBinType(otherType); err != nil {
-		t.Fatalf("CreateBinType OTHER: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(otherType), "CreateBinType OTHER")
 
 	// Rule: PART-A is allowed only in DEFAULT.
-	if err := db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}); err != nil {
-		t.Fatalf("SetPayloadBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}), "SetPayloadBinTypes")
 
 	// Only an OTHER-type empty bin exists. Rules say PART-A needs DEFAULT.
 	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-OTHER-A", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, otherBin); err != nil {
-		t.Fatalf("bins.Create otherBin: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, otherBin), "bins.Create otherBin")
 
 	_, err := bins.FindEmptyCompatible(db.DB, std.Payload.Code, "", 0)
 	if err == nil {
@@ -770,17 +686,14 @@ func TestFindEmptyCompatible_RulesEnforced_NoMatchReturnsErr(t *testing.T) {
 }
 
 func TestHasNotes(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-NOTES-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 	noNote := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-NOTES-2", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, noNote); err != nil {
-		t.Fatalf("bins.Create noNote: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, noNote), "bins.Create noNote")
 
 	// Insert an audit log entry for `bin`.
 	if _, err := db.DB.Exec(
@@ -817,12 +730,11 @@ func TestHasNotes(t *testing.T) {
 // ---------- bin_types.go ----------
 
 func TestBinType_CRUD(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	bt := &bins.BinType{Code: "TOTE-X", Description: "extra-large tote", WidthIn: 24.5, HeightIn: 18.0}
-	if err := bins.CreateType(db.DB, bt); err != nil {
-		t.Fatalf("bins.CreateType: %v", err)
-	}
+	testutil.MustNoErr(t, bins.CreateType(db.DB, bt), "bins.CreateType")
 	if bt.ID == 0 {
 		t.Fatal("bins.CreateType: expected ID set")
 	}
@@ -853,9 +765,7 @@ func TestBinType_CRUD(t *testing.T) {
 	t.Run("bins.UpdateType", func(t *testing.T) {
 		bt.Description = "renamed"
 		bt.WidthIn = 30
-		if err := bins.UpdateType(db.DB, bt); err != nil {
-			t.Fatalf("bins.UpdateType: %v", err)
-		}
+		testutil.MustNoErr(t, bins.UpdateType(db.DB, bt), "bins.UpdateType")
 		got, _ := bins.GetType(db.DB, bt.ID)
 		if got.Description != "renamed" {
 			t.Errorf("Description = %q, want %q", got.Description, "renamed")
@@ -868,9 +778,7 @@ func TestBinType_CRUD(t *testing.T) {
 	t.Run("bins.ListTypes", func(t *testing.T) {
 		// Add another for ordering check.
 		other := &bins.BinType{Code: "AAAA-FIRST", Description: "alphabetically first"}
-		if err := bins.CreateType(db.DB, other); err != nil {
-			t.Fatalf("bins.CreateType other: %v", err)
-		}
+		testutil.MustNoErr(t, bins.CreateType(db.DB, other), "bins.CreateType other")
 		got, err := bins.ListTypes(db.DB)
 		if err != nil {
 			t.Fatalf("bins.ListTypes: %v", err)
@@ -884,9 +792,7 @@ func TestBinType_CRUD(t *testing.T) {
 	})
 
 	t.Run("bins.DeleteType", func(t *testing.T) {
-		if err := bins.DeleteType(db.DB, bt.ID); err != nil {
-			t.Fatalf("bins.DeleteType: %v", err)
-		}
+		testutil.MustNoErr(t, bins.DeleteType(db.DB, bt.ID), "bins.DeleteType")
 		if _, err := bins.GetType(db.DB, bt.ID); err == nil {
 			t.Error("bins.GetType after bins.Delete: expected error, got nil")
 		}
@@ -894,17 +800,14 @@ func TestBinType_CRUD(t *testing.T) {
 }
 
 func TestListTypesForPayload(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	other := &bins.BinType{Code: "TOTE-OTHER", Description: "not linked"}
-	if err := bins.CreateType(db.DB, other); err != nil {
-		t.Fatalf("bins.CreateType other: %v", err)
-	}
+	testutil.MustNoErr(t, bins.CreateType(db.DB, other), "bins.CreateType other")
 
-	if err := db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}); err != nil {
-		t.Fatalf("SetPayloadBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}), "SetPayloadBinTypes")
 
 	got, err := bins.ListTypesForPayload(db.DB, std.Payload.ID)
 	if err != nil {
@@ -921,20 +824,17 @@ func TestListTypesForPayload(t *testing.T) {
 // ---------- bin_manifest.go ----------
 
 func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	bin := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-MAN-1", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, bin); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, bin), "bins.Create")
 
 	manifestJSON := `{"items":[{"catid":"PART-001","qty":5},{"catid":"PART-002","qty":3,"lot_code":"LOT-A"}]}`
 
 	t.Run("SetManifest_persists_payload_and_uop", func(t *testing.T) {
-		if err := bins.SetManifest(db.DB, bin.ID, manifestJSON, std.Payload.Code, 42); err != nil {
-			t.Fatalf("bins.SetManifest: %v", err)
-		}
+		testutil.MustNoErr(t, bins.SetManifest(db.DB, bin.ID, manifestJSON, std.Payload.Code, 42), "bins.SetManifest")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.PayloadCode != std.Payload.Code {
 			t.Errorf("PayloadCode = %q, want %q", got.PayloadCode, std.Payload.Code)
@@ -946,12 +846,8 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 				t.Fatal("bins.Manifest is nil, want JSON")
 			}
 		var gotParsed, wantParsed interface{}
-		if err := json.Unmarshal([]byte(*got.Manifest), &gotParsed); err != nil {
-			t.Fatalf("unmarshal got manifest: %v", err)
-		}
-		if err := json.Unmarshal([]byte(manifestJSON), &wantParsed); err != nil {
-			t.Fatalf("unmarshal want manifest: %v", err)
-		}
+		testutil.MustNoErr(t, json.Unmarshal([]byte(*got.Manifest), &gotParsed), "unmarshal got manifest")
+		testutil.MustNoErr(t, json.Unmarshal([]byte(manifestJSON), &wantParsed), "unmarshal want manifest")
 		gotBytes, _ := json.Marshal(gotParsed)
 		wantBytes, _ := json.Marshal(wantParsed)
 		if string(gotBytes) != string(wantBytes) {
@@ -979,9 +875,7 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 	})
 
 	t.Run("ConfirmManifest_default_timestamp", func(t *testing.T) {
-		if err := bins.ConfirmManifest(db.DB, bin.ID, ""); err != nil {
-			t.Fatalf("bins.ConfirmManifest: %v", err)
-		}
+		testutil.MustNoErr(t, bins.ConfirmManifest(db.DB, bin.ID, ""), "bins.ConfirmManifest")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if !got.ManifestConfirmed {
 			t.Error("ManifestConfirmed = false, want true")
@@ -993,13 +887,9 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 
 	t.Run("ConfirmManifest_explicit_timestamp", func(t *testing.T) {
 		// Re-set so we can re-confirm with an explicit timestamp.
-		if err := bins.SetManifest(db.DB, bin.ID, manifestJSON, std.Payload.Code, 42); err != nil {
-			t.Fatalf("bins.SetManifest: %v", err)
-		}
+		testutil.MustNoErr(t, bins.SetManifest(db.DB, bin.ID, manifestJSON, std.Payload.Code, 42), "bins.SetManifest")
 		ts := "2024-06-15 12:34:56"
-		if err := bins.ConfirmManifest(db.DB, bin.ID, ts); err != nil {
-			t.Fatalf("bins.ConfirmManifest explicit: %v", err)
-		}
+		testutil.MustNoErr(t, bins.ConfirmManifest(db.DB, bin.ID, ts), "bins.ConfirmManifest explicit")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.LoadedAt == nil {
 			t.Fatal("LoadedAt = nil, want set")
@@ -1011,9 +901,7 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 	})
 
 	t.Run("ClearManifest_empties_bin", func(t *testing.T) {
-		if err := bins.ClearManifest(db.DB, bin.ID); err != nil {
-			t.Fatalf("bins.ClearManifest: %v", err)
-		}
+		testutil.MustNoErr(t, bins.ClearManifest(db.DB, bin.ID), "bins.ClearManifest")
 		got, _ := bins.Get(db.DB, bin.ID)
 		if got.PayloadCode != "" {
 			t.Errorf("PayloadCode = %q, want empty", got.PayloadCode)
@@ -1048,6 +936,7 @@ func TestManifest_Set_Get_Confirm_Clear(t *testing.T) {
 }
 
 func TestFindSourceFIFO(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -1091,6 +980,7 @@ func TestFindSourceFIFO(t *testing.T) {
 // bin (preserving the previous behavior for plants that haven't populated
 // the table).
 func TestFindSourceFIFO_AdvisoryFallback_NoRules(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -1100,19 +990,11 @@ func TestFindSourceFIFO_AdvisoryFallback_NoRules(t *testing.T) {
 	// Add a second bin type and load a bin of that type with the payload.
 	// Without rules, FindSourceFIFO should still return this bin.
 	otherType := &bins.BinType{Code: "OTHER", Description: "Other type"}
-	if err := db.CreateBinType(otherType); err != nil {
-		t.Fatalf("CreateBinType OTHER: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(otherType), "CreateBinType OTHER")
 	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-FIFO-OTHER", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, otherBin); err != nil {
-		t.Fatalf("bins.Create otherBin: %v", err)
-	}
-	if err := db.SetBinManifest(otherBin.ID, `{"items":[]}`, std.Payload.Code, 100); err != nil {
-		t.Fatalf("SetBinManifest: %v", err)
-	}
-	if err := db.ConfirmBinManifest(otherBin.ID, ""); err != nil {
-		t.Fatalf("ConfirmBinManifest: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, otherBin), "bins.Create otherBin")
+	testutil.MustNoErr(t, db.SetBinManifest(otherBin.ID, `{"items":[]}`, std.Payload.Code, 100), "SetBinManifest")
+	testutil.MustNoErr(t, db.ConfirmBinManifest(otherBin.ID, ""), "ConfirmBinManifest")
 
 	got, err := bins.FindSourceFIFO(db.DB, std.Payload.Code, 0)
 	if err != nil {
@@ -1135,29 +1017,20 @@ func TestFindSourceFIFO_AdvisoryFallback_NoRules(t *testing.T) {
 // Post-fix the rules-enforced path is symmetric: that incompatible bin
 // becomes invisible to FindSourceFIFO.
 func TestFindSourceFIFO_RulesEnforced(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	// Rules: PART-A is allowed only in DEFAULT.
-	if err := db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}); err != nil {
-		t.Fatalf("SetPayloadBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(std.Payload.ID, []int64{std.BinType.ID}), "SetPayloadBinTypes")
 
 	// One full bin of OTHER type (forbidden by rules) — must NOT be returned.
 	otherType := &bins.BinType{Code: "OTHER", Description: "Other type"}
-	if err := db.CreateBinType(otherType); err != nil {
-		t.Fatalf("CreateBinType OTHER: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(otherType), "CreateBinType OTHER")
 	otherBin := &bins.Bin{BinTypeID: otherType.ID, Label: "BIN-FIFO-OTHER", NodeID: &std.StorageNode.ID, Status: "available"}
-	if err := bins.Create(db.DB, otherBin); err != nil {
-		t.Fatalf("bins.Create otherBin: %v", err)
-	}
-	if err := db.SetBinManifest(otherBin.ID, `{"items":[]}`, std.Payload.Code, 100); err != nil {
-		t.Fatalf("SetBinManifest other: %v", err)
-	}
-	if err := db.ConfirmBinManifest(otherBin.ID, ""); err != nil {
-		t.Fatalf("ConfirmBinManifest other: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, otherBin), "bins.Create otherBin")
+	testutil.MustNoErr(t, db.SetBinManifest(otherBin.ID, `{"items":[]}`, std.Payload.Code, 100), "SetBinManifest other")
+	testutil.MustNoErr(t, db.ConfirmBinManifest(otherBin.ID, ""), "ConfirmBinManifest other")
 
 	// One full bin of DEFAULT type (allowed by rules) — should be returned.
 	defaultBin := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-FIFO-DEFAULT")
@@ -1179,6 +1052,7 @@ func TestFindSourceFIFO_RulesEnforced(t *testing.T) {
 // payload_code = '' instead of NULL; without this guard, a caller
 // passing payloadCode = "" would silently match every unattached bin.
 func TestFindSourceFIFO_RejectsEmptyPayloadCode(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -1203,6 +1077,7 @@ func TestFindSourceFIFO_RejectsEmptyPayloadCode(t *testing.T) {
 // (payload_code = '') must not be returned when the caller queries
 // for a real payload.
 func TestFindSourceFIFO_DoesNotMatchUnattachedBins(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -1218,9 +1093,7 @@ func TestFindSourceFIFO_DoesNotMatchUnattachedBins(t *testing.T) {
 		NodeID:    &std.StorageNode.ID,
 		Status:    "available",
 	}
-	if err := bins.Create(db.DB, unattached); err != nil {
-		t.Fatalf("bins.Create unattached: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, unattached), "bins.Create unattached")
 	if _, err := db.DB.Exec(`UPDATE bins SET payload_code = '' WHERE id = $1`, unattached.ID); err != nil {
 		t.Fatalf("force unattached payload_code = '': %v", err)
 	}
@@ -1237,18 +1110,15 @@ func TestFindSourceFIFO_DoesNotMatchUnattachedBins(t *testing.T) {
 // ---------- node_bin_types.go ----------
 
 func TestSetNodeTypes_And_ListTypesForNode(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	other := &bins.BinType{Code: "TOTE-Z", Description: "second type"}
-	if err := bins.CreateType(db.DB, other); err != nil {
-		t.Fatalf("bins.CreateType other: %v", err)
-	}
+	testutil.MustNoErr(t, bins.CreateType(db.DB, other), "bins.CreateType other")
 
 	t.Run("bind_two_types", func(t *testing.T) {
-		if err := bins.SetNodeTypes(db.DB, std.StorageNode.ID, []int64{std.BinType.ID, other.ID}); err != nil {
-			t.Fatalf("bins.SetNodeTypes: %v", err)
-		}
+		testutil.MustNoErr(t, bins.SetNodeTypes(db.DB, std.StorageNode.ID, []int64{std.BinType.ID, other.ID}), "bins.SetNodeTypes")
 		got, err := bins.ListTypesForNode(db.DB, std.StorageNode.ID)
 		if err != nil {
 			t.Fatalf("bins.ListTypesForNode: %v", err)
@@ -1259,9 +1129,7 @@ func TestSetNodeTypes_And_ListTypesForNode(t *testing.T) {
 	})
 
 	t.Run("replace_with_one", func(t *testing.T) {
-		if err := bins.SetNodeTypes(db.DB, std.StorageNode.ID, []int64{other.ID}); err != nil {
-			t.Fatalf("bins.SetNodeTypes replace: %v", err)
-		}
+		testutil.MustNoErr(t, bins.SetNodeTypes(db.DB, std.StorageNode.ID, []int64{other.ID}), "bins.SetNodeTypes replace")
 		got, _ := bins.ListTypesForNode(db.DB, std.StorageNode.ID)
 		if len(got) != 1 {
 			t.Fatalf("after replace len=%d, want 1", len(got))
@@ -1272,9 +1140,7 @@ func TestSetNodeTypes_And_ListTypesForNode(t *testing.T) {
 	})
 
 	t.Run("unbind_all", func(t *testing.T) {
-		if err := bins.SetNodeTypes(db.DB, std.StorageNode.ID, nil); err != nil {
-			t.Fatalf("bins.SetNodeTypes unbind: %v", err)
-		}
+		testutil.MustNoErr(t, bins.SetNodeTypes(db.DB, std.StorageNode.ID, nil), "bins.SetNodeTypes unbind")
 		got, _ := bins.ListTypesForNode(db.DB, std.StorageNode.ID)
 		if len(got) != 0 {
 			t.Errorf("after unbind len=%d, want 0", len(got))
@@ -1283,14 +1149,13 @@ func TestSetNodeTypes_And_ListTypesForNode(t *testing.T) {
 }
 
 func TestListEffectiveTypesInherited(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	// bins.Create child node parented under StorageNode.
 	child := &domain.Node{Name: "STORAGE-A1-CHILD", ParentID: &std.StorageNode.ID, Enabled: true}
-	if err := db.CreateNode(child); err != nil {
-		t.Fatalf("CreateNode child: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(child), "CreateNode child")
 
 	t.Run("no_assignments_anywhere_returns_empty", func(t *testing.T) {
 		got, err := bins.ListEffectiveTypesInherited(db.DB, child.ID)
@@ -1303,9 +1168,7 @@ func TestListEffectiveTypesInherited(t *testing.T) {
 	})
 
 	t.Run("inherits_from_parent", func(t *testing.T) {
-		if err := bins.SetNodeTypes(db.DB, std.StorageNode.ID, []int64{std.BinType.ID}); err != nil {
-			t.Fatalf("bins.SetNodeTypes parent: %v", err)
-		}
+		testutil.MustNoErr(t, bins.SetNodeTypes(db.DB, std.StorageNode.ID, []int64{std.BinType.ID}), "bins.SetNodeTypes parent")
 		got, err := bins.ListEffectiveTypesInherited(db.DB, child.ID)
 		if err != nil {
 			t.Fatalf("bins.ListEffectiveTypesInherited: %v", err)
@@ -1321,12 +1184,8 @@ func TestListEffectiveTypesInherited(t *testing.T) {
 	t.Run("self_assignment_overrides_parent", func(t *testing.T) {
 		// Add a second type at the child level.
 		otherType := &bins.BinType{Code: "TOTE-CHILD", Description: "child-only type"}
-		if err := bins.CreateType(db.DB, otherType); err != nil {
-			t.Fatalf("bins.CreateType: %v", err)
-		}
-		if err := bins.SetNodeTypes(db.DB, child.ID, []int64{otherType.ID}); err != nil {
-			t.Fatalf("bins.SetNodeTypes child: %v", err)
-		}
+		testutil.MustNoErr(t, bins.CreateType(db.DB, otherType), "bins.CreateType")
+		testutil.MustNoErr(t, bins.SetNodeTypes(db.DB, child.ID, []int64{otherType.ID}), "bins.SetNodeTypes child")
 		got, err := bins.ListEffectiveTypesInherited(db.DB, child.ID)
 		if err != nil {
 			t.Fatalf("bins.ListEffectiveTypesInherited: %v", err)
@@ -1343,6 +1202,7 @@ func TestListEffectiveTypesInherited(t *testing.T) {
 // ---------- bins.go bins.ScanBin via row passthrough ----------
 
 func TestScanBin_via_Get(t *testing.T) {
+	t.Parallel()
 	// bins.ScanBin is exercised by every bins.Get/bins.List call above; this test just pins the
 	// nullable-field behavior: a bin with no node should produce NodeID=nil and
 	// empty NodeName.
@@ -1350,9 +1210,7 @@ func TestScanBin_via_Get(t *testing.T) {
 	std := testdb.SetupStandardData(t, db)
 
 	floating := &bins.Bin{BinTypeID: std.BinType.ID, Label: "BIN-NO-NODE", Status: "available"}
-	if err := bins.Create(db.DB, floating); err != nil {
-		t.Fatalf("bins.Create: %v", err)
-	}
+	testutil.MustNoErr(t, bins.Create(db.DB, floating), "bins.Create")
 	got, err := bins.Get(db.DB, floating.ID)
 	if err != nil {
 		t.Fatalf("bins.Get: %v", err)

@@ -10,6 +10,7 @@ import (
 )
 
 func TestCoverage_AuditLog(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	audit.Append(db.DB, "order", 1, "created", "", "new order", "system")
 	audit.Append(db.DB, "order", 1, "dispatched", "pending", "dispatched", "system")

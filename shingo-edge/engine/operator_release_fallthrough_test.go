@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -90,6 +91,7 @@ func findLogLine(logs []string, needles ...string) string {
 // Post-cleanup, the breadcrumb names the skip reason and surfaces the
 // disposition the operator declared.
 func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	getLogs := captureReleaseLogs(t, eng)
@@ -100,17 +102,13 @@ func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("transition to staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "transition to staged")
 
 	disp := ReleaseDisposition{
 		Mode:     DispositionCaptureLineside,
 		CalledBy: "stephen-station-test",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	logs := getLogs()
 	line := findLogLine(logs, "no_process_node",
@@ -127,6 +125,7 @@ func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
 // release (it resets on ingest completion), so the disposition is
 // intentionally dropped — but the skip is now visible in the log.
 func TestReleaseOrderWithLineside_ProduceRole_LogsSkip(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "simple")
 	eng := testEngine(t, db)
@@ -138,17 +137,13 @@ func TestReleaseOrderWithLineside_ProduceRole_LogsSkip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("transition to staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "transition to staged")
 
 	disp := ReleaseDisposition{
 		Mode:     DispositionSendPartialBack,
 		CalledBy: "stephen-station-test",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	logs := getLogs()
 	line := findLogLine(logs, "produce_role",
@@ -169,6 +164,7 @@ func TestReleaseOrderWithLineside_ProduceRole_LogsSkip(t *testing.T) {
 // resolveReleaseClaim returns nil. The release should still succeed, log
 // the disposition, and call orderMgr.ReleaseOrder with nil remaining_uop.
 func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	// Process + node with no claim. Mirrors a misconfigured-station
@@ -198,9 +194,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("transition to staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "transition to staged")
 
 	eng := testEngine(t, db)
 	getLogs := captureReleaseLogs(t, eng)
@@ -209,9 +203,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 		Mode:     DispositionCaptureLineside,
 		CalledBy: "stephen-station-test",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	// Existing log line shape (pre-cleanup): "toClaim is nil ... disposition %q dropped"
 	logs := getLogs()
@@ -229,6 +221,7 @@ func TestReleaseOrderWithLineside_NoActiveClaim_LogsSkip(t *testing.T) {
 // the cleanup. If a future edit to operator_release.go drops one, this
 // test catches it before review.
 func TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDisposition(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	getLogs := captureReleaseLogs(t, eng)
@@ -239,9 +232,7 @@ func TestReleaseOrderWithLineside_FallthroughLogShape_IncludesOrderAndDispositio
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("transition to staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "transition to staged")
 	if err := eng.ReleaseOrderWithLineside(orderID,
 		ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "t"}); err != nil {
 		t.Fatalf("ReleaseOrderWithLineside: %v", err)

@@ -44,6 +44,7 @@ func seedProcessNode(t *testing.T, db *store.DB) (processID, nodeID int64) {
 }
 
 func TestCanAcceptOrders(t *testing.T) {
+	t.Parallel()
 	t.Run("available when no orders and no changeover", func(t *testing.T) {
 		db := testEngineDB(t)
 		_, nodeID := seedProcessNode(t, db)

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 )
 
@@ -15,6 +16,7 @@ import (
 // `delivered` after the operator's clear tap and handleUnloaderFullInCompletion
 // never fires.
 func TestConfirmUnloaderU1OnClear_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U1-CONF", "consume", "PART-CONF", "STORAGE-NODE")
 
@@ -25,9 +27,7 @@ func TestConfirmUnloaderU1OnClear_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create U1 order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)); err != nil {
-		t.Fatalf("set U1 delivered: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)), "set U1 delivered")
 
 	eng := testEngine(t, db)
 	gotID, ok := eng.confirmUnloaderU1OnClear(unloaderNodeID)
@@ -50,6 +50,7 @@ func TestConfirmUnloaderU1OnClear_HappyPath(t *testing.T) {
 // an L1 retrieve_empty at the same node must NOT be picked up by the
 // unloader-side confirm. The filter is `!RetrieveEmpty`.
 func TestConfirmUnloaderU1OnClear_IgnoresL1(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U1-IGN-L1", "consume", "PART-IGN", "STORAGE-NODE")
 
@@ -60,9 +61,7 @@ func TestConfirmUnloaderU1OnClear_IgnoresL1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create L1 order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)); err != nil {
-		t.Fatalf("set L1 delivered: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)), "set L1 delivered")
 
 	eng := testEngine(t, db)
 	_, ok := eng.confirmUnloaderU1OnClear(unloaderNodeID)
@@ -80,6 +79,7 @@ func TestConfirmUnloaderU1OnClear_IgnoresL1(t *testing.T) {
 // the rare ordering race where ClearBin is invoked before the fleet's
 // delivery event has updated the order row.
 func TestConfirmUnloaderU1OnClear_RequiresDelivered(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U1-NDLV", "consume", "PART-NDLV", "STORAGE-NODE")
 
@@ -89,9 +89,7 @@ func TestConfirmUnloaderU1OnClear_RequiresDelivered(t *testing.T) {
 		t.Fatalf("create U1 order: %v", err)
 	}
 	// Leave it at `in_transit` — pre-delivery.
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)); err != nil {
-		t.Fatalf("set U1 in_transit: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusInTransit)), "set U1 in_transit")
 
 	eng := testEngine(t, db)
 	_, ok := eng.confirmUnloaderU1OnClear(unloaderNodeID)
@@ -107,6 +105,7 @@ func TestConfirmUnloaderU1OnClear_RequiresDelivered(t *testing.T) {
 // order created. Pre-fix, step (a) was missing and step (b) never fired —
 // bin cleared physically, order stuck at `delivered`.
 func TestClearBin_FiresU2ViaU1Confirm(t *testing.T) {
+	t.Parallel()
 	// Fake Core HTTP server — answers OK to the bin-clear call ClearBin
 	// proxies through coreClient. Without this, eng.coreClient.ClearBin
 	// would error and the test would fail before we got to verify U2.
@@ -123,9 +122,7 @@ func TestClearBin_FiresU2ViaU1Confirm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create U1 order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)); err != nil {
-		t.Fatalf("set U1 delivered: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusDelivered)), "set U1 delivered")
 
 	eng := testEngine(t, db)
 	// Swap in a real bridged emitter so ConfirmDelivery's terminal
@@ -135,9 +132,7 @@ func TestClearBin_FiresU2ViaU1Confirm(t *testing.T) {
 	eng.coreClient = NewCoreClient(srv.URL)
 	eng.wireEventHandlers()
 
-	if err := eng.ClearBin(unloaderNodeID); err != nil {
-		t.Fatalf("ClearBin: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ClearBin(unloaderNodeID), "ClearBin")
 
 	// U1 must have been confirmed by ClearBin's pre-clear confirm step.
 	after, err := db.GetOrder(orderID)

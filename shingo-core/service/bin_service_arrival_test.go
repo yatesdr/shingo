@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
@@ -17,6 +18,7 @@ import (
 // in this package as of Phase 6.4a (moved from store/completion.go's
 // (db *DB).ApplyBinArrival, which has been deleted).
 func TestApplyArrival(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := newBinSvc(db)
 
@@ -46,15 +48,11 @@ func TestApplyArrival(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := &bins.Bin{BinTypeID: bt.ID, Label: "AB-" + tc.name, NodeID: &startNode.ID, Status: "available"}
-			if err := db.CreateBin(bin); err != nil {
-				t.Fatalf("create bin: %v", err)
-			}
+			testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 			// Claim so we can verify ApplyArrival releases it.
 			db.ClaimBin(bin.ID, 7)
 
-			if err := svc.ApplyArrival(bin.ID, destNode.ID, tc.staged, tc.expiresAt); err != nil {
-				t.Fatalf("ApplyArrival: %v", err)
-			}
+			testutil.MustNoErr(t, svc.ApplyArrival(bin.ID, destNode.ID, tc.staged, tc.expiresAt), "ApplyArrival")
 
 			got, _ := db.GetBin(bin.ID)
 			if got.NodeID == nil || *got.NodeID != destNode.ID {

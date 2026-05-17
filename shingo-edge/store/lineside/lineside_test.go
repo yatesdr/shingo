@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"shingo/protocol/testutil"
 	_ "modernc.org/sqlite"
 )
 
@@ -71,6 +72,7 @@ INSERT INTO process_nodes (id, process_id, core_node_name, code, name)
 }
 
 func TestCaptureCreatesActiveBucket(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 
 	b, err := Capture(db, 100, "", 10, "P-500", 60)
@@ -89,6 +91,7 @@ func TestCaptureCreatesActiveBucket(t *testing.T) {
 }
 
 func TestCaptureZeroIsNoop(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	b, err := Capture(db, 100, "", 10, "P-500", 0)
 	if err != nil {
@@ -105,6 +108,7 @@ func TestCaptureZeroIsNoop(t *testing.T) {
 }
 
 func TestCaptureMergesWithExistingActive(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
 		t.Fatalf("first Capture: %v", err)
@@ -129,6 +133,7 @@ func TestCaptureMergesWithExistingActive(t *testing.T) {
 }
 
 func TestCaptureReactivatesInactive(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 
 	// Style A runs, captures 60 of P-500.
@@ -136,9 +141,7 @@ func TestCaptureReactivatesInactive(t *testing.T) {
 		t.Fatalf("Capture A: %v", err)
 	}
 	// Switch to Style B — A's bucket goes inactive.
-	if err := DeactivateOtherStyles(db, 100, 20); err != nil {
-		t.Fatalf("DeactivateOtherStyles: %v", err)
-	}
+	testutil.MustNoErr(t, DeactivateOtherStyles(db, 100, 20), "DeactivateOtherStyles")
 	// A's bucket is now inactive with qty 60.
 	b, err := Find(db, 100, 10, "P-500")
 	if err != nil {
@@ -171,6 +174,7 @@ func TestCaptureReactivatesInactive(t *testing.T) {
 }
 
 func TestDeactivateOtherStylesLeavesKeptStyleUntouched(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
 		t.Fatalf("Capture A: %v", err)
@@ -183,9 +187,7 @@ func TestDeactivateOtherStylesLeavesKeptStyleUntouched(t *testing.T) {
 		t.Fatalf("Capture B: %v", err)
 	}
 
-	if err := DeactivateOtherStyles(db, 100, 20); err != nil {
-		t.Fatalf("DeactivateOtherStyles: %v", err)
-	}
+	testutil.MustNoErr(t, DeactivateOtherStyles(db, 100, 20), "DeactivateOtherStyles")
 
 	a, err := Find(db, 100, 10, "P-500")
 	if err != nil {
@@ -205,6 +207,7 @@ func TestDeactivateOtherStylesLeavesKeptStyleUntouched(t *testing.T) {
 }
 
 func TestDrainDecrementsBucketFirst(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
 		t.Fatalf("Capture: %v", err)
@@ -224,6 +227,7 @@ func TestDrainDecrementsBucketFirst(t *testing.T) {
 }
 
 func TestDrainCarriesRemainderWhenBucketEmpty(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	if _, err := Capture(db, 100, "", 10, "P-500", 10); err != nil {
 		t.Fatalf("Capture: %v", err)
@@ -244,6 +248,7 @@ func TestDrainCarriesRemainderWhenBucketEmpty(t *testing.T) {
 }
 
 func TestDrainWithNoBucketReturnsZero(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	drained, err := Drain(db, 100, 10, "P-500", 5)
 	if err != nil {
@@ -255,6 +260,7 @@ func TestDrainWithNoBucketReturnsZero(t *testing.T) {
 }
 
 func TestDrainZeroIsNoop(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
 		t.Fatalf("Capture: %v", err)
@@ -273,6 +279,7 @@ func TestDrainZeroIsNoop(t *testing.T) {
 }
 
 func TestListForNodeActiveFirst(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
 		t.Fatalf("Capture A: %v", err)
@@ -280,9 +287,7 @@ func TestListForNodeActiveFirst(t *testing.T) {
 	// DeactivateOtherStyles: leaves no active rows for style 10 — but we
 	// simulate a stranded bucket by flipping state directly then starting
 	// a new active style.
-	if err := DeactivateOtherStyles(db, 100, 20); err != nil {
-		t.Fatalf("Deactivate: %v", err)
-	}
+	testutil.MustNoErr(t, DeactivateOtherStyles(db, 100, 20), "Deactivate")
 	if _, err := Capture(db, 100, "", 20, "P-600", 40); err != nil {
 		t.Fatalf("Capture B: %v", err)
 	}
@@ -303,6 +308,7 @@ func TestListForNodeActiveFirst(t *testing.T) {
 }
 
 func TestListForPair(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	if _, err := Capture(db, 100, "pair-1", 10, "P-500", 60); err != nil {
 		t.Fatalf("Capture node A: %v", err)
@@ -321,6 +327,7 @@ func TestListForPair(t *testing.T) {
 }
 
 func TestListForPairEmptyKey(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	list, err := ListForPair(db, "")
 	if err != nil {
@@ -332,6 +339,7 @@ func TestListForPairEmptyKey(t *testing.T) {
 }
 
 func TestUniqueActivePerNodeStylePart(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	// Two direct inserts of "active" for the same (node, style, part)
 	// must be rejected by the unique index — Capture always merges so
@@ -350,6 +358,7 @@ func TestUniqueActivePerNodeStylePart(t *testing.T) {
 }
 
 func TestDeactivateDeletesZeroQtyRows(t *testing.T) {
+	t.Parallel()
 	db := openTestDB(t)
 	// Manually seed a zero-qty active row (wouldn't normally exist, but
 	// we want to confirm the cleanup happens).
@@ -358,9 +367,7 @@ func TestDeactivateDeletesZeroQtyRows(t *testing.T) {
 		VALUES (100, '', 10, 'P-500', 0, 'active')`); err != nil {
 		t.Fatalf("seed zero row: %v", err)
 	}
-	if err := DeactivateOtherStyles(db, 100, 20); err != nil {
-		t.Fatalf("Deactivate: %v", err)
-	}
+	testutil.MustNoErr(t, DeactivateOtherStyles(db, 100, 20), "Deactivate")
 	var count int
 	db.QueryRow(`SELECT COUNT(*) FROM node_lineside_bucket`).Scan(&count)
 	if count != 0 {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/store/nodes"
 )
 
@@ -32,6 +33,7 @@ type goldenScenario struct {
 }
 
 func TestGolden_RetrieveAlgorithms(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 
 	scenarios := []struct {
@@ -216,9 +218,7 @@ func TestGolden_RetrieveAlgorithms(t *testing.T) {
 
 	if *updateFlag {
 		data, _ := json.MarshalIndent(results, "", "  ")
-		if err := os.WriteFile(goldenPath, data, 0644); err != nil {
-			t.Fatalf("write golden: %v", err)
-		}
+		testutil.MustNoErr(t, os.WriteFile(goldenPath, data, 0644), "write golden")
 		t.Logf("updated %s (%d scenarios)", goldenPath, len(results))
 		return
 	}
@@ -228,9 +228,7 @@ func TestGolden_RetrieveAlgorithms(t *testing.T) {
 		t.Skipf("golden file %s not found (run with -update to create): %v", goldenPath, err)
 	}
 	var expected []goldenScenario
-	if err := json.Unmarshal(data, &expected); err != nil {
-		t.Fatalf("parse golden: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(data, &expected), "parse golden")
 
 	if len(results) != len(expected) {
 		t.Fatalf("scenario count: got %d, want %d", len(results), len(expected))

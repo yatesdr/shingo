@@ -11,6 +11,7 @@ import (
 )
 
 func TestCoverage_InsertAndListMissionEvents(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	orderID := int64(100)
 	e1 := &telemetry.Event{OrderID: orderID, VendorOrderID: "rds-100", OldState: "CREATED", NewState: "RUNNING", RobotID: "AMB-1", RobotStation: "LINE-1", BlocksJSON: "[]", ErrorsJSON: "[]", Detail: "dispatched"}
@@ -28,6 +29,7 @@ func TestCoverage_InsertAndListMissionEvents(t *testing.T) {
 }
 
 func TestCoverage_UpsertAndGetMissionTelemetry(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	created := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	completed := time.Date(2025, 1, 1, 10, 5, 0, 0, time.UTC)
@@ -50,6 +52,7 @@ func TestCoverage_UpsertAndGetMissionTelemetry(t *testing.T) {
 }
 
 func TestCoverage_ListMissionsFilter(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	times := []time.Time{time.Date(2025,1,1,10,0,0,0,time.UTC), time.Date(2025,2,1,10,0,0,0,time.UTC), time.Date(2025,3,1,10,0,0,0,time.UTC), time.Date(2025,4,1,10,0,0,0,time.UTC)}
 	rows := []*telemetry.Mission{
@@ -76,6 +79,7 @@ func TestCoverage_ListMissionsFilter(t *testing.T) {
 }
 
 func TestCoverage_GetMissionStats(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	rows := []*telemetry.Mission{
 		{OrderID:2001, StationID:"S", TerminalState:"FINISHED", DurationMS:1000, BlocksJSON:"[]", ErrorsJSON:"[]", WarningsJSON:"[]", NoticesJSON:"[]"},
@@ -97,6 +101,7 @@ func TestCoverage_GetMissionStats(t *testing.T) {
 }
 
 func TestCoverage_GetMissionStats_EmptyPopulation(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	stats, err := telemetry.GetStats(db.DB, telemetry.Filter{StationID: "NOBODY"})
 	if err != nil { t.Fatalf("GetStats (empty): %v", err) }

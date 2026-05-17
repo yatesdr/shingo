@@ -43,6 +43,7 @@ import (
 	"fmt"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 )
@@ -108,6 +109,7 @@ ANALYZE;
 `
 
 func TestExplainPlan_FindEmptyCompatible(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	if _, err := db.Exec(explainSeedSQL); err != nil {
@@ -152,9 +154,7 @@ func TestExplainPlan_FindEmptyCompatible(t *testing.T) {
 			t.Logf("--- payload=%q ---", payloadCode)
 			for rows.Next() {
 				var line string
-				if err := rows.Scan(&line); err != nil {
-					t.Fatalf("scan: %v", err)
-				}
+				testutil.MustNoErr(t, rows.Scan(&line), "scan")
 				t.Log(line)
 			}
 		})

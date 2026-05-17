@@ -37,6 +37,7 @@ func (h *countingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *countingHandler) Count() int64 { return h.count.Load() }
 
 func TestPollerStartPolls(t *testing.T) {
+	t.Parallel()
 	// A handler that always returns RUNNING so we don't trigger terminal
 	// removal — that keeps the poller busy making requests.
 	ch := &countingHandler{inner: func(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +68,7 @@ func TestPollerStartPolls(t *testing.T) {
 }
 
 func TestPollerStopHaltsPolling(t *testing.T) {
+	t.Parallel()
 	ch := &countingHandler{inner: func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-stop","state":"RUNNING","vehicle":"AMB-01"}`))
 	}}
@@ -94,11 +96,11 @@ waitLoop:
 	}
 
 	p.Stop()
-	// Allow any in-flight poll to complete (3x poll interval).
+	// KEEP: post-stop quiet window — 3× poll interval for any in-flight poll to drain.
 	time.Sleep(30 * time.Millisecond)
 	beforeQuiet := ch.Count()
 
-	// Post-stop window: 10x poll interval — no new requests should arrive.
+	// KEEP: negative assertion — 10× poll interval to prove no new requests arrive after Stop.
 	time.Sleep(100 * time.Millisecond)
 	afterQuiet := ch.Count()
 
@@ -108,6 +110,7 @@ waitLoop:
 }
 
 func TestPollerStopIdempotent(t *testing.T) {
+	t.Parallel()
 	client := NewClient("http://localhost:1", time.Second)
 	p := NewPoller(client, &mockPollerEmitter{}, &mockResolver{}, time.Minute)
 
@@ -118,6 +121,7 @@ func TestPollerStopIdempotent(t *testing.T) {
 }
 
 func TestPollerServerErrorDoesNotPanic(t *testing.T) {
+	t.Parallel()
 	ch := &countingHandler{inner: func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("fleet down"))
@@ -159,6 +163,7 @@ func TestPollerServerErrorDoesNotPanic(t *testing.T) {
 }
 
 func TestPollerResolveErrorKeepsOldState(t *testing.T) {
+	t.Parallel()
 	// Server reports RUNNING; resolver always fails. The poller should log
 	// but keep the tracked state at its initial value so the transition is
 	// retried next cycle.
@@ -184,6 +189,7 @@ func TestPollerResolveErrorKeepsOldState(t *testing.T) {
 }
 
 func TestPollerEmitsTransitionEndToEnd(t *testing.T) {
+	t.Parallel()
 	// Drives the poller through a real Start/Stop cycle with a server that
 	// flips state on the second hit. Asserts the emitter sees exactly one
 	// CREATED->RUNNING transition.
@@ -241,6 +247,7 @@ func TestPollerEmitsTransitionEndToEnd(t *testing.T) {
 }
 
 func TestPollerEmptyActiveSetIsNoOp(t *testing.T) {
+	t.Parallel()
 	// No tracked orders — poll() should still not touch the server.
 	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,6 +276,7 @@ func TestPollerEmptyActiveSetIsNoOp(t *testing.T) {
 // being the per-pickup signal. If the diff misses transitions, queued
 // orders never unblock and source slots stay stuck.
 func TestPollerEmitsBlockCompletedOnTransition(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := hits.Add(1)
@@ -330,6 +338,7 @@ func TestPollerEmitsBlockCompletedOnTransition(t *testing.T) {
 // state would otherwise flood the engine handler with duplicates and
 // log lines on every cycle.
 func TestPollerBlockCompletedFiresOnce(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Always-FINISHED block, order still RUNNING.
 		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-once","state":"RUNNING","vehicle":"AMB-9","blocks":[
@@ -362,6 +371,7 @@ func TestPollerBlockCompletedFiresOnce(t *testing.T) {
 // per-block tracking too. Without this, blockStates would grow
 // unboundedly across the lifetime of the process.
 func TestPollerBlockStateClearedOnTerminal(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := hits.Add(1)
@@ -394,6 +404,7 @@ func TestPollerBlockStateClearedOnTerminal(t *testing.T) {
 }
 
 func TestPollerConcurrentTrackDuringPoll(t *testing.T) {
+	t.Parallel()
 	// Hammers Track/Untrack from a goroutine while poll() runs to ensure
 	// the mutex discipline in poll() doesn't deadlock or race.
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +439,7 @@ func TestPollerConcurrentTrackDuringPoll(t *testing.T) {
 // TestPollerGraceRecovery verifies RUNNING -> FAILED -> RUNNING within grace
 // results in a recovery transition and the order stays tracked.
 func TestPollerGraceRecovery(t *testing.T) {
+	t.Parallel()
 	callCount := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
@@ -481,6 +493,7 @@ func TestPollerGraceRecovery(t *testing.T) {
 // TestPollerGraceExpiry verifies RUNNING -> FAILED + grace expiry emits GraceExpired
 // and untracks the order.
 func TestPollerGraceExpiry(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","id":"rds-exp","state":"FAILED","vehicle":"AMB-01"}`))
 	}))
@@ -498,7 +511,7 @@ func TestPollerGraceExpiry(t *testing.T) {
 		t.Errorf("ActiveCount after FAILED = %d, want 1 (grace period)", p.ActiveCount())
 	}
 
-	// Wait for grace to expire
+	// KEEP: timing test — verifying grace-period expiry.
 	time.Sleep(10 * time.Millisecond)
 
 	// Second poll: still FAILED, grace should have expired

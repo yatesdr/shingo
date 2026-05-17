@@ -36,6 +36,14 @@ jobs:
         working-directory: protocol
         run: go test -v -coverprofile=build/coverage ./...
 
+      - name: Test (race)
+        working-directory: protocol
+        # Warning-only for the first 30 days (until 2026-06-16). Race
+        # findings surface latent production data races. Promote to
+        # gating once baseline is known clean. Tracked in Phase 7.
+        continue-on-error: true
+        run: go test -race -count=1 ./...
+
       - name: Coverage report
         working-directory: protocol
         run: go tool cover -func=build/coverage

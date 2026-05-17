@@ -6,28 +6,26 @@ import (
 	"shingocore/store/payloads"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 )
 
 // TestCreate_AssignsID asserts payloads.Create inserts a row and populates the ID.
 func TestCreate_AssignsID(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "PC-100", Description: "Coverage payload", UOPCapacity: 25}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	if p.ID == 0 {
 		t.Errorf("payloads.Create: ID should be assigned, got 0")
 	}
 
 	// Confirm it's in the DB.
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM payloads WHERE id=$1`, p.ID).Scan(&count); err != nil {
-		t.Fatalf("count: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM payloads WHERE id=$1`, p.ID).Scan(&count), "count")
 	if count != 1 {
 		t.Errorf("expected 1 row, got %d", count)
 	}
@@ -35,13 +33,12 @@ func TestCreate_AssignsID(t *testing.T) {
 
 // TestCreate_DuplicateCodeErrors ensures the unique-code constraint surfaces.
 func TestCreate_DuplicateCodeErrors(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	a := &payloads.Payload{Code: "DUP-1", Description: "first", UOPCapacity: 1}
-	if err := payloads.Create(db, a); err != nil {
-		t.Fatalf("create first: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, a), "create first")
 	b := &payloads.Payload{Code: "DUP-1", Description: "second", UOPCapacity: 2}
 	if err := payloads.Create(db, b); err == nil {
 		t.Errorf("expected error inserting duplicate code, got nil")
@@ -50,13 +47,12 @@ func TestCreate_DuplicateCodeErrors(t *testing.T) {
 
 // TestGet_RoundTrip confirms payloads.Get returns the exact fields written via payloads.Create.
 func TestGet_RoundTrip(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "GR-1", Description: "round trip", UOPCapacity: 42}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
 	got, err := payloads.Get(db, p.ID)
 	if err != nil {
@@ -84,6 +80,7 @@ func TestGet_RoundTrip(t *testing.T) {
 
 // TestGet_MissingErrors confirms payloads.Get returns an error for unknown IDs.
 func TestGet_MissingErrors(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
@@ -94,13 +91,12 @@ func TestGet_MissingErrors(t *testing.T) {
 
 // TestGetByCode_RoundTrip confirms lookup by unique code matches payloads.Create output.
 func TestGetByCode_RoundTrip(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "BC-1", Description: "by code", UOPCapacity: 8}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
 	got, err := payloads.GetByCode(db, "BC-1")
 	if err != nil {
@@ -116,6 +112,7 @@ func TestGetByCode_RoundTrip(t *testing.T) {
 
 // TestGetByCode_MissingErrors confirms payloads.GetByCode errors on a missing code.
 func TestGetByCode_MissingErrors(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
@@ -126,6 +123,7 @@ func TestGetByCode_MissingErrors(t *testing.T) {
 
 // TestList_OrderedByCode asserts payloads.List returns all payloads ordered by code.
 func TestList_OrderedByCode(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
@@ -155,6 +153,7 @@ func TestList_OrderedByCode(t *testing.T) {
 
 // TestList_Empty confirms payloads.List returns an empty slice on a fresh DB.
 func TestList_Empty(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
@@ -169,20 +168,17 @@ func TestList_Empty(t *testing.T) {
 
 // TestUpdate_PersistsFields updates every column and re-reads to verify.
 func TestUpdate_PersistsFields(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "UP-1", Description: "orig", UOPCapacity: 5}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
 	p.Code = "UP-1-v2"
 	p.Description = "updated"
 	p.UOPCapacity = 99
-	if err := payloads.Update(db, p); err != nil {
-		t.Fatalf("payloads.Update: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Update(db, p), "payloads.Update")
 
 	got, err := payloads.Get(db, p.ID)
 	if err != nil {
@@ -204,17 +200,14 @@ func TestUpdate_PersistsFields(t *testing.T) {
 
 // TestDelete_RemovesRow confirms payloads.Delete strips the row and payloads.Get then errors.
 func TestDelete_RemovesRow(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "DL-1", Description: "del", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
-	if err := payloads.Delete(db, p.ID); err != nil {
-		t.Fatalf("payloads.Delete: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Delete(db, p.ID), "payloads.Delete")
 
 	if _, err := payloads.Get(db, p.ID); err == nil {
 		t.Errorf("expected error after delete, got nil")
@@ -228,43 +221,30 @@ func TestDelete_RemovesRow(t *testing.T) {
 
 // TestSetBinTypes_ReplacesAssociations asserts the junction is rewritten.
 func TestSetBinTypes_ReplacesAssociations(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "SBT-1", UOPCapacity: 10}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create payload: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create payload")
 
 	bt1 := &domain.BinType{Code: "BT-A", Description: "type A"}
-	if err := sdb.CreateBinType(bt1); err != nil {
-		t.Fatalf("create bt1: %v", err)
-	}
+	testutil.MustNoErr(t, sdb.CreateBinType(bt1), "create bt1")
 	bt2 := &domain.BinType{Code: "BT-B", Description: "type B"}
-	if err := sdb.CreateBinType(bt2); err != nil {
-		t.Fatalf("create bt2: %v", err)
-	}
+	testutil.MustNoErr(t, sdb.CreateBinType(bt2), "create bt2")
 	bt3 := &domain.BinType{Code: "BT-C", Description: "type C"}
-	if err := sdb.CreateBinType(bt3); err != nil {
-		t.Fatalf("create bt3: %v", err)
-	}
+	testutil.MustNoErr(t, sdb.CreateBinType(bt3), "create bt3")
 
 	// Initial set: two types.
-	if err := payloads.SetBinTypes(db, p.ID, []int64{bt1.ID, bt2.ID}); err != nil {
-		t.Fatalf("payloads.SetBinTypes initial: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.SetBinTypes(db, p.ID, []int64{bt1.ID, bt2.ID}), "payloads.SetBinTypes initial")
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM payload_bin_types WHERE payload_id=$1`, p.ID).Scan(&count); err != nil {
-		t.Fatalf("count initial: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM payload_bin_types WHERE payload_id=$1`, p.ID).Scan(&count), "count initial")
 	if count != 2 {
 		t.Errorf("count after initial = %d, want 2", count)
 	}
 
 	// Replace with a different single type.
-	if err := payloads.SetBinTypes(db, p.ID, []int64{bt3.ID}); err != nil {
-		t.Fatalf("payloads.SetBinTypes replace: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.SetBinTypes(db, p.ID, []int64{bt3.ID}), "payloads.SetBinTypes replace")
 	rows, err := db.Query(`SELECT bin_type_id FROM payload_bin_types WHERE payload_id=$1`, p.ID)
 	if err != nil {
 		t.Fatalf("query after replace: %v", err)
@@ -273,9 +253,7 @@ func TestSetBinTypes_ReplacesAssociations(t *testing.T) {
 	var got []int64
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
-			t.Fatalf("scan: %v", err)
-		}
+		testutil.MustNoErr(t, rows.Scan(&id), "scan")
 		got = append(got, id)
 	}
 	if len(got) != 1 || got[0] != bt3.ID {
@@ -283,12 +261,8 @@ func TestSetBinTypes_ReplacesAssociations(t *testing.T) {
 	}
 
 	// Clear with nil.
-	if err := payloads.SetBinTypes(db, p.ID, nil); err != nil {
-		t.Fatalf("payloads.SetBinTypes clear: %v", err)
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM payload_bin_types WHERE payload_id=$1`, p.ID).Scan(&count); err != nil {
-		t.Fatalf("count after clear: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.SetBinTypes(db, p.ID, nil), "payloads.SetBinTypes clear")
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM payload_bin_types WHERE payload_id=$1`, p.ID).Scan(&count), "count after clear")
 	if count != 0 {
 		t.Errorf("count after clear = %d, want 0", count)
 	}
@@ -297,22 +271,17 @@ func TestSetBinTypes_ReplacesAssociations(t *testing.T) {
 // TestSetBinTypes_RollbackOnBadFK verifies the transaction reverts on an
 // invalid bin_type_id so the prior associations survive.
 func TestSetBinTypes_RollbackOnBadFK(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "RB-1", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	bt := &domain.BinType{Code: "RB-BT"}
-	if err := sdb.CreateBinType(bt); err != nil {
-		t.Fatalf("CreateBinType: %v", err)
-	}
+	testutil.MustNoErr(t, sdb.CreateBinType(bt), "CreateBinType")
 
 	// Seed one valid association.
-	if err := payloads.SetBinTypes(db, p.ID, []int64{bt.ID}); err != nil {
-		t.Fatalf("seed payloads.SetBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.SetBinTypes(db, p.ID, []int64{bt.ID}), "seed payloads.SetBinTypes")
 
 	// Attempt with a bogus bin_type_id — should fail and rollback.
 	if err := payloads.SetBinTypes(db, p.ID, []int64{bt.ID, 999999}); err == nil {
@@ -320,9 +289,7 @@ func TestSetBinTypes_RollbackOnBadFK(t *testing.T) {
 	}
 
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM payload_bin_types WHERE payload_id=$1`, p.ID).Scan(&count); err != nil {
-		t.Fatalf("count: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM payload_bin_types WHERE payload_id=$1`, p.ID).Scan(&count), "count")
 	// Either the transaction rolled back (count=1, desired) OR the DELETE
 	// committed before the failure (count=0). payloads.SetBinTypes uses tx.Rollback
 	// via defer after an errored INSERT, so count should remain 1.
@@ -333,6 +300,7 @@ func TestSetBinTypes_RollbackOnBadFK(t *testing.T) {
 
 // TestScanPayloads_EmptyRows uses payloads.List against an empty table to exercise payloads.ScanPayloads' no-row path.
 func TestScanPayloads_EmptyRows(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
@@ -349,26 +317,21 @@ func TestScanPayloads_EmptyRows(t *testing.T) {
 
 // TestCreateItem_AssignsID inserts a manifest item and confirms the ID is populated.
 func TestCreateItem_AssignsID(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "MI-1", UOPCapacity: 10}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create payload: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create payload")
 
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "PN-X", Quantity: 3, Description: "widget"}
-	if err := payloads.CreateItem(db, item); err != nil {
-		t.Fatalf("payloads.CreateItem: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
 	if item.ID == 0 {
 		t.Errorf("payloads.CreateItem: ID should be assigned")
 	}
 
 	var cnt int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM payload_manifest WHERE id=$1`, item.ID).Scan(&cnt); err != nil {
-		t.Fatalf("count: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM payload_manifest WHERE id=$1`, item.ID).Scan(&cnt), "count")
 	if cnt != 1 {
 		t.Errorf("rows for id %d = %d, want 1", item.ID, cnt)
 	}
@@ -376,13 +339,12 @@ func TestCreateItem_AssignsID(t *testing.T) {
 
 // TestListManifest_OrderedByID verifies payloads.ListManifest returns items in insertion order.
 func TestListManifest_OrderedByID(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "ML-1", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
 	parts := []string{"PN-A", "PN-B", "PN-C"}
 	for i, pn := range parts {
@@ -417,13 +379,12 @@ func TestListManifest_OrderedByID(t *testing.T) {
 
 // TestListManifest_EmptyPayload asserts listing for an empty payload returns no rows.
 func TestListManifest_EmptyPayload(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "ME-1", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
 	list, err := payloads.ListManifest(db, p.ID)
 	if err != nil {
@@ -436,21 +397,16 @@ func TestListManifest_EmptyPayload(t *testing.T) {
 
 // TestUpdateItem_PersistsChanges updates a manifest line and re-reads via payloads.List.
 func TestUpdateItem_PersistsChanges(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "MU-1", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", Quantity: 1, Description: "orig"}
-	if err := payloads.CreateItem(db, item); err != nil {
-		t.Fatalf("payloads.CreateItem: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
 
-	if err := payloads.UpdateItem(db, item.ID, "NEW", 77); err != nil {
-		t.Fatalf("payloads.UpdateItem: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.UpdateItem(db, item.ID, "NEW", 77), "payloads.UpdateItem")
 
 	list, err := payloads.ListManifest(db, p.ID)
 	if err != nil {
@@ -473,25 +429,18 @@ func TestUpdateItem_PersistsChanges(t *testing.T) {
 
 // TestDeleteItem_RemovesRow deletes a manifest line and confirms payloads.List no longer returns it.
 func TestDeleteItem_RemovesRow(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "MD-1", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	keep := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "KEEP", Quantity: 1}
 	gone := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "GONE", Quantity: 2}
-	if err := payloads.CreateItem(db, keep); err != nil {
-		t.Fatalf("payloads.CreateItem keep: %v", err)
-	}
-	if err := payloads.CreateItem(db, gone); err != nil {
-		t.Fatalf("payloads.CreateItem gone: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.CreateItem(db, keep), "payloads.CreateItem keep")
+	testutil.MustNoErr(t, payloads.CreateItem(db, gone), "payloads.CreateItem gone")
 
-	if err := payloads.DeleteItem(db, gone.ID); err != nil {
-		t.Fatalf("payloads.DeleteItem: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.DeleteItem(db, gone.ID), "payloads.DeleteItem")
 
 	list, err := payloads.ListManifest(db, p.ID)
 	if err != nil {
@@ -512,32 +461,25 @@ func TestDeleteItem_RemovesRow(t *testing.T) {
 
 // TestReplaceManifest_OverwritesAllAndSetsIDs covers the happy path.
 func TestReplaceManifest_OverwritesAllAndSetsIDs(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "MR-1", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
 	// Seed two existing items that should be replaced.
 	seed1 := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED-1", Quantity: 1}
 	seed2 := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED-2", Quantity: 2}
-	if err := payloads.CreateItem(db, seed1); err != nil {
-		t.Fatalf("seed1: %v", err)
-	}
-	if err := payloads.CreateItem(db, seed2); err != nil {
-		t.Fatalf("seed2: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.CreateItem(db, seed1), "seed1")
+	testutil.MustNoErr(t, payloads.CreateItem(db, seed2), "seed2")
 
 	replacements := []*payloads.ManifestItem{
 		{PartNumber: "R-1", Quantity: 10, Description: "rep 1"},
 		{PartNumber: "R-2", Quantity: 20, Description: "rep 2"},
 		{PartNumber: "R-3", Quantity: 30, Description: "rep 3"},
 	}
-	if err := payloads.ReplaceManifest(db, p.ID, replacements); err != nil {
-		t.Fatalf("payloads.ReplaceManifest: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, replacements), "payloads.ReplaceManifest")
 
 	// Every replacement should have an ID and PayloadID set.
 	for i, r := range replacements {
@@ -571,21 +513,16 @@ func TestReplaceManifest_OverwritesAllAndSetsIDs(t *testing.T) {
 
 // TestReplaceManifest_EmptyClears wipes the manifest with a nil slice.
 func TestReplaceManifest_EmptyClears(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "MR-EMPTY", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "A", Quantity: 1}
-	if err := payloads.CreateItem(db, item); err != nil {
-		t.Fatalf("payloads.CreateItem: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.CreateItem(db, item), "payloads.CreateItem")
 
-	if err := payloads.ReplaceManifest(db, p.ID, nil); err != nil {
-		t.Fatalf("payloads.ReplaceManifest nil: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, nil), "payloads.ReplaceManifest nil")
 	list, err := payloads.ListManifest(db, p.ID)
 	if err != nil {
 		t.Fatalf("payloads.ListManifest: %v", err)
@@ -595,12 +532,8 @@ func TestReplaceManifest_EmptyClears(t *testing.T) {
 	}
 
 	// Also test explicit empty slice.
-	if err := payloads.CreateItem(db, &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "B", Quantity: 1}); err != nil {
-		t.Fatalf("reseed: %v", err)
-	}
-	if err := payloads.ReplaceManifest(db, p.ID, []*payloads.ManifestItem{}); err != nil {
-		t.Fatalf("payloads.ReplaceManifest empty: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.CreateItem(db, &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "B", Quantity: 1}), "reseed")
+	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p.ID, []*payloads.ManifestItem{}), "payloads.ReplaceManifest empty")
 	list2, _ := payloads.ListManifest(db, p.ID)
 	if len(list2) != 0 {
 		t.Errorf("expected empty manifest after empty replace, got %d rows", len(list2))
@@ -609,27 +542,20 @@ func TestReplaceManifest_EmptyClears(t *testing.T) {
 
 // TestReplaceManifest_ScopedByPayload ensures payloads.ReplaceManifest only touches its own payload_id.
 func TestReplaceManifest_ScopedByPayload(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p1 := &payloads.Payload{Code: "MR-P1", UOPCapacity: 1}
 	p2 := &payloads.Payload{Code: "MR-P2", UOPCapacity: 1}
-	if err := payloads.Create(db, p1); err != nil {
-		t.Fatalf("payloads.Create p1: %v", err)
-	}
-	if err := payloads.Create(db, p2); err != nil {
-		t.Fatalf("payloads.Create p2: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p1), "payloads.Create p1")
+	testutil.MustNoErr(t, payloads.Create(db, p2), "payloads.Create p2")
 
 	// Seed a manifest on p2 that must NOT be touched.
 	untouched := &payloads.ManifestItem{PayloadID: p2.ID, PartNumber: "UNTOUCHED", Quantity: 7}
-	if err := payloads.CreateItem(db, untouched); err != nil {
-		t.Fatalf("payloads.CreateItem untouched: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.CreateItem(db, untouched), "payloads.CreateItem untouched")
 
-	if err := payloads.ReplaceManifest(db, p1.ID, []*payloads.ManifestItem{{PartNumber: "P1-ONLY", Quantity: 1}}); err != nil {
-		t.Fatalf("payloads.ReplaceManifest: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.ReplaceManifest(db, p1.ID, []*payloads.ManifestItem{{PartNumber: "P1-ONLY", Quantity: 1}}), "payloads.ReplaceManifest")
 
 	list2, err := payloads.ListManifest(db, p2.ID)
 	if err != nil {
@@ -649,17 +575,14 @@ func TestReplaceManifest_ScopedByPayload(t *testing.T) {
 // NOTE: payloads.ReplaceManifest uses `defer tx.Rollback()` and returns on INSERT error without Commit.
 // If the schema enforces a NOT NULL constraint on part_number or quantity, we can exercise the path.
 func TestReplaceManifest_RollbackOnError(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "MR-RB", UOPCapacity: 1}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 	seed := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "SEED", Quantity: 1}
-	if err := payloads.CreateItem(db, seed); err != nil {
-		t.Fatalf("payloads.CreateItem seed: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.CreateItem(db, seed), "payloads.CreateItem seed")
 
 	// Force an error by using a bogus payload_id inside the items slice
 	// (payloads.ReplaceManifest overrides PayloadID from the argument, so we need
@@ -692,13 +615,12 @@ func TestReplaceManifest_RollbackOnError(t *testing.T) {
 // TestScanPayload_DirectRow exercises payloads.ScanPayload against a hand-rolled row to
 // catch column-order changes in payloads.SelectCols.
 func TestScanPayload_DirectRow(t *testing.T) {
+	t.Parallel()
 	sdb := testdb.Open(t)
 	db := sdb.DB
 
 	p := &payloads.Payload{Code: "SP-1", Description: "scan", UOPCapacity: 3}
-	if err := payloads.Create(db, p); err != nil {
-		t.Fatalf("payloads.Create: %v", err)
-	}
+	testutil.MustNoErr(t, payloads.Create(db, p), "payloads.Create")
 
 	row := db.QueryRow(`SELECT `+payloads.SelectCols+` FROM payloads WHERE id=$1`, p.ID)
 	got, err := payloads.ScanPayload(row)

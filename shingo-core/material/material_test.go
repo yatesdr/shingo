@@ -30,6 +30,7 @@ func addNode(f *fakeStore, id int64, name string, synthetic bool, parentID int64
 // ---------- FindCMSBoundary ----------------------------------------
 
 func TestFindCMSBoundary_ParentlessSyntheticDefaultOn(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "root", true, 0) // synthetic, no parent, no prop → enabled
 
@@ -43,6 +44,7 @@ func TestFindCMSBoundary_ParentlessSyntheticDefaultOn(t *testing.T) {
 }
 
 func TestFindCMSBoundary_ParentlessSyntheticExplicitlyOff(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "root", true, 0)
 	f.setProp(1, "log_cms_transactions", "false")
@@ -57,6 +59,7 @@ func TestFindCMSBoundary_ParentlessSyntheticExplicitlyOff(t *testing.T) {
 }
 
 func TestFindCMSBoundary_ChildSyntheticDefaultOff(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "root", true, 0)
 	f.setProp(1, "log_cms_transactions", "false") // disable root so walk keeps going
@@ -72,6 +75,7 @@ func TestFindCMSBoundary_ChildSyntheticDefaultOff(t *testing.T) {
 }
 
 func TestFindCMSBoundary_ChildSyntheticExplicitlyOn(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "root", true, 0)
 	addNode(f, 2, "child", true, 1)
@@ -87,6 +91,7 @@ func TestFindCMSBoundary_ChildSyntheticExplicitlyOn(t *testing.T) {
 }
 
 func TestFindCMSBoundary_WalksToRootReturnsRoot(t *testing.T) {
+	t.Parallel()
 	// Non-synthetic leaf, non-synthetic middle, synthetic root: walk
 	// should climb past both non-syntheticals and stop at the root.
 	f := newFakeStore()
@@ -104,6 +109,7 @@ func TestFindCMSBoundary_WalksToRootReturnsRoot(t *testing.T) {
 }
 
 func TestFindCMSBoundary_NoSyntheticAncestor(t *testing.T) {
+	t.Parallel()
 	// Walk bottoms out at a non-synthetic root → (nil, nil).
 	f := newFakeStore()
 	addNode(f, 1, "root", false, 0)
@@ -119,6 +125,7 @@ func TestFindCMSBoundary_NoSyntheticAncestor(t *testing.T) {
 }
 
 func TestFindCMSBoundary_CycleReturnsError(t *testing.T) {
+	t.Parallel()
 	// Two non-synthetic nodes that point at each other. FindCMSBoundary
 	// should detect the revisit and return (nil, err) so the engine
 	// wrapper can log the anomaly without returning a bogus node.
@@ -145,6 +152,7 @@ func setManifest(b *bins.Bin, entries []bins.ManifestEntry) {
 }
 
 func TestBuildMovement_SameBoundaryNoTxns(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "boundary", true, 0) // single synthetic root
 
@@ -164,6 +172,7 @@ func TestBuildMovement_SameBoundaryNoTxns(t *testing.T) {
 }
 
 func TestBuildMovement_CrossBoundaryProducesPair(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "src", true, 0)
 	addNode(f, 2, "dst", true, 0)
@@ -203,6 +212,7 @@ func TestBuildMovement_CrossBoundaryProducesPair(t *testing.T) {
 }
 
 func TestBuildMovement_EmptyManifestNil(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "src", true, 0)
 	addNode(f, 2, "dst", true, 0)
@@ -224,6 +234,7 @@ func TestBuildMovement_EmptyManifestNil(t *testing.T) {
 // ---------- BuildCorrectionTransactions -----------------------------
 
 func TestBuildCorrection_DiffsProduceSignedDeltas(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "boundary", true, 0)
 	f.totals[1] = map[string]int64{"C1": 10, "C2": 4}
@@ -263,6 +274,7 @@ func TestBuildCorrection_DiffsProduceSignedDeltas(t *testing.T) {
 }
 
 func TestBuildCorrection_NoChangesNil(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	addNode(f, 1, "boundary", true, 0)
 
@@ -280,6 +292,7 @@ func TestBuildCorrection_NoChangesNil(t *testing.T) {
 }
 
 func TestBuildCorrection_NoBoundaryUsesNodeItself(t *testing.T) {
+	t.Parallel()
 	// No synthetic ancestors → the correction is logged against
 	// nodeID / node.Name rather than silently dropped.
 	f := newFakeStore()
@@ -307,6 +320,7 @@ func TestBuildCorrection_NoBoundaryUsesNodeItself(t *testing.T) {
 // ---------- txnType helper -----------------------------------------
 
 func TestTxnType(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   int64
 		want string

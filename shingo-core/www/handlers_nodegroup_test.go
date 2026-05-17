@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/engine"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -104,9 +105,7 @@ func setupReparentFixture(t *testing.T, db *store.DB, prefix string) *reparentFi
 		ParentID: &srcID,
 		Enabled:  true,
 	}
-	if err := db.CreateNode(child); err != nil {
-		t.Fatalf("create direct child: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(child), "create direct child")
 	srcGrp, err := db.GetNode(srcID)
 	if err != nil {
 		t.Fatalf("get src group: %v", err)
@@ -131,9 +130,7 @@ func createActiveOrderRefSource(t *testing.T, db *store.DB, uuid, station, sourc
 		SourceNode:   sourceName,
 		DeliveryNode: "LINE-TGT",
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	return o
 }
 
@@ -141,9 +138,7 @@ func createActiveOrderRefSource(t *testing.T, db *store.DB, uuid, station, sourc
 func postJSON(t *testing.T, handler http.HandlerFunc, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	if err := json.NewEncoder(buf).Encode(body); err != nil {
-		t.Fatalf("encode body: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewEncoder(buf).Encode(body), "encode body")
 	req := httptest.NewRequest(http.MethodPost, path, buf)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -225,6 +220,7 @@ func requireOutboxSubject(t *testing.T, db *store.DB, subject string) {
 // --- apiCreateNodeGroup -----------------------------------------------------
 
 func TestApiCreateNodeGroup_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	snap := captureNodeUpdated(t, h.engine.EventBus())
 
@@ -238,9 +234,7 @@ func TestApiCreateNodeGroup_HappyPath(t *testing.T) {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode response")
 	if resp.ID == 0 || resp.Name != "GRP-CREATE-OK" {
 		t.Errorf("response: got %+v", resp)
 	}
@@ -266,6 +260,7 @@ func TestApiCreateNodeGroup_HappyPath(t *testing.T) {
 }
 
 func TestApiCreateNodeGroup_MissingName(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postJSON(t, h.apiCreateNodeGroup, "/api/node-group/create",
 		map[string]any{"name": ""})
@@ -277,6 +272,7 @@ func TestApiCreateNodeGroup_MissingName(t *testing.T) {
 // --- apiAddLane -------------------------------------------------------------
 
 func TestApiAddLane_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	snap := captureNodeUpdated(t, h.engine.EventBus())
 
@@ -294,9 +290,7 @@ func TestApiAddLane_HappyPath(t *testing.T) {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode response")
 	if resp.ID == 0 {
 		t.Fatalf("lane ID missing in response: %+v", resp)
 	}
@@ -325,6 +319,7 @@ func TestApiAddLane_HappyPath(t *testing.T) {
 }
 
 func TestApiAddLane_MissingFields(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postJSON(t, h.apiAddLane, "/api/node-group/add-lane",
 		map[string]any{"group_id": 0, "name": ""})
@@ -336,6 +331,7 @@ func TestApiAddLane_MissingFields(t *testing.T) {
 // --- apiReorderLaneSlots ----------------------------------------------------
 
 func TestApiReorderLaneSlots_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	fx := setupNodeGroupFixture(t, db, "REORDER", 3)
 	snap := captureNodeUpdated(t, h.engine.EventBus())
@@ -373,6 +369,7 @@ func TestApiReorderLaneSlots_HappyPath(t *testing.T) {
 }
 
 func TestApiReorderLaneSlots_NotALane(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	fx := setupNodeGroupFixture(t, db, "NOLANE", 1)
 
@@ -391,6 +388,7 @@ func TestApiReorderLaneSlots_NotALane(t *testing.T) {
 // physical direct-child-of-NGRP; synthetic nodes (LANE, NGRP) are rejected
 // earlier by the synthetic guard and never reach the block check.
 func TestApiReparentNode_NonForceBlocked(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	fx := setupReparentFixture(t, db, "RP-BLOCK")
 
@@ -410,9 +408,7 @@ func TestApiReparentNode_NonForceBlocked(t *testing.T) {
 		Error    string  `json:"error"`
 		OrderIDs []int64 `json:"order_ids"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if len(resp.OrderIDs) != 1 || resp.OrderIDs[0] != blockingOrder.ID {
 		t.Errorf("order_ids: got %v, want [%d]", resp.OrderIDs, blockingOrder.ID)
 	}
@@ -437,6 +433,7 @@ func TestApiReparentNode_NonForceBlocked(t *testing.T) {
 // the engine's notification gate requires to route the failure to Edge. The
 // reparent then succeeds.
 func TestApiReparentNode_ForceFailsBlockedOrdersEmitsEvents(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	fx := setupReparentFixture(t, db, "RP-FORCE")
 
@@ -502,6 +499,7 @@ func TestApiReparentNode_ForceFailsBlockedOrdersEmitsEvents(t *testing.T) {
 // the old parent is an NGRP the handler enqueues a protocol.SubjectNodeStructureChanged
 // message via SendDataToEdge → EnqueueOutbox.
 func TestApiReparentNode_HappyPathEmitsStructureChanged(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	fx := setupReparentFixture(t, db, "RP-HAPPY")
 
@@ -529,6 +527,7 @@ func TestApiReparentNode_HappyPathEmitsStructureChanged(t *testing.T) {
 // --- apiDeleteNodeGroup -----------------------------------------------------
 
 func TestApiDeleteNodeGroup_NonForceBlocked(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	src := setupNodeGroupFixture(t, db, "DEL-BLOCK", 0)
 
@@ -544,9 +543,7 @@ func TestApiDeleteNodeGroup_NonForceBlocked(t *testing.T) {
 		Error    string  `json:"error"`
 		OrderIDs []int64 `json:"order_ids"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if len(resp.OrderIDs) != 1 || resp.OrderIDs[0] != blockingOrder.ID {
 		t.Errorf("order_ids: got %v, want [%d]", resp.OrderIDs, blockingOrder.ID)
 	}
@@ -566,6 +563,7 @@ func TestApiDeleteNodeGroup_NonForceBlocked(t *testing.T) {
 // populated EventOrderFailed) BEFORE DeleteNodeGroup executes, and the NGRP
 // deletion emits a SubjectNodeStructureChanged outbox message.
 func TestApiDeleteNodeGroup_ForceFailsBlockedOrdersThenDeletes(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	src := setupNodeGroupFixture(t, db, "DEL-FORCE", 0)
 

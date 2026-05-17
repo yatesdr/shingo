@@ -5,6 +5,7 @@ package store
 import "testing"
 
 func TestRecordInboundMessage(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	first, err := db.RecordInboundMessage("msg-1", "order.redirect", "edge.1")

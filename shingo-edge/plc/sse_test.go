@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingoedge/config"
 )
 
@@ -71,17 +72,16 @@ func (e *mockEmitter) getEvents() []string {
 	return cp
 }
 
-func (e *mockEmitter) waitFor(event string, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+func (e *mockEmitter) waitFor(t *testing.T, event string, timeout time.Duration) {
+	t.Helper()
+	testutil.EventuallyWithInterval(t, 10*time.Millisecond, timeout, func() bool {
 		for _, ev := range e.getEvents() {
 			if ev == event {
 				return true
 			}
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return false
+		return false
+	})
 }
 
 // setTestURL parses a httptest.Server URL and sets cfg.WarLink.Host/Port.
@@ -111,20 +111,8 @@ func newTestServer(restPLCs string, sseHandler func(w http.ResponseWriter, r *ht
 	}))
 }
 
-// eventually polls fn at 2ms intervals until it returns true or timeout.
-func eventually(t *testing.T, timeout time.Duration, fn func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if fn() {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("condition not met within %v", timeout)
-}
-
 func TestSSE_RESTBootstrapAndValueChange(t *testing.T) {
+	t.Parallel()
 	ts := newTestServer(
 		`[{"name":"PLC1","status":"Connected","product_name":"1756-L83E"}]`,
 		func(w http.ResponseWriter, r *http.Request) {
@@ -132,11 +120,13 @@ func TestSSE_RESTBootstrapAndValueChange(t *testing.T) {
 			flusher := w.(http.Flusher)
 
 			// Wait for REST bootstrap to complete, then send value-change
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(100 * time.Millisecond)
 
 			fmt.Fprintf(w, "event: value-change\ndata: {\"plc\":\"PLC1\",\"tag\":\"Counter1\",\"value\":42,\"type\":\"DINT\"}\n\n")
 			flusher.Flush()
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(200 * time.Millisecond)
 		},
 	)
@@ -151,16 +141,12 @@ func TestSSE_RESTBootstrapAndValueChange(t *testing.T) {
 
 	m.StartWarLinkPoller()
 
-	if !emitter.waitFor("warlink_connected", 2*time.Second) {
-		t.Fatal("timed out waiting for warlink_connected")
-	}
-	if !emitter.waitFor("plc_connected:PLC1", 2*time.Second) {
-		t.Fatal("timed out waiting for plc_connected:PLC1")
-	}
+	emitter.waitFor(t, "warlink_connected", 2*time.Second)
+	emitter.waitFor(t, "plc_connected:PLC1", 2*time.Second)
 
 	// Wait for value-change to be processed
 	// Poll until the value-change event is reflected in ReadTag.
-	eventually(t, 2*time.Second, func() bool {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		val, err := m.ReadTag("PLC1", "Counter1")
 		if err != nil {
 			return false
@@ -182,18 +168,21 @@ func TestSSE_RESTBootstrapAndValueChange(t *testing.T) {
 }
 
 func TestSSE_StatusChange(t *testing.T) {
+	t.Parallel()
 	ts := newTestServer(
 		`[{"name":"PLC1","status":"Connected"}]`,
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher := w.(http.Flusher)
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(100 * time.Millisecond)
 
 			// PLC disconnects
 			fmt.Fprintf(w, "event: status-change\ndata: {\"plc\":\"PLC1\",\"status\":\"disconnected\",\"error\":\"timeout\"}\n\n")
 			flusher.Flush()
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(200 * time.Millisecond)
 		},
 	)
@@ -208,15 +197,9 @@ func TestSSE_StatusChange(t *testing.T) {
 
 	m.StartWarLinkPoller()
 
-	if !emitter.waitFor("plc_connected:PLC1", 2*time.Second) {
-		t.Fatal("timed out waiting for plc_connected:PLC1")
-	}
-	if !emitter.waitFor("plc_disconnected:PLC1", 2*time.Second) {
-		t.Fatal("timed out waiting for plc_disconnected:PLC1")
-	}
-	if !emitter.waitFor("plc_health_alert:PLC1", 2*time.Second) {
-		t.Fatal("timed out waiting for plc_health_alert:PLC1")
-	}
+	emitter.waitFor(t, "plc_connected:PLC1", 2*time.Second)
+	emitter.waitFor(t, "plc_disconnected:PLC1", 2*time.Second)
+	emitter.waitFor(t, "plc_health_alert:PLC1", 2*time.Second)
 
 	// Verify status normalized to title case
 	mp := m.GetPLC("PLC1")
@@ -232,30 +215,35 @@ func TestSSE_StatusChange(t *testing.T) {
 }
 
 func TestSSE_HealthEvent(t *testing.T) {
+	t.Parallel()
 	ts := newTestServer(
 		`[{"name":"PLC1","status":"Connected"}]`,
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher := w.(http.Flusher)
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(100 * time.Millisecond)
 
 			// First health: online
 			fmt.Fprintf(w, "event: health\ndata: {\"plc\":\"PLC1\",\"driver\":\"ab-eip\",\"online\":true,\"status\":\"ok\",\"error\":\"\",\"timestamp\":\"2025-01-01T00:00:00Z\"}\n\n")
 			flusher.Flush()
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(50 * time.Millisecond)
 
 			// Second health: offline
 			fmt.Fprintf(w, "event: health\ndata: {\"plc\":\"PLC1\",\"driver\":\"ab-eip\",\"online\":false,\"status\":\"error\",\"error\":\"connection refused\",\"timestamp\":\"2025-01-01T00:00:10Z\"}\n\n")
 			flusher.Flush()
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(50 * time.Millisecond)
 
 			// Third health: back online
 			fmt.Fprintf(w, "event: health\ndata: {\"plc\":\"PLC1\",\"driver\":\"ab-eip\",\"online\":true,\"status\":\"ok\",\"error\":\"\",\"timestamp\":\"2025-01-01T00:00:20Z\"}\n\n")
 			flusher.Flush()
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(200 * time.Millisecond)
 		},
 	)
@@ -271,12 +259,8 @@ func TestSSE_HealthEvent(t *testing.T) {
 	m.StartWarLinkPoller()
 
 	// Wait for health events to be processed
-	if !emitter.waitFor("plc_health_alert:PLC1", 2*time.Second) {
-		t.Fatal("timed out waiting for plc_health_alert:PLC1")
-	}
-	if !emitter.waitFor("plc_health_recover:PLC1", 2*time.Second) {
-		t.Fatal("timed out waiting for plc_health_recover:PLC1")
-	}
+	emitter.waitFor(t, "plc_health_alert:PLC1", 2*time.Second)
+	emitter.waitFor(t, "plc_health_recover:PLC1", 2*time.Second)
 
 	// Verify health data
 	h := m.GetPLCHealth("PLC1")
@@ -295,6 +279,7 @@ func TestSSE_HealthEvent(t *testing.T) {
 }
 
 func TestSSE_StopCancellation(t *testing.T) {
+	t.Parallel()
 	ts := newTestServer(
 		`[]`,
 		func(w http.ResponseWriter, r *http.Request) {
@@ -319,9 +304,7 @@ func TestSSE_StopCancellation(t *testing.T) {
 
 	m.StartWarLinkPoller()
 
-	if !emitter.waitFor("warlink_connected", 2*time.Second) {
-		t.Fatal("timed out waiting for warlink_connected")
-	}
+	emitter.waitFor(t, "warlink_connected", 2*time.Second)
 
 	// Stop should return promptly (not hang)
 	done := make(chan struct{})
@@ -341,6 +324,7 @@ func TestSSE_StopCancellation(t *testing.T) {
 }
 
 func TestSSE_Reconnection(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	connectCount := 0
 
@@ -378,29 +362,18 @@ func TestSSE_Reconnection(t *testing.T) {
 	m.StartWarLinkPoller()
 
 	// Wait for at least two connections (reconnect after first drop)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.EventuallyWithInterval(t, 50*time.Millisecond, 5*time.Second, func() bool {
 		mu.Lock()
-		n := connectCount
-		mu.Unlock()
-		if n >= 2 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	mu.Lock()
-	n := connectCount
-	mu.Unlock()
-	if n < 2 {
-		t.Fatalf("expected at least 2 connections, got %d", n)
-	}
+		defer mu.Unlock()
+		return connectCount >= 2
+	})
 
 	m.StopWarLinkPoller()
 	m.Stop()
 }
 
 func TestSSE_PollModeDefault(t *testing.T) {
+	t.Parallel()
 	// Verify that without mode="sse", StartWarLinkPoller uses poll mode.
 	var mu sync.Mutex
 	paths := []string{}
@@ -426,9 +399,7 @@ func TestSSE_PollModeDefault(t *testing.T) {
 	m.StartWarLinkPoller()
 
 	// Wait for at least one poll
-	if !emitter.waitFor("warlink_connected", 2*time.Second) {
-		t.Fatal("timed out waiting for warlink_connected")
-	}
+	emitter.waitFor(t, "warlink_connected", 2*time.Second)
 
 	m.StopWarLinkPoller()
 
@@ -446,6 +417,7 @@ func TestSSE_PollModeDefault(t *testing.T) {
 }
 
 func TestSSE_ValueChangeCreatesUnknownPLC(t *testing.T) {
+	t.Parallel()
 	// SSE value-change for a PLC not in REST bootstrap should create the PLC entry
 	ts := newTestServer(
 		`[]`, // No PLCs in REST bootstrap
@@ -453,11 +425,13 @@ func TestSSE_ValueChangeCreatesUnknownPLC(t *testing.T) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher := w.(http.Flusher)
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(100 * time.Millisecond)
 
 			fmt.Fprintf(w, "event: value-change\ndata: {\"plc\":\"NewPLC\",\"tag\":\"Tag1\",\"value\":99,\"type\":\"INT\"}\n\n")
 			flusher.Flush()
 
+			// KEEP: localhost server-side event pacing — deterministic, not async wait.
 			time.Sleep(200 * time.Millisecond)
 		},
 	)
@@ -472,11 +446,9 @@ func TestSSE_ValueChangeCreatesUnknownPLC(t *testing.T) {
 
 	m.StartWarLinkPoller()
 
-	if !emitter.waitFor("warlink_connected", 2*time.Second) {
-		t.Fatal("timed out waiting for warlink_connected")
-	}
+	emitter.waitFor(t, "warlink_connected", 2*time.Second)
 	// Poll until the value-change event is reflected in ReadTag.
-	eventually(t, 2*time.Second, func() bool {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		val, err := m.ReadTag("NewPLC", "Tag1")
 		if err != nil {
 			return false

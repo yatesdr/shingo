@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 	"shingocore/store"
 	"shingocore/store/demands"
@@ -41,13 +42,12 @@ func seedLaneNodeType(t *testing.T, db *store.DB) {
 		}
 	}
 	// Fallback: create it if migrations didn't seed for some reason.
-	if err := db.CreateNodeType(&nodes.NodeType{Code: "LANE", Name: "Lane", IsSynthetic: true}); err != nil {
-		t.Fatalf("create LANE node type: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNodeType(&nodes.NodeType{Code: "LANE", Name: "Lane", IsSynthetic: true}), "create LANE node type")
 }
 
 // TestIsStorageSlot_ChildOfLane returns true: the parent node is a LANE.
 func TestIsStorageSlot_ChildOfLane(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -55,13 +55,9 @@ func TestIsStorageSlot_ChildOfLane(t *testing.T) {
 
 	laneTypeID := mustGetNodeTypeID(t, db, "LANE")
 	lane := &nodes.Node{Name: "LANE-K1", Enabled: true, NodeTypeID: &laneTypeID}
-	if err := db.CreateNode(lane); err != nil {
-		t.Fatalf("create lane: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	slot := &nodes.Node{Name: "LANE-K1-SLOT-1", Enabled: true, ParentID: &lane.ID}
-	if err := db.CreateNode(slot); err != nil {
-		t.Fatalf("create slot: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
 
 	if !eng.isStorageSlot(slot.ID) {
 		t.Errorf("expected isStorageSlot(%d) true for child of LANE", slot.ID)
@@ -70,17 +66,14 @@ func TestIsStorageSlot_ChildOfLane(t *testing.T) {
 
 // TestIsStorageSlot_ChildOfNonLane — parent exists but is not LANE.
 func TestIsStorageSlot_ChildOfNonLane(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
 	parent := &nodes.Node{Name: "NOT-LANE", Enabled: true}
-	if err := db.CreateNode(parent); err != nil {
-		t.Fatalf("create parent: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(parent), "create parent")
 	child := &nodes.Node{Name: "NOT-LANE-CHILD", Enabled: true, ParentID: &parent.ID}
-	if err := db.CreateNode(child); err != nil {
-		t.Fatalf("create child: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(child), "create child")
 
 	if eng.isStorageSlot(child.ID) {
 		t.Errorf("isStorageSlot should be false when parent is not LANE")
@@ -89,13 +82,12 @@ func TestIsStorageSlot_ChildOfNonLane(t *testing.T) {
 
 // TestIsStorageSlot_OrphanNode — no parent → not a storage slot.
 func TestIsStorageSlot_OrphanNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
 	orphan := &nodes.Node{Name: "ORPHAN-1", Enabled: true}
-	if err := db.CreateNode(orphan); err != nil {
-		t.Fatalf("create orphan: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(orphan), "create orphan")
 
 	if eng.isStorageSlot(orphan.ID) {
 		t.Errorf("isStorageSlot must be false for orphan node")
@@ -104,6 +96,7 @@ func TestIsStorageSlot_OrphanNode(t *testing.T) {
 
 // TestIsStorageSlot_MissingNode — GetNode returns error → false.
 func TestIsStorageSlot_MissingNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -117,6 +110,7 @@ func TestIsStorageSlot_MissingNode(t *testing.T) {
 // TestHandleKanbanDemand_GuardsEmptyPayload short-circuits before doing
 // any DB work when PayloadCode is blank.
 func TestHandleKanbanDemand_GuardsEmptyPayload(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -131,6 +125,7 @@ func TestHandleKanbanDemand_GuardsEmptyPayload(t *testing.T) {
 
 // TestHandleKanbanDemand_GuardsNonMovedAction — only Action=="moved" runs.
 func TestHandleKanbanDemand_GuardsNonMovedAction(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -157,19 +152,16 @@ func TestHandleKanbanDemand_GuardsNonMovedAction(t *testing.T) {
 // storage slot → sendDemandSignals fires with role=produce, and the
 // registered producer gets a data.demand_signal enqueued in outbox.
 func TestHandleKanbanDemand_FromStorageSignalsProducers(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
 	seedLaneNodeType(t, db)
 	laneTypeID := mustGetNodeTypeID(t, db, "LANE")
 	lane := &nodes.Node{Name: "LANE-FROM", Enabled: true, NodeTypeID: &laneTypeID}
-	if err := db.CreateNode(lane); err != nil {
-		t.Fatalf("create lane: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	slot := &nodes.Node{Name: "LANE-FROM-SLOT", Enabled: true, ParentID: &lane.ID}
-	if err := db.CreateNode(slot); err != nil {
-		t.Fatalf("create slot: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
 
 	// Register both a producer (should receive "produce" signals) and
 	// a consumer (should NOT receive when we only drain FROM storage).
@@ -208,19 +200,16 @@ func TestHandleKanbanDemand_FromStorageSignalsProducers(t *testing.T) {
 // TestHandleKanbanDemand_ToStorageSignalsConsumers — bin arrives in
 // storage → consumers (role=consume) are signalled.
 func TestHandleKanbanDemand_ToStorageSignalsConsumers(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
 	seedLaneNodeType(t, db)
 	laneTypeID := mustGetNodeTypeID(t, db, "LANE")
 	lane := &nodes.Node{Name: "LANE-TO", Enabled: true, NodeTypeID: &laneTypeID}
-	if err := db.CreateNode(lane); err != nil {
-		t.Fatalf("create lane: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	slot := &nodes.Node{Name: "LANE-TO-SLOT", Enabled: true, ParentID: &lane.ID}
-	if err := db.CreateNode(slot); err != nil {
-		t.Fatalf("create slot: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
 
 	seedDemandEntry(t, db, "station-consumer-2", "CNS-NODE", "consume", "P-K2")
 	seedDemandEntry(t, db, "station-producer-2", "PRD-NODE", "produce", "P-K2")
@@ -253,6 +242,7 @@ func TestHandleKanbanDemand_ToStorageSignalsConsumers(t *testing.T) {
 // TestHandleKanbanDemand_NonStorageNodesSkipped — neither From nor To is
 // under a LANE → sendDemandSignals is never invoked → no outbox growth.
 func TestHandleKanbanDemand_NonStorageNodesSkipped(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -326,17 +316,11 @@ func findDemandSignal(t *testing.T, msgs []*messaging.OutboxMessage, stationID s
 			continue
 		}
 		var env protocol.Envelope
-		if err := json.Unmarshal(m.Payload, &env); err != nil {
-			t.Fatalf("decode envelope: %v", err)
-		}
+		testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "decode envelope")
 		var data protocol.Data
-		if err := json.Unmarshal(env.Payload, &data); err != nil {
-			t.Fatalf("decode data wrapper: %v", err)
-		}
+		testutil.MustNoErr(t, json.Unmarshal(env.Payload, &data), "decode data wrapper")
 		var sig protocol.DemandSignal
-		if err := json.Unmarshal(data.Body, &sig); err != nil {
-			t.Fatalf("decode DemandSignal body: %v", err)
-		}
+		testutil.MustNoErr(t, json.Unmarshal(data.Body, &sig), "decode DemandSignal body")
 		return &sig
 	}
 	return nil

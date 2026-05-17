@@ -7,6 +7,7 @@ import (
 )
 
 func TestSSEReader_BasicEvent(t *testing.T) {
+	t.Parallel()
 	input := "event: greeting\ndata: hello\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
@@ -28,6 +29,7 @@ func TestSSEReader_BasicEvent(t *testing.T) {
 }
 
 func TestSSEReader_MultiLineData(t *testing.T) {
+	t.Parallel()
 	input := "event: multi\ndata: line1\ndata: line2\ndata: line3\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
@@ -41,6 +43,7 @@ func TestSSEReader_MultiLineData(t *testing.T) {
 }
 
 func TestSSEReader_CommentsIgnored(t *testing.T) {
+	t.Parallel()
 	input := ": this is a comment\nevent: test\ndata: value\n: another comment\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
@@ -57,6 +60,7 @@ func TestSSEReader_CommentsIgnored(t *testing.T) {
 }
 
 func TestSSEReader_MultipleEvents(t *testing.T) {
+	t.Parallel()
 	input := "event: first\ndata: 1\n\nevent: second\ndata: 2\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
@@ -78,6 +82,7 @@ func TestSSEReader_MultipleEvents(t *testing.T) {
 }
 
 func TestSSEReader_IDField(t *testing.T) {
+	t.Parallel()
 	input := "id: 42\nevent: test\ndata: hello\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
@@ -91,6 +96,7 @@ func TestSSEReader_IDField(t *testing.T) {
 }
 
 func TestSSEReader_DataOnly(t *testing.T) {
+	t.Parallel()
 	input := "data: just data\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
@@ -107,6 +113,7 @@ func TestSSEReader_DataOnly(t *testing.T) {
 }
 
 func TestSSEReader_NoSpaceAfterColon(t *testing.T) {
+	t.Parallel()
 	input := "event:nospace\ndata:value\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 
@@ -123,6 +130,7 @@ func TestSSEReader_NoSpaceAfterColon(t *testing.T) {
 }
 
 func TestSSEReader_EOFWithPendingEvent(t *testing.T) {
+	t.Parallel()
 	// No trailing blank line — event should still be dispatched at EOF
 	input := "event: last\ndata: final"
 	r := NewSSEReader(strings.NewReader(input))
@@ -137,6 +145,7 @@ func TestSSEReader_EOFWithPendingEvent(t *testing.T) {
 }
 
 func TestSSEReader_EmptyStream(t *testing.T) {
+	t.Parallel()
 	r := NewSSEReader(strings.NewReader(""))
 
 	_, err := r.Next()
@@ -146,6 +155,7 @@ func TestSSEReader_EmptyStream(t *testing.T) {
 }
 
 func TestSSEReader_BlankLinesOnly(t *testing.T) {
+	t.Parallel()
 	r := NewSSEReader(strings.NewReader("\n\n\n"))
 
 	_, err := r.Next()
@@ -155,6 +165,7 @@ func TestSSEReader_BlankLinesOnly(t *testing.T) {
 }
 
 func TestSSEReader_JSONData(t *testing.T) {
+	t.Parallel()
 	input := "event: tag_change\ndata: {\"plc\":\"PLC1\",\"tag\":\"Counter1\",\"value\":42,\"type\":\"DINT\"}\n\n"
 	r := NewSSEReader(strings.NewReader(input))
 

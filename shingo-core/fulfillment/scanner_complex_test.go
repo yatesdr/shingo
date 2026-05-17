@@ -39,6 +39,7 @@ func newTestScannerWithDispatcher(t *testing.T, db Store, d Dispatcher) *Scanner
 // dropoff node hits the type-switch, calls
 // dispatcher.DispatchPreparedComplex exactly once, and returns true.
 func TestScanner_ComplexOrder_DispatchedWhenCapacityGreen(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	dispatcher := &stubDispatcher{}
 	s := newTestScannerWithDispatcher(t, f, dispatcher)
@@ -82,6 +83,7 @@ func TestScanner_ComplexOrder_DispatchedWhenCapacityGreen(t *testing.T) {
 // scoped to simple orders only. See scanner.go:181-190 for the
 // invariant.
 func TestScanner_ComplexOrder_BypassesCapacityGate(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	dispatcher := &stubDispatcher{}
 	s := newTestScannerWithDispatcher(t, f, dispatcher)

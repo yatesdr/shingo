@@ -14,6 +14,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/fleet"
@@ -117,15 +118,12 @@ func testDB(t *testing.T) *store.DB {
 }
 
 func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	line := &nodes.Node{Name: "LINE-1", Enabled: true}
 	dest := &nodes.Node{Name: "LINE-2", Enabled: true}
-	if err := db.CreateNode(line); err != nil {
-		t.Fatalf("create line node: %v", err)
-	}
-	if err := db.CreateNode(dest); err != nil {
-		t.Fatalf("create destination node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(line), "create line node")
+	testutil.MustNoErr(t, db.CreateNode(dest), "create destination node")
 
 	order := &orders.Order{
 		EdgeUUID:      "uuid-redir",
@@ -137,12 +135,8 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 		DeliveryNode:  line.Name,
 		VendorOrderID: "vendor-1",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderVendor(order.ID, "vendor-1", "CREATED", ""); err != nil {
-		t.Fatalf("persist vendor order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "vendor-1", "CREATED", ""), "persist vendor order")
 	backend := &countingBackend{}
 	dispatcher := dispatch.NewDispatcher(db, backend, noopEmitter{}, "core", "dispatch", nil)
 	handler := NewCoreHandler(db, nil, "core", "dispatch", dispatcher)
@@ -172,15 +166,12 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 }
 
 func TestCoreHandlerDeduplicatesOrderRequestByEnvelopeID(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	dest := &nodes.Node{Name: "LINE-REQ", Enabled: true}
-	if err := db.CreateNode(dest); err != nil {
-		t.Fatalf("create destination node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create destination node")
 	payload := &payloads.Payload{Code: "PART-A", Description: "Part A", UOPCapacity: 10}
-	if err := db.CreatePayload(payload); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(payload), "create payload")
 
 	backend := &countingBackend{}
 	dispatcher := dispatch.NewDispatcher(db, backend, noopEmitter{}, "core", "dispatch", nil)
@@ -214,15 +205,12 @@ func TestCoreHandlerDeduplicatesOrderRequestByEnvelopeID(t *testing.T) {
 }
 
 func TestCoreHandlerDeduplicationPersistsAcrossHandlerRestart(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	dest := &nodes.Node{Name: "LINE-RESTART", Enabled: true}
-	if err := db.CreateNode(dest); err != nil {
-		t.Fatalf("create destination node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(dest), "create destination node")
 	payload := &payloads.Payload{Code: "PART-R", Description: "Part R", UOPCapacity: 10}
-	if err := db.CreatePayload(payload); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(payload), "create payload")
 
 	env := &protocol.Envelope{
 		ID:   "msg-restart-1",
@@ -254,6 +242,7 @@ func TestCoreHandlerDeduplicationPersistsAcrossHandlerRestart(t *testing.T) {
 }
 
 func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	order := &orders.Order{
 		EdgeUUID:     "uuid-receipt-restart",
@@ -262,9 +251,7 @@ func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 		Status:       dispatch.StatusDelivered,
 		DeliveryNode: "LINE-1",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	env := &protocol.Envelope{
 		ID:   "msg-receipt-restart-1",

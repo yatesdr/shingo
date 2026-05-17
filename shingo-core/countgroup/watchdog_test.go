@@ -46,6 +46,7 @@ func (r *recordingLog) lineCount() int {
 // exactly once at each threshold (not every minute), and that the
 // log mentions the group name and the case-sensitivity hint.
 func TestNeverOccupiedWatchdogFiresWarnThenError(t *testing.T) {
+	t.Parallel()
 	rec := &recordingLog{}
 	cfg := config.CountGroupsConfig{
 		NeverOccupiedWarn:  1 * time.Second,
@@ -88,6 +89,7 @@ func TestNeverOccupiedWatchdogFiresWarnThenError(t *testing.T) {
 // occupied (typo'd names), not groups that happen to be empty right
 // now.
 func TestNeverOccupiedWatchdogSuppressedAfterNonEmpty(t *testing.T) {
+	t.Parallel()
 	rec := &recordingLog{}
 	cfg := config.CountGroupsConfig{
 		NeverOccupiedWarn:  1 * time.Second,
@@ -108,6 +110,7 @@ func TestNeverOccupiedWatchdogSuppressedAfterNonEmpty(t *testing.T) {
 // TestNeverOccupiedWatchdogSkipsDisabledGroups ensures disabled groups
 // don't generate spurious WARN/ERROR noise.
 func TestNeverOccupiedWatchdogSkipsDisabledGroups(t *testing.T) {
+	t.Parallel()
 	rec := &recordingLog{}
 	cfg := config.CountGroupsConfig{
 		NeverOccupiedWarn:  1 * time.Second,

@@ -2,11 +2,13 @@ package protocol
 
 import (
 	"encoding/json"
+	"shingo/protocol/testutil"
 	"testing"
 	"time"
 )
 
 func TestEnvelopeRoundTrip(t *testing.T) {
+	t.Parallel()
 	src := Address{Role: RoleEdge, Station: "plant-a.line-1"}
 	dst := Address{Role: RoleCore}
 
@@ -40,9 +42,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 
 	// Decode back
 	var decoded Envelope
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(data, &decoded), "Unmarshal")
 
 	if decoded.Type != TypeOrderRequest {
 		t.Errorf("decoded type = %q, want %q", decoded.Type, TypeOrderRequest)
@@ -53,9 +53,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 
 	// Decode payload
 	var req OrderRequest
-	if err := decoded.DecodePayload(&req); err != nil {
-		t.Fatalf("DecodePayload: %v", err)
-	}
+	testutil.MustNoErr(t, decoded.DecodePayload(&req), "DecodePayload")
 	if req.OrderUUID != "test-uuid-123" {
 		t.Errorf("order_uuid = %q, want %q", req.OrderUUID, "test-uuid-123")
 	}
@@ -65,6 +63,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 }
 
 func TestNewReply(t *testing.T) {
+	t.Parallel()
 	reply, err := NewReply(TypeOrderAck,
 		Address{Role: RoleCore},
 		Address{Role: RoleEdge, Station: "plant-a.line-1"},
@@ -83,6 +82,7 @@ func TestNewReply(t *testing.T) {
 }
 
 func TestExpiry(t *testing.T) {
+	t.Parallel()
 	env := &Envelope{ExpiresAt: time.Now().UTC().Add(-1 * time.Minute)}
 	if !IsExpired(env) {
 		t.Error("expected expired envelope to be detected")
@@ -100,6 +100,7 @@ func TestExpiry(t *testing.T) {
 }
 
 func TestExpiryHeader(t *testing.T) {
+	t.Parallel()
 	hdr := &RawHeader{ExpiresAt: time.Now().UTC().Add(-1 * time.Second)}
 	if !IsExpiredHeader(hdr) {
 		t.Error("expected expired header to be detected")
@@ -112,6 +113,7 @@ func TestExpiryHeader(t *testing.T) {
 }
 
 func TestDefaultTTLFor(t *testing.T) {
+	t.Parallel()
 	if ttl := DefaultTTLFor(TypeData); ttl != 5*time.Minute {
 		t.Errorf("data TTL = %v, want 5m", ttl)
 	}
@@ -124,6 +126,7 @@ func TestDefaultTTLFor(t *testing.T) {
 }
 
 func TestIngestorDispatch(t *testing.T) {
+	t.Parallel()
 	handler := &testHandler{}
 	ingestor := NewIngestor(handler, nil)
 
@@ -146,15 +149,14 @@ func TestIngestorDispatch(t *testing.T) {
 
 	// Verify two-level decode of the body
 	var reg EdgeRegister
-	if err := json.Unmarshal(handler.dataPayload.Body, &reg); err != nil {
-		t.Fatalf("unmarshal body: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(handler.dataPayload.Body, &reg), "unmarshal body")
 	if reg.StationID != "test-node" {
 		t.Errorf("station_id = %q, want %q", reg.StationID, "test-node")
 	}
 }
 
 func TestIngestorFilter(t *testing.T) {
+	t.Parallel()
 	handler := &testHandler{}
 	// Filter that rejects everything
 	ingestor := NewIngestor(handler, func(_ *RawHeader) bool { return false })
@@ -174,6 +176,7 @@ func TestIngestorFilter(t *testing.T) {
 }
 
 func TestIngestorDropsExpired(t *testing.T) {
+	t.Parallel()
 	handler := &testHandler{}
 	ingestor := NewIngestor(handler, nil)
 
@@ -194,6 +197,7 @@ func TestIngestorDropsExpired(t *testing.T) {
 }
 
 func TestEdgeFilter(t *testing.T) {
+	t.Parallel()
 	filter := func(hdr *RawHeader) bool {
 		return hdr.Dst.Station == "plant-a.line-1" || hdr.Dst.Station == "*"
 	}
@@ -213,6 +217,7 @@ func TestEdgeFilter(t *testing.T) {
 }
 
 func TestWireFormatKeys(t *testing.T) {
+	t.Parallel()
 	env, _ := NewDataEnvelope(SubjectEdgeHeartbeat,
 		Address{Role: RoleEdge, Station: "n1"},
 		Address{Role: RoleCore},
@@ -221,9 +226,7 @@ func TestWireFormatKeys(t *testing.T) {
 	data, _ := env.Encode()
 
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(data, &m); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(data, &m), "unmarshal")
 
 	// Verify short keys are used
 	expected := []string{"v", "type", "id", "src", "dst", "ts", "exp", "p"}
@@ -242,6 +245,7 @@ func TestWireFormatKeys(t *testing.T) {
 }
 
 func TestDataEnvelopeRoundTrip(t *testing.T) {
+	t.Parallel()
 	src := Address{Role: RoleEdge, Station: "plant-a.line-1"}
 	dst := Address{Role: RoleCore}
 
@@ -264,24 +268,18 @@ func TestDataEnvelopeRoundTrip(t *testing.T) {
 	}
 
 	var decoded Envelope
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(raw, &decoded), "Unmarshal")
 
 	// Level 1: decode Data
 	var d Data
-	if err := decoded.DecodePayload(&d); err != nil {
-		t.Fatalf("DecodePayload: %v", err)
-	}
+	testutil.MustNoErr(t, decoded.DecodePayload(&d), "DecodePayload")
 	if d.Subject != SubjectEdgeRegister {
 		t.Errorf("subject = %q, want %q", d.Subject, SubjectEdgeRegister)
 	}
 
 	// Level 2: decode body
 	var reg EdgeRegister
-	if err := json.Unmarshal(d.Body, &reg); err != nil {
-		t.Fatalf("unmarshal body: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(d.Body, &reg), "unmarshal body")
 	if reg.StationID != "plant-a.line-1" {
 		t.Errorf("station_id = %q, want %q", reg.StationID, "plant-a.line-1")
 	}
@@ -291,6 +289,7 @@ func TestDataEnvelopeRoundTrip(t *testing.T) {
 }
 
 func TestDataTTLForSubjects(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		subject string
 		want    time.Duration
@@ -309,6 +308,7 @@ func TestDataTTLForSubjects(t *testing.T) {
 }
 
 func TestNewDataReply(t *testing.T) {
+	t.Parallel()
 	reply, err := NewDataReply(SubjectEdgeRegistered,
 		Address{Role: RoleCore, Station: "core"},
 		Address{Role: RoleEdge, Station: "plant-a.line-1"},
@@ -327,15 +327,14 @@ func TestNewDataReply(t *testing.T) {
 
 	// Decode and verify subject
 	var d Data
-	if err := reply.DecodePayload(&d); err != nil {
-		t.Fatalf("DecodePayload: %v", err)
-	}
+	testutil.MustNoErr(t, reply.DecodePayload(&d), "DecodePayload")
 	if d.Subject != SubjectEdgeRegistered {
 		t.Errorf("subject = %q, want %q", d.Subject, SubjectEdgeRegistered)
 	}
 }
 
 func TestDataWireFormat(t *testing.T) {
+	t.Parallel()
 	env, _ := NewDataEnvelope(SubjectEdgeHeartbeat,
 		Address{Role: RoleEdge, Station: "plant-a.line-1"},
 		Address{Role: RoleCore},
@@ -345,9 +344,7 @@ func TestDataWireFormat(t *testing.T) {
 
 	// Parse the full wire JSON
 	var wire map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &wire); err != nil {
-		t.Fatalf("unmarshal wire: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(raw, &wire), "unmarshal wire")
 
 	// Verify type is "data"
 	var typ string
@@ -358,9 +355,7 @@ func TestDataWireFormat(t *testing.T) {
 
 	// Verify payload has "subject" and "data" keys
 	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(wire["p"], &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(wire["p"], &payload), "unmarshal payload")
 	if _, ok := payload["subject"]; !ok {
 		t.Error("expected 'subject' key in payload")
 	}
@@ -377,9 +372,7 @@ func TestDataWireFormat(t *testing.T) {
 
 	// Verify inner data can be decoded
 	var hb EdgeHeartbeat
-	if err := json.Unmarshal(payload["data"], &hb); err != nil {
-		t.Fatalf("unmarshal heartbeat data: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(payload["data"], &hb), "unmarshal heartbeat data")
 	if hb.Uptime != 3600 {
 		t.Errorf("uptime = %d, want 3600", hb.Uptime)
 	}
@@ -389,6 +382,7 @@ func TestDataWireFormat(t *testing.T) {
 }
 
 func TestSignAndVerify(t *testing.T) {
+	t.Parallel()
 	key := []byte("test-secret-key-1234")
 
 	env, _ := NewEnvelope(TypeOrderRequest,
@@ -417,6 +411,7 @@ func TestSignAndVerify(t *testing.T) {
 }
 
 func TestVerifyRejectsWrongKey(t *testing.T) {
+	t.Parallel()
 	key := []byte("correct-key")
 	wrongKey := []byte("wrong-key")
 
@@ -435,6 +430,7 @@ func TestVerifyRejectsWrongKey(t *testing.T) {
 }
 
 func TestVerifyRejectsUnsignedWhenKeySet(t *testing.T) {
+	t.Parallel()
 	key := []byte("my-key")
 
 	// Plain envelope JSON (not wrapped in signed format)
@@ -452,6 +448,7 @@ func TestVerifyRejectsUnsignedWhenKeySet(t *testing.T) {
 }
 
 func TestVerifyPassthroughWhenNoKey(t *testing.T) {
+	t.Parallel()
 	data := []byte(`{"v":1,"type":"order.request"}`)
 
 	// nil key = signing disabled, should pass through
@@ -474,6 +471,7 @@ func TestVerifyPassthroughWhenNoKey(t *testing.T) {
 }
 
 func TestIngestorWithSigning(t *testing.T) {
+	t.Parallel()
 	key := []byte("ingestor-test-key")
 	handler := &testHandler{}
 	ingestor := NewIngestor(handler, nil)
@@ -495,6 +493,7 @@ func TestIngestorWithSigning(t *testing.T) {
 }
 
 func TestIngestorRejectsUnsignedWhenKeySet(t *testing.T) {
+	t.Parallel()
 	key := []byte("ingestor-test-key")
 	handler := &testHandler{}
 	ingestor := NewIngestor(handler, nil)
@@ -527,6 +526,7 @@ func (h *testHandler) HandleData(env *Envelope, p *Data) {
 }
 
 func TestIsTerminal(t *testing.T) {
+	t.Parallel()
 	for _, s := range []Status{StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped} {
 		if !IsTerminal(s) {
 			t.Errorf("IsTerminal(%q) = false, want true", s)
@@ -540,6 +540,7 @@ func TestIsTerminal(t *testing.T) {
 }
 
 func TestValidForwardTransitions(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ from, to Status }{
 		{StatusPending, StatusSubmitted},
 		{StatusPending, StatusSourcing},
@@ -562,6 +563,7 @@ func TestValidForwardTransitions(t *testing.T) {
 }
 
 func TestInvalidBackwardTransitions(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ from, to Status }{
 		{StatusDelivered, StatusInTransit},
 		{StatusInTransit, StatusAcknowledged},
@@ -577,6 +579,7 @@ func TestInvalidBackwardTransitions(t *testing.T) {
 }
 
 func TestTerminalStatesCannotTransition(t *testing.T) {
+	t.Parallel()
 	for _, from := range []Status{StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped} {
 		for _, to := range []Status{StatusPending, StatusDelivered, StatusConfirmed} {
 			if IsValidTransition(from, to) {
@@ -591,6 +594,7 @@ func TestTerminalStatesCannotTransition(t *testing.T) {
 // (Acknowledged, Dispatched, InTransit, Staged) cannot — by then the fleet
 // owns the order and the resolution is fail or cancel, not skip.
 func TestSkippedTransitions(t *testing.T) {
+	t.Parallel()
 	canSkip := []Status{StatusPending, StatusSourcing, StatusSubmitted, StatusQueued}
 	for _, from := range canSkip {
 		if !IsValidTransition(from, StatusSkipped) {
@@ -609,6 +613,7 @@ func TestSkippedTransitions(t *testing.T) {
 }
 
 func TestUnknownStatusNotValidTransition(t *testing.T) {
+	t.Parallel()
 	if IsValidTransition("unknown", StatusDelivered) {
 		t.Error("expected unknown 'from' status to be invalid")
 	}
@@ -621,6 +626,7 @@ func TestUnknownStatusNotValidTransition(t *testing.T) {
 // is non-terminal — IsTerminal is now derived from "no key in the map" so
 // any status with at least one outgoing edge MUST report as non-terminal.
 func TestIsTerminalDerivedFromTable(t *testing.T) {
+	t.Parallel()
 	for status := range validTransitions {
 		if IsTerminal(status) {
 			t.Errorf("status %q has outgoing edges in validTransitions but IsTerminal returned true", status)
@@ -633,6 +639,7 @@ func TestIsTerminalDerivedFromTable(t *testing.T) {
 // register as "has key but no transitions" — IsTerminal would falsely say
 // false (because the key exists), but no transition would ever validate.
 func TestEveryKeyHasOutgoingEdge(t *testing.T) {
+	t.Parallel()
 	for status, edges := range validTransitions {
 		if len(edges) == 0 {
 			t.Errorf("status %q has empty outgoing edge list — either remove the key (making it terminal) or add transitions", status)
@@ -645,6 +652,7 @@ func TestEveryKeyHasOutgoingEdge(t *testing.T) {
 // {Confirmed | Failed | Cancelled}; children go through their own
 // lifecycle and never hold Reshuffling.
 func TestReshufflingTransitions(t *testing.T) {
+	t.Parallel()
 	if !IsValidTransition(StatusPending, StatusReshuffling) {
 		t.Error("Pending → Reshuffling must be valid (compound parent entry)")
 	}
@@ -663,6 +671,7 @@ func TestReshufflingTransitions(t *testing.T) {
 // TestAllStatusesCovered asserts every status returned by AllStatuses() is
 // either a key in validTransitions (non-terminal) or has no key (terminal).
 func TestAllStatusesCovered(t *testing.T) {
+	t.Parallel()
 	for _, st := range AllStatuses() {
 		_, hasKey := validTransitions[st]
 		if !hasKey && !IsTerminal(st) {
@@ -678,6 +687,7 @@ func TestAllStatusesCovered(t *testing.T) {
 // a deep copy — mutating the returned map must not affect the canonical
 // table.
 func TestAllValidTransitionsIsCopy(t *testing.T) {
+	t.Parallel()
 	dup := AllValidTransitions()
 	dup[StatusPending] = []Status{"some-bogus-status"}
 	if !IsValidTransition(StatusPending, StatusSourcing) {

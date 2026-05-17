@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
@@ -36,6 +37,7 @@ func newPendingOrder(uuid string) *domain.Order {
 // -------- Order CRUD lifecycle ---------------------------------------------
 
 func TestOrderCRUD(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -44,9 +46,7 @@ func TestOrderCRUD(t *testing.T) {
 	o.PayloadCode = "PART-A"
 	o.Priority = 5
 
-	if err := orders.Create(db, o); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Create(db, o), "Create")
 	if o.ID == 0 {
 		t.Fatal("Create must assign o.ID")
 	}
@@ -84,9 +84,7 @@ func TestOrderCRUD(t *testing.T) {
 	}
 
 	// UpdateStatus -> dispatched (also writes history)
-	if err := orders.UpdateStatus(db, o.ID, "dispatched", "sent to RDS"); err != nil {
-		t.Fatalf("UpdateStatus dispatched: %v", err)
-	}
+	testutil.MustNoErr(t, orders.UpdateStatus(db, o.ID, "dispatched", "sent to RDS"), "UpdateStatus dispatched")
 	got2, err := orders.Get(db, o.ID)
 	if err != nil {
 		t.Fatalf("Get after UpdateStatus: %v", err)
@@ -100,9 +98,7 @@ func TestOrderCRUD(t *testing.T) {
 	}
 
 	// UpdateVendor
-	if err := orders.UpdateVendor(db, o.ID, "rds-123", "RUNNING", "AMB-01"); err != nil {
-		t.Fatalf("UpdateVendor: %v", err)
-	}
+	testutil.MustNoErr(t, orders.UpdateVendor(db, o.ID, "rds-123", "RUNNING", "AMB-01"), "UpdateVendor")
 	got3, _ := orders.Get(db, o.ID)
 	if got3.VendorOrderID != "rds-123" {
 		t.Errorf("VendorOrderID = %q, want rds-123", got3.VendorOrderID)
@@ -124,9 +120,7 @@ func TestOrderCRUD(t *testing.T) {
 	}
 
 	// UpdateRobotID (narrow, only touches robot_id)
-	if err := orders.UpdateRobotID(db, o.ID, "AMB-99"); err != nil {
-		t.Fatalf("UpdateRobotID: %v", err)
-	}
+	testutil.MustNoErr(t, orders.UpdateRobotID(db, o.ID, "AMB-99"), "UpdateRobotID")
 	got4, _ := orders.Get(db, o.ID)
 	if got4.RobotID != "AMB-99" {
 		t.Errorf("RobotID = %q, want AMB-99", got4.RobotID)
@@ -139,9 +133,7 @@ func TestOrderCRUD(t *testing.T) {
 	}
 
 	// Complete sets completed_at (status handled separately).
-	if err := orders.Complete(db, o.ID); err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Complete(db, o.ID), "Complete")
 	got5, _ := orders.Get(db, o.ID)
 	if got5.CompletedAt == nil {
 		t.Error("CompletedAt should be set after Complete")
@@ -151,17 +143,14 @@ func TestOrderCRUD(t *testing.T) {
 // -------- Failed/cancelled transitions preserve error_detail --------------
 
 func TestUpdateStatus_PreservesErrorDetailOnTerminal(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
 	o := newPendingOrder("uuid-fail")
-	if err := orders.Create(db, o); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Create(db, o), "Create")
 
-	if err := orders.UpdateStatus(db, o.ID, "failed", "robot crashed"); err != nil {
-		t.Fatalf("UpdateStatus failed: %v", err)
-	}
+	testutil.MustNoErr(t, orders.UpdateStatus(db, o.ID, "failed", "robot crashed"), "UpdateStatus failed")
 	got, _ := orders.Get(db, o.ID)
 	if got.Status != "failed" {
 		t.Errorf("Status = %q, want failed", got.Status)
@@ -172,12 +161,8 @@ func TestUpdateStatus_PreservesErrorDetailOnTerminal(t *testing.T) {
 
 	// Cancelled also preserves detail.
 	o2 := newPendingOrder("uuid-cancel")
-	if err := orders.Create(db, o2); err != nil {
-		t.Fatalf("Create o2: %v", err)
-	}
-	if err := orders.UpdateStatus(db, o2.ID, "cancelled", "operator stop"); err != nil {
-		t.Fatalf("UpdateStatus cancelled: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Create(db, o2), "Create o2")
+	testutil.MustNoErr(t, orders.UpdateStatus(db, o2.ID, "cancelled", "operator stop"), "UpdateStatus cancelled")
 	got2, _ := orders.Get(db, o2.ID)
 	if got2.ErrorDetail != "operator stop" {
 		t.Errorf("ErrorDetail = %q, want 'operator stop'", got2.ErrorDetail)
@@ -187,13 +172,12 @@ func TestUpdateStatus_PreservesErrorDetailOnTerminal(t *testing.T) {
 // -------- History: append via UpdateStatus, list oldest-first -------------
 
 func TestHistory_AppendAndList(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
 	o := newPendingOrder("uuid-history")
-	if err := orders.Create(db, o); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Create(db, o), "Create")
 
 	events := []struct {
 		status string
@@ -239,6 +223,7 @@ func TestHistory_AppendAndList(t *testing.T) {
 // -------- List + status filter --------------------------------------------
 
 func TestList_FilterByStatus(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -308,6 +293,7 @@ func TestList_FilterByStatus(t *testing.T) {
 // active because ListActive's NOT IN list predated the addition of
 // StatusSkipped to the protocol state machine. Pin the regression.
 func TestListActive_ExcludesSkipped(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -335,6 +321,7 @@ func TestListActive_ExcludesSkipped(t *testing.T) {
 // -------- ListFiltered: statuses, station, since, limit, offset -----------
 
 func TestListFiltered(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -425,14 +412,13 @@ func TestListFiltered(t *testing.T) {
 // -------- Compound orders: children + GetNextChild ------------------------
 
 func TestChildOrders(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
 	parent := newPendingOrder("parent")
 	parent.OrderType = "compound"
-	if err := orders.Create(db, parent); err != nil {
-		t.Fatalf("Create parent: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Create(db, parent), "Create parent")
 
 	children := []*domain.Order{
 		{EdgeUUID: "c1", StationID: "line-1", OrderType: "retrieve", Status: "pending", Quantity: 1, ParentOrderID: &parent.ID, Sequence: 1},
@@ -471,9 +457,7 @@ func TestChildOrders(t *testing.T) {
 	}
 
 	// Advance: mark c1 confirmed, next pending is c2.
-	if err := orders.UpdateStatus(db, children[0].ID, "confirmed", "done"); err != nil {
-		t.Fatalf("UpdateStatus c1: %v", err)
-	}
+	testutil.MustNoErr(t, orders.UpdateStatus(db, children[0].ID, "confirmed", "done"), "UpdateStatus c1")
 	next2, _ := orders.GetNextChild(db, parent.ID)
 	if next2.ID != children[1].ID {
 		t.Errorf("GetNextChild after c1 done = %d, want %d", next2.ID, children[1].ID)
@@ -483,29 +467,18 @@ func TestChildOrders(t *testing.T) {
 // -------- Narrow field updates --------------------------------------------
 
 func TestNarrowUpdates(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
 	o := newPendingOrder("narrow")
-	if err := orders.Create(db, o); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Create(db, o), "Create")
 
-	if err := orders.UpdateSourceNode(db, o.ID, "STORAGE-B2"); err != nil {
-		t.Fatalf("UpdateSourceNode: %v", err)
-	}
-	if err := orders.UpdateDeliveryNode(db, o.ID, "LINE2-IN"); err != nil {
-		t.Fatalf("UpdateDeliveryNode: %v", err)
-	}
-	if err := orders.UpdatePriority(db, o.ID, 42); err != nil {
-		t.Fatalf("UpdatePriority: %v", err)
-	}
-	if err := orders.UpdatePayloadCode(db, o.ID, "PART-B"); err != nil {
-		t.Fatalf("UpdatePayloadCode: %v", err)
-	}
-	if err := orders.UpdateWaitIndex(db, o.ID, 3); err != nil {
-		t.Fatalf("UpdateWaitIndex: %v", err)
-	}
+	testutil.MustNoErr(t, orders.UpdateSourceNode(db, o.ID, "STORAGE-B2"), "UpdateSourceNode")
+	testutil.MustNoErr(t, orders.UpdateDeliveryNode(db, o.ID, "LINE2-IN"), "UpdateDeliveryNode")
+	testutil.MustNoErr(t, orders.UpdatePriority(db, o.ID, 42), "UpdatePriority")
+	testutil.MustNoErr(t, orders.UpdatePayloadCode(db, o.ID, "PART-B"), "UpdatePayloadCode")
+	testutil.MustNoErr(t, orders.UpdateWaitIndex(db, o.ID, 3), "UpdateWaitIndex")
 
 	got, _ := orders.Get(db, o.ID)
 	if got.SourceNode != "STORAGE-B2" {
@@ -528,6 +501,7 @@ func TestNarrowUpdates(t *testing.T) {
 // -------- ListByStation ---------------------------------------------------
 
 func TestListByStation(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -565,6 +539,7 @@ func TestListByStation(t *testing.T) {
 // -------- CountActiveByDeliveryNode / CountInFlightByDeliveryNode ---------
 
 func TestCountByDeliveryNode(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -615,6 +590,7 @@ func TestCountByDeliveryNode(t *testing.T) {
 // -------- ListDispatchedVendorOrderIDs ------------------------------------
 
 func TestListDispatchedVendorOrderIDs(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -663,6 +639,7 @@ func TestListDispatchedVendorOrderIDs(t *testing.T) {
 // -------- ListActiveBySourceRef -------------------------------------------
 
 func TestListActiveBySourceRef(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -711,6 +688,7 @@ func TestListActiveBySourceRef(t *testing.T) {
 // -------- ListQueued (FIFO, oldest first) --------------------------------
 
 func TestListQueued(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
@@ -723,7 +701,8 @@ func TestListQueued(t *testing.T) {
 		return o.ID
 	}
 	id1 := mk("q1", "queued")
-	time.Sleep(10 * time.Millisecond) // ensure different created_at for FIFO
+	// KEEP: timestamp separation — distinct created_at for FIFO ordering.
+	time.Sleep(10 * time.Millisecond)
 	id2 := mk("q2", "queued")
 	mk("p", "pending")   // not queued
 	mk("c", "confirmed") // not queued
@@ -744,6 +723,7 @@ func TestListQueued(t *testing.T) {
 // -------- UpdateBinID + ListByBinID --------------------------------------
 
 func TestUpdateBinIDAndListByBinID(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	fx := testdb.SetupStandardData(t, d)
 	db := d.DB
@@ -751,13 +731,9 @@ func TestUpdateBinIDAndListByBinID(t *testing.T) {
 	bin := testdb.CreateBinAtNode(t, d, "PART-A", fx.StorageNode.ID, "BIN-X")
 
 	o := newPendingOrder("bin-owner")
-	if err := orders.Create(db, o); err != nil {
-		t.Fatalf("Create order: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
 
-	if err := orders.UpdateBinID(db, o.ID, bin.ID); err != nil {
-		t.Fatalf("UpdateBinID: %v", err)
-	}
+	testutil.MustNoErr(t, orders.UpdateBinID(db, o.ID, bin.ID), "UpdateBinID")
 	got, _ := orders.Get(db, o.ID)
 	if got.BinID == nil || *got.BinID != bin.ID {
 		t.Errorf("BinID after update = %v, want %d", got.BinID, bin.ID)
@@ -787,6 +763,7 @@ func TestUpdateBinIDAndListByBinID(t *testing.T) {
 // -------- Order <-> Bin junction: InsertOrderBin, ListOrderBins, DeleteOrderBins
 
 func TestOrderBinsJunction(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	fx := testdb.SetupStandardData(t, d)
 	db := d.DB
@@ -796,17 +773,11 @@ func TestOrderBinsJunction(t *testing.T) {
 
 	o := newPendingOrder("junction")
 	o.OrderType = "compound"
-	if err := orders.Create(db, o); err != nil {
-		t.Fatalf("Create order: %v", err)
-	}
+	testutil.MustNoErr(t, orders.Create(db, o), "Create order")
 
 	// Insert rows out of step_index order; ListOrderBins must sort ascending.
-	if err := orders.InsertOrderBin(db, o.ID, bin2.ID, 2, "deliver", "STORAGE-A1", "LINE1-IN"); err != nil {
-		t.Fatalf("InsertOrderBin bin2: %v", err)
-	}
-	if err := orders.InsertOrderBin(db, o.ID, bin1.ID, 1, "pick", "STORAGE-A1", ""); err != nil {
-		t.Fatalf("InsertOrderBin bin1: %v", err)
-	}
+	testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin2.ID, 2, "deliver", "STORAGE-A1", "LINE1-IN"), "InsertOrderBin bin2")
+	testutil.MustNoErr(t, orders.InsertOrderBin(db, o.ID, bin1.ID, 1, "pick", "STORAGE-A1", ""), "InsertOrderBin bin1")
 
 	list, err := orders.ListOrderBins(db, o.ID)
 	if err != nil {
@@ -870,14 +841,13 @@ func TestOrderBinsJunction(t *testing.T) {
 // -------- ScanOrder / ScanOrders: raw-row consumption --------------------
 
 func TestScanOrders_DirectSQL(t *testing.T) {
+	t.Parallel()
 	d := testdb.Open(t)
 	db := d.DB
 
 	for i := 1; i <= 3; i++ {
 		o := newPendingOrder("scan-" + string(rune('0'+i)))
-		if err := orders.Create(db, o); err != nil {
-			t.Fatalf("Create: %v", err)
-		}
+		testutil.MustNoErr(t, orders.Create(db, o), "Create")
 	}
 
 	// Exercise ScanOrder via a single-row QueryRow.

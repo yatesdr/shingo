@@ -5,6 +5,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"shingo/protocol/testutil"
 	"testing"
 	"time"
 )
@@ -25,6 +26,7 @@ func testDB(t *testing.T) *DB {
 }
 
 func TestOutbox_EnqueueAndList(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	id, err := db.EnqueueOutbox([]byte(`{"test":"data"}`), "order.request")
@@ -54,13 +56,12 @@ func TestOutbox_EnqueueAndList(t *testing.T) {
 }
 
 func TestOutbox_AckRemovesFromPending(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	id, _ := db.EnqueueOutbox([]byte(`{}`), "test")
 
-	if err := db.AckOutbox(id); err != nil {
-		t.Fatalf("ack: %v", err)
-	}
+	testutil.MustNoErr(t, db.AckOutbox(id), "ack")
 
 	msgs, _ := db.ListPendingOutbox(10)
 	if len(msgs) != 0 {
@@ -69,14 +70,13 @@ func TestOutbox_AckRemovesFromPending(t *testing.T) {
 }
 
 func TestOutbox_IncrementRetries(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	id, _ := db.EnqueueOutbox([]byte(`{}`), "test")
 
 	for i := 0; i < 3; i++ {
-		if err := db.IncrementOutboxRetries(id); err != nil {
-			t.Fatalf("increment retries: %v", err)
-		}
+		testutil.MustNoErr(t, db.IncrementOutboxRetries(id), "increment retries")
 	}
 
 	msgs, _ := db.ListPendingOutbox(10)
@@ -89,6 +89,7 @@ func TestOutbox_IncrementRetries(t *testing.T) {
 }
 
 func TestOutbox_MaxRetriesExcluded(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	id, _ := db.EnqueueOutbox([]byte(`{}`), "test")
@@ -106,6 +107,7 @@ func TestOutbox_MaxRetriesExcluded(t *testing.T) {
 }
 
 func TestOutbox_PurgeOld(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	// Enqueue and ack a message
@@ -123,6 +125,7 @@ func TestOutbox_PurgeOld(t *testing.T) {
 }
 
 func TestOutbox_ListPendingLimit(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	for i := 0; i < 5; i++ {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -21,14 +22,13 @@ import (
 // row landed; error-path tests assert the wrapped error surfaces.
 
 func TestApplyCorrection_AddItem_PersistsManifestAndRecord(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	node := &nodes.Node{Name: "CORR-NODE-ADD", Enabled: true}
-	if err := db.CreateNode(node); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 	bin := createTestBinAtNode(t, db, bp.Code, node.ID, "BIN-ADD")
 
 	// Capture emitted CorrectionApplied event to prove side effects wired up.
@@ -89,14 +89,13 @@ func TestApplyCorrection_AddItem_PersistsManifestAndRecord(t *testing.T) {
 }
 
 func TestApplyCorrection_AdjustQty_UpdatesExistingEntry(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	node := &nodes.Node{Name: "CORR-NODE-ADJ", Enabled: true}
-	if err := db.CreateNode(node); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 	bin := createTestBinAtNode(t, db, bp.Code, node.ID, "BIN-ADJ")
 	// Seed an existing manifest entry.
 	putManifest(t, db, bin.ID, bp.Code, "PART-ADJ", 5)
@@ -126,14 +125,13 @@ func TestApplyCorrection_AdjustQty_UpdatesExistingEntry(t *testing.T) {
 }
 
 func TestApplyCorrection_RemoveItem_DropsEntry(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	node := &nodes.Node{Name: "CORR-NODE-RM", Enabled: true}
-	if err := db.CreateNode(node); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 	bin := createTestBinAtNode(t, db, bp.Code, node.ID, "BIN-RM")
 	putManifest(t, db, bin.ID, bp.Code, "PART-RM", 2)
 
@@ -158,6 +156,7 @@ func TestApplyCorrection_RemoveItem_DropsEntry(t *testing.T) {
 
 // TestApplyCorrection_MissingBin surfaces the error-path wrap when GetBin fails.
 func TestApplyCorrection_MissingBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -178,6 +177,7 @@ func TestApplyCorrection_MissingBin(t *testing.T) {
 // ── ApplyBatchCorrection ────────────────────────────────────────────
 
 func TestApplyBatchCorrection_DiffsAndEmits(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -193,9 +193,7 @@ func TestApplyBatchCorrection_DiffsAndEmits(t *testing.T) {
 		{CatID: "P2", Quantity: 3},
 	}}
 	data, _ := json.Marshal(m)
-	if err := db.SetBinManifest(bin.ID, string(data), bp.Code, 100); err != nil {
-		t.Fatalf("reset manifest: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, string(data), bp.Code, 100), "reset manifest")
 
 	// Capture events.
 	var appliedSeen, binUpdatedSeen bool
@@ -258,14 +256,13 @@ func TestApplyBatchCorrection_DiffsAndEmits(t *testing.T) {
 
 // TestApplyBatchCorrection_NoChanges short-circuits before touching the DB.
 func TestApplyBatchCorrection_NoChanges(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	node := &nodes.Node{Name: "BATCH-NOOP", Enabled: true}
-	if err := db.CreateNode(node); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 	bin := createTestBinAtNode(t, db, bp.Code, node.ID, "BIN-NOOP")
 	putManifest(t, db, bin.ID, bp.Code, "P1", 5)
 
@@ -294,6 +291,7 @@ func TestApplyBatchCorrection_NoChanges(t *testing.T) {
 
 // TestApplyBatchCorrection_MissingBin — validation error path.
 func TestApplyBatchCorrection_MissingBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 

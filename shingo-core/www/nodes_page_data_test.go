@@ -59,6 +59,7 @@ func (errNotFound) Error() string { return "not found" }
 // counts driven by ParentID, and depths populated only for children
 // whose GetSlotDepth succeeds.
 func TestGetNodesPageData_ComposesOutput(t *testing.T) {
+	t.Parallel()
 	parentID := int64(1)
 	otherParentID := int64(99) // parent that does not exist in the node list
 	stub := &stubNodesPageDataStore{

@@ -3,9 +3,11 @@
 package engine
 
 import (
+	"fmt"
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
@@ -61,4 +63,33 @@ func newTestEngine(t *testing.T, db *store.DB, sim *simulator.SimulatorBackend) 
 	eng.Start()
 	t.Cleanup(func() { eng.Stop() })
 	return eng
+}
+
+// setupThreeBinLine creates a line with 3 bins delivered and confirmed (claims released).
+// This represents a line mid-operation: bins are physically there, orders are done.
+// Returns the 3 bins, the storage node, the line node, and the payload.
+func setupThreeBinLine(t *testing.T, db *store.DB) (bins [3]*bins.Bin, storageNode, lineNode *nodes.Node, bp *payloads.Payload) {
+	t.Helper()
+	storageNode, lineNode, bp = setupTestData(t, db)
+
+	// Create a quality-hold node (another destination the operator might use)
+	qhNode := &nodes.Node{Name: "QUALITY-HOLD-1", Zone: "Q", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(qhNode), "create QH node")
+
+	// Create 3 bins at the line node (as if retrieve orders completed)
+	for i := 0; i < 3; i++ {
+		label := fmt.Sprintf("BIN-LINE-%d", i+1)
+		bins[i] = createTestBinAtNode(t, db, bp.Code, lineNode.ID, label)
+	}
+
+	// Refresh bins so we have current state
+	for i := 0; i < 3; i++ {
+		var err error
+		bins[i], err = db.GetBin(bins[i].ID)
+		if err != nil {
+			t.Fatalf("refresh bin %d: %v", i, err)
+		}
+	}
+
+	return
 }

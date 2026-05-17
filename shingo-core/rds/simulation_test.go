@@ -3,11 +3,13 @@ package rds
 import (
 	"encoding/json"
 	"net/http"
+	"shingo/protocol/testutil"
 	"strings"
 	"testing"
 )
 
 func TestGetSimStateTemplate(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/getSimRobotStateTemplate" {
 			t.Errorf("path = %q, want /getSimRobotStateTemplate", r.URL.Path)
@@ -25,9 +27,7 @@ func TestGetSimStateTemplate(t *testing.T) {
 	}
 	// Assert the raw JSON round-trips into a map with the expected fields.
 	var parsed map[string]any
-	if err := json.Unmarshal(got, &parsed); err != nil {
-		t.Fatalf("response is not valid JSON: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(got, &parsed), "response is not valid JSON")
 	if parsed["x"] != 1.5 {
 		t.Errorf("x = %v, want 1.5", parsed["x"])
 	}
@@ -37,6 +37,7 @@ func TestGetSimStateTemplate(t *testing.T) {
 }
 
 func TestGetSimStateTemplate_RDSErrorCode(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"code":9,"msg":"simulation disabled"}`))
 	})
@@ -52,6 +53,7 @@ func TestGetSimStateTemplate_RDSErrorCode(t *testing.T) {
 }
 
 func TestGetSimStateTemplate_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("boom"))
@@ -65,6 +67,7 @@ func TestGetSimStateTemplate_HTTPError(t *testing.T) {
 }
 
 func TestUpdateSimState(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/updateSimRobotState" {
 			t.Errorf("path = %q, want /updateSimRobotState", r.URL.Path)
@@ -73,9 +76,7 @@ func TestUpdateSimState(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var got map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&got), "decode request")
 		if got["vehicle"] != "AMB-01" {
 			t.Errorf("vehicle = %v, want AMB-01", got["vehicle"])
 		}
@@ -96,6 +97,7 @@ func TestUpdateSimState(t *testing.T) {
 }
 
 func TestUpdateSimState_RDSErrorCode(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(Response{Code: 13, Msg: "robot not simulated"})
 	})
@@ -111,6 +113,7 @@ func TestUpdateSimState_RDSErrorCode(t *testing.T) {
 }
 
 func TestUpdateSimState_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("bad"))

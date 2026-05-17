@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/payloads"
@@ -34,6 +35,7 @@ func postFormPL(t *testing.T, handler http.HandlerFunc, target string, form url.
 // --- handlePayloadCreate ----------------------------------------------------
 
 func TestHandlePayloadCreate_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	form := url.Values{}
@@ -59,6 +61,7 @@ func TestHandlePayloadCreate_HappyPath(t *testing.T) {
 }
 
 func TestHandlePayloadCreate_DuplicateCode(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -76,6 +79,7 @@ func TestHandlePayloadCreate_DuplicateCode(t *testing.T) {
 // --- handlePayloadUpdate ----------------------------------------------------
 
 func TestHandlePayloadUpdate_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -96,6 +100,7 @@ func TestHandlePayloadUpdate_HappyPath(t *testing.T) {
 }
 
 func TestHandlePayloadUpdate_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	form := url.Values{}
@@ -108,6 +113,7 @@ func TestHandlePayloadUpdate_InvalidID(t *testing.T) {
 }
 
 func TestHandlePayloadUpdate_NotFound(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	form := url.Values{}
@@ -123,11 +129,10 @@ func TestHandlePayloadUpdate_NotFound(t *testing.T) {
 // --- handlePayloadDelete ----------------------------------------------------
 
 func TestHandlePayloadDelete_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	pl := &payloads.Payload{Code: "DELME-1", Description: "to delete"}
-	if err := db.CreatePayload(pl); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(pl), "seed")
 
 	form := url.Values{}
 	form.Set("id", fmt.Sprint(pl.ID))
@@ -142,6 +147,7 @@ func TestHandlePayloadDelete_HappyPath(t *testing.T) {
 }
 
 func TestHandlePayloadDelete_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	form := url.Values{}
@@ -156,12 +162,11 @@ func TestHandlePayloadDelete_InvalidID(t *testing.T) {
 // --- apiCreatePayloadTemplate -----------------------------------------------
 
 func TestApiCreatePayloadTemplate_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	// Seed a bin type so we can associate it.
 	bt := &bins.BinType{Code: "BT-TMPL", Description: "for template"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("create bin type: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
 
 	rec := postJSON(t, h.apiCreatePayloadTemplate, "/api/payloads/templates/create",
 		map[string]any{
@@ -178,9 +183,7 @@ func TestApiCreatePayloadTemplate_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var created payloads.Payload
-	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&created), "decode")
 	if created.ID == 0 || created.Code != "TMPL-1" {
 		t.Errorf("response: got %+v", created)
 	}
@@ -197,6 +200,7 @@ func TestApiCreatePayloadTemplate_HappyPath(t *testing.T) {
 }
 
 func TestApiCreatePayloadTemplate_MinimalBody(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	// No bin_types, no manifest — just create the payload.
@@ -217,6 +221,7 @@ func TestApiCreatePayloadTemplate_MinimalBody(t *testing.T) {
 }
 
 func TestApiCreatePayloadTemplate_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiCreatePayloadTemplate, "/api/payloads/templates/create", []byte("garbage"))
 	if rec.Code != http.StatusBadRequest {
@@ -227,15 +232,12 @@ func TestApiCreatePayloadTemplate_InvalidJSON(t *testing.T) {
 // --- apiUpdatePayloadTemplate -----------------------------------------------
 
 func TestApiUpdatePayloadTemplate_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	pl := &payloads.Payload{Code: "UPD-1", Description: "orig", UOPCapacity: 5}
-	if err := db.CreatePayload(pl); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(pl), "seed")
 	bt := &bins.BinType{Code: "BT-UPD", Description: "for update"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("create bin type: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
 
 	rec := postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update",
 		map[string]any{
@@ -268,6 +270,7 @@ func TestApiUpdatePayloadTemplate_HappyPath(t *testing.T) {
 }
 
 func TestApiUpdatePayloadTemplate_NotFound(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postJSON(t, h.apiUpdatePayloadTemplate, "/api/payloads/templates/update",
 		map[string]any{"id": 9999999, "code": "X"})
@@ -280,6 +283,7 @@ func TestApiUpdatePayloadTemplate_NotFound(t *testing.T) {
 // --- apiGetPayloadManifestTemplate ------------------------------------------
 
 func TestApiGetPayloadManifestTemplate_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
@@ -294,15 +298,14 @@ func TestApiGetPayloadManifestTemplate_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var items []*payloads.ManifestItem
-	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&items), "decode")
 	if len(items) != 1 || items[0].PartNumber != "X" {
 		t.Errorf("items: got %+v", items)
 	}
 }
 
 func TestApiGetPayloadManifestTemplate_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiGetPayloadManifestTemplate, "/api/payloads/templates/manifest?id=x")
 	if rec.Code != http.StatusBadRequest {
@@ -313,6 +316,7 @@ func TestApiGetPayloadManifestTemplate_InvalidID(t *testing.T) {
 // --- apiSavePayloadManifestTemplate -----------------------------------------
 
 func TestApiSavePayloadManifestTemplate_ReplacesItems(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	// Seed one old item to verify it gets replaced.
@@ -345,6 +349,7 @@ func TestApiSavePayloadManifestTemplate_ReplacesItems(t *testing.T) {
 }
 
 func TestApiSavePayloadManifestTemplate_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiSavePayloadManifestTemplate, "/api/payloads/templates/manifest", []byte("{"))
 	if rec.Code != http.StatusBadRequest {
@@ -355,11 +360,10 @@ func TestApiSavePayloadManifestTemplate_InvalidJSON(t *testing.T) {
 // --- apiGetPayloadBinTypes --------------------------------------------------
 
 func TestApiGetPayloadBinTypes_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
-	if err := db.SetPayloadBinTypes(sd.Payload.ID, []int64{sd.BinType.ID}); err != nil {
-		t.Fatalf("seed bin types: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(sd.Payload.ID, []int64{sd.BinType.ID}), "seed bin types")
 
 	rec := getPlain(t, h.apiGetPayloadBinTypes,
 		"/api/payloads/templates/bin-types?id="+fmt.Sprint(sd.Payload.ID))
@@ -367,15 +371,14 @@ func TestApiGetPayloadBinTypes_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var bts []*bins.BinType
-	if err := json.NewDecoder(rec.Body).Decode(&bts); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&bts), "decode")
 	if len(bts) != 1 || bts[0].ID != sd.BinType.ID {
 		t.Errorf("bin types: got %+v", bts)
 	}
 }
 
 func TestApiGetPayloadBinTypes_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiGetPayloadBinTypes, "/api/payloads/templates/bin-types?id=abc")
 	if rec.Code != http.StatusBadRequest {
@@ -386,6 +389,7 @@ func TestApiGetPayloadBinTypes_InvalidID(t *testing.T) {
 // --- apiSavePayloadBinTypes -------------------------------------------------
 
 func TestApiSavePayloadBinTypes_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -406,6 +410,7 @@ func TestApiSavePayloadBinTypes_HappyPath(t *testing.T) {
 }
 
 func TestApiSavePayloadBinTypes_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiSavePayloadBinTypes, "/api/payloads/templates/bin-types", []byte("nope"))
 	if rec.Code != http.StatusBadRequest {
@@ -416,6 +421,7 @@ func TestApiSavePayloadBinTypes_InvalidJSON(t *testing.T) {
 // --- handlePayloadsPage -----------------------------------------------------
 
 func TestHandlePayloadsPage_RendersHTML(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlersForPages(t)
 	testdb.SetupStandardData(t, db)
 

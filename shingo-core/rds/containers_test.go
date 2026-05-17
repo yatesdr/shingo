@@ -3,10 +3,12 @@ package rds
 import (
 	"encoding/json"
 	"net/http"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestBindContainerGoods(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/setContainerGoods" {
 			t.Errorf("path = %q, want /setContainerGoods", r.URL.Path)
@@ -15,9 +17,7 @@ func TestBindContainerGoods(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req BindGoodsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-01" {
 			t.Errorf("Vehicle = %q, want AMB-01", req.Vehicle)
 		}
@@ -42,6 +42,7 @@ func TestBindContainerGoods(t *testing.T) {
 }
 
 func TestBindContainerGoods_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 7, Msg: "container in use"})
 	})
@@ -54,6 +55,7 @@ func TestBindContainerGoods_Error(t *testing.T) {
 }
 
 func TestUnbindGoods(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/clearGoods" {
 			t.Errorf("path = %q, want /clearGoods", r.URL.Path)
@@ -62,9 +64,7 @@ func TestUnbindGoods(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req UnbindGoodsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-02" {
 			t.Errorf("Vehicle = %q, want AMB-02", req.Vehicle)
 		}
@@ -75,12 +75,11 @@ func TestUnbindGoods(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.UnbindGoods("AMB-02", "G-1"); err != nil {
-		t.Fatalf("UnbindGoods: %v", err)
-	}
+	testutil.MustNoErr(t, client.UnbindGoods("AMB-02", "G-1"), "UnbindGoods")
 }
 
 func TestUnbindGoods_ServerError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -92,6 +91,7 @@ func TestUnbindGoods_ServerError(t *testing.T) {
 }
 
 func TestUnbindContainerGoods(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/clearContainer" {
 			t.Errorf("path = %q, want /clearContainer", r.URL.Path)
@@ -100,9 +100,7 @@ func TestUnbindContainerGoods(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req UnbindContainerRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-03" {
 			t.Errorf("Vehicle = %q, want AMB-03", req.Vehicle)
 		}
@@ -113,12 +111,11 @@ func TestUnbindContainerGoods(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.UnbindContainerGoods("AMB-03", "shelf-2"); err != nil {
-		t.Fatalf("UnbindContainerGoods: %v", err)
-	}
+	testutil.MustNoErr(t, client.UnbindContainerGoods("AMB-03", "shelf-2"), "UnbindContainerGoods")
 }
 
 func TestUnbindContainerGoods_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 9, Msg: "no such container"})
 	})
@@ -131,6 +128,7 @@ func TestUnbindContainerGoods_Error(t *testing.T) {
 }
 
 func TestClearAllContainerGoods(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/clearAllContainersGoods" {
 			t.Errorf("path = %q, want /clearAllContainersGoods", r.URL.Path)
@@ -139,9 +137,7 @@ func TestClearAllContainerGoods(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req ClearAllGoodsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-04" {
 			t.Errorf("Vehicle = %q, want AMB-04", req.Vehicle)
 		}
@@ -149,12 +145,11 @@ func TestClearAllContainerGoods(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.ClearAllContainerGoods("AMB-04"); err != nil {
-		t.Fatalf("ClearAllContainerGoods: %v", err)
-	}
+	testutil.MustNoErr(t, client.ClearAllContainerGoods("AMB-04"), "ClearAllContainerGoods")
 }
 
 func TestClearAllContainerGoods_Disconnect(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {})
 	srv.Close() // Close before invoking — POST should fail with connection error.
 

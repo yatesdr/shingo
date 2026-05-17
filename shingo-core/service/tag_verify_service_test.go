@@ -17,6 +17,7 @@ import (
 // from store/tag_verify.go's deleted (db *DB).VerifyTag method).
 
 func TestVerifyTag_NoOrder(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewTagVerifyService(db)
 
@@ -34,6 +35,7 @@ func TestVerifyTag_NoOrder(t *testing.T) {
 }
 
 func TestVerifyTag_NoBin(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewTagVerifyService(db)
 
@@ -48,6 +50,7 @@ func TestVerifyTag_NoBin(t *testing.T) {
 }
 
 func TestVerifyTag_LearnEmptyLabel(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewTagVerifyService(db)
 
@@ -77,6 +80,7 @@ func TestVerifyTag_LearnEmptyLabel(t *testing.T) {
 }
 
 func TestVerifyTag_MatchAndMismatch(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewTagVerifyService(db)
 

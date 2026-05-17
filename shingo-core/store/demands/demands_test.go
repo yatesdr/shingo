@@ -6,11 +6,13 @@ package demands_test
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/demands"
 )
 
 func TestCoverage_DemandRemaining(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		demand   int64
@@ -33,6 +35,7 @@ func TestCoverage_DemandRemaining(t *testing.T) {
 }
 
 func TestCoverage_DemandCRUD(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	id, err := demands.Create(db.DB, "CAT-001", "Widget catalog", 100)
@@ -68,9 +71,7 @@ func TestCoverage_DemandCRUD(t *testing.T) {
 		t.Errorf("GetByCatID ID = %d, want %d", byCat.ID, id)
 	}
 
-	if err := demands.Update(db.DB, id, "CAT-001", "Widget catalog v2", 250, 30); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
+	testutil.MustNoErr(t, demands.Update(db.DB, id, "CAT-001", "Widget catalog v2", 250, 30), "Update")
 	after, _ := demands.Get(db.DB, id)
 	if after.Description != "Widget catalog v2" {
 		t.Errorf("Description after update = %q", after.Description)
@@ -82,9 +83,7 @@ func TestCoverage_DemandCRUD(t *testing.T) {
 		t.Errorf("ProducedQty after update = %d, want 30", after.ProducedQty)
 	}
 
-	if err := demands.UpdateAndResetProduced(db.DB, id, "Widget catalog v3", 400); err != nil {
-		t.Fatalf("UpdateAndResetProduced: %v", err)
-	}
+	testutil.MustNoErr(t, demands.UpdateAndResetProduced(db.DB, id, "Widget catalog v3", 400), "UpdateAndResetProduced")
 	reset, _ := demands.Get(db.DB, id)
 	if reset.DemandQty != 400 {
 		t.Errorf("DemandQty after reset = %d, want 400", reset.DemandQty)
@@ -96,42 +95,33 @@ func TestCoverage_DemandCRUD(t *testing.T) {
 		t.Errorf("Description after reset = %q", reset.Description)
 	}
 
-	if err := demands.Delete(db.DB, id); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
+	testutil.MustNoErr(t, demands.Delete(db.DB, id), "Delete")
 	if _, err := demands.Get(db.DB, id); err == nil {
 		t.Error("Get after delete should error")
 	}
 }
 
 func TestCoverage_DemandProducedOps(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	id1, _ := demands.Create(db.DB, "CAT-A", "A", 100)
 	id2, _ := demands.Create(db.DB, "CAT-B", "B", 200)
 
-	if err := demands.IncrementProduced(db.DB, "CAT-A", 10); err != nil {
-		t.Fatalf("IncrementProduced: %v", err)
-	}
-	if err := demands.IncrementProduced(db.DB, "CAT-A", 5); err != nil {
-		t.Fatalf("IncrementProduced 2: %v", err)
-	}
+	testutil.MustNoErr(t, demands.IncrementProduced(db.DB, "CAT-A", 10), "IncrementProduced")
+	testutil.MustNoErr(t, demands.IncrementProduced(db.DB, "CAT-A", 5), "IncrementProduced 2")
 	d1, _ := demands.Get(db.DB, id1)
 	if d1.ProducedQty != 15 {
 		t.Errorf("CAT-A produced = %d, want 15", d1.ProducedQty)
 	}
 
-	if err := demands.SetProduced(db.DB, id2, 77); err != nil {
-		t.Fatalf("SetProduced: %v", err)
-	}
+	testutil.MustNoErr(t, demands.SetProduced(db.DB, id2, 77), "SetProduced")
 	d2, _ := demands.Get(db.DB, id2)
 	if d2.ProducedQty != 77 {
 		t.Errorf("CAT-B produced after SetProduced = %d, want 77", d2.ProducedQty)
 	}
 
-	if err := demands.ClearProduced(db.DB, id1); err != nil {
-		t.Fatalf("ClearProduced: %v", err)
-	}
+	testutil.MustNoErr(t, demands.ClearProduced(db.DB, id1), "ClearProduced")
 	d1b, _ := demands.Get(db.DB, id1)
 	if d1b.ProducedQty != 0 {
 		t.Errorf("CAT-A produced after ClearProduced = %d, want 0", d1b.ProducedQty)
@@ -142,9 +132,7 @@ func TestCoverage_DemandProducedOps(t *testing.T) {
 	}
 
 	demands.SetProduced(db.DB, id1, 3)
-	if err := demands.ClearAllProduced(db.DB); err != nil {
-		t.Fatalf("ClearAllProduced: %v", err)
-	}
+	testutil.MustNoErr(t, demands.ClearAllProduced(db.DB), "ClearAllProduced")
 	d1c, _ := demands.Get(db.DB, id1)
 	d2c, _ := demands.Get(db.DB, id2)
 	if d1c.ProducedQty != 0 || d2c.ProducedQty != 0 {
@@ -154,6 +142,7 @@ func TestCoverage_DemandProducedOps(t *testing.T) {
 }
 
 func TestCoverage_ListDemands(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	demands.Create(db.DB, "CAT-C", "C desc", 10)
@@ -174,17 +163,12 @@ func TestCoverage_ListDemands(t *testing.T) {
 }
 
 func TestCoverage_LogProduction(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
-	if err := demands.LogProduction(db.DB, "CAT-X", "line-1", 5); err != nil {
-		t.Fatalf("LogProduction 1: %v", err)
-	}
-	if err := demands.LogProduction(db.DB, "CAT-X", "line-2", 10); err != nil {
-		t.Fatalf("LogProduction 2: %v", err)
-	}
-	if err := demands.LogProduction(db.DB, "CAT-Y", "line-1", 7); err != nil {
-		t.Fatalf("LogProduction 3: %v", err)
-	}
+	testutil.MustNoErr(t, demands.LogProduction(db.DB, "CAT-X", "line-1", 5), "LogProduction 1")
+	testutil.MustNoErr(t, demands.LogProduction(db.DB, "CAT-X", "line-2", 10), "LogProduction 2")
+	testutil.MustNoErr(t, demands.LogProduction(db.DB, "CAT-Y", "line-1", 7), "LogProduction 3")
 
 	entries, err := demands.ListProductionLog(db.DB, "CAT-X", 10)
 	if err != nil {
@@ -208,6 +192,7 @@ func TestCoverage_LogProduction(t *testing.T) {
 }
 
 func TestCoverage_SyncDemandRegistry(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	initial := []demands.RegistryEntry{
@@ -269,6 +254,7 @@ func TestCoverage_SyncDemandRegistry(t *testing.T) {
 }
 
 func TestCoverage_LookupDemandRegistry(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
@@ -313,6 +299,7 @@ func TestCoverage_LookupDemandRegistry(t *testing.T) {
 // timers — the opt-in default depends on the registry-driven change
 // detection working correctly.
 func TestCoverage_SyncRegistry_ThresholdChangeDetection(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	// First sync: introduce a binding with threshold > 0.
@@ -363,6 +350,7 @@ func TestCoverage_SyncRegistry_ThresholdChangeDetection(t *testing.T) {
 // per the C-push contract — Core never monitors those pairs, Edge
 // owns them via the legacy bin-count path.
 func TestCoverage_LookupThresholdsByPayload(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
 		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},

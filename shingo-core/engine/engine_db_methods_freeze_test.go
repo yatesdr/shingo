@@ -28,6 +28,7 @@ import (
 const frozenPassthroughCount = 0
 
 func TestEngineDbMethodsFrozen(t *testing.T) {
+	t.Parallel()
 	src, err := os.ReadFile("engine_db_methods.go")
 	if err != nil {
 		t.Fatalf("read engine_db_methods.go: %v", err)

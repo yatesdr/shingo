@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -88,6 +89,7 @@ func testHandlersWithVendorProxy(t *testing.T, baseURL string) (*Handlers, *stor
 // With the simulator backend (no VendorProxy), FleetBaseURL is empty but the
 // page still renders.
 func TestHandleFleetExplorer_RendersHTML(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/fleet-explorer", nil)
@@ -107,6 +109,7 @@ func TestHandleFleetExplorer_RendersHTML(t *testing.T) {
 // satisfies VendorProxy, its BaseURL() flows into the rendered template via
 // FleetBaseURL.
 func TestHandleFleetExplorer_ExposesBaseURL(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersWithVendorProxy(t, "http://fake-rds.local:9999")
 
 	req := httptest.NewRequest(http.MethodGet, "/fleet-explorer", nil)
@@ -125,6 +128,7 @@ func TestHandleFleetExplorer_ExposesBaseURL(t *testing.T) {
 
 // TestApiFleetProxy_RejectsGET pins the method guard: only POST is allowed.
 func TestApiFleetProxy_RejectsGET(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/fleet/proxy", nil)
@@ -140,6 +144,7 @@ func TestApiFleetProxy_RejectsGET(t *testing.T) {
 // TestApiFleetProxy_BackendNotSupported pins the 501 path: simulator does not
 // implement VendorProxy.
 func TestApiFleetProxy_BackendNotSupported(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiFleetProxy, "/api/fleet/proxy",
@@ -153,6 +158,7 @@ func TestApiFleetProxy_BackendNotSupported(t *testing.T) {
 // TestApiFleetProxy_InvalidJSON pins the 400 path on bad body when proxy is
 // supported (we have to hit the post-501 codepath).
 func TestApiFleetProxy_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersWithVendorProxy(t, "http://unused.local")
 
 	rec := postRaw(t, h.apiFleetProxy, "/api/fleet/proxy", []byte("not-json"))
@@ -165,6 +171,7 @@ func TestApiFleetProxy_InvalidJSON(t *testing.T) {
 // path: the handler forwards the (method, path) pair to the vendor base URL,
 // then echoes the upstream JSON body back to the client under "body".
 func TestApiFleetProxy_ForwardsAndReturnsJSON(t *testing.T) {
+	t.Parallel()
 	gotMethod := ""
 	gotPath := ""
 	gotBody := ""
@@ -202,9 +209,7 @@ func TestApiFleetProxy_ForwardsAndReturnsJSON(t *testing.T) {
 	}
 
 	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode response")
 	if resp["status_code"].(float64) != 200 {
 		t.Errorf("status_code: got %v, want 200", resp["status_code"])
 	}
@@ -226,6 +231,7 @@ func TestApiFleetProxy_ForwardsAndReturnsJSON(t *testing.T) {
 // TestApiFleetProxy_NonJSONBody pins the body_text fallback: when the upstream
 // returns non-JSON content, the response gets a body_text field instead of body.
 func TestApiFleetProxy_NonJSONBody(t *testing.T) {
+	t.Parallel()
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, "plain text response")
@@ -240,9 +246,7 @@ func TestApiFleetProxy_NonJSONBody(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if _, hasBody := resp["body"]; hasBody {
 		t.Errorf("non-JSON upstream should NOT set 'body'; got %+v", resp)
 	}
@@ -254,6 +258,7 @@ func TestApiFleetProxy_NonJSONBody(t *testing.T) {
 // TestApiFleetProxy_DefaultsMethodAndPath pins the parser defaults: empty
 // method becomes GET and a path without leading "/" gets one prepended.
 func TestApiFleetProxy_DefaultsMethodAndPath(t *testing.T) {
+	t.Parallel()
 	gotMethod := ""
 	gotPath := ""
 
@@ -283,6 +288,7 @@ func TestApiFleetProxy_DefaultsMethodAndPath(t *testing.T) {
 // TestApiFleetProxy_UpstreamUnreachable pins the network-error envelope: the
 // handler still returns 200 (the error is in the body) with status_code:0.
 func TestApiFleetProxy_UpstreamUnreachable(t *testing.T) {
+	t.Parallel()
 	// 127.0.0.1:1 is reliably refused on Linux test runners.
 	h, _ := testHandlersWithVendorProxy(t, "http://127.0.0.1:1")
 
@@ -293,9 +299,7 @@ func TestApiFleetProxy_UpstreamUnreachable(t *testing.T) {
 			rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp["status_code"].(float64) != 0 {
 		t.Errorf("status_code on connect error: got %v, want 0", resp["status_code"])
 	}
@@ -309,6 +313,7 @@ func TestApiFleetProxy_UpstreamUnreachable(t *testing.T) {
 // TestFlattenHeaders pins the helper used to convert http.Header into a
 // flat map[string]string for JSON response bodies.
 func TestFlattenHeaders(t *testing.T) {
+	t.Parallel()
 	hdr := http.Header{}
 	hdr.Add("X-Single", "v1")
 	hdr.Add("X-Multi", "a")

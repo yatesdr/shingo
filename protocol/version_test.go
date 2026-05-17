@@ -14,6 +14,7 @@ import (
 // use the same Go version and the same golang.org/x/crypto version.
 // Run: cd protocol && go test -run TestModuleVersionConsistency
 func TestModuleVersionConsistency(t *testing.T) {
+	t.Parallel()
 	type modInfo struct {
 		name   string
 		goVer  string

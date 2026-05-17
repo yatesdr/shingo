@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingoedge/store/catalog"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -46,6 +47,7 @@ func seedProcessStyle(t *testing.T, db *DB, procName, styleName string) (int64, 
 // ============================================================================
 
 func TestAdminUsers_CreateGetUpdateExists(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	exists, err := db.AdminUserExists()
@@ -80,9 +82,7 @@ func TestAdminUsers_CreateGetUpdateExists(t *testing.T) {
 		t.Error("expected non-zero created_at")
 	}
 
-	if err := db.UpdateAdminPassword("alice", "hash-v2"); err != nil {
-		t.Fatalf("update: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateAdminPassword("alice", "hash-v2"), "update")
 	got2, err := db.GetAdminUser("alice")
 	if err != nil {
 		t.Fatalf("get after update: %v", err)
@@ -93,6 +93,7 @@ func TestAdminUsers_CreateGetUpdateExists(t *testing.T) {
 }
 
 func TestAdminUsers_GetMissingReturnsError(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	if _, err := db.GetAdminUser("ghost"); err == nil {
 		t.Fatal("expected error for missing user")
@@ -104,6 +105,7 @@ func TestAdminUsers_GetMissingReturnsError(t *testing.T) {
 // ============================================================================
 
 func TestProcesses_CreateListGetUpdateDelete(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	id, err := db.CreateProcess("LINE-A", "main line", "active_production", "PLC1", "TAG1", true, false)
@@ -127,9 +129,7 @@ func TestProcesses_CreateListGetUpdateDelete(t *testing.T) {
 		t.Errorf("counter fields wrong: %+v", got)
 	}
 
-	if err := db.UpdateProcess(id, "LINE-A-v2", "updated", "", "PLC2", "TAG2", false, false); err != nil {
-		t.Fatalf("update: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcess(id, "LINE-A-v2", "updated", "", "PLC2", "TAG2", false, false), "update")
 	got2, _ := db.GetProcess(id)
 	if got2.Name != "LINE-A-v2" {
 		t.Errorf("name after update = %q", got2.Name)
@@ -142,9 +142,7 @@ func TestProcesses_CreateListGetUpdateDelete(t *testing.T) {
 		t.Error("expected counter_enabled=false after update")
 	}
 
-	if err := db.DeleteProcess(id); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteProcess(id), "delete")
 	rest, _ := db.ListProcesses()
 	if len(rest) != 0 {
 		t.Errorf("list after delete = %d, want 0", len(rest))
@@ -152,6 +150,7 @@ func TestProcesses_CreateListGetUpdateDelete(t *testing.T) {
 }
 
 func TestProcesses_CreateDefaultsProductionState(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	id, err := db.CreateProcess("DEF", "", "", "", "", false, false)
 	if err != nil {
@@ -164,6 +163,7 @@ func TestProcesses_CreateDefaultsProductionState(t *testing.T) {
 }
 
 func TestProcesses_ActiveAndTargetStyle(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, sid := seedProcessStyle(t, db, "P", "S1")
 
@@ -176,9 +176,7 @@ func TestProcesses_ActiveAndTargetStyle(t *testing.T) {
 		t.Errorf("active style = %v, want nil", active)
 	}
 
-	if err := db.SetActiveStyle(pid, &sid); err != nil {
-		t.Fatalf("set active: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, &sid), "set active")
 	active, _ = db.GetActiveStyleID(pid)
 	if active == nil || *active != sid {
 		t.Errorf("active style = %v, want %d", active, sid)
@@ -186,18 +184,14 @@ func TestProcesses_ActiveAndTargetStyle(t *testing.T) {
 
 	// Set target style.
 	sid2, _ := db.CreateStyle("S2", "", pid)
-	if err := db.SetTargetStyle(pid, &sid2); err != nil {
-		t.Fatalf("set target: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetTargetStyle(pid, &sid2), "set target")
 	got, _ := db.GetProcess(pid)
 	if got.TargetStyleID == nil || *got.TargetStyleID != sid2 {
 		t.Errorf("target style = %v, want %d", got.TargetStyleID, sid2)
 	}
 
 	// Clear active by nil.
-	if err := db.SetActiveStyle(pid, nil); err != nil {
-		t.Fatalf("clear active: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(pid, nil), "clear active")
 	active, _ = db.GetActiveStyleID(pid)
 	if active != nil {
 		t.Errorf("active after nil = %v", active)
@@ -205,14 +199,13 @@ func TestProcesses_ActiveAndTargetStyle(t *testing.T) {
 }
 
 func TestProcesses_SetProductionState(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	id, err := db.CreateProcess("P", "", "", "", "", false, false)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if err := db.SetProcessProductionState(id, "changeover_active"); err != nil {
-		t.Fatalf("set state: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessProductionState(id, "changeover_active"), "set state")
 	got, _ := db.GetProcess(id)
 	if got.ProductionState != "changeover_active" {
 		t.Errorf("state = %q, want changeover_active", got.ProductionState)
@@ -224,6 +217,7 @@ func TestProcesses_SetProductionState(t *testing.T) {
 // ============================================================================
 
 func TestStyles_CRUDAndListing(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, err := db.CreateProcess("P", "", "", "", "", false, false)
 	if err != nil {
@@ -259,17 +253,13 @@ func TestStyles_CRUDAndListing(t *testing.T) {
 		t.Errorf("get by name: %v id=%d", err, gotByName.ID)
 	}
 
-	if err := db.UpdateStyle(s1, "WIDGET-A-v2", "renamed", pid); err != nil {
-		t.Fatalf("update: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateStyle(s1, "WIDGET-A-v2", "renamed", pid), "update")
 	got2, _ := db.GetStyle(s1)
 	if got2.Name != "WIDGET-A-v2" {
 		t.Errorf("name after update = %q", got2.Name)
 	}
 
-	if err := db.DeleteStyle(s2); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteStyle(s2), "delete")
 	after, _ := db.ListStyles()
 	if len(after) != 1 {
 		t.Errorf("list after delete = %d, want 1", len(after))
@@ -277,6 +267,7 @@ func TestStyles_CRUDAndListing(t *testing.T) {
 }
 
 func TestStyles_GetMissingReturnsError(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	if _, err := db.GetStyle(9999); err == nil {
 		t.Fatal("expected error for missing id")
@@ -291,14 +282,11 @@ func TestStyles_GetMissingReturnsError(t *testing.T) {
 // ============================================================================
 
 func TestShifts_UpsertListDelete(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
-	if err := db.UpsertShift(1, "Day", "06:00", "14:00"); err != nil {
-		t.Fatalf("upsert 1: %v", err)
-	}
-	if err := db.UpsertShift(2, "Swing", "14:00", "22:00"); err != nil {
-		t.Fatalf("upsert 2: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpsertShift(1, "Day", "06:00", "14:00"), "upsert 1")
+	testutil.MustNoErr(t, db.UpsertShift(2, "Swing", "14:00", "22:00"), "upsert 2")
 
 	list, err := db.ListShifts()
 	if err != nil || len(list) != 2 {
@@ -309,17 +297,13 @@ func TestShifts_UpsertListDelete(t *testing.T) {
 	}
 
 	// Upsert conflict -> updates name/start/end, keeps id
-	if err := db.UpsertShift(1, "Day Updated", "07:00", "15:00"); err != nil {
-		t.Fatalf("upsert update: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpsertShift(1, "Day Updated", "07:00", "15:00"), "upsert update")
 	list2, _ := db.ListShifts()
 	if list2[0].Name != "Day Updated" || list2[0].StartTime != "07:00" {
 		t.Errorf("after upsert-update: %+v", list2[0])
 	}
 
-	if err := db.DeleteShift(1); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteShift(1), "delete")
 	list3, _ := db.ListShifts()
 	if len(list3) != 1 || list3[0].ShiftNumber != 2 {
 		t.Errorf("after delete: %+v", list3)
@@ -331,6 +315,7 @@ func TestShifts_UpsertListDelete(t *testing.T) {
 // ============================================================================
 
 func TestPayloadCatalog_UpsertListGet(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	entry := &catalog.CatalogEntry{
@@ -340,9 +325,7 @@ func TestPayloadCatalog_UpsertListGet(t *testing.T) {
 		Description: "10-unit tote",
 		UOPCapacity: 10,
 	}
-	if err := db.UpsertPayloadCatalog(entry); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpsertPayloadCatalog(entry), "upsert")
 
 	list, err := db.ListPayloadCatalog()
 	if err != nil || len(list) != 1 {
@@ -363,9 +346,7 @@ func TestPayloadCatalog_UpsertListGet(t *testing.T) {
 	// Upsert conflict — same ID updates the fields in place.
 	entry.Description = "10-unit tote (v2)"
 	entry.UOPCapacity = 12
-	if err := db.UpsertPayloadCatalog(entry); err != nil {
-		t.Fatalf("upsert-update: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpsertPayloadCatalog(entry), "upsert-update")
 	byCode2, _ := db.GetPayloadCatalogByCode("WT-10")
 	if byCode2.UOPCapacity != 12 || !strings.Contains(byCode2.Description, "v2") {
 		t.Errorf("after upsert-update: %+v", byCode2)
@@ -373,27 +354,22 @@ func TestPayloadCatalog_UpsertListGet(t *testing.T) {
 }
 
 func TestPayloadCatalog_DeleteStale(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	for _, id := range []int64{1, 2, 3} {
 		e := &catalog.CatalogEntry{ID: id, Name: "E", Code: "C"}
-		if err := db.UpsertPayloadCatalog(e); err != nil {
-			t.Fatalf("upsert: %v", err)
-		}
+		testutil.MustNoErr(t, db.UpsertPayloadCatalog(e), "upsert")
 	}
 
 	// Empty activeIDs is a no-op (safety).
-	if err := db.DeleteStalePayloadCatalogEntries(nil); err != nil {
-		t.Fatalf("delete stale (nil): %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteStalePayloadCatalogEntries(nil), "delete stale (nil)")
 	list, _ := db.ListPayloadCatalog()
 	if len(list) != 3 {
 		t.Fatalf("len after no-op delete = %d, want 3", len(list))
 	}
 
 	// Keep only id=2.
-	if err := db.DeleteStalePayloadCatalogEntries([]int64{2}); err != nil {
-		t.Fatalf("delete stale: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteStalePayloadCatalogEntries([]int64{2}), "delete stale")
 	list2, _ := db.ListPayloadCatalog()
 	if len(list2) != 1 || list2[0].ID != 2 {
 		t.Errorf("after delete stale: %+v", list2)
@@ -401,6 +377,7 @@ func TestPayloadCatalog_DeleteStale(t *testing.T) {
 }
 
 func TestPayloadCatalog_GetMissingReturnsError(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	if _, err := db.GetPayloadCatalogByCode("none"); err == nil {
 		t.Fatal("expected error for missing code")
@@ -412,6 +389,7 @@ func TestPayloadCatalog_GetMissingReturnsError(t *testing.T) {
 // ============================================================================
 
 func TestReportingPoints_CRUD(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S1")
 
@@ -439,17 +417,13 @@ func TestReportingPoints_CRUD(t *testing.T) {
 
 	// Enable + rename + change style
 	_, sid2 := seedProcessStyle(t, db, "P2", "S2")
-	if err := db.UpdateReportingPoint(id, "PLC2", "COUNTER_B", sid2, true); err != nil {
-		t.Fatalf("update: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateReportingPoint(id, "PLC2", "COUNTER_B", sid2, true), "update")
 	got2, _ := db.GetReportingPoint(id)
 	if !got2.Enabled || got2.PLCName != "PLC2" || got2.TagName != "COUNTER_B" || got2.StyleID != sid2 {
 		t.Errorf("after update: %+v", got2)
 	}
 
-	if err := db.DeleteReportingPoint(id); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteReportingPoint(id), "delete")
 	after, _ := db.ListReportingPoints()
 	if len(after) != 0 {
 		t.Errorf("after delete: %d", len(after))
@@ -457,13 +431,12 @@ func TestReportingPoints_CRUD(t *testing.T) {
 }
 
 func TestReportingPoints_UpdateCounter(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
 	id, _ := db.CreateReportingPoint("PLC", "TAG", sid)
-	if err := db.UpdateReportingPointCounter(id, 42); err != nil {
-		t.Fatalf("update counter: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateReportingPointCounter(id, 42), "update counter")
 	got, _ := db.GetReportingPoint(id)
 	if got.LastCount != 42 {
 		t.Errorf("last_count = %d, want 42", got.LastCount)
@@ -474,21 +447,18 @@ func TestReportingPoints_UpdateCounter(t *testing.T) {
 }
 
 func TestReportingPoints_SetManaged(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 	id, _ := db.CreateReportingPoint("PLC", "TAG", sid)
 
-	if err := db.SetReportingPointManaged(id, true); err != nil {
-		t.Fatalf("set managed: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetReportingPointManaged(id, true), "set managed")
 	got, _ := db.GetReportingPoint(id)
 	if !got.WarlinkManaged {
 		t.Error("expected warlink_managed=true")
 	}
 
-	if err := db.SetReportingPointManaged(id, false); err != nil {
-		t.Fatalf("set managed false: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetReportingPointManaged(id, false), "set managed false")
 	got2, _ := db.GetReportingPoint(id)
 	if got2.WarlinkManaged {
 		t.Error("expected warlink_managed=false")
@@ -496,6 +466,7 @@ func TestReportingPoints_SetManaged(t *testing.T) {
 }
 
 func TestReportingPoints_ListEnabledAndLookups(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
@@ -504,9 +475,7 @@ func TestReportingPoints_ListEnabledAndLookups(t *testing.T) {
 
 	// Schema default for `enabled` is 1, so both rows start enabled.
 	// Disable id2 to verify ListEnabledReportingPoints actually filters.
-	if err := db.UpdateReportingPoint(id2, "PLC2", "T2", sid, false); err != nil {
-		t.Fatalf("disable id2: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateReportingPoint(id2, "PLC2", "T2", sid, false), "disable id2")
 
 	enabled, err := db.ListEnabledReportingPoints()
 	if err != nil {
@@ -531,6 +500,7 @@ func TestReportingPoints_ListEnabledAndLookups(t *testing.T) {
 }
 
 func TestReportingPoints_LookupMissingReturnsError(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	if _, err := db.GetReportingPoint(9999); err == nil {
 		t.Fatal("expected error")
@@ -548,6 +518,7 @@ func TestReportingPoints_LookupMissingReturnsError(t *testing.T) {
 // ============================================================================
 
 func TestCounterSnapshots_InsertListConfirmDismiss(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 	rpID, _ := db.CreateReportingPoint("PLC", "TAG", sid)
@@ -575,9 +546,7 @@ func TestCounterSnapshots_InsertListConfirmDismiss(t *testing.T) {
 	}
 
 	// Confirming the anomaly removes it from the unconfirmed list.
-	if err := db.ConfirmAnomaly(anomalyID); err != nil {
-		t.Fatalf("confirm: %v", err)
-	}
+	testutil.MustNoErr(t, db.ConfirmAnomaly(anomalyID), "confirm")
 	list2, _ := db.ListUnconfirmedAnomalies()
 	if len(list2) != 0 {
 		t.Errorf("after confirm: %d", len(list2))
@@ -585,9 +554,7 @@ func TestCounterSnapshots_InsertListConfirmDismiss(t *testing.T) {
 
 	// Dismissing a second anomaly deletes it.
 	dismissID, _ := db.InsertCounterSnapshot(rpID, 300, 100, "jump", false)
-	if err := db.DismissAnomaly(dismissID); err != nil {
-		t.Fatalf("dismiss: %v", err)
-	}
+	testutil.MustNoErr(t, db.DismissAnomaly(dismissID), "dismiss")
 	list3, _ := db.ListUnconfirmedAnomalies()
 	if len(list3) != 0 {
 		t.Errorf("after dismiss: %d", len(list3))
@@ -595,6 +562,7 @@ func TestCounterSnapshots_InsertListConfirmDismiss(t *testing.T) {
 }
 
 func TestCounterSnapshots_DismissOnlyUnconfirmedJump(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 	rpID, _ := db.CreateReportingPoint("PLC", "TAG", sid)
@@ -603,9 +571,7 @@ func TestCounterSnapshots_DismissOnlyUnconfirmedJump(t *testing.T) {
 	id, _ := db.InsertCounterSnapshot(rpID, 100, 10, "jump", false)
 	db.ConfirmAnomaly(id)
 
-	if err := db.DismissAnomaly(id); err != nil {
-		t.Fatalf("dismiss: %v", err)
-	}
+	testutil.MustNoErr(t, db.DismissAnomaly(id), "dismiss")
 	// Row should still exist (dismiss is a no-op for confirmed).
 	var count int
 	db.QueryRow(`SELECT COUNT(*) FROM counter_snapshots WHERE id=?`, id).Scan(&count)
@@ -619,19 +585,14 @@ func TestCounterSnapshots_DismissOnlyUnconfirmedJump(t *testing.T) {
 // ============================================================================
 
 func TestHourlyCounts_UpsertAccumulates(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, sid := seedProcessStyle(t, db, "P", "S")
 	date := "2026-04-19"
 
-	if err := db.UpsertHourlyCount(pid, sid, date, 8, 5); err != nil {
-		t.Fatalf("upsert: %v", err)
-	}
-	if err := db.UpsertHourlyCount(pid, sid, date, 8, 3); err != nil {
-		t.Fatalf("upsert second: %v", err)
-	}
-	if err := db.UpsertHourlyCount(pid, sid, date, 9, 7); err != nil {
-		t.Fatalf("upsert hour 9: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, date, 8, 5), "upsert")
+	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, date, 8, 3), "upsert second")
+	testutil.MustNoErr(t, db.UpsertHourlyCount(pid, sid, date, 9, 7), "upsert hour 9")
 
 	list, err := db.ListHourlyCounts(pid, sid, date)
 	if err != nil || len(list) != 2 {
@@ -647,6 +608,7 @@ func TestHourlyCounts_UpsertAccumulates(t *testing.T) {
 }
 
 func TestHourlyCounts_Totals(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, sid1 := seedProcessStyle(t, db, "P", "S1")
 	sid2, _ := db.CreateStyle("S2", "", pid)
@@ -673,6 +635,7 @@ func TestHourlyCounts_Totals(t *testing.T) {
 // ============================================================================
 
 func TestReconciliationSummary_OkOnEmptyDB(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	s, err := db.GetReconciliationSummary()
 	if err != nil {
@@ -687,6 +650,7 @@ func TestReconciliationSummary_OkOnEmptyDB(t *testing.T) {
 }
 
 func TestReconciliationSummary_DegradedOnPendingOutbox(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	// Enqueue 1 message — pending, not yet stale enough for critical.
@@ -707,6 +671,7 @@ func TestReconciliationSummary_DegradedOnPendingOutbox(t *testing.T) {
 }
 
 func TestReconciliationSummary_CriticalOnDeadLetter(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	id, _ := db.EnqueueOutbox([]byte(`{}`), "test")
@@ -727,6 +692,7 @@ func TestReconciliationSummary_CriticalOnDeadLetter(t *testing.T) {
 }
 
 func TestReconciliationAnomalies_DetectsStuckAndDelivered(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	// Two orders — backdate updated_at to push past the thresholds.
@@ -781,6 +747,7 @@ func TestReconciliationAnomalies_DetectsStuckAndDelivered(t *testing.T) {
 // ============================================================================
 
 func TestOrders_CreateGetListByUUID(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	id, err := db.CreateOrder("uuid-1", "retrieve", nil, false, 5,
@@ -811,6 +778,7 @@ func TestOrders_CreateGetListByUUID(t *testing.T) {
 }
 
 func TestOrders_ActiveListFilters(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	a, _ := db.CreateOrder("a", "retrieve", nil, false, 1, "", "", "", "", false, "")
@@ -840,6 +808,7 @@ func TestOrders_ActiveListFilters(t *testing.T) {
 }
 
 func TestOrders_ByProcessAndNodeFilters(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P1", "", "", "", "", false, false)
 	nid, err := db.CreateProcessNode(processes.NodeInput{
@@ -879,6 +848,7 @@ func TestOrders_ByProcessAndNodeFilters(t *testing.T) {
 }
 
 func TestOrders_UpdateMutations(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	id, _ := db.CreateOrder("u", "retrieve", nil, false, 1, "", "", "", "", false, "")
 
@@ -887,40 +857,26 @@ func TestOrders_UpdateMutations(t *testing.T) {
 	nid, _ := db.CreateProcessNode(processes.NodeInput{
 		ProcessID: pid, CoreNodeName: "N", Code: "N", Name: "N", Sequence: 1, Enabled: true,
 	})
-	if err := db.UpdateOrderProcessNode(id, &nid); err != nil {
-		t.Fatalf("update node: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderProcessNode(id, &nid), "update node")
 
 	// Waybill + ETA
-	if err := db.UpdateOrderWaybill(id, "WB-1", "2026-04-19T10:00:00Z"); err != nil {
-		t.Fatalf("waybill: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderWaybill(id, "WB-1", "2026-04-19T10:00:00Z"), "waybill")
 
 	// ETA-only update
-	if err := db.UpdateOrderETA(id, "2026-04-19T12:00:00Z"); err != nil {
-		t.Fatalf("eta: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderETA(id, "2026-04-19T12:00:00Z"), "eta")
 
 	// Final count
-	if err := db.UpdateOrderFinalCount(id, 42, true); err != nil {
-		t.Fatalf("final count: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderFinalCount(id, 42, true), "final count")
 
 	// Delivery node
-	if err := db.UpdateOrderDeliveryNode(id, "DEST"); err != nil {
-		t.Fatalf("delivery: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderDeliveryNode(id, "DEST"), "delivery")
 
 	// Steps JSON
-	if err := db.UpdateOrderStepsJSON(id, `{"step":1}`); err != nil {
-		t.Fatalf("steps: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStepsJSON(id, `{"step":1}`), "steps")
 
 	// Staged expire
 	exp := time.Now().UTC().Add(10 * time.Minute)
-	if err := db.UpdateOrderStagedExpireAt(id, &exp); err != nil {
-		t.Fatalf("expire: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStagedExpireAt(id, &exp), "expire")
 
 	got, err := db.GetOrder(id)
 	if err != nil {
@@ -946,9 +902,7 @@ func TestOrders_UpdateMutations(t *testing.T) {
 	}
 
 	// Clear expire
-	if err := db.UpdateOrderStagedExpireAt(id, nil); err != nil {
-		t.Fatalf("clear expire: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStagedExpireAt(id, nil), "clear expire")
 	got2, _ := db.GetOrder(id)
 	if got2.StagedExpireAt != nil {
 		t.Errorf("staged_expire_at after clear = %v", got2.StagedExpireAt)
@@ -956,15 +910,12 @@ func TestOrders_UpdateMutations(t *testing.T) {
 }
 
 func TestOrders_HistoryInsertAndList(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	id, _ := db.CreateOrder("u", "retrieve", nil, false, 1, "", "", "", "", false, "")
 
-	if err := db.InsertOrderHistory(id, "pending", "submitted", "auto-submit"); err != nil {
-		t.Fatalf("insert history: %v", err)
-	}
-	if err := db.InsertOrderHistory(id, "submitted", "acknowledged", "core ack"); err != nil {
-		t.Fatalf("insert history 2: %v", err)
-	}
+	testutil.MustNoErr(t, db.InsertOrderHistory(id, "pending", "submitted", "auto-submit"), "insert history")
+	testutil.MustNoErr(t, db.InsertOrderHistory(id, "submitted", "acknowledged", "core ack"), "insert history 2")
 
 	list, err := db.ListOrderHistory(id)
 	if err != nil {
@@ -991,6 +942,7 @@ func TestOrders_HistoryInsertAndList(t *testing.T) {
 }
 
 func TestOrders_GetMissingReturnsError(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	if _, err := db.GetOrder(9999); err == nil {
 		t.Fatal("expected error for missing id")
@@ -1005,6 +957,7 @@ func TestOrders_GetMissingReturnsError(t *testing.T) {
 // ============================================================================
 
 func TestOperatorStations_CRUD(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
 
@@ -1068,9 +1021,7 @@ func TestOperatorStations_CRUD(t *testing.T) {
 		t.Errorf("code changed during update: %q -> %q", got.Code, gotU.Code)
 	}
 
-	if err := db.DeleteOperatorStation(id2); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteOperatorStation(id2), "delete")
 	after, _ := db.ListOperatorStations()
 	if len(after) != 1 {
 		t.Errorf("after delete: %d", len(after))
@@ -1078,15 +1029,14 @@ func TestOperatorStations_CRUD(t *testing.T) {
 }
 
 func TestOperatorStations_TouchUpdatesHealthAndLastSeen(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
 	id, _ := db.CreateOperatorStation(stations.Input{
 		ProcessID: pid, Name: "S", Enabled: true,
 	})
 
-	if err := db.TouchOperatorStation(id, "ok"); err != nil {
-		t.Fatalf("touch: %v", err)
-	}
+	testutil.MustNoErr(t, db.TouchOperatorStation(id, "ok"), "touch")
 	got, _ := db.GetOperatorStation(id)
 	if got.HealthStatus != "ok" {
 		t.Errorf("health = %q", got.HealthStatus)
@@ -1097,6 +1047,7 @@ func TestOperatorStations_TouchUpdatesHealthAndLastSeen(t *testing.T) {
 }
 
 func TestOperatorStations_MoveUpDown(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
 	a, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "A"})
@@ -1106,9 +1057,7 @@ func TestOperatorStations_MoveUpDown(t *testing.T) {
 	// Initial sequences: A=1, B=2, C=3.
 
 	// Move B up → swap with A (seq 2 <-> 1).
-	if err := db.MoveOperatorStation(b, "up"); err != nil {
-		t.Fatalf("move up: %v", err)
-	}
+	testutil.MustNoErr(t, db.MoveOperatorStation(b, "up"), "move up")
 	sa, _ := db.GetOperatorStation(a)
 	sb, _ := db.GetOperatorStation(b)
 	if sa.Sequence != 2 || sb.Sequence != 1 {
@@ -1116,9 +1065,7 @@ func TestOperatorStations_MoveUpDown(t *testing.T) {
 	}
 
 	// Move C up → swap with A (now at seq 2).
-	if err := db.MoveOperatorStation(c, "up"); err != nil {
-		t.Fatalf("move up 2: %v", err)
-	}
+	testutil.MustNoErr(t, db.MoveOperatorStation(c, "up"), "move up 2")
 	sa2, _ := db.GetOperatorStation(a)
 	sc, _ := db.GetOperatorStation(c)
 	if sa2.Sequence != 3 || sc.Sequence != 2 {
@@ -1126,17 +1073,11 @@ func TestOperatorStations_MoveUpDown(t *testing.T) {
 	}
 
 	// Move at the edge is a no-op (no error).
-	if err := db.MoveOperatorStation(b, "up"); err != nil {
-		t.Fatalf("no-op up: %v", err)
-	}
-	if err := db.MoveOperatorStation(a, "down"); err != nil {
-		t.Fatalf("no-op down: %v", err)
-	}
+	testutil.MustNoErr(t, db.MoveOperatorStation(b, "up"), "no-op up")
+	testutil.MustNoErr(t, db.MoveOperatorStation(a, "down"), "no-op down")
 
 	// down works too
-	if err := db.MoveOperatorStation(b, "down"); err != nil {
-		t.Fatalf("move down: %v", err)
-	}
+	testutil.MustNoErr(t, db.MoveOperatorStation(b, "down"), "move down")
 }
 
 // TestOperatorStations_SetStationNodes* moved to
@@ -1149,6 +1090,7 @@ func TestOperatorStations_MoveUpDown(t *testing.T) {
 // ============================================================================
 
 func TestProcessNodes_CRUDAndListing(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
 	sid, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
@@ -1208,9 +1150,7 @@ func TestProcessNodes_CRUDAndListing(t *testing.T) {
 		t.Errorf("preservation after update: %+v (was %+v)", gotU, got)
 	}
 
-	if err := db.DeleteProcessNode(id2); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteProcessNode(id2), "delete")
 	after, _ := db.ListProcessNodes()
 	if len(after) != 1 {
 		t.Errorf("after delete = %d", len(after))
@@ -1218,6 +1158,7 @@ func TestProcessNodes_CRUDAndListing(t *testing.T) {
 }
 
 func TestProcessNodes_InvalidStationIDCoercedToNil(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
 
@@ -1243,6 +1184,7 @@ func TestProcessNodes_InvalidStationIDCoercedToNil(t *testing.T) {
 // ============================================================================
 
 func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	pid, _ := db.CreateProcess("P", "", "", "", "", false, false)
 	nid, _ := db.CreateProcessNode(processes.NodeInput{
@@ -1264,9 +1206,7 @@ func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 
 	// SetProcessNodeRuntime updates claim + uop.
 	cid := int64(42)
-	if err := db.SetProcessNodeRuntime(nid, &cid, 75); err != nil {
-		t.Fatalf("set: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nid, &cid, 75), "set")
 	rt, _ := db.GetProcessNodeRuntime(nid)
 	if rt.ActiveClaimID == nil || *rt.ActiveClaimID != 42 || rt.RemainingUOPCached != 75 {
 		t.Errorf("after set: %+v", rt)
@@ -1274,9 +1214,7 @@ func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 
 	// UpdateProcessNodeRuntimeOrders.
 	a, b := int64(100), int64(200)
-	if err := db.UpdateProcessNodeRuntimeOrders(nid, &a, &b); err != nil {
-		t.Fatalf("update orders: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nid, &a, &b), "update orders")
 	rt2b, _ := db.GetProcessNodeRuntime(nid)
 	if rt2b.ActiveOrderID == nil || *rt2b.ActiveOrderID != 100 ||
 		rt2b.StagedOrderID == nil || *rt2b.StagedOrderID != 200 {
@@ -1284,18 +1222,14 @@ func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 	}
 
 	// UpdateProcessNodeUOP
-	if err := db.UpdateProcessNodeUOP(nid, 30); err != nil {
-		t.Fatalf("update uop: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeUOP(nid, 30), "update uop")
 	rt3, _ := db.GetProcessNodeRuntime(nid)
 	if rt3.RemainingUOPCached != 30 {
 		t.Errorf("uop = %d, want 30", rt3.RemainingUOPCached)
 	}
 
 	// SetActivePull
-	if err := db.SetActivePull(nid, true); err != nil {
-		t.Fatalf("set active pull: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActivePull(nid, true), "set active pull")
 	rt4, _ := db.GetProcessNodeRuntime(nid)
 	if !rt4.ActivePull {
 		t.Error("active_pull should be true")
@@ -1312,6 +1246,7 @@ func TestProcessNodeRuntime_EnsureGetSet(t *testing.T) {
 // ============================================================================
 
 func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
@@ -1376,6 +1311,7 @@ func TestStyleNodeClaims_InsertUpdateGetList(t *testing.T) {
 // would surface synthesized fragments as if they were real configured
 // claims, so UpsertClaim rejects it (and any other unknown SwapMode).
 func TestUpsertClaim_RejectsPressPositionSwapMode(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
@@ -1394,6 +1330,7 @@ func TestUpsertClaim_RejectsPressPositionSwapMode(t *testing.T) {
 // be rejected at config time so the dispatcher doesn't see surprise
 // modes at plan time.
 func TestUpsertClaim_RejectsUnknownSwapMode(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "PU", "SU")
 
@@ -1406,6 +1343,7 @@ func TestUpsertClaim_RejectsUnknownSwapMode(t *testing.T) {
 }
 
 func TestStyleNodeClaims_ManualSwapRequiresOutboundDestination(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
@@ -1432,6 +1370,7 @@ func TestStyleNodeClaims_ManualSwapRequiresOutboundDestination(t *testing.T) {
 }
 
 func TestStyleNodeClaims_AllowedPayloads(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{}
 	if got := claim.AllowedPayloads(); got != nil {
 		t.Errorf("empty claim: %v, want nil", got)
@@ -1455,6 +1394,7 @@ func TestStyleNodeClaims_AllowedPayloads(t *testing.T) {
 // get-by-node. Default is zero ("off"); explicit values must survive
 // both INSERT and UPDATE paths.
 func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 
@@ -1503,14 +1443,13 @@ func TestStyleNodeClaims_LinesideSoftThreshold_Roundtrip(t *testing.T) {
 }
 
 func TestStyleNodeClaims_Delete(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 	_, sid := seedProcessStyle(t, db, "P", "S")
 	id, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: sid, CoreNodeName: "N", PayloadCode: "PL",
 	})
-	if err := db.DeleteStyleNodeClaim(id); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteStyleNodeClaim(id), "delete")
 	if _, err := db.GetStyleNodeClaim(id); err == nil {
 		t.Fatal("expected error after delete")
 	}

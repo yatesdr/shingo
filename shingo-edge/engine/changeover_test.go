@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
-	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
+	storeorders "shingoedge/store/orders"
 )
 
 // seedChangeoverScenario creates two styles (from/to) with claims on the same
@@ -45,9 +46,7 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 	}
 
 	// Set from-style as active
-	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// From-claim: consume node WITHOUT OutboundStaging — prevents Phase 3 auto Order B.
 	// OutboundDestination is kept so the manual EvacuateNode path still works.
@@ -119,9 +118,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 		t.Fatalf("create to style: %v", err)
 	}
 
-	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// From-claim: full staging config — enables Phase 3 swap Order B
 	fromClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
@@ -255,6 +252,7 @@ func markOrderTerminal(db *store.DB, orderID int64) {
 // TestChangeover_AutoStaging verifies that StartProcessChangeover automatically
 // stages all swap/add positions without manual per-position clicks (Phase 2).
 func TestChangeover_AutoStaging(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -310,6 +308,7 @@ func getAutoStagedOrder(t *testing.T, db *store.DB, changeoverID, nodeID int64) 
 // TestChangeover_StagingCompletion verifies that when a staging order completes,
 // the node task state advances from staging_requested to staged.
 func TestChangeover_StagingCompletion(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -334,6 +333,7 @@ func TestChangeover_StagingCompletion(t *testing.T) {
 // TestChangeover_EmptyCompletion verifies that when an empty/clear order
 // completes, the node task state advances from empty_requested to line_cleared.
 func TestChangeover_EmptyCompletion(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -377,6 +377,7 @@ func TestChangeover_EmptyCompletion(t *testing.T) {
 // TestChangeover_ReleaseCompletion verifies that when a release order completes,
 // the node task state advances to released and tryCompleteProcessChangeover fires.
 func TestChangeover_ReleaseCompletion(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -422,6 +423,7 @@ func TestChangeover_ReleaseCompletion(t *testing.T) {
 // TestChangeover_FullLifecycle tests the complete changeover flow with auto-staging:
 // start (auto-stages) → empty → release → switch → cutover → complete.
 func TestChangeover_FullLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -464,9 +466,7 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 	emitOrderCompleted(eng, releaseOrder.ID, releaseOrder.UUID, releaseOrder.OrderType, &nodeID)
 
 	// Switch
-	if err := eng.SwitchNodeToTarget(processID, nodeID); err != nil {
-		t.Fatalf("switch: %v", err)
-	}
+	testutil.MustNoErr(t, eng.SwitchNodeToTarget(processID, nodeID), "switch")
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 	if task.State != "switched" {
@@ -474,9 +474,7 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 	}
 
 	// Complete the cutover (sets active_style_id, which is required for tryCompleteProcessChangeover)
-	if err := eng.CompleteProcessProductionCutover(processID); err != nil {
-		t.Fatalf("cutover: %v", err)
-	}
+	testutil.MustNoErr(t, eng.CompleteProcessProductionCutover(processID), "cutover")
 
 	// Verify changeover completed
 	co, err := db.GetActiveProcessChangeover(processID)
@@ -496,6 +494,7 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 // TestChangeover_OrderFailure verifies that an order failure marks the node
 // task as error, and a retry after failure succeeds.
 func TestChangeover_OrderFailure(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -537,6 +536,7 @@ func TestChangeover_OrderFailure(t *testing.T) {
 // TestChangeover_CancelMidStaging verifies that cancelling a changeover while
 // staging is in progress aborts the orders and reverts state.
 func TestChangeover_CancelMidStaging(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -551,9 +551,7 @@ func TestChangeover_CancelMidStaging(t *testing.T) {
 	db.UpdateOrderStatus(stageOrder.ID, string(orders.StatusSubmitted))
 
 	// Cancel the changeover
-	if err := eng.CancelProcessChangeover(processID); err != nil {
-		t.Fatalf("cancel: %v", err)
-	}
+	testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "cancel")
 
 	// Verify staging order was aborted
 	order, _ := db.GetOrder(stageOrder.ID)
@@ -614,9 +612,7 @@ func seedAddNodeScenario(t *testing.T, db *store.DB) (processID, addNodeID, from
 		t.Fatalf("create to style: %v", err)
 	}
 
-	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// From-style has NO claims on ADD-NODE
 	// To-style has a claim on ADD-NODE — this creates SituationAdd
@@ -644,6 +640,7 @@ func seedAddNodeScenario(t *testing.T, db *store.DB) (processID, addNodeID, from
 // with embedded wait) upfront. Order A completion → "staged". Order B completion
 // → "released" (skips the manual empty → line_cleared → release path entirely).
 func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -734,6 +731,7 @@ func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 // evacuate flow. Same as swap but Order B has 2 waits (ready + tooling done).
 // When Order B completes, node goes directly to "released".
 func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	// Create a process with evacuate situation (same payload, different UOP — or
@@ -765,9 +763,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 		t.Fatalf("create to style: %v", err)
 	}
 
-	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// From-claim: full staging config, role=consume
 	fromClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
@@ -852,6 +848,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 // missing outbound staging config, Phase 3 falls back to simple staging
 // (no Order B created), preserving the manual empty → release path.
 func TestChangeover_Phase3FallbackToManual(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, _ := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -878,6 +875,7 @@ func TestChangeover_Phase3FallbackToManual(t *testing.T) {
 // has no active claim from the old style, but StageNodeChangeoverMaterial should
 // still succeed by looking up the to-claim from the changeover's target style.
 func TestChangeover_SituationAdd(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, addNodeID, _, toStyleID := seedAddNodeScenario(t, db)
 	eng := testEngine(t, db)
@@ -940,9 +938,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode protocol.Sw
 		t.Fatalf("create to style: %v", err)
 	}
 
-	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// From-claim: KeepStaged=true, full staging config
 	fromClaimID, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
@@ -987,6 +983,7 @@ func seedKeepStagedSwapScenario(t *testing.T, db *store.DB, swapMode protocol.Sw
 // robot) changeover flow. Order A clears old staged bin, fetches new, stages,
 // waits, and delivers. Order B evacuates old material from the line.
 func TestChangeover_KeepStagedCombined(t *testing.T) {
+	t.Parallel()
 	t.Skip("KeepStaged short-circuited; runtime hooks no-op'd, planner+builders preserved for rewire")
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedKeepStagedSwapScenario(t, db, "simple")
@@ -1053,6 +1050,7 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 // changeover flow. Order A fetches new and delivers with wait. Order B
 // evacuates old material with wait.
 func TestChangeover_KeepStagedSplit(t *testing.T) {
+	t.Parallel()
 	t.Skip("KeepStaged short-circuited; runtime hooks no-op'd, planner+builders preserved for rewire")
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedKeepStagedSwapScenario(t, db, "two_robot")
@@ -1102,6 +1100,7 @@ func TestChangeover_KeepStagedSplit(t *testing.T) {
 // shouldn't happen because Order B has a wait step that holds the robot, but
 // the wiring should not prematurely set "released" if Order A hasn't completed.
 func TestChangeover_OrderBBeforeOrderA(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -1147,6 +1146,7 @@ func TestChangeover_OrderBBeforeOrderA(t *testing.T) {
 // error so the floor sees the misconfig instead of executing a doomed
 // plan.
 func TestChangeover_PressIndex_CoreUnavailable_RefusesStart(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, err := db.CreateProcess("PI-NOCORE", "press-index core down", "active_production", "", "", false, false)
 	if err != nil {
@@ -1175,9 +1175,7 @@ func TestChangeover_PressIndex_CoreUnavailable_RefusesStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create to style: %v", err)
 	}
-	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID: fromStyleID, CoreNodeName: "PI-NODE", Role: "consume", SwapMode: "two_robot_press_index",
@@ -1216,6 +1214,7 @@ func TestChangeover_PressIndex_CoreUnavailable_RefusesStart(t *testing.T) {
 // position keeps reading the old style's UOP value until the
 // reconciler heals (~60s) and the line UI lies during the window.
 func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	processID, err := db.CreateProcess("SEQ-EV-PROC", "sequential evac", "active_production", "", "", false, false)
@@ -1243,9 +1242,7 @@ func TestSequentialEvacuate_OrderBCompletion_ResetsPairedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create to style: %v", err)
 	}
-	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active style")
 
 	// Same payload + EvacuateOnChangeover so the diff resolves to
 	// SituationEvacuate (not Swap), exercising the sequential evacuate

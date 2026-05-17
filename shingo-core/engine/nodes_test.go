@@ -38,6 +38,7 @@ func (f *fakeOccupancyBackend) GetNodeOccupancy(groups ...string) ([]fleet.Occup
 // the constructor returns an error whose Error() reads sensibly and
 // IsFleetUnsupported correctly identifies it (and nothing else).
 func TestErrFleetUnsupported_FormatAndIs(t *testing.T) {
+	t.Parallel()
 	err := errFleetUnsupported("occupancy status")
 	if err == nil {
 		t.Fatal("errFleetUnsupported returned nil")
@@ -66,6 +67,7 @@ func TestErrFleetUnsupported_FormatAndIs(t *testing.T) {
 // assertion bails out and the engine returns the IsFleetUnsupported
 // sentinel when fleet is a plain SimulatorBackend (no NodeOccupancy).
 func TestGetNodeOccupancy_Unsupported_SimulatorBackend(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -92,6 +94,7 @@ func TestGetNodeOccupancy_Unsupported_SimulatorBackend(t *testing.T) {
 //
 // Matching nodes are also flagged InShinGo=true so the UI can shade them.
 func TestGetNodeOccupancy_DiscrepancyClassification(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, _ := setupTestData(t, db)
 	// "STORAGE-A1" is the standard storage node; pretend the fleet sees it
@@ -162,6 +165,7 @@ func TestGetNodeOccupancy_DiscrepancyClassification(t *testing.T) {
 // TestGetNodeOccupancy_FleetError surfaces a fleet-side failure intact:
 // the engine wrapper returns it without conversion to IsFleetUnsupported.
 func TestGetNodeOccupancy_FleetError(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	fakeFleet := &fakeOccupancyBackend{
 		SimulatorBackend: simulator.New(),
@@ -189,6 +193,7 @@ func TestGetNodeOccupancy_FleetError(t *testing.T) {
 // in DB) returns an empty slice without error — characterizes the
 // happy-but-empty branch.
 func TestGetNodeOccupancy_EmptyFleetEmptyDB(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	fakeFleet := &fakeOccupancyBackend{
 		SimulatorBackend: simulator.New(),

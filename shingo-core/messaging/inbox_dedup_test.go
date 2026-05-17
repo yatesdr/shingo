@@ -35,6 +35,7 @@ func (c *countingHandler) HandleOrderCancel(*protocol.Envelope, *protocol.OrderC
 //
 // No DB is needed: the passthrough path never touches the inbox.
 func TestInboxDedup_HandleData_UngatedPassthrough(t *testing.T) {
+	t.Parallel()
 	inner := &countingHandler{}
 	dedup := NewInboxDedup(inner, nil) // nil db: passthrough never reads it
 
@@ -59,6 +60,7 @@ func TestInboxDedup_HandleData_UngatedPassthrough(t *testing.T) {
 // dropped at the decorator. Uses testDB because the dedup gate
 // writes to the inbox table.
 func TestInboxDedup_HandleOrderRequest_GatedByDedup(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	inner := &countingHandler{}
 	dedup := NewInboxDedup(inner, db)
@@ -85,6 +87,7 @@ func TestInboxDedup_HandleOrderRequest_GatedByDedup(t *testing.T) {
 // lets internally-synthesized envelopes (tests, cli harnesses)
 // through without pretending they have uniqueness.
 func TestInboxDedup_EmptyEnvelopeID_ProcessesEveryTime(t *testing.T) {
+	t.Parallel()
 	inner := &countingHandler{}
 	dedup := NewInboxDedup(inner, nil) // nil db: empty-ID path skips the write
 

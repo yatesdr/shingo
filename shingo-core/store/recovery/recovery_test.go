@@ -13,6 +13,7 @@ import (
 )
 
 func TestCoverage_RepairConfirmedOrderCompletion(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	origin := &nodes.Node{Name: "ORIGIN", Enabled: true}
 	dest := &nodes.Node{Name: "DEST", Enabled: true}
@@ -38,6 +39,7 @@ func TestCoverage_RepairConfirmedOrderCompletion(t *testing.T) {
 }
 
 func TestCoverage_ReleaseTerminalBinClaimRejectsActiveOrder(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	node := &nodes.Node{Name: "NODE-A", Enabled: true}
 	if err := nodes.Create(db.DB, node); err != nil { t.Fatalf("create node: %v", err) }
@@ -52,6 +54,7 @@ func TestCoverage_ReleaseTerminalBinClaimRejectsActiveOrder(t *testing.T) {
 }
 
 func TestCoverage_ReleaseTerminalBinClaimAllowsCancelledOrder(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	node := &nodes.Node{Name: "NODE-B", Enabled: true}
 	if err := nodes.Create(db.DB, node); err != nil { t.Fatalf("create node: %v", err) }
@@ -72,6 +75,7 @@ func TestCoverage_ReleaseTerminalBinClaimAllowsCancelledOrder(t *testing.T) {
 }
 
 func TestCoverage_RecordRecoveryAction_AndList(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := recovery.RecordAction(db.DB, "unstuck_order", "order", 42, "manual unblock", "alice"); err != nil { t.Fatalf("RecordAction: %v", err) }
 	got, err := recovery.ListActions(db.DB, 10)
@@ -86,6 +90,7 @@ func TestCoverage_RecordRecoveryAction_AndList(t *testing.T) {
 }
 
 func TestCoverage_ListRecoveryActions_OrderAndLimit(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	recovery.RecordAction(db.DB, "a1", "order", 1, "first", "sys")
 	recovery.RecordAction(db.DB, "a2", "order", 2, "second", "sys")

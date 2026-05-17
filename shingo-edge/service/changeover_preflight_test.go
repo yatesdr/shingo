@@ -61,6 +61,7 @@ func seedPreflightStyle(t *testing.T, db *store.DB) int64 {
 // has claims for several payloads (with one __empty__ sentinel), the
 // preflight call carries exactly the unique non-empty payload codes.
 func TestChangeoverPreflight_BuildsPayloadListFromToStyle(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	toStyleID := seedPreflightStyle(t, db)
 
@@ -95,6 +96,7 @@ func TestChangeoverPreflight_BuildsPayloadListFromToStyle(t *testing.T) {
 // TestChangeoverPreflight_FailsWhenNoBinAvailable: Core returns missing
 // payloads → checker returns the same list unchanged.
 func TestChangeoverPreflight_FailsWhenNoBinAvailable(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	toStyleID := seedPreflightStyle(t, db)
 
@@ -118,6 +120,7 @@ func TestChangeoverPreflight_FailsWhenNoBinAvailable(t *testing.T) {
 // TestChangeoverPreflight_PropagatesCoreError: a Core HTTP failure surfaces
 // as an error rather than collapsing silently to "all available".
 func TestChangeoverPreflight_PropagatesCoreError(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	toStyleID := seedPreflightStyle(t, db)
 
@@ -139,6 +142,7 @@ func TestChangeoverPreflight_PropagatesCoreError(t *testing.T) {
 // surfaces as an error — refuse the changeover rather than passing
 // silently when the source of truth is offline.
 func TestChangeoverPreflight_NoCoreClient(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	toStyleID := seedPreflightStyle(t, db)
 

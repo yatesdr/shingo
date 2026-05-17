@@ -5,6 +5,7 @@ package service
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/store/bins"
 	"shingocore/store/payloads"
 )
@@ -20,13 +21,12 @@ func makePayload(t *testing.T, svc *PayloadService, code, desc string, uop int) 
 }
 
 func TestPayloadService_Create_PersistsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 
 	p := &payloads.Payload{Code: "PL-CR-1", Description: "first", UOPCapacity: 50}
-	if err := svc.Create(p); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Create(p), "Create")
 	if p.ID == 0 {
 		t.Fatal("expected ID populated")
 	}
@@ -41,6 +41,7 @@ func TestPayloadService_Create_PersistsRow(t *testing.T) {
 }
 
 func TestPayloadService_GetByCode_ReturnsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-GBC", "by code", 10)
@@ -55,15 +56,14 @@ func TestPayloadService_GetByCode_ReturnsRow(t *testing.T) {
 }
 
 func TestPayloadService_Update_PersistsChanges(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-UPD", "old desc", 10)
 
 	p.Description = "new desc"
 	p.UOPCapacity = 25
-	if err := svc.Update(p); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Update(p), "Update")
 	got, _ := db.GetPayload(p.ID)
 	if got.Description != "new desc" || got.UOPCapacity != 25 {
 		t.Errorf("row = %+v, want new desc/25", got)
@@ -71,19 +71,19 @@ func TestPayloadService_Update_PersistsChanges(t *testing.T) {
 }
 
 func TestPayloadService_Delete_RemovesRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-DEL", "", 1)
 
-	if err := svc.Delete(p.ID); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Delete(p.ID), "Delete")
 	if _, err := db.GetPayload(p.ID); err == nil {
 		t.Error("GetPayload after Delete should error")
 	}
 }
 
 func TestPayloadService_List_ReturnsAll(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 
@@ -107,6 +107,7 @@ func TestPayloadService_List_ReturnsAll(t *testing.T) {
 }
 
 func TestPayloadService_CreateAndListManifest(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-MAN", "manifest", 10)
@@ -116,9 +117,7 @@ func TestPayloadService_CreateAndListManifest(t *testing.T) {
 		PartNumber: "PART-1",
 		Quantity:   3,
 	}
-	if err := svc.CreateManifestItem(item); err != nil {
-		t.Fatalf("CreateManifestItem: %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
 	if item.ID == 0 {
 		t.Fatal("expected manifest item ID populated")
 	}
@@ -133,18 +132,15 @@ func TestPayloadService_CreateAndListManifest(t *testing.T) {
 }
 
 func TestPayloadService_UpdateManifestItem_PersistsChanges(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-UMI", "", 10)
 
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P-OLD", Quantity: 1}
-	if err := svc.CreateManifestItem(item); err != nil {
-		t.Fatalf("CreateManifestItem: %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
 
-	if err := svc.UpdateManifestItem(item.ID, "P-NEW", 9); err != nil {
-		t.Fatalf("UpdateManifestItem: %v", err)
-	}
+	testutil.MustNoErr(t, svc.UpdateManifestItem(item.ID, "P-NEW", 9), "UpdateManifestItem")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 1 || rows[0].PartNumber != "P-NEW" || rows[0].Quantity != 9 {
 		t.Errorf("rows = %+v, want one P-NEW/9", rows)
@@ -152,17 +148,14 @@ func TestPayloadService_UpdateManifestItem_PersistsChanges(t *testing.T) {
 }
 
 func TestPayloadService_DeleteManifestItem_RemovesRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-DMI", "", 10)
 
 	item := &payloads.ManifestItem{PayloadID: p.ID, PartNumber: "P", Quantity: 1}
-	if err := svc.CreateManifestItem(item); err != nil {
-		t.Fatalf("CreateManifestItem: %v", err)
-	}
-	if err := svc.DeleteManifestItem(item.ID); err != nil {
-		t.Fatalf("DeleteManifestItem: %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateManifestItem(item), "CreateManifestItem")
+	testutil.MustNoErr(t, svc.DeleteManifestItem(item.ID), "DeleteManifestItem")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 0 {
 		t.Errorf("rows = %+v, want 0 after delete", rows)
@@ -170,22 +163,19 @@ func TestPayloadService_DeleteManifestItem_RemovesRow(t *testing.T) {
 }
 
 func TestPayloadService_ReplaceManifest_SwapsList(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-RPL", "", 10)
 
 	// Seed with one item, then replace with two.
-	if err := svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", Quantity: 1}); err != nil {
-		t.Fatalf("seed CreateManifestItem: %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateManifestItem(&payloads.ManifestItem{PayloadID: p.ID, PartNumber: "OLD", Quantity: 1}), "seed CreateManifestItem")
 
 	newItems := []*payloads.ManifestItem{
 		{PayloadID: p.ID, PartNumber: "N1", Quantity: 4},
 		{PayloadID: p.ID, PartNumber: "N2", Quantity: 5},
 	}
-	if err := svc.ReplaceManifest(p.ID, newItems); err != nil {
-		t.Fatalf("ReplaceManifest: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ReplaceManifest(p.ID, newItems), "ReplaceManifest")
 	rows, _ := db.ListPayloadManifest(p.ID)
 	if len(rows) != 2 {
 		t.Fatalf("len(rows) = %d, want 2", len(rows))
@@ -197,22 +187,17 @@ func TestPayloadService_ReplaceManifest_SwapsList(t *testing.T) {
 }
 
 func TestPayloadService_SetAndListBinTypes(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-BTY", "", 10)
 
 	bt1 := &bins.BinType{Code: "BT-A", Description: "a"}
 	bt2 := &bins.BinType{Code: "BT-B", Description: "b"}
-	if err := db.CreateBinType(bt1); err != nil {
-		t.Fatalf("create bt1: %v", err)
-	}
-	if err := db.CreateBinType(bt2); err != nil {
-		t.Fatalf("create bt2: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt1), "create bt1")
+	testutil.MustNoErr(t, db.CreateBinType(bt2), "create bt2")
 
-	if err := svc.SetBinTypes(p.ID, []int64{bt1.ID, bt2.ID}); err != nil {
-		t.Fatalf("SetBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetBinTypes(p.ID, []int64{bt1.ID, bt2.ID}), "SetBinTypes")
 	got, err := svc.ListBinTypes(p.ID)
 	if err != nil {
 		t.Fatalf("ListBinTypes: %v", err)
@@ -222,9 +207,7 @@ func TestPayloadService_SetAndListBinTypes(t *testing.T) {
 	}
 
 	// Replacing with empty list clears.
-	if err := svc.SetBinTypes(p.ID, nil); err != nil {
-		t.Fatalf("SetBinTypes(nil): %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetBinTypes(p.ID, nil), "SetBinTypes(nil)")
 	got, _ = svc.ListBinTypes(p.ID)
 	if len(got) != 0 {
 		t.Errorf("after clear len(got) = %d, want 0", len(got))
@@ -232,6 +215,7 @@ func TestPayloadService_SetAndListBinTypes(t *testing.T) {
 }
 
 func TestPayloadService_ListCompatibleNodes_EmptyByDefault(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewPayloadService(db)
 	p := makePayload(t, svc, "PL-CNODES", "", 10)

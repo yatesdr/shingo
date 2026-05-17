@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 )
 
@@ -19,7 +20,6 @@ import (
 // Each test targets a specific bug or failure mode observed in production.
 // =============================================================================
 
-// TC-1: Complex order blocks must include JackLoad/JackUnload bin tasks.
 // Scenario: verifies every fleet block includes a bin task (JackLoad/JackUnload).
 //
 // Bug: 2026-03-26 — stepsToBlocks() was creating OrderBlocks without BinTask,
@@ -84,8 +84,6 @@ func TestSimulator_ComplexOrderBinTasks(t *testing.T) {
 	}
 }
 
-// TC-2: Staged complex order — pre-wait blocks sent initially,
-// post-wait blocks appended on release.
 // Scenario: verifies dispatcher-level staged order block structure.
 //
 // Complex orders with a "wait" step are dispatched as staged (incomplete)
@@ -146,9 +144,7 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 	// In a full engine test the fleet tracker would transition the order to
 	// "staged" when the robot reports WAITING.  This dispatcher-level test has
 	// no engine wiring, so we advance the status manually.
-	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "robot waiting (simulated)"); err != nil {
-		t.Fatalf("set order staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "robot waiting (simulated)"), "set order staged")
 
 	// Release: append post-wait blocks
 	d.HandleOrderRelease(env, &protocol.OrderRelease{
@@ -172,7 +168,6 @@ func TestSimulator_StagedComplexOrder(t *testing.T) {
 	}
 }
 
-// TC-3: Simple retrieve.
 // Scenario: verifies the full dispatch path creates the right fleet request
 // with JackLoad at source and JackUnload at destination.
 func TestSimulator_SimpleRetrieveOrder(t *testing.T) {
@@ -231,7 +226,6 @@ func TestSimulator_SimpleRetrieveOrder(t *testing.T) {
 	}
 }
 
-// TC-4: Simulator state mapping matches RDS adapter mapping.
 // Scenario: verifies simulator state mapping is identical to the real RDS adapter.
 //
 // Ensures the simulator's MapState matches the real SEER RDS adapter
@@ -266,7 +260,6 @@ func TestSimulator_StateMapping(t *testing.T) {
 	}
 }
 
-// TC-5: Fleet creation failure causes order to fail with no vendor order ID.
 // Scenario: verifies that fleet rejection results in a clean failed order
 // with no phantom return orders.
 //

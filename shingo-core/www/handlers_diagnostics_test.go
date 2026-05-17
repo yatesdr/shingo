@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 )
 
@@ -19,6 +20,7 @@ import (
 // --- handleDiagnostics ------------------------------------------------------
 
 func TestHandleDiagnostics_RendersHTML(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/diagnostics", nil)
@@ -39,6 +41,7 @@ func TestHandleDiagnostics_RendersHTML(t *testing.T) {
 // --- apiHealthCheck ---------------------------------------------------------
 
 func TestApiHealthCheck_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	rec := getPlain(t, h.apiHealthCheck, "/api/health")
@@ -46,9 +49,7 @@ func TestApiHealthCheck_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	// Expected fields present.
 	for _, field := range []string{"status", "fleet", "messaging", "database", "reconciliation"} {
 		if _, ok := resp[field]; !ok {
@@ -72,6 +73,7 @@ func TestApiHealthCheck_HappyPath(t *testing.T) {
 // --- apiReconciliation ------------------------------------------------------
 
 func TestApiReconciliation_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiReconciliation, "/api/reconciliation")
@@ -82,9 +84,7 @@ func TestApiReconciliation_HappyPath(t *testing.T) {
 		Summary   map[string]any   `json:"summary"`
 		Anomalies []map[string]any `json:"anomalies"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Summary == nil {
 		t.Error("summary missing")
 	}
@@ -93,6 +93,7 @@ func TestApiReconciliation_HappyPath(t *testing.T) {
 // --- apiListDeadLetterOutbox ------------------------------------------------
 
 func TestApiListDeadLetterOutbox_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListDeadLetterOutbox, "/api/outbox/deadletters")
@@ -101,14 +102,13 @@ func TestApiListDeadLetterOutbox_HappyPath(t *testing.T) {
 	}
 	// Body must decode as JSON; shape is []*OutboxMessage or null.
 	var list []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&list), "decode")
 }
 
 // --- apiListRecoveryActions -------------------------------------------------
 
 func TestApiListRecoveryActions_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListRecoveryActions, "/api/recovery/actions")
@@ -116,14 +116,13 @@ func TestApiListRecoveryActions_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var list []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&list), "decode")
 }
 
 // --- apiReplayOutbox --------------------------------------------------------
 
 func TestApiReplayOutbox_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiReplayOutbox, "/api/outbox/replay?id=nope")
 	if rec.Code != http.StatusBadRequest {
@@ -132,6 +131,7 @@ func TestApiReplayOutbox_InvalidID(t *testing.T) {
 }
 
 func TestApiReplayOutbox_UnknownID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	// Valid integer but no matching outbox row — UPDATE affects 0 rows and
 	// returns no error, so the handler responds 200 (idempotent no-op).
@@ -144,6 +144,7 @@ func TestApiReplayOutbox_UnknownID(t *testing.T) {
 // --- apiRepairAnomaly -------------------------------------------------------
 
 func TestApiRepairAnomaly_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiRepairAnomaly, "/api/recovery/repair", []byte("not json"))
 	if rec.Code != http.StatusBadRequest {
@@ -152,6 +153,7 @@ func TestApiRepairAnomaly_InvalidJSON(t *testing.T) {
 }
 
 func TestApiRepairAnomaly_UnknownAction(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postJSON(t, h.apiRepairAnomaly, "/api/recovery/repair",
 		map[string]any{"action": "no-such-action"})
@@ -163,6 +165,7 @@ func TestApiRepairAnomaly_UnknownAction(t *testing.T) {
 
 // Each sub-action requires its corresponding id field — missing id returns 400.
 func TestApiRepairAnomaly_MissingIDs(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	cases := []struct {
@@ -203,6 +206,7 @@ func TestApiRepairAnomaly_MissingIDs(t *testing.T) {
 }
 
 func TestApiRepairAnomaly_ReleaseStagedBin_NotStaged(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-NOSTAGE-1")

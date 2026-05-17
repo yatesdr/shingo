@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
@@ -10,6 +11,7 @@ import (
 // distinct rows; updates target the right row; delete is by string
 // key.
 func TestLoaderPayloadThresholds_UpsertAndKeying(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	if err := db.UpsertLoaderPayloadThreshold(LoaderPayloadThreshold{
@@ -77,9 +79,7 @@ func TestLoaderPayloadThresholds_UpsertAndKeying(t *testing.T) {
 	}
 
 	// Delete by composite key.
-	if err := db.DeleteLoaderPayloadThreshold("SPRING-LDR-01", "WIDGET-A"); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	testutil.MustNoErr(t, db.DeleteLoaderPayloadThreshold("SPRING-LDR-01", "WIDGET-A"), "delete")
 	if got, _ := db.GetLoaderPayloadThreshold("SPRING-LDR-01", "WIDGET-A"); got != nil {
 		t.Error("LDR-01 still present after delete")
 	}
@@ -90,6 +90,7 @@ func TestLoaderPayloadThresholds_UpsertAndKeying(t *testing.T) {
 // calculated_at, and threshold_confidence on the threshold row so the
 // UI badge and history readback don't have to join the audit table.
 func TestLoaderPayloadThresholds_CalculatedMetadata(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	if err := db.UpsertLoaderPayloadThreshold(LoaderPayloadThreshold{
@@ -125,6 +126,7 @@ func TestLoaderPayloadThresholds_CalculatedMetadata(t *testing.T) {
 // comma-separated override token list through upsert + scan + update.
 // Order is preserved (UI consumes the list in storage order).
 func TestLoaderPayloadThresholds_OverriddenInputs(t *testing.T) {
+	t.Parallel()
 	db := coverageDB(t)
 
 	if err := db.UpsertLoaderPayloadThreshold(LoaderPayloadThreshold{

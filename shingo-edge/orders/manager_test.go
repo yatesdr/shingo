@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/store"
 )
 
@@ -28,6 +29,7 @@ func testManagerDB(t *testing.T) *store.DB {
 }
 
 func TestConfirmDeliveryDoesNotTransitionWhenReceiptEnqueueFails(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
@@ -35,14 +37,10 @@ func TestConfirmDeliveryDoesNotTransitionWhenReceiptEnqueueFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(StatusDelivered)); err != nil {
-		t.Fatalf("set delivered status: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusDelivered)), "set delivered status")
 
 	// Force enqueue failure by closing the DB before confirmation.
-	if err := db.Close(); err != nil {
-		t.Fatalf("close db: %v", err)
-	}
+	testutil.MustNoErr(t, db.Close(), "close db")
 
 	if err := mgr.ConfirmDelivery(orderID, 12); err == nil {
 		t.Fatalf("expected confirm delivery to fail when receipt enqueue fails")
@@ -50,6 +48,7 @@ func TestConfirmDeliveryDoesNotTransitionWhenReceiptEnqueueFails(t *testing.T) {
 }
 
 func TestAbortOrderDoesNotTransitionWhenCancelEnqueueFails(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
@@ -57,13 +56,9 @@ func TestAbortOrderDoesNotTransitionWhenCancelEnqueueFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(StatusSubmitted)); err != nil {
-		t.Fatalf("set submitted status: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusSubmitted)), "set submitted status")
 
-	if err := db.Close(); err != nil {
-		t.Fatalf("close db: %v", err)
-	}
+	testutil.MustNoErr(t, db.Close(), "close db")
 
 	if err := mgr.AbortOrder(orderID); err == nil {
 		t.Fatalf("expected abort to fail when cancel enqueue fails")
@@ -71,6 +66,7 @@ func TestAbortOrderDoesNotTransitionWhenCancelEnqueueFails(t *testing.T) {
 }
 
 func TestRedirectOrderDoesNotPersistWhenRedirectEnqueueFails(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
@@ -78,13 +74,9 @@ func TestRedirectOrderDoesNotPersistWhenRedirectEnqueueFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(StatusSubmitted)); err != nil {
-		t.Fatalf("set submitted status: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusSubmitted)), "set submitted status")
 
-	if err := db.Close(); err != nil {
-		t.Fatalf("close db: %v", err)
-	}
+	testutil.MustNoErr(t, db.Close(), "close db")
 
 	if _, err := mgr.RedirectOrder(orderID, "LINE-2"); err == nil {
 		t.Fatalf("expected redirect to fail when redirect enqueue fails")
@@ -96,6 +88,7 @@ func TestRedirectOrderDoesNotPersistWhenRedirectEnqueueFails(t *testing.T) {
 // and a duplicate transition to the same or another terminal state arrives,
 // Transition should return nil (idempotent) instead of an error.
 func TestRegression_TerminalTransitionIdempotent(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
@@ -104,12 +97,8 @@ func TestRegression_TerminalTransitionIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(StatusDelivered)); err != nil {
-		t.Fatalf("set delivered: %v", err)
-	}
-	if err := db.UpdateOrderStatus(orderID, string(StatusConfirmed)); err != nil {
-		t.Fatalf("set confirmed: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusDelivered)), "set delivered")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusConfirmed)), "set confirmed")
 
 	// confirmed → confirmed should be nil (idempotent), not an error
 	if err := mgr.lifecycle.Transition(orderID, StatusConfirmed, "duplicate confirm"); err != nil {
@@ -139,6 +128,7 @@ func TestRegression_TerminalTransitionIdempotent(t *testing.T) {
 // ForceTransition: Core's planner is authoritative for "the work was
 // never needed" and the local status machine must yield.
 func TestHandleSkipped_OverridesAcknowledged(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
@@ -149,13 +139,9 @@ func TestHandleSkipped_OverridesAcknowledged(t *testing.T) {
 	// Walk to Acknowledged the way real flow would: pending → submitted →
 	// acknowledged. UpdateOrderStatus bypasses the state machine; that's
 	// fine here — we just need the row at acknowledged when HandleSkipped fires.
-	if err := db.UpdateOrderStatus(orderID, string(StatusAcknowledged)); err != nil {
-		t.Fatalf("set acknowledged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusAcknowledged)), "set acknowledged")
 
-	if err := mgr.HandleSkipped("uuid-skip-ack", "no_source_bin", "every pickup empty"); err != nil {
-		t.Fatalf("HandleSkipped: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.HandleSkipped("uuid-skip-ack", "no_source_bin", "every pickup empty"), "HandleSkipped")
 
 	got, err := db.GetOrder(orderID)
 	if err != nil {
@@ -168,6 +154,7 @@ func TestHandleSkipped_OverridesAcknowledged(t *testing.T) {
 
 // Verify cancelled→cancelled is also idempotent (Bug 6 — cancel spam)
 func TestRegression_CancelledToCancelledIdempotent(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
@@ -175,9 +162,7 @@ func TestRegression_CancelledToCancelledIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(StatusCancelled)); err != nil {
-		t.Fatalf("set cancelled: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusCancelled)), "set cancelled")
 
 	if err := mgr.lifecycle.Transition(orderID, StatusCancelled, "duplicate cancel"); err != nil {
 		t.Errorf("cancelled→cancelled should be nil, got: %v", err)
@@ -186,6 +171,7 @@ func TestRegression_CancelledToCancelledIdempotent(t *testing.T) {
 
 // Verify that valid transitions still work normally (non-regression)
 func TestRegression_ValidTransitionsStillWork(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
@@ -195,9 +181,7 @@ func TestRegression_ValidTransitionsStillWork(t *testing.T) {
 	}
 
 	// pending → submitted is valid and should succeed
-	if err := mgr.lifecycle.Transition(orderID, StatusSubmitted, "test submit"); err != nil {
-		t.Fatalf("pending→submitted should succeed, got: %v", err)
-	}
+	testutil.MustNoErr(t, mgr.lifecycle.Transition(orderID, StatusSubmitted, "test submit"), "pending→submitted should succeed, got")
 
 	// Verify status actually changed
 	order, err := db.GetOrder(orderID)
@@ -216,6 +200,7 @@ func TestRegression_ValidTransitionsStillWork(t *testing.T) {
 
 // Verify failed→failed is idempotent (last uncovered terminal state)
 func TestRegression_FailedToFailedIdempotent(t *testing.T) {
+	t.Parallel()
 	db := testManagerDB(t)
 	mgr := NewManager(db, testEmitter{}, "edge.station")
 
@@ -223,9 +208,7 @@ func TestRegression_FailedToFailedIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(StatusFailed)); err != nil {
-		t.Fatalf("set failed: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(StatusFailed)), "set failed")
 
 	if err := mgr.lifecycle.Transition(orderID, StatusFailed, "duplicate fail"); err != nil {
 		t.Errorf("failed→failed should be nil, got: %v", err)

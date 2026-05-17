@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/messaging"
@@ -36,16 +37,12 @@ func findOutboxByType(t *testing.T, db *store.DB, msgType string) []messaging.Me
 func decodeOrderRelease(t *testing.T, msg messaging.Message) protocol.OrderRelease {
 	t.Helper()
 	var env protocol.Envelope
-	if err := json.Unmarshal(msg.Payload, &env); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(msg.Payload, &env), "unmarshal envelope")
 	if env.Type != protocol.TypeOrderRelease {
 		t.Fatalf("envelope.Type = %q, want %q", env.Type, protocol.TypeOrderRelease)
 	}
 	var rel protocol.OrderRelease
-	if err := env.DecodePayload(&rel); err != nil {
-		t.Fatalf("decode OrderRelease: %v", err)
-	}
+	testutil.MustNoErr(t, env.DecodePayload(&rel), "decode OrderRelease")
 	return rel
 }
 
@@ -66,6 +63,7 @@ func decodeOrderRelease(t *testing.T, msg messaging.Message) protocol.OrderRelea
 // This test asserts the envelope shape is correct so a future refactor
 // can't silently re-introduce the bypass.
 func TestReleaseChangeoverWait_RoutesThroughLinesideRelease(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -95,9 +93,7 @@ func TestReleaseChangeoverWait_RoutesThroughLinesideRelease(t *testing.T) {
 	// production the fleet tracker advances the order to staged when the
 	// robot reports WAITING; the dispatcher-level test has no fleet wiring,
 	// so we set it directly.
-	if err := db.UpdateOrderStatus(orderB.ID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("force order B staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderB.ID, string(orders.StatusStaged)), "force order B staged")
 
 	// Drain any pending outbox messages from the changeover-start phase so
 	// we can assert exactly one OrderRelease lands from the wait release.
@@ -147,6 +143,7 @@ func TestReleaseChangeoverWait_RoutesThroughLinesideRelease(t *testing.T) {
 // preserving the 2026-04 ALN_001 fix intent (manifest cleared so evac bin
 // can't land at OutboundDestination tagged with stale payload).
 func TestReleaseChangeoverWait_AutoDetectEmpty(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -158,9 +155,7 @@ func TestReleaseChangeoverWait_AutoDetectEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get runtime: %v", err)
 	}
-	if err := db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0); err != nil {
-		t.Fatalf("set runtime to 0: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, runtime.ActiveClaimID, 0), "set runtime to 0")
 
 	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "auto-detect empty")
 	if err != nil {
@@ -171,9 +166,7 @@ func TestReleaseChangeoverWait_AutoDetectEmpty(t *testing.T) {
 		t.Fatalf("get task: %v", err)
 	}
 	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	if err := db.UpdateOrderStatus(orderB.ID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("force staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderB.ID, string(orders.StatusStaged)), "force staged")
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {
 		_ = db.AckOutbox(m.ID)
@@ -203,6 +196,7 @@ func TestReleaseChangeoverWait_AutoDetectEmpty(t *testing.T) {
 // are no staged evacuation orders (e.g. all tasks are unchanged or already
 // past staged), ReleaseChangeoverWait succeeds without touching the outbox.
 func TestReleaseChangeoverWait_NoStagedOrdersIsNoOp(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -237,6 +231,7 @@ func TestReleaseChangeoverWait_NoStagedOrdersIsNoOp(t *testing.T) {
 // a 200 OK while one bin's manifest stayed stale (recreating the original
 // ALN_001 incident on partial failure).
 func TestReleaseChangeoverWait_PartialFailureSurfacesError(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -253,9 +248,7 @@ func TestReleaseChangeoverWait_PartialFailureSurfacesError(t *testing.T) {
 	}
 
 	// Force Order B to staged so ReleaseChangeoverWait will pick it up.
-	if err := db.UpdateOrderStatus(*task.OldMaterialReleaseOrderID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("force order staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(*task.OldMaterialReleaseOrderID, string(orders.StatusStaged)), "force order staged")
 
 	// Inject a failure: orphan the order's ProcessNodeID so
 	// ReleaseOrderWithLineside fails inside e.db.GetProcessNode. The order
@@ -332,6 +325,7 @@ func contains(s, substr string) bool {
 // contract is unchanged in either model — this test just exercises
 // the new sequencing.
 func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -365,12 +359,8 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 	// Force both orders to staged. In production the fleet tracker
 	// advances these as the robots dwell at their wait points; the
 	// dispatcher-level test has no fleet wiring.
-	if err := db.UpdateOrderStatus(evacOrder.ID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("force evac staged: %v", err)
-	}
-	if err := db.UpdateOrderStatus(supplyOrder.ID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("force supply staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(evacOrder.ID, string(orders.StatusStaged)), "force evac staged")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyOrder.ID, string(orders.StatusStaged)), "force supply staged")
 
 	// Drain outbox so we can count exactly the envelopes produced.
 	pending, _ := db.ListPendingOutbox(100)
@@ -463,6 +453,7 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 // behavior pinned in TestReleaseChangeoverWait_SupplyManifestPreserved,
 // this is the regression lock for the Friday stuck-robot bug.
 func TestReleaseChangeoverWait_FiresEvacOnly_OnNonStagedNonTerminal(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -482,9 +473,7 @@ func TestReleaseChangeoverWait_FiresEvacOnly_OnNonStagedNonTerminal(t *testing.T
 
 	// Force evac to in_transit (NOT staged). Pre-Phase-2 the staged-only
 	// switch would silently skip this; post-Phase-2 it must fire.
-	if err := db.UpdateOrderStatus(*task.OldMaterialReleaseOrderID, string(orders.StatusInTransit)); err != nil {
-		t.Fatalf("force evac in_transit: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(*task.OldMaterialReleaseOrderID, string(orders.StatusInTransit)), "force evac in_transit")
 	// Supply stays in CREATED (its default after auto-stage, before
 	// dispatch). It should NOT fire at click time — it's deferred for
 	// pickup-confirm regardless of its current status.
@@ -519,6 +508,7 @@ func TestReleaseChangeoverWait_FiresEvacOnly_OnNonStagedNonTerminal(t *testing.T
 // matches a changeover_node_task's OldMaterialReleaseOrderID, the
 // task's NextMaterialOrderID auto-releases.
 func TestHandleBinPickedUp_ReleasesDeferredSupply(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -536,9 +526,7 @@ func TestHandleBinPickedUp_ReleasesDeferredSupply(t *testing.T) {
 	// skips StatusPending / StatusSubmitted) doesn't drop the auto-release.
 	// In production the fleet tracker advances the order here as the supply
 	// robot reaches its wait point before the operator clicks.
-	if err := db.UpdateOrderStatus(supplyOrder.ID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("force supply staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(supplyOrder.ID, string(orders.StatusStaged)), "force supply staged")
 
 	// Drain outbox to count exactly the BinPickedUp-driven envelope.
 	pending, _ := db.ListPendingOutbox(100)
@@ -568,6 +556,7 @@ func TestHandleBinPickedUp_ReleasesDeferredSupply(t *testing.T) {
 // for changeover-only auto-release must not silently change behavior on
 // other paths that fire BinPickedUp.
 func TestHandleBinPickedUp_NoOpForNonChangeoverOrder(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, _, _, _ = seedPhase3SwapScenario(t, db) // ensure schema seeded
 	eng := testEngine(t, db)
@@ -598,6 +587,7 @@ func TestHandleBinPickedUp_NoOpForNonChangeoverOrder(t *testing.T) {
 // re-fire it. releaseUnlessTerminal handles the terminal-skip branch;
 // this test pins that the wiring respects it.
 func TestHandleBinPickedUp_DoesNotReleaseTerminalSupply(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -611,9 +601,7 @@ func TestHandleBinPickedUp_DoesNotReleaseTerminalSupply(t *testing.T) {
 	evacOrder, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
 
 	// Force supply to terminal — already cancelled.
-	if err := db.UpdateOrderStatus(*task.NextMaterialOrderID, string(orders.StatusCancelled)); err != nil {
-		t.Fatalf("force supply cancelled: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(*task.NextMaterialOrderID, string(orders.StatusCancelled)), "force supply cancelled")
 
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {

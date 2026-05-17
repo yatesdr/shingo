@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 )
 
@@ -19,6 +20,7 @@ import (
 // --- apiCreateCorrection ----------------------------------------------------
 
 func TestApiCreateCorrection_HappyPath_AdjustQty(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-CORR-1")
@@ -39,9 +41,7 @@ func TestApiCreateCorrection_HappyPath_AdjustQty(t *testing.T) {
 	var resp struct {
 		ID int64 `json:"id"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.ID == 0 {
 		t.Errorf("response missing id: %+v", resp)
 	}
@@ -69,6 +69,7 @@ func TestApiCreateCorrection_HappyPath_AdjustQty(t *testing.T) {
 }
 
 func TestApiCreateCorrection_HappyPath_AddItem(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-CORR-ADD")
@@ -108,6 +109,7 @@ func TestApiCreateCorrection_HappyPath_AddItem(t *testing.T) {
 }
 
 func TestApiCreateCorrection_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiCreateCorrection, "/api/corrections/create", []byte("not json"))
 	if rec.Code != http.StatusBadRequest {
@@ -116,6 +118,7 @@ func TestApiCreateCorrection_InvalidJSON(t *testing.T) {
 }
 
 func TestApiCreateCorrection_MissingBin(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -139,6 +142,7 @@ func TestApiCreateCorrection_MissingBin(t *testing.T) {
 // --- apiApplyBatchCorrection ------------------------------------------------
 
 func TestApiApplyBatchCorrection_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-BATCH-1")
@@ -157,9 +161,7 @@ func TestApiApplyBatchCorrection_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var env map[string]bool
-	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&env), "decode")
 	if !env["ok"] {
 		t.Errorf("response: got %+v, want ok:true", env)
 	}
@@ -175,6 +177,7 @@ func TestApiApplyBatchCorrection_HappyPath(t *testing.T) {
 }
 
 func TestApiApplyBatchCorrection_MissingReason(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-BATCH-NOREASON")
@@ -193,6 +196,7 @@ func TestApiApplyBatchCorrection_MissingReason(t *testing.T) {
 }
 
 func TestApiApplyBatchCorrection_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiApplyBatchCorrection, "/api/corrections/batch", []byte("broken"))
 	if rec.Code != http.StatusBadRequest {
@@ -203,6 +207,7 @@ func TestApiApplyBatchCorrection_InvalidJSON(t *testing.T) {
 // --- apiListNodeCorrections -------------------------------------------------
 
 func TestApiListNodeCorrections_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LIST-CORR")
@@ -227,15 +232,14 @@ func TestApiListNodeCorrections_HappyPath(t *testing.T) {
 		t.Fatalf("list status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var list []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&list), "decode")
 	if len(list) == 0 {
 		t.Errorf("expected at least one correction for node %d", sd.StorageNode.ID)
 	}
 }
 
 func TestApiListNodeCorrections_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiListNodeCorrections, "/api/corrections?node_id=xyz")
 	if rec.Code != http.StatusBadRequest {

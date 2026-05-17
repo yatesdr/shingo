@@ -10,6 +10,7 @@ import (
 // gate's "not blocked" branch into the JSON-friendly shape the UI
 // needs.
 func TestPreviewDropoffCapacity_PassThroughGate(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		db      *fakeCapacityDB

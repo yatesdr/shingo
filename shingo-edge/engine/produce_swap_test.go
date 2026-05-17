@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/config"
 	"shingoedge/orders"
 	"shingoedge/service"
@@ -46,9 +47,7 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 	if err != nil {
 		t.Fatalf("create style: %v", err)
 	}
-	if err := db.SetActiveStyle(processID, &styleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &styleID), "set active style")
 
 	claimID, err = db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             styleID,
@@ -73,9 +72,7 @@ func seedProduceNode(t *testing.T, db *store.DB, swapMode protocol.SwapMode) (pr
 		t.Fatalf("ensure runtime: %v", err)
 	}
 	cID := claimID
-	if err := db.SetProcessNodeRuntime(nodeID, &cID, 50); err != nil {
-		t.Fatalf("set runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &cID, 50), "set runtime")
 
 	return processID, nodeID, styleID, claimID
 }
@@ -119,6 +116,7 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 }
 
 func TestProduceSimple_FinalizeIngest(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "simple")
 	eng := testEngine(t, db)
@@ -152,6 +150,7 @@ func TestProduceSimple_FinalizeIngest(t *testing.T) {
 }
 
 func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "sequential")
 	eng := testEngine(t, db)
@@ -198,6 +197,7 @@ func TestProduceSequential_RemovalThenBackfill(t *testing.T) {
 }
 
 func TestProduceSingleRobot_TenStepSwap(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "single_robot")
 	eng := testEngine(t, db)
@@ -224,6 +224,7 @@ func TestProduceSingleRobot_TenStepSwap(t *testing.T) {
 }
 
 func TestProduceTwoRobot_BothOrdersCreated(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
@@ -265,14 +266,13 @@ func TestProduceTwoRobot_BothOrdersCreated(t *testing.T) {
 }
 
 func TestProduceFinalize_RejectsZeroUOP(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedProduceNode(t, db, "simple")
 	eng := testEngine(t, db)
 
 	// Set UOP to 0 — nothing to finalize
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 0); err != nil {
-		t.Fatalf("set runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 0), "set runtime")
 
 	_, err := eng.FinalizeProduceNode(nodeID)
 	if err == nil {
@@ -281,6 +281,7 @@ func TestProduceFinalize_RejectsZeroUOP(t *testing.T) {
 }
 
 func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedProduceNode(t, db, "simple")
 	eng := testEngine(t, db)
@@ -316,6 +317,7 @@ func markStaged(t *testing.T, db *store.DB, orderID int64) {
 }
 
 func TestReleaseStagedOrders_BothStaged(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
@@ -327,9 +329,7 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 	markStaged(t, db, result.OrderA.ID)
 	markStaged(t, db, result.OrderB.ID)
 
-	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}); err != nil {
-		t.Fatalf("ReleaseStagedOrders: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}), "ReleaseStagedOrders")
 
 	a, err := db.GetOrder(result.OrderA.ID)
 	if err != nil {
@@ -369,6 +369,7 @@ func TestReleaseStagedOrders_BothStaged(t *testing.T) {
 // initial post-finalize (pre-staged) status. ReleaseStagedOrders releases
 // both.
 func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
@@ -386,13 +387,9 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 	// lifecycle validator rejects submitted->in_transit. Production traffic
 	// reaches at-least acknowledged before B can stage at the line.
 	markStaged(t, db, result.OrderB.ID)
-	if err := db.UpdateOrderStatus(result.OrderA.ID, string(orders.StatusAcknowledged)); err != nil {
-		t.Fatalf("seed A acknowledged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(result.OrderA.ID, string(orders.StatusAcknowledged)), "seed A acknowledged")
 
-	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}); err != nil {
-		t.Fatalf("ReleaseStagedOrders: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}), "ReleaseStagedOrders")
 
 	a, _ := db.GetOrder(result.OrderA.ID)
 	b, _ := db.GetOrder(result.OrderB.ID)
@@ -416,6 +413,7 @@ func TestReleaseStagedOrders_OnlyOneStaged(t *testing.T) {
 // two_robot. This is defense-in-depth for direct API callers; the UI already
 // gates the button on swap_ready.
 func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, styleID, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
@@ -463,6 +461,7 @@ func TestReleaseStagedOrders_RejectsNonTwoRobot(t *testing.T) {
 // in_transit between the operator's click and the handler running), the
 // release call treats it as success rather than erroring.
 func TestReleaseStagedOrders_Idempotent(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)
@@ -473,13 +472,9 @@ func TestReleaseStagedOrders_Idempotent(t *testing.T) {
 	}
 	markStaged(t, db, result.OrderA.ID)
 	// B already advanced past staged.
-	if err := db.UpdateOrderStatus(result.OrderB.ID, string(orders.StatusInTransit)); err != nil {
-		t.Fatalf("force B in_transit: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(result.OrderB.ID, string(orders.StatusInTransit)), "force B in_transit")
 
-	if err := eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}); err != nil {
-		t.Fatalf("ReleaseStagedOrders should be idempotent on already-released order: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseStagedOrders(nodeID, ReleaseDisposition{}), "ReleaseStagedOrders should be idempotent on already-released order")
 
 	a, _ := db.GetOrder(result.OrderA.ID)
 	if a.Status != orders.StatusInTransit {
@@ -488,6 +483,7 @@ func TestReleaseStagedOrders_Idempotent(t *testing.T) {
 }
 
 func TestReleaseStagedOrders_NoTrackedOrders(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedProduceNode(t, db, "two_robot")
 	eng := testEngine(t, db)

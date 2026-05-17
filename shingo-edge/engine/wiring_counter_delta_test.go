@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store/lineside"
 	"shingoedge/store/processes"
@@ -479,6 +480,7 @@ type fakePendingBucketKey struct {
 // past zero must not refire (the reorder is already in flight).
 // See TestRegression_RuntimeUOPNegativeNoReorderRefire.
 func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "OVERPACK",
@@ -486,9 +488,7 @@ func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  3,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 3); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 3), "seed runtime")
 
 	// Active order with bin id — required for the bin delta path
 	// (binAtNode looks the bin up via runtime.ActiveOrderID).
@@ -541,6 +541,7 @@ func TestRegression_RuntimeUOPGoesNegativeOnOverpack(t *testing.T) {
 // split the bucket vs bin attribution is implicit and Phase 2's
 // reconciler can't distinguish "bucket drained" from "bin drained".
 func TestRegression_DrainLinesideAttribution(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "DRAIN-ATTR",
@@ -558,15 +559,9 @@ func TestRegression_DrainLinesideAttribution(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 	bid := binID
-	if err := db.UpdateOrderBinID(orderID, &bid); err != nil {
-		t.Fatalf("set order bin id: %v", err)
-	}
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil); err != nil {
-		t.Fatalf("set runtime orders: %v", err)
-	}
-	if err := db.SetProcessNodeActiveBinID(nodeID, &bid); err != nil {
-		t.Fatalf("set active_bin_id: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &bid), "set order bin id")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "set runtime orders")
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, &bid), "set active_bin_id")
 
 	// Seed a lineside bucket with 7 parts. A delta of 10 should drain
 	// 7 from the bucket and 3 from the bin.
@@ -627,6 +622,7 @@ func TestRegression_DrainLinesideAttribution(t *testing.T) {
 // the bin via a single BinUOPDelta(consume_tick). No bucket delta
 // fires because nothing drained.
 func TestRegression_NoBucketAllToBin(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "NO-BUCKET",
@@ -676,6 +672,7 @@ func TestRegression_NoBucketAllToBin(t *testing.T) {
 // invariant — every emission site must nil-guard so engines without a
 // reporter (test contexts, off-modes) don't crash on tick events.
 func TestRegression_NoSinkNoEmissionDoesNotPanic(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "NO-SINK",
@@ -711,6 +708,7 @@ func TestRegression_NoSinkNoEmissionDoesNotPanic(t *testing.T) {
 // decrements locally — that's harmless drift on an idle slot — but
 // nothing ships to Core because there's no bin to attribute to.
 func TestRegression_BinAttributionRequiresActiveBinID(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "NO-BIN-ID",

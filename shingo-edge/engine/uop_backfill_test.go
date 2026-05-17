@@ -21,6 +21,7 @@ import (
 // delivery; idempotent because the seed is always "the qty as
 // observed right now."
 func TestPhase3Backfill_InFlightBuckets(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	nodeID, styleID, _ := seedReconcilerNode(t, db, "BACKFILL", "PART-BF")
 
@@ -68,6 +69,7 @@ func TestPhase3Backfill_InFlightBuckets(t *testing.T) {
 // backfill ran) doesn't generate a seed delta. Avoids burning
 // SequenceID slots and the dedup row count for a no-op.
 func TestPhase3Backfill_EmptyBucketsNotEmitted(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	nodeID, styleID, _ := seedReconcilerNode(t, db, "BACKFILL-EMPTY", "PART-BFE")
 
@@ -101,6 +103,7 @@ func TestPhase3Backfill_EmptyBucketsNotEmitted(t *testing.T) {
 // The startup auto-fire path keys on this; without it Core stays
 // empty after deployment until an operator manually backfills.
 func TestBucketBackfillNeeded_FreshCoreEdgeHasRows(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	nodeID, styleID, _ := seedReconcilerNode(t, db, "BF-NEEDED", "PART-BFN")
 	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "PART-BFN", 8); err != nil {
@@ -127,6 +130,7 @@ func TestBucketBackfillNeeded_FreshCoreEdgeHasRows(t *testing.T) {
 // populated Core must not re-seed (would double-count via dedup
 // at-least-once semantics).
 func TestBucketBackfillNeeded_PopulatedCoreReturnsFalse(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	nodeID, styleID, _ := seedReconcilerNode(t, db, "BF-POP", "PART-BFP")
 	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "PART-BFP", 8); err != nil {
@@ -157,6 +161,7 @@ func TestBucketBackfillNeeded_PopulatedCoreReturnsFalse(t *testing.T) {
 // returns false even though Core's bucket list is empty. Avoids a
 // no-op backfill emission.
 func TestBucketBackfillNeeded_EmptyEdgeReturnsFalse(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, _, _ = seedReconcilerNode(t, db, "BF-EMPTY", "PART-BFE2")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +183,7 @@ func TestBucketBackfillNeeded_EmptyEdgeReturnsFalse(t *testing.T) {
 // without a reporter wired returns an error rather than silently
 // emitting into the void. Catches a misconfigured composition root.
 func TestPhase3Backfill_NoSinkErrors(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	// Deliberately clear the default sink testEngine wires — this test

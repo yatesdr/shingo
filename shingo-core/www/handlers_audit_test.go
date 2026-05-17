@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/audit"
 )
@@ -32,6 +33,7 @@ func newAuditRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // TestApiAuditBinTimeline pins the per-bin endpoint: every audit row
 // for a given bin id, newest first.
 func TestApiAuditBinTimeline(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-AUDIT-1")
@@ -54,9 +56,7 @@ func TestApiAuditBinTimeline(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var rows []audit.BinUOPRow
-	if err := json.NewDecoder(rec.Body).Decode(&rows); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
 	if len(rows) < 2 {
 		t.Errorf("rows = %d, want >= 2", len(rows))
 	}
@@ -69,6 +69,7 @@ func TestApiAuditBinTimeline(t *testing.T) {
 
 // TestApiAuditBinTimeline_BadID pins the parse-error branch.
 func TestApiAuditBinTimeline_BadID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	router := chi.NewRouter()
 	router.Get("/api/audit/bin/{id}", h.apiAuditBinTimeline)
@@ -84,6 +85,7 @@ func TestApiAuditBinTimeline_BadID(t *testing.T) {
 // TestApiAuditOperatorActivity pins the by-actor endpoint: rows
 // where actor matches the URL param exactly.
 func TestApiAuditOperatorActivity(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-OPER-1")
@@ -104,9 +106,7 @@ func TestApiAuditOperatorActivity(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	var rows []audit.BinUOPRow
-	if err := json.NewDecoder(rec.Body).Decode(&rows); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
 	if len(rows) == 0 {
 		t.Errorf("got 0 rows, expected at least one for OP-OPER-1")
 	}
@@ -120,6 +120,7 @@ func TestApiAuditOperatorActivity(t *testing.T) {
 // TestApiAuditStationOverrides pins the station-override filter:
 // only the two operator-override op tags surface, no other audit rows.
 func TestApiAuditStationOverrides(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-STN-1")
@@ -148,9 +149,7 @@ func TestApiAuditStationOverrides(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	var rows []audit.BinUOPRow
-	if err := json.NewDecoder(rec.Body).Decode(&rows); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1 (override only): %+v", len(rows), rows)
 	}

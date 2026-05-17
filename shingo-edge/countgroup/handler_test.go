@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/config"
 )
 
@@ -117,6 +118,7 @@ func newTestHandler(p *fakePLC, sender AckSender) (*Handler, config.CountGroupsC
 }
 
 func TestHandlerBootstrapClearsStaleTag(t *testing.T) {
+	t.Parallel()
 	p := newFakePLC()
 	p.setTag("PLC1", "Z1_REQ", 5) // stale non-zero value left by prior run
 
@@ -141,6 +143,7 @@ func TestHandlerBootstrapClearsStaleTag(t *testing.T) {
 }
 
 func TestHandlerUnboundGroupLogsWarnAndReturns(t *testing.T) {
+	t.Parallel()
 	p := newFakePLC()
 	h, _ := newTestHandler(p, nil)
 	h.OnCommand(protocol.CountGroupCommand{
@@ -154,6 +157,7 @@ func TestHandlerUnboundGroupLogsWarnAndReturns(t *testing.T) {
 }
 
 func TestHandlerUnknownDesiredStateReturns(t *testing.T) {
+	t.Parallel()
 	p := newFakePLC()
 	h, _ := newTestHandler(p, nil)
 	h.OnCommand(protocol.CountGroupCommand{
@@ -167,6 +171,7 @@ func TestHandlerUnknownDesiredStateReturns(t *testing.T) {
 }
 
 func TestHandlerWarlinkWriteErrorSendsErrorAck(t *testing.T) {
+	t.Parallel()
 	p := newFakePLC()
 	p.writeErr = errors.New("warlink down")
 	send, acks := recordingAckSender()
@@ -187,6 +192,7 @@ func TestHandlerWarlinkWriteErrorSendsErrorAck(t *testing.T) {
 }
 
 func TestStartedGuardSuppressesHeartbeat(t *testing.T) {
+	t.Parallel()
 	p := newFakePLC()
 	h, cfg := newTestHandler(p, nil)
 
@@ -195,7 +201,7 @@ func TestStartedGuardSuppressesHeartbeat(t *testing.T) {
 	defer hb.Stop()
 
 	// Before MarkStarted: heartbeat writer should NOT write to the tag.
-	// Wait 4x HeartbeatInterval so a spurious write would have time to fire.
+	// KEEP: negative assertion — wait 4× HeartbeatInterval to prove no write happens.
 	time.Sleep(4 * cfg.HeartbeatInterval)
 	writes := p.writesFor("PLC1", "Heartbeat")
 	if len(writes) != 0 {
@@ -204,26 +210,14 @@ func TestStartedGuardSuppressesHeartbeat(t *testing.T) {
 
 	h.MarkStarted()
 	// Poll until at least one heartbeat write appears.
-	eventually(t, 2*time.Second, func() bool {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		return len(p.writesFor("PLC1", "Heartbeat")) > 0
 	})
 	writes = p.writesFor("PLC1", "Heartbeat")
 }
 
-// eventually polls fn at 2ms intervals until it returns true or timeout.
-func eventually(t *testing.T, timeout time.Duration, fn func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if fn() {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("condition not met within %v", timeout)
-}
-
 func TestAckTimeoutSendsTimeoutAckAndAbandons(t *testing.T) {
+	t.Parallel()
 	p := newFakePLC()
 	// PLC never clears the tag â€” ack never arrives. OnCommand writes 1,
 	// fake PLC holds it, ack-poll times out after AckDead (300ms).
@@ -244,21 +238,19 @@ func TestAckTimeoutSendsTimeoutAckAndAbandons(t *testing.T) {
 
 	// Wait past AckDead (300ms). Heartbeat ticker is 20ms so it should
 	// cycle checkAcks many times.
-	deadline := time.Now().Add(800 * time.Millisecond)
-	for time.Now().Before(deadline) {
+	testutil.EventuallyWithInterval(t, 20*time.Millisecond, 800*time.Millisecond, func() bool {
 		for _, a := range acks() {
 			if a.Outcome == protocol.AckOutcomeTimeout {
-				// Verify abandoned: no longer in inFlight.
-				h.inFlightMu.Lock()
-				_, stillTracked := h.inFlight["Z1"]
-				h.inFlightMu.Unlock()
-				if stillTracked {
-					t.Fatalf("group Z1 still in-flight after timeout ack")
-				}
-				return // success
+				return true
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		return false
+	})
+	// Verify abandoned: no longer in inFlight.
+	h.inFlightMu.Lock()
+	_, stillTracked := h.inFlight["Z1"]
+	h.inFlightMu.Unlock()
+	if stillTracked {
+		t.Fatalf("group Z1 still in-flight after timeout ack")
 	}
-	t.Fatalf("did not receive timeout ack within deadline; got %+v", acks())
 }

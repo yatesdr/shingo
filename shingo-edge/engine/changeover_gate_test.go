@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 )
 
@@ -18,6 +19,7 @@ import (
 // Without the gate the row would advance to completed; with the gate it
 // returns an error and the row state stays in_progress.
 func TestChangeover_PrematureComplete_TasksNonTerminal_IsBlocked(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -55,6 +57,7 @@ func TestChangeover_PrematureComplete_TasksNonTerminal_IsBlocked(t *testing.T) {
 // silently bail (task 105 stranded). The gate's order-terminality
 // check blocks this.
 func TestChangeover_PrematureComplete_OrdersInFlight_IsBlocked(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -66,9 +69,7 @@ func TestChangeover_PrematureComplete_OrdersInFlight_IsBlocked(t *testing.T) {
 	// Drive the task state to released directly. Don't move the linked
 	// orders past in_transit — the gate's second check (orders terminal)
 	// is the one we're pinning here.
-	if err := db.UpdateChangeoverNodeTaskState(task.ID, "released"); err != nil {
-		t.Fatalf("update task state: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, "released"), "update task state")
 	for _, orderIDPtr := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
 		if orderIDPtr == nil {
 			continue
@@ -99,6 +100,7 @@ func TestChangeover_PrematureComplete_OrdersInFlight_IsBlocked(t *testing.T) {
 // released must fire tryCompleteProcessChangeover so the row advances
 // without operator intervention.
 func TestChangeover_AutoCompleteFiresOnTerminalTransition(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -112,9 +114,7 @@ func TestChangeover_AutoCompleteFiresOnTerminalTransition(t *testing.T) {
 	// before the gate runs (the function flips active style first); the
 	// gate then blocks completion. Simulate by setting active style
 	// directly so tryCompleteProcessChangeover's first precondition holds.
-	if err := db.SetActiveStyle(processID, &toStyleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &toStyleID), "set active style")
 
 	// Drive both linked orders to terminal so the gate's order check
 	// passes. Then fire EventOrderCompleted for the release order — that
@@ -140,6 +140,7 @@ func TestChangeover_AutoCompleteFiresOnTerminalTransition(t *testing.T) {
 // cancelProcessChangeoverInternal — e.g. via the operator's per-order
 // cancel button — the handler must stamp the task to "cancelled".
 func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -176,6 +177,7 @@ func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
 // GetActiveProcessChangeover which filters out completed/cancelled rows
 // at the SQL layer — this test makes the invariant explicit.
 func TestChangeover_FailedTaskInCompletedChangeover_NotStamped(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -189,12 +191,8 @@ func TestChangeover_FailedTaskInCompletedChangeover_NotStamped(t *testing.T) {
 	orderID := *task.NextMaterialOrderID
 
 	// Force the changeover into completed state with the task at released.
-	if err := db.UpdateChangeoverNodeTaskState(task.ID, "released"); err != nil {
-		t.Fatalf("update task state: %v", err)
-	}
-	if err := db.UpdateProcessChangeoverState(changeover.ID, "completed"); err != nil {
-		t.Fatalf("update changeover state: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, "released"), "update task state")
+	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(changeover.ID, "completed"), "update changeover state")
 
 	// Late-arriving failure event for the same order. Pre-gate this would
 	// have stamped the task to error; post-gate the SQL filter on

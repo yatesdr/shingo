@@ -515,6 +515,7 @@ func TestCompound_CancelParentWhileChildInFlight(t *testing.T) {
 // due to failure. This test documents whether the current behavior causes
 // silent data loss (blocker not restocked but parent "confirmed").
 func TestCompound_AdvanceSkipsFailedChild_PrematureCompletion(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	sc := testdb.SetupCompound(t, db, testdb.CompoundConfig{Prefix: "SKIP"})

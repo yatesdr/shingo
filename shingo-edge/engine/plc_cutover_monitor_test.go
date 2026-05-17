@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -13,6 +14,7 @@ import (
 // (no fire). After that, only a 1→0 transition followed by 2s of
 // continuous-zero produces a fire signal.
 func TestApplyEdge_StateMachine(t *testing.T) {
+	t.Parallel()
 	type step struct {
 		value     int64
 		ok        bool
@@ -113,6 +115,7 @@ func TestApplyEdge_StateMachine(t *testing.T) {
 // decodes integer tag values as float64 by default; the helper has to
 // accept that path plus the typed Go integer types.
 func TestPLCTagInt64(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   interface{}
 		want int64
@@ -142,6 +145,7 @@ func TestPLCTagInt64(t *testing.T) {
 // changeover row untouched. This is what makes auto-cutover safe to
 // ship without waiting on Nate to confirm tag semantics.
 func TestCutoverFromPLC_GateBlockedDoesNotMutate(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, _, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -169,6 +173,7 @@ func TestCutoverFromPLC_GateBlockedDoesNotMutate(t *testing.T) {
 // captures "plc-auto" when the PLC-driven entry point completes the
 // cutover successfully.
 func TestCutoverFromPLC_RecordsTriggeredBy(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -187,13 +192,9 @@ func TestCutoverFromPLC_RecordsTriggeredBy(t *testing.T) {
 		db.UpdateOrderStatus(*orderIDPtr, string(orders.StatusDelivered))
 		db.UpdateOrderStatus(*orderIDPtr, string(orders.StatusConfirmed))
 	}
-	if err := db.UpdateChangeoverNodeTaskState(task.ID, "released"); err != nil {
-		t.Fatalf("update task state: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, "released"), "update task state")
 
-	if err := eng.CompleteProcessProductionCutoverFromPLC(processID); err != nil {
-		t.Fatalf("PLC cutover: %v", err)
-	}
+	testutil.MustNoErr(t, eng.CompleteProcessProductionCutoverFromPLC(processID), "PLC cutover")
 
 	// Look up the now-completed changeover row by its ID directly via
 	// ListChangeovers (GetActiveProcessChangeover filters out completed).

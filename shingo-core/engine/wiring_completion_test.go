@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
@@ -54,7 +55,7 @@ func deliveredOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simulator.Sim
 	return db, eng, sim, d, order, sd.LineNode
 }
 
-// TC-CO-1: Normal receipt — bin already at destination (idempotent safety net).
+// Normal receipt — bin already at destination (idempotent safety net).
 // handleOrderCompleted should detect bin is already at dest and skip ApplyBinArrival.
 func TestOrderCompleted_BinAlreadyAtDest(t *testing.T) {
 	t.Parallel()
@@ -85,7 +86,7 @@ func TestOrderCompleted_BinAlreadyAtDest(t *testing.T) {
 	}
 }
 
-// TC-CO-2: handleOrderCompleted with missing BinID — early return, no crash.
+// handleOrderCompleted with missing BinID — early return, no crash.
 func TestOrderCompleted_NoBinID(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -104,9 +105,7 @@ func TestOrderCompleted_NoBinID(t *testing.T) {
 		DeliveryNode: "LINE1-IN",
 		// BinID is nil
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	// Should not panic — early return on nil BinID
 	eng.handleOrderCompleted(OrderCompletedEvent{
@@ -116,7 +115,7 @@ func TestOrderCompleted_NoBinID(t *testing.T) {
 	})
 }
 
-// TC-CO-3: handleOrderCompleted with missing source/delivery nodes — early return.
+// handleOrderCompleted with missing source/delivery nodes — early return.
 func TestOrderCompleted_MissingNodes(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -132,9 +131,7 @@ func TestOrderCompleted_MissingNodes(t *testing.T) {
 		Status:    "delivered",
 		// SourceNode and DeliveryNode empty
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	// Should not panic — early return
 	eng.handleOrderCompleted(OrderCompletedEvent{
@@ -144,7 +141,7 @@ func TestOrderCompleted_MissingNodes(t *testing.T) {
 	})
 }
 
-// TC-CO-4: handleOrderCompleted for non-existent order — log and return.
+// handleOrderCompleted for non-existent order — log and return.
 func TestOrderCompleted_NonExistentOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
@@ -160,7 +157,7 @@ func TestOrderCompleted_NonExistentOrder(t *testing.T) {
 	})
 }
 
-// TC-CO-5: handleOrderCompleted safety net — bin NOT at dest yet.
+// handleOrderCompleted safety net — bin NOT at dest yet.
 // Simulates the case where handleOrderDelivered failed or didn't move the bin.
 // handleOrderCompleted should apply the arrival.
 func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
@@ -183,18 +180,14 @@ func TestOrderCompleted_SafetyNetArrival(t *testing.T) {
 		BinID:        &bin.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	// Claim the bin for this order — Phase 3 of bin-transit-state moved the
 	// safety-net guard predicate from "bin.NodeID == sourceNode" to
 	// "bin.ClaimedBy == order.ID". In production the bin is always claimed
 	// by the time delivery fires (ClaimForDispatch at planning time);
 	// without the claim here the safety-net correctly skips because nothing
 	// signals the bin still belongs to this order.
-	if err := db.ClaimBin(bin.ID, order.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim bin")
 
 	// Verify bin is still at storage node
 	testdb.RequireBinAtNode(t, db, bin.ID, sd.StorageNode.ID)
@@ -241,20 +234,14 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 		BinID:        &bin.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderWaitIndex(order.ID, 1); err != nil {
-		t.Fatalf("update wait index: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(order.ID, 1), "update wait index")
 	// Phase 3 of bin-transit-state moved the safety-net guard from
 	// node-based to claim-based; in production every dispatched order
 	// has a claimed bin. Mirror that here so the safety net actually
 	// fires and the lineside-staging assertion below has something to
 	// check.
-	if err := db.ClaimBin(bin.ID, order.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim bin")
 
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID: order.ID, EdgeUUID: order.EdgeUUID, StationID: order.StationID,
@@ -293,7 +280,7 @@ func TestRegression_LinesideStagingPreventsFifoPoach(t *testing.T) {
 // tests no longer have anything to assert. See TestOrderCompleted_LinesideStaging
 // below for the new positive-case test.
 
-// TC-CO-6 replacement: lineside deliveries should arrive `staged` so that
+// Lineside deliveries should arrive `staged` so that
 // FindSourceBinFIFO excludes them — protecting from unloader/loader auto-request
 // poaching. Covers both retrieve_empty (loader) and complex-order (swap) paths.
 func TestOrderCompleted_LinesideStaging(t *testing.T) {
@@ -316,12 +303,8 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 		BinID:        &binEmpty.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
-	if err := db.CreateOrder(emptyOrder); err != nil {
-		t.Fatalf("create empty order: %v", err)
-	}
-	if err := db.ClaimBin(binEmpty.ID, emptyOrder.ID); err != nil {
-		t.Fatalf("claim empty bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(emptyOrder), "create empty order")
+	testutil.MustNoErr(t, db.ClaimBin(binEmpty.ID, emptyOrder.ID), "claim empty bin")
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID: emptyOrder.ID, EdgeUUID: emptyOrder.EdgeUUID, StationID: emptyOrder.StationID,
 	})
@@ -345,15 +328,9 @@ func TestOrderCompleted_LinesideStaging(t *testing.T) {
 		BinID:        &binComplex.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
-	if err := db.CreateOrder(complexOrder); err != nil {
-		t.Fatalf("create complex order: %v", err)
-	}
-	if err := db.UpdateOrderWaitIndex(complexOrder.ID, 1); err != nil {
-		t.Fatalf("update wait index: %v", err)
-	}
-	if err := db.ClaimBin(binComplex.ID, complexOrder.ID); err != nil {
-		t.Fatalf("claim complex bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(complexOrder), "create complex order")
+	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(complexOrder.ID, 1), "update wait index")
+	testutil.MustNoErr(t, db.ClaimBin(binComplex.ID, complexOrder.ID), "claim complex bin")
 	eng.handleOrderCompleted(OrderCompletedEvent{
 		OrderID: complexOrder.ID, EdgeUUID: complexOrder.EdgeUUID, StationID: complexOrder.StationID,
 	})
@@ -398,9 +375,7 @@ func TestRegression_LateConfirmDoesNotTeleportReclaimedBin(t *testing.T) {
 	// Third node — stand-in for the bin-loader (SMN_001) the bin physically
 	// landed at after a newer order re-claimed it.
 	thirdNode := &nodes.Node{Name: "BIN-LOADER", Enabled: true}
-	if err := db.CreateNode(thirdNode); err != nil {
-		t.Fatalf("create third node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(thirdNode), "create third node")
 
 	// Bin currently at the third node (the newer order has already moved it).
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, thirdNode.ID, "BIN-RECLAIM")
@@ -421,9 +396,7 @@ func TestRegression_LateConfirmDoesNotTeleportReclaimedBin(t *testing.T) {
 		BinID:        &bin.ID,
 		PayloadCode:  sd.Payload.Code,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	// Sanity: bin starts at the third node.
 	testdb.RequireBinAtNode(t, db, bin.ID, thirdNode.ID)

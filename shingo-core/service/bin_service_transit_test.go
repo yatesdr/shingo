@@ -5,6 +5,7 @@ package service
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
@@ -19,6 +20,7 @@ import (
 // `node_id=_TRANSIT AND claimed_by IS NULL` would also fire on every
 // healthy in-flight bin.
 func TestMoveToTransit_PreservesClaim(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := newBinSvc(db)
 
@@ -29,17 +31,11 @@ func TestMoveToTransit_PreservesClaim(t *testing.T) {
 	db.CreateNode(source)
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "TR-BIN-1", NodeID: &source.ID, Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 	const orderID int64 = 4242
-	if err := db.ClaimBin(bin.ID, orderID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, orderID), "claim bin")
 
-	if err := svc.MoveToTransit(bin.ID); err != nil {
-		t.Fatalf("MoveToTransit: %v", err)
-	}
+	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "MoveToTransit")
 
 	got, err := db.GetBin(bin.ID)
 	if err != nil {
@@ -63,6 +59,7 @@ func TestMoveToTransit_PreservesClaim(t *testing.T) {
 // resends, etc.). A second MoveToTransit on a bin already in transit
 // must be a no-op, not an error.
 func TestMoveToTransit_Idempotent(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := newBinSvc(db)
 
@@ -75,16 +72,13 @@ func TestMoveToTransit_Idempotent(t *testing.T) {
 	db.CreateBin(bin)
 	db.ClaimBin(bin.ID, 1)
 
-	if err := svc.MoveToTransit(bin.ID); err != nil {
-		t.Fatalf("first MoveToTransit: %v", err)
-	}
-	if err := svc.MoveToTransit(bin.ID); err != nil {
-		t.Fatalf("second MoveToTransit (should be no-op): %v", err)
-	}
+	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "first MoveToTransit")
+	testutil.MustNoErr(t, svc.MoveToTransit(bin.ID), "second MoveToTransit (should be no-op)")
 }
 
 // TestMarkAnomaly_Sets sets the anomaly_at timestamp.
 func TestMarkAnomaly_Sets(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := newBinSvc(db)
 
@@ -98,9 +92,7 @@ func TestMarkAnomaly_Sets(t *testing.T) {
 		t.Fatalf("pre-condition: AnomalyAt should be nil on a fresh bin, got %v", got.AnomalyAt)
 	}
 
-	if err := svc.MarkAnomaly(bin.ID); err != nil {
-		t.Fatalf("MarkAnomaly: %v", err)
-	}
+	testutil.MustNoErr(t, svc.MarkAnomaly(bin.ID), "MarkAnomaly")
 
 	got, _ = db.GetBin(bin.ID)
 	if got.AnomalyAt == nil {
@@ -111,6 +103,7 @@ func TestMarkAnomaly_Sets(t *testing.T) {
 // TestClearAnomaly_Clears clears anomaly_at after the operator
 // resolves the bin's location.
 func TestClearAnomaly_Clears(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := newBinSvc(db)
 
@@ -120,9 +113,7 @@ func TestClearAnomaly_Clears(t *testing.T) {
 	db.CreateBin(bin)
 
 	svc.MarkAnomaly(bin.ID)
-	if err := svc.ClearAnomaly(bin.ID); err != nil {
-		t.Fatalf("ClearAnomaly: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClearAnomaly(bin.ID), "ClearAnomaly")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.AnomalyAt != nil {
@@ -138,6 +129,7 @@ func TestClearAnomaly_Clears(t *testing.T) {
 // in-flight bins would be re-claimable by other orders — a silent
 // correctness break. This test guards that.
 func TestTransitNode_IsSyntheticGate(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	transit, err := db.GetNodeByName(domain.TransitNodeName)

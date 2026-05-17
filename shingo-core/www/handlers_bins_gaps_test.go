@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/orders"
@@ -44,6 +45,7 @@ type transportResp struct {
 // TestApiBulkBinAction_EmptyIDsReturns400 pins the lower bound of the size
 // guard. The handler rejects zero-length id slices.
 func TestApiBulkBinAction_EmptyIDsReturns400(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiBulkBinAction, "/api/bin/bulk",
@@ -56,6 +58,7 @@ func TestApiBulkBinAction_EmptyIDsReturns400(t *testing.T) {
 // TestApiBulkBinAction_TooManyIDsReturns400 pins the upper bound: 101+
 // ids are rejected without any per-bin processing.
 func TestApiBulkBinAction_TooManyIDsReturns400(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	ids := make([]int64, 101)
@@ -77,14 +80,13 @@ func TestApiBulkBinAction_TooManyIDsReturns400(t *testing.T) {
 // must still succeed — this is the main reason the handler loops per-id
 // rather than batching everything into one SQL statement.
 func TestApiBulkBinAction_LockedSkipsNonUnlockActions(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	locked := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-BULK-LOCKED")
 	open := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-BULK-OPEN")
 
-	if err := db.LockBin(locked.ID, "qa"); err != nil {
-		t.Fatalf("seed lock: %v", err)
-	}
+	testutil.MustNoErr(t, db.LockBin(locked.ID, "qa"), "seed lock")
 
 	rec := postJSON(t, h.apiBulkBinAction, "/api/bin/bulk",
 		map[string]any{
@@ -96,9 +98,7 @@ func TestApiBulkBinAction_LockedSkipsNonUnlockActions(t *testing.T) {
 	}
 
 	var resp bulkResp
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if len(resp.Results) != 2 {
 		t.Fatalf("results len: got %d, want 2 — %+v", len(resp.Results), resp)
 	}
@@ -141,12 +141,11 @@ func TestApiBulkBinAction_LockedSkipsNonUnlockActions(t *testing.T) {
 // the skip: when the action IS "unlock" the handler must NOT skip locked
 // bins — unlocking a locked bin is exactly the operation the caller wants.
 func TestApiBulkBinAction_UnlockActionProceedsOnLockedBin(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-BULK-UNLOCK")
-	if err := db.LockBin(bin.ID, "qa"); err != nil {
-		t.Fatalf("seed lock: %v", err)
-	}
+	testutil.MustNoErr(t, db.LockBin(bin.ID, "qa"), "seed lock")
 
 	rec := postJSON(t, h.apiBulkBinAction, "/api/bin/bulk",
 		map[string]any{"ids": []int64{bin.ID}, "action": "unlock"})
@@ -173,6 +172,7 @@ func TestApiBulkBinAction_UnlockActionProceedsOnLockedBin(t *testing.T) {
 // not-found branch: a missing id produces ok=false/error="not found" in
 // the results envelope without failing the whole request.
 func TestApiBulkBinAction_BinNotFoundAppearsInResults(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiBulkBinAction, "/api/bin/bulk",
@@ -193,6 +193,7 @@ func TestApiBulkBinAction_BinNotFoundAppearsInResults(t *testing.T) {
 // un-claimed bin with a known source + destination node returns 200 with a
 // message like "Transport requested: SRC → DST".
 func TestApiRequestBinTransport_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-OK")
@@ -207,9 +208,7 @@ func TestApiRequestBinTransport_HappyPath(t *testing.T) {
 	}
 
 	var resp transportResp
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.BinID != bin.ID {
 		t.Errorf("bin_id: got %d, want %d", resp.BinID, bin.ID)
 	}
@@ -225,6 +224,7 @@ func TestApiRequestBinTransport_HappyPath(t *testing.T) {
 // TestApiRequestBinTransport_BinNotFoundReturns404 pins the GetBin-miss
 // branch.
 func TestApiRequestBinTransport_BinNotFoundReturns404(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -240,6 +240,7 @@ func TestApiRequestBinTransport_BinNotFoundReturns404(t *testing.T) {
 // Conflict with no writes. This is the critical "don't trample a live
 // order" invariant.
 func TestApiRequestBinTransport_ClaimedBinReturns409(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-CLAIMED")
@@ -249,12 +250,8 @@ func TestApiRequestBinTransport_ClaimedBinReturns409(t *testing.T) {
 		EdgeUUID: "xport-prior-1", StationID: "line-1",
 		OrderType: "move", Status: "pending", Quantity: 1,
 	}
-	if err := db.CreateOrder(priorOrder); err != nil {
-		t.Fatalf("create prior order: %v", err)
-	}
-	if err := db.ClaimBin(bin.ID, priorOrder.ID); err != nil {
-		t.Fatalf("seed claim: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(priorOrder), "create prior order")
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, priorOrder.ID), "seed claim")
 
 	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
 		map[string]any{"bin_id": bin.ID, "destination_node_id": sd.LineNode.ID})
@@ -269,14 +266,13 @@ func TestApiRequestBinTransport_ClaimedBinReturns409(t *testing.T) {
 // TestApiRequestBinTransport_NoNodeReturns400 pins the "bin has no current
 // location" branch: a bin without a node_id cannot be routed.
 func TestApiRequestBinTransport_NoNodeReturns400(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-TRANSPORT-NONODE", Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create orphan bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create orphan bin")
 
 	rec := postJSON(t, h.apiRequestBinTransport, "/api/bin/transport",
 		map[string]any{"bin_id": bin.ID, "destination_node_id": sd.LineNode.ID})
@@ -289,6 +285,7 @@ func TestApiRequestBinTransport_NoNodeReturns400(t *testing.T) {
 // destination == current node is rejected so callers don't queue pointless
 // moves.
 func TestApiRequestBinTransport_SameLocationReturns400(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-SAME")
@@ -303,6 +300,7 @@ func TestApiRequestBinTransport_SameLocationReturns400(t *testing.T) {
 // TestApiRequestBinTransport_UnknownDestinationReturns404 pins the
 // destination-not-found branch.
 func TestApiRequestBinTransport_UnknownDestinationReturns404(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TRANSPORT-NODEST")

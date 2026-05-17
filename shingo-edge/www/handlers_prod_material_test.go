@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/protocol/testutil"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 	"shingoedge/store/shifts"
@@ -55,9 +56,7 @@ func TestApiListShifts_ReturnsSeededShift(t *testing.T) {
 	if _, err := testDB.Exec("DELETE FROM shifts"); err != nil {
 		t.Fatalf("clear shifts: %v", err)
 	}
-	if err := testDB.UpsertShift(1, "Day", "06:00", "14:00"); err != nil {
-		t.Fatalf("seed shift: %v", err)
-	}
+	testutil.MustNoErr(t, testDB.UpsertShift(1, "Day", "06:00", "14:00"), "seed shift")
 
 	resp := doRequest(t, router, "GET", "/api/shifts", nil, nil)
 	assertStatus(t, resp, http.StatusOK)
@@ -84,9 +83,7 @@ func TestApiSaveShifts_UpsertAndDelete(t *testing.T) {
 		t.Fatalf("clear shifts: %v", err)
 	}
 	// Seed a shift that we'll delete via empty start/end times.
-	if err := testDB.UpsertShift(2, "ToBeDeleted", "14:00", "22:00"); err != nil {
-		t.Fatalf("seed shift: %v", err)
-	}
+	testutil.MustNoErr(t, testDB.UpsertShift(2, "ToBeDeleted", "14:00", "22:00"), "seed shift")
 
 	body := []map[string]interface{}{
 		{"shift_number": 1, "name": "Day", "start_time": "06:00", "end_time": "14:00"},

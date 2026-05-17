@@ -3,6 +3,7 @@ package engine
 import "testing"
 
 func TestDeriveProcessTagPrefix(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want string
@@ -22,6 +23,7 @@ func TestDeriveProcessTagPrefix(t *testing.T) {
 }
 
 func TestDeriveCutoverTag(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want string

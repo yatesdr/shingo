@@ -42,6 +42,14 @@ jobs:
         working-directory: shingo-core
         run: go test -coverprofile=build/coverage ./...
 
+      - name: Test (unit, race)
+        working-directory: shingo-core
+        # Warning-only for the first 30 days (until 2026-06-16). Race
+        # findings surface latent production data races. Promote to
+        # gating once baseline is known clean. Tracked in Phase 7.
+        continue-on-error: true
+        run: go test -race -count=1 ./...
+
       - name: Coverage report (unit)
         working-directory: shingo-core
         run: go tool cover -func=build/coverage
@@ -61,3 +69,10 @@ jobs:
       - name: Coverage report (Docker)
         working-directory: shingo-core
         run: go tool cover -func=build/coverage-docker
+
+      - name: Test (Docker integration, race)
+        working-directory: shingo-core
+        # Warning-only for the first 30 days (until 2026-06-16). See
+        # the unit race step above; promote to gating after baseline.
+        continue-on-error: true
+        run: go test -tags=docker -race -timeout=25m -count=1 ./...

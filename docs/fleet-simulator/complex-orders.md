@@ -16,7 +16,7 @@ Run this domain's tests:
 
 ```bash
 cd shingo-core
-go test -v -run "TestComplexOrder|TestCompound|TestBuriedBin|TestLaneLock|TestTC40|TestTC44|TestTC45|TestTC46|TestTC60|TestTC24" ./engine/ ./dispatch/ -timeout 120s
+go test -v -run "TestComplexOrder|TestCompound|TestBuriedBin|TestLaneLock|TestFIFOSelection|TestCOSTSelection|TestFindEmptyCompatible|TestRetrieveEmpty" ./engine/ ./dispatch/ -timeout 120s
 ```
 
 ## Index
@@ -48,7 +48,7 @@ go test -v -run "TestComplexOrder|TestCompound|TestBuriedBin|TestLaneLock|TestTC
 | TC-57 | Two-Robot Swap Resupply — 2 pre-wait blocks, staging wait | PASS |
 | TC-58 | Two-Robot Swap Removal — dropoff-first pre-wait, full lifecycle | PASS |
 | TC-59 | Staging + Deliver separation — two independent orders | PASS |
-| TC-60 | Single-robot 10-step swap — multi-bin junction table fix | FIXED |
+| TC-60 | Single-robot 9-step swap — multi-bin junction table fix | FIXED |
 
 ## Bugs found and fixed
 
@@ -82,7 +82,7 @@ if order.BinID == nil {
 
 **Status:** Fixed. The 3rd store order now fails with `"no available bin at LINE1-IN"` and no robot is dispatched.
 
-**Test:** `engine/engine_test.go` — `TestTC23c_ChangeoverWithMissingBin`
+**Test:** `engine/engine_linechangeover_test.go` — `TestLineChangeover_WithMissingBin`
 
 ---
 
@@ -104,7 +104,7 @@ Complex orders (`HandleComplexOrderRequest`) previously never called `ClaimBin` 
 
 **Known limitation:** `Order.BinID` is a single `*int64`. Multi-pickup complex orders (uncommon) have all bins claimed and protected from poaching, but only the first bin gets the `ApplyBinArrival` treatment on completion. A future schema change (order_bins junction table) would fully address this.
 
-**Tests:** `engine/engine_test.go` — `TestTC24_ComplexOrderBinPoaching`, `TestTC24b_StaleBinLocationAfterComplexOrder`, `TestTC24c_PhantomInventoryRetrieve`
+**Tests:** `engine/engine_claim_test.go` — `TestComplexOrder_BinPoachingPrevention`, `TestComplexOrder_StaleBinLocation`, `TestComplexOrder_PhantomInventoryRetrieve`
 
 ---
 
@@ -131,9 +131,9 @@ Complex orders (`HandleComplexOrderRequest`) previously never called `ClaimBin` 
 
 ---
 
-### TC-60: Single-robot 10-step swap — multi-bin junction table fix
+### TC-60: Single-robot 9-step swap — multi-bin junction table fix
 
-**Scenario:** A single-robot swap moves two bins in one trip: new material from storage to the line, old material from the line to outbound destination. The 10-step sequence has two pickup steps at different nodes. `claimComplexBins` claims both bins (iterates all pickup steps), but `Order.BinID` is `*int64` — it can only track the first claimed bin (the new bin at storage). The second bin (old bin at line) is claimed but invisible to the completion path.
+**Scenario:** A single-robot swap moves two bins in one trip: new material from storage to the line, old material from the line to outbound destination. The 9-step sequence has two pickup steps at different nodes. `claimComplexBins` claims both bins (iterates all pickup steps), but `Order.BinID` is `*int64` — it can only track the first claimed bin (the new bin at storage). The second bin (old bin at line) is claimed but invisible to the completion path.
 
 **Expected behavior:** New bin at lineNode. Old bin at outboundDest. Both unclaimed.
 
@@ -173,7 +173,7 @@ Complex orders (`HandleComplexOrderRequest`) previously never called `ClaimBin` 
 
 **Result:** PASS. Two sub-tests verified: (1) when accessible bins exist, COST mode returns the oldest accessible bin (BIN-MID at T+1s) and ignores the buried older bin (BIN-OLD at T). No `BuriedError` raised. (2) When no accessible bins exist at all (only buried bins behind blockers), COST mode falls back to returning a `BuriedError` for the buried bin, which triggers a reshuffle — the same behavior as FIFO mode in this degenerate case.
 
-**Tests:** `dispatch/group_resolver_test.go` — `TestTC40b_COSTIgnoresBuriedWhenAccessible`, `TestTC40b_COSTFallsToBuriedWhenNoAccessible`
+**Tests:** `dispatch/group_resolver_test.go` — `TestCOSTSelection_IgnoresBuriedWhenAccessible`, `TestCOSTSelection_FallsToBuriedWhenNoneAccessible`
 
 ---
 
@@ -185,7 +185,7 @@ Complex orders (`HandleComplexOrderRequest`) previously never called `ClaimBin` 
 
 **Result:** PASS. Two complementary tests verified: (1) Unit level (`group_resolver_test.go`): confirms the gap — `FindEmptyCompatibleBin` is lane-unaware and returns a buried empty, but `IsSlotAccessible` correctly reports it as unreachable. This documents the pre-fix behavior where a robot would be sent to a slot it can't physically access. (2) End-to-end level (`end_to_end_test.go`): after the fix, the `retrieve_empty` path with buried empties creates a reshuffle compound order (status `reshuffling` with compound children) instead of dispatching directly to the unreachable slot.
 
-**Tests:** `dispatch/group_resolver_test.go` — `TestTC41_EmptyStarvation_BuriedEmptiesUnreachable`; `dispatch/end_to_end_test.go` — `TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle`
+**Tests:** `dispatch/group_resolver_test.go` — `TestFindEmptyCompatible_LaneUnawareStarvation`; `dispatch/end_to_end_test.go` — `TestRetrieveEmpty_BuriedTriggersReshuffle`
 
 ---
 

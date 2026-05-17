@@ -5,11 +5,13 @@ package store
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/store/inventory"
 	"shingocore/store/nodes"
 )
 
 func TestCorrectionCRUD(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 
 	node := &nodes.Node{Name: "S1", Enabled: true}
@@ -22,9 +24,7 @@ func TestCorrectionCRUD(t *testing.T) {
 		Reason:         "physical count mismatch",
 		Actor:          "admin",
 	}
-	if err := db.CreateCorrection(c); err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateCorrection(c), "create")
 	if c.ID == 0 {
 		t.Fatal("ID should be assigned")
 	}

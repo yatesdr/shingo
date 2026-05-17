@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -31,6 +32,7 @@ import (
 // the wire shape (e.g. defaulting empty Mode to capture, or dropping the
 // runtime UOP threading), one of these subtests fails before it ships.
 func TestReleaseOrderWithLineside_WireRemainingUOP_PerDisposition(t *testing.T) {
+	t.Parallel()
 	const (
 		runtimeUOP = 800 // count Edge thinks is left on the bin at release time
 		capacity   = 1200
@@ -77,17 +79,13 @@ func TestReleaseOrderWithLineside_WireRemainingUOP_PerDisposition(t *testing.T) 
 			// Re-anchor runtime UOP after seeding (seedConsumeNode sets it,
 			// but be explicit so a future change to the helper doesn't break
 			// the partials assertion).
-			if err := db.SetProcessNodeRuntime(nodeID, &claimID, runtimeUOP); err != nil {
-				t.Fatalf("seed runtime UOP: %v", err)
-			}
+			testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, runtimeUOP), "seed runtime UOP")
 
 			orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-wire-"+tc.name)
 			// Track on runtime so ReleaseOrderWithLineside follows the same
 			// path it would in production (claim resolution + UOP reset live
 			// off the runtime row).
-			if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID); err != nil {
-				t.Fatalf("track staged order on runtime: %v", err)
-			}
+			testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID), "track staged order on runtime")
 
 			eng := testEngine(t, db)
 
@@ -153,6 +151,7 @@ func TestReleaseOrderWithLineside_WireRemainingUOP_PerDisposition(t *testing.T) 
 // covered by the empty-captures subtest in
 // TestReleaseOrderWithLineside_WireRemainingUOP_PerDisposition.
 func TestRegression_CaptureReleaseSingleWriter(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "REL-SINGLE-WRITER",
@@ -160,9 +159,7 @@ func TestRegression_CaptureReleaseSingleWriter(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  100,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 100); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 100), "seed runtime")
 
 	const binID int64 = 9001
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-single-writer")
@@ -186,9 +183,7 @@ func TestRegression_CaptureReleaseSingleWriter(t *testing.T) {
 		LinesideCapture: map[string]int{"PART-SW": 30},
 		CalledBy:        "test-op",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	// Wire half: RemainingUOP must be nil — the delta stream owns the
 	// count change now.
@@ -232,6 +227,7 @@ func TestRegression_CaptureReleaseSingleWriter(t *testing.T) {
 // button would strip the manifest off the freshly-loaded supply bin before
 // it even reached the line — re-introducing the SMN_003 stale-UOP bug class.
 func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "REL-WIRE-TR-SUPPLY",
@@ -265,12 +261,8 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T)
 	orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply-A")
 	orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-tr-supply-B")
 	_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
-		t.Fatalf("track A+B on runtime: %v", err)
-	}
-	if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
-		t.Fatalf("link siblings: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "track A+B on runtime")
+	testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
 
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {
@@ -282,9 +274,7 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T)
 	// Operator picks capture_lineside — for Order A this MUST be overridden
 	// to nil so Core leaves the supply bin alone.
 	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, CalledBy: "test-operator"}
-	if err := eng.ReleaseOrderWithLineside(orderA, disp); err != nil {
-		t.Fatalf("release Order A: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderA, disp), "release Order A")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -314,6 +304,7 @@ func TestReleaseOrderWithLineside_TwoRobotSupplyOrderForcesNilWire(t *testing.T)
 // operator's typed value to whatever the PLC counter says, which is the
 // exact gap finding R4b in shingo-uop-remaining-zero-audit.md was about.
 func TestReleaseOrderWithLineside_PartialBackUsesOperatorCount(t *testing.T) {
+	t.Parallel()
 	const (
 		runtimeUOP        = 60 // PLC counter says 60
 		operatorOverride  = 47 // operator typed 47 (label was wrong, partially overfilled, etc.)
@@ -326,13 +317,9 @@ func TestReleaseOrderWithLineside_PartialBackUsesOperatorCount(t *testing.T) {
 		UOPCapacity: capacity,
 		InitialUOP:  runtimeUOP,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, runtimeUOP); err != nil {
-		t.Fatalf("seed runtime UOP: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, runtimeUOP), "seed runtime UOP")
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-partial-override")
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID); err != nil {
-		t.Fatalf("track staged order on runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID), "track staged order on runtime")
 
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {
@@ -348,9 +335,7 @@ func TestReleaseOrderWithLineside_PartialBackUsesOperatorCount(t *testing.T) {
 		PartialCountSuggested: &suggested,
 		CalledBy:              "stephen-station-9",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -389,6 +374,7 @@ func TestReleaseOrderWithLineside_PartialBackUsesOperatorCount(t *testing.T) {
 // the way pre-Phase-0b clients expect. Defends against a refactor that
 // accidentally wires the new field as required.
 func TestReleaseOrderWithLineside_PartialBackFallsBackToRuntime(t *testing.T) {
+	t.Parallel()
 	const (
 		runtimeUOP = 75
 		capacity   = 1200
@@ -400,13 +386,9 @@ func TestReleaseOrderWithLineside_PartialBackFallsBackToRuntime(t *testing.T) {
 		UOPCapacity: capacity,
 		InitialUOP:  runtimeUOP,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, runtimeUOP); err != nil {
-		t.Fatalf("seed runtime UOP: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, runtimeUOP), "seed runtime UOP")
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-partial-legacy")
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID); err != nil {
-		t.Fatalf("track staged order on runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID), "track staged order on runtime")
 	pending, _ := db.ListPendingOutbox(100)
 	for _, m := range pending {
 		_ = db.AckOutbox(m.ID)
@@ -417,9 +399,7 @@ func TestReleaseOrderWithLineside_PartialBackFallsBackToRuntime(t *testing.T) {
 		Mode:     DispositionSendPartialBack,
 		CalledBy: "legacy-client",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
 		t.Fatalf("OrderRelease envelopes: got %d, want 1", len(releases))

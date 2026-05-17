@@ -31,6 +31,7 @@ import (
 // re-emits to track call shapes. The accumulator's own internal
 // usage is also exempt (this file lives in uop/).
 func TestArch_NoDirectRecordBinOrRecordBucket(t *testing.T) {
+	t.Parallel()
 	root := edgeRepoRoot(t)
 	var bad []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {

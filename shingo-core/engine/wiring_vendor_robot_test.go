@@ -23,7 +23,7 @@ import (
 // Without DriveStateWithRobot, Case D (clobbering existing robot_id) was
 // untestable because DriveState always passed robotID="".
 //
-// TC-90 through TC-95 cover: first assignment, Case D regression, reassignment,
+// This suite covers: first assignment, Case D regression, reassignment,
 // idempotent no-write, Option C dedup, and narrow write verification.
 
 // dispatchRetrieveOrderWithRobot is a variant of dispatchRetrieveOrder that
@@ -51,7 +51,7 @@ func dispatchRetrieveOrderWithRobot(t *testing.T) (*store.DB, *Engine, *simulato
 	return db, eng, sim, order
 }
 
-// TC-90: First robot assignment persists robot ID and sends waybill.
+// First robot assignment persists robot ID and sends waybill.
 // This is Case A: new robot ID + status change (dispatched -> in_transit).
 // Option C: waybill sent, then single UpdateOrderVendor with effectiveRobotID.
 func TestVendorStatus_RobotID_FirstAssignment(t *testing.T) {
@@ -90,7 +90,7 @@ func TestVendorStatus_RobotID_FirstAssignment(t *testing.T) {
 	}
 }
 
-// TC-91: Case D regression - subsequent event with empty RobotID does NOT clobber.
+// Case D regression - subsequent event with empty RobotID does NOT clobber.
 // Robot is assigned on RUNNING, then FINISHED event arrives with empty RobotID.
 // Option C effectiveRobotID preserves the existing value.
 func TestVendorStatus_RobotID_CaseD_NoClobber(t *testing.T) {
@@ -116,7 +116,7 @@ func TestVendorStatus_RobotID_CaseD_NoClobber(t *testing.T) {
 	}
 }
 
-// TC-92: Robot reassignment - event with different non-empty RobotID updates.
+// Robot reassignment - event with different non-empty RobotID updates.
 // This is Case D reassignment variant: order already has AMB-42, event carries AMB-99.
 func TestVendorStatus_RobotID_Reassignment(t *testing.T) {
 	t.Parallel()
@@ -139,7 +139,7 @@ func TestVendorStatus_RobotID_Reassignment(t *testing.T) {
 	}
 }
 
-// TC-93: Idempotent no-write - same status + same robot = no state change.
+// Idempotent no-write - same status + same robot = no state change.
 // Driving RUNNING twice with same robot ID should be a no-op on the second call.
 func TestVendorStatus_RobotID_IdempotentNoChange(t *testing.T) {
 	t.Parallel()
@@ -170,7 +170,7 @@ func TestVendorStatus_RobotID_IdempotentNoChange(t *testing.T) {
 	}
 }
 
-// TC-94: Option C dedup - first robot assignment + status change = single UpdateOrderVendor.
+// Option C dedup - first robot assignment + status change = single UpdateOrderVendor.
 // On the dispatched -> in_transit path with a new robot, Option C should produce
 // exactly one UpdateOrderVendor call (not two like the old code). We verify by
 // checking that vendor_state matches the RUNNING event state.
@@ -195,7 +195,7 @@ func TestVendorStatus_RobotID_OptionC_SingleWrite(t *testing.T) {
 	}
 }
 
-// TC-95: Idempotent path uses narrow UpdateOrderRobotID when robot changes without status change.
+// Idempotent path uses narrow UpdateOrderRobotID when robot changes without status change.
 // If the status is the same but the robot ID differs, the narrow UpdateOrderRobotID
 // method should be used (only touches robot_id, not vendor_state or vendor_order_id).
 func TestVendorStatus_RobotID_NarrowWrite_SameStatusNewRobot(t *testing.T) {

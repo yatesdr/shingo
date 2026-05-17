@@ -1,8 +1,12 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+	"shingo/protocol/testutil"
+)
 
 func TestBinStatus_IsTerminal(t *testing.T) {
+	t.Parallel()
 	terminal := []BinStatus{BinStatusRetired}
 	for _, s := range terminal {
 		if !s.IsTerminal() {
@@ -18,6 +22,7 @@ func TestBinStatus_IsTerminal(t *testing.T) {
 }
 
 func TestBinStatus_CanTransitionTo(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		from, to BinStatus
 		want     bool
@@ -38,6 +43,7 @@ func TestBinStatus_CanTransitionTo(t *testing.T) {
 }
 
 func TestBinStatus_ScanValue_Roundtrip(t *testing.T) {
+	t.Parallel()
 	for _, original := range AllBinStatuses() {
 		v, err := original.Value()
 		if err != nil {
@@ -54,22 +60,20 @@ func TestBinStatus_ScanValue_Roundtrip(t *testing.T) {
 }
 
 func TestBinStatus_Scan_NullEmpty(t *testing.T) {
+	t.Parallel()
 	var s BinStatus
-	if err := s.Scan(nil); err != nil {
-		t.Fatalf("Scan(nil) error: %v", err)
-	}
+	testutil.MustNoErr(t, s.Scan(nil), "Scan(nil) error")
 	if s != "" {
 		t.Errorf("Scan(nil) -> %q, want empty", s)
 	}
-	if err := s.Scan([]byte("staged")); err != nil {
-		t.Fatalf("Scan([]byte) error: %v", err)
-	}
+	testutil.MustNoErr(t, s.Scan([]byte("staged")), "Scan([]byte) error")
 	if s != BinStatusStaged {
 		t.Errorf("Scan([]byte staged) -> %q, want %q", s, BinStatusStaged)
 	}
 }
 
 func TestBinStatus_TerminalDerivedFromTable(t *testing.T) {
+	t.Parallel()
 	for status := range validBinTransitions {
 		if status.IsTerminal() {
 			t.Errorf("status %q has outgoing edges in validBinTransitions but IsTerminal returned true", status)

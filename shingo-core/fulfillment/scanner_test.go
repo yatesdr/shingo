@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
@@ -94,6 +95,7 @@ func seedQueuedRetrieve(f *fakeStore, orderID int64, deliveryNode string) *order
 // ── scan() branches ─────────────────────────────────────────────────
 
 func TestScanner_RunOnce_NoQueuedOrders(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	s := newTestScanner(t, f)
 
@@ -106,6 +108,7 @@ func TestScanner_RunOnce_NoQueuedOrders(t *testing.T) {
 }
 
 func TestScanner_ListQueuedOrders_ErrorReturnsZero(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	f.errListQueued = errors.New("db down")
 	s := newTestScanner(t, f)
@@ -118,6 +121,7 @@ func TestScanner_ListQueuedOrders_ErrorReturnsZero(t *testing.T) {
 // ── tryFulfill() branches ────────────────────────────────────────────
 
 func TestScanner_TryFulfill_OrderCancelledBetweenListAndFetch(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 1, "dest-01")
 	// GetOrder returns a fresh copy where the order has since flipped
@@ -137,6 +141,7 @@ func TestScanner_TryFulfill_OrderCancelledBetweenListAndFetch(t *testing.T) {
 }
 
 func TestScanner_TryFulfill_InFlightDeliveryNode_Skipped(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 2, "dest-02")
 	f.inFlightAt["dest-02"] = 1 // another order already heading there
@@ -151,6 +156,7 @@ func TestScanner_TryFulfill_InFlightDeliveryNode_Skipped(t *testing.T) {
 }
 
 func TestScanner_TryFulfill_DestNodeHasBin_Skipped(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 3, "dest-03")
 	// Node lookup succeeds; the node still has a bin parked on it
@@ -172,6 +178,7 @@ func TestScanner_TryFulfill_DestNodeHasBin_Skipped(t *testing.T) {
 // the standard EventOrderFailed handler chain (audit, return order,
 // edge notification) fires.
 func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 4, "dest-04")
 	order.PayloadCode = "" // no payload = nothing to source
@@ -220,6 +227,7 @@ func TestScannerScanForRetrieve_FailsCleanlyOnEmptyPayload(t *testing.T) {
 }
 
 func TestScanner_TryFulfill_RetrieveEmpty_NoBinAvailable_UsesDestZone(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 5, "dest-05")
 	order.OrderType = protocol.OrderTypeRetrieveEmpty
@@ -245,6 +253,7 @@ func TestScanner_TryFulfill_RetrieveEmpty_NoBinAvailable_UsesDestZone(t *testing
 }
 
 func TestScanner_TryFulfill_Retrieve_NoSourceBin_Skipped(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 6, "dest-06")
 	f.errFindSourceBinFIFO = errors.New("no source bin")
@@ -259,6 +268,7 @@ func TestScanner_TryFulfill_Retrieve_NoSourceBin_Skipped(t *testing.T) {
 }
 
 func TestScanner_TryFulfill_ClaimBinFails_SkipsSilently(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 7, "dest-07")
 	sourceNodeID := int64(200)
@@ -278,6 +288,7 @@ func TestScanner_TryFulfill_ClaimBinFails_SkipsSilently(t *testing.T) {
 }
 
 func TestScanner_TryFulfill_GetNodeAfterClaimFails_Unclaims(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	seedQueuedRetrieve(f, 8, "dest-08")
 	sourceNodeID := int64(201)
@@ -303,6 +314,7 @@ func TestScanner_TryFulfill_GetNodeAfterClaimFails_Unclaims(t *testing.T) {
 }
 
 func TestScanner_TryFulfill_DestNodeLookupFails_UnclaimsAndRequeues(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	order := seedQueuedRetrieve(f, 9, "dest-09")
 	sourceNodeID := int64(202)
@@ -349,6 +361,7 @@ func TestScanner_TryFulfill_DestNodeLookupFails_UnclaimsAndRequeues(t *testing.T
 // ── RunOnce coalescing + periodic sweep ─────────────────────────────
 
 func TestScanner_RunOnce_TriggerDuringScan_RerunsOnce(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	s := newTestScanner(t, f)
 
@@ -374,6 +387,7 @@ func TestScanner_RunOnce_TriggerDuringScan_RerunsOnce(t *testing.T) {
 }
 
 func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	s := newTestScanner(t, f)
 
@@ -384,7 +398,7 @@ func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 
 	s.StartPeriodicSweep(5 * time.Millisecond)
 	// Wait for at least one sweep to fire.
-	eventually(t, 2*time.Second, func() bool {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		return atomic.LoadInt32(&scanCount) >= 1
 	})
 	s.Stop()
@@ -405,15 +419,3 @@ func TestScanner_StartPeriodicSweep_StopHaltsLoop(t *testing.T) {
 	}
 }
 
-// eventually polls fn at 2ms intervals until it returns true or timeout.
-func eventually(t *testing.T, timeout time.Duration, fn func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if fn() {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("condition not met within %v", timeout)
-}

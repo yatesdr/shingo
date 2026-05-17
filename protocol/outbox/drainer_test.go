@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"shingo/protocol/testutil"
 )
 
 // mockStore implements Store for testing.
@@ -79,6 +81,7 @@ func (m *mockPublisher) Publish(topic string, payload []byte) error {
 func (m *mockPublisher) IsConnected() bool { return m.connected }
 
 func TestDrainer_DrainCycle(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		pending: []Message{
 			{ID: 1, Topic: "orders", Payload: []byte("hello"), MsgType: "test", Retries: 0},
@@ -102,6 +105,7 @@ func TestDrainer_DrainCycle(t *testing.T) {
 }
 
 func TestDrainer_FallbackTopic(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		pending: []Message{
 			{ID: 1, Payload: []byte("hello"), MsgType: "test", Retries: 0},
@@ -121,6 +125,7 @@ func TestDrainer_FallbackTopic(t *testing.T) {
 }
 
 func TestDrainer_SkipsWhenDisconnected(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		pending: []Message{
 			{ID: 1, Payload: []byte("hello"), MsgType: "test", Retries: 0},
@@ -140,6 +145,7 @@ func TestDrainer_SkipsWhenDisconnected(t *testing.T) {
 }
 
 func TestDrainer_RetryOnPublishFail(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		pending: []Message{
 			{ID: 1, Payload: []byte("hello"), MsgType: "test", Retries: 3},
@@ -162,6 +168,7 @@ func TestDrainer_RetryOnPublishFail(t *testing.T) {
 }
 
 func TestDrainer_DeadLetter(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{
 		pending: []Message{
 			{ID: 1, Payload: []byte("hello"), MsgType: "test", Retries: MaxRetries - 1},
@@ -179,6 +186,7 @@ func TestDrainer_DeadLetter(t *testing.T) {
 }
 
 func TestDrainer_ListPendingError(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{listErr: errors.New("db error")}
 	pub := &mockPublisher{connected: true}
 
@@ -191,6 +199,7 @@ func TestDrainer_ListPendingError(t *testing.T) {
 }
 
 func TestDrainer_PurgeOld(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	pub := &mockPublisher{connected: true}
 
@@ -198,25 +207,15 @@ func TestDrainer_PurgeOld(t *testing.T) {
 	d.Start()
 	defer d.Stop()
 	// Poll until purge fires (drainer runs at 1ms interval with purgeAge=50ms).
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.Eventually(t, 2*time.Second, func() bool {
 		store.mu.Lock()
-		if store.purged {
-			store.mu.Unlock()
-			return // test passed
-		}
-		store.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if !store.purged {
-		t.Error("expected purge to be called")
-	}
+		defer store.mu.Unlock()
+		return store.purged
+	})
 }
 
 func TestDrainer_Stop(t *testing.T) {
+	t.Parallel()
 	store := &mockStore{}
 	pub := &mockPublisher{connected: true}
 

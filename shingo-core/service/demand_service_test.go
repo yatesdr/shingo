@@ -3,10 +3,12 @@
 package service
 
 import (
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestDemandService_Create_PersistsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
@@ -28,6 +30,7 @@ func TestDemandService_Create_PersistsRow(t *testing.T) {
 }
 
 func TestDemandService_Get_ReturnsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
@@ -45,14 +48,13 @@ func TestDemandService_Get_ReturnsRow(t *testing.T) {
 }
 
 func TestDemandService_Update_ChangesFields(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
 	id, _ := svc.Create("CAT-UPD", "first", 10)
 
-	if err := svc.Update(id, "CAT-UPD", "second", 25, 7); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Update(id, "CAT-UPD", "second", 25, 7), "Update")
 	got, _ := db.GetDemand(id)
 	if got.Description != "second" || got.DemandQty != 25 || got.ProducedQty != 7 {
 		t.Errorf("row = %+v, want second/25/7", got)
@@ -60,17 +62,14 @@ func TestDemandService_Update_ChangesFields(t *testing.T) {
 }
 
 func TestDemandService_UpdateAndResetProduced_ResetsToZero(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
 	id, _ := svc.Create("CAT-RST", "before", 10)
-	if err := svc.SetProduced(id, 9); err != nil {
-		t.Fatalf("SetProduced: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetProduced(id, 9), "SetProduced")
 
-	if err := svc.UpdateAndResetProduced(id, "after", 40); err != nil {
-		t.Fatalf("UpdateAndResetProduced: %v", err)
-	}
+	testutil.MustNoErr(t, svc.UpdateAndResetProduced(id, "after", 40), "UpdateAndResetProduced")
 	got, _ := db.GetDemand(id)
 	if got.Description != "after" || got.DemandQty != 40 || got.ProducedQty != 0 {
 		t.Errorf("row = %+v, want after/40/0", got)
@@ -78,20 +77,20 @@ func TestDemandService_UpdateAndResetProduced_ResetsToZero(t *testing.T) {
 }
 
 func TestDemandService_Delete_RemovesRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
 	id, _ := svc.Create("CAT-DEL", "", 10)
 
-	if err := svc.Delete(id); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Delete(id), "Delete")
 	if _, err := db.GetDemand(id); err == nil {
 		t.Error("GetDemand after Delete should error")
 	}
 }
 
 func TestDemandService_List_ReturnsAll(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
@@ -110,13 +109,12 @@ func TestDemandService_List_ReturnsAll(t *testing.T) {
 }
 
 func TestDemandService_SetProduced_OverwritesValue(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
 	id, _ := svc.Create("CAT-SP", "", 10)
-	if err := svc.SetProduced(id, 5); err != nil {
-		t.Fatalf("SetProduced: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetProduced(id, 5), "SetProduced")
 	got, _ := db.GetDemand(id)
 	if got.ProducedQty != 5 {
 		t.Errorf("ProducedQty = %d, want 5", got.ProducedQty)
@@ -124,6 +122,7 @@ func TestDemandService_SetProduced_OverwritesValue(t *testing.T) {
 }
 
 func TestDemandService_ClearProduced_ZeroesSingle(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
@@ -132,9 +131,7 @@ func TestDemandService_ClearProduced_ZeroesSingle(t *testing.T) {
 	_ = svc.SetProduced(a, 4)
 	_ = svc.SetProduced(b, 6)
 
-	if err := svc.ClearProduced(a); err != nil {
-		t.Fatalf("ClearProduced: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClearProduced(a), "ClearProduced")
 	gotA, _ := db.GetDemand(a)
 	gotB, _ := db.GetDemand(b)
 	if gotA.ProducedQty != 0 {
@@ -146,6 +143,7 @@ func TestDemandService_ClearProduced_ZeroesSingle(t *testing.T) {
 }
 
 func TestDemandService_ClearAllProduced_ZeroesEverything(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 
@@ -154,9 +152,7 @@ func TestDemandService_ClearAllProduced_ZeroesEverything(t *testing.T) {
 	_ = svc.SetProduced(a, 4)
 	_ = svc.SetProduced(b, 6)
 
-	if err := svc.ClearAllProduced(); err != nil {
-		t.Fatalf("ClearAllProduced: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClearAllProduced(), "ClearAllProduced")
 	gotA, _ := db.GetDemand(a)
 	gotB, _ := db.GetDemand(b)
 	if gotA.ProducedQty != 0 || gotB.ProducedQty != 0 {
@@ -165,6 +161,7 @@ func TestDemandService_ClearAllProduced_ZeroesEverything(t *testing.T) {
 }
 
 func TestDemandService_ListProductionLog_EmptyWhenNoEntries(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewDemandService(db)
 

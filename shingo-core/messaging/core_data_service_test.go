@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -103,6 +104,7 @@ func dataTestDB(t *testing.T) *store.DB {
 // sends them. When the operator hits "Sync Nodes" on edge, NGRP nodes are
 // missing from the dropdown, even though edge can display them.
 func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
+	t.Parallel()
 	db := dataTestDB(t)
 
 	// NGRP node type is created by migrations — look it up
@@ -118,9 +120,7 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 		Enabled:     true,
 		NodeTypeID:  &grpType.ID,
 	}
-	if err := db.CreateNode(grpNode); err != nil {
-		t.Fatalf("create NGRP node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(grpNode), "create NGRP node")
 
 	// Create a physical child node under the NGRP
 	childNode := &nodes.Node{
@@ -128,15 +128,11 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 		Enabled:  true,
 		ParentID: &grpNode.ID,
 	}
-	if err := db.CreateNode(childNode); err != nil {
-		t.Fatalf("create child node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(childNode), "create child node")
 
 	// Assign the child to a station (this is how station-scoped queries work)
 	stationID := "edge.line1"
-	if err := db.AssignNodeToStation(childNode.ID, stationID); err != nil {
-		t.Fatalf("assign child to station: %v", err)
-	}
+	testutil.MustNoErr(t, db.AssignNodeToStation(childNode.ID, stationID), "assign child to station")
 
 	// Create the data service and request node list
 	resp := &captureResponder{}
@@ -154,9 +150,7 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 
 	var nodeListResp protocol.NodeListResponse
 	payloadBytes, _ := json.Marshal(resp.replies[0].payload)
-	if err := json.Unmarshal(payloadBytes, &nodeListResp); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(payloadBytes, &nodeListResp), "unmarshal response")
 
 	// Build a set of node names for easy lookup
 	names := make(map[string]string) // name -> node_type
@@ -181,6 +175,7 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 // TestNodeListResponse_GlobalPath_IncludesNodeGroups verifies the global
 // (non-station-scoped) fallback path also includes NGRP nodes.
 func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
+	t.Parallel()
 	db := dataTestDB(t)
 
 	// NGRP node type is created by migrations — look it up
@@ -196,9 +191,7 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 		Enabled:     true,
 		NodeTypeID:  &grpType.ID,
 	}
-	if err := db.CreateNode(grpNode); err != nil {
-		t.Fatalf("create NGRP node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(grpNode), "create NGRP node")
 
 	// Create a physical child
 	childNode := &nodes.Node{
@@ -206,9 +199,7 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 		Enabled:  true,
 		ParentID: &grpNode.ID,
 	}
-	if err := db.CreateNode(childNode); err != nil {
-		t.Fatalf("create child node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(childNode), "create child node")
 
 	// No station assignment — triggers global path fallback
 
@@ -223,9 +214,7 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 
 	var nodeListResp protocol.NodeListResponse
 	payloadBytes, _ := json.Marshal(resp.replies[0].payload)
-	if err := json.Unmarshal(payloadBytes, &nodeListResp); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(payloadBytes, &nodeListResp), "unmarshal response")
 
 	names := make(map[string]string)
 	for _, n := range nodeListResp.Nodes {

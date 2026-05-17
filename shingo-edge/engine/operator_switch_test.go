@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingo/protocol/testutil"
 	"testing"
 )
 
@@ -11,6 +12,7 @@ import (
 // SwitchNodeToTarget must NOT clobber that drift back to capacity. This
 // is the exact "post-swap confirm" behaviour we're removing.
 func TestSwitchNodeToTarget_SkipsUOPResetWhenAlreadyAtTarget(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, _, toClaimID := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -22,13 +24,9 @@ func TestSwitchNodeToTarget_SkipsUOPResetWhenAlreadyAtTarget(t *testing.T) {
 	// Simulate the Phase-3 release click: runtime already points at the
 	// to-claim, and a few lineside consumption ticks have drawn the
 	// counter down from the to-claim capacity (200) to 137.
-	if err := db.SetProcessNodeRuntime(nodeID, &toClaimID, 137); err != nil {
-		t.Fatalf("seed runtime at target with drift: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &toClaimID, 137), "seed runtime at target with drift")
 
-	if err := eng.SwitchNodeToTarget(processID, nodeID); err != nil {
-		t.Fatalf("switch: %v", err)
-	}
+	testutil.MustNoErr(t, eng.SwitchNodeToTarget(processID, nodeID), "switch")
 
 	runtime, err := db.GetProcessNodeRuntime(nodeID)
 	if err != nil {
@@ -60,6 +58,7 @@ func TestSwitchNodeToTarget_SkipsUOPResetWhenAlreadyAtTarget(t *testing.T) {
 // still performs the UOP reset so the counter lands at to-claim
 // capacity.
 func TestSwitchNodeToTarget_ResetsUOPWhenRuntimeStillOnFromClaim(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID, fromClaimID, toClaimID := seedChangeoverScenario(t, db)
 	eng := testEngine(t, db)
@@ -69,13 +68,9 @@ func TestSwitchNodeToTarget_ResetsUOPWhenRuntimeStillOnFromClaim(t *testing.T) {
 
 	// Runtime still points at the from-claim (legacy path — release
 	// click never fired, or this is an admin-driven override).
-	if err := db.SetProcessNodeRuntime(nodeID, &fromClaimID, 5); err != nil {
-		t.Fatalf("seed runtime on from-claim: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &fromClaimID, 5), "seed runtime on from-claim")
 
-	if err := eng.SwitchNodeToTarget(processID, nodeID); err != nil {
-		t.Fatalf("switch: %v", err)
-	}
+	testutil.MustNoErr(t, eng.SwitchNodeToTarget(processID, nodeID), "switch")
 
 	runtime, err := db.GetProcessNodeRuntime(nodeID)
 	if err != nil {

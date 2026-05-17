@@ -3,11 +3,13 @@ package backup
 import (
 	"os"
 	"path/filepath"
+	"shingo/protocol/testutil"
 	"testing"
 	"time"
 )
 
 func TestStageAndLoadRestoreMarker(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "shingoedge.yaml")
 	if err := os.WriteFile(configPath, []byte("database_path: test.db\n"), 0o644); err != nil {
@@ -15,9 +17,7 @@ func TestStageAndLoadRestoreMarker(t *testing.T) {
 	}
 
 	archive := []byte("archive-bytes")
-	if err := StageRestoreArchive(configPath, "station/backup.tar.gz", bytesReader(archive), "station-1"); err != nil {
-		t.Fatalf("stage restore archive: %v", err)
-	}
+	testutil.MustNoErr(t, StageRestoreArchive(configPath, "station/backup.tar.gz", bytesReader(archive), "station-1"), "stage restore archive")
 
 	marker, err := PendingRestore(configPath)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -148,6 +149,7 @@ func TestPartialConsumption_SyncsUOP(t *testing.T) {
 // different bin with no double-claims. This tests concurrent claim distribution
 // rather than the ghost-bin TOCTOU (which ClearAndClaim's atomic SQL prevents).
 func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, _ = setupTestData(t, db)
 
@@ -237,8 +239,8 @@ func TestConcurrentRetrieveEmpty_BothClaimed_NoOverlap(t *testing.T) {
 // persisted on the order row (the queued-then-replayed path needs to
 // recover it from somewhere across the queue boundary).
 func TestComplexOrder_RemainingUOP_ProcessNodeOnly(t *testing.T) {
-	t.Skip("Phase 4b: RemainingUOP-at-intake deferred until persisted on order row")
 	t.Parallel()
+	t.Skip("Phase 4b: RemainingUOP-at-intake deferred until persisted on order row")
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 
@@ -321,9 +323,7 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 
 	// Destination node for the dropoff step (must exist for step resolution).
 	destNode := &nodes.Node{Name: "RELEASE-DEST", Enabled: true}
-	if err := db.CreateNode(destNode); err != nil {
-		t.Fatalf("create dest node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(destNode), "create dest node")
 
 	// Filled bin at the line (outgoing partial/empty after consumption).
 	bin := &bins.Bin{BinTypeID: 1, Label: binLabel, NodeID: &lineNode.ID, Status: "staged"}
@@ -361,9 +361,7 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 		t.Fatalf("get order: %v", err)
 	}
 	if order.Status == StatusQueued {
-		if err := d.DispatchPreparedComplex(order); err != nil {
-			t.Fatalf("dispatch prepared complex: %v", err)
-		}
+		testutil.MustNoErr(t, d.DispatchPreparedComplex(order), "dispatch prepared complex")
 		order, err = db.GetOrderByUUID(orderUUID)
 		if err != nil {
 			t.Fatalf("re-get order after dispatch: %v", err)
@@ -377,9 +375,7 @@ func stageComplexOrderWithLineBin(t *testing.T, db *store.DB, d *Dispatcher, lin
 	}
 
 	// Force StatusStaged so HandleOrderRelease accepts the release.
-	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: simulate robot waiting"); err != nil {
-		t.Fatalf("set order staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: simulate robot waiting"), "set order staged")
 	order, _ = db.GetOrderByUUID(orderUUID)
 	return order, bin
 }
@@ -496,12 +492,8 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 	// the line consumed down to zero — Edge knows it's empty, Core
 	// still has the loaded state because there's no cycle telemetry).
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-FALLBACK", NodeID: &lineNode.ID, Status: "staged"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
-	if err := db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":100}]}`, bp.Code, 100); err != nil {
-		t.Fatalf("set manifest: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
+	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":100}]}`, bp.Code, 100), "set manifest")
 
 	// Order whose BinID is nil but whose SourceNode points at the line.
 	// Mimics the production failure mode where claimComplexBins didn't
@@ -518,13 +510,9 @@ func TestHandleOrderRelease_BinIDNilFallbackClearsManifest(t *testing.T) {
 		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
 		// BinID intentionally nil
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	// Force StatusStaged (CreateOrder may default to pending).
-	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: fallback scenario"); err != nil {
-		t.Fatalf("set order staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: fallback scenario"), "set order staged")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -571,17 +559,11 @@ func TestHandleOrderRelease_BinIDNilFallbackPrefersClaim(t *testing.T) {
 	// source node proves the claim-first lookup works regardless of
 	// where the bin physically is.
 	transitNode := &nodes.Node{Name: "TRANSIT-TEST", IsSynthetic: true, Enabled: true}
-	if err := db.CreateNode(transitNode); err != nil {
-		t.Fatalf("create transit node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(transitNode), "create transit node")
 
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-CLAIM-FB", NodeID: &transitNode.ID, Status: "staged"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
-	if err := db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":50}]}`, bp.Code, 50); err != nil {
-		t.Fatalf("set manifest: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
+	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":50}]}`, bp.Code, 50), "set manifest")
 
 	// Order with BinID=nil but the bin IS claimed by this order. Mimics
 	// the DB-write race where ClaimForDispatch took but UpdateOrderBinID
@@ -600,12 +582,8 @@ func TestHandleOrderRelease_BinIDNilFallbackPrefersClaim(t *testing.T) {
 		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
 		// BinID intentionally nil — fallback path will fire.
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: claim-first fallback"); err != nil {
-		t.Fatalf("set order staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: claim-first fallback"), "set order staged")
 	// Set the claim AFTER the order exists so claimed_by points at a real ID.
 	if _, err := db.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, order.ID, bin.ID); err != nil {
 		t.Fatalf("set claimed_by: %v", err)
@@ -636,13 +614,9 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 	_, lineNode, bp := setupTestData(t, db)
 
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-FALLBACK-PART", NodeID: &lineNode.ID, Status: "staged"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 	manifest := `{"items":[{"catid":"PART-A","qty":100}]}`
-	if err := db.SetBinManifest(bin.ID, manifest, bp.Code, 100); err != nil {
-		t.Fatalf("set manifest: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, manifest, bp.Code, 100), "set manifest")
 
 	order := &orders.Order{
 		EdgeUUID:     "uuid-fallback-partial",
@@ -655,12 +629,8 @@ func TestHandleOrderRelease_BinIDNilFallbackSyncsPartial(t *testing.T) {
 		PayloadCode:  bp.Code,
 		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: fallback partial scenario"); err != nil {
-		t.Fatalf("set order staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: fallback partial scenario"), "set order staged")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -706,12 +676,8 @@ func TestHandleOrderRelease_InTransitWithNoMoreSegmentsIsNoOp(t *testing.T) {
 
 	// Simulate the prior release having already happened: order.Status is
 	// in_transit and WaitIndex has advanced past the only wait.
-	if err := db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: prior release consumed the wait"); err != nil {
-		t.Fatalf("force in_transit: %v", err)
-	}
-	if err := db.UpdateOrderWaitIndex(order.ID, 1); err != nil {
-		t.Fatalf("advance wait_index: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: prior release consumed the wait"), "force in_transit")
+	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(order.ID, 1), "advance wait_index")
 
 	d.HandleOrderRelease(testEnvelope(), &protocol.OrderRelease{
 		OrderUUID: "uuid-in-transit-noop",
@@ -749,9 +715,7 @@ func TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment(t *testing.T
 	_, lineNode, bp := setupTestData(t, db)
 
 	destNode := &nodes.Node{Name: "MULTI-WAIT-DEST", Enabled: true}
-	if err := db.CreateNode(destNode); err != nil {
-		t.Fatalf("create dest node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(destNode), "create dest node")
 
 	// Two-wait choreography: wait → pickup → wait → dropoff. WaitIndex=1
 	// means the first wait was already consumed; the next release should
@@ -770,18 +734,10 @@ func TestHandleOrderRelease_InTransitMultiWaitDispatchesNextSegment(t *testing.T
 			`{"action":"wait"},` +
 			`{"action":"dropoff","node":"` + destNode.Name + `"}]`,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderVendor(order.ID, "vendor-multi-wait", "DISPATCHED", ""); err != nil {
-		t.Fatalf("set vendor: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: mid-choreography"); err != nil {
-		t.Fatalf("set in_transit: %v", err)
-	}
-	if err := db.UpdateOrderWaitIndex(order.ID, 1); err != nil {
-		t.Fatalf("set wait_index: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "vendor-multi-wait", "DISPATCHED", ""), "set vendor")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusInTransit), "test: mid-choreography"), "set in_transit")
+	testutil.MustNoErr(t, db.UpdateOrderWaitIndex(order.ID, 1), "set wait_index")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -820,13 +776,9 @@ func TestDispatchPreparedComplex_NoSourceBinSkipsNotFails(t *testing.T) {
 	// Source and destination nodes exist; source has NO bin (the bin was
 	// pulled to quality hold before this dispatch tick).
 	sourceNode := &nodes.Node{Name: "ALN-EMPTY-1", Enabled: true}
-	if err := db.CreateNode(sourceNode); err != nil {
-		t.Fatalf("create source node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(sourceNode), "create source node")
 	destNode := &nodes.Node{Name: "SMN-OUT-1", Enabled: true}
-	if err := db.CreateNode(destNode); err != nil {
-		t.Fatalf("create dest node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(destNode), "create dest node")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -881,27 +833,17 @@ func TestDispatchPreparedComplex_BinClaimedElsewhereFails(t *testing.T) {
 	_, _, bp := setupTestData(t, db)
 
 	sourceNode := &nodes.Node{Name: "ALN-CLAIMED-1", Enabled: true}
-	if err := db.CreateNode(sourceNode); err != nil {
-		t.Fatalf("create source node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(sourceNode), "create source node")
 	destNode := &nodes.Node{Name: "SMN-OUT-2", Enabled: true}
-	if err := db.CreateNode(destNode); err != nil {
-		t.Fatalf("create dest node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(destNode), "create dest node")
 
 	// Bin at source, but claimed by a different order (id=999 — doesn't
 	// matter that the row doesn't exist; the dispatcher only looks at the
 	// claim_by pointer for the unavailability check).
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-CLAIMED-1", NodeID: &sourceNode.ID, Status: "staged"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
-	if err := db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":50}]}`, bp.Code, 50); err != nil {
-		t.Fatalf("set manifest: %v", err)
-	}
-	if err := db.ConfirmBinManifest(bin.ID, ""); err != nil {
-		t.Fatalf("confirm manifest: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
+	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, `{"items":[{"catid":"PART-A","qty":50}]}`, bp.Code, 50), "set manifest")
+	testutil.MustNoErr(t, db.ConfirmBinManifest(bin.ID, ""), "confirm manifest")
 	bogusOrderID := int64(999999)
 	if _, err := db.DB.Exec(`UPDATE bins SET claimed_by=$1 WHERE id=$2`, bogusOrderID, bin.ID); err != nil {
 		t.Fatalf("set claimed_by: %v", err)

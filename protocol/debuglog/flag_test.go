@@ -5,92 +5,93 @@ import (
 	"testing"
 )
 
-func TestParseDebugFlag_NoFlag(t *testing.T) {
-	filtered, filter := ParseDebugFlag([]string{"--config", "test.yaml"})
-	if !reflect.DeepEqual(filtered, []string{"--config", "test.yaml"}) {
-		t.Errorf("filtered = %v, want [--config test.yaml]", filtered)
-	}
-	if filter != nil {
-		t.Errorf("filter = %v, want nil", filter)
-	}
-}
+func TestParseDebugFlag(t *testing.T) {
+	t.Parallel()
 
-func TestParseDebugFlag_BareFlag(t *testing.T) {
-	filtered, filter := ParseDebugFlag([]string{"--config", "test.yaml", "--log-debug"})
-	if !reflect.DeepEqual(filtered, []string{"--config", "test.yaml"}) {
-		t.Errorf("filtered = %v, want [--config test.yaml]", filtered)
+	// filter has tri-state semantics:
+	//   nil          → flag not present
+	//   []string{}   → bare flag / explicit empty value (all subsystems)
+	//   [a, b]       → only listed subsystems
+	cases := []struct {
+		name     string
+		args     []string
+		filtered []string
+		filter   []string
+		filterEmpty bool // true means filter must be non-nil len-0 slice
+	}{
+		{
+			name:     "no flag",
+			args:     []string{"--config", "test.yaml"},
+			filtered: []string{"--config", "test.yaml"},
+			filter:   nil,
+		},
+		{
+			name:        "bare flag",
+			args:        []string{"--config", "test.yaml", "--log-debug"},
+			filtered:    []string{"--config", "test.yaml"},
+			filterEmpty: true,
+		},
+		{
+			name:        "short flag",
+			args:        []string{"-log-debug"},
+			filtered:    []string{},
+			filterEmpty: true,
+		},
+		{
+			name:     "with value",
+			args:     []string{"--log-debug=rds,kafka"},
+			filtered: []string{},
+			filter:   []string{"rds", "kafka"},
+		},
+		{
+			name:     "short with value",
+			args:     []string{"-log-debug=engine"},
+			filtered: []string{},
+			filter:   []string{"engine"},
+		},
+		{
+			name:        "empty value",
+			args:        []string{"--log-debug="},
+			filtered:    []string{},
+			filterEmpty: true,
+		},
+		{
+			name:     "multiple args",
+			args:     []string{"--config", "foo.yaml", "--log-debug=rds", "--port", "8080"},
+			filtered: []string{"--config", "foo.yaml", "--port", "8080"},
+			filter:   []string{"rds"},
+		},
+		{
+			name:     "last value wins",
+			args:     []string{"--log-debug=rds", "--log-debug=kafka"},
+			filtered: []string{},
+			filter:   []string{"kafka"},
+		},
 	}
-	if filter == nil {
-		t.Fatal("filter is nil, want empty slice")
-	}
-	if len(filter) != 0 {
-		t.Errorf("filter = %v, want empty slice (all subsystems)", filter)
-	}
-}
 
-func TestParseDebugFlag_ShortFlag(t *testing.T) {
-	filtered, filter := ParseDebugFlag([]string{"-log-debug"})
-	if len(filtered) != 0 {
-		t.Errorf("filtered = %v, want empty", filtered)
-	}
-	if filter == nil {
-		t.Fatal("filter is nil")
-	}
-	if len(filter) != 0 {
-		t.Errorf("filter = %v, want empty slice", filter)
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			filtered, filter := ParseDebugFlag(tc.args)
 
-func TestParseDebugFlag_WithValue(t *testing.T) {
-	filtered, filter := ParseDebugFlag([]string{"--log-debug=rds,kafka"})
-	if len(filtered) != 0 {
-		t.Errorf("filtered = %v, want empty", filtered)
-	}
-	if !reflect.DeepEqual(filter, []string{"rds", "kafka"}) {
-		t.Errorf("filter = %v, want [rds kafka]", filter)
-	}
-}
+			// filtered: compare with semantic emptiness (nil == zero-len treated equal)
+			if len(filtered) != len(tc.filtered) || (len(filtered) > 0 && !reflect.DeepEqual(filtered, tc.filtered)) {
+				t.Errorf("filtered = %v, want %v", filtered, tc.filtered)
+			}
 
-func TestParseDebugFlag_ShortWithValue(t *testing.T) {
-	filtered, filter := ParseDebugFlag([]string{"-log-debug=engine"})
-	if len(filtered) != 0 {
-		t.Errorf("filtered = %v, want empty", filtered)
-	}
-	if !reflect.DeepEqual(filter, []string{"engine"}) {
-		t.Errorf("filter = %v, want [engine]", filter)
-	}
-}
+			if tc.filterEmpty {
+				if filter == nil {
+					t.Fatal("filter is nil, want empty slice (all subsystems)")
+				}
+				if len(filter) != 0 {
+					t.Errorf("filter = %v, want empty slice", filter)
+				}
+				return
+			}
 
-func TestParseDebugFlag_EmptyValue(t *testing.T) {
-	filtered, filter := ParseDebugFlag([]string{"--log-debug="})
-	if len(filtered) != 0 {
-		t.Errorf("filtered = %v, want empty", filtered)
-	}
-	if filter == nil {
-		t.Fatal("filter is nil")
-	}
-	if len(filter) != 0 {
-		t.Errorf("filter = %v, want empty slice", filter)
-	}
-}
-
-func TestParseDebugFlag_MultipleArgs(t *testing.T) {
-	filtered, filter := ParseDebugFlag([]string{"--config", "foo.yaml", "--log-debug=rds", "--port", "8080"})
-	if !reflect.DeepEqual(filtered, []string{"--config", "foo.yaml", "--port", "8080"}) {
-		t.Errorf("filtered = %v", filtered)
-	}
-	if !reflect.DeepEqual(filter, []string{"rds"}) {
-		t.Errorf("filter = %v, want [rds]", filter)
-	}
-}
-
-func TestParseDebugFlag_LastValueWins(t *testing.T) {
-	filtered, filter := ParseDebugFlag([]string{"--log-debug=rds", "--log-debug=kafka"})
-	if len(filtered) != 0 {
-		t.Errorf("filtered = %v, want empty", filtered)
-	}
-	// Last occurrence wins
-	if !reflect.DeepEqual(filter, []string{"kafka"}) {
-		t.Errorf("filter = %v, want [kafka]", filter)
+			if !reflect.DeepEqual(filter, tc.filter) {
+				t.Errorf("filter = %v, want %v", filter, tc.filter)
+			}
+		})
 	}
 }

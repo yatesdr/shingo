@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/config"
 )
 
@@ -23,6 +24,7 @@ import (
 // groups on the in-memory config so both table rows show up in the rendered
 // HTML.
 func TestHandleTraffic_RendersHTML(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	cfg := h.engine.AppConfig()
@@ -52,6 +54,7 @@ func TestHandleTraffic_RendersHTML(t *testing.T) {
 // TestHandleTraffic_SavedBanner pins the `?saved=added` query surfaces the
 // "Group added." banner in the page.
 func TestHandleTraffic_SavedBanner(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/traffic?saved=added", nil)
@@ -69,6 +72,7 @@ func TestHandleTraffic_SavedBanner(t *testing.T) {
 // TestHandleTraffic_ErrorBanner pins the `?err=duplicate` query → the
 // "already exists" banner.
 func TestHandleTraffic_ErrorBanner(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/traffic?err=duplicate", nil)
@@ -88,6 +92,7 @@ func TestHandleTraffic_ErrorBanner(t *testing.T) {
 // TestApiTrafficGroups_EmptyConfig pins the JSON shape on the default config
 // (no groups): empty list, 200 OK.
 func TestApiTrafficGroups_EmptyConfig(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiTrafficGroups, "/api/traffic/groups")
@@ -95,9 +100,7 @@ func TestApiTrafficGroups_EmptyConfig(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var groups []config.CountGroupConfig
-	if err := json.NewDecoder(rec.Body).Decode(&groups); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&groups), "decode")
 	if len(groups) != 0 {
 		t.Errorf("expected empty groups, got %d", len(groups))
 	}
@@ -106,6 +109,7 @@ func TestApiTrafficGroups_EmptyConfig(t *testing.T) {
 // TestApiTrafficGroups_SeededConfig pins that the API faithfully echoes the
 // in-memory CountGroups.Groups list.
 func TestApiTrafficGroups_SeededConfig(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	cfg := h.engine.AppConfig()
 	cfg.Lock()
@@ -120,9 +124,7 @@ func TestApiTrafficGroups_SeededConfig(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var groups []config.CountGroupConfig
-	if err := json.NewDecoder(rec.Body).Decode(&groups); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&groups), "decode")
 	if len(groups) != 2 || groups[0].Name != "g1" || groups[1].Name != "g2" {
 		t.Errorf("groups: got %+v", groups)
 	}
@@ -138,6 +140,7 @@ func TestApiTrafficGroups_SeededConfig(t *testing.T) {
 // in-memory list entirely, persists to disk, and redirects with
 // ?saved=groups.
 func TestHandleTrafficSave_ReplacesGroups(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	// Seed a pre-existing group that should NOT survive the save (replace-all
@@ -182,6 +185,7 @@ func TestHandleTrafficSave_ReplacesGroups(t *testing.T) {
 // TestHandleTrafficSave_EmptyFormClearsGroups pins that submitting an empty
 // form wipes the group list (the loop finds no group_name_0 and returns).
 func TestHandleTrafficSave_EmptyFormClearsGroups(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	cfg := h.engine.AppConfig()
@@ -206,6 +210,7 @@ func TestHandleTrafficSave_EmptyFormClearsGroups(t *testing.T) {
 // TestHandleTrafficAdd_HappyPath pins the happy path: name arrives → appended
 // with Enabled=true and redirected with ?saved=added.
 func TestHandleTrafficAdd_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	form := url.Values{}
@@ -232,6 +237,7 @@ func TestHandleTrafficAdd_HappyPath(t *testing.T) {
 // TestHandleTrafficAdd_EmptyName pins that empty name → redirect with
 // ?err=empty and no mutation.
 func TestHandleTrafficAdd_EmptyName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	form := url.Values{}
@@ -257,6 +263,7 @@ func TestHandleTrafficAdd_EmptyName(t *testing.T) {
 // TestHandleTrafficAdd_Duplicate pins the duplicate-name guard: adding a
 // name that already exists → redirect with ?err=duplicate, no mutation.
 func TestHandleTrafficAdd_Duplicate(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	cfg := h.engine.AppConfig()
@@ -289,6 +296,7 @@ func TestHandleTrafficAdd_Duplicate(t *testing.T) {
 // TestHandleTrafficDelete_HappyPath pins the delete path: name matches →
 // group is removed and redirect carries ?saved=deleted.
 func TestHandleTrafficDelete_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	cfg := h.engine.AppConfig()
@@ -320,6 +328,7 @@ func TestHandleTrafficDelete_HappyPath(t *testing.T) {
 // TestHandleTrafficDelete_UnknownName pins that deleting a non-existent name
 // is a no-op (still redirects 303, no mutation).
 func TestHandleTrafficDelete_UnknownName(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	cfg := h.engine.AppConfig()

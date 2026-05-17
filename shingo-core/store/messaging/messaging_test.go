@@ -5,16 +5,16 @@ package messaging_test
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/messaging"
 )
 
 func TestCoverage_OutboxCRUD(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
-	if err := messaging.EnqueueOutbox(db.DB, "shingo.dispatch", []byte(`{"test":true}`), "order.ack", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, messaging.EnqueueOutbox(db.DB, "shingo.dispatch", []byte(`{"test":true}`), "order.ack", "line-1"), "enqueue")
 	messaging.EnqueueOutbox(db.DB, "shingo.dispatch", []byte(`{"test":2}`), "order.update", "line-2")
 
 	msgs, err := messaging.ListPendingOutbox(db.DB, 10)
@@ -45,19 +45,16 @@ func TestCoverage_OutboxCRUD(t *testing.T) {
 }
 
 func TestCoverage_OutboxDeadLetterReplay(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
-	if err := messaging.EnqueueOutbox(db.DB, "shingo.dispatch", []byte(`{"dead":true}`), "order.error", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, messaging.EnqueueOutbox(db.DB, "shingo.dispatch", []byte(`{"dead":true}`), "order.error", "line-1"), "enqueue")
 	msgs, err := messaging.ListPendingOutbox(db.DB, 10)
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("list pending: len=%d err=%v", len(msgs), err)
 	}
 	for i := 0; i < messaging.MaxOutboxRetries; i++ {
-		if err := messaging.IncrementOutboxRetries(db.DB, msgs[0].ID); err != nil {
-			t.Fatalf("increment retries: %v", err)
-		}
+		testutil.MustNoErr(t, messaging.IncrementOutboxRetries(db.DB, msgs[0].ID), "increment retries")
 	}
 
 	dead, err := messaging.ListDeadLetterOutbox(db.DB, 10)
@@ -68,9 +65,7 @@ func TestCoverage_OutboxDeadLetterReplay(t *testing.T) {
 		t.Fatalf("dead letters = %d, want 1", len(dead))
 	}
 
-	if err := messaging.RequeueOutbox(db.DB, dead[0].ID); err != nil {
-		t.Fatalf("requeue: %v", err)
-	}
+	testutil.MustNoErr(t, messaging.RequeueOutbox(db.DB, dead[0].ID), "requeue")
 	pending, err := messaging.ListPendingOutbox(db.DB, 10)
 	if err != nil {
 		t.Fatalf("list pending after requeue: %v", err)

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 )
 
 func TestReplySender_SendAck(t *testing.T) {
@@ -37,13 +38,9 @@ func TestReplySender_SendAck(t *testing.T) {
 	}
 
 	var replyEnv protocol.Envelope
-	if err := json.Unmarshal(msg.Payload, &replyEnv); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(msg.Payload, &replyEnv), "unmarshal envelope")
 	var ack protocol.OrderAck
-	if err := json.Unmarshal(replyEnv.Payload, &ack); err != nil {
-		t.Fatalf("unmarshal ack: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(replyEnv.Payload, &ack), "unmarshal ack")
 	if ack.OrderUUID != "order-uuid-1" {
 		t.Errorf("order_uuid = %q, want %q", ack.OrderUUID, "order-uuid-1")
 	}
@@ -76,13 +73,9 @@ func TestReplySender_SendError(t *testing.T) {
 	}
 
 	var replyEnv protocol.Envelope
-	if err := json.Unmarshal(msgs[0].Payload, &replyEnv); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(msgs[0].Payload, &replyEnv), "unmarshal envelope")
 	var p protocol.OrderError
-	if err := json.Unmarshal(replyEnv.Payload, &p); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(replyEnv.Payload, &p), "unmarshal error")
 	if p.OrderUUID != "order-uuid-2" {
 		t.Errorf("order_uuid = %q, want %q", p.OrderUUID, "order-uuid-2")
 	}
@@ -118,13 +111,9 @@ func TestReplySender_SendCancelled(t *testing.T) {
 	}
 
 	var replyEnv protocol.Envelope
-	if err := json.Unmarshal(msgs[0].Payload, &replyEnv); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(msgs[0].Payload, &replyEnv), "unmarshal envelope")
 	var p protocol.OrderCancelled
-	if err := json.Unmarshal(replyEnv.Payload, &p); err != nil {
-		t.Fatalf("unmarshal cancelled: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(replyEnv.Payload, &p), "unmarshal cancelled")
 	if p.OrderUUID != "order-uuid-3" {
 		t.Errorf("order_uuid = %q, want %q", p.OrderUUID, "order-uuid-3")
 	}
@@ -157,13 +146,9 @@ func TestReplySender_SendUpdate(t *testing.T) {
 	}
 
 	var replyEnv protocol.Envelope
-	if err := json.Unmarshal(msgs[0].Payload, &replyEnv); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(msgs[0].Payload, &replyEnv), "unmarshal envelope")
 	var p protocol.OrderUpdate
-	if err := json.Unmarshal(replyEnv.Payload, &p); err != nil {
-		t.Fatalf("unmarshal update: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(replyEnv.Payload, &p), "unmarshal update")
 	if p.OrderUUID != "order-uuid-4" {
 		t.Errorf("order_uuid = %q, want %q", p.OrderUUID, "order-uuid-4")
 	}

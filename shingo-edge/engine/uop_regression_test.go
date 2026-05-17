@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 )
 
@@ -20,19 +21,16 @@ import (
 // PLC tick attribution happens to an empty slot. UI may want to
 // surface "no bin" when active_bin_id is nil.
 func TestRegression_RemovalOrderClearsBinPointer(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	nodeID, _, claimID := seedReconcilerNode(t, db, "REG11", "PART-R11")
 
 	// Drain runtime to a partial value — simulates a half-consumed bin.
 	const partialUOP = 137
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, partialUOP); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, partialUOP), "seed runtime")
 	// Seed a fake bin pointer so we can prove the completion clears it.
 	priorBin := int64(99)
-	if err := db.SetProcessNodeActiveBinID(nodeID, &priorBin); err != nil {
-		t.Fatalf("seed active_bin_id: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, &priorBin), "seed active_bin_id")
 
 	// Removal order: process_node is the line (REG11-NODE), but
 	// DeliveryNode is OUTBOUND-DEST. The order moves the spent bin
@@ -44,9 +42,7 @@ func TestRegression_RemovalOrderClearsBinPointer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)); err != nil {
-		t.Fatalf("set order confirmed: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "set order confirmed")
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
 	eng := testEngine(t, db)
@@ -55,9 +51,7 @@ func TestRegression_RemovalOrderClearsBinPointer(t *testing.T) {
 	// Under the new contract the bin pointer clears at pickup, not at
 	// completion. Simulate the pickup directly (HandleBinPickedUp's full
 	// path needs inventoryDelta wired, which test contexts don't).
-	if err := db.SetProcessNodeActiveBinID(nodeID, nil); err != nil {
-		t.Fatalf("simulate pickup clear: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeActiveBinID(nodeID, nil), "simulate pickup clear")
 	emitOrderCompleted(eng, orderID, "uuid-reg11-removal", orders.TypeComplex, &nodeID)
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
@@ -72,6 +66,7 @@ func TestRegression_RemovalOrderClearsBinPointer(t *testing.T) {
 // returns false would silently disable replenishment without any
 // regression visible.
 func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "REG11D", PayloadCode: "PART-R11D", UOPCapacity: 200, InitialUOP: 200,
@@ -79,9 +74,7 @@ func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
 
 	// Drained runtime — simulates a half-consumed bin about to be
 	// replaced by the incoming delivery.
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 50); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
 
 	// Delivery order: DeliveryNode IS the process node — Order A in
 	// two-robot consume, R2 in press-index, the delivery step in
@@ -94,9 +87,7 @@ func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)); err != nil {
-		t.Fatalf("set order confirmed: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "set order confirmed")
 	deliveredBin := int64(202)
 	db.UpdateOrderBinID(orderID, &deliveredBin)
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
@@ -122,6 +113,7 @@ func TestRegression_11_DeliveryOrderStillResetsLineUOP(t *testing.T) {
 // Companion to TestRegression_RemovalOrderClearsBinAndZeroesUOP which
 // pins the empty-slot path.
 func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "ITEM8", PayloadCode: "PART-I8", UOPCapacity: 200, InitialUOP: 200,
@@ -129,9 +121,7 @@ func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
 
 	// Drained runtime — the line was consuming from the previous bin.
 	// Pre-arrival, runtime carries 50.
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 50); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
 
 	// Delivery order to the line with a bin attached.
 	orderID, err := db.CreateOrder("uuid-item8-delivery", orders.TypeComplex,
@@ -139,9 +129,7 @@ func TestRegression_DeliveryResetsToCapacityWithBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)); err != nil {
-		t.Fatalf("set order confirmed: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed)), "set order confirmed")
 	deliveredBin := int64(303)
 	db.UpdateOrderBinID(orderID, &deliveredBin)
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)

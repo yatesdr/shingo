@@ -14,6 +14,7 @@ import (
 
 // FIFO picks the globally oldest accessible bin across all lanes.
 func TestFIFO_PicksOldestAcrossLanes(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 
@@ -47,6 +48,7 @@ func TestFIFO_PicksOldestAcrossLanes(t *testing.T) {
 
 // FIFO returns BuriedError when a buried bin is older than any accessible bin.
 func TestFIFO_BuriedOlderThanAccessibleTriggersReshuffle(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	lane := laneChild(10, "L")
@@ -82,6 +84,7 @@ func TestFIFO_BuriedOlderThanAccessibleTriggersReshuffle(t *testing.T) {
 // must not fire for a locked lane, otherwise a second concurrent order
 // would steal a bin mid-reshuffle.
 func TestFIFO_SkipsLockedLanes(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	locked := laneChild(10, "locked")
@@ -119,6 +122,7 @@ func TestFIFO_SkipsLockedLanes(t *testing.T) {
 
 // COST only triggers a reshuffle when NO accessible bin exists.
 func TestCOST_PrefersAccessibleOverOlderBuried(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	f.setProp(group.ID, "retrieve_algorithm", RetrieveCOST)
@@ -154,6 +158,7 @@ func TestCOST_PrefersAccessibleOverOlderBuried(t *testing.T) {
 
 // COST falls back to BuriedError only when no accessible bin is found.
 func TestCOST_FallsBackToBuriedWhenNoAccessible(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	f.setProp(group.ID, "retrieve_algorithm", RetrieveCOST)
@@ -183,6 +188,7 @@ func TestCOST_FallsBackToBuriedWhenNoAccessible(t *testing.T) {
 
 // FAVL returns the first available bin and never surfaces a BuriedError.
 func TestFAVL_FirstAvailableNoReshuffle(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	f.setProp(group.ID, "retrieve_algorithm", RetrieveFAVL)
@@ -225,6 +231,7 @@ func TestFAVL_FirstAvailableNoReshuffle(t *testing.T) {
 
 // LKND prefers a candidate that already holds a matching payload.
 func TestLKND_PrefersConsolidationOverEmptier(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	// LKND is the default; setting it explicitly documents intent.
@@ -250,6 +257,7 @@ func TestLKND_PrefersConsolidationOverEmptier(t *testing.T) {
 
 // LKND falls back to emptiest when no consolidation candidate exists.
 func TestLKND_EmptiestWhenNoMatch(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	// Two lanes, different counts, neither holds a matching bin.
@@ -276,6 +284,7 @@ func TestLKND_EmptiestWhenNoMatch(t *testing.T) {
 
 // LKND skips lanes whose effective payload set excludes the request.
 func TestLKND_SkipsLaneWithPayloadMismatch(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	restricted := laneChild(10, "restricted")
@@ -301,6 +310,7 @@ func TestLKND_SkipsLaneWithPayloadMismatch(t *testing.T) {
 
 // LKND skips lanes/direct-children whose bin-type whitelist excludes the request.
 func TestLKND_SkipsBinTypeMismatch(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	restricted := directChild(10, "wrong-type")
@@ -327,6 +337,7 @@ func TestLKND_SkipsBinTypeMismatch(t *testing.T) {
 // DPTH prefers lanes over direct children, even when the direct child
 // has room.
 func TestDPTH_LanesBeatDirectChildren(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	f.setProp(group.ID, "store_algorithm", StoreDPTH)
@@ -350,6 +361,7 @@ func TestDPTH_LanesBeatDirectChildren(t *testing.T) {
 
 // DPTH falls back to a direct child when every lane is full.
 func TestDPTH_FallsBackToDirectChild(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	f.setProp(group.ID, "store_algorithm", StoreDPTH)
@@ -374,6 +386,7 @@ func TestDPTH_FallsBackToDirectChild(t *testing.T) {
 
 // An NGRP with only disabled children returns StructuralError.
 func TestClassifyEmpty_NoEnabledChildren_Structural(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	f.children[group.ID] = []*nodes.Node{disabledChild(10, "off")}
@@ -393,6 +406,7 @@ func TestClassifyEmpty_NoEnabledChildren_Structural(t *testing.T) {
 // request returns StructuralError — the group cannot satisfy this
 // payload regardless of inventory.
 func TestClassifyEmpty_NoChildAcceptsPayload_Structural(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	child := directChild(10, "fixed")
@@ -412,6 +426,7 @@ func TestClassifyEmpty_NoChildAcceptsPayload_Structural(t *testing.T) {
 // the error must be transient — a buried bin is absent and a fresh
 // delivery could make the group satisfiable.
 func TestClassifyEmpty_Transient_WhenGroupStructurallyCapable(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	group := ngrpNode(1, "grp")
 	child := directChild(10, "cap")

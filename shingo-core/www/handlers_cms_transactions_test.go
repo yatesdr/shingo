@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 )
 
@@ -22,6 +23,7 @@ import (
 // returns 200 with an empty JSON list (decodes to a zero-length slice —
 // either `[]` or `null` depending on Go JSON encoding, so we tolerate both).
 func TestApiListCMSTransactions_EmptyDB(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListCMSTransactions, "/api/cms-transactions")
@@ -29,9 +31,7 @@ func TestApiListCMSTransactions_EmptyDB(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var list []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&list), "decode")
 	if len(list) != 0 {
 		t.Errorf("expected empty list from fresh DB, got %d rows: %+v", len(list), list)
 	}
@@ -41,6 +41,7 @@ func TestApiListCMSTransactions_EmptyDB(t *testing.T) {
 // query params don't error out on an empty DB (they're applied to the SQL
 // regardless of whether there are rows). A 200 OK is enough here.
 func TestApiListCMSTransactions_WithLimitOffset(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListCMSTransactions, "/api/cms-transactions?limit=5&offset=0")
@@ -48,14 +49,13 @@ func TestApiListCMSTransactions_WithLimitOffset(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var list []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&list), "decode")
 }
 
 // TestApiListCMSTransactions_BadNodeID pins the validation path: a node_id
 // that can't be parsed as int64 returns 400 with {"error": "invalid node_id"}.
 func TestApiListCMSTransactions_BadNodeID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListCMSTransactions, "/api/cms-transactions?node_id=not-a-number")
@@ -69,6 +69,7 @@ func TestApiListCMSTransactions_BadNodeID(t *testing.T) {
 // valid integer node_id (even if the node has no transactions) triggers the
 // filtered query branch and returns 200 + empty list.
 func TestApiListCMSTransactions_KnownNodeID(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -78,9 +79,7 @@ func TestApiListCMSTransactions_KnownNodeID(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var list []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&list), "decode")
 	if len(list) != 0 {
 		t.Errorf("expected empty list for unseeded node, got %d: %+v", len(list), list)
 	}
@@ -90,6 +89,7 @@ func TestApiListCMSTransactions_KnownNodeID(t *testing.T) {
 // but nonexistent node_id still returns 200 (SQL just returns no rows) rather
 // than a NotFound.
 func TestApiListCMSTransactions_UnknownNodeID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListCMSTransactions, "/api/cms-transactions?node_id=99999999")
@@ -102,6 +102,7 @@ func TestApiListCMSTransactions_UnknownNodeID(t *testing.T) {
 // tolerance: negative/zero/garbage limit/offset params are silently ignored
 // (fall back to the defaults of limit=100 offset=0) rather than erroring.
 func TestApiListCMSTransactions_IgnoresBogusLimitOffset(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListCMSTransactions,

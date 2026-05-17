@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"shingo/protocol/testutil"
 	"strings"
 	"testing"
 )
 
 func TestDownloadScene(t *testing.T) {
+	t.Parallel()
 	payload := []byte("BINARY-SCENE-BLOB-\x00\x01\x02")
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/downloadScene" {
@@ -32,6 +34,7 @@ func TestDownloadScene(t *testing.T) {
 }
 
 func TestDownloadScene_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("missing"))
@@ -45,6 +48,7 @@ func TestDownloadScene_HTTPError(t *testing.T) {
 }
 
 func TestUploadScene(t *testing.T) {
+	t.Parallel()
 	body := []byte("scene-bytes-here")
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/uploadScene" {
@@ -64,12 +68,11 @@ func TestUploadScene(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.UploadScene(bytes.NewReader(body)); err != nil {
-		t.Fatalf("UploadScene: %v", err)
-	}
+	testutil.MustNoErr(t, client.UploadScene(bytes.NewReader(body)), "UploadScene")
 }
 
 func TestUploadScene_RDSErrorCode(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(Response{Code: 42, Msg: "scene rejected"})
 	})
@@ -85,6 +88,7 @@ func TestUploadScene_RDSErrorCode(t *testing.T) {
 }
 
 func TestUploadScene_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("boom"))
@@ -97,6 +101,7 @@ func TestUploadScene_HTTPError(t *testing.T) {
 }
 
 func TestSyncScene(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/syncScene" {
 			t.Errorf("path = %q, want /syncScene", r.URL.Path)
@@ -113,12 +118,11 @@ func TestSyncScene(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.SyncScene(); err != nil {
-		t.Fatalf("SyncScene: %v", err)
-	}
+	testutil.MustNoErr(t, client.SyncScene(), "SyncScene")
 }
 
 func TestSyncScene_RDSErrorCode(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(Response{Code: 7, Msg: "no robots connected"})
 	})

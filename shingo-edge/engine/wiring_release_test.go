@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -26,6 +27,7 @@ import (
 // proposed TestRegression_CaptureDeltaRejectedOnTrueMismatch would
 // duplicate that coverage, so this Edge-side pin is sufficient.
 func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	// Active claim is the TARGET style — "PART-NEW".
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
@@ -34,9 +36,7 @@ func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  100,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 100); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 100), "seed runtime")
 
 	// Order was created when the bin held the OLD payload. The order
 	// row's payload_code captures the bin's true payload at create-time;
@@ -47,17 +47,11 @@ func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("transition to staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "transition to staged")
 	const binID int64 = 7777
 	bid := binID
-	if err := db.UpdateOrderBinID(orderID, &bid); err != nil {
-		t.Fatalf("set bin id: %v", err)
-	}
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID); err != nil {
-		t.Fatalf("set runtime orders: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &bid), "set bin id")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID), "set runtime orders")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -72,9 +66,7 @@ func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
 		LinesideCapture: map[string]int{"PART-NEW": 30},
 		CalledBy:        "test-op",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
 	if len(sink.binCalls) != 1 {
 		t.Fatalf("bin calls = %d, want 1: %+v", len(sink.binCalls), sink.binCalls)
@@ -98,6 +90,7 @@ func TestRegression_CaptureDeltaUsesActualBinPayload(t *testing.T) {
 // the explicit flush, an Edge restart between release and the next
 // 5s tick could lose the just-recorded deltas.
 func TestRegression_CaptureReleaseFlushBoundary(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "REL-CAP-FLUSH",
@@ -105,19 +98,13 @@ func TestRegression_CaptureReleaseFlushBoundary(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  100,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 100); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 100), "seed runtime")
 
 	const binID int64 = 12345
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-cap-flush")
 	bid := binID
-	if err := db.UpdateOrderBinID(orderID, &bid); err != nil {
-		t.Fatalf("set bin id: %v", err)
-	}
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID); err != nil {
-		t.Fatalf("set runtime orders: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &bid), "set bin id")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &orderID), "set runtime orders")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -130,9 +117,7 @@ func TestRegression_CaptureReleaseFlushBoundary(t *testing.T) {
 		LinesideCapture: map[string]int{"PART-CAP": 30},
 		CalledBy:        "test-op",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
 	// Bucket fill: one capture_fill record for 30.
 	if len(sink.bucketCalls) != 1 {
@@ -165,6 +150,7 @@ func TestRegression_CaptureReleaseFlushBoundary(t *testing.T) {
 // pointer still ships via the OrderRelease envelope; only the
 // Phase 1 delta emission stays quiet.
 func TestRegression_ReleasePartialEmitsNoBinDelta(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "REL-PARTIAL-NOEMIT",
@@ -172,9 +158,7 @@ func TestRegression_ReleasePartialEmitsNoBinDelta(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  47,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 47); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 47), "seed runtime")
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-partial-noemit")
 	bid := int64(99)
 	_ = db.UpdateOrderBinID(orderID, &bid)
@@ -189,9 +173,7 @@ func TestRegression_ReleasePartialEmitsNoBinDelta(t *testing.T) {
 		Mode:     DispositionSendPartialBack,
 		CalledBy: "test-op",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
 	if len(sink.bucketCalls) != 0 {
 		t.Errorf("bucket calls = %d, want 0 (partial back doesn't capture): %+v",
@@ -211,6 +193,7 @@ func TestRegression_ReleasePartialEmitsNoBinDelta(t *testing.T) {
 // physically went to lineside regardless of which order triggered
 // the release).
 func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "REL-SUPPLY-SUPP",
@@ -240,12 +223,8 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 	bidB := int64(2002)
 	_ = db.UpdateOrderBinID(orderA, &bidA)
 	_ = db.UpdateOrderBinID(orderB, &bidB)
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
-		t.Fatalf("set A+B: %v", err)
-	}
-	if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
-		t.Fatalf("link siblings: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "set A+B")
+	testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -258,9 +237,7 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 		LinesideCapture: map[string]int{"PART-SUP": 5},
 		CalledBy:        "test-op",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderA, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderA, disp), "release")
 
 	// Bucket fill ships — the parts physically left wherever they
 	// came from and went to lineside.
@@ -282,6 +259,7 @@ func TestRegression_ReleaseSupplyOrderSuppressesBinDelta(t *testing.T) {
 // node's residual deltas would either get lost (on Edge restart) or
 // attribute to the wrong active-bin context.
 func TestRegression_ABInactivePairFlush(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeAID, styleID, claimAID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "AB-FLIP-A",
@@ -322,9 +300,7 @@ func TestRegression_ABInactivePairFlush(t *testing.T) {
 		t.Fatalf("pair claim A: %v", err)
 	}
 
-	if err := db.SetProcessNodeRuntime(nodeAID, &claimAID, 100); err != nil {
-		t.Fatalf("seed runtime A: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeAID, &claimAID, 100), "seed runtime A")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -336,9 +312,7 @@ func TestRegression_ABInactivePairFlush(t *testing.T) {
 		t.Fatalf("pre-flip flushes = %d, want 0", sink.flushes)
 	}
 
-	if err := eng.FlipABNode(nodeAID); err != nil {
-		t.Fatalf("FlipABNode: %v", err)
-	}
+	testutil.MustNoErr(t, eng.FlipABNode(nodeAID), "FlipABNode")
 
 	if sink.flushes == 0 {
 		t.Errorf("Flush() not called during FlipABNode — A/B active-pull state flip is a flush trigger")
@@ -388,6 +362,7 @@ func (s *flushTrackingSink) OnBinPickedUp(nodeID *int64) error {
 // normally. Pin: the guard is a transient gate, not a permanent
 // block; the periodic-flush recovery path can't deadlock the operator.
 func TestRegression_ReleaseAcceptsAfterFlush(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "REL-ACCEPT",
@@ -395,9 +370,7 @@ func TestRegression_ReleaseAcceptsAfterFlush(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  100,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 100); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 100), "seed runtime")
 	const binID int64 = 8002
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-accept")
 	bid := binID
@@ -443,6 +416,7 @@ func TestRegression_ReleaseAcceptsAfterFlush(t *testing.T) {
 // it to release_empty) would be invisible until forensics realized
 // the underpack pattern stopped showing up.
 func TestRegression_ReleaseUnderpack_WireShape(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "REL-UNDERPACK",
@@ -451,9 +425,7 @@ func TestRegression_ReleaseUnderpack_WireShape(t *testing.T) {
 		InitialUOP:  10,
 	})
 	const runtimeAtClick = 10
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, runtimeAtClick); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, runtimeAtClick), "seed runtime")
 
 	const binID int64 = 12001
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-underpack")
@@ -476,9 +448,7 @@ func TestRegression_ReleaseUnderpack_WireShape(t *testing.T) {
 		Mode:     DispositionReleaseUnderpack,
 		CalledBy: "test-op",
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {

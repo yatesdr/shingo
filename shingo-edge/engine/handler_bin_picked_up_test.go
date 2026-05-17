@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 )
 
@@ -12,6 +13,7 @@ import (
 // active claim advances. Without the flush, Edge can lose a tick
 // or two recorded between RELEASE PARTIAL and the physical pickup.
 func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "BPU-FLUSH",
@@ -19,9 +21,7 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 		UOPCapacity: 100,
 		InitialUOP:  50,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 50); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
 
 	const binID int64 = 11001
 	const orderUUID = "uuid-bpu-flush"
@@ -63,6 +63,7 @@ func TestBinPickedUp_FlushesAccumulator(t *testing.T) {
 // cross-station envelope, etc.) the handler logs and returns
 // without crashing.
 func TestBinPickedUp_HandlesMissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	eng := testEngine(t, db)
 	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
@@ -88,6 +89,7 @@ func TestBinPickedUp_HandlesMissingOrder(t *testing.T) {
 // (binAtNode returns 0 → no bin delta), preventing mis-attribution
 // to a bin that's no longer at the slot.
 func TestRegression_PartialBackTicksAttributeToReleasedBin(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "BPU-PARTIAL",
@@ -105,9 +107,7 @@ func TestRegression_PartialBackTicksAttributeToReleasedBin(t *testing.T) {
 	bid := binID
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 50); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 50), "seed runtime")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()

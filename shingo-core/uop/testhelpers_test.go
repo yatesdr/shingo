@@ -5,6 +5,7 @@ package uop_test
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -20,9 +21,7 @@ func createTestBin(t *testing.T, db *store.DB, nodeID int64, label, payloadCode 
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
 		bt = &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-		if err := db.CreateBinType(bt); err != nil {
-			t.Fatalf("create default bin type: %v", err)
-		}
+		testutil.MustNoErr(t, db.CreateBinType(bt), "create default bin type")
 	}
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {

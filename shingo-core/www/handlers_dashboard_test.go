@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/orders"
 )
@@ -19,6 +20,7 @@ import (
 // reflects the seeded data.
 
 func TestHandleDashboard_RendersWithEmptyData(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -40,6 +42,7 @@ func TestHandleDashboard_RendersWithEmptyData(t *testing.T) {
 //   - the seeded node name appears somewhere in the HTML (TotalNodes/EnabledNodes
 //     and the node list section both reference node data)
 func TestHandleDashboard_ShowsSeededNodes(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlersForPages(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -74,6 +77,7 @@ func TestHandleDashboard_ShowsSeededNodes(t *testing.T) {
 // StatusCounts, so if 1 pending order is seeded the engine's counts include
 // it.
 func TestHandleDashboard_ReflectsActiveOrderCount(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlersForPages(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -86,9 +90,7 @@ func TestHandleDashboard_ReflectsActiveOrderCount(t *testing.T) {
 		Quantity:   1,
 		SourceNode: sd.StorageNode.Name,
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()

@@ -11,10 +11,14 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
+	"shingocore/internal/testdb"
+	"shingocore/store/bins"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
+	"shingocore/store/payloads"
 )
 
 // =============================================================================
@@ -152,6 +156,7 @@ func TestConcurrent_ClaimRaceDeterministic(t *testing.T) {
 // --- TestConcurrent_DispatchStress ---
 // Statistical verification: many concurrent dispatches competing for bins.
 func TestConcurrent_DispatchStress(t *testing.T) {
+	t.Parallel()
 	old := runtime.GOMAXPROCS(runtime.NumCPU())
 	t.Cleanup(func() { runtime.GOMAXPROCS(old) })
 
@@ -219,7 +224,7 @@ func TestConcurrent_DispatchStress(t *testing.T) {
 // --- TC-9: Complex order with zero steps ---
 // Scenario: Edge sends a complex order request with no steps.
 // Expected: order fails gracefully, no panic, no fleet orders.
-func TestTC09_ComplexOrderZeroSteps(t *testing.T) {
+func TestComplexOrder_ZeroSteps(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
@@ -260,7 +265,7 @@ func TestTC09_ComplexOrderZeroSteps(t *testing.T) {
 // --- TC-10: Order references nonexistent delivery node ---
 // Scenario: Retrieve order with DeliveryNode that doesn't exist in the database.
 // Expected: order fails with clear error, no fleet orders.
-func TestTC10_NonexistentDeliveryNode(t *testing.T) {
+func TestComplexOrder_NonexistentDeliveryNode(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
@@ -298,7 +303,7 @@ func TestTC10_NonexistentDeliveryNode(t *testing.T) {
 // --- TC-12: Order requests zero quantity ---
 // Scenario: Retrieve order with quantity=0.
 // Expected: system handles gracefully — no panic.
-func TestTC12_ZeroQuantity(t *testing.T) {
+func TestComplexOrder_ZeroQuantity(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -338,9 +343,7 @@ func TestRedirect_MidTransit(t *testing.T) {
 
 	// Create second line node for redirect destination
 	lineNode2 := &nodes.Node{Name: "LINE2-IN", Enabled: true}
-	if err := db.CreateNode(lineNode2); err != nil {
-		t.Fatalf("create line node 2: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(lineNode2), "create line node 2")
 	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REDIR")
 
 	sim := simulator.New()
@@ -499,16 +502,12 @@ func TestFulfillmentScanner_QueueToDispatch(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// TC-37: Staging expiry vs active claim
-// =============================================================================
-
-// --- TC-37: Staging sweep flips bin to available while still claimed ---
+// --- Staging sweep flips bin to available while still claimed ---
 // Scenario: Bin delivered to lineside (staged). A second order claims it.
 // Staging TTL expires. The sweep runs and flips bin to available
 // without checking claimed_by.
 // Expected: sweep should skip bins with active claims.
-func TestTC37_StagingExpiryVsActiveClaim(t *testing.T) {
+func TestStagingExpiry_DoesNotExpireActiveClaim(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
@@ -561,12 +560,8 @@ func TestTC37_StagingExpiryVsActiveClaim(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Status:      dispatch.StatusQueued,
 	}
-	if err := db.CreateOrder(secondOrder); err != nil {
-		t.Fatalf("create second order: %v", err)
-	}
-	if err := db.ClaimBin(bin.ID, secondOrder.ID); err != nil {
-		t.Fatalf("claim bin for second order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(secondOrder), "create second order")
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, secondOrder.ID), "claim bin for second order")
 
 	// Set staging expiry to past
 	if _, err := db.Exec(`UPDATE bins SET staged_expires_at = NOW() - interval '1 hour' WHERE id = $1`, bin.ID); err != nil {
@@ -589,5 +584,195 @@ func TestTC37_StagingExpiryVsActiveClaim(t *testing.T) {
 	if bin.Status == "available" && bin.ClaimedBy != nil {
 		t.Errorf("BUG: staging sweep flipped bin to available while still claimed by order %d — "+
 			"ReleaseExpiredStagedBins should check claimed_by IS NULL", *bin.ClaimedBy)
+	}
+}
+
+// --- TC-28: Two lines request the same part at the same time ---
+// Scenario: verifies that concurrent retrieve orders for the same payload
+// each get a different bin, with no double-assignment.
+//
+// Two storage nodes each hold one PART-A bin (one bin per node — physical
+// constraint). Two retrieve orders fire back-to-back for the same payload.
+// Expected: each order claims a different bin. No bin is double-claimed.
+//
+// Risk: FindSourceBinFIFO returns the oldest unclaimed bin. If both orders
+// SELECT the same bin before either calls ClaimBin, the second ClaimBin
+// fails (WHERE claimed_by IS NULL). planRetrieve does not retry — it
+// returns claim_failed and the order dies. This test checks whether the
+// system handles this correctly or whether we need retry logic.
+func TestConcurrentRetrieve_SamePart(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+
+	// Two storage nodes, each with one bin of PART-A
+	storageNode1 := &nodes.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(storageNode1), "create storage node 1")
+	storageNode2 := &nodes.Node{Name: "STORAGE-A2", Zone: "A", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(storageNode2), "create storage node 2")
+
+	// Two line nodes (two different production lines)
+	lineNode1 := &nodes.Node{Name: "LINE1-IN", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(lineNode1), "create line node 1")
+	lineNode2 := &nodes.Node{Name: "LINE2-IN", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(lineNode2), "create line node 2")
+
+	bp := &payloads.Payload{Code: "PART-A", Description: "Steel bracket tote"}
+	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
+	bt := &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "create bin type")
+
+	bin1 := createTestBinAtNode(t, db, bp.Code, storageNode1.ID, "BIN-A1")
+	bin2 := createTestBinAtNode(t, db, bp.Code, storageNode2.ID, "BIN-A2")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Line 1 requests PART-A
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-line1",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode1.Name,
+		Quantity:     1,
+	})
+
+	// Line 2 requests PART-A immediately after
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:    "retrieve-line2",
+		OrderType:    dispatch.OrderTypeRetrieve,
+		PayloadCode:  bp.Code,
+		DeliveryNode: lineNode2.Name,
+		Quantity:     1,
+	})
+
+	order1 := testdb.RequireOrder(t, db, "retrieve-line1")
+	order2 := testdb.RequireOrder(t, db, "retrieve-line2")
+
+	t.Logf("order 1: status=%s, bin_id=%v, vendor_id=%s", order1.Status, order1.BinID, order1.VendorOrderID)
+	t.Logf("order 2: status=%s, bin_id=%v, vendor_id=%s", order2.Status, order2.BinID, order2.VendorOrderID)
+
+	// Both orders should have dispatched successfully
+	bothDispatched := order1.VendorOrderID != "" && order2.VendorOrderID != ""
+	if !bothDispatched {
+		t.Errorf("expected both orders to dispatch — order1 vendor=%q, order2 vendor=%q",
+			order1.VendorOrderID, order2.VendorOrderID)
+		if order1.VendorOrderID == "" {
+			t.Logf("order 1 failed to dispatch (status=%s) — possible TOCTOU race in FindSourceBinFIFO → ClaimBin", order1.Status)
+		}
+		if order2.VendorOrderID == "" {
+			t.Logf("order 2 failed to dispatch (status=%s) — possible TOCTOU race in FindSourceBinFIFO → ClaimBin", order2.Status)
+		}
+	}
+
+	// Each order should have claimed a DIFFERENT bin
+	if order1.BinID != nil && order2.BinID != nil {
+		if *order1.BinID == *order2.BinID {
+			t.Errorf("BUG: both orders claimed the same bin %d — double assignment", *order1.BinID)
+		} else {
+			t.Logf("correct: order 1 claimed bin %d, order 2 claimed bin %d — no collision", *order1.BinID, *order2.BinID)
+		}
+	}
+
+	// Verify bins are claimed by the correct orders
+	bin1 = testdb.RequireBin(t, db, bin1.ID)
+	bin2 = testdb.RequireBin(t, db, bin2.ID)
+
+	claimedBins := 0
+	if bin1.ClaimedBy != nil {
+		claimedBins++
+		t.Logf("bin %d (%s) claimed by order %d", bin1.ID, bin1.Label, *bin1.ClaimedBy)
+	}
+	if bin2.ClaimedBy != nil {
+		claimedBins++
+		t.Logf("bin %d (%s) claimed by order %d", bin2.ID, bin2.Label, *bin2.ClaimedBy)
+	}
+
+	if claimedBins != 2 {
+		t.Errorf("expected 2 bins claimed, got %d — one order may have failed at ClaimBin", claimedBins)
+	}
+}
+
+func TestRetrieveClaimFailure_QueueSurvives(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	// Single bin — both orders compete for the same bin
+	createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-TC36")
+
+	sim := simulator.New()
+	eng := newTestEngine(t, db, sim)
+	d := eng.Dispatcher()
+	env := testEnvelope()
+
+	// Fire two concurrent retrieve orders for the same payload.
+	// Both will call FindSourceBinFIFO → find the same unclaimed bin → both
+	// try ClaimBin. One wins, the other gets claim_failed.
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		<-start
+		d.HandleOrderRequest(env, &protocol.OrderRequest{
+			OrderUUID:    "tc36-a",
+			OrderType:    dispatch.OrderTypeRetrieve,
+			PayloadCode:  bp.Code,
+			DeliveryNode: lineNode.Name,
+			Quantity:     1,
+		})
+	}()
+
+	go func() {
+		defer wg.Done()
+		<-start
+		d.HandleOrderRequest(env, &protocol.OrderRequest{
+			OrderUUID:    "tc36-b",
+			OrderType:    dispatch.OrderTypeRetrieve,
+			PayloadCode:  bp.Code,
+			DeliveryNode: lineNode.Name,
+			Quantity:     1,
+		})
+	}()
+
+	close(start) // fire both goroutines simultaneously
+	wg.Wait()
+
+	orderA := testdb.RequireOrder(t, db, "tc36-a")
+	orderB := testdb.RequireOrder(t, db, "tc36-b")
+
+	t.Logf("order A: status=%s bin=%v vendor=%s", orderA.Status, orderA.BinID, orderA.VendorOrderID)
+	t.Logf("order B: status=%s bin=%v vendor=%s", orderB.Status, orderB.BinID, orderB.VendorOrderID)
+
+	// Neither order should be permanently failed for a transient claim race.
+	for _, order := range []*orders.Order{orderA, orderB} {
+		if order.Status == dispatch.StatusFailed {
+			t.Errorf("BUG: order %s permanently failed after claim_failed — should be queued for retry",
+				order.EdgeUUID)
+		}
+	}
+
+	// One should be dispatched, the other queued (not failed, not sourcing)
+	dispatched := 0
+	queued := 0
+	for _, order := range []*orders.Order{orderA, orderB} {
+		switch order.Status {
+		case dispatch.StatusDispatched, dispatch.StatusInTransit:
+			dispatched++
+		case dispatch.StatusQueued:
+			queued++
+		}
+	}
+
+	if dispatched == 1 && queued == 1 {
+		t.Logf("correct: one dispatched, one queued — fulfillment scanner will retry")
+	} else if dispatched == 2 {
+		t.Logf("both dispatched — race did not trigger (scheduler serialized), no bug exposed this run")
+	} else {
+		t.Logf("unexpected distribution: dispatched=%d queued=%d (statuses: A=%s B=%s)",
+			dispatched, queued, orderA.Status, orderB.Status)
 	}
 }

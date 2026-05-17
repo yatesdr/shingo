@@ -16,6 +16,7 @@ import (
 // the adapter queries the order details to find the assigned vehicle and
 // includes it in the addBlocks request so RDS keeps the same robot.
 func TestReleaseOrder_PinsVehicle(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var addBlocksReq rds.AddBlocksRequest
 	var addBlocksCalled bool
@@ -75,6 +76,7 @@ func TestReleaseOrder_PinsVehicle(t *testing.T) {
 // lookup fails (e.g., order not found), the release still succeeds
 // without pinning a vehicle — RDS picks freely.
 func TestReleaseOrder_NoVehicleFallback(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var addBlocksReq rds.AddBlocksRequest
 

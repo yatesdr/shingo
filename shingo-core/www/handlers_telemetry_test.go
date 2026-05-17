@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/payloads"
 )
@@ -33,6 +34,7 @@ func chiReq(method, target string, params map[string]string) *http.Request {
 // --- apiTelemetryNodeBins ---------------------------------------------------
 
 func TestApiTelemetryNodeBins_EmptyParam(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiTelemetryNodeBins, "/api/telemetry/node-bins")
@@ -47,6 +49,7 @@ func TestApiTelemetryNodeBins_EmptyParam(t *testing.T) {
 }
 
 func TestApiTelemetryNodeBins_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-TELEM-1")
@@ -58,9 +61,7 @@ func TestApiTelemetryNodeBins_HappyPath(t *testing.T) {
 	}
 
 	var entries []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&entries); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&entries), "decode")
 	if len(entries) != 2 {
 		t.Fatalf("entries: got %d, want 2: %+v", len(entries), entries)
 	}
@@ -83,6 +84,7 @@ func TestApiTelemetryNodeBins_HappyPath(t *testing.T) {
 // --- apiTelemetryPayloadManifest --------------------------------------------
 
 func TestApiTelemetryPayloadManifest_EmptyCode(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	// No chi param → code == "".
@@ -94,15 +96,14 @@ func TestApiTelemetryPayloadManifest_EmptyCode(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp["uop_capacity"].(float64) != 0 {
 		t.Errorf("uop_capacity: got %v, want 0", resp["uop_capacity"])
 	}
 }
 
 func TestApiTelemetryPayloadManifest_UnknownCode(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	req := chiReq(http.MethodGet, "/api/telemetry/payload/NO-SUCH/manifest",
@@ -114,22 +115,19 @@ func TestApiTelemetryPayloadManifest_UnknownCode(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp["uop_capacity"].(float64) != 0 {
 		t.Errorf("uop_capacity: got %v, want 0", resp["uop_capacity"])
 	}
 }
 
 func TestApiTelemetryPayloadManifest_KnownWithManifest(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	// Give the payload a capacity and a manifest template.
 	sd.Payload.UOPCapacity = 50
-	if err := db.UpdatePayload(sd.Payload); err != nil {
-		t.Fatalf("update payload uop: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdatePayload(sd.Payload), "update payload uop")
 	if err := db.CreatePayloadManifestItem(&payloads.ManifestItem{
 		PayloadID: sd.Payload.ID, PartNumber: "P-X", Quantity: 10, Description: "desc",
 	}); err != nil {
@@ -152,9 +150,7 @@ func TestApiTelemetryPayloadManifest_KnownWithManifest(t *testing.T) {
 			Description string `json:"description"`
 		} `json:"items"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.UOPCapacity != 50 {
 		t.Errorf("uop_capacity: got %d, want 50", resp.UOPCapacity)
 	}
@@ -164,12 +160,11 @@ func TestApiTelemetryPayloadManifest_KnownWithManifest(t *testing.T) {
 }
 
 func TestApiTelemetryPayloadManifest_KnownNoManifest_FallbackEntry(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	sd.Payload.UOPCapacity = 30
-	if err := db.UpdatePayload(sd.Payload); err != nil {
-		t.Fatalf("update payload uop: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdatePayload(sd.Payload), "update payload uop")
 
 	req := chiReq(http.MethodGet, "/api/telemetry/payload/"+sd.Payload.Code+"/manifest",
 		map[string]string{"code": sd.Payload.Code})
@@ -186,9 +181,7 @@ func TestApiTelemetryPayloadManifest_KnownNoManifest_FallbackEntry(t *testing.T)
 			Quantity   int64  `json:"quantity"`
 		} `json:"items"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.UOPCapacity != 30 {
 		t.Errorf("uop_capacity: got %d, want 30", resp.UOPCapacity)
 	}
@@ -201,6 +194,7 @@ func TestApiTelemetryPayloadManifest_KnownNoManifest_FallbackEntry(t *testing.T)
 // --- apiTelemetryNodeChildren -----------------------------------------------
 
 func TestApiTelemetryNodeChildren_EmptyName(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	req := chiReq(http.MethodGet, "/api/telemetry/node//children", map[string]string{"name": ""})
 	rec := httptest.NewRecorder()
@@ -216,6 +210,7 @@ func TestApiTelemetryNodeChildren_EmptyName(t *testing.T) {
 }
 
 func TestApiTelemetryNodeChildren_UnknownName(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	req := chiReq(http.MethodGet, "/api/telemetry/node/NO-SUCH/children",
 		map[string]string{"name": "NO-SUCH"})
@@ -234,6 +229,7 @@ func TestApiTelemetryNodeChildren_UnknownName(t *testing.T) {
 // --- apiBinLoad -------------------------------------------------------------
 
 func TestApiBinLoad_MissingNodeName(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postJSON(t, h.apiBinLoad, "/api/telemetry/bin-load",
 		map[string]any{"node_name": ""})
@@ -244,6 +240,7 @@ func TestApiBinLoad_MissingNodeName(t *testing.T) {
 }
 
 func TestApiBinLoad_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiBinLoad, "/api/telemetry/bin-load", []byte("not-json"))
 	if rec.Code != http.StatusBadRequest {
@@ -252,6 +249,7 @@ func TestApiBinLoad_InvalidJSON(t *testing.T) {
 }
 
 func TestApiBinLoad_UnknownNode(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postJSON(t, h.apiBinLoad, "/api/telemetry/bin-load",
 		map[string]any{"node_name": "NO-SUCH-NODE", "payload_code": "X"})
@@ -261,6 +259,7 @@ func TestApiBinLoad_UnknownNode(t *testing.T) {
 }
 
 func TestApiBinLoad_NodeWithoutBin(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	// Line node has no bin in the standard fixture.
@@ -273,6 +272,7 @@ func TestApiBinLoad_NodeWithoutBin(t *testing.T) {
 }
 
 func TestApiBinLoad_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-LOAD-1")
@@ -297,9 +297,7 @@ func TestApiBinLoad_HappyPath(t *testing.T) {
 		PayloadCode  string `json:"payload_code"`
 		UOPRemaining int    `json:"uop_remaining"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Status != "ok" || resp.BinID != bin.ID || resp.UOPRemaining != 25 {
 		t.Errorf("response: got %+v", resp)
 	}
@@ -320,6 +318,7 @@ func TestApiBinLoad_HappyPath(t *testing.T) {
 // --- apiBinClear ------------------------------------------------------------
 
 func TestApiBinClear_MissingNodeName(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
 		map[string]any{"node_name": ""})
@@ -330,6 +329,7 @@ func TestApiBinClear_MissingNodeName(t *testing.T) {
 }
 
 func TestApiBinClear_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiBinClear, "/api/telemetry/bin-clear", []byte("{"))
 	if rec.Code != http.StatusBadRequest {
@@ -338,6 +338,7 @@ func TestApiBinClear_InvalidJSON(t *testing.T) {
 }
 
 func TestApiBinClear_UnknownNode(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postJSON(t, h.apiBinClear, "/api/telemetry/bin-clear",
 		map[string]any{"node_name": "NOPE"})
@@ -347,6 +348,7 @@ func TestApiBinClear_UnknownNode(t *testing.T) {
 }
 
 func TestApiBinClear_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-CLEAR-1")
@@ -361,9 +363,7 @@ func TestApiBinClear_HappyPath(t *testing.T) {
 		BinID    int64  `json:"bin_id"`
 		BinLabel string `json:"bin_label"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Status != "ok" || resp.BinID != bin.ID || resp.BinLabel != bin.Label {
 		t.Errorf("response: got %+v", resp)
 	}
@@ -378,6 +378,7 @@ func TestApiBinClear_HappyPath(t *testing.T) {
 // --- apiEMaintRobotTelemetry (+ download) -----------------------------------
 
 func TestApiEMaintRobotTelemetry_EmptyFleet(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiEMaintRobotTelemetry, "/api/telemetry/e-maint")
@@ -391,9 +392,7 @@ func TestApiEMaintRobotTelemetry_EmptyFleet(t *testing.T) {
 		RobotCount  int              `json:"robot_count"`
 		Robots      []map[string]any `json:"robots"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Source != "shingo-core" {
 		t.Errorf("source: got %q, want shingo-core", resp.Source)
 	}
@@ -406,6 +405,7 @@ func TestApiEMaintRobotTelemetry_EmptyFleet(t *testing.T) {
 }
 
 func TestApiEMaintRobotTelemetryDownload_ContentDisposition(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiEMaintRobotTelemetryDownload, "/api/telemetry/e-maint/download")
@@ -421,9 +421,7 @@ func TestApiEMaintRobotTelemetryDownload_ContentDisposition(t *testing.T) {
 	}
 	// Body should still be valid JSON matching the report shape.
 	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode body")
 	if resp["source"] != "shingo-core" {
 		t.Errorf("source: got %v", resp["source"])
 	}

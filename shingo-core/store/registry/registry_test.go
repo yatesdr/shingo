@@ -11,6 +11,7 @@ import (
 )
 
 func TestCoverage_RegisterEdge_InsertAndUpdate(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	if err := registry.Register(db.DB, "line-1", "host-a", "v1.0.0", []string{"L1", "L2"}); err != nil { t.Fatalf("Register initial: %v", err) }
 	edges, err := registry.List(db.DB)
@@ -30,6 +31,7 @@ func TestCoverage_RegisterEdge_InsertAndUpdate(t *testing.T) {
 }
 
 func TestCoverage_UpdateHeartbeat_IsNewThenNot(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	isNew1, err := registry.UpdateHeartbeat(db.DB, "line-fresh")
 	if err != nil { t.Fatalf("UpdateHeartbeat first: %v", err) }
@@ -38,6 +40,7 @@ func TestCoverage_UpdateHeartbeat_IsNewThenNot(t *testing.T) {
 	if len(edges) != 1 { t.Fatalf("after first heartbeat len = %d, want 1", len(edges)) }
 	if edges[0].LastHeartbeat == nil { t.Error("last_heartbeat should be set") }
 	firstBeat := edges[0].LastHeartbeat
+	// KEEP: timestamp separation — second heartbeat must record a later timestamp.
 	time.Sleep(10 * time.Millisecond)
 	isNew2, err := registry.UpdateHeartbeat(db.DB, "line-fresh")
 	if err != nil { t.Fatalf("UpdateHeartbeat second: %v", err) }
@@ -48,11 +51,13 @@ func TestCoverage_UpdateHeartbeat_IsNewThenNot(t *testing.T) {
 }
 
 func TestCoverage_MarkStaleEdges(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	registry.Register(db.DB, "line-stale-1", "h1", "v", nil)
 	registry.UpdateHeartbeat(db.DB, "line-stale-1")
 	registry.Register(db.DB, "line-stale-2", "h2", "v", nil)
 	registry.UpdateHeartbeat(db.DB, "line-stale-2")
+	// KEEP: timestamp separation — stale-marking threshold needs distinct timestamps.
 	time.Sleep(5 * time.Millisecond)
 	stale, err := registry.MarkStale(db.DB, 1*time.Nanosecond)
 	if err != nil { t.Fatalf("MarkStale: %v", err) }

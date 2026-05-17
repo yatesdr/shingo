@@ -5,6 +5,7 @@ package service
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/store"
 	"shingocore/store/telemetry"
 )
@@ -31,13 +32,12 @@ func seedMission(t *testing.T, db *store.DB, orderID int64, station, robot, stat
 		WarningsJSON:  "[]",
 		NoticesJSON:   "[]",
 	}
-	if err := db.UpsertMissionTelemetry(tel); err != nil {
-		t.Fatalf("UpsertMissionTelemetry: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpsertMissionTelemetry(tel), "UpsertMissionTelemetry")
 	return tel
 }
 
 func TestMissionService_Telemetry_RoundTripsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewMissionService(db)
 
@@ -53,6 +53,7 @@ func TestMissionService_Telemetry_RoundTripsRow(t *testing.T) {
 }
 
 func TestMissionService_ListEvents_ReturnsInserted(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewMissionService(db)
 
@@ -69,9 +70,7 @@ func TestMissionService_ListEvents_ReturnsInserted(t *testing.T) {
 			BlocksJSON:    "[]",
 			ErrorsJSON:    "[]",
 		}
-		if err := db.InsertMissionEvent(e); err != nil {
-			t.Fatalf("InsertMissionEvent: %v", err)
-		}
+		testutil.MustNoErr(t, db.InsertMissionEvent(e), "InsertMissionEvent")
 	}
 	other := &telemetry.Event{
 		OrderID:       56,
@@ -80,9 +79,7 @@ func TestMissionService_ListEvents_ReturnsInserted(t *testing.T) {
 		BlocksJSON:    "[]",
 		ErrorsJSON:    "[]",
 	}
-	if err := db.InsertMissionEvent(other); err != nil {
-		t.Fatalf("InsertMissionEvent (other): %v", err)
-	}
+	testutil.MustNoErr(t, db.InsertMissionEvent(other), "InsertMissionEvent (other)")
 
 	events, err := svc.ListEvents(55)
 	if err != nil {
@@ -99,6 +96,7 @@ func TestMissionService_ListEvents_ReturnsInserted(t *testing.T) {
 }
 
 func TestMissionService_List_CountsMatchFilter(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewMissionService(db)
 
@@ -126,6 +124,7 @@ func TestMissionService_List_CountsMatchFilter(t *testing.T) {
 }
 
 func TestMissionService_Stats_CountsCompletionsAndFailures(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewMissionService(db)
 

@@ -3,16 +3,16 @@
 package service
 
 import (
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestAuditService_Append_PersistsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewAuditService(db)
 
-	if err := svc.Append("bin", 42, "status", "available", "flagged", "tester"); err != nil {
-		t.Fatalf("Append: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Append("bin", 42, "status", "available", "flagged", "tester"), "Append")
 
 	entries, err := svc.ListForEntity("bin", 42)
 	if err != nil {
@@ -50,6 +50,7 @@ func TestAuditService_Append_PersistsRow(t *testing.T) {
 }
 
 func TestAuditService_ListForEntity_OrderedNewestFirst(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewAuditService(db)
 
@@ -74,20 +75,15 @@ func TestAuditService_ListForEntity_OrderedNewestFirst(t *testing.T) {
 }
 
 func TestAuditService_ListForEntity_FiltersByEntity(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewAuditService(db)
 
 	// Two different entities, same type.
-	if err := svc.Append("bin", 1, "status", "", "available", "ui"); err != nil {
-		t.Fatalf("Append bin/1: %v", err)
-	}
-	if err := svc.Append("bin", 2, "status", "", "flagged", "ui"); err != nil {
-		t.Fatalf("Append bin/2: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Append("bin", 1, "status", "", "available", "ui"), "Append bin/1")
+	testutil.MustNoErr(t, svc.Append("bin", 2, "status", "", "flagged", "ui"), "Append bin/2")
 	// Different type, same id as first.
-	if err := svc.Append("order", 1, "created", "", "", "ui"); err != nil {
-		t.Fatalf("Append order/1: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Append("order", 1, "created", "", "", "ui"), "Append order/1")
 
 	bin1, err := svc.ListForEntity("bin", 1)
 	if err != nil {

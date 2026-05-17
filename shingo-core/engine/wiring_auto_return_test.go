@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/store/nodes"
@@ -28,6 +29,7 @@ import (
 // persisted while autoReturnEnabled is false. Characterization test for
 // the current production state.
 func TestMaybeCreateReturnOrder_DisabledByFlag(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -43,9 +45,7 @@ func TestMaybeCreateReturnOrder_DisabledByFlag(t *testing.T) {
 		VendorOrderID: "v-1",
 		BinID:         &bin.ID,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	before, _ := db.ListPendingOutbox(10)
 	beforeCount := len(before)
@@ -78,6 +78,7 @@ func TestMaybeCreateReturnOrder_DisabledByFlag(t *testing.T) {
 // Since the constant is fixed, this test just documents that child
 // orders don't get return orders (covered by the general disabled test).
 func TestMaybeCreateReturnOrder_NoVendorOrderID(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -94,9 +95,7 @@ func TestMaybeCreateReturnOrder_NoVendorOrderID(t *testing.T) {
 		// if the feature flag were on.
 		BinID: &bin.ID,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	eng.maybeCreateReturnOrder(order, "failed")
 
@@ -117,19 +116,16 @@ func TestMaybeCreateReturnOrder_NoVendorOrderID(t *testing.T) {
 //   - an EventOrderReceived is emitted so the edge pipeline can pick it up
 //   - an audit row lands
 func TestCreateSingleReturnOrder_PersistsOrderAndClaim(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Build a two-level tree: synthetic root + lineside child.
 	root := &nodes.Node{Name: "AR-ROOT", IsSynthetic: true, Enabled: true}
-	if err := db.CreateNode(root); err != nil {
-		t.Fatalf("create root: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(root), "create root")
 	leaf := &nodes.Node{Name: "AR-LEAF", Enabled: true, ParentID: &root.ID}
-	if err := db.CreateNode(leaf); err != nil {
-		t.Fatalf("create leaf: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(leaf), "create leaf")
 
 	bin := createTestBinAtNode(t, db, bp.Code, leaf.ID, "BIN-AR-CORE")
 	original := &orders.Order{
@@ -142,9 +138,7 @@ func TestCreateSingleReturnOrder_PersistsOrderAndClaim(t *testing.T) {
 		VendorOrderID: "v-ret",
 		BinID:         &bin.ID,
 	}
-	if err := db.CreateOrder(original); err != nil {
-		t.Fatalf("create original: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(original), "create original")
 
 	received := make(chan OrderReceivedEvent, 2)
 	eng.Events.SubscribeTypes(func(evt Event) {
@@ -212,6 +206,7 @@ func TestCreateSingleReturnOrder_PersistsOrderAndClaim(t *testing.T) {
 // TestCreateSingleReturnOrder_MissingSourceNode short-circuits cleanly
 // when the source node name can't be resolved — no DB writes.
 func TestCreateSingleReturnOrder_MissingSourceNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -228,9 +223,7 @@ func TestCreateSingleReturnOrder_MissingSourceNode(t *testing.T) {
 		VendorOrderID: "v-miss",
 		BinID:         &bin.ID,
 	}
-	if err := db.CreateOrder(original); err != nil {
-		t.Fatalf("create original: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(original), "create original")
 
 	// Pass a bogus source node name — GetNodeByDotName fails → early return.
 	eng.createSingleReturnOrder(original, bin.ID, "DOES-NOT-EXIST-NODE", "failed")

@@ -3,10 +3,11 @@
 package nodes_test
 
 import (
-	"shingocore/store/nodes"
 	"database/sql"
+	"shingocore/store/nodes"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 )
@@ -16,9 +17,7 @@ import (
 func countNodePayloads(t *testing.T, db *sql.DB, nodeID int64) int {
 	t.Helper()
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM node_payloads WHERE node_id=$1`, nodeID).Scan(&n); err != nil {
-		t.Fatalf("count node_payloads: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM node_payloads WHERE node_id=$1`, nodeID).Scan(&n), "count node_payloads")
 	return n
 }
 
@@ -27,13 +26,12 @@ func countNodePayloads(t *testing.T, db *sql.DB, nodeID int64) int {
 // ---------------------------------------------------------------------------
 
 func TestNodeCRUD(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	n := &nodes.Node{Name: "STORAGE-A1", Zone: "A", Enabled: true}
-	if err := nodes.Create(sdb, n); err != nil {
-		t.Fatalf("nodes.Create: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
 	if n.ID == 0 {
 		t.Fatalf("nodes.Create: expected ID to be assigned")
 	}
@@ -56,9 +54,7 @@ func TestNodeCRUD(t *testing.T) {
 	got.Zone = "B"
 	got.Enabled = false
 	got.Name = "STORAGE-A1-RENAMED"
-	if err := nodes.Update(sdb, got); err != nil {
-		t.Fatalf("nodes.Update: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Update(sdb, got), "nodes.Update")
 	got2, err := nodes.Get(sdb, n.ID)
 	if err != nil {
 		t.Fatalf("nodes.Get after update: %v", err)
@@ -74,22 +70,19 @@ func TestNodeCRUD(t *testing.T) {
 	}
 
 	// nodes.Delete then nodes.Get should error.
-	if err := nodes.Delete(sdb, n.ID); err != nil {
-		t.Fatalf("nodes.Delete: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Delete(sdb, n.ID), "nodes.Delete")
 	if _, err := nodes.Get(sdb, n.ID); err == nil {
 		t.Errorf("nodes.Get after nodes.Delete: expected error, got nil")
 	}
 }
 
 func TestNodeGetByName(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	n := &nodes.Node{Name: "UNIQ-NAME", Enabled: true}
-	if err := nodes.Create(sdb, n); err != nil {
-		t.Fatalf("nodes.Create: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
 
 	got, err := nodes.GetByName(sdb, "UNIQ-NAME")
 	if err != nil {
@@ -105,17 +98,14 @@ func TestNodeGetByName(t *testing.T) {
 }
 
 func TestNodeGetByDotName(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	parent := &nodes.Node{Name: "PARENT", Enabled: true}
-	if err := nodes.Create(sdb, parent); err != nil {
-		t.Fatalf("nodes.Create parent: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, parent), "nodes.Create parent")
 	child := &nodes.Node{Name: "CHILD", Enabled: true, ParentID: &parent.ID}
-	if err := nodes.Create(sdb, child); err != nil {
-		t.Fatalf("nodes.Create child: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, child), "nodes.Create child")
 
 	// Dot notation: PARENT.CHILD should resolve to the child parented under PARENT.
 	got, err := nodes.GetByDotName(sdb, "PARENT.CHILD")
@@ -137,21 +127,16 @@ func TestNodeGetByDotName(t *testing.T) {
 }
 
 func TestNodeGetRoot(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	root := &nodes.Node{Name: "ROOT", Enabled: true}
-	if err := nodes.Create(sdb, root); err != nil {
-		t.Fatalf("nodes.Create root: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, root), "nodes.Create root")
 	mid := &nodes.Node{Name: "MID", Enabled: true, ParentID: &root.ID}
-	if err := nodes.Create(sdb, mid); err != nil {
-		t.Fatalf("nodes.Create mid: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, mid), "nodes.Create mid")
 	leaf := &nodes.Node{Name: "LEAF", Enabled: true, ParentID: &mid.ID}
-	if err := nodes.Create(sdb, leaf); err != nil {
-		t.Fatalf("nodes.Create leaf: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, leaf), "nodes.Create leaf")
 
 	got, err := nodes.GetRoot(sdb, leaf.ID)
 	if err != nil {
@@ -172,6 +157,7 @@ func TestNodeGetRoot(t *testing.T) {
 }
 
 func TestNodeList(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
@@ -209,17 +195,14 @@ func TestNodeList(t *testing.T) {
 }
 
 func TestNodeListChildren(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	parent := &nodes.Node{Name: "PARENT", Enabled: true}
-	if err := nodes.Create(sdb, parent); err != nil {
-		t.Fatalf("nodes.Create parent: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, parent), "nodes.Create parent")
 	unrelated := &nodes.Node{Name: "UNRELATED", Enabled: true}
-	if err := nodes.Create(sdb, unrelated); err != nil {
-		t.Fatalf("nodes.Create unrelated: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, unrelated), "nodes.Create unrelated")
 
 	childNames := []string{"ZETA", "ALPHA", "MU"}
 	for _, name := range childNames {
@@ -251,21 +234,16 @@ func TestNodeListChildren(t *testing.T) {
 }
 
 func TestNodeSetAndClearParent(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	parent := &nodes.Node{Name: "P", Enabled: true}
-	if err := nodes.Create(sdb, parent); err != nil {
-		t.Fatalf("nodes.Create parent: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, parent), "nodes.Create parent")
 	child := &nodes.Node{Name: "C", Enabled: true}
-	if err := nodes.Create(sdb, child); err != nil {
-		t.Fatalf("nodes.Create child: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, child), "nodes.Create child")
 
-	if err := nodes.SetParent(sdb, child.ID, parent.ID); err != nil {
-		t.Fatalf("nodes.SetParent: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetParent(sdb, child.ID, parent.ID), "nodes.SetParent")
 	got, err := nodes.Get(sdb, child.ID)
 	if err != nil {
 		t.Fatalf("nodes.Get after nodes.SetParent: %v", err)
@@ -274,9 +252,7 @@ func TestNodeSetAndClearParent(t *testing.T) {
 		t.Errorf("ParentID after nodes.SetParent = %v, want %d", got.ParentID, parent.ID)
 	}
 
-	if err := nodes.ClearParent(sdb, child.ID); err != nil {
-		t.Fatalf("nodes.ClearParent: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.ClearParent(sdb, child.ID), "nodes.ClearParent")
 	got2, err := nodes.Get(sdb, child.ID)
 	if err != nil {
 		t.Fatalf("nodes.Get after nodes.ClearParent: %v", err)
@@ -287,26 +263,19 @@ func TestNodeSetAndClearParent(t *testing.T) {
 }
 
 func TestNodeReparent(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	lane := &nodes.Node{Name: "L", Enabled: true}
-	if err := nodes.Create(sdb, lane); err != nil {
-		t.Fatalf("nodes.Create lane: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, lane), "nodes.Create lane")
 	slot := &nodes.Node{Name: "S", Enabled: true}
-	if err := nodes.Create(sdb, slot); err != nil {
-		t.Fatalf("nodes.Create slot: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, slot), "nodes.Create slot")
 	// Seed role property — orphaning should clear it.
-	if err := nodes.SetProperty(sdb, slot.ID, "role", "store"); err != nil {
-		t.Fatalf("nodes.SetProperty role: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, slot.ID, "role", "store"), "nodes.SetProperty role")
 
 	// Adopt with a position -> depth set.
-	if err := nodes.Reparent(sdb, slot.ID, &lane.ID, 3); err != nil {
-		t.Fatalf("nodes.Reparent adopt: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Reparent(sdb, slot.ID, &lane.ID, 3), "nodes.Reparent adopt")
 	got, err := nodes.Get(sdb, slot.ID)
 	if err != nil {
 		t.Fatalf("nodes.Get after nodes.Reparent adopt: %v", err)
@@ -319,9 +288,7 @@ func TestNodeReparent(t *testing.T) {
 	}
 
 	// Orphan: parent cleared, depth cleared, role property cleared.
-	if err := nodes.Reparent(sdb, slot.ID, nil, 0); err != nil {
-		t.Fatalf("nodes.Reparent orphan: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Reparent(sdb, slot.ID, nil, 0), "nodes.Reparent orphan")
 	got2, err := nodes.Get(sdb, slot.ID)
 	if err != nil {
 		t.Fatalf("nodes.Get after nodes.Reparent orphan: %v", err)
@@ -338,13 +305,12 @@ func TestNodeReparent(t *testing.T) {
 }
 
 func TestReorderLaneSlots(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	lane := &nodes.Node{Name: "LANE-X", Enabled: true}
-	if err := nodes.Create(sdb, lane); err != nil {
-		t.Fatalf("nodes.Create lane: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, lane), "nodes.Create lane")
 	d1, d2, d3 := 1, 2, 3
 	s1 := &nodes.Node{Name: "S1", Enabled: true, ParentID: &lane.ID, Depth: &d1}
 	s2 := &nodes.Node{Name: "S2", Enabled: true, ParentID: &lane.ID, Depth: &d2}
@@ -356,9 +322,7 @@ func TestReorderLaneSlots(t *testing.T) {
 	}
 
 	// Reverse the order: s3 -> depth 1, s2 -> depth 2, s1 -> depth 3.
-	if err := nodes.ReorderLaneSlots(sdb, lane.ID, []int64{s3.ID, s2.ID, s1.ID}); err != nil {
-		t.Fatalf("nodes.ReorderLaneSlots: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.ReorderLaneSlots(sdb, lane.ID, []int64{s3.ID, s2.ID, s1.ID}), "nodes.ReorderLaneSlots")
 
 	cases := map[int64]int{s3.ID: 1, s2.ID: 2, s1.ID: 3}
 	for id, want := range cases {
@@ -373,6 +337,7 @@ func TestReorderLaneSlots(t *testing.T) {
 }
 
 func TestScanNodesEmpty(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
@@ -396,13 +361,12 @@ func TestScanNodesEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNodeTypeCRUD(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	nt := &nodes.NodeType{Code: "TSTOR", Name: "Storage", Description: "storage slot", IsSynthetic: false}
-	if err := nodes.CreateType(sdb, nt); err != nil {
-		t.Fatalf("nodes.CreateType: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.CreateType(sdb, nt), "nodes.CreateType")
 	if nt.ID == 0 {
 		t.Fatalf("nodes.CreateType: expected ID to be assigned")
 	}
@@ -430,9 +394,7 @@ func TestNodeTypeCRUD(t *testing.T) {
 	// nodes.Update.
 	got.Name = "Storage Slot"
 	got.IsSynthetic = true
-	if err := nodes.UpdateType(sdb, got); err != nil {
-		t.Fatalf("nodes.UpdateType: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.UpdateType(sdb, got), "nodes.UpdateType")
 	got3, err := nodes.GetType(sdb, nt.ID)
 	if err != nil {
 		t.Fatalf("nodes.GetType after update: %v", err)
@@ -446,9 +408,7 @@ func TestNodeTypeCRUD(t *testing.T) {
 
 	// nodes.List: LANE and NGRP are seeded by migration; TSTOR makes 3 total.
 	second := &nodes.NodeType{Code: "TSTOR2", Name: "Extra", IsSynthetic: true}
-	if err := nodes.CreateType(sdb, second); err != nil {
-		t.Fatalf("nodes.CreateType second: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.CreateType(sdb, second), "nodes.CreateType second")
 	list, err := nodes.ListTypes(sdb)
 	if err != nil {
 		t.Fatalf("nodes.ListTypes: %v", err)
@@ -462,15 +422,14 @@ func TestNodeTypeCRUD(t *testing.T) {
 	}
 
 	// nodes.Delete.
-	if err := nodes.DeleteType(sdb, second.ID); err != nil {
-		t.Fatalf("nodes.DeleteType: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.DeleteType(sdb, second.ID), "nodes.DeleteType")
 	if _, err := nodes.GetType(sdb, second.ID); err == nil {
 		t.Errorf("nodes.GetType after nodes.DeleteType: expected error, got nil")
 	}
 }
 
 func TestNodeTypeGetByCodeMissing(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
@@ -484,6 +443,7 @@ func TestNodeTypeGetByCodeMissing(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCreateGroupAndAddLane(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
@@ -548,6 +508,7 @@ func TestCreateGroupAndAddLane(t *testing.T) {
 }
 
 func TestCreateGroupDuplicateName(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
@@ -562,6 +523,7 @@ func TestCreateGroupDuplicateName(t *testing.T) {
 }
 
 func TestAddLaneMissingGroup(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
@@ -572,6 +534,7 @@ func TestAddLaneMissingGroup(t *testing.T) {
 }
 
 func TestDeleteGroupHierarchy(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
@@ -588,21 +551,13 @@ func TestDeleteGroupHierarchy(t *testing.T) {
 
 	// Physical slot under the lane: should survive nodes.DeleteGroup but be unparented.
 	physical := &nodes.Node{Name: "PHYS-1", Enabled: true, ParentID: &laneID}
-	if err := nodes.Create(sdb, physical); err != nil {
-		t.Fatalf("nodes.Create physical: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, physical), "nodes.Create physical")
 	// Give it a "role" property so we can verify nodes.DeleteGroup clears it.
-	if err := nodes.SetProperty(sdb, physical.ID, "role", "store"); err != nil {
-		t.Fatalf("nodes.SetProperty role: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, physical.ID, "role", "store"), "nodes.SetProperty role")
 	// And an unrelated property that must NOT be cleared.
-	if err := nodes.SetProperty(sdb, physical.ID, "notes", "keep-me"); err != nil {
-		t.Fatalf("nodes.SetProperty notes: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, physical.ID, "notes", "keep-me"), "nodes.SetProperty notes")
 
-	if err := nodes.DeleteGroup(sdb, grpID); err != nil {
-		t.Fatalf("nodes.DeleteGroup: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.DeleteGroup(sdb, grpID), "nodes.DeleteGroup")
 
 	// Synthetic group and lane are gone.
 	if _, err := nodes.Get(sdb, grpID); err == nil {
@@ -630,13 +585,12 @@ func TestDeleteGroupHierarchy(t *testing.T) {
 }
 
 func TestListLaneSlotsOrder(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	laneParent := &nodes.Node{Name: "LAN", Enabled: true}
-	if err := nodes.Create(sdb, laneParent); err != nil {
-		t.Fatalf("nodes.Create lane: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, laneParent), "nodes.Create lane")
 	d1, d2, d3 := 1, 2, 3
 	s2 := &nodes.Node{Name: "S2", Enabled: true, ParentID: &laneParent.ID, Depth: &d2}
 	s1 := &nodes.Node{Name: "S1", Enabled: true, ParentID: &laneParent.ID, Depth: &d1}
@@ -661,13 +615,12 @@ func TestListLaneSlotsOrder(t *testing.T) {
 }
 
 func TestGetSlotDepthUnset(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	n := &nodes.Node{Name: "NO-DEPTH", Enabled: true}
-	if err := nodes.Create(sdb, n); err != nil {
-		t.Fatalf("nodes.Create: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
 	got, err := nodes.GetSlotDepth(sdb, n.ID)
 	if err != nil {
 		t.Fatalf("nodes.GetSlotDepth: %v", err)
@@ -683,13 +636,12 @@ func TestGetSlotDepthUnset(t *testing.T) {
 }
 
 func TestIsSlotAccessibleRootNode(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	root := &nodes.Node{Name: "ROOT", Enabled: true}
-	if err := nodes.Create(sdb, root); err != nil {
-		t.Fatalf("nodes.Create root: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, root), "nodes.Create root")
 
 	// A node with no parent is accessible.
 	ok, err := nodes.IsSlotAccessible(sdb, root.ID)
@@ -702,9 +654,7 @@ func TestIsSlotAccessibleRootNode(t *testing.T) {
 
 	// Child with no Depth set is accessible by the "no depth = accessible" rule.
 	child := &nodes.Node{Name: "CHILD", Enabled: true, ParentID: &root.ID}
-	if err := nodes.Create(sdb, child); err != nil {
-		t.Fatalf("nodes.Create child: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, child), "nodes.Create child")
 	ok2, err := nodes.IsSlotAccessible(sdb, child.ID)
 	if err != nil {
 		t.Fatalf("nodes.IsSlotAccessible child: %v", err)
@@ -715,13 +665,12 @@ func TestIsSlotAccessibleRootNode(t *testing.T) {
 }
 
 func TestFindStoreSlotInLaneEmpty(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	lane := &nodes.Node{Name: "LN", Enabled: true}
-	if err := nodes.Create(sdb, lane); err != nil {
-		t.Fatalf("nodes.Create lane: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, lane), "nodes.Create lane")
 
 	// No slots -> expect error ("no empty slot").
 	if _, err := nodes.FindStoreSlotInLane(sdb, lane.ID); err == nil {
@@ -730,18 +679,15 @@ func TestFindStoreSlotInLaneEmpty(t *testing.T) {
 }
 
 func TestCountBinsInLaneNoBins(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	lane := &nodes.Node{Name: "LN", Enabled: true}
-	if err := nodes.Create(sdb, lane); err != nil {
-		t.Fatalf("nodes.Create lane: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, lane), "nodes.Create lane")
 	d := 1
 	slot := &nodes.Node{Name: "SL", Enabled: true, ParentID: &lane.ID, Depth: &d}
-	if err := nodes.Create(sdb, slot); err != nil {
-		t.Fatalf("nodes.Create slot: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, slot), "nodes.Create slot")
 
 	count, err := nodes.CountBinsInLane(sdb, lane.ID)
 	if err != nil {
@@ -757,13 +703,12 @@ func TestCountBinsInLaneNoBins(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNodeProperties_SetGetDelete(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	n := &nodes.Node{Name: "N1", Enabled: true}
-	if err := nodes.Create(sdb, n); err != nil {
-		t.Fatalf("nodes.Create: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
 
 	// Unset key returns empty string.
 	if v := nodes.GetProperty(sdb, n.ID, "role"); v != "" {
@@ -771,25 +716,19 @@ func TestNodeProperties_SetGetDelete(t *testing.T) {
 	}
 
 	// Set, then read back.
-	if err := nodes.SetProperty(sdb, n.ID, "role", "store"); err != nil {
-		t.Fatalf("nodes.SetProperty: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "role", "store"), "nodes.SetProperty")
 	if v := nodes.GetProperty(sdb, n.ID, "role"); v != "store" {
 		t.Errorf("nodes.GetProperty after set = %q, want %q", v, "store")
 	}
 
 	// Upsert: same key re-set updates the value.
-	if err := nodes.SetProperty(sdb, n.ID, "role", "retrieve"); err != nil {
-		t.Fatalf("nodes.SetProperty upsert: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "role", "retrieve"), "nodes.SetProperty upsert")
 	if v := nodes.GetProperty(sdb, n.ID, "role"); v != "retrieve" {
 		t.Errorf("nodes.GetProperty after upsert = %q, want %q", v, "retrieve")
 	}
 
 	// Add a second property.
-	if err := nodes.SetProperty(sdb, n.ID, "capacity", "42"); err != nil {
-		t.Fatalf("nodes.SetProperty capacity: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, n.ID, "capacity", "42"), "nodes.SetProperty capacity")
 
 	// nodes.ListProperties -- ordered by key ASC.
 	list, err := nodes.ListProperties(sdb, n.ID)
@@ -810,9 +749,7 @@ func TestNodeProperties_SetGetDelete(t *testing.T) {
 	}
 
 	// nodes.Delete one, list shrinks.
-	if err := nodes.DeleteProperty(sdb, n.ID, "role"); err != nil {
-		t.Fatalf("nodes.DeleteProperty: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.DeleteProperty(sdb, n.ID, "role"), "nodes.DeleteProperty")
 	if v := nodes.GetProperty(sdb, n.ID, "role"); v != "" {
 		t.Errorf("nodes.GetProperty after delete = %q, want \"\"", v)
 	}
@@ -829,13 +766,12 @@ func TestNodeProperties_SetGetDelete(t *testing.T) {
 }
 
 func TestListPropertiesEmpty(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	n := &nodes.Node{Name: "EMPTY", Enabled: true}
-	if err := nodes.Create(sdb, n); err != nil {
-		t.Fatalf("nodes.Create: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
 	list, err := nodes.ListProperties(sdb, n.ID)
 	if err != nil {
 		t.Fatalf("nodes.ListProperties: %v", err)
@@ -850,24 +786,17 @@ func TestListPropertiesEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestStations_AssignListUnassign(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	n := &nodes.Node{Name: "N-STAT", Enabled: true}
-	if err := nodes.Create(sdb, n); err != nil {
-		t.Fatalf("nodes.Create: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
 
-	if err := nodes.AssignStation(sdb, n.ID, "line-1"); err != nil {
-		t.Fatalf("nodes.AssignStation line-1: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, n.ID, "line-1"), "nodes.AssignStation line-1")
 	// ON CONFLICT DO NOTHING: assigning same station again is a no-op (no error).
-	if err := nodes.AssignStation(sdb, n.ID, "line-1"); err != nil {
-		t.Fatalf("nodes.AssignStation line-1 dup: %v", err)
-	}
-	if err := nodes.AssignStation(sdb, n.ID, "line-2"); err != nil {
-		t.Fatalf("nodes.AssignStation line-2: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, n.ID, "line-1"), "nodes.AssignStation line-1 dup")
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, n.ID, "line-2"), "nodes.AssignStation line-2")
 
 	list, err := nodes.ListStationsForNode(sdb, n.ID)
 	if err != nil {
@@ -880,9 +809,7 @@ func TestStations_AssignListUnassign(t *testing.T) {
 		t.Errorf("nodes.ListStationsForNode = %v, want [line-1 line-2]", list)
 	}
 
-	if err := nodes.UnassignStation(sdb, n.ID, "line-1"); err != nil {
-		t.Fatalf("nodes.UnassignStation: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.UnassignStation(sdb, n.ID, "line-1"), "nodes.UnassignStation")
 	list2, err := nodes.ListStationsForNode(sdb, n.ID)
 	if err != nil {
 		t.Fatalf("nodes.ListStationsForNode after unassign: %v", err)
@@ -893,25 +820,18 @@ func TestStations_AssignListUnassign(t *testing.T) {
 }
 
 func TestSetStationsReplacesAll(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	n := &nodes.Node{Name: "N-SET", Enabled: true}
-	if err := nodes.Create(sdb, n); err != nil {
-		t.Fatalf("nodes.Create: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
 
-	if err := nodes.AssignStation(sdb, n.ID, "alpha"); err != nil {
-		t.Fatalf("nodes.AssignStation alpha: %v", err)
-	}
-	if err := nodes.AssignStation(sdb, n.ID, "beta"); err != nil {
-		t.Fatalf("nodes.AssignStation beta: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, n.ID, "alpha"), "nodes.AssignStation alpha")
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, n.ID, "beta"), "nodes.AssignStation beta")
 
 	// nodes.SetStations replaces the full set.
-	if err := nodes.SetStations(sdb, n.ID, []string{"gamma", "delta"}); err != nil {
-		t.Fatalf("nodes.SetStations: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetStations(sdb, n.ID, []string{"gamma", "delta"}), "nodes.SetStations")
 	list, err := nodes.ListStationsForNode(sdb, n.ID)
 	if err != nil {
 		t.Fatalf("nodes.ListStationsForNode: %v", err)
@@ -921,9 +841,7 @@ func TestSetStationsReplacesAll(t *testing.T) {
 	}
 
 	// nodes.SetStations with empty slice clears everything.
-	if err := nodes.SetStations(sdb, n.ID, nil); err != nil {
-		t.Fatalf("nodes.SetStations nil: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetStations(sdb, n.ID, nil), "nodes.SetStations nil")
 	list2, err := nodes.ListStationsForNode(sdb, n.ID)
 	if err != nil {
 		t.Fatalf("nodes.ListStationsForNode empty: %v", err)
@@ -934,6 +852,7 @@ func TestSetStationsReplacesAll(t *testing.T) {
 }
 
 func TestListNodesForStation(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
@@ -945,31 +864,19 @@ func TestListNodesForStation(t *testing.T) {
 
 	// Directly assigned top-level node.
 	direct := &nodes.Node{Name: "DIRECT", Enabled: true}
-	if err := nodes.Create(sdb, direct); err != nil {
-		t.Fatalf("nodes.Create direct: %v", err)
-	}
-	if err := nodes.AssignStation(sdb, direct.ID, "line-1"); err != nil {
-		t.Fatalf("nodes.AssignStation direct: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, direct), "nodes.Create direct")
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, direct.ID, "line-1"), "nodes.AssignStation direct")
 
 	// Group + child under it: station assigned to the child; group should
 	// surface too because of the NGRP parent rollup clause.
 	grp := &nodes.Node{Name: "GRP", Enabled: true, IsSynthetic: true, NodeTypeID: &ngrp.ID}
-	if err := nodes.Create(sdb, grp); err != nil {
-		t.Fatalf("nodes.Create grp: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, grp), "nodes.Create grp")
 	kid := &nodes.Node{Name: "KID", Enabled: true, ParentID: &grp.ID}
-	if err := nodes.Create(sdb, kid); err != nil {
-		t.Fatalf("nodes.Create kid: %v", err)
-	}
-	if err := nodes.AssignStation(sdb, kid.ID, "line-1"); err != nil {
-		t.Fatalf("nodes.AssignStation kid: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, kid), "nodes.Create kid")
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, kid.ID, "line-1"), "nodes.AssignStation kid")
 
 	// Unrelated node — must not appear.
-	if err := nodes.Create(sdb, &nodes.Node{Name: "UNREL", Enabled: true}); err != nil {
-		t.Fatalf("nodes.Create unrel: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, &nodes.Node{Name: "UNREL", Enabled: true}), "nodes.Create unrel")
 
 	nodes, err := nodes.ListNodesForStation(sdb, "line-1")
 	if err != nil {
@@ -994,26 +901,19 @@ func TestListNodesForStation(t *testing.T) {
 }
 
 func TestGetEffectiveStationsModes(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	parent := &nodes.Node{Name: "P", Enabled: true}
-	if err := nodes.Create(sdb, parent); err != nil {
-		t.Fatalf("nodes.Create parent: %v", err)
-	}
-	if err := nodes.AssignStation(sdb, parent.ID, "parent-line"); err != nil {
-		t.Fatalf("nodes.AssignStation parent: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, parent), "nodes.Create parent")
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, parent.ID, "parent-line"), "nodes.AssignStation parent")
 
 	child := &nodes.Node{Name: "C", Enabled: true, ParentID: &parent.ID}
-	if err := nodes.Create(sdb, child); err != nil {
-		t.Fatalf("nodes.Create child: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, child), "nodes.Create child")
 
 	// Mode "all" -> returns nil.
-	if err := nodes.SetProperty(sdb, child.ID, "station_mode", "all"); err != nil {
-		t.Fatalf("nodes.SetProperty all: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, child.ID, "station_mode", "all"), "nodes.SetProperty all")
 	got, err := nodes.GetEffectiveStations(sdb, child.ID)
 	if err != nil {
 		t.Fatalf("nodes.GetEffectiveStations all: %v", err)
@@ -1023,9 +923,7 @@ func TestGetEffectiveStationsModes(t *testing.T) {
 	}
 
 	// Mode "none" -> empty non-nil slice.
-	if err := nodes.SetProperty(sdb, child.ID, "station_mode", "none"); err != nil {
-		t.Fatalf("nodes.SetProperty none: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, child.ID, "station_mode", "none"), "nodes.SetProperty none")
 	got, err = nodes.GetEffectiveStations(sdb, child.ID)
 	if err != nil {
 		t.Fatalf("nodes.GetEffectiveStations none: %v", err)
@@ -1035,12 +933,8 @@ func TestGetEffectiveStationsModes(t *testing.T) {
 	}
 
 	// Mode "specific" -> direct assignments only (seed a child assignment).
-	if err := nodes.SetProperty(sdb, child.ID, "station_mode", "specific"); err != nil {
-		t.Fatalf("nodes.SetProperty specific: %v", err)
-	}
-	if err := nodes.AssignStation(sdb, child.ID, "child-line"); err != nil {
-		t.Fatalf("nodes.AssignStation child: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetProperty(sdb, child.ID, "station_mode", "specific"), "nodes.SetProperty specific")
+	testutil.MustNoErr(t, nodes.AssignStation(sdb, child.ID, "child-line"), "nodes.AssignStation child")
 	got, err = nodes.GetEffectiveStations(sdb, child.ID)
 	if err != nil {
 		t.Fatalf("nodes.GetEffectiveStations specific: %v", err)
@@ -1051,12 +945,8 @@ func TestGetEffectiveStationsModes(t *testing.T) {
 
 	// Mode inherit: delete the child's own assignment, then inherit walks
 	// up to parent-line.
-	if err := nodes.UnassignStation(sdb, child.ID, "child-line"); err != nil {
-		t.Fatalf("nodes.UnassignStation child: %v", err)
-	}
-	if err := nodes.DeleteProperty(sdb, child.ID, "station_mode"); err != nil {
-		t.Fatalf("nodes.DeleteProperty station_mode: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.UnassignStation(sdb, child.ID, "child-line"), "nodes.UnassignStation child")
+	testutil.MustNoErr(t, nodes.DeleteProperty(sdb, child.ID, "station_mode"), "nodes.DeleteProperty station_mode")
 	got, err = nodes.GetEffectiveStations(sdb, child.ID)
 	if err != nil {
 		t.Fatalf("nodes.GetEffectiveStations inherit: %v", err)
@@ -1071,13 +961,12 @@ func TestGetEffectiveStationsModes(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPayloadAssignments(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sdb := db.DB
 
 	n := &nodes.Node{Name: "N-PL", Enabled: true}
-	if err := nodes.Create(sdb, n); err != nil {
-		t.Fatalf("nodes.Create: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.Create(sdb, n), "nodes.Create")
 
 	// Seed two payload templates directly — no nodes-package CRUD for payloads.
 	var pl1ID, pl2ID int64
@@ -1093,41 +982,29 @@ func TestPayloadAssignments(t *testing.T) {
 	}
 
 	// nodes.AssignPayload.
-	if err := nodes.AssignPayload(sdb, n.ID, pl1ID); err != nil {
-		t.Fatalf("nodes.AssignPayload pl1: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.AssignPayload(sdb, n.ID, pl1ID), "nodes.AssignPayload pl1")
 	// Duplicate assign — ON CONFLICT DO NOTHING, no error.
-	if err := nodes.AssignPayload(sdb, n.ID, pl1ID); err != nil {
-		t.Fatalf("nodes.AssignPayload pl1 dup: %v", err)
-	}
-	if err := nodes.AssignPayload(sdb, n.ID, pl2ID); err != nil {
-		t.Fatalf("nodes.AssignPayload pl2: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.AssignPayload(sdb, n.ID, pl1ID), "nodes.AssignPayload pl1 dup")
+	testutil.MustNoErr(t, nodes.AssignPayload(sdb, n.ID, pl2ID), "nodes.AssignPayload pl2")
 
 	if got := countNodePayloads(t, sdb, n.ID); got != 2 {
 		t.Errorf("node_payloads count after assigns = %d, want 2", got)
 	}
 
 	// nodes.UnassignPayload.
-	if err := nodes.UnassignPayload(sdb, n.ID, pl1ID); err != nil {
-		t.Fatalf("nodes.UnassignPayload: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.UnassignPayload(sdb, n.ID, pl1ID), "nodes.UnassignPayload")
 	if got := countNodePayloads(t, sdb, n.ID); got != 1 {
 		t.Errorf("node_payloads count after unassign = %d, want 1", got)
 	}
 
 	// nodes.SetPayloads replaces the set entirely.
-	if err := nodes.SetPayloads(sdb, n.ID, []int64{pl1ID, pl2ID}); err != nil {
-		t.Fatalf("nodes.SetPayloads: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetPayloads(sdb, n.ID, []int64{pl1ID, pl2ID}), "nodes.SetPayloads")
 	if got := countNodePayloads(t, sdb, n.ID); got != 2 {
 		t.Errorf("node_payloads count after nodes.SetPayloads = %d, want 2", got)
 	}
 
 	// nodes.SetPayloads nil clears.
-	if err := nodes.SetPayloads(sdb, n.ID, nil); err != nil {
-		t.Fatalf("nodes.SetPayloads nil: %v", err)
-	}
+	testutil.MustNoErr(t, nodes.SetPayloads(sdb, n.ID, nil), "nodes.SetPayloads nil")
 	if got := countNodePayloads(t, sdb, n.ID); got != 0 {
 		t.Errorf("node_payloads count after nodes.SetPayloads(nil) = %d, want 0", got)
 	}

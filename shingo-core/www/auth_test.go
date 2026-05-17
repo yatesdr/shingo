@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"shingo/protocol/auth"
+	"shingo/protocol/testutil"
 )
 
 // Characterization tests for auth.go — pinned before the Stage 1 refactor
@@ -31,6 +32,7 @@ import (
 // admin_users table the helper creates "admin" with a bcrypt hash of
 // "admin" (verified via auth.CheckPassword).
 func TestEnsureDefaultAdmin_CreatesWhenEmpty(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	exists, err := db.AdminUserExists()
@@ -59,15 +61,14 @@ func TestEnsureDefaultAdmin_CreatesWhenEmpty(t *testing.T) {
 // calling ensureDefaultAdmin when any admin already exists must NOT add a
 // second row (the guard is AdminUserExists, not username-specific).
 func TestEnsureDefaultAdmin_IdempotentWhenUserExists(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	// Seed a non-"admin" user so the helper's AdminUserExists check returns
 	// true. If the helper ever ignored this guard it would also try to
 	// insert the default "admin" row.
 	hash, _ := auth.HashPassword("s3cret")
-	if err := db.CreateAdminUser("operator", hash); err != nil {
-		t.Fatalf("seed user: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateAdminUser("operator", hash), "seed user")
 
 	h.ensureDefaultAdmin()
 
@@ -86,6 +87,7 @@ func TestEnsureDefaultAdmin_IdempotentWhenUserExists(t *testing.T) {
 // valid credentials set a session cookie that records
 // {authenticated:true, username:<username>} and redirect 303 to "/".
 func TestHandleLogin_HappyPathSetsSession(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	h.ensureDefaultAdmin() // admin/admin
 
@@ -136,6 +138,7 @@ func TestHandleLogin_HappyPathSetsSession(t *testing.T) {
 // branch: the handler renders the login template with an error (Status 200,
 // NOT a redirect), and no authenticated session is established.
 func TestHandleLogin_WrongPasswordRendersLogin(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	h.ensureDefaultAdmin()
 
@@ -175,6 +178,7 @@ func TestHandleLogin_WrongPasswordRendersLogin(t *testing.T) {
 // GetAdminUser-miss branch. The error path must not leak that the user is
 // unknown vs. the password is wrong — both just re-render login.
 func TestHandleLogin_UnknownUserRendersLogin(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	form := url.Values{}
@@ -200,6 +204,7 @@ func TestHandleLogin_UnknownUserRendersLogin(t *testing.T) {
 // logout the session's authenticated flag is false, so a follow-up request
 // carrying the rewritten cookie fails isAuthenticated.
 func TestHandleLogout_ClearsAuthenticatedFlag(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	h.ensureDefaultAdmin()
 

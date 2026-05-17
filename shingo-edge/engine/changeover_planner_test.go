@@ -23,6 +23,7 @@ func fullSwapClaim(node, payload string, role protocol.ClaimRole) processes.Node
 }
 
 func TestPlanNodeAction_Swap(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	to := fullSwapClaim("N1", "PART-B", "consume")
 	diff := ChangeoverNodeDiff{
@@ -61,6 +62,7 @@ func TestPlanNodeAction_Swap(t *testing.T) {
 }
 
 func TestPlanNodeAction_Drop(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	diff := ChangeoverNodeDiff{
 		CoreNodeName: "N1",
@@ -99,6 +101,7 @@ func TestPlanNodeAction_Drop(t *testing.T) {
 // time and advances to line_cleared on the pickup event (handled in
 // handler_bin_picked_up).
 func TestPlanNodeAction_Drop_WithEvacuateMarker(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.EvacuateOnChangeover = true
 	diff := ChangeoverNodeDiff{
@@ -122,6 +125,7 @@ func TestPlanNodeAction_Drop_WithEvacuateMarker(t *testing.T) {
 // and silently skipped — root cause of Bug 2 (ALN_002) where operators
 // saw nothing happen and had no diagnostic to point at.
 func TestPlanNodeAction_DropWithoutOutbound_FailsLoudly(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"} // no OutboundDestination
 	diff := ChangeoverNodeDiff{
 		CoreNodeName: "N1",
@@ -146,6 +150,7 @@ func TestPlanNodeAction_DropWithoutOutbound_FailsLoudly(t *testing.T) {
 // plan is enough to refuse dispatch. The planner emits all actions; the
 // apply layer's job is to fail the whole plan on any Err.
 func TestBuildChangeoverPlan_AnyNodeWithErrFailsThePlan(t *testing.T) {
+	t.Parallel()
 	// Valid Swap on N1.
 	swapFrom := fullSwapClaim("N1", "PART-A", "consume")
 	swapTo := fullSwapClaim("N1", "PART-B", "consume")
@@ -193,6 +198,7 @@ func TestBuildChangeoverPlan_AnyNodeWithErrFailsThePlan(t *testing.T) {
 // doing so would silently emit a single-delivery retrieve instead of
 // the A/B paired swap the operator expects.
 func TestPlanNodeAction_Sequential_EmptyStagingStillDispatchesSequential(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{
 		CoreNodeName:        "N1",
 		PayloadCode:         "PART-A",
@@ -231,6 +237,7 @@ func TestPlanNodeAction_Sequential_EmptyStagingStillDispatchesSequential(t *test
 }
 
 func TestPlanNodeAction_Swap_Sequential(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "sequential"
 	from.PairedCoreNode = "N1B"
@@ -275,6 +282,7 @@ func TestPlanNodeAction_Swap_Sequential(t *testing.T) {
 // pulling from PairedCoreNode (N1B active), the planner should swap N1
 // (the inactive side) FIRST. Mirror test asserts the inverse direction.
 func TestBuildChangeoverPlan_Sequential_ActiveOnB_SwapsAFirst(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "sequential"
 	from.PairedCoreNode = "N1B"
@@ -299,6 +307,7 @@ func TestBuildChangeoverPlan_Sequential_ActiveOnB_SwapsAFirst(t *testing.T) {
 }
 
 func TestBuildChangeoverPlan_Sequential_ActiveOnA_SwapsBFirst(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "sequential"
 	from.PairedCoreNode = "N1B"
@@ -326,6 +335,7 @@ func TestBuildChangeoverPlan_Sequential_ActiveOnA_SwapsBFirst(t *testing.T) {
 // (each robot evacs its position then fetches new + waits + delivers).
 // LogTag = "evacuate_sequential".
 func TestPlanNodeAction_Evacuate_Sequential(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "sequential"
 	from.PairedCoreNode = "N1B"
@@ -360,6 +370,7 @@ func TestPlanNodeAction_Evacuate_Sequential(t *testing.T) {
 
 // Sequential without PairedCoreNode → loud NodeAction.Err.
 func TestPlanNodeAction_Sequential_RequiresPairedCoreNode(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "sequential"
 	// PairedCoreNode intentionally empty
@@ -388,6 +399,7 @@ func TestPlanNodeAction_Sequential_RequiresPairedCoreNode(t *testing.T) {
 }
 
 func TestPlanNodeAction_Add_FallsBackToStaging(t *testing.T) {
+	t.Parallel()
 	to := fullSwapClaim("N1", "PART-B", "consume")
 	diff := ChangeoverNodeDiff{
 		CoreNodeName: "N1",
@@ -409,6 +421,7 @@ func TestPlanNodeAction_Add_FallsBackToStaging(t *testing.T) {
 }
 
 func TestPlanNodeAction_AddNoStaging_RetrieveFallback(t *testing.T) {
+	t.Parallel()
 	to := processes.NodeClaim{CoreNodeName: "N1", PayloadCode: "PART-B", Role: "produce"} // no InboundStaging
 	diff := ChangeoverNodeDiff{
 		CoreNodeName: "N1",
@@ -430,6 +443,7 @@ func TestPlanNodeAction_AddNoStaging_RetrieveFallback(t *testing.T) {
 }
 
 func TestPlanNodeAction_KeepStagedSplit(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.KeepStaged = true
 	from.SwapMode = "two_robot"
@@ -452,6 +466,7 @@ func TestPlanNodeAction_KeepStagedSplit(t *testing.T) {
 }
 
 func TestPlanNodeAction_KeepStagedCombined(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.KeepStaged = true
 	from.SwapMode = "single_robot"
@@ -471,6 +486,7 @@ func TestPlanNodeAction_KeepStagedCombined(t *testing.T) {
 }
 
 func TestBuildChangeoverPlan_SkipsUnchangedAndUnknownNodes(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	to := fullSwapClaim("N1", "PART-B", "consume")
 	diffs := []ChangeoverNodeDiff{
@@ -493,6 +509,7 @@ func TestBuildChangeoverPlan_SkipsUnchangedAndUnknownNodes(t *testing.T) {
 // index dispatch with both R1 and R2 orders emitted (no fan-out, no
 // NodeAction.Err).
 func TestPlanNodeAction_PressIndex_SameBinType_RoutesToStandardDispatch(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "two_robot_press_index"
 	from.PairedCoreNode = "N1B"
@@ -526,6 +543,7 @@ func TestPlanNodeAction_PressIndex_SameBinType_RoutesToStandardDispatch(t *testi
 // routes through BuildSwapChangeoverSteps' per-position case: single-
 // order shape, 4 steps, no operator gate.
 func TestPlanNodeAction_PressPosition_SwapRoutesToPerPositionBuilder(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{
 		CoreNodeName:        "POS-A",
 		PayloadCode:         "PART-A",
@@ -569,6 +587,7 @@ func TestPlanNodeAction_PressPosition_SwapRoutesToPerPositionBuilder(t *testing.
 // Per-position Evacuate routes the same way (parent SituationEvacuate
 // is unusual when bin types differ, but the dispatch must handle it).
 func TestPlanNodeAction_PressPosition_EvacuateRoutesToPerPositionBuilder(t *testing.T) {
+	t.Parallel()
 	from := processes.NodeClaim{
 		CoreNodeName:        "POS-A",
 		PayloadCode:         "PART-A",
@@ -609,6 +628,7 @@ func TestPlanNodeAction_PressPosition_EvacuateRoutesToPerPositionBuilder(t *test
 // entry naming the fields its builder consumes; the planner emits a
 // clear NodeAction.Err naming the missing field(s).
 func TestRequiredChangeoverFields_PerMode(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		fromMode protocol.SwapMode
@@ -724,6 +744,7 @@ func TestRequiredChangeoverFields_PerMode(t *testing.T) {
 // naming the missing field, distinct from the generic "couldn't build
 // steps" message that the builder emits for unanticipated rejections.
 func TestPlanNodeAction_MissingFieldDiagnostic(t *testing.T) {
+	t.Parallel()
 	from := fullSwapClaim("N1", "PART-A", "consume")
 	from.SwapMode = "two_robot"
 	from.OutboundDestination = "" // missing

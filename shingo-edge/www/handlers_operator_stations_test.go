@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"shingo/protocol/testutil"
 	"shingoedge/store"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -616,9 +617,7 @@ func TestOperatorStations_ClearNodeOrders_Success(t *testing.T) {
 		t.Fatalf("EnsureProcessNodeRuntime: %v", err)
 	}
 	stubOrder := int64(42)
-	if err := testDB.UpdateProcessNodeRuntimeOrders(nodeID, &stubOrder, nil); err != nil {
-		t.Fatalf("seed active order: %v", err)
-	}
+	testutil.MustNoErr(t, testDB.UpdateProcessNodeRuntimeOrders(nodeID, &stubOrder, nil), "seed active order")
 
 	resp := doRequest(t, router, "POST", "/api/process-nodes/"+itoa(nodeID)+"/clear-orders", nil, nil)
 	assertStatus(t, resp, http.StatusOK)

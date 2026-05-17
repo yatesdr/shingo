@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/config"
 	"shingoedge/orders"
 	"shingoedge/service"
@@ -79,6 +80,7 @@ func newCoverageEngine(t *testing.T) *Engine {
 // ── engine.go accessors ─────────────────────────────────────────────
 
 func TestEngine_Accessors(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	if eng.DB() == nil {
 		t.Error("DB() returned nil")
@@ -112,6 +114,7 @@ func TestEngine_Accessors(t *testing.T) {
 }
 
 func TestEngine_UptimeAndStop(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	// startedAt is zero value until Start() runs, so Uptime() will be large.
 	// Set it manually so Uptime returns something sane.
@@ -134,6 +137,7 @@ func TestEngine_UptimeAndStop(t *testing.T) {
 // ── Core node sync ──────────────────────────────────────────────────
 
 func TestEngine_SetCoreNodesEmitsEvent(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	var got CoreNodesUpdatedEvent
 	var gotType EventType
@@ -172,6 +176,7 @@ func TestEngine_SetCoreNodesEmitsEvent(t *testing.T) {
 // ── Func injection ──────────────────────────────────────────────────
 
 func TestEngine_RequestNodeSync(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	// No fn set → no-op, no panic.
 	eng.RequestNodeSync()
@@ -186,6 +191,7 @@ func TestEngine_RequestNodeSync(t *testing.T) {
 }
 
 func TestEngine_RequestCatalogSync(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	eng.RequestCatalogSync() // no fn set — no-op
 
@@ -198,6 +204,7 @@ func TestEngine_RequestCatalogSync(t *testing.T) {
 }
 
 func TestEngine_SendEnvelope(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	// No sendFn configured.
 	err := eng.SendEnvelope(&protocol.Envelope{})
@@ -211,15 +218,14 @@ func TestEngine_SendEnvelope(t *testing.T) {
 		return nil
 	})
 	sentinel := &protocol.Envelope{}
-	if err := eng.SendEnvelope(sentinel); err != nil {
-		t.Fatalf("SendEnvelope: %v", err)
-	}
+	testutil.MustNoErr(t, eng.SendEnvelope(sentinel), "SendEnvelope")
 	if captured != sentinel {
 		t.Error("sendFn did not receive the envelope we passed in")
 	}
 }
 
 func TestEngine_ReconnectKafka(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	if err := eng.ReconnectKafka(); err == nil {
 		t.Error("ReconnectKafka with no fn should error")
@@ -242,14 +248,13 @@ func TestEngine_ReconnectKafka(t *testing.T) {
 // ── HandlePayloadCatalog ────────────────────────────────────────────
 
 func TestEngine_HandlePayloadCatalog_UpsertsAndPrunes(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 
 	// Seed an entry with ID=99 that should be pruned when Core's catalog
 	// doesn't mention it.
 	stale := &catalog.CatalogEntry{ID: 99, Name: "stale", Code: "STALE", UOPCapacity: 10}
-	if err := eng.db.UpsertPayloadCatalog(stale); err != nil {
-		t.Fatalf("seed stale: %v", err)
-	}
+	testutil.MustNoErr(t, eng.db.UpsertPayloadCatalog(stale), "seed stale")
 
 	// Handle a catalog with two fresh entries (ID 1 and 2).
 	entries := []protocol.CatalogPayloadInfo{
@@ -279,6 +284,7 @@ func TestEngine_HandlePayloadCatalog_UpsertsAndPrunes(t *testing.T) {
 }
 
 func TestEngine_HandlePayloadCatalog_EmptyIsSafe(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	// Seed three entries.
 	for i := int64(1); i <= 3; i++ {
@@ -302,6 +308,7 @@ func TestEngine_HandlePayloadCatalog_EmptyIsSafe(t *testing.T) {
 // ── adapters.go — plcEmitter branches ───────────────────────────────
 
 func TestPlcEmitter_AllEvents(t *testing.T) {
+	t.Parallel()
 	bus := NewEventBus()
 	// Collect every event the emitter fires so we can assert on type + payload.
 	received := map[EventType]any{}
@@ -365,6 +372,7 @@ func TestPlcEmitter_AllEvents(t *testing.T) {
 // ── adapters.go — orderEmitter branches ─────────────────────────────
 
 func TestOrderEmitter_AllEvents(t *testing.T) {
+	t.Parallel()
 	bus := NewEventBus()
 	received := map[EventType]any{}
 	var mu sync.Mutex
@@ -402,6 +410,7 @@ func TestOrderEmitter_AllEvents(t *testing.T) {
 // ── core_client.go ──────────────────────────────────────────────────
 
 func TestCoreClient_AvailableAndSetBaseURL(t *testing.T) {
+	t.Parallel()
 	c := NewCoreClient("")
 	if c.Available() {
 		t.Error("new empty-url client should not be Available")
@@ -421,6 +430,7 @@ func TestCoreClient_AvailableAndSetBaseURL(t *testing.T) {
 }
 
 func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
+	t.Parallel()
 	c := NewCoreClient("")
 
 	// All telemetry reads should return (nil,nil) — not an error.
@@ -444,6 +454,7 @@ func TestCoreClient_NoBaseURL_GracefulDegrade(t *testing.T) {
 }
 
 func TestCoreClient_FetchPayloadManifest_EmptyCode(t *testing.T) {
+	t.Parallel()
 	// Even with a base URL, empty payload code short-circuits to (nil,nil).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("server should not be hit: %s", r.URL.Path)
@@ -457,6 +468,7 @@ func TestCoreClient_FetchPayloadManifest_EmptyCode(t *testing.T) {
 }
 
 func TestCoreClient_FetchPayloadManifest_Success(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/WIDGET/manifest") {
 			t.Errorf("unexpected path: %s", r.URL.Path)
@@ -482,6 +494,7 @@ func TestCoreClient_FetchPayloadManifest_Success(t *testing.T) {
 }
 
 func TestCoreClient_FetchPayloadManifest_404(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
@@ -495,6 +508,7 @@ func TestCoreClient_FetchPayloadManifest_404(t *testing.T) {
 }
 
 func TestCoreClient_FetchPayloadManifest_BadJSON(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("not-json"))
 	}))
@@ -507,6 +521,7 @@ func TestCoreClient_FetchPayloadManifest_BadJSON(t *testing.T) {
 }
 
 func TestCoreClient_FetchPayloadManifest_NetworkError(t *testing.T) {
+	t.Parallel()
 	// Point at a closed server → HTTP transport error → graceful (nil,nil).
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	closedURL := srv.URL
@@ -520,6 +535,7 @@ func TestCoreClient_FetchPayloadManifest_NetworkError(t *testing.T) {
 }
 
 func TestCoreClient_FetchNodeChildren(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/NGRP/children") {
 			t.Errorf("unexpected path %s", r.URL.Path)
@@ -546,6 +562,7 @@ func TestCoreClient_FetchNodeChildren(t *testing.T) {
 }
 
 func TestCoreClient_FetchNodeChildren_Non200(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "nope", http.StatusNotFound)
 	}))
@@ -558,6 +575,7 @@ func TestCoreClient_FetchNodeChildren_Non200(t *testing.T) {
 }
 
 func TestCoreClient_FetchNodeChildren_BadJSON(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("{not:json"))
 	}))
@@ -574,6 +592,7 @@ func TestCoreClient_FetchNodeChildren_BadJSON(t *testing.T) {
 // reconciler can distinguish "Core says empty" from "Core says
 // here's the bin" from "Core unreachable, retain prior cached value".
 func TestCoreClient_BinAtLineside_TriState(t *testing.T) {
+	t.Parallel()
 	t.Run("found_with_bin", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode([]NodeBinInfo{
@@ -645,6 +664,7 @@ func TestCoreClient_BinAtLineside_TriState(t *testing.T) {
 }
 
 func TestCoreClient_FetchNodeBins(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("nodes"); got != "N1,N2" {
 			t.Errorf("nodes query = %q, want N1,N2", got)
@@ -672,6 +692,7 @@ func TestCoreClient_FetchNodeBins(t *testing.T) {
 }
 
 func TestCoreClient_FetchNodeBins_ErrorPaths(t *testing.T) {
+	t.Parallel()
 	// 500 → graceful (nil,nil).
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
@@ -694,6 +715,7 @@ func TestCoreClient_FetchNodeBins_ErrorPaths(t *testing.T) {
 }
 
 func TestCoreClient_LoadBin_Success(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
@@ -723,6 +745,7 @@ func TestCoreClient_LoadBin_Success(t *testing.T) {
 }
 
 func TestCoreClient_LoadBin_ErrorStatus(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(BinLoadResponse{Status: "error", Detail: "bin already loaded"})
 	}))
@@ -734,6 +757,7 @@ func TestCoreClient_LoadBin_ErrorStatus(t *testing.T) {
 }
 
 func TestCoreClient_LoadBin_Non200(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(BinLoadResponse{})
@@ -746,6 +770,7 @@ func TestCoreClient_LoadBin_Non200(t *testing.T) {
 }
 
 func TestCoreClient_LoadBin_NetworkError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := srv.URL
 	srv.Close()
@@ -756,6 +781,7 @@ func TestCoreClient_LoadBin_NetworkError(t *testing.T) {
 }
 
 func TestCoreClient_ClearBin_Success(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
@@ -767,6 +793,7 @@ func TestCoreClient_ClearBin_Success(t *testing.T) {
 }
 
 func TestCoreClient_ClearBin_ErrorStatus(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "error", "detail": "nope"})
 	}))
@@ -778,6 +805,7 @@ func TestCoreClient_ClearBin_ErrorStatus(t *testing.T) {
 }
 
 func TestCoreClient_ClearBin_Non200NoDetail(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{}) // no detail
@@ -791,6 +819,7 @@ func TestCoreClient_ClearBin_Non200NoDetail(t *testing.T) {
 }
 
 func TestCoreClient_ClearBin_NetworkError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := srv.URL
 	srv.Close()
@@ -803,6 +832,7 @@ func TestCoreClient_ClearBin_NetworkError(t *testing.T) {
 // ── core_sync_service.go ────────────────────────────────────────────
 
 func TestCoreSyncService_StartupReconcileCallsAllHooks(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	nodeSyncCalls := 0
 	catalogSyncCalls := 0
@@ -819,6 +849,7 @@ func TestCoreSyncService_StartupReconcileCallsAllHooks(t *testing.T) {
 }
 
 func TestCoreSyncService_RequestOrderStatusSync_NoSendFn(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	err := eng.coreSync.RequestOrderStatusSync()
 	if err == nil || !strings.Contains(err.Error(), "send function not configured") {
@@ -827,19 +858,19 @@ func TestCoreSyncService_RequestOrderStatusSync_NoSendFn(t *testing.T) {
 }
 
 func TestCoreSyncService_RequestOrderStatusSync_NoActiveOrders(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	sent := 0
 	eng.SetSendFunc(func(*protocol.Envelope) error { sent++; return nil })
 	// No orders in DB → returns nil without sending.
-	if err := eng.coreSync.RequestOrderStatusSync(); err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
+	testutil.MustNoErr(t, eng.coreSync.RequestOrderStatusSync(), "unexpected err")
 	if sent != 0 {
 		t.Errorf("sendFn called %d times, want 0 when no active orders", sent)
 	}
 }
 
 func TestCoreSyncService_RequestOrderStatusSync_SendsEnvelope(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	// Seed an active order so ListActiveOrders returns something.
 	orderUUID := "uuid-active"
@@ -851,9 +882,7 @@ func TestCoreSyncService_RequestOrderStatusSync_SendsEnvelope(t *testing.T) {
 		captured = env
 		return nil
 	})
-	if err := eng.coreSync.RequestOrderStatusSync(); err != nil {
-		t.Fatalf("RequestOrderStatusSync: %v", err)
-	}
+	testutil.MustNoErr(t, eng.coreSync.RequestOrderStatusSync(), "RequestOrderStatusSync")
 	if captured == nil {
 		t.Fatal("expected an envelope to be sent")
 	}
@@ -861,23 +890,20 @@ func TestCoreSyncService_RequestOrderStatusSync_SendsEnvelope(t *testing.T) {
 		t.Errorf("envelope Type = %q, want %q", captured.Type, protocol.TypeData)
 	}
 	var data protocol.Data
-	if err := captured.DecodePayload(&data); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
+	testutil.MustNoErr(t, captured.DecodePayload(&data), "decode payload")
 	if data.Subject != protocol.SubjectOrderStatusRequest {
 		t.Errorf("Subject = %q, want %q", data.Subject, protocol.SubjectOrderStatusRequest)
 	}
 	// The body should embed the order UUID we seeded.
 	var req protocol.OrderStatusRequest
-	if err := json.Unmarshal(data.Body, &req); err != nil {
-		t.Fatalf("unmarshal body: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(data.Body, &req), "unmarshal body")
 	if len(req.OrderUUIDs) != 1 || req.OrderUUIDs[0] != orderUUID {
 		t.Errorf("OrderUUIDs = %v, want [%s]", req.OrderUUIDs, orderUUID)
 	}
 }
 
 func TestCoreSyncService_RequestOrderStatusSync_SendFnError(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	if _, err := eng.db.CreateOrder("uuid-err", "complex", nil, false, 1, "", "", "", "", false, ""); err != nil {
 		t.Fatalf("create order: %v", err)
@@ -890,6 +916,7 @@ func TestCoreSyncService_RequestOrderStatusSync_SendFnError(t *testing.T) {
 }
 
 func TestCoreSyncService_HandleOrderStatusSnapshots(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	// Create a local order so ApplyCoreStatusSnapshot has something to act on.
 	if _, err := eng.db.CreateOrder("uuid-snap", "complex", nil, false, 1, "", "", "", "", false, ""); err != nil {
@@ -908,6 +935,7 @@ func TestCoreSyncService_HandleOrderStatusSnapshots(t *testing.T) {
 // ── reconciliation.go (engine-level thin delegates) ─────────────────
 
 func TestEngine_StartupReconcileDelegates(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	// Both delegates through to coreSync.StartupReconcile → no sendFn → err.
 	if err := eng.StartupReconcile(); err == nil {
@@ -923,6 +951,7 @@ func TestEngine_StartupReconcileDelegates(t *testing.T) {
 // ── reconciliation_service.go ───────────────────────────────────────
 
 func TestReconciliationService_Summary(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	summary, err := eng.Reconciliation().Summary()
 	if err != nil {
@@ -941,6 +970,7 @@ func TestReconciliationService_Summary(t *testing.T) {
 }
 
 func TestReconciliationService_ListAnomaliesEmpty(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	anomalies, err := eng.Reconciliation().ListAnomalies()
 	if err != nil {
@@ -952,6 +982,7 @@ func TestReconciliationService_ListAnomaliesEmpty(t *testing.T) {
 }
 
 func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	db := eng.db
 	// Seed an outbox row + bump retries above MaxOutboxRetries to dead-letter it.
@@ -960,9 +991,7 @@ func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
 		t.Fatalf("enqueue: %v", err)
 	}
 	for i := 0; i < store.MaxOutboxRetries; i++ {
-		if err := db.IncrementOutboxRetries(id); err != nil {
-			t.Fatalf("increment: %v", err)
-		}
+		testutil.MustNoErr(t, db.IncrementOutboxRetries(id), "increment")
 	}
 
 	dead, err := eng.Reconciliation().ListDeadLetterOutbox(10)
@@ -974,9 +1003,7 @@ func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
 	}
 
 	// Requeue clears retries so the row is no longer dead-lettered.
-	if err := eng.Reconciliation().RequeueOutbox(id); err != nil {
-		t.Fatalf("RequeueOutbox: %v", err)
-	}
+	testutil.MustNoErr(t, eng.Reconciliation().RequeueOutbox(id), "RequeueOutbox")
 	dead2, err := eng.Reconciliation().ListDeadLetterOutbox(10)
 	if err != nil {
 		t.Fatalf("ListDeadLetterOutbox after requeue: %v", err)
@@ -989,6 +1016,7 @@ func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
 // ── countgroup_sender.go ────────────────────────────────────────────
 
 func TestEngine_SendCountGroupAck_NoSendFn(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	err := eng.SendCountGroupAck(&protocol.CountGroupAck{
 		CorrelationID: "corr-1", Group: "g1", Outcome: "acked",
@@ -999,6 +1027,7 @@ func TestEngine_SendCountGroupAck_NoSendFn(t *testing.T) {
 }
 
 func TestEngine_SendCountGroupAck_BuildsEnvelope(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	var captured *protocol.Envelope
 	eng.SetSendFunc(func(env *protocol.Envelope) error {
@@ -1012,9 +1041,7 @@ func TestEngine_SendCountGroupAck_BuildsEnvelope(t *testing.T) {
 		AckLatencyMs:  42,
 		Timestamp:     time.Now(),
 	}
-	if err := eng.SendCountGroupAck(ack); err != nil {
-		t.Fatalf("SendCountGroupAck: %v", err)
-	}
+	testutil.MustNoErr(t, eng.SendCountGroupAck(ack), "SendCountGroupAck")
 	if captured == nil {
 		t.Fatal("expected envelope to be sent")
 	}
@@ -1022,9 +1049,7 @@ func TestEngine_SendCountGroupAck_BuildsEnvelope(t *testing.T) {
 		t.Errorf("envelope Type = %q, want %q", captured.Type, protocol.TypeData)
 	}
 	var data protocol.Data
-	if err := captured.DecodePayload(&data); err != nil {
-		t.Fatalf("decode payload: %v", err)
-	}
+	testutil.MustNoErr(t, captured.DecodePayload(&data), "decode payload")
 	if data.Subject != protocol.SubjectCountGroupAck {
 		t.Errorf("Subject = %q, want %q", data.Subject, protocol.SubjectCountGroupAck)
 	}
@@ -1037,6 +1062,7 @@ func TestEngine_SendCountGroupAck_BuildsEnvelope(t *testing.T) {
 }
 
 func TestEngine_SendCountGroupAck_SendFnError(t *testing.T) {
+	t.Parallel()
 	eng := newCoverageEngine(t)
 	eng.SetSendFunc(func(*protocol.Envelope) error { return fmt.Errorf("bus closed") })
 	err := eng.SendCountGroupAck(&protocol.CountGroupAck{CorrelationID: "c1"})

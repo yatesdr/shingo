@@ -3,10 +3,12 @@ package rds
 import (
 	"encoding/json"
 	"net/http"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestSetDispatchable(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/dispatchable" {
 			t.Errorf("path = %q, want /dispatchable", r.URL.Path)
@@ -15,9 +17,7 @@ func TestSetDispatchable(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req DispatchableRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Vehicles) != 2 || req.Vehicles[0] != "AMB-01" || req.Vehicles[1] != "AMB-02" {
 			t.Errorf("Vehicles = %v, want [AMB-01 AMB-02]", req.Vehicles)
 		}
@@ -38,6 +38,7 @@ func TestSetDispatchable(t *testing.T) {
 }
 
 func TestSetDispatchable_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "fail"})
 	})
@@ -50,14 +51,13 @@ func TestSetDispatchable_Error(t *testing.T) {
 }
 
 func TestRedoFailed(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/redoFailedOrder" {
 			t.Errorf("path = %q, want /redoFailedOrder", r.URL.Path)
 		}
 		var req RedoFailedRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Vehicles) != 1 || req.Vehicles[0] != "AMB-01" {
 			t.Errorf("Vehicles = %v, want [AMB-01]", req.Vehicles)
 		}
@@ -65,13 +65,11 @@ func TestRedoFailed(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.RedoFailed(&RedoFailedRequest{Vehicles: []string{"AMB-01"}})
-	if err != nil {
-		t.Fatalf("RedoFailed: %v", err)
-	}
+	testutil.MustNoErr(t, client.RedoFailed(&RedoFailedRequest{Vehicles: []string{"AMB-01"}}), "RedoFailed")
 }
 
 func TestRedoFailed_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 2, Msg: "no failed block"})
 	})
@@ -84,14 +82,13 @@ func TestRedoFailed_Error(t *testing.T) {
 }
 
 func TestManualFinish(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/manualFinished" {
 			t.Errorf("path = %q, want /manualFinished", r.URL.Path)
 		}
 		var req ManualFinishRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Vehicles) != 1 || req.Vehicles[0] != "AMB-03" {
 			t.Errorf("Vehicles = %v, want [AMB-03]", req.Vehicles)
 		}
@@ -99,13 +96,11 @@ func TestManualFinish(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.ManualFinish(&ManualFinishRequest{Vehicles: []string{"AMB-03"}})
-	if err != nil {
-		t.Fatalf("ManualFinish: %v", err)
-	}
+	testutil.MustNoErr(t, client.ManualFinish(&ManualFinishRequest{Vehicles: []string{"AMB-03"}}), "ManualFinish")
 }
 
 func TestManualFinish_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "fail"})
 	})
@@ -118,6 +113,7 @@ func TestManualFinish_Error(t *testing.T) {
 }
 
 func TestGetRobotMap(t *testing.T) {
+	t.Parallel()
 	want := []byte("MAP-BINARY-DATA-\x00\x01\x02")
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/robotSmap" {
@@ -147,6 +143,7 @@ func TestGetRobotMap(t *testing.T) {
 }
 
 func TestGetRobotMap_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("no map"))
@@ -160,14 +157,13 @@ func TestGetRobotMap_HTTPError(t *testing.T) {
 }
 
 func TestPreemptControl(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/lock" {
 			t.Errorf("path = %q, want /lock", r.URL.Path)
 		}
 		var req VehiclesRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Vehicles) != 2 || req.Vehicles[0] != "AMB-1" || req.Vehicles[1] != "AMB-2" {
 			t.Errorf("Vehicles = %v, want [AMB-1 AMB-2]", req.Vehicles)
 		}
@@ -175,12 +171,11 @@ func TestPreemptControl(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.PreemptControl([]string{"AMB-1", "AMB-2"}); err != nil {
-		t.Fatalf("PreemptControl: %v", err)
-	}
+	testutil.MustNoErr(t, client.PreemptControl([]string{"AMB-1", "AMB-2"}), "PreemptControl")
 }
 
 func TestPreemptControl_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "already locked"})
 	})
@@ -192,14 +187,13 @@ func TestPreemptControl_Error(t *testing.T) {
 }
 
 func TestReleaseControl(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/unlock" {
 			t.Errorf("path = %q, want /unlock", r.URL.Path)
 		}
 		var req VehiclesRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Vehicles) != 1 || req.Vehicles[0] != "AMB-7" {
 			t.Errorf("Vehicles = %v, want [AMB-7]", req.Vehicles)
 		}
@@ -207,12 +201,11 @@ func TestReleaseControl(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.ReleaseControl([]string{"AMB-7"}); err != nil {
-		t.Fatalf("ReleaseControl: %v", err)
-	}
+	testutil.MustNoErr(t, client.ReleaseControl([]string{"AMB-7"}), "ReleaseControl")
 }
 
 func TestReleaseControl_Disconnect(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {})
 	srv.Close()
 
@@ -222,14 +215,13 @@ func TestReleaseControl_Disconnect(t *testing.T) {
 }
 
 func TestSetParamsTemp(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/setParams" {
 			t.Errorf("path = %q, want /setParams", r.URL.Path)
 		}
 		var req ModifyParamsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-01" {
 			t.Errorf("Vehicle = %q, want AMB-01", req.Vehicle)
 		}
@@ -247,12 +239,11 @@ func TestSetParamsTemp(t *testing.T) {
 	body := map[string]map[string]any{
 		"motion": {"max_speed": 1.5},
 	}
-	if err := client.SetParamsTemp("AMB-01", body); err != nil {
-		t.Fatalf("SetParamsTemp: %v", err)
-	}
+	testutil.MustNoErr(t, client.SetParamsTemp("AMB-01", body), "SetParamsTemp")
 }
 
 func TestSetParamsTemp_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "bad params"})
 	})
@@ -265,14 +256,13 @@ func TestSetParamsTemp_Error(t *testing.T) {
 }
 
 func TestSetParamsPerm(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/saveParams" {
 			t.Errorf("path = %q, want /saveParams", r.URL.Path)
 		}
 		var req ModifyParamsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-02" {
 			t.Errorf("Vehicle = %q, want AMB-02", req.Vehicle)
 		}
@@ -281,12 +271,11 @@ func TestSetParamsPerm(t *testing.T) {
 	defer srv.Close()
 
 	body := map[string]map[string]any{"slam": {"resolution": 0.05}}
-	if err := client.SetParamsPerm("AMB-02", body); err != nil {
-		t.Fatalf("SetParamsPerm: %v", err)
-	}
+	testutil.MustNoErr(t, client.SetParamsPerm("AMB-02", body), "SetParamsPerm")
 }
 
 func TestSetParamsPerm_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "fail"})
 	})
@@ -299,14 +288,13 @@ func TestSetParamsPerm_Error(t *testing.T) {
 }
 
 func TestRestoreParamDefaults(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/reloadParams" {
 			t.Errorf("path = %q, want /reloadParams", r.URL.Path)
 		}
 		var req RestoreParamsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-03" {
 			t.Errorf("Vehicle = %q, want AMB-03", req.Vehicle)
 		}
@@ -332,6 +320,7 @@ func TestRestoreParamDefaults(t *testing.T) {
 }
 
 func TestRestoreParamDefaults_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "fail"})
 	})
@@ -344,14 +333,13 @@ func TestRestoreParamDefaults_Error(t *testing.T) {
 }
 
 func TestSwitchMap(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/switchMap" {
 			t.Errorf("path = %q, want /switchMap", r.URL.Path)
 		}
 		var req SwitchMapRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-01" {
 			t.Errorf("Vehicle = %q, want AMB-01", req.Vehicle)
 		}
@@ -362,12 +350,11 @@ func TestSwitchMap(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.SwitchMap("AMB-01", "warehouse-2"); err != nil {
-		t.Fatalf("SwitchMap: %v", err)
-	}
+	testutil.MustNoErr(t, client.SwitchMap("AMB-01", "warehouse-2"), "SwitchMap")
 }
 
 func TestSwitchMap_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "no such map"})
 	})
@@ -379,14 +366,13 @@ func TestSwitchMap_Error(t *testing.T) {
 }
 
 func TestConfirmRelocalization(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/reLocConfirm" {
 			t.Errorf("path = %q, want /reLocConfirm", r.URL.Path)
 		}
 		var req VehiclesRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Vehicles) != 1 || req.Vehicles[0] != "AMB-9" {
 			t.Errorf("Vehicles = %v, want [AMB-9]", req.Vehicles)
 		}
@@ -394,12 +380,11 @@ func TestConfirmRelocalization(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.ConfirmRelocalization([]string{"AMB-9"}); err != nil {
-		t.Fatalf("ConfirmRelocalization: %v", err)
-	}
+	testutil.MustNoErr(t, client.ConfirmRelocalization([]string{"AMB-9"}), "ConfirmRelocalization")
 }
 
 func TestConfirmRelocalization_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "fail"})
 	})
@@ -411,14 +396,13 @@ func TestConfirmRelocalization_Error(t *testing.T) {
 }
 
 func TestPauseNavigation(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/gotoSitePause" {
 			t.Errorf("path = %q, want /gotoSitePause", r.URL.Path)
 		}
 		var req VehiclesRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Vehicles) != 1 || req.Vehicles[0] != "AMB-1" {
 			t.Errorf("Vehicles = %v, want [AMB-1]", req.Vehicles)
 		}
@@ -426,12 +410,11 @@ func TestPauseNavigation(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.PauseNavigation([]string{"AMB-1"}); err != nil {
-		t.Fatalf("PauseNavigation: %v", err)
-	}
+	testutil.MustNoErr(t, client.PauseNavigation([]string{"AMB-1"}), "PauseNavigation")
 }
 
 func TestPauseNavigation_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "fail"})
 	})
@@ -443,14 +426,13 @@ func TestPauseNavigation_Error(t *testing.T) {
 }
 
 func TestResumeNavigation(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/gotoSiteResume" {
 			t.Errorf("path = %q, want /gotoSiteResume", r.URL.Path)
 		}
 		var req VehiclesRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Vehicles) != 1 || req.Vehicles[0] != "AMB-1" {
 			t.Errorf("Vehicles = %v, want [AMB-1]", req.Vehicles)
 		}
@@ -458,12 +440,11 @@ func TestResumeNavigation(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.ResumeNavigation([]string{"AMB-1"}); err != nil {
-		t.Fatalf("ResumeNavigation: %v", err)
-	}
+	testutil.MustNoErr(t, client.ResumeNavigation([]string{"AMB-1"}), "ResumeNavigation")
 }
 
 func TestResumeNavigation_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "fail"})
 	})

@@ -1,5 +1,159 @@
 # Changelog
 
+## 2026-05-17 — Test Infrastructure Cleanup, Phase 6: Fleet-Simulator Doc Sync
+
+### Documentation
+
+- Fixed the **TC-60 "10-step swap"** discrepancy in
+  `docs/fleet-simulator/complex-orders.md` — the test code is a 9-step
+  sequence (single-robot swap with 1 pickup at storage + 1 pickup at
+  line + 6 motion/wait/drop steps + 1 final dropoff). All `10-step`
+  mentions updated to `9-step`.
+- Updated `docs/fleet-simulator/architecture.md` and per-domain doc
+  "Test files" sections to reference the post-Phase-3 split file names
+  (`engine_simulator_test.go`, `engine_claim_test.go`,
+  `engine_linechangeover_test.go`, `engine_quality_test.go`,
+  `engine_terminal_test.go`, `engine_reconciliation_test.go`,
+  extended `engine_concurrent_test.go`) instead of the deleted
+  `engine_test.go`. All 18 stale test-file refs across the 3 large
+  domain docs corrected.
+
+### Deferred
+
+- The full learning-mode prose pruning (plan target: 30–40% line
+  reduction across the 9 docs) was deferred. A scan of the four
+  largest docs (`changeover.md`, `complex-orders.md`,
+  `core-dispatch.md`, `bin-reservation.md`) found that they are
+  already organized as scenario/expected/result/root-cause specs with
+  minimal learning-mode prose; an invasive line-reduction pass would
+  remove operationally useful context (test scenarios, production
+  risk callouts, before/after diff blocks) without clear payoff.
+  Plan-prescribed updates landed: the TC-60 fix and the test-file
+  reference cleanup. Deep prose pruning captured as a Phase 7
+  candidate to be revisited only if a specific reader complaint
+  surfaces.
+
+## 2026-05-17 — Test Infrastructure Cleanup, Phase 5: MustNoErr Migration
+
+### Refactoring
+
+- Added `testutil.MustNoErr(t, err, msg)` and `testutil.Context(t, timeout)`
+  helpers to `protocol/testutil/`.
+- Migrated ~1,224 `if err := ...; err != nil { t.Fatalf(...) }` and
+  `err := ...; if err != nil { t.Fatalf(...) }` sites across 139 test
+  files to `testutil.MustNoErr`. Net diff: **-2,342 LOC**. Only sites
+  where the `err` variable is unused after the fatal block were migrated;
+  sites that reference `err` later (e.g. `errors.As`, sentinel checks),
+  multi-statement err blocks, `t.Errorf` (non-fatal), and `t.Fatalf`
+  templates with additional format args were left alone.
+- Collapsed eight `TestParseDebugFlag_*` functions in
+  `protocol/debuglog/flag_test.go` into a single table-driven
+  `TestParseDebugFlag` covering all 8 cases via `t.Run`.
+
+### Developer tooling
+
+- Added `make test-explain` target in `shingo-core/Makefile` to run the
+  `//go:build explain` bins-store EXPLAIN-plan regression harness.
+  Local-only — not in CI. Use before merging changes to the bins-store
+  query layer (`FindSourceBinFIFO`, `ResolveRetrieve`,
+  `FindEmptyCompatibleBin`) to catch index regressions at production
+  scale.
+
+### Out of scope
+
+- The partial `changeover_diff_test.go` table-driven consolidation
+  (plan Step 5.3b) was skipped — the 5–9 candidate functions sit
+  alongside 20+ structurally-distinct neighbors and the partial
+  conversion adds split-form complexity without enough payoff.
+  Captured as a Phase 7 candidate.
+
+## 2026-05-17 — Test Infrastructure Cleanup, Phase 4: t.Parallel + -race CI
+
+### Refactoring
+
+- Added `t.Parallel()` to ~1,600 top-level test functions across
+  `protocol/`, `shingo-core/`, and `shingo-edge/`. Skipped:
+  `shingo-edge/www/` (package-level shared `testDB`),
+  `shingo-core/countgroup/loop_test.go` (timing-mechanic tests),
+  `TestConcurrent_ClaimRaceDeterministic` (intentionally serial
+  TOCTOU exerciser). Functions using `t.Setenv` / `os.Setenv` left
+  serial because Go forbids combining them with `t.Parallel()`.
+- Per-test DB isolation via `testdb.Open(t)` was already in place;
+  the mass addition just unlocks the parallel scheduling.
+
+### Continuous integration
+
+- Added `-race` detector to `core.yml`, `edge.yml`, and
+  `protocol.yml` as `continue-on-error: true` steps. Warning-only
+  for the first 30 days (until **2026-06-16**) so the team can
+  fix any latent production races without merge blocks. Promote
+  to gating once the baseline is known clean — tracked as a
+  Phase 7 candidate.
+
+## 2026-05-17 — Test Infrastructure Cleanup, Phase 3: Engine Split + Coverage Rename
+
+### Refactoring
+
+- Split `shingo-core/engine/engine_test.go` (1734 LOC, 19 funcs) into
+  7 behavior-clustered files: simulator, claim, line-changeover,
+  quality, terminal, reconciliation, plus extending concurrent.
+  Original file deleted. `setupThreeBinLine` helper hoisted to
+  `engine_testhelpers_test.go`.
+- Renamed 19 `*_coverage_test.go` files to drop the `_coverage` tier
+  signal. The `//go:build docker` tag (where present) carries the
+  integration signal; the filename suffix was misleading.
+- Minor rename adjustment: `shingo-edge/orders/manager_coverage_test.go`
+  renamed to `manager_db_test.go` (not `manager_test.go` as planned)
+  because that name was already taken by an unrelated fakes-based suite.
+
+## 2026-05-17 — Test Infrastructure Cleanup, Phase 2: Eventually Adoption
+
+### Refactoring
+
+- Hoisted `Eventually` / `EventuallyWithInterval` / `AssertEventually`
+  to `protocol/testutil/`. Deleted the two prior copies in
+  `shingo-core/internal/testdb/` and `shingo-edge/testharness/`.
+- Replaced 8 `time.Sleep`-based polling loops with `testutil.Eventually`.
+- Deleted 2 local `eventually` helpers in `scanner_test.go` and
+  `sse_test.go`; both duplicated the canonical helper.
+- Refactored `mockEmitter.waitFor` (SSE tests) to fatal-on-timeout
+  via `testutil.EventuallyWithInterval`; eight callers no longer
+  carry the `if !waitFor(...) { t.Fatal(...) }` boilerplate.
+- Replaced `waitForTransitions` polling internals with
+  `testutil.EventuallyWithInterval`.
+- Added KEEP annotations on 14 intentional `time.Sleep` calls
+  (negative assertions, timestamp separation, timing-mechanic tests,
+  post-stop quiet windows). The 10 server-side SSE event-pacing sleeps
+  carry `// KEEP: localhost server-side event pacing` headers so the
+  intent is unambiguous to future readers.
+
+Net effect: `testutil.Eventually` went from 0 callers to a baseline
+of real callers across protocol, shingo-core, and shingo-edge. SSE
+test client side is no longer wall-clock dependent.
+
+## 2026-05-17 — Test Infrastructure Cleanup, Phase 1: TC Scheme Removal
+
+### Refactoring
+
+- Stripped `// TC-*` test comments across 13 files (~65 comments).
+- Renamed 25 `TestTC##_*` functions to `Test<Subject>_<Behavior>` form.
+- Rewrote 3 TC-77 known-issue references in `wiring_completion.go` and
+  `changeover_flow_test.go` to describe the failure mode by name
+  (`phantom-inventory pin`) rather than TC token.
+- Updated `docs/fleet-simulator/` references to new test names.
+
+### Documentation
+
+- Deleted `shingo-core/docs/test-catalog.md`. Of 262 test functions only
+  70 carried a TC ID, with 30 numbering gaps and ~30 missing comment
+  headers. Catalog admitted in-doc it was outpaced by test growth.
+  Learning-mode scaffolding, not load-bearing infrastructure.
+
+### Out of scope
+
+- Fleet-simulator design docs retain internal TC numbering. Phase 6
+  will streamline these docs without dropping the spec convention.
+
 ## 2026-05-06 — Dispatch Test Coverage & Retrieve-Algorithm Collapse
 
 ### Refactoring

@@ -40,6 +40,7 @@ func countGroupServer(t *testing.T, wantGroup string, status int, body string) (
 }
 
 func TestGetRobotsInCountGroup_BareArrayOccupied(t *testing.T) {
+	t.Parallel()
 	srv, client := countGroupServer(t, "Crosswalk1", 200, `["AMR-01"]`)
 	defer srv.Close()
 
@@ -53,6 +54,7 @@ func TestGetRobotsInCountGroup_BareArrayOccupied(t *testing.T) {
 }
 
 func TestGetRobotsInCountGroup_BareArrayEmpty(t *testing.T) {
+	t.Parallel()
 	srv, client := countGroupServer(t, "Crosswalk1", 200, `[]`)
 	defer srv.Close()
 
@@ -66,6 +68,7 @@ func TestGetRobotsInCountGroup_BareArrayEmpty(t *testing.T) {
 }
 
 func TestGetRobotsInCountGroup_UnknownGroupReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	// Empirical contract: unknown group is indistinguishable from
 	// real-but-empty — both return 200 + [].
 	srv, client := countGroupServer(t, "Bogus", 200, `[]`)
@@ -81,6 +84,7 @@ func TestGetRobotsInCountGroup_UnknownGroupReturnsEmpty(t *testing.T) {
 }
 
 func TestGetRobotsInCountGroup_WrappedEnvelopeSuccess(t *testing.T) {
+	t.Parallel()
 	// Future-proofing: if AIVISION normalises to the standard envelope,
 	// the defensive decoder must extract the array from .report.
 	body := `{"code":0,"msg":"ok","create_on":"2026-04-15T20:00:00Z","report":["AMR-02","AMR-03"]}`
@@ -97,6 +101,7 @@ func TestGetRobotsInCountGroup_WrappedEnvelopeSuccess(t *testing.T) {
 }
 
 func TestGetRobotsInCountGroup_MalformedJSONReturns400(t *testing.T) {
+	t.Parallel()
 	body := `{"code":50000,"msg":"parse json error","create_on":"2026-04-15T19:58:24Z"}`
 	srv, client := countGroupServer(t, "X", 400, body)
 	defer srv.Close()
@@ -111,6 +116,7 @@ func TestGetRobotsInCountGroup_MalformedJSONReturns400(t *testing.T) {
 }
 
 func TestGetRobotsInCountGroup_MissingGroupFieldReturns400(t *testing.T) {
+	t.Parallel()
 	body := `{"code":50001,"msg":"don't have group or group is not a string","create_on":"2026-04-15T19:59:14Z"}`
 	srv, client := countGroupServer(t, "X", 400, body)
 	defer srv.Close()
@@ -125,6 +131,7 @@ func TestGetRobotsInCountGroup_MissingGroupFieldReturns400(t *testing.T) {
 }
 
 func TestGetRobotsInCountGroup_UnknownBodyShapeErrors(t *testing.T) {
+	t.Parallel()
 	// 200 with neither bare array nor wrapped-with-report. Must error,
 	// not silently return nil/empty.
 	body := `{"unexpected":"shape"}`

@@ -10,6 +10,7 @@ import (
 )
 
 func TestCoverage_ScenePoint_UpsertInsertThenUpdate(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	sp := &scene.Point{AreaName: "AREA-1", InstanceName: "INST-1", ClassName: "RobotPose", PointName: "home", GroupName: "grp-a", Label: "Home Pose", PosX: 1.0, PosY: 2.0, PosZ: 3.0, Dir: 0.0, PropertiesJSON: `{"foo":"bar"}`}
 	if err := scene.Upsert(db.DB, sp); err != nil { t.Fatalf("Upsert insert: %v", err) }
@@ -30,6 +31,7 @@ func TestCoverage_ScenePoint_UpsertInsertThenUpdate(t *testing.T) {
 }
 
 func TestCoverage_ScenePoint_ListFiltersAndDelete(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	points := []*scene.Point{
 		{AreaName: "AREA-A", InstanceName: "I-1", ClassName: "Waypoint", PropertiesJSON: `{}`},

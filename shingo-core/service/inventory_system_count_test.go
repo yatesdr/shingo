@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/domain"
 	"shingocore/internal/testdb"
 )
@@ -15,15 +16,14 @@ import (
 // staged at the consumer line not counting against the 2-bin trigger —
 // is the case this test pins.
 func TestSystemBinCount_IncludesStaged(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
 	// One available at storage, one staged at the line.
 	binStorage := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.StorageNode.ID, "BIN-SYS-AVAIL")
 	binStaged := testdb.CreateBinAtNode(t, db, std.Payload.Code, std.LineNode.ID, "BIN-SYS-STAGED")
-	if err := db.UpdateBinStatus(binStaged.ID, domain.BinStatusStaged); err != nil {
-		t.Fatalf("set staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateBinStatus(binStaged.ID, domain.BinStatusStaged), "set staged")
 	_ = binStorage // keep linter happy
 
 	svc := NewInventoryService(db)
@@ -43,6 +43,7 @@ func TestSystemBinCount_IncludesStaged(t *testing.T) {
 // quality_hold, and retired bins are out of the kanban loop and must
 // not count. Each status verified individually.
 func TestSystemBinCount_ExcludesOutOfLoop(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		status domain.BinStatus
@@ -81,6 +82,7 @@ func TestSystemBinCount_ExcludesOutOfLoop(t *testing.T) {
 // appear in Counts with BinCount=0 (callers shouldn't have to handle
 // absence as a special case).
 func TestSystemBinCount_ZeroForUnseededPayload(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 
@@ -101,6 +103,7 @@ func TestSystemBinCount_ZeroForUnseededPayload(t *testing.T) {
 // guard as PreflightAvailability — silent zero on a typo would mask the
 // problem at the wrong layer.
 func TestSystemBinCount_EmptyPayloadCodeRejected(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 
@@ -114,6 +117,7 @@ func TestSystemBinCount_EmptyPayloadCodeRejected(t *testing.T) {
 // TestSystemBinCount_PreservesRequestOrder: callers can index into
 // Counts by request position without re-sorting.
 func TestSystemBinCount_PreservesRequestOrder(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 

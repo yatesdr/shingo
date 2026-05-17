@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -19,6 +20,7 @@ import (
 // IsNodeTaskStateTerminal) without touching runtime, and the call
 // returns nil.
 func TestSwitchNodeToTarget_DropAdvancesWithoutTargetClaim(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedDropScenario(t, db)
 	eng := testEngine(t, db)
@@ -39,9 +41,7 @@ func TestSwitchNodeToTarget_DropAdvancesWithoutTargetClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get node task: %v", err)
 	}
-	if err := db.UpdateChangeoverNodeTaskState(task.ID, "empty_requested"); err != nil {
-		t.Fatalf("seed task to non-terminal: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, "empty_requested"), "seed task to non-terminal")
 
 	if err := eng.SwitchNodeToTarget(processID, nodeID); err != nil {
 		t.Fatalf("switch on drop node: unexpected error %v", err)
@@ -66,6 +66,7 @@ func TestSwitchNodeToTarget_DropAdvancesWithoutTargetClaim(t *testing.T) {
 // /changeover supervisor page to clear; the changeover's intent — get
 // the bin off the line — was effectively satisfied either way.
 func TestHandleNodeOrderFailed_DropNoBinAutoClears(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedDropScenarioEvacuate(t, db)
 	eng := testEngine(t, db)
@@ -118,6 +119,7 @@ func TestHandleNodeOrderFailed_DropNoBinAutoClears(t *testing.T) {
 // must still land at "error" so the operator sees the alarm. Without
 // this guard the auto-skip would silently hide real failures.
 func TestHandleNodeOrderFailed_DropOtherFailureStillErrors(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedDropScenarioEvacuate(t, db)
 	eng := testEngine(t, db)

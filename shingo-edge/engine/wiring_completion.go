@@ -225,7 +225,8 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	// as a no-op). Fall through to the standard path so legacy claims
 	// with KeepStaged=true behave like normal swaps until the keep-
 	// staged path is rewired. See implementer notes' "Known issue —
-	// TC-77 latent under CO-0b fall-through" for the rewire-time risk.
+	// phantom-inventory pin latent under CO-0b fall-through" for the
+	// rewire-time risk.
 	if isKeepStaged && e.handleKeepStagedOrderBCompletion(ctx) {
 		return true
 	}
@@ -251,8 +252,8 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 // handleComplexOrderBCompletion fall through to the standard non-
 // KeepStaged path (UOP reset on delivery + state → "released"), which
 // is the desired behaviour until KeepStaged is rewired. See implementer
-// notes' "Known issue — TC-77 latent under CO-0b fall-through" for the
-// rewire-time risk this falls through to.
+// notes' "Known issue — phantom-inventory pin latent under CO-0b
+// fall-through" for the rewire-time risk this falls through to.
 func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool {
 	_ = ctx
 	return false

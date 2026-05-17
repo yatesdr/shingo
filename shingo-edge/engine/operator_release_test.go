@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -25,9 +26,7 @@ func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid str
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateOrderStatus(orderID, string(orders.StatusStaged)); err != nil {
-		t.Fatalf("transition to staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(orderID, string(orders.StatusStaged)), "transition to staged")
 	return orderID
 }
 
@@ -38,15 +37,14 @@ func stageOrderForConsumeNode(t *testing.T, db *store.DB, nodeID int64, uuid str
 // other firing point (new bin dropped) flips the count back to capacity
 // via SetProcessNodeRuntimeWithBin at delivery completion.
 func TestReleaseOrderWithLineside_ZeroesUOPAndCapturesBuckets(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL", PayloadCode: "PART-R", UOPCapacity: 100, InitialUOP: 8,
 	})
 
 	// Drain the counter low (simulating pre-swap production).
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 8); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 8), "seed runtime")
 
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-1")
 
@@ -55,9 +53,7 @@ func TestReleaseOrderWithLineside_ZeroesUOPAndCapturesBuckets(t *testing.T) {
 		Mode:            DispositionCaptureLineside,
 		LinesideCapture: map[string]int{"PART-R": 12},
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	// UOP must zero at release — bin is leaving, no count attributed
 	// to the slot until the new bin drops (which flips it to capacity).
@@ -89,21 +85,18 @@ func TestReleaseOrderWithLineside_ZeroesUOPAndCapturesBuckets(t *testing.T) {
 // with no captures (RELEASE EMPTY semantics) zeroes the slot at release
 // click and deactivates stranded buckets for other styles.
 func TestReleaseOrderWithLineside_EmptyMapZeroesUOP(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL2", PayloadCode: "PART-R2", UOPCapacity: 50, InitialUOP: 3,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 3); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 3), "seed runtime")
 	orderID := stageOrderForConsumeNode(t, db, nodeID, "uuid-rel-2")
 
 	eng := testEngine(t, db)
 	// Empty disposition (legacy / NOTHING-PULLED-with-no-explicit-mode):
 	// must not touch runtime UOP.
-	if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionCaptureLineside}); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: DispositionCaptureLineside}), "ReleaseOrderWithLineside")
 
 	runtime, _ := db.GetProcessNodeRuntime(nodeID)
 	if runtime.RemainingUOPCached != 0 {
@@ -115,13 +108,12 @@ func TestReleaseOrderWithLineside_EmptyMapZeroesUOP(t *testing.T) {
 // when the release click happens, any active buckets on the node that
 // belong to a different style are flipped to inactive.
 func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-REL3", PayloadCode: "PART-R3", UOPCapacity: 80, InitialUOP: 5,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 5); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 5), "seed runtime")
 
 	// Seed a leftover active bucket from a different style on this node.
 	otherStyleID := styleID + 999
@@ -135,9 +127,7 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 		Mode:            DispositionCaptureLineside,
 		LinesideCapture: map[string]int{"PART-R3": 2},
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	// Leftover bucket should now be inactive.
 	inactive, err := db.ListInactiveLinesideBuckets(nodeID)
@@ -167,6 +157,7 @@ func TestReleaseOrderWithLineside_DeactivatesStrandedStyles(t *testing.T) {
 // partial → &runtime.RemainingUOPCached, partial-with-non-positive-runtime → &0)
 // is locked down without the surrounding HTTP/DB/dispatch machinery.
 func TestComputeReleaseRemainingUOP(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		mode        ReleaseDispositionMode
@@ -207,13 +198,12 @@ func TestComputeReleaseRemainingUOP(t *testing.T) {
 // runtime UOP is preserved (delivery completion will reset, not release),
 // and stranded other-style buckets are still deactivated.
 func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-PARTIAL", PayloadCode: "PART-PB", UOPCapacity: 1200, InitialUOP: 800,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 800); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 800), "seed runtime")
 	// Stranded bucket from a previous style — should be deactivated even
 	// on the partial-back path because the deactivation reflects "this
 	// node is now running this style," not bucket capture.
@@ -228,9 +218,7 @@ func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.
 		Mode:            DispositionSendPartialBack,
 		LinesideCapture: map[string]int{"PART-PB": 99}, // ignored when Mode == send_partial_back
 	}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("ReleaseOrderWithLineside: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "ReleaseOrderWithLineside")
 
 	// Runtime UOP zeroes at release — the partial bin is leaving the
 	// slot. The wire-shape RemainingUOP=&runtime preserves the partial
@@ -268,15 +256,14 @@ func TestReleaseOrderWithLineside_SendPartialBack_SkipsBucketCapture(t *testing.
 // and arrival, completion resets to capacity because that's when the new
 // bin is physically present.
 func TestHandleComplexOrderBCompletion_ResetsOnDelivery(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-IDEMP", PayloadCode: "PART-IDEMP", UOPCapacity: 100, InitialUOP: 100,
 	})
 
 	// Simulate counter drained to 87 (any value < capacity) before delivery.
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 87); err != nil {
-		t.Fatalf("seed drained runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 87), "seed drained runtime")
 
 	// DeliveryNode must equal the seeded node's CoreNodeName for
 	// binArrivingAt to fire. BinID set so resolveReplenishUOP returns
@@ -355,6 +342,7 @@ func seedManualSwapClaim(t *testing.T, db *store.DB, prefix string, role protoco
 // the trigger is the system's filled-bin count, not the operator's
 // release event.
 func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		mode ReleaseDispositionMode
@@ -373,9 +361,7 @@ func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
 
 			orderID := stageOrderForConsumeNode(t, db, lineNodeID, "uuid-"+tc.name)
 			eng := testEngine(t, db)
-			if err := eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: tc.mode}); err != nil {
-				t.Fatalf("ReleaseOrderWithLineside: %v", err)
-			}
+			testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, ReleaseDisposition{Mode: tc.mode}), "ReleaseOrderWithLineside")
 
 			loaderOrders, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
 			if err != nil {
@@ -414,6 +400,7 @@ func TestReleaseOrderWithLineside_ConsumeReleaseDoesNotFireL1(t *testing.T) {
 // (zero orders created when the test doesn't simulate a "no bin
 // present" Core response).
 func TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	loaderNodeID, _ := seedManualSwapClaim(t, db, "L1-CREATE", "produce", "PART-CREATE", "STORAGE-NODE")
 	eng := testEngine(t, db)
@@ -443,6 +430,7 @@ func TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires(t *testing.T) {
 // consume, manual_swap) confirms at the unloader, U2 fires as a move from
 // the unloader to claim.OutboundDestination.
 func TestHandleUnloaderFullInCompletion_FiresU2(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	unloaderNodeID, _ := seedManualSwapClaim(t, db, "U2-FIRE", "consume", "PART-U2", "STORAGE-NODE")
 
@@ -479,13 +467,12 @@ func TestHandleUnloaderFullInCompletion_FiresU2(t *testing.T) {
 // to match the process node's CoreNodeName — see TestRegression_11_*
 // for the negative path (removal-shaped orders).
 func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "LSD-RETR", PayloadCode: "PART-RETR", UOPCapacity: 100, InitialUOP: 10,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 10); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 10), "seed runtime")
 
 	// DeliveryNode must equal the seeded node's CoreNodeName for
 	// binArrivingAt to fire. Prefix "LSD-RETR" → "LSD-RETR-NODE".
@@ -543,6 +530,7 @@ func TestHandleNormalReplenishment_RetrieveStillResets(t *testing.T) {
 // here. A future expansion of the supply guard to additional multi-bin
 // modes should grow this test alongside.
 func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
+	t.Parallel()
 	const (
 		seededUOP = 800
 		capacity  = 1200
@@ -656,9 +644,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 				t.Fatalf("upsert claim: %v", err)
 			}
 			db.EnsureProcessNodeRuntime(nodeID)
-			if err := db.SetProcessNodeRuntime(nodeID, &claimID, seededUOP); err != nil {
-				t.Fatalf("seed runtime UOP: %v", err)
-			}
+			testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, seededUOP), "seed runtime UOP")
 
 			// Stage one or two orders depending on releaseSide. The
 			// supply/evac convention matches isSupplyOrderInActiveTwoRobotSwap:
@@ -667,30 +653,20 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 			switch tc.setup.releaseSide {
 			case "single":
 				releaseOrderID = stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name)
-				if err := db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &releaseOrderID); err != nil {
-					t.Fatalf("track staged order: %v", err)
-				}
+				testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, nil, &releaseOrderID), "track staged order")
 			case "supply":
 				orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-A")
 				orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-B")
 				_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
-				if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
-					t.Fatalf("track A+B on runtime: %v", err)
-				}
-				if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
-					t.Fatalf("link siblings: %v", err)
-				}
+				testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "track A+B on runtime")
+				testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
 				releaseOrderID = orderA
 			case "evac":
 				orderA := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-A")
 				orderB := stageOrderForConsumeNode(t, db, nodeID, "uuid-"+tc.name+"-B")
 				_ = db.UpdateOrderDeliveryNode(orderB, "TR-EVAC-DEST")
-				if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
-					t.Fatalf("track A+B on runtime: %v", err)
-				}
-				if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
-					t.Fatalf("link siblings: %v", err)
-				}
+				testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "track A+B on runtime")
+				testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
 				releaseOrderID = orderB
 			default:
 				t.Fatalf("unknown releaseSide %q", tc.setup.releaseSide)
@@ -698,9 +674,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 
 			eng := testEngine(t, db)
 			disp := ReleaseDisposition{Mode: tc.disp, CalledBy: "regression-test"}
-			if err := eng.ReleaseOrderWithLineside(releaseOrderID, disp); err != nil {
-				t.Fatalf("ReleaseOrderWithLineside: %v", err)
-			}
+			testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(releaseOrderID, disp), "ReleaseOrderWithLineside")
 
 			runtime, _ := db.GetProcessNodeRuntime(nodeID)
 			if runtime.RemainingUOPCached != tc.want.runtimeUOP {

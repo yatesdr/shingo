@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -178,8 +179,6 @@ func findTaskByNode(tasks []processes.NodeTask, coreName string) *processes.Node
 // Section 3: Changeover flow gaps
 // ===========================================================================
 
-// TC-91: SituationDrop lifecycle — evacuation-only order, no Order A.
-//
 // Default drop (no EvacuateOnChangeover marker): task is terminal-from-plan
 // at line_cleared so cutover doesn't wait on the bin's return trip. The
 // order still runs (operator releases with partial count at the lineside,
@@ -187,6 +186,7 @@ func findTaskByNode(tasks []processes.NodeTask, coreName string) *processes.Node
 // 2026-05-11 fix: ALN_002 cutover stuck in line_cleared because the gate
 // treated drop's intermediate state as non-terminal.
 func TestChangeoverFlow_SituationDrop(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, fromStyleID, toStyleID := seedDropScenario(t, db)
 	_ = fromStyleID
@@ -236,8 +236,9 @@ func TestChangeoverFlow_SituationDrop(t *testing.T) {
 	}
 }
 
-// TC-92: Multi-node changeover — 4 nodes with distinct situations.
+// Multi-node changeover — 4 nodes with distinct situations.
 func TestChangeoverFlow_MultiNode(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodes, fromStyleID, toStyleID := seedMultiNodeScenario(t, db)
 	_ = fromStyleID
@@ -330,8 +331,9 @@ func TestChangeoverFlow_MultiNode(t *testing.T) {
 	}
 }
 
-// TC-93: Changeover-only role — evacuate and restore.
+// Changeover-only role — evacuate and restore.
 func TestChangeoverFlow_ChangeoverRole(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedChangeoverRoleScenario(t, db)
 	eng := testEngine(t, db)
@@ -375,8 +377,9 @@ func TestChangeoverFlow_ChangeoverRole(t *testing.T) {
 	}
 }
 
-// TC-94: Double changeover — complete one, start another, verify clean state.
+// Double changeover — complete one, start another, verify clean state.
 func TestChangeoverFlow_DoubleChangeover(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, fromStyleID, toStyleID := seedPhase3SwapScenario(t, db)
 	_ = fromStyleID
@@ -436,8 +439,9 @@ func TestChangeoverFlow_DoubleChangeover(t *testing.T) {
 	}
 }
 
-// TC-95: Changeover with no claim changes — all unchanged, effective no-op.
+// Changeover with no claim changes — all unchanged, effective no-op.
 func TestChangeoverFlow_NoClaimChanges(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, fromStyleID, toStyleID := seedNoChangeScenario(t, db)
 	_ = fromStyleID
@@ -470,8 +474,9 @@ func TestChangeoverFlow_NoClaimChanges(t *testing.T) {
 	}
 }
 
-// TC-96: Cancel mid-release — Order B (swap) is in progress.
+// Cancel mid-release — Order B (swap) is in progress.
 func TestChangeoverFlow_CancelMidRelease(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -492,9 +497,7 @@ func TestChangeoverFlow_CancelMidRelease(t *testing.T) {
 	db.UpdateOrderStatus(orderB.ID, string(orders.StatusInTransit))
 
 	// Cancel while Order B is mid-flight
-	if err := eng.CancelProcessChangeover(processID); err != nil {
-		t.Fatalf("cancel: %v", err)
-	}
+	testutil.MustNoErr(t, eng.CancelProcessChangeover(processID), "cancel")
 
 	// Verify Order B was aborted
 	orderB, _ = db.GetOrder(orderB.ID)
@@ -514,8 +517,9 @@ func TestChangeoverFlow_CancelMidRelease(t *testing.T) {
 	}
 }
 
-// TC-97: Order A fails — staging order fails, node goes to error, retry succeeds.
+// Order A fails — staging order fails, node goes to error, retry succeeds.
 func TestChangeoverFlow_OrderAFails(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -551,8 +555,9 @@ func TestChangeoverFlow_OrderAFails(t *testing.T) {
 	}
 }
 
-// TC-98: Order B fails — swap/evacuate order fails, node goes to error.
+// Order B fails — swap/evacuate order fails, node goes to error.
 func TestChangeoverFlow_OrderBFails(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
 	eng := testEngine(t, db)
@@ -598,8 +603,9 @@ func TestChangeoverFlow_OrderBFails(t *testing.T) {
 	}
 }
 
-// TC-99: Partial completion — 3 nodes, 2 complete, 1 errors. Cutover blocked.
+// Partial completion — 3 nodes, 2 complete, 1 errors. Cutover blocked.
 func TestChangeoverFlow_PartialCompletion(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	processID, _ := db.CreateProcess("PARTIAL-PROC", "partial test", "active_production", "", "", false, false)
@@ -680,8 +686,9 @@ func TestChangeoverFlow_PartialCompletion(t *testing.T) {
 	}
 }
 
-// TC-100: Cutover completion — verify all state transitions.
+// Cutover completion — verify all state transitions.
 func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, fromStyleID, toStyleID := seedPhase3SwapScenario(t, db)
 	_ = fromStyleID
@@ -746,8 +753,9 @@ func TestChangeoverFlow_CutoverCompletion(t *testing.T) {
 // Section 4: Keep-staged edge cases
 // ===========================================================================
 
-// TC-101: Keep-staged with evacuate — both flags on same claim.
+// Keep-staged with evacuate — both flags on same claim.
 func TestChangeoverFlow_KeepStagedWithEvacuate(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	processID, _ := db.CreateProcess("KS-EV-PROC", "ks+evac test", "active_production", "", "", false, false)
@@ -811,15 +819,16 @@ func TestChangeoverFlow_KeepStagedWithEvacuate(t *testing.T) {
 		t.Errorf("after Order B (Order A done): expected released, got %s", task.State)
 	}
 
-	// TC-77 phantom-inventory pin no longer applies under the new cache
+	// phantom-inventory pin no longer applies under the new cache
 	// contract: confirm doesn't touch RemainingUOPCached, so there's no
 	// fall-through reset to assert against. The state-machine assertion
 	// above (task.State == "released") covers the surviving behavior.
 }
 
-// TC-102: Keep-staged from → non-keep-staged to. Old style had keep-staged,
+// Keep-staged from → non-keep-staged to. Old style had keep-staged,
 // new style doesn't. The from-claim's KeepStaged flag drives the handler.
 func TestChangeoverFlow_KeepStagedToNoKeep(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	processID, _ := db.CreateProcess("KS2NK-PROC", "ks→nokeep", "active_production", "", "", false, false)
@@ -864,8 +873,9 @@ func TestChangeoverFlow_KeepStagedToNoKeep(t *testing.T) {
 	}
 }
 
-// TC-103: Keep-staged with missing staging config — falls back to simple staging.
+// Keep-staged with missing staging config — falls back to simple staging.
 func TestChangeoverFlow_KeepStagedMissingStaging(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	processID, _ := db.CreateProcess("KSMS-PROC", "ks missing staging", "active_production", "", "", false, false)

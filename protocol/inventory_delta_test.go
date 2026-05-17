@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/json"
+	"shingo/protocol/testutil"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 // envelope. Every field round-trips identically; reason strings
 // preserve their typed-constant values.
 func TestBinUOPDelta_RoundTrip(t *testing.T) {
+	t.Parallel()
 	t0 := time.Date(2026, 5, 1, 14, 30, 0, 0, time.UTC)
 	t1 := t0.Add(5 * time.Second)
 	for _, tc := range []struct {
@@ -56,9 +58,7 @@ func TestBinUOPDelta_RoundTrip(t *testing.T) {
 				t.Fatalf("marshal: %v", err)
 			}
 			var got BinUOPDelta
-			if err := json.Unmarshal(b, &got); err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
+			testutil.MustNoErr(t, json.Unmarshal(b, &got), "unmarshal")
 			if got != tc.d {
 				t.Errorf("round-trip differs:\ngot:  %+v\nwant: %+v", got, tc.d)
 			}
@@ -76,6 +76,7 @@ func TestBinUOPDelta_RoundTrip(t *testing.T) {
 // query time). A future regression that adds it back will fail this
 // test via the unmarshal assertion.
 func TestLinesideBucketDelta_RoundTrip(t *testing.T) {
+	t.Parallel()
 	t0 := time.Date(2026, 5, 1, 14, 30, 0, 0, time.UTC)
 	t1 := t0.Add(5 * time.Second)
 	for _, tc := range []struct {
@@ -114,9 +115,7 @@ func TestLinesideBucketDelta_RoundTrip(t *testing.T) {
 				t.Errorf("LinesideBucketDelta carries a state field on the wire — Option C requires location-only buckets: %s", string(b))
 			}
 			var got LinesideBucketDelta
-			if err := json.Unmarshal(b, &got); err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
+			testutil.MustNoErr(t, json.Unmarshal(b, &got), "unmarshal")
 			if got != tc.d {
 				t.Errorf("round-trip differs:\ngot:  %+v\nwant: %+v", got, tc.d)
 			}
@@ -128,6 +127,7 @@ func TestLinesideBucketDelta_RoundTrip(t *testing.T) {
 // participate in routing across both modules and renames must come
 // with a coordinated migration.
 func TestInventoryDelta_SubjectsStable(t *testing.T) {
+	t.Parallel()
 	if SubjectBinUOPDelta != "inventory.bin_uop_delta" {
 		t.Errorf("SubjectBinUOPDelta = %q; the wire string is part of Core's HandleData router, do not rename without a migration plan", SubjectBinUOPDelta)
 	}

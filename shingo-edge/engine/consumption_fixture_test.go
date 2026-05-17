@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"shingo/protocol/testutil"
 	"testing"
 	"time"
 )
@@ -166,13 +167,12 @@ func (f *processFixture) Elapsed() time.Duration { return f.elapsed }
 // elsewhere, this test goes red and the fixture follows the production
 // path before any choreography test gets re-written.
 func TestProcessFixture_RunFor_DrivesRealCounterDeltaPath(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "FIX-RUNFOR", PayloadCode: "PART-FIX", UOPCapacity: 200, InitialUOP: 200,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 200); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 200), "seed runtime")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -197,13 +197,12 @@ func TestProcessFixture_RunFor_DrivesRealCounterDeltaPath(t *testing.T) {
 // real cell counter at 25 parts/15min has emitted 0 parts at t=1min,
 // not 1.66; the fixture must match.
 func TestProcessFixture_RunFor_PartialPeriodTruncates(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "FIX-PARTIAL", PayloadCode: "PART-PRT", UOPCapacity: 100, InitialUOP: 100,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 100); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 100), "seed runtime")
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -223,13 +222,12 @@ func TestProcessFixture_RunFor_PartialPeriodTruncates(t *testing.T) {
 // point — the variant tests use when they want "after 10 consumed parts"
 // rather than "after t minutes."
 func TestProcessFixture_EmitTicks_DirectCount(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "FIX-TICKS", PayloadCode: "PART-TKS", UOPCapacity: 50, InitialUOP: 50,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 50); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -253,22 +251,19 @@ func TestProcessFixture_EmitTicks_DirectCount(t *testing.T) {
 // future bug where UOP gets persisted to the wrong row would be invisible
 // to fixture-driven tests.
 func TestProcessFixture_LineUOP_ReadsThroughDB(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "FIX-READ", PayloadCode: "PART-RD", UOPCapacity: 300, InitialUOP: 300,
 	})
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 300); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 300), "seed runtime")
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 	fix := newProcessFixture(t, eng, processID, styleID, rate25Per15Min)
 
 	// Mutate runtime via the production API (not the fixture) — fixture
 	// must observe the change.
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 137); err != nil {
-		t.Fatalf("manual mutation: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 137), "manual mutation")
 	if got := fix.LineUOP(nodeID); got != 137 {
 		t.Errorf("LineUOP = %d, want 137 (must read through DB, not from fixture cache)", got)
 	}

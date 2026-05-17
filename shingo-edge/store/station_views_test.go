@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/store/processes"
 )
 
@@ -40,9 +41,7 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, run
 	if err != nil {
 		t.Fatalf("create style: %v", err)
 	}
-	if err := d.SetActiveStyle(processID, &styleID); err != nil {
-		t.Fatalf("set active style: %v", err)
-	}
+	testutil.MustNoErr(t, d.SetActiveStyle(processID, &styleID), "set active style")
 	claimID, err := d.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             styleID,
 		CoreNodeName:        "SWAP-NODE",
@@ -75,21 +74,15 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, run
 		t.Fatalf("ensure runtime: %v", err)
 	}
 	cID := claimID
-	if err := d.SetProcessNodeRuntime(nodeID, &cID, 0); err != nil {
-		t.Fatalf("set runtime: %v", err)
-	}
-	if err := d.UpdateProcessNodeRuntimeOrders(nodeID, &aID, &bID); err != nil {
-		t.Fatalf("update runtime orders: %v", err)
-	}
+	testutil.MustNoErr(t, d.SetProcessNodeRuntime(nodeID, &cID, 0), "set runtime")
+	testutil.MustNoErr(t, d.UpdateProcessNodeRuntimeOrders(nodeID, &aID, &bID), "update runtime orders")
 	// Sibling-link the pair — mirrors what every site that creates a
 	// two-robot pair does in production (operator_stations.go:134,
 	// operator_bin_ops.go, operator_produce.go, changeover_applier.go,
 	// wiring_status_changed.go). ComputeSwapReady's order-graph predicate
 	// requires this pointer; tests that exercise the happy path need it
 	// set the same way real flows would.
-	if err := d.LinkOrderSiblings(aID, bID); err != nil {
-		t.Fatalf("link siblings: %v", err)
-	}
+	testutil.MustNoErr(t, d.LinkOrderSiblings(aID, bID), "link siblings")
 	rt, err := d.GetProcessNodeRuntime(nodeID)
 	if err != nil {
 		t.Fatalf("get runtime: %v", err)
@@ -99,13 +92,10 @@ func seedSwapReadyFixture(t *testing.T) (db *DB, claim *processes.NodeClaim, run
 }
 
 func TestComputeSwapReady_BothStaged(t *testing.T) {
+	t.Parallel()
 	db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
-	if err := db.UpdateOrderStatus(aID, "staged"); err != nil {
-		t.Fatalf("mark A staged: %v", err)
-	}
-	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
-		t.Fatalf("mark B staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "staged"), "mark A staged")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
 	if !ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=true when both orders staged")
 	}
@@ -120,28 +110,21 @@ func TestComputeSwapReady_BothStaged(t *testing.T) {
 // "at least one staged" rule), SwapReady is false because B isn't parked
 // at the line yet.
 func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
+	t.Parallel()
 	db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
 
 	// B (StagedOrderID, lineside robot) staged; A (ActiveOrderID) in_transit.
 	// New contract: SwapReady=true — the gating leg is parked.
-	if err := db.UpdateOrderStatus(aID, "in_transit"); err != nil {
-		t.Fatalf("mark A in_transit: %v", err)
-	}
-	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
-		t.Fatalf("mark B staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "in_transit"), "mark A in_transit")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
 	if !ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=true when StagedOrderID (B, lineside robot) is at staged — the new gating signal")
 	}
 
 	// Inverse: A staged, B in_transit. Under the new contract this returns
 	// false because B isn't the parked one. The operator should wait for B.
-	if err := db.UpdateOrderStatus(aID, "staged"); err != nil {
-		t.Fatalf("mark A staged: %v", err)
-	}
-	if err := db.UpdateOrderStatus(bID, "in_transit"); err != nil {
-		t.Fatalf("mark B in_transit: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "staged"), "mark A staged")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "in_transit"), "mark B in_transit")
 	if ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=false when only ActiveOrderID (A) is staged and B has not yet arrived — B is the gate, not A")
 	}
@@ -151,12 +134,11 @@ func TestComputeSwapReady_OnlyOneStaged(t *testing.T) {
 // fire when the non-staged leg has gone terminal (confirmed/failed/cancelled).
 // The cycle is over at that point and the consolidated path shouldn't appear.
 func TestComputeSwapReady_OneStagedOneTerminal(t *testing.T) {
+	t.Parallel()
 	for _, terminalStatus := range []string{"confirmed", "failed", "cancelled"} {
 		t.Run(terminalStatus, func(t *testing.T) {
 			db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
-			if err := db.UpdateOrderStatus(aID, "staged"); err != nil {
-				t.Fatalf("mark A staged: %v", err)
-			}
+			testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "staged"), "mark A staged")
 			if err := db.UpdateOrderStatus(bID, terminalStatus); err != nil {
 				t.Fatalf("mark B %s: %v", terminalStatus, err)
 			}
@@ -168,13 +150,10 @@ func TestComputeSwapReady_OneStagedOneTerminal(t *testing.T) {
 }
 
 func TestComputeSwapReady_NonTwoRobotClaim(t *testing.T) {
+	t.Parallel()
 	db, claim, runtime, aID, bID := seedSwapReadyFixture(t)
-	if err := db.UpdateOrderStatus(aID, "staged"); err != nil {
-		t.Fatalf("mark A staged: %v", err)
-	}
-	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
-		t.Fatalf("mark B staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(aID, "staged"), "mark A staged")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
 	// Flip the claim mode — SwapReady should only fire for two_robot swaps.
 	claim.SwapMode = "single_robot"
 	if ComputeSwapReady(db, claim, runtime, nil) {
@@ -183,6 +162,7 @@ func TestComputeSwapReady_NonTwoRobotClaim(t *testing.T) {
 }
 
 func TestComputeSwapReady_NilClaim(t *testing.T) {
+	t.Parallel()
 	db, _, runtime, _, _ := seedSwapReadyFixture(t)
 	if ComputeSwapReady(db, nil, runtime, nil) {
 		t.Error("expected SwapReady=false when claim is nil")
@@ -190,6 +170,7 @@ func TestComputeSwapReady_NilClaim(t *testing.T) {
 }
 
 func TestComputeSwapReady_MissingRuntimeOrders(t *testing.T) {
+	t.Parallel()
 	db, claim, _, _, _ := seedSwapReadyFixture(t)
 	// Runtime with no tracked orders.
 	empty := &processes.RuntimeState{}
@@ -204,10 +185,9 @@ func TestComputeSwapReady_MissingRuntimeOrders(t *testing.T) {
 // durable OldMaterialReleaseOrderID so the operator gets RELEASE instead of
 // being parked on WAITING FOR OTHER ROBOT with no escape.
 func TestComputeSwapReady_TaskFallbackWhenRuntimePointersNil(t *testing.T) {
+	t.Parallel()
 	db, claim, _, _, bID := seedSwapReadyFixture(t)
-	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
-		t.Fatalf("mark B staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
 	// Runtime with no tracked orders — simulates handler_bin_picked_up or
 	// other clears that nulled both ActiveOrderID and StagedOrderID.
 	empty := &processes.RuntimeState{}
@@ -223,10 +203,9 @@ func TestComputeSwapReady_TaskFallbackWhenRuntimePointersNil(t *testing.T) {
 // Symmetric guard: task fallback must still require B at staged. If the
 // task points at the evac but the evac isn't actually parked yet, no release.
 func TestComputeSwapReady_TaskFallbackRequiresStaged(t *testing.T) {
+	t.Parallel()
 	db, claim, _, _, bID := seedSwapReadyFixture(t)
-	if err := db.UpdateOrderStatus(bID, "in_transit"); err != nil {
-		t.Fatalf("mark B in_transit: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "in_transit"), "mark B in_transit")
 	empty := &processes.RuntimeState{}
 	task := &processes.NodeTask{OldMaterialReleaseOrderID: &bID}
 	if ComputeSwapReady(db, claim, empty, task) {
@@ -249,17 +228,14 @@ func TestComputeSwapReady_TaskFallbackRequiresStaged(t *testing.T) {
 // tracked orders to release". Post-refactor: evac.SiblingOrderID==nil
 // short-circuits before the staged check.
 func TestComputeSwapReady_DropHasNoSibling_ViaTaskPointer(t *testing.T) {
+	t.Parallel()
 	db, claim, _, _, bID := seedSwapReadyFixture(t)
-	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
-		t.Fatalf("mark B staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
 	// Simulate a drop: clear the sibling pointer that the fixture set
 	// up for the standard two-robot pair. A real drop never gets one
 	// because the applier skips LinkOrderSiblings when only the evac
 	// order is created.
-	if err := db.ClearOrderSibling(bID); err != nil {
-		t.Fatalf("clear sibling: %v", err)
-	}
+	testutil.MustNoErr(t, db.ClearOrderSibling(bID), "clear sibling")
 	empty := &processes.RuntimeState{}
 	dropTask := &processes.NodeTask{
 		OldMaterialReleaseOrderID: &bID,
@@ -276,13 +252,10 @@ func TestComputeSwapReady_DropHasNoSibling_ViaTaskPointer(t *testing.T) {
 // drop. The order-graph predicate handles this without needing a
 // Situation check.
 func TestComputeSwapReady_DropHasNoSibling_ViaRuntimePointer(t *testing.T) {
+	t.Parallel()
 	db, claim, runtime, _, bID := seedSwapReadyFixture(t)
-	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
-		t.Fatalf("mark B staged: %v", err)
-	}
-	if err := db.ClearOrderSibling(bID); err != nil {
-		t.Fatalf("clear sibling: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
+	testutil.MustNoErr(t, db.ClearOrderSibling(bID), "clear sibling")
 	dropTask := &processes.NodeTask{Situation: "drop"}
 	if ComputeSwapReady(db, claim, runtime, dropTask) {
 		t.Error("expected SwapReady=false when runtime points at an order without a sibling (drop on a two-robot-mode node)")
@@ -298,15 +271,12 @@ func TestComputeSwapReady_DropHasNoSibling_ViaRuntimePointer(t *testing.T) {
 // failure to prevent reaching this state. The two event-loop sites
 // stay log-and-continue with a residual risk tracked in SHINGO_TODO.md.
 func TestComputeSwapReady_PairWithoutSiblingPointer(t *testing.T) {
+	t.Parallel()
 	db, claim, runtime, _, bID := seedSwapReadyFixture(t)
-	if err := db.UpdateOrderStatus(bID, "staged"); err != nil {
-		t.Fatalf("mark B staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(bID, "staged"), "mark B staged")
 	// Simulate a silent LinkOrderSiblings failure: clear the pointer
 	// the fixture set.
-	if err := db.ClearOrderSibling(bID); err != nil {
-		t.Fatalf("clear sibling: %v", err)
-	}
+	testutil.MustNoErr(t, db.ClearOrderSibling(bID), "clear sibling")
 	if ComputeSwapReady(db, claim, runtime, nil) {
 		t.Error("expected SwapReady=false when the pair is missing sibling linkage (silent LinkOrderSiblings failure)")
 	}
@@ -314,6 +284,7 @@ func TestComputeSwapReady_PairWithoutSiblingPointer(t *testing.T) {
 
 // Both runtime pointers populated → walk no siblings, return as-is.
 func TestResolveSwapPair_RuntimeBothPresent(t *testing.T) {
+	t.Parallel()
 	db, _, runtime, aID, bID := seedSwapReadyFixture(t)
 	evac, supply, err := ResolveSwapPair(db, runtime, nil)
 	if err != nil {
@@ -331,6 +302,7 @@ func TestResolveSwapPair_RuntimeBothPresent(t *testing.T) {
 // Mirrors handler_bin_picked_up clearing StagedOrderID while ActiveOrderID
 // survives.
 func TestResolveSwapPair_RuntimeStagedNilSiblingWalk(t *testing.T) {
+	t.Parallel()
 	db, _, _, aID, bID := seedSwapReadyFixture(t)
 	rt := &processes.RuntimeState{ActiveOrderID: &aID}
 	evac, supply, err := ResolveSwapPair(db, rt, nil)
@@ -351,6 +323,7 @@ func TestResolveSwapPair_RuntimeStagedNilSiblingWalk(t *testing.T) {
 // fell back to task.OldMaterialReleaseOrderID and rendered RELEASE.
 // ResolveSwapPair now uses the same task fallback so both sides agree.
 func TestResolveSwapPair_TaskFallbackWhenRuntimePointersNil(t *testing.T) {
+	t.Parallel()
 	db, _, _, aID, bID := seedSwapReadyFixture(t)
 	empty := &processes.RuntimeState{}
 	task := &processes.NodeTask{OldMaterialReleaseOrderID: &bID}
@@ -370,6 +343,7 @@ func TestResolveSwapPair_TaskFallbackWhenRuntimePointersNil(t *testing.T) {
 // No runtime, no task → "no tracked orders to release". The render-side
 // equivalent: ComputeSwapReady returns false without erroring.
 func TestResolveSwapPair_EmptyRuntimeAndTask(t *testing.T) {
+	t.Parallel()
 	db, _, _, _, _ := seedSwapReadyFixture(t)
 	_, _, err := ResolveSwapPair(db, &processes.RuntimeState{}, nil)
 	if err == nil {
@@ -381,10 +355,9 @@ func TestResolveSwapPair_EmptyRuntimeAndTask(t *testing.T) {
 // than partial-release. The HMI's ComputeSwapReady would have already
 // short-circuited via the sibling check, so this is defense-in-depth.
 func TestResolveSwapPair_TaskFallbackSingleLegRejected(t *testing.T) {
+	t.Parallel()
 	db, _, _, _, bID := seedSwapReadyFixture(t)
-	if err := db.ClearOrderSibling(bID); err != nil {
-		t.Fatalf("clear sibling: %v", err)
-	}
+	testutil.MustNoErr(t, db.ClearOrderSibling(bID), "clear sibling")
 	task := &processes.NodeTask{OldMaterialReleaseOrderID: &bID, Situation: "drop"}
 	_, _, err := ResolveSwapPair(db, &processes.RuntimeState{}, task)
 	if err == nil {

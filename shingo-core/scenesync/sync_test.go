@@ -151,6 +151,7 @@ func (r *recordingChange) on(nodeID int64, nodeName, action string) {
 // --- SyncScenePoints -------------------------------------------------
 
 func TestSyncScenePoints_Empty(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	total, loc := SyncScenePoints(db, noopLog, nil)
 	if total != 0 {
@@ -165,6 +166,7 @@ func TestSyncScenePoints_Empty(t *testing.T) {
 }
 
 func TestSyncScenePoints_AdvancedAndBins(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 
 	areas := []fleet.SceneArea{
@@ -228,6 +230,7 @@ func TestSyncScenePoints_AdvancedAndBins(t *testing.T) {
 }
 
 func TestSyncScenePoints_DeletePerAreaCalled(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	// Pre-seed a stale point in AreaA that sync should nuke.
 	_ = db.UpsertScenePoint(&scene.Point{AreaName: "AreaA", InstanceName: "stale"})
@@ -246,6 +249,7 @@ func TestSyncScenePoints_DeletePerAreaCalled(t *testing.T) {
 }
 
 func TestSyncScenePoints_ErrorsLoggedNotFatal(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	db.errUpsert = errors.New("boom")
 	rec := &recordingLog{}
@@ -268,6 +272,7 @@ func TestSyncScenePoints_ErrorsLoggedNotFatal(t *testing.T) {
 // --- SyncFleetNodes --------------------------------------------------
 
 func TestSyncFleetNodes_CreatesMissingNodes(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 7, Code: "STAG"}
 	rc := &recordingChange{}
@@ -302,6 +307,7 @@ func TestSyncFleetNodes_CreatesMissingNodes(t *testing.T) {
 }
 
 func TestSyncFleetNodes_UpdatesZoneOnExisting(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 1, Code: "STAG"}
 
@@ -327,6 +333,7 @@ func TestSyncFleetNodes_UpdatesZoneOnExisting(t *testing.T) {
 }
 
 func TestSyncFleetNodes_DeletesNodesNotInScene(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 1, Code: "STAG"}
 
@@ -379,6 +386,7 @@ func TestSyncFleetNodes_DeletesNodesNotInScene(t *testing.T) {
 }
 
 func TestSyncFleetNodes_NoNodeTypeStillCreates(t *testing.T) {
+	t.Parallel()
 	// Absence of the STAG node type should not stop node creation —
 	// NodeTypeID is just left nil.
 	db := newFakeStore()
@@ -400,6 +408,7 @@ func TestSyncFleetNodes_NoNodeTypeStillCreates(t *testing.T) {
 // --- UpdateNodeZones -------------------------------------------------
 
 func TestUpdateNodeZones_OverwriteTrue(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	_ = db.CreateNode(&nodes.Node{Name: "a", Zone: "OLD"})
 	_ = db.CreateNode(&nodes.Node{Name: "b", Zone: ""})
@@ -431,6 +440,7 @@ func TestUpdateNodeZones_OverwriteTrue(t *testing.T) {
 }
 
 func TestUpdateNodeZones_OverwriteFalse(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	_ = db.CreateNode(&nodes.Node{Name: "a", Zone: "OLD"}) // non-empty → skipped
 	_ = db.CreateNode(&nodes.Node{Name: "b", Zone: ""})    // empty → filled
@@ -452,6 +462,7 @@ func TestUpdateNodeZones_OverwriteFalse(t *testing.T) {
 }
 
 func TestUpdateNodeZones_ListError(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	db.errList = errors.New("list exploded")
 	rec := &recordingLog{}
@@ -476,6 +487,7 @@ func (f *fakeSyncer) GetSceneAreas() ([]fleet.SceneArea, error) {
 }
 
 func TestSync_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	db.nodeTypes["STAG"] = &nodes.NodeType{ID: 1, Code: "STAG"}
 
@@ -516,6 +528,7 @@ func TestSync_HappyPath(t *testing.T) {
 }
 
 func TestSync_RejectsConcurrent(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	syncer := &fakeSyncer{}
 	var running atomic.Bool
@@ -534,6 +547,7 @@ func TestSync_RejectsConcurrent(t *testing.T) {
 }
 
 func TestSync_SyncerError(t *testing.T) {
+	t.Parallel()
 	db := newFakeStore()
 	wantErr := errors.New("fleet down")
 	syncer := &fakeSyncer{err: wantErr}

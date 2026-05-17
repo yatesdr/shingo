@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/nodes"
@@ -272,12 +273,8 @@ func TestCompoundOrderCreation(t *testing.T) {
 	}
 	// Create a delivery node so dispatchToFleet can resolve it
 	destNode := &nodes.Node{Name: "LINE1-DEST", Enabled: true}
-	if err := db.CreateNode(destNode); err != nil {
-		t.Fatalf("create dest node: %v", err)
-	}
-	if err := db.CreateOrder(parentOrder); err != nil {
-		t.Fatalf("create parent order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(destNode), "create dest node")
+	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent order")
 
 	// Plan the reshuffle
 	plan, err := PlanReshuffle(db, target, slots[1], lane, grp.ID)
@@ -289,9 +286,7 @@ func TestCompoundOrderCreation(t *testing.T) {
 	d, _ := newTestDispatcher(t, db, testdb.NewSuccessBackend())
 
 	// Create compound order
-	if err := d.CreateCompoundOrder(parentOrder, plan); err != nil {
-		t.Fatalf("CreateCompoundOrder: %v", err)
-	}
+	testutil.MustNoErr(t, d.CreateCompoundOrder(parentOrder, plan), "CreateCompoundOrder")
 
 	// Verify parent order status is "reshuffling"
 	parentGot, err := db.GetOrder(parentOrder.ID)
@@ -370,9 +365,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		OrderType: OrderTypeRetrieve,
 		Status:    StatusReshuffling,
 	}
-	if err := db.CreateOrder(parentOrder); err != nil {
-		t.Fatalf("create parent order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent order")
 
 	// Create 3 child orders
 	child1 := &orders.Order{
@@ -385,9 +378,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		SourceNode:    slots[0].Name,
 		DeliveryNode:  "GRP-TEST-DC-1",
 	}
-	if err := db.CreateOrder(child1); err != nil {
-		t.Fatalf("create child1: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(child1), "create child1")
 
 	child2 := &orders.Order{
 		EdgeUUID:      "uuid-fail-parent-step-2",
@@ -399,9 +390,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		SourceNode:    slots[1].Name,
 		DeliveryNode:  "LINE1-DEST",
 	}
-	if err := db.CreateOrder(child2); err != nil {
-		t.Fatalf("create child2: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(child2), "create child2")
 
 	// Create a bin claimed by child3 to verify unclaim on cancel
 	binC3 := createTestBinAtNode(t, db, bp.Code, slots[2].ID, "BIN-C3")
@@ -416,9 +405,7 @@ func TestHandleChildOrderFailure(t *testing.T) {
 		SourceNode:    slots[2].Name,
 		DeliveryNode:  slots[0].Name,
 	}
-	if err := db.CreateOrder(child3); err != nil {
-		t.Fatalf("create child3: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(child3), "create child3")
 
 	// Claim the bin by child3
 	db.ClaimBin(binC3.ID, child3.ID)
@@ -488,9 +475,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		OrderType: OrderTypeRetrieve,
 		Status:    StatusReshuffling,
 	}
-	if err := db.CreateOrder(parentOrder); err != nil {
-		t.Fatalf("create parent order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(parentOrder), "create parent order")
 
 	// Child 1: already confirmed (done)
 	child1 := &orders.Order{
@@ -503,9 +488,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		SourceNode:    slots[0].Name,
 		DeliveryNode:  "GRP-TEST-DC-1",
 	}
-	if err := db.CreateOrder(child1); err != nil {
-		t.Fatalf("create child1: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(child1), "create child1")
 
 	// Child 2: the one that fails
 	child2 := &orders.Order{
@@ -518,9 +501,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		SourceNode:    slots[1].Name,
 		DeliveryNode:  "LINE1-DEST",
 	}
-	if err := db.CreateOrder(child2); err != nil {
-		t.Fatalf("create child2: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(child2), "create child2")
 
 	// Child 3: IN-FLIGHT (in_transit) — the key test case.
 	// Old code would skip this, leaving orphan robot and claimed bin.
@@ -537,9 +518,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		DeliveryNode:  slots[0].Name,
 		BinID:         &binC3.ID,
 	}
-	if err := db.CreateOrder(child3); err != nil {
-		t.Fatalf("create child3: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(child3), "create child3")
 	db.ClaimBin(binC3.ID, child3.ID)
 
 	// Child 4: still pending — should also be cancelled
@@ -555,9 +534,7 @@ func TestHandleChildOrderFailure_InFlightSibling(t *testing.T) {
 		DeliveryNode:  slots[1].Name,
 		BinID:         &binC4.ID,
 	}
-	if err := db.CreateOrder(child4); err != nil {
-		t.Fatalf("create child4: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(child4), "create child4")
 	db.ClaimBin(binC4.ID, child4.ID)
 
 	// Lock the lane
@@ -648,9 +625,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		Quantity:     1,
 	}
-	if err := db.CreateOrder(parent); err != nil {
-		t.Fatalf("create parent: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	failedChild := &orders.Order{
 		EdgeUUID:      "child-fail-event",
@@ -662,9 +637,7 @@ func TestAdvanceCompoundOrder_FailedParentEmitsOrderFailed(t *testing.T) {
 		SourceNode:    lineNode.Name,
 		DeliveryNode:  lineNode.Name,
 	}
-	if err := db.CreateOrder(failedChild); err != nil {
-		t.Fatalf("create failed child: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(failedChild), "create failed child")
 
 	// Reset emitter to ignore receipt events from order creation
 	emitter.failed = nil

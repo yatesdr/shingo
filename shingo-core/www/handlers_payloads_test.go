@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet/simulator"
@@ -154,13 +155,12 @@ func loadTestTemplates(t *testing.T, h *Handlers) {
 // --- apiListPayloads --------------------------------------------------------
 
 func TestApiListPayloads_ReturnsAll(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	// Seed two payloads. testdb.SetupStandardData creates PART-A.
 	sd := testdb.SetupStandardData(t, db)
 	extra := &payloads.Payload{Code: "PART-B", Description: "second"}
-	if err := db.CreatePayload(extra); err != nil {
-		t.Fatalf("seed payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(extra), "seed payload")
 
 	rec := getPlain(t, h.apiListPayloads, "/api/payloads")
 	if rec.Code != http.StatusOK {
@@ -168,9 +168,7 @@ func TestApiListPayloads_ReturnsAll(t *testing.T) {
 	}
 
 	var payloads []*payloads.Payload
-	if err := json.NewDecoder(rec.Body).Decode(&payloads); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&payloads), "decode")
 	if len(payloads) < 2 {
 		t.Errorf("expected at least 2 payloads, got %d", len(payloads))
 	}
@@ -186,6 +184,7 @@ func TestApiListPayloads_ReturnsAll(t *testing.T) {
 // --- apiGetPayload ----------------------------------------------------------
 
 func TestApiGetPayload_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -194,15 +193,14 @@ func TestApiGetPayload_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var got payloads.Payload
-	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&got), "decode")
 	if got.Code != sd.Payload.Code {
 		t.Errorf("code: got %q, want %q", got.Code, sd.Payload.Code)
 	}
 }
 
 func TestApiGetPayload_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiGetPayload, "/api/payloads/detail?id=notanint")
 	if rec.Code != http.StatusBadRequest {
@@ -212,6 +210,7 @@ func TestApiGetPayload_InvalidID(t *testing.T) {
 }
 
 func TestApiGetPayload_NotFound(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiGetPayload, "/api/payloads/detail?id=9999999")
 	if rec.Code != http.StatusNotFound {
@@ -223,6 +222,7 @@ func TestApiGetPayload_NotFound(t *testing.T) {
 // --- apiListManifest --------------------------------------------------------
 
 func TestApiListManifest_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -243,15 +243,14 @@ func TestApiListManifest_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var items []*payloads.ManifestItem
-	if err := json.NewDecoder(rec.Body).Decode(&items); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&items), "decode")
 	if len(items) != 2 {
 		t.Errorf("got %d items, want 2", len(items))
 	}
 }
 
 func TestApiListManifest_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiListManifest, "/api/payloads/manifest?id=xyz")
 	if rec.Code != http.StatusBadRequest {
@@ -262,6 +261,7 @@ func TestApiListManifest_InvalidID(t *testing.T) {
 // --- apiCreateManifestItem --------------------------------------------------
 
 func TestApiCreateManifestItem_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -275,9 +275,7 @@ func TestApiCreateManifestItem_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var created payloads.ManifestItem
-	if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&created), "decode")
 	if created.ID == 0 || created.PartNumber != "PART-X" || created.Quantity != 7 {
 		t.Errorf("created: got %+v", created)
 	}
@@ -299,6 +297,7 @@ func TestApiCreateManifestItem_HappyPath(t *testing.T) {
 }
 
 func TestApiCreateManifestItem_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiCreateManifestItem, "/api/payloads/manifest/create", []byte("not-json"))
 	if rec.Code != http.StatusBadRequest {
@@ -309,12 +308,11 @@ func TestApiCreateManifestItem_InvalidJSON(t *testing.T) {
 // --- apiUpdateManifestItem --------------------------------------------------
 
 func TestApiUpdateManifestItem_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "OLD", Quantity: 1}
-	if err := db.CreatePayloadManifestItem(item); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "seed")
 
 	rec := postJSON(t, h.apiUpdateManifestItem, "/api/payloads/manifest/update",
 		map[string]any{"id": item.ID, "part_number": "NEW", "quantity": 9})
@@ -332,12 +330,11 @@ func TestApiUpdateManifestItem_HappyPath(t *testing.T) {
 // --- apiDeleteManifestItem --------------------------------------------------
 
 func TestApiDeleteManifestItem_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	item := &payloads.ManifestItem{PayloadID: sd.Payload.ID, PartNumber: "GONE", Quantity: 1}
-	if err := db.CreatePayloadManifestItem(item); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "seed")
 
 	rec := postJSON(t, h.apiDeleteManifestItem, "/api/payloads/manifest/delete",
 		map[string]any{"id": item.ID})
@@ -353,6 +350,7 @@ func TestApiDeleteManifestItem_HappyPath(t *testing.T) {
 }
 
 func TestApiDeleteManifestItem_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiDeleteManifestItem, "/api/payloads/manifest/delete", []byte("{"))
 	if rec.Code != http.StatusBadRequest {
@@ -363,13 +361,12 @@ func TestApiDeleteManifestItem_InvalidJSON(t *testing.T) {
 // --- apiConfirmManifest -----------------------------------------------------
 
 func TestApiConfirmManifest_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-CONFIRM-1")
 	// Unconfirm first.
-	if err := db.UnconfirmBinManifest(bin.ID); err != nil {
-		t.Fatalf("unconfirm: %v", err)
-	}
+	testutil.MustNoErr(t, db.UnconfirmBinManifest(bin.ID), "unconfirm")
 
 	rec := postJSON(t, h.apiConfirmManifest, "/api/payloads/confirm-manifest",
 		map[string]any{"id": bin.ID})
@@ -386,28 +383,26 @@ func TestApiConfirmManifest_HappyPath(t *testing.T) {
 // --- apiListPayloadEvents ---------------------------------------------------
 
 func TestApiListPayloadEvents_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-AUDIT-1")
 	// seed audit entry
-	if err := db.AppendAudit("bin", bin.ID, "test-action", "old", "new", "tester"); err != nil {
-		t.Fatalf("seed audit: %v", err)
-	}
+	testutil.MustNoErr(t, db.AppendAudit("bin", bin.ID, "test-action", "old", "new", "tester"), "seed audit")
 
 	rec := getPlain(t, h.apiListPayloadEvents, "/api/payloads/events?id="+fmt.Sprint(bin.ID))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var entries []*audit.Entry
-	if err := json.NewDecoder(rec.Body).Decode(&entries); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&entries), "decode")
 	if len(entries) == 0 {
 		t.Error("expected at least one audit entry")
 	}
 }
 
 func TestApiListPayloadEvents_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiListPayloadEvents, "/api/payloads/events?id=bogus")
 	if rec.Code != http.StatusBadRequest {
@@ -418,6 +413,7 @@ func TestApiListPayloadEvents_InvalidID(t *testing.T) {
 // --- apiPayloadsByNode ------------------------------------------------------
 
 func TestApiPayloadsByNode_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-NODE-1")
@@ -427,15 +423,14 @@ func TestApiPayloadsByNode_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var bins []*bins.Bin
-	if err := json.NewDecoder(rec.Body).Decode(&bins); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&bins), "decode")
 	if len(bins) != 1 || bins[0].ID != bin.ID {
 		t.Errorf("bins at node: got %+v, want single bin id=%d", bins, bin.ID)
 	}
 }
 
 func TestApiPayloadsByNode_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := getPlain(t, h.apiPayloadsByNode, "/api/payloads/by-node?id=abc")
 	if rec.Code != http.StatusBadRequest {
@@ -446,6 +441,7 @@ func TestApiPayloadsByNode_InvalidID(t *testing.T) {
 // --- apiBulkRegisterBins ----------------------------------------------------
 
 func TestApiBulkRegisterBins_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -462,9 +458,7 @@ func TestApiBulkRegisterBins_HappyPath(t *testing.T) {
 		Created int     `json:"created"`
 		IDs     []int64 `json:"ids"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Created != 3 || len(resp.IDs) != 3 {
 		t.Errorf("response: got %+v, want created=3", resp)
 	}
@@ -480,6 +474,7 @@ func TestApiBulkRegisterBins_HappyPath(t *testing.T) {
 }
 
 func TestApiBulkRegisterBins_CountOutOfRange(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -508,6 +503,7 @@ func TestApiBulkRegisterBins_CountOutOfRange(t *testing.T) {
 }
 
 func TestApiBulkRegisterBins_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	rec := postRaw(t, h.apiBulkRegisterBins, "/api/bins/bulk-register", []byte("{bad"))
 	if rec.Code != http.StatusBadRequest {

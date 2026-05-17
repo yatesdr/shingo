@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -71,6 +72,7 @@ func coreUnreachableServer(t *testing.T) *httptest.Server {
 // bin's authoritative UOP from Core, and stamps cached_bin_id so the
 // PLC tick gate can detect steady-vs-gap state.
 func TestRuntimeBinding_ReleaseClickWritesIncomingBinUOP(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "RC-WRITE", PayloadCode: "PART-RC", UOPCapacity: 1200, InitialUOP: 800,
@@ -90,17 +92,11 @@ func TestRuntimeBinding_ReleaseClickWritesIncomingBinUOP(t *testing.T) {
 		t.Fatalf("create order: %v", err)
 	}
 	binID := supplyBinID
-	if err := db.UpdateOrderBinID(orderID, &binID); err != nil {
-		t.Fatalf("attach bin: %v", err)
-	}
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil); err != nil {
-		t.Fatalf("track order: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderBinID(orderID, &binID), "attach bin")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "track order")
 
 	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, LinesideCapture: map[string]int{}}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != supplyBinUOP {
@@ -116,6 +112,7 @@ func TestRuntimeBinding_ReleaseClickWritesIncomingBinUOP(t *testing.T) {
 // removal-only release (no supply leg / supply leg's BinID nil) writes
 // cache := 0, cached_bin_id := nil.
 func TestRuntimeBinding_ReleaseClickFallsBackToZero(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "RC-ZERO", PayloadCode: "PART-RC0", UOPCapacity: 1200, InitialUOP: 600,
@@ -131,14 +128,10 @@ func TestRuntimeBinding_ReleaseClickFallsBackToZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create order: %v", err)
 	}
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil); err != nil {
-		t.Fatalf("track order: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil), "track order")
 
 	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, LinesideCapture: map[string]int{}}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != 0 {
@@ -155,6 +148,7 @@ func TestRuntimeBinding_ReleaseClickFallsBackToZero(t *testing.T) {
 // sibling's bin via order.SiblingOrderID and writes its UOP. Both
 // legs land on the same value; idempotent rewrite.
 func TestRuntimeBinding_ReleaseClickResolvesSupplyViaSibling(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, err := db.CreateProcess("RC-SIB", "two-robot sibling", "active_production", "", "", false, false)
 	if err != nil {
@@ -178,9 +172,7 @@ func TestRuntimeBinding_ReleaseClickResolvesSupplyViaSibling(t *testing.T) {
 		t.Fatalf("upsert claim: %v", err)
 	}
 	db.EnsureProcessNodeRuntime(nodeID)
-	if err := db.SetProcessNodeRuntime(nodeID, &claimID, 500); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 500), "seed runtime")
 
 	const supplyBinID int64 = 9101
 	const supplyBinUOP = 950 // partial supply — verifies it's not just "capacity"
@@ -203,19 +195,13 @@ func TestRuntimeBinding_ReleaseClickResolvesSupplyViaSibling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create B: %v", err)
 	}
-	if err := db.LinkOrderSiblings(orderA, orderB); err != nil {
-		t.Fatalf("link siblings: %v", err)
-	}
-	if err := db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB); err != nil {
-		t.Fatalf("track A+B: %v", err)
-	}
+	testutil.MustNoErr(t, db.LinkOrderSiblings(orderA, orderB), "link siblings")
+	testutil.MustNoErr(t, db.UpdateProcessNodeRuntimeOrders(nodeID, &orderA, &orderB), "track A+B")
 
 	// Releasing B (the evac, no own supply BinID) must walk the sibling
 	// pointer to find A's BinID.
 	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, LinesideCapture: map[string]int{}}
-	if err := eng.ReleaseOrderWithLineside(orderB, disp); err != nil {
-		t.Fatalf("release B: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderB, disp), "release B")
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != supplyBinUOP {
@@ -226,9 +212,7 @@ func TestRuntimeBinding_ReleaseClickResolvesSupplyViaSibling(t *testing.T) {
 	}
 
 	// Now release A — should be an idempotent rewrite of the same value.
-	if err := eng.ReleaseOrderWithLineside(orderA, disp); err != nil {
-		t.Fatalf("release A: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderA, disp), "release A")
 	rt, _ = db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != supplyBinUOP {
 		t.Errorf("after A release: cache = %d, want %d (idempotent)", rt.RemainingUOPCached, supplyBinUOP)
@@ -240,6 +224,7 @@ func TestRuntimeBinding_ReleaseClickResolvesSupplyViaSibling(t *testing.T) {
 // click bin lookup, the cache is left untouched. The B2-fix precedent
 // (BinAtLineside): a transient Core blip must not zero a live cache.
 func TestRuntimeBinding_CoreUnavailableAtReleaseClickPreservesCache(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "RC-COREDOWN", PayloadCode: "PART-RCD", UOPCapacity: 1200, InitialUOP: 750,
@@ -260,9 +245,7 @@ func TestRuntimeBinding_CoreUnavailableAtReleaseClickPreservesCache(t *testing.T
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
 	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, LinesideCapture: map[string]int{}}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
 	if rt.RemainingUOPCached != seededUOP {
@@ -279,6 +262,7 @@ func TestRuntimeBinding_CoreUnavailableAtReleaseClickPreservesCache(t *testing.T
 // physically arrives, the delivered handler binds active_bin_id ==
 // cached_bin_id and sets cache to the bin's authoritative UOP from Core.
 func TestRuntimeBinding_DeliveredFlipsCacheAndPointers(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "DEL-FLIP", PayloadCode: "PART-DF", UOPCapacity: 1200, InitialUOP: 0,
@@ -327,6 +311,7 @@ func TestRuntimeBinding_DeliveredFlipsCacheAndPointers(t *testing.T) {
 // DeliveryNode == coreNodeName. Cache stays at whatever the supply
 // leg's delivery set it to.
 func TestRuntimeBinding_RemovalOnlyOrderDoesNotResetCache(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "REM-NORST", PayloadCode: "PART-RN", UOPCapacity: 1200, InitialUOP: 850,
@@ -384,6 +369,7 @@ func TestRuntimeBinding_RemovalOnlyOrderDoesNotResetCache(t *testing.T) {
 // Mirrors the ALN_002 -3/1200 incident: cache was zeroed at click,
 // ticks decremented from 0 into negatives.
 func TestRuntimeBinding_PLCTicksDoNotDecrementCacheDuringGap(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "GAP-NODEC", PayloadCode: "PART-GD", UOPCapacity: 1200, InitialUOP: 1200,
@@ -417,6 +403,7 @@ func TestRuntimeBinding_PLCTicksDoNotDecrementCacheDuringGap(t *testing.T) {
 // it), cached_bin_id still pointing at incoming. Ticks drain lineside
 // and that's it — no Core delta, no cache change.
 func TestRuntimeBinding_PLCTicksAfterPickupOnlyDrainLineside(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "GAP-PICKUP", PayloadCode: "PART-GP", UOPCapacity: 1200, InitialUOP: 1200,
@@ -449,6 +436,7 @@ func TestRuntimeBinding_PLCTicksAfterPickupOnlyDrainLineside(t *testing.T) {
 // that once delivery sets active_bin_id == cached_bin_id, ticks resume
 // normal cache decrement.
 func TestRuntimeBinding_PLCTicksResumeCacheDecrementAfterDelivery(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "GAP-RESUME", PayloadCode: "PART-GR", UOPCapacity: 1200, InitialUOP: 1200,
@@ -482,6 +470,7 @@ func TestRuntimeBinding_PLCTicksResumeCacheDecrementAfterDelivery(t *testing.T) 
 // preceding EventOrderDelivered) must not flip cache, active_bin_id,
 // or cached_bin_id.
 func TestRuntimeBinding_ConfirmDoesNotTouchCache(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "CONF-NOOP", PayloadCode: "PART-CN", UOPCapacity: 1200, InitialUOP: 600,
@@ -531,6 +520,7 @@ func TestRuntimeBinding_ConfirmDoesNotTouchCache(t *testing.T) {
 // requirement: the manual loader/unloader workflow is forklift-
 // managed; PLC tick deltas must not affect bin counts on those nodes.
 func TestRuntimeBinding_ManualSwapNodesSkipPLCTicks(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, err := db.CreateProcess("MS-SKIP", "manual swap skip", "active_production", "", "", false, false)
 	if err != nil {
@@ -583,6 +573,7 @@ func TestRuntimeBinding_ManualSwapNodesSkipPLCTicks(t *testing.T) {
 // requires Manager wiring; this is a contract test, not an integration
 // test.
 func TestRuntimeBinding_FaultedTerminalLeavesCacheAtClickValue(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix: "FT-EXP", PayloadCode: "PART-FT", UOPCapacity: 1200, InitialUOP: 0,
@@ -603,9 +594,7 @@ func TestRuntimeBinding_FaultedTerminalLeavesCacheAtClickValue(t *testing.T) {
 	db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
 
 	disp := ReleaseDisposition{Mode: DispositionCaptureLineside, LinesideCapture: map[string]int{}}
-	if err := eng.ReleaseOrderWithLineside(orderID, disp); err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseOrderWithLineside(orderID, disp), "release")
 
 	// Order goes Faulted → Failed terminal.
 	db.UpdateOrderStatus(orderID, string(protocol.StatusFaulted))

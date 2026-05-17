@@ -11,6 +11,7 @@ import "testing"
 // "release"). Locking down both branches here means a future
 // classification change has to change the test, not just slip through.
 func TestIsPickupBlock(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		binTask string
 		want    bool

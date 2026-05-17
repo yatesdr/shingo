@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/store"
 )
 
@@ -39,17 +40,11 @@ func pendingOutboxByType[T any](t *testing.T, db *store.DB, subject string) []T 
 			continue
 		}
 		var env protocol.Envelope
-		if err := json.Unmarshal(m.Payload, &env); err != nil {
-			t.Fatalf("decode envelope: %v", err)
-		}
+		testutil.MustNoErr(t, json.Unmarshal(m.Payload, &env), "decode envelope")
 		var data protocol.Data
-		if err := json.Unmarshal(env.Payload, &data); err != nil {
-			t.Fatalf("decode data: %v", err)
-		}
+		testutil.MustNoErr(t, json.Unmarshal(env.Payload, &data), "decode data")
 		var p T
-		if err := json.Unmarshal(data.Body, &p); err != nil {
-			t.Fatalf("decode payload: %v", err)
-		}
+		testutil.MustNoErr(t, json.Unmarshal(data.Body, &p), "decode payload")
 		out = append(out, p)
 	}
 	return out
@@ -59,6 +54,7 @@ func pendingOutboxByType[T any](t *testing.T, db *store.DB, subject string) []T 
 // multiple RecordBin calls in the same window aggregate into a single
 // envelope with the summed delta and a monotonic SequenceID.
 func TestInventoryDeltaReporter_BinAccumulationAndFlush(t *testing.T) {
+	t.Parallel()
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
@@ -96,6 +92,7 @@ func TestInventoryDeltaReporter_BinAccumulationAndFlush(t *testing.T) {
 // mirror: per-(node, pair_key, style, part) keying, capture_fill +
 // consume_drain accumulate, sequence advances monotonically.
 func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
+	t.Parallel()
 	db := newReporterTestDB(t)
 	r := New(db, "SMN_003", nil, nil, nil)
 
@@ -134,6 +131,7 @@ func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
 // allocating a seq, so a +5/-5 pair flushes nothing. A future change
 // that always allocates would fail this test before it ships.
 func TestInventoryDeltaReporter_ZeroDeltaNoFlush(t *testing.T) {
+	t.Parallel()
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
@@ -160,6 +158,7 @@ func TestInventoryDeltaReporter_ZeroDeltaNoFlush(t *testing.T) {
 // keys) accumulate and flush independently. Each gets its own
 // SequenceID stream.
 func TestInventoryDeltaReporter_ScopeKeysIndependent(t *testing.T) {
+	t.Parallel()
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
@@ -197,6 +196,7 @@ func TestInventoryDeltaReporter_ScopeKeysIndependent(t *testing.T) {
 //
 // We force failure by closing the underlying DB before flush.
 func TestInventoryDeltaReporter_RestoreOnEnqueueFailure(t *testing.T) {
+	t.Parallel()
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
@@ -226,6 +226,7 @@ func TestInventoryDeltaReporter_RestoreOnEnqueueFailure(t *testing.T) {
 // sum to a deterministic 1000 on flush, with no lost updates and no
 // data races (run with -race in CI).
 func TestInventoryDeltaReporter_ConcurrentRecordsThenFlush(t *testing.T) {
+	t.Parallel()
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 
@@ -260,6 +261,7 @@ func TestInventoryDeltaReporter_ConcurrentRecordsThenFlush(t *testing.T) {
 // graceful Edge shutdown after a release click would lose any
 // in-flight delta.
 func TestInventoryDeltaReporter_StopFlushesPending(t *testing.T) {
+	t.Parallel()
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
 	r.SetInterval(1 * time.Hour) // never auto-flush
@@ -283,6 +285,7 @@ func TestInventoryDeltaReporter_StopFlushesPending(t *testing.T) {
 // between the two sides would make every bucket delta look like a
 // new scope, defeating dedup.
 func TestInventoryDeltaReporter_BucketScopeKeyComposite(t *testing.T) {
+	t.Parallel()
 	got := bucketScopeKey(5, "L1|U1", 100, "PART-A")
 	want := "5|L1|U1|100|PART-A"
 	if got != want {

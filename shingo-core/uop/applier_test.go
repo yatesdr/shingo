@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/service"
 	"shingocore/store/audit"
@@ -49,23 +50,18 @@ func makeBucketDelta(nodeID int64, pairKey string, styleID int64, partNumber str
 // authoritative-write invariant: BinUOPDelta moves bins.uop_remaining
 // directly — deltas land on the count the rest of the system reads.
 func TestInventoryDelta_BinUOPDelta_AppliesToAuthoritative(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-1", "PART-A", 100)
 
-	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -3, 1, protocol.ReasonConsumeTick)); err != nil {
-		t.Fatalf("apply consume_tick: %v", err)
-	}
-	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -2, 2, protocol.ReasonConsumeTick)); err != nil {
-		t.Fatalf("apply consume_tick #2: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -3, 1, protocol.ReasonConsumeTick)), "apply consume_tick")
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -2, 2, protocol.ReasonConsumeTick)), "apply consume_tick #2")
 
 	var got int
-	if err := db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got); err != nil {
-		t.Fatalf("read bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got), "read bin")
 	if got != 95 {
 		t.Errorf("uop_remaining = %d, want 95 (100 - 3 - 2)", got)
 	}
@@ -77,6 +73,7 @@ func TestInventoryDelta_BinUOPDelta_AppliesToAuthoritative(t *testing.T) {
 // can replay any envelope after a Core blip; the dedup table is what
 // makes that safe.
 func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
@@ -84,9 +81,7 @@ func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-DUP", "PART-A", 100)
 
 	d := makeBinDelta(bin.ID, "PART-A", -10, 5, protocol.ReasonConsumeTick)
-	if err := svc.ApplyBinUOPDelta(d); err != nil {
-		t.Fatalf("apply first time: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply first time")
 	// Replay the exact same envelope.
 	if err := svc.ApplyBinUOPDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
@@ -97,9 +92,7 @@ func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 	}
 
 	var got int
-	if err := db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got); err != nil {
-		t.Fatalf("read bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT uop_remaining FROM bins WHERE id=$1`, bin.ID).Scan(&got), "read bin")
 	if got != 90 {
 		t.Errorf("uop_remaining = %d, want 90 (100 - 10 once, not 100 - 30)", got)
 	}
@@ -112,15 +105,14 @@ func TestInventoryDelta_BinUOPDelta_DedupesReplay(t *testing.T) {
 // indicates either a replay or a bug, and either way silently dropping
 // is the safe choice.
 func TestInventoryDelta_BinUOPDelta_OutOfOrderRejectsLowerSeq(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-DELTA-ORD", "PART-A", 100)
 
-	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -5, 10, protocol.ReasonConsumeTick)); err != nil {
-		t.Fatalf("apply seq=10: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -5, 10, protocol.ReasonConsumeTick)), "apply seq=10")
 	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-A", -7, 5, protocol.ReasonConsumeTick)); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("seq=5 (older) error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
@@ -138,6 +130,7 @@ func TestInventoryDelta_BinUOPDelta_OutOfOrderRejectsLowerSeq(t *testing.T) {
 // reconciliation pass surfaces the mismatch instead of letting it slip
 // through silently.
 func TestInventoryDelta_BinUOPDelta_RejectsMismatchedPayload(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
@@ -161,6 +154,7 @@ func TestInventoryDelta_BinUOPDelta_RejectsMismatchedPayload(t *testing.T) {
 // loudly. Phase 2's reconciler picks up the divergence on the next
 // pass.
 func TestInventoryDelta_BinUOPDelta_RejectsUnknownBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
@@ -175,13 +169,12 @@ func TestInventoryDelta_BinUOPDelta_RejectsUnknownBin(t *testing.T) {
 // reduces it; reaching zero deletes the row. Option C (location-only)
 // means an empty bucket has nothing to track.
 func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(5, "L1|U1", 100, "PART-A", 47, 1, protocol.ReasonCaptureFill)); err != nil {
-		t.Fatalf("capture_fill: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(5, "L1|U1", 100, "PART-A", 47, 1, protocol.ReasonCaptureFill)), "capture_fill")
 
 	var qty int
 	if err := db.QueryRow(`SELECT qty FROM lineside_buckets
@@ -193,9 +186,7 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 		t.Errorf("bucket qty after fill = %d, want 47", qty)
 	}
 
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(5, "L1|U1", 100, "PART-A", -47, 2, protocol.ReasonConsumeDrain)); err != nil {
-		t.Fatalf("consume_drain to zero: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(5, "L1|U1", 100, "PART-A", -47, 2, protocol.ReasonConsumeDrain)), "consume_drain to zero")
 
 	var rowCount int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM lineside_buckets
@@ -211,13 +202,12 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 // negative is rejected. Reconciliation in Phase 2 surfaces the
 // divergence.
 func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(7, "L2|U2", 200, "PART-B", 5, 1, protocol.ReasonCaptureFill)); err != nil {
-		t.Fatalf("capture_fill: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(7, "L2|U2", 200, "PART-B", 5, 1, protocol.ReasonCaptureFill)), "capture_fill")
 	// Try to drain 10 from a bucket that holds 5.
 	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(7, "L2|U2", 200, "PART-B", -10, 2, protocol.ReasonConsumeDrain)); err == nil {
 		t.Fatal("expected CHECK violation on underflow, got nil")
@@ -236,14 +226,13 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 // TestInventoryDelta_LinesideBucketDelta_DedupesReplay pins the
 // at-most-once contract for the bucket scope.
 func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	d := makeBucketDelta(8, "L1|U1", 300, "PART-C", 10, 1, protocol.ReasonCaptureFill)
-	if err := svc.ApplyLinesideBucketDelta(d); err != nil {
-		t.Fatalf("first apply: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(d), "first apply")
 	if err := svc.ApplyLinesideBucketDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
 	}
@@ -262,13 +251,12 @@ func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 // dedup independently. A reused SequenceID across distinct scopes is
 // not a replay.
 func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(9, "L1|U1", 400, "PART-D", 5, 1, protocol.ReasonCaptureFill)); err != nil {
-		t.Fatalf("part D apply: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(9, "L1|U1", 400, "PART-D", 5, 1, protocol.ReasonCaptureFill)), "part D apply")
 	// Same SequenceID, different part — this is a separate scope.
 	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(9, "L1|U1", 400, "PART-E", 7, 1, protocol.ReasonCaptureFill)); err != nil {
 		t.Errorf("part E apply (same seq, different scope): %v", err)
@@ -292,14 +280,13 @@ func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
 // current authoritative uop_remaining for every bin at the requested
 // nodes. Edge's reconciler self-heal reads it to align local cache.
 func TestInventoryDelta_ListBinUOPForNodes_ReturnsAuthoritative(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	bin := createTestBin(t, db, sd.LineNode.ID, "BIN-RECONC", "PART-R", 100)
-	if err := svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-R", -7, 1, protocol.ReasonConsumeTick)); err != nil {
-		t.Fatalf("apply delta: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(makeBinDelta(bin.ID, "PART-R", -7, 1, protocol.ReasonConsumeTick)), "apply delta")
 
 	rows, err := svc.ListBinUOPForNodes([]string{sd.LineNode.Name})
 	if err != nil {
@@ -322,14 +309,13 @@ func TestInventoryDelta_ListBinUOPForNodes_ReturnsAuthoritative(t *testing.T) {
 // rows whose station column matches "A". Cross-station leakage
 // would let Edge see (and mis-attribute) other stations' buckets.
 func TestInventoryDelta_ListBucketsForStation_FiltersByStation(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_ = testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	apply := func(d *protocol.LinesideBucketDelta) {
-		if err := svc.ApplyLinesideBucketDelta(d); err != nil {
-			t.Fatalf("apply: %v", err)
-		}
+		testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(d), "apply")
 	}
 	// Two stations, two buckets each.
 	stationA := makeBucketDelta(11, "L1|U1", 100, "PART-A", 5, 1, protocol.ReasonCaptureFill)
@@ -364,6 +350,7 @@ func TestInventoryDelta_ListBucketsForStation_FiltersByStation(t *testing.T) {
 // still attached — visible to the operator UI as "empty" but invisible
 // to FindEmptyCompatibleBin.
 func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
@@ -372,9 +359,7 @@ func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T)
 
 	// Apply capture_reduction of -25 → drives the bin to zero.
 	d := makeBinDelta(bin.ID, "PART-CC", -25, 1, protocol.ReasonCaptureReduction)
-	if err := svc.ApplyBinUOPDelta(d); err != nil {
-		t.Fatalf("apply capture_reduction: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply capture_reduction")
 
 	// uop_remaining must be 0; payload_code must be cleared (manifest
 	// reset by ClearForReuseTx).
@@ -414,6 +399,7 @@ func TestApplyBinUOPDelta_CaptureReductionToZeroFiresClearForReuse(t *testing.T)
 // still had work to do. Only operator-driven release paths (capture,
 // RELEASE EMPTY, partial-back-with-zero) clear the manifest.
 func TestApplyBinUOPDelta_ConsumeTickToZeroDoesNotFireClearForReuse(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
@@ -421,9 +407,7 @@ func TestApplyBinUOPDelta_ConsumeTickToZeroDoesNotFireClearForReuse(t *testing.T
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TICK-NOCLR", "PART-TNC", 5)
 
 	d := makeBinDelta(bin.ID, "PART-TNC", -5, 1, protocol.ReasonConsumeTick)
-	if err := svc.ApplyBinUOPDelta(d); err != nil {
-		t.Fatalf("apply consume_tick: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyBinUOPDelta(d), "apply consume_tick")
 
 	var (
 		gotUOP     int

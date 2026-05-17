@@ -65,10 +65,15 @@ shingo-core/
 │       ├── compound.go            # CompoundScenario, CompoundConfig, SetupCompound
 │       └── mock_backend.go        # MockBackend (NewFailingBackend/NewSuccessBackend), MockTrackingBackend
 ├── engine/
-│   ├── engine_test.go             # 16 foundational tests (harness helpers removed)
-│   ├── engine_concurrent_test.go  # Concurrency + general tests (~400 lines)
-│   ├── engine_compound_test.go    # 8 compound reshuffle tests (uses SetupCompound for setup)
-│   └── engine_complex_test.go     # 12 complex order tests (~600 lines)
+│   ├── engine_simulator_test.go   # Full-lifecycle + staged complex-order release
+│   ├── engine_claim_test.go       # Bin claim / poaching prevention (6 tests)
+│   ├── engine_linechangeover_test.go # Line changeover with missing/in-flight bins
+│   ├── engine_quality_test.go     # Quality-hold dispatch behavior
+│   ├── engine_terminal_test.go    # Terminal-state semantics (cancel, fail, terminate)
+│   ├── engine_reconciliation_test.go # Orphaned bin claim sweep
+│   ├── engine_concurrent_test.go  # Concurrency + malformed input + redirect + scanner
+│   ├── engine_compound_test.go    # 8 compound reshuffle tests (uses SetupCompound)
+│   └── engine_complex_test.go     # 12 complex order tests
 ├── dispatch/
 │   ├── dispatcher_test.go         # 18 tests, uses testdb.NewFailingBackend
 │   ├── reshuffle_test.go          # 6 tests, uses testdb.NewSuccessBackend/NewFailingBackend
@@ -94,8 +99,13 @@ shingo-core/
 | `fleet/simulator/inspector.go` | Read-only query methods. GetOrder, GetOrderByIndex, OrderCount, BlocksForOrder, HasOrder, FindOrderByLocation. Used by tests to inspect what the "fleet" received. |
 | `fleet/simulator/options.go` | Fault injection. WithCreateFailure (fleet rejects orders), WithPingFailure (fleet health check fails). |
 | `fleet/simulator/concurrent.go` | Barrier-synchronized goroutine launcher (ParallelGroup). Used for concurrent dispatch stress tests. |
-| `engine/engine_test.go` | Engine-level tests (regression and scenario). TC-15, TC-2, TC-21, TC-23 cluster, TC-24 cluster, TC-30, ClaimBin. Uses real Engine + real DB + simulator. |
-| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, and staging expiry tests. TC-09, TC-10, TC-12, claim race, dispatch stress, redirect, fulfillment scanner, TC-37. Uses PostFindHook for deterministic TOCTOU race reproduction. |
+| `engine/engine_simulator_test.go` | Full-order-lifecycle and staged complex-order release tests. Real Engine + real DB + simulator. |
+| `engine/engine_claim_test.go` | Bin-claim contracts: silent-overwrite guard, store-order poach prevention, complex-order claim hand-off, store-order vs staged bin at core node. |
+| `engine/engine_linechangeover_test.go` | Line changeover with one bin already moved away, and changeover while a move-to-QH order is in flight. |
+| `engine/engine_quality_test.go` | Quality-hold bin handling — queued, not failed. |
+| `engine/engine_terminal_test.go` | Terminal-state semantics: cancel + return-claim transfer, fleet-failed return-claim transfer, cancel-after-delivered, terminate-rejects-confirmed, source-node auto-return. |
+| `engine/engine_reconciliation_test.go` | Orphaned bin claim detection + sweep. |
+| `engine/engine_concurrent_test.go` | Concurrency, malformed input, redirect, fulfillment scanner, and staging expiry tests. Uses PostFindHook for deterministic TOCTOU race reproduction. |
 | `engine/engine_complex_test.go` | Complex order lifecycle + production cycle pattern tests. TC-42, TC-43, TC-47, TC-48, TC-49, TC-50, TC-55, TC-56, TC-57, TC-58, TC-59, TC-60. Strengthened with SourceNode, bin position, and lifecycle assertions. |
 | `engine/engine_compound_test.go` | Compound reshuffle order tests. TC-40a, TC-44, TC-45, TC-46, TC-51, TC-52, TC-53, TC-54. All 8 tests use `testdb.SetupCompound()` for setup, reducing ~400 lines of boilerplate. |
 | `dispatch/dispatcher_test.go` | Dispatcher-level tests. 18 tests, uses shared `testdb.NewFailingBackend()` instead of inline mock. |

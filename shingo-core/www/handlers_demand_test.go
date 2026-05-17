@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"shingo/protocol/testutil"
 )
 
 // Characterization tests for handlers_demand.go — pinned before the Stage 1
@@ -26,9 +27,7 @@ import (
 func postJSONWithChi(t *testing.T, handler http.HandlerFunc, path string, params map[string]string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	buf := &bytes.Buffer{}
-	if err := json.NewEncoder(buf).Encode(body); err != nil {
-		t.Fatalf("encode body: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewEncoder(buf).Encode(body), "encode body")
 	req := httptest.NewRequest(http.MethodPost, path, buf)
 	req.Header.Set("Content-Type", "application/json")
 	rctx := chi.NewRouteContext()
@@ -44,6 +43,7 @@ func postJSONWithChi(t *testing.T, handler http.HandlerFunc, path string, params
 // --- apiCreateDemand --------------------------------------------------------
 
 func TestApiCreateDemand_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 
 	rec := postJSON(t, h.apiCreateDemand, "/api/demand",
@@ -59,9 +59,7 @@ func TestApiCreateDemand_HappyPath(t *testing.T) {
 	var resp struct {
 		ID int64 `json:"id"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.ID == 0 {
 		t.Fatalf("response missing id: %+v", resp)
 	}
@@ -76,6 +74,7 @@ func TestApiCreateDemand_HappyPath(t *testing.T) {
 }
 
 func TestApiCreateDemand_MissingCatID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiCreateDemand, "/api/demand",
@@ -88,6 +87,7 @@ func TestApiCreateDemand_MissingCatID(t *testing.T) {
 // --- apiUpdateDemand --------------------------------------------------------
 
 func TestApiUpdateDemand_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	id, err := db.CreateDemand("PART-2", "orig", 5)
 	if err != nil {
@@ -116,6 +116,7 @@ func TestApiUpdateDemand_HappyPath(t *testing.T) {
 }
 
 func TestApiUpdateDemand_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSONWithChi(t, h.apiUpdateDemand, "/api/demand/{id}",
@@ -132,14 +133,13 @@ func TestApiUpdateDemand_InvalidID(t *testing.T) {
 // UpdateDemandAndResetProduced contract: produced_qty MUST be zeroed, demand
 // fields are overwritten with the request payload.
 func TestApiApplyDemand_ResetsProduced(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	id, err := db.CreateDemand("PART-APPLY", "before", 5)
 	if err != nil {
 		t.Fatalf("seed demand: %v", err)
 	}
-	if err := db.SetProduced(id, 3); err != nil {
-		t.Fatalf("seed produced: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProduced(id, 3), "seed produced")
 
 	rec := postJSONWithChi(t, h.apiApplyDemand, "/api/demand/{id}/apply",
 		map[string]string{"id": strconv.FormatInt(id, 10)},
@@ -163,6 +163,7 @@ func TestApiApplyDemand_ResetsProduced(t *testing.T) {
 // --- apiDeleteDemand --------------------------------------------------------
 
 func TestApiDeleteDemand_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	id, err := db.CreateDemand("PART-DEL", "to be removed", 1)
 	if err != nil {
@@ -188,6 +189,7 @@ func TestApiDeleteDemand_HappyPath(t *testing.T) {
 // the handler currently aborts on first error, so we also verify all rows
 // are updated when no error occurs.
 func TestApiApplyAllDemands_BatchesAllRows(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	id1, _ := db.CreateDemand("PART-ALL-1", "a", 5)
 	id2, _ := db.CreateDemand("PART-ALL-2", "b", 6)
@@ -228,6 +230,7 @@ func TestApiApplyAllDemands_BatchesAllRows(t *testing.T) {
 
 // TestApiSetDemandProduced_HappyPath pins the SetProduced write.
 func TestApiSetDemandProduced_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	id, _ := db.CreateDemand("PART-SET", "x", 50)
 
@@ -248,6 +251,7 @@ func TestApiSetDemandProduced_HappyPath(t *testing.T) {
 // (produced_qty < 0 → 400). A refactor that drops this guard would let
 // callers wedge the demand into an invalid state.
 func TestApiSetDemandProduced_NegativeRejected(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	id, _ := db.CreateDemand("PART-NEG", "x", 50)
 	_ = db.SetProduced(id, 5)
@@ -269,6 +273,7 @@ func TestApiSetDemandProduced_NegativeRejected(t *testing.T) {
 // --- apiClearDemandProduced + apiClearAllProduced ---------------------------
 
 func TestApiClearDemandProduced_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	id, _ := db.CreateDemand("PART-CLR", "x", 10)
 	_ = db.SetProduced(id, 7)
@@ -286,6 +291,7 @@ func TestApiClearDemandProduced_HappyPath(t *testing.T) {
 }
 
 func TestApiClearAllProduced_ZeroesEveryDemand(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	id1, _ := db.CreateDemand("PART-ALL-CLR-1", "a", 10)
 	id2, _ := db.CreateDemand("PART-ALL-CLR-2", "b", 20)
@@ -309,6 +315,7 @@ func TestApiClearAllProduced_ZeroesEveryDemand(t *testing.T) {
 
 // TestApiDemandLog_NotFoundReturns404 pins the GetDemand-miss branch.
 func TestApiDemandLog_NotFoundReturns404(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSONWithChi(t, h.apiDemandLog, "/api/demand/{id}/log",

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/countgroup"
 	"shingocore/fleet"
 	"shingocore/store/orders"
@@ -45,6 +46,7 @@ func captureBus() (*EventBus, *sync.Mutex, map[EventType]Event) {
 // ── dispatchEmitter ─────────────────────────────────────────────────
 
 func TestDispatchEmitter_EmitOrderReceived(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
 	em.EmitOrderReceived(42, "edge-uuid", "line-1", "retrieve", "PART-A", "LINE1-IN")
@@ -66,6 +68,7 @@ func TestDispatchEmitter_EmitOrderReceived(t *testing.T) {
 }
 
 func TestDispatchEmitter_EmitOrderDispatched(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
 	em.EmitOrderDispatched(7, "V-100", "STORAGE-A1", "LINE1-IN")
@@ -84,6 +87,7 @@ func TestDispatchEmitter_EmitOrderDispatched(t *testing.T) {
 }
 
 func TestDispatchEmitter_EmitOrderFailed(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
 	em.EmitOrderFailed(11, "euid", "st", "ERR_TIMEOUT", "vendor timed out")
@@ -102,6 +106,7 @@ func TestDispatchEmitter_EmitOrderFailed(t *testing.T) {
 }
 
 func TestDispatchEmitter_EmitOrderCancelled(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
 	em.EmitOrderCancelled(12, "euid", "st", "user_request", "dispatched")
@@ -119,6 +124,7 @@ func TestDispatchEmitter_EmitOrderCancelled(t *testing.T) {
 }
 
 func TestDispatchEmitter_EmitOrderCompleted(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
 	em.EmitOrderCompleted(13, "euid-c", "st-c")
@@ -136,6 +142,7 @@ func TestDispatchEmitter_EmitOrderCompleted(t *testing.T) {
 }
 
 func TestDispatchEmitter_EmitOrderQueued(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
 	em.EmitOrderQueued(14, "euid-q", "st-q", "PART-A")
@@ -156,6 +163,7 @@ func TestDispatchEmitter_EmitOrderQueued(t *testing.T) {
 // that emitting every method of the dispatchEmitter fires exactly one
 // matching event type and doesn't leak crosstalk.
 func TestDispatchEmitter_AllMethodsCovered(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &dispatchEmitter{bus: bus}
 	em.EmitOrderReceived(1, "", "", "", "", "")
@@ -184,6 +192,7 @@ func TestDispatchEmitter_AllMethodsCovered(t *testing.T) {
 // ── pollerEmitter ───────────────────────────────────────────────────
 
 func TestPollerEmitter_EmitOrderStatusChanged_WithSnapshot(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &pollerEmitter{bus: bus}
 
@@ -215,6 +224,7 @@ func TestPollerEmitter_EmitOrderStatusChanged_WithSnapshot(t *testing.T) {
 }
 
 func TestPollerEmitter_EmitOrderStatusChanged_NilSnapshot(t *testing.T) {
+	t.Parallel()
 	// Nil-snapshot branch — the emitter must forward nil without panicking.
 	bus, mu, got := captureBus()
 	em := &pollerEmitter{bus: bus}
@@ -234,6 +244,7 @@ func TestPollerEmitter_EmitOrderStatusChanged_NilSnapshot(t *testing.T) {
 // ── countGroupEventEmitter ──────────────────────────────────────────
 
 func TestCountGroupEventEmitter_Emit(t *testing.T) {
+	t.Parallel()
 	bus, mu, got := captureBus()
 	em := &countGroupEventEmitter{bus: bus}
 	now := time.Now()
@@ -272,6 +283,7 @@ func TestCountGroupEventEmitter_Emit(t *testing.T) {
 }
 
 func TestCountGroupEventEmitter_Emit_FailSafe(t *testing.T) {
+	t.Parallel()
 	// The fail-safe branch fires when RDS is down — Robots is typically nil.
 	bus, mu, got := captureBus()
 	em := &countGroupEventEmitter{bus: bus}
@@ -297,6 +309,7 @@ func TestCountGroupEventEmitter_Emit_FailSafe(t *testing.T) {
 // ── orderResolver ───────────────────────────────────────────────────
 
 func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 
@@ -309,13 +322,9 @@ func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
 		SourceNode:   "STORAGE-A1",
 		DeliveryNode: "LINE1-IN",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	// CreateOrder doesn't set vendor_order_id — use UpdateOrderVendor.
-	if err := db.UpdateOrderVendor(order.ID, "V-FOUND-1", "RUNNING", "AMR-5"); err != nil {
-		t.Fatalf("update vendor: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(order.ID, "V-FOUND-1", "RUNNING", "AMR-5"), "update vendor")
 
 	r := &orderResolver{db: db}
 	got, err := r.ResolveVendorOrderID("V-FOUND-1")
@@ -328,6 +337,7 @@ func TestOrderResolver_ResolveVendorOrderID_Found(t *testing.T) {
 }
 
 func TestOrderResolver_ResolveVendorOrderID_NotFound(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 
@@ -346,6 +356,7 @@ func TestOrderResolver_ResolveVendorOrderID_NotFound(t *testing.T) {
 // fleet.OrderIDResolver — a compile-time check. If the interface moves
 // or gains methods, this test stops compiling, which is the point.
 func TestOrderResolver_ImplementsInterface(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	var _ fleet.OrderIDResolver = &orderResolver{db: db}
 }

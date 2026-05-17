@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -81,13 +82,9 @@ func makeOrder(t *testing.T, db *store.DB, uuid, vendorID string, priority int) 
 		SourceNode: "STORAGE-A1",
 		Priority:   priority,
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	if vendorID != "" {
-		if err := db.UpdateOrderVendor(o.ID, vendorID, "CREATED", ""); err != nil {
-			t.Fatalf("update order vendor: %v", err)
-		}
+		testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, vendorID, "CREATED", ""), "update order vendor")
 	}
 	got, err := db.GetOrder(o.ID)
 	if err != nil {
@@ -117,6 +114,7 @@ func registerVendorOrder(t *testing.T, sim *simulator.SimulatorBackend, vendorID
 // Fleet().SetOrderPriority first, then DB().UpdateOrderPriority. Both sides
 // reflect the new priority when both calls succeed.
 func TestApiSetOrderPriority_FleetThenDBHappyPath(t *testing.T) {
+	t.Parallel()
 	sim := simulator.New()
 	h, db := testHandlersWithSim(t, sim)
 
@@ -140,6 +138,7 @@ func TestApiSetOrderPriority_FleetThenDBHappyPath(t *testing.T) {
 // MUST NOT run. Reversing the order in a refactor would leak divergent
 // priorities between fleet and DB.
 func TestApiSetOrderPriority_FleetFailureSkipsDBUpdate(t *testing.T) {
+	t.Parallel()
 	sim := simulator.New()
 	h, db := testHandlersWithSim(t, sim)
 
@@ -165,6 +164,7 @@ func TestApiSetOrderPriority_FleetFailureSkipsDBUpdate(t *testing.T) {
 // touching the fleet. This guards against an over-zealous refactor that calls
 // fleet unconditionally.
 func TestApiSetOrderPriority_NoVendorIDSkipsFleet(t *testing.T) {
+	t.Parallel()
 	sim := simulator.New()
 	h, db := testHandlersWithSim(t, sim)
 
@@ -184,6 +184,7 @@ func TestApiSetOrderPriority_NoVendorIDSkipsFleet(t *testing.T) {
 }
 
 func TestApiSetOrderPriority_OrderNotFound(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiSetOrderPriority, "/api/order/priority",
@@ -225,6 +226,7 @@ func submitRetrieveSpecific(t *testing.T, h *Handlers, binLabel, deliveryNode st
 // TestSubmitSpotRetrieveSpecific_HappyPath pins the baseline: bin gets claimed
 // by the new order, order advances to "dispatched" with a vendor_order_id.
 func TestSubmitSpotRetrieveSpecific_HappyPath(t *testing.T) {
+	t.Parallel()
 	sim := simulator.New()
 	h, db := testHandlersWithSim(t, sim)
 	sd := testdb.SetupStandardData(t, db)
@@ -260,6 +262,7 @@ func TestSubmitSpotRetrieveSpecific_HappyPath(t *testing.T) {
 // FailOrderAtomic, handler then calls UnclaimBin for the specific bin). A
 // refactor that drops either half would leak a dangling claim.
 func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) {
+	t.Parallel()
 	sim := simulator.New(simulator.WithCreateFailure())
 	h, db := testHandlersWithSim(t, sim)
 	sd := testdb.SetupStandardData(t, db)
@@ -292,6 +295,7 @@ func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) 
 }
 
 func TestSubmitSpotRetrieveSpecific_MissingBinLabel(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -302,6 +306,7 @@ func TestSubmitSpotRetrieveSpecific_MissingBinLabel(t *testing.T) {
 }
 
 func TestSubmitSpotRetrieveSpecific_MissingDeliveryNode(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RS-NODEST")
@@ -313,6 +318,7 @@ func TestSubmitSpotRetrieveSpecific_MissingDeliveryNode(t *testing.T) {
 }
 
 func TestSubmitSpotRetrieveSpecific_UnknownBin(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -323,6 +329,7 @@ func TestSubmitSpotRetrieveSpecific_UnknownBin(t *testing.T) {
 }
 
 func TestSubmitSpotRetrieveSpecific_UnknownDeliveryNode(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RS-BADDEST")
@@ -337,15 +344,14 @@ func TestSubmitSpotRetrieveSpecific_UnknownDeliveryNode(t *testing.T) {
 // attempting a retrieve_specific on a bin already claimed by another order
 // returns 409 Conflict and performs zero writes.
 func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RS-CLAIMED")
 
 	// Stand up a prior order and have it claim the bin.
 	prior := makeOrder(t, db, "prior-claim-1", "", 0)
-	if err := db.ClaimBin(bin.ID, prior.ID); err != nil {
-		t.Fatalf("seed prior claim: %v", err)
-	}
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, prior.ID), "seed prior claim")
 
 	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
 	if status != http.StatusConflict {

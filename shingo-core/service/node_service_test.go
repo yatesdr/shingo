@@ -6,6 +6,7 @@ import (
 	"sort"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -25,14 +26,13 @@ func makeNode(t *testing.T, db *store.DB, name string) *nodes.Node {
 }
 
 func TestNodeService_ApplyAssignments_SpecificStationsAndBinTypes(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
 
 	bt2 := &bins.BinType{Code: "BT2", Description: "second"}
-	if err := db.CreateBinType(bt2); err != nil {
-		t.Fatalf("create second bin type: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt2), "create second bin type")
 
 	a := NodeAssignments{
 		StationMode: "specific",
@@ -41,9 +41,7 @@ func TestNodeService_ApplyAssignments_SpecificStationsAndBinTypes(t *testing.T) 
 		BinTypeIDs:  []int64{sd.BinType.ID, bt2.ID},
 	}
 
-	if err := svc.ApplyAssignments(sd.StorageNode.ID, a); err != nil {
-		t.Fatalf("ApplyAssignments: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyAssignments(sd.StorageNode.ID, a), "ApplyAssignments")
 
 	if got := db.GetNodeProperty(sd.StorageNode.ID, "station_mode"); got != "specific" {
 		t.Errorf("station_mode = %q, want %q", got, "specific")
@@ -79,6 +77,7 @@ func TestNodeService_ApplyAssignments_SpecificStationsAndBinTypes(t *testing.T) 
 }
 
 func TestNodeService_ApplyAssignments_NonSpecificClearsList(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
@@ -101,9 +100,7 @@ func TestNodeService_ApplyAssignments_NonSpecificClearsList(t *testing.T) {
 		BinTypeMode: "all",
 		BinTypeIDs:  []int64{sd.BinType.ID},
 	}
-	if err := svc.ApplyAssignments(sd.StorageNode.ID, a); err != nil {
-		t.Fatalf("ApplyAssignments (all): %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyAssignments(sd.StorageNode.ID, a), "ApplyAssignments (all)")
 
 	if mode := db.GetNodeProperty(sd.StorageNode.ID, "station_mode"); mode != "all" {
 		t.Errorf("station_mode = %q, want %q", mode, "all")
@@ -123,6 +120,7 @@ func TestNodeService_ApplyAssignments_NonSpecificClearsList(t *testing.T) {
 }
 
 func TestNodeService_ApplyAssignments_InheritMode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "NODE-INHERIT")
@@ -131,9 +129,7 @@ func TestNodeService_ApplyAssignments_InheritMode(t *testing.T) {
 		StationMode: "inherit",
 		BinTypeMode: "inherit",
 	}
-	if err := svc.ApplyAssignments(n.ID, a); err != nil {
-		t.Fatalf("ApplyAssignments: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyAssignments(n.ID, a), "ApplyAssignments")
 	if mode := db.GetNodeProperty(n.ID, "station_mode"); mode != "inherit" {
 		t.Errorf("station_mode = %q, want %q", mode, "inherit")
 	}
@@ -152,15 +148,14 @@ func TestNodeService_ApplyAssignments_InheritMode(t *testing.T) {
 }
 
 func TestNodeService_ApplyAssignments_EmptyModesAreWritten(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "NODE-EMPTY")
 
 	// Empty mode value still writes the property (mirrors the comment in
 	// the source: "The mode is always written").
-	if err := svc.ApplyAssignments(n.ID, NodeAssignments{}); err != nil {
-		t.Fatalf("ApplyAssignments: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyAssignments(n.ID, NodeAssignments{}), "ApplyAssignments")
 	props, err := db.ListNodeProperties(n.ID)
 	if err != nil {
 		t.Fatalf("ListNodeProperties: %v", err)
@@ -178,6 +173,7 @@ func TestNodeService_ApplyAssignments_EmptyModesAreWritten(t *testing.T) {
 }
 
 func TestNodeService_ApplyAssignments_SwitchFromSpecificToInheritClearsList(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
@@ -214,6 +210,7 @@ func TestNodeService_ApplyAssignments_SwitchFromSpecificToInheritClearsList(t *t
 }
 
 func TestNodeService_ApplyAssignments_SpecificWithEmptyLists(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "NODE-SPEC-EMPTY")
@@ -224,9 +221,7 @@ func TestNodeService_ApplyAssignments_SpecificWithEmptyLists(t *testing.T) {
 		StationMode: "specific",
 		BinTypeMode: "specific",
 	}
-	if err := svc.ApplyAssignments(n.ID, a); err != nil {
-		t.Fatalf("ApplyAssignments: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ApplyAssignments(n.ID, a), "ApplyAssignments")
 	if got := db.GetNodeProperty(n.ID, "station_mode"); got != "specific" {
 		t.Errorf("station_mode = %q, want %q", got, "specific")
 	}
@@ -241,6 +236,7 @@ func TestNodeService_ApplyAssignments_SpecificWithEmptyLists(t *testing.T) {
 }
 
 func TestNodeService_ApplyAssignments_ReplacesExistingStations(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "NODE-REPLACE")
@@ -270,6 +266,7 @@ func TestNodeService_ApplyAssignments_ReplacesExistingStations(t *testing.T) {
 }
 
 func TestNodeService_CreateNodeGroup(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
@@ -293,6 +290,7 @@ func TestNodeService_CreateNodeGroup(t *testing.T) {
 }
 
 func TestNodeService_AddLane(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
@@ -320,6 +318,7 @@ func TestNodeService_AddLane(t *testing.T) {
 }
 
 func TestNodeService_DeleteNodeGroup(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
@@ -331,15 +330,14 @@ func TestNodeService_DeleteNodeGroup(t *testing.T) {
 		t.Fatalf("AddLane: %v", err)
 	}
 
-	if err := svc.DeleteNodeGroup(grpID); err != nil {
-		t.Fatalf("DeleteNodeGroup: %v", err)
-	}
+	testutil.MustNoErr(t, svc.DeleteNodeGroup(grpID), "DeleteNodeGroup")
 	if _, err := db.GetNode(grpID); err == nil {
 		t.Errorf("group still exists after DeleteNodeGroup")
 	}
 }
 
 func TestNodeService_GetGroupLayout(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
@@ -383,6 +381,7 @@ func TestNodeService_GetGroupLayout(t *testing.T) {
 }
 
 func TestNodeService_ListLaneSlots(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
@@ -414,6 +413,7 @@ func TestNodeService_ListLaneSlots(t *testing.T) {
 }
 
 func TestNodeService_ReorderLaneSlots(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
@@ -439,9 +439,7 @@ func TestNodeService_ReorderLaneSlots(t *testing.T) {
 
 	// Reverse the order.
 	reversed := []int64{slotIDs[2], slotIDs[1], slotIDs[0]}
-	if err := svc.ReorderLaneSlots(laneID, reversed); err != nil {
-		t.Fatalf("ReorderLaneSlots: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ReorderLaneSlots(laneID, reversed), "ReorderLaneSlots")
 
 	got, err := svc.ListLaneSlots(laneID)
 	if err != nil {
@@ -458,19 +456,16 @@ func TestNodeService_ReorderLaneSlots(t *testing.T) {
 }
 
 func TestNodeService_SetNodePayloads(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
 
 	// Create a second payload to verify replacement semantics.
 	p2 := &payloads.Payload{Code: "PART-B", Description: "Second payload"}
-	if err := db.CreatePayload(p2); err != nil {
-		t.Fatalf("create p2: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(p2), "create p2")
 
-	if err := svc.SetNodePayloads(sd.StorageNode.ID, []int64{sd.Payload.ID, p2.ID}); err != nil {
-		t.Fatalf("SetNodePayloads: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodePayloads(sd.StorageNode.ID, []int64{sd.Payload.ID, p2.ID}), "SetNodePayloads")
 	nodes, err := db.ListNodesForPayload(sd.Payload.ID)
 	if err != nil {
 		t.Fatalf("ListNodesForPayload: %v", err)
@@ -487,9 +482,7 @@ func TestNodeService_SetNodePayloads(t *testing.T) {
 	}
 
 	// Clearing with nil should wipe.
-	if err := svc.SetNodePayloads(sd.StorageNode.ID, nil); err != nil {
-		t.Fatalf("SetNodePayloads(nil): %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodePayloads(sd.StorageNode.ID, nil), "SetNodePayloads(nil)")
 	nodes, _ = db.ListNodesForPayload(sd.Payload.ID)
 	for _, n := range nodes {
 		if n.ID == sd.StorageNode.ID {
@@ -499,13 +492,12 @@ func TestNodeService_SetNodePayloads(t *testing.T) {
 }
 
 func TestNodeService_SetNodeStations(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "NODE-SETSTATIONS")
 
-	if err := svc.SetNodeStations(n.ID, []string{"s1", "s2"}); err != nil {
-		t.Fatalf("SetNodeStations: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodeStations(n.ID, []string{"s1", "s2"}), "SetNodeStations")
 	got, err := db.ListStationsForNode(n.ID)
 	if err != nil {
 		t.Fatalf("ListStationsForNode: %v", err)
@@ -516,18 +508,14 @@ func TestNodeService_SetNodeStations(t *testing.T) {
 	}
 
 	// Replace with a different set.
-	if err := svc.SetNodeStations(n.ID, []string{"s9"}); err != nil {
-		t.Fatalf("SetNodeStations (replace): %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodeStations(n.ID, []string{"s9"}), "SetNodeStations (replace)")
 	got, _ = db.ListStationsForNode(n.ID)
 	if !equalStrings(got, []string{"s9"}) {
 		t.Errorf("stations after replace = %v, want [s9]", got)
 	}
 
 	// Clear with nil.
-	if err := svc.SetNodeStations(n.ID, nil); err != nil {
-		t.Fatalf("SetNodeStations(nil): %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodeStations(n.ID, nil), "SetNodeStations(nil)")
 	got, _ = db.ListStationsForNode(n.ID)
 	if len(got) != 0 {
 		t.Errorf("stations after clear = %v, want empty", got)
@@ -549,13 +537,12 @@ func equalStrings(a, b []string) bool {
 // ── PR 3a.1b additions: tests for methods absorbed from engine_db_methods.go ──
 
 func TestNodeService_CreateNode_AssignsIDAndReadback(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
 	n := &nodes.Node{Name: "CREATE-NODE-1", Zone: "zone-a", Enabled: true}
-	if err := svc.CreateNode(n); err != nil {
-		t.Fatalf("CreateNode: %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateNode(n), "CreateNode")
 	if n.ID == 0 {
 		t.Fatal("CreateNode did not populate ID")
 	}
@@ -576,15 +563,14 @@ func TestNodeService_CreateNode_AssignsIDAndReadback(t *testing.T) {
 }
 
 func TestNodeService_UpdateNode_PersistsFieldChanges(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "UPDATE-NODE-1")
 
 	n.Zone = "zone-b"
 	n.Enabled = false
-	if err := svc.UpdateNode(n); err != nil {
-		t.Fatalf("UpdateNode: %v", err)
-	}
+	testutil.MustNoErr(t, svc.UpdateNode(n), "UpdateNode")
 
 	got, err := db.GetNode(n.ID)
 	if err != nil {
@@ -599,19 +585,19 @@ func TestNodeService_UpdateNode_PersistsFieldChanges(t *testing.T) {
 }
 
 func TestNodeService_DeleteNode_RemovesRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "DELETE-NODE-1")
 
-	if err := svc.DeleteNode(n.ID); err != nil {
-		t.Fatalf("DeleteNode: %v", err)
-	}
+	testutil.MustNoErr(t, svc.DeleteNode(n.ID), "DeleteNode")
 	if _, err := db.GetNode(n.ID); err == nil {
 		t.Errorf("GetNode succeeded after DeleteNode — node still present")
 	}
 }
 
 func TestNodeService_GetNode_RoundTrip(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "GETNODE-1")
@@ -627,6 +613,7 @@ func TestNodeService_GetNode_RoundTrip(t *testing.T) {
 }
 
 func TestNodeService_ListNodes_SeesInsertedNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "LISTNODES-ONE")
@@ -648,14 +635,13 @@ func TestNodeService_ListNodes_SeesInsertedNode(t *testing.T) {
 }
 
 func TestNodeService_ListChildNodes_ReturnsOnlyChildren(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	parent := makeNode(t, db, "CHILD-PARENT-1")
 
 	child := &nodes.Node{Name: "CHILD-1", Enabled: true, ParentID: &parent.ID}
-	if err := db.CreateNode(child); err != nil {
-		t.Fatalf("create child: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(child), "create child")
 	// Unrelated sibling under no parent.
 	_ = makeNode(t, db, "CHILD-UNRELATED")
 
@@ -672,6 +658,7 @@ func TestNodeService_ListChildNodes_ReturnsOnlyChildren(t *testing.T) {
 }
 
 func TestNodeService_ListNodeStates_IncludesSeededNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "STATE-1")
@@ -686,6 +673,7 @@ func TestNodeService_ListNodeStates_IncludesSeededNode(t *testing.T) {
 }
 
 func TestNodeService_ListBinsByNode_ReturnsAttachedBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
@@ -696,9 +684,7 @@ func TestNodeService_ListBinsByNode_ReturnsAttachedBin(t *testing.T) {
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
 	}
-	if err := db.CreateBin(b); err != nil {
-		t.Fatalf("CreateBin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(b), "CreateBin")
 
 	got, err := svc.ListBinsByNode(sd.StorageNode.ID)
 	if err != nil {
@@ -718,13 +704,12 @@ func TestNodeService_ListBinsByNode_ReturnsAttachedBin(t *testing.T) {
 }
 
 func TestNodeService_ListStationsForNode_Roundtrip(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "LIST-STATIONS-1")
 
-	if err := db.SetNodeStations(n.ID, []string{"st-a", "st-b"}); err != nil {
-		t.Fatalf("SetNodeStations: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetNodeStations(n.ID, []string{"st-a", "st-b"}), "SetNodeStations")
 	got, err := svc.ListStationsForNode(n.ID)
 	if err != nil {
 		t.Fatalf("ListStationsForNode: %v", err)
@@ -736,13 +721,12 @@ func TestNodeService_ListStationsForNode_Roundtrip(t *testing.T) {
 }
 
 func TestNodeService_ListBinTypesForNode_Roundtrip(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
 
-	if err := db.SetNodeBinTypes(sd.StorageNode.ID, []int64{sd.BinType.ID}); err != nil {
-		t.Fatalf("SetNodeBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetNodeBinTypes(sd.StorageNode.ID, []int64{sd.BinType.ID}), "SetNodeBinTypes")
 	got, err := svc.ListBinTypesForNode(sd.StorageNode.ID)
 	if err != nil {
 		t.Fatalf("ListBinTypesForNode: %v", err)
@@ -753,16 +737,13 @@ func TestNodeService_ListBinTypesForNode_Roundtrip(t *testing.T) {
 }
 
 func TestNodeService_ListNodeProperties_ReturnsAllSet(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "LIST-PROPS-1")
 
-	if err := db.SetNodeProperty(n.ID, "role", "source"); err != nil {
-		t.Fatalf("set role: %v", err)
-	}
-	if err := db.SetNodeProperty(n.ID, "capacity", "5"); err != nil {
-		t.Fatalf("set capacity: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetNodeProperty(n.ID, "role", "source"), "set role")
+	testutil.MustNoErr(t, db.SetNodeProperty(n.ID, "capacity", "5"), "set capacity")
 
 	props, err := svc.ListNodeProperties(n.ID)
 	if err != nil {
@@ -781,16 +762,13 @@ func TestNodeService_ListNodeProperties_ReturnsAllSet(t *testing.T) {
 }
 
 func TestNodeService_GetEffectiveStations_SpecificMode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "EFF-STATIONS-1")
 
-	if err := db.SetNodeStations(n.ID, []string{"st-x"}); err != nil {
-		t.Fatalf("SetNodeStations: %v", err)
-	}
-	if err := db.SetNodeProperty(n.ID, "station_mode", "specific"); err != nil {
-		t.Fatalf("SetNodeProperty: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetNodeStations(n.ID, []string{"st-x"}), "SetNodeStations")
+	testutil.MustNoErr(t, db.SetNodeProperty(n.ID, "station_mode", "specific"), "SetNodeProperty")
 
 	got, err := svc.GetEffectiveStations(n.ID)
 	if err != nil {
@@ -802,16 +780,13 @@ func TestNodeService_GetEffectiveStations_SpecificMode(t *testing.T) {
 }
 
 func TestNodeService_GetEffectiveBinTypes_SpecificMode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
 
-	if err := db.SetNodeBinTypes(sd.StorageNode.ID, []int64{sd.BinType.ID}); err != nil {
-		t.Fatalf("SetNodeBinTypes: %v", err)
-	}
-	if err := db.SetNodeProperty(sd.StorageNode.ID, "bin_type_mode", "specific"); err != nil {
-		t.Fatalf("SetNodeProperty: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetNodeBinTypes(sd.StorageNode.ID, []int64{sd.BinType.ID}), "SetNodeBinTypes")
+	testutil.MustNoErr(t, db.SetNodeProperty(sd.StorageNode.ID, "bin_type_mode", "specific"), "SetNodeProperty")
 
 	got, err := svc.GetEffectiveBinTypes(sd.StorageNode.ID)
 	if err != nil {
@@ -823,13 +798,12 @@ func TestNodeService_GetEffectiveBinTypes_SpecificMode(t *testing.T) {
 }
 
 func TestNodeService_SetAndGetNodeProperty_Roundtrip(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "PROP-RW-1")
 
-	if err := svc.SetNodeProperty(n.ID, "direction", "forward"); err != nil {
-		t.Fatalf("SetNodeProperty: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodeProperty(n.ID, "direction", "forward"), "SetNodeProperty")
 	if got := svc.GetNodeProperty(n.ID, "direction"); got != "forward" {
 		t.Errorf("GetNodeProperty = %q, want %q", got, "forward")
 	}
@@ -840,43 +814,35 @@ func TestNodeService_SetAndGetNodeProperty_Roundtrip(t *testing.T) {
 }
 
 func TestNodeService_DeleteNodeProperty_ClearsValue(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 	n := makeNode(t, db, "PROP-DEL-1")
 
-	if err := svc.SetNodeProperty(n.ID, "kill-me", "yes"); err != nil {
-		t.Fatalf("SetNodeProperty: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodeProperty(n.ID, "kill-me", "yes"), "SetNodeProperty")
 	if got := svc.GetNodeProperty(n.ID, "kill-me"); got != "yes" {
 		t.Fatalf("seed verify: got %q, want %q", got, "yes")
 	}
 
-	if err := svc.DeleteNodeProperty(n.ID, "kill-me"); err != nil {
-		t.Fatalf("DeleteNodeProperty: %v", err)
-	}
+	testutil.MustNoErr(t, svc.DeleteNodeProperty(n.ID, "kill-me"), "DeleteNodeProperty")
 	if got := svc.GetNodeProperty(n.ID, "kill-me"); got != "" {
 		t.Errorf("after delete, GetNodeProperty = %q, want empty", got)
 	}
 }
 
 func TestNodeService_SetNodeBinTypes_ReplacesAssignments(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
 
 	btB := &bins.BinType{Code: "BT-REPLACE-B", Description: "b"}
-	if err := db.CreateBinType(btB); err != nil {
-		t.Fatalf("create btB: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(btB), "create btB")
 
 	// Start with one.
-	if err := svc.SetNodeBinTypes(sd.StorageNode.ID, []int64{sd.BinType.ID}); err != nil {
-		t.Fatalf("SetNodeBinTypes initial: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodeBinTypes(sd.StorageNode.ID, []int64{sd.BinType.ID}), "SetNodeBinTypes initial")
 	// Replace with a different one.
-	if err := svc.SetNodeBinTypes(sd.StorageNode.ID, []int64{btB.ID}); err != nil {
-		t.Fatalf("SetNodeBinTypes replace: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodeBinTypes(sd.StorageNode.ID, []int64{btB.ID}), "SetNodeBinTypes replace")
 
 	got, err := db.ListBinTypesForNode(sd.StorageNode.ID)
 	if err != nil {
@@ -888,6 +854,7 @@ func TestNodeService_SetNodeBinTypes_ReplacesAssignments(t *testing.T) {
 }
 
 func TestNodeService_ReparentNode_MovesUnderNewParent(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
@@ -902,13 +869,9 @@ func TestNodeService_ReparentNode_MovesUnderNewParent(t *testing.T) {
 	}
 
 	slot := &nodes.Node{Name: "REPARENT-SLOT-1", Enabled: true}
-	if err := db.CreateNode(slot); err != nil {
-		t.Fatalf("create slot: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
 
-	if err := svc.ReparentNode(slot.ID, &laneID, 1); err != nil {
-		t.Fatalf("ReparentNode: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ReparentNode(slot.ID, &laneID, 1), "ReparentNode")
 	got, err := db.GetNode(slot.ID)
 	if err != nil {
 		t.Fatalf("GetNode: %v", err)
@@ -921,6 +884,7 @@ func TestNodeService_ReparentNode_MovesUnderNewParent(t *testing.T) {
 // ── PR 3a.5.1 additions: tests for methods absorbed from engine_db_methods.go ──
 
 func TestNodeService_NodeTileStates_IncludesNodeWithBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewNodeService(db)
@@ -933,9 +897,7 @@ func TestNodeService_NodeTileStates_IncludesNodeWithBin(t *testing.T) {
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
 	}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("CreateBin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "CreateBin")
 
 	states, err := svc.NodeTileStates()
 	if err != nil {
@@ -948,6 +910,7 @@ func TestNodeService_NodeTileStates_IncludesNodeWithBin(t *testing.T) {
 }
 
 func TestNodeService_ListScenePoints_RoundTrip(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
@@ -958,9 +921,7 @@ func TestNodeService_ListScenePoints_RoundTrip(t *testing.T) {
 		PointName:      "pp",
 		PropertiesJSON: `{}`,
 	}
-	if err := db.UpsertScenePoint(sp); err != nil {
-		t.Fatalf("UpsertScenePoint: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpsertScenePoint(sp), "UpsertScenePoint")
 
 	all, err := svc.ListScenePoints()
 	if err != nil {
@@ -979,12 +940,11 @@ func TestNodeService_ListScenePoints_RoundTrip(t *testing.T) {
 }
 
 func TestNodeService_ListEdges_ReturnsRegisteredStation(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 
-	if err := db.RegisterEdge("edge-svc-1", "host-svc", "v1", []string{"L1"}); err != nil {
-		t.Fatalf("RegisterEdge: %v", err)
-	}
+	testutil.MustNoErr(t, db.RegisterEdge("edge-svc-1", "host-svc", "v1", []string{"L1"}), "RegisterEdge")
 
 	edges, err := svc.ListEdges()
 	if err != nil {
@@ -1003,6 +963,7 @@ func TestNodeService_ListEdges_ReturnsRegisteredStation(t *testing.T) {
 }
 
 func TestNodeService_GetSlotDepth_ReflectsSlotOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewNodeService(db)
 

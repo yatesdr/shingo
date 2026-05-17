@@ -7,6 +7,7 @@ import (
 )
 
 func TestStatusIsTerminal(t *testing.T) {
+	t.Parallel()
 	terminals := []Status{StatusConfirmed, StatusCancelled, StatusFailed, StatusSkipped}
 	for _, s := range terminals {
 		if !s.IsTerminal() {
@@ -22,12 +23,14 @@ func TestStatusIsTerminal(t *testing.T) {
 }
 
 func TestStatusFaultedIsNonTerminal(t *testing.T) {
+	t.Parallel()
 	if StatusFaulted.IsTerminal() {
 		t.Error("StatusFaulted.IsTerminal() = true, want false")
 	}
 }
 
 func TestFaultedTransitions(t *testing.T) {
+	t.Parallel()
 	accepted := []struct{ from, to Status }{
 		{StatusDispatched, StatusFaulted},
 		{StatusAcknowledged, StatusFaulted},
@@ -61,6 +64,7 @@ func TestFaultedTransitions(t *testing.T) {
 	}
 }
 func TestStatusCanTransitionTo(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		from, to Status
 		want     bool
@@ -80,12 +84,14 @@ func TestStatusCanTransitionTo(t *testing.T) {
 }
 
 func TestStatusString(t *testing.T) {
+	t.Parallel()
 	if got := StatusPending.String(); got != "pending" {
 		t.Errorf("StatusPending.String() = %q, want %q", got, "pending")
 	}
 }
 
 func TestStatusScanValue(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   any
@@ -124,6 +130,7 @@ func TestStatusScanValue(t *testing.T) {
 }
 
 func TestStatusScanRejectsUnsupportedType(t *testing.T) {
+	t.Parallel()
 	var s Status
 	if err := s.Scan(42); err == nil {
 		t.Error("Scan(int) returned nil error, want failure")
@@ -167,6 +174,7 @@ var predicateProjectorPairs = []struct {
 // returns true. Catches any future drift between Go-side classification
 // and SQL projection.
 func TestStatusSQLProjectorsAgreeWithPredicates(t *testing.T) {
+	t.Parallel()
 	for _, pair := range predicateProjectorPairs {
 		t.Run(pair.name, func(t *testing.T) {
 			projected := pair.projector()
@@ -187,6 +195,7 @@ func TestStatusSQLProjectorsAgreeWithPredicates(t *testing.T) {
 // caller doing literal-string assertions against the projector output
 // (drift tests, golden files, JS-side mirrors) has a stable target.
 func TestStatusSQLProjectorsAreSorted(t *testing.T) {
+	t.Parallel()
 	for _, pair := range predicateProjectorPairs {
 		t.Run(pair.name, func(t *testing.T) {
 			parts := strings.Split(pair.projector(), ",")
@@ -214,6 +223,7 @@ func TestStatusSQLProjectorsAreSorted(t *testing.T) {
 // the projectors, which is the actual risk). This test exercises every
 // status by name to catch enum/AllStatuses drift.
 func TestEveryStatusClassifiedAsTerminalOrNot(t *testing.T) {
+	t.Parallel()
 	// All status constants declared in status.go. If a new constant is
 	// added without being appended to AllStatuses(), this list is the
 	// place to catch it — add the new constant here and the test will

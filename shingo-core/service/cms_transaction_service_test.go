@@ -5,6 +5,7 @@ package service
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/store"
 	"shingocore/store/cms"
 	"shingocore/store/nodes"
@@ -24,9 +25,7 @@ func seedCMSTxn(t *testing.T, db *store.DB, nodeID int64, catID string, delta in
 		QtyAfter:   delta,
 		SourceType: "movement",
 	}
-	if err := db.CreateCMSTransactions([]*cms.Transaction{tx}); err != nil {
-		t.Fatalf("CreateCMSTransactions: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateCMSTransactions([]*cms.Transaction{tx}), "CreateCMSTransactions")
 	if tx.ID == 0 {
 		t.Fatal("expected Create to populate ID")
 	}
@@ -34,15 +33,12 @@ func seedCMSTxn(t *testing.T, db *store.DB, nodeID int64, catID string, delta in
 }
 
 func TestCMSTransactionService_ListByNode_FiltersByNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	nodeA := &nodes.Node{Name: "CMS-NA", Enabled: true}
-	if err := db.CreateNode(nodeA); err != nil {
-		t.Fatalf("create nodeA: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(nodeA), "create nodeA")
 	nodeB := &nodes.Node{Name: "CMS-NB", Enabled: true}
-	if err := db.CreateNode(nodeB); err != nil {
-		t.Fatalf("create nodeB: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(nodeB), "create nodeB")
 
 	seedCMSTxn(t, db, nodeA.ID, "CAT-1", 5)
 	seedCMSTxn(t, db, nodeA.ID, "CAT-2", 3)
@@ -65,11 +61,10 @@ func TestCMSTransactionService_ListByNode_FiltersByNode(t *testing.T) {
 }
 
 func TestCMSTransactionService_ListByNode_RespectsLimitAndOffset(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	node := &nodes.Node{Name: "CMS-PG", Enabled: true}
-	if err := db.CreateNode(node); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(node), "create node")
 
 	for i := 0; i < 5; i++ {
 		seedCMSTxn(t, db, node.ID, "CAT-P", int64(i+1))
@@ -104,15 +99,12 @@ func TestCMSTransactionService_ListByNode_RespectsLimitAndOffset(t *testing.T) {
 }
 
 func TestCMSTransactionService_ListAll_SpansNodes(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	nodeA := &nodes.Node{Name: "CMS-ALL-A", Enabled: true}
-	if err := db.CreateNode(nodeA); err != nil {
-		t.Fatalf("create nodeA: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(nodeA), "create nodeA")
 	nodeB := &nodes.Node{Name: "CMS-ALL-B", Enabled: true}
-	if err := db.CreateNode(nodeB); err != nil {
-		t.Fatalf("create nodeB: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(nodeB), "create nodeB")
 
 	seedCMSTxn(t, db, nodeA.ID, "CA", 1)
 	seedCMSTxn(t, db, nodeB.ID, "CB", 2)

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/store/processes"
 )
 
@@ -23,6 +24,7 @@ import (
 //     UOPCapacity preserved so the UI can render the implied-bin
 //     annotation next to the calculated threshold.
 func TestFindAnyLoaderClaimForPayload_InactiveStyle(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 
 	processID, err := db.CreateProcess("CAL-PROC", "calculator test", "active_production", "", "", false, false)
@@ -49,9 +51,7 @@ func TestFindAnyLoaderClaimForPayload_InactiveStyle(t *testing.T) {
 		t.Fatalf("create new style: %v", err)
 	}
 	// OLD is active. NEW carries the loader claim for WIDGET-X.
-	if err := db.SetActiveStyle(processID, &oldStyleID); err != nil {
-		t.Fatalf("set active: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &oldStyleID), "set active")
 	if _, err := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
 		StyleID:             newStyleID,
 		CoreNodeName:        "CAL-LOADER",

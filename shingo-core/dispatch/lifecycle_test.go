@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -176,9 +177,7 @@ func TestLifecycle_ConfirmReceipt_AlreadyCompleted(t *testing.T) {
 	db := testDB(t)
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "confirm-dup", StatusDelivered)
-	if err := db.CompleteOrder(ord.ID); err != nil {
-		t.Fatalf("complete order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CompleteOrder(ord.ID), "complete order")
 	reloaded, _ := db.GetOrder(ord.ID)
 
 	ok, err := lc.ConfirmReceipt(reloaded, "edge.test", "confirmed", 1)
@@ -221,9 +220,7 @@ func TestLifecycle_Fail_PersistsFailed(t *testing.T) {
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fail-1", StatusInTransit)
 
-	if err := lc.Fail(ord, "edge.test", "fleet_failed", "robot stuck"); err != nil {
-		t.Fatalf("Fail: %v", err)
-	}
+	testutil.MustNoErr(t, lc.Fail(ord, "edge.test", "fleet_failed", "robot stuck"), "Fail")
 	persisted, _ := db.GetOrder(ord.ID)
 	if persisted.Status != StatusFailed {
 		t.Errorf("after Fail, status = %q, want %q", persisted.Status, StatusFailed)
@@ -242,9 +239,7 @@ func TestLifecycle_Skip_PersistsSkipped(t *testing.T) {
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "skip-1", StatusQueued)
 
-	if err := lc.Skip(ord, "edge.test", "no_source_bin", "bin missing at ALN_002"); err != nil {
-		t.Fatalf("Skip: %v", err)
-	}
+	testutil.MustNoErr(t, lc.Skip(ord, "edge.test", "no_source_bin", "bin missing at ALN_002"), "Skip")
 	persisted, _ := db.GetOrder(ord.ID)
 	if persisted.Status != StatusSkipped {
 		t.Errorf("after Skip, status = %q, want %q", persisted.Status, StatusSkipped)
@@ -421,9 +416,7 @@ func TestLifecycle_MarkFaultedRecovered_TransitionsToInTransit(t *testing.T) {
 	lc, emitter := newLifecycleForTest(t, db)
 	ord := makeOrderAt(t, db, "fault-recover-1", StatusFaulted)
 
-	if err := lc.MarkFaultedRecovered(ord, "robot-42"); err != nil {
-		t.Fatalf("MarkFaultedRecovered: %v", err)
-	}
+	testutil.MustNoErr(t, lc.MarkFaultedRecovered(ord, "robot-42"), "MarkFaultedRecovered")
 	if ord.Status != StatusInTransit {
 		t.Errorf("status = %q, want %q", ord.Status, StatusInTransit)
 	}

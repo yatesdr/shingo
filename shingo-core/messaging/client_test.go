@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 )
 
 func TestNewClient(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -30,6 +32,7 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestClient_Connect_NoBrokers(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka: config.KafkaConfig{},
 	}
@@ -42,6 +45,7 @@ func TestClient_Connect_NoBrokers(t *testing.T) {
 }
 
 func TestClient_IsConnected(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -59,6 +63,7 @@ func TestClient_IsConnected(t *testing.T) {
 }
 
 func TestClient_Close(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -71,6 +76,7 @@ func TestClient_Close(t *testing.T) {
 }
 
 func TestClient_CloseIdempotent(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -85,6 +91,7 @@ func TestClient_CloseIdempotent(t *testing.T) {
 }
 
 func TestClient_Subscribe_NotConnected(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -100,6 +107,7 @@ func TestClient_Subscribe_NotConnected(t *testing.T) {
 }
 
 func TestClient_Publish_NotConnected(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -114,6 +122,7 @@ func TestClient_Publish_NotConnected(t *testing.T) {
 }
 
 func TestClient_PublishEnvelope(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -139,6 +148,7 @@ func TestClient_PublishEnvelope(t *testing.T) {
 }
 
 func TestClient_Reconfigure(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -172,6 +182,7 @@ func TestClient_Reconfigure(t *testing.T) {
 }
 
 func TestClient_HandlerRegistration(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -195,6 +206,7 @@ func TestClient_HandlerRegistration(t *testing.T) {
 }
 
 func TestClient_EnvelopeEncoding(t *testing.T) {
+	t.Parallel()
 	// Test that envelope encoding works correctly
 	env, err := protocol.NewEnvelope(
 		"order.request",
@@ -219,9 +231,7 @@ func TestClient_EnvelopeEncoding(t *testing.T) {
 
 	// Verify JSON structure
 	var decoded map[string]interface{}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(data, &decoded), "decode envelope")
 
 	if decoded["type"] != "order.request" {
 		t.Errorf("type = %v, want order.request", decoded["type"])
@@ -232,6 +242,7 @@ func TestClient_EnvelopeEncoding(t *testing.T) {
 }
 
 func TestClient_DataEnvelope(t *testing.T) {
+	t.Parallel()
 	env, err := protocol.NewDataEnvelope(
 		"edge.heartbeat",
 		protocol.Address{Role: protocol.RoleEdge, Station: "line-1"},
@@ -252,9 +263,7 @@ func TestClient_DataEnvelope(t *testing.T) {
 	}
 
 	var decoded map[string]interface{}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(data, &decoded), "decode envelope")
 
 	if decoded["type"] != "data" {
 		t.Errorf("type = %v, want data", decoded["type"])
@@ -262,6 +271,7 @@ func TestClient_DataEnvelope(t *testing.T) {
 }
 
 func TestClient_StopChanClosed(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -281,6 +291,7 @@ func TestClient_StopChanClosed(t *testing.T) {
 }
 
 func TestClient_ConcurrentAccess(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -314,6 +325,7 @@ func TestClient_ConcurrentAccess(t *testing.T) {
 }
 
 func TestClient_DebugLog(t *testing.T) {
+	t.Parallel()
 	cfg := &config.MessagingConfig{
 		Kafka:         config.KafkaConfig{Brokers: []string{"localhost:9092"}},
 		OrdersTopic:   "shingo.orders",
@@ -338,6 +350,7 @@ func TestClient_DebugLog(t *testing.T) {
 
 // Test readLoop backoff logic
 func TestClient_BackoffCalculation(t *testing.T) {
+	t.Parallel()
 	const (
 		baseBackoff = 500 * time.Millisecond
 		maxBackoff  = 5 * time.Second

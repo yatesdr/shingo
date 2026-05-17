@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestOccupyMutexGroup(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/getBlockGroup" {
 			t.Errorf("path = %q, want /getBlockGroup", r.URL.Path)
@@ -16,9 +18,7 @@ func TestOccupyMutexGroup(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req MutexGroupRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode request")
 		if req.ID != "wp-99" {
 			t.Errorf("ID = %q, want %q", req.ID, "wp-99")
 		}
@@ -47,6 +47,7 @@ func TestOccupyMutexGroup(t *testing.T) {
 }
 
 func TestOccupyMutexGroup_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("boom"))
@@ -60,6 +61,7 @@ func TestOccupyMutexGroup_HTTPError(t *testing.T) {
 }
 
 func TestReleaseMutexGroup(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/releaseBlockGroup" {
 			t.Errorf("path = %q, want /releaseBlockGroup", r.URL.Path)
@@ -68,9 +70,7 @@ func TestReleaseMutexGroup(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req MutexGroupRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode request")
 		if req.ID != "wp-7" {
 			t.Errorf("ID = %q, want %q", req.ID, "wp-7")
 		}
@@ -94,6 +94,7 @@ func TestReleaseMutexGroup(t *testing.T) {
 }
 
 func TestReleaseMutexGroup_DecodeFailure(t *testing.T) {
+	t.Parallel()
 	// Server returns a non-array payload that the post() decoder cannot
 	// fit into []MutexGroupResult. The wrapper should propagate the error.
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +109,7 @@ func TestReleaseMutexGroup_DecodeFailure(t *testing.T) {
 }
 
 func TestGetMutexGroupStatus(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/blockGroupStatus" {
 			t.Errorf("path = %q, want /blockGroupStatus", r.URL.Path)
@@ -135,6 +137,7 @@ func TestGetMutexGroupStatus(t *testing.T) {
 }
 
 func TestGetMutexGroupStatus_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte("upstream down"))
@@ -148,6 +151,7 @@ func TestGetMutexGroupStatus_HTTPError(t *testing.T) {
 }
 
 func TestGetMutexGroupStatus_BadJSON(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`not json at all`))
 	})

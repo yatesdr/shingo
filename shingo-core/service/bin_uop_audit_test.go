@@ -9,6 +9,7 @@ import (
 
 	"shingo/protocol"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/audit"
@@ -41,9 +42,7 @@ func loadBinUOPAudit(t *testing.T, db *store.DB, binID int64) []auditRow {
 	var out []auditRow
 	for rows.Next() {
 		var r auditRow
-		if err := rows.Scan(&r.BinID, &r.BeforeUOP, &r.AfterUOP, &r.Op, &r.Source, &r.OrderID, &r.PayloadCode, &r.Actor); err != nil {
-			t.Fatalf("scan bin_uop_audit row: %v", err)
-		}
+		testutil.MustNoErr(t, rows.Scan(&r.BinID, &r.BeforeUOP, &r.AfterUOP, &r.Op, &r.Source, &r.OrderID, &r.PayloadCode, &r.Actor), "scan bin_uop_audit row")
 		out = append(out, r)
 	}
 	return out
@@ -56,6 +55,7 @@ func loadBinUOPAudit(t *testing.T, db *store.DB, binID int64) []auditRow {
 // produced the change. Without this, Phase 1+ regressions devolve into
 // guessing which of ~13 write sites stomped a bin.
 func TestBinUOPAudit_SyncOrClearForReleased_LogsBeforeAndAfter(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -65,9 +65,7 @@ func TestBinUOPAudit_SyncOrClearForReleased_LogsBeforeAndAfter(t *testing.T) {
 	claimBinForTest(t, db, bin.ID, order.ID)
 
 	partial := 47
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", "stephen-station"); err != nil {
-		t.Fatalf("SyncOrClearForReleased: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", "stephen-station"), "SyncOrClearForReleased")
 
 	rows := loadBinUOPAudit(t, db, bin.ID)
 	if len(rows) != 1 {
@@ -99,15 +97,14 @@ func TestBinUOPAudit_SyncOrClearForReleased_LogsBeforeAndAfter(t *testing.T) {
 // scrap-zero workflow), the audit row must still land with order_id NULL
 // and a recognizable op tag.
 func TestBinUOPAudit_ClearForReuse_LogsZeroAfter(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-AUDIT-CLEAR", "PART-A", 88)
 
-	if err := svc.ClearForReuse(bin.ID); err != nil {
-		t.Fatalf("ClearForReuse: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClearForReuse(bin.ID), "ClearForReuse")
 
 	rows := loadBinUOPAudit(t, db, bin.ID)
 	if len(rows) != 1 {
@@ -133,6 +130,7 @@ func TestBinUOPAudit_ClearForReuse_LogsZeroAfter(t *testing.T) {
 // the audit row must NOT land. Otherwise the audit log lies about what
 // actually committed and Phase 1+ forensics get poisoned.
 func TestBinUOPAudit_Atomicity_NoRowOnFailedUpdate(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -206,6 +204,7 @@ func loadBinUOPOverrideRows(t *testing.T, db *store.DB, binID int64, op string) 
 // every divergence must be observable so management / SCO can review
 // override patterns.
 func TestRegression_OverrideAuditReleasePartial(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -220,9 +219,7 @@ func TestRegression_OverrideAuditReleasePartial(t *testing.T) {
 		Count:          47, // operator typed 47 — bin had been overfilled upstream
 		CountSuggested: &suggested,
 	}
-	if err := svc.AuditReleaseOverride(bin.ID, order.ID, disp, "stephen-station"); err != nil {
-		t.Fatalf("AuditReleaseOverride: %v", err)
-	}
+	testutil.MustNoErr(t, svc.AuditReleaseOverride(bin.ID, order.ID, disp, "stephen-station"), "AuditReleaseOverride")
 
 	rows := loadBinUOPOverrideRows(t, db, bin.ID, audit.OpOperatorOverrideReleasePartial)
 	if len(rows) != 1 {
@@ -269,6 +266,7 @@ func TestRegression_OverrideAuditReleasePartial(t *testing.T) {
 // suggestion don't produce rows. payload_code holds the part number so
 // forensics can filter by part within a bin.
 func TestRegression_OverrideAuditPullParts(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -290,9 +288,7 @@ func TestRegression_OverrideAuditPullParts(t *testing.T) {
 			// PART-C absent → suggested 0, operator 3 → divergence
 		},
 	}
-	if err := svc.AuditReleaseOverride(bin.ID, order.ID, disp, "stephen-station"); err != nil {
-		t.Fatalf("AuditReleaseOverride: %v", err)
-	}
+	testutil.MustNoErr(t, svc.AuditReleaseOverride(bin.ID, order.ID, disp, "stephen-station"), "AuditReleaseOverride")
 
 	rows := loadBinUOPOverrideRows(t, db, bin.ID, audit.OpOperatorOverridePullParts)
 	if len(rows) != 2 {
@@ -328,6 +324,7 @@ func TestRegression_OverrideAuditPullParts(t *testing.T) {
 // turns the audit into "every release writes a row," which would
 // flood the table and dilute the signal of an actual override.
 func TestRegression_NoOverrideNoAudit(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -379,9 +376,7 @@ func TestRegression_NoOverrideNoAudit(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := svc.AuditReleaseOverride(bin.ID, order.ID, tc.disp, "stephen-station"); err != nil {
-				t.Fatalf("AuditReleaseOverride: %v", err)
-			}
+			testutil.MustNoErr(t, svc.AuditReleaseOverride(bin.ID, order.ID, tc.disp, "stephen-station"), "AuditReleaseOverride")
 		})
 	}
 

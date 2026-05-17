@@ -3,10 +3,12 @@ package rds
 import (
 	"encoding/json"
 	"net/http"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestCallTerminal(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/callTerminal" {
 			t.Errorf("path = %q, want /callTerminal", r.URL.Path)
@@ -15,9 +17,7 @@ func TestCallTerminal(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req CallTerminalRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.ID != "TERM-1" {
 			t.Errorf("ID = %q, want TERM-1", req.ID)
 		}
@@ -45,6 +45,7 @@ func TestCallTerminal(t *testing.T) {
 }
 
 func TestCallTerminal_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(CallTerminalResponse{
 			Response: Response{Code: 5, Msg: "terminal not found"},
@@ -59,6 +60,7 @@ func TestCallTerminal_Error(t *testing.T) {
 }
 
 func TestGetDevicesStatus_NoFilter(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/devicesDetails" {
 			t.Errorf("path = %q, want /devicesDetails", r.URL.Path)
@@ -96,6 +98,7 @@ func TestGetDevicesStatus_NoFilter(t *testing.T) {
 }
 
 func TestGetDevicesStatus_WithFilter(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		got := r.URL.Query().Get("devices")
 		if got != "D1,D2" {
@@ -118,6 +121,7 @@ func TestGetDevicesStatus_WithFilter(t *testing.T) {
 }
 
 func TestGetDevicesStatus_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(DevicesResponse{
 			Response: Response{Code: 3, Msg: "fail"},
@@ -132,6 +136,7 @@ func TestGetDevicesStatus_Error(t *testing.T) {
 }
 
 func TestCallDoor(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/callDoor" {
 			t.Errorf("path = %q, want /callDoor", r.URL.Path)
@@ -141,9 +146,7 @@ func TestCallDoor(t *testing.T) {
 		}
 		// CallDoor sends the slice directly as the request body.
 		var req []CallDoorRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req) != 2 {
 			t.Fatalf("len(req) = %d, want 2", len(req))
 		}
@@ -167,6 +170,7 @@ func TestCallDoor(t *testing.T) {
 }
 
 func TestCallDoor_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "door fault"})
 	})
@@ -179,14 +183,13 @@ func TestCallDoor_Error(t *testing.T) {
 }
 
 func TestDisableDoor(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/disableDoor" {
 			t.Errorf("path = %q, want /disableDoor", r.URL.Path)
 		}
 		var req DisableDeviceRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Names) != 1 || req.Names[0] != "Door-X" {
 			t.Errorf("Names = %v, want [Door-X]", req.Names)
 		}
@@ -197,13 +200,11 @@ func TestDisableDoor(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.DisableDoor(&DisableDeviceRequest{Names: []string{"Door-X"}, Disabled: true})
-	if err != nil {
-		t.Fatalf("DisableDoor: %v", err)
-	}
+	testutil.MustNoErr(t, client.DisableDoor(&DisableDeviceRequest{Names: []string{"Door-X"}, Disabled: true}), "DisableDoor")
 }
 
 func TestDisableDoor_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 4, Msg: "fail"})
 	})
@@ -216,14 +217,13 @@ func TestDisableDoor_Error(t *testing.T) {
 }
 
 func TestCallLift(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/callLift" {
 			t.Errorf("path = %q, want /callLift", r.URL.Path)
 		}
 		var req []CallLiftRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req) != 1 {
 			t.Fatalf("len(req) = %d, want 1", len(req))
 		}
@@ -234,13 +234,11 @@ func TestCallLift(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.CallLift([]CallLiftRequest{{Name: "Lift-1", TargetArea: "Floor-2"}})
-	if err != nil {
-		t.Fatalf("CallLift: %v", err)
-	}
+	testutil.MustNoErr(t, client.CallLift([]CallLiftRequest{{Name: "Lift-1", TargetArea: "Floor-2"}}), "CallLift")
 }
 
 func TestCallLift_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "lift busy"})
 	})
@@ -253,14 +251,13 @@ func TestCallLift_Error(t *testing.T) {
 }
 
 func TestDisableLift(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/disableLift" {
 			t.Errorf("path = %q, want /disableLift", r.URL.Path)
 		}
 		var req DisableDeviceRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if len(req.Names) != 2 || req.Names[0] != "Lift-1" || req.Names[1] != "Lift-2" {
 			t.Errorf("Names = %v, want [Lift-1 Lift-2]", req.Names)
 		}
@@ -271,13 +268,11 @@ func TestDisableLift(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.DisableLift(&DisableDeviceRequest{Names: []string{"Lift-1", "Lift-2"}, Disabled: false})
-	if err != nil {
-		t.Fatalf("DisableLift: %v", err)
-	}
+	testutil.MustNoErr(t, client.DisableLift(&DisableDeviceRequest{Names: []string{"Lift-1", "Lift-2"}, Disabled: false}), "DisableLift")
 }
 
 func TestDisableLift_ServerError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 	})

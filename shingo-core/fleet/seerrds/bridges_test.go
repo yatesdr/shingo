@@ -55,6 +55,7 @@ func (f *fakeTrackerEmitter) EmitGraceExpired(orderID int64, vendorOrderID strin
 // every scalar through unchanged and maps the *rds.OrderDetail to a
 // *fleet.OrderSnapshot with correct fields.
 func TestEmitterBridge_ForwardsArgsAndMapsSnapshot(t *testing.T) {
+	t.Parallel()
 	fake := &fakeTrackerEmitter{}
 	b := &emitterBridge{emitter: fake}
 
@@ -125,6 +126,7 @@ func TestEmitterBridge_ForwardsArgsAndMapsSnapshot(t *testing.T) {
 // passes nil for the order detail, the bridge forwards nil rather than a
 // zero-valued snapshot.
 func TestEmitterBridge_NilDetailPassesNilSnapshot(t *testing.T) {
+	t.Parallel()
 	fake := &fakeTrackerEmitter{}
 	b := &emitterBridge{emitter: fake}
 
@@ -144,6 +146,7 @@ func TestEmitterBridge_NilDetailPassesNilSnapshot(t *testing.T) {
 // TestEmitterBridge_MultipleCalls verifies per-call state isolation — each
 // call replaces the captured fields rather than aggregating.
 func TestEmitterBridge_MultipleCalls(t *testing.T) {
+	t.Parallel()
 	fake := &fakeTrackerEmitter{}
 	b := &emitterBridge{emitter: fake}
 
@@ -181,6 +184,7 @@ func (f *fakeOrderIDResolver) ResolveVendorOrderID(vendorOrderID string) (int64,
 // rds order ID string unmodified and returns whatever the underlying
 // fleet.OrderIDResolver returns.
 func TestResolverBridge_ForwardsAndReturns(t *testing.T) {
+	t.Parallel()
 	fake := &fakeOrderIDResolver{ret: 12345}
 	b := &resolverBridge{resolver: fake}
 
@@ -202,6 +206,7 @@ func TestResolverBridge_ForwardsAndReturns(t *testing.T) {
 // TestResolverBridge_PropagatesError verifies that a resolver error is
 // returned unwrapped to the caller — the bridge must not swallow it.
 func TestResolverBridge_PropagatesError(t *testing.T) {
+	t.Parallel()
 	sentinel := errors.New("not found")
 	fake := &fakeOrderIDResolver{ret: 0, err: sentinel}
 	b := &resolverBridge{resolver: fake}
@@ -221,6 +226,7 @@ func TestResolverBridge_PropagatesError(t *testing.T) {
 // TestResolverBridge_EmptyInput documents current behavior: an empty rds
 // order ID is forwarded verbatim rather than rejected at the bridge layer.
 func TestResolverBridge_EmptyInput(t *testing.T) {
+	t.Parallel()
 	fake := &fakeOrderIDResolver{ret: 0}
 	b := &resolverBridge{resolver: fake}
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 )
 
@@ -26,6 +27,7 @@ import (
 // returns 200 with an HTML body containing the "Inventory" heading from
 // inventory.html.
 func TestHandleInventory_RendersHTML(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/inventory", nil)
@@ -49,6 +51,7 @@ func TestHandleInventory_RendersHTML(t *testing.T) {
 // TestApiInventory_EmptyDB pins the empty-DB response: 200 + a JSON array
 // (possibly empty) decode.
 func TestApiInventory_EmptyDB(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiInventory, "/api/inventory")
@@ -56,14 +59,13 @@ func TestApiInventory_EmptyDB(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var rows []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&rows); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
 }
 
 // TestApiInventory_WithSeededBin pins the happy path: a bin at a storage
 // node shows up as an InventoryRow with the bin label.
 func TestApiInventory_WithSeededBin(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-INV-1")
@@ -73,9 +75,7 @@ func TestApiInventory_WithSeededBin(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var rows []map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&rows); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&rows), "decode")
 	found := false
 	for _, r := range rows {
 		if label, _ := r["bin_label"].(string); label == bin.Label {
@@ -94,6 +94,7 @@ func TestApiInventory_WithSeededBin(t *testing.T) {
 // should set Content-Type to the XLSX MIME and Content-Disposition to an
 // attachment with filename "inventory.xlsx".
 func TestApiInventoryExport_ContentType(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiInventoryExport, "/api/inventory/export")
@@ -114,6 +115,7 @@ func TestApiInventoryExport_ContentType(t *testing.T) {
 // XLSX that excelize can re-open, with the expected Inventory sheet name and
 // the expected header row.
 func TestApiInventoryExport_BodyIsValidXLSX(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-EXPORT-1")
@@ -162,6 +164,7 @@ func TestApiInventoryExport_BodyIsValidXLSX(t *testing.T) {
 // or buckets, the endpoint returns Total=BinSum=BucketSum=0 plus a
 // recent ComputedAt.
 func TestApiInventoryInvariant_EmptyDB(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiInventoryInvariant, "/api/inventory/invariant")
@@ -169,9 +172,7 @@ func TestApiInventoryInvariant_EmptyDB(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var got InventoryInvariant
-	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&got), "decode")
 	if got.Total != 0 || got.BinSum != 0 || got.BucketSum != 0 {
 		t.Errorf("empty DB: %+v, want all zero", got)
 	}
@@ -184,6 +185,7 @@ func TestApiInventoryInvariant_EmptyDB(t *testing.T) {
 // math: seed bins + lineside_buckets, hit the endpoint, assert each
 // component reflects the seeded values and Total = BinSum + BucketSum.
 func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -207,9 +209,7 @@ func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
 		t.Fatalf("status: got %d, want 200", rec.Code)
 	}
 	var got InventoryInvariant
-	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&got), "decode")
 	if got.BinSum != 70 {
 		t.Errorf("BinSum = %d, want 70 (30 + 40)", got.BinSum)
 	}
@@ -227,6 +227,7 @@ func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
 // dashboards built against the endpoint would silently misreport
 // inventory whenever overpack occurred.
 func TestApiInventoryInvariant_ReportsNegativeBinSum(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -241,9 +242,7 @@ func TestApiInventoryInvariant_ReportsNegativeBinSum(t *testing.T) {
 		t.Fatalf("status: got %d, want 200", rec.Code)
 	}
 	var got InventoryInvariant
-	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&got), "decode")
 	if got.BinSum != -3 {
 		t.Errorf("BinSum = %d, want -3 (signed; overpack must surface as negative)", got.BinSum)
 	}
@@ -257,6 +256,7 @@ func TestApiInventoryInvariant_ReportsNegativeBinSum(t *testing.T) {
 // TestCellHelper pins the "A1"-style label generator used by the export path.
 // This is a pure function but exported for the export code, so we lock it in.
 func TestCellHelper(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		col string
 		row int

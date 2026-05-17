@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/config"
 )
 
@@ -60,14 +61,9 @@ func (r *recordingEmitter) snapshot() []Transition {
 // waitForTransitions polls until emitter has >= n transitions or timeout.
 func waitForTransitions(t *testing.T, em *recordingEmitter, n int, timeout time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if len(em.snapshot()) >= n {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %d transitions (saw %d)", n, len(em.snapshot()))
+	testutil.EventuallyWithInterval(t, 10*time.Millisecond, timeout, func() bool {
+		return len(em.snapshot()) >= n
+	})
 }
 
 func fastConfig(groups []config.CountGroupConfig) config.CountGroupsConfig {
@@ -136,7 +132,7 @@ func TestLoopFailSafeOnContinuousRDSError(t *testing.T) {
 	}
 
 	// No second emit while we're still in fail-safe.
-	// Wait 2x FailSafeTimeout so a spurious second emit would have time to fire.
+	// KEEP: negative assertion — wait 2× FailSafeTimeout to prove no spurious second emit.
 	time.Sleep(2 * cfg.FailSafeTimeout)
 	if len(em.snapshot()) != 1 {
 		t.Fatalf("fail-safe should emit exactly once, got %d transitions", len(em.snapshot()))
@@ -150,7 +146,7 @@ func TestLoopSkipsDisabledGroups(t *testing.T) {
 	r := NewRunner(cfg, p, em, nil)
 	r.Start()
 	defer r.Stop()
-	// Wait several poll intervals so a poll would have fired if the group were enabled.
+	// KEEP: negative assertion — wait 5× PollInterval to prove the disabled group never polls.
 	time.Sleep(5 * cfg.PollInterval)
 	if p.calls != 0 {
 		t.Fatalf("disabled group should not poll, calls=%d", p.calls)

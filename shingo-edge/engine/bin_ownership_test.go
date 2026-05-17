@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/orders"
 )
 
@@ -16,6 +17,7 @@ import (
 // order pointer can come and go (pickup, completion, manual clear),
 // but the bin pointer survives until the bin physically leaves.
 func TestBinOwnership_BinAtNodeReadsRuntimeActiveBinID(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, styleID, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "OWN-BAN",
@@ -27,9 +29,7 @@ func TestBinOwnership_BinAtNodeReadsRuntimeActiveBinID(t *testing.T) {
 	// Set runtime's bin pointer to one value.
 	const runtimeBin int64 = 7777
 	bid := runtimeBin
-	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 100); err != nil {
-		t.Fatalf("seed runtime: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 100), "seed runtime")
 
 	// Create an order with a DIFFERENT BinID — proves binAtNode does not
 	// walk the order. Pre-flip, this would have returned the order's
@@ -72,6 +72,7 @@ func TestBinOwnership_BinAtNodeReadsRuntimeActiveBinID(t *testing.T) {
 // PLC ticks during the gap before the next delivery don't silently
 // attribute to the departed bin.
 func TestBinOwnership_PickupClearsActiveBinID(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "OWN-PICK",
@@ -90,9 +91,7 @@ func TestBinOwnership_PickupClearsActiveBinID(t *testing.T) {
 	}
 	_ = db.UpdateOrderBinID(orderID, &bid)
 	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
-	if err := db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 50); err != nil {
-		t.Fatalf("seed runtime with bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 50), "seed runtime with bin")
 
 	// Pre-condition: bin pointer set.
 	rt, _ := db.GetProcessNodeRuntime(nodeID)
@@ -119,6 +118,7 @@ func TestBinOwnership_PickupClearsActiveBinID(t *testing.T) {
 // active_bin_id, PLC tick ships a delta against that bin, pickup
 // clears the pointer, post-pickup tick ships nothing.
 func TestBinOwnership_DeliveryThenTickThenPickup(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, nodeID, _, _ := seedConsumeNode(t, db, consumeNodeConfig{
 		Prefix:      "OWN-RT",

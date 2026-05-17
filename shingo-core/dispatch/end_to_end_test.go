@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -299,9 +300,7 @@ func TestDispatcher_SyntheticNodeResolution(t *testing.T) {
 		Name: "ZONE-A", IsSynthetic: true,
 		NodeTypeID: &syntheticType.ID, Enabled: true,
 	}
-	if err := db.CreateNode(parentNode); err != nil {
-		t.Fatalf("create parent node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(parentNode), "create parent node")
 
 	// Create child nodes under the synthetic parent (lineside slots)
 	child1 := &nodes.Node{Name: "ZONE-A-01", Enabled: true}
@@ -550,11 +549,7 @@ func TestDispatcher_RetrieveEmptyToSyntheticNGRP(t *testing.T) {
 	}
 }
 
-// TC-41: retrieve_empty for a buried empty now triggers reshuffle instead of
-// dispatching to an unreachable slot. planRetrieveEmpty detects the bin is
-// inaccessible, walks up to find the lane, and hands a BuriedError to
-// planBuriedReshuffle. The order should go to "reshuffling" status.
-func TestTC41_RetrieveEmpty_BuriedEmptyTriggersReshuffle(t *testing.T) {
+func TestRetrieveEmpty_BuriedTriggersReshuffle(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, _, _ = setupTestData(t, db)
@@ -1042,28 +1037,18 @@ func TestDispatcher_MoveOrder_NGRPSource_NoBin(t *testing.T) {
 		t.Fatalf("get LANE type: %v", err)
 	}
 	bp := &payloads.Payload{Code: "PART-MVEMPTY", Description: "test"}
-	if err := db.CreatePayload(bp); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
 
 	// Create NGRP with an empty lane (no bins)
 	grp := &nodes.Node{Name: "GRP-MVEMPTY", NodeTypeID: &grpType.ID, Enabled: true, IsSynthetic: true}
-	if err := db.CreateNode(grp); err != nil {
-		t.Fatalf("create NGRP: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP")
 	lane := &nodes.Node{Name: "GRP-MVEMPTY-L1", NodeTypeID: &lanType.ID, ParentID: &grp.ID, Enabled: true, IsSynthetic: true}
-	if err := db.CreateNode(lane); err != nil {
-		t.Fatalf("create lane: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(lane), "create lane")
 	depth := 1
 	slot := &nodes.Node{Name: "GRP-MVEMPTY-L1-S1", ParentID: &lane.ID, Enabled: true, Depth: &depth}
-	if err := db.CreateNode(slot); err != nil {
-		t.Fatalf("create slot: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(slot), "create slot")
 	lineNode := &nodes.Node{Name: "LINE-MVEMPTY", Enabled: true}
-	if err := db.CreateNode(lineNode); err != nil {
-		t.Fatalf("create line: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(lineNode), "create line")
 
 	backend := testdb.NewTrackingBackend()
 	emitter := &mockEmitter{}
@@ -1144,7 +1129,6 @@ func TestDispatcher_MoveOrder_NGRPSource_BuriedBin(t *testing.T) {
 	}
 }
 
-// TC-71: Move order where source and destination are the same node must fail.
 // Bug: 2026-04-13 — planMove() did not guard against same-node moves,
 // which would dispatch a physically impossible fleet transport.
 func TestDispatcher_MoveOrder_SameNode(t *testing.T) {

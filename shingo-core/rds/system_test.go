@@ -3,6 +3,7 @@ package rds
 import (
 	"encoding/json"
 	"net/http"
+	"shingo/protocol/testutil"
 	"strings"
 	"testing"
 )
@@ -10,6 +11,7 @@ import (
 // TestPing is defined in client_test.go — not duplicated here.
 
 func TestGetProfiles(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/getProfiles" {
 			t.Errorf("path = %q, want /getProfiles", r.URL.Path)
@@ -18,9 +20,7 @@ func TestGetProfiles(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req GetProfilesRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode request")
 		if req.File != "dispatch.cfg" {
 			t.Errorf("File = %q, want dispatch.cfg", req.File)
 		}
@@ -43,6 +43,7 @@ func TestGetProfiles(t *testing.T) {
 }
 
 func TestGetProfiles_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("no such file"))
@@ -56,6 +57,7 @@ func TestGetProfiles_HTTPError(t *testing.T) {
 }
 
 func TestGetLicenseInfo(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/licInfo" {
 			t.Errorf("path = %q, want /licInfo", r.URL.Path)
@@ -99,6 +101,7 @@ func TestGetLicenseInfo(t *testing.T) {
 }
 
 func TestGetLicenseInfo_RDSErrorCode(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(LicenseResponse{
 			Response: Response{Code: 5, Msg: "license expired"},
@@ -116,6 +119,7 @@ func TestGetLicenseInfo_RDSErrorCode(t *testing.T) {
 }
 
 func TestGetLicenseInfo_EmptyData(t *testing.T) {
+	t.Parallel()
 	// Documented edge case: code=0 but data is null/absent. The client must
 	// surface this rather than returning a nil LicenseInfo.
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +137,7 @@ func TestGetLicenseInfo_EmptyData(t *testing.T) {
 }
 
 func TestGetLicenseInfo_HTTPError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte("unauth"))

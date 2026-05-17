@@ -6,6 +6,7 @@ import (
 )
 
 func TestRetainedKeysKeepsLatestAndBuckets(t *testing.T) {
+	t.Parallel()
 	base := time.Date(2026, 3, 21, 15, 0, 0, 0, time.UTC)
 	items := []SnapshotInfo{
 		{Key: "latest", CreatedAt: timePtr(base)},

@@ -3,10 +3,12 @@ package rds
 import (
 	"encoding/json"
 	"net/http"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestGetBinDetails_NoFilter(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/binDetails" {
 			t.Errorf("path = %q, want /binDetails", r.URL.Path)
@@ -49,6 +51,7 @@ func TestGetBinDetails_NoFilter(t *testing.T) {
 }
 
 func TestGetBinDetails_WithGroups(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/binDetails" {
 			t.Errorf("path = %q, want /binDetails", r.URL.Path)
@@ -74,6 +77,7 @@ func TestGetBinDetails_WithGroups(t *testing.T) {
 }
 
 func TestGetBinDetails_ErrorEnvelope(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(BinDetailsResponse{
 			Response: Response{Code: 42, Msg: "no bin group"},
@@ -88,6 +92,7 @@ func TestGetBinDetails_ErrorEnvelope(t *testing.T) {
 }
 
 func TestGetBinDetails_ServerError(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("boom"))
@@ -101,6 +106,7 @@ func TestGetBinDetails_ServerError(t *testing.T) {
 }
 
 func TestCheckBins(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/binCheck" {
 			t.Errorf("path = %q, want /binCheck", r.URL.Path)
@@ -109,9 +115,7 @@ func TestCheckBins(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req BinCheckRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode body")
 		if len(req.Bins) != 2 || req.Bins[0] != "B1" || req.Bins[1] != "B2" {
 			t.Errorf("Bins = %v, want [B1 B2]", req.Bins)
 		}
@@ -144,6 +148,7 @@ func TestCheckBins(t *testing.T) {
 }
 
 func TestCheckBins_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(BinCheckResponse{
 			Response: Response{Code: 1, Msg: "bad request"},
@@ -158,6 +163,7 @@ func TestCheckBins_Error(t *testing.T) {
 }
 
 func TestGetScene(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/scene" {
 			t.Errorf("path = %q, want /scene", r.URL.Path)
@@ -193,6 +199,7 @@ func TestGetScene(t *testing.T) {
 }
 
 func TestGetScene_NullScene(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		// Code=0 but scene field omitted/null — bins.go treats this as an error.
 		w.Write([]byte(`{"code":0,"msg":"ok"}`))
@@ -206,6 +213,7 @@ func TestGetScene_NullScene(t *testing.T) {
 }
 
 func TestGetScene_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(SceneResponse{
 			Response: Response{Code: 1, Msg: "scene unavailable"},

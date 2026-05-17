@@ -64,6 +64,7 @@ func (f *fakeDispatcher) HandleOrderRelease(env *protocol.Envelope, p *protocol.
 // main value the narrow interface provides: swapping in a test double for
 // CoreHandler without spinning up a real *dispatch.Dispatcher.
 func TestDispatcherInterface_SatisfiedByFake(t *testing.T) {
+	t.Parallel()
 	f := &fakeDispatcher{}
 	var d Dispatcher = f
 	// Round-trip the interface: type-assert back to the concrete pointer
@@ -83,6 +84,7 @@ func TestDispatcherInterface_SatisfiedByFake(t *testing.T) {
 // mirrors the compile-time assertion at the bottom of dispatcher.go but
 // makes the coverage explicit in the test report.
 func TestDispatcherInterface_SatisfiedByRealDispatcher(t *testing.T) {
+	t.Parallel()
 	var d Dispatcher = (*dispatch.Dispatcher)(nil)
 	// Use reflection rather than calling d directly: calling a Handle*
 	// method on the typed-nil would panic in the receiver body. We just
@@ -105,6 +107,7 @@ func TestDispatcherInterface_SatisfiedByRealDispatcher(t *testing.T) {
 // renames, drops, or adds a method without updating this test or the compile
 // assertion, the divergence is caught here.
 func TestDispatcherInterface_HasAllEightOrderHandlers(t *testing.T) {
+	t.Parallel()
 	want := []string{
 		"HandleComplexOrderRequest",
 		"HandleOrderCancel",
@@ -143,6 +146,7 @@ func TestDispatcherInterface_HasAllEightOrderHandlers(t *testing.T) {
 // payload. This ensures the fake we use elsewhere doesn't silently drop
 // method invocations, and indirectly documents the dispatch surface.
 func TestDispatcher_FakeDispatchesEachPayload(t *testing.T) {
+	t.Parallel()
 	env := &protocol.Envelope{
 		ID:   "env-1",
 		Type: protocol.TypeOrderRequest,
@@ -190,6 +194,7 @@ func TestDispatcher_FakeDispatchesEachPayload(t *testing.T) {
 // Verified via reflect.Type.Implements so the test compiles even when the
 // candidate is intentionally incomplete.
 func TestDispatcher_IncompleteFakeDoesNotSatisfy(t *testing.T) {
+	t.Parallel()
 	type partialDispatcher struct{}
 	// partialDispatcher has zero methods so it cannot satisfy Dispatcher.
 

@@ -11,6 +11,7 @@ import (
 // TestMapState_KnownStates verifies every documented RDS state maps to the
 // expected canonical protocol status.
 func TestMapState_KnownStates(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		vendorState string
@@ -37,6 +38,7 @@ func TestMapState_KnownStates(t *testing.T) {
 // TestMapState_Unknown verifies unrecognized vendor states fall back to
 // "dispatched" rather than returning an empty/invalid status.
 func TestMapState_Unknown(t *testing.T) {
+	t.Parallel()
 	cases := []string{"", "BOGUS", "running", "finished"} // lower-case variants should not match
 	for _, s := range cases {
 		t.Run(s, func(t *testing.T) {
@@ -50,6 +52,7 @@ func TestMapState_Unknown(t *testing.T) {
 
 // TestIsTerminalState verifies terminality matches rds.OrderState.IsTerminal.
 func TestIsTerminalState(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		state string
 		want  bool
@@ -76,6 +79,7 @@ func TestIsTerminalState(t *testing.T) {
 // TestMapOrderSnapshot_FullyPopulated verifies every field, including nested
 // block and message slices, is copied verbatim into the fleet snapshot.
 func TestMapOrderSnapshot_FullyPopulated(t *testing.T) {
+	t.Parallel()
 	d := &rds.OrderDetail{
 		ID:           "order-xyz",
 		Vehicle:      "AMB-07",
@@ -145,6 +149,7 @@ func TestMapOrderSnapshot_FullyPopulated(t *testing.T) {
 // TestMapOrderSnapshot_EmptyDetail verifies a zero-valued detail produces a
 // non-nil snapshot with empty slices (not nil pointer, not panic).
 func TestMapOrderSnapshot_EmptyDetail(t *testing.T) {
+	t.Parallel()
 	d := &rds.OrderDetail{}
 	got := mapOrderSnapshot(d)
 	if got == nil {
@@ -168,6 +173,7 @@ func TestMapOrderSnapshot_EmptyDetail(t *testing.T) {
 // TestMapRobotStatus_AllFields verifies every mapped field reaches the output
 // struct with the correct value. Connected is derived (connection_status != 0).
 func TestMapRobotStatus_AllFields(t *testing.T) {
+	t.Parallel()
 	in := rds.RobotStatus{
 		VehicleID:        "AMB-01",
 		ConnectionStatus: 1, // nonzero -> Connected = true
@@ -258,6 +264,7 @@ func TestMapRobotStatus_AllFields(t *testing.T) {
 // surfaces as Connected = false — the State() computed status then derives
 // "offline" downstream.
 func TestMapRobotStatus_DisconnectedZeroStatus(t *testing.T) {
+	t.Parallel()
 	in := rds.RobotStatus{
 		VehicleID:        "AMB-OFF",
 		ConnectionStatus: 0, // disconnected
@@ -278,6 +285,7 @@ func TestMapRobotStatus_DisconnectedZeroStatus(t *testing.T) {
 // TestMapRobotStatus_Zero verifies that a zero rds.RobotStatus produces a
 // fully-zero fleet.RobotStatus (no panics, no surprise defaults).
 func TestMapRobotStatus_Zero(t *testing.T) {
+	t.Parallel()
 	got := mapRobotStatus(rds.RobotStatus{})
 	var want fleet.RobotStatus
 	if got != want {

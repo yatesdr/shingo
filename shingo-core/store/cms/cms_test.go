@@ -11,6 +11,7 @@ import (
 )
 
 func TestCoverage_CreateAndListCMSTransactions(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	nodeA := &nodes.Node{Name: "CMS-NODE-A", Enabled: true}
 	if err := nodes.Create(db.DB, nodeA); err != nil { t.Fatalf("create nodeA: %v", err) }

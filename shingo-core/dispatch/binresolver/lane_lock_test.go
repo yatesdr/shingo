@@ -3,6 +3,7 @@ package binresolver
 import "testing"
 
 func TestLaneLock_TryLockUnlock(t *testing.T) {
+	t.Parallel()
 	ll := NewLaneLock()
 	if !ll.TryLock(1, 100) {
 		t.Fatal("first TryLock on free lane must succeed")
@@ -23,6 +24,7 @@ func TestLaneLock_TryLockUnlock(t *testing.T) {
 }
 
 func TestLaneLock_IndependentLanes(t *testing.T) {
+	t.Parallel()
 	ll := NewLaneLock()
 	if !ll.TryLock(1, 100) || !ll.TryLock(2, 200) {
 		t.Fatal("distinct lanes must be lockable concurrently")
@@ -37,6 +39,7 @@ func TestLaneLock_IndependentLanes(t *testing.T) {
 }
 
 func TestLaneLock_LockedByUnknown(t *testing.T) {
+	t.Parallel()
 	ll := NewLaneLock()
 	if ll.IsLocked(42) {
 		t.Fatal("unknown lane must not report locked")

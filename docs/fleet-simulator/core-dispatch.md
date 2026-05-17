@@ -7,8 +7,8 @@ Core dispatch translates order requests into fleet transport orders. It handles 
 ## Test files
 
 - `dispatch/fleet_simulator_test.go` — outbound fleet instruction verification (TC-1, 3, 4, 5)
-- `engine/engine_test.go` — engine-level lifecycle and staging tests (TC-2, 15)
-- `engine/engine_test.go` — post-delivery cancel guard (TC-68)
+- `engine/engine_simulator_test.go` — engine-level lifecycle and staging tests (TC-2, 15)
+- `engine/engine_terminal_test.go` — post-delivery cancel guard (TC-68)
 - `engine/engine_concurrent_test.go` — malformed input handling (TC-9, 10, 12)
 - `messaging/core_data_service_test.go` — node list sync (TC-69)
 
@@ -16,7 +16,7 @@ Run this domain's tests:
 
 ```bash
 cd shingo-core
-go test -v -run "TestSimulator|TestTC09|TestTC10|TestTC12|TestTC38|TestTC39|TestNodeListResponse|TestMaybeCreateReturnOrder" ./engine/ ./dispatch/ ./messaging/ -timeout 120s
+go test -v -run "TestSimulator|TestComplexOrder|TestCancelDeliveredOrder|TestTerminateOrder|TestNodeListResponse|TestMaybeCreateReturnOrder" ./engine/ ./dispatch/ ./messaging/ -timeout 120s
 ```
 
 ## Index
@@ -76,7 +76,7 @@ returnOrder := &store.Order{
 
 **Status:** Fixed. Return order now correctly uses `order.SourceNode`.
 
-**Tests:** `engine/engine_test.go` — `TestMaybeCreateReturnOrder_SourceNode`; `engine/engine_complex_test.go` — `TestComplexOrder_CancelMidTransit`, `TestComplexOrder_FleetFailureMidTransit` (both strengthened with SourceNode assertions)
+**Tests:** `engine/engine_terminal_test.go` — `TestMaybeCreateReturnOrder_SourceNode`; `engine/engine_complex_test.go` — `TestComplexOrder_CancelMidTransit`, `TestComplexOrder_FleetFailureMidTransit` (both strengthened with SourceNode assertions)
 
 ---
 
@@ -168,7 +168,7 @@ func (d *Dispatcher) HandleOrderReceipt(...) error {
 
 **Status:** Fixed. `TerminateOrder` rejects already-delivered statuses. `CancelOrder` passes `order.Status` as `previousStatus` for `EmitOrderCancelled` to avoid spurious return orders. `ConfirmReceipt` rejects receipt on delivered/cancelled/confirmed statuses.
 
-**Test:** `shingo-core/engine/engine_test.go` -- `TestTC38_CancelDeliveredOrder_NoReturnOrder`, `TestTC39_TerminateOrder_RejectsTerminalStatuses`
+**Test:** `shingo-core/engine/engine_terminal_test.go` -- `TestCancelDeliveredOrder_NoReturnCreated`, `TestTerminateOrder_RejectsConfirmedStatus_FullLifecycle`
 
 ---
 
@@ -250,7 +250,7 @@ d.HandleOrderRelease(env, &protocol.OrderRelease{OrderUUID: "staged-tc2"})
 assert(len(view.Blocks) == 4 && view.Complete == true)
 ```
 
-**Test:** `engine/engine_test.go` — `TestSimulator_StagedComplexOrderRelease`
+**Test:** `engine/engine_simulator_test.go` — `TestSimulator_StagedComplexOrderRelease`
 
 ---
 
@@ -318,7 +318,7 @@ assert(*bin.NodeID == lineNode.ID)    // bin moved
 assert(bin.ClaimedBy == nil)           // claim released
 ```
 
-**Test:** `engine/engine_test.go` — `TestSimulator_FullLifecycle`
+**Test:** `engine/engine_simulator_test.go` — `TestSimulator_FullLifecycle`
 
 ---
 
@@ -330,7 +330,7 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 **Result:** PASS. The handler rejected the order before persisting — `GetOrderByUUID` returned "not found." No fleet orders were created. The system handled the malformed input cleanly without crashing.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestTC09_ComplexOrderZeroSteps`
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_ZeroSteps`
 
 ---
 
@@ -342,7 +342,7 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 **Result:** PASS. The lifecycle rejected the order before persisting — `GetOrderByUUID` returned "not found." No fleet orders were created.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestTC10_NonexistentDeliveryNode`
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_NonexistentDeliveryNode`
 
 ---
 
@@ -354,7 +354,7 @@ assert(bin.ClaimedBy == nil)           // claim released
 
 **Result:** PASS. The system handled the zero-quantity order without panic. The order was created and processed through the normal pipeline.
 
-**Test:** `engine/engine_concurrent_test.go` — `TestTC12_ZeroQuantity`
+**Test:** `engine/engine_concurrent_test.go` — `TestComplexOrder_ZeroQuantity`
 
 ### TC-90: First robot assignment persists robot ID and sends waybill â€” PASS
 

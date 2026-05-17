@@ -16,6 +16,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/auth"
+	"shingo/protocol/testutil"
 	"shingoedge/config"
 	"shingoedge/engine"
 	"shingoedge/engine/changeover"
@@ -23,9 +24,9 @@ import (
 	"shingoedge/plc"
 	"shingoedge/service"
 	"shingoedge/store"
-	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 	"shingoedge/store/stations"
+	storeorders "shingoedge/store/orders"
 )
 
 // testDB is the shared SQLite database initialised by TestMain.
@@ -375,9 +376,7 @@ func authCookie(t *testing.T, h *Handlers) *http.Cookie {
 func decodeJSON(t *testing.T, resp *http.Response, v interface{}) {
 	t.Helper()
 	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
-		t.Fatalf("decode response body: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(v), "decode response body")
 }
 
 // assertStatus asserts the HTTP status code.
@@ -394,9 +393,7 @@ func assertJSONPath(t *testing.T, resp *http.Response, path string, want interfa
 	t.Helper()
 	defer resp.Body.Close()
 	var raw map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		t.Fatalf("decode json for path assertion: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(resp.Body).Decode(&raw), "decode json for path assertion")
 	// For single-level paths only (all our handlers use flat JSON)
 	got, ok := raw[path]
 	if !ok {

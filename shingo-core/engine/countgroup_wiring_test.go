@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 )
 
@@ -17,6 +18,7 @@ import (
 // CountGroupCommand envelope is enqueued on the outbox with the
 // correct subject, broadcast destination, and payload fields.
 func TestHandleCountGroupTransitionBuildsBroadcastCommand(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -51,26 +53,20 @@ func TestHandleCountGroupTransitionBuildsBroadcastCommand(t *testing.T) {
 
 	// Decode envelope to verify payload fields.
 	env := &protocol.Envelope{}
-	if err := json.Unmarshal(row.Payload, env); err != nil {
-		t.Fatalf("decode envelope: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(row.Payload, env), "decode envelope")
 	if env.Type != protocol.TypeData {
 		t.Errorf("envelope type = %q, want data", env.Type)
 	}
 
 	// The envelope payload for TypeData is a Data struct with subject + body.
 	var data protocol.Data
-	if err := json.Unmarshal(env.Payload, &data); err != nil {
-		t.Fatalf("decode data: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(env.Payload, &data), "decode data")
 	if data.Subject != protocol.SubjectCountGroupCommand {
 		t.Errorf("data subject = %q, want %q", data.Subject, protocol.SubjectCountGroupCommand)
 	}
 
 	var cmd protocol.CountGroupCommand
-	if err := json.Unmarshal(data.Body, &cmd); err != nil {
-		t.Fatalf("decode command: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(data.Body, &cmd), "decode command")
 	if cmd.Group != "Crosswalk1" {
 		t.Errorf("group = %q, want Crosswalk1", cmd.Group)
 	}
@@ -113,6 +109,7 @@ func TestHandleCountGroupTransitionBuildsBroadcastCommand(t *testing.T) {
 // TestHandleCountGroupTransitionFailSafeAudit verifies the audit row
 // distinguishes a fail-safe triggered transition from a normal one.
 func TestHandleCountGroupTransitionFailSafeAudit(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 

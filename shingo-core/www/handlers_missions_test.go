@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/store/orders"
 	"shingocore/store/telemetry"
 )
@@ -24,6 +25,7 @@ import (
 // TestHandleMissions_RendersHTML pins that the missions page renders via the
 // templates loaded by loadTestTemplates.
 func TestHandleMissions_RendersHTML(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/missions", nil)
@@ -44,6 +46,7 @@ func TestHandleMissions_RendersHTML(t *testing.T) {
 // TestHandleMissionDetail_InvalidID pins that a non-integer orderID returns
 // 400. The handler uses http.Error (plain text), not a JSON envelope.
 func TestHandleMissionDetail_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	req := chiReq(http.MethodGet, "/missions/not-a-number",
@@ -62,6 +65,7 @@ func TestHandleMissionDetail_InvalidID(t *testing.T) {
 // TestHandleMissionDetail_UnknownOrder pins the 404 path when the orderID is
 // a valid integer but the order doesn't exist in the DB.
 func TestHandleMissionDetail_UnknownOrder(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	req := chiReq(http.MethodGet, "/missions/999999",
@@ -77,6 +81,7 @@ func TestHandleMissionDetail_UnknownOrder(t *testing.T) {
 // TestHandleMissionDetail_HappyPath pins that an existing order renders its
 // detail page as HTML with the mission-detail.html template.
 func TestHandleMissionDetail_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlersForPages(t)
 	o := &orders.Order{
 		EdgeUUID:   "mission-detail-1",
@@ -86,9 +91,7 @@ func TestHandleMissionDetail_HappyPath(t *testing.T) {
 		Quantity:   1,
 		SourceNode: "STORAGE-A1",
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
 	req := chiReq(http.MethodGet, fmt.Sprintf("/missions/%d", o.ID),
 		map[string]string{"orderID": fmt.Sprint(o.ID)})
@@ -110,6 +113,7 @@ func TestHandleMissionDetail_HappyPath(t *testing.T) {
 // TestApiListMissions_EmptyDB pins the list shape on an empty DB: total=0
 // and missions is a null/empty array. limit defaults to 50, offset to 0.
 func TestApiListMissions_EmptyDB(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListMissions, "/api/missions")
@@ -122,9 +126,7 @@ func TestApiListMissions_EmptyDB(t *testing.T) {
 		Limit    int              `json:"limit"`
 		Offset   int              `json:"offset"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Total != 0 {
 		t.Errorf("total: got %d, want 0", resp.Total)
 	}
@@ -140,6 +142,7 @@ func TestApiListMissions_EmptyDB(t *testing.T) {
 // limit, offset, station_id, robot_id, and the since/until date parser all
 // echo into the JSON response.
 func TestApiListMissions_ParsesFilters(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListMissions,
@@ -151,9 +154,7 @@ func TestApiListMissions_ParsesFilters(t *testing.T) {
 		Limit  int `json:"limit"`
 		Offset int `json:"offset"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Limit != 10 {
 		t.Errorf("limit: got %d, want 10", resp.Limit)
 	}
@@ -165,6 +166,7 @@ func TestApiListMissions_ParsesFilters(t *testing.T) {
 // TestApiListMissions_IgnoresBogusLimitOffset pins parser tolerance: garbage
 // limit/offset params fall back to defaults (limit=50, offset=0).
 func TestApiListMissions_IgnoresBogusLimitOffset(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiListMissions, "/api/missions?limit=abc&offset=-1")
@@ -175,9 +177,7 @@ func TestApiListMissions_IgnoresBogusLimitOffset(t *testing.T) {
 		Limit  int `json:"limit"`
 		Offset int `json:"offset"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Limit != 50 || resp.Offset != 0 {
 		t.Errorf("bogus params should fall back to defaults; got limit=%d offset=%d",
 			resp.Limit, resp.Offset)
@@ -189,6 +189,7 @@ func TestApiListMissions_IgnoresBogusLimitOffset(t *testing.T) {
 // TestApiGetMission_InvalidID pins that non-integer orderID → 400 (plain
 // http.Error, not JSON envelope).
 func TestApiGetMission_InvalidID(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	req := chiReq(http.MethodGet, "/api/missions/not-a-number",
@@ -203,6 +204,7 @@ func TestApiGetMission_InvalidID(t *testing.T) {
 
 // TestApiGetMission_UnknownOrder pins 404 for a valid-but-missing orderID.
 func TestApiGetMission_UnknownOrder(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	req := chiReq(http.MethodGet, "/api/missions/99999",
@@ -218,6 +220,7 @@ func TestApiGetMission_UnknownOrder(t *testing.T) {
 // TestApiGetMission_HappyPath pins the response shape for a known order:
 // {order, telemetry, events, history} with the order object populated.
 func TestApiGetMission_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	o := &orders.Order{
 		EdgeUUID:   "mission-get-1",
@@ -227,9 +230,7 @@ func TestApiGetMission_HappyPath(t *testing.T) {
 		Quantity:   1,
 		SourceNode: "STORAGE-A1",
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 
 	req := chiReq(http.MethodGet, fmt.Sprintf("/api/missions/%d", o.ID),
 		map[string]string{"orderID": fmt.Sprint(o.ID)})
@@ -245,9 +246,7 @@ func TestApiGetMission_HappyPath(t *testing.T) {
 		Events    []map[string]any `json:"events"`
 		History   []map[string]any `json:"history"`
 	}
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&resp), "decode")
 	if resp.Order == nil {
 		t.Fatalf("order missing from response: %+v", resp)
 	}
@@ -261,6 +260,7 @@ func TestApiGetMission_HappyPath(t *testing.T) {
 // TestApiMissionStats_EmptyDB pins that stats endpoint returns 200 with a
 // MissionStats-shaped JSON body on an empty DB (total=0, success=0).
 func TestApiMissionStats_EmptyDB(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiMissionStats, "/api/missions/stats")
@@ -268,9 +268,7 @@ func TestApiMissionStats_EmptyDB(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var stats telemetry.Stats
-	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&stats), "decode")
 	if stats.TotalMissions != 0 {
 		t.Errorf("total: got %d, want 0", stats.TotalMissions)
 	}
@@ -279,6 +277,7 @@ func TestApiMissionStats_EmptyDB(t *testing.T) {
 // TestApiMissionStats_AcceptsFilters pins that the handler reads the same
 // filters as apiListMissions and returns a 200 with a valid body.
 func TestApiMissionStats_AcceptsFilters(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiMissionStats,
@@ -287,8 +286,6 @@ func TestApiMissionStats_AcceptsFilters(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var stats telemetry.Stats
-	if err := json.NewDecoder(rec.Body).Decode(&stats); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&stats), "decode")
 }
 

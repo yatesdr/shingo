@@ -26,6 +26,7 @@ import (
 // TestEventTypes_AllDistinctAndNonZero guards against a future edit
 // that accidentally shadows an iota or introduces a duplicate.
 func TestEventTypes_AllDistinctAndNonZero(t *testing.T) {
+	t.Parallel()
 	types := []EventType{
 		EventOrderReceived,
 		EventOrderDispatched,
@@ -68,6 +69,7 @@ func TestEventTypes_AllDistinctAndNonZero(t *testing.T) {
 // This is a single table-driven test so it covers every payload type in
 // events.go in one pass, with per-type assertions.
 func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	cases := []struct {
 		name    string
@@ -344,6 +346,7 @@ func TestEventPayloads_RoundTripAllShapes(t *testing.T) {
 // is populated even when they don't set one. Part of the events.go
 // contract because payloads ride inside Event.
 func TestEvent_TimestampAutofill(t *testing.T) {
+	t.Parallel()
 	bus := NewEventBus()
 	var got Event
 	bus.Subscribe(func(evt Event) { got = evt })

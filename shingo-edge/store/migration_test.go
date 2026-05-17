@@ -3,10 +3,12 @@ package store
 import (
 	"database/sql"
 	"path/filepath"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestOpenMigratesLegacyOrdersWithoutProcessNodeID(t *testing.T) {
+	t.Parallel()
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
@@ -51,9 +53,7 @@ CREATE INDEX idx_orders_uuid ON orders(uuid);
 	defer db.Close()
 
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders') WHERE name='process_node_id'`).Scan(&count); err != nil {
-		t.Fatalf("check process_node_id column: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('orders') WHERE name='process_node_id'`).Scan(&count), "check process_node_id column")
 	if count != 1 {
 		t.Fatalf("expected process_node_id column to exist after migration, count=%d", count)
 	}
@@ -64,6 +64,7 @@ CREATE INDEX idx_orders_uuid ON orders(uuid);
 }
 
 func TestOpenRebuildsOperatorStationsWithoutParentHierarchy(t *testing.T) {
+	t.Parallel()
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "legacy-stations.db")
@@ -119,9 +120,7 @@ VALUES (1, 1, NULL, 'op-10', 'OP10', 'Legacy note', 7);
 	defer db.Close()
 
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('operator_stations') WHERE name='parent_station_id'`).Scan(&count); err != nil {
-		t.Fatalf("check parent_station_id column: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('operator_stations') WHERE name='parent_station_id'`).Scan(&count), "check parent_station_id column")
 	if count != 0 {
 		t.Fatalf("expected parent_station_id column to be removed after migration, count=%d", count)
 	}
@@ -136,6 +135,7 @@ VALUES (1, 1, NULL, 'op-10', 'OP10', 'Legacy note', 7);
 }
 
 func TestOpenMigratesLegacyProcessNodeTablesIntoNewProcessOwnershipModel(t *testing.T) {
+	t.Parallel()
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "legacy-process-nodes.db")
@@ -248,9 +248,7 @@ INSERT INTO op_node_style_assignments (id, op_node_id, style_id, payload_code, p
 	defer db.Close()
 
 	var nodeCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM process_nodes`).Scan(&nodeCount); err != nil {
-		t.Fatalf("count process_nodes: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM process_nodes`).Scan(&nodeCount), "count process_nodes")
 	if nodeCount != 1 {
 		t.Fatalf("expected one migrated process node, count=%d", nodeCount)
 	}
@@ -269,9 +267,7 @@ INSERT INTO op_node_style_assignments (id, op_node_id, style_id, payload_code, p
 	}
 
 	var delegationCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM process_nodes WHERE operator_station_id IS NOT NULL`).Scan(&delegationCount); err != nil {
-		t.Fatalf("count process_nodes with operator_station_id: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM process_nodes WHERE operator_station_id IS NOT NULL`).Scan(&delegationCount), "count process_nodes with operator_station_id")
 	if delegationCount != 1 {
 		t.Fatalf("expected one migrated station delegation, count=%d", delegationCount)
 	}
@@ -285,6 +281,7 @@ INSERT INTO op_node_style_assignments (id, op_node_id, style_id, payload_code, p
 }
 
 func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
+	t.Parallel()
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "lineside-migration.db")
@@ -327,9 +324,7 @@ func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
 	defer rows.Close()
 	for rows.Next() {
 		var col string
-		if err := rows.Scan(&col); err != nil {
-			t.Fatalf("scan col: %v", err)
-		}
+		testutil.MustNoErr(t, rows.Scan(&col), "scan col")
 		if _, ok := expected[col]; ok {
 			expected[col] = true
 		}
@@ -348,6 +343,7 @@ func TestOpenCreatesNodeLinesideBucketTable(t *testing.T) {
 //   - succeed in dropping it on a dev DB that has the column
 // Both paths end with the same shape: no drop_via_staging column.
 func TestMigration_DropsDropViaStagingColumn(t *testing.T) {
+	t.Parallel()
 	t.Helper()
 
 	t.Run("fresh_db_never_has_column", func(t *testing.T) {
@@ -359,9 +355,7 @@ func TestMigration_DropsDropViaStagingColumn(t *testing.T) {
 		defer db.Close()
 
 		var n int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims') WHERE name='drop_via_staging'`).Scan(&n); err != nil {
-			t.Fatalf("check drop_via_staging: %v", err)
-		}
+		testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims') WHERE name='drop_via_staging'`).Scan(&n), "check drop_via_staging")
 		if n != 0 {
 			t.Fatalf("fresh DB should not have drop_via_staging column, got %d", n)
 		}
@@ -381,9 +375,7 @@ func TestMigration_DropsDropViaStagingColumn(t *testing.T) {
 		}
 		// Re-run migrate() by closing and re-opening the DB. The DROP
 		// migration should remove the column on the second pass.
-		if err := db.Close(); err != nil {
-			t.Fatalf("close: %v", err)
-		}
+		testutil.MustNoErr(t, db.Close(), "close")
 		db, err = Open(dbPath)
 		if err != nil {
 			t.Fatalf("re-open: %v", err)
@@ -391,9 +383,7 @@ func TestMigration_DropsDropViaStagingColumn(t *testing.T) {
 		defer db.Close()
 
 		var n int
-		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims') WHERE name='drop_via_staging'`).Scan(&n); err != nil {
-			t.Fatalf("check drop_via_staging: %v", err)
-		}
+		testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('style_node_claims') WHERE name='drop_via_staging'`).Scan(&n), "check drop_via_staging")
 		if n != 0 {
 			t.Fatalf("legacy DB should have drop_via_staging dropped, got %d (expected 0)", n)
 		}

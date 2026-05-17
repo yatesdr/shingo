@@ -5,6 +5,7 @@ package service
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/internal/testdb"
 	"shingoedge/store/stations"
 )
@@ -20,6 +21,7 @@ import (
 // directly. Now it exercises the service.
 
 func TestStation_SetNodes(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewStationService(db)
 
@@ -27,9 +29,7 @@ func TestStation_SetNodes(t *testing.T) {
 	id, _ := db.CreateOperatorStation(stations.Input{ProcessID: pid, Name: "S"})
 
 	// Initial set.
-	if err := svc.SetNodes(id, []string{"N1", "N2"}); err != nil {
-		t.Fatalf("set 1: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodes(id, []string{"N1", "N2"}), "set 1")
 	names, err := svc.GetNodeNames(id)
 	if err != nil {
 		t.Fatalf("get names: %v", err)
@@ -54,9 +54,7 @@ func TestStation_SetNodes(t *testing.T) {
 	}
 
 	// Update: remove N1, add N3. N1 has no active orders, so it's deleted.
-	if err := svc.SetNodes(id, []string{"N2", "N3"}); err != nil {
-		t.Fatalf("set 2: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodes(id, []string{"N2", "N3"}), "set 2")
 	nodes2, _ := db.ListProcessNodesByStation(id)
 	if len(nodes2) != 2 {
 		t.Fatalf("nodes len after update = %d", len(nodes2))
@@ -70,9 +68,7 @@ func TestStation_SetNodes(t *testing.T) {
 	}
 
 	// Input with duplicates + whitespace — dedupe + trim paths.
-	if err := svc.SetNodes(id, []string{" N2 ", "N2", "", "N4"}); err != nil {
-		t.Fatalf("set 3: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodes(id, []string{" N2 ", "N2", "", "N4"}), "set 3")
 	nodes3, _ := db.ListProcessNodesByStation(id)
 	if len(nodes3) != 2 { // N2, N4 — N3 removed
 		t.Errorf("nodes after dedup = %d, want 2", len(nodes3))
@@ -80,6 +76,7 @@ func TestStation_SetNodes(t *testing.T) {
 }
 
 func TestStation_SetNodesDisablesRatherThanDeletesWhenOrdersActive(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewStationService(db)
 
@@ -101,9 +98,7 @@ func TestStation_SetNodesDisablesRatherThanDeletesWhenOrdersActive(t *testing.T)
 	}
 
 	// Drop N-KEEP. Node should be disabled, not deleted.
-	if err := svc.SetNodes(id, []string{"N-NEW"}); err != nil {
-		t.Fatalf("set: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetNodes(id, []string{"N-NEW"}), "set")
 	n, err := db.GetProcessNode(nodeID)
 	if err != nil {
 		t.Fatalf("get node: %v (should still exist)", err)

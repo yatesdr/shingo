@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
@@ -133,10 +134,7 @@ func TestRegression_OrderFailedSkipsEmptyEdgeUUID(t *testing.T) {
 	}})
 
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = 'order.error'`).Scan(&count)
-	if err != nil {
-		t.Fatalf("query outbox: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = 'order.error'`).Scan(&count), "query outbox")
 	if count != 0 {
 		t.Errorf("outbox has %d order.error messages, want 0 — empty EdgeUUID should skip Edge notification", count)
 	}
@@ -169,9 +167,7 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 		BinID:        &bin.ID,
 		PayloadDesc:  "auto_return",
 	}
-	if err := db.CreateOrder(autoReturn); err != nil {
-		t.Fatalf("create auto-return order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(autoReturn), "create auto-return order")
 
 	// Cancel via event — should NOT send to Edge or panic
 	eng.Events.Emit(Event{Type: EventOrderCancelled, Payload: OrderCancelledEvent{
@@ -184,10 +180,7 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 
 	// Assertion 1: No cancel message in outbox (Edge was NOT notified)
 	var outboxCount int
-	err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = 'order_cancelled'`).Scan(&outboxCount)
-	if err != nil {
-		t.Fatalf("query outbox: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE msg_type = 'order_cancelled'`).Scan(&outboxCount), "query outbox")
 	if outboxCount != 0 {
 		t.Errorf("outbox has %d order_cancelled messages, want 0 — empty EdgeUUID should skip Edge notification", outboxCount)
 	}
@@ -195,10 +188,7 @@ func TestRegression_CancelEmptyEdgeUUID(t *testing.T) {
 	// Assertion 2: No auto-return order was created (payload_desc=auto_return prevents loops,
 	// but verify it didn't slip through)
 	var returnCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM orders WHERE payload_desc = 'auto_return' AND source_node = $1`, storageNode.Name).Scan(&returnCount)
-	if err != nil {
-		t.Fatalf("query return orders: %v", err)
-	}
+	testutil.MustNoErr(t, db.QueryRow(`SELECT COUNT(*) FROM orders WHERE payload_desc = 'auto_return' AND source_node = $1`, storageNode.Name).Scan(&returnCount), "query return orders")
 	if returnCount != 0 {
 		t.Errorf("auto-return order was created for an already-return order — loop guard may be broken")
 	}

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet/simulator"
@@ -144,15 +145,13 @@ func findAuditByAction(entries []*audit.Entry, action string) *audit.Entry {
 // --- Simple status transitions ---
 
 func TestExecuteBinAction_Activate(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// Set bin to a non-available status first so activate is meaningful.
 	db.UpdateBinStatus(bin.ID, "flagged")
 
-	err := h.executeBinAction(bin, "activate", nil)
-	if err != nil {
-		t.Fatalf("activate: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "activate", nil), "activate")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Status != "available" {
@@ -162,12 +161,10 @@ func TestExecuteBinAction_Activate(t *testing.T) {
 }
 
 func TestExecuteBinAction_Flag(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
-	err := h.executeBinAction(bin, "flag", nil)
-	if err != nil {
-		t.Fatalf("flag: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "flag", nil), "flag")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Status != "flagged" {
@@ -177,12 +174,10 @@ func TestExecuteBinAction_Flag(t *testing.T) {
 }
 
 func TestExecuteBinAction_Maintenance(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
-	err := h.executeBinAction(bin, "maintenance", nil)
-	if err != nil {
-		t.Fatalf("maintenance: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "maintenance", nil), "maintenance")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Status != "maintenance" {
@@ -192,12 +187,10 @@ func TestExecuteBinAction_Maintenance(t *testing.T) {
 }
 
 func TestExecuteBinAction_Retire(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
-	err := h.executeBinAction(bin, "retire", nil)
-	if err != nil {
-		t.Fatalf("retire: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "retire", nil), "retire")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Status != "retired" {
@@ -209,16 +202,14 @@ func TestExecuteBinAction_Retire(t *testing.T) {
 // --- Complex actions ---
 
 func TestExecuteBinAction_QualityHold(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	params := mustJSON(t, map[string]string{
 		"reason": "Surface defect on lid",
 		"actor":  "inspector-1",
 	})
-	err := h.executeBinAction(bin, "quality_hold", params)
-	if err != nil {
-		t.Fatalf("quality_hold: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "quality_hold", params), "quality_hold")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Status != "quality_hold" {
@@ -245,15 +236,13 @@ func TestExecuteBinAction_QualityHold(t *testing.T) {
 }
 
 func TestExecuteBinAction_QualityHold_NoReason(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// No reason — should still change status but skip the note. Two audit
 	// entries: handler "status" + engine "status_changed".
 	params := mustJSON(t, map[string]string{"actor": "inspector-2"})
-	err := h.executeBinAction(bin, "quality_hold", params)
-	if err != nil {
-		t.Fatalf("quality_hold no reason: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "quality_hold", params), "quality_hold no reason")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Status != "quality_hold" {
@@ -270,13 +259,11 @@ func TestExecuteBinAction_QualityHold_NoReason(t *testing.T) {
 }
 
 func TestExecuteBinAction_Lock(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	params := mustJSON(t, map[string]string{"actor": "maintenance-tech"})
-	err := h.executeBinAction(bin, "lock", params)
-	if err != nil {
-		t.Fatalf("lock: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "lock", params), "lock")
 
 	got, _ := db.GetBin(bin.ID)
 	if !got.Locked {
@@ -289,14 +276,12 @@ func TestExecuteBinAction_Lock(t *testing.T) {
 }
 
 func TestExecuteBinAction_Lock_NoExplicitActor(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// No actor param — resolveActor("") returns "ui", which passes the
 	// `if actor == ""` guard. Lock succeeds with actor "ui".
-	err := h.executeBinAction(bin, "lock", nil)
-	if err != nil {
-		t.Fatalf("lock with no explicit actor should succeed (resolves to 'ui'): %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "lock", nil), "lock with no explicit actor should succeed (resolves to 'ui')")
 
 	got, _ := db.GetBin(bin.ID)
 	if !got.Locked {
@@ -308,16 +293,14 @@ func TestExecuteBinAction_Lock_NoExplicitActor(t *testing.T) {
 }
 
 func TestExecuteBinAction_Unlock(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// Lock first, then unlock.
 	db.LockBin(bin.ID, "someone")
 	bin.LockedBy = "someone" // update the in-memory copy to match
 
-	err := h.executeBinAction(bin, "unlock", nil)
-	if err != nil {
-		t.Fatalf("unlock: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "unlock", nil), "unlock")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Locked {
@@ -327,16 +310,14 @@ func TestExecuteBinAction_Unlock(t *testing.T) {
 }
 
 func TestExecuteBinAction_Release(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// Stage the bin first so release actually transitions staged → available.
 	db.StageBin(bin.ID, nil)
 	bin.Status = "staged" // keep in-memory copy in sync (executeBinAction reads b.Status for oldStatus)
 
-	err := h.executeBinAction(bin, "release", nil)
-	if err != nil {
-		t.Fatalf("release: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "release", nil), "release")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Status != "available" {
@@ -351,25 +332,21 @@ func TestExecuteBinAction_Release(t *testing.T) {
 // --- Payload actions ---
 
 func TestExecuteBinAction_LoadPayload(t *testing.T) {
+	t.Parallel()
 	h, db, sd, _ := setupBinForAction(t)
 
 	// Create a clean bin without manifest for loading.
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	nodeID := sd.StorageNode.ID
 	cleanBin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-LOAD-1", NodeID: &nodeID, Status: "available"}
-	if err := db.CreateBin(cleanBin); err != nil {
-		t.Fatalf("create clean bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(cleanBin), "create clean bin")
 	cleanBin, _ = db.GetBin(cleanBin.ID)
 
 	params := mustJSON(t, map[string]any{
 		"payload_code": sd.Payload.Code,
 		"uop_override": 50,
 	})
-	err := h.executeBinAction(cleanBin, "load_payload", params)
-	if err != nil {
-		t.Fatalf("load_payload: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(cleanBin, "load_payload", params), "load_payload")
 
 	got, _ := db.GetBin(cleanBin.ID)
 	if got.PayloadCode != sd.Payload.Code {
@@ -379,6 +356,7 @@ func TestExecuteBinAction_LoadPayload(t *testing.T) {
 }
 
 func TestExecuteBinAction_LoadPayload_MissingCode(t *testing.T) {
+	t.Parallel()
 	h, _, _, bin := setupBinForAction(t)
 
 	params := mustJSON(t, map[string]string{"payload_code": ""})
@@ -389,6 +367,7 @@ func TestExecuteBinAction_LoadPayload_MissingCode(t *testing.T) {
 }
 
 func TestExecuteBinAction_LoadPayload_UnknownCode(t *testing.T) {
+	t.Parallel()
 	h, _, _, bin := setupBinForAction(t)
 
 	params := mustJSON(t, map[string]string{"payload_code": "NONEXISTENT-XYZ"})
@@ -399,15 +378,13 @@ func TestExecuteBinAction_LoadPayload_UnknownCode(t *testing.T) {
 }
 
 func TestExecuteBinAction_Clear(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// bin from setupBinForAction already has a manifest (CreateBinAtNode sets one).
 	oldCode := bin.PayloadCode
 
-	err := h.executeBinAction(bin, "clear", nil)
-	if err != nil {
-		t.Fatalf("clear: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "clear", nil), "clear")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.PayloadCode != "" {
@@ -417,16 +394,14 @@ func TestExecuteBinAction_Clear(t *testing.T) {
 }
 
 func TestExecuteBinAction_ConfirmManifest(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// Unconfirm first so we can test confirm.
 	db.UnconfirmBinManifest(bin.ID)
 	bin.ManifestConfirmed = false
 
-	err := h.executeBinAction(bin, "confirm_manifest", nil)
-	if err != nil {
-		t.Fatalf("confirm_manifest: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "confirm_manifest", nil), "confirm_manifest")
 
 	got, _ := db.GetBin(bin.ID)
 	if !got.ManifestConfirmed {
@@ -436,15 +411,14 @@ func TestExecuteBinAction_ConfirmManifest(t *testing.T) {
 }
 
 func TestExecuteBinAction_ConfirmManifest_NoManifest(t *testing.T) {
+	t.Parallel()
 	h, db, sd, _ := setupBinForAction(t)
 
 	// Create a bin with no manifest.
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
 	nodeID := sd.StorageNode.ID
 	emptyBin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-NOMANI-1", NodeID: &nodeID, Status: "available"}
-	if err := db.CreateBin(emptyBin); err != nil {
-		t.Fatalf("create empty bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(emptyBin), "create empty bin")
 	emptyBin, _ = db.GetBin(emptyBin.ID)
 
 	err := h.executeBinAction(emptyBin, "confirm_manifest", nil)
@@ -454,13 +428,11 @@ func TestExecuteBinAction_ConfirmManifest_NoManifest(t *testing.T) {
 }
 
 func TestExecuteBinAction_UnconfirmManifest(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// bin from setup is already confirmed.
-	err := h.executeBinAction(bin, "unconfirm_manifest", nil)
-	if err != nil {
-		t.Fatalf("unconfirm_manifest: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "unconfirm_manifest", nil), "unconfirm_manifest")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.ManifestConfirmed {
@@ -472,14 +444,12 @@ func TestExecuteBinAction_UnconfirmManifest(t *testing.T) {
 // --- Move ---
 
 func TestExecuteBinAction_Move(t *testing.T) {
+	t.Parallel()
 	h, db, sd, bin := setupBinForAction(t)
 
 	// Move bin from storage node to line node.
 	params := mustJSON(t, map[string]any{"node_id": sd.LineNode.ID})
-	err := h.executeBinAction(bin, "move", params)
-	if err != nil {
-		t.Fatalf("move: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "move", params), "move")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.NodeID == nil || *got.NodeID != sd.LineNode.ID {
@@ -489,6 +459,7 @@ func TestExecuteBinAction_Move(t *testing.T) {
 }
 
 func TestExecuteBinAction_Move_MissingNodeID(t *testing.T) {
+	t.Parallel()
 	h, _, _, bin := setupBinForAction(t)
 
 	err := h.executeBinAction(bin, "move", nil)
@@ -498,6 +469,7 @@ func TestExecuteBinAction_Move_MissingNodeID(t *testing.T) {
 }
 
 func TestExecuteBinAction_Move_UnknownNode(t *testing.T) {
+	t.Parallel()
 	h, _, _, bin := setupBinForAction(t)
 
 	params := mustJSON(t, map[string]any{"node_id": 999999})
@@ -507,10 +479,10 @@ func TestExecuteBinAction_Move_UnknownNode(t *testing.T) {
 	}
 }
 
-// TC-70: Moving a bin to its current node is physically impossible and must be rejected.
 // Bug: 2026-04-13 — binMove() had no guard against same-node moves; the dropdown
 // also offered the bin's current location as a destination.
 func TestExecuteBinAction_Move_SameNode(t *testing.T) {
+	t.Parallel()
 	h, _, sd, bin := setupBinForAction(t)
 
 	// Attempt to move the bin to the storage node where it already lives.
@@ -530,6 +502,7 @@ func TestExecuteBinAction_Move_SameNode(t *testing.T) {
 // (ListBinsByNode consumers doing bins[0]) silently picked one and ignored
 // the rest. This asserts the new guard refuses the move with a clear error.
 func TestExecuteBinAction_Move_RefusesOccupiedDestination(t *testing.T) {
+	t.Parallel()
 	h, db, sd, bin := setupBinForAction(t)
 
 	// Place a second bin at the line node so the move destination is occupied.
@@ -557,6 +530,7 @@ func TestExecuteBinAction_Move_RefusesOccupiedDestination(t *testing.T) {
 // --- Record count ---
 
 func TestExecuteBinAction_RecordCount(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// bin.UOPRemaining is 100 (set by CreateBinAtNode).
@@ -564,10 +538,7 @@ func TestExecuteBinAction_RecordCount(t *testing.T) {
 		"actual_uop": 95,
 		"actor":      "counter-1",
 	})
-	err := h.executeBinAction(bin, "record_count", params)
-	if err != nil {
-		t.Fatalf("record_count: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "record_count", params), "record_count")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.UOPRemaining != 95 {
@@ -595,6 +566,7 @@ func TestExecuteBinAction_RecordCount(t *testing.T) {
 }
 
 func TestExecuteBinAction_RecordCount_NoDiscrepancy(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// Count matches expected — no discrepancy note.
@@ -602,10 +574,7 @@ func TestExecuteBinAction_RecordCount_NoDiscrepancy(t *testing.T) {
 		"actual_uop": 100,
 		"actor":      "counter-2",
 	})
-	err := h.executeBinAction(bin, "record_count", params)
-	if err != nil {
-		t.Fatalf("record_count no discrepancy: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "record_count", params), "record_count no discrepancy")
 
 	entries, _ := db.ListEntityAudit("bin", bin.ID)
 	// No note:count entry — just handler "counted" and engine "counted".
@@ -619,6 +588,7 @@ func TestExecuteBinAction_RecordCount_NoDiscrepancy(t *testing.T) {
 // --- Add note (unique: no audit/SSE, returns directly) ---
 
 func TestExecuteBinAction_AddNote(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	params := mustJSON(t, map[string]any{
@@ -626,10 +596,7 @@ func TestExecuteBinAction_AddNote(t *testing.T) {
 		"message":   "Crack observed on corner",
 		"actor":     "operator-5",
 	})
-	err := h.executeBinAction(bin, "add_note", params)
-	if err != nil {
-		t.Fatalf("add_note: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "add_note", params), "add_note")
 
 	// add_note calls AddBinNote which appends "note:damage" audit.
 	entries, _ := db.ListEntityAudit("bin", bin.ID)
@@ -645,16 +612,14 @@ func TestExecuteBinAction_AddNote(t *testing.T) {
 }
 
 func TestExecuteBinAction_AddNote_DefaultNoteType(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	// Omit note_type — should default to "general".
 	params := mustJSON(t, map[string]any{
 		"message": "General observation",
 	})
-	err := h.executeBinAction(bin, "add_note", params)
-	if err != nil {
-		t.Fatalf("add_note default type: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "add_note", params), "add_note default type")
 
 	entries, _ := db.ListEntityAudit("bin", bin.ID)
 	if entries[0].Action != "note:general" {
@@ -663,6 +628,7 @@ func TestExecuteBinAction_AddNote_DefaultNoteType(t *testing.T) {
 }
 
 func TestExecuteBinAction_AddNote_MissingMessage(t *testing.T) {
+	t.Parallel()
 	h, _, _, bin := setupBinForAction(t)
 
 	params := mustJSON(t, map[string]any{"note_type": "damage"})
@@ -675,6 +641,7 @@ func TestExecuteBinAction_AddNote_MissingMessage(t *testing.T) {
 // --- Update ---
 
 func TestExecuteBinAction_Update(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 
 	newLabel := "RELABELED-BIN"
@@ -683,10 +650,7 @@ func TestExecuteBinAction_Update(t *testing.T) {
 		"label":       newLabel,
 		"description": newDesc,
 	})
-	err := h.executeBinAction(bin, "update", params)
-	if err != nil {
-		t.Fatalf("update: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "update", params), "update")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Label != newLabel {
@@ -699,15 +663,13 @@ func TestExecuteBinAction_Update(t *testing.T) {
 }
 
 func TestExecuteBinAction_Update_PartialFields(t *testing.T) {
+	t.Parallel()
 	h, db, _, bin := setupBinForAction(t)
 	origLabel := bin.Label
 
 	// Only update description, leave label unchanged.
 	params := mustJSON(t, map[string]any{"description": "New desc only"})
-	err := h.executeBinAction(bin, "update", params)
-	if err != nil {
-		t.Fatalf("update partial: %v", err)
-	}
+	testutil.MustNoErr(t, h.executeBinAction(bin, "update", params), "update partial")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Label != origLabel {
@@ -724,6 +686,7 @@ func TestExecuteBinAction_Update_PartialFields(t *testing.T) {
 // Before the guard, admins could create a second bin at an occupied node via
 // the web form, and downstream bins[0]-indexing code would silently break.
 func TestHandleBinCreate_RefusesOccupiedNode(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 	// Storage node is occupied by this bin
@@ -758,6 +721,7 @@ func TestHandleBinCreate_RefusesOccupiedNode(t *testing.T) {
 // handleBinCreate must refuse multi-bin create targeting a physical node.
 // Creating N bins at a single physical node is never valid (one bin per node).
 func TestHandleBinCreate_RefusesMultiBinAtPhysicalNode(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -789,6 +753,7 @@ func TestHandleBinCreate_RefusesMultiBinAtPhysicalNode(t *testing.T) {
 // handleBinCreate should succeed when the target node is empty (baseline).
 // Guards against over-restrictive guards breaking the normal flow.
 func TestHandleBinCreate_AllowsEmptyNode(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	sd := testdb.SetupStandardData(t, db)
 
@@ -820,6 +785,7 @@ func TestHandleBinCreate_AllowsEmptyNode(t *testing.T) {
 // --- Unknown action ---
 
 func TestExecuteBinAction_UnknownAction(t *testing.T) {
+	t.Parallel()
 	h, _, _, bin := setupBinForAction(t)
 
 	err := h.executeBinAction(bin, "nonexistent_action", nil)

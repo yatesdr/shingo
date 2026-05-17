@@ -12,6 +12,7 @@ import (
 )
 
 func TestCoverage_ListInventory_Empty(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	rows, err := inventory.List(db.DB)
 	if err != nil { t.Fatalf("List (empty): %v", err) }
@@ -19,6 +20,7 @@ func TestCoverage_ListInventory_Empty(t *testing.T) {
 }
 
 func TestCoverage_ListInventory(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	bt := &bins.BinType{Code: "INV-BT", Description: "inv tote"}
 	bins.CreateType(db.DB, bt)

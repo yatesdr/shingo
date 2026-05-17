@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/internal/testdb"
@@ -224,9 +225,7 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "DWELLING")
 
 	// Mark order as staged (simulating the dwell callback)
-	if err := db.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "dwelling at lineside"); err != nil {
-		t.Fatalf("update to staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "dwelling at lineside"), "update to staged")
 
 	// Edge sends release — there are no post-wait steps
 	d.HandleOrderRelease(env, &protocol.OrderRelease{
@@ -277,6 +276,7 @@ func TestComplexOrder_EmptyPostWaitRelease(t *testing.T) {
 // node C, not new node D. The test verifies whether the redirect actually
 // takes effect in the post-wait phase.
 func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	_ = createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-REDIR")
@@ -310,15 +310,11 @@ func TestComplexOrder_RedirectStaleStepsJSON(t *testing.T) {
 	sim.DriveState(order.VendorOrderID, "RUNNING")
 	sim.DriveState(order.VendorOrderID, "DWELLING")
 
-	if err := db.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "dwelling"); err != nil {
-		t.Fatalf("update to staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(dispatch.StatusStaged), "dwelling"), "update to staged")
 
 	// Simulate redirect: update DeliveryNode directly (PrepareRedirect does this).
 	// StepsJSON still has storageNode as the last dropoff — this is the TC-48 bug surface.
-	if err := db.UpdateOrderDeliveryNode(order.ID, newDest.Name); err != nil {
-		t.Fatalf("update delivery node: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderDeliveryNode(order.ID, newDest.Name), "update delivery node")
 
 	// Release — HandleOrderRelease should patch the segment with the new DeliveryNode
 	d.HandleOrderRelease(env, &protocol.OrderRelease{
@@ -424,6 +420,7 @@ func TestComplexOrder_GhostRobotNoBin(t *testing.T) {
 // Expected: First order claims the bin and dispatches. Second order fails
 // at planning — no ghost robot. No double-claim occurs.
 func TestComplexOrder_ConcurrentSameNodeDoubleClaimRace(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-RACE")
@@ -510,17 +507,11 @@ func setupProductionNodes(t *testing.T, db *store.DB) (
 	storageNode, lineNode, bp = setupTestData(t, db)
 
 	inboundStaging = &nodes.Node{Name: "INBOUND-STAGING", Enabled: true}
-	if err := db.CreateNode(inboundStaging); err != nil {
-		t.Fatalf("create inbound staging node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(inboundStaging), "create inbound staging node")
 	outboundStaging = &nodes.Node{Name: "OUTBOUND-STAGING", Enabled: true}
-	if err := db.CreateNode(outboundStaging); err != nil {
-		t.Fatalf("create outbound staging node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(outboundStaging), "create outbound staging node")
 	outboundDest = &nodes.Node{Name: "OUTBOUND-DEST", Enabled: true}
-	if err := db.CreateNode(outboundDest); err != nil {
-		t.Fatalf("create outbound dest node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(outboundDest), "create outbound dest node")
 	return
 }
 
@@ -1230,7 +1221,7 @@ func TestComplexOrder_SingleRobotSwap(t *testing.T) {
 }
 
 // =============================================================================
-// TC-DW: Double-wait complex order — Phase 3 evacuate flow prerequisite
+// Double-wait complex order — Phase 3 evacuate flow prerequisite
 //
 // This test verifies that a complex order with TWO wait steps is handled
 // correctly by the Core dispatcher. The evacuate changeover flow requires:

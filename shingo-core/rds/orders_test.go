@@ -3,10 +3,12 @@ package rds
 import (
 	"encoding/json"
 	"net/http"
+	"shingo/protocol/testutil"
 	"testing"
 )
 
 func TestCreateOrder(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/setOrder" {
 			t.Errorf("path = %q, want /setOrder", r.URL.Path)
@@ -15,9 +17,7 @@ func TestCreateOrder(t *testing.T) {
 			t.Errorf("method = %q, want POST", r.Method)
 		}
 		var req SetOrderRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.ID != "ord-1" {
 			t.Errorf("ID = %q, want ord-1", req.ID)
 		}
@@ -51,6 +51,7 @@ func TestCreateOrder(t *testing.T) {
 }
 
 func TestCreateOrder_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 11, Msg: "duplicate id"})
 	})
@@ -63,14 +64,13 @@ func TestCreateOrder_Error(t *testing.T) {
 }
 
 func TestMarkComplete(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/markComplete" {
 			t.Errorf("path = %q, want /markComplete", r.URL.Path)
 		}
 		var req MarkCompleteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.ID != "ord-99" {
 			t.Errorf("ID = %q, want ord-99", req.ID)
 		}
@@ -78,12 +78,11 @@ func TestMarkComplete(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.MarkComplete(&MarkCompleteRequest{ID: "ord-99"}); err != nil {
-		t.Fatalf("MarkComplete: %v", err)
-	}
+	testutil.MustNoErr(t, client.MarkComplete(&MarkCompleteRequest{ID: "ord-99"}), "MarkComplete")
 }
 
 func TestMarkComplete_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "not found"})
 	})
@@ -95,6 +94,7 @@ func TestMarkComplete_Error(t *testing.T) {
 }
 
 func TestGetOrderByExternalID(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/orderDetailsByExternalId/EXT-77" {
 			t.Errorf("path = %q, want /orderDetailsByExternalId/EXT-77", r.URL.Path)
@@ -125,6 +125,7 @@ func TestGetOrderByExternalID(t *testing.T) {
 }
 
 func TestGetOrderByExternalID_EmptyID(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		// Code=0 but no order id present — orders.go treats this as an error.
 		w.Write([]byte(`{"code":0,"msg":"ok"}`))
@@ -138,6 +139,7 @@ func TestGetOrderByExternalID_EmptyID(t *testing.T) {
 }
 
 func TestGetOrderByExternalID_NotFound(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"code":1,"msg":"not found"}`))
 	})
@@ -150,6 +152,7 @@ func TestGetOrderByExternalID_NotFound(t *testing.T) {
 }
 
 func TestGetOrderByBlockID(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/orderDetailsByBlockId/blk-42" {
 			t.Errorf("path = %q, want /orderDetailsByBlockId/blk-42", r.URL.Path)
@@ -171,6 +174,7 @@ func TestGetOrderByBlockID(t *testing.T) {
 }
 
 func TestGetOrderByBlockID_EmptyID(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"code":0,"msg":"ok"}`))
 	})
@@ -183,14 +187,13 @@ func TestGetOrderByBlockID_EmptyID(t *testing.T) {
 }
 
 func TestSetLabel(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/setLabel" {
 			t.Errorf("path = %q, want /setLabel", r.URL.Path)
 		}
 		var req SetLabelRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.ID != "ord-1" {
 			t.Errorf("ID = %q, want ord-1", req.ID)
 		}
@@ -201,12 +204,11 @@ func TestSetLabel(t *testing.T) {
 	})
 	defer srv.Close()
 
-	if err := client.SetLabel("ord-1", "rush"); err != nil {
-		t.Fatalf("SetLabel: %v", err)
-	}
+	testutil.MustNoErr(t, client.SetLabel("ord-1", "rush"), "SetLabel")
 }
 
 func TestSetLabel_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 1, Msg: "fail"})
 	})
@@ -218,14 +220,13 @@ func TestSetLabel_Error(t *testing.T) {
 }
 
 func TestAddBlocks_NoVehicle(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/addBlocks" {
 			t.Errorf("path = %q, want /addBlocks", r.URL.Path)
 		}
 		var req AddBlocksRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.ID != "ord-7" {
 			t.Errorf("ID = %q, want ord-7", req.ID)
 		}
@@ -242,18 +243,14 @@ func TestAddBlocks_NoVehicle(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.AddBlocks("ord-7", []Block{{BlockID: "blk-1", Location: "L1"}}, true)
-	if err != nil {
-		t.Fatalf("AddBlocks: %v", err)
-	}
+	testutil.MustNoErr(t, client.AddBlocks("ord-7", []Block{{BlockID: "blk-1", Location: "L1"}}, true), "AddBlocks")
 }
 
 func TestAddBlocks_WithVehicle(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		var req AddBlocksRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
+		testutil.MustNoErr(t, json.NewDecoder(r.Body).Decode(&req), "decode")
 		if req.Vehicle != "AMB-05" {
 			t.Errorf("Vehicle = %q, want AMB-05", req.Vehicle)
 		}
@@ -264,13 +261,11 @@ func TestAddBlocks_WithVehicle(t *testing.T) {
 	})
 	defer srv.Close()
 
-	err := client.AddBlocks("ord-7", []Block{{BlockID: "blk-2"}}, false, "AMB-05")
-	if err != nil {
-		t.Fatalf("AddBlocks: %v", err)
-	}
+	testutil.MustNoErr(t, client.AddBlocks("ord-7", []Block{{BlockID: "blk-2"}}, false, "AMB-05"), "AddBlocks")
 }
 
 func TestAddBlocks_Error(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(Response{Code: 13, Msg: "order is complete"})
 	})
@@ -283,6 +278,7 @@ func TestAddBlocks_Error(t *testing.T) {
 }
 
 func TestGetBlockDetails(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/blockDetailsById/blk-7" {
 			t.Errorf("path = %q, want /blockDetailsById/blk-7", r.URL.Path)
@@ -316,6 +312,7 @@ func TestGetBlockDetails(t *testing.T) {
 }
 
 func TestGetBlockDetails_EmptyID(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		// code=0 but no blockId — orders.go treats as an error.
 		w.Write([]byte(`{"code":0,"msg":"ok"}`))
@@ -329,6 +326,7 @@ func TestGetBlockDetails_EmptyID(t *testing.T) {
 }
 
 func TestGetBlockDetails_NotFound(t *testing.T) {
+	t.Parallel()
 	srv, client := testServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"code":1,"msg":"not found"}`))
 	})

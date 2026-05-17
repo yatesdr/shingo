@@ -8,7 +8,7 @@ BUILD_DIR=build
 # Build flags
 LDFLAGS=-ldflags "-s -w -X main.Version=$(VERSION)"
 
-.PHONY: all clean linux windows macos build run test
+.PHONY: all clean linux windows macos build run test test-explain
 
 # Default target
 all: clean linux windows macos
@@ -32,6 +32,14 @@ test:
 # locally before pushing, and in CI where Docker Desktop is available.
 test-all:
 	go test -v -tags=docker ./...
+
+# Run the bins-store EXPLAIN-plan regression harness. Tagged
+# //go:build explain so it stays out of the default and docker test
+# runs. Use locally before merging changes that touch the bins-store
+# query layer (FindSourceBinFIFO, ResolveRetrieve, FindEmptyCompatible)
+# to catch index-removal regressions at production scale.
+test-explain:
+	go test -tags=explain -count=1 ./store/bins/...
 
 # Generate a coverage profile and print a per-package summary table.
 # Requires Docker (for //go:build docker tests) and runs sequentially
@@ -107,3 +115,4 @@ help:
 	@echo "  make fmt       - Format code"
 	@echo "  make vet       - Vet code"
 	@echo "  make cover     - Generate coverage report by package"
+	@echo "  make test-explain - Run EXPLAIN-plan regression harness for bins store"

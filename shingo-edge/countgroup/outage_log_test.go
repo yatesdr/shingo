@@ -94,6 +94,7 @@ func TestOutageLogger_RepeatFailuresSuppressedUntilSummary(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected 1 line after 10 rapid failures (open only), got %d: %v", len(got), got)
 	}
+	// KEEP: timing test — verifying summary-interval expiry.
 	time.Sleep(60 * time.Millisecond)
 	l.Failure("plc1", cap.logFn, "test write", errors.New("boom"))
 	got = cap.snapshot()

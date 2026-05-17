@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/dispatch"
 	"shingocore/fleet/simulator"
 	"shingocore/store/orders"
@@ -23,6 +24,7 @@ import (
 // ── CreateDirectOrder happy path ────────────────────────────────────
 
 func TestCreateDirectOrder_Success_PersistsAndDispatches(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-DIRECT-OK")
@@ -86,6 +88,7 @@ func TestCreateDirectOrder_Success_PersistsAndDispatches(t *testing.T) {
 // ── CreateDirectOrder error paths ───────────────────────────────────
 
 func TestCreateDirectOrder_SameSourceAndDest(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, _ := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -107,6 +110,7 @@ func TestCreateDirectOrder_SameSourceAndDest(t *testing.T) {
 }
 
 func TestCreateDirectOrder_MissingSourceNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, _ := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -125,6 +129,7 @@ func TestCreateDirectOrder_MissingSourceNode(t *testing.T) {
 }
 
 func TestCreateDirectOrder_MissingDestNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, _ := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -147,6 +152,7 @@ func TestCreateDirectOrder_MissingDestNode(t *testing.T) {
 // WithCreateFailure makes DispatchDirect call FailOrderAtomic and emit
 // EventOrderFailed before returning the wrapped error.
 func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-DIRECT-FAIL")
@@ -192,6 +198,7 @@ func TestCreateDirectOrder_FleetDispatchFails(t *testing.T) {
 // cancels it — verifies status flip to cancelled, audit, and emitted
 // EventOrderCancelled.
 func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-TERMINATE")
@@ -213,9 +220,7 @@ func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 		cancelled <- evt.Payload.(OrderCancelledEvent)
 	}, EventOrderCancelled)
 
-	if err := eng.TerminateOrder(res.OrderID, "operator-x"); err != nil {
-		t.Fatalf("TerminateOrder: %v", err)
-	}
+	testutil.MustNoErr(t, eng.TerminateOrder(res.OrderID, "operator-x"), "TerminateOrder")
 
 	got, err := db.GetOrder(res.OrderID)
 	if err != nil {
@@ -242,6 +247,7 @@ func TestTerminateOrder_CancelsActiveOrder(t *testing.T) {
 }
 
 func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -252,9 +258,7 @@ func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
 		OrderType: "retrieve",
 		Status:    dispatch.StatusConfirmed,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	err := eng.TerminateOrder(order.ID, "op")
 	if err == nil {
@@ -266,6 +270,7 @@ func TestTerminateOrder_RejectsTerminalStatus(t *testing.T) {
 }
 
 func TestTerminateOrder_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -285,6 +290,7 @@ func TestTerminateOrder_MissingOrder(t *testing.T) {
 // (fail + emit) plus the GetOrder lookup that populates the event
 // envelope so Edge knows which station to notify.
 func TestFailOrderAndEmit_PopulatesEventFromDB(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -295,9 +301,7 @@ func TestFailOrderAndEmit_PopulatesEventFromDB(t *testing.T) {
 		OrderType: "retrieve",
 		Status:    "in_transit",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	failed := make(chan OrderFailedEvent, 2)
 	eng.Events.SubscribeTypes(func(evt Event) {

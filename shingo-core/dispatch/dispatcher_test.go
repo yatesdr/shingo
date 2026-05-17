@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/fleet"
 	"shingocore/internal/testdb"
 	"shingocore/store"
@@ -118,12 +119,8 @@ func TestHandleOrderReceipt_DuplicateCompletedOrderIgnored(t *testing.T) {
 		Quantity:     1,
 		DeliveryNode: lineNode.Name,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.CompleteOrder(order.ID); err != nil {
-		t.Fatalf("complete order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.CompleteOrder(order.ID), "complete order")
 
 	emitter := &mockEmitter{}
 	d := NewDispatcher(db, testdb.NewFailingBackend(), emitter, "core", "dispatch", nil)
@@ -315,9 +312,7 @@ func TestHandleOrderRequest_UsesRegisteredPlanner(t *testing.T) {
 
 	d, emitter := newTestDispatcher(t, db, testdb.NewFailingBackend())
 	d.RegisterPlanner("custom_transfer", func(order *orders.Order, env *protocol.Envelope, payloadCode string) (*PlanningResult, *planningError) {
-		if err := db.UpdateOrderSourceNode(order.ID, storageNode.Name); err != nil {
-			t.Fatalf("update source node: %v", err)
-		}
+		testutil.MustNoErr(t, db.UpdateOrderSourceNode(order.ID, storageNode.Name), "update source node")
 		order.SourceNode = storageNode.Name
 		return &PlanningResult{
 			SourceNode: storageNode,
@@ -670,9 +665,7 @@ func TestRegression_HandleOrderReceipt_ReturnsOnError(t *testing.T) {
 		Quantity:     1,
 		DeliveryNode: lineNode.Name,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	env := testEnvelope()
 	d.HandleOrderReceipt(env, &protocol.OrderReceipt{
@@ -713,12 +706,8 @@ func TestDispatchDirect_Retrieve(t *testing.T) {
 		Quantity:     1,
 		DeliveryNode: lineNode.Name,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"); err != nil {
-		t.Fatalf("set pending: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"), "set pending")
 	order.Status = StatusPending
 
 	vendorID, err := d.DispatchDirect(order, storageNode, lineNode)
@@ -773,12 +762,8 @@ func TestDispatchDirect_FleetFailure(t *testing.T) {
 		Quantity:     1,
 		DeliveryNode: lineNode.Name,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"); err != nil {
-		t.Fatalf("set pending: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusPending), "test fixture"), "set pending")
 	order.Status = StatusPending
 
 	vendorID, err := d.DispatchDirect(order, storageNode, lineNode)
@@ -817,12 +802,8 @@ func TestHandleOrderRedirect_NonexistentDestNode(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		VendorOrderID: "sg-123-test",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"); err != nil {
-		t.Fatalf("set dispatched: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"), "set dispatched")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewFailingBackend())
 
@@ -862,12 +843,8 @@ func TestHandleOrderRedirect_NoSourceNode(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		VendorOrderID: "sg-456-test",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"); err != nil {
-		t.Fatalf("set dispatched: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusDispatched), "test fixture"), "set dispatched")
 
 	backend := testdb.NewTrackingBackend()
 	d, _ := newTestDispatcher(t, db, backend)

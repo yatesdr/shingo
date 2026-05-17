@@ -6,6 +6,7 @@ import (
 )
 
 func TestNew(t *testing.T) {
+	t.Parallel()
 	b := New(100*time.Millisecond, 5*time.Second)
 	if b.Base() != 100*time.Millisecond {
 		t.Errorf("Base() = %v, want 100ms", b.Base())
@@ -16,6 +17,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNext_Doubles(t *testing.T) {
+	t.Parallel()
 	b := New(100*time.Millisecond, 10*time.Second)
 
 	d1 := b.Next()
@@ -35,6 +37,7 @@ func TestNext_Doubles(t *testing.T) {
 }
 
 func TestNext_CapsAtMax(t *testing.T) {
+	t.Parallel()
 	b := New(3*time.Second, 5*time.Second)
 
 	_ = b.Next() // ~3s, internal becomes 6s -> capped to 5s
@@ -52,6 +55,7 @@ func TestNext_CapsAtMax(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
+	t.Parallel()
 	b := New(100*time.Millisecond, 5*time.Second)
 
 	_ = b.Next() // ~100ms
@@ -67,6 +71,7 @@ func TestReset(t *testing.T) {
 }
 
 func TestNext_JitterRange(t *testing.T) {
+	t.Parallel()
 	b := New(1*time.Second, 10*time.Second)
 
 	var minVal, maxVal time.Duration

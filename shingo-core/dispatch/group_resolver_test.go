@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -33,15 +34,11 @@ func setupNodeGroup(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*nodes
 
 	// Create payload template
 	bp = &payloads.Payload{Code: "WGA"}
-	if err := db.CreatePayload(bp); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
 
 	// Create NGRP node
 	grp = &nodes.Node{Name: "GRP-1", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
-	if err := db.CreateNode(grp); err != nil {
-		t.Fatalf("create NGRP node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP node")
 	grp, _ = db.GetNode(grp.ID)
 
 	// Create 2 lanes
@@ -85,7 +82,7 @@ func TestGroupResolveRetrieve_AccessibleFIFO(t *testing.T) {
 	// Place bin at lane 0, slot depth 1 (front/accessible) — older
 	older := createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "BIN-FIFO-OLD")
 
-	// Small delay to ensure different timestamps
+	// KEEP: timestamp separation — distinct created_at for FIFO ordering.
 	time.Sleep(10 * time.Millisecond)
 
 	// Place bin at lane 1, slot depth 1 (front/accessible) — newer
@@ -112,9 +109,7 @@ func TestGroupResolveRetrieve_BuriedFails(t *testing.T) {
 
 	// Create a different payload template for the blocker
 	blockerBP := &payloads.Payload{Code: "BLK"}
-	if err := db.CreatePayload(blockerBP); err != nil {
-		t.Fatalf("create blocker payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(blockerBP), "create blocker payload")
 
 	// Place blocker at lane 0, slot depth 1 (front — blocks access)
 	createTestBinAtNode(t, db, blockerBP.Code, slots[0][0].ID, "BIN-BLK")
@@ -278,6 +273,7 @@ func TestNodeGroupResolveRetrieve_Mixed(t *testing.T) {
 	// Place older bin at direct child
 	older := createTestBinAtNode(t, db, bp.Code, directChild.ID, "BIN-MIX-OLD")
 
+	// KEEP: timestamp separation — distinct created_at for FIFO ordering.
 	time.Sleep(10 * time.Millisecond)
 
 	// Place newer bin at lane 0, slot 0
@@ -329,13 +325,9 @@ func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
 
 	// Create two bin types
 	btSmall := &bins.BinType{Code: "SMALL"}
-	if err := db.CreateBinType(btSmall); err != nil {
-		t.Fatalf("create bin type SMALL: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(btSmall), "create bin type SMALL")
 	btLarge := &bins.BinType{Code: "LARGE"}
-	if err := db.CreateBinType(btLarge); err != nil {
-		t.Fatalf("create bin type LARGE: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(btLarge), "create bin type LARGE")
 
 	// Restrict lane 0 to SMALL only
 	lanes, _ := db.ListChildNodes(grp.ID)
@@ -349,9 +341,7 @@ func TestGroupResolveStore_BinTypeRestriction(t *testing.T) {
 	if lane0 == nil {
 		t.Fatal("no lane found")
 	}
-	if err := db.SetNodeBinTypes(lane0.ID, []int64{btSmall.ID}); err != nil {
-		t.Fatalf("set node bin types: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetNodeBinTypes(lane0.ID, []int64{btSmall.ID}), "set node bin types")
 
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
@@ -399,14 +389,10 @@ func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*
 	}
 
 	bp = &payloads.Payload{Code: "WGA"}
-	if err := db.CreatePayload(bp); err != nil {
-		t.Fatalf("create payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(bp), "create payload")
 
 	grp = &nodes.Node{Name: "GRP-3L", IsSynthetic: true, NodeTypeID: &grpType.ID, Enabled: true}
-	if err := db.CreateNode(grp); err != nil {
-		t.Fatalf("create NGRP node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create NGRP node")
 	grp, _ = db.GetNode(grp.ID)
 
 	lanes = make([]*nodes.Node, 3)
@@ -438,8 +424,6 @@ func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*
 	return
 }
 
-// TC-40a: FIFO mode — buried bin older than accessible triggers reshuffle.
-//
 // Layout:
 //   Lane 1: depth 1 = BIN-NEW  (WGA, T+2s, accessible)
 //   Lane 2: depth 1 = BIN-MID  (WGA, T+1s, accessible)
@@ -448,7 +432,7 @@ func setupNodeGroup3Lane(t *testing.T, db *store.DB) (grp *nodes.Node, lanes []*
 //           depth 3 = BIN-OLD  (WGA, T,     buried ← oldest)
 //
 // Strict FIFO must return BuriedError for BIN-OLD, not the accessible BIN-MID.
-func TestTC40a_FIFOBuriedOlderThanAccessible(t *testing.T) {
+func TestFIFOSelection_BuriedOlderThanAccessible(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	grp, lanes, slots, bp := setupNodeGroup3Lane(t, db)
@@ -459,9 +443,7 @@ func TestTC40a_FIFOBuriedOlderThanAccessible(t *testing.T) {
 
 	// Create blocker payload
 	blkPayload := &payloads.Payload{Code: "BLK"}
-	if err := db.CreatePayload(blkPayload); err != nil {
-		t.Fatalf("create blocker payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(blkPayload), "create blocker payload")
 
 	baseTime := time.Now().Add(-1 * time.Hour)
 
@@ -497,8 +479,7 @@ func TestTC40a_FIFOBuriedOlderThanAccessible(t *testing.T) {
 	}
 }
 
-// TC-40a regression guard: when buried bin is newer than accessible, return accessible (no reshuffle).
-func TestTC40a_FIFOAccessibleOlderThanBuried(t *testing.T) {
+func TestFIFOSelection_AccessibleOlderThanBuried(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
@@ -506,9 +487,7 @@ func TestTC40a_FIFOAccessibleOlderThanBuried(t *testing.T) {
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
 	blkPayload := &payloads.Payload{Code: "BLK"}
-	if err := db.CreatePayload(blkPayload); err != nil {
-		t.Fatalf("create blocker payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(blkPayload), "create blocker payload")
 
 	baseTime := time.Now().Add(-1 * time.Hour)
 
@@ -532,26 +511,20 @@ func TestTC40a_FIFOAccessibleOlderThanBuried(t *testing.T) {
 	}
 }
 
-// TC-40b: COST mode — oldest accessible returned, older buried bin ignored.
-//
-// Same layout as TC-40a but with retrieve_algorithm=COST.
+// Same layout as the FIFO test, but with retrieve_algorithm=COST.
 // Should return BIN-MID (oldest accessible), NOT trigger BuriedError for BIN-OLD.
-func TestTC40b_COSTIgnoresBuriedWhenAccessible(t *testing.T) {
+func TestCOSTSelection_IgnoresBuriedWhenAccessible(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
 
 	// Set group to COST mode
-	if err := db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"); err != nil {
-		t.Fatalf("set retrieve_algorithm: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"), "set retrieve_algorithm")
 
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
 	blkPayload := &payloads.Payload{Code: "BLK"}
-	if err := db.CreatePayload(blkPayload); err != nil {
-		t.Fatalf("create blocker payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(blkPayload), "create blocker payload")
 
 	baseTime := time.Now().Add(-1 * time.Hour)
 
@@ -582,22 +555,17 @@ func TestTC40b_COSTIgnoresBuriedWhenAccessible(t *testing.T) {
 	_ = binNew
 }
 
-// TC-40b edge: COST mode falls back to buried when no accessible bins exist.
-func TestTC40b_COSTFallsToBuriedWhenNoAccessible(t *testing.T) {
+func TestCOSTSelection_FallsToBuriedWhenNoneAccessible(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	grp, _, slots, bp := setupNodeGroup3Lane(t, db)
 
-	if err := db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"); err != nil {
-		t.Fatalf("set retrieve_algorithm: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetNodeProperty(grp.ID, "retrieve_algorithm", "COST"), "set retrieve_algorithm")
 
 	gr := &GroupResolver{DB: db, LaneLock: NewLaneLock()}
 
 	blkPayload := &payloads.Payload{Code: "BLK"}
-	if err := db.CreatePayload(blkPayload); err != nil {
-		t.Fatalf("create blocker payload: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayload(blkPayload), "create blocker payload")
 
 	// Only buried bins, no accessible
 	buried := createTestBinAtNode(t, db, bp.Code, slots[0][2].ID, "BIN-BURIED")
@@ -617,8 +585,6 @@ func TestTC40b_COSTFallsToBuriedWhenNoAccessible(t *testing.T) {
 	}
 }
 
-// TC-41: Empty cart starvation — FindEmptyCompatibleBin is lane-unaware.
-//
 // Proves the gap: all accessible empties are consumed, only buried empties remain.
 // FindEmptyCompatibleBin still returns a buried empty (it doesn't check lane depth),
 // but IsSlotAccessible shows the bin is unreachable. The retrieve_empty path has no
@@ -633,7 +599,7 @@ func TestTC40b_COSTFallsToBuriedWhenNoAccessible(t *testing.T) {
 //           depth 3 = EMPTY-BIN (no manifest, buried)
 //
 // No accessible empties exist anywhere in the NGRP.
-func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
+func TestFindEmptyCompatible_LaneUnawareStarvation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
 	_, lanes, slots, bp := setupNodeGroup3Lane(t, db)
@@ -644,13 +610,9 @@ func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
 		bt = &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-		if err := db.CreateBinType(bt); err != nil {
-			t.Fatalf("create default bin type: %v", err)
-		}
+		testutil.MustNoErr(t, db.CreateBinType(bt), "create default bin type")
 	}
-	if err := db.SetPayloadBinTypes(bp.ID, []int64{bt.ID}); err != nil {
-		t.Fatalf("set payload bin types: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(bp.ID, []int64{bt.ID}), "set payload bin types")
 
 	// Fill lane 1 (index 0): full bins at depth 1 and 2, empty bin buried at depth 3
 	createTestBinAtNode(t, db, bp.Code, slots[0][0].ID, "FULL-L1-S1")
@@ -658,17 +620,13 @@ func TestTC41_EmptyStarvation_BuriedEmptiesUnreachable(t *testing.T) {
 
 	// Empty bin at depth 3 — no manifest, just a bare bin
 	emptyL1 := &bins.Bin{BinTypeID: bt.ID, Label: "EMPTY-L1-S3", NodeID: &slots[0][2].ID, Status: "available"}
-	if err := db.CreateBin(emptyL1); err != nil {
-		t.Fatalf("create empty bin L1: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(emptyL1), "create empty bin L1")
 
 	// Fill lane 2 (index 1): full bin at depth 1, empty bin buried at depth 3
 	createTestBinAtNode(t, db, bp.Code, slots[1][0].ID, "FULL-L2-S1")
 
 	emptyL2 := &bins.Bin{BinTypeID: bt.ID, Label: "EMPTY-L2-S3", NodeID: &slots[1][2].ID, Status: "available"}
-	if err := db.CreateBin(emptyL2); err != nil {
-		t.Fatalf("create empty bin L2: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(emptyL2), "create empty bin L2")
 
 	// GAP PROOF 1: FindEmptyCompatibleBin returns a buried empty (lane-unaware)
 	found, err := db.FindEmptyCompatibleBin(bp.Code, "", 0)

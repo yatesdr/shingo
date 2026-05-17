@@ -10,6 +10,7 @@ import (
 )
 
 func TestCoverage_TestCommandCRUD(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	tc := &diagnostics.TestCommand{CommandType: "move", RobotID: "AMB-1", VendorOrderID: "rds-1", VendorState: "CREATED", Location: "LINE-1", ConfigID: "cfg-a", Detail: "initial"}
 	if err := diagnostics.Create(db.DB, tc); err != nil { t.Fatalf("Create: %v", err) }
@@ -34,6 +35,7 @@ func TestCoverage_TestCommandCRUD(t *testing.T) {
 }
 
 func TestCoverage_ListTestCommands(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	cmds := []*diagnostics.TestCommand{
 		{CommandType: "move", RobotID: "AMB-1"},

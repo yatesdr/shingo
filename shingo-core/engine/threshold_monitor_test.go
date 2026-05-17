@@ -12,6 +12,7 @@ import (
 // First call passes, second within window blocks, then after the
 // window the gate reopens.
 func TestThresholdMonitor_DebounceWindow(t *testing.T) {
+	t.Parallel()
 	tm := &ThresholdMonitor{
 		eng:       nil, // not used in allow()
 		debounce:  make(map[string]time.Time),
@@ -41,6 +42,7 @@ func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 // state for changed bindings so a freshly-applied threshold engages
 // without waiting out the prior window.
 func TestThresholdMonitor_OnRegistryChanges(t *testing.T) {
+	t.Parallel()
 	tm := &ThresholdMonitor{
 		eng:       nil,
 		debounce:  make(map[string]time.Time),
@@ -72,6 +74,7 @@ func TestThresholdMonitor_OnRegistryChanges(t *testing.T) {
 // bypasses the debounce window so the startup-sweep cap can fire
 // multiple back-to-back signals on a cold-start binding.
 func TestThresholdMonitor_WarmUpOverridesDebounce(t *testing.T) {
+	t.Parallel()
 	tm := &ThresholdMonitor{
 		eng:       nil,
 		debounce:  make(map[string]time.Time),

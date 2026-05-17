@@ -46,7 +46,7 @@ func dispatchRetrieveOrder(t *testing.T) (db *store.DB, eng *Engine, sim *simula
 	return db, eng, sim, order, sd.StorageNode, sd.LineNode
 }
 
-// TC-VS-1: RUNNING state updates order to in_transit and assigns robot ID.
+// RUNNING state updates order to in_transit and assigns robot ID.
 // Updated to use DriveStateWithRobot for full robot ID coverage.
 func TestVendorStatus_RunningUpdatesStatus(t *testing.T) {
 	t.Parallel()
@@ -60,7 +60,7 @@ func TestVendorStatus_RunningUpdatesStatus(t *testing.T) {
 	}
 }
 
-// TC-VS-2: Idempotent status — driving same state twice doesn't error.
+// Idempotent status — driving same state twice doesn't error.
 func TestVendorStatus_IdempotentStatus(t *testing.T) {
 	t.Parallel()
 	db, _, sim, order, _, _ := dispatchRetrieveOrder(t)
@@ -71,7 +71,7 @@ func TestVendorStatus_IdempotentStatus(t *testing.T) {
 	testdb.AssertOrderStatus(t, db, "vs-order-1", "in_transit")
 }
 
-// TC-VS-3: FINISHED terminal state → order delivered, bin moved to dest.
+// FINISHED terminal state → order delivered, bin moved to dest.
 func TestVendorStatus_FinishedDelivers(t *testing.T) {
 	t.Parallel()
 	db, _, sim, order, _, lineNode := dispatchRetrieveOrder(t)
@@ -87,7 +87,7 @@ func TestVendorStatus_FinishedDelivers(t *testing.T) {
 	}
 }
 
-// TC-VS-4: FAILED terminal state → order failed, EventOrderFailed emitted.
+// FAILED terminal state → order failed, EventOrderFailed emitted.
 func TestVendorStatus_FailedTerminal(t *testing.T) {
 	t.Parallel()
 	db, eng, sim, order, _, _ := dispatchRetrieveOrder(t)
@@ -118,7 +118,7 @@ func TestVendorStatus_FailedTerminal(t *testing.T) {
 	}
 }
 
-// TC-VS-5: STOPPED terminal state → order cancelled, EventOrderCancelled emitted
+// STOPPED terminal state → order cancelled, EventOrderCancelled emitted
 // with PreviousStatus captured before the status update.
 func TestVendorStatus_StoppedCancels(t *testing.T) {
 	t.Parallel()
@@ -157,7 +157,7 @@ func TestVendorStatus_StoppedCancels(t *testing.T) {
 	t.Logf("PreviousStatus captured: %q (characterization)", cancelledEvt.PreviousStatus)
 }
 
-// TC-VS-6: Non-existent order — handleVendorStatusChange logs and returns gracefully.
+// Non-existent order — handleVendorStatusChange logs and returns gracefully.
 func TestVendorStatus_NonExistentOrder(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)

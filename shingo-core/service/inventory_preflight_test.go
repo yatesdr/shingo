@@ -13,6 +13,7 @@ import (
 // queries for two payloads, and asserts that the unseeded payload appears
 // in Missing while the seeded one shows BinCount > 0 in Available.
 func TestInventoryPreflight_ReturnsMissingPayloads(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -51,6 +52,7 @@ func TestInventoryPreflight_ReturnsMissingPayloads(t *testing.T) {
 // TestInventoryPreflight_AllAvailable: every requested payload has bins;
 // Missing is empty.
 func TestInventoryPreflight_AllAvailable(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	std := testdb.SetupStandardData(t, db)
 
@@ -73,6 +75,7 @@ func TestInventoryPreflight_AllAvailable(t *testing.T) {
 // the request is a construction bug — return an error rather than silently
 // counting unattached bins.
 func TestInventoryPreflight_EmptyPayloadCodeRejected(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	testdb.SetupStandardData(t, db)
 

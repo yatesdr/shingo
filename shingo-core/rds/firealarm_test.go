@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"shingo/protocol/testutil"
 	"testing"
 	"time"
 )
@@ -38,6 +39,7 @@ func fireAlarmServer(t *testing.T, isFire bool, createOn string) *httptest.Serve
 }
 
 func TestGetFireAlarmStatus_Clear(t *testing.T) {
+	t.Parallel()
 	srv := fireAlarmServer(t, false, "2024-01-15T08:00:00Z")
 	defer srv.Close()
 
@@ -55,6 +57,7 @@ func TestGetFireAlarmStatus_Clear(t *testing.T) {
 }
 
 func TestGetFireAlarmStatus_Active(t *testing.T) {
+	t.Parallel()
 	srv := fireAlarmServer(t, true, "2024-01-15T10:30:00Z")
 	defer srv.Close()
 
@@ -72,6 +75,7 @@ func TestGetFireAlarmStatus_Active(t *testing.T) {
 }
 
 func TestGetFireAlarmStatus_EpochZeroSuppressed(t *testing.T) {
+	t.Parallel()
 	srv := fireAlarmServer(t, false, "1970-01-01T00:00:00Z")
 	defer srv.Close()
 
@@ -86,11 +90,10 @@ func TestGetFireAlarmStatus_EpochZeroSuppressed(t *testing.T) {
 }
 
 func TestSetFireAlarm(t *testing.T) {
+	t.Parallel()
 	srv := fireAlarmServer(t, false, "")
 	defer srv.Close()
 
 	c := NewClient(srv.URL, 5*time.Second)
-	if err := c.SetFireAlarm(true, false); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	testutil.MustNoErr(t, c.SetFireAlarm(true, false), "unexpected error")
 }

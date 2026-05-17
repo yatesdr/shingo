@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -50,9 +51,7 @@ func putManifest(t *testing.T, db *store.DB, binID int64, payloadCode, catID str
 	t.Helper()
 	m := bins.Manifest{Items: []bins.ManifestEntry{{CatID: catID, Quantity: qty}}}
 	data, _ := json.Marshal(m)
-	if err := db.SetBinManifest(binID, string(data), payloadCode, 100); err != nil {
-		t.Fatalf("set bin manifest: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetBinManifest(binID, string(data), payloadCode, 100), "set bin manifest")
 }
 
 // ── FindCMSBoundary ─────────────────────────────────────────────────
@@ -60,6 +59,7 @@ func putManifest(t *testing.T, db *store.DB, binID int64, payloadCode, catID str
 // TestFindCMSBoundary_LogsAtSyntheticRoot covers the happy path: the
 // wrapper returns the synthetic ancestor that has the boundary property.
 func TestFindCMSBoundary_LogsAtSyntheticRoot(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -78,14 +78,13 @@ func TestFindCMSBoundary_LogsAtSyntheticRoot(t *testing.T) {
 // synthetic ancestor exists — matches the wrapper's collapse-to-nil
 // contract for "no logging here".
 func TestFindCMSBoundary_NoBoundary_NonSyntheticChain(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
 	// Plain non-synthetic node with no synthetic parent.
 	n := &nodes.Node{Name: "PLAIN-1", Enabled: true}
-	if err := db.CreateNode(n); err != nil {
-		t.Fatalf("create node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(n), "create node")
 
 	if got := eng.FindCMSBoundary(n.ID); got != nil {
 		t.Errorf("expected nil boundary for plain node, got %+v", got)
@@ -96,6 +95,7 @@ func TestFindCMSBoundary_NoBoundary_NonSyntheticChain(t *testing.T) {
 // swallows the underlying material error (cycle or store miss) so the
 // rest of the engine sees a single nil-return contract.
 func TestFindCMSBoundary_StoreError_CollapsedToNil(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -111,6 +111,7 @@ func TestFindCMSBoundary_StoreError_CollapsedToNil(t *testing.T) {
 // across two CMS boundaries and asserts (a) cms_transactions rows are
 // inserted by the wrapper and (b) EventCMSTransaction is published.
 func TestRecordMovementTransactions_PersistsAndEmits(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -172,6 +173,7 @@ func TestRecordMovementTransactions_PersistsAndEmits(t *testing.T) {
 // TestRecordMovementTransactions_NoOpWhenSameBoundary confirms the
 // wrapper short-circuits cleanly: no rows persisted, no event emitted.
 func TestRecordMovementTransactions_NoOpWhenSameBoundary(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -179,9 +181,7 @@ func TestRecordMovementTransactions_NoOpWhenSameBoundary(t *testing.T) {
 	root, slotA := makeCMSBoundary(t, db, "ONE")
 	// A second slot under the SAME boundary root.
 	slotB := &nodes.Node{Name: "ONE-SLOT2", Enabled: true, ParentID: &root.ID}
-	if err := db.CreateNode(slotB); err != nil {
-		t.Fatalf("create slotB: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(slotB), "create slotB")
 
 	bin := createTestBinAtNode(t, db, bp.Code, slotA.ID, "BIN-MV-2")
 	putManifest(t, db, bin.ID, bp.Code, "PART-A", 3)
@@ -211,6 +211,7 @@ func TestRecordMovementTransactions_NoOpWhenSameBoundary(t *testing.T) {
 // a different quantity → exactly one adjust row is logged at the
 // boundary, and the bus event fires.
 func TestRecordCorrectionTransactions_PersistsAndEmits(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -254,6 +255,7 @@ func TestRecordCorrectionTransactions_PersistsAndEmits(t *testing.T) {
 // TestRecordCorrectionTransactions_NoOpWhenManifestUnchanged confirms
 // the wrapper short-circuits: same in == same out → zero rows, no event.
 func TestRecordCorrectionTransactions_NoOpWhenManifestUnchanged(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())

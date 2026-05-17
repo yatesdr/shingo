@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -25,14 +26,13 @@ func ensureDefaultBinType(t *testing.T, db *store.DB) *bins.BinType {
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
 		bt = &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-		if err := db.CreateBinType(bt); err != nil {
-			t.Fatalf("create default bin type: %v", err)
-		}
+		testutil.MustNoErr(t, db.CreateBinType(bt), "create default bin type")
 	}
 	return bt
 }
 
 func TestBinService_Manifest_ReturnsComposedService(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	manifest := NewBinManifestService(db)
 	svc := NewBinService(db, manifest)
@@ -43,6 +43,7 @@ func TestBinService_Manifest_ReturnsComposedService(t *testing.T) {
 }
 
 func TestBinService_Create_AtPhysicalNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -53,9 +54,7 @@ func TestBinService_Create_AtPhysicalNode(t *testing.T) {
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
 	}
-	if err := svc.Create(bin); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Create(bin), "Create")
 	if bin.ID == 0 {
 		t.Fatal("expected bin ID to be assigned after Create")
 	}
@@ -73,6 +72,7 @@ func TestBinService_Create_AtPhysicalNode(t *testing.T) {
 }
 
 func TestBinService_Create_NoNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -82,9 +82,7 @@ func TestBinService_Create_NoNode(t *testing.T) {
 		Label:     "BS-CREATE-NIL",
 		Status:    "available",
 	}
-	if err := svc.Create(bin); err != nil {
-		t.Fatalf("Create with nil NodeID: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Create(bin), "Create with nil NodeID")
 	got, err := db.GetBin(bin.ID)
 	if err != nil {
 		t.Fatalf("get bin: %v", err)
@@ -95,6 +93,7 @@ func TestBinService_Create_NoNode(t *testing.T) {
 }
 
 func TestBinService_Create_FailsWhenPhysicalNodeOccupied(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -118,6 +117,7 @@ func TestBinService_Create_FailsWhenPhysicalNodeOccupied(t *testing.T) {
 }
 
 func TestBinService_Create_FailsWhenNodeMissing(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -135,13 +135,12 @@ func TestBinService_Create_FailsWhenNodeMissing(t *testing.T) {
 }
 
 func TestBinService_CreateBatch_AtSyntheticNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)
 
 	syn := &nodes.Node{Name: "GRP-BATCH", Enabled: true, IsSynthetic: true}
-	if err := db.CreateNode(syn); err != nil {
-		t.Fatalf("create synthetic node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(syn), "create synthetic node")
 
 	svc := newBinSvc(db)
 	template := bins.Bin{
@@ -149,9 +148,7 @@ func TestBinService_CreateBatch_AtSyntheticNode(t *testing.T) {
 		NodeID:    &syn.ID,
 		Status:    "available",
 	}
-	if err := svc.CreateBatch(template, "BATCH-", 3); err != nil {
-		t.Fatalf("CreateBatch: %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateBatch(template, "BATCH-", 3), "CreateBatch")
 
 	bins, err := db.ListBinsByNode(syn.ID)
 	if err != nil {
@@ -177,6 +174,7 @@ func TestBinService_CreateBatch_AtSyntheticNode(t *testing.T) {
 }
 
 func TestBinService_CreateBatch_RejectsMultipleAtPhysicalNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -199,6 +197,7 @@ func TestBinService_CreateBatch_RejectsMultipleAtPhysicalNode(t *testing.T) {
 }
 
 func TestBinService_CreateBatch_SingleAtPhysicalNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -208,9 +207,7 @@ func TestBinService_CreateBatch_SingleAtPhysicalNode(t *testing.T) {
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
 	}
-	if err := svc.CreateBatch(template, "OK-", 1); err != nil {
-		t.Fatalf("CreateBatch(1): %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateBatch(template, "OK-", 1), "CreateBatch(1)")
 
 	bins, err := db.ListBinsByNode(sd.StorageNode.ID)
 	if err != nil {
@@ -222,6 +219,7 @@ func TestBinService_CreateBatch_SingleAtPhysicalNode(t *testing.T) {
 }
 
 func TestBinService_CreateBatch_DefaultsCountToOne(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -232,9 +230,7 @@ func TestBinService_CreateBatch_DefaultsCountToOne(t *testing.T) {
 		NodeID:    &sd.StorageNode.ID,
 		Status:    "available",
 	}
-	if err := svc.CreateBatch(template, "DC-", 0); err != nil {
-		t.Fatalf("CreateBatch(0): %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateBatch(template, "DC-", 0), "CreateBatch(0)")
 	bins, _ := db.ListBinsByNode(sd.StorageNode.ID)
 	if len(bins) != 1 {
 		t.Errorf("len(bins) = %d, want 1 (count=0 should default to 1)", len(bins))
@@ -242,14 +238,13 @@ func TestBinService_CreateBatch_DefaultsCountToOne(t *testing.T) {
 }
 
 func TestBinService_ChangeStatus(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-STAT-1", "", 0)
-	if err := svc.ChangeStatus(bin.ID, "reserved"); err != nil {
-		t.Fatalf("ChangeStatus: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ChangeStatus(bin.ID, "reserved"), "ChangeStatus")
 	got, _ := db.GetBin(bin.ID)
 	if got.Status != "reserved" {
 		t.Errorf("Status = %q, want %q", got.Status, "reserved")
@@ -257,23 +252,20 @@ func TestBinService_ChangeStatus(t *testing.T) {
 }
 
 func TestBinService_Release_ClearsStaging(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-REL-1", "", 0)
 
-	if err := db.StageBin(bin.ID, nil); err != nil {
-		t.Fatalf("StageBin: %v", err)
-	}
+	testutil.MustNoErr(t, db.StageBin(bin.ID, nil), "StageBin")
 	staged, _ := db.GetBin(bin.ID)
 	if staged.StagedAt == nil {
 		t.Fatal("expected staged_at to be set after StageBin")
 	}
 
-	if err := svc.Release(bin.ID); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Release(bin.ID), "Release")
 	got, _ := db.GetBin(bin.ID)
 	if got.StagedAt != nil {
 		t.Errorf("StagedAt = %v, want nil after Release", got.StagedAt)
@@ -284,6 +276,7 @@ func TestBinService_Release_ClearsStaging(t *testing.T) {
 }
 
 func TestBinService_Lock_RequiresActor(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -300,15 +293,14 @@ func TestBinService_Lock_RequiresActor(t *testing.T) {
 }
 
 func TestBinService_Lock_Unlock_RoundTrip(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LOCK-1", "", 0)
 
-	if err := svc.Lock(bin.ID, "tester"); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Lock(bin.ID, "tester"), "Lock")
 	got, _ := db.GetBin(bin.ID)
 	if !got.Locked {
 		t.Error("Locked = false, want true after Lock")
@@ -322,9 +314,7 @@ func TestBinService_Lock_Unlock_RoundTrip(t *testing.T) {
 		t.Error("expected second Lock to fail (already locked)")
 	}
 
-	if err := svc.Unlock(bin.ID); err != nil {
-		t.Fatalf("Unlock: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Unlock(bin.ID), "Unlock")
 	got, _ = db.GetBin(bin.ID)
 	if got.Locked {
 		t.Error("Locked = true, want false after Unlock")
@@ -335,6 +325,7 @@ func TestBinService_Lock_Unlock_RoundTrip(t *testing.T) {
 }
 
 func TestBinService_LoadPayload_RequiresPayloadCode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -346,6 +337,7 @@ func TestBinService_LoadPayload_RequiresPayloadCode(t *testing.T) {
 }
 
 func TestBinService_LoadPayload_RejectsUnknownPayload(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -361,6 +353,7 @@ func TestBinService_LoadPayload_RejectsUnknownPayload(t *testing.T) {
 }
 
 func TestBinService_LoadPayload_AppliesTemplate(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -372,14 +365,10 @@ func TestBinService_LoadPayload_AppliesTemplate(t *testing.T) {
 		PartNumber: "PART-X",
 		Quantity:   7,
 	}
-	if err := db.CreatePayloadManifestItem(item); err != nil {
-		t.Fatalf("create payload manifest item: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreatePayloadManifestItem(item), "create payload manifest item")
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-OK", "", 0)
-	if err := svc.LoadPayload(bin.ID, sd.Payload.Code, 25); err != nil {
-		t.Fatalf("LoadPayload: %v", err)
-	}
+	testutil.MustNoErr(t, svc.LoadPayload(bin.ID, sd.Payload.Code, 25), "LoadPayload")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.PayloadCode != sd.Payload.Code {
@@ -394,17 +383,14 @@ func TestBinService_LoadPayload_AppliesTemplate(t *testing.T) {
 }
 
 func TestBinService_LoadPayload_RejectsIncompatibleBinType(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	otherBT := &bins.BinType{Code: "OTHER-BT", Description: "non-default test bin type"}
-	if err := db.CreateBinType(otherBT); err != nil {
-		t.Fatalf("create other bin type: %v", err)
-	}
-	if err := db.SetPayloadBinTypes(sd.Payload.ID, []int64{otherBT.ID}); err != nil {
-		t.Fatalf("SetPayloadBinTypes: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(otherBT), "create other bin type")
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(sd.Payload.ID, []int64{otherBT.ID}), "SetPayloadBinTypes")
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-INCOMPAT", "", 0)
 	err := svc.LoadPayload(bin.ID, sd.Payload.Code, 0)
@@ -417,34 +403,28 @@ func TestBinService_LoadPayload_RejectsIncompatibleBinType(t *testing.T) {
 }
 
 func TestBinService_LoadPayload_AllowsWhenAllowlistEmpty(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	// No SetPayloadBinTypes → empty allow-list → unrestricted (advisory semantics).
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-LP-EMPTYCOMPAT", "", 0)
-	if err := svc.LoadPayload(bin.ID, sd.Payload.Code, 0); err != nil {
-		t.Fatalf("LoadPayload with empty compat list should succeed: %v", err)
-	}
+	testutil.MustNoErr(t, svc.LoadPayload(bin.ID, sd.Payload.Code, 0), "LoadPayload with empty compat list should succeed")
 }
 
 func TestBinService_Move_HappyPath(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)
 
 	from := &nodes.Node{Name: "MOVE-FROM", Enabled: true}
 	to := &nodes.Node{Name: "MOVE-TO", Enabled: true}
-	if err := db.CreateNode(from); err != nil {
-		t.Fatalf("create from: %v", err)
-	}
-	if err := db.CreateNode(to); err != nil {
-		t.Fatalf("create to: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(from), "create from")
+	testutil.MustNoErr(t, db.CreateNode(to), "create to")
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-1", NodeID: &from.ID, Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 
 	svc := newBinSvc(db)
 	res, err := svc.Move(bin, to.ID)
@@ -462,6 +442,7 @@ func TestBinService_Move_HappyPath(t *testing.T) {
 }
 
 func TestBinService_Move_RejectsZeroNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -473,6 +454,7 @@ func TestBinService_Move_RejectsZeroNode(t *testing.T) {
 }
 
 func TestBinService_Move_RejectsSameNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -485,6 +467,7 @@ func TestBinService_Move_RejectsSameNode(t *testing.T) {
 }
 
 func TestBinService_Move_RejectsOccupiedPhysicalDestination(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)
 
@@ -494,13 +477,9 @@ func TestBinService_Move_RejectsOccupiedPhysicalDestination(t *testing.T) {
 	db.CreateNode(to)
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-OCC-1", NodeID: &from.ID, Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create source bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create source bin")
 	occupant := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-OCC-OCC", NodeID: &to.ID, Status: "available"}
-	if err := db.CreateBin(occupant); err != nil {
-		t.Fatalf("create occupant bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(occupant), "create occupant bin")
 
 	svc := newBinSvc(db)
 	if _, err := svc.Move(bin, to.ID); err == nil {
@@ -513,6 +492,7 @@ func TestBinService_Move_RejectsOccupiedPhysicalDestination(t *testing.T) {
 }
 
 func TestBinService_Move_RejectsMissingDestination(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -524,6 +504,7 @@ func TestBinService_Move_RejectsMissingDestination(t *testing.T) {
 }
 
 func TestBinService_Move_AllowsSyntheticDestinationWithBins(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	bt := ensureDefaultBinType(t, db)
 
@@ -534,14 +515,10 @@ func TestBinService_Move_AllowsSyntheticDestinationWithBins(t *testing.T) {
 
 	// Pre-load the synthetic destination with a bin.
 	pre := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-SYN-PRE", NodeID: &syn.ID, Status: "available"}
-	if err := db.CreateBin(pre); err != nil {
-		t.Fatalf("pre-load bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(pre), "pre-load bin")
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BS-MV-SYN-1", NodeID: &from.ID, Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 
 	svc := newBinSvc(db)
 	if _, err := svc.Move(bin, syn.ID); err != nil {
@@ -554,6 +531,7 @@ func TestBinService_Move_AllowsSyntheticDestinationWithBins(t *testing.T) {
 }
 
 func TestBinService_RecordCount_NoDiscrepancy(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -586,6 +564,7 @@ func TestBinService_RecordCount_NoDiscrepancy(t *testing.T) {
 }
 
 func TestBinService_RecordCount_WithDiscrepancy(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -614,6 +593,7 @@ func TestBinService_RecordCount_WithDiscrepancy(t *testing.T) {
 // Pre-Item-19 cycle counts were silent in bin_uop_audit and therefore
 // invisible in Item 10's audit timeline UI.
 func TestBinService_RecordCount_WritesAuditRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -654,6 +634,7 @@ func TestBinService_RecordCount_WritesAuditRow(t *testing.T) {
 }
 
 func TestBinService_AddNote_RequiresMessage(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -665,14 +646,13 @@ func TestBinService_AddNote_RequiresMessage(t *testing.T) {
 }
 
 func TestBinService_AddNote_DefaultsType(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-NOTE-1", "", 0)
-	if err := svc.AddNote(bin.ID, "", "hello world", "actor"); err != nil {
-		t.Fatalf("AddNote: %v", err)
-	}
+	testutil.MustNoErr(t, svc.AddNote(bin.ID, "", "hello world", "actor"), "AddNote")
 
 	entries, err := db.ListEntityAudit("bin", bin.ID)
 	if err != nil {
@@ -695,14 +675,13 @@ func TestBinService_AddNote_DefaultsType(t *testing.T) {
 }
 
 func TestBinService_AddNote_PassesThroughExplicitType(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-NOTE-2", "", 0)
-	if err := svc.AddNote(bin.ID, "discrepancy", "off by one", "qa"); err != nil {
-		t.Fatalf("AddNote: %v", err)
-	}
+	testutil.MustNoErr(t, svc.AddNote(bin.ID, "discrepancy", "off by one", "qa"), "AddNote")
 
 	entries, _ := db.ListEntityAudit("bin", bin.ID)
 	found := false
@@ -717,6 +696,7 @@ func TestBinService_AddNote_PassesThroughExplicitType(t *testing.T) {
 }
 
 func TestBinService_Update_AppliesPartialChanges(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -725,15 +705,11 @@ func TestBinService_Update_AppliesPartialChanges(t *testing.T) {
 
 	// Create a second bin type so we can swap.
 	bt2 := &bins.BinType{Code: "DEFAULT2", Description: "Second type"}
-	if err := db.CreateBinType(bt2); err != nil {
-		t.Fatalf("create second bin type: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt2), "create second bin type")
 
 	newLabel := "BS-UPD-1-RENAMED"
 	newDesc := "renamed"
-	if err := svc.Update(bin, &newLabel, &newDesc, &bt2.ID); err != nil {
-		t.Fatalf("Update: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Update(bin, &newLabel, &newDesc, &bt2.ID), "Update")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Label != "BS-UPD-1-RENAMED" {
@@ -748,6 +724,7 @@ func TestBinService_Update_AppliesPartialChanges(t *testing.T) {
 }
 
 func TestBinService_Update_NilPointersLeaveFieldsAlone(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -756,9 +733,7 @@ func TestBinService_Update_NilPointersLeaveFieldsAlone(t *testing.T) {
 	originalLabel := bin.Label
 	originalBT := bin.BinTypeID
 
-	if err := svc.Update(bin, nil, nil, nil); err != nil {
-		t.Fatalf("Update with all nils: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Update(bin, nil, nil, nil), "Update with all nils")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.Label != originalLabel {
@@ -772,6 +747,7 @@ func TestBinService_Update_NilPointersLeaveFieldsAlone(t *testing.T) {
 // --- PR 3a.2 absorbed methods --------------------------------------------
 
 func TestBinService_GetBin_ReturnsCreated(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -790,6 +766,7 @@ func TestBinService_GetBin_ReturnsCreated(t *testing.T) {
 }
 
 func TestBinService_GetBin_MissingErrors(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newBinSvc(db)
 	if _, err := svc.GetBin(99999); err == nil {
@@ -798,6 +775,7 @@ func TestBinService_GetBin_MissingErrors(t *testing.T) {
 }
 
 func TestBinService_ListBins_IncludesCreated(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -820,29 +798,27 @@ func TestBinService_ListBins_IncludesCreated(t *testing.T) {
 }
 
 func TestBinService_Delete_RemovesBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-DEL-1", "", 0)
-	if err := svc.Delete(bin.ID); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Delete(bin.ID), "Delete")
 	if _, err := db.GetBin(bin.ID); err == nil {
 		t.Fatal("expected GetBin to error after Delete")
 	}
 }
 
 func TestBinService_HasNotes_ReportsBoth(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
 
 	withNote := createTestBin(t, db, sd.StorageNode.ID, "BS-HN-1", "", 0)
 	withoutNote := createTestBin(t, db, sd.StorageNode.ID, "BS-HN-2", "", 0)
-	if err := db.AddBinNote(withNote.ID, "general", "hello", "tester"); err != nil {
-		t.Fatalf("seed note: %v", err)
-	}
+	testutil.MustNoErr(t, db.AddBinNote(withNote.ID, "general", "hello", "tester"), "seed note")
 
 	got, err := svc.HasNotes([]int64{withNote.ID, withoutNote.ID})
 	if err != nil {
@@ -857,13 +833,12 @@ func TestBinService_HasNotes_ReportsBoth(t *testing.T) {
 }
 
 func TestBinService_CreateBinType_Persists(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newBinSvc(db)
 
 	bt := &bins.BinType{Code: "BS-BT-CR", Description: "create test"}
-	if err := svc.CreateBinType(bt); err != nil {
-		t.Fatalf("CreateBinType: %v", err)
-	}
+	testutil.MustNoErr(t, svc.CreateBinType(bt), "CreateBinType")
 	if bt.ID == 0 {
 		t.Fatal("expected bin type ID assignment")
 	}
@@ -877,13 +852,12 @@ func TestBinService_CreateBinType_Persists(t *testing.T) {
 }
 
 func TestBinService_GetBinType_RoundTrip(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newBinSvc(db)
 
 	bt := &bins.BinType{Code: "BS-BT-GET", Description: "get test"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("seed bin type: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "seed bin type")
 	got, err := svc.GetBinType(bt.ID)
 	if err != nil {
 		t.Fatalf("GetBinType: %v", err)
@@ -894,17 +868,14 @@ func TestBinService_GetBinType_RoundTrip(t *testing.T) {
 }
 
 func TestBinService_UpdateBinType_Persists(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newBinSvc(db)
 
 	bt := &bins.BinType{Code: "BS-BT-UP", Description: "before"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("seed bin type: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "seed bin type")
 	bt.Description = "after"
-	if err := svc.UpdateBinType(bt); err != nil {
-		t.Fatalf("UpdateBinType: %v", err)
-	}
+	testutil.MustNoErr(t, svc.UpdateBinType(bt), "UpdateBinType")
 	got, _ := db.GetBinType(bt.ID)
 	if got.Description != "after" {
 		t.Errorf("Description = %q, want %q", got.Description, "after")
@@ -912,29 +883,25 @@ func TestBinService_UpdateBinType_Persists(t *testing.T) {
 }
 
 func TestBinService_DeleteBinType_Removes(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newBinSvc(db)
 
 	bt := &bins.BinType{Code: "BS-BT-DEL", Description: "delete test"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("seed bin type: %v", err)
-	}
-	if err := svc.DeleteBinType(bt.ID); err != nil {
-		t.Fatalf("DeleteBinType: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "seed bin type")
+	testutil.MustNoErr(t, svc.DeleteBinType(bt.ID), "DeleteBinType")
 	if _, err := db.GetBinType(bt.ID); err == nil {
 		t.Fatal("expected GetBinType to error after DeleteBinType")
 	}
 }
 
 func TestBinService_ListBinTypes_IncludesCreated(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newBinSvc(db)
 
 	bt := &bins.BinType{Code: "BS-BT-LIST", Description: "list test"}
-	if err := db.CreateBinType(bt); err != nil {
-		t.Fatalf("seed bin type: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBinType(bt), "seed bin type")
 	types, err := svc.ListBinTypes()
 	if err != nil {
 		t.Fatalf("ListBinTypes: %v", err)
@@ -954,6 +921,7 @@ func TestBinService_ListBinTypes_IncludesCreated(t *testing.T) {
 // ── PR 3a.5.1 additions: tests for methods absorbed from engine_db_methods.go ──
 
 func TestBinService_CountBinsByAllNodes_GroupsByNode(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := newBinSvc(db)
@@ -975,9 +943,7 @@ func TestBinService_CountBinsByAllNodes_GroupsByNode(t *testing.T) {
 	// synthetic NGRP node and put two bins there, plus one at the line
 	// node.
 	grp := &nodes.Node{Name: "CBBAN-GRP", IsSynthetic: true, Enabled: true}
-	if err := db.CreateNode(grp); err != nil {
-		t.Fatalf("create synthetic grp: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(grp), "create synthetic grp")
 	mk("CBBAN-1", grp.ID)
 	mk("CBBAN-2", grp.ID)
 	mk("CBBAN-3", sd.LineNode.ID)

@@ -5,6 +5,7 @@ package service
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/store/diagnostics"
 )
 
@@ -15,9 +16,7 @@ func makeTestCommand(t *testing.T, svc *TestCommandService, cmdType, robotID str
 		RobotID:     robotID,
 		VendorState: "queued",
 	}
-	if err := svc.Create(tc); err != nil {
-		t.Fatalf("Create test command: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Create(tc), "Create test command")
 	if tc.ID == 0 {
 		t.Fatal("expected Create to populate ID")
 	}
@@ -25,6 +24,7 @@ func makeTestCommand(t *testing.T, svc *TestCommandService, cmdType, robotID str
 }
 
 func TestTestCommandService_Create_PersistsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewTestCommandService(db)
 
@@ -35,9 +35,7 @@ func TestTestCommandService_Create_PersistsRow(t *testing.T) {
 		VendorState:   "queued",
 		Location:      "STN-A",
 	}
-	if err := svc.Create(tc); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Create(tc), "Create")
 	if tc.ID == 0 {
 		t.Fatal("ID not populated")
 	}
@@ -52,6 +50,7 @@ func TestTestCommandService_Create_PersistsRow(t *testing.T) {
 }
 
 func TestTestCommandService_Get_ReturnsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewTestCommandService(db)
 	seed := makeTestCommand(t, svc, "pick", "R2")
@@ -66,13 +65,12 @@ func TestTestCommandService_Get_ReturnsRow(t *testing.T) {
 }
 
 func TestTestCommandService_UpdateStatus_PersistsChanges(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewTestCommandService(db)
 	seed := makeTestCommand(t, svc, "place", "R3")
 
-	if err := svc.UpdateStatus(seed.ID, "running", "started OK"); err != nil {
-		t.Fatalf("UpdateStatus: %v", err)
-	}
+	testutil.MustNoErr(t, svc.UpdateStatus(seed.ID, "running", "started OK"), "UpdateStatus")
 	got, _ := db.GetTestCommand(seed.ID)
 	if got.VendorState != "running" || got.Detail != "started OK" {
 		t.Errorf("row = %+v, want running/started OK", got)
@@ -83,13 +81,12 @@ func TestTestCommandService_UpdateStatus_PersistsChanges(t *testing.T) {
 }
 
 func TestTestCommandService_Complete_SetsCompletedAt(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewTestCommandService(db)
 	seed := makeTestCommand(t, svc, "charge", "R4")
 
-	if err := svc.Complete(seed.ID); err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Complete(seed.ID), "Complete")
 	got, _ := db.GetTestCommand(seed.ID)
 	if got.CompletedAt == nil {
 		t.Error("CompletedAt = nil, want non-nil after Complete")
@@ -97,6 +94,7 @@ func TestTestCommandService_Complete_SetsCompletedAt(t *testing.T) {
 }
 
 func TestTestCommandService_List_LimitsRows(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := NewTestCommandService(db)
 

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingoedge/store/processes"
 )
 
@@ -21,6 +22,7 @@ import (
 // nil — only during a changeover (target is non-nil), so existing-node
 // flows are unaffected.
 func TestFindActiveClaim_AddNodeChangeoverFallback(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, err := db.CreateProcess("ADD-PROC", "add-node test", "active_production", "", "", false, false)
 	if err != nil {
@@ -36,12 +38,8 @@ func TestFindActiveClaim_AddNodeChangeoverFallback(t *testing.T) {
 	}
 
 	// Mid-changeover: active=from, target=to.
-	if err := db.SetActiveStyle(processID, &fromStyleID); err != nil {
-		t.Fatalf("set active=from: %v", err)
-	}
-	if err := db.SetTargetStyle(processID, &toStyleID); err != nil {
-		t.Fatalf("set target=to: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetActiveStyle(processID, &fromStyleID), "set active=from")
+	testutil.MustNoErr(t, db.SetTargetStyle(processID, &toStyleID), "set target=to")
 
 	nodeID, err := db.CreateProcessNode(processes.NodeInput{
 		ProcessID:    processID,
@@ -89,6 +87,7 @@ func TestFindActiveClaim_AddNodeChangeoverFallback(t *testing.T) {
 // is the one that should govern until cutover) MUST keep returning
 // the from-style claim.
 func TestFindActiveClaim_PrefersActiveOverTarget(t *testing.T) {
+	t.Parallel()
 	db := testEngineDB(t)
 	processID, _ := db.CreateProcess("PREF-PROC", "prefer-active test", "active_production", "", "", false, false)
 	fromStyleID, _ := db.CreateStyle("PREF-FROM", "from", processID)

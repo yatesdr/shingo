@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/orders"
@@ -31,13 +32,12 @@ func makeOrder(t *testing.T, db *store.DB, nodeName string) *orders.Order {
 		Quantity:     1,
 		DeliveryNode: nodeName,
 	}
-	if err := db.CreateOrder(o); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o), "create order")
 	return o
 }
 
 func TestOrderService_Create_InsertsRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc, _ := newOrderSvc(db, false)
 
@@ -49,9 +49,7 @@ func TestOrderService_Create_InsertsRow(t *testing.T) {
 		Quantity:     2,
 		DeliveryNode: "dest",
 	}
-	if err := svc.Create(o); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Create(o), "Create")
 	if o.ID == 0 {
 		t.Fatal("expected ID to be populated after Create")
 	}
@@ -72,15 +70,14 @@ func TestOrderService_Create_InsertsRow(t *testing.T) {
 }
 
 func TestOrderService_UpdateStatus_TransitionAndHistory(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
 	o := makeOrder(t, db, sd.LineNode.Name)
 
-	if err := svc.UpdateStatus(o.ID, "queued", "ready"); err != nil {
-		t.Fatalf("UpdateStatus: %v", err)
-	}
+	testutil.MustNoErr(t, svc.UpdateStatus(o.ID, "queued", "ready"), "UpdateStatus")
 	got, _ := db.GetOrder(o.ID)
 	if got.Status != "queued" {
 		t.Errorf("Status = %q, want queued", got.Status)
@@ -106,14 +103,13 @@ func TestOrderService_UpdateStatus_TransitionAndHistory(t *testing.T) {
 }
 
 func TestOrderService_UpdateStatus_TerminalFailedPersistsDetail(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
 	o := makeOrder(t, db, sd.LineNode.Name)
-	if err := svc.UpdateStatus(o.ID, "failed", "resolver had no matching bin"); err != nil {
-		t.Fatalf("UpdateStatus(failed): %v", err)
-	}
+	testutil.MustNoErr(t, svc.UpdateStatus(o.ID, "failed", "resolver had no matching bin"), "UpdateStatus(failed)")
 	got, _ := db.GetOrder(o.ID)
 	if got.Status != "failed" {
 		t.Errorf("Status = %q, want failed", got.Status)
@@ -124,14 +120,13 @@ func TestOrderService_UpdateStatus_TerminalFailedPersistsDetail(t *testing.T) {
 }
 
 func TestOrderService_UpdateVendor(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
 	o := makeOrder(t, db, sd.LineNode.Name)
-	if err := svc.UpdateVendor(o.ID, "vendor-42", "RUNNING", "robot-7"); err != nil {
-		t.Fatalf("UpdateVendor: %v", err)
-	}
+	testutil.MustNoErr(t, svc.UpdateVendor(o.ID, "vendor-42", "RUNNING", "robot-7"), "UpdateVendor")
 	got, _ := db.GetOrder(o.ID)
 	if got.VendorOrderID != "vendor-42" {
 		t.Errorf("VendorOrderID = %q, want %q", got.VendorOrderID, "vendor-42")
@@ -145,6 +140,7 @@ func TestOrderService_UpdateVendor(t *testing.T) {
 }
 
 func TestOrderService_SetPriority_NoVendorSkipsFleet(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	// Failing backend is fine here — it must not be called when VendorOrderID="".
@@ -172,15 +168,14 @@ func TestOrderService_SetPriority_NoVendorSkipsFleet(t *testing.T) {
 }
 
 func TestOrderService_SetPriority_WithVendorCallsFleet(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
 	o := makeOrder(t, db, sd.LineNode.Name)
 	// Attach a vendor order id so SetPriority dispatches to the fleet.
-	if err := db.UpdateOrderVendor(o.ID, "vendor-abc", "RUNNING", "robot-1"); err != nil {
-		t.Fatalf("UpdateOrderVendor: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "vendor-abc", "RUNNING", "robot-1"), "UpdateOrderVendor")
 
 	resolved, err := svc.SetPriority(o.ID, 3)
 	if err != nil {
@@ -197,14 +192,13 @@ func TestOrderService_SetPriority_WithVendorCallsFleet(t *testing.T) {
 }
 
 func TestOrderService_SetPriority_FleetErrorReturnsOrderAndError(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, true) // failing backend
 
 	o := makeOrder(t, db, sd.LineNode.Name)
-	if err := db.UpdateOrderVendor(o.ID, "vendor-xyz", "RUNNING", "robot-1"); err != nil {
-		t.Fatalf("UpdateOrderVendor: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderVendor(o.ID, "vendor-xyz", "RUNNING", "robot-1"), "UpdateOrderVendor")
 	origPriority := int(0) // freshly-created orders default to 0
 
 	resolved, err := svc.SetPriority(o.ID, 9)
@@ -224,6 +218,7 @@ func TestOrderService_SetPriority_FleetErrorReturnsOrderAndError(t *testing.T) {
 }
 
 func TestOrderService_SetPriority_OrderNotFound(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc, _ := newOrderSvc(db, false)
 
@@ -237,6 +232,7 @@ func TestOrderService_SetPriority_OrderNotFound(t *testing.T) {
 }
 
 func TestOrderService_ClaimBin_And_UnclaimBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
@@ -244,17 +240,13 @@ func TestOrderService_ClaimBin_And_UnclaimBin(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "OS-CLAIM-1", "", 0)
 	o := makeOrder(t, db, sd.LineNode.Name)
 
-	if err := svc.ClaimBin(bin.ID, o.ID); err != nil {
-		t.Fatalf("ClaimBin: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClaimBin(bin.ID, o.ID), "ClaimBin")
 	got, _ := db.GetBin(bin.ID)
 	if got.ClaimedBy == nil || *got.ClaimedBy != o.ID {
 		t.Errorf("ClaimedBy = %v, want %d", got.ClaimedBy, o.ID)
 	}
 
-	if err := svc.UnclaimBin(bin.ID); err != nil {
-		t.Fatalf("UnclaimBin: %v", err)
-	}
+	testutil.MustNoErr(t, svc.UnclaimBin(bin.ID), "UnclaimBin")
 	got, _ = db.GetBin(bin.ID)
 	if got.ClaimedBy != nil {
 		t.Errorf("ClaimedBy = %v, want nil after UnclaimBin", got.ClaimedBy)
@@ -262,6 +254,7 @@ func TestOrderService_ClaimBin_And_UnclaimBin(t *testing.T) {
 }
 
 func TestOrderService_ClaimBin_FailsIfAlreadyClaimed(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
@@ -269,18 +262,14 @@ func TestOrderService_ClaimBin_FailsIfAlreadyClaimed(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "OS-CLAIM-2", "", 0)
 	o1 := makeOrder(t, db, sd.LineNode.Name)
 
-	if err := svc.ClaimBin(bin.ID, o1.ID); err != nil {
-		t.Fatalf("first ClaimBin: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClaimBin(bin.ID, o1.ID), "first ClaimBin")
 
 	// Second order tries to claim the same bin — must fail.
 	o2 := &orders.Order{
 		EdgeUUID: "second-claim", StationID: "s", OrderType: "move", Status: "pending",
 		Quantity: 1, DeliveryNode: sd.LineNode.Name,
 	}
-	if err := db.CreateOrder(o2); err != nil {
-		t.Fatalf("create o2: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(o2), "create o2")
 
 	if err := svc.ClaimBin(bin.ID, o2.ID); err == nil {
 		t.Fatal("expected second ClaimBin to fail on already-claimed bin")
@@ -295,6 +284,7 @@ func TestOrderService_ClaimBin_FailsIfAlreadyClaimed(t *testing.T) {
 // --- PR 3a.3a absorbed query methods -------------------------------------
 
 func TestOrderService_GetOrder_ReturnsCreated(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
@@ -313,6 +303,7 @@ func TestOrderService_GetOrder_ReturnsCreated(t *testing.T) {
 }
 
 func TestOrderService_GetOrder_MissingErrors(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc, _ := newOrderSvc(db, false)
 	if _, err := svc.GetOrder(99999); err == nil {
@@ -321,6 +312,7 @@ func TestOrderService_GetOrder_MissingErrors(t *testing.T) {
 }
 
 func TestOrderService_GetOrderByUUID_ReturnsCreated(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
@@ -339,6 +331,7 @@ func TestOrderService_GetOrderByUUID_ReturnsCreated(t *testing.T) {
 }
 
 func TestOrderService_GetOrderByUUID_MissingErrors(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc, _ := newOrderSvc(db, false)
 	if _, err := svc.GetOrderByUUID("does-not-exist-uuid"); err == nil {
@@ -347,6 +340,7 @@ func TestOrderService_GetOrderByUUID_MissingErrors(t *testing.T) {
 }
 
 func TestOrderService_ListActiveOrders_IncludesPending(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
@@ -369,15 +363,14 @@ func TestOrderService_ListActiveOrders_IncludesPending(t *testing.T) {
 }
 
 func TestOrderService_ListOrders_FiltersByStatus(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
 	pending := makeOrder(t, db, sd.LineNode.Name)
 	failed := makeOrder(t, db, sd.LineNode.Name)
-	if err := db.UpdateOrderStatus(failed.ID, "failed", "test failure"); err != nil {
-		t.Fatalf("UpdateOrderStatus: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(failed.ID, "failed", "test failure"), "UpdateOrderStatus")
 
 	// status="" => all orders, both included
 	all, err := svc.ListOrders("", 100)
@@ -413,17 +406,14 @@ func TestOrderService_ListOrders_FiltersByStatus(t *testing.T) {
 }
 
 func TestOrderService_ListOrderHistory_ReturnsTransitions(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
 
 	o := makeOrder(t, db, sd.LineNode.Name)
-	if err := db.UpdateOrderStatus(o.ID, "queued", "ready"); err != nil {
-		t.Fatalf("UpdateOrderStatus queued: %v", err)
-	}
-	if err := db.UpdateOrderStatus(o.ID, "dispatched", "assigned"); err != nil {
-		t.Fatalf("UpdateOrderStatus dispatched: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, "queued", "ready"), "UpdateOrderStatus queued")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(o.ID, "dispatched", "assigned"), "UpdateOrderStatus dispatched")
 
 	history, err := svc.ListOrderHistory(o.ID)
 	if err != nil {
@@ -447,6 +437,7 @@ func TestOrderService_ListOrderHistory_ReturnsTransitions(t *testing.T) {
 }
 
 func TestOrderService_ListChildOrders_ReturnsSequencedChildren(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
@@ -459,9 +450,7 @@ func TestOrderService_ListChildOrders_ReturnsSequencedChildren(t *testing.T) {
 		Quantity:     1,
 		DeliveryNode: sd.LineNode.Name,
 	}
-	if err := db.CreateOrder(parent); err != nil {
-		t.Fatalf("create parent: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(parent), "create parent")
 
 	for i := 1; i <= 3; i++ {
 		child := &orders.Order{
@@ -501,6 +490,7 @@ func TestOrderService_ListChildOrders_ReturnsSequencedChildren(t *testing.T) {
 // --- PR 3a.3b absorbed query methods -------------------------------------
 
 func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
@@ -513,9 +503,7 @@ func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
 		Quantity:     1,
 		DeliveryNode: sd.LineNode.Name,
 	}
-	if err := db.CreateOrder(mine); err != nil {
-		t.Fatalf("create mine: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(mine), "create mine")
 	other := &orders.Order{
 		EdgeUUID:     "svc-by-station-other",
 		StationID:    "station-beta",
@@ -524,9 +512,7 @@ func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
 		Quantity:     1,
 		DeliveryNode: sd.LineNode.Name,
 	}
-	if err := db.CreateOrder(other); err != nil {
-		t.Fatalf("create other: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(other), "create other")
 
 	got, err := svc.ListOrdersByStation("station-alpha", 50)
 	if err != nil {
@@ -550,6 +536,7 @@ func TestOrderService_ListOrdersByStation_FiltersByStation(t *testing.T) {
 }
 
 func TestOrderService_ListOrdersByStation_AppliesLimit(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc, _ := newOrderSvc(db, false)
@@ -585,6 +572,7 @@ func TestOrderService_ListOrdersByStation_AppliesLimit(t *testing.T) {
 }
 
 func TestOrderService_ListOrdersByStation_UnknownStationEmpty(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc, _ := newOrderSvc(db, false)
 	got, err := svc.ListOrdersByStation("no-such-station", 50)

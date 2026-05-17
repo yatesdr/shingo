@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -127,6 +128,7 @@ func testHandlersWithRobotFleet(t *testing.T) (*Handlers, *store.DB, *fakeRobotL
 // TestHandleRobots_RendersHTML pins that /robots renders the template, using
 // the engine's cached robot list (empty in a fresh engine).
 func TestHandleRobots_RendersHTML(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlersForPages(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/robots", nil)
@@ -152,6 +154,7 @@ func TestHandleRobots_RendersHTML(t *testing.T) {
 // TestApiRobotsStatus_EmptyCache pins the JSON shape on an engine with no
 // cached robots: a (possibly null/empty) JSON list.
 func TestApiRobotsStatus_EmptyCache(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := getPlain(t, h.apiRobotsStatus, "/api/robots")
@@ -159,9 +162,7 @@ func TestApiRobotsStatus_EmptyCache(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var robots []fleet.RobotStatus
-	if err := json.NewDecoder(rec.Body).Decode(&robots); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.NewDecoder(rec.Body).Decode(&robots), "decode")
 	if len(robots) != 0 {
 		t.Errorf("expected empty robot list, got %d", len(robots))
 	}
@@ -172,6 +173,7 @@ func TestApiRobotsStatus_EmptyCache(t *testing.T) {
 // TestApiRobotSetAvailability_BackendNotSupported pins the 501 path when the
 // fleet backend doesn't satisfy RobotLister.
 func TestApiRobotSetAvailability_BackendNotSupported(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiRobotSetAvailability, "/api/robots/availability",
@@ -184,6 +186,7 @@ func TestApiRobotSetAvailability_BackendNotSupported(t *testing.T) {
 
 // TestApiRobotSetAvailability_InvalidJSON pins 400 on bad body.
 func TestApiRobotSetAvailability_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postRaw(t, h.apiRobotSetAvailability, "/api/robots/availability", []byte("not-json"))
@@ -196,6 +199,7 @@ func TestApiRobotSetAvailability_InvalidJSON(t *testing.T) {
 // RobotLister.SetAvailability with the body's (vehicle_id, available) pair
 // and returns {"status":"ok"}.
 func TestApiRobotSetAvailability_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithRobotFleet(t)
 
 	rec := postJSON(t, h.apiRobotSetAvailability, "/api/robots/availability",
@@ -216,6 +220,7 @@ func TestApiRobotSetAvailability_HappyPath(t *testing.T) {
 
 // TestApiRobotSetAvailability_BackendError pins the 500 propagation.
 func TestApiRobotSetAvailability_BackendError(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithRobotFleet(t)
 	sim.setAvailErr = errStub("robot not found")
 
@@ -230,6 +235,7 @@ func TestApiRobotSetAvailability_BackendError(t *testing.T) {
 // --- apiRobotRetryFailed ---------------------------------------------------
 
 func TestApiRobotRetryFailed_BackendNotSupported(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiRobotRetryFailed, "/api/robots/retry",
@@ -240,6 +246,7 @@ func TestApiRobotRetryFailed_BackendNotSupported(t *testing.T) {
 }
 
 func TestApiRobotRetryFailed_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postRaw(t, h.apiRobotRetryFailed, "/api/robots/retry", []byte("bad"))
@@ -249,6 +256,7 @@ func TestApiRobotRetryFailed_InvalidJSON(t *testing.T) {
 }
 
 func TestApiRobotRetryFailed_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithRobotFleet(t)
 
 	rec := postJSON(t, h.apiRobotRetryFailed, "/api/robots/retry",
@@ -266,6 +274,7 @@ func TestApiRobotRetryFailed_HappyPath(t *testing.T) {
 }
 
 func TestApiRobotRetryFailed_BackendError(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithRobotFleet(t)
 	sim.retryErr = errStub("nothing to retry")
 
@@ -280,6 +289,7 @@ func TestApiRobotRetryFailed_BackendError(t *testing.T) {
 // --- apiRobotForceComplete -------------------------------------------------
 
 func TestApiRobotForceComplete_BackendNotSupported(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiRobotForceComplete, "/api/robots/force-complete",
@@ -290,6 +300,7 @@ func TestApiRobotForceComplete_BackendNotSupported(t *testing.T) {
 }
 
 func TestApiRobotForceComplete_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postRaw(t, h.apiRobotForceComplete, "/api/robots/force-complete", []byte("{"))
@@ -299,6 +310,7 @@ func TestApiRobotForceComplete_InvalidJSON(t *testing.T) {
 }
 
 func TestApiRobotForceComplete_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithRobotFleet(t)
 
 	rec := postJSON(t, h.apiRobotForceComplete, "/api/robots/force-complete",
@@ -316,6 +328,7 @@ func TestApiRobotForceComplete_HappyPath(t *testing.T) {
 }
 
 func TestApiRobotForceComplete_BackendError(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithRobotFleet(t)
 	sim.forceCompleteErr = errStub("stuck")
 

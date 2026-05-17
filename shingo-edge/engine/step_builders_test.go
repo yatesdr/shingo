@@ -34,6 +34,7 @@ func stepActions(steps []protocol.ComplexOrderStep) []string {
 // Single-robot legacy choreography: line-side Order B sequence + stage
 // Order A.
 func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
 		OutboundStaging:     "OUT-STAGE",
@@ -98,6 +99,7 @@ func TestBuildSwapChangeoverSteps_SingleRobot(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildEvacuateChangeoverSteps_SingleRobot(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
 		OutboundStaging:     "OUT-STAGE",
@@ -140,6 +142,7 @@ func TestBuildEvacuateChangeoverSteps_SingleRobot(t *testing.T) {
 // two_robot Swap — Order A pre-stages → waits at staging → delivers; Order B
 // drives to line → waits → evacuates straight to OutboundDestination.
 func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE",
 		OutboundStaging:     "OUT-STAGE",
@@ -203,6 +206,7 @@ func TestBuildSwapChangeoverSteps_TwoRobot(t *testing.T) {
 // so the line is naturally clear without an operator gate between the
 // two legs. Step shape is identical to two_robot Swap.
 func TestBuildEvacuateChangeoverSteps_TwoRobot(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE",
 		OutboundStaging:     "OUT-STAGE",
@@ -243,6 +247,7 @@ func TestBuildEvacuateChangeoverSteps_TwoRobot(t *testing.T) {
 // R1 evacuates from CoreNodeName, drops at OutboundDestination, picks new
 // from InboundSource, drops at PairedCoreNode (back). R2 indexes B → A.
 func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "FRONT",
 		PairedCoreNode:      "BACK",
@@ -290,6 +295,7 @@ func TestBuildSwapChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 // two_robot_press_index Swap — 3-position layout. R1 refills SecondPairedCoreNode;
 // R2 indexes C → B → A.
 func TestBuildSwapChangeoverSteps_PressIndex_3Pos(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:         "FRONT",
 		PairedCoreNode:       "MID",
@@ -329,6 +335,7 @@ func TestBuildSwapChangeoverSteps_PressIndex_3Pos(t *testing.T) {
 // two_robot_press_index Evacuate — extra tooling-done wait on R1 between
 // dropoff outbound and pickup inbound.
 func TestBuildEvacuateChangeoverSteps_PressIndex_2Pos(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "FRONT",
 		PairedCoreNode:      "BACK",
@@ -357,6 +364,7 @@ func TestBuildEvacuateChangeoverSteps_PressIndex_2Pos(t *testing.T) {
 // diff routes to this builder via the SwapMode == pressPositionSwapMode
 // case. Single complex order, 4 steps, no operator gate inside.
 func TestBuildPressIndexPerPositionSwap_FourStepSequence(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "POS-A",
 		PayloadCode:         "PART-A",
@@ -403,6 +411,7 @@ func TestBuildPressIndexPerPositionSwap_FourStepSequence(t *testing.T) {
 
 // Per-position press-index missing required config → empty dispatch.
 func TestBuildPressIndexPerPositionSwap_MissingConfig_EmptyDispatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		from *processes.NodeClaim
@@ -438,6 +447,7 @@ func TestBuildPressIndexPerPositionSwap_MissingConfig_EmptyDispatch(t *testing.T
 // steady-state choreography (steady-state backfill goes pickup
 // InboundSource → dropoff CoreNodeName, no staging).
 func TestBuildSwapChangeoverSteps_Sequential(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
 		PairedCoreNode:      "CORE-B",
@@ -489,6 +499,7 @@ func TestBuildSwapChangeoverSteps_Sequential(t *testing.T) {
 // pulling from CORE-A, the inactive side is CORE-B — swap CORE-B first,
 // wait at CORE-A for cutover.
 func TestBuildSwapChangeoverSteps_Sequential_ActiveOnA_SwapsBFirst(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
 		PairedCoreNode:      "CORE-B",
@@ -521,6 +532,7 @@ func TestBuildSwapChangeoverSteps_Sequential_ActiveOnA_SwapsBFirst(t *testing.T)
 //   pickup(InboundSource) → wait() → dropoff(my position)
 // A single tooling-done click releases both bare waits.
 func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
 		PairedCoreNode:      "CORE-B",
@@ -581,6 +593,7 @@ func TestBuildEvacuateChangeoverSteps_Sequential(t *testing.T) {
 // Sequential without PairedCoreNode → empty dispatch (planner emits
 // NodeAction.Err). Tested for both Swap and Evacuate.
 func TestBuildSwapChangeoverSteps_SequentialUnpaired_EmptyDispatch(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE",
 		OutboundDestination: "DEST",
@@ -594,6 +607,7 @@ func TestBuildSwapChangeoverSteps_SequentialUnpaired_EmptyDispatch(t *testing.T)
 }
 
 func TestBuildEvacuateChangeoverSteps_SequentialUnpaired_EmptyDispatch(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE",
 		OutboundDestination: "DEST",
@@ -610,6 +624,7 @@ func TestBuildEvacuateChangeoverSteps_SequentialUnpaired_EmptyDispatch(t *testin
 // dispatch (the planner is expected to provide them; the empty-dispatch
 // fallthrough surfaces a loud error in planNodeAction).
 func TestBuildSwapChangeoverSteps_Sequential_MissingActivePull_EmptyDispatch(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-A",
 		PairedCoreNode:      "CORE-B",
@@ -627,6 +642,7 @@ func TestBuildSwapChangeoverSteps_Sequential_MissingActivePull_EmptyDispatch(t *
 // the active-pull snapshot. Tie-break (both false) uses convention:
 // CoreNodeName=inactive, PairedCoreNode=active.
 func TestResolveSequentialActivePull(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{CoreNodeName: "CORE-A", PairedCoreNode: "CORE-B"}
 
 	tests := []struct {
@@ -667,6 +683,7 @@ func TestResolveSequentialActivePull(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildKeepStagedDeliverSteps(t *testing.T) {
+	t.Parallel()
 	to := &processes.NodeClaim{
 		CoreNodeName:   "CORE-NODE",
 		InboundSource:  "SOURCE",
@@ -701,6 +718,7 @@ func TestBuildKeepStagedDeliverSteps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildKeepStagedEvacSteps(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		CoreNodeName:        "CORE-NODE",
 		OutboundDestination: "DEST-FINAL",
@@ -732,6 +750,7 @@ func TestBuildKeepStagedEvacSteps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildKeepStagedCombinedSteps(t *testing.T) {
+	t.Parallel()
 	from := &processes.NodeClaim{
 		InboundSource: "FROM-SOURCE",
 	}
@@ -792,6 +811,7 @@ func TestBuildKeepStagedCombinedSteps(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildStageSteps(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{
 		InboundSource:  "MARKET",
 		InboundStaging: "STAGING-AREA",
@@ -813,6 +833,7 @@ func TestBuildStageSteps(t *testing.T) {
 }
 
 func TestBuildStageSteps_NoInboundStaging(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{
 		InboundSource: "MARKET",
 		// InboundStaging empty — cannot pre-stage
@@ -828,6 +849,7 @@ func TestBuildStageSteps_NoInboundStaging(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildReleaseSteps(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{
 		CoreNodeName:        "CORE-NODE",
 		OutboundDestination: "DEST",
@@ -848,6 +870,7 @@ func TestBuildReleaseSteps(t *testing.T) {
 // Edge case: missing OutboundDestination → dropoff step has no Node.
 // Core uses payload-based routing (global fallback).
 func TestBuildReleaseSteps_MissingDestination(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{
 		CoreNodeName: "CORE-NODE",
 		// OutboundDestination empty
@@ -875,6 +898,7 @@ func TestBuildReleaseSteps_MissingDestination(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildRestoreSteps(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{
 		CoreNodeName:    "CORE-NODE",
 		OutboundStaging: "OUT-STAGE",
@@ -896,6 +920,7 @@ func TestBuildRestoreSteps(t *testing.T) {
 }
 
 func TestBuildRestoreSteps_NoOutboundStaging(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{
 		CoreNodeName: "CORE-NODE",
 		// OutboundStaging empty — nothing to restore
@@ -913,6 +938,7 @@ func TestBuildRestoreSteps_NoOutboundStaging(t *testing.T) {
 // BuildStageSteps with empty InboundSource: pickup step has no Node.
 // Core resolves the source via payloadCode.
 func TestBuildStageSteps_MissingInboundSource(t *testing.T) {
+	t.Parallel()
 	claim := &processes.NodeClaim{
 		// InboundSource empty
 		InboundStaging: "STAGING-AREA",
@@ -932,6 +958,7 @@ func TestBuildStageSteps_MissingInboundSource(t *testing.T) {
 
 // BuildKeepStagedDeliverSteps with empty InboundSource: first pickup has no Node.
 func TestBuildKeepStagedDeliverSteps_MissingInboundSource(t *testing.T) {
+	t.Parallel()
 	to := &processes.NodeClaim{
 		CoreNodeName:   "CORE-NODE",
 		InboundStaging: "IN-STAGE",

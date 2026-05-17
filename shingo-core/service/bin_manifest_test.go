@@ -11,6 +11,7 @@ import (
 
 	"shingo/protocol"
 
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/audit"
@@ -28,9 +29,7 @@ func createTestBin(t *testing.T, db *store.DB, nodeID int64, label, payloadCode 
 	bt, err := db.GetBinTypeByCode("DEFAULT")
 	if err != nil {
 		bt = &bins.BinType{Code: "DEFAULT", Description: "Default test bin type"}
-		if err := db.CreateBinType(bt); err != nil {
-			t.Fatalf("create default bin type: %v", err)
-		}
+		testutil.MustNoErr(t, db.CreateBinType(bt), "create default bin type")
 	}
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: label, NodeID: &nodeID, Status: "available"}
 	if err := db.CreateBin(bin); err != nil {
@@ -62,13 +61,12 @@ func createTestOrder(t *testing.T, db *store.DB, nodeID int64) *orders.Order {
 		Quantity:     1,
 		DeliveryNode: node.Name,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	return order
 }
 
 func TestBinManifestService_ClearForReuse(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -84,9 +82,7 @@ func TestBinManifestService_ClearForReuse(t *testing.T) {
 	}
 
 	// Clear the bin
-	if err := svc.ClearForReuse(bin.ID); err != nil {
-		t.Fatalf("ClearForReuse: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClearForReuse(bin.ID), "ClearForReuse")
 
 	// Verify cleared state
 	got, err := db.GetBin(bin.ID)
@@ -108,6 +104,7 @@ func TestBinManifestService_ClearForReuse(t *testing.T) {
 }
 
 func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -124,9 +121,7 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 	}
 
 	// Clear the bin
-	if err := svc.ClearForReuse(bin.ID); err != nil {
-		t.Fatalf("ClearForReuse: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClearForReuse(bin.ID), "ClearForReuse")
 
 	// Now FindEmptyCompatibleBin should find it
 	found, err := db.FindEmptyCompatibleBin(sd.Payload.Code, "", 0)
@@ -145,6 +140,7 @@ func TestBinManifestService_ClearForReuse_MakesVisibleToFindEmpty(t *testing.T) 
 // claim-with-uop case directly.)
 
 func TestBinManifestService_ClearAndClaim_Atomic(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -153,9 +149,7 @@ func TestBinManifestService_ClearAndClaim_Atomic(t *testing.T) {
 	order := createTestOrder(t, db, sd.LineNode.ID)
 
 	// Atomic clear and claim
-	if err := svc.ClearAndClaim(bin.ID, order.ID); err != nil {
-		t.Fatalf("ClearAndClaim: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClearAndClaim(bin.ID, order.ID), "ClearAndClaim")
 
 	got, _ := db.GetBin(bin.ID)
 
@@ -174,6 +168,7 @@ func TestBinManifestService_ClearAndClaim_Atomic(t *testing.T) {
 }
 
 func TestBinManifestService_ClearAndClaim_FailsIfAlreadyClaimed(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -183,9 +178,7 @@ func TestBinManifestService_ClearAndClaim_FailsIfAlreadyClaimed(t *testing.T) {
 	order2 := createTestOrder(t, db, sd.LineNode.ID)
 
 	// First claim succeeds
-	if err := svc.ClearAndClaim(bin.ID, order1.ID); err != nil {
-		t.Fatalf("first ClearAndClaim: %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClearAndClaim(bin.ID, order1.ID), "first ClearAndClaim")
 
 	// Second claim must fail (bin already claimed)
 	err := svc.ClearAndClaim(bin.ID, order2.ID)
@@ -201,6 +194,7 @@ func TestBinManifestService_ClearAndClaim_FailsIfAlreadyClaimed(t *testing.T) {
 }
 
 func TestBinManifestService_SyncUOPAndClaim(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -211,9 +205,7 @@ func TestBinManifestService_SyncUOPAndClaim(t *testing.T) {
 	originalManifest := *bin.Manifest
 
 	// Sync UOP and claim atomically
-	if err := svc.SyncUOPAndClaim(bin.ID, order.ID, 37); err != nil {
-		t.Fatalf("SyncUOPAndClaim: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SyncUOPAndClaim(bin.ID, order.ID, 37), "SyncUOPAndClaim")
 
 	got, _ := db.GetBin(bin.ID)
 
@@ -237,6 +229,7 @@ func TestBinManifestService_SyncUOPAndClaim(t *testing.T) {
 }
 
 func TestBinManifestService_ClaimForDispatch_NilIsPlainClaim(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -245,9 +238,7 @@ func TestBinManifestService_ClaimForDispatch_NilIsPlainClaim(t *testing.T) {
 	order := createTestOrder(t, db, sd.LineNode.ID)
 
 	// nil = no UOP change, plain claim
-	if err := svc.ClaimForDispatch(bin.ID, order.ID, nil); err != nil {
-		t.Fatalf("ClaimForDispatch(nil): %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, nil), "ClaimForDispatch(nil)")
 
 	got, _ := db.GetBin(bin.ID)
 
@@ -266,6 +257,7 @@ func TestBinManifestService_ClaimForDispatch_NilIsPlainClaim(t *testing.T) {
 }
 
 func TestBinManifestService_ClaimForDispatch_ZeroClearsManifest(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -275,9 +267,7 @@ func TestBinManifestService_ClaimForDispatch_ZeroClearsManifest(t *testing.T) {
 
 	// 0 = full depletion, clear manifest + claim
 	zero := 0
-	if err := svc.ClaimForDispatch(bin.ID, order.ID, &zero); err != nil {
-		t.Fatalf("ClaimForDispatch(0): %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, &zero), "ClaimForDispatch(0)")
 
 	got, _ := db.GetBin(bin.ID)
 
@@ -296,6 +286,7 @@ func TestBinManifestService_ClaimForDispatch_ZeroClearsManifest(t *testing.T) {
 }
 
 func TestBinManifestService_ClaimForDispatch_PositiveSyncsUOP(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -305,9 +296,7 @@ func TestBinManifestService_ClaimForDispatch_PositiveSyncsUOP(t *testing.T) {
 
 	// >0 = partial consumption, sync UOP + claim
 	partial := 55
-	if err := svc.ClaimForDispatch(bin.ID, order.ID, &partial); err != nil {
-		t.Fatalf("ClaimForDispatch(55): %v", err)
-	}
+	testutil.MustNoErr(t, svc.ClaimForDispatch(bin.ID, order.ID, &partial), "ClaimForDispatch(55)")
 
 	got, _ := db.GetBin(bin.ID)
 
@@ -326,6 +315,7 @@ func TestBinManifestService_ClaimForDispatch_PositiveSyncsUOP(t *testing.T) {
 }
 
 func TestBinManifestService_SetForProduction(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -334,9 +324,7 @@ func TestBinManifestService_SetForProduction(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-SFP-1", "", 0)
 
 	manifest := `{"items":[{"catid":"WIDGET","qty":50}]}`
-	if err := svc.SetForProduction(bin.ID, manifest, "WIDGET-X", 200); err != nil {
-		t.Fatalf("SetForProduction: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetForProduction(bin.ID, manifest, "WIDGET-X", 200), "SetForProduction")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.PayloadCode != "WIDGET-X" {
@@ -364,6 +352,7 @@ func TestBinManifestService_SetForProduction(t *testing.T) {
 }
 
 func TestBinManifestService_Confirm(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -373,9 +362,7 @@ func TestBinManifestService_Confirm(t *testing.T) {
 	// Unconfirm first so we can test confirm
 	db.Exec("UPDATE bins SET manifest_confirmed=false WHERE id=$1", bin.ID)
 
-	if err := svc.Confirm(bin.ID, "2026-03-30T12:00:00Z"); err != nil {
-		t.Fatalf("Confirm: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Confirm(bin.ID, "2026-03-30T12:00:00Z"), "Confirm")
 
 	got, _ := db.GetBin(bin.ID)
 	if !got.ManifestConfirmed {
@@ -387,6 +374,7 @@ func TestBinManifestService_Confirm(t *testing.T) {
 }
 
 func TestBinManifestService_Unconfirm(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -397,9 +385,7 @@ func TestBinManifestService_Unconfirm(t *testing.T) {
 		t.Fatal("expected test bin to start confirmed")
 	}
 
-	if err := svc.Unconfirm(bin.ID); err != nil {
-		t.Fatalf("Unconfirm: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Unconfirm(bin.ID), "Unconfirm")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.ManifestConfirmed {
@@ -408,6 +394,7 @@ func TestBinManifestService_Unconfirm(t *testing.T) {
 }
 
 func TestBinManifestService_ClearAndClaim_FailsIfLocked(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -435,6 +422,7 @@ func TestBinManifestService_ClearAndClaim_FailsIfLocked(t *testing.T) {
 // values (one ClearAndClaim, one SyncUOPAndClaim), exactly one wins and the bin
 // ends up in the correct state for the winner's operation.
 func TestBinManifestService_ClaimForDispatch_ConcurrentRace(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -526,6 +514,7 @@ func claimBinForTest(t *testing.T, db *store.DB, binID, orderID int64) {
 }
 
 func TestBinManifestService_SyncOrClearForReleased_NilIsNoOp(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -534,9 +523,7 @@ func TestBinManifestService_SyncOrClearForReleased_NilIsNoOp(t *testing.T) {
 	order := createTestOrder(t, db, sd.LineNode.ID)
 	claimBinForTest(t, db, bin.ID, order.ID)
 
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, nil, "", ""); err != nil {
-		t.Fatalf("SyncOrClearForReleased(nil): %v", err)
-	}
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, nil, "", ""), "SyncOrClearForReleased(nil)")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.PayloadCode != bin.PayloadCode {
@@ -551,6 +538,7 @@ func TestBinManifestService_SyncOrClearForReleased_NilIsNoOp(t *testing.T) {
 }
 
 func TestBinManifestService_SyncOrClearForReleased_ZeroClearsManifest(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -560,9 +548,7 @@ func TestBinManifestService_SyncOrClearForReleased_ZeroClearsManifest(t *testing
 	claimBinForTest(t, db, bin.ID, order.ID)
 
 	zero := 0
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, "", ""); err != nil {
-		t.Fatalf("SyncOrClearForReleased(0): %v", err)
-	}
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &zero, "", ""), "SyncOrClearForReleased(0)")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.PayloadCode != "" {
@@ -584,6 +570,7 @@ func TestBinManifestService_SyncOrClearForReleased_ZeroClearsManifest(t *testing
 }
 
 func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -593,9 +580,7 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 	claimBinForTest(t, db, bin.ID, order.ID)
 
 	partial := 800
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""); err != nil {
-		t.Fatalf("SyncOrClearForReleased(800): %v", err)
-	}
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""), "SyncOrClearForReleased(800)")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.UOPRemaining != 800 {
@@ -633,6 +618,7 @@ func TestBinManifestService_SyncOrClearForReleased_PositiveSyncsUOP(t *testing.T
 // to a different order between staging and release) must not stomp the new
 // claim's bin state.
 func TestBinManifestService_SyncOrClearForReleased_WrongOrderRejected(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -662,6 +648,7 @@ func TestBinManifestService_SyncOrClearForReleased_WrongOrderRejected(t *testing
 // locked=false guard. A bin under active fleet handling (locked=true) must
 // not have its manifest mutated mid-flight.
 func TestBinManifestService_SyncOrClearForReleased_LockedRejected(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -690,6 +677,7 @@ func TestBinManifestService_SyncOrClearForReleased_LockedRejected(t *testing.T) 
 // empty actor falls back to "system" for consistency with other bin
 // audits (claimComplexBins, etc.).
 func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -699,17 +687,13 @@ func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T)
 	orderNamed := createTestOrder(t, db, sd.LineNode.ID)
 	claimBinForTest(t, db, binNamed.ID, orderNamed.ID)
 	zero := 0
-	if err := svc.SyncOrClearForReleased(binNamed.ID, orderNamed.ID, &zero, "", "stephen-station-7"); err != nil {
-		t.Fatalf("SyncOrClearForReleased named actor: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(binNamed.ID, orderNamed.ID, &zero, "", "stephen-station-7"), "SyncOrClearForReleased named actor")
 
 	// Empty actor — should fall back to "system" in the audit row
 	binSystem := createTestBin(t, db, sd.StorageNode.ID, "BIN-SOC-ACTOR-S", "PART-A", 100)
 	orderSystem := createTestOrder(t, db, sd.LineNode.ID)
 	claimBinForTest(t, db, binSystem.ID, orderSystem.ID)
-	if err := svc.SyncOrClearForReleased(binSystem.ID, orderSystem.ID, &zero, "", ""); err != nil {
-		t.Fatalf("SyncOrClearForReleased empty actor: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(binSystem.ID, orderSystem.ID, &zero, "", ""), "SyncOrClearForReleased empty actor")
 
 	// Query audit log for both bins and verify the actor column.
 	rows, err := db.Query(`
@@ -725,9 +709,7 @@ func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T)
 	for rows.Next() {
 		var id int64
 		var actor string
-		if err := rows.Scan(&id, &actor); err != nil {
-			t.Fatalf("scan audit_log: %v", err)
-		}
+		testutil.MustNoErr(t, rows.Scan(&id, &actor), "scan audit_log")
 		seen[id] = actor
 	}
 	if seen[binNamed.ID] != "stephen-station-7" {
@@ -743,6 +725,7 @@ func TestBinManifestService_SyncOrClearForReleased_ActorOnAuditRow(t *testing.T)
 // caller side) leaves the bin in the same end state and does not error on
 // the second call.
 func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -752,12 +735,8 @@ func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T)
 	claimBinForTest(t, db, bin.ID, order.ID)
 
 	partial := 250
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""); err != nil {
-		t.Fatalf("first SyncOrClearForReleased: %v", err)
-	}
-	if err := svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""); err != nil {
-		t.Fatalf("second SyncOrClearForReleased should succeed (idempotent): %v", err)
-	}
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""), "first SyncOrClearForReleased")
+	testutil.MustNoErr(t, svc.SyncOrClearForReleased(bin.ID, order.ID, &partial, "", ""), "second SyncOrClearForReleased should succeed (idempotent)")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.UOPRemaining != 250 {
@@ -776,6 +755,7 @@ func TestBinManifestService_SyncOrClearForReleased_IdempotentRetry(t *testing.T)
 // *store.DB.SetBinManifestFromTemplate which bypassed audit; Item
 // 10's UI surface made the audit-bypass a real gap.
 func TestBinManifestService_SetFromTemplate(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -783,9 +763,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	bin := createTestBin(t, db, sd.StorageNode.ID, "BIN-TMPL-1", "INITIAL", 0)
 
 	// Apply the template — uopOverride=0 falls back to template's UOPCapacity.
-	if err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, 0); err != nil {
-		t.Fatalf("SetFromTemplate: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetFromTemplate(bin.ID, sd.Payload.Code, 0), "SetFromTemplate")
 
 	got, _ := db.GetBin(bin.ID)
 	if got.PayloadCode != sd.Payload.Code {
@@ -808,9 +786,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 	}
 
 	// Override uopOverride.
-	if err := svc.SetFromTemplate(bin.ID, sd.Payload.Code, 50); err != nil {
-		t.Fatalf("SetFromTemplate override: %v", err)
-	}
+	testutil.MustNoErr(t, svc.SetFromTemplate(bin.ID, sd.Payload.Code, 50), "SetFromTemplate override")
 	got2, _ := db.GetBin(bin.ID)
 	if got2.UOPRemaining != 50 {
 		t.Errorf("UOPRemaining after override = %d, want 50", got2.UOPRemaining)
@@ -823,6 +799,7 @@ func TestBinManifestService_SetFromTemplate(t *testing.T) {
 // cleared, uop=0, claim preserved). The disposition kind doesn't
 // affect the bin write — only the audit op tag.
 func TestRegression_ReleaseUnderpack_BinClearsToZero(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -864,6 +841,7 @@ func TestRegression_ReleaseUnderpack_BinClearsToZero(t *testing.T) {
 // query for op=released_underpack and find every "labeled bin
 // short-counted by N" event.
 func TestRegression_ReleaseUnderpack_AuditRecordsMissingDelta(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -927,6 +905,7 @@ func TestRegression_ReleaseUnderpack_AuditRecordsMissingDelta(t *testing.T) {
 // Companion to the bin-clears test above; this one targets the
 // fields the empty-bin-pool query reads.
 func TestRegression_ReleaseUnderpack_ManifestClears(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	sd := testdb.SetupStandardData(t, db)
 	svc := NewBinManifestService(db)
@@ -937,9 +916,7 @@ func TestRegression_ReleaseUnderpack_ManifestClears(t *testing.T) {
 
 	// Confirm the manifest first so loaded_at is set; underpack
 	// release must clear that too.
-	if err := svc.Confirm(bin.ID, ""); err != nil {
-		t.Fatalf("Confirm: %v", err)
-	}
+	testutil.MustNoErr(t, svc.Confirm(bin.ID, ""), "Confirm")
 	pre, _ := db.GetBin(bin.ID)
 	if !pre.ManifestConfirmed {
 		t.Fatalf("pre-release ManifestConfirmed = false, want true (Confirm should have set it)")

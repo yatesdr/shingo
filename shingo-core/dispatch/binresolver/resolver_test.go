@@ -12,6 +12,7 @@ import (
 // --- Non-NGRP retrieve -----------------------------------------------------
 
 func TestDefaultResolver_Retrieve_PicksFirstChildWithAvailableBin(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	childA := directChild(10, "child-A")
@@ -34,6 +35,7 @@ func TestDefaultResolver_Retrieve_PicksFirstChildWithAvailableBin(t *testing.T) 
 // --- IsAvailableAtConcreteNode (payload-match trap fix) -------------------
 
 func TestIsAvailableAtConcreteNode_ClearedBinPasses(t *testing.T) {
+	t.Parallel()
 	// Post-completion state: payload cleared, manifest_confirmed=false, status=staged.
 	// This is exactly what ClearAndClaim leaves behind.
 	cleared := &bins.Bin{
@@ -48,6 +50,7 @@ func TestIsAvailableAtConcreteNode_ClearedBinPasses(t *testing.T) {
 }
 
 func TestIsAvailableAtConcreteNode_MatchingPayloadPasses(t *testing.T) {
+	t.Parallel()
 	bin := &bins.Bin{
 		ID:                2,
 		Status:            "staged",
@@ -60,6 +63,7 @@ func TestIsAvailableAtConcreteNode_MatchingPayloadPasses(t *testing.T) {
 }
 
 func TestIsAvailableAtConcreteNode_MismatchedPayloadRejected(t *testing.T) {
+	t.Parallel()
 	// Wrong part parked at wrong station — should be rejected.
 	bin := &bins.Bin{
 		ID:                3,
@@ -73,6 +77,7 @@ func TestIsAvailableAtConcreteNode_MismatchedPayloadRejected(t *testing.T) {
 }
 
 func TestIsAvailableAtConcreteNode_ClaimedBinRejected(t *testing.T) {
+	t.Parallel()
 	orderID := int64(99)
 	bin := &bins.Bin{
 		ID:                4,
@@ -87,6 +92,7 @@ func TestIsAvailableAtConcreteNode_ClaimedBinRejected(t *testing.T) {
 }
 
 func TestIsAvailableAtConcreteNode_BadStatusRejected(t *testing.T) {
+	t.Parallel()
 	for _, status := range []domain.BinStatus{domain.BinStatusMaintenance, domain.BinStatusFlagged, domain.BinStatusRetired, domain.BinStatusQualityHold} {
 		bin := &bins.Bin{
 			ID:                5,
@@ -101,6 +107,7 @@ func TestIsAvailableAtConcreteNode_BadStatusRejected(t *testing.T) {
 }
 
 func TestIsAvailableAtConcreteNode_EmptyPayloadCodeAccepted(t *testing.T) {
+	t.Parallel()
 	// When the order itself has no payload filter, any bin should pass
 	// except claimed/bad-status.
 	bin := &bins.Bin{
@@ -115,6 +122,7 @@ func TestIsAvailableAtConcreteNode_EmptyPayloadCodeAccepted(t *testing.T) {
 }
 
 func TestDefaultResolver_Retrieve_NoAvailableBins(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	child := directChild(10, "only-child")
@@ -128,6 +136,7 @@ func TestDefaultResolver_Retrieve_NoAvailableBins(t *testing.T) {
 }
 
 func TestDefaultResolver_Retrieve_PayloadFilter(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	child := directChild(10, "c")
@@ -144,6 +153,7 @@ func TestDefaultResolver_Retrieve_PayloadFilter(t *testing.T) {
 // --- Non-NGRP store --------------------------------------------------------
 
 func TestDefaultResolver_Store_PicksConsolidationCandidate(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	a := directChild(10, "empty-A")
@@ -168,6 +178,7 @@ func TestDefaultResolver_Store_PicksConsolidationCandidate(t *testing.T) {
 }
 
 func TestDefaultResolver_Store_SkipsOccupiedAndSynthetic(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	syn := &nodes.Node{ID: 10, Name: "syn", IsSynthetic: true, Enabled: true}
@@ -188,6 +199,7 @@ func TestDefaultResolver_Store_SkipsOccupiedAndSynthetic(t *testing.T) {
 }
 
 func TestDefaultResolver_Store_NoCandidate(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	full := directChild(10, "full")
@@ -203,6 +215,7 @@ func TestDefaultResolver_Store_NoCandidate(t *testing.T) {
 // --- Unknown order type / empty synthetic ---------------------------------
 
 func TestDefaultResolver_UnknownOrderType_FirstEnabled(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	parent := directChild(1, "parent")
 	disabled := disabledChild(9, "off")
@@ -220,6 +233,7 @@ func TestDefaultResolver_UnknownOrderType_FirstEnabled(t *testing.T) {
 }
 
 func TestDefaultResolver_NoChildren(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	parent := directChild(1, "lonely")
 
@@ -232,6 +246,7 @@ func TestDefaultResolver_NoChildren(t *testing.T) {
 // --- NGRP delegation -------------------------------------------------------
 
 func TestDefaultResolver_Retrieve_NGRPDelegatesToGroupResolver(t *testing.T) {
+	t.Parallel()
 	f := newFakeStore()
 	ngrp := ngrpNode(1, "group")
 	lane := laneChild(10, "lane-1")

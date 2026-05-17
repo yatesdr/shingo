@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet"
@@ -124,6 +125,7 @@ func testHandlersWithFireAlarmFleet(t *testing.T, enabled bool) (*Handlers, *sto
 // FireAlarm.Enabled is false, the endpoint returns 404 regardless of whether
 // the fleet supports the controller interface.
 func TestApiFireAlarmStatus_DisabledReturns404(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t) // simulator backend; FireAlarm.Enabled defaults to false
 
 	rec := getPlain(t, h.apiFireAlarmStatus, "/api/fire-alarm/status")
@@ -137,6 +139,7 @@ func TestApiFireAlarmStatus_DisabledReturns404(t *testing.T) {
 // the feature is enabled but the backend doesn't implement FireAlarmController,
 // the handler returns 501.
 func TestApiFireAlarmStatus_BackendNotSupported(t *testing.T) {
+	t.Parallel()
 	h, db := testHandlers(t)
 	_ = db
 	// Flip the feature on via the live AppConfig.
@@ -156,6 +159,7 @@ func TestApiFireAlarmStatus_BackendNotSupported(t *testing.T) {
 // forwards GetFireAlarmStatus output into the response body with is_fire and
 // changed_at keys.
 func TestApiFireAlarmStatus_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithFireAlarmFleet(t, true)
 	// Seed the simulator's fire alarm state.
 	sim.status = fleet.FireAlarmStatus{IsFire: true, ChangedAt: "2025-01-01T10:00:00Z"}
@@ -165,9 +169,7 @@ func TestApiFireAlarmStatus_HappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	var resp map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	testutil.MustNoErr(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode")
 	if resp["is_fire"] != true {
 		t.Errorf("is_fire: got %v, want true", resp["is_fire"])
 	}
@@ -179,6 +181,7 @@ func TestApiFireAlarmStatus_HappyPath(t *testing.T) {
 // TestApiFireAlarmStatus_BackendError pins the bad-gateway path: a controller
 // error is forwarded as 502.
 func TestApiFireAlarmStatus_BackendError(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithFireAlarmFleet(t, true)
 	sim.getErr = errStub("vendor unavailable")
 
@@ -194,6 +197,7 @@ func TestApiFireAlarmStatus_BackendError(t *testing.T) {
 // TestApiFireAlarmTrigger_DisabledReturns404 pins the feature-gate on the
 // write path.
 func TestApiFireAlarmTrigger_DisabledReturns404(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 
 	rec := postJSON(t, h.apiFireAlarmTrigger, "/api/fire-alarm/trigger",
@@ -205,6 +209,7 @@ func TestApiFireAlarmTrigger_DisabledReturns404(t *testing.T) {
 
 // TestApiFireAlarmTrigger_InvalidJSON pins the 400 on bad body.
 func TestApiFireAlarmTrigger_InvalidJSON(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithFireAlarmFleet(t, true)
 	rec := postRaw(t, h.apiFireAlarmTrigger, "/api/fire-alarm/trigger", []byte("not-json"))
 	if rec.Code != http.StatusBadRequest {
@@ -215,6 +220,7 @@ func TestApiFireAlarmTrigger_InvalidJSON(t *testing.T) {
 // TestApiFireAlarmTrigger_BackendNotSupported pins the 501 path when the
 // backend doesn't satisfy FireAlarmController.
 func TestApiFireAlarmTrigger_BackendNotSupported(t *testing.T) {
+	t.Parallel()
 	h, _ := testHandlers(t)
 	cfg := h.engine.AppConfig()
 	cfg.Lock()
@@ -232,6 +238,7 @@ func TestApiFireAlarmTrigger_BackendNotSupported(t *testing.T) {
 // forwards the (on, autoResume) pair to the controller, writes an audit row,
 // and returns {"status":"ok"}.
 func TestApiFireAlarmTrigger_HappyPath(t *testing.T) {
+	t.Parallel()
 	h, db, sim := testHandlersWithFireAlarmFleet(t, true)
 
 	rec := postJSON(t, h.apiFireAlarmTrigger, "/api/fire-alarm/trigger",
@@ -267,6 +274,7 @@ func TestApiFireAlarmTrigger_HappyPath(t *testing.T) {
 // TestApiFireAlarmTrigger_ClearsTheAlarm pins the off path: on=false goes to
 // SetFireAlarm with autoResume=false and writes a "cleared" audit row.
 func TestApiFireAlarmTrigger_ClearsTheAlarm(t *testing.T) {
+	t.Parallel()
 	h, db, sim := testHandlersWithFireAlarmFleet(t, true)
 
 	rec := postJSON(t, h.apiFireAlarmTrigger, "/api/fire-alarm/trigger",
@@ -295,6 +303,7 @@ func TestApiFireAlarmTrigger_ClearsTheAlarm(t *testing.T) {
 // TestApiFireAlarmTrigger_BackendError pins the 502 propagation when the
 // controller returns an error.
 func TestApiFireAlarmTrigger_BackendError(t *testing.T) {
+	t.Parallel()
 	h, _, sim := testHandlersWithFireAlarmFleet(t, true)
 	sim.setErr = errStub("vendor rejected")
 

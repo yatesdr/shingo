@@ -23,6 +23,7 @@ func feedAll(d *debouncer, samples []bool) []struct {
 }
 
 func TestDebounceColdStartHoldsUntilOnThresholdHit(t *testing.T) {
+	t.Parallel()
 	// 2-of-3 on, 3-of-3 off. First occupied sample must NOT emit —
 	// needs two consecutive.
 	d := newDebouncer(2, 3)
@@ -41,6 +42,7 @@ func TestDebounceColdStartHoldsUntilOnThresholdHit(t *testing.T) {
 }
 
 func TestDebounceAsymmetricThresholds(t *testing.T) {
+	t.Parallel()
 	// 2-of-3 on, 3-of-3 off. Validate that on takes fewer samples
 	// than off (devA's design intent).
 	d := newDebouncer(2, 3)
@@ -66,6 +68,7 @@ func TestDebounceAsymmetricThresholds(t *testing.T) {
 }
 
 func TestDebounceTransientFlicker(t *testing.T) {
+	t.Parallel()
 	// A stable ON stream interrupted by a single empty should NOT
 	// cause an off emit — the off threshold of 3 protects against it.
 	d := newDebouncer(2, 3)
@@ -82,6 +85,7 @@ func TestDebounceTransientFlicker(t *testing.T) {
 }
 
 func TestDebounceOffRequiresConsecutive(t *testing.T) {
+	t.Parallel()
 	d := newDebouncer(2, 3)
 	d.feed(true)
 	d.feed(true) // state=on
@@ -101,6 +105,7 @@ func TestDebounceOffRequiresConsecutive(t *testing.T) {
 }
 
 func TestDebounceForceOnOverridesState(t *testing.T) {
+	t.Parallel()
 	d := newDebouncer(2, 3)
 
 	// From unknown: forceOn flips to On.
@@ -117,6 +122,7 @@ func TestDebounceForceOnOverridesState(t *testing.T) {
 }
 
 func TestDebounceForceOnFromOff(t *testing.T) {
+	t.Parallel()
 	d := newDebouncer(2, 3)
 	d.feed(false)
 	d.feed(false)
@@ -130,6 +136,7 @@ func TestDebounceForceOnFromOff(t *testing.T) {
 }
 
 func TestDebounceNoSpuriousEmitOnRepeatedSameState(t *testing.T) {
+	t.Parallel()
 	d := newDebouncer(2, 3)
 	d.feed(true)
 	d.feed(true) // state=on, changed=true

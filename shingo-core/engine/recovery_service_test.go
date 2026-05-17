@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/fleet/simulator"
 	"shingocore/store/orders"
 )
@@ -20,6 +21,7 @@ import (
 // ── newRecoveryService ──────────────────────────────────────────────
 
 func TestNewRecoveryService_WiresEngine(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 	svc := newRecoveryService(eng)
@@ -39,6 +41,7 @@ func TestNewRecoveryService_WiresEngine(t *testing.T) {
 // the order's completed_at was set. Also verifies a recovery_actions
 // audit row landed.
 func TestReapplyOrderCompletion_Success(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -55,16 +58,10 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 		DeliveryNode: lineNode.Name,
 		BinID:        &bin.ID,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.ClaimBin(bin.ID, order.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim bin")
 
-	if err := eng.Recovery().ReapplyOrderCompletion(order.ID, "op-recovery"); err != nil {
-		t.Fatalf("ReapplyOrderCompletion: %v", err)
-	}
+	testutil.MustNoErr(t, eng.Recovery().ReapplyOrderCompletion(order.ID, "op-recovery"), "ReapplyOrderCompletion")
 
 	// Order completed_at set.
 	got, err := db.GetOrder(order.ID)
@@ -101,6 +98,7 @@ func TestReapplyOrderCompletion_Success(t *testing.T) {
 }
 
 func TestReapplyOrderCompletion_RejectsAlreadyCompleted(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -117,9 +115,7 @@ func TestReapplyOrderCompletion_RejectsAlreadyCompleted(t *testing.T) {
 		BinID:        &bin.ID,
 		CompletedAt:  &now,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	// Force completed_at via direct update (CreateOrder drops it).
 	if _, err := db.Exec(`UPDATE orders SET completed_at = NOW() WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("set completed_at: %v", err)
@@ -135,6 +131,7 @@ func TestReapplyOrderCompletion_RejectsAlreadyCompleted(t *testing.T) {
 }
 
 func TestReapplyOrderCompletion_RejectsMissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -148,6 +145,7 @@ func TestReapplyOrderCompletion_RejectsMissingOrder(t *testing.T) {
 }
 
 func TestReapplyOrderCompletion_RejectsNoBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -159,9 +157,7 @@ func TestReapplyOrderCompletion_RejectsNoBin(t *testing.T) {
 		Status:       "confirmed",
 		DeliveryNode: "LINE1-IN",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	err := eng.Recovery().ReapplyOrderCompletion(order.ID, "op")
 	if err == nil {
@@ -178,6 +174,7 @@ func TestReapplyOrderCompletion_RejectsNoBin(t *testing.T) {
 // claiming order is cancelled. Engine pass-through (Engine.ReleaseTerminalBinClaim)
 // tests the same path — we call it directly to also exercise recovery.go.
 func TestReleaseTerminalBinClaim_Success(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -190,19 +187,11 @@ func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 		Status:    "cancelled",
 		BinID:     &bin.ID,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, "cancelled", "seed"); err != nil {
-		t.Fatalf("cancel order: %v", err)
-	}
-	if err := db.ClaimBin(bin.ID, order.ID); err != nil {
-		t.Fatalf("claim bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, "cancelled", "seed"), "cancel order")
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim bin")
 
-	if err := eng.ReleaseTerminalBinClaim(bin.ID, "op-term"); err != nil {
-		t.Fatalf("ReleaseTerminalBinClaim: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReleaseTerminalBinClaim(bin.ID, "op-term"), "ReleaseTerminalBinClaim")
 
 	gotBin, _ := db.GetBin(bin.ID)
 	if gotBin.ClaimedBy != nil {
@@ -222,6 +211,7 @@ func TestReleaseTerminalBinClaim_Success(t *testing.T) {
 }
 
 func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -234,12 +224,8 @@ func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 		Status:    "dispatched", // non-terminal
 		BinID:     &bin.ID,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.ClaimBin(bin.ID, order.ID); err != nil {
-		t.Fatalf("claim: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, order.ID), "claim")
 
 	if err := eng.Recovery().ReleaseTerminalBinClaim(bin.ID, "op"); err == nil {
 		t.Fatal("expected refusal to release active claim")
@@ -254,6 +240,7 @@ func TestReleaseTerminalBinClaim_RefusesActiveClaim(t *testing.T) {
 // ── ReleaseStagedBin ────────────────────────────────────────────────
 
 func TestReleaseStagedBin_Success(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -261,13 +248,9 @@ func TestReleaseStagedBin_Success(t *testing.T) {
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-STAGED")
 	// Stage the bin so its status is "staged".
 	future := time.Now().Add(1 * time.Hour)
-	if err := db.StageBin(bin.ID, &future); err != nil {
-		t.Fatalf("stage bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.StageBin(bin.ID, &future), "stage bin")
 
-	if err := eng.Recovery().ReleaseStagedBin(bin.ID, "op-unstage"); err != nil {
-		t.Fatalf("ReleaseStagedBin: %v", err)
-	}
+	testutil.MustNoErr(t, eng.Recovery().ReleaseStagedBin(bin.ID, "op-unstage"), "ReleaseStagedBin")
 
 	gotBin, _ := db.GetBin(bin.ID)
 	if gotBin.Status == "staged" {
@@ -287,6 +270,7 @@ func TestReleaseStagedBin_Success(t *testing.T) {
 }
 
 func TestReleaseStagedBin_RejectsNonStaged(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -304,6 +288,7 @@ func TestReleaseStagedBin_RejectsNonStaged(t *testing.T) {
 }
 
 func TestReleaseStagedBin_MissingBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -316,6 +301,7 @@ func TestReleaseStagedBin_MissingBin(t *testing.T) {
 // ── CancelStuckOrder ────────────────────────────────────────────────
 
 func TestCancelStuckOrder_Success(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-A", storageNode.ID, "BIN-STUCK")
@@ -332,9 +318,7 @@ func TestCancelStuckOrder_Success(t *testing.T) {
 		t.Fatalf("seed CreateDirectOrder: %v", err)
 	}
 
-	if err := eng.CancelStuckOrder(res.OrderID, "recovery-op"); err != nil {
-		t.Fatalf("CancelStuckOrder: %v", err)
-	}
+	testutil.MustNoErr(t, eng.CancelStuckOrder(res.OrderID, "recovery-op"), "CancelStuckOrder")
 
 	got, err := db.GetOrder(res.OrderID)
 	if err != nil {
@@ -357,6 +341,7 @@ func TestCancelStuckOrder_Success(t *testing.T) {
 }
 
 func TestCancelStuckOrder_RejectsTerminal(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	eng := newTestEngine(t, db, simulator.New())
@@ -367,9 +352,7 @@ func TestCancelStuckOrder_RejectsTerminal(t *testing.T) {
 		OrderType: "retrieve",
 		Status:    "confirmed",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	err := eng.Recovery().CancelStuckOrder(order.ID, "op")
 	if err == nil {
@@ -381,6 +364,7 @@ func TestCancelStuckOrder_RejectsTerminal(t *testing.T) {
 }
 
 func TestCancelStuckOrder_MissingOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	eng := newTestEngine(t, db, simulator.New())
 
@@ -393,6 +377,7 @@ func TestCancelStuckOrder_MissingOrder(t *testing.T) {
 // --- RecoverFaultedOrder ---
 
 func TestRecoverFaultedOrder_Success(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-FT", storageNode.ID, "BIN-FT-1")
@@ -419,9 +404,7 @@ func TestRecoverFaultedOrder_Success(t *testing.T) {
 		t.Fatalf("order status = %q, want faulted before recovery", got.Status)
 	}
 
-	if err := eng.RecoverFaultedOrder(res.OrderID, "op-recovery"); err != nil {
-		t.Fatalf("RecoverFaultedOrder: %v", err)
-	}
+	testutil.MustNoErr(t, eng.RecoverFaultedOrder(res.OrderID, "op-recovery"), "RecoverFaultedOrder")
 
 	got, _ = db.GetOrder(res.OrderID)
 	if got.Status != "in_transit" {
@@ -441,6 +424,7 @@ func TestRecoverFaultedOrder_Success(t *testing.T) {
 }
 
 func TestRecoverFaultedOrder_RejectsNonFaulted(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-FT2", storageNode.ID, "BIN-FT-2")
@@ -468,6 +452,7 @@ func TestRecoverFaultedOrder_RejectsNonFaulted(t *testing.T) {
 // --- ReissueTerminate ---
 
 func TestReissueTerminate_Success(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-RT", storageNode.ID, "BIN-RT-1")
@@ -490,13 +475,9 @@ func TestReissueTerminate_Success(t *testing.T) {
 
 	// Manually fail the order to simulate grace-expiry terminal transition
 	got, _ := db.GetOrder(res.OrderID)
-	if err := eng.dispatcher.Lifecycle().Fail(got, got.StationID, "grace_timeout", "test grace expiry"); err != nil {
-		t.Fatalf("fail order: %v", err)
-	}
+	testutil.MustNoErr(t, eng.dispatcher.Lifecycle().Fail(got, got.StationID, "grace_timeout", "test grace expiry"), "fail order")
 
-	if err := eng.ReissueTerminate(res.OrderID, "op-retry"); err != nil {
-		t.Fatalf("ReissueTerminate: %v", err)
-	}
+	testutil.MustNoErr(t, eng.ReissueTerminate(res.OrderID, "op-retry"), "ReissueTerminate")
 
 	acts, _ := db.ListRecoveryActions(10)
 	found := false
@@ -511,6 +492,7 @@ func TestReissueTerminate_Success(t *testing.T) {
 }
 
 func TestReissueTerminate_RejectsNonFailed(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, lineNode, _ := setupTestData(t, db)
 	createTestBinAtNode(t, db, "PART-RT2", storageNode.ID, "BIN-RT-2")

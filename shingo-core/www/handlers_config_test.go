@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"shingo/protocol/debuglog"
+	"shingo/protocol/testutil"
 	"shingocore/config"
 	"shingocore/engine"
 	"shingocore/fleet/simulator"
@@ -43,9 +44,7 @@ func testHandlersWithConfigPath(t *testing.T) (*Handlers, *store.DB, string) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
 	// Pre-write so that Save's WriteFile works.
-	if err := os.WriteFile(cfgPath, []byte("{}"), 0644); err != nil {
-		t.Fatalf("seed config file: %v", err)
-	}
+	testutil.MustNoErr(t, os.WriteFile(cfgPath, []byte("{}"), 0644), "seed config file")
 
 	eng := engine.New(engine.Config{
 		AppConfig:  cfg,
@@ -79,6 +78,7 @@ func testHandlersWithConfigPath(t *testing.T) (*Handlers, *store.DB, string) {
 // --- handleConfig (page render) ---------------------------------------------
 
 func TestHandleConfig_RendersHTML(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/config", nil)
@@ -97,6 +97,7 @@ func TestHandleConfig_RendersHTML(t *testing.T) {
 }
 
 func TestHandleConfig_SavedBanner(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/config?saved=database", nil)
@@ -115,6 +116,7 @@ func TestHandleConfig_SavedBanner(t *testing.T) {
 // --- handleConfigSave -------------------------------------------------------
 
 func TestHandleConfigSave_DatabaseSection(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	form := url.Values{}
@@ -157,6 +159,7 @@ func TestHandleConfigSave_DatabaseSection(t *testing.T) {
 }
 
 func TestHandleConfigSave_FleetSection(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	form := url.Values{}
@@ -177,6 +180,7 @@ func TestHandleConfigSave_FleetSection(t *testing.T) {
 }
 
 func TestHandleConfigSave_MessagingSection(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	form := url.Values{}
@@ -210,6 +214,7 @@ func TestHandleConfigSave_MessagingSection(t *testing.T) {
 }
 
 func TestHandleConfigSave_FireAlarmSection(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	form := url.Values{}
@@ -232,6 +237,7 @@ func TestHandleConfigSave_FireAlarmSection(t *testing.T) {
 }
 
 func TestHandleConfigSave_UnknownSection(t *testing.T) {
+	t.Parallel()
 	h, _, _ := testHandlersWithConfigPath(t)
 
 	form := url.Values{}
@@ -247,15 +253,12 @@ func TestHandleConfigSave_UnknownSection(t *testing.T) {
 }
 
 func TestHandleConfigSave_InvalidConfigPathReturns500(t *testing.T) {
+	t.Parallel()
 	h, _, cfgPath := testHandlersWithConfigPath(t)
 	// Make the config path unwritable by removing it and putting a directory
 	// in its place — Save's WriteFile will then fail.
-	if err := os.Remove(cfgPath); err != nil {
-		t.Fatalf("remove cfg file: %v", err)
-	}
-	if err := os.Mkdir(cfgPath, 0755); err != nil {
-		t.Fatalf("mkdir over cfg path: %v", err)
-	}
+	testutil.MustNoErr(t, os.Remove(cfgPath), "remove cfg file")
+	testutil.MustNoErr(t, os.Mkdir(cfgPath, 0755), "mkdir over cfg path")
 
 	form := url.Values{}
 	form.Set("section", "fire_alarm")

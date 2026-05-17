@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"shingo/protocol/testutil"
 	"shingocore/store"
 	"shingocore/store/orders"
 )
@@ -42,6 +43,7 @@ func newReconService(t *testing.T, db *store.DB) *ReconciliationService {
 // ── constructor ─────────────────────────────────────────────────────
 
 func TestNewReconciliationService_WiresDeps(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconciliationService(db, t.Logf)
 	if svc == nil {
@@ -61,6 +63,7 @@ func TestNewReconciliationService_WiresDeps(t *testing.T) {
 // ── Summary — fresh DB ──────────────────────────────────────────────
 
 func TestReconciliationService_Summary_FreshDB(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
 	summary, err := svc.Summary()
@@ -87,6 +90,7 @@ func TestReconciliationService_Summary_FreshDB(t *testing.T) {
 // ── Summary — degraded by stuck order ───────────────────────────────
 
 func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -102,9 +106,7 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 		SourceNode:   "STORAGE-A1",
 		DeliveryNode: "LINE1-IN",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate order: %v", err)
 	}
@@ -124,13 +126,12 @@ func TestReconciliationService_Summary_StuckOrderDegrades(t *testing.T) {
 // ── Summary — critical by dead letter ───────────────────────────────
 
 func TestReconciliationService_Summary_DeadLetterCritical(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
 
 	// Enqueue one outbox row and push it past MaxOutboxRetries.
-	if err := db.EnqueueOutbox("t1", []byte(`{"msg":1}`), "test.event", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, db.EnqueueOutbox("t1", []byte(`{"msg":1}`), "test.event", "line-1"), "enqueue")
 	// Fetch its ID — EnqueueOutbox doesn't return one.
 	pending, err := db.ListPendingOutbox(10)
 	if err != nil {
@@ -141,9 +142,7 @@ func TestReconciliationService_Summary_DeadLetterCritical(t *testing.T) {
 	}
 	id := pending[0].ID
 	for i := 0; i < store.MaxOutboxRetries; i++ {
-		if err := db.IncrementOutboxRetries(id); err != nil {
-			t.Fatalf("increment: %v", err)
-		}
+		testutil.MustNoErr(t, db.IncrementOutboxRetries(id), "increment")
 	}
 
 	summary, err := svc.Summary()
@@ -161,6 +160,7 @@ func TestReconciliationService_Summary_DeadLetterCritical(t *testing.T) {
 // ── ListAnomalies ───────────────────────────────────────────────────
 
 func TestReconciliationService_ListAnomalies_Empty(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
 	anomalies, err := svc.ListAnomalies()
@@ -173,6 +173,7 @@ func TestReconciliationService_ListAnomalies_Empty(t *testing.T) {
 }
 
 func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -183,9 +184,7 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 		OrderType: "retrieve",
 		Status:    "dispatched",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
@@ -213,6 +212,7 @@ func TestReconciliationService_ListAnomalies_StuckOrder(t *testing.T) {
 }
 
 func TestReconciliationService_ListAnomalies_ExpiredStagedBin(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	storageNode, _, bp := setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -220,9 +220,7 @@ func TestReconciliationService_ListAnomalies_ExpiredStagedBin(t *testing.T) {
 	bin := createTestBinAtNode(t, db, bp.Code, storageNode.ID, "STAGED-1")
 	// Stage the bin with an already-past expiration. StageBin uses the ts arg.
 	past := time.Now().Add(-10 * time.Minute)
-	if err := db.StageBin(bin.ID, &past); err != nil {
-		t.Fatalf("stage bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.StageBin(bin.ID, &past), "stage bin")
 
 	anomalies, err := svc.ListAnomalies()
 	if err != nil {
@@ -246,12 +244,11 @@ func TestReconciliationService_ListAnomalies_ExpiredStagedBin(t *testing.T) {
 // ── RequeueOutbox + ListDeadLetterOutbox ────────────────────────────
 
 func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
 
-	if err := db.EnqueueOutbox("t1", []byte(`{"msg":"dl"}`), "test", "line-1"); err != nil {
-		t.Fatalf("enqueue: %v", err)
-	}
+	testutil.MustNoErr(t, db.EnqueueOutbox("t1", []byte(`{"msg":"dl"}`), "test", "line-1"), "enqueue")
 	pending, err := db.ListPendingOutbox(10)
 	if err != nil {
 		t.Fatalf("list pending: %v", err)
@@ -261,9 +258,7 @@ func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
 	}
 	id := pending[0].ID
 	for i := 0; i < store.MaxOutboxRetries; i++ {
-		if err := db.IncrementOutboxRetries(id); err != nil {
-			t.Fatalf("increment: %v", err)
-		}
+		testutil.MustNoErr(t, db.IncrementOutboxRetries(id), "increment")
 	}
 
 	dead, err := svc.ListDeadLetterOutbox(10)
@@ -275,9 +270,7 @@ func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
 	}
 
 	// RequeueOutbox zeros the retries — the row moves off the dead-letter list.
-	if err := svc.RequeueOutbox(id); err != nil {
-		t.Fatalf("RequeueOutbox: %v", err)
-	}
+	testutil.MustNoErr(t, svc.RequeueOutbox(id), "RequeueOutbox")
 	dead2, err := svc.ListDeadLetterOutbox(10)
 	if err != nil {
 		t.Fatalf("ListDeadLetterOutbox after requeue: %v", err)
@@ -298,6 +291,7 @@ func TestReconciliationService_ListDeadLetterAndRequeue(t *testing.T) {
 // ── ListRecoveryActions ─────────────────────────────────────────────
 
 func TestReconciliationService_ListRecoveryActions(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
 
@@ -312,12 +306,8 @@ func TestReconciliationService_ListRecoveryActions(t *testing.T) {
 
 	// Seed two rows directly via the store — the service should surface both,
 	// newest-first (DESC by id per the store query).
-	if err := db.RecordRecoveryAction("release_claim", "order", 1, "first", "sys"); err != nil {
-		t.Fatalf("record 1: %v", err)
-	}
-	if err := db.RecordRecoveryAction("auto_confirm_delivered", "order", 2, "second", "sys"); err != nil {
-		t.Fatalf("record 2: %v", err)
-	}
+	testutil.MustNoErr(t, db.RecordRecoveryAction("release_claim", "order", 1, "first", "sys"), "record 1")
+	testutil.MustNoErr(t, db.RecordRecoveryAction("auto_confirm_delivered", "order", 2, "second", "sys"), "record 2")
 
 	acts, err = svc.ListRecoveryActions(10)
 	if err != nil {
@@ -344,6 +334,7 @@ func TestReconciliationService_ListRecoveryActions(t *testing.T) {
 // ── AutoConfirmStuckDeliveredOrders ─────────────────────────────────
 
 func TestReconciliationService_AutoConfirm_NoTimeout(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
 	// timeout <= 0 is a no-op and must never touch the DB.
@@ -364,6 +355,7 @@ func TestReconciliationService_AutoConfirm_NoTimeout(t *testing.T) {
 }
 
 func TestReconciliationService_AutoConfirm_NothingDelivered(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
 	// Fresh DB — no delivered rows, must return 0.
@@ -377,6 +369,7 @@ func TestReconciliationService_AutoConfirm_NothingDelivered(t *testing.T) {
 }
 
 func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -390,9 +383,7 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 		SourceNode:   "STORAGE-A1",
 		DeliveryNode: "LINE1-IN",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
@@ -451,6 +442,7 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 }
 
 func TestReconciliationService_AutoConfirm_SkipsFreshDelivered(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -464,9 +456,7 @@ func TestReconciliationService_AutoConfirm_SkipsFreshDelivered(t *testing.T) {
 		SourceNode:   "STORAGE-A1",
 		DeliveryNode: "LINE1-IN",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 
 	n, err := svc.AutoConfirmStuckDeliveredOrders(30 * time.Minute)
 	if err != nil {
@@ -489,6 +479,7 @@ func TestReconciliationService_AutoConfirm_SkipsFreshDelivered(t *testing.T) {
 }
 
 func TestReconciliationService_AutoConfirm_SkipsNonDelivered(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
@@ -500,9 +491,7 @@ func TestReconciliationService_AutoConfirm_SkipsNonDelivered(t *testing.T) {
 		OrderType: "retrieve",
 		Status:    "in_transit",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
@@ -517,6 +506,7 @@ func TestReconciliationService_AutoConfirm_SkipsNonDelivered(t *testing.T) {
 }
 
 func TestReconciliationService_AutoConfirm_NoHookIsSafe(t *testing.T) {
+	t.Parallel()
 	// If onOrderCompleted is nil (e.g. service built outside Engine), the
 	// auto-confirm path must skip the hook call without panicking.
 	db := testDB(t)
@@ -534,9 +524,7 @@ func TestReconciliationService_AutoConfirm_NoHookIsSafe(t *testing.T) {
 		SourceNode:   "STORAGE-A1",
 		DeliveryNode: "LINE1-IN",
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
 	if _, err := db.Exec(`UPDATE orders SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, order.ID); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
@@ -556,6 +544,7 @@ func TestReconciliationService_AutoConfirm_NoHookIsSafe(t *testing.T) {
 // promptly when stopCh is closed. Guards against the goroutine leak
 // that would happen if the select missed a shutdown.
 func TestReconciliationService_Loop_StopsOnSignal(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	svc := newReconService(t, db)
 

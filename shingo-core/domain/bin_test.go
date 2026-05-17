@@ -10,6 +10,7 @@ import (
 func strPtr(s string) *string { return &s }
 
 func TestBin_ParseManifest_Nil(t *testing.T) {
+	t.Parallel()
 	b := &Bin{Manifest: nil}
 	m, err := b.ParseManifest()
 	if err != nil {
@@ -24,6 +25,7 @@ func TestBin_ParseManifest_Nil(t *testing.T) {
 }
 
 func TestBin_ParseManifest_Empty(t *testing.T) {
+	t.Parallel()
 	b := &Bin{Manifest: strPtr("")}
 	m, err := b.ParseManifest()
 	if err != nil {
@@ -38,6 +40,7 @@ func TestBin_ParseManifest_Empty(t *testing.T) {
 }
 
 func TestBin_ParseManifest_Single(t *testing.T) {
+	t.Parallel()
 	raw := `{"items":[{"catid":"A","qty":5}]}`
 	b := &Bin{Manifest: &raw}
 
@@ -64,6 +67,7 @@ func TestBin_ParseManifest_Single(t *testing.T) {
 }
 
 func TestBin_ParseManifest_Multi(t *testing.T) {
+	t.Parallel()
 	raw := `{
 		"items": [
 			{"catid":"A","qty":1},
@@ -104,6 +108,7 @@ func TestBin_ParseManifest_Multi(t *testing.T) {
 }
 
 func TestBin_ParseManifest_Invalid(t *testing.T) {
+	t.Parallel()
 	raw := "not json"
 	b := &Bin{Manifest: &raw}
 

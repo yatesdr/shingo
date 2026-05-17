@@ -3,6 +3,7 @@ package www
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/service"
 	"shingoedge/store/processes"
 )
@@ -69,9 +70,7 @@ func TestBuildChangeoverViewData_ActiveChangeoverWithPendingNodeTasks(t *testing
 
 	// Set the active style on the process so CurrentStyleName populates.
 	activeStyle := fromStyleID
-	if err := testDB.SetActiveStyle(pid, &activeStyle); err != nil {
-		t.Fatalf("SetActiveStyle: %v", err)
-	}
+	testutil.MustNoErr(t, testDB.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
 
 	// Seed a station + process node so the node task can attach to a station.
 	stationID := seedOperatorStation(t, pid, "CO-CODE-1", "ChangeoverStation")
@@ -135,9 +134,7 @@ func TestBuildChangeoverViewData_AllSwitchedTasksMarkComplete(t *testing.T) {
 	from := seedStyle(t, "From2", pid)
 	to := seedStyle(t, "To2", pid)
 	activeStyle := from
-	if err := testDB.SetActiveStyle(pid, &activeStyle); err != nil {
-		t.Fatalf("SetActiveStyle: %v", err)
-	}
+	testutil.MustNoErr(t, testDB.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
 	stationID := seedOperatorStation(t, pid, "CO-CODE-2", "Station2")
 	_ = seedProcessNode(t, pid, stationID, "CO-NODE-B")
 
@@ -178,9 +175,7 @@ func TestBuildChangeoverViewData_CentralNodeTasksWhenNoStation(t *testing.T) {
 	from := seedStyle(t, "FromC", pid)
 	to := seedStyle(t, "ToC", pid)
 	activeStyle := from
-	if err := testDB.SetActiveStyle(pid, &activeStyle); err != nil {
-		t.Fatalf("SetActiveStyle: %v", err)
-	}
+	testutil.MustNoErr(t, testDB.SetActiveStyle(pid, &activeStyle), "SetActiveStyle")
 	// Process node with stationID=0 → OperatorStationID nil.
 	_ = seedProcessNode(t, pid, 0, "CO-CENTRAL-A")
 

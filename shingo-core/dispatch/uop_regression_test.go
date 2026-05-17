@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/testutil"
 	"shingocore/internal/testdb"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
@@ -61,6 +62,7 @@ import (
 // stale-manifest incidents the late-bind manifest sync was supposed to
 // close — the existing test was too weak to fail on the real bug.
 func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
 
@@ -110,17 +112,14 @@ func TestRegression_15_PartialBackReconstructsManifest(t *testing.T) {
 // on the fallback path too — otherwise we patch one path and leave the
 // safety-net path stale.
 func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
+	t.Parallel()
 	db := testDB(t)
 	_, lineNode, bp := setupTestData(t, db)
 
 	bin := &bins.Bin{BinTypeID: 1, Label: "BIN-REG15-FB-PART", NodeID: &lineNode.ID, Status: "staged"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 	preManifest := `{"items":[{"catid":"` + bp.Code + `","qty":100}]}`
-	if err := db.SetBinManifest(bin.ID, preManifest, bp.Code, 100); err != nil {
-		t.Fatalf("set manifest: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetBinManifest(bin.ID, preManifest, bp.Code, 100), "set manifest")
 
 	order := &orders.Order{
 		EdgeUUID:     "uuid-reg15-fb-partial",
@@ -133,12 +132,8 @@ func TestRegression_15_PartialBackFallbackReconstructsManifest(t *testing.T) {
 		PayloadCode:  bp.Code,
 		StepsJSON:    `[{"action":"wait","node":"` + lineNode.Name + `"},{"action":"pickup","node":"` + lineNode.Name + `"},{"action":"dropoff","node":"OUTBOUND-DEST"}]`,
 	}
-	if err := db.CreateOrder(order); err != nil {
-		t.Fatalf("create order: %v", err)
-	}
-	if err := db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: regression #15 fallback"); err != nil {
-		t.Fatalf("set order staged: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateOrder(order), "create order")
+	testutil.MustNoErr(t, db.UpdateOrderStatus(order.ID, string(StatusStaged), "test: regression #15 fallback"), "set order staged")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 
@@ -203,24 +198,16 @@ func TestRegression_ProduceIngestUsesRuntimeNotTemplate(t *testing.T) {
 	_, _, bp := setupTestData(t, db)
 
 	bp.UOPCapacity = 100
-	if err := db.UpdatePayload(bp); err != nil {
-		t.Fatalf("update payload uop capacity: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdatePayload(bp), "update payload uop capacity")
 
 	bt, _ := db.GetBinTypeByCode("DEFAULT")
-	if err := db.SetPayloadBinTypes(bp.ID, []int64{bt.ID}); err != nil {
-		t.Fatalf("set payload bin types: %v", err)
-	}
+	testutil.MustNoErr(t, db.SetPayloadBinTypes(bp.ID, []int64{bt.ID}), "set payload bin types")
 
 	produceNode := &nodes.Node{Name: "PRODUCE-RUN", Enabled: true}
-	if err := db.CreateNode(produceNode); err != nil {
-		t.Fatalf("create produce node: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateNode(produceNode), "create produce node")
 
 	bin := &bins.Bin{BinTypeID: bt.ID, Label: "BIN-RUN-1", NodeID: &produceNode.ID, Status: "available"}
-	if err := db.CreateBin(bin); err != nil {
-		t.Fatalf("create bin: %v", err)
-	}
+	testutil.MustNoErr(t, db.CreateBin(bin), "create bin")
 
 	d, _ := newTestDispatcher(t, db, testdb.NewTrackingBackend())
 

@@ -5,6 +5,7 @@ package service
 import (
 	"testing"
 
+	"shingo/protocol/testutil"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -39,6 +40,7 @@ func seedProcessStyle(t *testing.T, db *store.DB, procName, styleName string) (i
 // store/store_coverage_test.go.
 
 func TestChangeover_CreateAtomic(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewChangeoverService(db)
 
@@ -117,6 +119,7 @@ func TestChangeover_CreateAtomic(t *testing.T) {
 }
 
 func TestChangeover_StateTransitionsAndListing(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewChangeoverService(db)
 
@@ -129,9 +132,7 @@ func TestChangeover_StateTransitionsAndListing(t *testing.T) {
 	}
 
 	// In-flight state transitions.
-	if err := db.UpdateProcessChangeoverState(cid, "phase_3"); err != nil {
-		t.Fatalf("update state: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(cid, "phase_3"), "update state")
 
 	// Second changeover to test listing and exclusion-by-state.
 	cid2, _ := svc.Create(pid, &fromStyle, toStyle, "y", "", nil, nil, nil)
@@ -143,9 +144,7 @@ func TestChangeover_StateTransitionsAndListing(t *testing.T) {
 	}
 
 	// Mark first as completed → GetActive returns the remaining one only.
-	if err := db.UpdateProcessChangeoverState(cid, "completed"); err != nil {
-		t.Fatalf("complete: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(cid, "completed"), "complete")
 	active, err := db.GetActiveProcessChangeover(pid)
 	if err != nil {
 		t.Fatalf("get active after complete: %v", err)
@@ -168,6 +167,7 @@ func TestChangeover_StateTransitionsAndListing(t *testing.T) {
 }
 
 func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewChangeoverService(db)
 
@@ -195,9 +195,7 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get station task: %v", err)
 	}
-	if err := db.UpdateChangeoverStationTaskState(st.ID, "in_progress"); err != nil {
-		t.Fatalf("update station task: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateChangeoverStationTaskState(st.ID, "in_progress"), "update station task")
 	st2, _ := db.GetChangeoverStationTaskByStation(cid, sid)
 	if st2.State != "in_progress" {
 		t.Errorf("station task state = %q", st2.State)
@@ -208,16 +206,12 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get node task: %v", err)
 	}
-	if err := db.UpdateChangeoverNodeTaskState(nt.ID, "in_progress"); err != nil {
-		t.Fatalf("update node task: %v", err)
-	}
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(nt.ID, "in_progress"), "update node task")
 
 	// Link material orders.
 	orderA, _ := db.CreateOrder("next", "retrieve", &nid, false, 1, "", "", "", "", false, "")
 	orderB, _ := db.CreateOrder("old", "retrieve", &nid, false, 1, "", "", "", "", false, "")
-	if err := db.LinkChangeoverNodeOrders(nt.ID, &orderA, &orderB); err != nil {
-		t.Fatalf("link orders: %v", err)
-	}
+	testutil.MustNoErr(t, db.LinkChangeoverNodeOrders(nt.ID, &orderA, &orderB), "link orders")
 	nt2, _ := db.GetChangeoverNodeTaskByNode(cid, nid)
 	if nt2.State != "in_progress" {
 		t.Errorf("node task state = %q", nt2.State)
@@ -231,9 +225,7 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 
 	// Partial link (only old) — COALESCE keeps previous next.
 	orderC, _ := db.CreateOrder("old2", "retrieve", &nid, false, 1, "", "", "", "", false, "")
-	if err := db.LinkChangeoverNodeOrders(nt.ID, nil, &orderC); err != nil {
-		t.Fatalf("partial link: %v", err)
-	}
+	testutil.MustNoErr(t, db.LinkChangeoverNodeOrders(nt.ID, nil, &orderC), "partial link")
 	nt3, _ := db.GetChangeoverNodeTaskByNode(cid, nid)
 	if nt3.NextMaterialOrderID == nil || *nt3.NextMaterialOrderID != orderA {
 		t.Errorf("partial link: next should be preserved: %v", nt3.NextMaterialOrderID)

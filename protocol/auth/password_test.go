@@ -3,6 +3,7 @@ package auth
 import "testing"
 
 func TestCheckPassword(t *testing.T) {
+	t.Parallel()
 	hash, err := HashPassword("correct-password")
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
@@ -31,6 +32,7 @@ func TestCheckPassword(t *testing.T) {
 }
 
 func TestHashPassword(t *testing.T) {
+	t.Parallel()
 	hash, err := HashPassword("test-password")
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)

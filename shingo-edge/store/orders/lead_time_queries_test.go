@@ -85,6 +85,7 @@ func insertHistory(t *testing.T, db *sql.DB, rows ...orderHistoryRow) {
 // and 2 long-tail outliers at 10,800s (3 hours) — a mean would be
 // pulled to ~2400s; a median should land near 720s.
 func TestMedianL2LoadSeconds_AbsorbsOutliers(t *testing.T) {
+	t.Parallel()
 	db := openLeadTimeTestDB(t)
 
 	// 10 normal-time confirms with durations 700..790s (12 min ± a bit)
@@ -127,6 +128,7 @@ func TestMedianL2LoadSeconds_AbsorbsOutliers(t *testing.T) {
 // midpoint of the two middle values for even-length samples and the
 // single middle value for odd-length samples. Spot-check both shapes.
 func TestMedianL2LoadSeconds_EvenAndOdd(t *testing.T) {
+	t.Parallel()
 	dr := DateRange{
 		Start: time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
 		End:   time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
@@ -193,6 +195,7 @@ func TestMedianL2LoadSeconds_EvenAndOdd(t *testing.T) {
 // a known set of retrieve durations and checking p95 lands on the
 // expected value (not zero, not the wrong sample).
 func TestP95MarketToCellSeconds_ArgBinding(t *testing.T) {
+	t.Parallel()
 	db := openLeadTimeTestDB(t)
 
 	// 10 retrieves with linearly increasing durations: 10, 20, ..., 100 s.

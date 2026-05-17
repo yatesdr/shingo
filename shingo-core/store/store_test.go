@@ -14,6 +14,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"shingo/protocol/testutil"
 )
 
 // testDB creates a temporary PostgreSQL database via testcontainers for testing.
@@ -74,9 +75,7 @@ func testDB(t *testing.T) *DB {
 	t.Cleanup(func() { db.Close() })
 
 	// Verify connection
-	if err := db.Ping(); err != nil {
-		t.Fatalf("ping test db: %v", err)
-	}
+	testutil.MustNoErr(t, db.Ping(), "ping test db")
 	fmt.Println("test database ready")
 	return db
 }

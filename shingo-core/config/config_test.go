@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"shingo/protocol/testutil"
 )
 
 func TestDefaults_NonNil(t *testing.T) {
+	t.Parallel()
 	c := Defaults()
 	if c == nil {
 		t.Fatal("Defaults() returned nil")
@@ -50,6 +52,7 @@ func TestDefaults_NonNil(t *testing.T) {
 }
 
 func TestSaveAndLoad_Roundtrip(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "shingocore.yaml")
 
@@ -62,9 +65,7 @@ func TestSaveAndLoad_Roundtrip(t *testing.T) {
 	orig.Database.Postgres.Host = "db.example.com"
 	orig.RDS.BaseURL = "http://example:8080"
 
-	if err := orig.Save(path); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
+	testutil.MustNoErr(t, orig.Save(path), "Save")
 
 	loaded, err := Load(path)
 	if err != nil {
@@ -95,15 +96,14 @@ func TestSaveAndLoad_Roundtrip(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	var bare map[string]any
-	if err := yaml.Unmarshal(raw, &bare); err != nil {
-		t.Fatalf("written file is not valid YAML: %v", err)
-	}
+	testutil.MustNoErr(t, yaml.Unmarshal(raw, &bare), "written file is not valid YAML")
 	if _, ok := bare["web"]; !ok {
 		t.Errorf("YAML output missing top-level 'web' key; got keys %v", keysOf(bare))
 	}
 }
 
 func TestLoad_MissingFile_Behaviour(t *testing.T) {
+	t.Parallel()
 	// Note on intent: the implementation deliberately returns
 	// (Defaults(), nil) when the config file does not exist —
 	// see config.Load. The user-facing test brief asked for a
@@ -128,14 +128,13 @@ func TestLoad_MissingFile_Behaviour(t *testing.T) {
 }
 
 func TestLoad_InvalidYAML_Error(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")
 	// Note: config.Load uses yaml.Unmarshal, not encoding/json.
 	// "{not json" happens to be a string yaml.v3 will accept (single
 	// scalar). Use unambiguously-malformed YAML instead.
-	if err := os.WriteFile(path, []byte("web:\n  port: [unterminated\n"), 0644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	testutil.MustNoErr(t, os.WriteFile(path, []byte("web:\n  port: [unterminated\n"), 0644), "WriteFile")
 	cfg, err := Load(path)
 	if err == nil {
 		t.Fatalf("Load on malformed YAML returned nil error; cfg=%+v", cfg)
@@ -146,6 +145,7 @@ func TestLoad_InvalidYAML_Error(t *testing.T) {
 }
 
 func TestLockUnlock_Reentrancy(t *testing.T) {
+	t.Parallel()
 	c := Defaults()
 
 	// Hold the lock on the main goroutine, kick off a second goroutine
@@ -198,6 +198,7 @@ func TestLockUnlock_Reentrancy(t *testing.T) {
 // goroutines incrementing a shared counter under Lock/Unlock should
 // produce the exact final count with no data race (run with -race).
 func TestLockUnlock_ConcurrentCounters(t *testing.T) {
+	t.Parallel()
 	c := Defaults()
 
 	const goroutines = 50

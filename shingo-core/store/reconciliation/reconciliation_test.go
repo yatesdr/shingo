@@ -14,6 +14,7 @@ import (
 )
 
 func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	node := &nodes.Node{Name: "LINE-1", Enabled: true}
@@ -47,6 +48,7 @@ func TestCoverage_ListOrderCompletionAnomalies(t *testing.T) {
 }
 
 func TestCoverage_GetReconciliationSummary(t *testing.T) {
+	t.Parallel()
 	db := testdb.Open(t)
 
 	order := &orders.Order{EdgeUUID: "summary-order", StationID: "edge.1", OrderType: "retrieve", Status: "pending", Quantity: 1, PayloadDesc: "payload"}
