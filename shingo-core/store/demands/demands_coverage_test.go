@@ -214,7 +214,7 @@ func TestCoverage_SyncDemandRegistry(t *testing.T) {
 		{StationID: "line-1", CoreNodeName: "MS-A", Role: "consume", PayloadCode: "WIDGET-A", OutboundDest: "LINE1-IN"},
 		{StationID: "line-1", CoreNodeName: "MS-B", Role: "produce", PayloadCode: "WIDGET-B", OutboundDest: ""},
 	}
-	if err := demands.SyncRegistry(db.DB, "line-1", initial); err != nil {
+	if _, err := demands.SyncRegistry(db.DB, "line-1", initial); err != nil {
 		t.Fatalf("SyncRegistry initial: %v", err)
 	}
 
@@ -242,7 +242,7 @@ func TestCoverage_SyncDemandRegistry(t *testing.T) {
 	replacement := []demands.RegistryEntry{
 		{StationID: "line-1", CoreNodeName: "MS-Z", Role: "consume", PayloadCode: "WIDGET-Z", OutboundDest: ""},
 	}
-	if err := demands.SyncRegistry(db.DB, "line-1", replacement); err != nil {
+	if _, err := demands.SyncRegistry(db.DB, "line-1", replacement); err != nil {
 		t.Fatalf("SyncRegistry resync: %v", err)
 	}
 	after, err := demands.ListRegistry(db.DB)
@@ -259,7 +259,7 @@ func TestCoverage_SyncDemandRegistry(t *testing.T) {
 	other := []demands.RegistryEntry{
 		{StationID: "line-2", CoreNodeName: "MS-OTHER", Role: "consume", PayloadCode: "WIDGET-Y", OutboundDest: ""},
 	}
-	if err := demands.SyncRegistry(db.DB, "line-2", other); err != nil {
+	if _, err := demands.SyncRegistry(db.DB, "line-2", other); err != nil {
 		t.Fatalf("SyncRegistry other station: %v", err)
 	}
 	full, _ := demands.ListRegistry(db.DB)
@@ -302,6 +302,82 @@ func TestCoverage_LookupDemandRegistry(t *testing.T) {
 	}
 	if len(none) != 0 {
 		t.Errorf("miss returned %d entries, want 0", len(none))
+	}
+}
+
+// TestCoverage_SyncRegistry_ThresholdChangeDetection — SyncRegistry
+// returns a RegistryChange for any (loader, payload) whose
+// replenish_uop_threshold value moved. New rows (old=0 → new>0),
+// changed rows (old=X → new=Y), and deleted rows (old>0 → new=0) all
+// fire a change. Threshold-monitor consumes this to reset debounce
+// timers — the opt-in default depends on the registry-driven change
+// detection working correctly.
+func TestCoverage_SyncRegistry_ThresholdChangeDetection(t *testing.T) {
+	db := testdb.Open(t)
+
+	// First sync: introduce a binding with threshold > 0.
+	changes, err := demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
+		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
+	})
+	if err != nil {
+		t.Fatalf("SyncRegistry: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("changes len = %d, want 1 (new threshold binding)", len(changes))
+	}
+	if changes[0].OldThreshold != 0 || changes[0].NewThreshold != 10 {
+		t.Errorf("change = %+v, want old=0 new=10", changes[0])
+	}
+
+	// Re-sync with same threshold: no change.
+	changes, _ = demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
+		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
+	})
+	if len(changes) != 0 {
+		t.Errorf("re-sync with same threshold yielded %d changes, want 0", len(changes))
+	}
+
+	// Change the threshold value.
+	changes, _ = demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
+		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 25},
+	})
+	if len(changes) != 1 {
+		t.Fatalf("change-value sync yielded %d changes, want 1", len(changes))
+	}
+	if changes[0].OldThreshold != 10 || changes[0].NewThreshold != 25 {
+		t.Errorf("change = %+v, want old=10 new=25", changes[0])
+	}
+
+	// Remove the binding entirely — should surface as a change from 25→0.
+	changes, _ = demands.SyncRegistry(db.DB, "line-1", nil)
+	if len(changes) != 1 {
+		t.Fatalf("removal sync yielded %d changes, want 1", len(changes))
+	}
+	if changes[0].OldThreshold != 25 || changes[0].NewThreshold != 0 {
+		t.Errorf("change = %+v, want old=25 new=0", changes[0])
+	}
+}
+
+// TestCoverage_LookupThresholdsByPayload returns only the monitored
+// (threshold > 0) bindings. Opt-out rows (threshold = 0) are excluded
+// per the C-push contract — Core never monitors those pairs, Edge
+// owns them via the legacy bin-count path.
+func TestCoverage_LookupThresholdsByPayload(t *testing.T) {
+	db := testdb.Open(t)
+	demands.SyncRegistry(db.DB, "line-1", []demands.RegistryEntry{
+		{StationID: "line-1", CoreNodeName: "MS-A", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 10},
+		{StationID: "line-1", CoreNodeName: "MS-B", Role: "produce", PayloadCode: "P-1", ReplenishUOPThreshold: 0},
+		{StationID: "line-1", CoreNodeName: "MS-C", Role: "produce", PayloadCode: "P-2", ReplenishUOPThreshold: 5},
+	})
+	hits, err := demands.LookupThresholdsByPayload(db.DB, "P-1")
+	if err != nil {
+		t.Fatalf("LookupThresholdsByPayload: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Errorf("P-1 hits = %d, want 1 (opt-out row excluded)", len(hits))
+	}
+	if len(hits) > 0 && hits[0].CoreNodeName != "MS-A" {
+		t.Errorf("P-1 monitored binding = %s, want MS-A", hits[0].CoreNodeName)
 	}
 }
 

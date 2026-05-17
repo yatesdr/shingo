@@ -277,6 +277,19 @@ func (e *Engine) wireEventHandlers() {
 		e.handleKanbanDemand(ev)
 	}, EventBinUpdated)
 
+	// ── UOP-threshold replenishment monitor ─────────────────────────────
+	// Combined bin + bucket UOP per payload — fires LoopBelowThresholdSignal
+	// when a monitored (loader, payload) drops below its configured
+	// threshold. Bucket-apply events go through OnBucketApplied from the
+	// messaging layer; bin updates land via this subscription so cell-side
+	// consume ticks and loader-side bin moves both re-evaluate.
+	if e.thresholdMonitor != nil {
+		e.Events.SubscribeTypes(func(evt Event) {
+			ev := evt.Payload.(BinUpdatedEvent)
+			e.thresholdMonitor.handleBinUpdated(ev)
+		}, EventBinUpdated)
+	}
+
 	// â”€â”€ Count-group transitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	// When the countgroup runner detects a debounced occupancy change
 	// (or fires the RDS-down fail-safe), ship a CountGroupCommand to

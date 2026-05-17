@@ -112,6 +112,15 @@ func (h *CoreHandler) sendData(subject, stationID string, payload any) {
 	}
 }
 
+// SetThresholdMonitor wires the engine's UOP-threshold monitor into
+// the data service so claim-sync threshold changes reset debounce
+// timers and bucket-applied events drive re-evaluation. Optional;
+// callers that don't care about C-push (tests, embedded harnesses)
+// can skip this.
+func (h *CoreHandler) SetThresholdMonitor(tm ThresholdMonitor) {
+	h.dataService.SetThresholdMonitor(tm)
+}
+
 // Start begins the stale-edge detection goroutine.
 func (h *CoreHandler) Start() {
 	go h.staleEdgeLoop()
@@ -207,7 +216,7 @@ func (h *CoreHandler) staleEdgeLoop() {
 				// to an edge that isn't listening. The station's
 				// entries repopulate via ClaimSync when the edge
 				// re-registers, same path as cold boot.
-				if err := h.db.SyncDemandRegistry(sid, nil); err != nil {
+				if _, err := h.db.SyncDemandRegistry(sid, nil); err != nil {
 					log.Printf("core_handler: reap demand registry for %s: %v", sid, err)
 				}
 			}

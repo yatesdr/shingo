@@ -63,7 +63,15 @@ func (m *Mutator) Backfill(force bool) (int, error) {
 			if b.Qty <= 0 {
 				continue
 			}
-			m.acc.recordBucket(b.NodeID, b.PairKey, b.StyleID, b.PartNumber,
+			// Existing uop_backfill ships the bucket's current qty as a
+			// capture_fill — Core hasn't seen this bucket yet. Payload
+			// code isn't on the local Bucket row (lineside_buckets row
+			// is keyed on node + style + part_number only) so we ship
+			// empty here. Core's UPSERT keeps any previously-latched
+			// payload_code; going-forward capture_fill events from
+			// capture.go carry the resolved code from the order
+			// context, so the row self-heals on the first real delta.
+			m.acc.recordBucket(b.NodeID, b.PairKey, b.StyleID, b.PartNumber, "",
 				b.Qty, protocol.ReasonCaptureFill)
 			emitted++
 		}

@@ -213,8 +213,45 @@ CREATE TABLE IF NOT EXISTS style_node_claims (
     lineside_soft_threshold INTEGER NOT NULL DEFAULT 0,
     reuse_compatible_bins   INTEGER NOT NULL DEFAULT 0,
     auto_push               INTEGER NOT NULL DEFAULT 0,
+    -- UOP-threshold replenishment: tracks how reorder_point was set.
+    -- 'legacy' = default, never edited (silent-inert when 0).
+    -- 'manual' = engineer typed a value.
+    -- 'calculated' = applied from the unified calculator.
+    reorder_point_source    TEXT NOT NULL DEFAULT 'legacy',
     created_at              TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(style_id, core_node_name)
+);
+
+-- UOP-threshold replenishment (v6 C-push, opt-in):
+--   Per-(loader, payload) trigger value Core's threshold monitor
+--   compares against combined in-loop UOP (bins + buckets).
+--   PK is (core_node_name, payload_code) — the canonical cross-system
+--   identifier already used by style_node_claims, process_nodes, the
+--   protocol, and Core's demand_registry. Multi-cell plants sharing a
+--   loader end up with one row per binding, not per-Edge variants.
+--   A row with replenish_uop_threshold = 0 is treated identically to
+--   no row at all — Edge falls back to legacy bin-count, Core never
+--   monitors.
+CREATE TABLE IF NOT EXISTS loader_payload_thresholds (
+    core_node_name          TEXT    NOT NULL,
+    payload_code            TEXT    NOT NULL,
+    replenish_uop_threshold INTEGER NOT NULL DEFAULT 0,
+    source                  TEXT    NOT NULL DEFAULT 'legacy',
+        -- 'legacy' | 'manual' | 'calculated'
+    safety_factor           REAL    NOT NULL DEFAULT 1.5,
+    lookback_days           INTEGER NOT NULL DEFAULT 14,
+    threshold_calculated    INTEGER NOT NULL DEFAULT 0,
+    threshold_calculated_at TEXT,
+    threshold_confidence    TEXT    NOT NULL DEFAULT '',
+        -- 'HIGH' | 'MEDIUM' | 'LOW' | ''
+    overridden_inputs       TEXT    NOT NULL DEFAULT '',
+        -- Comma-separated list of calculator-input field names the
+        -- engineer overrode during the last Calculate that produced
+        -- the current threshold. Empty when no overrides OR when
+        -- source != 'calculated'. Example: 'l2_load_seconds,safety_factor'
+    updated_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_by              TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (core_node_name, payload_code)
 );
 
 CREATE TABLE IF NOT EXISTS process_changeovers (

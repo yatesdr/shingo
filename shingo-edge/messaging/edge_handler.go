@@ -20,10 +20,11 @@ type EdgeHandler struct {
 	onRegistered           func()
 	onRegisterReq          func()
 	onOrderStatuses        func([]protocol.OrderStatusSnapshot)
-	onNodeStructureChanged func()
-	onDemandSignal         func(*protocol.DemandSignal)
-	onCountGroupCommand    func(protocol.CountGroupCommand)
-	onBinPickedUp          func(*protocol.BinPickedUp)
+	onNodeStructureChanged   func()
+	onDemandSignal           func(*protocol.DemandSignal)
+	onLoopBelowThreshold     func(*protocol.LoopBelowThresholdSignal)
+	onCountGroupCommand      func(protocol.CountGroupCommand)
+	onBinPickedUp            func(*protocol.BinPickedUp)
 
 	DebugLog DebugLogFunc
 }
@@ -61,6 +62,14 @@ func (h *EdgeHandler) SetNodeStructureChangedHandler(fn func()) {
 // SetDemandSignalHandler sets a callback for when core sends a kanban demand signal.
 func (h *EdgeHandler) SetDemandSignalHandler(fn func(*protocol.DemandSignal)) {
 	h.onDemandSignal = fn
+}
+
+// SetLoopBelowThresholdHandler sets a callback for the UOP-threshold
+// replenishment signal — Core observed combined in-loop UOP for a
+// (loader, payload) drop below the configured threshold and is asking
+// Edge to fire L1.
+func (h *EdgeHandler) SetLoopBelowThresholdHandler(fn func(*protocol.LoopBelowThresholdSignal)) {
+	h.onLoopBelowThreshold = fn
 }
 
 // SetCountGroupCommandHandler sets a callback for when core sends a
@@ -185,6 +194,17 @@ func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 			signal.CoreNodeName, signal.PayloadCode, signal.Role, signal.Reason)
 		if h.onDemandSignal != nil {
 			h.onDemandSignal(&signal)
+		}
+	case protocol.SubjectLoopBelowThreshold:
+		var signal protocol.LoopBelowThresholdSignal
+		if err := json.Unmarshal(p.Body, &signal); err != nil {
+			log.Printf("edge_handler: decode loop below threshold signal: %v", err)
+			return
+		}
+		log.Printf("edge_handler: loop below threshold: core_node=%s payload=%s current=%d threshold=%d reason=%s",
+			signal.CoreNodeName, signal.PayloadCode, signal.CurrentUOP, signal.Threshold, signal.Reason)
+		if h.onLoopBelowThreshold != nil {
+			h.onLoopBelowThreshold(&signal)
 		}
 	case protocol.SubjectCountGroupCommand:
 		var cmd protocol.CountGroupCommand

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
@@ -94,6 +95,18 @@ func (e *Engine) Start() {
 		e.logFn("engine: eta cache initial refresh failed: %v (will retry in %s)", err, "10m")
 	}
 	e.backfillETAsForInTransitOrders()
+
+	// UOP-threshold monitor: startup sweep + ongoing subscription via
+	// wireEventHandlers. Ctx tied to stopChan so the sweep aborts on
+	// shutdown.
+	if e.thresholdMonitor != nil {
+		monCtx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-e.stopChan
+			cancel()
+		}()
+		e.thresholdMonitor.Run(monCtx)
+	}
 
 	e.logFn("engine: started")
 }

@@ -78,6 +78,7 @@ type Engine struct {
 	healthService   *service.HealthService
 	tagVerifyService *service.TagVerifyService
 	inventoryDeltaService *service.InventoryDeltaService
+	thresholdMonitor *ThresholdMonitor
 	etaCache        *eta.Cache
 	stopChan        chan struct{}
 	stopOnce        sync.Once
@@ -130,8 +131,16 @@ func New(c Config) *Engine {
 	e.healthService = service.NewHealthService(e.db)
 	e.tagVerifyService = service.NewTagVerifyService(e.db)
 	e.inventoryDeltaService = service.NewInventoryDeltaService(e.db, e.binManifest)
+	e.thresholdMonitor = NewThresholdMonitor(e)
 	e.etaCache = eta.NewCache(e.db.DB)
 	return e
+}
+
+// ThresholdMonitor returns the UOP-threshold monitor for wiring into
+// the messaging layer's CoreDataService. Public so cmd/shingocore can
+// thread the dependency without engine internals leaking elsewhere.
+func (e *Engine) ThresholdMonitor() *ThresholdMonitor {
+	return e.thresholdMonitor
 }
 
 func (e *Engine) dbg(format string, args ...any) {

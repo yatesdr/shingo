@@ -200,6 +200,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 			r.Get("/manual-message", h.handleManualMessage)
 			r.Get("/diagnostics", h.handleDiagnostics)
 			r.Get("/lineside-buckets", h.handleLinesideBuckets)
+			r.Get("/replenishment", h.handleReplenishment)
 		})
 
 		// ── API routes ──────────────────────────────────────────
@@ -276,6 +277,15 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 				// UOP backfill (Item 3)
 				r.Post("/admin/uop/backfill", h.apiBackfillBuckets)
+
+				// UOP-threshold replenishment admin (Phase 1+2)
+				r.Put("/replenishment/loader-threshold", h.apiUpsertLoaderThreshold)
+				r.Delete("/replenishment/loader-threshold", h.apiDeleteLoaderThreshold)
+				r.Put("/replenishment/cell-reorder", h.apiUpdateCellReorder)
+				r.Post("/replenishment/calculate", h.apiCalculateThresholds)
+				r.Post("/replenishment/calculate-and-apply", h.apiCalculateAndApply)
+				r.Post("/replenishment/override", h.apiOverrideThreshold)
+				r.Post("/replenishment/recalculate-all", h.apiRecalculateAll)
 
 				// Reporting points
 				r.Get("/reporting-points", h.apiListReportingPoints)

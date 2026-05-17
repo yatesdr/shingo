@@ -178,6 +178,22 @@ func (db *DB) runVersionedMigrations() error {
  		{18, "add skip_auto_confirm column to orders", v18OrderSkipAutoConfirm,
  			func(q schema.Querier) bool { return schema.ColumnExists(q, "orders", "skip_auto_confirm") }},
 		{19, "promote retrieve_empty from payload_desc magic string to OrderType", v19PromoteRetrieveEmptyOrderType, nil},
+
+		// v20: UOP-threshold replenishment (C-push).
+		//   - lineside_buckets.payload_code lets Core sum bins +
+		//     buckets per payload for SystemUOPForPayload. Populated
+		//     going-forward by Edge's capture.go at emit time; no SQL
+		//     backfill — Springfield is a fresh install and no plant
+		//     has the pre-feature row shape.
+		//   - demand_registry.replenish_uop_threshold is the per-
+		//     (loader, payload) trigger value the threshold monitor
+		//     compares against. Default 0 = opt-out / legacy bin-count.
+		{20, "uop-threshold replenishment: payload_code + replenish_uop_threshold",
+			v20UOPThresholdReplenishment,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "lineside_buckets", "payload_code") &&
+					schema.ColumnExists(q, "demand_registry", "replenish_uop_threshold")
+			}},
 	}
 
 	for _, m := range migrations {
@@ -340,6 +356,36 @@ func v18OrderSkipAutoConfirm(tx *sql.Tx) error {
 func v19PromoteRetrieveEmptyOrderType(tx *sql.Tx) error {
 	_, err := tx.Exec(`UPDATE orders SET order_type = 'retrieve_empty', payload_desc = '' WHERE payload_desc = 'retrieve_empty' AND order_type = 'retrieve'`)
 	return err
+}
+
+// v20UOPThresholdReplenishment adds the two columns the UOP-threshold
+// C-push architecture needs at Core:
+//
+//   - lineside_buckets.payload_code lets SystemUOPForPayload sum bins
+//     and buckets for the same payload. Edge populates this at capture
+//     time from the order context. No SQL backfill — Springfield is a
+//     fresh install and no plant has the pre-feature row shape that
+//     would need one. If/when a future plant needs backfill, design
+//     then with bin_uop_audit correlation (each capture event records
+//     the bin's order_id and payload_code, so joining gives correct
+//     attribution).
+//
+//   - demand_registry.replenish_uop_threshold is the per-(loader,
+//     payload) trigger value. SyncRegistry persists it; the threshold
+//     monitor compares combined in-loop UOP against it on every bin
+//     update / bucket delta apply. Default 0 = opt-out (Core never
+//     monitors that pair, legacy bin-count at Edge preserved).
+func v20UOPThresholdReplenishment(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE lineside_buckets ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add lineside_buckets.payload_code: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_lineside_buckets_payload ON lineside_buckets(payload_code)`); err != nil {
+		return fmt.Errorf("create idx_lineside_buckets_payload: %w", err)
+	}
+	if _, err := tx.Exec(`ALTER TABLE demand_registry ADD COLUMN IF NOT EXISTS replenish_uop_threshold INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add demand_registry.replenish_uop_threshold: %w", err)
+	}
+	return nil
 }
 
 // v7DropDefaultManifestJSON removes the vestigial default_manifest_json column.

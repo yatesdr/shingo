@@ -20,11 +20,32 @@ type coreDataResponder interface {
 	sendData(subject, stationID string, payload any)
 }
 
+// ThresholdMonitor is the minimal surface CoreDataService needs from the
+// engine's threshold-monitor goroutine so claim-sync threshold changes
+// can reset per-binding debounce timers and bucket applies can trigger
+// re-evaluation. Wired by the engine on startup via
+// CoreDataService.SetThresholdMonitor; nil-safe at every call site so
+// unit tests that construct CoreDataService directly do not need a fake
+// monitor.
+type ThresholdMonitor interface {
+	OnRegistryChanges(changes []demands.RegistryChange)
+	OnBucketApplied(station string, nodeID int64, payloadCode string, newQty, delta int, reason protocol.LinesideBucketDeltaReason)
+}
+
 type CoreDataService struct {
-	db             *store.DB
-	tagVerify      *service.TagVerifyService
-	inventoryDelta *service.InventoryDeltaService
-	resp           coreDataResponder
+	db               *store.DB
+	tagVerify        *service.TagVerifyService
+	inventoryDelta   *service.InventoryDeltaService
+	resp             coreDataResponder
+	thresholdMonitor ThresholdMonitor
+}
+
+// SetThresholdMonitor wires the engine's threshold-monitor for
+// SyncRegistry change notifications and bucket-applied events.
+// Optional; may be nil — tests that don't exercise the UOP-threshold
+// path can skip it.
+func (s *CoreDataService) SetThresholdMonitor(tm ThresholdMonitor) {
+	s.thresholdMonitor = tm
 }
 
 // newCoreDataService constructs a CoreDataService. The TagVerifyService is
@@ -175,6 +196,17 @@ func (s *CoreDataService) handleLinesideBucketDelta(env *protocol.Envelope, d *p
 	}
 	s.resp.dbg("lineside_bucket_delta applied station=%s node=%d part=%q seq=%d delta=%d reason=%s",
 		d.Station, d.NodeID, d.PartNumber, d.SequenceID, d.Delta, d.Reason)
+
+	// Notify the UOP-threshold monitor so a bucket drain or capture
+	// re-evaluates loop totals. The monitor's debounce + opt-in gating
+	// inside is what keeps this from being noisy. Empty payload_code is
+	// fine — the monitor short-circuits on unknown payload.
+	if s.thresholdMonitor != nil {
+		// newQty is not returned by the applier; the monitor recomputes
+		// from a SystemUOPForPayload query anyway. Pass 0 — the monitor
+		// only uses it for diagnostic logging.
+		s.thresholdMonitor.OnBucketApplied(d.Station, d.NodeID, d.PayloadCode, 0, d.Delta, d.Reason)
+	}
 }
 
 // handleCountGroupAck records an edge's response to a prior CountGroupCommand.
@@ -415,19 +447,32 @@ func (s *CoreDataService) handleClaimSync(env *protocol.Envelope, sync *protocol
 			}
 		}
 		for _, pc := range c.AllowedPayloadCodes {
+			// UOP-threshold replenishment: pull per-payload threshold
+			// from the ClaimSync map. Omitted/zero means "Core does
+			// not monitor this pair" (legacy bin-count at Edge).
+			thr := c.PayloadThresholds[pc]
 			entries = append(entries, demands.RegistryEntry{
-				StationID:    stationID,
-				CoreNodeName: c.CoreNodeName,
-				Role:         c.Role,
-				PayloadCode:  pc,
-				OutboundDest: c.OutboundDestination,
+				StationID:             stationID,
+				CoreNodeName:          c.CoreNodeName,
+				Role:                  c.Role,
+				PayloadCode:           pc,
+				OutboundDest:          c.OutboundDestination,
+				ReplenishUOPThreshold: thr,
 			})
 		}
 	}
 
-	if err := s.db.SyncDemandRegistry(stationID, entries); err != nil {
+	changes, err := s.db.SyncDemandRegistry(stationID, entries)
+	if err != nil {
 		log.Printf("core_handler: sync demand registry for %s: %v", stationID, err)
 		return
 	}
-	log.Printf("core_handler: demand registry updated for %s: %d entries", stationID, len(entries))
+	log.Printf("core_handler: demand registry updated for %s: %d entries (%d threshold changes)", stationID, len(entries), len(changes))
+
+	// Reset threshold-monitor debounce for any (loader, payload) whose
+	// threshold value moved, so the new value engages immediately
+	// instead of waiting out the debounce window.
+	if s.thresholdMonitor != nil && len(changes) > 0 {
+		s.thresholdMonitor.OnRegistryChanges(changes)
+	}
 }

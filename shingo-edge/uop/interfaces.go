@@ -79,7 +79,7 @@ type Sink interface {
 	// should not call these; the archtest enforces no direct
 	// RecordBin/RecordBucket calls outside this package.
 	RecordBin(binID int64, payloadCode string, delta int, reason protocol.BinUOPDeltaReason)
-	RecordBucket(nodeID int64, pairKey string, styleID int64, partNumber string, delta int, reason protocol.LinesideBucketDeltaReason)
+	RecordBucket(nodeID int64, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
 	Flush()
 	FlushFailures() int64
 }

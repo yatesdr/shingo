@@ -99,10 +99,10 @@ func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
 	db := newReporterTestDB(t)
 	r := New(db, "SMN_003", nil, nil, nil)
 
-	r.RecordBucket(5, "L1|U1", 100, "PART-A", 47, protocol.ReasonCaptureFill)
+	r.RecordBucket(5, "L1|U1", 100, "PART-A", "WIDGET-A", 47, protocol.ReasonCaptureFill)
 	r.Flush()
-	r.RecordBucket(5, "L1|U1", 100, "PART-A", -3, protocol.ReasonConsumeDrain)
-	r.RecordBucket(5, "L1|U1", 100, "PART-A", -2, protocol.ReasonConsumeDrain)
+	r.RecordBucket(5, "L1|U1", 100, "PART-A", "WIDGET-A", -3, protocol.ReasonConsumeDrain)
+	r.RecordBucket(5, "L1|U1", 100, "PART-A", "WIDGET-A", -2, protocol.ReasonConsumeDrain)
 	r.Flush()
 
 	deltas := pendingOutboxByType[protocol.LinesideBucketDelta](t, db, protocol.SubjectLinesideBucketDelta)

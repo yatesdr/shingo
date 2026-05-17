@@ -65,7 +65,7 @@ type TickEvent struct {
 func (m *Mutator) Consumed(ev TickEvent) error {
 	for part, drained := range ev.Drains {
 		if drained > 0 {
-			m.acc.recordBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, -drained, protocol.ReasonConsumeDrain)
+			m.acc.recordBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, ev.PayloadCode, -drained, protocol.ReasonConsumeDrain)
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
@@ -110,7 +110,7 @@ func (m *Mutator) Produced(ev TickEvent) error {
 func (m *Mutator) Fallthrough(ev TickEvent) error {
 	for part, drained := range ev.Drains {
 		if drained > 0 {
-			m.acc.recordBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, -drained, protocol.ReasonConsumeDrain)
+			m.acc.recordBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, ev.PayloadCode, -drained, protocol.ReasonConsumeDrain)
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {

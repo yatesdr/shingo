@@ -304,7 +304,7 @@ func mustGetNodeTypeID(t *testing.T, db *store.DB, code string) int64 {
 // use different stationIDs so they don't clobber each other.
 func seedDemandEntry(t *testing.T, db *store.DB, stationID, coreNodeName, role, payloadCode string) {
 	t.Helper()
-	if err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
+	if _, err := db.SyncDemandRegistry(stationID, []demands.RegistryEntry{{
 		StationID:    stationID,
 		CoreNodeName: coreNodeName,
 		Role:         protocol.ClaimRole(role),

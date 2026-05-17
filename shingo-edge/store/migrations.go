@@ -25,16 +25,38 @@ import (
 	"shingoedge/store/schema"
 )
 
+// hasV5LoaderColumn returns true when loader_payload_thresholds exists
+// with the v5 loader_node_id column. SQLite's pragma_table_info is the
+// portable column probe.
+func hasV5LoaderColumn(db *DB) bool {
+	var hit int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('loader_payload_thresholds') WHERE name='loader_node_id'`).Scan(&hit)
+	if err != nil {
+		return false
+	}
+	return hit > 0
+}
+
 // legacyDropDDL drops tables that have been removed entirely from the
 // canonical schema. Runs first in migrate() so the rest of the
 // migration logic operates on a clean table set. DROP IF EXISTS is
 // safe on every database state.
+//
+// kanban_calculations / threshold_calculations were two short-lived
+// v5/v6 audit-trail experiments — the v6 fix-up pass dropped them
+// after deciding the engineer doesn't need a per-calculate history
+// (current source / updated_at / updated_by on the threshold row
+// covers "what's the current value based on", and re-running
+// Calculate is the way to see fresh inputs). Listed here so any dev
+// DB that has either name gets it cleaned up.
 const legacyDropDDL = `
 DROP TABLE IF EXISTS bom_entries;
 DROP TABLE IF EXISTS inventory;
 DROP TABLE IF EXISTS materials;
 DROP TABLE IF EXISTS kanban_templates;
 DROP TABLE IF EXISTS operator_screens;
+DROP TABLE IF EXISTS kanban_calculations;
+DROP TABLE IF EXISTS threshold_calculations;
 `
 
 // migrate runs the full forward-migration pipeline: legacy DROPs,
@@ -48,6 +70,21 @@ func (db *DB) migrate() error {
 		return err
 	}
 	db.Exec("ALTER TABLE orders DROP COLUMN material_id")
+
+	// UOP-threshold replenishment v5→v6 schema replace: the branch
+	// isn't merged, so an in-place drop+recreate of
+	// loader_payload_thresholds is acceptable when the v5 column
+	// shape is detected. SQLite has no generic "table has column X
+	// with type Y" check, so we probe for the v5 loader_node_id
+	// column specifically — if it's there, this DB is on v5 schema
+	// and we drop the table so schema.Apply rebuilds the v6 shape.
+	// The audit-table siblings (kanban_calculations,
+	// threshold_calculations) are dropped unconditionally via
+	// legacyDropDDL above; both were short-lived experiments and the
+	// fix-up pass removed them entirely.
+	if hasV5LoaderColumn(db) {
+		db.Exec("DROP TABLE IF EXISTS loader_payload_thresholds")
+	}
 
 	// 2. Rename legacy tables BEFORE schema.Apply so existing data
 	//    migrates into the new table names instead of being orphaned
@@ -282,6 +319,42 @@ func (db *DB) migrate() error {
 	// required. Default false preserves the existing kanban-driven model.
 	// See engine/operator_demand.go MaybePushUnloader for the trigger logic.
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_push INTEGER NOT NULL DEFAULT 0")
+
+	// v25 (2026-05-16, UOP-threshold replenishment Phase 1): source
+	// tracking for reorder_point so the engineer UI can show whether a
+	// value was hand-typed or applied from the unified calculator.
+	// Default 'legacy' = never touched — preserves the silent-inert
+	// behaviour for plants that have not opted in.
+	db.Exec("ALTER TABLE style_node_claims ADD COLUMN reorder_point_source TEXT NOT NULL DEFAULT 'legacy'")
+
+	// v26 (UOP-threshold replenishment fix-up): track which calculator
+	// inputs the engineer overrode on the Calculate that produced the
+	// current threshold. Comma-separated snake_case field names; empty
+	// when source != 'calculated' or when no inputs were overridden.
+	// Idempotent — SQLite ALTER silently no-ops if the column exists.
+	db.Exec("ALTER TABLE loader_payload_thresholds ADD COLUMN overridden_inputs TEXT NOT NULL DEFAULT ''")
+
+	// v25b (UOP-threshold replenishment Phase 1): one-shot cleanup for
+	// stale RuntimeState pointers — active_order_id / staged_order_id
+	// rows that reference terminal orders. The brief flagged this as a
+	// data hygiene step that unblocks autoreorder evaluation paths whose
+	// CanAcceptOrders guard returns false silently on stale pointers.
+	//
+	// Strategy: NULL out a pointer iff the referenced order's status is
+	// in the terminal set (confirmed, cancelled, failed, skipped). Live
+	// orders are left alone. Idempotent — runs every migrate(), no-op
+	// when there's nothing to clean. Default to apply mode here; the
+	// dry-run variant lives in the admin endpoint (handlers_api_replenishment).
+	db.Exec(`UPDATE process_node_runtime_states
+		SET active_order_id = NULL
+		WHERE active_order_id IN (
+			SELECT id FROM orders WHERE status IN ('confirmed','cancelled','failed','skipped')
+		)`)
+	db.Exec(`UPDATE process_node_runtime_states
+		SET staged_order_id = NULL
+		WHERE staged_order_id IN (
+			SELECT id FROM orders WHERE status IN ('confirmed','cancelled','failed','skipped')
+		)`)
 
 	return nil
 }

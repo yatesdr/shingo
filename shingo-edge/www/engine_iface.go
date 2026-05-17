@@ -123,6 +123,21 @@ type EngineOrchestration interface {
 	// with ReasonOperatorCorrectionBucket so Core mirrors.
 	AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearBucket bool) error
 
+	// ── UOP-threshold replenishment admin ──────────────────────────
+	// Backs the /replenishment admin page (handlers_admin_replenishment +
+	// handlers_api_replenishment). Writes trigger ClaimSync so Core's
+	// threshold monitor picks up the new values immediately rather than
+	// waiting for the next heartbeat-driven sync.
+	ListLoaderThresholds() ([]engine.LoaderThresholdRow, error)
+	UpsertLoaderThreshold(engine.LoaderThresholdInput) error
+	DeleteLoaderThreshold(coreNodeName, payloadCode string) error
+	UpdateCellReorder(engine.CellReorderInput) error
+	// v6 Phase 2 pull-forward — engineer-triggered calculation.
+	CalculateThresholdForLoader(engine.CalculateInput) (service.CalculateResult, error)
+	ApplyCalculatedThreshold(in engine.LoaderThresholdInput) error
+	OverrideCalculatedThreshold(overrideValue int, in engine.LoaderThresholdInput) error
+	ListLoaderClaimsForRecalculate() ([]engine.LoaderClaimPair, error)
+
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)
 	ManageReportingPointTag(rpID int64, oldPLC, oldTag string, oldManaged bool, newPLC, newTag string)

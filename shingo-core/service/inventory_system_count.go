@@ -115,3 +115,132 @@ func (s *InventoryService) SystemBinCount(ctx context.Context, payloads []string
 	}
 	return result, nil
 }
+
+// PayloadSystemUOP is the per-payload UOP total returned by
+// SystemUOPForPayload. Distinct from PayloadSystemCount (bin-count
+// semantics) — callers can't confuse "I have N bins of WIDGET-A" with
+// "I have N parts of WIDGET-A in the loop" at the type level.
+type PayloadSystemUOP struct {
+	PayloadCode string `json:"payload_code"`
+	BinUOP      int    `json:"bin_uop"`     // SUM(bins.uop_remaining)
+	BucketUOP   int    `json:"bucket_uop"`  // SUM(lineside_buckets.qty)
+	TotalUOP    int    `json:"total_uop"`   // BinUOP + BucketUOP
+}
+
+// SystemUOPForPayloadResult carries per-payload UOP totals.
+type SystemUOPForPayloadResult struct {
+	Counts []PayloadSystemUOP `json:"counts"`
+}
+
+// SystemUOPForPayload returns the total in-loop UOP for each payload —
+// the sum of bin remaining-UOP plus the sum of lineside-bucket qty
+// (1:1 BOM assumption: bucket.qty IS UOP). This is the value the
+// UOP-threshold replenishment monitor compares against
+// demand_registry.replenish_uop_threshold to decide whether to fire
+// LoopBelowThresholdSignal.
+//
+// Lifecycle filter on bins mirrors SystemBinCount — bins in flagged,
+// maintenance, quality_hold, or retired status are excluded
+// (preserves the 2026-05-11 SNF2 fix semantics: production can't rely
+// on those bins so they don't count as loop inventory).
+//
+// Buckets with empty payload_code are excluded — those are orphans
+// (claim deleted before the capture event resolved a payload).
+// Conservative undercount is preferable to attributing parts to the
+// wrong payload.
+//
+// Empty payload codes in the request are rejected.
+func (s *InventoryService) SystemUOPForPayload(ctx context.Context, payloads []string) (SystemUOPForPayloadResult, error) {
+	result := SystemUOPForPayloadResult{
+		Counts: make([]PayloadSystemUOP, 0, len(payloads)),
+	}
+	if len(payloads) == 0 {
+		return result, nil
+	}
+
+	type acc struct {
+		bins    int
+		buckets int
+	}
+	counts := make(map[string]*acc, len(payloads))
+	for _, p := range payloads {
+		if p == "" {
+			return result, fmt.Errorf("system-uop: empty payload code in request")
+		}
+		counts[p] = &acc{}
+	}
+
+	placeholders := make([]byte, 0, len(payloads)*4)
+	args := make([]any, 0, len(payloads))
+	for i, p := range payloads {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '$')
+		placeholders = append(placeholders, []byte(fmt.Sprintf("%d", i+1))...)
+		args = append(args, p)
+	}
+	in := string(placeholders)
+
+	// Bin sum. Same lifecycle filter as SystemBinCount.
+	binQuery := `SELECT payload_code, COALESCE(SUM(uop_remaining), 0) AS total
+		FROM bins
+		WHERE payload_code IN (` + in + `)
+		  AND status NOT IN ('flagged', 'maintenance', 'quality_hold', 'retired')
+		GROUP BY payload_code`
+	binRows, err := s.db.DB.QueryContext(ctx, binQuery, args...)
+	if err != nil {
+		return result, fmt.Errorf("system-uop: bins query: %w", err)
+	}
+	for binRows.Next() {
+		var code string
+		var n int
+		if err := binRows.Scan(&code, &n); err != nil {
+			binRows.Close()
+			return result, fmt.Errorf("system-uop: bins scan: %w", err)
+		}
+		if a, ok := counts[code]; ok {
+			a.bins = n
+		}
+	}
+	binRows.Close()
+	if err := binRows.Err(); err != nil {
+		return result, fmt.Errorf("system-uop: bins rows: %w", err)
+	}
+
+	// Bucket sum. Excludes empty payload_code (orphans / pre-upgrade).
+	bucketQuery := `SELECT payload_code, COALESCE(SUM(qty), 0) AS total
+		FROM lineside_buckets
+		WHERE payload_code IN (` + in + `)
+		GROUP BY payload_code`
+	bucketRows, err := s.db.DB.QueryContext(ctx, bucketQuery, args...)
+	if err != nil {
+		return result, fmt.Errorf("system-uop: buckets query: %w", err)
+	}
+	for bucketRows.Next() {
+		var code string
+		var n int
+		if err := bucketRows.Scan(&code, &n); err != nil {
+			bucketRows.Close()
+			return result, fmt.Errorf("system-uop: buckets scan: %w", err)
+		}
+		if a, ok := counts[code]; ok {
+			a.buckets = n
+		}
+	}
+	bucketRows.Close()
+	if err := bucketRows.Err(); err != nil {
+		return result, fmt.Errorf("system-uop: buckets rows: %w", err)
+	}
+
+	for _, p := range payloads {
+		a := counts[p]
+		result.Counts = append(result.Counts, PayloadSystemUOP{
+			PayloadCode: p,
+			BinUOP:      a.bins,
+			BucketUOP:   a.buckets,
+			TotalUOP:    a.bins + a.buckets,
+		})
+	}
+	return result, nil
+}

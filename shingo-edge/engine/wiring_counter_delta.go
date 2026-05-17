@@ -143,8 +143,9 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// it attributes to active_bin_id (the old bin still on slot, or
 	// nothing if pickup has happened), keeping Core's manifest honest
 	// for whatever the cell is actually pulling from.
+	steady := inSteadyState(runtime)
 	newRemaining := runtime.RemainingUOPCached
-	if inSteadyState(runtime) {
+	if steady {
 		newRemaining = runtime.RemainingUOPCached - binRemainder
 		if err := e.db.UpdateProcessNodeUOP(node.ID, newRemaining); err != nil {
 			log.Printf("update UOP for node %d: %v", node.ID, err)
@@ -156,11 +157,39 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 	// Auto-reorder if threshold reached, enabled, and node can accept orders.
 	// During the gap newRemaining is unchanged so the threshold isn't crossed
 	// twice for the same supply event.
-	if claim.AutoReorder && newRemaining <= claim.ReorderPoint && newRemaining > 0 {
-		if ok, _ := e.CanAcceptOrders(node.ID); ok {
-			if _, err := e.RequestNodeMaterial(node.ID, 1); err != nil {
-				log.Printf("auto-reorder for node %s: %v", node.Name, err)
+	//
+	// UOP-threshold replenishment (Phase 1): the existing condition
+	// (newRemaining <= ReorderPoint && newRemaining > 0) is logically
+	// unsatisfiable when ReorderPoint = 0, so the path was silent-inert
+	// for plants that never set a value. The explicit `ReorderPoint > 0`
+	// gate makes the opt-in semantic visible without changing behaviour
+	// — any plant with a 0 threshold sees identical behaviour to before.
+	// Diagnostic log line fires on every consume tick where AutoReorder
+	// is on, so engineers can see exactly why nothing fires (gate=insteady
+	// _state_gap during release window, gate=below_floor when the
+	// remaining count is already at 0, etc.).
+	if claim.AutoReorder {
+		if !steady {
+			e.debugFn("autoreorder eval: claim=%d node=%s gate=insteady_state_gap (release-to-delivery window)",
+				claim.ID, node.Name)
+		} else if claim.ReorderPoint <= 0 {
+			e.debugFn("autoreorder eval: claim=%d node=%s gate=opt_out (reorder_point=0) — legacy silent-inert path",
+				claim.ID, node.Name)
+		} else if newRemaining <= 0 {
+			e.debugFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d gate=at_floor (nothing left to reorder)",
+				claim.ID, node.Name, newRemaining, claim.ReorderPoint)
+		} else if newRemaining <= claim.ReorderPoint {
+			canAccept, reason := e.CanAcceptOrders(node.ID)
+			e.logFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d canAccept=%v reason=%s gate=consume_tick",
+				claim.ID, node.Name, newRemaining, claim.ReorderPoint, canAccept, reason)
+			if canAccept {
+				if _, err := e.RequestNodeMaterial(node.ID, 1); err != nil {
+					log.Printf("auto-reorder for node %s: %v", node.Name, err)
+				}
 			}
+		} else {
+			e.debugFn("autoreorder eval: claim=%d node=%s remaining=%d threshold=%d gate=above_threshold",
+				claim.ID, node.Name, newRemaining, claim.ReorderPoint)
 		}
 	}
 }
@@ -201,10 +230,25 @@ func (e *Engine) handleProduceTick(node *processes.Node, runtime *processes.Runt
 	}
 
 	// Auto-relief at capacity: finalize the produce node (manifest + swap).
-	if claim.AutoReorder && claim.UOPCapacity > 0 && newRemaining >= claim.UOPCapacity {
-		if ok, _ := e.CanAcceptOrders(node.ID); ok {
-			if _, err := e.FinalizeProduceNode(node.ID); err != nil {
-				log.Printf("auto-relief for produce node %s: %v", node.Name, err)
+	//
+	// UOP-threshold replenishment (Phase 1) diagnostic: same logging
+	// shape as the consume side so engineers can see produce-tick
+	// evaluation outcomes alongside consume-tick.
+	if claim.AutoReorder && claim.UOPCapacity > 0 {
+		if !inSteadyState(runtime) {
+			e.debugFn("autoreorder eval (produce): claim=%d node=%s gate=insteady_state_gap",
+				claim.ID, node.Name)
+		} else if newRemaining < claim.UOPCapacity {
+			e.debugFn("autoreorder eval (produce): claim=%d node=%s remaining=%d capacity=%d gate=below_capacity",
+				claim.ID, node.Name, newRemaining, claim.UOPCapacity)
+		} else {
+			canAccept, reason := e.CanAcceptOrders(node.ID)
+			e.logFn("autoreorder eval (produce): claim=%d node=%s remaining=%d capacity=%d canAccept=%v reason=%s gate=produce_tick",
+				claim.ID, node.Name, newRemaining, claim.UOPCapacity, canAccept, reason)
+			if canAccept {
+				if _, err := e.FinalizeProduceNode(node.ID); err != nil {
+					log.Printf("auto-relief for produce node %s: %v", node.Name, err)
+				}
 			}
 		}
 	}

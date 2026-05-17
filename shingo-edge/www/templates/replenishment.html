@@ -1,0 +1,234 @@
+{{template "header" .}}
+
+<div class="flex flex-between mb-2">
+  <h1>Replenishment</h1>
+  <div class="text-muted" style="font-size:0.9rem;">
+    UOP-threshold replenishment (C-push) configuration. Threshold = 0 opts out — legacy bin-count and silent-inert autoreorder preserved.
+  </div>
+</div>
+
+<div class="flex flex-between mb-2">
+  <h2 style="margin:0;">Loader thresholds</h2>
+  <button class="btn btn-sm" onclick="replenishmentRecalculateAll()">Recalculate all (process sweep)</button>
+</div>
+<p class="text-muted" style="font-size:0.9rem;">
+  Per-(loader, payload) replenish trigger. When combined in-loop UOP
+  (bins + buckets) drops below this, Core signals Edge to fire L1.
+  Setting to 0 reverts to legacy bin-count.
+</p>
+
+<div class="card" style="padding:0; margin-bottom:2rem;">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Loader</th>
+        <th>Payload</th>
+        <th style="text-align:right;">Threshold</th>
+        <th>Source</th>
+        <th>Confidence</th>
+        <th style="text-align:right;">Safety</th>
+        <th style="width:260px;">Edit</th>
+      </tr>
+    </thead>
+    <tbody id="loader-threshold-rows">
+      {{range .LoaderRows}}
+      <tr data-core-node-name="{{.CoreNodeName}}" data-payload="{{.PayloadCode}}" data-current-threshold="{{.ReplenishUOPThreshold}}" data-safety="{{.SafetyFactor}}" data-bin-capacity="{{.BinCapacityUOP}}">
+        <td>{{.CoreNodeName}}</td>
+        <td class="mono">{{.PayloadCode}}</td>
+        <td style="text-align:right;" class="mono">
+          <input type="number" min="0" value="{{.ReplenishUOPThreshold}}" class="loader-threshold-input" style="width:80px; text-align:right;">
+          <span class="text-muted threshold-implied-bins" style="font-size:0.8rem; margin-left:0.25rem;"></span>
+        </td>
+        <td>
+          <span class="badge {{if eq .Source "calculated"}}badge-info{{else if eq .Source "manual"}}badge-warn{{else}}badge-muted{{end}}">{{.Source}}</span>
+        </td>
+        <td>
+          {{if .ThresholdConfidence}}<span class="badge">{{.ThresholdConfidence}}</span>{{else}}<span class="text-muted">—</span>{{end}}
+          {{if .OverriddenInputs}}<div class="text-muted overrides-line" data-overrides="{{.OverriddenInputs}}" style="font-size:0.8rem;"></div>{{end}}
+        </td>
+        <td style="text-align:right;" class="mono">{{printf "%.2f" .SafetyFactor}}</td>
+        <td>
+          <button class="btn btn-sm" onclick="replenishmentOpenCalculate(this)">Calculate…</button>
+          <button class="btn btn-sm btn-primary" onclick="replenishmentApplyLoader(this)">Apply</button>
+          <button class="btn btn-sm" onclick="replenishmentDeleteLoader(this)">Remove</button>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="7" class="text-muted">No loader thresholds configured. Plant is on legacy bin-count.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+<h2>Cell autoreorder</h2>
+<p class="text-muted" style="font-size:0.9rem;">
+  Per-claim reorder_point on the line side. When this bin's remaining
+  UOP drops to or below the threshold, Edge fires a retrieve from
+  supermarket to swap the bin. Requires AutoReorder enabled.
+  reorder_point = 0 is silent-inert (the legacy default).
+</p>
+
+<div class="card" style="padding:0; margin-bottom:2rem;">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Process</th>
+        <th>Style</th>
+        <th>Node</th>
+        <th>Payload</th>
+        <th style="text-align:right;">Capacity</th>
+        <th style="text-align:right;">Reorder At</th>
+        <th>Source</th>
+        <th>AutoReorder</th>
+        <th style="width:120px;">Edit</th>
+      </tr>
+    </thead>
+    <tbody id="cell-reorder-rows">
+      {{range .ClaimRows}}
+      <tr data-claim-id="{{.ClaimID}}">
+        <td>{{.ProcessName}}</td>
+        <td>{{.StyleName}}</td>
+        <td>{{.NodeName}}</td>
+        <td class="mono">{{.PayloadCode}}</td>
+        <td style="text-align:right;" class="mono">{{.UOPCapacity}}</td>
+        <td style="text-align:right;" class="mono">
+          <input type="number" min="0" value="{{.ReorderPoint}}" class="reorder-point-input" style="width:80px; text-align:right;">
+        </td>
+        <td>
+          <span class="badge {{if eq .Source "calculated"}}badge-info{{else if eq .Source "manual"}}badge-warn{{else}}badge-muted{{end}}">{{.Source}}</span>
+        </td>
+        <td>
+          <input type="checkbox" class="auto-reorder-input" {{if .AutoReorder}}checked{{end}}>
+        </td>
+        <td>
+          <button class="btn btn-sm btn-primary" onclick="replenishmentApplyCell(this)">Apply</button>
+        </td>
+      </tr>
+      {{else}}
+      <tr><td colspan="9" class="text-muted">No claims found on active styles.</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+
+<h2>Diagnostics</h2>
+<p class="text-muted" style="font-size:0.9rem;">
+  Recent autoreorder evaluation log lines. Phase 1.5: live stream view
+  is deferred — for now, inspect <code>shingo-debug-edge.log</code> for
+  lines tagged <code>autoreorder eval:</code>. Lines include gate
+  outcome (consume_tick / produce_tick / insteady_state_gap / opt_out /
+  at_floor / above_threshold / below_capacity).
+</p>
+
+<!-- Calculate modal — opened from per-row Calculate buttons.
+     Date range selector, then a server fetch populates each input
+     with the observed value. Engineer may edit any input; the
+     calculated outputs recompute locally as inputs change.
+     Apply / Override / Cancel commit (or discard) the result. -->
+<div id="calculate-modal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width:560px;">
+    <div class="flex flex-between mb-2">
+      <h3 id="calc-title" style="margin:0;">Calculate threshold</h3>
+      <button class="btn btn-sm" onclick="replenishmentCloseCalculate()">×</button>
+    </div>
+
+    <div class="form-row">
+      <label>Date range:</label>
+      <select id="calc-range">
+        <option value="7">Last 7 days</option>
+        <option value="14" selected>Last 14 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+      <button class="btn btn-sm btn-primary ml-2" onclick="replenishmentRunCalculate()">Run calculation</button>
+      <span id="calc-status" class="text-muted ml-2"></span>
+    </div>
+
+    <div id="calc-result" class="mt-2" style="display:none;">
+      <h4>Inputs (editable)</h4>
+      <p class="text-muted" style="font-size:0.85rem; margin:0 0 0.5rem 0;">
+        Each input is pre-filled with the value observed over the date range.
+        Edit any cell to substitute engineer judgment for the data.
+      </p>
+      <table class="table" style="margin:0;">
+        <tr>
+          <td>Cycle time (s)</td>
+          <td><input type="number" id="calc-input-cycle_seconds" data-field="cycle_seconds" class="calc-input mono" min="0" step="0.1" style="width:80px; text-align:right;"></td>
+          <td class="text-muted mono" id="calc-source-cycle_seconds" style="font-size:0.8rem;">engineer-supplied</td>
+        </tr>
+        <tr>
+          <td>L1 queue (s)</td>
+          <td><input type="number" id="calc-input-l1_queue_seconds" data-field="l1_queue_seconds" class="calc-input mono" min="0" step="0.1" style="width:80px; text-align:right;"></td>
+          <td class="text-muted mono" id="calc-source-l1_queue_seconds" style="font-size:0.8rem;"></td>
+        </tr>
+        <tr>
+          <td>L1 transit (s)</td>
+          <td><input type="number" id="calc-input-l1_transit_seconds" data-field="l1_transit_seconds" class="calc-input mono" min="0" step="0.1" style="width:80px; text-align:right;"></td>
+          <td class="text-muted mono" id="calc-source-l1_transit_seconds" style="font-size:0.8rem;"></td>
+        </tr>
+        <tr>
+          <td>L2 load (s)</td>
+          <td><input type="number" id="calc-input-l2_load_seconds" data-field="l2_load_seconds" class="calc-input mono" min="0" step="0.1" style="width:80px; text-align:right;"></td>
+          <td class="text-muted mono" id="calc-source-l2_load_seconds" style="font-size:0.8rem;"></td>
+        </tr>
+        <tr>
+          <td>L2 transit (s)</td>
+          <td><input type="number" id="calc-input-l2_transit_seconds" data-field="l2_transit_seconds" class="calc-input mono" min="0" step="0.1" style="width:80px; text-align:right;"></td>
+          <td class="text-muted mono" id="calc-source-l2_transit_seconds" style="font-size:0.8rem;"></td>
+        </tr>
+        <tr>
+          <td>Market→cell (s)</td>
+          <td><input type="number" id="calc-input-market_to_cell_seconds" data-field="market_to_cell_seconds" class="calc-input mono" min="0" step="0.1" style="width:80px; text-align:right;"></td>
+          <td class="text-muted mono" id="calc-source-market_to_cell_seconds" style="font-size:0.8rem;"></td>
+        </tr>
+        <tr>
+          <td>Safety factor</td>
+          <td><input type="number" id="calc-input-safety_factor" data-field="safety_factor" class="calc-input mono" min="0.5" step="0.1" style="width:80px; text-align:right;"></td>
+          <td class="text-muted mono" style="font-size:0.8rem;">engineer-supplied</td>
+        </tr>
+      </table>
+
+      <h4 class="mt-2">Calculated</h4>
+      <p>Threshold: <strong id="calc-threshold"></strong> UOP
+         <span id="calc-implied-bins" class="text-muted" style="font-size:0.85rem; margin-left:0.25rem;"></span> &nbsp;
+         Cell reorder: <strong id="calc-cell"></strong> UOP &nbsp;
+         Confidence: <strong id="calc-confidence"></strong></p>
+      <p>Current value: <span id="calc-current" class="mono"></span></p>
+
+      <div class="mt-2">
+        <button id="calc-apply" class="btn btn-primary" onclick="replenishmentApplyFromModal()">Apply</button>
+        <button class="btn" onclick="replenishmentOverrideFromModal()">Override…</button>
+        <button class="btn" onclick="replenishmentCloseCalculate()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recalculate-all summary modal — opens with one row per binding. -->
+<div id="recalc-all-modal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width:720px;">
+    <div class="flex flex-between mb-2">
+      <h3 style="margin:0;">Recalculate all loader thresholds</h3>
+      <button class="btn btn-sm" onclick="replenishmentCloseRecalcAll()">×</button>
+    </div>
+
+    <div class="form-row">
+      <label>Date range (days):</label>
+      <select id="recalc-range">
+        <option value="7">Last 7</option>
+        <option value="14" selected>Last 14</option>
+        <option value="30">Last 30</option>
+      </select>
+      <label class="ml-2">Cycle (s):</label>
+      <input type="number" id="recalc-cycle" min="0" step="0.1" value="22.5" style="width:80px;">
+      <label class="ml-2">Safety:</label>
+      <input type="number" id="recalc-safety" min="0.5" step="0.1" value="1.5" style="width:60px;">
+      <button class="btn btn-sm btn-primary ml-2" onclick="replenishmentRunRecalculateAll()">Run sweep</button>
+    </div>
+
+    <div id="recalc-results" class="mt-2"></div>
+  </div>
+</div>
+
+<script src="/static/js/pages/replenishment.js"></script>
+
+{{template "footer" .}}

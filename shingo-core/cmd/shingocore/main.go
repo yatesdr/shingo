@@ -254,6 +254,11 @@ func main() {
 	coreHandler := messaging.NewCoreHandler(db, msgClient, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
 	coreHandler.DebugLog = dbg.Func("core_handler")
 	coreHandler.StaleEdgeThreshold = cfg.Messaging.StaleEdgeThreshold
+	// Wire the UOP-threshold monitor so claim-sync threshold changes
+	// reset debounce timers and bucket-applied events drive
+	// re-evaluation. Engine.Start() has already constructed the monitor
+	// and kicked its startup-sweep goroutine.
+	coreHandler.SetThresholdMonitor(eng.ThresholdMonitor())
 	coreHandler.Start()
 	defer coreHandler.Stop()
 	inboxDedup := messaging.NewInboxDedup(coreHandler, db)

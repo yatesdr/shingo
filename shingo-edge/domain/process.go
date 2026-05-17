@@ -138,6 +138,12 @@ type NodeClaim struct {
 	// into this same column rather than a parallel "loader threshold"
 	// field.
 	ReorderPoint         int       `json:"reorder_point"`
+	// ReorderPointSource (UOP-threshold replenishment) records how
+	// ReorderPoint was set. 'legacy' = default, never edited (the
+	// silent-inert default); 'manual' = engineer typed a value;
+	// 'calculated' = applied from the unified calculator. Surfaced in
+	// the replenishment UI as a small badge per row.
+	ReorderPointSource   string    `json:"reorder_point_source"`
 	AutoReorder          bool      `json:"auto_reorder"`
 	InboundStaging       string    `json:"inbound_staging"`
 	OutboundStaging      string    `json:"outbound_staging"`
@@ -204,6 +210,7 @@ type NodeClaimInput struct {
 	PayloadCode           string   `json:"payload_code"`
 	UOPCapacity           int      `json:"uop_capacity"`
 	ReorderPoint          int      `json:"reorder_point"`
+	ReorderPointSource    string   `json:"reorder_point_source"`
 	AutoReorder           bool     `json:"auto_reorder"`
 	InboundStaging        string   `json:"inbound_staging"`
 	OutboundStaging       string   `json:"outbound_staging"`

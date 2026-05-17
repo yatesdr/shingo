@@ -367,6 +367,11 @@ CREATE TABLE IF NOT EXISTS demand_registry (
     role             TEXT NOT NULL,
     payload_code     TEXT NOT NULL,
     outbound_dest    TEXT NOT NULL DEFAULT '',
+    -- UOP-threshold replenishment: when > 0 Core monitors combined
+    -- in-loop UOP (bins + buckets) for this (loader, payload) and
+    -- emits LoopBelowThresholdSignal on crossing. 0 = legacy bin-count
+    -- behavior preserved at Edge.
+    replenish_uop_threshold INTEGER NOT NULL DEFAULT 0,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(station_id, core_node_name, payload_code)
 );
@@ -386,11 +391,18 @@ CREATE TABLE IF NOT EXISTS lineside_buckets (
     style_id BIGINT NOT NULL,
     part_number TEXT NOT NULL,
     qty INTEGER NOT NULL CHECK (qty >= 0),
+    -- UOP-threshold replenishment: payload this bucket's parts belong
+    -- to. Populated by Edge at capture time from the order context.
+    -- Empty means unknown (orphan whose claim was deleted before the
+    -- capture event resolved a payload) and excluded from
+    -- SystemUOPForPayload — conservative undercount, never overcount.
+    payload_code TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (station, node_id, pair_key, style_id, part_number)
 );
 CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(node_id, style_id);
+CREATE INDEX IF NOT EXISTS idx_lineside_buckets_payload ON lineside_buckets(payload_code);
 
 -- Phase 1 of the UOP bin-as-truth refactor — at-most-once dedup table
 -- for inventory delta envelopes. Distinct from inbox dedup (which gates

@@ -238,14 +238,22 @@ func (s *InventoryDeltaService) ApplyLinesideBucketDelta(d *protocol.LinesideBuc
 	// the schema level rejects under-zero results. Treat that
 	// constraint violation as a typed error so the handler can log
 	// without spamming the SQL fault line.
+	//
+	// payload_code (UOP-threshold replenishment): write the incoming
+	// value when non-empty; keep the existing row's value when the
+	// incoming is empty. Empty just means "this delta envelope didn't
+	// carry a code" (rare — older Edge build or an envelope built
+	// outside the capture-from-order-context path); we don't want
+	// such a delta to clobber a previously-latched payload code.
 	res, err := tx.Exec(`
-		INSERT INTO lineside_buckets (station, node_id, pair_key, style_id, part_number, qty)
-		VALUES ($1, $2, $3, $4, $5, GREATEST($6, 0))
+		INSERT INTO lineside_buckets (station, node_id, pair_key, style_id, part_number, qty, payload_code)
+		VALUES ($1, $2, $3, $4, $5, GREATEST($6, 0), $7)
 		ON CONFLICT (station, node_id, pair_key, style_id, part_number)
 		DO UPDATE SET
 			qty = lineside_buckets.qty + $6,
+			payload_code = CASE WHEN $7 = '' THEN lineside_buckets.payload_code ELSE $7 END,
 			updated_at = NOW()`,
-		d.Station, d.NodeID, d.PairKey, d.StyleID, d.PartNumber, d.Delta)
+		d.Station, d.NodeID, d.PairKey, d.StyleID, d.PartNumber, d.Delta, d.PayloadCode)
 	if err != nil {
 		// Most likely cause: CHECK (qty >= 0) violation when the
 		// DO UPDATE branch tried to drive qty negative. Wrap.

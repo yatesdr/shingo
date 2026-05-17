@@ -489,11 +489,21 @@ type NodeStructureChanged struct {
 }
 
 // ClaimSyncEntry represents a single manual_swap claim's config for the demand registry.
+//
+// PayloadThresholds (UOP-threshold replenishment) carries per-payload
+// replenish_uop_threshold values for loader produce-role claims.
+// Map key is payload_code, value is the threshold UOP count. Entries
+// with value 0 are omitted from the wire (legacy bin-count behavior
+// preserved). Non-produce claims send an empty/nil map. Core uses this
+// to populate demand_registry.replenish_uop_threshold so the threshold
+// monitor can compare combined in-loop UOP against the configured
+// trigger.
 type ClaimSyncEntry struct {
-	CoreNodeName        string    `json:"core_node_name"`
-	Role                ClaimRole `json:"role"`
-	AllowedPayloadCodes []string  `json:"allowed_payload_codes"` // payloads this node accepts
-	OutboundDestination string    `json:"outbound_destination"`
+	CoreNodeName        string         `json:"core_node_name"`
+	Role                ClaimRole      `json:"role"`
+	AllowedPayloadCodes []string       `json:"allowed_payload_codes"` // payloads this node accepts
+	OutboundDestination string         `json:"outbound_destination"`
+	PayloadThresholds   map[string]int `json:"payload_thresholds,omitempty"` // payload_code → threshold; omit 0
 }
 
 // ClaimSync is sent by Edge to Core on startup and claim changes.
@@ -636,15 +646,49 @@ type BinUOPDelta struct {
 // (station, node_id, pair_key, style_id, part_number). When qty hits
 // zero Core deletes the row — Option C: active/inactive is computed
 // at query time, so empty buckets carry no useful information.
+//
+// PayloadCode (UOP-threshold replenishment) lets Core associate a
+// bucket with the payload its parts came from so SystemUOPForPayload
+// can sum bins + buckets for the same payload. Edge populates this at
+// capture time from the order context. Empty string means "unknown"
+// (orphan bucket whose claim was deleted before the capture event
+// could resolve a payload). Orphans are excluded from
+// SystemUOPForPayload — conservative undercount, never overcount.
 type LinesideBucketDelta struct {
 	Station     string                    `json:"station"`
 	NodeID      int64                     `json:"node_id"`
 	PairKey     string                    `json:"pair_key"`
 	StyleID     int64                     `json:"style_id"`
 	PartNumber  string                    `json:"part_number"`
+	PayloadCode string                    `json:"payload_code,omitempty"`
 	Delta       int                       `json:"delta"`
 	Reason      LinesideBucketDeltaReason `json:"reason"`
 	SequenceID  int64                     `json:"sequence_id"`
 	WindowStart time.Time                 `json:"window_start"`
 	WindowEnd   time.Time                 `json:"window_end"`
+}
+
+// LoopBelowThresholdSignal is sent by Core to Edge when total in-loop
+// UOP for a (loader, payload) pair drops below the configured threshold.
+// Edge responds by firing an L1 retrieve_empty order via
+// refillLoaderForPayload after the countLoaderInFlightEmptyIn dedup
+// guard.
+//
+// CoreNodeName is the canonical cross-system identifier (matches the
+// node name used by style_node_claims, process_nodes, demand_registry,
+// and the rest of the protocol). v6 renamed this from LoaderNode to
+// make the type symmetry with the rest of the system explicit.
+//
+// Reason carries either "below_threshold" (normal crossing) or
+// "warm_up_startup_sweep" (Core startup observed an existing
+// under-threshold state and is firing up to the per-binding warm-up
+// cap). The signal is the only path that fires L1 for opted-in pairs;
+// the legacy DemandSignal path in HandleDemandSignal explicitly skips
+// these pairs to avoid redundant evaluation.
+type LoopBelowThresholdSignal struct {
+	PayloadCode  string `json:"payload_code"`
+	CurrentUOP   int    `json:"current_uop"`
+	Threshold    int    `json:"threshold"`
+	CoreNodeName string `json:"core_node_name"`
+	Reason       string `json:"reason"`
 }

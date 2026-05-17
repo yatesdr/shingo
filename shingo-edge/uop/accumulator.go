@@ -68,12 +68,21 @@ type binDeltaEntry struct {
 // (nodeID, pairKey, styleID, partNumber); these fields are immutable
 // for the lifetime of an entry (a different composite key produces a
 // different sync.Map entry).
+//
+// payloadCode (UOP-threshold replenishment) carries the payload this
+// bucket's parts belong to. Latched on first non-empty recordBucket
+// call for the key; subsequent calls with the same key only overwrite
+// when they bring a non-empty value (a downstream caller that doesn't
+// have the payload handy shouldn't be able to wipe one that's already
+// set). Empty on the wire = "unknown" — Core's UPSERT preserves the
+// existing payload_code.
 type bucketDeltaEntry struct {
 	mu          sync.Mutex
 	nodeID      int64
 	pairKey     string
 	styleID     int64
 	partNumber  string
+	payloadCode string
 	delta       int
 	reason      protocol.LinesideBucketDeltaReason
 	windowStart time.Time
@@ -208,7 +217,7 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 // "manual swap nodes never emit bucket deltas" because they have no
 // PLC and their count-change events are operator actions on the bin,
 // not the bucket.
-func (r *accumulator) recordBucket(nodeID int64, pairKey string, styleID int64, partNumber string, delta int, reason protocol.LinesideBucketDeltaReason) {
+func (r *accumulator) recordBucket(nodeID int64, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
 	if delta == 0 {
 		return
 	}
@@ -223,6 +232,7 @@ func (r *accumulator) recordBucket(nodeID int64, pairKey string, styleID int64, 
 		pairKey:     pairKey,
 		styleID:     styleID,
 		partNumber:  partNumber,
+		payloadCode: payloadCode,
 		windowStart: now,
 	})
 	e := v.(*bucketDeltaEntry)
@@ -231,13 +241,19 @@ func (r *accumulator) recordBucket(nodeID int64, pairKey string, styleID int64, 
 	if e.delta == 0 {
 		e.windowStart = now
 	}
+	// Only overwrite payloadCode with a non-empty value; an unset
+	// caller must not wipe a previously-latched one. This mirrors
+	// Core's UPSERT policy on the apply side.
+	if payloadCode != "" {
+		e.payloadCode = payloadCode
+	}
 	e.delta += delta
 	e.reason = reason
 	e.windowEnd = now
 	e.mu.Unlock()
 
-	r.debugLog.Log("inventory_delta: bucket node=%d part=%q delta=%+d reason=%s",
-		nodeID, partNumber, delta, reason)
+	r.debugLog.Log("inventory_delta: bucket node=%d part=%q payload=%q delta=%+d reason=%s",
+		nodeID, partNumber, payloadCode, delta, reason)
 }
 
 // flush performs one synchronous flush pass. Boundary triggers call
@@ -368,6 +384,7 @@ func (r *accumulator) flushBuckets() {
 		sPairKey := e.pairKey
 		sStyleID := e.styleID
 		sPartNumber := e.partNumber
+		sPayloadCode := e.payloadCode
 		sDelta := e.delta
 		sReason := e.reason
 		sWindowStart := e.windowStart
@@ -394,6 +411,7 @@ func (r *accumulator) flushBuckets() {
 				PairKey:     sPairKey,
 				StyleID:     sStyleID,
 				PartNumber:  sPartNumber,
+				PayloadCode: sPayloadCode,
 				Delta:       sDelta,
 				Reason:      sReason,
 				SequenceID:  seq,

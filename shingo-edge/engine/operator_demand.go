@@ -42,11 +42,32 @@ func (e *Engine) SendClaimSync() {
 			if len(payloads) == 0 {
 				continue
 			}
+			// UOP-threshold replenishment: ship the per-payload
+			// threshold map so Core can populate
+			// demand_registry.replenish_uop_threshold. Threshold 0 is
+			// the opt-out default; the protocol encoder omits zero
+			// entries via omitempty on the map field. v6: thresholds
+			// are keyed by core_node_name directly — no process_node
+			// lookup needed since core_node_name is the canonical
+			// cross-system identifier and the same row applies across
+			// every style's claim row that lists the same loader.
+			thresholds := map[string]int{}
+			if c.Role == protocol.ClaimRoleProduce {
+				rows, err := e.db.ThresholdsByPayloadForLoader(c.CoreNodeName)
+				if err == nil {
+					for _, p := range payloads {
+						if v, ok := rows[p]; ok && v > 0 {
+							thresholds[p] = v
+						}
+					}
+				}
+			}
 			claims = append(claims, protocol.ClaimSyncEntry{
 				CoreNodeName:        c.CoreNodeName,
 				Role:                c.Role,
 				AllowedPayloadCodes: payloads,
 				OutboundDestination: c.OutboundDestination,
+				PayloadThresholds:   thresholds,
 			})
 		}
 	}
@@ -151,6 +172,72 @@ func (e *Engine) FindLoaderForPayload(payloadCode string) *manualSwapNode {
 			continue
 		}
 		return &m
+	}
+	return nil
+}
+
+// FindAnyLoaderClaimForPayload returns a (node, claim) pair for a
+// manual_swap PRODUCER claim matching the payload across **every**
+// style on every process, not just the active style. Returns the
+// first match. Used only by the engineer-triggered Calculate path
+// to resolve bin capacity — a payload may be on an inactive style
+// during commissioning, calibration, or multi-process plants, and
+// the calculator still needs to know the bin's UOPCapacity so the
+// UI can render the implied-bin annotation ("≈ N bins") next to the
+// calculated threshold.
+//
+// Do not use this for L1 trigger logic or for SendClaimSync — those
+// must stay active-gated so an inactive style's threshold doesn't
+// leak into the live demand wire.
+func (e *Engine) FindAnyLoaderClaimForPayload(payloadCode string) *manualSwapNode {
+	if payloadCode == "" {
+		return nil
+	}
+	procList, err := e.db.ListProcesses()
+	if err != nil {
+		log.Printf("FindAnyLoaderClaimForPayload: list processes: %v", err)
+		return nil
+	}
+	for _, proc := range procList {
+		styles, err := e.db.ListStylesByProcess(proc.ID)
+		if err != nil {
+			log.Printf("FindAnyLoaderClaimForPayload: list styles for process %d: %v", proc.ID, err)
+			continue
+		}
+		var nodes []processes.Node
+		var nodesFetched bool
+		for _, st := range styles {
+			claims, err := e.db.ListStyleNodeClaims(st.ID)
+			if err != nil {
+				log.Printf("FindAnyLoaderClaimForPayload: list claims for style %d: %v", st.ID, err)
+				continue
+			}
+			for _, claim := range claims {
+				if claim.SwapMode != protocol.SwapModeManualSwap {
+					continue
+				}
+				if claim.Role != protocol.ClaimRoleProduce {
+					continue
+				}
+				if !slices.Contains(claim.AllowedPayloads(), payloadCode) {
+					continue
+				}
+				if !nodesFetched {
+					nodes, err = e.db.ListProcessNodesByProcess(proc.ID)
+					if err != nil {
+						log.Printf("FindAnyLoaderClaimForPayload: list nodes for process %d: %v", proc.ID, err)
+						break
+					}
+					nodesFetched = true
+				}
+				for _, node := range nodes {
+					if node.CoreNodeName != claim.CoreNodeName {
+						continue
+					}
+					return &manualSwapNode{node: node, claim: claim}
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -304,9 +391,59 @@ func (e *Engine) MaybeCreateLoaderEmptyIn(payloadCode string) {
 	// the operator sees the full demand rather than discovering it one signal
 	// at a time. The signaled payload is what tells us which loader to
 	// evaluate; what to queue is computed per-payload from current state.
+	//
+	// UOP-threshold replenishment (C-push) — for any (loader, payload)
+	// with replenish_uop_threshold > 0, Core is the source of truth.
+	// Skip the legacy bin-count evaluation here; Core's
+	// LoopBelowThresholdSignal goes through HandleLoopBelowThreshold
+	// instead. The countLoaderInFlightEmptyIn guard on both paths is
+	// the dedup contract for the race window where both signals arrive
+	// near-simultaneously — do not remove or weaken either guard.
 	for _, code := range loader.claim.AllowedPayloads() {
+		if e.hasOptInLoaderThreshold(loader.node.CoreNodeName, code) {
+			e.debugFn("kanban: HandleDemandSignal skip loader=%s payload=%s — C-push active",
+				loader.node.CoreNodeName, code)
+			continue
+		}
 		e.refillLoaderForPayload(loader, code)
 	}
+}
+
+// hasOptInLoaderThreshold returns true when a loader_payload_thresholds
+// row exists for this (loader, payload) with replenish_uop_threshold > 0.
+// Lookup failure returns false — better to over-fire L1 (which the
+// countLoaderInFlightEmptyIn guard catches as a duplicate) than to leave
+// a payload unstocked because a DB read flickered.
+func (e *Engine) hasOptInLoaderThreshold(coreNodeName, payloadCode string) bool {
+	row, err := e.db.GetLoaderPayloadThreshold(coreNodeName, payloadCode)
+	if err != nil || row == nil {
+		return false
+	}
+	return row.ReplenishUOPThreshold > 0
+}
+
+// HandleLoopBelowThreshold is the Core→Edge LoopBelowThresholdSignal
+// receiver. Calls refillLoaderForPayload for the signaled payload
+// after resolving the local loader via FindLoaderForPayload. The
+// countLoaderInFlightEmptyIn guard inside refillLoaderForPayload is
+// the dedup contract with the legacy DemandSignal path.
+//
+// Reason carries either "below_threshold" or "warm_up_startup_sweep" —
+// logged for diagnostics but behaves identically: both ask Edge to fire
+// L1 if not already in flight. Per-binding warm-up cap is enforced at
+// Core; Edge just responds to each signal.
+func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal) {
+	if sig == nil || sig.PayloadCode == "" {
+		return
+	}
+	loader := e.FindLoaderForPayload(sig.PayloadCode)
+	if loader == nil {
+		e.debugFn("loop_threshold: no loader for payload=%s — dropping signal", sig.PayloadCode)
+		return
+	}
+	e.logFn("loop_threshold: signal received loader=%s payload=%s current=%d threshold=%d reason=%s",
+		loader.node.CoreNodeName, sig.PayloadCode, sig.CurrentUOP, sig.Threshold, sig.Reason)
+	e.refillLoaderForPayload(loader, sig.PayloadCode)
 }
 
 // refillLoaderForPayload tops the per-payload empty-in queue at one loader

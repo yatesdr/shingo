@@ -184,6 +184,23 @@ func (s *stubEngine) BucketBackfillNeeded() (bool, error) {
 
 func (s *stubEngine) AdminAdjustLinesideBucket(int64, int, bool) error { return nil }
 
+// UOP-threshold replenishment admin (Phase 1+2) — stubs only; the
+// real path is exercised through engine tests, not www handler tests.
+func (s *stubEngine) ListLoaderThresholds() ([]engine.LoaderThresholdRow, error) { return nil, nil }
+func (s *stubEngine) UpsertLoaderThreshold(engine.LoaderThresholdInput) error    { return nil }
+func (s *stubEngine) DeleteLoaderThreshold(string, string) error                 { return nil }
+func (s *stubEngine) UpdateCellReorder(engine.CellReorderInput) error            { return nil }
+func (s *stubEngine) CalculateThresholdForLoader(engine.CalculateInput) (service.CalculateResult, error) {
+	return service.CalculateResult{}, nil
+}
+func (s *stubEngine) ApplyCalculatedThreshold(engine.LoaderThresholdInput) error { return nil }
+func (s *stubEngine) OverrideCalculatedThreshold(int, engine.LoaderThresholdInput) error {
+	return nil
+}
+func (s *stubEngine) ListLoaderClaimsForRecalculate() ([]engine.LoaderClaimPair, error) {
+	return nil, nil
+}
+
 // ── Service accessors (Phase 6.2′) ─────────────────────────────────
 // Each accessor returns a real *service.X backed by the test DB so
 // handler tests exercise the full service → *store.DB → SQLite path.

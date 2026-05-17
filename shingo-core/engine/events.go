@@ -19,6 +19,12 @@ const (
 	EventOrderCancelled
 	EventOrderQueued
 	EventBinUpdated
+	// EventLinesideBucketApplied — emitted after CoreDataService
+	// successfully applies a LinesideBucketDelta. The UOP-threshold
+	// monitor subscribes to this so bucket drains (which change loop
+	// UOP without moving a bin) re-evaluate threshold crossings the
+	// same way bin moves do.
+	EventLinesideBucketApplied
 	EventNodeUpdated
 	EventCorrectionApplied
 	EventFleetConnected
@@ -117,6 +123,19 @@ type BinUpdatedEvent struct {
 	ToNodeID    int64
 	Actor       string
 	Detail      string
+}
+
+// LinesideBucketAppliedEvent is the engine event the UOP-threshold
+// monitor consumes when a bucket delta lands. PayloadCode may be
+// empty for orphan / pre-upgrade-backfill rows; the monitor short-
+// circuits on empty.
+type LinesideBucketAppliedEvent struct {
+	Station     string
+	NodeID      int64
+	PayloadCode string
+	NewQty      int
+	Delta       int
+	Reason      protocol.LinesideBucketDeltaReason
 }
 
 type NodeUpdatedEvent struct {

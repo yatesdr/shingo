@@ -212,6 +212,7 @@ func GetNode(db *sql.DB, id int64) (*Node, error) {
 	return &n, nil
 }
 
+
 // CreateNode inserts a process_node row, generating the code and
 // sequence number when not supplied.
 func CreateNode(db *sql.DB, in NodeInput) (int64, error) {

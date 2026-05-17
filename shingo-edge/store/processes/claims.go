@@ -52,7 +52,7 @@ type (
 )
 
 const claimSelect = `id, style_id, core_node_name, role, swap_mode, payload_code,
-	uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
+	uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 	inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 	keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 	lineside_soft_threshold, second_paired_core_node,
@@ -62,7 +62,7 @@ func scanNodeClaim(scanner interface{ Scan(...interface{}) error }) (NodeClaim, 
 	var c NodeClaim
 	var createdAt, allowedJSON string
 	if err := scanner.Scan(&c.ID, &c.StyleID, &c.CoreNodeName, &c.Role, &c.SwapMode, &c.PayloadCode,
-		&c.UOPCapacity, &c.ReorderPoint, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
+		&c.UOPCapacity, &c.ReorderPoint, &c.ReorderPointSource, &c.AutoReorder, &c.InboundStaging, &c.OutboundStaging,
 		&c.InboundSource, &c.OutboundDestination, &allowedJSON, &c.AutoRequestPayload,
 		&c.KeepStaged, &c.EvacuateOnChangeover, &c.PairedCoreNode, &c.AutoConfirm, &c.Sequence,
 		&c.LinesideSoftThreshold, &c.SecondPairedCoreNode,
@@ -199,14 +199,18 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	// INSERT, RowsAffected==0 and we fall through to UPDATE the
 	// winner's row with our values. Plain INSERT failed here with
 	// UNIQUE constraint on the same race.
+	source := in.ReorderPointSource
+	if source == "" {
+		source = "legacy"
+	}
 	res, err := db.Exec(`INSERT OR IGNORE INTO style_node_claims (style_id, core_node_name, role, swap_mode, payload_code,
-		uop_capacity, reorder_point, auto_reorder, inbound_staging, outbound_staging,
+		uop_capacity, reorder_point, reorder_point_source, auto_reorder, inbound_staging, outbound_staging,
 		inbound_source, outbound_destination, allowed_payload_codes, auto_request_payload,
 		keep_staged, evacuate_on_changeover, paired_core_node, auto_confirm, sequence,
 		lineside_soft_threshold, second_paired_core_node, reuse_compatible_bins, auto_push)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		in.StyleID, in.CoreNodeName, in.Role, in.SwapMode, in.PayloadCode,
-		in.UOPCapacity, in.ReorderPoint, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
+		in.UOPCapacity, in.ReorderPoint, source, in.AutoReorder, in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,
 		in.LinesideSoftThreshold, in.SecondPairedCoreNode, in.ReuseCompatibleBins, in.AutoPush)
@@ -225,14 +229,18 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 
 func updateClaim(db *sql.DB, id int64, in NodeClaimInput) error {
 	allowedJSON := marshalAllowedPayloads(in.AllowedPayloadCodes)
+	source := in.ReorderPointSource
+	if source == "" {
+		source = "legacy"
+	}
 	_, err := db.Exec(`UPDATE style_node_claims SET role=?, swap_mode=?, payload_code=?,
-		uop_capacity=?, reorder_point=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
+		uop_capacity=?, reorder_point=?, reorder_point_source=?, auto_reorder=?, inbound_staging=?, outbound_staging=?,
 		inbound_source=?, outbound_destination=?, allowed_payload_codes=?, auto_request_payload=?,
 		keep_staged=?, evacuate_on_changeover=?, paired_core_node=?, auto_confirm=?, sequence=?,
 		lineside_soft_threshold=?, second_paired_core_node=?,
 		reuse_compatible_bins=?, auto_push=?
 		WHERE id=?`,
-		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, in.AutoReorder,
+		in.Role, in.SwapMode, in.PayloadCode, in.UOPCapacity, in.ReorderPoint, source, in.AutoReorder,
 		in.InboundStaging, in.OutboundStaging,
 		in.InboundSource, in.OutboundDestination, allowedJSON, in.AutoRequestPayload,
 		in.KeepStaged, in.EvacuateOnChangeover, in.PairedCoreNode, in.AutoConfirm, in.Sequence,

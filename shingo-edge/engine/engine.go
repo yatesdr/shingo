@@ -129,6 +129,9 @@ func New(c Config) *Engine {
 	if c.DebugLogger != nil {
 		debugFn = DebugLogFunc(c.DebugLogger.Func("engine"))
 	}
+	if debugFn == nil {
+		debugFn = func(string, ...interface{}) {}
+	}
 	e := &Engine{
 		cfg:         c.AppConfig,
 		configPath:  c.ConfigPath,

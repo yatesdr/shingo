@@ -271,6 +271,17 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	})
 	log.Printf("kanban: demand-signal handler wired — produce-role signals route to MaybeCreateLoaderEmptyIn")
 
+	// UOP-threshold replenishment: Core observes combined in-loop UOP
+	// (bins + buckets) per payload and signals here when a monitored
+	// (loader, payload) drops below threshold. Edge responds by firing
+	// L1 via refillLoaderForPayload (same path as DemandSignal, but
+	// scoped to the signaled payload). countLoaderInFlightEmptyIn is
+	// the dedup contract with the DemandSignal path.
+	edgeHandler.SetLoopBelowThresholdHandler(func(s *protocol.LoopBelowThresholdSignal) {
+		eng.HandleLoopBelowThreshold(s)
+	})
+	log.Printf("kanban: loop-below-threshold handler wired — C-push signals route to HandleLoopBelowThreshold")
+
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)
 	}
