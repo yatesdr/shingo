@@ -34,6 +34,7 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/config"
 	"shingoedge/orders"
+	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/service"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
@@ -71,7 +72,7 @@ func newCoverageEngine(t *testing.T) *Engine {
 	eng.coreClient = NewCoreClient("")
 	eng.reconciliation = newReconciliationService(eng.db)
 	eng.coreSync = newCoreSyncService(eng)
-	eng.orderMgr = orders.NewManager(db, testOrderEmitter{}, cfg.StationID())
+	eng.orderMgr = orders.NewManager(db, ordertestutil.NoOpOrderEmitter{}, cfg.StationID())
 	eng.stationService = service.NewStationService(db)
 	eng.changeoverService = service.NewChangeoverService(db)
 	return eng

@@ -7,20 +7,11 @@ import (
 	"shingo/protocol/testutil"
 	"shingoedge/config"
 	"shingoedge/orders"
+	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/service"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
-
-// testOrderEmitter is a no-op implementation of orders.EventEmitter for testing.
-type testOrderEmitter struct{}
-
-func (testOrderEmitter) EmitOrderCreated(int64, string, protocol.OrderType, *int64, *int64) {}
-func (testOrderEmitter) EmitOrderStatusChanged(int64, string, protocol.OrderType, string, string, string, *int64, *int64) {
-}
-func (testOrderEmitter) EmitOrderCompleted(int64, string, protocol.OrderType, *int64, *int64) {}
-func (testOrderEmitter) EmitOrderDelivered(int64, string, protocol.OrderType, *int64, *int64) {}
-func (testOrderEmitter) EmitOrderFailed(int64, string, protocol.OrderType, string)            {}
 
 // seedProduceNode creates a process, process node, style, claim, and runtime
 // suitable for produce-node finalization tests. Returns all the IDs needed.
@@ -90,7 +81,7 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 	eng := &Engine{
 		cfg:      cfg,
 		db:       db,
-		orderMgr: orders.NewManager(db, testOrderEmitter{}, "test.station"),
+		orderMgr: orders.NewManager(db, ordertestutil.NoOpOrderEmitter{}, "test.station"),
 		Events:   NewEventBus(),
 		stopChan: make(chan struct{}),
 		// logFn is initialized to a no-op for tests that exercise diagnostic
@@ -494,4 +485,3 @@ func TestReleaseStagedOrders_NoTrackedOrders(t *testing.T) {
 		t.Fatal("expected error when no orders are tracked on the node")
 	}
 }
-func (testOrderEmitter) EmitOrderFaulted(int64, string, string)                                 {}

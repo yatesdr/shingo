@@ -21,6 +21,7 @@ import (
 	"shingoedge/engine"
 	"shingoedge/engine/changeover"
 	"shingoedge/orders"
+	ordertestutil "shingoedge/orders/testutil"
 	"shingoedge/plc"
 	"shingoedge/service"
 	"shingoedge/store"
@@ -52,23 +53,6 @@ func TestMain(m *testing.M) {
 }
 
 // --- Stub engine ---
-
-// stubOrderEmitter is a no-op implementation of orders.EventEmitter for tests.
-// The order manager fires events on every transition; tests don't care about
-// them, so we drop them on the floor.
-type stubOrderEmitter struct{}
-
-func (stubOrderEmitter) EmitOrderCreated(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
-}
-func (stubOrderEmitter) EmitOrderStatusChanged(orderID int64, orderUUID string, orderType protocol.OrderType, oldStatus, newStatus, eta string, payloadID, processNodeID *int64) {
-}
-func (stubOrderEmitter) EmitOrderCompleted(orderID int64, orderUUID string, orderType protocol.OrderType, payloadID, processNodeID *int64) {
-}
-func (stubOrderEmitter) EmitOrderDelivered(orderID int64, orderUUID string, orderType protocol.OrderType, processNodeID, binID *int64) {
-}
-func (stubOrderEmitter) EmitOrderFailed(orderID int64, orderUUID string, orderType protocol.OrderType, reason string) {
-}
-func (stubOrderEmitter) EmitOrderFaulted(orderID int64, orderUUID, reason string) {}
 
 // stubEngine implements both ServiceAccess and EngineOrchestration for
 // tests, since *Handlers now holds two fields of those interface types
@@ -250,7 +234,7 @@ func newTestHandlers(t *testing.T) (*Handlers, *chi.Mux) {
 		db:       testDB,
 		cfg:      cfg,
 		cfgPath:  cfgPath,
-		orderMgr: orders.NewManager(testDB, stubOrderEmitter{}, "test.station"),
+		orderMgr: orders.NewManager(testDB, ordertestutil.NoOpOrderEmitter{}, "test.station"),
 	}
 
 	h := &Handlers{

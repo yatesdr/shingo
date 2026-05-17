@@ -1,12 +1,16 @@
 //go:build docker
 
-package store
+package store_test
 
-import "testing"
+import (
+	"testing"
+
+	"shingocore/internal/testdb"
+)
 
 func TestRecordInboundMessage(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 
 	first, err := db.RecordInboundMessage("msg-1", "order.redirect", "edge.1")
 	if err != nil {

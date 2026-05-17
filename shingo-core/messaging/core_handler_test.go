@@ -3,22 +3,14 @@
 package messaging
 
 import (
-	"context"
 	"fmt"
-	"strings"
 	"testing"
-	"time"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingocore/config"
 	"shingocore/dispatch"
 	"shingocore/fleet"
-	"shingocore/store"
+	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 	"shingocore/store/orders"
 	"shingocore/store/payloads"
@@ -61,65 +53,9 @@ func (noopEmitter) EmitOrderCancelled(orderID int64, edgeUUID, stationID, reason
 func (noopEmitter) EmitOrderCompleted(orderID int64, edgeUUID, stationID string)                  {}
 func (noopEmitter) EmitOrderQueued(orderID int64, edgeUUID, stationID, payloadCode string)        {}
 
-func testDB(t *testing.T) *store.DB {
-	t.Helper()
-	ctx := context.Background()
-	defer func() {
-		if r := recover(); r != nil {
-			msg := fmt.Sprint(r)
-			if strings.Contains(strings.ToLower(msg), "docker") {
-				t.Skipf("skipping integration test: %s", msg)
-			}
-			panic(r)
-		}
-	}()
-
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
-		postgres.WithDatabase("shingocore_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "docker") {
-			t.Skipf("skipping integration test: %v", err)
-		}
-		t.Fatalf("start postgres container: %v", err)
-	}
-	t.Cleanup(func() { pgContainer.Terminate(ctx) })
-
-	host, err := pgContainer.Host(ctx)
-	if err != nil {
-		t.Fatalf("get container host: %v", err)
-	}
-	port, err := pgContainer.MappedPort(ctx, "5432")
-	if err != nil {
-		t.Fatalf("get container port: %v", err)
-	}
-
-	db, err := store.Open(&config.DatabaseConfig{
-		Postgres: config.PostgresConfig{
-			Host:     host,
-			Port:     port.Int(),
-			Database: "shingocore_test",
-			User:     "test",
-			Password: "test",
-			SSLMode:  "disable",
-		},
-	})
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
-}
-
 func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	line := &nodes.Node{Name: "LINE-1", Enabled: true}
 	dest := &nodes.Node{Name: "LINE-2", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(line), "create line node")
@@ -167,7 +103,7 @@ func TestCoreHandlerDeduplicatesRedirectByEnvelopeID(t *testing.T) {
 
 func TestCoreHandlerDeduplicatesOrderRequestByEnvelopeID(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	dest := &nodes.Node{Name: "LINE-REQ", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create destination node")
 	payload := &payloads.Payload{Code: "PART-A", Description: "Part A", UOPCapacity: 10}
@@ -206,7 +142,7 @@ func TestCoreHandlerDeduplicatesOrderRequestByEnvelopeID(t *testing.T) {
 
 func TestCoreHandlerDeduplicationPersistsAcrossHandlerRestart(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	dest := &nodes.Node{Name: "LINE-RESTART", Enabled: true}
 	testutil.MustNoErr(t, db.CreateNode(dest), "create destination node")
 	payload := &payloads.Payload{Code: "PART-R", Description: "Part R", UOPCapacity: 10}
@@ -243,7 +179,7 @@ func TestCoreHandlerDeduplicationPersistsAcrossHandlerRestart(t *testing.T) {
 
 func TestCoreHandlerDeduplicatesReceiptAcrossHandlerRestart(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	order := &orders.Order{
 		EdgeUUID:     "uuid-receipt-restart",
 		StationID:    "edge.1",

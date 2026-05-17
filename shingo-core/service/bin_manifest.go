@@ -316,112 +316,7 @@ func (s *BinManifestService) ClaimForDispatch(binID, orderID int64, remainingUOP
 // Idempotent: re-running with the same arguments produces the same row state,
 // so retries after a failed fleet release are safe.
 func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string) error {
-	if remainingUOP == nil {
-		return nil
-	}
-	if actor == "" {
-		actor = "system"
-	}
-	// Defense in depth: Edge's computeReleaseRemainingUOP guards against
-	// non-positive values reaching this branch, but a direct Core caller
-	// (test, automation, future bypass) could still hand us a negative
-	// pointer. Reject loudly rather than corrupt the bin row.
-	if *remainingUOP < 0 {
-		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
-	}
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	before, err := readBinUOPInTx(tx, binID)
-	if err != nil {
-		return err
-	}
-
-	if *remainingUOP == 0 {
-		// Clear manifest, preserve claim
-		res, err := tx.Exec(`
-			UPDATE bins SET
-				payload_code='', manifest=NULL, uop_remaining=0,
-				manifest_confirmed=false, loaded_at=NULL,
-				updated_at=NOW()
-			WHERE id=$1 AND claimed_by=$2 AND locked=false`,
-			binID, orderID)
-		if err != nil {
-			return fmt.Errorf("clear manifest for released bin %d: %w", binID, err)
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			return fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
-		}
-		op := audit.OpReleasedEmpty
-		legacyTag := "released_empty"
-		if kind == protocol.DispositionReleaseUnderpack {
-			op = audit.OpReleasedUnderpack
-			legacyTag = "released_underpack"
-		}
-		if err := audit.AppendBinUOP(tx, binID, before, 0,
-			op, "service/bin_manifest.go:SyncOrClearForReleased",
-			&orderID, "", actor); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit clear-for-released bin %d: %w", binID, err)
-		}
-		s.db.AppendAudit("bin", binID, legacyTag,
-			"", fmt.Sprintf("order=%d", orderID), actor)
-		return nil
-	}
-	// Positive: sync UOP AND reconstruct manifest, preserve claim.
-	//
-	// Manifest reconstruction (single-payload normalization assumption):
-	// the bin's manifest is rewritten to {"items":[{"catid": payload_code,
-	// "qty": remaining_uop}]}. Pre-2026-05 this branch only updated
-	// uop_remaining, leaving the manifest carrying the pre-release qty
-	// — the SMN_003/ALN_002 stale-manifest bug class. The reconstruction
-	// is atomic with the UOP update via jsonb_build_object reading
-	// payload_code from the same row, so no read-then-update race.
-	//
-	// The CASE guard preserves the prior manifest if payload_code is
-	// empty (a malformed state — partial-release should always have a
-	// payload). Erroring would be cleaner but risks regressing release
-	// flows in the field; preserving the prior manifest matches the
-	// pre-fix observable behavior for the edge case.
-	res, err := tx.Exec(`
-		UPDATE bins SET
-			uop_remaining=$1,
-			manifest=CASE
-				WHEN COALESCE(payload_code, '') = '' THEN manifest
-				ELSE jsonb_build_object(
-					'items', jsonb_build_array(
-						jsonb_build_object('catid', payload_code, 'qty', $1::int)
-					)
-				)
-			END,
-			updated_at=NOW()
-		WHERE id=$2 AND claimed_by=$3 AND locked=false`,
-		*remainingUOP, binID, orderID)
-	if err != nil {
-		return fmt.Errorf("sync UOP for released bin %d: %w", binID, err)
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
-	}
-	if err := audit.AppendBinUOP(tx, binID, before, *remainingUOP,
-		audit.OpReleasedPartial, "service/bin_manifest.go:SyncOrClearForReleased",
-		&orderID, "", actor); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit sync-for-released bin %d: %w", binID, err)
-	}
-	s.db.AppendAudit("bin", binID, "released_partial",
-		"", fmt.Sprintf("uop=%d order=%d", *remainingUOP, orderID), actor)
-	return nil
+	return s.syncOrClearForReleased(binID, orderID, remainingUOP, kind, actor, false)
 }
 
 // SyncOrClearForReleasedNoOwner is the source-node-fallback variant of
@@ -442,14 +337,42 @@ func (s *BinManifestService) SyncOrClearForReleased(binID, orderID int64, remain
 // Idempotent: re-running with the same arguments produces the same row
 // state, so retries after a failed fleet release are safe.
 func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64, remainingUOP *int, actor string) error {
+	return s.syncOrClearForReleased(binID, orderID, remainingUOP, "", actor, true)
+}
+
+// syncOrClearForReleased is the shared body of the two exported variants.
+// sourceNodeFallback toggles the claimed_by SQL guard, audit-op constants,
+// legacy-tag suffixes, and error-message strings. kind is honored only for
+// the owner path (sourceNodeFallback=false); the fallback path passes ""
+// and never emits an underpack tag.
+func (s *BinManifestService) syncOrClearForReleased(binID, orderID int64, remainingUOP *int, kind protocol.UOPDispositionKind, actor string, sourceNodeFallback bool) error {
 	if remainingUOP == nil {
 		return nil
 	}
 	if actor == "" {
 		actor = "system"
 	}
+	// Defense in depth: Edge's computeReleaseRemainingUOP guards against
+	// non-positive values reaching this branch, but a direct Core caller
+	// (test, automation, future bypass) could still hand us a negative
+	// pointer. Reject loudly rather than corrupt the bin row.
 	if *remainingUOP < 0 {
 		return fmt.Errorf("remainingUOP must be nil, 0, or positive; got %d", *remainingUOP)
+	}
+
+	// Per-variant strings — these are the differences enumerated in
+	// bin-manifest-dedup-analysis.md.
+	errSuffix := ""
+	tagSuffix := ""
+	finalMsgSuffix := ""
+	sourceLabel := "service/bin_manifest.go:SyncOrClearForReleased"
+	notFoundErr := fmt.Errorf("bin %d not claimed by order %d (or locked)", binID, orderID)
+	if sourceNodeFallback {
+		errSuffix = " (no-owner fallback)"
+		tagSuffix = "_fallback"
+		finalMsgSuffix = " (source-node fallback)"
+		sourceLabel = "service/bin_manifest.go:SyncOrClearForReleasedNoOwner"
+		notFoundErr = fmt.Errorf("bin %d not found or locked (no-owner fallback)", binID)
 	}
 
 	tx, err := s.db.Begin()
@@ -464,36 +387,64 @@ func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64,
 	}
 
 	if *remainingUOP == 0 {
-		res, err := tx.Exec(`
+		// Clear manifest, preserve claim (if applicable). The claimed_by guard
+		// is added only for the owner variant.
+		clearSQL := `
 			UPDATE bins SET
 				payload_code='', manifest=NULL, uop_remaining=0,
 				manifest_confirmed=false, loaded_at=NULL,
 				updated_at=NOW()
-			WHERE id=$1 AND locked=false`,
-			binID)
+			WHERE id=$1 AND locked=false`
+		var res sql.Result
+		if sourceNodeFallback {
+			res, err = tx.Exec(clearSQL, binID)
+		} else {
+			res, err = tx.Exec(clearSQL+` AND claimed_by=$2`, binID, orderID)
+		}
 		if err != nil {
-			return fmt.Errorf("clear manifest for released bin %d (no-owner fallback): %w", binID, err)
+			return fmt.Errorf("clear manifest for released bin %d%s: %w", binID, errSuffix, err)
 		}
 		n, _ := res.RowsAffected()
 		if n == 0 {
-			return fmt.Errorf("bin %d not found or locked (no-owner fallback)", binID)
+			return notFoundErr
+		}
+		op := audit.OpReleasedEmpty
+		legacyTag := "released_empty"
+		switch {
+		case sourceNodeFallback:
+			op = audit.OpReleasedEmptyFallback
+		case kind == protocol.DispositionReleaseUnderpack:
+			op = audit.OpReleasedUnderpack
+			legacyTag = "released_underpack"
 		}
 		if err := audit.AppendBinUOP(tx, binID, before, 0,
-			audit.OpReleasedEmptyFallback, "service/bin_manifest.go:SyncOrClearForReleasedNoOwner",
+			op, sourceLabel,
 			&orderID, "", actor); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit clear-for-released bin %d (no-owner fallback): %w", binID, err)
+			return fmt.Errorf("commit clear-for-released bin %d%s: %w", binID, errSuffix, err)
 		}
-		s.db.AppendAudit("bin", binID, "released_empty_fallback",
-			"", fmt.Sprintf("order=%d (source-node fallback)", orderID), actor)
+		s.db.AppendAudit("bin", binID, legacyTag+tagSuffix,
+			"", fmt.Sprintf("order=%d%s", orderID, finalMsgSuffix), actor)
 		return nil
 	}
-	// Same manifest-reconstruction logic as SyncOrClearForReleased but
-	// without the claimed_by guard — see the parent method's comment for
-	// the rationale on the JSON shape and the empty-payload_code CASE.
-	res, err := tx.Exec(`
+	// Positive: sync UOP AND reconstruct manifest, preserve claim.
+	//
+	// Manifest reconstruction (single-payload normalization assumption):
+	// the bin's manifest is rewritten to {"items":[{"catid": payload_code,
+	// "qty": remaining_uop}]}. Pre-2026-05 this branch only updated
+	// uop_remaining, leaving the manifest carrying the pre-release qty
+	// — the SMN_003/ALN_002 stale-manifest bug class. The reconstruction
+	// is atomic with the UOP update via jsonb_build_object reading
+	// payload_code from the same row, so no read-then-update race.
+	//
+	// The CASE guard preserves the prior manifest if payload_code is
+	// empty (a malformed state — partial-release should always have a
+	// payload). Erroring would be cleaner but risks regressing release
+	// flows in the field; preserving the prior manifest matches the
+	// pre-fix observable behavior for the edge case.
+	syncSQL := `
 		UPDATE bins SET
 			uop_remaining=$1,
 			manifest=CASE
@@ -505,25 +456,34 @@ func (s *BinManifestService) SyncOrClearForReleasedNoOwner(binID, orderID int64,
 				)
 			END,
 			updated_at=NOW()
-		WHERE id=$2 AND locked=false`,
-		*remainingUOP, binID)
+		WHERE id=$2 AND locked=false`
+	var res sql.Result
+	if sourceNodeFallback {
+		res, err = tx.Exec(syncSQL, *remainingUOP, binID)
+	} else {
+		res, err = tx.Exec(syncSQL+` AND claimed_by=$3`, *remainingUOP, binID, orderID)
+	}
 	if err != nil {
-		return fmt.Errorf("sync UOP for released bin %d (no-owner fallback): %w", binID, err)
+		return fmt.Errorf("sync UOP for released bin %d%s: %w", binID, errSuffix, err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("bin %d not found or locked (no-owner fallback)", binID)
+		return notFoundErr
+	}
+	op := audit.OpReleasedPartial
+	if sourceNodeFallback {
+		op = audit.OpReleasedPartialFallback
 	}
 	if err := audit.AppendBinUOP(tx, binID, before, *remainingUOP,
-		audit.OpReleasedPartialFallback, "service/bin_manifest.go:SyncOrClearForReleasedNoOwner",
+		op, sourceLabel,
 		&orderID, "", actor); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit sync-for-released bin %d (no-owner fallback): %w", binID, err)
+		return fmt.Errorf("commit sync-for-released bin %d%s: %w", binID, errSuffix, err)
 	}
-	s.db.AppendAudit("bin", binID, "released_partial_fallback",
-		"", fmt.Sprintf("uop=%d order=%d (source-node fallback)", *remainingUOP, orderID), actor)
+	s.db.AppendAudit("bin", binID, "released_partial"+tagSuffix,
+		"", fmt.Sprintf("uop=%d order=%d%s", *remainingUOP, orderID, finalMsgSuffix), actor)
 	return nil
 }
 

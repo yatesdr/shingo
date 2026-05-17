@@ -53,7 +53,12 @@ func ResetDatabase(cfg *config.DatabaseConfig) error {
 	return nil
 }
 
-func Open(cfg *config.DatabaseConfig) (*DB, error) {
+// OpenWithoutMigrate connects to the configured Postgres database and
+// applies pool limits, but does NOT run migrations. Production callers
+// should use Open; this is a test-only seam so testdb can clone a
+// pre-migrated template database and skip per-test migration cost.
+// Lives next to Open so the two paths are obviously paired.
+func OpenWithoutMigrate(cfg *config.DatabaseConfig) (*DB, error) {
 	sqlDB, err := sql.Open("pgx", dsn(&cfg.Postgres))
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -76,9 +81,16 @@ func Open(cfg *config.DatabaseConfig) (*DB, error) {
 	sqlDB.SetMaxIdleConns(maxIdle)
 	sqlDB.SetConnMaxLifetime(maxLife)
 
-	db := &DB{DB: sqlDB}
+	return &DB{DB: sqlDB}, nil
+}
+
+func Open(cfg *config.DatabaseConfig) (*DB, error) {
+	db, err := OpenWithoutMigrate(cfg)
+	if err != nil {
+		return nil, err
+	}
 	if err := db.migrate(); err != nil {
-		sqlDB.Close()
+		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return db, nil

@@ -3,21 +3,13 @@
 package messaging
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
-	"time"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
-	"shingocore/config"
-	"shingocore/store"
+	"shingocore/internal/testdb"
 	"shingocore/store/nodes"
 )
 
@@ -38,62 +30,6 @@ func (r *captureResponder) replyData(env *protocol.Envelope, subject string, pay
 }
 func (r *captureResponder) sendData(subject, stationID string, payload any) {}
 
-func dataTestDB(t *testing.T) *store.DB {
-	t.Helper()
-	ctx := context.Background()
-	defer func() {
-		if r := recover(); r != nil {
-			msg := fmt.Sprint(r)
-			if strings.Contains(strings.ToLower(msg), "docker") {
-				t.Skipf("skipping integration test: %s", msg)
-			}
-			panic(r)
-		}
-	}()
-
-	pgContainer, err := postgres.Run(ctx, "postgres:16-alpine",
-		postgres.WithDatabase("shingocore_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "docker") {
-			t.Skipf("skipping integration test: %v", err)
-		}
-		t.Fatalf("start postgres container: %v", err)
-	}
-	t.Cleanup(func() { pgContainer.Terminate(ctx) })
-
-	host, err := pgContainer.Host(ctx)
-	if err != nil {
-		t.Fatalf("get container host: %v", err)
-	}
-	port, err := pgContainer.MappedPort(ctx, "5432")
-	if err != nil {
-		t.Fatalf("get container port: %v", err)
-	}
-
-	db, err := store.Open(&config.DatabaseConfig{
-		Postgres: config.PostgresConfig{
-			Host:     host,
-			Port:     port.Int(),
-			Database: "shingocore_test",
-			User:     "test",
-			Password: "test",
-			SSLMode:  "disable",
-		},
-	})
-	if err != nil {
-		t.Fatalf("open test db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
-}
-
 // TestNodeListResponse_IncludesNodeGroups verifies that NGRP node groups are
 // included in the node list sync response when their children are assigned to
 // the requesting station.
@@ -105,7 +41,7 @@ func dataTestDB(t *testing.T) *store.DB {
 // missing from the dropdown, even though edge can display them.
 func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 	t.Parallel()
-	db := dataTestDB(t)
+	db := testdb.Open(t)
 
 	// NGRP node type is created by migrations — look it up
 	grpType, err := db.GetNodeTypeByCode("NGRP")
@@ -176,7 +112,7 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 // (non-station-scoped) fallback path also includes NGRP nodes.
 func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 	t.Parallel()
-	db := dataTestDB(t)
+	db := testdb.Open(t)
 
 	// NGRP node type is created by migrations — look it up
 	grpType, err := db.GetNodeTypeByCode("NGRP")

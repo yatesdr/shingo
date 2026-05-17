@@ -1,18 +1,19 @@
 //go:build docker
 
-package store
+package store_test
 
 import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/internal/testdb"
 	"shingocore/store/inventory"
 	"shingocore/store/nodes"
 )
 
 func TestCorrectionCRUD(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 
 	node := &nodes.Node{Name: "S1", Enabled: true}
 	db.CreateNode(node)

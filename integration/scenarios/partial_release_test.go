@@ -253,6 +253,7 @@ func (noopEmitter) EmitOrderReceived(_ int64, _, _ string, _ protocol.OrderType,
 }
 func (noopEmitter) EmitOrderDispatched(_ int64, _, _, _ string)        {}
 func (noopEmitter) EmitOrderFailed(_ int64, _, _, _, _ string)         {}
+func (noopEmitter) EmitOrderSkipped(_ int64, _, _, _, _ string)        {}
 func (noopEmitter) EmitOrderCancelled(_ int64, _, _, _, _ string)      {}
 func (noopEmitter) EmitOrderCompleted(_ int64, _, _ string)            {}
 func (noopEmitter) EmitOrderQueued(_ int64, _, _, _ string)            {}

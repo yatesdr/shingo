@@ -119,7 +119,7 @@ func TestScenario_ReleaseIsChangeoverIndependent(t *testing.T) {
 	// Represents a normal production order in flight when the operator
 	// initiates the changeover. Forced to staged so the release path
 	// fires (Manager.ReleaseOrder pre-dispatch guard otherwise).
-	indepOrder, err := edge.Engine.OrderManager().CreateRetrieveOrder(&nodeB, false, 1, "NODE-B", "SRC-B", "fork", "STABLE-B", false, false)
+	indepOrder, err := edge.Engine.OrderManager().CreateRetrieveOrder(&nodeB, false, 1, "NODE-B", "SRC-B", "", "fork", "STABLE-B", false, false)
 	if err != nil {
 		t.Fatalf("create independent order: %v", err)
 	}

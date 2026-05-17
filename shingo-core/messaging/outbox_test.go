@@ -9,6 +9,7 @@ import (
 	"shingo/protocol/outbox"
 	"shingo/protocol/testutil"
 	"shingocore/config"
+	"shingocore/internal/testdb"
 )
 
 // newOutboxTestClient returns an unconnected *Client. NewOutboxDrainer only
@@ -28,7 +29,7 @@ func newOutboxTestClient() *Client {
 // produce a usable drainer (DebugLogFunc is nil-safe).
 func TestNewOutboxDrainer_ReturnsNonNilWithDebugLog(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	client := newOutboxTestClient()
 
 	logged := 0
@@ -54,7 +55,7 @@ func TestNewOutboxDrainer_ReturnsNonNilWithDebugLog(t *testing.T) {
 // invoked (DebugLogFunc.Log is nil-safe by contract).
 func TestNewOutboxDrainer_NilClientDebugLogIsSafe(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	client := newOutboxTestClient() // DebugLog is nil
 
 	drainer := NewOutboxDrainer(db, client, 10*time.Millisecond)
@@ -71,7 +72,7 @@ func TestNewOutboxDrainer_NilClientDebugLogIsSafe(t *testing.T) {
 // mapping would silently drop payloads at the drainer boundary.
 func TestCoreOutboxStore_ListPendingOutbox_ConvertsFields(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	adapter := &coreOutboxStore{db: db}
 
 	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{"a":1}`), "order.ack", "line-1"), "enqueue")
@@ -117,7 +118,7 @@ func TestCoreOutboxStore_ListPendingOutbox_ConvertsFields(t *testing.T) {
 // edge: the adapter must return a non-nil zero-length slice and no error.
 func TestCoreOutboxStore_ListPendingOutbox_EmptyTable(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	adapter := &coreOutboxStore{db: db}
 
 	msgs, err := adapter.ListPendingOutbox(10)
@@ -138,7 +139,7 @@ func TestCoreOutboxStore_ListPendingOutbox_EmptyTable(t *testing.T) {
 // is forwarded through to the underlying store query.
 func TestCoreOutboxStore_ListPendingOutbox_HonoursLimit(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	adapter := &coreOutboxStore{db: db}
 
 	for i := 0; i < 5; i++ {
@@ -160,7 +161,7 @@ func TestCoreOutboxStore_ListPendingOutbox_HonoursLimit(t *testing.T) {
 // message as sent so it no longer shows up in ListPendingOutbox.
 func TestCoreOutboxStore_AckOutbox_RemovesFromPending(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	adapter := &coreOutboxStore{db: db}
 
 	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
@@ -192,7 +193,7 @@ func TestCoreOutboxStore_AckOutbox_RemovesFromPending(t *testing.T) {
 // increments by exactly one per call (not reset, not doubled).
 func TestCoreOutboxStore_IncrementOutboxRetries_BumpsRetries(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	adapter := &coreOutboxStore{db: db}
 
 	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
@@ -223,7 +224,7 @@ func TestCoreOutboxStore_IncrementOutboxRetries_BumpsRetries(t *testing.T) {
 // regression would silently truncate the count.
 func TestCoreOutboxStore_PurgeOldOutbox_RemovesSentMessages(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	adapter := &coreOutboxStore{db: db}
 
 	// Two messages: one acked, one pending.
@@ -266,7 +267,7 @@ func TestCoreOutboxStore_PurgeOldOutbox_RemovesSentMessages(t *testing.T) {
 // must also handle n=0.
 func TestCoreOutboxStore_PurgeOldOutbox_PreservesRecentSends(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	adapter := &coreOutboxStore{db: db}
 
 	testutil.MustNoErr(t, db.EnqueueOutbox("shingo.dispatch", []byte(`{}`), "order.ack", "line-1"), "enqueue")
@@ -300,7 +301,7 @@ func TestCoreOutboxStore_SatisfiesOutboxStoreInterface(t *testing.T) {
 // the whole point of the outbox is to survive exactly this state.
 func TestNewOutboxDrainer_DrainIsNoOpWhenPublisherNotConnected(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	client := newOutboxTestClient() // never Connect()'d
 	adapter := &coreOutboxStore{db: db}
 

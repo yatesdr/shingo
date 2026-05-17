@@ -121,27 +121,8 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 		return fmt.Errorf("ensure runtime for node %d: %w", node.ID, err)
 	}
 
-	// Drop CO release fast-path. A drop has no to-style claim by definition
-	// (the new style abandons this node), so the normal toClaim-based
-	// bookkeeping (UOP reset for the next bin, lineside bucket capture,
-	// node-task state advance) doesn't apply — there's no next bin and no
-	// new style claiming the slot. But the operator's disposition still
-	// needs to flow to Core so the returning bin's manifest reflects the
-	// partial count instead of arriving empty.
-	//
-	// Detect via the node task (situation="drop" with this order on
-	// OldMaterialReleaseOrderID) and pass the disposition through directly.
-	// Skipping the normal path avoids the toClaim-nil silent-drop at the
-	// resolution fallback (plant incident 2026-05-11: ALN_002 drop bin
-	// arrived empty at supermarket because resolveReleaseClaim returned nil
-	// and the disposition was discarded; root cause was runtime ambiguity
-	// in the fallback rather than a clean drop path).
 	if dropTask, _ := e.db.GetChangeoverNodeTaskByEvacOrderID(order.ID); dropTask != nil && dropTask.Situation == "drop" {
-		manifestUOP := computeReleaseRemainingUOP(disp, runtime)
-		wireDisposition := buildProtocolDisposition(disp, runtime)
-		e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
-			orderID, node.Name, string(disp.Mode))
-		return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy)
+		return e.releaseOrderDropFastPath(orderID, node, runtime, disp)
 	}
 
 	// Resolve the target claim: if a changeover is active, use the
@@ -209,6 +190,41 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 			orderID, node.Name, string(disp.Mode))
 		return e.orderMgr.ReleaseOrder(orderID, nil, disp.CalledBy)
 	}
+
+	return e.releaseOrderWithFullLineside(order, node, runtime, toClaim, nodeTask, disp, isSupply)
+}
+
+// releaseOrderDropFastPath handles the drop-CO release shape. A drop has
+// no to-style claim by definition (the new style abandons this node), so
+// the normal toClaim-based bookkeeping (UOP reset for the next bin,
+// lineside bucket capture, node-task state advance) doesn't apply —
+// there's no next bin and no new style claiming the slot. But the
+// operator's disposition still needs to flow to Core so the returning
+// bin's manifest reflects the partial count instead of arriving empty.
+//
+// Detect via the node task (situation="drop" with this order on
+// OldMaterialReleaseOrderID) and pass the disposition through directly.
+// Skipping the normal path avoids the toClaim-nil silent-drop at the
+// resolution fallback (plant incident 2026-05-11: ALN_002 drop bin
+// arrived empty at supermarket because resolveReleaseClaim returned nil
+// and the disposition was discarded; root cause was runtime ambiguity
+// in the fallback rather than a clean drop path).
+func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, runtime *processes.RuntimeState, disp ReleaseDisposition) error {
+	manifestUOP := computeReleaseRemainingUOP(disp, runtime)
+	wireDisposition := buildProtocolDisposition(disp, runtime)
+	e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
+		orderID, node.Name, string(disp.Mode))
+	return e.orderMgr.ReleaseOrderWithDisposition(orderID, manifestUOP, wireDisposition, disp.CalledBy)
+}
+
+// releaseOrderWithFullLineside is the main lineside release path. Runs
+// after the early-exit branches in ReleaseOrderWithLineside have ruled
+// themselves out (process node present, not a drop CO, toClaim resolved,
+// not a produce node). Owns: supply-bin guard, lineside bucket capture +
+// paired bin delta, release-click runtime cache binding, node-task state
+// transition to "released", outbox flush, final OrderRelease emit.
+func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *processes.Node, runtime *processes.RuntimeState, toClaim *processes.NodeClaim, nodeTask *processes.NodeTask, disp ReleaseDisposition, isSupply bool) error {
+	orderID := order.ID
 
 	// Compute the manifest-sync UOP from the disposition. Renamed from
 	// `remainingUOP` to disambiguate from Manager.ReleaseOrder's parameter of

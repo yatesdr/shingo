@@ -1,0 +1,82 @@
+name: Integration
+
+# Integration is the cross-module test surface (Edge ↔ Core wire
+# round-trips through the harness Bus). It depends on shingo-core,
+# shingo-edge, and protocol, so any of those changing can break it.
+# All scenario tests are //go:build docker-tagged, which is why the
+# default 'go build ./...' wouldn't have caught the drift that wave-2
+# uncovered — the docker-tagged build path needs explicit coverage here.
+on:
+  push:
+    paths:
+      - "integration/**"
+      - "shingo-core/**"
+      - "shingo-edge/**"
+      - "protocol/**"
+  pull_request:
+    paths:
+      - "integration/**"
+      - "shingo-core/**"
+      - "shingo-edge/**"
+      - "protocol/**"
+  workflow_call:
+
+# See core.yml for rationale — same idempotent burst-coalescing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+
+      - name: Build (default tags)
+        working-directory: integration
+        run: go build ./...
+
+      - name: Build (docker tag)
+        working-directory: integration
+        # All scenario tests live behind //go:build docker. Build under
+        # that tag explicitly so compile-time drift in test files can't
+        # accumulate the way it did before this workflow existed.
+        run: go test -tags=docker -count=1 -run NONE ./...
+
+      - name: Vet (docker tag)
+        working-directory: integration
+        run: go vet -tags=docker ./...
+
+      - name: Prepare build dir
+        working-directory: integration
+        run: mkdir -p build
+
+      - name: Test (default tags)
+        working-directory: integration
+        # Currently a thin slice — most integration logic is docker-
+        # gated. This step protects against drift in the harness/ pkg
+        # and any non-tagged tests added in the future.
+        run: go test -count=1 ./...
+
+      - name: Test (Docker integration)
+        working-directory: integration
+        # testcontainers manages its own Postgres container; the
+        # ubuntu-latest runner provides Docker. -count=1 prevents
+        # stale-cache false positives; -timeout=10m accommodates
+        # cold-runner container startup. Tighten once observed.
+        run: go test -tags=docker -timeout=10m -count=1 -coverprofile=build/coverage-docker ./...
+
+      - name: Coverage report (Docker)
+        working-directory: integration
+        run: go tool cover -func=build/coverage-docker
+
+      - name: Test (Docker integration, race)
+        working-directory: integration
+        # Warning-only for the first 30 days (until 2026-06-16), matching
+        # core.yml / edge.yml. Promote to gating after baseline.
+        continue-on-error: true
+        run: go test -tags=docker -race -timeout=25m -count=1 ./...

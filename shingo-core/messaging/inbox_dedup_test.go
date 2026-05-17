@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingocore/internal/testdb"
 )
 
 // countingHandler is a MessageHandler that records call counts per
@@ -61,7 +62,7 @@ func TestInboxDedup_HandleData_UngatedPassthrough(t *testing.T) {
 // writes to the inbox table.
 func TestInboxDedup_HandleOrderRequest_GatedByDedup(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	inner := &countingHandler{}
 	dedup := NewInboxDedup(inner, db)
 

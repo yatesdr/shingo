@@ -1,7 +1,8 @@
 // Package testdb provides shared test infrastructure for shingo-core integration tests.
-// It manages a single Postgres container per test process (via sync.Once) and creates
-// a fresh database per test for isolation. Both engine and dispatch tests import this
-// package instead of duplicating their own container and fixture setup.
+// It manages a single Postgres container per test process (via sync.Once), builds
+// a pre-migrated template database once, then clones the template for each test
+// instead of re-running the full migration stack. Both engine and dispatch tests
+// import this package instead of duplicating their own container and fixture setup.
 package testdb
 
 import (
@@ -11,9 +12,11 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/docker/go-connections/nat"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -27,6 +30,10 @@ import (
 	"shingocore/store/payloads"
 )
 
+// templateDBName is the name of the pre-migrated database every test gets
+// cloned from. Must be a valid Postgres identifier; underscores only.
+const templateDBName = "template_test"
+
 // containerState holds the shared Postgres container started once per test process.
 var (
 	containerOnce sync.Once
@@ -36,30 +43,202 @@ var (
 	pgContainer   *postgres.PostgresContainer
 )
 
+// templateState gates one-time template-DB construction. setupTemplate runs
+// migrations against templateDBName and then marks it IS_TEMPLATE=true so
+// later CREATE DATABASE ... TEMPLATE template_test calls are file-level
+// copies that skip migrations entirely.
+var (
+	templateOnce sync.Once
+	templateErr  error
+)
+
+// Counters for trigger thresholds (see wave-2 plan triggers #2, #3):
+//   - testDBsCreated: total number of per-test databases cloned from the template
+//   - terminateFired: number of t.Cleanup paths that had to fall back to
+//     pg_terminate_backend because DROP DATABASE hit "database is being
+//     accessed by other users." Connection leak indicator.
+var (
+	testDBsCreated int64
+	terminateFired int64
+)
+
+// TestDatabasesCreated returns the number of test databases cloned so far.
+// Exported for the smoke test that checks pg_terminate_backend firing rate.
+func TestDatabasesCreated() int64 { return atomic.LoadInt64(&testDBsCreated) }
+
+// TerminateBackendFired returns the number of cleanup paths that had to
+// fall back to pg_terminate_backend. >5% of TestDatabasesCreated indicates
+// a connection leak somewhere in production code (the test pool isn't
+// draining before DROP).
+func TerminateBackendFired() int64 { return atomic.LoadInt64(&terminateFired) }
+
 // startContainer spins up a single Postgres container for the entire test process.
 // Called via sync.Once — all tests share this container but get their own database.
+//
+// Retries up to 3 times on transient failures: Host/MappedPort errors and the
+// port=0 race that surfaces when many packages spin up containers in parallel
+// (Docker port-mapping appears to lag behind container ready state). Errors
+// used to be swallowed and produced confusing "lookup port=0" failures
+// downstream — they now propagate via containerErr.
 func startContainer() {
+	// If anything inside panics — testcontainers occasionally does under
+	// load — sync.Once still marks this Once done. Subsequent Open()
+	// callers would otherwise find containerErr==nil and containerHost=="",
+	// and fail downstream with "container vars not set" errors. Capture
+	// the panic into containerErr first, then re-panic so the panicking
+	// test sees the original failure.
+	defer func() {
+		if r := recover(); r != nil {
+			if containerErr == nil {
+				containerErr = fmt.Errorf("startContainer panic: %v", r)
+			}
+			panic(r)
+		}
+	}()
+	const attempts = 3
 	ctx := context.Background()
-	pgContainer, containerErr = postgres.Run(ctx, "postgres:16-alpine",
-		postgres.WithDatabase("postgres"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	if containerErr != nil {
-		return
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		container, err := postgres.Run(ctx, "postgres:16-alpine",
+			postgres.WithDatabase("postgres"),
+			postgres.WithUsername("test"),
+			postgres.WithPassword("test"),
+			// Wait for BOTH the postgres ready log AND the mapped host port to be
+			// listening. Log-only waits caused MappedPort to return 0 under
+			// heavy parallelism — the container had crossed the log threshold
+			// but the host-side port forwarding hadn't completed yet.
+			testcontainers.WithWaitStrategy(
+				wait.ForAll(
+					wait.ForLog("database system is ready to accept connections").
+						WithOccurrence(2).
+						WithStartupTimeout(60*time.Second),
+					wait.ForListeningPort(nat.Port("5432/tcp")).
+						WithStartupTimeout(60*time.Second),
+				),
+			),
+		)
+		if err != nil {
+			lastErr = fmt.Errorf("postgres.Run: %w", err)
+			continue
+		}
+		host, hostErr := container.Host(ctx)
+		port, portErr := container.MappedPort(ctx, "5432")
+		if hostErr == nil && portErr == nil && host != "" && port.Int() != 0 {
+			pgContainer = container
+			containerHost = host
+			containerPort = port.Int()
+			return
+		}
+		lastErr = fmt.Errorf("container host/port not ready (hostErr=%v host=%q portErr=%v portVal=%d)", hostErr, host, portErr, port.Int())
+		_ = container.Terminate(ctx)
 	}
-	containerHost, _ = pgContainer.Host(ctx)
-	p, _ := pgContainer.MappedPort(ctx, "5432")
-	containerPort = p.Int()
+	containerErr = fmt.Errorf("start container after %d attempts: %w", attempts, lastErr)
 }
 
-// Open returns a *store.DB connected to a fresh database inside the shared Postgres
-// container. Each call creates a new database (test_<random>) so tests are fully
-// isolated. The database and connection are cleaned up via t.Cleanup.
+// adminConn returns a connection to the container's default "postgres"
+// database, used for CREATE/DROP DATABASE and template metadata changes.
+func adminConn() (*sql.DB, error) {
+	return sql.Open("pgx", fmt.Sprintf(
+		"host=%s port=%d dbname=postgres user=test password=test sslmode=disable",
+		containerHost, containerPort))
+}
+
+// setupTemplate builds templateDBName by running migrations once, then
+// marks it as a Postgres template so further CREATE DATABASE x TEMPLATE
+// calls become near-instant file copies. On first-attempt failure (e.g.,
+// migration crashed mid-flight) it drops the broken template and retries
+// once; a second failure latches templateErr.
+func setupTemplate() {
+	if containerErr != nil {
+		templateErr = containerErr
+		return
+	}
+	if err := buildTemplate(); err != nil {
+		// Fallback: tear down and retry once. Covers the case where a
+		// partial template was left from a prior in-process attempt
+		// (shouldn't happen with sync.Once, but cheap to defend).
+		if dropErr := dropTemplate(); dropErr != nil {
+			templateErr = fmt.Errorf("template build failed (%v); cleanup also failed (%v)", err, dropErr)
+			return
+		}
+		if err2 := buildTemplate(); err2 != nil {
+			templateErr = fmt.Errorf("template build failed on retry: %w", err2)
+			return
+		}
+	}
+}
+
+// buildTemplate creates templateDBName, runs the full migration stack
+// against it, terminates any lingering connections, and flips it into
+// template mode.
+func buildTemplate() error {
+	if containerHost == "" || containerPort == 0 {
+		return fmt.Errorf("container vars not set: host=%q port=%d (startContainer didn't populate)", containerHost, containerPort)
+	}
+	admin, err := adminConn()
+	if err != nil {
+		return fmt.Errorf("connect admin for template build: %w", err)
+	}
+	defer admin.Close()
+
+	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s", templateDBName)); err != nil {
+		return fmt.Errorf("create template database: %w", err)
+	}
+
+	// Run migrations once against the template via the production Open path.
+	tmplDB, err := store.Open(&config.DatabaseConfig{
+		Postgres: config.PostgresConfig{
+			Host:     containerHost,
+			Port:     containerPort,
+			Database: templateDBName,
+			User:     "test",
+			Password: "test",
+			SSLMode:  "disable",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("open + migrate template: %w", err)
+	}
+	tmplDB.Close()
+
+	// Pool close above is best-effort; explicitly evict anything still
+	// holding the template open so the IS_TEMPLATE flip can't be blocked.
+	if _, err := admin.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, templateDBName); err != nil {
+		return fmt.Errorf("terminate template backends: %w", err)
+	}
+
+	if _, err := admin.Exec(fmt.Sprintf("ALTER DATABASE %s WITH IS_TEMPLATE = true", templateDBName)); err != nil {
+		return fmt.Errorf("mark template: %w", err)
+	}
+	if _, err := admin.Exec(fmt.Sprintf("ALTER DATABASE %s WITH ALLOW_CONNECTIONS = false", templateDBName)); err != nil {
+		return fmt.Errorf("disallow template connections: %w", err)
+	}
+	return nil
+}
+
+// dropTemplate removes a previously-built template database. Used by the
+// retry path in setupTemplate when a partial build needs to be cleared.
+func dropTemplate() error {
+	admin, err := adminConn()
+	if err != nil {
+		return err
+	}
+	defer admin.Close()
+	// IS_TEMPLATE must be cleared before DROP succeeds; ignore errors here
+	// since the prior failure may have left it unset.
+	_, _ = admin.Exec(fmt.Sprintf("ALTER DATABASE %s WITH IS_TEMPLATE = false", templateDBName))
+	_, _ = admin.Exec(fmt.Sprintf("ALTER DATABASE %s WITH ALLOW_CONNECTIONS = true", templateDBName))
+	_, _ = admin.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, templateDBName)
+	if _, err := admin.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", templateDBName)); err != nil {
+		return fmt.Errorf("drop template: %w", err)
+	}
+	return nil
+}
+
+// Open returns a *store.DB connected to a fresh database cloned from the
+// pre-migrated template. Each call creates a new database (test_<random>)
+// so tests are fully isolated. The database and connection are cleaned up
+// via t.Cleanup.
 //
 // If Docker is not running, the test is skipped (not failed).
 func Open(t *testing.T) *store.DB {
@@ -77,7 +256,6 @@ func Open(t *testing.T) *store.DB {
 	}()
 
 	containerOnce.Do(startContainer)
-
 	if containerErr != nil {
 		if strings.Contains(strings.ToLower(containerErr.Error()), "docker") {
 			t.Skipf("skipping integration test: %v", containerErr)
@@ -85,19 +263,24 @@ func Open(t *testing.T) *store.DB {
 		t.Fatalf("start postgres container: %v", containerErr)
 	}
 
-	// Create a fresh database for this test
+	templateOnce.Do(setupTemplate)
+	if templateErr != nil {
+		t.Fatalf("setup template database: %v", templateErr)
+	}
+
 	dbName := fmt.Sprintf("test_%s_%d", sanitize(t.Name()), rand.Intn(100000))
 
-	adminDB, err := sql.Open("pgx", fmt.Sprintf("host=%s port=%d dbname=postgres user=test password=test sslmode=disable", containerHost, containerPort))
+	admin, err := adminConn()
 	if err != nil {
 		t.Fatalf("open admin connection: %v", err)
 	}
-	defer adminDB.Close()
-	if _, err := adminDB.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName)); err != nil {
-		t.Fatalf("create test database %s: %v", dbName, err)
+	defer admin.Close()
+	if _, err := admin.Exec(fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", dbName, templateDBName)); err != nil {
+		t.Fatalf("create test database %s from template: %v", dbName, err)
 	}
+	atomic.AddInt64(&testDBsCreated, 1)
 
-	db, err := store.Open(&config.DatabaseConfig{
+	db, err := store.OpenWithoutMigrate(&config.DatabaseConfig{
 		Postgres: config.PostgresConfig{
 			Host:     containerHost,
 			Port:     containerPort,
@@ -113,14 +296,23 @@ func Open(t *testing.T) *store.DB {
 
 	t.Cleanup(func() {
 		db.Close()
-		// Best-effort drop — the container dies at process exit anyway.
-		// Use a fresh connection to avoid "database is being accessed" errors.
-		cleanup, err := sql.Open("pgx", fmt.Sprintf("host=%s port=%d dbname=postgres user=test password=test sslmode=disable", containerHost, containerPort))
-		if err == nil {
-			cleanup.Exec(fmt.Sprintf(
-				"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='%s' AND pid <> pg_backend_pid()", dbName))
+		// Best-effort drop on a fresh connection. If DROP fails because
+		// connections are still alive, fall back to pg_terminate_backend
+		// and retry — and bump the counter so the smoke test can flag
+		// connection-leak rates above 5% of TestDatabasesCreated.
+		cleanup, err := adminConn()
+		if err != nil {
+			return
+		}
+		defer cleanup.Close()
+		_, dropErr := cleanup.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
+		if dropErr == nil {
+			return
+		}
+		if strings.Contains(strings.ToLower(dropErr.Error()), "is being accessed") {
+			cleanup.Exec(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`, dbName)
 			cleanup.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
-			cleanup.Close()
+			atomic.AddInt64(&terminateFired, 1)
 		}
 	})
 	return db

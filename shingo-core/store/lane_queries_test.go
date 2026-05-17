@@ -1,17 +1,19 @@
 //go:build docker
 
-package store
+package store_test
 
 import (
 	"testing"
 
+	"shingocore/internal/testdb"
+	"shingocore/store"
 	"shingocore/store/bins"
 	"shingocore/store/nodes"
 )
 
 // laneFixture builds a NGRP > LANE > 3 slots hierarchy and returns the lane ID
 // plus the three slot IDs (front→back).
-func laneFixture(t *testing.T, db *DB, prefix string) (laneID int64, slot1ID, slot2ID, slot3ID int64) {
+func laneFixture(t *testing.T, db *store.DB, prefix string) (laneID int64, slot1ID, slot2ID, slot3ID int64) {
 	t.Helper()
 
 	grpType := &nodes.NodeType{Code: prefix + "-NGRP", Name: "nodes.Node Group", IsSynthetic: true}
@@ -38,7 +40,7 @@ func laneFixture(t *testing.T, db *DB, prefix string) (laneID int64, slot1ID, sl
 
 func TestFindOldestBuriedBin(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 
 	laneID, slot1ID, slot2ID, slot3ID := laneFixture(t, db, "OLD")
 
@@ -89,7 +91,7 @@ func TestFindOldestBuriedBin(t *testing.T) {
 
 func TestListLaneSlotsEmpty(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	// Non-existent lane id — list should come back empty, no error.
 	slots, err := db.ListLaneSlots(99999)
 	if err != nil {
@@ -111,7 +113,7 @@ func TestListLaneSlotsEmpty(t *testing.T) {
 
 func TestFindSourceBinInLane_NoMatch(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	laneID, _, _, _ := laneFixture(t, db, "NOM")
 
 	// No bins at all — should error (no accessible bin).
@@ -135,7 +137,7 @@ func TestFindSourceBinInLane_NoMatch(t *testing.T) {
 
 func TestLaneSlotAccessibility(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	laneID, slot1ID, slot2ID, slot3ID := laneFixture(t, db, "ACC")
 
 	bt := &bins.BinType{Code: "ACC-BT"}
@@ -193,7 +195,7 @@ func TestLaneSlotAccessibility(t *testing.T) {
 
 func TestFindBuriedBin_NoBuried(t *testing.T) {
 	t.Parallel()
-	db := testDB(t)
+	db := testdb.Open(t)
 	laneID, slot1ID, _, _ := laneFixture(t, db, "NOB")
 
 	bt := &bins.BinType{Code: "NOB-BT"}
