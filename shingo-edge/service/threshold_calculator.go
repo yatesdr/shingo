@@ -145,11 +145,23 @@ type CalculateResult struct {
 // threshold's source / updated_at / updated_by for "what's the
 // current value based on", and re-runs Calculate to inspect fresh
 // inputs.
+//
+// CycleSeconds: if the request carries a non-zero value (engineer
+// typed it into the modal for a live recompute) it's used as-is.
+// Otherwise we fall back to the per-part value persisted on
+// payload_catalog.cycle_seconds — the engineer's last saved cycle for
+// this part. The result's Inputs.CycleSeconds echoes whichever was
+// used so the UI can pre-fill the input with that value.
 func (s *ThresholdCalculatorService) Calculate(req CalculateRequest) (CalculateResult, error) {
 	in := ThresholdCalculatorInputs{
 		SafetyFactor:   req.SafetyFactor,
 		BinCapacityUOP: req.BinCapacityUOP,
 		CycleSeconds:   req.CycleSeconds,
+	}
+	if in.CycleSeconds <= 0 && req.PayloadCode != "" {
+		if entry, err := s.db.GetPayloadCatalogByCode(req.PayloadCode); err == nil && entry != nil {
+			in.CycleSeconds = entry.CycleSeconds
+		}
 	}
 	if v, err := orders.AvgL1QueueSeconds(s.db.DB, req.PayloadCode, req.DateRange); err == nil {
 		in.L1QueueSeconds = v
