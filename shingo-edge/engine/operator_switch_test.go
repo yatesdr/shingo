@@ -2,6 +2,7 @@ package engine
 
 import (
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"testing"
 )
 
@@ -46,7 +47,7 @@ func TestSwitchNodeToTarget_SkipsUOPResetWhenAlreadyAtTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get node task: %v", err)
 	}
-	if task.State != "switched" {
+	if task.State != domain.NodeTaskSwitched {
 		t.Errorf("task state = %q, want switched", task.State)
 	}
 }
@@ -89,7 +90,7 @@ func TestSwitchNodeToTarget_ResetsUOPWhenRuntimeStillOnFromClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get node task: %v", err)
 	}
-	if task.State != "switched" {
+	if task.State != domain.NodeTaskSwitched {
 		t.Errorf("task state = %q, want switched", task.State)
 	}
 }

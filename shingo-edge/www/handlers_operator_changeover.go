@@ -93,7 +93,7 @@ func (h *Handlers) apiPreviewProcessChangeover(w http.ResponseWriter, r *http.Re
 			Situation:   a.Situation,
 			SupplyOrder: toPreviewSpec(a.SupplyOrder),
 			EvacOrder:   toPreviewSpec(a.EvacOrder),
-			NextState:   a.NextState,
+			NextState:   string(a.NextState),
 			LogTag:      a.LogTag,
 		}
 		if a.Err != nil {

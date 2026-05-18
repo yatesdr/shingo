@@ -425,6 +425,49 @@ func TestMaybeCreateLoaderEmptyIn_CreatesL1WhenDemandSignalFires(t *testing.T) {
 	}
 }
 
+// TestHandleLoaderEmptyInCompletion_FiresL2 verifies the L2 fire on the
+// loader side: when an L1 retrieve_empty order (empty bin, role produce,
+// manual_swap) confirms at the loader, L2 fires as a move from the loader
+// to claim.OutboundDestination. Symmetric counterpart to
+// TestHandleUnloaderFullInCompletion_FiresU2 — discriminator is the role
+// on the active claim (produce + RetrieveEmpty=true vs. consume + full).
+func TestHandleLoaderEmptyInCompletion_FiresL2(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	loaderNodeID, _ := seedManualSwapClaim(t, db, "L2-FIRE", "produce", "PART-L2", "STORAGE-NODE")
+
+	// L1 = retrieve_empty order at the loader. RetrieveEmpty=true is the
+	// trigger condition; the payload code on the L1 itself is not what
+	// drives L2's payload (handleLoaderEmptyInCompletion looks up the
+	// loaded payload code via coreClient.FetchNodeBins — coreClient is
+	// nil in this fixture, so L2 ships with an empty payload code, which
+	// is acceptable for asserting the dispatch shape).
+	orderID, err := db.CreateOrder("uuid-l1-fire", orders.TypeRetrieve,
+		&loaderNodeID, true, 1, "L2-FIRE-MSWAP-NODE", "", "", "", false, "")
+	if err != nil {
+		t.Fatalf("create L1 order: %v", err)
+	}
+	db.UpdateOrderStatus(orderID, string(orders.StatusConfirmed))
+
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+	emitOrderCompleted(eng, orderID, "uuid-l1-fire", orders.TypeRetrieve, &loaderNodeID)
+
+	all, err := db.ListActiveOrdersByProcessNode(loaderNodeID)
+	if err != nil {
+		t.Fatalf("ListActiveOrdersByProcessNode: %v", err)
+	}
+	var l2Found bool
+	for _, o := range all {
+		if o.OrderType == orders.TypeMove && o.DeliveryNode == "STORAGE-NODE" {
+			l2Found = true
+		}
+	}
+	if !l2Found {
+		t.Errorf("expected L2 move from loader to STORAGE-NODE; got %+v", all)
+	}
+}
+
 // TestHandleUnloaderFullInCompletion_FiresU2 verifies the U2 mirror of
 // handleLoaderEmptyInCompletion: when a U1 retrieve order (full bin, role
 // consume, manual_swap) confirms at the unloader, U2 fires as a move from

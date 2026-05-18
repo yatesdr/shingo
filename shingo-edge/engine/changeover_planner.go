@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
@@ -141,7 +142,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			return action
 		}
 		assignDispatch(&action, diff.CoreNodeName, disp)
-		action.NextState = "staging_requested"
+		action.NextState = domain.NodeTaskStagingRequested
 		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 			action.LogTag = "swap_sequential"
 		} else {
@@ -184,7 +185,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 			return action
 		}
 		assignDispatch(&action, diff.CoreNodeName, disp)
-		action.NextState = "staging_requested"
+		action.NextState = domain.NodeTaskStagingRequested
 		if diff.FromClaim.SwapMode == protocol.SwapModeSequential {
 			action.LogTag = "evacuate_sequential"
 		} else {
@@ -211,7 +212,7 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
  				AutoConfirm:   fallbackAutoConfirm,
  			},
  		}
- 		action.NextState = "staging_requested"
+ 		action.NextState = domain.NodeTaskStagingRequested
  		action.LogTag = "add"
  		return action
 
@@ -249,9 +250,9 @@ func planNodeAction(diff ChangeoverNodeDiff, node *processes.Node, fallbackAutoC
 		// cutover; the task stays at empty_requested until the bin
 		// physically leaves the line (handled in the pickup hook).
 		if diff.FromClaim.EvacuateOnChangeover {
-			action.NextState = "empty_requested"
+			action.NextState = domain.NodeTaskEmptyRequested
 		} else {
-			action.NextState = "line_cleared"
+			action.NextState = domain.NodeTaskLineCleared
 		}
 	}
 
@@ -264,7 +265,7 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 	if toClaim.InboundStaging != "" {
 		if steps := BuildStageSteps(toClaim); steps != nil {
 			action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, steps, false)
-			action.NextState = "staging_requested"
+			action.NextState = domain.NodeTaskStagingRequested
 			action.LogTag = "fallback_staging"
 			return action
 		}
@@ -280,7 +281,7 @@ func planFallbackStagingAction(action changeover.NodeAction, toClaim *processes.
 			AutoConfirm:   fallbackAutoConfirm,
 		},
 	}
-	action.NextState = "staging_requested"
+	action.NextState = domain.NodeTaskStagingRequested
 	action.LogTag = "fallback_retrieve"
 	return action
 }
@@ -293,14 +294,14 @@ func planKeepStagedAction(action changeover.NodeAction, fromClaim, toClaim *proc
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
 		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, deliverSteps, false)
 		action.EvacOrder = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
-		action.NextState = "staging_requested"
+		action.NextState = domain.NodeTaskStagingRequested
 		action.LogTag = "keep_staged_split"
 	default:
 		combinedSteps := BuildKeepStagedCombinedSteps(fromClaim, toClaim)
 		evacSteps := BuildKeepStagedEvacSteps(fromClaim)
 		action.SupplyOrder = complexSpec(toClaim.InboundStaging, toClaim.CoreNodeName, combinedSteps, false)
 		action.EvacOrder = complexSpec("", toClaim.CoreNodeName, evacSteps, true)
-		action.NextState = "staging_requested"
+		action.NextState = domain.NodeTaskStagingRequested
 		action.LogTag = "keep_staged_combined"
 	}
 	return action

@@ -1,0 +1,99 @@
+package domain
+
+import (
+	"database/sql/driver"
+	"fmt"
+)
+
+// NodeTaskState is the typed state for a changeover_node_task row. Wraps
+// string so it serializes natively over JSON and SQL while gaining
+// compile-time distinction from raw strings and other enum-shaped state
+// types (Changeover.State, StationTask.State, protocol.Status).
+type NodeTaskState string
+
+// Canonical node-task state constants. Names mirror the underlying
+// string literals so a grep for the literal still finds the constant.
+const (
+	// Planner-emitted initial states.
+	NodeTaskSwapRequired     NodeTaskState = "swap_required"
+	NodeTaskStagingRequested NodeTaskState = "staging_requested"
+	NodeTaskEmptyRequested   NodeTaskState = "empty_requested"
+	NodeTaskReleaseRequested NodeTaskState = "release_requested"
+
+	// Intermediate / terminal-by-situation states.
+	NodeTaskStaged      NodeTaskState = "staged"
+	NodeTaskLineCleared NodeTaskState = "line_cleared" // terminal for drop, intermediate for swap/evacuate
+
+	// Clean terminal states.
+	NodeTaskReleased  NodeTaskState = "released"
+	NodeTaskSwitched  NodeTaskState = "switched"
+	NodeTaskUnchanged NodeTaskState = "unchanged"
+
+	// Terminal state with no current Go producer. Referenced by the
+	// IsTerminal predicate and the operator-station HTML template as a
+	// terminal state, but no in-tree code path writes it. Possibly a
+	// legacy state from before some refactor, possibly set externally
+	// (manual SQL during triage), possibly vestigial. Audit follow-up
+	// tracked in SHINGO_TODO.md "Verify NodeTaskState 'verified'
+	// production usage". Kept in the enum so existing DB rows still load.
+	NodeTaskVerified NodeTaskState = "verified"
+
+	// Failure-disposition states.
+	NodeTaskCancelled NodeTaskState = "cancelled"
+	NodeTaskError     NodeTaskState = "error"
+)
+
+// String satisfies fmt.Stringer.
+func (s NodeTaskState) String() string { return string(s) }
+
+// Scan implements sql.Scanner for reading from a database column.
+// Accepts string or []byte; NULL becomes the empty NodeTaskState.
+// Does NOT validate the value against known constants — historical rows
+// from retired states must still load. Same approach as protocol.Status.
+func (s *NodeTaskState) Scan(v any) error {
+	if v == nil {
+		*s = ""
+		return nil
+	}
+	switch x := v.(type) {
+	case string:
+		*s = NodeTaskState(x)
+	case []byte:
+		*s = NodeTaskState(x)
+	default:
+		return fmt.Errorf("domain.NodeTaskState.Scan: cannot scan %T", v)
+	}
+	return nil
+}
+
+// Value implements driver.Valuer for writing to a database column.
+func (s NodeTaskState) Value() (driver.Value, error) {
+	return string(s), nil
+}
+
+// IsTerminal reports whether the state represents a clean completion —
+// the task finished its work and the changeover can advance toward
+// "completed" if all sibling tasks also did.
+//
+// Excludes NodeTaskError (operator retry is expected) and NodeTaskCancelled
+// (only set by cancelProcessChangeoverInternal, which moves the changeover
+// row to "cancelled" rather than "completed", so the completion gate never
+// reaches a row with cancelled tasks).
+//
+// NodeTaskLineCleared is terminal only for drop situations. For
+// swap/evacuate it's an intermediate state ("Order B finished evacuating,
+// waiting for Order A to deliver"); for drop there is no Order A — once
+// the line is clear, the task is done.
+//
+// Single source of truth for the changeover completion gate, the
+// auto-completion path, the node-changeover operator-entry guard, the
+// per-station rollup, and the dashboard's "all nodes complete" indicator.
+func (s NodeTaskState) IsTerminal(situation string) bool {
+	switch s {
+	case NodeTaskSwitched, NodeTaskVerified, NodeTaskUnchanged, NodeTaskReleased:
+		return true
+	case NodeTaskLineCleared:
+		return situation == "drop"
+	}
+	return false
+}

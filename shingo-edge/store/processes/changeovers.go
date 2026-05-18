@@ -106,10 +106,10 @@ func GetActiveChangeover(db *sql.DB, processID int64) (*Changeover, error) {
 }
 
 // UpdateChangeoverState changes the state on a process_changeover,
-// setting completed_at when transitioning to "completed" or
-// "cancelled". Does NOT touch triggered_by — callers that record a
-// trigger source should call UpdateChangeoverStateWithTrigger.
-func UpdateChangeoverState(db *sql.DB, id int64, state string) error {
+// setting completed_at when transitioning to a terminal state. Does
+// NOT touch triggered_by — callers that record a trigger source should
+// call UpdateChangeoverStateWithTrigger.
+func UpdateChangeoverState(db *sql.DB, id int64, state domain.ChangeoverState) error {
 	return UpdateChangeoverStateWithTrigger(db, id, state, "")
 }
 
@@ -117,9 +117,9 @@ func UpdateChangeoverState(db *sql.DB, id int64, state string) error {
 // non-empty) the triggered_by audit field together. Empty triggeredBy
 // leaves the existing value untouched, so callers that don't have a
 // source distinction don't blank it out on later state writes.
-func UpdateChangeoverStateWithTrigger(db *sql.DB, id int64, state, triggeredBy string) error {
+func UpdateChangeoverStateWithTrigger(db *sql.DB, id int64, state domain.ChangeoverState, triggeredBy string) error {
 	completedAt := sql.NullString{}
-	if state == "completed" || state == "cancelled" {
+	if state.IsTerminal() {
 		completedAt = sql.NullString{Valid: true, String: time.Now().UTC().Format(helpers.TimeLayout)}
 	}
 	_, err := db.Exec(`UPDATE process_changeovers SET state=?,
@@ -161,7 +161,7 @@ func ListChangeoverStationTasks(db *sql.DB, changeoverID int64) ([]StationTask, 
 }
 
 // UpdateChangeoverStationTaskState writes the state on a station task.
-func UpdateChangeoverStationTaskState(db *sql.DB, id int64, state string) error {
+func UpdateChangeoverStationTaskState(db *sql.DB, id int64, state domain.StationTaskState) error {
 	_, err := db.Exec(`UPDATE changeover_station_tasks SET state=?, updated_at=datetime('now') WHERE id=?`,
 		state, id)
 	return err
@@ -271,7 +271,7 @@ func GetChangeoverNodeTaskByNode(db *sql.DB, changeoverID, processNodeID int64) 
 // in non-success terminal states outside cancelProcessChangeoverInternal)
 // can be reconciled even when the changeover row itself has already
 // finalized.
-func FindChangeoverNodeTaskByOrderID(db *sql.DB, orderID int64) (*NodeTask, string, error) {
+func FindChangeoverNodeTaskByOrderID(db *sql.DB, orderID int64) (*NodeTask, domain.ChangeoverState, error) {
 	row := db.QueryRow(`SELECT t.id, t.process_changeover_id, t.process_node_id,
 		t.from_claim_id, t.to_claim_id, t.situation, t.state,
 		t.next_material_order_id, t.old_material_release_order_id,
@@ -283,7 +283,8 @@ func FindChangeoverNodeTaskByOrderID(db *sql.DB, orderID int64) (*NodeTask, stri
 		WHERE t.next_material_order_id=? OR t.old_material_release_order_id=?
 		LIMIT 1`, orderID, orderID)
 	var t NodeTask
-	var updatedAt, coState string
+	var updatedAt string
+	var coState domain.ChangeoverState
 	if err := row.Scan(&t.ID, &t.ProcessChangeoverID, &t.ProcessNodeID,
 		&t.FromClaimID, &t.ToClaimID, &t.Situation, &t.State,
 		&t.NextMaterialOrderID, &t.OldMaterialReleaseOrderID,
@@ -325,7 +326,7 @@ func GetChangeoverNodeTaskByEvacOrderID(db *sql.DB, orderID int64) (*NodeTask, e
 }
 
 // UpdateChangeoverNodeTaskState writes the state on a node task.
-func UpdateChangeoverNodeTaskState(db *sql.DB, id int64, state string) error {
+func UpdateChangeoverNodeTaskState(db *sql.DB, id int64, state domain.NodeTaskState) error {
 	_, err := db.Exec(`UPDATE changeover_node_tasks SET state=?, updated_at=datetime('now') WHERE id=?`, state, id)
 	return err
 }

@@ -60,7 +60,7 @@ func (e *Engine) recordChangeoverOrder(
 	ctx *changeoverNodeCtx,
 	updateRuntime bool,
 	nextOrderID, releaseOrderID *int64,
-	newState string,
+	newState domain.NodeTaskState,
 ) {
 	if updateRuntime {
 		if err := e.db.UpdateProcessNodeRuntimeOrders(
@@ -79,7 +79,7 @@ func (e *Engine) recordChangeoverOrder(
 	}
 	if ctx.stationTask != nil {
 		if err := e.db.UpdateChangeoverStationTaskState(
-			ctx.stationTask.ID, "in_progress",
+			ctx.stationTask.ID, domain.StationTaskInProgress,
 		); err != nil {
 			log.Printf("changeover: update station task state: %v", err)
 		}
@@ -108,7 +108,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 			if err != nil {
 				return nil, err
 			}
-			e.recordChangeoverOrder(ctx, true, &order.ID, nil, "staging_requested")
+			e.recordChangeoverOrder(ctx, true, &order.ID, nil, domain.NodeTaskStagingRequested)
 			return order, nil
 		}
 	}
@@ -121,7 +121,7 @@ func (e *Engine) StageNodeChangeoverMaterial(processID, nodeID int64) (*orders.O
 	if err != nil {
 		return nil, err
 	}
-	e.recordChangeoverOrder(ctx, true, &order.ID, nil, "staging_requested")
+	e.recordChangeoverOrder(ctx, true, &order.ID, nil, domain.NodeTaskStagingRequested)
 	return order, nil
 }
 
@@ -141,7 +141,7 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 		if err != nil {
 			return nil, err
 		}
-		e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, &order.ID, "empty_requested")
+		e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, &order.ID, domain.NodeTaskEmptyRequested)
 		return order, nil
 	}
 
@@ -155,7 +155,7 @@ func (e *Engine) EvacuateNode(processID, nodeID int64, partialQty int64) (*order
 	if err != nil {
 		return nil, err
 	}
-	e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, &order.ID, "empty_requested")
+	e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, &order.ID, domain.NodeTaskEmptyRequested)
 	return order, nil
 }
 
@@ -182,7 +182,7 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 			if err != nil {
 				return nil, err
 			}
-			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, "release_requested")
+			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleaseRequested)
 			return order, nil
 		}
 	}
@@ -194,13 +194,13 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 			if err != nil {
 				return nil, err
 			}
-			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, "release_requested")
+			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleaseRequested)
 			return order, nil
 		}
 	}
 
 	// No staging — mark as released directly
-	e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, ctx.nodeTask.OldMaterialReleaseOrderID, "released")
+	e.recordChangeoverOrder(ctx, false, ctx.nodeTask.NextMaterialOrderID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleased)
 	return nil, nil
 }
 
@@ -230,7 +230,7 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	if coErr == nil {
 		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 		if err == nil && nodeTask.Situation == "drop" {
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "line_cleared"); err != nil {
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskLineCleared); err != nil {
 				log.Printf("switch_node: update drop task state for task %d: %v", nodeTask.ID, err)
 			}
 			e.rollupStationTaskAfterNodeSwitch(changeover.ID, node)
@@ -269,7 +269,7 @@ func (e *Engine) SwitchNodeToTarget(processID, nodeID int64) error {
 	if coErr == nil {
 		nodeTask, err := e.db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
 		if err == nil {
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "switched"); err != nil {
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskSwitched); err != nil {
 				log.Printf("switch_node: update node task state for task %d: %v", nodeTask.ID, err)
 			}
 			e.rollupStationTaskAfterNodeSwitch(changeover.ID, node)
@@ -302,9 +302,9 @@ func (e *Engine) rollupStationTaskAfterNodeSwitch(changeoverID int64, node *proc
 			break
 		}
 	}
-	newState := "in_progress"
+	newState := domain.StationTaskInProgress
 	if allDone {
-		newState = "switched"
+		newState = domain.StationTaskSwitched
 	}
 	if err := e.db.UpdateChangeoverStationTaskState(stationTask.ID, newState); err != nil {
 		log.Printf("switch_node: update station task state (%s) for task %d: %v", newState, stationTask.ID, err)

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -161,7 +162,7 @@ func TestCutoverFromPLC_GateBlockedDoesNotMutate(t *testing.T) {
 	if co == nil {
 		t.Fatal("expected changeover to still be active after gate-blocked PLC cutover")
 	}
-	if co.ID != changeover.ID || co.State == "completed" {
+	if co.ID != changeover.ID || co.State == domain.ChangeoverCompleted {
 		t.Fatalf("changeover should be unchanged in_progress, got %+v", co)
 	}
 	if co.TriggeredBy != "" {
@@ -192,7 +193,7 @@ func TestCutoverFromPLC_RecordsTriggeredBy(t *testing.T) {
 		db.UpdateOrderStatus(*orderIDPtr, string(orders.StatusDelivered))
 		db.UpdateOrderStatus(*orderIDPtr, string(orders.StatusConfirmed))
 	}
-	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, "released"), "update task state")
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased), "update task state")
 
 	testutil.MustNoErr(t, eng.CompleteProcessProductionCutoverFromPLC(processID), "PLC cutover")
 
@@ -212,7 +213,7 @@ func TestCutoverFromPLC_RecordsTriggeredBy(t *testing.T) {
 	if got == nil {
 		t.Fatal("changeover row not found")
 	}
-	if got.State != "completed" {
+	if got.State != domain.ChangeoverCompleted {
 		t.Errorf("state = %q, want completed", got.State)
 	}
 	if got.TriggeredBy != "plc-auto" {

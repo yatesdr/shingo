@@ -89,7 +89,7 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
 		// Non-evac drops were stamped terminal at plan time, so the
 		// !terminal guard makes this a no-op for them.
 		if task.Situation == "drop" && !domain.IsNodeTaskStateTerminal(task.State, task.Situation) {
-			if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "line_cleared"); err != nil {
+			if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskLineCleared); err != nil {
 				e.logFn("bin_picked_up: advance drop task %d to line_cleared: %v", task.ID, err)
 			}
 		}

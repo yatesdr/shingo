@@ -7,6 +7,7 @@ package changeover
 
 import (
 	"shingo/protocol"
+	"shingoedge/domain"
 )
 
 // ComplexOrderSpec describes a single complex order to be created.
@@ -60,7 +61,7 @@ type NodeAction struct {
 	Situation    string
 	SupplyOrder  *OrderSpec // "next material" — staging / delivery order. nil for drops.
 	EvacOrder    *OrderSpec // "old material release" — swap/evac/release order. nil for adds.
-	NextState    string     // node-task state to set on success
+	NextState    domain.NodeTaskState // node-task state to set on success
 	LogTag       string     // short tag used in success log line
 	Err          error      // pre-flight validation failure (planning-time)
 }

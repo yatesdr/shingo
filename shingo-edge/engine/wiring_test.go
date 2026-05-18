@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/catalog"
@@ -890,7 +891,7 @@ func TestWiring_ABPairsAcrossStyles(t *testing.T) {
 			db.UpdateOrderStatus(*orderID, string(orders.StatusDelivered))
 			db.UpdateOrderStatus(*orderID, string(orders.StatusConfirmed))
 		}
-		db.UpdateChangeoverNodeTaskState(task.ID, "released")
+		db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased)
 	}
 	testutil.MustNoErr(t, eng.CompleteProcessProductionCutover(processID), "cutover")
 

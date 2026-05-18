@@ -159,7 +159,6 @@ func (e *Engine) findManualSwapNodes(coreNodeName string) []manualSwapNode {
 // Used by the side-cycle order generator: when a line REQUEST creates demand
 // for a payload, the engine creates a parallel "empty-in" order tracked at
 // the loader so the loader operator's UI surfaces the demand directly.
-// See SHINGO_TODO.md "Bin loader as active workflow participant".
 func (e *Engine) FindLoaderForPayload(payloadCode string) *manualSwapNode {
 	if payloadCode == "" {
 		return nil

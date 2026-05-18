@@ -44,6 +44,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	storeorders "shingoedge/store/orders"
 	"shingoedge/store/processes"
 	"shingoedge/uop"
@@ -362,7 +363,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 		}
 	}
 	if nodeTask != nil {
-		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "released"); err != nil {
+		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskReleased); err != nil {
 			e.logRelease("update node task %d to released: %v", nodeTask.ID, err)
 		}
 	}

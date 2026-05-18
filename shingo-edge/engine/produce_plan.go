@@ -13,8 +13,7 @@ import (
 // calls. Captures the produce-specific concerns (manifest the filled bin,
 // reset the runtime UOP) on top of the shared swap dispatch.
 //
-// Build with BuildProducePlan. The corresponding Apply path lives in
-// FinalizeProduceNode today; migrating it to consume a Plan is a follow-up.
+// Build with BuildProducePlan; apply with applyProducePlan.
 type ProducePlan struct {
 	// Manifest is the ingest order's manifest — currently always one entry,
 	// kept as a slice for protocol shape consistency. ProducedAt is the

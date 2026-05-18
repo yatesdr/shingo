@@ -5,6 +5,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/processes"
 )
@@ -41,7 +42,7 @@ func TestSwitchNodeToTarget_DropAdvancesWithoutTargetClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get node task: %v", err)
 	}
-	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, "empty_requested"), "seed task to non-terminal")
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskEmptyRequested), "seed task to non-terminal")
 
 	if err := eng.SwitchNodeToTarget(processID, nodeID); err != nil {
 		t.Fatalf("switch on drop node: unexpected error %v", err)
@@ -51,7 +52,7 @@ func TestSwitchNodeToTarget_DropAdvancesWithoutTargetClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get node task after switch: %v", err)
 	}
-	if task.State != "line_cleared" {
+	if task.State != domain.NodeTaskLineCleared {
 		t.Errorf("drop switch task state = %q, want line_cleared", task.State)
 	}
 }
@@ -87,7 +88,7 @@ func TestHandleNodeOrderFailed_DropNoBinAutoClears(t *testing.T) {
 	// EvacuateOnChangeover=true on the from-claim → planner lands the
 	// task at empty_requested (non-terminal) so cutover waits for the
 	// physical pickup. That's the precondition for this regression.
-	if task.State != "empty_requested" {
+	if task.State != domain.NodeTaskEmptyRequested {
 		t.Fatalf("expected empty_requested at plan time (EvacuateOnChangeover), got %s", task.State)
 	}
 	if task.OldMaterialReleaseOrderID == nil {
@@ -105,7 +106,7 @@ func TestHandleNodeOrderFailed_DropNoBinAutoClears(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get node task after fail: %v", err)
 	}
-	if task.State != "line_cleared" {
+	if task.State != domain.NodeTaskLineCleared {
 		t.Errorf("drop+no_bin task state = %q, want line_cleared (auto-clear)", task.State)
 	}
 	if task.SkipNote == "" {
@@ -135,7 +136,7 @@ func TestHandleNodeOrderFailed_DropOtherFailureStillErrors(t *testing.T) {
 		"fleet rejected staged order: vendor timeout")
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "error" {
+	if task.State != domain.NodeTaskError {
 		t.Errorf("drop+fleet_error task state = %q, want error (auto-skip must not swallow non-bin failures)", task.State)
 	}
 }

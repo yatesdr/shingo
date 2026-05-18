@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 )
 
@@ -41,7 +42,7 @@ func TestChangeover_PrematureComplete_TasksNonTerminal_IsBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get active changeover after blocked cutover: %v", err)
 	}
-	if co == nil || co.State == "completed" {
+	if co == nil || co.State == domain.ChangeoverCompleted {
 		t.Fatalf("changeover should still be active after blocked cutover, got %+v", co)
 	}
 	if co.ID != changeover.ID {
@@ -69,7 +70,7 @@ func TestChangeover_PrematureComplete_OrdersInFlight_IsBlocked(t *testing.T) {
 	// Drive the task state to released directly. Don't move the linked
 	// orders past in_transit — the gate's second check (orders terminal)
 	// is the one we're pinning here.
-	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, "released"), "update task state")
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased), "update task state")
 	for _, orderIDPtr := range []*int64{task.NextMaterialOrderID, task.OldMaterialReleaseOrderID} {
 		if orderIDPtr == nil {
 			continue
@@ -88,7 +89,7 @@ func TestChangeover_PrematureComplete_OrdersInFlight_IsBlocked(t *testing.T) {
 		t.Errorf("error %q should name the blocking order(s)", err.Error())
 	}
 	co, _ := db.GetActiveProcessChangeover(processID)
-	if co == nil || co.State == "completed" {
+	if co == nil || co.State == domain.ChangeoverCompleted {
 		t.Fatalf("changeover should still be active, got %+v", co)
 	}
 }
@@ -165,8 +166,53 @@ func TestChangeover_OrphanCancelStampsTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get task after orphan cancel: %v", err)
 	}
-	if updated.State != "cancelled" {
+	if updated.State != domain.NodeTaskCancelled {
 		t.Errorf("expected task state cancelled, got %s", updated.State)
+	}
+}
+
+// TestChangeover_OrphanFailStampsTask pins the orphan handler's Failed
+// branch, the counterpart to TestChangeover_OrphanCancelStampsTask. When
+// a linked order transitions to StatusFailed and reaches the completion
+// dispatcher through EventOrderCompleted (i.e. via handleNodeOrderCompleted's
+// non-Confirmed dispatch to handleOrphanedTaskOrderCompleted, not via
+// EventOrderFailed → handleNodeOrderFailed), the handler must stamp the
+// task to "error" rather than "cancelled".
+//
+// Drives the path with emitOrderCompleted only (not emitOrderFailed) so
+// the assertion isolates the orphan handler's StatusFailed → "error"
+// mapping at wiring_completion.go:540-543. In production both events
+// generally fire together for failed orders; this test pins the orphan
+// handler's behavior independently so a future refactor that splits or
+// reorders the two paths can't silently regress this branch.
+func TestChangeover_OrphanFailStampsTask(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	processID, nodeID, _, toStyleID := seedPhase3SwapScenario(t, db)
+	eng := testEngine(t, db)
+	eng.wireEventHandlers()
+
+	changeover, _ := startChangeover(t, eng, db, processID, toStyleID)
+	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if task.NextMaterialOrderID == nil {
+		t.Fatal("expected task to have a NextMaterialOrderID for this scenario")
+	}
+	orderID := *task.NextMaterialOrderID
+
+	// Drive the order to StatusFailed (Submitted → Failed is the path
+	// taken by a fleet rejection or unrecoverable dispatch error).
+	db.UpdateOrderStatus(orderID, string(orders.StatusSubmitted))
+	db.UpdateOrderStatus(orderID, string(orders.StatusFailed))
+
+	order, _ := db.GetOrder(orderID)
+	emitOrderCompleted(eng, orderID, order.UUID, order.OrderType, &nodeID)
+
+	updated, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
+	if err != nil {
+		t.Fatalf("get task after orphan fail: %v", err)
+	}
+	if updated.State != domain.NodeTaskError {
+		t.Errorf("expected task state error, got %s", updated.State)
 	}
 }
 
@@ -191,8 +237,8 @@ func TestChangeover_FailedTaskInCompletedChangeover_NotStamped(t *testing.T) {
 	orderID := *task.NextMaterialOrderID
 
 	// Force the changeover into completed state with the task at released.
-	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, "released"), "update task state")
-	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(changeover.ID, "completed"), "update changeover state")
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased), "update task state")
+	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(changeover.ID, domain.ChangeoverCompleted), "update changeover state")
 
 	// Late-arriving failure event for the same order. Pre-gate this would
 	// have stamped the task to error; post-gate the SQL filter on
@@ -205,7 +251,7 @@ func TestChangeover_FailedTaskInCompletedChangeover_NotStamped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get task after late failure: %v", err)
 	}
-	if final.State != "released" {
+	if final.State != domain.NodeTaskReleased {
 		t.Errorf("expected task to remain released, got %s — late failure stamped a finalized changeover", final.State)
 	}
 }

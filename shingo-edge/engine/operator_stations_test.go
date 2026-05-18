@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/service"
 	"shingoedge/store"
@@ -176,7 +177,7 @@ func TestCanAcceptOrders(t *testing.T) {
 			t.Fatalf("create changeover: %v", err)
 		}
 		// Mark changeover completed
-		db.UpdateProcessChangeoverState(coID, "completed")
+		db.UpdateProcessChangeoverState(coID, domain.ChangeoverCompleted)
 
 		eng := &Engine{db: db}
 		ok, reason := eng.CanAcceptOrders(nodeID)

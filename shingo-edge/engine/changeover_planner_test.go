@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingoedge/domain"
 	"shingoedge/store/processes"
 )
 
@@ -53,7 +54,7 @@ func TestPlanNodeAction_Swap(t *testing.T) {
 	if !action.EvacOrder.Complex.AutoConfirm {
 		t.Error("evac order must auto-confirm (robot completes)")
 	}
-	if action.NextState != "staging_requested" {
+	if action.NextState != domain.NodeTaskStagingRequested {
 		t.Errorf("NextState = %q, want staging_requested", action.NextState)
 	}
 	if action.LogTag != "swap" {
@@ -90,7 +91,7 @@ func TestPlanNodeAction_Drop(t *testing.T) {
 	// Default drop (no EvacuateOnChangeover marker): terminal from plan
 	// time so cutover doesn't wait. Bin retrieval still runs but isn't on
 	// the critical path.
-	if action.NextState != "line_cleared" {
+	if action.NextState != domain.NodeTaskLineCleared {
 		t.Errorf("NextState = %q, want line_cleared (terminal from plan for non-evac drop)", action.NextState)
 	}
 }
@@ -115,7 +116,7 @@ func TestPlanNodeAction_Drop_WithEvacuateMarker(t *testing.T) {
 	if action.Err != nil {
 		t.Fatalf("unexpected planning error: %v", action.Err)
 	}
-	if action.NextState != "empty_requested" {
+	if action.NextState != domain.NodeTaskEmptyRequested {
 		t.Errorf("NextState = %q, want empty_requested (evac-marked drop blocks cutover until pickup)", action.NextState)
 	}
 }
@@ -415,7 +416,7 @@ func TestPlanNodeAction_Add_FallsBackToStaging(t *testing.T) {
 	if action.SupplyOrder == nil {
 		t.Fatal("Add should produce a fallback supply order")
 	}
-	if action.NextState != "staging_requested" {
+	if action.NextState != domain.NodeTaskStagingRequested {
 		t.Errorf("NextState = %q, want staging_requested", action.NextState)
 	}
 }

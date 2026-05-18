@@ -3,6 +3,7 @@ package engine
 import (
 	"log"
 
+	"shingoedge/domain"
 	"shingoedge/engine/changeover"
 	"shingoedge/store/processes"
 )
@@ -22,7 +23,7 @@ func (e *Engine) applyChangeoverPlan(co *processes.Changeover, plan changeover.P
 		if action.Err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): %v — operator must handle manually",
 				action.NodeName, action.Situation, action.Err)
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskError); err != nil {
 				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
 			}
 			continue
@@ -40,7 +41,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create supply order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskError); err != nil {
 				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
 			}
 			return
@@ -52,7 +53,7 @@ func (e *Engine) applyNodeAction(nodeTask *processes.NodeTask, action changeover
 		if err != nil {
 			log.Printf("changeover: auto-create orders for %s (%s): create evac order: %v — operator must handle manually",
 				action.NodeName, action.Situation, err)
-			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, "error"); err != nil {
+			if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, domain.NodeTaskError); err != nil {
 				log.Printf("changeover: update node task %d state to error: %v", nodeTask.ID, err)
 			}
 			return

@@ -151,7 +151,7 @@ func (e *Engine) handleStagedDelivery(ctx *orderCompletionCtx) bool {
 			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
 		}
 	}
-	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "staged"); err != nil {
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskStaged); err != nil {
 		log.Printf("update node task %d to staged: %v", ctx.nodeTask.ID, err)
 	}
 	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
@@ -192,7 +192,7 @@ func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
 	if domain.IsNodeTaskStateTerminal(ctx.nodeTask.State, ctx.nodeTask.Situation) {
 		return true
 	}
-	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "line_cleared"); err != nil {
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskLineCleared); err != nil {
 		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
 	}
 	return true
@@ -236,7 +236,7 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	// release-click (incoming supply bin) and at delivery (the
 	// physically-arrived bin), not at confirm. Confirm only advances
 	// the changeover node task state machine.
-	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
 	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
@@ -289,7 +289,7 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 	// from handleNodeOrderDelivered (each leg of a sequential SWAP
 	// terminal step delivers to its own slot; the delivered handler
 	// fires for each).
-	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, "released"); err != nil {
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
 	if err := e.tryCompleteProcessChangeover(ctx.node.ProcessID); err != nil {
@@ -303,8 +303,6 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 // (loader) node. L1 brought an empty to the loader; the operator filled
 // it; CONFIRM means the bin is ready to send back to the supermarket.
 // L2 = a move order from the loader to claim.OutboundDestination.
-//
-// See SHINGO_TODO.md "Bin loader as active workflow participant".
 // Returns true if it handled the order (regardless of L2 success).
 func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 	if !ctx.order.RetrieveEmpty {
@@ -537,9 +535,9 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 		log.Printf("orphan: skip task %d stamp — changeover %d already %s", task.ID, task.ProcessChangeoverID, changeoverState)
 		return
 	}
-	newState := "cancelled"
+	newState := domain.NodeTaskCancelled
 	if order.Status == orders.StatusFailed {
-		newState = "error"
+		newState = domain.NodeTaskError
 	}
 	if err := e.db.UpdateChangeoverNodeTaskState(task.ID, newState); err != nil {
 		log.Printf("orphan: update task %d to %s: %v", task.ID, newState, err)
@@ -588,7 +586,7 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 	}
 	if (nodeTask.NextMaterialOrderID != nil && *nodeTask.NextMaterialOrderID == order.ID) ||
 		(nodeTask.OldMaterialReleaseOrderID != nil && *nodeTask.OldMaterialReleaseOrderID == order.ID) {
-		newState := "error"
+		newState := domain.NodeTaskError
 		// Drop auto-skip: for a drop, "could not claim a bin at the
 		// pickup" satisfies the changeover's intent (or there was
 		// nothing to remove). Core's no_source_bin code already routes
@@ -601,12 +599,12 @@ func (e *Engine) handleNodeOrderFailed(failed OrderFailedEvent) {
 		// failures stay at "error" because the new bin can't move in
 		// until the old one leaves.
 		if nodeTask.Situation == "drop" && isNoBinFailure(failed.Reason) {
-			newState = "line_cleared"
+			newState = domain.NodeTaskLineCleared
 		}
 		if err := e.db.UpdateChangeoverNodeTaskState(nodeTask.ID, newState); err != nil {
 			log.Printf("update node task %d to %s: %v", nodeTask.ID, newState, err)
 		}
-		if newState == "line_cleared" {
+		if newState == domain.NodeTaskLineCleared {
 			note := "evac auto-cleared: no bin to remove at " + nodeTask.NodeName
 			if err := e.db.SetChangeoverNodeTaskSkipNote(nodeTask.ID, note); err != nil {
 				log.Printf("changeover: set skip_note on drop auto-clear for task %d: %v", nodeTask.ID, err)

@@ -6,6 +6,7 @@ package engine
 import (
 	"log"
 
+	"shingoedge/domain"
 	"shingoedge/orders"
 )
 
@@ -46,7 +47,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 			}
 		}
 		// Mark node task as cancelled
-		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "cancelled"); err != nil {
+		if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskCancelled); err != nil {
 			log.Printf("changeover: update node task %d state to cancelled: %v", task.ID, err)
 		}
 	}
@@ -62,7 +63,7 @@ func (e *Engine) cancelProcessChangeoverInternal(processID int64, nextStyleID *i
 		}
 	}
 
-	if err := e.db.UpdateProcessChangeoverState(changeover.ID, "cancelled"); err != nil {
+	if err := e.db.UpdateProcessChangeoverState(changeover.ID, domain.ChangeoverCancelled); err != nil {
 		return err
 	}
 	if err := e.db.SetTargetStyle(processID, nil); err != nil {

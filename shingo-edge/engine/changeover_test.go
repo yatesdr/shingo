@@ -6,6 +6,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -274,7 +275,7 @@ func TestChangeover_AutoStaging(t *testing.T) {
 		t.Skip("node situation is unchanged, nothing to auto-stage")
 	}
 
-	if task.State != "staging_requested" {
+	if task.State != domain.NodeTaskStagingRequested {
 		t.Errorf("expected staging_requested after auto-stage, got %s", task.State)
 	}
 
@@ -292,7 +293,7 @@ func getAutoStagedOrder(t *testing.T, db *store.DB, changeoverID, nodeID int64) 
 	if err != nil {
 		t.Fatalf("get node task: %v", err)
 	}
-	if task.State != "staging_requested" {
+	if task.State != domain.NodeTaskStagingRequested {
 		t.Fatalf("expected staging_requested from auto-stage, got %s", task.State)
 	}
 	if task.NextMaterialOrderID == nil {
@@ -325,7 +326,7 @@ func TestChangeover_StagingCompletion(t *testing.T) {
 
 	// Verify state advanced to staged
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "staged" {
+	if task.State != domain.NodeTaskStaged {
 		t.Errorf("expected staged, got %s", task.State)
 	}
 }
@@ -348,7 +349,7 @@ func TestChangeover_EmptyCompletion(t *testing.T) {
 
 	// Verify staged
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "staged" {
+	if task.State != domain.NodeTaskStaged {
 		t.Fatalf("expected staged, got %s", task.State)
 	}
 
@@ -359,7 +360,7 @@ func TestChangeover_EmptyCompletion(t *testing.T) {
 	}
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "empty_requested" {
+	if task.State != domain.NodeTaskEmptyRequested {
 		t.Fatalf("expected empty_requested, got %s", task.State)
 	}
 
@@ -369,7 +370,7 @@ func TestChangeover_EmptyCompletion(t *testing.T) {
 
 	// Verify line_cleared
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "line_cleared" {
+	if task.State != domain.NodeTaskLineCleared {
 		t.Errorf("expected line_cleared, got %s", task.State)
 	}
 }
@@ -405,7 +406,7 @@ func TestChangeover_ReleaseCompletion(t *testing.T) {
 	}
 
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "release_requested" {
+	if task.State != domain.NodeTaskReleaseRequested {
 		t.Fatalf("expected release_requested, got %s", task.State)
 	}
 
@@ -415,7 +416,7 @@ func TestChangeover_ReleaseCompletion(t *testing.T) {
 
 	// Verify released
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "released" {
+	if task.State != domain.NodeTaskReleased {
 		t.Errorf("expected released, got %s", task.State)
 	}
 }
@@ -439,7 +440,7 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 
 	// Auto-staging already created the order — find it from the node task
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "staging_requested" {
+	if task.State != domain.NodeTaskStagingRequested {
 		t.Fatalf("expected staging_requested from auto-stage, got %s", task.State)
 	}
 	if task.NextMaterialOrderID == nil {
@@ -469,7 +470,7 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 	testutil.MustNoErr(t, eng.SwitchNodeToTarget(processID, nodeID), "switch")
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "switched" {
+	if task.State != domain.NodeTaskSwitched {
 		t.Fatalf("expected switched, got %s", task.State)
 	}
 
@@ -478,7 +479,7 @@ func TestChangeover_FullLifecycle(t *testing.T) {
 
 	// Verify changeover completed
 	co, err := db.GetActiveProcessChangeover(processID)
-	if err == nil && co != nil && co.State != "completed" {
+	if err == nil && co != nil && co.State != domain.ChangeoverCompleted {
 		t.Errorf("expected changeover completed, got state=%s", co.State)
 	}
 
@@ -512,7 +513,7 @@ func TestChangeover_OrderFailure(t *testing.T) {
 
 	// Verify error state
 	task, _ := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "error" {
+	if task.State != domain.NodeTaskError {
 		t.Fatalf("expected error, got %s", task.State)
 	}
 
@@ -528,7 +529,7 @@ func TestChangeover_OrderFailure(t *testing.T) {
 
 	// Verify recovered to staged
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "staged" {
+	if task.State != domain.NodeTaskStaged {
 		t.Errorf("expected staged after retry, got %s", task.State)
 	}
 }
@@ -565,7 +566,7 @@ func TestChangeover_CancelMidStaging(t *testing.T) {
 		if task.Situation == "unchanged" {
 			continue
 		}
-		if task.State != "cancelled" {
+		if task.State != domain.NodeTaskCancelled {
 			t.Errorf("node task %s: expected cancelled, got %s", task.NodeName, task.State)
 		}
 	}
@@ -660,7 +661,7 @@ func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 	if task.Situation != "swap" {
 		t.Fatalf("expected situation=swap, got %s", task.Situation)
 	}
-	if task.State != "staging_requested" {
+	if task.State != domain.NodeTaskStagingRequested {
 		t.Fatalf("expected staging_requested, got %s", task.State)
 	}
 	if task.NextMaterialOrderID == nil {
@@ -696,7 +697,7 @@ func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "staged" {
+	if task.State != domain.NodeTaskStaged {
 		t.Fatalf("after Order A: expected staged, got %s", task.State)
 	}
 
@@ -705,7 +706,7 @@ func TestChangeover_Phase3SwapLifecycle(t *testing.T) {
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "released" {
+	if task.State != domain.NodeTaskReleased {
 		t.Fatalf("after Order B: expected released, got %s", task.State)
 	}
 
@@ -826,7 +827,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "staged" {
+	if task.State != domain.NodeTaskStaged {
 		t.Fatalf("after Order A: expected staged, got %s", task.State)
 	}
 
@@ -836,7 +837,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "released" {
+	if task.State != domain.NodeTaskReleased {
 		t.Fatalf("after Order B: expected released, got %s", task.State)
 	}
 
@@ -897,7 +898,7 @@ func TestChangeover_SituationAdd(t *testing.T) {
 	}
 
 	// Auto-staging should have fired — node task should be at staging_requested
-	if task.State != "staging_requested" {
+	if task.State != domain.NodeTaskStagingRequested {
 		t.Errorf("expected staging_requested after auto-stage of add node, got %s", task.State)
 	}
 
@@ -1002,7 +1003,7 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 	if task.Situation != "swap" {
 		t.Fatalf("expected situation=swap, got %s", task.Situation)
 	}
-	if task.State != "staging_requested" {
+	if task.State != domain.NodeTaskStagingRequested {
 		t.Fatalf("expected staging_requested, got %s", task.State)
 	}
 
@@ -1028,7 +1029,7 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "staged" {
+	if task.State != domain.NodeTaskStaged {
 		t.Fatalf("after Order A: expected staged, got %s", task.State)
 	}
 
@@ -1038,7 +1039,7 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "released" {
+	if task.State != domain.NodeTaskReleased {
 		t.Fatalf("after Order B (Order A already done): expected released, got %s", task.State)
 	}
 
@@ -1081,7 +1082,7 @@ func TestChangeover_KeepStagedSplit(t *testing.T) {
 	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "staged" {
+	if task.State != domain.NodeTaskStaged {
 		t.Fatalf("after Order A: expected staged, got %s", task.State)
 	}
 
@@ -1090,7 +1091,7 @@ func TestChangeover_KeepStagedSplit(t *testing.T) {
 	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
 
 	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != "released" {
+	if task.State != domain.NodeTaskReleased {
 		t.Fatalf("after Order B (Order A already done): expected released, got %s", task.State)
 	}
 }
@@ -1128,7 +1129,7 @@ func TestChangeover_OrderBBeforeOrderA(t *testing.T) {
 	// of Order A status, because the swap order IS the delivery — the robot
 	// picked new material from InboundStaging and delivered it to the node.
 	// If Order B completed, the material is at the node.
-	if task.State != "released" {
+	if task.State != domain.NodeTaskReleased {
 		t.Logf("Order B before Order A: state=%s (expected released — swap order IS the delivery)", task.State)
 	}
 

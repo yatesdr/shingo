@@ -3,6 +3,7 @@ package engine
 import (
 	"log"
 
+	"shingoedge/domain"
 	"shingoedge/orders"
 	"shingoedge/store/processes"
 )
@@ -79,12 +80,12 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 							}
 						}
 					}
-					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "staged"); err != nil {
+					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskStaged); err != nil {
 				log.Printf("changeover: update node task %d to staged: %v", task.ID, err)
 				}
 					advanced = true
 				case "release_requested":
-					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "released"); err != nil {
+					if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskReleased); err != nil {
 				log.Printf("changeover: update node task %d to released: %v", task.ID, err)
 				}
 					advanced = true
@@ -96,8 +97,8 @@ func (e *Engine) reconcileNodeTask(task *processes.NodeTask, toStyleID int64) bo
 	// Check evacuation/clear order (OldMaterialReleaseOrderID)
 	if task.OldMaterialReleaseOrderID != nil {
 		if order, err := e.db.GetOrder(*task.OldMaterialReleaseOrderID); err == nil {
-			if orders.IsTerminal(order.Status) && task.State == "empty_requested" {
-				if err := e.db.UpdateChangeoverNodeTaskState(task.ID, "line_cleared"); err != nil {
+			if orders.IsTerminal(order.Status) && task.State == domain.NodeTaskEmptyRequested {
+				if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskLineCleared); err != nil {
 				log.Printf("changeover: update node task %d to line_cleared: %v", task.ID, err)
 				}
 				advanced = true

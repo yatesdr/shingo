@@ -13,9 +13,7 @@ import (
 // inbound delivery and the node-empty downgrade) on top of the shared
 // swap dispatch.
 //
-// Build with BuildConsumePlan. The corresponding Apply path lives in
-// requestNodeFromClaim today; migrating it to consume a Plan is a
-// follow-up.
+// Build with BuildConsumePlan; apply with applyConsumePlan.
 type ConsumePlan struct {
 	// Quantity is the operator-requested quantity for the order(s); plumbed
 	// through unchanged from RequestNodeMaterial.

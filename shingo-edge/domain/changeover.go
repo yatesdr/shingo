@@ -11,7 +11,7 @@ type Changeover struct {
 	ProcessID   int64      `json:"process_id"`
 	FromStyleID *int64     `json:"from_style_id,omitempty"`
 	ToStyleID   int64      `json:"to_style_id"`
-	State       string     `json:"state"`
+	State       ChangeoverState `json:"state"`
 	CalledBy    string     `json:"called_by"`
 	Notes       string     `json:"notes"`
 	StartedAt   time.Time  `json:"started_at"`
@@ -38,7 +38,7 @@ type StationTask struct {
 	ID                  int64     `json:"id"`
 	ProcessChangeoverID int64     `json:"process_changeover_id"`
 	OperatorStationID   int64     `json:"operator_station_id"`
-	State               string    `json:"state"`
+	State               StationTaskState `json:"state"`
 	UpdatedAt           time.Time `json:"updated_at"`
 	// Joined fields
 	StationName string `json:"station_name"`
@@ -53,8 +53,8 @@ type NodeTask struct {
 	ProcessNodeID             int64     `json:"process_node_id"`
 	FromClaimID               *int64    `json:"from_claim_id,omitempty"`
 	ToClaimID                 *int64    `json:"to_claim_id,omitempty"`
-	Situation                 string    `json:"situation"`
-	State                     string    `json:"state"`
+	Situation                 string        `json:"situation"`
+	State                     NodeTaskState `json:"state"`
 	NextMaterialOrderID       *int64    `json:"next_material_order_id,omitempty"`
 	OldMaterialReleaseOrderID *int64    `json:"old_material_release_order_id,omitempty"`
 	// SkipNote is the operator-facing message set when a linked complex
@@ -68,33 +68,10 @@ type NodeTask struct {
 	NodeName string `json:"node_name"`
 }
 
-// IsNodeTaskStateTerminal reports whether a changeover_node_tasks.state
-// represents a clean completion — the task finished its work and the
-// changeover row can advance toward "completed" if all sibling tasks
-// also did.
-//
-// Excludes "error" (operator retry is expected) and "cancelled"
-// (only set by cancelProcessChangeoverInternal, which moves the
-// changeover row to "cancelled" rather than "completed", so the
-// completion gate never reaches a row with cancelled tasks).
-//
-// Single source of truth for the changeover completion gate, the
-// auto-completion path, the node-changeover operator-entry guard, the
-// per-station rollup, and the dashboard's "all nodes complete"
-// indicator. All five care about the same predicate: did this task
-// finish cleanly?
-//
-// `line_cleared` is terminal only for drop situations. For swap/evacuate
-// it's an intermediate state ("Order B finished evacuating, waiting for
-// Order A to deliver"), but for drop there is no Order A — once the line
-// is clear, the task is done. Cutover and downstream gates should not
-// wait for the bin's onward journey to the supermarket.
-func IsNodeTaskStateTerminal(state, situation string) bool {
-	switch state {
-	case "switched", "verified", "unchanged", "released":
-		return true
-	case "line_cleared":
-		return situation == "drop"
-	}
-	return false
+// IsNodeTaskStateTerminal is the function form of NodeTaskState.IsTerminal,
+// retained so callers holding a NodeTaskState (formerly: a raw string)
+// can use either form. See NodeTaskState.IsTerminal for the full predicate
+// rationale.
+func IsNodeTaskStateTerminal(state NodeTaskState, situation string) bool {
+	return state.IsTerminal(situation)
 }

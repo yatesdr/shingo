@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/service"
 	"shingoedge/store/processes"
 )
@@ -109,7 +110,7 @@ func TestBuildChangeoverViewData_ActiveChangeoverWithPendingNodeTasks(t *testing
 	if d.ActiveChangeover == nil {
 		t.Fatal("ActiveChangeover: got nil, want loaded changeover")
 	}
-	if d.ActiveChangeover.State != "active" {
+	if d.ActiveChangeover.State != domain.ChangeoverActive {
 		t.Errorf("ActiveChangeover.State: got %q, want active", d.ActiveChangeover.State)
 	}
 	if d.CurrentStyleName != "From-Style" {

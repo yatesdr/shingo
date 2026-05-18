@@ -234,7 +234,7 @@ func (e *Engine) finalizeChangeoverRow(processID, changeoverID int64, triggeredB
 	if err := e.SyncProcessCounter(processID); err != nil {
 		return err
 	}
-	return e.db.UpdateProcessChangeoverStateWithTrigger(changeoverID, "completed", triggeredBy)
+	return e.db.UpdateProcessChangeoverStateWithTrigger(changeoverID, domain.ChangeoverCompleted, triggeredBy)
 }
 
 func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
@@ -266,7 +266,7 @@ func (e *Engine) tryCompleteProcessChangeover(processID int64) error {
 		return err
 	}
 	for _, task := range tasks {
-		if err := e.db.UpdateChangeoverStationTaskState(task.ID, "switched"); err != nil {
+		if err := e.db.UpdateChangeoverStationTaskState(task.ID, domain.StationTaskSwitched); err != nil {
 			log.Printf("changeover: update station task state: %v", err)
 		}
 	}

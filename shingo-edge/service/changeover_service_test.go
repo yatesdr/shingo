@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingoedge/domain"
 	"shingoedge/internal/testdb"
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -80,7 +81,7 @@ func TestChangeover_CreateAtomic(t *testing.T) {
 
 	// Station tasks created.
 	stTasks, _ := db.ListChangeoverStationTasks(cid)
-	if len(stTasks) != 1 || stTasks[0].OperatorStationID != sid || stTasks[0].State != "waiting" {
+	if len(stTasks) != 1 || stTasks[0].OperatorStationID != sid || stTasks[0].State != domain.StationTaskWaiting {
 		t.Errorf("station tasks: %+v", stTasks)
 	}
 
@@ -116,7 +117,21 @@ func TestChangeover_CreateAtomic(t *testing.T) {
 	}
 }
 
-func TestChangeover_StateTransitionsAndListing(t *testing.T) {
+// TestChangeover_ListingExclusionByCompletedState exercises the
+// active-vs-completed split: ListProcessChangeovers returns all rows
+// regardless of state, while GetActiveProcessChangeover filters out
+// terminal rows at the SQL layer.
+//
+// Pre-refactor this test was TestChangeover_StateTransitionsAndListing
+// and included an arbitrary "phase_3" state update to test in-flight
+// CRUD round-trip. ChangeoverState is a typed three-value enum (active,
+// completed, cancelled) with no intermediate state, so "phase_3" was
+// a stale fixture with no Go producer; the update was removed during
+// the typed-state-machine migration. The remaining coverage —
+// active-vs-completed exclusion via GetActiveProcessChangeover, plus
+// completed_at population — is what this test still meaningfully
+// exercises; the name was updated to match.
+func TestChangeover_ListingExclusionByCompletedState(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	svc := NewChangeoverService(db)
@@ -129,9 +144,6 @@ func TestChangeover_StateTransitionsAndListing(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	// In-flight state transitions.
-	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(cid, "phase_3"), "update state")
-
 	// Second changeover to test listing and exclusion-by-state.
 	cid2, _ := svc.Create(pid, &fromStyle, toStyle, "y", "", nil, nil, nil)
 	_ = cid2
@@ -142,7 +154,7 @@ func TestChangeover_StateTransitionsAndListing(t *testing.T) {
 	}
 
 	// Mark first as completed → GetActive returns the remaining one only.
-	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(cid, "completed"), "complete")
+	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(cid, domain.ChangeoverCompleted), "complete")
 	active, err := db.GetActiveProcessChangeover(pid)
 	if err != nil {
 		t.Fatalf("get active after complete: %v", err)
@@ -161,6 +173,53 @@ func TestChangeover_StateTransitionsAndListing(t *testing.T) {
 	}
 	if completed == nil || completed.CompletedAt == nil {
 		t.Errorf("expected completed_at to be populated: %+v", completed)
+	}
+}
+
+// TestChangeover_ListingExclusionByCancelledState mirrors the Completed
+// sibling for the other terminal state. Cancelled is the second terminal
+// in the ChangeoverState enum; GetActiveProcessChangeover excludes it at
+// the SQL layer via the same NOT IN clause, and completed_at populates
+// on the same transition path. Restores the coverage that was lost when
+// the typed-state-machine migration deleted the pre-refactor "phase_3"
+// CRUD fixture from TestChangeover_StateTransitionsAndListing.
+func TestChangeover_ListingExclusionByCancelledState(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	svc := NewChangeoverService(db)
+
+	pid, fromStyle := seedProcessStyle(t, db, "PC", "FC")
+	toStyle, _ := db.CreateStyle("TC", "", pid)
+
+	cid, err := svc.Create(pid, &fromStyle, toStyle, "x", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	cid2, _ := svc.Create(pid, &fromStyle, toStyle, "y", "", nil, nil, nil)
+	_ = cid2
+
+	// Mark first as cancelled — GetActive returns the remaining one only.
+	testutil.MustNoErr(t, db.UpdateProcessChangeoverState(cid, domain.ChangeoverCancelled), "cancel")
+	active, err := db.GetActiveProcessChangeover(pid)
+	if err != nil {
+		t.Fatalf("get active after cancel: %v", err)
+	}
+	if active.ID == cid {
+		t.Error("active still points at cancelled changeover")
+	}
+
+	// Cancelled changeover has completed_at populated (the column doubles
+	// as a finalized-at marker for both terminal states; see
+	// UpdateChangeoverStateWithTrigger's IsTerminal branch).
+	histList, _ := db.ListProcessChangeovers(pid)
+	var cancelled *processes.Changeover
+	for i := range histList {
+		if histList[i].ID == cid {
+			cancelled = &histList[i]
+		}
+	}
+	if cancelled == nil || cancelled.CompletedAt == nil {
+		t.Errorf("expected completed_at to be populated on cancelled row: %+v", cancelled)
 	}
 }
 
@@ -193,9 +252,9 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get station task: %v", err)
 	}
-	testutil.MustNoErr(t, db.UpdateChangeoverStationTaskState(st.ID, "in_progress"), "update station task")
+	testutil.MustNoErr(t, db.UpdateChangeoverStationTaskState(st.ID, domain.StationTaskInProgress), "update station task")
 	st2, _ := db.GetChangeoverStationTaskByStation(cid, sid)
-	if st2.State != "in_progress" {
+	if st2.State != domain.StationTaskInProgress {
 		t.Errorf("station task state = %q", st2.State)
 	}
 
@@ -204,14 +263,18 @@ func TestChangeover_NodeAndStationTaskMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get node task: %v", err)
 	}
-	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(nt.ID, "in_progress"), "update node task")
+	// Note: pre-NodeTaskState-typing this used "in_progress" as a CRUD
+	// fixture state, but no Go producer writes that value. Using a real
+	// NodeTaskState constant here makes the round-trip exercise representative
+	// of the actual lifecycle.
+	testutil.MustNoErr(t, db.UpdateChangeoverNodeTaskState(nt.ID, domain.NodeTaskStagingRequested), "update node task")
 
 	// Link material orders.
 	orderA, _ := db.CreateOrder("next", "retrieve", &nid, false, 1, "", "", "", "", false, "")
 	orderB, _ := db.CreateOrder("old", "retrieve", &nid, false, 1, "", "", "", "", false, "")
 	testutil.MustNoErr(t, db.LinkChangeoverNodeOrders(nt.ID, &orderA, &orderB), "link orders")
 	nt2, _ := db.GetChangeoverNodeTaskByNode(cid, nid)
-	if nt2.State != "in_progress" {
+	if nt2.State != domain.NodeTaskStagingRequested {
 		t.Errorf("node task state = %q", nt2.State)
 	}
 	if nt2.NextMaterialOrderID == nil || *nt2.NextMaterialOrderID != orderA {

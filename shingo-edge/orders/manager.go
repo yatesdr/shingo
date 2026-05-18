@@ -10,6 +10,7 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/types"
+	"shingoedge/domain"
 	"shingoedge/store"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
@@ -747,11 +748,11 @@ func (m *Manager) HandleSkipped(orderUUID, errorCode, detail string) error {
 //   - supply leg (NextMaterialOrderID == orderID): released
 //   - neither matches (shouldn't happen — FindChangeoverNodeTaskByOrderID
 //     OR-matches): default to released to keep the state machine moving.
-func skippedTerminalState(task *processes.NodeTask, orderID int64) string {
+func skippedTerminalState(task *processes.NodeTask, orderID int64) domain.NodeTaskState {
 	if task.OldMaterialReleaseOrderID != nil && *task.OldMaterialReleaseOrderID == orderID {
-		return "line_cleared"
+		return domain.NodeTaskLineCleared
 	}
-	return "released"
+	return domain.NodeTaskReleased
 }
 
 // formatSkipNote builds the operator-facing chip text. Keep it short —
