@@ -39,17 +39,52 @@ func (db *DB) migrateRenames() error {
 	return nil
 }
 
-// migrate runs column renames (for ancient databases), the baseline DDL via
-// the schema sub-package, then versioned migrations. Order matters: renames
-// fix tables that the baseline CREATE ... IF NOT EXISTS would otherwise skip.
+// migrate runs column renames (for ancient databases), pre-baseline column
+// adds for tables the baseline DDL indexes by a column that existed on no
+// prior schema, the baseline DDL via the schema sub-package, then versioned
+// migrations. Order matters: renames and column adds fix tables that the
+// baseline CREATE ... IF NOT EXISTS would otherwise skip — without them,
+// a CREATE INDEX in the baseline DDL that references a not-yet-added column
+// fails before any versioned migration gets a chance to run.
 func (db *DB) migrate() error {
 	if err := db.migrateRenames(); err != nil {
 		return fmt.Errorf("migrate renames: %w", err)
+	}
+	if err := db.migrateAddBaselineColumns(); err != nil {
+		return fmt.Errorf("migrate add baseline columns: %w", err)
 	}
 	if err := schema.Apply(db.DB); err != nil {
 		return err
 	}
 	return db.runVersionedMigrations()
+}
+
+// migrateAddBaselineColumns idempotently adds columns the baseline DDL
+// assumes-present (e.g. via a CREATE INDEX on the column) but which are
+// not added by any versioned migration. Without this step, a DB created
+// before the column landed in postgres_ddl.go's CREATE TABLE hits
+// "column does not exist" inside schema.Apply, ahead of versioned
+// migrations. Pre-baseline sibling of migrateRenames; same rationale.
+//
+// Pair with the schema-constant rule's reverse direction: whenever a
+// column lands in postgres_ddl.go's CREATE TABLE for a table that
+// already exists in production DBs, append it here. A pre-baseline ADD
+// COLUMN IF NOT EXISTS is the minimum to keep old DBs starting.
+func (db *DB) migrateAddBaselineColumns() error {
+	adds := []struct{ table, column, ddl string }{
+		{"bins", "payload_code", `ALTER TABLE bins ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
+		{"cms_transactions", "payload_code", `ALTER TABLE cms_transactions ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
+		{"demand_registry", "payload_code", `ALTER TABLE demand_registry ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, a := range adds {
+		if !schema.TableExists(db.DB, a.table) {
+			continue
+		}
+		if _, err := db.Exec(a.ddl); err != nil {
+			return fmt.Errorf("add %s.%s: %w", a.table, a.column, err)
+		}
+	}
+	return nil
 }
 
 // migration is one numbered, tracked schema change.

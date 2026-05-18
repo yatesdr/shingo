@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS demand_registry (
     station_id       TEXT NOT NULL,
     core_node_name   TEXT NOT NULL,
     role             TEXT NOT NULL,
-    payload_code     TEXT NOT NULL,
+    payload_code     TEXT NOT NULL DEFAULT '',
     outbound_dest    TEXT NOT NULL DEFAULT '',
     -- UOP-threshold replenishment: when > 0 Core monitors combined
     -- in-loop UOP (bins + buckets) for this (loader, payload) and
