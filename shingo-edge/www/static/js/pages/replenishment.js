@@ -414,3 +414,29 @@ async function replenishmentApplyCell(btn) {
   }
   window.location.reload();
 }
+
+// Revert a single claim to legacy: zero the reorder_point, disable
+// autoreorder, mark source=legacy. Symmetric with the loader-side
+// "Revert to legacy" (which deletes the loader_payload_thresholds row).
+async function replenishmentRevertCell(btn) {
+  const row = btn.closest('tr');
+  const claimID = parseInt(row.dataset.claimId, 10);
+  if (!confirm('Revert this claim to legacy? reorder_point becomes 0 and autoreorder is disabled.')) {
+    return;
+  }
+  const r = await fetch('/api/replenishment/cell-reorder', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      claim_id: claimID,
+      reorder_point: 0,
+      source: 'legacy',
+      auto_reorder: false,
+    }),
+  });
+  if (!r.ok) {
+    alert('Failed: ' + await r.text());
+    return;
+  }
+  window.location.reload();
+}

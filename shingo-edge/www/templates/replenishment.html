@@ -50,7 +50,7 @@
         <td>
           <button class="btn btn-sm btn-primary" onclick="replenishmentOpenCalculate(this)" title="Open calculator for this (loader, payload)">📊 Calculate…</button>
           <button class="btn btn-sm" onclick="replenishmentApplyLoader(this)">Apply</button>
-          <button class="btn btn-sm" onclick="replenishmentDeleteLoader(this)">Remove</button>
+          <button class="btn btn-sm" onclick="replenishmentDeleteLoader(this)" title="Delete the row; Edge falls back to legacy bin-count for this (loader, payload)">Revert to legacy</button>
         </td>
       </tr>
       {{else}}
@@ -80,7 +80,7 @@
         <th style="text-align:right;">Reorder At</th>
         <th>Source</th>
         <th>AutoReorder</th>
-        <th style="width:120px;">Edit</th>
+        <th style="width:220px;">Edit</th>
       </tr>
     </thead>
     <tbody id="cell-reorder-rows">
@@ -105,6 +105,7 @@
         </td>
         <td>
           <button class="btn btn-sm btn-primary" onclick="replenishmentApplyCell(this)">Apply</button>
+          <button class="btn btn-sm" onclick="replenishmentRevertCell(this)" title="Zero reorder_point, disable autoreorder, mark source=legacy">Revert to legacy</button>
         </td>
       </tr>
       {{else}}
