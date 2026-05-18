@@ -26,7 +26,7 @@ type coreDataResponder interface {
 type ThresholdMonitor interface {
 	OnRegistryChanges(changes []demands.RegistryChange)
 	OnBinUOPDelta(payloadCode string, delta int)
-	OnBucketApplied(station string, nodeID int64, payloadCode string, newQty, delta int, reason protocol.LinesideBucketDeltaReason)
+	OnBucketApplied(station string, nodeID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
 }
 
 type CoreDataService struct {
@@ -128,10 +128,7 @@ func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *p
 	// inside is what keeps this from being noisy. Empty payload_code is
 	// fine — the monitor short-circuits on unknown payload.
 	if s.thresholdMonitor != nil {
-		// newQty is not returned by the applier; the monitor recomputes
-		// from a SystemUOPForPayload query anyway. Pass 0 — the monitor
-		// only uses it for diagnostic logging.
-		s.thresholdMonitor.OnBucketApplied(d.Station, d.NodeID, d.PayloadCode, 0, d.Delta, d.Reason)
+		s.thresholdMonitor.OnBucketApplied(d.Station, d.NodeID, d.PayloadCode, d.Delta, d.Reason)
 	}
 }
 

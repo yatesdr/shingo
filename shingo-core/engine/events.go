@@ -149,7 +149,6 @@ type LinesideBucketAppliedEvent struct {
 	Station     string
 	NodeID      int64
 	PayloadCode string
-	NewQty      int
 	Delta       int
 	Reason      protocol.LinesideBucketDeltaReason
 }

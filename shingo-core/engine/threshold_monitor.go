@@ -204,7 +204,12 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 				m.mu.Lock()
 				m.warmUp[bindingKey(b.StationID, b.CoreNodeName, b.PayloadCode)] = warmUpFloor
 				m.mu.Unlock()
-				m.fireSignal(b, total, "warm_up_startup_sweep")
+				m.fireSignalCached(thresholdEntry{
+					stationID:    b.StationID,
+					coreNodeName: b.CoreNodeName,
+					payloadCode:  b.PayloadCode,
+					threshold:    b.ReplenishUOPThreshold,
+				}, total, "warm_up_startup_sweep")
 			}
 		}
 	}
@@ -218,14 +223,20 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 // OnBinUOPDelta applies a bin UOP delta to the cached total and checks
 // thresholds. Called by HandleBinUOPDelta after the delta is applied to
 // the DB. The delta is known (from the Kafka message) so we apply it
-// directly — no DB query needed.
+// directly — no DB query needed. Short-circuits for unmonitored
+// payloads so the cache doesn't grow entries for payloads no binding
+// is watching.
 func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
 	if payloadCode == "" {
 		return
 	}
 	m.mu.Lock()
+	bindings, monitored := m.thresholdsByPayload[payloadCode]
+	if !monitored {
+		m.mu.Unlock()
+		return
+	}
 	m.uopCache[payloadCode] += delta
-	bindings := m.thresholdsByPayload[payloadCode]
 	total := m.uopCache[payloadCode]
 	m.mu.Unlock()
 
@@ -235,12 +246,13 @@ func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
 // OnBucketApplied is invoked by the messaging layer after a successful
 // LinesideBucketDelta apply. Applies the delta to the cached total,
 // emits an engine event for other subscribers, and checks thresholds.
-func (m *ThresholdMonitor) OnBucketApplied(station string, nodeID int64, payloadCode string, newQty, delta int, reason protocol.LinesideBucketDeltaReason) {
+// Short-circuits for unmonitored payloads (after the event emit) so
+// the cache doesn't grow for payloads no binding is watching.
+func (m *ThresholdMonitor) OnBucketApplied(station string, nodeID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
 	m.eng.Events.Emit(Event{Type: EventLinesideBucketApplied, Payload: LinesideBucketAppliedEvent{
 		Station:     station,
 		NodeID:      nodeID,
 		PayloadCode: payloadCode,
-		NewQty:      newQty,
 		Delta:       delta,
 		Reason:      reason,
 	}})
@@ -248,8 +260,12 @@ func (m *ThresholdMonitor) OnBucketApplied(station string, nodeID int64, payload
 		return
 	}
 	m.mu.Lock()
+	bindings, monitored := m.thresholdsByPayload[payloadCode]
+	if !monitored {
+		m.mu.Unlock()
+		return
+	}
 	m.uopCache[payloadCode] += delta
-	bindings := m.thresholdsByPayload[payloadCode]
 	total := m.uopCache[payloadCode]
 	m.mu.Unlock()
 
@@ -326,27 +342,9 @@ func (m *ThresholdMonitor) allow(key string) bool {
 	return true
 }
 
-// fireSignal builds and ships a LoopBelowThresholdSignal from a DB entry.
-// Used by the startup sweep.
-func (m *ThresholdMonitor) fireSignal(b demands.RegistryEntry, total int, reason string) {
-	signal := &protocol.LoopBelowThresholdSignal{
-		PayloadCode:  b.PayloadCode,
-		CurrentUOP:   total,
-		Threshold:    b.ReplenishUOPThreshold,
-		CoreNodeName: b.CoreNodeName,
-		Reason:       reason,
-	}
-	if err := m.eng.SendDataToEdge(protocol.SubjectLoopBelowThreshold, b.StationID, signal); err != nil {
-		m.eng.logFn("threshold_monitor: send LoopBelowThresholdSignal to %s loader=%s payload=%s: %v",
-			b.StationID, b.CoreNodeName, b.PayloadCode, err)
-		return
-	}
-	m.eng.logFn("threshold_monitor: signaled station=%s loader=%s payload=%s current=%d threshold=%d reason=%s",
-		b.StationID, b.CoreNodeName, b.PayloadCode, total, b.ReplenishUOPThreshold, reason)
-}
-
 // fireSignalCached builds and ships a LoopBelowThresholdSignal from a
-// cached threshold entry. Used by checkBindings in steady state.
+// cached threshold entry. Used by checkBindings in steady state and
+// by the startup sweep (which constructs a thresholdEntry inline).
 func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason string) {
 	signal := &protocol.LoopBelowThresholdSignal{
 		PayloadCode:  b.payloadCode,
