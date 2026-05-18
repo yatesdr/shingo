@@ -75,6 +75,7 @@ func (db *DB) migrateAddBaselineColumns() error {
 		{"bins", "payload_code", `ALTER TABLE bins ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
 		{"cms_transactions", "payload_code", `ALTER TABLE cms_transactions ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
 		{"demand_registry", "payload_code", `ALTER TABLE demand_registry ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
+		{"lineside_buckets", "payload_code", `ALTER TABLE lineside_buckets ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, a := range adds {
 		if !schema.TableExists(db.DB, a.table) {
