@@ -45,6 +45,11 @@ type apiLoaderThresholdReq struct {
 	ReplenishUOPThreshold int     `json:"replenish_uop_threshold"`
 	Source                string  `json:"source"`
 	SafetyFactor          float64 `json:"safety_factor"`
+	// CycleSeconds: optional — when present and > 0, also writes the
+	// per-part cycle to payload_catalog so the next Calculate fetches the
+	// engineer-set value. Bundled into the loader-threshold PUT so the UI
+	// can land cycle + threshold in one round-trip.
+	CycleSeconds float64 `json:"cycle_seconds,omitempty"`
 }
 
 func (h *Handlers) apiUpsertLoaderThreshold(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +69,12 @@ func (h *Handlers) apiUpsertLoaderThreshold(w http.ResponseWriter, r *http.Reque
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if req.CycleSeconds > 0 {
+		if err := h.orchestration.SetPayloadCatalogCycleSeconds(req.PayloadCode, req.CycleSeconds); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -196,6 +207,12 @@ func (h *Handlers) apiCalculateAndApply(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if req.CycleSeconds > 0 {
+		if err := h.orchestration.SetPayloadCatalogCycleSeconds(req.PayloadCode, req.CycleSeconds); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -207,6 +224,7 @@ type apiOverrideReq struct {
 	ThresholdCalculated int      `json:"threshold_calculated"`
 	ComputedAt          string   `json:"computed_at"`
 	OverriddenInputs    []string `json:"overridden_inputs,omitempty"`
+	CycleSeconds        float64  `json:"cycle_seconds,omitempty"`
 }
 
 func (h *Handlers) apiOverrideThreshold(w http.ResponseWriter, r *http.Request) {
@@ -228,6 +246,12 @@ func (h *Handlers) apiOverrideThreshold(w http.ResponseWriter, r *http.Request) 
 	if err := h.orchestration.OverrideCalculatedThreshold(req.OverrideValue, thr); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if req.CycleSeconds > 0 {
+		if err := h.orchestration.SetPayloadCatalogCycleSeconds(req.PayloadCode, req.CycleSeconds); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

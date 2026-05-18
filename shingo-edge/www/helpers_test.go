@@ -185,6 +185,9 @@ func (s *stubEngine) OverrideCalculatedThreshold(int, engine.LoaderThresholdInpu
 func (s *stubEngine) ListLoaderClaimsForRecalculate() ([]engine.LoaderClaimPair, error) {
 	return nil, nil
 }
+func (s *stubEngine) SetPayloadCatalogCycleSeconds(payloadCode string, seconds float64) error {
+	return nil
+}
 
 // ── Service accessors (Phase 6.2′) ─────────────────────────────────
 // Each accessor returns a real *service.X backed by the test DB so

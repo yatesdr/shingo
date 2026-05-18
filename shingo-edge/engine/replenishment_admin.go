@@ -76,6 +76,7 @@ type LoaderThresholdRow struct {
 	ThresholdConfidence   string  `json:"threshold_confidence,omitempty"`
 	OverriddenInputs      string  `json:"overridden_inputs,omitempty"`
 	BinCapacityUOP        int     `json:"bin_capacity_uop"`
+	CycleSeconds          float64 `json:"cycle_seconds"` // per-part, from payload_catalog
 }
 
 // ListLoaderThresholds returns every loader_payload_thresholds row
@@ -94,6 +95,10 @@ func (e *Engine) ListLoaderThresholds() ([]LoaderThresholdRow, error) {
 		if loader := e.FindAnyLoaderClaimForPayload(r.PayloadCode); loader != nil {
 			cap = loader.claim.UOPCapacity
 		}
+		cycle := 0.0
+		if entry, err := e.db.GetPayloadCatalogByCode(r.PayloadCode); err == nil && entry != nil {
+			cycle = entry.CycleSeconds
+		}
 		out = append(out, LoaderThresholdRow{
 			CoreNodeName:          r.CoreNodeName,
 			PayloadCode:           r.PayloadCode,
@@ -104,6 +109,7 @@ func (e *Engine) ListLoaderThresholds() ([]LoaderThresholdRow, error) {
 			ThresholdConfidence:   r.ThresholdConfidence,
 			OverriddenInputs:      r.OverriddenInputs,
 			BinCapacityUOP:        cap,
+			CycleSeconds:          cycle,
 		})
 	}
 	return out, nil
@@ -313,6 +319,20 @@ type CellReorderInput struct {
 	ReorderPoint int
 	Source       string
 	AutoReorder  bool
+}
+
+// SetPayloadCatalogCycleSeconds writes the engineer-edited per-part
+// cycle time onto payload_catalog. Surfaced through the orchestration
+// interface so the replenishment-page Apply path can land cycle + threshold
+// in one round-trip.
+func (e *Engine) SetPayloadCatalogCycleSeconds(payloadCode string, seconds float64) error {
+	if payloadCode == "" {
+		return fmt.Errorf("set payload cycle: payload_code required")
+	}
+	if seconds < 0 {
+		return fmt.Errorf("set payload cycle: seconds must be >= 0")
+	}
+	return e.db.SetPayloadCatalogCycleSeconds(payloadCode, seconds)
 }
 
 // UpdateCellReorder modifies the reorder_point + source + AutoReorder

@@ -137,6 +137,10 @@ type EngineOrchestration interface {
 	ApplyCalculatedThreshold(in engine.LoaderThresholdInput) error
 	OverrideCalculatedThreshold(overrideValue int, in engine.LoaderThresholdInput) error
 	ListLoaderClaimsForRecalculate() ([]engine.LoaderClaimPair, error)
+	// Edge-local per-part cycle time. Engineer-edited via the
+	// replenishment page, used by the threshold calculator as a fallback
+	// when no cycle is supplied per-request. See store/catalog/catalog.go.
+	SetPayloadCatalogCycleSeconds(payloadCode string, seconds float64) error
 
 	// ── WarLink tag management ─────────────────────────────────────
 	EnsureTagPublished(rpID int64, plcName, tagName string)

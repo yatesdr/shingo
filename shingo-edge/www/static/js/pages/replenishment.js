@@ -67,6 +67,7 @@ async function replenishmentApplyLoader(btn) {
   const coreNodeName = row.dataset.coreNodeName;
   const payload      = row.dataset.payload;
   const value        = parseInt(row.querySelector('.loader-threshold-input').value, 10) || 0;
+  const cycle        = parseFloat(row.querySelector('.loader-cycle-input').value) || 0;
   const r = await fetch('/api/replenishment/loader-threshold', {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
@@ -75,6 +76,7 @@ async function replenishmentApplyLoader(btn) {
       payload_code: payload,
       replenish_uop_threshold: value,
       source: 'manual',
+      cycle_seconds: cycle,
     }),
   });
   if (!r.ok) {
@@ -121,12 +123,14 @@ function replenishmentOpenCalculate(btn) {
   // is ever marked at a time.
   document.querySelectorAll('tr.calc-row-selected').forEach(r => r.classList.remove('calc-row-selected'));
   row.classList.add('calc-row-selected');
+  const rowCycle = parseFloat(row.dataset.cycle) || 0;
   calcContext = {
     row: row,
     coreNodeName: row.dataset.coreNodeName,
     payload: row.dataset.payload,
     currentThreshold: parseInt(row.dataset.currentThreshold, 10) || 0,
     safety: parseFloat(row.dataset.safety) || 1.5,
+    cycle: rowCycle,
     observed: {},   // snake_case key → numeric observed value
     confidence: '',
     computedAt: '',
@@ -137,8 +141,10 @@ function replenishmentOpenCalculate(btn) {
     'Calculate threshold for ' + calcContext.payload + ' (' + calcContext.coreNodeName + ')';
   document.getElementById('calc-result').style.display = 'none';
   document.getElementById('calc-status').textContent = '';
-  // Seed engineer-supplied defaults so the inputs aren't blank pre-run.
-  document.getElementById('calc-input-cycle_seconds').value = '22.5';
+  // Pre-fill cycle from the row's persisted per-part value (payload_catalog.cycle_seconds).
+  // 0 means the engineer hasn't set one yet — leave blank rather than seeding a fake 22.5,
+  // so the empty field is a visible prompt to type a real value.
+  document.getElementById('calc-input-cycle_seconds').value = rowCycle > 0 ? rowCycle.toString() : '';
   document.getElementById('calc-input-safety_factor').value = calcContext.safety.toString();
   for (const f of CALC_FIELDS) {
     if (f.result) document.getElementById('calc-input-' + f.key).value = '';
@@ -352,19 +358,20 @@ function replenishmentCloseRecalcAll() {
 
 async function replenishmentRunRecalculateAll() {
   const days = parseInt(document.getElementById('recalc-range').value, 10);
-  const cycle = parseFloat(document.getElementById('recalc-cycle').value) || 0;
   const safety = parseFloat(document.getElementById('recalc-safety').value) || 1.5;
   const range = isoDateRange(days);
   const results = document.getElementById('recalc-results');
   results.innerHTML = '<p class="text-muted">Running…</p>';
 
+  // No cycle_seconds: the server falls back to payload_catalog.cycle_seconds
+  // per-payload. Rows for parts that don't yet have a saved cycle will
+  // calculate to 0 with LOW confidence — surface that in the row error.
   const r = await fetch('/api/replenishment/recalculate-all', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       date_range_start: range.start,
       date_range_end: range.end,
-      cycle_seconds: cycle,
       safety_factor: safety,
     }),
   });
