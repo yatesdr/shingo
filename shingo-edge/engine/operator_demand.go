@@ -7,15 +7,34 @@ import (
 	"shingo/protocol"
 	"shingoedge/store/processes"
 )
-// SendClaimSync builds a ClaimSync message from all manual_swap claims across
-// all active processes and sends it to Core. Core uses this to populate its
-// demand registry for kanban wiring.
+// SendClaimSync builds a ClaimSync message from all manual_swap claims
+// across **every style** on every process — not just the active one — and
+// sends it to Core. Core uses this to populate its demand registry for
+// kanban wiring and the UOP-threshold replenishment monitor.
 //
 // Called on startup (after registration ack) and whenever the operator
 // upserts or deletes a style node claim via the admin UI (see
-// shingo-edge/www/handlers_api_config.go). Without the UI-triggered
-// resync, demand_registry would only converge on the next heartbeat
-// cycle or Edge restart.
+// shingo-edge/www/handlers_api_config.go) or applies a loader threshold
+// via the replenishment page. Without the UI-triggered resync,
+// demand_registry would only converge on the next heartbeat cycle or
+// Edge restart.
+//
+// All-styles vs. active-only: the replenishment page lets engineers
+// configure thresholds for (loader, payload) bindings on inactive
+// styles (commissioning, calibration, multi-style processes). Those
+// thresholds belong in demand_registry so Core's monitor watches them
+// even when the binding's style isn't running. Active-only sync used
+// to silently drop those — the symptom was "threshold applied, page
+// shows it, but C-push never fires." Core-side DemandSignal handling
+// for kanban is already active-style-gated on Edge
+// (FindLoaderForPayload short-circuits on inactive styles), so the
+// extra entries don't drive runtime work — they just make sure the
+// threshold monitor has the data it needs.
+//
+// Claims are deduplicated by (core_node_name, role) — a loader on
+// multiple styles becomes one ClaimSyncEntry with the union of
+// AllowedPayloads. Active-style values win for OutboundDestination
+// when they exist, so changing the running style updates the wire.
 func (e *Engine) SendClaimSync() {
 	stationID := e.cfg.StationID()
 	processes, err := e.db.ListProcesses()
@@ -24,52 +43,112 @@ func (e *Engine) SendClaimSync() {
 		return
 	}
 
-	var claims []protocol.ClaimSyncEntry
+	// aggregated tracks one ClaimSyncEntry-in-progress per
+	// (core_node_name, role). allowedPayloads is a set; activeKnown
+	// records whether we've seen the active style for this node yet
+	// so a later inactive-style claim doesn't clobber the
+	// active-style OutboundDestination.
+	type aggregated struct {
+		coreNodeName        string
+		role                protocol.ClaimRole
+		outboundDestination string
+		allowedPayloads     map[string]bool
+		activeKnown         bool
+	}
+	byKey := make(map[string]*aggregated)
+	keyFor := func(coreNodeName string, role protocol.ClaimRole) string {
+		return coreNodeName + "\x00" + string(role)
+	}
+
 	for _, proc := range processes {
-		if proc.ActiveStyleID == nil {
-			continue
-		}
-		nodeClaims, err := e.db.ListStyleNodeClaims(*proc.ActiveStyleID)
+		styles, err := e.db.ListStylesByProcess(proc.ID)
 		if err != nil {
-			log.Printf("claim sync: list claims for style %d: %v", *proc.ActiveStyleID, err)
+			log.Printf("claim sync: list styles for process %d: %v", proc.ID, err)
 			continue
 		}
-		for _, c := range nodeClaims {
-			if c.SwapMode != protocol.SwapModeManualSwap {
+		activeStyleID := int64(0)
+		if proc.ActiveStyleID != nil {
+			activeStyleID = *proc.ActiveStyleID
+		}
+		for _, st := range styles {
+			active := st.ID == activeStyleID
+			nodeClaims, err := e.db.ListStyleNodeClaims(st.ID)
+			if err != nil {
+				log.Printf("claim sync: list claims for style %d: %v", st.ID, err)
 				continue
 			}
-			payloads := c.AllowedPayloads()
-			if len(payloads) == 0 {
-				continue
+			for _, c := range nodeClaims {
+				if c.SwapMode != protocol.SwapModeManualSwap {
+					continue
+				}
+				payloads := c.AllowedPayloads()
+				if len(payloads) == 0 {
+					continue
+				}
+				k := keyFor(c.CoreNodeName, c.Role)
+				agg, ok := byKey[k]
+				if !ok {
+					agg = &aggregated{
+						coreNodeName:        c.CoreNodeName,
+						role:                c.Role,
+						outboundDestination: c.OutboundDestination,
+						allowedPayloads:     make(map[string]bool),
+					}
+					byKey[k] = agg
+				}
+				// Active-style claim wins for OutboundDestination if
+				// we haven't already locked it in from an earlier
+				// active-style claim on the same key (multiple active
+				// styles per process aren't a thing, but defending
+				// against the iteration order changing is cheap).
+				if active && !agg.activeKnown {
+					agg.outboundDestination = c.OutboundDestination
+					agg.activeKnown = true
+				}
+				for _, p := range payloads {
+					agg.allowedPayloads[p] = true
+				}
 			}
-			// UOP-threshold replenishment: ship the per-payload
-			// threshold map so Core can populate
-			// demand_registry.replenish_uop_threshold. Threshold 0 is
-			// the opt-out default; the protocol encoder omits zero
-			// entries via omitempty on the map field. v6: thresholds
-			// are keyed by core_node_name directly — no process_node
-			// lookup needed since core_node_name is the canonical
-			// cross-system identifier and the same row applies across
-			// every style's claim row that lists the same loader.
-			thresholds := map[string]int{}
-			if c.Role == protocol.ClaimRoleProduce {
-				rows, err := e.db.ThresholdsByPayloadForLoader(c.CoreNodeName)
-				if err == nil {
-					for _, p := range payloads {
-						if v, ok := rows[p]; ok && v > 0 {
-							thresholds[p] = v
-						}
+		}
+	}
+
+	// Build the final ClaimSyncEntry list with each aggregated entry's
+	// thresholds resolved from loader_payload_thresholds. Sorted
+	// payload codes keep the wire shape deterministic for debugging.
+	var claims []protocol.ClaimSyncEntry
+	for _, agg := range byKey {
+		payloads := make([]string, 0, len(agg.allowedPayloads))
+		for p := range agg.allowedPayloads {
+			payloads = append(payloads, p)
+		}
+		slices.Sort(payloads)
+		// UOP-threshold replenishment: ship the per-payload
+		// threshold map so Core can populate
+		// demand_registry.replenish_uop_threshold. Threshold 0 is
+		// the opt-out default; the protocol encoder omits zero
+		// entries via omitempty on the map field. v6: thresholds
+		// are keyed by core_node_name directly — no process_node
+		// lookup needed since core_node_name is the canonical
+		// cross-system identifier and the same row applies across
+		// every style's claim row that lists the same loader.
+		thresholds := map[string]int{}
+		if agg.role == protocol.ClaimRoleProduce {
+			rows, err := e.db.ThresholdsByPayloadForLoader(agg.coreNodeName)
+			if err == nil {
+				for _, p := range payloads {
+					if v, ok := rows[p]; ok && v > 0 {
+						thresholds[p] = v
 					}
 				}
 			}
-			claims = append(claims, protocol.ClaimSyncEntry{
-				CoreNodeName:        c.CoreNodeName,
-				Role:                c.Role,
-				AllowedPayloadCodes: payloads,
-				OutboundDestination: c.OutboundDestination,
-				PayloadThresholds:   thresholds,
-			})
 		}
+		claims = append(claims, protocol.ClaimSyncEntry{
+			CoreNodeName:        agg.coreNodeName,
+			Role:                agg.role,
+			AllowedPayloadCodes: payloads,
+			OutboundDestination: agg.outboundDestination,
+			PayloadThresholds:   thresholds,
+		})
 	}
 
 	sync := &protocol.ClaimSync{
