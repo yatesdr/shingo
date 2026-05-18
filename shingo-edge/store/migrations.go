@@ -183,6 +183,10 @@ func (db *DB) migrate() error {
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN allowed_payload_codes TEXT NOT NULL DEFAULT ''")
 	db.Exec("ALTER TABLE style_node_claims ADD COLUMN auto_request_payload TEXT NOT NULL DEFAULT ''")
 
+	// Edge-local per-part cycle time used by the threshold calculator.
+	// Not synced from Core (see catalog.UpsertCatalog comment).
+	db.Exec("ALTER TABLE payload_catalog ADD COLUMN cycle_seconds REAL NOT NULL DEFAULT 0")
+
 	// 6. Data fixups
 	db.Exec("UPDATE orders SET status='pending' WHERE status='queued'")
 

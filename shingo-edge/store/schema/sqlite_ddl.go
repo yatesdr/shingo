@@ -137,12 +137,19 @@ CREATE TABLE IF NOT EXISTS hourly_counts (
 );
 
 CREATE TABLE IF NOT EXISTS payload_catalog (
-    id           INTEGER PRIMARY KEY,
-    name         TEXT NOT NULL,
-    code         TEXT NOT NULL DEFAULT '',
-    description  TEXT NOT NULL DEFAULT '',
-    uop_capacity INTEGER NOT NULL DEFAULT 0,
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    code          TEXT NOT NULL DEFAULT '',
+    description   TEXT NOT NULL DEFAULT '',
+    uop_capacity  INTEGER NOT NULL DEFAULT 0,
+    -- Edge-local per-part cycle time (seconds per UOP at the consuming
+    -- cell). NOT synced from Core — different installations may run the
+    -- same part at different rates, and the calculator on this Edge is
+    -- the only consumer. Engineer-edited via the replenishment page;
+    -- preserved across catalog syncs (UpsertCatalog excludes this column
+    -- from its ON CONFLICT update list).
+    cycle_seconds REAL NOT NULL DEFAULT 0,
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS operator_stations (

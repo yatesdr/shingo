@@ -25,6 +25,12 @@ func (db *DB) GetPayloadCatalogByCode(code string) (*catalog.CatalogEntry, error
 	return catalog.GetCatalogByCode(db.DB, code)
 }
 
+// SetPayloadCatalogCycleSeconds writes the engineer-edited per-part
+// cycle time onto an existing payload_catalog row.
+func (db *DB) SetPayloadCatalogCycleSeconds(code string, seconds float64) error {
+	return catalog.SetCycleSeconds(db.DB, code, seconds)
+}
+
 // DeleteStalePayloadCatalogEntries removes local catalog entries whose
 // IDs are not in activeIDs. If activeIDs is empty, no entries are
 // removed.
