@@ -79,38 +79,104 @@ type LoaderThresholdRow struct {
 	CycleSeconds          float64 `json:"cycle_seconds"` // per-part, from payload_catalog
 }
 
-// ListLoaderThresholds returns every loader_payload_thresholds row
-// sorted by (core_node_name, payload_code), each annotated with the
-// matching loader claim's bin capacity (via FindAnyLoaderClaimForPayload
-// so an inactive style still resolves). The capacity is for the UI's
-// implied-bin annotation only — runtime gating is unchanged.
+// ListLoaderThresholds returns one row per (loader, payload) binding,
+// merged with any saved loader_payload_thresholds row, sorted by
+// (core_node_name, payload_code).
+//
+// Returning the binding inventory (not just saved rows) is what makes
+// the replenishment page actionable: an engineer on a fresh plant has
+// somewhere to type a threshold or cycle before any row exists. A
+// binding with no saved row reports threshold=0 / source="legacy" /
+// blank confidence — Apply on such a row creates the underlying
+// loader_payload_thresholds row.
+//
+// Each row carries BinCapacityUOP (from any loader claim binding the
+// payload — for the implied-bins annotation) and CycleSeconds (from
+// payload_catalog — the per-part value the calculator uses).
+//
+// Bindings include every claim with role=produce + swap_mode=manual_swap
+// across all styles on all processes — same shape as the cell-autoreorder
+// listing on the same page, so engineers can configure replenishment for
+// styles that aren't currently running.
 func (e *Engine) ListLoaderThresholds() ([]LoaderThresholdRow, error) {
-	rows, err := e.db.ListLoaderPayloadThresholds()
+	pairs, err := e.listAllLoaderBindings()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]LoaderThresholdRow, 0, len(rows))
-	for _, r := range rows {
-		cap := 0
-		if loader := e.FindAnyLoaderClaimForPayload(r.PayloadCode); loader != nil {
-			cap = loader.claim.UOPCapacity
+	savedRows, err := e.db.ListLoaderPayloadThresholds()
+	if err != nil {
+		return nil, err
+	}
+	type key struct{ node, payload string }
+	savedByKey := make(map[key]int, len(savedRows))
+	for i, r := range savedRows {
+		savedByKey[key{r.CoreNodeName, r.PayloadCode}] = i
+	}
+	out := make([]LoaderThresholdRow, 0, len(pairs))
+	for _, p := range pairs {
+		row := LoaderThresholdRow{
+			CoreNodeName:   p.CoreNodeName,
+			PayloadCode:    p.PayloadCode,
+			BinCapacityUOP: p.UOPCapacity,
+			Source:         "legacy",
 		}
-		cycle := 0.0
-		if entry, err := e.db.GetPayloadCatalogByCode(r.PayloadCode); err == nil && entry != nil {
-			cycle = entry.CycleSeconds
+		if idx, ok := savedByKey[key{p.CoreNodeName, p.PayloadCode}]; ok {
+			s := savedRows[idx]
+			row.ReplenishUOPThreshold = s.ReplenishUOPThreshold
+			row.Source = s.Source
+			row.SafetyFactor = s.SafetyFactor
+			row.LookbackDays = s.LookbackDays
+			row.ThresholdConfidence = s.ThresholdConfidence
+			row.OverriddenInputs = s.OverriddenInputs
 		}
-		out = append(out, LoaderThresholdRow{
-			CoreNodeName:          r.CoreNodeName,
-			PayloadCode:           r.PayloadCode,
-			ReplenishUOPThreshold: r.ReplenishUOPThreshold,
-			Source:                r.Source,
-			SafetyFactor:          r.SafetyFactor,
-			LookbackDays:          r.LookbackDays,
-			ThresholdConfidence:   r.ThresholdConfidence,
-			OverriddenInputs:      r.OverriddenInputs,
-			BinCapacityUOP:        cap,
-			CycleSeconds:          cycle,
-		})
+		if entry, err := e.db.GetPayloadCatalogByCode(p.PayloadCode); err == nil && entry != nil {
+			row.CycleSeconds = entry.CycleSeconds
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// listAllLoaderBindings is the all-style version of
+// ListLoaderClaimsForRecalculate — every (loader, payload) pair across
+// every style on every process, deduplicated. Used by the page render
+// and the recalc-all sweep; both want the full configurable surface,
+// not just bindings on currently-active styles.
+func (e *Engine) listAllLoaderBindings() ([]LoaderClaimPair, error) {
+	procList, err := e.db.ListProcesses()
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var out []LoaderClaimPair
+	for _, p := range procList {
+		styles, err := e.db.ListStylesByProcess(p.ID)
+		if err != nil {
+			continue
+		}
+		for _, s := range styles {
+			claims, err := e.db.ListStyleNodeClaims(s.ID)
+			if err != nil {
+				continue
+			}
+			for _, c := range claims {
+				if c.Role != protocol.ClaimRoleProduce || c.SwapMode != protocol.SwapModeManualSwap {
+					continue
+				}
+				for _, payload := range c.AllowedPayloads() {
+					k := c.CoreNodeName + "|" + payload
+					if seen[k] {
+						continue
+					}
+					seen[k] = true
+					out = append(out, LoaderClaimPair{
+						CoreNodeName: c.CoreNodeName,
+						PayloadCode:  payload,
+						UOPCapacity:  c.UOPCapacity,
+					})
+				}
+			}
+		}
 	}
 	return out, nil
 }
@@ -265,43 +331,12 @@ func (e *Engine) OverrideCalculatedThreshold(overrideValue int, in LoaderThresho
 	return e.UpsertLoaderThreshold(in)
 }
 
-// ListLoaderClaimsForRecalculate returns all distinct (core_node_name,
-// payload_code) pairs for produce-role manual_swap claims across
-// active processes. Backs the "Recalculate all" button.
+// ListLoaderClaimsForRecalculate returns the same set of (loader, payload)
+// pairs the replenishment page renders — all styles, all processes — so
+// the "Recalculate all" sweep covers every configurable binding, not
+// just the currently-active style's. Backed by listAllLoaderBindings.
 func (e *Engine) ListLoaderClaimsForRecalculate() ([]LoaderClaimPair, error) {
-	procList, err := e.db.ListProcesses()
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	var out []LoaderClaimPair
-	for _, p := range procList {
-		if p.ActiveStyleID == nil {
-			continue
-		}
-		claims, err := e.db.ListStyleNodeClaims(*p.ActiveStyleID)
-		if err != nil {
-			continue
-		}
-		for _, c := range claims {
-			if c.Role != protocol.ClaimRoleProduce || c.SwapMode != protocol.SwapModeManualSwap {
-				continue
-			}
-			for _, payload := range c.AllowedPayloads() {
-				key := c.CoreNodeName + "|" + payload
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				out = append(out, LoaderClaimPair{
-					CoreNodeName: c.CoreNodeName,
-					PayloadCode:  payload,
-					UOPCapacity:  c.UOPCapacity,
-				})
-			}
-		}
-	}
-	return out, nil
+	return e.listAllLoaderBindings()
 }
 
 // LoaderClaimPair names one (loader, payload) binding eligible for
