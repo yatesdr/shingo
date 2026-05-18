@@ -130,6 +130,74 @@ func AllTypes() []string {
 	}
 }
 
+// CoreInboundSubjects returns every Subject Core handles (envelopes
+// originated by Edge: requests, lifecycle, claim sync, inventory deltas).
+// Used by cmd/shingocore/main.go's boot-time SubjectRouter coverage
+// assertion — adding a new Core-handled subject means adding both the
+// const above and an entry here, else boot crashes loudly instead of
+// dropping the first inbound envelope on the floor.
+func CoreInboundSubjects() []string {
+	return []string{
+		SubjectEdgeRegister,
+		SubjectEdgeHeartbeat,
+		SubjectNodeListRequest,
+		SubjectProductionReport,
+		SubjectTagVerifyRequest,
+		SubjectCatalogPayloadsRequest,
+		SubjectNodeStateRequest,
+		SubjectOrderStatusRequest,
+		SubjectClaimSync,
+		SubjectCountGroupAck,
+		SubjectBinUOPDelta,
+		SubjectLinesideBucketDelta,
+	}
+}
+
+// EdgeInboundSubjects returns every Subject Edge handles (envelopes
+// originated by Core: registration acks, node-list/catalog responses,
+// demand signals, count-group commands, bin-picked-up notifications).
+// Used by cmd/shingoedge/main.go's boot-time SubjectRouter coverage
+// assertion.
+//
+// Core inbound subjects and Edge inbound subjects are disjoint by
+// design — Subject names carry directionality, so registering a Core
+// subject on Edge's router would be a wiring bug, not a no-op like the
+// envelope-type case where both sides legitimately register all 17 (Edge
+// no-ops the order-channel types it sends but never receives).
+func EdgeInboundSubjects() []string {
+	return []string{
+		SubjectEdgeRegistered,
+		SubjectEdgeHeartbeatAck,
+		SubjectNodeListResponse,
+		SubjectProductionReportAck,
+		SubjectCatalogPayloadsResponse,
+		SubjectOrderStatusResponse,
+		SubjectTagVerifyResponse,
+		SubjectEdgeRegisterRequest,
+		SubjectEdgeStale,
+		SubjectNodeStructureChanged,
+		SubjectDemandSignal,
+		SubjectLoopBelowThreshold,
+		SubjectCountGroupCommand,
+		SubjectBinPickedUp,
+	}
+}
+
+// AllSubjects returns the union of CoreInboundSubjects and
+// EdgeInboundSubjects — every Subject constant that participates in
+// production dispatch. Convenience for tests that walk the full set
+// (e.g., a future "every subject has a sample payload in the agreement
+// table" check). The boot-time coverage assertions in each composition
+// root use the role-specific lists above.
+func AllSubjects() []string {
+	core := CoreInboundSubjects()
+	edge := EdgeInboundSubjects()
+	out := make([]string, 0, len(core)+len(edge))
+	out = append(out, core...)
+	out = append(out, edge...)
+	return out
+}
+
 // AckOutcome is the typed outcome of a CountGroupAck. Wraps string for
 // SQL/JSON-native serialization while gaining compile-time distinction
 // from raw strings and other enum-shaped types in this package.

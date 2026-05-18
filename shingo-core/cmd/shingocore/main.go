@@ -256,13 +256,41 @@ func main() {
 	coreHandler := messaging.NewCoreHandler(db, msgClient, cfg.Messaging.StationID, cfg.Messaging.DispatchTopic, eng.Dispatcher())
 	coreHandler.DebugLog = dbg.Func("core_handler")
 	coreHandler.StaleEdgeThreshold = cfg.Messaging.StaleEdgeThreshold
+	coreHandler.Start()
+	defer coreHandler.Stop()
+
+	// ── Subject router (Data sub-dispatch) ─────────────────────────────
+	// Every Subject Core handles is registered explicitly here against
+	// a CoreDataService method — same shape as cmd/shingoedge/main.go's
+	// SubjectRouter wiring. CoreDataService is constructed at this
+	// composition root rather than buried inside NewCoreHandler so the
+	// dispatch table is grep-able from one place.
+	coreDataService := messaging.NewCoreDataService(db, coreHandler)
 	// Wire the UOP-threshold monitor so claim-sync threshold changes
 	// reset debounce timers and bucket-applied events drive
 	// re-evaluation. Engine.Start() has already constructed the monitor
 	// and kicked its startup-sweep goroutine.
-	coreHandler.SetThresholdMonitor(eng.ThresholdMonitor())
-	coreHandler.Start()
-	defer coreHandler.Stop()
+	coreDataService.SetThresholdMonitor(eng.ThresholdMonitor())
+
+	subjectRouter := router.NewSubject()
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegister, coreDataService.HandleEdgeRegister)
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeat, coreDataService.HandleEdgeHeartbeat)
+	router.RegisterSubjectBare(subjectRouter, protocol.SubjectNodeListRequest, coreDataService.HandleNodeListRequest)
+	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReport, coreDataService.HandleProductionReport)
+	router.RegisterSubject(subjectRouter, protocol.SubjectTagVerifyRequest, coreDataService.HandleTagVerifyRequest)
+	router.RegisterSubjectBare(subjectRouter, protocol.SubjectCatalogPayloadsRequest, coreDataService.HandleCatalogPayloadsRequest)
+	router.RegisterSubject(subjectRouter, protocol.SubjectNodeStateRequest, coreDataService.HandleNodeStateRequest)
+	router.RegisterSubject(subjectRouter, protocol.SubjectOrderStatusRequest, coreDataService.HandleOrderStatusRequest)
+	router.RegisterSubject(subjectRouter, protocol.SubjectClaimSync, coreDataService.HandleClaimSync)
+	router.RegisterSubject(subjectRouter, protocol.SubjectCountGroupAck, coreDataService.HandleCountGroupAck)
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinUOPDelta, coreDataService.HandleBinUOPDelta)
+	router.RegisterSubject(subjectRouter, protocol.SubjectLinesideBucketDelta, coreDataService.HandleLinesideBucketDelta)
+	for _, s := range protocol.CoreInboundSubjects() {
+		if !subjectRouter.Has(s) {
+			log.Fatalf("shingocore: subject router missing handler for %s — composition root is incomplete", s)
+		}
+	}
+
 	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })
 	ingestor.DebugLog = dbg.Func("protocol")
 	if cfg.Messaging.SigningKey != "" {
@@ -271,10 +299,11 @@ func main() {
 	}
 
 	// ── Protocol router (envelope Type dispatch) ───────────────────────
-	// Each envelope Type registers directly against coreHandler.HandleX.
-	// The 8 order-channel Types share the inbox-dedup middleware via
-	// UseFor; TypeData and the reply-channel Types pass through ungated
-	// (the order-channel scoping matches the legacy InboxDedup decorator
+	// Each envelope Type registers directly against coreHandler.HandleX
+	// (or, for TypeData, a closure into subjectRouter.Dispatch). The 8
+	// order-channel Types share the inbox-dedup middleware via UseFor;
+	// TypeData and the reply-channel Types pass through ungated (the
+	// order-channel scoping matches the legacy InboxDedup decorator
 	// contract this middleware replaced).
 	protoRouter := router.New[string]()
 	dedupMW := middleware.NewInboxDedup(db, dbg.Func("inbox_dedup"))
@@ -288,7 +317,11 @@ func main() {
 		protocol.TypeOrderRelease,
 		protocol.TypeOrderIngest,
 	)
-	router.Register(protoRouter, protocol.TypeData, coreHandler.HandleData)
+	dataDbg := dbg.Func("core_handler")
+	router.Register(protoRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
+		dataDbg("data: subject=%s body_size=%d from=%s", p.Subject, len(p.Body), env.Src.Station)
+		subjectRouter.Dispatch(env, p)
+	})
 	router.Register(protoRouter, protocol.TypeOrderRequest, coreHandler.HandleOrderRequest)
 	router.Register(protoRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
 	router.Register(protoRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)

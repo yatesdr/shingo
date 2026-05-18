@@ -72,13 +72,13 @@ func TestNodeListResponse_IncludesNodeGroups(t *testing.T) {
 
 	// Create the data service and request node list
 	resp := &captureResponder{}
-	svc := newCoreDataService(db, resp)
+	svc := NewCoreDataService(db, resp)
 
 	env := &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: stationID},
 		Dst: protocol.Address{Role: protocol.RoleCore, Station: "core"},
 	}
-	svc.handleNodeListRequest(env)
+	svc.HandleNodeListRequest(env)
 
 	if len(resp.replies) != 1 {
 		t.Fatalf("expected 1 reply, got %d", len(resp.replies))
@@ -140,13 +140,13 @@ func TestNodeListResponse_GlobalPath_IncludesNodeGroups(t *testing.T) {
 	// No station assignment — triggers global path fallback
 
 	resp := &captureResponder{}
-	svc := newCoreDataService(db, resp)
+	svc := NewCoreDataService(db, resp)
 
 	env := &protocol.Envelope{
 		Src: protocol.Address{Role: protocol.RoleEdge, Station: "edge.unknown"},
 		Dst: protocol.Address{Role: protocol.RoleCore, Station: "core"},
 	}
-	svc.handleNodeListRequest(env)
+	svc.HandleNodeListRequest(env)
 
 	var nodeListResp protocol.NodeListResponse
 	payloadBytes, _ := json.Marshal(resp.replies[0].payload)

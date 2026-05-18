@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"shingo/protocol"
-	"shingo/protocol/router"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/demands"
@@ -38,7 +37,6 @@ type CoreDataService struct {
 	inventoryDelta   *service.InventoryDeltaService
 	resp             coreDataResponder
 	thresholdMonitor ThresholdMonitor
-	subjectRouter    *router.SubjectRouter
 }
 
 // SetThresholdMonitor wires the engine's threshold-monitor for
@@ -49,40 +47,24 @@ func (s *CoreDataService) SetThresholdMonitor(tm ThresholdMonitor) {
 	s.thresholdMonitor = tm
 }
 
-// newCoreDataService constructs a CoreDataService. The TagVerifyService is
+// NewCoreDataService constructs a CoreDataService. The TagVerifyService is
 // built internally from the same *store.DB so the constructor signature
-// stays stable (NewCoreHandler and existing tests don't have to change).
-// Phase 6.4a routed the tag-verify path through the service so the
-// *store.DB.VerifyTag method could be retired.
-func newCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
-	s := &CoreDataService{
+// stays minimal. Subject-router registration is the composition root's
+// responsibility — it calls RegisterSubject against this service's
+// HandleX methods explicitly, matching the EdgeHandler wiring pattern
+// (cmd/shingoedge/main.go). Keeping the dispatch table at the
+// composition root rather than buried in this constructor means a
+// reader can see every Subject Core handles by grepping cmd/shingocore.
+func NewCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
+	return &CoreDataService{
 		db:             db,
 		tagVerify:      service.NewTagVerifyService(db),
 		inventoryDelta: service.NewInventoryDeltaService(db, service.NewBinManifestService(db)),
 		resp:           resp,
 	}
-	s.subjectRouter = router.NewSubject()
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectEdgeRegister, s.handleEdgeRegister)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectEdgeHeartbeat, s.handleEdgeHeartbeat)
-	router.RegisterSubjectBare(s.subjectRouter, protocol.SubjectNodeListRequest, s.handleNodeListRequest)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectProductionReport, s.handleProductionReport)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectTagVerifyRequest, s.handleTagVerifyRequest)
-	router.RegisterSubjectBare(s.subjectRouter, protocol.SubjectCatalogPayloadsRequest, s.handleCatalogPayloadsRequest)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectNodeStateRequest, s.handleNodeStateRequest)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectOrderStatusRequest, s.handleOrderStatusRequest)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectClaimSync, s.handleClaimSync)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectCountGroupAck, s.handleCountGroupAck)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectBinUOPDelta, s.handleBinUOPDelta)
-	router.RegisterSubject(s.subjectRouter, protocol.SubjectLinesideBucketDelta, s.handleLinesideBucketDelta)
-	return s
 }
 
-func (s *CoreDataService) Handle(env *protocol.Envelope, p *protocol.Data) {
-	s.resp.dbg("data: subject=%s body_size=%d from=%s", p.Subject, len(p.Body), env.Src.Station)
-	s.subjectRouter.Dispatch(env, p)
-}
-
-// handleBinUOPDelta routes a Phase 1 inventory delta envelope to the
+// HandleBinUOPDelta routes a Phase 1 inventory delta envelope to the
 // InventoryDeltaService. Errors land in the log loud (no Edge reply
 // channel exists for these — they're fire-and-forget from Edge's
 // outbox); a missing target bin or payload mismatch is the
@@ -91,7 +73,7 @@ func (s *CoreDataService) Handle(env *protocol.Envelope, p *protocol.Data) {
 //
 // Core applies deltas authoritatively against bins.uop_remaining;
 // Edge's runtime cache trails authoritative state via the reconciler.
-func (s *CoreDataService) handleBinUOPDelta(env *protocol.Envelope, d *protocol.BinUOPDelta) {
+func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.BinUOPDelta) {
 	// Edge sets the station from its own identity at outbox time. Trust
 	// the envelope source for routing — preserves the two-edge case
 	// where d.Station is set on Edge before the message hits the wire
@@ -113,12 +95,12 @@ func (s *CoreDataService) handleBinUOPDelta(env *protocol.Envelope, d *protocol.
 		d.Station, d.BinID, d.SequenceID, d.Delta, d.Reason)
 }
 
-// handleLinesideBucketDelta routes a Phase 1 inventory delta envelope
+// HandleLinesideBucketDelta routes a Phase 1 inventory delta envelope
 // to the InventoryDeltaService. Same dead-letter / authoritative-write notes
-// as handleBinUOPDelta apply. Manual-swap nodes never emit bucket
+// as HandleBinUOPDelta apply. Manual-swap nodes never emit bucket
 // deltas (no PLC) — a delta arriving from a manual-swap node would
 // indicate an Edge bug.
-func (s *CoreDataService) handleLinesideBucketDelta(env *protocol.Envelope, d *protocol.LinesideBucketDelta) {
+func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *protocol.LinesideBucketDelta) {
 	if d.Station == "" {
 		d.Station = env.Src.Station
 	}
@@ -147,11 +129,11 @@ func (s *CoreDataService) handleLinesideBucketDelta(env *protocol.Envelope, d *p
 	}
 }
 
-// handleCountGroupAck records an edge's response to a prior CountGroupCommand.
+// HandleCountGroupAck records an edge's response to a prior CountGroupCommand.
 // One audit row per ack — combined with the transition-side row emitted by
 // countgroup_wiring.go, this gives end-to-end forensics: core saw X, edge
 // wrote Y, PLC took Z ms to ack (or timed out).
-func (s *CoreDataService) handleCountGroupAck(env *protocol.Envelope, ack *protocol.CountGroupAck) {
+func (s *CoreDataService) HandleCountGroupAck(env *protocol.Envelope, ack *protocol.CountGroupAck) {
 	log.Printf("core_handler: countgroup ack from=%s group=%s outcome=%s latency=%dms corr=%s",
 		env.Src.Station, ack.Group, ack.Outcome, ack.AckLatencyMs, ack.CorrelationID)
 	detail := fmt.Sprintf("group=%s outcome=%s latency_ms=%d corr=%s station=%s",
@@ -161,7 +143,7 @@ func (s *CoreDataService) handleCountGroupAck(env *protocol.Envelope, ack *proto
 	}
 }
 
-func (s *CoreDataService) handleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
+func (s *CoreDataService) HandleEdgeRegister(env *protocol.Envelope, p *protocol.EdgeRegister) {
 	log.Printf("core_handler: edge registered: %s (hostname=%s, version=%s, lines=%v)",
 		p.StationID, p.Hostname, p.Version, p.LineIDs)
 
@@ -175,7 +157,7 @@ func (s *CoreDataService) handleEdgeRegister(env *protocol.Envelope, p *protocol
 	s.resp.dbg("reply published: subject=edge.registered station=%s", p.StationID)
 }
 
-func (s *CoreDataService) handleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
+func (s *CoreDataService) HandleEdgeHeartbeat(env *protocol.Envelope, p *protocol.EdgeHeartbeat) {
 	isNew, err := s.db.UpdateHeartbeat(p.StationID)
 	if err != nil {
 		log.Printf("core_handler: update heartbeat for %s: %v", p.StationID, err)
@@ -192,7 +174,7 @@ func (s *CoreDataService) handleEdgeHeartbeat(env *protocol.Envelope, p *protoco
 	}
 }
 
-func (s *CoreDataService) handleNodeListRequest(env *protocol.Envelope) {
+func (s *CoreDataService) HandleNodeListRequest(env *protocol.Envelope) {
 	stationID := env.Src.Station
 	nodeList, err := s.db.ListNodesForStation(stationID)
 	stationScoped := err == nil && len(nodeList) > 0
@@ -256,7 +238,7 @@ func (s *CoreDataService) handleNodeListRequest(env *protocol.Envelope) {
 	log.Printf("core_handler: sent node list (%d nodes) to %s", len(infos), env.Src.Station)
 }
 
-func (s *CoreDataService) handleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
+func (s *CoreDataService) HandleProductionReport(env *protocol.Envelope, rpt *protocol.ProductionReport) {
 	log.Printf("core_handler: production report from %s: %d entries", rpt.StationID, len(rpt.Reports))
 	accepted := 0
 	for _, entry := range rpt.Reports {
@@ -277,7 +259,7 @@ func (s *CoreDataService) handleProductionReport(env *protocol.Envelope, rpt *pr
 		&protocol.ProductionReportAck{StationID: rpt.StationID, Accepted: accepted})
 }
 
-func (s *CoreDataService) handleTagVerifyRequest(env *protocol.Envelope, req *protocol.TagVerifyRequest) {
+func (s *CoreDataService) HandleTagVerifyRequest(env *protocol.Envelope, req *protocol.TagVerifyRequest) {
 	log.Printf("core_handler: tag verify from %s: uuid=%s tag=%s", env.Src.Station, req.OrderUUID, req.TagID)
 
 	result := s.tagVerify.VerifyTag(req.OrderUUID, req.TagID, req.Location)
@@ -293,7 +275,7 @@ func (s *CoreDataService) handleTagVerifyRequest(env *protocol.Envelope, req *pr
 	})
 }
 
-func (s *CoreDataService) handleCatalogPayloadsRequest(env *protocol.Envelope) {
+func (s *CoreDataService) HandleCatalogPayloadsRequest(env *protocol.Envelope) {
 	log.Printf("core_handler: catalog payloads request from %s", env.Src.Station)
 	payloads, err := s.db.ListPayloads()
 	if err != nil {
@@ -312,7 +294,7 @@ func (s *CoreDataService) handleCatalogPayloadsRequest(env *protocol.Envelope) {
 	log.Printf("core_handler: sent payload catalog (%d payloads) to %s", len(infos), env.Src.Station)
 }
 
-func (s *CoreDataService) handleNodeStateRequest(env *protocol.Envelope, req *protocol.NodeStateRequest) {
+func (s *CoreDataService) HandleNodeStateRequest(env *protocol.Envelope, req *protocol.NodeStateRequest) {
 	log.Printf("core_handler: node state request from %s: %d nodes", env.Src.Station, len(req.Nodes))
 	entries := make([]protocol.NodeStateEntry, 0, len(req.Nodes))
 	for _, name := range req.Nodes {
@@ -343,7 +325,7 @@ func (s *CoreDataService) handleNodeStateRequest(env *protocol.Envelope, req *pr
 	log.Printf("core_handler: sent node state (%d entries) to %s", len(entries), env.Src.Station)
 }
 
-func (s *CoreDataService) handleOrderStatusRequest(env *protocol.Envelope, req *protocol.OrderStatusRequest) {
+func (s *CoreDataService) HandleOrderStatusRequest(env *protocol.Envelope, req *protocol.OrderStatusRequest) {
 	resp := &protocol.OrderStatusResponse{Orders: make([]protocol.OrderStatusSnapshot, 0, len(req.OrderUUIDs))}
 	for _, orderUUID := range req.OrderUUIDs {
 		snap := protocol.OrderStatusSnapshot{OrderUUID: orderUUID}
@@ -362,7 +344,7 @@ func (s *CoreDataService) handleOrderStatusRequest(env *protocol.Envelope, req *
 	s.resp.replyData(env, protocol.SubjectOrderStatusResponse, resp)
 }
 
-func (s *CoreDataService) handleClaimSync(env *protocol.Envelope, sync *protocol.ClaimSync) {
+func (s *CoreDataService) HandleClaimSync(env *protocol.Envelope, sync *protocol.ClaimSync) {
 	stationID := sync.StationID
 	if stationID == "" {
 		stationID = env.Src.Station
@@ -370,7 +352,7 @@ func (s *CoreDataService) handleClaimSync(env *protocol.Envelope, sync *protocol
 	log.Printf("core_handler: claim sync from %s: %d claims", stationID, len(sync.Claims))
 
 	// Convert protocol entries to store entries, warning when a consume
-	// claim targets a node that isn't LANE-parented — handleKanbanDemand
+	// claim targets a node that isn't LANE-parented — HandleKanbanDemand
 	// will never fire a consume signal for such nodes (see isStorageSlot
 	// in wiring_kanban.go), so the registry row is inert and usually
 	// means an Edge-UI validation gap. Warn-don't-reject keeps this a

@@ -41,8 +41,18 @@ type rawHandler func(env *protocol.Envelope)
 // Middleware wraps a handler invocation. The middleware function receives
 // the envelope, the routing key (as `any` so the same middleware function
 // can be shared across routers keyed on different K), and a next callback
-// that invokes the rest of the chain. To short-circuit the chain (e.g.,
-// inbox dedup detecting a duplicate), simply don't call next.
+// that invokes the rest of the chain.
+//
+// Contract:
+//   - Calling next zero times short-circuits the chain (e.g., inbox dedup
+//     detecting a duplicate).
+//   - Calling next exactly once advances to the next middleware (or the
+//     handler if this is the last middleware).
+//   - Calling next more than once is safely guarded: only the first call
+//     advances the chain; subsequent calls are dropped with a warning log
+//     (per-key, naming the middleware index). Middleware authors do not
+//     need to defend against accidental double-calls — the router does
+//     it for them so a single handler invocation cannot be doubled.
 type Middleware func(env *protocol.Envelope, key any, next func())
 
 // New constructs an empty Router. Add routes with Register and middleware

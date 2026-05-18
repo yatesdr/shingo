@@ -9,9 +9,12 @@ import (
 	"shingocore/store"
 )
 
-// CoreHandler handles inbound protocol messages on the orders topic.
-// It processes registration and heartbeat messages directly, and
-// delegates order messages to the dispatcher.
+// CoreHandler handles the order-channel inbound protocol messages and
+// owns the stale-edge detection loop. TypeData / Subject dispatch is
+// owned by CoreDataService, registered against a SubjectRouter at the
+// composition root; CoreHandler implements the coreDataResponder
+// interface (dbg, replyData, sendData) so CoreDataService methods can
+// publish reply envelopes through the outbox.
 //
 // dispatcher is the narrow consumer-side Dispatcher interface (see
 // dispatcher.go in this package). *dispatch.Dispatcher satisfies it
@@ -23,7 +26,6 @@ type CoreHandler struct {
 	stationID     string
 	dispatchTopic string
 	dispatcher    Dispatcher
-	dataService   *CoreDataService
 	DebugLog      func(string, ...any)
 
 	// StaleEdgeThreshold controls how long an edge can skip heartbeats
@@ -45,13 +47,20 @@ type CoreHandler struct {
 // target a dead edge after a hard crash.
 const defaultStaleEdgeThreshold = 15 * time.Minute
 
-// NewCoreHandler creates a handler for inbound edge messages.
+// NewCoreHandler creates a handler for the order-channel inbound
+// messages and stale-edge management.
 //
 // dispatcher is accepted as the narrow Dispatcher interface. Callers
 // (engine) pass the concrete *dispatch.Dispatcher; structural typing
 // handles the rest.
+//
+// CoreDataService is constructed separately at the composition root —
+// build it with messaging.NewCoreDataService(db, coreHandler) and
+// register its HandleX methods on a router.SubjectRouter directly. This
+// keeps the dispatch table grep-able from cmd/shingocore/main.go rather
+// than buried in a constructor.
 func NewCoreHandler(db *store.DB, client *Client, stationID, dispatchTopic string, dispatcher Dispatcher) *CoreHandler {
-	h := &CoreHandler{
+	return &CoreHandler{
 		db:            db,
 		client:        client,
 		stationID:     stationID,
@@ -59,8 +68,6 @@ func NewCoreHandler(db *store.DB, client *Client, stationID, dispatchTopic strin
 		dispatcher:    dispatcher,
 		stopCh:        make(chan struct{}),
 	}
-	h.dataService = newCoreDataService(db, h)
-	return h
 }
 
 func (h *CoreHandler) dbg(format string, args ...any) {
@@ -110,15 +117,6 @@ func (h *CoreHandler) sendData(subject, stationID string, payload any) {
 	}
 }
 
-// SetThresholdMonitor wires the engine's UOP-threshold monitor into
-// the data service so claim-sync threshold changes reset debounce
-// timers and bucket-applied events drive re-evaluation. Optional;
-// callers that don't care about C-push (tests, embedded harnesses)
-// can skip this.
-func (h *CoreHandler) SetThresholdMonitor(tm ThresholdMonitor) {
-	h.dataService.SetThresholdMonitor(tm)
-}
-
 // Start begins the stale-edge detection goroutine.
 func (h *CoreHandler) Start() {
 	go h.staleEdgeLoop()
@@ -127,10 +125,6 @@ func (h *CoreHandler) Start() {
 // Stop halts the stale-edge detection goroutine.
 func (h *CoreHandler) Stop() {
 	h.stopOnce.Do(func() { close(h.stopCh) })
-}
-
-func (h *CoreHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
-	h.dataService.Handle(env, p)
 }
 
 // Order message handlers delegate to the dispatcher. Inbox

@@ -270,6 +270,18 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			bp.OrderUUID, bp.BinID, bp.Location)
 		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID)
 	})
+	// SubjectCountGroupCommand may be skipped above when cgHandler is nil
+	// (countgroup is an optional feature). The boot-time coverage assertion
+	// below is gated on the same condition so a non-countgroup edge doesn't
+	// fail to start over an unregistered optional subject.
+	for _, s := range protocol.EdgeInboundSubjects() {
+		if s == protocol.SubjectCountGroupCommand && cgHandler == nil {
+			continue
+		}
+		if !subjectRouter.Has(s) {
+			log.Fatalf("shingoedge: subject router missing handler for %s — composition root is incomplete", s)
+		}
+	}
 
 	// ── Protocol router (envelope Type dispatch) ───────────────────────
 	// Every envelope Type is registered against either the EdgeHandler
