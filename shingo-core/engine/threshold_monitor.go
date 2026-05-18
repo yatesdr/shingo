@@ -5,12 +5,20 @@
 // The C-push architecture in one paragraph:
 //
 //   Edge owns claim config and ships per-(loader, payload) thresholds
-//   to Core via ClaimSync. Core observes combined in-loop UOP (bins +
-//   buckets) per payload on every bin update / bucket delta apply.
+//   to Core via ClaimSync. Core tracks combined in-loop UOP (bins +
+//   buckets) per payload incrementally — the delta handlers apply each
+//   BinUOPDelta and LinesideBucketDelta directly to an in-memory total.
 //   When the total drops below the configured threshold for a (loader,
 //   payload) pair, Core emits a LoopBelowThresholdSignal on subject
 //   demand.loop_below_threshold. Edge responds by firing L1 retrieve_empty
 //   after its in-flight guard.
+//
+// No DB queries on the hot path. The monitor is notified directly by
+// the Kafka delta handlers (HandleBinUOPDelta, HandleLinesideBucketDelta)
+// which already have the payload code and delta. The EventBinUpdated bus
+// is only used for rare non-delta mutations (status changes, manual bin
+// moves) which reconcile from the DB since the event doesn't carry a
+// UOP delta.
 //
 // Debounce policy: 15-second window per (loader_node, payload).
 // In-memory state (lost on Core restart — that's intentional; the
@@ -19,9 +27,8 @@
 // so a newly-applied threshold engages immediately.
 //
 // Startup sweep: on Run() the monitor walks every binding with
-// threshold > 0 once, bypassing debounce. After the sweep, normal
-// debounced operation begins. This handles the case where Core was
-// down during a threshold-crossing event.
+// threshold > 0 once, seeding the UOP cache from the DB. After the
+// sweep, all further UOP updates are incremental — no more DB reads.
 //
 // Dedup with the legacy DemandSignal path:
 //   - Core never sends LoopBelowThresholdSignal for (loader, payload)
@@ -59,7 +66,17 @@ const thresholdDebounceWindow = 15 * time.Second
 // claim config and apply the ceiling.
 const warmUpFloor = 2
 
-// ThresholdMonitor watches combined bin + bucket UOP per payload and
+// thresholdEntry is one (station, loader, payload) binding with its
+// configured threshold, cached in memory so the monitor never queries
+// demand_registry on the hot path.
+type thresholdEntry struct {
+	stationID    string
+	coreNodeName string
+	payloadCode  string
+	threshold    int
+}
+
+// ThresholdMonitor tracks in-loop UOP per payload incrementally and
 // emits LoopBelowThresholdSignal when a monitored (loader, payload)
 // drops below its configured threshold.
 type ThresholdMonitor struct {
@@ -77,47 +94,46 @@ type ThresholdMonitor struct {
 	// sweepDone gates startup-sweep-only behavior. While false the
 	// debounce check is bypassed on the very first signal per binding.
 	sweepDone bool
+	// thresholdsByPayload caches per-payload threshold bindings. Keyed
+	// by payload_code. Built from the startup sweep and kept fresh via
+	// OnRegistryChanges. Never queried from the DB on the hot path.
+	thresholdsByPayload map[string][]thresholdEntry
+	// uopCache is the combined (bin + bucket) UOP total per payload,
+	// maintained incrementally. Seeded by the startup sweep from the DB,
+	// then updated by OnBinUOPDelta and OnBucketApplied on each Kafka
+	// delta. No DB queries after startup.
+	uopCache map[string]int
 }
 
 // NewThresholdMonitor constructs the monitor. Call Run() to perform
-// the startup sweep and then have it react to BinUpdated /
-// LinesideBucketApplied events.
+// the startup sweep.
 func NewThresholdMonitor(e *Engine) *ThresholdMonitor {
 	return &ThresholdMonitor{
-		eng:      e,
-		debounce: make(map[string]time.Time),
-		warmUp:   make(map[string]int),
+		eng:                 e,
+		debounce:            make(map[string]time.Time),
+		warmUp:              make(map[string]int),
+		thresholdsByPayload: make(map[string][]thresholdEntry),
+		uopCache:            make(map[string]int),
 	}
 }
 
 // bindingKey composes the (station, core_node_name, payload) tuple
 // used to key per-binding state in the threshold monitor's debounce
-// and warm-up maps. core_node_name is the canonical cross-system
-// identifier — matches loader_payload_thresholds, demand_registry,
-// and the LoopBelowThresholdSignal wire field.
+// and warm-up maps.
 func bindingKey(station, coreNodeName, payload string) string {
 	return station + "|" + coreNodeName + "|" + payload
 }
 
-// Run performs the startup sweep then subscribes to the engine event
-// bus for ongoing monitoring. Idempotent — calling twice is harmless;
-// the second call is a no-op because the sweep flag stays set.
+// Run performs the startup sweep then returns. Idempotent — calling
+// twice is harmless; the second call is a no-op because the sweep flag
+// stays set.
 //
 // Sweep runs in a goroutine so it doesn't block Engine startup; ordering
 // vs. uop_backfill is handled at the cmd/shingocore wiring layer
 // (sweep runs after a backfill-completion gate). For Phase 1 the
-// monitor itself just waits a short grace period before sweeping; the
-// brief flags persistent sweep ordering as a deploy-checklist item.
+// monitor itself just waits a short grace period before sweeping.
 func (m *ThresholdMonitor) Run(ctx context.Context) {
-	// One-shot startup sweep on a goroutine. Subscriptions are wired
-	// from wireEventHandlers so the subscription side is up before the
-	// sweep fires its first signal.
 	go func() {
-		// Brief grace period to let uop_backfill from any reconnecting
-		// Edge clear the inventory_delta_dedup pipeline before we read
-		// SystemUOPForPayload. Phase 1 deploy-checklist documents the
-		// strict ordering for plants where this matters; the grace
-		// period is a safety belt for the typical case.
 		select {
 		case <-ctx.Done():
 			return
@@ -127,17 +143,14 @@ func (m *ThresholdMonitor) Run(ctx context.Context) {
 	}()
 }
 
-// startupSweep iterates every (loader, payload) with threshold > 0
-// once, bypassing the debounce check. After the sweep, normal
-// debounced operation begins. Errors are logged and the sweep
-// continues — a single failed binding shouldn't stop the others from
-// being evaluated.
+// startupSweep iterates every (loader, payload) with threshold > 0,
+// seeds the UOP cache from the DB, and fires signals for any binding
+// already below threshold. After the sweep, all UOP updates are
+// incremental — no more DB reads.
 func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 	entries, err := m.eng.db.ListDemandThresholds()
 	if err != nil {
 		m.eng.logFn("threshold_monitor: startup sweep ListDemandThresholds: %v", err)
-		// Even on lookup failure, mark sweep done so steady-state
-		// monitoring isn't stuck in cold-start mode forever.
 		m.mu.Lock()
 		m.sweepDone = true
 		m.mu.Unlock()
@@ -145,15 +158,31 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 	}
 	m.eng.logFn("threshold_monitor: startup sweep — evaluating %d monitored bindings", len(entries))
 
-	// Group by payload so SystemUOPForPayload is called once per
-	// distinct payload rather than once per (station, loader)
-	// binding — multiple loaders that monitor the same payload share
-	// the lookup.
 	byPayload := map[string][]demands.RegistryEntry{}
 	for _, e := range entries {
+		if e.ReplenishUOPThreshold <= 0 {
+			continue
+		}
 		byPayload[e.PayloadCode] = append(byPayload[e.PayloadCode], e)
 	}
 
+	// Build threshold cache.
+	m.mu.Lock()
+	for payload, bindings := range byPayload {
+		tes := make([]thresholdEntry, 0, len(bindings))
+		for _, b := range bindings {
+			tes = append(tes, thresholdEntry{
+				stationID:    b.StationID,
+				coreNodeName: b.CoreNodeName,
+				payloadCode:  b.PayloadCode,
+				threshold:    b.ReplenishUOPThreshold,
+			})
+		}
+		m.thresholdsByPayload[payload] = tes
+	}
+	m.mu.Unlock()
+
+	// Seed UOP cache from DB (only time we query UOP after startup).
 	for payload, bindings := range byPayload {
 		if ctx.Err() != nil {
 			return
@@ -167,17 +196,13 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 		if len(uop.Counts) > 0 {
 			total = uop.Counts[0].TotalUOP
 		}
+		m.mu.Lock()
+		m.uopCache[payload] = total
+		m.mu.Unlock()
 		for _, b := range bindings {
-			if b.ReplenishUOPThreshold <= 0 {
-				continue
-			}
 			if total < b.ReplenishUOPThreshold {
-				// Seed the warm-up cap so subsequent signals on the
-				// same binding continue firing during the cold-start
-				// catch-up window.
-				cap := warmUpFloor
 				m.mu.Lock()
-				m.warmUp[bindingKey(b.StationID, b.CoreNodeName, b.PayloadCode)] = cap
+				m.warmUp[bindingKey(b.StationID, b.CoreNodeName, b.PayloadCode)] = warmUpFloor
 				m.mu.Unlock()
 				m.fireSignal(b, total, "warm_up_startup_sweep")
 			}
@@ -187,49 +212,97 @@ func (m *ThresholdMonitor) startupSweep(ctx context.Context) {
 	m.mu.Lock()
 	m.sweepDone = true
 	m.mu.Unlock()
-	m.eng.logFn("threshold_monitor: startup sweep complete — switching to debounced mode")
+	m.eng.logFn("threshold_monitor: startup sweep complete — switching to incremental mode")
 }
 
-// evaluatePayload is the steady-state path. Called from event
-// handlers (BinUpdated, LinesideBucketApplied) — looks up monitored
-// bindings for the affected payload, recomputes loop UOP, and dispatches
-// LoopBelowThresholdSignal for any binding below threshold whose
-// debounce window has elapsed.
-func (m *ThresholdMonitor) evaluatePayload(payloadCode string) {
+// OnBinUOPDelta applies a bin UOP delta to the cached total and checks
+// thresholds. Called by HandleBinUOPDelta after the delta is applied to
+// the DB. The delta is known (from the Kafka message) so we apply it
+// directly — no DB query needed.
+func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
 	if payloadCode == "" {
 		return
 	}
-	entries, err := m.eng.db.LookupDemandThresholdsByPayload(payloadCode)
-	if err != nil {
-		m.eng.logFn("threshold_monitor: LookupDemandThresholdsByPayload(%s): %v", payloadCode, err)
+	m.mu.Lock()
+	m.uopCache[payloadCode] += delta
+	bindings := m.thresholdsByPayload[payloadCode]
+	total := m.uopCache[payloadCode]
+	m.mu.Unlock()
+
+	m.checkBindings(bindings, total)
+}
+
+// OnBucketApplied is invoked by the messaging layer after a successful
+// LinesideBucketDelta apply. Applies the delta to the cached total,
+// emits an engine event for other subscribers, and checks thresholds.
+func (m *ThresholdMonitor) OnBucketApplied(station string, nodeID int64, payloadCode string, newQty, delta int, reason protocol.LinesideBucketDeltaReason) {
+	m.eng.Events.Emit(Event{Type: EventLinesideBucketApplied, Payload: LinesideBucketAppliedEvent{
+		Station:     station,
+		NodeID:      nodeID,
+		PayloadCode: payloadCode,
+		NewQty:      newQty,
+		Delta:       delta,
+		Reason:      reason,
+	}})
+	if payloadCode == "" {
 		return
 	}
-	if len(entries) == 0 {
+	m.mu.Lock()
+	m.uopCache[payloadCode] += delta
+	bindings := m.thresholdsByPayload[payloadCode]
+	total := m.uopCache[payloadCode]
+	m.mu.Unlock()
+
+	m.checkBindings(bindings, total)
+}
+
+// handleBinUpdated is the EventBinUpdated subscriber for rare non-delta
+// bin mutations (status changes, manual moves, corrections). These
+// events don't carry a UOP delta, so we reconcile from the DB. This
+// path fires infrequently — the primary consumption path goes through
+// OnBinUOPDelta instead.
+func (m *ThresholdMonitor) handleBinUpdated(ev BinUpdatedEvent) {
+	if ev.PayloadCode == "" {
 		return
 	}
-	uop, err := m.eng.inventoryService.SystemUOPForPayload(context.Background(), []string{payloadCode})
+	// Reconcile UOP from DB for this payload.
+	if m.eng == nil || m.eng.inventoryService == nil {
+		return
+	}
+	uop, err := m.eng.inventoryService.SystemUOPForPayload(context.Background(), []string{ev.PayloadCode})
 	if err != nil {
-		m.eng.logFn("threshold_monitor: SystemUOPForPayload(%s): %v", payloadCode, err)
+		m.eng.logFn("threshold_monitor: reconcile SystemUOPForPayload(%s): %v", ev.PayloadCode, err)
 		return
 	}
 	var total int
 	if len(uop.Counts) > 0 {
 		total = uop.Counts[0].TotalUOP
 	}
-	for _, b := range entries {
-		if b.ReplenishUOPThreshold <= 0 {
+	m.mu.Lock()
+	m.uopCache[ev.PayloadCode] = total
+	bindings := m.thresholdsByPayload[ev.PayloadCode]
+	m.mu.Unlock()
+
+	m.checkBindings(bindings, total)
+}
+
+// checkBindings evaluates all threshold bindings for a given total and
+// fires signals for any that are below threshold and past debounce.
+func (m *ThresholdMonitor) checkBindings(bindings []thresholdEntry, total int) {
+	for _, b := range bindings {
+		if b.threshold <= 0 {
 			continue
 		}
-		if total >= b.ReplenishUOPThreshold {
+		if total >= b.threshold {
 			continue
 		}
-		key := bindingKey(b.StationID, b.CoreNodeName, b.PayloadCode)
+		key := bindingKey(b.stationID, b.coreNodeName, b.payloadCode)
 		if !m.allow(key) {
 			m.eng.dbg("threshold_monitor: suppress station=%s loader=%s payload=%s total=%d threshold=%d (debounce)",
-				b.StationID, b.CoreNodeName, b.PayloadCode, total, b.ReplenishUOPThreshold)
+				b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold)
 			continue
 		}
-		m.fireSignal(b, total, "below_threshold")
+		m.fireSignalCached(b, total, "below_threshold")
 	}
 }
 
@@ -240,8 +313,6 @@ func (m *ThresholdMonitor) allow(key string) bool {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Warm-up override: while the per-binding warm-up counter is
-	// positive, allow firing every event regardless of debounce.
 	if w, ok := m.warmUp[key]; ok && w > 0 {
 		m.warmUp[key] = w - 1
 		m.debounce[key] = now
@@ -255,8 +326,8 @@ func (m *ThresholdMonitor) allow(key string) bool {
 	return true
 }
 
-// fireSignal builds and ships a LoopBelowThresholdSignal to the binding's
-// edge station. Caller is responsible for the debounce / warm-up gate.
+// fireSignal builds and ships a LoopBelowThresholdSignal from a DB entry.
+// Used by the startup sweep.
 func (m *ThresholdMonitor) fireSignal(b demands.RegistryEntry, total int, reason string) {
 	signal := &protocol.LoopBelowThresholdSignal{
 		PayloadCode:  b.PayloadCode,
@@ -274,51 +345,73 @@ func (m *ThresholdMonitor) fireSignal(b demands.RegistryEntry, total int, reason
 		b.StationID, b.CoreNodeName, b.PayloadCode, total, b.ReplenishUOPThreshold, reason)
 }
 
+// fireSignalCached builds and ships a LoopBelowThresholdSignal from a
+// cached threshold entry. Used by checkBindings in steady state.
+func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason string) {
+	signal := &protocol.LoopBelowThresholdSignal{
+		PayloadCode:  b.payloadCode,
+		CurrentUOP:   total,
+		Threshold:    b.threshold,
+		CoreNodeName: b.coreNodeName,
+		Reason:       reason,
+	}
+	if err := m.eng.SendDataToEdge(protocol.SubjectLoopBelowThreshold, b.stationID, signal); err != nil {
+		m.eng.logFn("threshold_monitor: send LoopBelowThresholdSignal to %s loader=%s payload=%s: %v",
+			b.stationID, b.coreNodeName, b.payloadCode, err)
+		return
+	}
+	m.eng.logFn("threshold_monitor: signaled station=%s loader=%s payload=%s current=%d threshold=%d reason=%s",
+		b.stationID, b.coreNodeName, b.payloadCode, total, b.threshold, reason)
+}
+
 // OnRegistryChanges resets per-binding debounce + warm-up state for
-// every (loader, payload) whose threshold value moved. Called by
+// every (loader, payload) whose threshold value moved, and rebuilds
+// the in-memory threshold cache for affected payloads. Called by
 // CoreDataService.handleClaimSync after SyncDemandRegistry returns its
-// change list. The clear ensures a freshly-configured threshold takes
-// effect on the next inventory event rather than waiting out the
-// debounce window from a previous firing.
+// change list.
 func (m *ThresholdMonitor) OnRegistryChanges(changes []demands.RegistryChange) {
 	if len(changes) == 0 {
 		return
 	}
+
+	affectedPayloads := make(map[string]bool)
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, c := range changes {
 		key := bindingKey(c.StationID, c.CoreNodeName, c.PayloadCode)
 		delete(m.debounce, key)
 		delete(m.warmUp, key)
+		affectedPayloads[c.PayloadCode] = true
 		if m.eng != nil {
 			m.eng.dbg("threshold_monitor: reset debounce station=%s loader=%s payload=%s old=%d new=%d",
 				c.StationID, c.CoreNodeName, c.PayloadCode, c.OldThreshold, c.NewThreshold)
 		}
 	}
-}
+	m.mu.Unlock()
 
-// OnBucketApplied is invoked by the messaging layer after a successful
-// LinesideBucketDelta apply. Emits an engine event so the rest of the
-// engine (any other subscriber, including potential future audit
-// listeners) sees the bucket motion, then drives evaluation directly
-// in line. We don't subscribe to the event for our own re-evaluation
-// path because the messaging-layer call already carries the payload
-// code we need and going through the event bus would force a redundant
-// lookup.
-func (m *ThresholdMonitor) OnBucketApplied(station string, nodeID int64, payloadCode string, newQty, delta int, reason protocol.LinesideBucketDeltaReason) {
-	m.eng.Events.Emit(Event{Type: EventLinesideBucketApplied, Payload: LinesideBucketAppliedEvent{
-		Station:     station,
-		NodeID:      nodeID,
-		PayloadCode: payloadCode,
-		NewQty:      newQty,
-		Delta:       delta,
-		Reason:      reason,
-	}})
-	m.evaluatePayload(payloadCode)
-}
-
-// handleBinUpdatedForThreshold is the EventBinUpdated subscriber that
-// re-evaluates the affected payload. Wired in wireEventHandlers.
-func (m *ThresholdMonitor) handleBinUpdated(ev BinUpdatedEvent) {
-	m.evaluatePayload(ev.PayloadCode)
+	if m.eng != nil && m.eng.db != nil {
+		for payload := range affectedPayloads {
+			entries, err := m.eng.db.LookupDemandThresholdsByPayload(payload)
+			if err != nil {
+				m.eng.logFn("threshold_monitor: OnRegistryChanges rebuild for %s: %v", payload, err)
+				continue
+			}
+			tes := make([]thresholdEntry, 0, len(entries))
+			for _, e := range entries {
+				tes = append(tes, thresholdEntry{
+					stationID:    e.StationID,
+					coreNodeName: e.CoreNodeName,
+					payloadCode:  e.PayloadCode,
+					threshold:    e.ReplenishUOPThreshold,
+				})
+			}
+			m.mu.Lock()
+			if len(tes) == 0 {
+				delete(m.thresholdsByPayload, payload)
+			} else {
+				m.thresholdsByPayload[payload] = tes
+			}
+			m.mu.Unlock()
+		}
+	}
 }

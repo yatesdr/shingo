@@ -7,18 +7,20 @@ import (
 	"shingocore/store/demands"
 )
 
-// TestThresholdMonitor_DebounceWindow verifies the in-memory debounce
-// suppresses repeat fires for the same (loader, payload) within 15s.
-// First call passes, second within window blocks, then after the
-// window the gate reopens.
+func newTestMonitor() *ThresholdMonitor {
+	return &ThresholdMonitor{
+		eng:                 nil,
+		debounce:            make(map[string]time.Time),
+		warmUp:              make(map[string]int),
+		sweepDone:           true,
+		thresholdsByPayload: make(map[string][]thresholdEntry),
+		uopCache:            make(map[string]int),
+	}
+}
+
 func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 	t.Parallel()
-	tm := &ThresholdMonitor{
-		eng:       nil, // not used in allow()
-		debounce:  make(map[string]time.Time),
-		warmUp:    make(map[string]int),
-		sweepDone: true,
-	}
+	tm := newTestMonitor()
 
 	key := bindingKey("station-1", "MS-LOADER", "WIDGET-A")
 	if !tm.allow(key) {
@@ -28,7 +30,6 @@ func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 		t.Error("second allow within debounce window should block")
 	}
 
-	// Simulate the debounce expiring by aging the recorded timestamp.
 	tm.mu.Lock()
 	tm.debounce[key] = time.Now().Add(-thresholdDebounceWindow - time.Second)
 	tm.mu.Unlock()
@@ -38,20 +39,12 @@ func TestThresholdMonitor_DebounceWindow(t *testing.T) {
 	}
 }
 
-// TestThresholdMonitor_OnRegistryChanges resets debounce + warm-up
-// state for changed bindings so a freshly-applied threshold engages
-// without waiting out the prior window.
 func TestThresholdMonitor_OnRegistryChanges(t *testing.T) {
 	t.Parallel()
-	tm := &ThresholdMonitor{
-		eng:       nil,
-		debounce:  make(map[string]time.Time),
-		warmUp:    make(map[string]int),
-		sweepDone: true,
-	}
+	tm := newTestMonitor()
 
 	key := bindingKey("station-1", "MS-LOADER", "WIDGET-A")
-	tm.allow(key) // records a firing time
+	tm.allow(key)
 
 	if tm.allow(key) {
 		t.Fatal("debounce should block before reset")
@@ -70,17 +63,9 @@ func TestThresholdMonitor_OnRegistryChanges(t *testing.T) {
 	}
 }
 
-// TestThresholdMonitor_WarmUpOverridesDebounce — warm-up counter > 0
-// bypasses the debounce window so the startup-sweep cap can fire
-// multiple back-to-back signals on a cold-start binding.
 func TestThresholdMonitor_WarmUpOverridesDebounce(t *testing.T) {
 	t.Parallel()
-	tm := &ThresholdMonitor{
-		eng:       nil,
-		debounce:  make(map[string]time.Time),
-		warmUp:    make(map[string]int),
-		sweepDone: true,
-	}
+	tm := newTestMonitor()
 	key := bindingKey("station-1", "MS-LOADER", "WIDGET-A")
 	tm.warmUp[key] = 2
 
@@ -88,10 +73,84 @@ func TestThresholdMonitor_WarmUpOverridesDebounce(t *testing.T) {
 		t.Fatal("first allow during warm-up should pass")
 	}
 	if !tm.allow(key) {
-		t.Error("second allow during warm-up should also pass (warm-up overrides debounce)")
+		t.Error("second allow during warm-up should also pass")
 	}
-	// Warm-up exhausted; debounce gates from here.
 	if tm.allow(key) {
-		t.Error("third allow after warm-up exhausted should block (debounce)")
+		t.Error("third allow after warm-up exhausted should block")
 	}
+}
+
+func TestThresholdMonitor_OnBinUOPDelta_AppliesIncrementally(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
+		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
+	}
+	tm.uopCache["WIDGET-A"] = 100
+
+	tm.OnBinUOPDelta("WIDGET-A", -5)
+	tm.mu.Lock()
+	if tm.uopCache["WIDGET-A"] != 95 {
+		t.Errorf("uopCache = %d, want 95", tm.uopCache["WIDGET-A"])
+	}
+	tm.mu.Unlock()
+
+	tm.OnBinUOPDelta("WIDGET-A", -10)
+	tm.mu.Lock()
+	if tm.uopCache["WIDGET-A"] != 85 {
+		t.Errorf("uopCache = %d, want 85", tm.uopCache["WIDGET-A"])
+	}
+	tm.mu.Unlock()
+}
+
+func TestThresholdMonitor_OnBinUOPDelta_SkipsEmptyPayload(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	tm.OnBinUOPDelta("", -5) // should not panic
+}
+
+func TestThresholdMonitor_OnBinUOPDelta_NoBindings(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	tm.OnBinUOPDelta("UNMONITORED", -10) // no bindings, should not panic
+}
+
+func TestThresholdMonitor_OnBucketApplied_AppliesDelta(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	tm.eng = &Engine{Events: NewEventBus()}
+	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
+		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
+	}
+	tm.uopCache["WIDGET-A"] = 100
+
+	tm.OnBucketApplied("s1", 1, "WIDGET-A", 90, -10, "capture")
+	tm.mu.Lock()
+	if tm.uopCache["WIDGET-A"] != 90 {
+		t.Errorf("uopCache = %d, want 90", tm.uopCache["WIDGET-A"])
+	}
+	tm.mu.Unlock()
+}
+
+func TestThresholdMonitor_OnBucketApplied_SkipsEmptyPayload(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	tm.eng = &Engine{Events: NewEventBus()}
+	tm.OnBucketApplied("s1", 1, "", 0, -5, "capture") // should not panic
+}
+
+func TestThresholdMonitor_CheckBindings_AboveThreshold_NoFire(t *testing.T) {
+	t.Parallel()
+	tm := newTestMonitor()
+	tm.thresholdsByPayload["WIDGET-A"] = []thresholdEntry{
+		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
+	}
+	tm.uopCache["WIDGET-A"] = 100
+
+	// Above threshold — checkBindings should not attempt to fire.
+	// With nil eng, a fire attempt would panic, so this passing proves
+	// the threshold check short-circuits correctly.
+	tm.checkBindings([]thresholdEntry{
+		{stationID: "s1", coreNodeName: "LOADER", payloadCode: "WIDGET-A", threshold: 50},
+	}, 100)
 }

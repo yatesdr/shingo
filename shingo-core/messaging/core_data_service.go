@@ -20,14 +20,12 @@ type coreDataResponder interface {
 }
 
 // ThresholdMonitor is the minimal surface CoreDataService needs from the
-// engine's threshold-monitor goroutine so claim-sync threshold changes
-// can reset per-binding debounce timers and bucket applies can trigger
-// re-evaluation. Wired by the engine on startup via
-// CoreDataService.SetThresholdMonitor; nil-safe at every call site so
-// unit tests that construct CoreDataService directly do not need a fake
-// monitor.
+// engine's threshold monitor. The monitor is notified directly by the
+// Kafka delta handlers (OnBinUOPDelta, OnBucketApplied) which carry the
+// payload code and delta — no DB queries on the hot path.
 type ThresholdMonitor interface {
 	OnRegistryChanges(changes []demands.RegistryChange)
+	OnBinUOPDelta(payloadCode string, delta int)
 	OnBucketApplied(station string, nodeID int64, payloadCode string, newQty, delta int, reason protocol.LinesideBucketDeltaReason)
 }
 
@@ -93,6 +91,14 @@ func (s *CoreDataService) HandleBinUOPDelta(env *protocol.Envelope, d *protocol.
 	}
 	s.resp.dbg("bin_uop_delta applied station=%s bin=%d seq=%d delta=%d reason=%s",
 		d.Station, d.BinID, d.SequenceID, d.Delta, d.Reason)
+
+	// Notify the UOP-threshold monitor so the delta is applied to the
+	// cached UOP total and thresholds are checked. The monitor does
+	// zero DB queries on this path — it applies the delta directly
+	// to its in-memory cache.
+	if s.thresholdMonitor != nil && d.PayloadCode != "" {
+		s.thresholdMonitor.OnBinUOPDelta(d.PayloadCode, d.Delta)
+	}
 }
 
 // HandleLinesideBucketDelta routes a Phase 1 inventory delta envelope
