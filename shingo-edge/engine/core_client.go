@@ -13,8 +13,15 @@ import (
 )
 
 // NodeBinInfo describes the bin state at a single core node.
+//
+// BinID carries Core's bins.id so callers can thread the authoritative
+// id into BinUOPDelta scopes — needed when the Edge order's BinID is
+// nil at release time (REP / complex orders whose OrderDelivered didn't
+// carry binID) and capture_reduction would otherwise be silently
+// dropped at the BinID==0 gate.
 type NodeBinInfo struct {
 	NodeName          string  `json:"node_name"`
+	BinID             int64   `json:"bin_id,omitempty"`
 	BinLabel          string  `json:"bin_label,omitempty"`
 	BinTypeCode       string  `json:"bin_type_code,omitempty"`
 	PayloadCode       string  `json:"payload_code,omitempty"`

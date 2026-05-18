@@ -28,6 +28,7 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 
 	type nodeBinInfo struct {
 		NodeName          string  `json:"node_name"`
+		BinID             int64   `json:"bin_id,omitempty"`
 		BinLabel          string  `json:"bin_label,omitempty"`
 		BinTypeCode       string  `json:"bin_type_code,omitempty"`
 		PayloadCode       string  `json:"payload_code,omitempty"`
@@ -57,6 +58,7 @@ func (h *Handlers) apiTelemetryNodeBins(w http.ResponseWriter, r *http.Request) 
 		}
 		bin := bins[0]
 		entry.Occupied = true
+		entry.BinID = bin.ID
 		entry.BinLabel = bin.Label
 		entry.BinTypeCode = bin.BinTypeCode
 		entry.PayloadCode = bin.PayloadCode

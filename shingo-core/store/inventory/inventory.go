@@ -148,6 +148,84 @@ func List(db *sql.DB) ([]Row, error) {
 	return result, rows.Err()
 }
 
+// BucketRow is the denormalized lineside_buckets listing row used by
+// the Core inventory page. Mirrors the field naming on Row so the JS
+// renderer can reuse the existing cell/lane/node columns alongside
+// the bucket-specific fields (Station, StyleID, PartNumber, Qty,
+// State).
+//
+// State is derived rather than stored: rows in lineside_buckets are
+// garbage-collected at qty=0, so any row that surfaces here is by
+// definition "active". The field is exposed for parity with Edge's
+// admin Lineside Buckets table and so a future "inactive" bucket
+// shape (if it ever lands on Core) has a place to plug in.
+type BucketRow struct {
+	GroupName string `json:"group_name"`
+	LaneName  string `json:"lane_name"`
+	NodeName  string `json:"node_name"`
+	Zone      string `json:"zone"`
+
+	Station     string `json:"station"`
+	StyleID     int64  `json:"style_id"`
+	PartNumber  string `json:"part_number"`
+	PayloadCode string `json:"payload_code"`
+	Qty         int    `json:"qty"`
+	State       string `json:"state"`
+}
+
+// linesideBucketsSQL mirrors the bin-side inventory join (cell → lane →
+// node) so the rendered listing groups consistently. Storage nodes
+// without a lane/group parent surface with empty group_name / lane_name
+// — same as the bin listing.
+const linesideBucketsSQL = `
+SELECT
+    COALESCE(grp.name, '') AS group_name,
+    CASE WHEN lane_type.code = 'LANE' THEN COALESCE(lane.name, '') ELSE '' END AS lane_name,
+    COALESCE(n.name, '') AS node_name,
+    COALESCE(n.zone, '') AS zone,
+    b.station, b.style_id, b.part_number,
+    COALESCE(b.payload_code, '') AS payload_code,
+    b.qty
+FROM lineside_buckets b
+LEFT JOIN nodes n ON n.id = b.node_id
+LEFT JOIN nodes lane ON lane.id = n.parent_id
+LEFT JOIN node_types lane_type ON lane_type.id = lane.node_type_id
+LEFT JOIN nodes grp ON grp.id = COALESCE(
+    CASE WHEN lane_type.code = 'LANE' THEN lane.parent_id ELSE lane.id END,
+    n.parent_id
+)
+LEFT JOIN node_types grp_type ON grp_type.id = grp.node_type_id AND grp_type.code = 'NGRP'
+ORDER BY group_name, b.station, COALESCE(n.depth, 0), node_name, b.part_number
+`
+
+// ListLinesideBuckets returns every lineside_buckets row joined to the
+// node hierarchy so the Core inventory page can render them alongside
+// the existing bins table. Rows are ordered by cell → station → node
+// → part for stable on-screen grouping. Empty table returns nil.
+func ListLinesideBuckets(db *sql.DB) ([]BucketRow, error) {
+	rows, err := db.Query(linesideBucketsSQL)
+	if err != nil {
+		return nil, fmt.Errorf("query lineside_buckets: %w", err)
+	}
+	defer rows.Close()
+
+	var out []BucketRow
+	for rows.Next() {
+		var r BucketRow
+		if err := rows.Scan(
+			&r.GroupName, &r.LaneName, &r.NodeName, &r.Zone,
+			&r.Station, &r.StyleID, &r.PartNumber, &r.PayloadCode, &r.Qty,
+		); err != nil {
+			return nil, fmt.Errorf("scan lineside_buckets row: %w", err)
+		}
+		// GC contract on lineside_buckets removes qty=0 rows; anything
+		// returned here is active by definition.
+		r.State = "active"
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // CreateCorrection inserts one corrections row and sets c.ID on success.
 func CreateCorrection(db *sql.DB, c *Correction) error {
 	id, err := helpers.InsertID(db, `INSERT INTO corrections (correction_type, node_id, bin_id, cat_id, description, quantity, reason, actor) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"log"
 	"sync"
 	"testing"
 
@@ -310,10 +311,19 @@ func (s *fakeDeltaSink) CaptureToLineside(ev uop.CaptureEvent) (int, error) {
 			return capturedTotal, err
 		}
 	}
-	if capturedTotal > 0 && !ev.SuppressBinDelta && ev.BinID > 0 {
-		s.mu.Lock()
-		s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction})
-		s.mu.Unlock()
+	if capturedTotal > 0 && !ev.SuppressBinDelta {
+		if ev.BinID > 0 {
+			s.mu.Lock()
+			s.binCalls = append(s.binCalls, fakeBinCall{ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction})
+			s.mu.Unlock()
+		} else {
+			// Mirror the real verb's loud diagnostic when the caller
+			// couldn't resolve a bin id. The release-path falls back
+			// to a legacy RemainingUOP=&0 wipe but the recurrence
+			// must remain visible in operator logs.
+			log.Printf("ERROR: uop capture: capture_reduction skipped (BinID=0) node=%d style=%d payload=%q captured_total=%d disposition=%q",
+				ev.NodeID, ev.StyleID, ev.PayloadCode, capturedTotal, ev.Disposition.Mode)
+		}
 	}
 	return capturedTotal, nil
 }

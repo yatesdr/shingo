@@ -19,6 +19,9 @@ type InventoryQueryStore interface {
 	// Typed wrapper for the aggregated inventory rollup.
 	ListInventory() ([]inventory.Row, error)
 
+	// Typed wrapper for the lineside_buckets read-side listing.
+	ListLinesideBuckets() ([]inventory.BucketRow, error)
+
 	// Raw SQL pass-through for the preflight / system-count / system-uop
 	// queries. Each one builds its own IN (...) placeholder list at
 	// runtime; abstracting that would just hide the actual query logic.

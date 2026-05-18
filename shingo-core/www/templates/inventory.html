@@ -58,6 +58,28 @@
       </table>
     </div>
   </div>
+
+  <div class="flex flex-between mb-1 mt-2">
+    <h2>Lineside Buckets</h2>
+    <span id="buckets-count" class="text-muted text-sm"></span>
+  </div>
+  <div id="buckets-table-wrap" style="overflow-x:auto;">
+    <table id="buckets-table">
+      <thead>
+        <tr>
+          <th>Cell</th>
+          <th>Process</th>
+          <th>Station</th>
+          <th>Node</th>
+          <th>Style</th>
+          <th>Part</th>
+          <th>State</th>
+          <th style="text-align:right">Qty</th>
+        </tr>
+      </thead>
+      <tbody id="buckets-body"></tbody>
+    </table>
+  </div>
 </div>
 
 <script src="/static/pages/inventory.js"></script>

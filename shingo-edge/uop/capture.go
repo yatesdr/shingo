@@ -18,6 +18,7 @@ package uop
 
 import (
 	"fmt"
+	"log"
 
 	"shingo/protocol"
 )
@@ -92,8 +93,20 @@ func (m *Mutator) CaptureToLineside(ev CaptureEvent) (capturedTotal int, err err
 		return capturedTotal, fmt.Errorf("deactivate other lineside styles on node %d: %w", ev.NodeID, err)
 	}
 
-	if capturedTotal > 0 && !ev.SuppressBinDelta && ev.BinID > 0 {
-		m.acc.recordBin(ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction)
+	if capturedTotal > 0 && !ev.SuppressBinDelta {
+		if ev.BinID > 0 {
+			m.acc.recordBin(ev.BinID, ev.PayloadCode, -capturedTotal, protocol.ReasonCaptureReduction)
+		} else {
+			// Loud diagnostic. The capture path used to silently drop
+			// the capture_reduction here when the caller couldn't
+			// resolve a bin id, and the bug shipped to a plant
+			// (lineside-buckets-investigation-2026-05-18.md). The
+			// release-path now falls back to a legacy RemainingUOP=&0
+			// wipe in this case, but a recurrence must remain
+			// visible in operator logs instead of vanishing.
+			log.Printf("ERROR: uop capture: capture_reduction skipped (BinID=0) node=%d style=%d payload=%q captured_total=%d disposition=%q",
+				ev.NodeID, ev.StyleID, ev.PayloadCode, capturedTotal, ev.Disposition.Mode)
+		}
 	}
 	return capturedTotal, nil
 }

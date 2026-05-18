@@ -175,7 +175,10 @@ func TestComputeReleaseRemainingUOP(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := &processes.RuntimeState{RemainingUOPCached: tc.runtimeUOP}
-			got := computeReleaseRemainingUOP(ReleaseDisposition{Mode: tc.mode}, rt)
+			// resolvedBinID irrelevant for these cases: captures map is
+			// empty so the PULL PARTS LINESIDE / unresolvable-bin
+			// branch is not exercised.
+			got := computeReleaseRemainingUOP(ReleaseDisposition{Mode: tc.mode}, rt, 0)
 			if tc.wantNil {
 				if got != nil {
 					t.Errorf("got %v, want nil", *got)

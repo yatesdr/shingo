@@ -57,6 +57,21 @@ func (h *Handlers) apiInventory(w http.ResponseWriter, r *http.Request) {
 	h.jsonOK(w, rows)
 }
 
+// apiBuckets returns every authoritative lineside_buckets row as JSON.
+// Powers the "Lineside Buckets" section on the operator-facing
+// inventory page. Read-only — no admin override or clear on Core yet
+// (Edge owns the engineer override path).
+//
+// See lineside-buckets-investigation-2026-05-18.md.
+func (h *Handlers) apiBuckets(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.engine.InventoryService().ListLinesideBuckets()
+	if err != nil {
+		h.jsonError(w, "Failed to load lineside buckets: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.jsonOK(w, rows)
+}
+
 func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.engine.InventoryService().List()
 	if err != nil {
@@ -113,6 +128,34 @@ func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {
 	}
 	for col, wd := range colWidths {
 		f.SetColWidth(sheet, col, col, wd)
+	}
+
+	// Second sheet: lineside buckets. Same workbook so operators can
+	// review both inventory views in one download. Read failures
+	// degrade gracefully — the bins sheet still ships.
+	if bucketRows, err := h.engine.InventoryService().ListLinesideBuckets(); err == nil {
+		bucketSheet := "Lineside Buckets"
+		if _, err := f.NewSheet(bucketSheet); err == nil {
+			bucketHeaders := []string{"Cell", "Process", "Station", "Node", "Zone", "Style ID", "Part", "Payload Code", "State", "Qty"}
+			for i, hdr := range bucketHeaders {
+				c, _ := excelize.CoordinatesToCellName(i+1, 1)
+				f.SetCellValue(bucketSheet, c, hdr)
+			}
+			f.SetRowStyle(bucketSheet, 1, 1, style)
+			for i, br := range bucketRows {
+				rn := i + 2
+				f.SetCellValue(bucketSheet, cell("A", rn), br.GroupName)
+				f.SetCellValue(bucketSheet, cell("B", rn), br.LaneName)
+				f.SetCellValue(bucketSheet, cell("C", rn), br.Station)
+				f.SetCellValue(bucketSheet, cell("D", rn), br.NodeName)
+				f.SetCellValue(bucketSheet, cell("E", rn), br.Zone)
+				f.SetCellValue(bucketSheet, cell("F", rn), br.StyleID)
+				f.SetCellValue(bucketSheet, cell("G", rn), br.PartNumber)
+				f.SetCellValue(bucketSheet, cell("H", rn), br.PayloadCode)
+				f.SetCellValue(bucketSheet, cell("I", rn), br.State)
+				f.SetCellValue(bucketSheet, cell("J", rn), br.Qty)
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

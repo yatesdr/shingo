@@ -211,7 +211,11 @@ func (e *Engine) ReleaseOrderWithLineside(orderID int64, disp ReleaseDisposition
 // and the disposition was discarded; root cause was runtime ambiguity
 // in the fallback rather than a clean drop path).
 func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, runtime *processes.RuntimeState, disp ReleaseDisposition) error {
-	manifestUOP := computeReleaseRemainingUOP(disp, runtime)
+	// Drop fast path doesn't run CaptureToLineside (no to-style claim
+	// to fill buckets against), so resolvedBinID=0 is correct: any
+	// PULL PARTS LINESIDE shape here falls through to the legacy &0
+	// wipe rather than a delta-driven write.
+	manifestUOP := computeReleaseRemainingUOP(disp, runtime, 0)
 	wireDisposition := buildProtocolDisposition(disp, runtime)
 	e.logRelease("order=%d node=%s disposition=%q — drop release: passing manifest sync through, skipping toClaim-dependent bookkeeping",
 		orderID, node.Name, string(disp.Mode))
@@ -227,11 +231,39 @@ func (e *Engine) releaseOrderDropFastPath(orderID int64, node *processes.Node, r
 func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *processes.Node, runtime *processes.RuntimeState, toClaim *processes.NodeClaim, nodeTask *processes.NodeTask, disp ReleaseDisposition, isSupply bool) error {
 	orderID := order.ID
 
+	// Resolve the bin id used by the capture_reduction emit and the
+	// manifest-sync fallback. order.BinID is typically populated by
+	// Core's OrderDelivered reply, but REP / complex orders whose
+	// reply didn't carry binID (and any path that lost the binding
+	// before release) land here with nil. For PULL PARTS LINESIDE we
+	// ask Core which bin is currently sitting at this slot so the
+	// capture_reduction delta lands on the right row; if Core can't
+	// resolve, resolvedBinID stays 0 and ComputeReleaseRemainingUOP's
+	// legacy-&0 fallback fires so the bin doesn't return to
+	// marshalling with its original UOP intact.
+	// See lineside-buckets-investigation-2026-05-18.md.
+	var resolvedBinID int64
+	if order.BinID != nil {
+		resolvedBinID = *order.BinID
+	} else if disp.Mode == uop.DispositionCaptureLineside && len(disp.LinesideCapture) > 0 && e.coreClient.Available() {
+		bin, _, err := e.coreClient.BinAtLineside(node.CoreNodeName)
+		switch {
+		case err != nil:
+			e.logRelease("order=%d node=%s — BinAtLineside resolve failed (%v); capture_reduction will skip and manifest-sync fallback will fire",
+				orderID, node.Name, err)
+		case bin != nil:
+			resolvedBinID = bin.BinID
+		}
+		// bin == nil with no error: Core confirmed the slot is empty;
+		// fall through with resolvedBinID=0 so the legacy &0 wipe
+		// fires.
+	}
+
 	// Compute the manifest-sync UOP from the disposition. Renamed from
 	// `remainingUOP` to disambiguate from Manager.ReleaseOrder's parameter of
 	// the same name; both flow to the same envelope field but live in
 	// different scopes.
-	manifestUOP := computeReleaseRemainingUOP(disp, runtime)
+	manifestUOP := computeReleaseRemainingUOP(disp, runtime, resolvedBinID)
 
 	// Phase 0b — protocol Disposition rides alongside the legacy
 	// RemainingUOP pointer. Core uses RemainingUOP for the manifest sync
@@ -290,16 +322,12 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 	// no bin" semantics make the resulting count consistent. The
 	// dual-write removal is a future cleanup item.
 	if e.inventoryDelta != nil {
-		var binID int64
-		if order.BinID != nil {
-			binID = *order.BinID
-		}
 		if _, err := e.inventoryDelta.CaptureToLineside(uop.CaptureEvent{
 			NodeID:           node.ID,
 			StyleID:          toClaim.StyleID,
 			PairKey:          toClaim.PairedCoreNode,
 			Disposition:      disp,
-			BinID:            binID,
+			BinID:            resolvedBinID,
 			PayloadCode:      order.PayloadCode,
 			SuppressBinDelta: isSupply,
 		}); err != nil {
@@ -388,8 +416,8 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 // shingoedge/uop in Phase 2. These thin shims preserve the existing
 // call sites in this file until Phase 3a inlines them at the
 // Capturer.CaptureToLineside verb boundary.
-func computeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState) *int {
-	return uop.ComputeReleaseRemainingUOP(disp, runtime)
+func computeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState, resolvedBinID int64) *int {
+	return uop.ComputeReleaseRemainingUOP(disp, runtime, resolvedBinID)
 }
 
 func buildProtocolDisposition(disp ReleaseDisposition, runtime *processes.RuntimeState) *protocol.UOPDisposition {

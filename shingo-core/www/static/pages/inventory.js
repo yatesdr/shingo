@@ -5,6 +5,7 @@ var sortAsc = true;
 
 (function() {
   loadInventory();
+  loadBuckets();
 })();
 
 async function loadInventory() {
@@ -162,4 +163,43 @@ function esc(s) {
 
 function exportInventory() {
   window.location.href = '/api/inventory/export';
+}
+
+async function loadBuckets() {
+  var tbody = document.getElementById('buckets-body');
+  var countEl = document.getElementById('buckets-count');
+  if (!tbody) return;
+  try {
+    var resp = await fetch('/api/buckets');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var rows = (await resp.json()) || [];
+    renderBuckets(rows);
+    countEl.textContent = rows.length + ' row' + (rows.length !== 1 ? 's' : '');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:1rem;">Failed to load lineside buckets: ' + esc(e.message) + '</td></tr>';
+    countEl.textContent = '';
+  }
+}
+
+function renderBuckets(rows) {
+  var tbody = document.getElementById('buckets-body');
+  if (!rows || rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:1rem;">No lineside buckets — no parts currently kitted at any node.</td></tr>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    html += '<tr>';
+    html += '<td>' + esc(r.group_name) + '</td>';
+    html += '<td>' + esc(r.lane_name) + '</td>';
+    html += '<td>' + esc(r.station) + '</td>';
+    html += '<td>' + esc(r.node_name) + '</td>';
+    html += '<td>' + (r.style_id || '') + '</td>';
+    html += '<td><code>' + esc(r.part_number) + '</code></td>';
+    html += '<td><span class="badge">' + esc(r.state || 'active') + '</span></td>';
+    html += '<td style="text-align:right">' + (r.qty || 0) + '</td>';
+    html += '</tr>';
+  }
+  tbody.innerHTML = html;
 }

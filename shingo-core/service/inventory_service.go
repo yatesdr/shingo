@@ -28,3 +28,12 @@ func NewInventoryService(db InventoryQueryStore) *InventoryService {
 func (s *InventoryService) List() ([]inventory.Row, error) {
 	return s.db.ListInventory()
 }
+
+// ListLinesideBuckets returns every lineside_buckets row joined to
+// node hierarchy so the operator-facing inventory page renders
+// bucket parts alongside the bins table. Phase: read-only view —
+// no admin override on Core yet (Edge owns the engineer override
+// for now).
+func (s *InventoryService) ListLinesideBuckets() ([]inventory.BucketRow, error) {
+	return s.db.ListLinesideBuckets()
+}

@@ -14,6 +14,13 @@ func (db *DB) ListInventory() ([]inventory.Row, error) {
 	return inventory.List(db.DB)
 }
 
+// ListLinesideBuckets returns every authoritative lineside_buckets row
+// joined to the node hierarchy. Surfaces the bucket data the
+// /api/buckets endpoint and Core inventory page render against.
+func (db *DB) ListLinesideBuckets() ([]inventory.BucketRow, error) {
+	return inventory.ListLinesideBuckets(db.DB)
+}
+
 // SumBinUOP returns the signed total of bins.uop_remaining across all
 // bin rows. Item 13 invariant probe; signed because the SME lock
 // allows bins to go negative (overpack). Empty table returns 0.

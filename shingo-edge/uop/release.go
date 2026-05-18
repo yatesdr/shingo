@@ -74,10 +74,18 @@ type ReleaseDisposition struct {
 // ComputeReleaseRemainingUOP returns the *int that should be threaded to
 // orderMgr.ReleaseOrder as the remaining_uop value, based on the disposition.
 //
+// resolvedBinID is the bin id the caller intends to attach to the
+// BinUOPDelta(capture_reduction) emission. 0 means the caller couldn't
+// resolve a bin (order.BinID was nil and BinAtLineside couldn't fill
+// in the gap), and triggers the legacy-&0 safety net for the
+// PULL PARTS LINESIDE branch so Core's SyncOrClearForReleased(0)
+// wipes the manifest the way the pre-Item-6 dual-write did.
+//
 // Returns:
 //   - &0 for DispositionCaptureLineside (operator-confirmed empty, manifest cleared)
-//     IF there are no captures; nil if captures are present (capture_reduction
-//     delta is the writer in that case).
+//     IF there are no captures; nil if captures are present AND a bin
+//     resolves (capture_reduction delta is the writer); &0 fallback when
+//     captures are present but resolvedBinID == 0.
 //   - The operator-entered or runtime-cache value for DispositionSendPartialBack.
 //   - &0 for DispositionReleaseUnderpack (bin physically empty before tracked
 //     count reached zero).
@@ -89,7 +97,7 @@ type ReleaseDisposition struct {
 //  2. runtime.RemainingUOPCached when >0. Fallback for legacy HTTP clients that
 //     don't ship the override-aware body shape.
 //  3. &0 otherwise — no positive baseline to preserve, declare empty.
-func ComputeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState) *int {
+func ComputeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.RuntimeState, resolvedBinID int64) *int {
 	switch disp.Mode {
 	case DispositionCaptureLineside:
 		// RELEASE EMPTY (no captures, just operator-confirmed empty)
@@ -102,7 +110,15 @@ func ComputeReleaseRemainingUOP(disp ReleaseDisposition, runtime *processes.Runt
 		// trigger handles the manifest clear and audits as
 		// released_capture_empty. Item 6 of the bin-as-truth refactor
 		// retires the dual-write at this site.
+		//
+		// TODO(bin-as-truth): remove the resolvedBinID==0 fallback when
+		// BinAtLineside resolution is provably exhaustive — see
+		// lineside-buckets-investigation-2026-05-18.md.
 		if len(disp.LinesideCapture) == 0 {
+			zero := 0
+			return &zero
+		}
+		if resolvedBinID == 0 {
 			zero := 0
 			return &zero
 		}
