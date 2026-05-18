@@ -8,16 +8,23 @@ import (
 func (h *Handlers) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	subsystem := r.URL.Query().Get("subsystem")
 	summary, _ := h.engine.Reconciliation().Summary()
-	anomalies, _ := h.engine.Reconciliation().ListAnomalies()
+	reconAnomalies, _ := h.engine.Reconciliation().ListAnomalies()
 	deadletters, _ := h.engine.Reconciliation().ListDeadLetterOutbox(50)
+	// Counter anomalies + ReportingPointMap feed the shared navbar bell
+	// (header.html). The diagnostics page also surfaces reconciliation
+	// anomalies in its body table — those live under a distinct key so
+	// they don't collide with the navbar's expected shape.
+	anomalies, rpMap := loadAnomalyData(h)
 	data := map[string]any{
-		"Page":        "logs",
-		"Entries":     h.debugLog.Entries(subsystem),
-		"Subsystems":  h.debugLog.Subsystems(),
-		"Subsystem":   subsystem,
-		"Recon":       summary,
-		"Anomalies":   anomalies,
-		"Deadletters": deadletters,
+		"Page":              "logs",
+		"Entries":           h.debugLog.Entries(subsystem),
+		"Subsystems":        h.debugLog.Subsystems(),
+		"Subsystem":         subsystem,
+		"Recon":             summary,
+		"Anomalies":         anomalies,
+		"ReportingPointMap": rpMap,
+		"ReconAnomalies":    reconAnomalies,
+		"Deadletters":       deadletters,
 	}
 	h.renderTemplate(w, r, "diagnostics.html", data)
 }

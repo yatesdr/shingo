@@ -65,8 +65,8 @@
         </tr>
       </thead>
       <tbody>
-        {{if .Anomalies}}
-          {{range .Anomalies}}
+        {{if .ReconAnomalies}}
+          {{range .ReconAnomalies}}
           <tr>
             <td>{{.Severity}}</td>
             <td>{{if .OrderID}}{{.OrderID}}{{else}}-{{end}}</td>
