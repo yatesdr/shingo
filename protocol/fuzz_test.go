@@ -60,7 +60,7 @@
  	f.Add([]byte(`{"v":1,"type":"unknown.type","id":"x","src":{"role":"edge"},"dst":{"role":"core"},"ts":"2026-01-01T00:00:00Z","exp":"2099-01-01T00:00:00Z","p":{}}`))
  
  	f.Fuzz(func(t *testing.T, data []byte) {
- 		ing := NewIngestor(NoOpHandler{}, nil)
+ 		ing := NewIngestor(nil)
  		ing.HandleRaw(data)
  	})
  }

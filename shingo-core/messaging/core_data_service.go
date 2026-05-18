@@ -1,13 +1,13 @@
 package messaging
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/router"
 	"shingocore/service"
 	"shingocore/store"
 	"shingocore/store/demands"
@@ -38,6 +38,7 @@ type CoreDataService struct {
 	inventoryDelta   *service.InventoryDeltaService
 	resp             coreDataResponder
 	thresholdMonitor ThresholdMonitor
+	subjectRouter    *router.SubjectRouter
 }
 
 // SetThresholdMonitor wires the engine's threshold-monitor for
@@ -54,94 +55,31 @@ func (s *CoreDataService) SetThresholdMonitor(tm ThresholdMonitor) {
 // Phase 6.4a routed the tag-verify path through the service so the
 // *store.DB.VerifyTag method could be retired.
 func newCoreDataService(db *store.DB, resp coreDataResponder) *CoreDataService {
-	return &CoreDataService{
+	s := &CoreDataService{
 		db:             db,
 		tagVerify:      service.NewTagVerifyService(db),
 		inventoryDelta: service.NewInventoryDeltaService(db, service.NewBinManifestService(db)),
 		resp:           resp,
 	}
+	s.subjectRouter = router.NewSubject()
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectEdgeRegister, s.handleEdgeRegister)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectEdgeHeartbeat, s.handleEdgeHeartbeat)
+	router.RegisterSubjectBare(s.subjectRouter, protocol.SubjectNodeListRequest, s.handleNodeListRequest)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectProductionReport, s.handleProductionReport)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectTagVerifyRequest, s.handleTagVerifyRequest)
+	router.RegisterSubjectBare(s.subjectRouter, protocol.SubjectCatalogPayloadsRequest, s.handleCatalogPayloadsRequest)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectNodeStateRequest, s.handleNodeStateRequest)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectOrderStatusRequest, s.handleOrderStatusRequest)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectClaimSync, s.handleClaimSync)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectCountGroupAck, s.handleCountGroupAck)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectBinUOPDelta, s.handleBinUOPDelta)
+	router.RegisterSubject(s.subjectRouter, protocol.SubjectLinesideBucketDelta, s.handleLinesideBucketDelta)
+	return s
 }
 
 func (s *CoreDataService) Handle(env *protocol.Envelope, p *protocol.Data) {
 	s.resp.dbg("data: subject=%s body_size=%d from=%s", p.Subject, len(p.Body), env.Src.Station)
-	switch p.Subject {
-	case protocol.SubjectEdgeRegister:
-		var reg protocol.EdgeRegister
-		if err := json.Unmarshal(p.Body, &reg); err != nil {
-			log.Printf("core_handler: decode edge register body: %v", err)
-			return
-		}
-		s.handleEdgeRegister(env, &reg)
-	case protocol.SubjectEdgeHeartbeat:
-		var hb protocol.EdgeHeartbeat
-		if err := json.Unmarshal(p.Body, &hb); err != nil {
-			log.Printf("core_handler: decode edge heartbeat body: %v", err)
-			return
-		}
-		s.handleEdgeHeartbeat(env, &hb)
-	case protocol.SubjectNodeListRequest:
-		s.handleNodeListRequest(env)
-	case protocol.SubjectProductionReport:
-		var rpt protocol.ProductionReport
-		if err := json.Unmarshal(p.Body, &rpt); err != nil {
-			log.Printf("core_handler: decode production report body: %v", err)
-			return
-		}
-		s.handleProductionReport(env, &rpt)
-	case protocol.SubjectTagVerifyRequest:
-		var req protocol.TagVerifyRequest
-		if err := json.Unmarshal(p.Body, &req); err != nil {
-			log.Printf("core_handler: decode tag verify request body: %v", err)
-			return
-		}
-		s.handleTagVerifyRequest(env, &req)
-	case protocol.SubjectCatalogPayloadsRequest:
-		s.handleCatalogPayloadsRequest(env)
-	case protocol.SubjectNodeStateRequest:
-		var req protocol.NodeStateRequest
-		if err := json.Unmarshal(p.Body, &req); err != nil {
-			log.Printf("core_handler: decode node state request body: %v", err)
-			return
-		}
-		s.handleNodeStateRequest(env, &req)
-	case protocol.SubjectOrderStatusRequest:
-		var req protocol.OrderStatusRequest
-		if err := json.Unmarshal(p.Body, &req); err != nil {
-			log.Printf("core_handler: decode order status request body: %v", err)
-			return
-		}
-		s.handleOrderStatusRequest(env, &req)
-	case protocol.SubjectClaimSync:
-		var sync protocol.ClaimSync
-		if err := json.Unmarshal(p.Body, &sync); err != nil {
-			log.Printf("core_handler: decode claim sync body: %v", err)
-			return
-		}
-		s.handleClaimSync(env, &sync)
-	case protocol.SubjectCountGroupAck:
-		var ack protocol.CountGroupAck
-		if err := json.Unmarshal(p.Body, &ack); err != nil {
-			log.Printf("core_handler: decode countgroup ack body: %v", err)
-			return
-		}
-		s.handleCountGroupAck(env, &ack)
-	case protocol.SubjectBinUOPDelta:
-		var d protocol.BinUOPDelta
-		if err := json.Unmarshal(p.Body, &d); err != nil {
-			log.Printf("core_handler: decode bin_uop_delta body: %v", err)
-			return
-		}
-		s.handleBinUOPDelta(env, &d)
-	case protocol.SubjectLinesideBucketDelta:
-		var d protocol.LinesideBucketDelta
-		if err := json.Unmarshal(p.Body, &d); err != nil {
-			log.Printf("core_handler: decode lineside_bucket_delta body: %v", err)
-			return
-		}
-		s.handleLinesideBucketDelta(env, &d)
-	default:
-		log.Printf("core_handler: unhandled data subject: %s", p.Subject)
-	}
+	s.subjectRouter.Dispatch(env, p)
 }
 
 // handleBinUOPDelta routes a Phase 1 inventory delta envelope to the

@@ -29,11 +29,13 @@ import (
 
 	"shingo/protocol"
 	"shingo/protocol/debuglog"
+	"shingo/protocol/router"
 	"shingocore/config"
 	"shingocore/countgroup"
 	"shingocore/engine"
 	"shingocore/fleet/seerrds"
 	"shingocore/messaging"
+	"shingocore/messaging/middleware"
 	"shingocore/rds"
 	"shingocore/store"
 	"shingocore/www"
@@ -261,13 +263,62 @@ func main() {
 	coreHandler.SetThresholdMonitor(eng.ThresholdMonitor())
 	coreHandler.Start()
 	defer coreHandler.Stop()
-	inboxDedup := messaging.NewInboxDedup(coreHandler, db)
-	inboxDedup.DebugLog = dbg.Func("core_handler")
-	ingestor := protocol.NewIngestor(inboxDedup, func(_ *protocol.RawHeader) bool { return true })
+	ingestor := protocol.NewIngestor(func(_ *protocol.RawHeader) bool { return true })
 	ingestor.DebugLog = dbg.Func("protocol")
 	if cfg.Messaging.SigningKey != "" {
 		ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
 		log.Printf("shingocore: envelope signing enabled")
+	}
+
+	// ── Protocol router (envelope Type dispatch) ───────────────────────
+	// Each envelope Type registers directly against coreHandler.HandleX.
+	// The 8 order-channel Types share the inbox-dedup middleware via
+	// UseFor; TypeData and the reply-channel Types pass through ungated
+	// (the order-channel scoping matches the legacy InboxDedup decorator
+	// contract this middleware replaced).
+	protoRouter := router.New[string]()
+	dedupMW := middleware.NewInboxDedup(db, dbg.Func("inbox_dedup"))
+	protoRouter.UseFor(dedupMW,
+		protocol.TypeOrderRequest,
+		protocol.TypeOrderCancel,
+		protocol.TypeOrderReceipt,
+		protocol.TypeOrderRedirect,
+		protocol.TypeOrderStorageWaybill,
+		protocol.TypeComplexOrderRequest,
+		protocol.TypeOrderRelease,
+		protocol.TypeOrderIngest,
+	)
+	router.Register(protoRouter, protocol.TypeData, coreHandler.HandleData)
+	router.Register(protoRouter, protocol.TypeOrderRequest, coreHandler.HandleOrderRequest)
+	router.Register(protoRouter, protocol.TypeOrderCancel, coreHandler.HandleOrderCancel)
+	router.Register(protoRouter, protocol.TypeOrderReceipt, coreHandler.HandleOrderReceipt)
+	router.Register(protoRouter, protocol.TypeOrderRedirect, coreHandler.HandleOrderRedirect)
+	router.Register(protoRouter, protocol.TypeOrderStorageWaybill, coreHandler.HandleOrderStorageWaybill)
+	router.Register(protoRouter, protocol.TypeComplexOrderRequest, coreHandler.HandleComplexOrderRequest)
+	router.Register(protoRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
+	router.Register(protoRouter, protocol.TypeOrderIngest, coreHandler.HandleOrderIngest)
+	// Core sends these reply-channel types to Edge but never receives
+	// them. Register as inline no-ops so the Phase 3.5 startup assertion
+	// (every type in protocol.AllTypes() has a handler) is satisfied
+	// without inventing a junk MessageHandler implementation. The
+	// "no handler registered" router log makes accidental inbound
+	// reply-channel traffic visible if it ever shows up.
+	router.Register(protoRouter, protocol.TypeOrderAck, func(*protocol.Envelope, *protocol.OrderAck) {})
+	router.Register(protoRouter, protocol.TypeOrderWaybill, func(*protocol.Envelope, *protocol.OrderWaybill) {})
+	router.Register(protoRouter, protocol.TypeOrderUpdate, func(*protocol.Envelope, *protocol.OrderUpdate) {})
+	router.Register(protoRouter, protocol.TypeOrderDelivered, func(*protocol.Envelope, *protocol.OrderDelivered) {})
+	router.Register(protoRouter, protocol.TypeOrderError, func(*protocol.Envelope, *protocol.OrderError) {})
+	router.Register(protoRouter, protocol.TypeOrderCancelled, func(*protocol.Envelope, *protocol.OrderCancelled) {})
+	router.Register(protoRouter, protocol.TypeOrderStaged, func(*protocol.Envelope, *protocol.OrderStaged) {})
+	router.Register(protoRouter, protocol.TypeOrderSkipped, func(*protocol.Envelope, *protocol.OrderSkipped) {})
+	for _, t := range protocol.AllTypes() {
+		if !protoRouter.Has(t) {
+			log.Fatalf("shingocore: protocol router missing handler for envelope type %s — composition root is incomplete", t)
+		}
+	}
+	protoRouter.LogRegistration(log.Printf)
+	ingestor.Dispatch = func(env *protocol.Envelope) {
+		protoRouter.Dispatch(env, env.Type)
 	}
 	if err := msgClient.Subscribe(cfg.Messaging.OrdersTopic, func(_ string, data []byte) {
 		ingestor.HandleRaw(data)

@@ -1,7 +1,6 @@
 package messaging
 
 import (
-	"encoding/json"
 	"log"
 	"time"
 
@@ -9,226 +8,29 @@ import (
 	"shingoedge/orders"
 )
 
-// EdgeHandler handles inbound protocol messages on the dispatch topic.
-// It delegates order reply messages to the orders.Manager.
+// EdgeHandler holds the order-channel reply handlers — the message
+// types whose handling is intrinsic to Edge's orders.Manager and not
+// composable from the composition root. Subject-channel (TypeData)
+// dispatch is owned by a router.SubjectRouter wired in the composition
+// root: cmd/shingoedge/main.go and shingoedge/testharness register the
+// per-subject closures that need to capture engine/heartbeater/etc.
+// state, rather than threading those references through this struct.
+//
+// Pre-router, this struct also held nine `onX func(...)` callback fields
+// populated by nine SetXHandler setters — a field-pattern workaround for
+// the init-ordering problem (handlers needed by Kafka subscription
+// before engine subsystems they call into existed). Phase 3.4g deletes
+// that pattern; SubjectRouter is now the registration surface.
 type EdgeHandler struct {
-	protocol.NoOpHandler
-
-	orderMgr               *orders.Manager
-	onCoreNodes            func([]protocol.NodeInfo)
-	onPayloadCatalog       func([]protocol.CatalogPayloadInfo)
-	onRegistered           func()
-	onRegisterReq          func()
-	onOrderStatuses        func([]protocol.OrderStatusSnapshot)
-	onNodeStructureChanged   func()
-	onDemandSignal           func(*protocol.DemandSignal)
-	onLoopBelowThreshold     func(*protocol.LoopBelowThresholdSignal)
-	onCountGroupCommand      func(protocol.CountGroupCommand)
-	onBinPickedUp            func(*protocol.BinPickedUp)
-
+	orderMgr *orders.Manager
 	DebugLog DebugLogFunc
 }
 
-// NewEdgeHandler creates a handler for inbound core messages.
-func NewEdgeHandler(orderMgr *orders.Manager, onCoreNodes func([]protocol.NodeInfo)) *EdgeHandler {
-	return &EdgeHandler{orderMgr: orderMgr, onCoreNodes: onCoreNodes}
-}
-
-// SetRegisterRequestHandler sets a callback for when core requests re-registration.
-func (h *EdgeHandler) SetRegisterRequestHandler(fn func()) {
-	h.onRegisterReq = fn
-}
-
-// SetPayloadCatalogHandler sets a callback for when the payload catalog is received from core.
-func (h *EdgeHandler) SetPayloadCatalogHandler(fn func([]protocol.CatalogPayloadInfo)) {
-	h.onPayloadCatalog = fn
-}
-
-func (h *EdgeHandler) SetOrderStatusHandler(fn func([]protocol.OrderStatusSnapshot)) {
-	h.onOrderStatuses = fn
-}
-
-func (h *EdgeHandler) SetRegisteredHandler(fn func()) {
-	h.onRegistered = fn
-}
-
-// SetNodeStructureChangedHandler sets a callback for when core notifies of
-// a node group structural change (reparent or deletion). Typically triggers
-// a node list refresh.
-func (h *EdgeHandler) SetNodeStructureChangedHandler(fn func()) {
-	h.onNodeStructureChanged = fn
-}
-
-// SetDemandSignalHandler sets a callback for when core sends a kanban demand signal.
-func (h *EdgeHandler) SetDemandSignalHandler(fn func(*protocol.DemandSignal)) {
-	h.onDemandSignal = fn
-}
-
-// SetLoopBelowThresholdHandler sets a callback for the UOP-threshold
-// replenishment signal — Core observed combined in-loop UOP for a
-// (loader, payload) drop below the configured threshold and is asking
-// Edge to fire L1.
-func (h *EdgeHandler) SetLoopBelowThresholdHandler(fn func(*protocol.LoopBelowThresholdSignal)) {
-	h.onLoopBelowThreshold = fn
-}
-
-// SetCountGroupCommandHandler sets a callback for when core sends a
-// count-group command (advanced-zone light state change request).
-func (h *EdgeHandler) SetCountGroupCommandHandler(fn func(protocol.CountGroupCommand)) {
-	h.onCountGroupCommand = fn
-}
-
-// SetBinPickedUpHandler sets the callback for the SubjectBinPickedUp
-// data subject — Item 11. Composition root wires it to
-// engine.HandleBinPickedUp so the released-bin's accumulator can flush
-// when the robot physically grabs the bin.
-func (h *EdgeHandler) SetBinPickedUpHandler(fn func(*protocol.BinPickedUp)) {
-	h.onBinPickedUp = fn
-}
-
-func (h *EdgeHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
-	h.DebugLog.Log("data subject=%s from=%s", p.Subject, env.Src.Station)
-	switch p.Subject {
-	case protocol.SubjectEdgeRegistered:
-		var reg protocol.EdgeRegistered
-		if err := json.Unmarshal(p.Body, &reg); err != nil {
-			log.Printf("edge_handler: decode edge registered body: %v", err)
-			return
-		}
-		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
-		if h.onRegistered != nil {
-			h.onRegistered()
-		}
-	case protocol.SubjectEdgeHeartbeatAck:
-		var ack protocol.EdgeHeartbeatAck
-		if err := json.Unmarshal(p.Body, &ack); err != nil {
-			log.Printf("edge_handler: decode heartbeat ack body: %v", err)
-			return
-		}
-		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
-	case protocol.SubjectNodeListResponse:
-		var resp protocol.NodeListResponse
-		if err := json.Unmarshal(p.Body, &resp); err != nil {
-			log.Printf("edge_handler: decode node list response: %v", err)
-			return
-		}
-		log.Printf("edge_handler: received node list (%d nodes)", len(resp.Nodes))
-		if h.onCoreNodes != nil {
-			h.onCoreNodes(resp.Nodes)
-		}
-	case protocol.SubjectProductionReportAck:
-		var ack protocol.ProductionReportAck
-		if err := json.Unmarshal(p.Body, &ack); err != nil {
-			log.Printf("edge_handler: decode production report ack: %v", err)
-			return
-		}
-		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
-	case protocol.SubjectCatalogPayloadsResponse:
-		var resp protocol.CatalogPayloadsResponse
-		if err := json.Unmarshal(p.Body, &resp); err != nil {
-			log.Printf("edge_handler: decode payload catalog response: %v", err)
-			return
-		}
-		log.Printf("edge_handler: received payload catalog (%d entries)", len(resp.Payloads))
-		if h.onPayloadCatalog != nil {
-			h.onPayloadCatalog(resp.Payloads)
-		}
-	case protocol.SubjectOrderStatusResponse:
-		var resp protocol.OrderStatusResponse
-		if err := json.Unmarshal(p.Body, &resp); err != nil {
-			log.Printf("edge_handler: decode order status response: %v", err)
-			return
-		}
-		if h.onOrderStatuses != nil {
-			h.onOrderStatuses(resp.Orders)
-		}
-	case protocol.SubjectTagVerifyResponse:
-		var resp protocol.TagVerifyResponse
-		if err := json.Unmarshal(p.Body, &resp); err != nil {
-			log.Printf("edge_handler: decode tag verify response: %v", err)
-			return
-		}
-		if resp.Match {
-			log.Printf("edge_handler: tag verify: uuid=%s match=true detail=%s", resp.OrderUUID, resp.Detail)
-		} else {
-			log.Printf("edge_handler: tag verify: uuid=%s match=false expected=%s detail=%s", resp.OrderUUID, resp.Expected, resp.Detail)
-		}
-	case protocol.SubjectEdgeRegisterRequest:
-		var req protocol.EdgeRegisterRequest
-		if err := json.Unmarshal(p.Body, &req); err != nil {
-			log.Printf("edge_handler: decode register request: %v", err)
-			return
-		}
-		log.Printf("edge_handler: core requested re-registration: %s", req.Reason)
-		if h.onRegisterReq != nil {
-			h.onRegisterReq()
-		}
-	case protocol.SubjectEdgeStale:
-		var stale protocol.EdgeStale
-		if err := json.Unmarshal(p.Body, &stale); err != nil {
-			log.Printf("edge_handler: decode stale notification: %v", err)
-			return
-		}
-		log.Printf("edge_handler: WARNING: core marked this edge as stale: %s — re-registering", stale.Message)
-		if h.onRegisterReq != nil {
-			h.onRegisterReq()
-		}
-	case protocol.SubjectNodeStructureChanged:
-		var changed protocol.NodeStructureChanged
-		if err := json.Unmarshal(p.Body, &changed); err != nil {
-			log.Printf("edge_handler: decode node structure changed: %v", err)
-			return
-		}
-		log.Printf("edge_handler: node structure changed: node=%s action=%s — refreshing node cache",
-			changed.NodeName, changed.Action)
-		if h.onNodeStructureChanged != nil {
-			h.onNodeStructureChanged()
-		}
-	case protocol.SubjectDemandSignal:
-		var signal protocol.DemandSignal
-		if err := json.Unmarshal(p.Body, &signal); err != nil {
-			log.Printf("edge_handler: decode demand signal: %v", err)
-			return
-		}
-		log.Printf("edge_handler: demand signal: node=%s payload=%s role=%s reason=%s",
-			signal.CoreNodeName, signal.PayloadCode, signal.Role, signal.Reason)
-		if h.onDemandSignal != nil {
-			h.onDemandSignal(&signal)
-		}
-	case protocol.SubjectLoopBelowThreshold:
-		var signal protocol.LoopBelowThresholdSignal
-		if err := json.Unmarshal(p.Body, &signal); err != nil {
-			log.Printf("edge_handler: decode loop below threshold signal: %v", err)
-			return
-		}
-		log.Printf("edge_handler: loop below threshold: core_node=%s payload=%s current=%d threshold=%d reason=%s",
-			signal.CoreNodeName, signal.PayloadCode, signal.CurrentUOP, signal.Threshold, signal.Reason)
-		if h.onLoopBelowThreshold != nil {
-			h.onLoopBelowThreshold(&signal)
-		}
-	case protocol.SubjectCountGroupCommand:
-		var cmd protocol.CountGroupCommand
-		if err := json.Unmarshal(p.Body, &cmd); err != nil {
-			log.Printf("edge_handler: decode countgroup command: %v", err)
-			return
-		}
-		if h.onCountGroupCommand != nil {
-			h.onCountGroupCommand(cmd)
-		}
-	case protocol.SubjectBinPickedUp:
-		var bp protocol.BinPickedUp
-		if err := json.Unmarshal(p.Body, &bp); err != nil {
-			log.Printf("edge_handler: decode bin_picked_up: %v", err)
-			return
-		}
-		log.Printf("edge_handler: bin_picked_up: order=%s bin=%d at=%s",
-			bp.OrderUUID, bp.BinID, bp.Location)
-		if h.onBinPickedUp != nil {
-			h.onBinPickedUp(&bp)
-		}
-	default:
-		log.Printf("edge_handler: unhandled data subject: %s", p.Subject)
-	}
+// NewEdgeHandler creates a handler for order-channel reply messages.
+// All subject-channel dispatch lives on the SubjectRouter wired
+// alongside this handler at the composition root.
+func NewEdgeHandler(orderMgr *orders.Manager) *EdgeHandler {
+	return &EdgeHandler{orderMgr: orderMgr}
 }
 
 func (h *EdgeHandler) HandleOrderAck(env *protocol.Envelope, p *protocol.OrderAck) {

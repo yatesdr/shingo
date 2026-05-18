@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"shingo/protocol"
+	"shingo/protocol/router"
 	"shingo/integration/harness"
 
 	coreharness "shingocore/testharness"
@@ -133,14 +134,22 @@ func TestScenario_PartialReleaseLandsBinWithCorrectManifest(t *testing.T) {
 	emitter := &noopEmitter{}
 	dispatcher := dispatch.NewDispatcher(coreDB, backend, emitter, "core", "shingo.dispatch", nil)
 	coreHandler := coremessaging.NewCoreHandler(coreDB, nil, "core", "shingo.dispatch", dispatcher)
-	coreIngestor := protocol.NewIngestor(coreHandler, nil)
+	coreIngestor := protocol.NewIngestor(nil)
+	coreRouter := router.New[string]()
+	router.Register(coreRouter, protocol.TypeOrderRelease, coreHandler.HandleOrderRelease)
+	coreIngestor.Dispatch = func(env *protocol.Envelope) {
+		coreRouter.Dispatch(env, env.Type)
+	}
 
 	// ── Edge setup ─────────────────────────────────────────────────
 	// Edge side is minimal: we just need an outbox to enqueue from
 	// and an ingestor that won't panic on inbound messages we don't
 	// care about for this scenario.
 	edgeDB := edgeharness.OpenDB(t)
-	edgeIngestor := protocol.NewIngestor(&protocol.NoOpHandler{}, nil)
+	// Edge side ignores all inbound — this scenario only enqueues from
+	// Edge and asserts Core's side. The bus needs *something* as an
+	// ingestor; an unrouted Ingestor decodes and drops, which is fine.
+	edgeIngestor := protocol.NewIngestor(nil)
 
 	// ── Wire the bus ───────────────────────────────────────────────
 	bus := harness.NewBus(t,

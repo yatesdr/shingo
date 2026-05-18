@@ -128,7 +128,12 @@ func TestDefaultTTLFor(t *testing.T) {
 func TestIngestorDispatch(t *testing.T) {
 	t.Parallel()
 	handler := &testHandler{}
-	ingestor := NewIngestor(handler, nil)
+	ingestor := NewIngestor(nil)
+	// TypeData migrated off the legacy switch; dispatch lives in the
+	// router now. Wire the Dispatch hook to mimic what the
+	// production composition root does (cmd/*/main.go). Direct decode
+	// + handler call rather than importing protocol/router (cycle).
+	dispatchTypeDataViaHook(ingestor, handler)
 
 	// Build a valid data envelope with edge.register subject
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
@@ -159,7 +164,8 @@ func TestIngestorFilter(t *testing.T) {
 	t.Parallel()
 	handler := &testHandler{}
 	// Filter that rejects everything
-	ingestor := NewIngestor(handler, func(_ *RawHeader) bool { return false })
+	ingestor := NewIngestor(func(_ *RawHeader) bool { return false })
+	dispatchTypeDataViaHook(ingestor, handler)
 
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Station: "test-node"},
@@ -178,7 +184,8 @@ func TestIngestorFilter(t *testing.T) {
 func TestIngestorDropsExpired(t *testing.T) {
 	t.Parallel()
 	handler := &testHandler{}
-	ingestor := NewIngestor(handler, nil)
+	ingestor := NewIngestor(nil)
+	dispatchTypeDataViaHook(ingestor, handler)
 
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
 		Address{Role: RoleEdge, Station: "test-node"},
@@ -474,8 +481,9 @@ func TestIngestorWithSigning(t *testing.T) {
 	t.Parallel()
 	key := []byte("ingestor-test-key")
 	handler := &testHandler{}
-	ingestor := NewIngestor(handler, nil)
+	ingestor := NewIngestor(nil)
 	ingestor.SigningKey = key
+	dispatchTypeDataViaHook(ingestor, handler)
 
 	// Create and sign a valid message
 	env, _ := NewDataEnvelope(SubjectEdgeRegister,
@@ -496,7 +504,7 @@ func TestIngestorRejectsUnsignedWhenKeySet(t *testing.T) {
 	t.Parallel()
 	key := []byte("ingestor-test-key")
 	handler := &testHandler{}
-	ingestor := NewIngestor(handler, nil)
+	ingestor := NewIngestor(nil)
 	ingestor.SigningKey = key
 
 	// Send unsigned message
@@ -513,11 +521,30 @@ func TestIngestorRejectsUnsignedWhenKeySet(t *testing.T) {
 	}
 }
 
-// testHandler tracks which methods were called.
+// testHandler tracks which methods were called. Pre-3.4h embedded
+// NoOpHandler; that scaffolding is gone now and the handler is
+// standalone — only HandleData is exercised here.
 type testHandler struct {
-	NoOpHandler
 	dataCalled  bool
 	dataPayload Data
+}
+
+// dispatchTypeDataViaHook wires the ingestor's Dispatch to invoke
+// handler.HandleData for TypeData envelopes. Reproduces the per-Type
+// unmarshal that the router does in production, without importing
+// protocol/router (which would create an import cycle from this internal
+// test package).
+func dispatchTypeDataViaHook(ing *Ingestor, h *testHandler) {
+	ing.Dispatch = func(env *Envelope) {
+		if env.Type != TypeData {
+			return
+		}
+		var d Data
+		if err := json.Unmarshal(env.Payload, &d); err != nil {
+			return
+		}
+		h.HandleData(env, &d)
+	}
 }
 
 func (h *testHandler) HandleData(env *Envelope, p *Data) {

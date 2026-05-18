@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/router"
 	"shingo/protocol/debuglog"
 	"shingoedge/backup"
 	"shingoedge/config"
@@ -130,16 +131,185 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 // enables the heartbeat writer (deadman). See countgroup/handler.go for the
 // `started` guard rationale.
 func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg *config.Config, dbg *debuglog.Logger, stationID string, db *store.DB, cgHandler *countgroup.Handler) {
-	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager(), func(nodes []protocol.NodeInfo) {
-		eng.SetCoreNodes(nodes)
-	})
+	edgeHandler := messaging.NewEdgeHandler(eng.OrderManager())
 	edgeHandler.DebugLog = messaging.DebugLogFunc(dbg.Func("edge_handler"))
-	ingestor := protocol.NewIngestor(edgeHandler, func(hdr *protocol.RawHeader) bool {
+	dataDbg := dbg.Func("edge_handler")
+	ingestor := protocol.NewIngestor(func(hdr *protocol.RawHeader) bool {
 		return hdr.Dst.Station == stationID || hdr.Dst.Station == protocol.StationBroadcast
 	})
 	ingestor.DebugLog = dbg.Func("protocol")
 	if cfg.Messaging.SigningKey != "" {
 		ingestor.SigningKey = []byte(cfg.Messaging.SigningKey)
+	}
+
+	// ── Heartbeater (built early so subject-router closures can capture it) ──
+	hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
+		return db.CountActiveOrders()
+	})
+	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
+
+	// ── Subject router (Data sub-dispatch) ─────────────────────────────
+	// Every protocol.SubjectX is registered against the closure that
+	// drives the corresponding Edge subsystem (engine method, heartbeater
+	// resync trigger, countgroup command, etc). Pre-router this was done
+	// via nine EdgeHandler.SetXHandler setters; the router is now the
+	// registration surface and EdgeHandler holds only order-channel
+	// state.
+	subjectRouter := router.NewSubject()
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegistered, func(_ *protocol.Envelope, reg *protocol.EdgeRegistered) {
+		log.Printf("edge_handler: registration acknowledged: station=%s msg=%s", reg.StationID, reg.Message)
+		if eng.Uptime() > 30 {
+			hb.RequestNodeSync()
+			hb.RequestCatalogSync()
+		}
+		// Sync manual_swap claims to Core's demand registry. Pre-side-cycle
+		// this also called StartupSweepManualSwap to seed empty-in orders
+		// at every loader — unnecessary now that empty-ins are driven by
+		// line REQUESTs through MaybeCreateLoaderEmptyIn.
+		go eng.SendClaimSync()
+		// Auto-push unloaders: catch any window that became free (or
+		// supply that arrived) while Edge was offline. No-op for kanban-
+		// driven consume manual_swap claims (AutoPush=false). Mirrors
+		// the loader-side reasoning that demand triggers fire while we
+		// were unreachable, so a startup pass keeps the queue current.
+		go eng.SweepPushUnloaders()
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
+		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectNodeListResponse, func(_ *protocol.Envelope, resp *protocol.NodeListResponse) {
+		log.Printf("edge_handler: received node list (%d nodes)", len(resp.Nodes))
+		eng.SetCoreNodes(resp.Nodes)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectProductionReportAck, func(_ *protocol.Envelope, ack *protocol.ProductionReportAck) {
+		log.Printf("edge_handler: production report ack: station=%s accepted=%d", ack.StationID, ack.Accepted)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectCatalogPayloadsResponse, func(_ *protocol.Envelope, resp *protocol.CatalogPayloadsResponse) {
+		log.Printf("edge_handler: received payload catalog (%d entries)", len(resp.Payloads))
+		eng.HandlePayloadCatalog(resp.Payloads)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectOrderStatusResponse, func(_ *protocol.Envelope, resp *protocol.OrderStatusResponse) {
+		eng.HandleOrderStatusSnapshots(resp.Orders)
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectTagVerifyResponse, func(_ *protocol.Envelope, resp *protocol.TagVerifyResponse) {
+		if resp.Match {
+			log.Printf("edge_handler: tag verify: uuid=%s match=true detail=%s", resp.OrderUUID, resp.Detail)
+		} else {
+			log.Printf("edge_handler: tag verify: uuid=%s match=false expected=%s detail=%s", resp.OrderUUID, resp.Expected, resp.Detail)
+		}
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeRegisterRequest, func(_ *protocol.Envelope, req *protocol.EdgeRegisterRequest) {
+		log.Printf("edge_handler: core requested re-registration: %s", req.Reason)
+		hb.SendRegister()
+		if err := eng.StartupReconcile(); err != nil {
+			log.Printf("startup reconcile after register request: %v", err)
+		}
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeStale, func(_ *protocol.Envelope, stale *protocol.EdgeStale) {
+		log.Printf("edge_handler: WARNING: core marked this edge as stale: %s — re-registering", stale.Message)
+		hb.SendRegister()
+		if err := eng.StartupReconcile(); err != nil {
+			log.Printf("startup reconcile after stale notification: %v", err)
+		}
+	})
+	router.RegisterSubject(subjectRouter, protocol.SubjectNodeStructureChanged, func(_ *protocol.Envelope, changed *protocol.NodeStructureChanged) {
+		log.Printf("edge_handler: node structure changed: node=%s action=%s — refreshing node cache",
+			changed.NodeName, changed.Action)
+		hb.RequestNodeSync()
+	})
+	// Kanban demand signals from Core's wiring_kanban driver. Produce-role
+	// signals translate to L1 retrieve_empty creation at the loader serving
+	// the signaled payload (MaybeCreateLoaderEmptyIn handles dedupe and the
+	// reorder-point gate). Consume-role signals are dropped here; the
+	// unloader-side U1 path is fired from operator releases on the line,
+	// not from Core demand, and adding a second entry point would
+	// double-fire.
+	//
+	// Long-term refactor target. This is the convergence point for the
+	// L1 trigger architecture. Today: event-driven via Core's
+	// wiring_kanban (Core observes bin movements at storage, emits
+	// DemandSignal). If the kanban model evolves — Edge-side periodic
+	// sweep over loader payloads, push the gate decision elsewhere,
+	// per-payload thresholds via the kanban calculator
+	// (shingo-kanban-calculator-design.md), or a Core-side sweep
+	// instead of event-driven — this handler is the single trigger
+	// surface to refactor from. Pre-this branch L1 also fired from
+	// operator_release.go and operator_stations.go release-time hooks;
+	// those were removed once DemandSignal became reliable, leaving
+	// this as the sole entry point.
+	router.RegisterSubject(subjectRouter, protocol.SubjectDemandSignal, func(_ *protocol.Envelope, s *protocol.DemandSignal) {
+		log.Printf("edge_handler: demand signal: node=%s payload=%s role=%s reason=%s",
+			s.CoreNodeName, s.PayloadCode, s.Role, s.Reason)
+		if s.Role != protocol.ClaimRoleProduce {
+			return
+		}
+		eng.MaybeCreateLoaderEmptyIn(s.PayloadCode)
+	})
+	// UOP-threshold replenishment: Core observes combined in-loop UOP
+	// (bins + buckets) per payload and signals here when a monitored
+	// (loader, payload) drops below threshold. Edge responds by firing
+	// L1 via refillLoaderForPayload (same path as DemandSignal, but
+	// scoped to the signaled payload). countLoaderInFlightEmptyIn is
+	// the dedup contract with the DemandSignal path.
+	router.RegisterSubject(subjectRouter, protocol.SubjectLoopBelowThreshold, func(_ *protocol.Envelope, s *protocol.LoopBelowThresholdSignal) {
+		log.Printf("edge_handler: loop below threshold: core_node=%s payload=%s current=%d threshold=%d reason=%s",
+			s.CoreNodeName, s.PayloadCode, s.CurrentUOP, s.Threshold, s.Reason)
+		eng.HandleLoopBelowThreshold(s)
+	})
+	if cgHandler != nil {
+		router.RegisterSubject(subjectRouter, protocol.SubjectCountGroupCommand, func(_ *protocol.Envelope, cmd *protocol.CountGroupCommand) {
+			cgHandler.OnCommand(*cmd)
+		})
+	}
+	// Item 11: SEND PARTIAL BACK pickup notification. Fires when Core's
+	// rds.Poller observes the robot finished the pickup block — Edge
+	// flushes the released bin's accumulator and clears the runtime's
+	// active order so subsequent ticks attribute cleanly.
+	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
+		log.Printf("edge_handler: bin_picked_up: order=%s bin=%d at=%s",
+			bp.OrderUUID, bp.BinID, bp.Location)
+		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID)
+	})
+
+	// ── Protocol router (envelope Type dispatch) ───────────────────────
+	// Every envelope Type is registered against either the EdgeHandler
+	// order-channel method or, for TypeData, a closure that delegates to
+	// the SubjectRouter built above.
+	protoRouter := router.New[string]()
+	router.Register(protoRouter, protocol.TypeData, func(env *protocol.Envelope, p *protocol.Data) {
+		dataDbg("data subject=%s from=%s", p.Subject, env.Src.Station)
+		subjectRouter.Dispatch(env, p)
+	})
+	// Edge sends these order-channel types to Core but never receives
+	// them. Register as inline no-ops so the Phase 3.5 startup assertion
+	// (every type in protocol.AllTypes() has a handler) is satisfied
+	// without a junk MessageHandler implementation. The "no handler
+	// registered" router log makes accidental inbound order-channel
+	// traffic visible if it ever shows up.
+	router.Register(protoRouter, protocol.TypeOrderRequest, func(*protocol.Envelope, *protocol.OrderRequest) {})
+	router.Register(protoRouter, protocol.TypeOrderCancel, func(*protocol.Envelope, *protocol.OrderCancel) {})
+	router.Register(protoRouter, protocol.TypeOrderReceipt, func(*protocol.Envelope, *protocol.OrderReceipt) {})
+	router.Register(protoRouter, protocol.TypeOrderRedirect, func(*protocol.Envelope, *protocol.OrderRedirect) {})
+	router.Register(protoRouter, protocol.TypeOrderStorageWaybill, func(*protocol.Envelope, *protocol.OrderStorageWaybill) {})
+	router.Register(protoRouter, protocol.TypeComplexOrderRequest, func(*protocol.Envelope, *protocol.ComplexOrderRequest) {})
+	router.Register(protoRouter, protocol.TypeOrderRelease, func(*protocol.Envelope, *protocol.OrderRelease) {})
+	router.Register(protoRouter, protocol.TypeOrderIngest, func(*protocol.Envelope, *protocol.OrderIngestRequest) {})
+	router.Register(protoRouter, protocol.TypeOrderAck, edgeHandler.HandleOrderAck)
+	router.Register(protoRouter, protocol.TypeOrderWaybill, edgeHandler.HandleOrderWaybill)
+	router.Register(protoRouter, protocol.TypeOrderUpdate, edgeHandler.HandleOrderUpdate)
+	router.Register(protoRouter, protocol.TypeOrderDelivered, edgeHandler.HandleOrderDelivered)
+	router.Register(protoRouter, protocol.TypeOrderError, edgeHandler.HandleOrderError)
+	router.Register(protoRouter, protocol.TypeOrderCancelled, edgeHandler.HandleOrderCancelled)
+	router.Register(protoRouter, protocol.TypeOrderStaged, edgeHandler.HandleOrderStaged)
+	router.Register(protoRouter, protocol.TypeOrderSkipped, edgeHandler.HandleOrderSkipped)
+	for _, t := range protocol.AllTypes() {
+		if !protoRouter.Has(t) {
+			log.Fatalf("shingoedge: protocol router missing handler for envelope type %s — composition root is incomplete", t)
+		}
+	}
+	protoRouter.LogRegistration(log.Printf)
+	ingestor.Dispatch = func(env *protocol.Envelope) {
+		protoRouter.Dispatch(env, env.Type)
 	}
 	if err := msgClient.Subscribe(cfg.Messaging.DispatchTopic, func(data []byte) {
 		ingestor.HandleRaw(data)
@@ -157,11 +327,6 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		}
 	}
 
-	// ── Heartbeater (registration + periodic heartbeat) ────────────────
-	hb := messaging.NewHeartbeater(msgClient, stationID, "dev", []string{cfg.LineID}, cfg.Messaging.OrdersTopic, func() int {
-		return db.CountActiveOrders()
-	})
-	hb.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
 	hb.Start()
 	// Note: hb.Stop() is not deferred here — it lives for the process lifetime
 	// and is cleaned up by the Kafka client close.
@@ -188,98 +353,9 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		log.Printf("auto-backfill: seeded %d bucket deltas to Core", emitted)
 	}()
 
-	// ── Handler callbacks (catalog, status, registration) ───────────────
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
-
-	edgeHandler.SetPayloadCatalogHandler(func(entries []protocol.CatalogPayloadInfo) {
-		eng.HandlePayloadCatalog(entries)
-	})
-	edgeHandler.SetOrderStatusHandler(func(items []protocol.OrderStatusSnapshot) {
-		eng.HandleOrderStatusSnapshots(items)
-	})
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
-
-	// Re-sync on registration ack only if we've been running for a while
-	// (startup already sends these; avoid triple-send at boot)
-	edgeHandler.SetRegisteredHandler(func() {
-		if eng.Uptime() > 30 {
-			hb.RequestNodeSync()
-			hb.RequestCatalogSync()
-		}
-		// Sync manual_swap claims to Core's demand registry. Pre-side-cycle
-		// this also called StartupSweepManualSwap to seed empty-in orders
-		// at every loader — unnecessary now that empty-ins are driven by
-		// line REQUESTs through MaybeCreateLoaderEmptyIn.
-		go eng.SendClaimSync()
-		// Auto-push unloaders: catch any window that became free (or
-		// supply that arrived) while Edge was offline. No-op for kanban-
-		// driven consume manual_swap claims (AutoPush=false). Mirrors
-		// the loader-side reasoning that demand triggers fire while we
-		// were unreachable, so a startup pass keeps the queue current.
-		go eng.SweepPushUnloaders()
-	})
-	edgeHandler.SetRegisterRequestHandler(func() {
-		hb.SendRegister()
-		if err := eng.StartupReconcile(); err != nil {
-			log.Printf("startup reconcile after register request: %v", err)
-		}
-	})
-	edgeHandler.SetNodeStructureChangedHandler(func() {
-		hb.RequestNodeSync()
-	})
-	if cgHandler != nil {
-		edgeHandler.SetCountGroupCommandHandler(func(cmd protocol.CountGroupCommand) {
-			cgHandler.OnCommand(cmd)
-		})
-	}
-
-	// Item 11: SEND PARTIAL BACK pickup notification. Fires when Core's
-	// rds.Poller observes the robot finished the pickup block — Edge
-	// flushes the released bin's accumulator and clears the runtime's
-	// active order so subsequent ticks attribute cleanly.
-	edgeHandler.SetBinPickedUpHandler(func(p *protocol.BinPickedUp) {
-		eng.HandleBinPickedUp(p.OrderUUID, p.BinID)
-	})
-
-	// Kanban demand signals from Core's wiring_kanban driver. EdgeHandler
-	// already decodes the protocol.SubjectDemandSignal payload; without
-	// this setter the decoder logs and drops it. Produce-role signals
-	// translate to L1 retrieve_empty creation at the loader serving the
-	// signaled payload (MaybeCreateLoaderEmptyIn handles dedupe and the
-	// reorder-point gate). Consume-role signals are dropped here; the
-	// unloader-side U1 path is fired from operator releases on the line,
-	// not from Core demand, and adding a second entry point would
-	// double-fire.
-	//
-	// Long-term refactor target. This is the convergence point for the
-	// L1 trigger architecture. Today: event-driven via Core's
-	// wiring_kanban (Core observes bin movements at storage, emits
-	// DemandSignal). If the kanban model evolves — Edge-side periodic
-	// sweep over loader payloads, push the gate decision elsewhere,
-	// per-payload thresholds via the kanban calculator
-	// (shingo-kanban-calculator-design.md), or a Core-side sweep
-	// instead of event-driven — this handler is the single trigger
-	// surface to refactor from. Pre-this branch L1 also fired from
-	// operator_release.go and operator_stations.go release-time hooks;
-	// those were removed once DemandSignal became reliable, leaving
-	// this as the sole entry point.
-	edgeHandler.SetDemandSignalHandler(func(s *protocol.DemandSignal) {
-		if s == nil || s.Role != protocol.ClaimRoleProduce {
-			return
-		}
-		eng.MaybeCreateLoaderEmptyIn(s.PayloadCode)
-	})
 	log.Printf("kanban: demand-signal handler wired — produce-role signals route to MaybeCreateLoaderEmptyIn")
-
-	// UOP-threshold replenishment: Core observes combined in-loop UOP
-	// (bins + buckets) per payload and signals here when a monitored
-	// (loader, payload) drops below threshold. Edge responds by firing
-	// L1 via refillLoaderForPayload (same path as DemandSignal, but
-	// scoped to the signaled payload). countLoaderInFlightEmptyIn is
-	// the dedup contract with the DemandSignal path.
-	edgeHandler.SetLoopBelowThresholdHandler(func(s *protocol.LoopBelowThresholdSignal) {
-		eng.HandleLoopBelowThreshold(s)
-	})
 	log.Printf("kanban: loop-below-threshold handler wired — C-push signals route to HandleLoopBelowThreshold")
 
 	if err := eng.StartupReconcile(); err != nil {

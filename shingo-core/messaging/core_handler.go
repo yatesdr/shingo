@@ -18,8 +18,6 @@ import (
 // structurally, so engine wiring is unchanged; the indirection is
 // what lets core_handler_test.go stub a fake.
 type CoreHandler struct {
-	protocol.NoOpHandler
-
 	db            *store.DB
 	client        *Client
 	stationID     string
@@ -136,9 +134,11 @@ func (h *CoreHandler) HandleData(env *protocol.Envelope, p *protocol.Data) {
 }
 
 // Order message handlers delegate to the dispatcher. Inbox
-// deduplication is performed by the InboxDedup decorator in the
-// composition root — these methods assume the envelope has already
-// cleared the dedup guard.
+// deduplication is performed by the inbox-dedup router middleware
+// (NewInboxDedup in messaging/middleware/dedup.go) scoped to the 8
+// order-channel envelope types via UseFor in the composition root —
+// these methods assume the envelope has already cleared the dedup
+// guard.
 
 func (h *CoreHandler) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
 	log.Printf("core_handler: order request from %s: uuid=%s type=%s", env.Src.Station, p.OrderUUID, p.OrderType)

@@ -81,10 +81,13 @@ const (
 
 	// Inventory delta envelopes. Edge → Core. Carry signed count
 	// changes against bins and lineside buckets. Routed on subject
-	// from CoreHandler.HandleData (the bin-as-truth refactor chose
-	// this over new MessageHandler methods, which would silently
-	// no-op via InboxDedup). Dedup is at the message level via the
-	// inventory_delta_dedup table keyed on
+	// via CoreDataService's SubjectRouter — chosen over new typed
+	// envelope types when the bin-as-truth refactor shipped (the
+	// pre-router rationale was that new MessageHandler methods would
+	// silently no-op through the InboxDedup decorator; the router
+	// removed that hazard but the subject-based shape stuck because
+	// it was already on the wire). Dedup is at the message level
+	// via the inventory_delta_dedup table keyed on
 	// (station, scope_kind, scope_key).
 	SubjectBinUOPDelta         = "inventory.bin_uop_delta"
 	SubjectLinesideBucketDelta = "inventory.lineside_bucket_delta"
@@ -98,6 +101,34 @@ const (
 	// and the active claim should advance.
 	SubjectBinPickedUp = "transit.bin_picked_up"
 )
+
+// AllTypes returns every envelope Type constant in this package. Used by
+// startup-coverage assertions (every Type must have a router handler
+// registered at boot) and by the agreement test that pins router-and-switch
+// dispatch parity during the cutover. Adding a new envelope type means
+// adding both the const above and an entry here — the agreement test fails
+// loudly if either side is missing.
+func AllTypes() []string {
+	return []string{
+		TypeData,
+		TypeOrderRequest,
+		TypeOrderCancel,
+		TypeOrderReceipt,
+		TypeOrderRedirect,
+		TypeOrderStorageWaybill,
+		TypeComplexOrderRequest,
+		TypeOrderRelease,
+		TypeOrderIngest,
+		TypeOrderAck,
+		TypeOrderWaybill,
+		TypeOrderUpdate,
+		TypeOrderDelivered,
+		TypeOrderError,
+		TypeOrderCancelled,
+		TypeOrderStaged,
+		TypeOrderSkipped,
+	}
+}
 
 // AckOutcome is the typed outcome of a CountGroupAck. Wraps string for
 // SQL/JSON-native serialization while gaining compile-time distinction

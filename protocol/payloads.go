@@ -552,10 +552,14 @@ type CountGroupAck struct {
 // ─── Phase 1 — inventory delta envelopes ─────────────────────────────────
 //
 // Two envelopes carry every count change in the bin-as-truth refactor.
-// Both ride the existing HandleData generic dispatch via subject
-// discriminator (Decision #1 / B1 fix in plan §2.6) — adding new typed
-// methods on MessageHandler would silently no-op through the InboxDedup
-// decorator, so we route on Subject from inside HandleData.
+// Both ride TypeData with a Subject discriminator (Decision #1 / B1 fix
+// in plan §2.6), dispatched through the SubjectRouter to the
+// CoreDataService methods rather than via standalone envelope types.
+// The original rationale (pre-router: a new MessageHandler method
+// would have silently no-opped through the InboxDedup decorator)
+// no longer applies — the router is explicit — but the subject-based
+// shape stayed because the wire format and consumer code already
+// committed to it.
 //
 // Dedup is at the message level via a (station, scope_kind, scope_key,
 // last_seq) table on Core — distinct from inbox dedup which gates

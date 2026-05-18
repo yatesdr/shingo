@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/router"
 
 	edgemessaging "shingoedge/store/messaging"
 
@@ -124,11 +125,9 @@ func (s *fakeCoreStore) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
 	return 0, nil
 }
 
-// recordingHandler is a protocol.MessageHandler that records every
-// invocation by type. Used to assert the Bus delivered to the right
-// receiver and that envelopes round-tripped through JSON correctly.
+// recordingHandler captures per-Type dispatch for the Bus tests. The
+// router registrations in newRecordingIngestor wire these methods.
 type recordingHandler struct {
-	protocol.NoOpHandler
 	releaseSeen []*protocol.OrderRelease
 	requestSeen []*protocol.OrderRequest
 }
@@ -139,6 +138,22 @@ func (h *recordingHandler) HandleOrderRelease(env *protocol.Envelope, p *protoco
 
 func (h *recordingHandler) HandleOrderRequest(env *protocol.Envelope, p *protocol.OrderRequest) {
 	h.requestSeen = append(h.requestSeen, p)
+}
+
+// newRecordingIngestor builds an Ingestor + Router pair that wires the
+// recordingHandler's two captured types and ignores the rest. Replaces
+// the pre-3.4h router.NewMessageHandlerIngestor helper — these tests
+// only need OrderRequest and OrderRelease, so registering 17 types via
+// a god-interface was always overkill.
+func newRecordingIngestor(h *recordingHandler) *protocol.Ingestor {
+	ing := protocol.NewIngestor(nil)
+	r := router.New[string]()
+	router.Register(r, protocol.TypeOrderRequest, h.HandleOrderRequest)
+	router.Register(r, protocol.TypeOrderRelease, h.HandleOrderRelease)
+	ing.Dispatch = func(env *protocol.Envelope) {
+		r.Dispatch(env, env.Type)
+	}
+	return ing
 }
 
 func enqueueOrderRelease(t *testing.T, store *fakeEdgeStore, uuid string, uop *int) {
@@ -175,11 +190,11 @@ func TestBus_PumpEdgeOutbox_DeliversEnvelopeToCoreIngestor(t *testing.T) {
 	bus := NewBus(t,
 		EdgeSide{
 			EdgeStore:    edgeStore,
-			EdgeIngestor: protocol.NewIngestor(edgeHandler, nil),
+			EdgeIngestor: newRecordingIngestor(edgeHandler),
 		},
 		CoreSide{
 			CoreStore:    coreStore,
-			CoreIngestor: protocol.NewIngestor(coreHandler, nil),
+			CoreIngestor: newRecordingIngestor(coreHandler),
 		},
 	)
 
@@ -222,8 +237,8 @@ func TestBus_PumpAll_Settles(t *testing.T) {
 	edgeStore := newFakeEdgeStore()
 	coreStore := newFakeCoreStore()
 	bus := NewBus(t,
-		EdgeSide{EdgeStore: edgeStore, EdgeIngestor: protocol.NewIngestor(&recordingHandler{}, nil)},
-		CoreSide{CoreStore: coreStore, CoreIngestor: protocol.NewIngestor(&recordingHandler{}, nil)},
+		EdgeSide{EdgeStore: edgeStore, EdgeIngestor: newRecordingIngestor(&recordingHandler{})},
+		CoreSide{CoreStore: coreStore, CoreIngestor: newRecordingIngestor(&recordingHandler{})},
 	)
 
 	uop := 0
@@ -245,8 +260,8 @@ func TestBus_FailNext_IncrementsRetries(t *testing.T) {
 	coreStore := newFakeCoreStore()
 	coreHandler := &recordingHandler{}
 	bus := NewBus(t,
-		EdgeSide{EdgeStore: edgeStore, EdgeIngestor: protocol.NewIngestor(&recordingHandler{}, nil)},
-		CoreSide{CoreStore: coreStore, CoreIngestor: protocol.NewIngestor(coreHandler, nil)},
+		EdgeSide{EdgeStore: edgeStore, EdgeIngestor: newRecordingIngestor(&recordingHandler{})},
+		CoreSide{CoreStore: coreStore, CoreIngestor: newRecordingIngestor(coreHandler)},
 	)
 
 	uop := 0
