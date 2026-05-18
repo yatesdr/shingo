@@ -117,7 +117,12 @@ let calcContext = null;
 
 function replenishmentOpenCalculate(btn) {
   const row = btn.closest('tr');
+  // Clear any prior highlight before marking the new row so only one row
+  // is ever marked at a time.
+  document.querySelectorAll('tr.calc-row-selected').forEach(r => r.classList.remove('calc-row-selected'));
+  row.classList.add('calc-row-selected');
   calcContext = {
+    row: row,
     coreNodeName: row.dataset.coreNodeName,
     payload: row.dataset.payload,
     currentThreshold: parseInt(row.dataset.currentThreshold, 10) || 0,
@@ -138,11 +143,14 @@ function replenishmentOpenCalculate(btn) {
   for (const f of CALC_FIELDS) {
     if (f.result) document.getElementById('calc-input-' + f.key).value = '';
   }
-  document.getElementById('calculate-modal').style.display = 'block';
+  document.getElementById('calculate-modal').style.display = 'flex';
 }
 
 function replenishmentCloseCalculate() {
   document.getElementById('calculate-modal').style.display = 'none';
+  if (calcContext && calcContext.row) {
+    calcContext.row.classList.remove('calc-row-selected');
+  }
   calcContext = null;
 }
 
@@ -335,7 +343,7 @@ async function replenishmentOverrideFromModal() {
 
 function replenishmentRecalculateAll() {
   document.getElementById('recalc-results').innerHTML = '';
-  document.getElementById('recalc-all-modal').style.display = 'block';
+  document.getElementById('recalc-all-modal').style.display = 'flex';
 }
 
 function replenishmentCloseRecalcAll() {

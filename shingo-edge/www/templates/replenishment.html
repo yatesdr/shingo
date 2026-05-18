@@ -48,8 +48,8 @@
         </td>
         <td style="text-align:right;" class="mono">{{printf "%.2f" .SafetyFactor}}</td>
         <td>
-          <button class="btn btn-sm" onclick="replenishmentOpenCalculate(this)">Calculate…</button>
-          <button class="btn btn-sm btn-primary" onclick="replenishmentApplyLoader(this)">Apply</button>
+          <button class="btn btn-sm btn-primary" onclick="replenishmentOpenCalculate(this)" title="Open calculator for this (loader, payload)">📊 Calculate…</button>
+          <button class="btn btn-sm" onclick="replenishmentApplyLoader(this)">Apply</button>
           <button class="btn btn-sm" onclick="replenishmentDeleteLoader(this)">Remove</button>
         </td>
       </tr>
@@ -85,9 +85,12 @@
     </thead>
     <tbody id="cell-reorder-rows">
       {{range .ClaimRows}}
-      <tr data-claim-id="{{.ClaimID}}">
+      <tr data-claim-id="{{.ClaimID}}"{{if .StyleActive}} class="row-style-active"{{end}}>
         <td>{{.ProcessName}}</td>
-        <td>{{.StyleName}}</td>
+        <td>
+          {{.StyleName}}
+          {{if .StyleActive}}<span class="badge badge-info" style="margin-left:0.25rem;">active</span>{{end}}
+        </td>
         <td>{{.NodeName}}</td>
         <td class="mono">{{.PayloadCode}}</td>
         <td style="text-align:right;" class="mono">{{.UOPCapacity}}</td>

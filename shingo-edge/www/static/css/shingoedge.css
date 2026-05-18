@@ -577,6 +577,13 @@ textarea.form-input {
     border-top: 1px solid var(--border);
 }
 
+/* Row currently being edited via a modal (e.g. Calculate threshold).
+   Replenishment page uses this; safe for any table row + modal pair. */
+.calc-row-selected td {
+    background: var(--primary-dark);
+    box-shadow: inset 4px 0 0 var(--primary);
+}
+
 /* Confirm overlay */
 .confirm-overlay {
     position: fixed;

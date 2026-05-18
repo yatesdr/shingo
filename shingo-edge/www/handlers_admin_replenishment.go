@@ -16,14 +16,13 @@ package www
 
 import (
 	"net/http"
-
-	"shingoedge/domain"
 )
 
 type replenishmentClaimRow struct {
 	ClaimID      int64
 	ProcessName  string
 	StyleName    string
+	StyleActive  bool
 	NodeName     string
 	PayloadCode  string
 	ReorderPoint int
@@ -39,42 +38,39 @@ func (h *Handlers) handleReplenishment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cell autoreorder rows — every claim across active processes.
-	// Read-through so the same page reflects changes made in /processes
-	// without a separate sync step.
+	// Cell autoreorder rows — every claim across every style on every
+	// process, not just the active style. Engineers configure reorder
+	// points proactively (pre-changeover), so showing only the active
+	// style hides 80% of the configurable surface. Active style is
+	// flagged per row so the operator can tell what's running now.
 	var claimRows []replenishmentClaimRow
 	processList, _ := h.engine.ProcessService().List()
-	styleByID := map[int64]domain.Style{}
-	if styles, err := h.engine.StyleService().List(); err == nil {
-		for _, s := range styles {
-			styleByID[s.ID] = s
-		}
-	}
 	for _, p := range processList {
-		if p.ActiveStyleID == nil {
-			continue
+		activeStyleID := int64(0)
+		if p.ActiveStyleID != nil {
+			activeStyleID = *p.ActiveStyleID
 		}
-		styleName := ""
-		if s, ok := styleByID[*p.ActiveStyleID]; ok {
-			styleName = s.Name
-		}
-		claims, _ := h.engine.StyleService().ListClaims(*p.ActiveStyleID)
-		for _, c := range claims {
-			source := c.ReorderPointSource
-			if source == "" {
-				source = "legacy"
+		styles, _ := h.engine.StyleService().ListByProcess(p.ID)
+		for _, s := range styles {
+			claims, _ := h.engine.StyleService().ListClaims(s.ID)
+			for _, c := range claims {
+				source := c.ReorderPointSource
+				if source == "" {
+					source = "legacy"
+				}
+				claimRows = append(claimRows, replenishmentClaimRow{
+					ClaimID:      c.ID,
+					ProcessName:  p.Name,
+					StyleName:    s.Name,
+					StyleActive:  s.ID == activeStyleID,
+					NodeName:     c.CoreNodeName,
+					PayloadCode:  c.PayloadCode,
+					ReorderPoint: c.ReorderPoint,
+					Source:       source,
+					AutoReorder:  c.AutoReorder,
+					UOPCapacity:  c.UOPCapacity,
+				})
 			}
-			claimRows = append(claimRows, replenishmentClaimRow{
-				ClaimID:      c.ID,
-				ProcessName:  p.Name,
-				StyleName:    styleName,
-				NodeName:     c.CoreNodeName,
-				PayloadCode:  c.PayloadCode,
-				ReorderPoint: c.ReorderPoint,
-				Source:       source,
-				AutoReorder:  c.AutoReorder,
-				UOPCapacity:  c.UOPCapacity,
-			})
 		}
 	}
 
