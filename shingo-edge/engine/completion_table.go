@@ -1,5 +1,7 @@
 package engine
 
+import "shingo/protocol"
+
 // completion_table.go — Order-completion dispatch table.
 //
 // The cascade replaces what was once eight hand-written
@@ -74,7 +76,7 @@ var completionChain = []completionCase{
 	{Name: "changeover_release", Match: matchChangeoverRelease, Apply: applyChangeoverRelease},
 	{Name: "loader_empty_in", Match: matchLoaderEmptyIn, Apply: applyLoaderEmptyIn},
 	{Name: "unloader_full_in", Match: matchUnloaderFullIn, Apply: applyUnloaderFullIn},
-	{Name: "manual_swap", Match: matchManualSwap, Apply: applyManualSwap},
+	{Name: string(protocol.SwapModeManualSwap), Match: matchManualSwap, Apply: applyManualSwap},
 	{Name: "produce_ingest", Match: matchProduceIngest, Apply: applyProduceIngest},
 	{Name: "normal_replenishment", Match: matchAlways, Apply: applyNormalReplenishmentTerminal},
 }
