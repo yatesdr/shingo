@@ -49,8 +49,15 @@ const (
 // Event is the envelope emitted by the Engine's EventBus.
 type Event = eventbus.Event[EventType]
 
+// --- Event payloads ---
+//
+// Each payload struct embeds eventbus.PayloadBase (zero-size marker) so
+// it satisfies the sealed eventbus.Payload interface and can flow through
+// SubscribeTyped / EmitTyped. Field layout is unchanged.
+
 // CounterReadEvent is emitted on every PLC poll.
 type CounterReadEvent struct {
+	eventbus.PayloadBase
 	ReportingPointID int64  `json:"reporting_point_id"`
 	PLCName          string `json:"plc_name"`
 	TagName          string `json:"tag_name"`
@@ -59,6 +66,7 @@ type CounterReadEvent struct {
 
 // CounterDeltaEvent is emitted when production count increases.
 type CounterDeltaEvent struct {
+	eventbus.PayloadBase
 	ReportingPointID int64  `json:"reporting_point_id"`
 	ProcessID        int64  `json:"process_id"`
 	StyleID          int64  `json:"style_id"`
@@ -69,6 +77,7 @@ type CounterDeltaEvent struct {
 
 // CounterAnomalyEvent is emitted for counter resets or jumps.
 type CounterAnomalyEvent struct {
+	eventbus.PayloadBase
 	ReportingPointID int64  `json:"reporting_point_id"`
 	SnapshotID       int64  `json:"snapshot_id"`
 	PLCName          string `json:"plc_name"`
@@ -80,6 +89,7 @@ type CounterAnomalyEvent struct {
 
 // OrderCreatedEvent is emitted when a new order is placed.
 type OrderCreatedEvent struct {
+	eventbus.PayloadBase
 	OrderID       int64  `json:"order_id"`
 	OrderUUID     string `json:"order_uuid"`
 	OrderType     protocol.OrderType `json:"order_type"`
@@ -88,6 +98,7 @@ type OrderCreatedEvent struct {
 
 // OrderStatusChangedEvent is emitted on order state transitions.
 type OrderStatusChangedEvent struct {
+	eventbus.PayloadBase
 	OrderID       int64  `json:"order_id"`
 	OrderUUID     string `json:"order_uuid"`
 	OrderType     protocol.OrderType `json:"order_type"`
@@ -99,6 +110,7 @@ type OrderStatusChangedEvent struct {
 
 // OrderCompletedEvent is emitted when an order reaches terminal state.
 type OrderCompletedEvent struct {
+	eventbus.PayloadBase
 	OrderID       int64  `json:"order_id"`
 	OrderUUID     string `json:"order_uuid"`
 	OrderType     protocol.OrderType `json:"order_type"`
@@ -107,34 +119,40 @@ type OrderCompletedEvent struct {
 
 // PLCEvent is emitted for PLC connection state changes.
 type PLCEvent struct {
+	eventbus.PayloadBase
 	PLCName string `json:"plc_name"`
 	Error   string `json:"error,omitempty"`
 }
 
 // PLCHealthAlertEvent is emitted when a PLC goes offline.
 type PLCHealthAlertEvent struct {
+	eventbus.PayloadBase
 	PLCName string `json:"plc_name"`
 	Error   string `json:"error,omitempty"`
 }
 
 // PLCHealthRecoverEvent is emitted when a PLC comes back online.
 type PLCHealthRecoverEvent struct {
+	eventbus.PayloadBase
 	PLCName string `json:"plc_name"`
 }
 
 // WarLinkEvent is emitted when the WarLink connection state changes.
 type WarLinkEvent struct {
+	eventbus.PayloadBase
 	Connected bool   `json:"connected"`
 	Error     string `json:"error,omitempty"`
 }
 
 // CoreNodesUpdatedEvent is emitted when the core node list is received.
 type CoreNodesUpdatedEvent struct {
+	eventbus.PayloadBase
 	Nodes []protocol.NodeInfo `json:"nodes"`
 }
 
 // CounterReadErrorEvent is emitted when a tag read fails.
 type CounterReadErrorEvent struct {
+	eventbus.PayloadBase
 	ReportingPointID int64  `json:"reporting_point_id"`
 	PLCName          string `json:"plc_name"`
 	TagName          string `json:"tag_name"`
@@ -143,6 +161,7 @@ type CounterReadErrorEvent struct {
 
 // OrderFailedEvent is emitted when an order transitions to failed state.
 type OrderFailedEvent struct {
+	eventbus.PayloadBase
 	OrderID   int64  `json:"order_id"`
 	OrderUUID string `json:"order_uuid"`
 	OrderType protocol.OrderType `json:"order_type"`
@@ -153,6 +172,7 @@ type OrderFailedEvent struct {
 // The HMI shows an amber indicator with elapsed-time-in-state so operators
 // can distinguish a brief blip from an about-to-escalate fault.
 type OrderFaultedEvent struct {
+	eventbus.PayloadBase
 	OrderID   int64  `json:"order_id"`
 	OrderUUID string `json:"order_uuid"`
 	Reason    string `json:"reason"`
@@ -167,6 +187,7 @@ type OrderFaultedEvent struct {
 // removal-shaped orders (e.g., Order B in two-robot consume) attach to
 // the process node for tracking but deliver to the supermarket.
 type OrderDeliveredEvent struct {
+	eventbus.PayloadBase
 	OrderID       int64              `json:"order_id"`
 	OrderUUID     string             `json:"order_uuid"`
 	OrderType     protocol.OrderType `json:"order_type"`

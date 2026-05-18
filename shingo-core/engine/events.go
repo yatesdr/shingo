@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"shingo/protocol"
+	"shingo/protocol/eventbus"
 	"shingocore/fleet"
 	"shingocore/store/cms"
 )
@@ -44,8 +45,14 @@ const (
 )
 
 // --- Event payloads ---
+//
+// Each payload struct embeds eventbus.PayloadBase (zero-size marker) so
+// it satisfies the sealed eventbus.Payload interface and can flow through
+// SubscribeTyped / EmitTyped. Field layout is unchanged — PayloadBase is
+// a struct{} embed.
 
 type OrderReceivedEvent struct {
+	eventbus.PayloadBase
 	OrderID      int64
 	EdgeUUID     string
 	StationID    string
@@ -55,6 +62,7 @@ type OrderReceivedEvent struct {
 }
 
 type OrderDispatchedEvent struct {
+	eventbus.PayloadBase
 	OrderID       int64
 	VendorOrderID string
 	SourceNode    string
@@ -62,6 +70,7 @@ type OrderDispatchedEvent struct {
 }
 
 type OrderStatusChangedEvent struct {
+	eventbus.PayloadBase
 	OrderID       int64
 	VendorOrderID string
 	OldStatus     string
@@ -72,12 +81,14 @@ type OrderStatusChangedEvent struct {
 }
 
 type OrderCompletedEvent struct {
+	eventbus.PayloadBase
 	OrderID  int64
 	EdgeUUID string
 	StationID string
 }
 
 type OrderFailedEvent struct {
+	eventbus.PayloadBase
 	OrderID  int64
 	EdgeUUID string
 	StationID string
@@ -91,6 +102,7 @@ type OrderFailedEvent struct {
 // to the protocol.OrderSkipped envelope so Edge can advance the linked
 // changeover node task without surfacing a failure to the operator.
 type OrderSkippedEvent struct {
+	eventbus.PayloadBase
 	OrderID   int64
 	EdgeUUID  string
 	StationID string
@@ -99,6 +111,7 @@ type OrderSkippedEvent struct {
 }
 
 type OrderCancelledEvent struct {
+	eventbus.PayloadBase
 	OrderID        int64
 	EdgeUUID       string
 	StationID      string
@@ -107,6 +120,7 @@ type OrderCancelledEvent struct {
 }
 
 type OrderQueuedEvent struct {
+	eventbus.PayloadBase
 	OrderID     int64
 	EdgeUUID    string
 	StationID   string
@@ -114,6 +128,7 @@ type OrderQueuedEvent struct {
 }
 
 type BinUpdatedEvent struct {
+	eventbus.PayloadBase
 	NodeID      int64
 	NodeName    string
 	Action      string // "added", "removed", "moved", "claimed", "unclaimed", "locked", "unlocked", "loaded", "cleared", "counted", "status_changed"
@@ -130,6 +145,7 @@ type BinUpdatedEvent struct {
 // empty for orphan / pre-upgrade-backfill rows; the monitor short-
 // circuits on empty.
 type LinesideBucketAppliedEvent struct {
+	eventbus.PayloadBase
 	Station     string
 	NodeID      int64
 	PayloadCode string
@@ -139,12 +155,14 @@ type LinesideBucketAppliedEvent struct {
 }
 
 type NodeUpdatedEvent struct {
+	eventbus.PayloadBase
 	NodeID   int64
 	NodeName string
 	Action   string // "created", "updated", "deleted"
 }
 
 type CorrectionAppliedEvent struct {
+	eventbus.PayloadBase
 	CorrectionID   int64
 	CorrectionType string
 	NodeID         int64
@@ -153,14 +171,17 @@ type CorrectionAppliedEvent struct {
 }
 
 type ConnectionEvent struct {
+	eventbus.PayloadBase
 	Detail string
 }
 
 type RobotsUpdatedEvent struct {
+	eventbus.PayloadBase
 	Robots []fleet.RobotStatus
 }
 
 type CMSTransactionEvent struct {
+	eventbus.PayloadBase
 	Transactions []*cms.Transaction
 }
 
@@ -168,6 +189,7 @@ type CMSTransactionEvent struct {
 // an advanced zone's debounced occupancy flips (or the RDS-down fail-safe
 // fires). A wiring subscriber picks it up and ships it to edge via the outbox.
 type CountGroupTransitionEvent struct {
+	eventbus.PayloadBase
 	Group             string
 	Desired           string // "on" | "off"
 	Robots            []string
@@ -186,6 +208,7 @@ type CountGroupTransitionEvent struct {
 // of the pickup node). BinTask carries the vendor's binTask field
 // ("Load", "Unload", "Wait", or empty for navigation-only blocks).
 type BlockCompletedEvent struct {
+	eventbus.PayloadBase
 	OrderID       int64
 	VendorOrderID string
 	BlockID       string
@@ -200,6 +223,7 @@ type BlockCompletedEvent struct {
 // vacant source slot) and the materials/admin UI for live transit-lane
 // rendering.
 type BinEnteredTransitEvent struct {
+	eventbus.PayloadBase
 	BinID      int64
 	OrderID    int64  // the order whose pickup drove the transition
 	FromNodeID int64  // the node the bin just left (now vacant)
@@ -210,6 +234,7 @@ type BinEnteredTransitEvent struct {
 // The HMI uses this to show an amber indicator with elapsed-time-in-state so
 // operators can distinguish a brief blip from an about-to-escalate fault.
 type OrderFaultedEvent struct {
+	eventbus.PayloadBase
 	OrderID   int64
 	EdgeUUID  string
 	StationID string
@@ -219,6 +244,7 @@ type OrderFaultedEvent struct {
 // OrderFaultedRecoveredEvent fires when an order transitions from faulted back
 // to in_transit (fleet recovered within the grace window).
 type OrderFaultedRecoveredEvent struct {
+	eventbus.PayloadBase
 	OrderID   int64
 	EdgeUUID  string
 	StationID string
@@ -228,6 +254,7 @@ type OrderFaultedRecoveredEvent struct {
 // grace period has elapsed without fleet recovery. The engine handler
 // calls CancelOrder (best-effort) then Fail() for the local terminal transition.
 type GraceExpiredEvent struct {
+	eventbus.PayloadBase
 	OrderID       int64
 	VendorOrderID string
 }

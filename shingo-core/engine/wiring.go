@@ -18,6 +18,13 @@
 //
 // sendToEdge (the outbound envelope helper) also lives here since it
 // is shared by the subscription handlers above.
+//
+// Typed-payload note: every subscription whose handler reads the event
+// payload uses eventbus.SubscribeTyped — the generic wrapper that pulls
+// the concrete payload off TypedEvent[T, P] so callers don't write
+// evt.Payload.(SomeEvent) assertions. The few subscriptions that don't
+// read the payload (the fulfillment scanner trigger) keep the original
+// Bus.SubscribeTypes form because there's no payload type to constrain.
 
 package engine
 
@@ -25,6 +32,7 @@ import (
 	"fmt"
 
 	"shingo/protocol"
+	"shingo/protocol/eventbus"
 	"shingocore/dispatch"
 )
 
@@ -49,13 +57,13 @@ func (e *Engine) sendToEdge(msgType string, stationID string, payload any) error
 	return nil
 }
 
-// â”€â”€ Event subscriptions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Event subscriptions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func (e *Engine) wireEventHandlers() {
 	// â”€â”€ Dispatch tracking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	// When an order is dispatched, track it in the tracker
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderDispatchedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderDispatchedEvent]) {
+		ev := evt.Payload
 		if e.tracker == nil {
 			return
 		}
@@ -70,21 +78,20 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderDispatched)
 
 	// â”€â”€ Vendor status changes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderStatusChangedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
+		ev := evt.Payload
 		e.dbg("vendor status change: order=%d vendor=%s %s->%s robot=%s", ev.OrderID, ev.VendorOrderID, ev.OldStatus, ev.NewStatus, ev.RobotID)
 		e.handleVendorStatusChange(ev)
 	}, EventOrderStatusChanged)
 
 	// Record mission telemetry on every vendor status change
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderStatusChangedEvent)
-		e.recordMissionEvent(ev)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
+		e.recordMissionEvent(evt.Payload)
 	}, EventOrderStatusChanged)
 
 	// â”€â”€ Order failure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderFailedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
+		ev := evt.Payload
 		e.logFn("engine: order %d failed: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
 		e.db.AppendAudit("order", ev.OrderID, "failed", "", ev.Detail, "system")
 
@@ -121,8 +128,8 @@ func (e *Engine) wireEventHandlers() {
 	// terminal. No return order, no anomaly audit — the operator-facing
 	// surface treats this as a clean no-op. Edge advances the linked
 	// changeover node task via HandleOrderSkipped.
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderSkippedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderSkippedEvent]) {
+		ev := evt.Payload
 		e.logFn("engine: order %d skipped: %s - %s", ev.OrderID, ev.ErrorCode, ev.Detail)
 		e.db.AppendAudit("order", ev.OrderID, "skipped", "", ev.Detail, "system")
 
@@ -141,16 +148,16 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderSkipped)
 
 	// â”€â”€ Order completion â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderCompletedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
+		ev := evt.Payload
 		e.logFn("engine: order %d completed", ev.OrderID)
 		e.db.AppendAudit("order", ev.OrderID, "completed", "", "", "system")
 		e.handleOrderCompleted(ev)
 	}, EventOrderCompleted)
 
 	// â”€â”€ Order cancellation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderCancelledEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCancelledEvent]) {
+		ev := evt.Payload
 		e.logFn("engine: order %d cancelled: %s", ev.OrderID, ev.Reason)
 		e.db.AppendAudit("order", ev.OrderID, "cancelled", "", ev.Reason, "system")
 
@@ -182,33 +189,33 @@ func (e *Engine) wireEventHandlers() {
 	}, EventOrderCancelled)
 
 	// â”€â”€ Audit-only subscriptions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderReceivedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderReceivedEvent]) {
+		ev := evt.Payload
 		e.logFn("engine: order %d received from %s: %s %s -> %s", ev.OrderID, ev.StationID, ev.OrderType, ev.PayloadCode, ev.DeliveryNode)
 		e.db.AppendAudit("order", ev.OrderID, "received", "", fmt.Sprintf("%s %s from %s", ev.OrderType, ev.PayloadCode, ev.StationID), "system")
 	}, EventOrderReceived)
 
 	// Bin contents changes: audit
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(BinUpdatedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
+		ev := evt.Payload
 		e.db.AppendAudit("bin", ev.BinID, ev.Action, "", fmt.Sprintf("payload=%s node=%d", ev.PayloadCode, ev.NodeID), "system")
 	}, EventBinUpdated)
 
 	// Node updates: audit
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(NodeUpdatedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, NodeUpdatedEvent]) {
+		ev := evt.Payload
 		e.db.AppendAudit("node", ev.NodeID, ev.Action, "", ev.NodeName, "system")
 	}, EventNodeUpdated)
 
 	// Corrections: audit
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(CorrectionAppliedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CorrectionAppliedEvent]) {
+		ev := evt.Payload
 		e.db.AppendAudit("correction", ev.CorrectionID, ev.CorrectionType, "", ev.Reason, ev.Actor)
 	}, EventCorrectionApplied)
 
 	// â”€â”€ CMS transaction logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(BinUpdatedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
+		ev := evt.Payload
 		if ev.Action == "moved" && ev.FromNodeID != 0 && ev.ToNodeID != 0 {
 			e.RecordMovementTransactions(ev)
 		}
@@ -218,7 +225,9 @@ func (e *Engine) wireEventHandlers() {
 	// Async trigger for high-volume signals (bin moves, order
 	// completions). The scanner coalesces overlapping triggers via
 	// its `pending` flag; a goroutine here keeps the emitting handler
-	// chain non-blocking.
+	// chain non-blocking. Subscribes to several event types whose
+	// payloads differ; stays on the untyped SubscribeTypes form
+	// because the trigger doesn't read the payload.
 	triggerFulfillment := func(Event) {
 		if e.fulfillment != nil {
 			e.fulfillment.Trigger()
@@ -245,7 +254,7 @@ func (e *Engine) wireEventHandlers() {
 	// observable on return from HandleComplexOrderRequest â€” the existing
 	// test fixtures rely on that ordering, and operator-facing latency
 	// expectations don't tolerate "queued for ~1ms while a goroutine
-	// gets scheduled."
+	// gets scheduled." Untyped subscribe — handler doesn't read payload.
 	e.Events.SubscribeTypes(func(Event) {
 		if e.fulfillment != nil {
 			e.fulfillment.RunOnce()
@@ -258,23 +267,21 @@ func (e *Engine) wireEventHandlers() {
 	// onto the synthetic _TRANSIT node. The poller diffs per-block state
 	// and fires EventBlockCompleted on the transition into FINISHED; this
 	// handler routes by block kind.
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(BlockCompletedEvent)
-		e.handleBlockCompleted(ev)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BlockCompletedEvent]) {
+		e.handleBlockCompleted(evt.Payload)
 	}, EventBlockCompleted)
 
 	// â”€â”€ Queued order audit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(OrderQueuedEvent)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderQueuedEvent]) {
+		ev := evt.Payload
 		e.logFn("engine: order %d queued for payload %s", ev.OrderID, ev.PayloadCode)
 		e.db.AppendAudit("order", ev.OrderID, "queued", "", fmt.Sprintf("payload=%s from %s", ev.PayloadCode, ev.StationID), "system")
 	}, EventOrderQueued)
 
 	// â”€â”€ Kanban demand â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	// look up the demand registry and send a demand signal to Edge.
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(BinUpdatedEvent)
-		e.handleKanbanDemand(ev)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
+		e.handleKanbanDemand(evt.Payload)
 	}, EventBinUpdated)
 
 	// ── UOP-threshold replenishment monitor ─────────────────────────────
@@ -284,9 +291,8 @@ func (e *Engine) wireEventHandlers() {
 	// messaging layer; bin updates land via this subscription so cell-side
 	// consume ticks and loader-side bin moves both re-evaluate.
 	if e.thresholdMonitor != nil {
-		e.Events.SubscribeTypes(func(evt Event) {
-			ev := evt.Payload.(BinUpdatedEvent)
-			e.thresholdMonitor.handleBinUpdated(ev)
+		eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, BinUpdatedEvent]) {
+			e.thresholdMonitor.handleBinUpdated(evt.Payload)
 		}, EventBinUpdated)
 	}
 
@@ -295,14 +301,12 @@ func (e *Engine) wireEventHandlers() {
 	// (or fires the RDS-down fail-safe), ship a CountGroupCommand to
 	// all edges. Each edge checks its own bindings map and either
 	// drives the PLC tag or ignores.
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(CountGroupTransitionEvent)
-		e.handleCountGroupTransition(ev)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CountGroupTransitionEvent]) {
+		e.handleCountGroupTransition(evt.Payload)
 	}, EventCountGroupTransition)
 	// Grace-expiry: poller detected a faulted order whose grace period expired
 	// without fleet recovery. Best-effort cancel at RDS, then local fail.
-	e.Events.SubscribeTypes(func(evt Event) {
-		ev := evt.Payload.(GraceExpiredEvent)
-		e.handleGraceExpired(ev)
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, GraceExpiredEvent]) {
+		e.handleGraceExpired(evt.Payload)
 	}, EventGraceExpired)
 }

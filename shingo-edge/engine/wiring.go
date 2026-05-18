@@ -29,44 +29,36 @@
 package engine
 
 import (
+	"shingo/protocol/eventbus"
 	"shingoedge/store/processes"
 )
 
 // wireEventHandlers keeps process ownership in Edge and updates
 // process-node runtime from order lifecycle events. Counter deltas
 // still feed hourly production. The lambdas here are intentionally
-// thin: they unpack the event payload, then defer the real work to a
-// handler in a sibling file (handle*).
+// thin: they read the typed payload and defer to the real handler in
+// a sibling file (handle*). Type assertions are gone — eventbus.SubscribeTyped
+// extracts the concrete payload from TypedEvent[EventType, P].
 func (e *Engine) wireEventHandlers() {
-	e.Events.SubscribeTypes(func(evt Event) {
-		if delta, ok := evt.Payload.(CounterDeltaEvent); ok {
-			e.hourlyTracker.HandleDelta(delta)
-			e.handleCounterDelta(delta)
-		}
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, CounterDeltaEvent]) {
+		e.hourlyTracker.HandleDelta(evt.Payload)
+		e.handleCounterDelta(evt.Payload)
 	}, EventCounterDelta)
 
-	e.Events.SubscribeTypes(func(evt Event) {
-		if completed, ok := evt.Payload.(OrderCompletedEvent); ok {
-			e.handleNodeOrderCompleted(completed)
-		}
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderCompletedEvent]) {
+		e.handleNodeOrderCompleted(evt.Payload)
 	}, EventOrderCompleted)
 
-	e.Events.SubscribeTypes(func(evt Event) {
-		if delivered, ok := evt.Payload.(OrderDeliveredEvent); ok {
-			e.handleNodeOrderDelivered(delivered)
-		}
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderDeliveredEvent]) {
+		e.handleNodeOrderDelivered(evt.Payload)
 	}, EventOrderDelivered)
 
-	e.Events.SubscribeTypes(func(evt Event) {
-		if failed, ok := evt.Payload.(OrderFailedEvent); ok {
-			e.handleNodeOrderFailed(failed)
-		}
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderFailedEvent]) {
+		e.handleNodeOrderFailed(evt.Payload)
 	}, EventOrderFailed)
 
-	e.Events.SubscribeTypes(func(evt Event) {
-		if changed, ok := evt.Payload.(OrderStatusChangedEvent); ok {
-			e.handleSequentialBackfill(changed)
-		}
+	eventbus.SubscribeTyped(e.Events, func(evt eventbus.TypedEvent[EventType, OrderStatusChangedEvent]) {
+		e.handleSequentialBackfill(evt.Payload)
 	}, EventOrderStatusChanged)
 }
 

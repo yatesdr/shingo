@@ -1,32 +1,24 @@
 // wiring_completion.go — Order-completion chain and node-failure handling.
 //
 // Subscribed via wireEventHandlers (wiring.go) on EventOrderCompleted and
-// EventOrderFailed. The completion dispatcher (handleNodeOrderCompleted)
-// matches order type and changeover context using an early-return
-// pattern: each handler returns true if it matched, false to fall
-// through to the next.
+// EventOrderFailed. handleNodeOrderCompleted walks completionChain (see
+// completion_table.go) and dispatches the first matching row's Apply.
 //
 // Layout:
-//   loadOrderCompletionCtx       – shared lookup for order/node/runtime/changeover
-//   handleNodeOrderCompleted     – dispatcher: staged → Order B → changeover →
-//                                  loader/unloader side-cycle → manual swap →
-//                                  produce ingest → normal replenishment
-//   handleStagedDelivery         – Order A → inbound staging
-//   handleOrderBCompletion       – Order B (old material release)
-//   handleComplexOrderBCompletion / handleKeepStagedOrderBCompletion
-//   handleChangeoverRelease      – Order A direct delivery
-//   handleLoaderEmptyInCompletion   – L1 confirm → fire L2 (filled-out)
-//   handleUnloaderFullInCompletion  – U1 confirm → fire U2 (empty-out)
-//   handleManualSwapCompletion   – move order for manual_swap nodes
-//   handleProduceIngestCompletion – ingest order for produce nodes
-//   handleNormalReplenishment    – standard retrieve/complex
-//   maybePreStage                – keep-staged pre-stage hook
-//   handleNodeOrderFailed        – changeover error marking (failure
-//                                  counterpart to changeover-order setup;
-//                                  reads the same node-task context the
-//                                  completion handlers do, which is why
-//                                  it lives in this file rather than in
-//                                  a standalone wiring_failed.go).
+//   loadOrderCompletionCtx                       – shared lookup for order/node/runtime/changeover
+//   orderCompletionCtx + Claim() / ToClaim()     – cascade-scope cache for expensive lookups
+//   handleNodeOrderCompleted                     – table-driven dispatcher
+//   match* / apply* per cascade row              – the table rows (see completion_table.go)
+//   handleComplexOrderBCompletion                – internal helper called from applyOrderBCompletion
+//   handleKeepStagedOrderBCompletion             – shelved no-op (rewire seam preserved)
+//   handleNormalReplenishment                    – terminal-row handler (void; adapted via applyNormalReplenishmentTerminal)
+//   maybePreStage                                – shelved no-op called from handleNormalReplenishment
+//   handleOrphanedTaskOrderCompleted             – non-success terminal path (cancelled / failed)
+//   handleNodeOrderFailed                        – EventOrderFailed counterpart (lives here because
+//                                                  it reads the same node-task context the completion
+//                                                  rows do; folding the two negative- and positive-path
+//                                                  counterparts together keeps changeover orchestration
+//                                                  in one place rather than in a standalone wiring_failed.go).
 
 package engine
 
@@ -42,13 +34,82 @@ import (
 )
 
 // orderCompletionCtx holds shared lookups for order completion handling.
-// Loaded once by loadOrderCompletionCtx and passed to each handler.
+// Loaded once by loadOrderCompletionCtx and passed to each table row's
+// Match and Apply. Cascade-scope cache for expensive lookups (claim,
+// toClaim) so multiple Match predicates that need the same value don't
+// each hit the DB.
 type orderCompletionCtx struct {
 	order     *storeorders.Order
 	node      *processes.Node
 	runtime   *processes.RuntimeState
 	toStyleID int64
 	nodeTask  *processes.NodeTask // nil when no active changeover
+
+	// e is the engine reference used by lazy field accessors below to
+	// perform their DB lookups on first access.
+	e *Engine
+
+	// Lazy field — the active NodeClaim at ctx.node. Resolved by Claim().
+	// claimResolved distinguishes "not fetched yet" from "fetched and nil";
+	// both are valid states (nil = no active style or claim row missing).
+	claim         *processes.NodeClaim
+	claimResolved bool
+
+	// Lazy field — the to-style NodeClaim at ctx.node during a changeover.
+	// Resolved by ToClaim(). toClaim==nil with toClaimResolved==true means
+	// no active changeover (toStyleID==0) or the lookup failed.
+	toClaim         *processes.NodeClaim
+	toClaimResolved bool
+
+	// Lazy field — the from-style NodeClaim attached to ctx.nodeTask via
+	// FromClaimID. Distinct from Claim() (active claim by node) and
+	// ToClaim() (to-style claim by node + style). FromClaim is a direct
+	// lookup by claim id; used by the complex Order B path to read the
+	// from-claim's KeepStaged flag. fromClaim==nil with fromClaimResolved==true
+	// means no changeover, no FromClaimID on the task, or the lookup failed.
+	fromClaim         *processes.NodeClaim
+	fromClaimResolved bool
+}
+
+// Claim returns the active NodeClaim at ctx.node, caching the lookup so
+// repeated calls within one cascade don't re-query. Returns nil if no
+// active claim is set (no active style, or the claim row is missing).
+func (c *orderCompletionCtx) Claim() *processes.NodeClaim {
+	if !c.claimResolved {
+		c.claim = findActiveClaim(c.e.db, c.node)
+		c.claimResolved = true
+	}
+	return c.claim
+}
+
+// ToClaim returns the to-style NodeClaim at ctx.node, looked up by
+// (toStyleID, CoreNodeName). Caches the lookup. Returns nil if there's
+// no active changeover or the lookup failed.
+func (c *orderCompletionCtx) ToClaim() *processes.NodeClaim {
+	if !c.toClaimResolved {
+		if c.toStyleID != 0 {
+			if tc, err := c.e.db.GetStyleNodeClaimByNode(c.toStyleID, c.node.CoreNodeName); err == nil {
+				c.toClaim = tc
+			}
+		}
+		c.toClaimResolved = true
+	}
+	return c.toClaim
+}
+
+// FromClaim returns the from-style NodeClaim attached to ctx.nodeTask
+// via FromClaimID, caching the direct-by-id lookup. Returns nil when
+// there's no node task, no FromClaimID, or the lookup failed.
+func (c *orderCompletionCtx) FromClaim() *processes.NodeClaim {
+	if !c.fromClaimResolved {
+		if c.nodeTask != nil && c.nodeTask.FromClaimID != nil {
+			if fc, err := c.e.db.GetStyleNodeClaim(*c.nodeTask.FromClaimID); err == nil {
+				c.fromClaim = fc
+			}
+		}
+		c.fromClaimResolved = true
+	}
+	return c.fromClaim
 }
 
 // loadOrderCompletionCtx fetches the order, node, runtime, and changeover context.
@@ -71,7 +132,7 @@ func (e *Engine) loadOrderCompletionCtx(completed OrderCompletedEvent) *orderCom
 		return nil
 	}
 
-	ctx := &orderCompletionCtx{order: order, node: node, runtime: runtime}
+	ctx := &orderCompletionCtx{order: order, node: node, runtime: runtime, e: e}
 
 	if changeover, err := e.db.GetActiveProcessChangeover(node.ProcessID); err == nil {
 		ctx.toStyleID = changeover.ToStyleID
@@ -111,40 +172,33 @@ func (e *Engine) handleNodeOrderCompleted(completed OrderCompletedEvent) {
 		return
 	}
 
-	if e.handleStagedDelivery(ctx) {
-		return
+	for _, c := range completionChain {
+		if !c.Match(ctx) {
+			continue
+		}
+		if c.Apply(e, ctx) {
+			return
+		}
 	}
-	if e.handleOrderBCompletion(ctx) {
-		return
-	}
-	if e.handleChangeoverRelease(ctx) {
-		return
-	}
-	if e.handleLoaderEmptyInCompletion(ctx) {
-		return
-	}
-	if e.handleUnloaderFullInCompletion(ctx) {
-		return
-	}
-	if e.handleManualSwapCompletion(ctx) {
-		return
-	}
-	if e.handleProduceIngestCompletion(ctx) {
-		return
-	}
-	e.handleNormalReplenishment(ctx)
 }
 
-// handleStagedDelivery handles Order A delivering to inbound staging during runout.
-// Returns true if this order matched the staged delivery path.
-func (e *Engine) handleStagedDelivery(ctx *orderCompletionCtx) bool {
+// matchStagedDelivery matches Order A delivering to inbound staging
+// during a runout-style changeover. Predicate: this order is the linked
+// next-material order on an active node task, the to-style claim has an
+// InboundStaging slot configured, and the order's delivery node is that
+// staging slot.
+func matchStagedDelivery(ctx *orderCompletionCtx) bool {
 	if ctx.nodeTask == nil || ctx.nodeTask.NextMaterialOrderID == nil || *ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
 		return false
 	}
-	toClaim, err := e.db.GetStyleNodeClaimByNode(ctx.toStyleID, ctx.node.CoreNodeName)
-	if err != nil || toClaim.InboundStaging == "" || ctx.order.DeliveryNode != toClaim.InboundStaging {
-		return false
-	}
+	toClaim := ctx.ToClaim()
+	return toClaim != nil &&
+		toClaim.InboundStaging != "" &&
+		ctx.order.DeliveryNode == toClaim.InboundStaging
+}
+
+func applyStagedDelivery(e *Engine, ctx *orderCompletionCtx) bool {
+	toClaim := ctx.ToClaim() // cached in Match
 	claimID := toClaim.ID
 	if e.inventoryDelta != nil {
 		if err := e.inventoryDelta.SetClaimAndCount(ctx.node.ID, &claimID, ctx.runtime.RemainingUOPCached); err != nil {
@@ -160,82 +214,41 @@ func (e *Engine) handleStagedDelivery(ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// handleOrderBCompletion handles Order B (OldMaterialReleaseOrderID) completing.
-// Phase 3 swap/evacuate: complex Order B does evacuation + delivery → "released".
-// Keep-staged: complex Order B only evacuates → "line_cleared" or "released" if Order A also done.
-// Manual/drop: simple move Order B → "line_cleared".
-func (e *Engine) handleOrderBCompletion(ctx *orderCompletionCtx) bool {
+// matchOrderBComplex matches the completion of Order B for the complex-
+// evacuate path: linked OldMaterialReleaseOrderID + complex order type +
+// swap-or-evacuate situation. Apply transitions the task to "released"
+// after delegating to the shelved KeepStaged no-op hook.
+func matchOrderBComplex(ctx *orderCompletionCtx) bool {
 	if ctx.nodeTask == nil || ctx.nodeTask.OldMaterialReleaseOrderID == nil || *ctx.nodeTask.OldMaterialReleaseOrderID != ctx.order.ID {
 		return false
 	}
-	if ctx.order.OrderType != orders.TypeMove && ctx.order.OrderType != orders.TypeComplex {
-		return false
-	}
-
-	// Complex Order B in swap/evacuate situations
-	if (ctx.nodeTask.Situation == "swap" || ctx.nodeTask.Situation == "evacuate") && ctx.order.OrderType == orders.TypeComplex {
-		return e.handleComplexOrderBCompletion(ctx)
-	}
-
-	// Manual path or drop: simple move order — only evacuation done, line cleared.
-	// Bin physically left the slot; clear active_bin_id so subsequent
-	// PLC ticks don't attribute to a bin that's no longer here.
-	if e.inventoryDelta != nil {
-		if err := e.inventoryDelta.ClearActiveAndReset(ctx.node.ID, ctx.runtime.ActiveClaimID); err != nil {
-			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
-		}
-	}
-	// Drop tasks without the evacuate marker were stamped terminal
-	// (line_cleared) at plan time — the cutover never depended on this
-	// completion event. Skip the state mutation so we don't churn the
-	// updated_at timestamp; the task is already at line_cleared.
-	if domain.IsNodeTaskStateTerminal(ctx.nodeTask.State, ctx.nodeTask.Situation) {
-		return true
-	}
-	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskLineCleared); err != nil {
-		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
-	}
-	return true
+	return ctx.order.OrderType == orders.TypeComplex &&
+		(ctx.nodeTask.Situation == "swap" || ctx.nodeTask.Situation == "evacuate")
 }
 
-// handleComplexOrderBCompletion handles complex Order B in swap/evacuate changeovers.
-// Regular: evacuation + delivery in one order → "released".
-// Keep-staged: only evacuates → depends on whether Order A (delivery) also completed.
+// applyOrderBComplex executes the complex Order B side effects:
+// state transition to "released" and a try-complete on the parent
+// changeover. UOP reset binds at delivery via handleNodeOrderDelivered,
+// not here — release-click writes the incoming supply bin's UOP, the
+// delivery handler re-affirms with the actually-arrived bin.
 //
-// UOP reset happens here on delivery completion (not at release click): the
-// release handler only marks the node task "released". Resetting at delivery
-// binds the runtime turnover to the moment the new bin is physically present,
-// so a robot fault between release and arrival doesn't leave the UI showing
-// a "fresh" capacity that the line never received.
+// For sequential EVAC, OrderB delivers to PairedCoreNode (not
+// ctx.node.CoreNodeName which is the primary). Per-slot resets fire
+// from handleNodeOrderDelivered for each leg of a sequential SWAP
+// terminal step; applyOrderBComplex only advances the state machine.
 //
-// For sequential EVAC, OrderB delivers to PairedCoreNode (not to
-// ctx.node.CoreNodeName which is the primary). Route the runtime reset
-// to the paired physical node so each robot's completion resets its
-// own position. handleChangeoverRelease handles the same for OrderA
-// (which delivers to the primary).
-func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
-	isKeepStaged := false
-	if ctx.nodeTask.FromClaimID != nil {
-		if fc, err := e.db.GetStyleNodeClaim(*ctx.nodeTask.FromClaimID); err == nil {
-			isKeepStaged = fc.KeepStaged
+// KeepStaged claims invoke the shelved no-op handler first; it returns
+// false (no-op) so legacy claims with KeepStaged=true fall through to
+// the standard "released" path. See implementer notes' "Known issue —
+// phantom-inventory pin latent under CO-0b fall-through" for the
+// rewire-time risk this falls through to. The function call is
+// preserved as a one-line rewire seam.
+func applyOrderBComplex(e *Engine, ctx *orderCompletionCtx) bool {
+	if fc := ctx.FromClaim(); fc != nil && fc.KeepStaged {
+		if e.handleKeepStagedOrderBCompletion(ctx) {
+			return true
 		}
 	}
-
-	// KeepStaged is currently short-circuited (the handler returns false
-	// as a no-op). Fall through to the standard path so legacy claims
-	// with KeepStaged=true behave like normal swaps until the keep-
-	// staged path is rewired. See implementer notes' "Known issue —
-	// phantom-inventory pin latent under CO-0b fall-through" for the
-	// rewire-time risk.
-	if isKeepStaged && e.handleKeepStagedOrderBCompletion(ctx) {
-		return true
-	}
-
-	// Runtime UOP cache binding moved out of the completion path:
-	// active_bin_id / cached_bin_id / remaining_uop_cached now flip at
-	// release-click (incoming supply bin) and at delivery (the
-	// physically-arrived bin), not at confirm. Confirm only advances
-	// the changeover node task state machine.
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
@@ -245,50 +258,106 @@ func (e *Engine) handleComplexOrderBCompletion(ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// handleKeepStagedOrderBCompletion is a short-circuited no-op.
+// matchOrderBSimple matches the completion of Order B for the simple-move
+// path: manual path or drop task. Order type Move (any situation), or
+// Complex order type that ISN'T in the swap/evacuate situation handled
+// by matchOrderBComplex. The non-complex-evac discrimination is encoded
+// explicitly rather than left to cascade ordering, mirroring the
+// matchChangeoverRelease pattern.
+func matchOrderBSimple(ctx *orderCompletionCtx) bool {
+	if ctx.nodeTask == nil || ctx.nodeTask.OldMaterialReleaseOrderID == nil || *ctx.nodeTask.OldMaterialReleaseOrderID != ctx.order.ID {
+		return false
+	}
+	if ctx.order.OrderType == orders.TypeMove {
+		return true
+	}
+	if ctx.order.OrderType == orders.TypeComplex {
+		// Complex in a non-swap/evacuate situation — order_b_complex won't
+		// match; this row picks it up.
+		return ctx.nodeTask.Situation != "swap" && ctx.nodeTask.Situation != "evacuate"
+	}
+	return false
+}
+
+// applyOrderBSimple executes the simple-move Order B side effects:
+// clear active_bin_id at the slot (the bin physically left) and stamp
+// the task to line_cleared unless the task is already terminal at plan
+// time (drop tasks without the evacuate marker land at line_cleared
+// during planning — skip the redundant state write to avoid churning
+// updated_at).
+func applyOrderBSimple(e *Engine, ctx *orderCompletionCtx) bool {
+	if e.inventoryDelta != nil {
+		if err := e.inventoryDelta.ClearActiveAndReset(ctx.node.ID, ctx.runtime.ActiveClaimID); err != nil {
+			log.Printf("set runtime for node %d: %v", ctx.node.ID, err)
+		}
+	}
+	if domain.IsNodeTaskStateTerminal(ctx.nodeTask.State, ctx.nodeTask.Situation) {
+		return true
+	}
+	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskLineCleared); err != nil {
+		log.Printf("update node task %d to line_cleared: %v", ctx.nodeTask.ID, err)
+	}
+	return true
+}
+
+// handleKeepStagedOrderBCompletion is a short-circuited no-op preserved
+// as the one-line rewire seam for the shelved KeepStaged path. Called
+// from applyOrderBComplex when the from-claim has KeepStaged=true.
 //
-// KeepStaged is shelved pending a future rewire. The function signature
-// is preserved for call sites; returning false makes the dispatcher in
-// handleComplexOrderBCompletion fall through to the standard non-
-// KeepStaged path (UOP reset on delivery + state → "released"), which
-// is the desired behaviour until KeepStaged is rewired. See implementer
-// notes' "Known issue — phantom-inventory pin latent under CO-0b
-// fall-through" for the rewire-time risk this falls through to.
+// Returning false makes applyOrderBComplex fall through to the standard
+// "released" path, which is the desired behaviour until KeepStaged is
+// rewired. See implementer notes' "Known issue — phantom-inventory pin
+// latent under CO-0b fall-through" for the rewire-time risk this falls
+// through to.
 func (e *Engine) handleKeepStagedOrderBCompletion(ctx *orderCompletionCtx) bool {
 	_ = ctx
 	return false
 }
 
-// handleChangeoverRelease handles Order A completing to release staged/replenished
-// material into production during a changeover (non-staging delivery path).
+// matchChangeoverRelease matches Order A completing to release staged or
+// replenished material into production during a changeover (non-staging
+// delivery path). Two-part predicate:
 //
-// UOP reset runs on delivery completion (not at release click). Release only
-// flips the node task to "released"; the runtime turnover is bound to the
-// arrival event so a fault between release and delivery doesn't leave the
-// line UI showing capacity for a bin that hasn't landed.
+//  1. The order is the node task's linked next-material order (shared
+//     with matchStagedDelivery's first guard).
+//  2. The delivery is NOT to the to-claim's InboundStaging slot — that
+//     case belongs to staged_delivery.
+//
+// The non-staging discrimination is encoded here explicitly rather than
+// being left to cascade ordering. Pre-fix, the predicate was just (1),
+// relying on staged_delivery running first in completionChain. That meant
+// a future commit reordering the slice (or inserting a new row between
+// staged_delivery and changeover_release) would silently change behavior.
+// With (2) made explicit, the row is self-describing and reorder-safe.
+//
+// UOP reset runs on delivery completion (not at release click). Release
+// only flips the node task to "released"; the runtime turnover is bound
+// to the arrival event so a fault between release and delivery doesn't
+// leave the line UI showing capacity for a bin that hasn't landed.
 //
 // Sequential SWAP ships as a single complex order with a mid-sequence
 // cutover wait. Its terminal step is the ACTIVE-side dropoff: by then,
 // both physical positions (CoreNodeName and PairedCoreNode) hold new
-// bins, so reset BOTH runtime rows' UOP — otherwise the paired-side
-// runtime cache would lie with the old style's UOP value indefinitely.
-// Post-flip (6d226d1) Edge is authoritative for at-node bins; no
-// reconciler exists to heal a stale cache.
-func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
-	if ctx.nodeTask == nil || ctx.nodeTask.NextMaterialOrderID == nil || *ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
+// bins. Per-slot resets fire from handleNodeOrderDelivered for each leg;
+// release here only advances the task state machine.
+func matchChangeoverRelease(ctx *orderCompletionCtx) bool {
+	if ctx.nodeTask == nil ||
+		ctx.nodeTask.NextMaterialOrderID == nil ||
+		*ctx.nodeTask.NextMaterialOrderID != ctx.order.ID {
 		return false
 	}
-	// Runtime UOP cache binding has moved off the completion path —
-	// release-click writes the incoming supply bin's UOP, delivery
-	// re-affirms with the actually-arrived bin. The state machine
-	// transition is the only thing that fires on confirm.
-	//
-	// Sequential SWAP's paired-position runtime was previously also
-	// reset here via resetPairedRuntimeUOPForSequentialSwap. That helper
-	// is gone now that each delivered bin gets its own per-slot reset
-	// from handleNodeOrderDelivered (each leg of a sequential SWAP
-	// terminal step delivers to its own slot; the delivered handler
-	// fires for each).
+	// Reject the staged-delivery shape: to-claim configured with an
+	// InboundStaging slot AND the order delivers to that slot.
+	toClaim := ctx.ToClaim()
+	if toClaim != nil &&
+		toClaim.InboundStaging != "" &&
+		ctx.order.DeliveryNode == toClaim.InboundStaging {
+		return false
+	}
+	return true
+}
+
+func applyChangeoverRelease(e *Engine, ctx *orderCompletionCtx) bool {
 	if err := e.db.UpdateChangeoverNodeTaskState(ctx.nodeTask.ID, domain.NodeTaskReleased); err != nil {
 		log.Printf("update node task %d to released: %v", ctx.nodeTask.ID, err)
 	}
@@ -298,20 +367,27 @@ func (e *Engine) handleChangeoverRelease(ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// handleLoaderEmptyInCompletion fires the side-cycle L2 when the L1
-// empty-in retrieve_empty order is confirmed at a manual_swap producer
-// (loader) node. L1 brought an empty to the loader; the operator filled
-// it; CONFIRM means the bin is ready to send back to the supermarket.
-// L2 = a move order from the loader to claim.OutboundDestination.
-// Returns true if it handled the order (regardless of L2 success).
-func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
+// matchLoaderEmptyIn matches an L1 retrieve_empty order completing at a
+// manual_swap producer (loader) node. L1 brought an empty to the loader;
+// the operator filled it; CONFIRM means the bin is ready to send back to
+// the supermarket. Apply fires the L2 (filled-out) move.
+//
+// The OutboundDestination validity checks live in Apply rather than Match
+// to preserve the pre-table fall-through-with-warning behavior: a malformed
+// claim logs a diagnostic and lets the cascade continue to
+// handleNormalReplenishment for default cleanup. PR 3 may revisit.
+func matchLoaderEmptyIn(ctx *orderCompletionCtx) bool {
 	if !ctx.order.RetrieveEmpty {
 		return false
 	}
-	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.SwapMode != protocol.SwapModeManualSwap || claim.Role != protocol.ClaimRoleProduce {
-		return false
-	}
+	claim := ctx.Claim()
+	return claim != nil &&
+		claim.SwapMode == protocol.SwapModeManualSwap &&
+		claim.Role == protocol.ClaimRoleProduce
+}
+
+func applyLoaderEmptyIn(e *Engine, ctx *orderCompletionCtx) bool {
+	claim := ctx.Claim() // cached in Match
 	if claim.OutboundDestination == "" {
 		e.logFn("side-cycle: loader %s has no OutboundDestination — cannot create L2 (filled bin will sit until operator manually moves it)", ctx.node.Name)
 		return false
@@ -361,25 +437,30 @@ func (e *Engine) handleLoaderEmptyInCompletion(ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// handleUnloaderFullInCompletion fires the side-cycle U2 when the U1
-// full-in retrieve order is confirmed at a manual_swap consumer
-// (unloader) node. U1 brought a full bin to the unloader; the operator
-// processed its contents; CONFIRM means the (now-empty) bin is ready to
-// send back to the supermarket. U2 = a move order from the unloader to
-// claim.OutboundDestination.
+// matchUnloaderFullIn matches a U1 full-in retrieve order completing at a
+// manual_swap consumer (unloader) node. U1 brought a full bin to the
+// unloader; the operator processed its contents; CONFIRM means the
+// (now-empty) bin is ready to send back to the supermarket. Apply fires
+// the U2 (empty-out) move.
 //
-// Symmetric to handleLoaderEmptyInCompletion (L2). The discriminator
-// between L1 and U1 retrieve orders is the role on the active claim:
-// producer (loader, L1, RetrieveEmpty=true) vs consumer (unloader, U1,
-// full-bin retrieve with PayloadCode).
-func (e *Engine) handleUnloaderFullInCompletion(ctx *orderCompletionCtx) bool {
+// Symmetric to matchLoaderEmptyIn (L1→L2). Discriminator between L1 and U1
+// retrieve orders is the claim role: producer (loader, L1, RetrieveEmpty=true)
+// vs consumer (unloader, U1, full-bin retrieve with PayloadCode).
+//
+// As with the loader path, OutboundDestination validity checks stay in
+// Apply to preserve fall-through-with-warning behavior on malformed claims.
+func matchUnloaderFullIn(ctx *orderCompletionCtx) bool {
 	if ctx.order.OrderType != orders.TypeRetrieve || ctx.order.RetrieveEmpty {
 		return false
 	}
-	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.SwapMode != protocol.SwapModeManualSwap || claim.Role != protocol.ClaimRoleConsume {
-		return false
-	}
+	claim := ctx.Claim()
+	return claim != nil &&
+		claim.SwapMode == protocol.SwapModeManualSwap &&
+		claim.Role == protocol.ClaimRoleConsume
+}
+
+func applyUnloaderFullIn(e *Engine, ctx *orderCompletionCtx) bool {
+	claim := ctx.Claim() // cached in Match
 	if claim.OutboundDestination == "" {
 		e.logFn("side-cycle: unloader %s has no OutboundDestination — cannot create U2 (empty bin will sit until operator manually moves it)", ctx.node.Name)
 		return false
@@ -411,18 +492,17 @@ func (e *Engine) handleUnloaderFullInCompletion(ctx *orderCompletionCtx) bool {
 	return true
 }
 
-// handleManualSwapCompletion handles a move order completing for manual_swap nodes.
-// The bin has been sent to destination, node is vacant. Pre-side-cycle
-// this also queued a follow-up empty-in via tryAutoRequest; that path was
-// removed when MaybeCreateLoaderEmptyIn became the only empty-in source.
-func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
+// matchManualSwap matches a move order completion on a manual_swap node.
+// The bin has been sent to destination, the node is vacant.
+func matchManualSwap(ctx *orderCompletionCtx) bool {
 	if ctx.order.OrderType != orders.TypeMove {
 		return false
 	}
-	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.SwapMode != protocol.SwapModeManualSwap {
-		return false
-	}
+	claim := ctx.Claim()
+	return claim != nil && claim.SwapMode == protocol.SwapModeManualSwap
+}
+
+func applyManualSwap(e *Engine, ctx *orderCompletionCtx) bool {
 	// L2/U2 move arrived at the supermarket — the bin physically left
 	// the loader/unloader some time ago (HandleBinPickedUp already
 	// nulled active_bin_id at pickup). Confirm here only clears the
@@ -441,26 +521,29 @@ func (e *Engine) handleManualSwapCompletion(ctx *orderCompletionCtx) bool {
 	// the unloader window is confirmed free. Fire the next U1 if the claim
 	// is auto-push. MaybePushUnloader gates internally on AutoPush so this
 	// is a no-op for kanban-driven unloaders.
+	claim := ctx.Claim() // cached on first access in Match
 	if claim.Role == protocol.ClaimRoleConsume && claim.AutoPush {
 		e.MaybePushUnloader(ctx.node.ID)
 	}
 	return true
 }
 
-// handleProduceIngestCompletion handles ingest order completing for produce nodes.
-// Core now knows the bin's manifest. Clears the runtime order pointers so the
-// next produce cycle starts clean. Cache state is owned by:
-//   - resetProduceRuntime at FinalizeProduceNode (operator's "I'm done" click)
-//   - handleNodeOrderDelivered when the next empty bin lands at this node
-// Confirm itself is a no-op for cache.
-func (e *Engine) handleProduceIngestCompletion(ctx *orderCompletionCtx) bool {
+// matchProduceIngest matches an ingest order completion at a produce node.
+// Core has just received the bin's manifest; this row's Apply clears the
+// runtime order pointers so the next produce cycle starts clean.
+//
+// Cache state is owned elsewhere (resetProduceRuntime at FinalizeProduceNode
+// and handleNodeOrderDelivered when the next empty bin lands). Confirm is
+// a no-op for cache.
+func matchProduceIngest(ctx *orderCompletionCtx) bool {
 	if ctx.order.OrderType != orders.TypeIngest {
 		return false
 	}
-	claim := findActiveClaim(e.db, ctx.node)
-	if claim == nil || claim.Role != protocol.ClaimRoleProduce {
-		return false
-	}
+	claim := ctx.Claim()
+	return claim != nil && claim.Role == protocol.ClaimRoleProduce
+}
+
+func applyProduceIngest(e *Engine, ctx *orderCompletionCtx) bool {
 	if err := e.db.UpdateProcessNodeRuntimeOrders(ctx.node.ID, nil, nil); err != nil {
 		log.Printf("update runtime orders for node %d: %v", ctx.node.ID, err)
 	}
@@ -477,7 +560,7 @@ func (e *Engine) handleNormalReplenishment(ctx *orderCompletionCtx) {
 	if ctx.order.OrderType != orders.TypeRetrieve && ctx.order.OrderType != orders.TypeComplex {
 		return
 	}
-	claim := findActiveClaim(e.db, ctx.node)
+	claim := ctx.Claim()
 	if claim == nil {
 		return
 	}
@@ -531,7 +614,7 @@ func (e *Engine) handleOrphanedTaskOrderCompleted(order *storeorders.Order) {
 	if err != nil {
 		return
 	}
-	if changeoverState == "completed" || changeoverState == "cancelled" {
+	if changeoverState.IsTerminal() {
 		log.Printf("orphan: skip task %d stamp — changeover %d already %s", task.ID, task.ProcessChangeoverID, changeoverState)
 		return
 	}
