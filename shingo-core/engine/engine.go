@@ -88,6 +88,19 @@ type Engine struct {
 	dbConnected     atomic.Bool
 	robotsMu        sync.RWMutex
 	robotsCache     map[string]fleet.RobotStatus
+
+	// preDisconnectAvailability captures per-robot Available state at the
+	// moment a fleet disconnect is detected. autoResumeAfterFleetReconnect
+	// consumes it on the next reconnect to resume only robots we last saw
+	// running (operator-paused robots stay paused). Single-shot: cleared
+	// when consumed; nil between cycles.
+	//
+	// Single-writer: written and read only by checkConnectionStatus, which
+	// runs from connectionHealthLoop's single goroutine. The auto-resume
+	// goroutine receives a copy as a function argument and never touches
+	// this field directly — so no lock is needed here. robotsCache reads
+	// during the capture still take robotsMu in the usual way.
+	preDisconnectAvailability map[string]bool
 }
 
 func New(c Config) *Engine {
