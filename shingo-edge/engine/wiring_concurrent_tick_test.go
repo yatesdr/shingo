@@ -258,7 +258,7 @@ func TestRegression_TickDuringPartialBackPickupWindow(t *testing.T) {
 	}
 
 	// BinPickedUp fires.
-	eng.HandleBinPickedUp(orderUUID, binID)
+	eng.HandleBinPickedUp(orderUUID, binID, "PB-PICKUP-NODE")
 
 	// Post-pickup tick must not attribute to the released bin.
 	eng.Events.Emit(Event{Type: EventCounterDelta, Payload: CounterDeltaEvent{

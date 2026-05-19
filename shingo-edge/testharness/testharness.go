@@ -107,7 +107,7 @@ func NewEdge(t *testing.T, stationID string) *Edge {
 		eng.SetCoreNodes(resp.Nodes)
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
-		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID)
+		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID, bp.Location)
 	})
 
 	ingestor := protocol.NewIngestor(func(hdr *protocol.RawHeader) bool {

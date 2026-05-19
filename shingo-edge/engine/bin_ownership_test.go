@@ -103,7 +103,7 @@ func TestBinOwnership_PickupClearsActiveBinID(t *testing.T) {
 	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
 	eng.SetInventoryDeltaSink(sink)
 
-	eng.HandleBinPickedUp(orderUUID, binID)
+	eng.HandleBinPickedUp(orderUUID, binID, "OWN-PICK-NODE")
 
 	// Post-condition: bin pointer cleared symmetric with order pointer.
 	rt, _ = db.GetProcessNodeRuntime(nodeID)
@@ -173,7 +173,7 @@ func TestBinOwnership_DeliveryThenTickThenPickup(t *testing.T) {
 	}
 
 	// Phase 3: pickup. ActiveBinID clears.
-	eng.HandleBinPickedUp(orderUUID, binID)
+	eng.HandleBinPickedUp(orderUUID, binID, "OWN-RT-NODE")
 
 	rt, _ = db.GetProcessNodeRuntime(nodeID)
 	if rt.ActiveBinID != nil {

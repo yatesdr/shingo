@@ -37,7 +37,17 @@ import "shingoedge/domain"
 // envelope. Post-flip there is no reconciler to heal silent failures;
 // the FlushFailures gauge is the operational signal if attribution
 // goes wrong.
-func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
+//
+// location is the Core node name where the pickup occurred (BinPickedUp.Location
+// on the wire envelope). Used to gate the runtime-mutation branches below:
+// orders with multiple pickups (simple move, two_robot supply leg,
+// single_robot full swap, two_robot_press_index R1) fire BinPickedUp at
+// remote sources (supermarket, intermediate staging) as well as at our
+// slot. Only the at-our-slot pickup means "the bin physically left here";
+// remote pickups must not clear active_bin_id / active_order_id, or
+// inSteadyState() goes false during the entire staging window and PLC
+// ticks stop decrementing remaining_uop_cached.
+func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location string) {
 	order, err := e.db.GetOrderByUUID(orderUUID)
 	if err != nil || order == nil {
 		// Unknown order — Edge may have GC'd a terminal order, or the
@@ -92,6 +102,35 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64) {
 			if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskLineCleared); err != nil {
 				e.logFn("bin_picked_up: advance drop task %d to line_cleared: %v", task.ID, err)
 			}
+		}
+	}
+
+	// Location gate: the branches below — flushing the per-bin accumulator
+	// and clearing active_bin_id / active_order_id — all encode "the bin
+	// physically left our slot." That's true only when the pickup happened
+	// at our node's CoreNodeName. Orders with intermediate or remote
+	// pickups (e.g. two_robot Order A picking up at InboundSource right
+	// after REQUEST MATERIAL) fire BinPickedUp envelopes with Location
+	// pointing at the source, not the slot. Without this gate, those
+	// remote pickups null active_bin_id, inSteadyState() goes false, and
+	// PLC ticks stop decrementing remaining_uop_cached for the entire
+	// supply-in-flight window — the operator sees the release-prompt
+	// lineside qty frozen at whatever value the cache had when REQUEST
+	// MATERIAL fired. Plant repro: Springfield ALN_001 two-robot, every
+	// cycle.
+	//
+	// F' Phase 2 above intentionally runs before this gate: it triggers
+	// on the changeover evac order's pickup-block-FINISHED, which IS at
+	// our slot anyway (evac's only pickup is at CoreNodeName), so the
+	// gate would be a no-op there. Keeping F' above the gate makes the
+	// chain robust to future order shapes where the lookup is the
+	// authoritative signal.
+	if order.ProcessNodeID != nil {
+		node, nerr := e.db.GetProcessNode(*order.ProcessNodeID)
+		if nerr == nil && node != nil && location != "" && location != node.CoreNodeName {
+			e.logFn("bin_picked_up: order=%s pickup at %q (node %s slot is %q) — ignoring, not our slot",
+				orderUUID, location, node.Name, node.CoreNodeName)
+			return
 		}
 	}
 

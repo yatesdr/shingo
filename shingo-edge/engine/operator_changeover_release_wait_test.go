@@ -416,7 +416,10 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 
 	// ─── Phase 2 step 2: evac robot picks up. BinPickedUp arrives. ───
 	// HandleBinPickedUp's task-lookup branch fires the deferred supply.
-	eng.HandleBinPickedUp(evacOrder.UUID, 9999 /* binID, irrelevant for this branch */)
+	// Location is empty here — the F' Phase 2 task-lookup branch runs
+	// before the location gate, so the deferred-supply chain isn't
+	// affected by gating.
+	eng.HandleBinPickedUp(evacOrder.UUID, 9999 /* binID, irrelevant for this branch */, "")
 
 	releases = findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -534,7 +537,7 @@ func TestHandleBinPickedUp_ReleasesDeferredSupply(t *testing.T) {
 		_ = db.AckOutbox(m.ID)
 	}
 
-	eng.HandleBinPickedUp(evacOrder.UUID, 1)
+	eng.HandleBinPickedUp(evacOrder.UUID, 1, "")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -573,7 +576,7 @@ func TestHandleBinPickedUp_NoOpForNonChangeoverOrder(t *testing.T) {
 		_ = db.AckOutbox(m.ID)
 	}
 
-	eng.HandleBinPickedUp(o.UUID, 1)
+	eng.HandleBinPickedUp(o.UUID, 1, "")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 0 {
@@ -608,7 +611,7 @@ func TestHandleBinPickedUp_DoesNotReleaseTerminalSupply(t *testing.T) {
 		_ = db.AckOutbox(m.ID)
 	}
 
-	eng.HandleBinPickedUp(evacOrder.UUID, 1)
+	eng.HandleBinPickedUp(evacOrder.UUID, 1, "")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 0 {

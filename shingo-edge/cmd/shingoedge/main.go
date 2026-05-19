@@ -268,7 +268,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	router.RegisterSubject(subjectRouter, protocol.SubjectBinPickedUp, func(_ *protocol.Envelope, bp *protocol.BinPickedUp) {
 		log.Printf("edge_handler: bin_picked_up: order=%s bin=%d at=%s",
 			bp.OrderUUID, bp.BinID, bp.Location)
-		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID)
+		eng.HandleBinPickedUp(bp.OrderUUID, bp.BinID, bp.Location)
 	})
 	// SubjectCountGroupCommand may be skipped above when cgHandler is nil
 	// (countgroup is an optional feature). The boot-time coverage assertion
