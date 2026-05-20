@@ -349,6 +349,16 @@ elif [ "$MODE" = "MIGRATION" ] && [ -z "$LEGACY_DB" ]; then
     echo "==> No legacy DB file on disk; skipping DB migration (config-only migration)"
 fi
 
+# Heal ownership on any existing DB files. Earlier versions of
+# db-migration.sh left these root-owned after migration, which made the
+# service unable to write the DB (SQLITE_READONLY). Re-running install on an
+# affected plant now repairs it.
+for f in /var/lib/shingo-edge/shingoedge.db \
+         /var/lib/shingo-edge/shingoedge.db-wal \
+         /var/lib/shingo-edge/shingoedge.db-shm; do
+    [ -e "$f" ] && chown shingo:shingo "$f"
+done
+
 # ----------------------------------------------------------------------
 # Install binary
 # ----------------------------------------------------------------------

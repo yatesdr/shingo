@@ -78,9 +78,12 @@ sudo chown shingo:shingo "$NEW_DIR"
 sudo chmod 755 "$NEW_DIR"
 
 echo "=== Step 6: Copy DB files ==="
-cp -v "$OLD_DB" "$NEW_DB"
-[ -f "${OLD_DB}-wal" ] && cp -v "${OLD_DB}-wal" "${NEW_DB}-wal"
-[ -f "${OLD_DB}-shm" ] && cp -v "${OLD_DB}-shm" "${NEW_DB}-shm"
+# Step 2 already ran wal_checkpoint(TRUNCATE), so the old -wal is empty and
+# -shm is regenerable. Only the .db itself carries data; copying the WAL
+# siblings would just create more root-owned files to chown.
+sudo cp -v "$OLD_DB" "$NEW_DB"
+sudo chown shingo:shingo "$NEW_DB"
+sudo chmod 644 "$NEW_DB"
 
 echo "=== Step 7: Integrity check new DB ==="
 NEW_INTEGRITY=$(sqlite3 "$NEW_DB" "PRAGMA integrity_check;")
