@@ -27,9 +27,15 @@ if [ ! -f "$OLD_DB" ]; then
 fi
 
 echo "=== Step 1: Confirm edge is stopped ==="
-if pgrep -f "shingoedge|go run.*shingoedge" > /dev/null; then
+# Match the compiled binary by exact process name, OR `go run` invocations
+# whose first non-flag argument resolves to .../cmd/shingoedge. Pattern is
+# deliberately narrow so this script's own cmdline (which contains the .db
+# path) doesn't false-match.
+if pgrep -x shingoedge > /dev/null 2>&1 \
+   || pgrep -f 'go run [^ ]*cmd/shingoedge' > /dev/null 2>&1; then
     echo "ERROR: edge process still running. Stop it before running this script."
-    pgrep -af "shingoedge|go run.*shingoedge"
+    pgrep -xa shingoedge || true
+    pgrep -fa 'go run [^ ]*cmd/shingoedge' || true
     exit 1
 fi
 
