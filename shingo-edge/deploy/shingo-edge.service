@@ -1,0 +1,24 @@
+[Unit]
+Description=ShinGo Edge
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shingo
+Group=shingo
+WorkingDirectory=/opt/shingo
+ExecStart=/opt/shingo/shingoedge --config /etc/shingo/shingoedge.yaml --log-debug
+Restart=always
+RestartSec=5s
+StartLimitBurst=10
+StartLimitIntervalSec=60s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shingo-edge
+MemoryMax=2G
+LogsDirectory=shingo-edge
+Environment=SHINGO_PANIC_LOG=/var/log/shingo-edge/last-panic.log
+
+[Install]
+WantedBy=multi-user.target

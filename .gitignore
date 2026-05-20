@@ -3,10 +3,9 @@
 *.dll
 *.so
 *.dylib
-# Built binaries (but not cmd/shingocore/ or cmd/shingoedge/ dirs)
-shingocore
-shingoedge
-!cmd/
+# Built binaries at the module roots (not the cmd/ source dirs)
+/shingo-edge/shingoedge
+/shingo-core/shingocore
 build/
 
 # Database files

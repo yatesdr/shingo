@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -181,6 +182,28 @@ func awaitShutdown(srv *http.Server, stopWeb func()) {
 }
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			stack := debug.Stack()
+			log.Printf("PANIC main: %v\n%s", r, stack)
+			// Persistent crash file (when SHINGO_PANIC_LOG is set by systemd unit)
+			if path := os.Getenv("SHINGO_PANIC_LOG"); path != "" {
+				if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+					fmt.Fprintf(f, "%s component=main panic: %v\n%s\n---\n",
+						time.Now().UTC().Format(time.RFC3339Nano),
+						r, stack)
+					f.Close()
+				}
+			}
+			os.Exit(1)
+		}
+	}()
+	// IMPORTANT: this recover only catches panics on the main goroutine
+	// — composition root, awaitShutdown, signal handling. Panics in
+	// other goroutines bypass this and are caught by the Go runtime +
+	// systemd supervisor + journald capture. SHINGO_PANIC_LOG path is
+	// set by the systemd unit.
+
 	// ── Flags & config ──────────────────────────────────────────────────
 	flags := parseFlags()
 
