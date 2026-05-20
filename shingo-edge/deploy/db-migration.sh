@@ -50,14 +50,25 @@ if [ "$INTEGRITY" != "ok" ]; then
 fi
 echo "old DB integrity: $INTEGRITY"
 
+# Count rows across every user table in the given DB. Output is sorted
+# "<table>|<count>" lines, suitable for diff'ing between old and new.
+snapshot_counts() {
+    local db="$1"
+    sqlite3 "$db" "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;" \
+    | while IFS= read -r tbl; do
+        [ -z "$tbl" ] && continue
+        local n
+        n=$(sqlite3 "$db" "SELECT count(*) FROM \"$tbl\";")
+        printf '%s|%s\n' "$tbl" "$n"
+    done
+}
+
 echo "=== Step 4: Snapshot row counts of old DB ==="
-sqlite3 "$OLD_DB" "
-SELECT 'orders', count(*) FROM orders
-UNION ALL SELECT 'outbox', count(*) FROM outbox
-UNION ALL SELECT 'bins', count(*) FROM bins
-UNION ALL SELECT 'process_nodes', count(*) FROM process_nodes
-UNION ALL SELECT 'payload_catalog', count(*) FROM payload_catalog;
-" > "$COUNTS_FILE"
+snapshot_counts "$OLD_DB" > "$COUNTS_FILE"
+if [ ! -s "$COUNTS_FILE" ]; then
+    echo "ERROR: old DB has no user tables — refusing to migrate an empty DB"
+    exit 1
+fi
 echo "row counts snapshot saved to $COUNTS_FILE:"
 cat "$COUNTS_FILE"
 
@@ -80,21 +91,17 @@ fi
 echo "new DB integrity: $NEW_INTEGRITY"
 
 echo "=== Step 8: Verify row counts match ==="
-sqlite3 "$NEW_DB" "
-SELECT 'orders', count(*) FROM orders
-UNION ALL SELECT 'outbox', count(*) FROM outbox
-UNION ALL SELECT 'bins', count(*) FROM bins
-UNION ALL SELECT 'process_nodes', count(*) FROM process_nodes
-UNION ALL SELECT 'payload_catalog', count(*) FROM payload_catalog;
-" > "$NEW_COUNTS_FILE"
+snapshot_counts "$NEW_DB" > "$NEW_COUNTS_FILE"
 if diff -q "$COUNTS_FILE" "$NEW_COUNTS_FILE" > /dev/null; then
-    echo "Row counts match. Migration verified."
+    echo "Row counts match across $(wc -l < "$COUNTS_FILE") tables. Migration verified."
 else
     echo "ERROR: row counts differ between old and new DB."
     echo "--- old ---"
     cat "$COUNTS_FILE"
     echo "--- new ---"
     cat "$NEW_COUNTS_FILE"
+    echo "--- diff ---"
+    diff "$COUNTS_FILE" "$NEW_COUNTS_FILE" || true
     exit 1
 fi
 
