@@ -76,6 +76,12 @@ func (db *DB) migrateAddBaselineColumns() error {
 		{"cms_transactions", "payload_code", `ALTER TABLE cms_transactions ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
 		{"demand_registry", "payload_code", `ALTER TABLE demand_registry ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
 		{"lineside_buckets", "payload_code", `ALTER TABLE lineside_buckets ADD COLUMN IF NOT EXISTS payload_code TEXT NOT NULL DEFAULT ''`},
+		// v21 adds core_node_name to lineside_buckets and drops node_id,
+		// but the baseline DDL's CREATE INDEX idx_lineside_buckets_node_style
+		// references core_node_name and runs ahead of versioned migrations.
+		// Pre-baseline-add unblocks schema.Apply on plant DBs that still
+		// carry the pre-v21 shape (Springfield, May 2026).
+		{"lineside_buckets", "core_node_name", `ALTER TABLE lineside_buckets ADD COLUMN IF NOT EXISTS core_node_name TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, a := range adds {
 		if !schema.TableExists(db.DB, a.table) {
