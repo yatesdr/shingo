@@ -379,6 +379,25 @@ done
 # ----------------------------------------------------------------------
 # Install binary
 # ----------------------------------------------------------------------
+
+# One-slot rollback: save the live binary as shingoedge.previous before
+# overwriting. Operator rollback recipe:
+#   sudo systemctl stop shingo-edge
+#   sudo mv /opt/shingo/shingoedge.previous /opt/shingo/shingoedge
+#   sudo systemctl start shingo-edge
+# .previous always reflects the binary that was running just before this
+# install — overwritten on every successful run, so a second install
+# replaces the snapshot. For multi-version recovery use the
+# timestamped /tmp/shingo-pre-install-*.tar.gz (config + DB only) plus
+# git checkout + reinstall.
+if [ -f /opt/shingo/shingoedge ]; then
+    if cp -p /opt/shingo/shingoedge /opt/shingo/shingoedge.previous; then
+        echo "==> Saved previous binary to /opt/shingo/shingoedge.previous"
+    else
+        echo "    WARNING: failed to snapshot previous binary; install will continue"
+    fi
+fi
+
 echo "==> Installing binary to /opt/shingo/shingoedge..."
 mv /tmp/shingoedge /opt/shingo/shingoedge
 chown shingo:shingo /opt/shingo/shingoedge

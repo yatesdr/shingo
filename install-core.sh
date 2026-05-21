@@ -321,6 +321,25 @@ fi
 # ----------------------------------------------------------------------
 # Install binary
 # ----------------------------------------------------------------------
+
+# One-slot rollback: save the live binary as shingocore.previous before
+# overwriting. Operator rollback recipe:
+#   sudo systemctl stop shingo-core
+#   sudo mv /opt/shingo/shingocore.previous /opt/shingo/shingocore
+#   sudo systemctl start shingo-core
+# .previous always reflects the binary that was running just before this
+# install — overwritten on every successful run, so a second install
+# replaces the snapshot. For multi-version recovery use the
+# timestamped /tmp/shingo-pre-install-*.tar.gz (config + DB only) plus
+# git checkout + reinstall.
+if [ -f /opt/shingo/shingocore ]; then
+    if cp -p /opt/shingo/shingocore /opt/shingo/shingocore.previous; then
+        echo "==> Saved previous binary to /opt/shingo/shingocore.previous"
+    else
+        echo "    WARNING: failed to snapshot previous binary; install will continue"
+    fi
+fi
+
 echo "==> Installing binary to /opt/shingo/shingocore..."
 mv /tmp/shingocore /opt/shingo/shingocore
 chown shingo:shingo /opt/shingo/shingocore
