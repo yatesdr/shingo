@@ -77,16 +77,23 @@ type binDeltaEntry struct {
 // set). Empty on the wire = "unknown" — Core's UPSERT preserves the
 // existing payload_code.
 type bucketDeltaEntry struct {
-	mu          sync.Mutex
-	nodeID      int64
-	pairKey     string
-	styleID     int64
-	partNumber  string
-	payloadCode string
-	delta       int
-	reason      protocol.LinesideBucketDeltaReason
-	windowStart time.Time
-	windowEnd   time.Time
+	mu sync.Mutex
+	// nodeID is Edge's local process_nodes.id — kept so flush-time
+	// logging and the louder drain diagnostic still work, but NOT on
+	// the wire post-Round-3-Obs-8.
+	nodeID int64
+	// coreNodeName is the cross-system identifier Core resolves to
+	// nodes.id at apply time. Populated by the engine when recording
+	// the delta; Edge no longer leaks its local int64 namespace.
+	coreNodeName string
+	pairKey      string
+	styleID      int64
+	partNumber   string
+	payloadCode  string
+	delta        int
+	reason       protocol.LinesideBucketDeltaReason
+	windowStart  time.Time
+	windowEnd    time.Time
 }
 
 // accumulator accumulates BinUOPDelta and LinesideBucketDelta count
@@ -217,7 +224,12 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 // "manual swap nodes never emit bucket deltas" because they have no
 // PLC and their count-change events are operator actions on the bin,
 // not the bucket.
-func (r *accumulator) recordBucket(nodeID int64, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
+//
+// coreNodeName is the cross-system identifier that goes on the wire
+// (Round-3 Obs 8). Edge's local nodeID stays only for the in-memory
+// dedup key and flush-time logging — Core no longer sees Edge's
+// process_nodes.id namespace.
+func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
 	if delta == 0 {
 		return
 	}
@@ -228,12 +240,13 @@ func (r *accumulator) recordBucket(nodeID int64, pairKey string, styleID int64, 
 	now := r.clock()
 
 	v, _ := r.buckets.LoadOrStore(key, &bucketDeltaEntry{
-		nodeID:      nodeID,
-		pairKey:     pairKey,
-		styleID:     styleID,
-		partNumber:  partNumber,
-		payloadCode: payloadCode,
-		windowStart: now,
+		nodeID:       nodeID,
+		coreNodeName: coreNodeName,
+		pairKey:      pairKey,
+		styleID:      styleID,
+		partNumber:   partNumber,
+		payloadCode:  payloadCode,
+		windowStart:  now,
 	})
 	e := v.(*bucketDeltaEntry)
 
@@ -381,6 +394,7 @@ func (r *accumulator) flushBuckets() {
 			return true
 		}
 		sNodeID := e.nodeID
+		sCoreNodeName := e.coreNodeName
 		sPairKey := e.pairKey
 		sStyleID := e.styleID
 		sPartNumber := e.partNumber
@@ -394,6 +408,27 @@ func (r *accumulator) flushBuckets() {
 		e.windowEnd = time.Time{}
 		e.mu.Unlock()
 
+		// Defensive: if the entry pre-dates the Round-3 Obs 8 change
+		// and was buffered without coreNodeName, resolve from the DB.
+		// In normal operation recordBucket populates this at write
+		// time so we never hit the lookup.
+		if sCoreNodeName == "" {
+			if node, lookupErr := r.db.GetProcessNode(sNodeID); lookupErr == nil && node != nil {
+				sCoreNodeName = node.CoreNodeName
+			}
+		}
+		if sCoreNodeName == "" {
+			// Drop the delta loudly rather than emit a wire envelope
+			// with an empty CoreNodeName — Core's applier validates
+			// the field at insert time and would drop the delta
+			// anyway. Logging here surfaces the problem at the
+			// source.
+			log.Printf("ERROR: uop accumulator: drop bucket delta key=%s — no core_node_name resolvable for nodeID=%d (process_node row missing?)",
+				k, sNodeID)
+			r.flushFailures.Add(1)
+			return true
+		}
+
 		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBucket, k)
 		if err != nil {
 			log.Printf("uop accumulator: allocate bucket seq key=%s: %v", k, err)
@@ -406,17 +441,17 @@ func (r *accumulator) flushBuckets() {
 			protocol.Address{Role: protocol.RoleEdge, Station: r.stationID},
 			protocol.Address{Role: protocol.RoleCore},
 			&protocol.LinesideBucketDelta{
-				Station:     r.stationID,
-				NodeID:      sNodeID,
-				PairKey:     sPairKey,
-				StyleID:     sStyleID,
-				PartNumber:  sPartNumber,
-				PayloadCode: sPayloadCode,
-				Delta:       sDelta,
-				Reason:      sReason,
-				SequenceID:  seq,
-				WindowStart: sWindowStart,
-				WindowEnd:   sWindowEnd,
+				Station:      r.stationID,
+				CoreNodeName: sCoreNodeName,
+				PairKey:      sPairKey,
+				StyleID:      sStyleID,
+				PartNumber:   sPartNumber,
+				PayloadCode:  sPayloadCode,
+				Delta:        sDelta,
+				Reason:       sReason,
+				SequenceID:   seq,
+				WindowStart:  sWindowStart,
+				WindowEnd:    sWindowEnd,
 			},
 		)
 		if encErr != nil {

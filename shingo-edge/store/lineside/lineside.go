@@ -237,29 +237,56 @@ func DeactivateOtherStyles(db Execer, nodeID, keepStyleID int64) error {
 }
 
 // Drain decrements the active bucket for (node, style, part) by up to
-// delta. Returns the amount actually drained from the bucket; the
-// caller passes the remainder (delta - drained) to the node-level
-// RemainingUOP decrement. Missing active bucket returns 0 with no
-// error — the counter tick simply flows through to the node counter.
+// delta. Returns the amount actually drained from the bucket and the
+// matched bucket's style_id so the caller can attribute the resulting
+// LinesideBucketDelta to the bucket's actual style (Core's dedup
+// scope_key keys off the style id). The caller passes the remainder
+// (delta - drained) to the node-level RemainingUOP decrement. Missing
+// active bucket returns (0, 0, nil) — the counter tick simply flows
+// through to the node counter.
+//
+// styleID is intentionally NOT in the WHERE clause. A lineside bucket
+// is a physical pile of parts at a node; the style_id is metadata of
+// which claim was in scope at capture time, not part of the bucket's
+// identity. During a cutover the bucket captured under style A must
+// keep draining even after the process flips to style B — the
+// operator already pulled the parts before the swap. Pre-fix Round-3
+// (plant 2026-05-19) the style_id gate left the bucket stuck while
+// consume ticks continued, mis-attributing the drain to the bin
+// counter and producing a chronic over-decrement.
+//
+// DeactivateOtherLinesideStyles (uop/capture.go:92) plus the schema-
+// enforced (node_id, part_number) WHERE state='active' unique index
+// (sqlite_ddl.go) keep "at most one active bucket per (node, part)"
+// — so the read is unambiguous without filtering on style.
+//
+// ORDER BY updated_at DESC LIMIT 1 is defense-in-depth: if a partial
+// transaction temporarily leaves two active rows for the same
+// (node, part) before DeactivateOtherStyles deactivates the old one,
+// pick the most-recently-touched one rather than a SQLite-undefined
+// "first match." Practically a no-op under the schema invariant.
 //
 // When the bucket hits zero it is deleted so zero-qty rows don't
 // linger in the UI.
-func Drain(db Execer, nodeID, styleID int64, partNumber string, delta int) (int, error) {
+func Drain(db Execer, nodeID int64, partNumber string, delta int) (drained int, matchedStyleID int64, err error) {
 	if delta <= 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 
-	// Read current qty.
+	// Read current qty + matched style_id.
 	var id int64
 	var qty int
-	row := db.QueryRow(`SELECT id, qty FROM node_lineside_bucket
-		WHERE node_id=? AND style_id=? AND part_number=? AND state=?`,
-		nodeID, styleID, partNumber, StateActive)
-	if err := row.Scan(&id, &qty); err != nil {
+	var styleID int64
+	row := db.QueryRow(`SELECT id, style_id, qty FROM node_lineside_bucket
+		WHERE node_id=? AND part_number=? AND state=?
+		ORDER BY updated_at DESC
+		LIMIT 1`,
+		nodeID, partNumber, StateActive)
+	if err := row.Scan(&id, &styleID, &qty); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, nil
+			return 0, 0, nil
 		}
-		return 0, fmt.Errorf("lineside: drain read: %w", err)
+		return 0, 0, fmt.Errorf("lineside: drain read: %w", err)
 	}
 
 	take := delta
@@ -269,15 +296,15 @@ func Drain(db Execer, nodeID, styleID int64, partNumber string, delta int) (int,
 	newQty := qty - take
 	if newQty == 0 {
 		if _, err := db.Exec(`DELETE FROM node_lineside_bucket WHERE id=?`, id); err != nil {
-			return 0, fmt.Errorf("lineside: drain delete: %w", err)
+			return 0, 0, fmt.Errorf("lineside: drain delete: %w", err)
 		}
-		return take, nil
+		return take, styleID, nil
 	}
 	if _, err := db.Exec(`UPDATE node_lineside_bucket
 		SET qty=?, updated_at=datetime('now') WHERE id=?`, newQty, id); err != nil {
-		return 0, fmt.Errorf("lineside: drain update: %w", err)
+		return 0, 0, fmt.Errorf("lineside: drain update: %w", err)
 	}
-	return take, nil
+	return take, styleID, nil
 }
 
 // SetForReconcile overwrites the bucket qty for (node, pair, style,

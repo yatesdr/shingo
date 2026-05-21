@@ -230,6 +230,21 @@ func (db *DB) runVersionedMigrations() error {
 				return schema.ColumnExists(q, "lineside_buckets", "payload_code") &&
 					schema.ColumnExists(q, "demand_registry", "replenish_uop_threshold")
 			}},
+
+		// v21 (Round-3 Obs 8, 2026-05-21): replace lineside_buckets.node_id
+		// with core_node_name. The pre-fix BIGINT node_id mixed Edge's
+		// process_nodes.id with Core's nodes.id namespace, producing
+		// cross-plant attribution bugs (Springfield 6883 stuck-bucket,
+		// Hopkinsville Core-only orphan). The TRUNCATE that follows
+		// deploy (operator action — see Round-3 SME doc) is what
+		// clears the now-orphaned rows; this migration only adjusts
+		// the schema shape.
+		{21, "lineside_buckets node_id → core_node_name (Round-3 Obs 8)",
+			v21LinesideBucketsCoreNodeName,
+			func(q schema.Querier) bool {
+				return schema.ColumnExists(q, "lineside_buckets", "core_node_name") &&
+					!schema.ColumnExists(q, "lineside_buckets", "node_id")
+			}},
 	}
 
 	for _, m := range migrations {
@@ -420,6 +435,97 @@ func v20UOPThresholdReplenishment(tx *sql.Tx) error {
 	}
 	if _, err := tx.Exec(`ALTER TABLE demand_registry ADD COLUMN IF NOT EXISTS replenish_uop_threshold INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("add demand_registry.replenish_uop_threshold: %w", err)
+	}
+	return nil
+}
+
+// v21LinesideBucketsCoreNodeName rewrites lineside_buckets so the
+// node_id BIGINT column is replaced with core_node_name TEXT. Round-3
+// Obs 8 — the int64 namespace mix between Edge and Core was the
+// source of cross-plant attribution drift.
+//
+// The migration drops the old column, the unique constraint on
+// (station, node_id, ...), and the (node_id, style_id) index, then
+// adds the new column / constraint / index. Existing rows lose their
+// node attribution — that's intentional and aligned with the SME doc's
+// post-deploy TRUNCATE step: bad data from the pre-fix days is not
+// recoverable (we don't know which CoreNodeName the int64 was supposed
+// to mean), and the next capture/drain cycle from Edge re-populates
+// the table cleanly using the new wire shape. Operators run the
+// TRUNCATE explicitly after deploy; the migration is a pure schema
+// change.
+//
+// CASCADE is required on the UNIQUE drop because the auto-generated
+// constraint name embeds the column list; we drop it by introspecting
+// pg_constraint and using ALTER TABLE ... DROP CONSTRAINT.
+func v21LinesideBucketsCoreNodeName(tx *sql.Tx) error {
+	// 1. Drop the old UNIQUE constraint (it references node_id).
+	if _, err := tx.Exec(`
+		DO $$
+		DECLARE c RECORD;
+		BEGIN
+			FOR c IN
+				SELECT con.conname
+				FROM pg_constraint con
+				JOIN pg_class rel ON rel.oid = con.conrelid
+				WHERE rel.relname = 'lineside_buckets'
+				  AND con.contype = 'u'
+			LOOP
+				EXECUTE 'ALTER TABLE lineside_buckets DROP CONSTRAINT ' || quote_ident(c.conname);
+			END LOOP;
+		END $$`); err != nil {
+		return fmt.Errorf("drop lineside_buckets unique constraint: %w", err)
+	}
+
+	// 2. Drop the old idx_lineside_buckets_node_style (was on node_id, style_id).
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_lineside_buckets_node_style`); err != nil {
+		return fmt.Errorf("drop idx_lineside_buckets_node_style: %w", err)
+	}
+
+	// 3. Drop the old node_id column.
+	if _, err := tx.Exec(`ALTER TABLE lineside_buckets DROP COLUMN IF EXISTS node_id`); err != nil {
+		return fmt.Errorf("drop lineside_buckets.node_id: %w", err)
+	}
+
+	// 4. Add core_node_name. NOT NULL with a DEFAULT '' so existing
+	//    orphaned rows (about to be TRUNCATEd by the operator post-deploy)
+	//    don't break the column add. IF NOT EXISTS because schema.Apply
+	//    on a fresh DB created the new shape ahead of the migration
+	//    pipeline.
+	if _, err := tx.Exec(`ALTER TABLE lineside_buckets ADD COLUMN IF NOT EXISTS core_node_name TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add lineside_buckets.core_node_name: %w", err)
+	}
+
+	// 5. Recreate the unique constraint and the supporting index on
+	//    the new column. The constraint add is wrapped in a guard so a
+	//    fresh DB (where schema.Apply already installed the new shape's
+	//    UNIQUE) skips this branch — postgres has no "ADD CONSTRAINT
+	//    IF NOT EXISTS" syntax.
+	if _, err := tx.Exec(`DO $$
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint con
+				JOIN pg_class rel ON rel.oid = con.conrelid
+				WHERE rel.relname = 'lineside_buckets'
+				  AND con.contype = 'u'
+			) THEN
+				ALTER TABLE lineside_buckets ADD CONSTRAINT lineside_buckets_station_core_node_pair_style_part_key UNIQUE (station, core_node_name, pair_key, style_id, part_number);
+			END IF;
+		END $$`); err != nil {
+		return fmt.Errorf("add lineside_buckets unique constraint: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(core_node_name, style_id)`); err != nil {
+		return fmt.Errorf("create idx_lineside_buckets_node_style: %w", err)
+	}
+
+	// 6. Clear the bucket-scope inventory_delta_dedup rows. The pre-fix
+	//    scope_key was "<NodeID>|<PairKey>|<StyleID>|<PartNumber>";
+	//    post-fix it is "<CoreNodeName>|<PairKey>|<StyleID>|<PartNumber>".
+	//    Leaving the old keys behind risks an out-of-order replay
+	//    shadowing a new key whose last_seq is genuinely lower.
+	//    Idempotent: a fresh DB has no rows to delete.
+	if _, err := tx.Exec(`DELETE FROM inventory_delta_dedup WHERE scope_kind = 'bucket'`); err != nil {
+		return fmt.Errorf("clear bucket dedup rows: %w", err)
 	}
 	return nil
 }
@@ -825,7 +931,20 @@ func v17UOPBinAsTruth(tx *sql.Tx) error {
 	)`); err != nil {
 		return fmt.Errorf("create lineside_buckets: %w", err)
 	}
-	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(node_id, style_id)`); err != nil {
+	// Round-3 Obs 8 (v21) replaces node_id with core_node_name on this
+	// table. On a fresh DB, schema.Apply ran the new shape before the
+	// migration pipeline started, so this index target won't exist —
+	// only create the index when the legacy column is present. The
+	// new-shape equivalent index gets created by v21.
+	if _, err := tx.Exec(`DO $$
+		BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name = 'lineside_buckets' AND column_name = 'node_id'
+			) THEN
+				CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(node_id, style_id);
+			END IF;
+		END $$`); err != nil {
 		return fmt.Errorf("index lineside_buckets(node_id, style_id): %w", err)
 	}
 

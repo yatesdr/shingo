@@ -96,10 +96,10 @@ func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
 	db := newReporterTestDB(t)
 	r := New(db, "SMN_003", nil, nil, nil)
 
-	r.RecordBucket(5, "L1|U1", 100, "PART-A", "WIDGET-A", 47, protocol.ReasonCaptureFill)
+	r.RecordBucket(5, "CORE-LOADER-1", "L1|U1", 100, "PART-A", "WIDGET-A", 47, protocol.ReasonCaptureFill)
 	r.Flush()
-	r.RecordBucket(5, "L1|U1", 100, "PART-A", "WIDGET-A", -3, protocol.ReasonConsumeDrain)
-	r.RecordBucket(5, "L1|U1", 100, "PART-A", "WIDGET-A", -2, protocol.ReasonConsumeDrain)
+	r.RecordBucket(5, "CORE-LOADER-1", "L1|U1", 100, "PART-A", "WIDGET-A", -3, protocol.ReasonConsumeDrain)
+	r.RecordBucket(5, "CORE-LOADER-1", "L1|U1", 100, "PART-A", "WIDGET-A", -2, protocol.ReasonConsumeDrain)
 	r.Flush()
 
 	deltas := pendingOutboxByType[protocol.LinesideBucketDelta](t, db, protocol.SubjectLinesideBucketDelta)
@@ -119,6 +119,11 @@ func TestInventoryDeltaReporter_BucketAccumulation(t *testing.T) {
 	}
 	if deltas[0].PartNumber != "PART-A" {
 		t.Errorf("PartNumber = %q, want PART-A", deltas[0].PartNumber)
+	}
+	// Round-3 Obs 8: wire envelope must carry the cross-system identifier,
+	// not Edge's local process_nodes.id.
+	if deltas[0].CoreNodeName != "CORE-LOADER-1" {
+		t.Errorf("CoreNodeName = %q, want CORE-LOADER-1 (Obs 8 — node ID namespace fix)", deltas[0].CoreNodeName)
 	}
 }
 

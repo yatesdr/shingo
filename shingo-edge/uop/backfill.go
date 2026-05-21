@@ -71,7 +71,7 @@ func (m *Mutator) Backfill(force bool) (int, error) {
 			// payload_code; going-forward capture_fill events from
 			// capture.go carry the resolved code from the order
 			// context, so the row self-heals on the first real delta.
-			m.acc.recordBucket(b.NodeID, b.PairKey, b.StyleID, b.PartNumber, "",
+			m.acc.recordBucket(b.NodeID, n.CoreNodeName, b.PairKey, b.StyleID, b.PartNumber, "",
 				b.Qty, protocol.ReasonCaptureFill)
 			emitted++
 		}

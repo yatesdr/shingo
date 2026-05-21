@@ -312,9 +312,14 @@ func (d *Dispatcher) HandleOrderStorageWaybill(env *protocol.Envelope, p *protoc
 		d.failOrder(order, env, planErr.Code, planErr.Detail)
 		return
 	}
-	if result != nil && !result.Handled {
-		d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
+	if result == nil || result.Handled {
+		return
 	}
+	if result.Queued {
+		d.queueOrder(order, env, "")
+		return
+	}
+	d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
 }
 
 // HandleOrderIngest processes an ingest request: sets manifest on a bin and dispatches storage.
@@ -334,9 +339,14 @@ func (d *Dispatcher) HandleOrderIngest(env *protocol.Envelope, p *protocol.Order
 		d.failOrder(order, env, planErr.Code, planErr.Detail)
 		return
 	}
-	if result != nil && !result.Handled {
-		d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
+	if result == nil || result.Handled {
+		return
 	}
+	if result.Queued {
+		d.queueOrder(order, env, payloadCode)
+		return
+	}
+	d.dispatchToFleet(order, env, result.SourceNode, result.DestNode)
 }
 
 func (d *Dispatcher) failOrder(order *orders.Order, env *protocol.Envelope, errorCode, detail string) {

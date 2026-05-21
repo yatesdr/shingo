@@ -30,19 +30,19 @@ func makeBinDelta(binID int64, payloadCode string, delta int, seq int64, reason 
 	}
 }
 
-func makeBucketDelta(nodeID int64, pairKey string, styleID int64, partNumber string, delta int, seq int64, reason protocol.LinesideBucketDeltaReason) *protocol.LinesideBucketDelta {
+func makeBucketDelta(coreNodeName, pairKey string, styleID int64, partNumber string, delta int, seq int64, reason protocol.LinesideBucketDeltaReason) *protocol.LinesideBucketDelta {
 	now := time.Now().UTC()
 	return &protocol.LinesideBucketDelta{
-		Station:     "ALN_001",
-		NodeID:      nodeID,
-		PairKey:     pairKey,
-		StyleID:     styleID,
-		PartNumber:  partNumber,
-		Delta:       delta,
-		Reason:      reason,
-		SequenceID:  seq,
-		WindowStart: now.Add(-5 * time.Second),
-		WindowEnd:   now,
+		Station:      "ALN_001",
+		CoreNodeName: coreNodeName,
+		PairKey:      pairKey,
+		StyleID:      styleID,
+		PartNumber:   partNumber,
+		Delta:        delta,
+		Reason:       reason,
+		SequenceID:   seq,
+		WindowStart:  now.Add(-5 * time.Second),
+		WindowEnd:    now,
 	}
 }
 
@@ -171,14 +171,19 @@ func TestInventoryDelta_BinUOPDelta_RejectsUnknownBin(t *testing.T) {
 func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_ = testdb.SetupStandardData(t, db)
+	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(5, "L1|U1", 100, "PART-A", 47, 1, protocol.ReasonCaptureFill)), "capture_fill")
+	// Round-3 Obs 8: applier validates core_node_name resolves to a
+	// Core node row, so the fixture's storage node is what the delta
+	// must reference. SetupStandardData creates STORAGE-A1.
+	nodeName := sd.StorageNode.Name
+
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", 47, 1, protocol.ReasonCaptureFill)), "capture_fill")
 
 	var qty int
 	if err := db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE station='ALN_001' AND node_id=5 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`).
+		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`, nodeName).
 		Scan(&qty); err != nil {
 		t.Fatalf("read bucket after fill: %v", err)
 	}
@@ -186,11 +191,11 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 		t.Errorf("bucket qty after fill = %d, want 47", qty)
 	}
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(5, "L1|U1", 100, "PART-A", -47, 2, protocol.ReasonConsumeDrain)), "consume_drain to zero")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L1|U1", 100, "PART-A", -47, 2, protocol.ReasonConsumeDrain)), "consume_drain to zero")
 
 	var rowCount int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM lineside_buckets
-		WHERE station='ALN_001' AND node_id=5 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`).
+		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=100 AND part_number='PART-A'`, nodeName).
 		Scan(&rowCount)
 	if rowCount != 0 {
 		t.Errorf("bucket row count at zero = %d, want 0 (Option C — empty buckets are deleted)", rowCount)
@@ -204,19 +209,20 @@ func TestInventoryDelta_LinesideBucketDelta_UpsertsAndDeletesAtZero(t *testing.T
 func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_ = testdb.SetupStandardData(t, db)
+	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	nodeName := sd.LineNode.Name
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(7, "L2|U2", 200, "PART-B", 5, 1, protocol.ReasonCaptureFill)), "capture_fill")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L2|U2", 200, "PART-B", 5, 1, protocol.ReasonCaptureFill)), "capture_fill")
 	// Try to drain 10 from a bucket that holds 5.
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(7, "L2|U2", 200, "PART-B", -10, 2, protocol.ReasonConsumeDrain)); err == nil {
+	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L2|U2", 200, "PART-B", -10, 2, protocol.ReasonConsumeDrain)); err == nil {
 		t.Fatal("expected CHECK violation on underflow, got nil")
 	}
 
 	// Bucket should still hold 5 — the rejected delta must not have applied.
 	var qty int
 	_ = db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE station='ALN_001' AND node_id=7 AND pair_key='L2|U2' AND style_id=200 AND part_number='PART-B'`).
+		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L2|U2' AND style_id=200 AND part_number='PART-B'`, nodeName).
 		Scan(&qty)
 	if qty != 5 {
 		t.Errorf("bucket qty after rejected drain = %d, want 5", qty)
@@ -228,10 +234,11 @@ func TestInventoryDelta_LinesideBucketDelta_RejectsUnderflow(t *testing.T) {
 func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_ = testdb.SetupStandardData(t, db)
+	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	nodeName := sd.StorageNode.Name
 
-	d := makeBucketDelta(8, "L1|U1", 300, "PART-C", 10, 1, protocol.ReasonCaptureFill)
+	d := makeBucketDelta(nodeName, "L1|U1", 300, "PART-C", 10, 1, protocol.ReasonCaptureFill)
 	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(d), "first apply")
 	if err := svc.ApplyLinesideBucketDelta(d); !errors.Is(err, uop.ErrInventoryDeltaSkipped) {
 		t.Errorf("replay error = %v, want uop.ErrInventoryDeltaSkipped", err)
@@ -239,7 +246,7 @@ func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 
 	var qty int
 	_ = db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE station='ALN_001' AND node_id=8 AND pair_key='L1|U1' AND style_id=300 AND part_number='PART-C'`).
+		WHERE station='ALN_001' AND core_node_name=$1 AND pair_key='L1|U1' AND style_id=300 AND part_number='PART-C'`, nodeName).
 		Scan(&qty)
 	if qty != 10 {
 		t.Errorf("bucket qty after replay = %d, want 10 (delta applied once)", qty)
@@ -253,20 +260,21 @@ func TestInventoryDelta_LinesideBucketDelta_DedupesReplay(t *testing.T) {
 func TestInventoryDelta_BucketScopeKeysIndependent(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_ = testdb.SetupStandardData(t, db)
+	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
+	nodeName := sd.LineNode.Name
 
-	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(9, "L1|U1", 400, "PART-D", 5, 1, protocol.ReasonCaptureFill)), "part D apply")
+	testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L1|U1", 400, "PART-D", 5, 1, protocol.ReasonCaptureFill)), "part D apply")
 	// Same SequenceID, different part — this is a separate scope.
-	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(9, "L1|U1", 400, "PART-E", 7, 1, protocol.ReasonCaptureFill)); err != nil {
+	if err := svc.ApplyLinesideBucketDelta(makeBucketDelta(nodeName, "L1|U1", 400, "PART-E", 7, 1, protocol.ReasonCaptureFill)); err != nil {
 		t.Errorf("part E apply (same seq, different scope): %v", err)
 	}
 
 	var d, e int
 	_ = db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE node_id=9 AND part_number='PART-D'`).Scan(&d)
+		WHERE core_node_name=$1 AND part_number='PART-D'`, nodeName).Scan(&d)
 	_ = db.QueryRow(`SELECT qty FROM lineside_buckets
-		WHERE node_id=9 AND part_number='PART-E'`).Scan(&e)
+		WHERE core_node_name=$1 AND part_number='PART-E'`, nodeName).Scan(&e)
 	if d != 5 {
 		t.Errorf("PART-D qty = %d, want 5", d)
 	}
@@ -311,17 +319,18 @@ func TestInventoryDelta_ListBinUOPForNodes_ReturnsAuthoritative(t *testing.T) {
 func TestInventoryDelta_ListBucketsForStation_FiltersByStation(t *testing.T) {
 	t.Parallel()
 	db := testDB(t)
-	_ = testdb.SetupStandardData(t, db)
+	sd := testdb.SetupStandardData(t, db)
 	svc := uop.NewInventoryDeltaService(db, service.NewBinManifestService(db))
 
 	apply := func(d *protocol.LinesideBucketDelta) {
 		testutil.MustNoErr(t, svc.ApplyLinesideBucketDelta(d), "apply")
 	}
-	// Two stations, two buckets each.
-	stationA := makeBucketDelta(11, "L1|U1", 100, "PART-A", 5, 1, protocol.ReasonCaptureFill)
+	// Two stations, two buckets each. Both attribute to nodes the
+	// applier can resolve via GetNodeByName.
+	stationA := makeBucketDelta(sd.StorageNode.Name, "L1|U1", 100, "PART-A", 5, 1, protocol.ReasonCaptureFill)
 	stationA.Station = "STATION-A"
 	apply(stationA)
-	stationB := makeBucketDelta(12, "L1|U1", 100, "PART-B", 7, 1, protocol.ReasonCaptureFill)
+	stationB := makeBucketDelta(sd.LineNode.Name, "L1|U1", 100, "PART-B", 7, 1, protocol.ReasonCaptureFill)
 	stationB.Station = "STATION-B"
 	apply(stationB)
 

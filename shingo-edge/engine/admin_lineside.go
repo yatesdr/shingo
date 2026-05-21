@@ -40,8 +40,16 @@ func (e *Engine) AdminAdjustLinesideBucket(bucketID int64, targetQty int, clearB
 	}
 
 	if e.inventoryDelta != nil {
+		// Resolve core_node_name for the wire envelope (Round-3 Obs 8).
+		// The bucket row doesn't carry it, so look up from the process
+		// node. Missing process_node is fatal for the admin path —
+		// we'd send a delta Core would drop on validation anyway.
+		node, err := e.db.GetProcessNode(bucket.NodeID)
+		if err != nil || node == nil {
+			return fmt.Errorf("resolve process_node %d for bucket %d: %w", bucket.NodeID, bucketID, err)
+		}
 		if err := e.inventoryDelta.AdjustBucket(
-			bucket.NodeID, bucket.PairKey, bucket.StyleID, bucket.PartNumber,
+			bucket.NodeID, node.CoreNodeName, bucket.PairKey, bucket.StyleID, bucket.PartNumber,
 			bucket.Qty, targetQty,
 			protocol.ReasonOperatorCorrectionBucket,
 		); err != nil {

@@ -46,14 +46,30 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 
 	payloadCode := p.PayloadCode
 
-	// Resolve steps up-front — validation must fail synchronously so the
-	// edge gets an immediate error rather than a queued order that will
-	// fail later. Storing resolved steps on the order also means the
-	// scanner replay doesn't have to re-resolve (NGRP children may shift
-	// between intake and dispatch).
-	resolvedSteps, err := d.resolveComplexSteps(p.Steps, payloadCode, env, p.OrderUUID)
+	// Resolve steps up-front so the scanner doesn't have to re-resolve
+	// on the happy path (NGRP children may shift between intake and
+	// dispatch — locking the choice at intake is the original
+	// optimization).
+	//
+	// Round-3 follow-up: capacity-shaped resolution failures
+	// ("no available slot in node group X", "no bin of requested
+	// payload in node group X") used to terminal-reject the order at
+	// intake — Edge got an error, no Core-side row created, no retry.
+	// Now they create the order as queued with the resolver message as
+	// queue_reason, and DispatchPreparedComplex re-resolves on each
+	// scanner tick. Structural / unknown-action / unknown-node errors
+	// still reject synchronously — those aren't fixable by waiting.
+	resolvedSteps, err := d.resolveComplexSteps(p.Steps, payloadCode)
+	var queueReason string
 	if err != nil {
-		return // error already sent to edge
+		if !isCapacityResolutionError(err) {
+			d.sendError(env, p.OrderUUID, "resolution_failed", err.Error())
+			return
+		}
+		// Capacity-shaped — preserve the original step shape (NGRP names
+		// intact) so the replay path has the input it needs to re-attempt.
+		resolvedSteps = stepsAsResolved(p.Steps)
+		queueReason = err.Error()
 	}
 
 	stepsJSON, err := json.Marshal(resolvedSteps)
@@ -76,12 +92,22 @@ func (d *Dispatcher) HandleComplexOrderRequest(env *protocol.Envelope, p *protoc
 		DeliveryNode: deliveryNode,
 		ProcessNode:  p.ProcessNode,
 		StepsJSON:    string(stepsJSON),
+		QueueReason:  queueReason,
 	}
 
 	if err := d.db.CreateOrder(order); err != nil {
 		log.Printf("dispatch: create complex order: %v", err)
 		d.sendError(env, p.OrderUUID, "internal_error", err.Error())
 		return
+	}
+	if queueReason != "" {
+		// CreateOrder may not persist QueueReason depending on the store
+		// helper's INSERT column list — set it explicitly so the field is
+		// visible to the scanner's queue-reason check and to the HMI.
+		if err := d.db.SetOrderQueueReason(order.ID, queueReason); err != nil {
+			log.Printf("dispatch: set initial queue_reason for complex order %d: %v", order.ID, err)
+		}
+		log.Printf("dispatch: complex order %d queued at intake — %s", order.ID, queueReason)
 	}
 	d.emitter.EmitOrderReceived(order.ID, order.EdgeUUID, stationID, OrderTypeComplex, payloadCode, deliveryNode)
 
@@ -124,6 +150,59 @@ func (d *Dispatcher) DispatchPreparedComplex(order *orders.Order) error {
 		d.failOrderInternal(order, "invalid_steps", fmt.Sprintf("parse stored steps: %v", err))
 		return err
 	}
+
+	// Round-3 follow-up: re-resolve any step that still references an
+	// NGRP. This happens on the deferred path — intake queued the order
+	// because the NGRP was saturated; the scanner replays after slot
+	// vacancy events, and we attempt resolution again here. On capacity
+	// failure, set queue_reason to the current resolver message and
+	// stay queued (don't fail). On other resolver errors, fail with
+	// invalid_steps. On success, persist the locked-in concrete-child
+	// names so subsequent ticks don't redo the work.
+	newSteps, changed, rerr := d.reResolveComplexSteps(resolvedSteps, order.PayloadCode)
+	if rerr != nil {
+		if isCapacityResolutionError(rerr) {
+			reason := rerr.Error()
+			if order.QueueReason != reason {
+				if serr := d.db.SetOrderQueueReason(order.ID, reason); serr != nil {
+					log.Printf("dispatch: set queue_reason for complex order %d: %v", order.ID, serr)
+				}
+			}
+			d.dbg("complex: order %d still capacity-blocked at NGRP resolution: %s", order.ID, reason)
+			return rerr
+		}
+		d.failOrderInternal(order, "invalid_steps", rerr.Error())
+		return rerr
+	}
+	if changed {
+		stepsJSON, mErr := json.Marshal(newSteps)
+		if mErr == nil {
+			if uErr := d.db.UpdateOrderStepsJSON(order.ID, string(stepsJSON)); uErr != nil {
+				log.Printf("dispatch: update steps_json for complex order %d: %v", order.ID, uErr)
+			} else {
+				order.StepsJSON = string(stepsJSON)
+			}
+		}
+		// Endpoints may have shifted (NGRP→child). Re-extract and persist
+		// so handler-side lookups (process_node lookup, source/delivery
+		// rendering) reflect the resolved choice.
+		newSource, newDelivery := extractEndpoints(newSteps)
+		if newSource != order.SourceNode {
+			if err := d.db.UpdateOrderSourceNode(order.ID, newSource); err != nil {
+				log.Printf("dispatch: update source_node for complex order %d: %v", order.ID, err)
+			} else {
+				order.SourceNode = newSource
+			}
+		}
+		if newDelivery != order.DeliveryNode {
+			if err := d.db.UpdateOrderDeliveryNode(order.ID, newDelivery); err != nil {
+				log.Printf("dispatch: update delivery_node for complex order %d: %v", order.ID, err)
+			} else {
+				order.DeliveryNode = newDelivery
+			}
+		}
+	}
+	resolvedSteps = newSteps
 
 	// Claim bins at pickup nodes. RemainingUOP is intentionally nil here
 	// — Edge's `CreateComplexOrder` doesn't thread it through at intake,

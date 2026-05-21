@@ -199,8 +199,8 @@ func TestApiInventoryInvariant_ReflectsBinAndBucketSums(t *testing.T) {
 		t.Fatalf("seed bin B: %v", err)
 	}
 	// One bucket of 11.
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, node_id, pair_key, style_id, part_number, qty)
-		VALUES ('STATION-INV', $1, '', 0, 'PART-INV', 11)`, sd.StorageNode.ID); err != nil {
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty)
+		VALUES ('STATION-INV', $1, '', 0, 'PART-INV', 11)`, sd.StorageNode.Name); err != nil {
 		t.Fatalf("seed bucket: %v", err)
 	}
 

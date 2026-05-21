@@ -104,9 +104,10 @@ func (s *fakeDeltaSink) RecordBin(binID int64, payloadCode string, delta int, re
 	s.mu.Unlock()
 }
 
-func (s *fakeDeltaSink) RecordBucket(nodeID int64, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
+func (s *fakeDeltaSink) RecordBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
 	s.mu.Lock()
 	s.bucketCalls = append(s.bucketCalls, fakeBucketCall{nodeID, pairKey, styleID, partNumber, payloadCode, delta, reason})
+	_ = coreNodeName // tests assert on the legacy call shape; coreNodeName is wire-only metadata
 	s.mu.Unlock()
 }
 
@@ -265,6 +266,7 @@ func (s *fakeDeltaSink) OnBinPickedUp(nodeID *int64) error {
 
 type fakeAdjustBucketCall struct {
 	NodeID                int64
+	CoreNodeName          string
 	PairKey               string
 	StyleID               int64
 	PartNumber            string
@@ -334,9 +336,13 @@ func (s *fakeDeltaSink) CaptureToLineside(ev uop.CaptureEvent) (int, error) {
 // on binCalls / bucketCalls keep working without modification.
 func (s *fakeDeltaSink) Consumed(ev uop.TickEvent) error {
 	s.mu.Lock()
-	for part, drained := range ev.Drains {
-		if drained > 0 {
-			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, ev.StyleID, part, ev.PayloadCode, -drained, protocol.ReasonConsumeDrain})
+	for part, d := range ev.Drains {
+		if d.Qty > 0 {
+			styleID := d.StyleID
+			if styleID == 0 {
+				styleID = ev.StyleID
+			}
+			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, styleID, part, ev.PayloadCode, -d.Qty, protocol.ReasonConsumeDrain})
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
@@ -357,9 +363,13 @@ func (s *fakeDeltaSink) Produced(ev uop.TickEvent) error {
 
 func (s *fakeDeltaSink) Fallthrough(ev uop.TickEvent) error {
 	s.mu.Lock()
-	for part, drained := range ev.Drains {
-		if drained > 0 {
-			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, ev.StyleID, part, ev.PayloadCode, -drained, protocol.ReasonConsumeDrain})
+	for part, d := range ev.Drains {
+		if d.Qty > 0 {
+			styleID := d.StyleID
+			if styleID == 0 {
+				styleID = ev.StyleID
+			}
+			s.bucketCalls = append(s.bucketCalls, fakeBucketCall{ev.NodeID, ev.PairKey, styleID, part, ev.PayloadCode, -d.Qty, protocol.ReasonConsumeDrain})
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
@@ -418,9 +428,9 @@ func (s *fakeDeltaSink) Backfill(force bool) (int, error) {
 	return emitted, nil
 }
 
-func (s *fakeDeltaSink) AdjustBucket(nodeID int64, pairKey string, styleID int64, partNumber string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error {
+func (s *fakeDeltaSink) AdjustBucket(nodeID int64, coreNodeName, pairKey string, styleID int64, partNumber string, currentQty, newQty int, reason protocol.LinesideBucketDeltaReason) error {
 	s.mu.Lock()
-	s.adjustBucketCalls = append(s.adjustBucketCalls, fakeAdjustBucketCall{nodeID, pairKey, styleID, partNumber, currentQty, newQty, reason})
+	s.adjustBucketCalls = append(s.adjustBucketCalls, fakeAdjustBucketCall{nodeID, coreNodeName, pairKey, styleID, partNumber, currentQty, newQty, reason})
 	delta := newQty - currentQty
 	if delta != 0 {
 		s.bucketCalls = append(s.bucketCalls, fakeBucketCall{nodeID, pairKey, styleID, partNumber, "", delta, reason})

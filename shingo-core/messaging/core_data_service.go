@@ -26,7 +26,7 @@ type coreDataResponder interface {
 type ThresholdMonitor interface {
 	OnRegistryChanges(changes []demands.RegistryChange)
 	OnBinUOPDelta(payloadCode string, delta int)
-	OnBucketApplied(station string, nodeID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
+	OnBucketApplied(station, coreNodeName, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason)
 }
 
 type CoreDataService struct {
@@ -112,23 +112,23 @@ func (s *CoreDataService) HandleLinesideBucketDelta(env *protocol.Envelope, d *p
 	}
 	if err := s.inventoryDelta.ApplyLinesideBucketDelta(d); err != nil {
 		if errors.Is(err, service.ErrInventoryDeltaSkipped) {
-			s.resp.dbg("lineside_bucket_delta replay station=%s node=%d part=%q seq=%d — already applied",
-				d.Station, d.NodeID, d.PartNumber, d.SequenceID)
+			s.resp.dbg("lineside_bucket_delta replay station=%s core_node=%q part=%q seq=%d — already applied",
+				d.Station, d.CoreNodeName, d.PartNumber, d.SequenceID)
 			return
 		}
-		log.Printf("core_handler: apply LinesideBucketDelta station=%s node=%d part=%q seq=%d delta=%d reason=%s: %v",
-			d.Station, d.NodeID, d.PartNumber, d.SequenceID, d.Delta, d.Reason, err)
+		log.Printf("core_handler: apply LinesideBucketDelta station=%s core_node=%q part=%q seq=%d delta=%d reason=%s: %v",
+			d.Station, d.CoreNodeName, d.PartNumber, d.SequenceID, d.Delta, d.Reason, err)
 		return
 	}
-	s.resp.dbg("lineside_bucket_delta applied station=%s node=%d part=%q seq=%d delta=%d reason=%s",
-		d.Station, d.NodeID, d.PartNumber, d.SequenceID, d.Delta, d.Reason)
+	s.resp.dbg("lineside_bucket_delta applied station=%s core_node=%q part=%q seq=%d delta=%d reason=%s",
+		d.Station, d.CoreNodeName, d.PartNumber, d.SequenceID, d.Delta, d.Reason)
 
 	// Notify the UOP-threshold monitor so a bucket drain or capture
 	// re-evaluates loop totals. The monitor's debounce + opt-in gating
 	// inside is what keeps this from being noisy. Empty payload_code is
 	// fine — the monitor short-circuits on unknown payload.
 	if s.thresholdMonitor != nil {
-		s.thresholdMonitor.OnBucketApplied(d.Station, d.NodeID, d.PayloadCode, d.Delta, d.Reason)
+		s.thresholdMonitor.OnBucketApplied(d.Station, d.CoreNodeName, d.PayloadCode, d.Delta, d.Reason)
 	}
 }
 

@@ -77,9 +77,10 @@ func TestPhase3Backfill_EmptyBucketsNotEmitted(t *testing.T) {
 	if _, err := db.CaptureLinesideBucket(nodeID, "", styleID, "PART-BFE", 5); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := db.DrainLinesideBucket(nodeID, styleID, "PART-BFE", 5); err != nil {
+	if _, _, err := db.DrainLinesideBucket(nodeID, "PART-BFE", 5); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
+	_ = styleID // styleID seeded the capture above; Drain no longer takes a style argument (Round-3 A*).
 
 	eng := testEngine(t, db)
 	sink := &fakeDeltaSink{db: db}

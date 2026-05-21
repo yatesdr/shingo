@@ -46,6 +46,11 @@
     <button class="btn btn-sm" disabled>3. Deliver</button>
     {{end}}
     <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/switch-node/{{.ProcessNodeID}}" hx-swap="none" style="margin-left:0.5rem">Skip</button>
+{{else if eq .State "capacity_blocked"}}
+    {{/* Round-3 Item C: drop's evac order failed at Core because the downstream storage destination is full / saturated. Distinct from "error" (operator intervention required) — Core's fulfillment scanner will replay the order automatically when CheckDropoffCapacity passes. Operator can re-fire manually or skip the node. */}}
+    <button class="btn btn-sm" disabled style="opacity:0.5">Waiting for downstream capacity...</button>
+    <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/evacuate-node/{{.ProcessNodeID}}" hx-swap="none">Retry Evac</button>
+    <button class="btn btn-sm" hx-post="/api/processes/{{.ProcessID}}/changeover/switch-node/{{.ProcessNodeID}}" hx-swap="none" style="margin-left:0.5rem">Skip</button>
 {{else if eq .State "cancelled"}}
     <button class="btn btn-sm" disabled style="opacity:0.5">Cancelled</button>
 {{end}}

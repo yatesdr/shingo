@@ -127,12 +127,90 @@ func TestHandleInventory_ListsBucketsSection(t *testing.T) {
 	}
 }
 
+// TestApiBucketDelete_RemovesRowAndDedup pins Round-3 Obs 10's admin
+// recovery path. Seed a bucket + a matching inventory_delta_dedup row,
+// hit POST /api/buckets/delete with the bucket's id, assert both rows
+// are gone afterward. This is the cleanup hatch for Core-only orphan
+// buckets the cross-namespace bugs in pre-Obs-8 builds left behind.
+func TestApiBucketDelete_RemovesRowAndDedup(t *testing.T) {
+	t.Parallel()
+	h, db := testHandlers(t)
+	sd := testdb.SetupStandardData(t, db)
+
+	seedBucket(t, db, "STATION-DEL", sd.StorageNode.ID, "", 1, "PART-DEL", 17)
+
+	var bucketID int64
+	testutil.MustNoErr(t,
+		db.QueryRow(`SELECT id FROM lineside_buckets WHERE station='STATION-DEL'`).Scan(&bucketID),
+		"lookup seeded bucket id")
+
+	// Seed a matching dedup row so we can verify it gets removed too.
+	scopeKey := sd.StorageNode.Name + "||1|PART-DEL"
+	if _, err := db.Exec(`INSERT INTO inventory_delta_dedup (station, scope_kind, scope_key, last_seq)
+		VALUES ('STATION-DEL', 'bucket', $1, 42)`, scopeKey); err != nil {
+		t.Fatalf("seed dedup: %v", err)
+	}
+
+	rec := postJSON(t, h.apiBucketDelete, "/api/buckets/delete",
+		map[string]any{"id": bucketID})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	var bucketCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM lineside_buckets WHERE id=$1`, bucketID).Scan(&bucketCount)
+	if bucketCount != 0 {
+		t.Errorf("bucket row count after delete = %d, want 0", bucketCount)
+	}
+
+	var dedupCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM inventory_delta_dedup
+		WHERE station='STATION-DEL' AND scope_kind='bucket' AND scope_key=$1`, scopeKey).Scan(&dedupCount)
+	if dedupCount != 0 {
+		t.Errorf("dedup row count after delete = %d, want 0 (deletion must clear both rows atomically)", dedupCount)
+	}
+}
+
+// TestApiBucketDelete_UnknownIDReturns404 pins the not-found response.
+func TestApiBucketDelete_UnknownIDReturns404(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+
+	rec := postJSON(t, h.apiBucketDelete, "/api/buckets/delete",
+		map[string]any{"id": int64(999999999)})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestApiBucketDelete_MissingIDReturns400 pins the validation: id is
+// required and must be positive.
+func TestApiBucketDelete_MissingIDReturns400(t *testing.T) {
+	t.Parallel()
+	h, _ := testHandlers(t)
+
+	rec := postJSON(t, h.apiBucketDelete, "/api/buckets/delete",
+		map[string]any{})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // seedBucket inserts one lineside_buckets row. Station / node / pair_key
 // / style_id / part_number must be set; qty is the count.
+//
+// nodeID is unused since the Round-3 Obs 8 migration; we derive the
+// node name from the row's node_id at seed time so call sites don't
+// have to refactor to the new shape. Pass either sd.StorageNode.ID /
+// sd.LineNode.ID — the lookup happens here.
 func seedBucket(t *testing.T, db *store.DB, station string, nodeID int64, pairKey string, styleID int64, part string, qty int) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, node_id, pair_key, style_id, part_number, qty)
-		VALUES ($1, $2, $3, $4, $5, $6)`, station, nodeID, pairKey, styleID, part, qty); err != nil {
+	var coreNodeName string
+	if err := db.QueryRow(`SELECT name FROM nodes WHERE id=$1`, nodeID).Scan(&coreNodeName); err != nil {
+		t.Fatalf("seedBucket lookup node name for id=%d: %v", nodeID, err)
+	}
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty)
+		VALUES ($1, $2, $3, $4, $5, $6)`, station, coreNodeName, pairKey, styleID, part, qty); err != nil {
 		t.Fatalf("seed bucket (%s/%s): %v", station, part, err)
 	}
 }

@@ -325,10 +325,37 @@ func (s *BinService) ListBins() ([]*bins.Bin, error) {
 	return s.db.ListBins()
 }
 
-// Delete removes a bin row. Absorbed from engine_db_methods.go as part
-// of the www-handler service migration (PR 3a.2).
+// Delete removes a bin row outright. Reserved for admin/DBA recovery
+// paths where the caller has guaranteed no FK relationships point at
+// the bin row. Operator-facing flows go through Retire instead — the
+// admin UI's "Retire" button calls Retire; raw DELETE is no longer
+// reachable from /bins.
 func (s *BinService) Delete(id int64) error {
 	return s.db.DeleteBin(id)
+}
+
+// Retire marks the bin retired and vacates its node assignment. This
+// is the operator-driven replacement for the old "Delete" admin
+// action, which raised FK violations on any bin with history
+// (claimed_by, order rows, audit) and stranded operators trying to
+// remove a physically out-of-service carrier from production.
+//
+// The store layer's bins.Retire is a single UPDATE — status='retired'
+// AND node_id=NULL — so the bin disappears from operational queries
+// (CountByAllNodes filters node_id IS NOT NULL; ListByNode and
+// ListByClaim filter status != 'retired'; FindSourceFIFO,
+// FindEmptyCompatible, FindEmptyCompatibleInGroup all exclude
+// status='retired' or require status='available'). Audit/history
+// rows pointing at bins.id remain intact for downstream reporting.
+//
+// Verification gating this design: see
+// github.com/.../round3-item-b-verification.md — every *bin.NodeID
+// deref in shingo-core/ is either nil-guarded at the site or
+// reachable only through queries that already filter
+// status != 'retired', so the node_id=NULL state cannot trigger a
+// panic.
+func (s *BinService) Retire(id int64) error {
+	return s.db.RetireBin(id)
 }
 
 // HasNotes returns a map indicating which of the supplied bin IDs have

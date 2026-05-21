@@ -95,6 +95,10 @@ func (db *DB) UpdateOrderDeliveryNode(id int64, deliveryNode string) error {
 	return orders.UpdateDeliveryNode(db.DB, id, deliveryNode)
 }
 
+func (db *DB) UpdateOrderStepsJSON(id int64, stepsJSON string) error {
+	return orders.UpdateStepsJSON(db.DB, id, stepsJSON)
+}
+
 func (db *DB) CompleteOrder(id int64) error            { return orders.Complete(db.DB, id) }
 func (db *DB) GetOrder(id int64) (*orders.Order, error)       { return orders.Get(db.DB, id) }
 func (db *DB) GetOrderByUUID(uuid string) (*orders.Order, error) {

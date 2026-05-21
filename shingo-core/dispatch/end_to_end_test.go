@@ -19,6 +19,7 @@
 package dispatch
 
 import (
+	"strings"
 	"testing"
 
 	"shingo/protocol"
@@ -181,6 +182,204 @@ func TestDispatcher_StoreOrder_FullLifecycle(t *testing.T) {
 	if order.DeliveryNode != storageNode.Name {
 		// Could be another storage node, just verify it's set
 		t.Logf("delivery node = %q", order.DeliveryNode)
+	}
+}
+
+// TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP pins the
+// Round-3 follow-up to Item C. Two-robot swap pairs construct each
+// leg as a complex order with multi-step pickup/dropoff. Pre-fix,
+// when the dropoff NGRP was saturated at intake the resolver
+// returned "no available slot in node group X" and
+// HandleComplexOrderRequest sent a resolution_failed error to Edge
+// — the order was never created at Core, no retry path. Stephen's
+// reproducer: two-robot swap supply dispatched, supermarket full,
+// evac leg failed at intake instead of queueing.
+//
+// With this fix, the order is created with status=queued and
+// queue_reason=the resolver message. DispatchPreparedComplex
+// re-resolves on each scanner tick; when a slot opens up the order
+// dispatches cleanly.
+func TestDispatcher_ComplexOrder_QueuesOnSaturatedNGRP(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	_, lineNode, bp := setupTestData(t, db)
+
+	syntheticType, err := db.GetNodeTypeByCode("NGRP")
+	if err != nil {
+		t.Fatalf("get NGRP type: %v", err)
+	}
+
+	// Construct an NGRP supermarket with both child slots occupied.
+	supermarket := &nodes.Node{Name: "SUPERMARKET-SAT", IsSynthetic: true, NodeTypeID: &syntheticType.ID, Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(supermarket), "create supermarket")
+	slotA := &nodes.Node{Name: "SAT-A", Enabled: true}
+	slotB := &nodes.Node{Name: "SAT-B", Enabled: true}
+	testutil.MustNoErr(t, db.CreateNode(slotA), "create slotA")
+	testutil.MustNoErr(t, db.CreateNode(slotB), "create slotB")
+	testutil.MustNoErr(t, db.SetNodeParent(slotA.ID, supermarket.ID), "parent slotA")
+	testutil.MustNoErr(t, db.SetNodeParent(slotB.ID, supermarket.ID), "parent slotB")
+
+	occA := &bins.Bin{BinTypeID: 1, Label: "OCC-A", NodeID: &slotA.ID, Status: "available"}
+	occB := &bins.Bin{BinTypeID: 1, Label: "OCC-B", NodeID: &slotB.ID, Status: "available"}
+	testutil.MustNoErr(t, db.CreateBin(occA), "create occA")
+	testutil.MustNoErr(t, db.CreateBin(occB), "create occB")
+
+	// The evac leg's source: a manifest-confirmed bin at the line so
+	// claimComplexBins can pick it up once the order dispatches.
+	_ = testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "EVAC-BIN")
+
+	backend := testdb.NewTrackingBackend()
+	emitter := &mockEmitter{}
+	resolver := &DefaultResolver{DB: db}
+	d := NewDispatcher(db, backend, emitter, "core", "shingo.dispatch", resolver)
+	env := testEnvelope()
+
+	d.HandleComplexOrderRequest(env, &protocol.ComplexOrderRequest{
+		OrderUUID:   "evac-sat-1",
+		PayloadCode: bp.Code,
+		Quantity:    1,
+		Steps: []protocol.ComplexOrderStep{
+			{Action: "pickup", Node: lineNode.Name},
+			{Action: "dropoff", Node: supermarket.Name},
+		},
+	})
+
+	// Round-3 follow-up: the order must exist at Core in queued state,
+	// not have been rejected via sendError.
+	if len(emitter.failed) > 0 {
+		t.Fatalf("complex order should not have hit failed path; got: %+v", emitter.failed)
+	}
+	order, err := db.GetOrderByUUID("evac-sat-1")
+	if err != nil {
+		t.Fatalf("get order: %v — capacity-shaped resolution failure should create the order as queued, not reject it", err)
+	}
+	if order.Status != StatusQueued {
+		t.Errorf("status = %q, want %q (capacity-blocked complex order must queue)", order.Status, StatusQueued)
+	}
+	if order.QueueReason == "" {
+		t.Errorf("queue_reason empty; expected the resolver message so the operator sees why the order is waiting")
+	}
+	if !strings.Contains(order.QueueReason, "no available slot in node group") {
+		t.Errorf("queue_reason = %q, want it to contain 'no available slot in node group ...'", order.QueueReason)
+	}
+
+	// Free slotB so a replay can succeed. Delete the occupying bin and
+	// drive DispatchPreparedComplex directly (mimics what the scanner
+	// would do on EventBinUpdated after the slot opened).
+	testutil.MustNoErr(t, db.DeleteBin(occB.ID), "delete occB to free slotB")
+
+	if err := d.DispatchPreparedComplex(order); err != nil {
+		t.Fatalf("DispatchPreparedComplex after slot opened: %v", err)
+	}
+
+	// Re-read; status should be Dispatched now, queue_reason cleared
+	// by the dispatch path.
+	order, err = db.GetOrderByUUID("evac-sat-1")
+	if err != nil {
+		t.Fatalf("re-read order: %v", err)
+	}
+	if order.Status != StatusDispatched {
+		t.Errorf("after replay status = %q, want %q", order.Status, StatusDispatched)
+	}
+}
+
+// TestDispatcher_StoreOrder_ConsolidationSkipsSource pins the
+// Round-3 follow-up: FindStorageDestination must never return the
+// source node as the destination. Pre-fix the consolidation branch
+// picked the alphabetically-first node holding a matching payload —
+// which could be the source itself when the source still held the
+// bin being stored. With this fix the source is excluded; the
+// fallback "any empty enabled physical node" branch picks a real
+// destination (STORAGE-A1).
+func TestDispatcher_StoreOrder_ConsolidationSkipsSource(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	// Only the source has a PART-A bin. Without the skip-source fix,
+	// FindStorageDestination's consolidation branch returns LINE1-IN
+	// (alphabetically first with a matching bin); with the fix, the
+	// consolidation branch returns no match, the empty fallback picks
+	// STORAGE-A1, and the order dispatches successfully.
+	testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-CONS-LINE")
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:   "store-cons-1",
+		OrderType:   OrderTypeStore,
+		PayloadCode: bp.Code,
+		SourceNode:  lineNode.Name,
+		Quantity:    1.0,
+	})
+
+	if len(emitter.failed) > 0 {
+		t.Fatalf("order should not fail, got error: %s", emitter.failed[0].errorCode)
+	}
+	if len(emitter.queued) > 0 {
+		t.Fatalf("order should not queue; the source is the only PART-A node, the empty fallback should pick %s. queued=%v",
+			storageNode.Name, emitter.queued)
+	}
+
+	order := testdb.AssertOrderStatus(t, db, "store-cons-1", StatusDispatched)
+	if order.DeliveryNode == lineNode.Name {
+		t.Fatalf("delivery node = %q (the source!); FindStorageDestination must skip the source in consolidation",
+			order.DeliveryNode)
+	}
+	if order.DeliveryNode != storageNode.Name {
+		t.Errorf("delivery node = %q, want %q (the only non-source physical destination)",
+			order.DeliveryNode, storageNode.Name)
+	}
+}
+
+// TestDispatcher_StoreOrder_QueuesOnOccupiedDestination pins Item C's
+// planStore dropoff-capacity gate. Before the gate, planStore would
+// dispatch a store order against an already-occupied destination —
+// FindStorageDestination's consolidation branch could return a node
+// that has a bin of the same payload, producing a fleet order that
+// the destination can't physically accept (single-bin-per-physical-
+// node rule). The gate now queues such orders so the operator-visible
+// state matches reality.
+func TestDispatcher_StoreOrder_QueuesOnOccupiedDestination(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	storageNode, lineNode, bp := setupTestData(t, db)
+
+	// Both candidate physical destinations have bins of the same payload.
+	// FindStorageDestination's consolidation branch picks one of them;
+	// the gate must see "occupied" and queue.
+	testdb.CreateBinAtNode(t, db, bp.Code, storageNode.ID, "BIN-OCC-STO")
+	testdb.CreateBinAtNode(t, db, bp.Code, lineNode.ID, "BIN-OCC-LINE")
+
+	backend := testdb.NewTrackingBackend()
+	d, emitter := newTestDispatcher(t, db, backend)
+
+	env := testEnvelope()
+
+	d.HandleOrderRequest(env, &protocol.OrderRequest{
+		OrderUUID:   "store-occ-1",
+		OrderType:   OrderTypeStore,
+		PayloadCode: bp.Code,
+		SourceNode:  lineNode.Name,
+		Quantity:    1.0,
+	})
+
+	if len(emitter.failed) > 0 {
+		t.Fatalf("order should not fail, got error: %s", emitter.failed[0].errorCode)
+	}
+	if len(emitter.queued) != 1 {
+		t.Fatalf("queued events = %d, want 1 (capacity gate should have fired)", len(emitter.queued))
+	}
+
+	order := testdb.AssertOrderStatus(t, db, "store-occ-1", StatusQueued)
+	if order.QueueReason == "" {
+		t.Errorf("queue_reason must be set when planStore gate fires, got empty")
+	}
+	if order.DeliveryNode == "" {
+		t.Errorf("delivery_node must be committed before the gate so the scanner can replay; got empty")
 	}
 }
 

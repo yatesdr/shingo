@@ -41,6 +41,15 @@ const (
 	// Failure-disposition states.
 	NodeTaskCancelled NodeTaskState = "cancelled"
 	NodeTaskError     NodeTaskState = "error"
+
+	// NodeTaskCapacityBlocked marks a drop task whose source-side fleet
+	// dispatch failed because the destination (storage) is full —
+	// distinct from NodeTaskLineCleared (no bin to remove, evac done)
+	// and NodeTaskError (needs operator intervention). Renders amber on
+	// the HMI: the system is waiting for space to open up, not broken.
+	// The fulfillment scanner replays these when capacity opens via
+	// CheckDropoffCapacity on the corresponding Core-side queued order.
+	NodeTaskCapacityBlocked NodeTaskState = "capacity_blocked"
 )
 
 // String satisfies fmt.Stringer.
@@ -93,6 +102,16 @@ func (s NodeTaskState) IsTerminal(situation string) bool {
 	case NodeTaskSwitched, NodeTaskVerified, NodeTaskUnchanged, NodeTaskReleased:
 		return true
 	case NodeTaskLineCleared:
+		return situation == "drop"
+	case NodeTaskCapacityBlocked:
+		// Terminal for drop only — same reasoning as LineCleared. A drop
+		// that hits a capacity block has done its source-side work (no
+		// bin to remove from the line, or the bin can't be moved yet
+		// because there's nowhere to put it). The changeover proceeds
+		// while the underlying Core-side store/move order stays queued
+		// until CheckDropoffCapacity passes. For swap/evacuate where
+		// downstream choreography matters, capacity_blocked is NOT
+		// terminal — the partner leg is still expected to materialize.
 		return situation == "drop"
 	}
 	return false

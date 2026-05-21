@@ -31,6 +31,11 @@ type CaptureEvent struct {
 	StyleID int64 // the to-style claim's style (target style after release)
 	PairKey string
 
+	// CoreNodeName is the cross-system identifier the wire envelope
+	// uses (Round-3 Obs 8). Engine populates from the process node
+	// row that drives the capture.
+	CoreNodeName string
+
 	// Disposition carries Mode + LinesideCapture map + other operator
 	// intent fields. Only Mode == DispositionCaptureLineside drives
 	// the bucket capture loop; other modes still call this verb to
@@ -84,7 +89,7 @@ func (m *Mutator) CaptureToLineside(ev CaptureEvent) (capturedTotal int, err err
 			// carries the bin's payload, which is the same payload the
 			// captured parts belong to. Core's SystemUOPForPayload sums
 			// bins + buckets keyed on this.
-			m.acc.recordBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, ev.PayloadCode, qty, protocol.ReasonCaptureFill)
+			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, ev.StyleID, part, ev.PayloadCode, qty, protocol.ReasonCaptureFill)
 			capturedTotal += qty
 		}
 	}

@@ -326,6 +326,7 @@ func (e *Engine) releaseOrderWithFullLineside(order *storeorders.Order, node *pr
 			NodeID:           node.ID,
 			StyleID:          toClaim.StyleID,
 			PairKey:          toClaim.PairedCoreNode,
+			CoreNodeName:     node.CoreNodeName,
 			Disposition:      disp,
 			BinID:            resolvedBinID,
 			PayloadCode:      order.PayloadCode,

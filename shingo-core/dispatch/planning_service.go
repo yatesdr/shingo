@@ -506,18 +506,19 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 	if err := s.lifecycle.MoveToSourcing(order, "planner", "finding storage destination"); err != nil {
 		log.Printf("dispatch: planStore order %d → sourcing: %v", order.ID, err)
 	}
-	originalDeliveryNode := order.DeliveryNode
-	destNode, err := s.db.FindStorageDestination(payloadCode)
-	if err != nil {
-		return nil, &planningError{Code: "no_storage", Detail: "no available storage node found", Err: err}
-	}
-	s.dbg("store: selected destination=%s for order %d", destNode.Name, order.ID)
-	order.DeliveryNode = destNode.Name
-	if err := s.db.UpdateOrderDeliveryNode(order.ID, destNode.Name); err != nil {
-		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
-	}
 
-	var sourceNode *nodes.Node
+	// Round-3 follow-up: resolve sourceNode BEFORE FindStorageDestination
+	// so we can exclude it from the consolidation pick. Pre-fix the
+	// consolidation branch happily returned the source itself when the
+	// source still held the bin being stored — produced same-node store
+	// orders that pre-Item-C dispatched as ghost moves and post-Item-C
+	// queued forever (the destination was always "occupied" by the
+	// bin we were trying to move).
+	originalDeliveryNode := order.DeliveryNode
+	var (
+		sourceNode *nodes.Node
+		err        error
+	)
 	if order.SourceNode != "" {
 		sourceNode, err = s.db.GetNodeByDotName(order.SourceNode)
 		if err != nil {
@@ -531,6 +532,16 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 	}
 	if sourceNode == nil {
 		return nil, &planningError{Code: "missing_source", Detail: "store order requires a source location"}
+	}
+
+	destNode, err := s.db.FindStorageDestination(payloadCode, sourceNode.ID)
+	if err != nil {
+		return nil, &planningError{Code: "no_storage", Detail: "no available storage node found", Err: err}
+	}
+	s.dbg("store: selected destination=%s for order %d", destNode.Name, order.ID)
+	order.DeliveryNode = destNode.Name
+	if err := s.db.UpdateOrderDeliveryNode(order.ID, destNode.Name); err != nil {
+		log.Printf("dispatch: update order %d delivery_node: %v", order.ID, err)
 	}
 	if order.BinID == nil {
 		bins, _ := s.db.ListBinsByNode(sourceNode.ID)
@@ -554,5 +565,28 @@ func (s *PlanningService) planStore(order *orders.Order, env *protocol.Envelope,
 	if err := s.db.UpdateOrderSourceNode(order.ID, sourceNode.Name); err != nil {
 		log.Printf("dispatch: update order %d source_node: %v", order.ID, err)
 	}
+
+	// Round-3 Item C: dropoff-capacity gate AFTER source claim. Sequencing
+	// matters — putting the gate before source claim would queue orders
+	// that have a bin available but a destination that's currently full,
+	// which is correct in isolation but breaks the existing changeover
+	// pattern: operators clear a line with N store orders, each expecting
+	// to claim one bin and dispatch when capacity opens up. With the gate
+	// before the claim, all N orders sit queued without bin claims, so
+	// the fulfillment scanner re-races every replay; with the gate after,
+	// each order owns its bin and waits politely for storage to open.
+	// Mirrors the pattern from planRetrieve/planRetrieveEmpty/planMove,
+	// only those run the gate first because their source claim is a
+	// separate code path. The gate uses the order ID as
+	// excludeOrderID so this order's own pending state doesn't
+	// self-collide.
+	if blocked, reason := CheckDropoffCapacity(s.db, destNode.Name, order.ID); blocked {
+		s.dbg("store: order %d queued — %s", order.ID, reason)
+		if err := s.db.SetOrderQueueReason(order.ID, reason); err != nil {
+			log.Printf("dispatch: set queue_reason for order %d: %v", order.ID, err)
+		}
+		return &PlanningResult{Queued: true}, nil
+	}
+
 	return &PlanningResult{SourceNode: sourceNode, DestNode: destNode}, nil
 }

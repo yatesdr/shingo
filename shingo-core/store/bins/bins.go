@@ -123,9 +123,33 @@ func Update(db *sql.DB, b *Bin) error {
 	return err
 }
 
-// Delete removes a bin.
+// Delete removes a bin row outright. Operational flows go through
+// Retire instead — physical-row deletes break FK relationships to any
+// table that points to bins.id (claims, order history, audit, transit
+// tracking) and so are reserved for admin/DBA recovery paths where
+// the caller has guaranteed those relationships are absent.
 func Delete(db *sql.DB, id int64) error {
 	_, err := db.Exec(`DELETE FROM bins WHERE id=$1`, id)
+	return err
+}
+
+// Retire marks a bin retired and vacates its node assignment in a
+// single atomic UPDATE. This is the operator-driven path that replaces
+// the old "Delete Bin" admin action — pre-Round-3 the admin Delete
+// button issued a DELETE which raised FK violations on any bin with
+// history (claimed_by, order rows, audit entries), stranding operators
+// who wanted to retire a physically out-of-service carrier.
+//
+// Setting node_id=NULL excludes the bin from operational readers
+// (CountByAllNodes, NodeTileStates, ListByNode all filter
+// status != 'retired' OR scope to node_id matches, and node_id=NULL
+// satisfies neither). Audit/admin views that need retired bins can
+// query via List + status filter.
+//
+// Idempotent: a second call on an already-retired bin is a successful
+// no-op (the row stays status='retired', node_id=NULL).
+func Retire(db *sql.DB, id int64) error {
+	_, err := db.Exec(`UPDATE bins SET status='retired', node_id=NULL, updated_at=NOW() WHERE id=$1`, id)
 	return err
 }
 

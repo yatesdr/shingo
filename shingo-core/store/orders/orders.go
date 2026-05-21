@@ -168,6 +168,16 @@ func UpdateDeliveryNode(db *sql.DB, id int64, deliveryNode string) error {
 	return err
 }
 
+// UpdateStepsJSON rewrites the steps_json field — used by complex-
+// order replay when deferred NGRP resolution succeeds on a later tick
+// and the scanner needs to lock the new concrete-child names ahead of
+// claim. Round-3 follow-up.
+func UpdateStepsJSON(db *sql.DB, id int64, stepsJSON string) error {
+	_, err := db.Exec(`UPDATE orders SET steps_json=$1, updated_at=NOW() WHERE id=$2`,
+		stepsJSON, id)
+	return err
+}
+
 // Complete marks an order as completed (timestamp only; status transitions
 // happen via UpdateStatus).
 func Complete(db *sql.DB, id int64) error {

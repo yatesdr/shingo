@@ -152,7 +152,7 @@ func (e *Engine) handleConsumeTick(node *processes.Node, runtime *processes.Runt
 		}
 	}
 
-	e.emitConsumeTickDeltas(node.ID, runtime, claim, drains, binRemainder)
+	e.emitConsumeTickDeltas(node, runtime, claim, drains, binRemainder)
 
 	// Auto-reorder if threshold reached, enabled, and node can accept orders.
 	// During the gap newRemaining is unchanged so the threshold isn't crossed
@@ -270,7 +270,7 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 
 	// Lineside-first on the fallback node too.
 	claim := findActiveClaim(e.db, node)
-	var drains map[string]int
+	var drains map[string]uop.LinesideDrain
 	binRemainder := delta
 	if claim != nil {
 		drains, binRemainder = e.drainLinesideFirst(node.ID, claim, delta)
@@ -287,7 +287,7 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 	}
 
 	if claim != nil {
-		e.emitFallthroughDeltas(node.ID, runtime, claim, drains, binRemainder)
+		e.emitFallthroughDeltas(node, runtime, claim, drains, binRemainder)
 	}
 }
 
@@ -295,15 +295,16 @@ func (e *Engine) handleABFallthrough(processID int64, node *processes.Node, runt
 // consume tick. Resolves the bin context via binAtNode, then delegates
 // the actual emission to uop.Mutator.Consumed which locks in the
 // reason taxonomy (consume_drain + consume_tick).
-func (e *Engine) emitConsumeTickDeltas(nodeID int64, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]int, binRemainder int) {
+func (e *Engine) emitConsumeTickDeltas(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]uop.LinesideDrain, binRemainder int) {
 	if e.inventoryDelta == nil {
 		return
 	}
 	binID, payload := e.binAtNode(runtime, claim)
 	_ = e.inventoryDelta.Consumed(uop.TickEvent{
-		NodeID:       nodeID,
+		NodeID:       node.ID,
 		StyleID:      claim.StyleID,
 		PairKey:      claim.PairedCoreNode,
+		CoreNodeName: node.CoreNodeName,
 		BinID:        binID,
 		PayloadCode:  payload,
 		Drains:       drains,
@@ -316,15 +317,16 @@ func (e *Engine) emitConsumeTickDeltas(nodeID int64, runtime *processes.RuntimeS
 // while keeping consume_drain on the bucket deltas (the bucket
 // physically drained regardless of which side of the A/B pair the
 // count attributed to).
-func (e *Engine) emitFallthroughDeltas(nodeID int64, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]int, binRemainder int) {
+func (e *Engine) emitFallthroughDeltas(node *processes.Node, runtime *processes.RuntimeState, claim *processes.NodeClaim, drains map[string]uop.LinesideDrain, binRemainder int) {
 	if e.inventoryDelta == nil {
 		return
 	}
 	binID, payload := e.binAtNode(runtime, claim)
 	_ = e.inventoryDelta.Fallthrough(uop.TickEvent{
-		NodeID:       nodeID,
+		NodeID:       node.ID,
 		StyleID:      claim.StyleID,
 		PairKey:      claim.PairedCoreNode,
+		CoreNodeName: node.CoreNodeName,
 		BinID:        binID,
 		PayloadCode:  payload,
 		Drains:       drains,
@@ -405,21 +407,29 @@ func (e *Engine) binAtNode(runtime *processes.RuntimeState, claim *processes.Nod
 // their draining doesn't affect the node counter arithmetic. If a
 // plant ever ships a claim where secondary parts can deplete
 // independently (e.g. consumables), revisit this.
-func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, delta int) (drains map[string]int, binRemainder int) {
-	drains = make(map[string]int)
+func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, delta int) (drains map[string]uop.LinesideDrain, binRemainder int) {
+	drains = make(map[string]uop.LinesideDrain)
 	binRemainder = delta
 	if delta <= 0 || claim == nil {
 		return drains, binRemainder
 	}
 
-	// Primary part controls the node-counter math.
+	// Primary part controls the node-counter math. Round-3 A*: the
+	// matched bucket may carry a style_id that differs from
+	// claim.StyleID during a cutover (bucket captured under the
+	// outgoing style, drained while the incoming style is now active).
+	// Preserve the matched style for downstream LinesideBucketDelta
+	// attribution so Core's dedup scope_key (...|<StyleID>|...)
+	// matches the bucket's own ID-space.
 	if primary := claim.PayloadCode; primary != "" {
-		drained, err := e.db.DrainLinesideBucket(nodeID, claim.StyleID, primary, delta)
+		drained, matchedStyleID, err := e.db.DrainLinesideBucket(nodeID, primary, delta)
 		if err != nil {
 			log.Printf("lineside: drain primary part %q on node %d: %v", primary, nodeID, err)
 		} else {
 			if drained > 0 {
-				drains[primary] = drained
+				drains[primary] = uop.LinesideDrain{Qty: drained, StyleID: matchedStyleID}
+			} else {
+				e.logUnexpectedDrainMiss(nodeID, primary, "primary")
 			}
 			binRemainder = delta - drained
 		}
@@ -432,15 +442,59 @@ func (e *Engine) drainLinesideFirst(nodeID int64, claim *processes.NodeClaim, de
 		if part == "" || part == claim.PayloadCode {
 			continue
 		}
-		drained, err := e.db.DrainLinesideBucket(nodeID, claim.StyleID, part, delta)
+		drained, matchedStyleID, err := e.db.DrainLinesideBucket(nodeID, part, delta)
 		if err != nil {
 			log.Printf("lineside: drain secondary part %q on node %d: %v", part, nodeID, err)
 			continue
 		}
 		if drained > 0 {
-			drains[part] = drained
+			drains[part] = uop.LinesideDrain{Qty: drained, StyleID: matchedStyleID}
+		} else {
+			e.logUnexpectedDrainMiss(nodeID, part, "secondary")
 		}
 	}
 
 	return drains, binRemainder
+}
+
+// logUnexpectedDrainMiss fires when Drain returned zero qty for a
+// (node, part) but ListActiveLinesideBuckets reports at least one
+// active bucket present at that node — the "we expected to drain but
+// didn't" signal that pre-Round-3 was swallowed by silent
+// `log.Printf + continue` (and so didn't surface the original
+// styleID-mismatch bug for weeks). After Round-3 A* the WHERE clause
+// no longer filters by style, so a drain miss really does mean
+// "no matching part_number active here," not "wrong style." Keeping
+// the diagnostic anyway because the failure mode is cheap to log and
+// useful when investigating future inventory-delta drift.
+//
+// Best-effort: a DB error on the visibility check is silently ignored
+// — the function is purely diagnostic, not load-bearing.
+func (e *Engine) logUnexpectedDrainMiss(nodeID int64, partNumber, role string) {
+	active, err := e.db.ListActiveLinesideBuckets(nodeID)
+	if err != nil {
+		return
+	}
+	if len(active) == 0 {
+		// No active buckets at all — drain miss is expected.
+		return
+	}
+	matched := false
+	visible := make([]string, 0, len(active))
+	for _, b := range active {
+		visible = append(visible, b.PartNumber)
+		if b.PartNumber == partNumber {
+			matched = true
+		}
+	}
+	if !matched {
+		// Active buckets at this node, but none match this part —
+		// nothing to drain. Don't bother logging unless callers want
+		// the visibility detail; the part-vs-bucket mismatch is the
+		// normal case (e.g. secondary parts that haven't been pulled
+		// this cycle).
+		return
+	}
+	log.Printf("lineside: %s part %q on node %d returned 0 drained despite an active bucket existing — possible drain/capture race (visible parts: %v)",
+		role, partNumber, nodeID, visible)
 }

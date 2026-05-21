@@ -300,6 +300,7 @@ main.container {
 .status-connected { background: #d1e7dd; color: #0f5132; }
 .status-disconnected { background: #e9ecef; color: #495057; }
 .status-error { background: #f8d7da; color: #842029; }
+.status-capacity-blocked { background: #fff3cd; color: #664d03; }
 
 /* Payload-specific statuses */
 .status-active { background: #d1e7dd; color: #0f5132; }

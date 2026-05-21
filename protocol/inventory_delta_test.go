@@ -86,7 +86,7 @@ func TestLinesideBucketDelta_RoundTrip(t *testing.T) {
 		{
 			name: "capture_fill_positive",
 			d: LinesideBucketDelta{
-				Station: "ALN_001", NodeID: 5, PairKey: "L1|U1",
+				Station: "ALN_001", CoreNodeName: "LOADER-A1", PairKey: "L1|U1",
 				StyleID: 100, PartNumber: "PART-A",
 				Delta: 47, Reason: ReasonCaptureFill,
 				SequenceID: 17, WindowStart: t0, WindowEnd: t0,
@@ -95,7 +95,7 @@ func TestLinesideBucketDelta_RoundTrip(t *testing.T) {
 		{
 			name: "consume_drain_negative",
 			d: LinesideBucketDelta{
-				Station: "ALN_002", NodeID: 8, PairKey: "L2|U2",
+				Station: "ALN_002", CoreNodeName: "LOADER-B2", PairKey: "L2|U2",
 				StyleID: 200, PartNumber: "PART-B",
 				Delta: -3, Reason: ReasonConsumeDrain,
 				SequenceID: 42, WindowStart: t0, WindowEnd: t1,

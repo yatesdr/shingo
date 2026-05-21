@@ -17,6 +17,7 @@ import (
 func (db *DB) CreateBin(b *bins.Bin) error                     { return bins.Create(db.DB, b) }
 func (db *DB) UpdateBin(b *bins.Bin) error                     { return bins.Update(db.DB, b) }
 func (db *DB) DeleteBin(id int64) error                   { return bins.Delete(db.DB, id) }
+func (db *DB) RetireBin(id int64) error                   { return bins.Retire(db.DB, id) }
 func (db *DB) GetBin(id int64) (*bins.Bin, error)              { return bins.Get(db.DB, id) }
 func (db *DB) GetBinByLabel(label string) (*bins.Bin, error)   { return bins.GetByLabel(db.DB, label) }
 func (db *DB) ListBins() ([]*bins.Bin, error)                  { return bins.List(db.DB) }

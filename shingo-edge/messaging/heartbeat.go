@@ -182,7 +182,17 @@ func (h *Heartbeater) loop() {
 		case <-ticker.C:
 			h.sendHeartbeat()
 			tick++
-			if tick%5 == 0 { // re-request node list and payload catalog every ~5 min
+			// Re-request node list and payload catalog every other tick
+			// (base interval is 60s → ~2 min poll). The pre-Phase-X
+			// cadence was tick%5 (~5 min) which left operators staring
+			// at a stale node admin view for an awkwardly long window
+			// after a Core-side rename or add. coreNodes is display-only
+			// per operator_guards.go:15-22 — no dispatch / routing
+			// decision reads from it — so this is purely a freshness
+			// improvement, not a correctness fix. Admins who need an
+			// immediate refresh hit the apiSyncCoreNodes endpoint
+			// (handlers_catalog.go:23) which forces a sync on demand.
+			if tick%2 == 0 {
 				h.sendNodeListRequest()
 				h.sendCatalogRequest()
 			}

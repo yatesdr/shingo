@@ -223,11 +223,12 @@ function renderActions(data) {
   html += '<button class="btn btn-sm" onclick="updateBinProps()">Save</button>';
   html += '</div></div>';
 
-  // Delete
+  // Retire
   html += '<div class="action-group">';
-  html += '<form method="POST" action="/bins/delete" onsubmit="return confirm(\'Delete this bin permanently?\')">';
+  var confirmMsg = 'Mark ' + (b.label || ('bin ' + b.id)) + ' as retired? It will be removed from all production nodes and no longer assigned to orders. Bin history will be preserved.';
+  html += '<form method="POST" action="/bins/retire" onsubmit="return confirm(\'' + confirmMsg.replace(/'/g, "\\'") + '\')">';
   html += '<input type="hidden" name="id" value="' + b.id + '">';
-  html += '<button type="submit" class="btn btn-sm btn-danger">Delete Bin</button>';
+  html += '<button type="submit" class="btn btn-sm btn-danger">Retire Bin</button>';
   html += '</form></div>';
 
   document.getElementById('bd-actions').innerHTML = html;

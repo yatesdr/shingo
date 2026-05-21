@@ -248,13 +248,13 @@ func (m *ThresholdMonitor) OnBinUOPDelta(payloadCode string, delta int) {
 // emits an engine event for other subscribers, and checks thresholds.
 // Short-circuits for unmonitored payloads (after the event emit) so
 // the cache doesn't grow for payloads no binding is watching.
-func (m *ThresholdMonitor) OnBucketApplied(station string, nodeID int64, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
+func (m *ThresholdMonitor) OnBucketApplied(station, coreNodeName, payloadCode string, delta int, reason protocol.LinesideBucketDeltaReason) {
 	m.eng.Events.Emit(Event{Type: EventLinesideBucketApplied, Payload: LinesideBucketAppliedEvent{
-		Station:     station,
-		NodeID:      nodeID,
-		PayloadCode: payloadCode,
-		Delta:       delta,
-		Reason:      reason,
+		Station:      station,
+		CoreNodeName: coreNodeName,
+		PayloadCode:  payloadCode,
+		Delta:        delta,
+		Reason:       reason,
 	}})
 	if payloadCode == "" {
 		return
@@ -367,6 +367,15 @@ func (m *ThresholdMonitor) fireSignalCached(b thresholdEntry, total int, reason 
 // the in-memory threshold cache for affected payloads. Called by
 // CoreDataService.handleClaimSync after SyncDemandRegistry returns its
 // change list.
+//
+// After rebuilding the cache, this function re-evaluates the affected
+// bindings against the current cached UOP total and fires
+// LoopBelowThresholdSignal immediately for any binding already below
+// threshold. Closes the gap where a newly-added or threshold-increased
+// binding for a payload with no incoming bin/bucket deltas (e.g. a
+// zero-stock payload) would stay silent until Core restarted — the
+// Springfield 6883 case where a threshold was configured but never
+// triggered because no delta arrived to drive checkBindings.
 func (m *ThresholdMonitor) OnRegistryChanges(changes []demands.RegistryChange) {
 	if len(changes) == 0 {
 		return
@@ -387,29 +396,58 @@ func (m *ThresholdMonitor) OnRegistryChanges(changes []demands.RegistryChange) {
 	}
 	m.mu.Unlock()
 
-	if m.eng != nil && m.eng.db != nil {
-		for payload := range affectedPayloads {
-			entries, err := m.eng.db.LookupDemandThresholdsByPayload(payload)
+	if m.eng == nil || m.eng.db == nil {
+		return
+	}
+
+	for payload := range affectedPayloads {
+		entries, err := m.eng.db.LookupDemandThresholdsByPayload(payload)
+		if err != nil {
+			m.eng.logFn("threshold_monitor: OnRegistryChanges rebuild for %s: %v", payload, err)
+			continue
+		}
+		tes := make([]thresholdEntry, 0, len(entries))
+		for _, e := range entries {
+			tes = append(tes, thresholdEntry{
+				stationID:    e.StationID,
+				coreNodeName: e.CoreNodeName,
+				payloadCode:  e.PayloadCode,
+				threshold:    e.ReplenishUOPThreshold,
+			})
+		}
+		m.mu.Lock()
+		if len(tes) == 0 {
+			delete(m.thresholdsByPayload, payload)
+			m.mu.Unlock()
+			continue
+		}
+		m.thresholdsByPayload[payload] = tes
+		cachedTotal, haveCached := m.uopCache[payload]
+		m.mu.Unlock()
+
+		// Seed the cache from the DB if this payload wasn't being
+		// monitored before — without this, a newly-added threshold for
+		// a zero-stock payload (no prior incremental delta) has no
+		// baseline to compare against and the immediate-fire below
+		// would compare against 0 by default, which is correct-by-accident
+		// for the zero-stock case but wrong if the bin/bucket totals are
+		// non-zero. Explicit lookup is unambiguous.
+		total := cachedTotal
+		if !haveCached && m.eng.inventoryService != nil {
+			uop, err := m.eng.inventoryService.SystemUOPForPayload(context.Background(), []string{payload})
 			if err != nil {
-				m.eng.logFn("threshold_monitor: OnRegistryChanges rebuild for %s: %v", payload, err)
-				continue
-			}
-			tes := make([]thresholdEntry, 0, len(entries))
-			for _, e := range entries {
-				tes = append(tes, thresholdEntry{
-					stationID:    e.StationID,
-					coreNodeName: e.CoreNodeName,
-					payloadCode:  e.PayloadCode,
-					threshold:    e.ReplenishUOPThreshold,
-				})
+				m.eng.logFn("threshold_monitor: OnRegistryChanges seed cache for %s: %v", payload, err)
+				// Best-effort: fall through with total=0 so a zero-stock
+				// payload still fires. The DB error is logged loudly so
+				// the operator can see it.
+			} else if len(uop.Counts) > 0 {
+				total = uop.Counts[0].TotalUOP
 			}
 			m.mu.Lock()
-			if len(tes) == 0 {
-				delete(m.thresholdsByPayload, payload)
-			} else {
-				m.thresholdsByPayload[payload] = tes
-			}
+			m.uopCache[payload] = total
 			m.mu.Unlock()
 		}
+
+		m.checkBindings(tes, total)
 	}
 }

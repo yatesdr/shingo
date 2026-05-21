@@ -124,7 +124,7 @@ func TestThresholdMonitor_OnBucketApplied_AppliesDelta(t *testing.T) {
 	}
 	tm.uopCache["WIDGET-A"] = 100
 
-	tm.OnBucketApplied("s1", 1, "WIDGET-A", -10, "capture")
+	tm.OnBucketApplied("s1", "LOADER", "WIDGET-A", -10, "capture")
 	tm.mu.Lock()
 	if tm.uopCache["WIDGET-A"] != 90 {
 		t.Errorf("uopCache = %d, want 90", tm.uopCache["WIDGET-A"])
@@ -136,7 +136,7 @@ func TestThresholdMonitor_OnBucketApplied_SkipsEmptyPayload(t *testing.T) {
 	t.Parallel()
 	tm := newTestMonitor()
 	tm.eng = &Engine{Events: NewEventBus()}
-	tm.OnBucketApplied("s1", 1, "", -5, "capture") // should not panic
+	tm.OnBucketApplied("s1", "LOADER", "", -5, "capture") // should not panic
 }
 
 func TestThresholdMonitor_CheckBindings_AboveThreshold_NoFire(t *testing.T) {

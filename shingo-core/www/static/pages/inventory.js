@@ -184,13 +184,13 @@ async function loadBuckets() {
 function renderBuckets(rows) {
   var tbody = document.getElementById('buckets-body');
   if (!rows || rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:1rem;">No lineside buckets — no parts currently kitted at any node.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="text-muted" style="text-align:center;padding:1rem;">No lineside buckets — no parts currently kitted at any node.</td></tr>';
     return;
   }
   var html = '';
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
-    html += '<tr>';
+    html += '<tr data-bucket-id="' + (r.id || 0) + '">';
     html += '<td>' + esc(r.group_name) + '</td>';
     html += '<td>' + esc(r.lane_name) + '</td>';
     html += '<td>' + esc(r.station) + '</td>';
@@ -199,7 +199,38 @@ function renderBuckets(rows) {
     html += '<td><code>' + esc(r.part_number) + '</code></td>';
     html += '<td><span class="badge">' + esc(r.state || 'active') + '</span></td>';
     html += '<td style="text-align:right">' + (r.qty || 0) + '</td>';
+    // Round-3 Obs 10: admin Delete button. Confirm dialog includes
+    // enough identifying info that the operator doesn't nuke the
+    // wrong row when several stations have similar parts.
+    var confirmMsg = 'Delete bucket #' + r.id + ' (' + r.node_name + ' / ' + r.part_number +
+        ' / qty=' + (r.qty || 0) + ')?\\n\\nUse this only for Core-only orphan rows. Active buckets re-emit from Edge after deletion.';
+    html += '<td><button class="btn btn-sm btn-danger" onclick="deleteBucket(' + (r.id || 0) +
+        ', ' + JSON.stringify(confirmMsg) + ')">Delete</button></td>';
     html += '</tr>';
   }
   tbody.innerHTML = html;
+}
+
+async function deleteBucket(id, confirmMsg) {
+  if (!id) return;
+  if (!window.confirm(confirmMsg)) return;
+  try {
+    var resp = await fetch('/api/buckets/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id })
+    });
+    if (!resp.ok) {
+      var msg = 'HTTP ' + resp.status;
+      try {
+        var j = await resp.json();
+        if (j && j.error) { msg = j.error; }
+      } catch (e) { /* keep status code */ }
+      window.alert('Delete failed: ' + msg);
+      return;
+    }
+    await loadBuckets();
+  } catch (e) {
+    window.alert('Delete failed: ' + (e.message || e));
+  }
 }

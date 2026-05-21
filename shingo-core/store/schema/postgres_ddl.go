@@ -383,10 +383,19 @@ CREATE INDEX IF NOT EXISTS idx_demand_registry_payload ON demand_registry(payloa
 -- existed during the staged Phase 1–3 rollout was dropped in v23
 -- after authority flipped plant-wide; only the authoritative table
 -- remains.
+-- Round-3 Obs 8 (2026-05-21): core_node_name replaced node_id BIGINT.
+-- The Edge int64 process_nodes.id namespace and Core int64 nodes.id
+-- namespace share a type but mean different things at each end. The
+-- pre-fix table used Edge's int as if it were Core's, producing
+-- cross-plant attribution bugs (Springfield 6883 stuck-bucket,
+-- Hopkinsville Core-only orphan). Storing the canonical node name on
+-- this table makes the bucket row translation-free from the wire all
+-- the way to the Core admin UI. core_node_name resolves to nodes.id
+-- via GetNodeByName for joins/aggregations.
 CREATE TABLE IF NOT EXISTS lineside_buckets (
     id BIGSERIAL PRIMARY KEY,
     station TEXT NOT NULL,
-    node_id BIGINT NOT NULL,
+    core_node_name TEXT NOT NULL,
     pair_key TEXT NOT NULL,
     style_id BIGINT NOT NULL,
     part_number TEXT NOT NULL,
@@ -399,9 +408,9 @@ CREATE TABLE IF NOT EXISTS lineside_buckets (
     payload_code TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (station, node_id, pair_key, style_id, part_number)
+    UNIQUE (station, core_node_name, pair_key, style_id, part_number)
 );
-CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(node_id, style_id);
+CREATE INDEX IF NOT EXISTS idx_lineside_buckets_node_style ON lineside_buckets(core_node_name, style_id);
 CREATE INDEX IF NOT EXISTS idx_lineside_buckets_payload ON lineside_buckets(payload_code);
 
 -- Phase 1 of the UOP bin-as-truth refactor — at-most-once dedup table

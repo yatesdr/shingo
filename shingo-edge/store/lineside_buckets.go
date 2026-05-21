@@ -65,11 +65,15 @@ func (db *DB) DeactivateOtherLinesideStyles(nodeID, keepStyleID int64) error {
 	return lineside.DeactivateOtherStyles(db.DB, nodeID, keepStyleID)
 }
 
-// DrainLinesideBucket decrements the active bucket for (node, style,
-// part) by up to delta. Returns the amount actually drained; caller
-// passes the remainder to the node-level RemainingUOP decrement.
-func (db *DB) DrainLinesideBucket(nodeID, styleID int64, partNumber string, delta int) (int, error) {
-	return lineside.Drain(db.DB, nodeID, styleID, partNumber, delta)
+// DrainLinesideBucket decrements the active bucket for (node, part)
+// by up to delta. Returns (drained, matchedStyleID); the caller
+// passes the remainder (delta - drained) to the node-level
+// RemainingUOP decrement and attributes the resulting LinesideBucketDelta
+// to matchedStyleID so Core's dedup scope_key keys on the bucket's
+// actual style, not the caller's claim.StyleID. Round-3 A* dropped
+// style_id from the WHERE clause — see lineside.Drain doc.
+func (db *DB) DrainLinesideBucket(nodeID int64, partNumber string, delta int) (drained int, matchedStyleID int64, err error) {
+	return lineside.Drain(db.DB, nodeID, partNumber, delta)
 }
 
 // SetLinesideBucketForReconcile overwrites the bucket qty to exactly

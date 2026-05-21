@@ -25,12 +25,34 @@ package uop
 
 import "shingo/protocol"
 
+// LinesideDrain describes the result of decrementing one lineside
+// bucket on a consume tick: how many UOP came out and which style the
+// matched bucket carries. Round-3 A* dropped style_id from the Drain
+// WHERE clause, so the bucket's style may differ from the caller's
+// claim.StyleID (cutover window — bucket captured under style A
+// drains while the process is now running style B). Carrying the
+// matched StyleID through the wire envelope keeps Core's dedup
+// scope_key (<NodeID>|<PairKey>|<StyleID>|<PartNumber>) consistent
+// with what Core has on file for that bucket.
+type LinesideDrain struct {
+	Qty     int
+	StyleID int64
+}
+
 // TickEvent carries the resolved tick context to the emission verbs.
 // Engine populates it from the existing per-tick state.
 type TickEvent struct {
 	NodeID  int64
 	StyleID int64
 	PairKey string
+
+	// CoreNodeName is the cross-system identifier the wire envelope
+	// uses (Round-3 Obs 8). Engine resolves this from the process
+	// node row that drives the tick — see emitConsumeTickDeltas.
+	// Bucket deltas with an empty CoreNodeName are dropped at flush
+	// rather than emitted into the (now Core-rejected) cross-namespace
+	// translation hole.
+	CoreNodeName string
 
 	// BinID + PayloadCode resolved via engine.binAtNode. BinID == 0
 	// when no bin is at the slot (gap window with active_bin_id nil);
@@ -41,8 +63,9 @@ type TickEvent struct {
 
 	// Drains is the per-part lineside-bucket drain map computed by
 	// engine.drainLinesideFirst. Each non-zero entry emits one
-	// consume_drain bucket delta (signed -qty).
-	Drains map[string]int
+	// consume_drain bucket delta (signed -qty) keyed on the matched
+	// bucket's StyleID rather than the caller's claim.StyleID.
+	Drains map[string]LinesideDrain
 
 	// BinRemainder is the portion of the tick delta that flows to the
 	// bin counter after lineside drain. Emits one bin delta when > 0.
@@ -63,9 +86,17 @@ type TickEvent struct {
 // physical lineside change is independent of which bin is at the
 // slot.
 func (m *Mutator) Consumed(ev TickEvent) error {
-	for part, drained := range ev.Drains {
-		if drained > 0 {
-			m.acc.recordBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, ev.PayloadCode, -drained, protocol.ReasonConsumeDrain)
+	for part, d := range ev.Drains {
+		if d.Qty > 0 {
+			styleID := d.StyleID
+			if styleID == 0 {
+				// Defensive: pre-A* tests / fixtures may populate
+				// Drains without a per-part style. Fall back to the
+				// tick's own StyleID so the dedup key stays scoped to
+				// something meaningful instead of zero.
+				styleID = ev.StyleID
+			}
+			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, styleID, part, ev.PayloadCode, -d.Qty, protocol.ReasonConsumeDrain)
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {
@@ -108,9 +139,13 @@ func (m *Mutator) Produced(ev TickEvent) error {
 // refactor plan called this out specifically. Reason-taxonomy
 // preservation requires both reasons in the same logical operation.
 func (m *Mutator) Fallthrough(ev TickEvent) error {
-	for part, drained := range ev.Drains {
-		if drained > 0 {
-			m.acc.recordBucket(ev.NodeID, ev.PairKey, ev.StyleID, part, ev.PayloadCode, -drained, protocol.ReasonConsumeDrain)
+	for part, d := range ev.Drains {
+		if d.Qty > 0 {
+			styleID := d.StyleID
+			if styleID == 0 {
+				styleID = ev.StyleID
+			}
+			m.acc.recordBucket(ev.NodeID, ev.CoreNodeName, ev.PairKey, styleID, part, ev.PayloadCode, -d.Qty, protocol.ReasonConsumeDrain)
 		}
 	}
 	if ev.BinRemainder > 0 && ev.BinID > 0 {

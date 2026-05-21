@@ -31,6 +31,15 @@
         <span id="core-api-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
         <button class="btn btn-primary" onclick="saveCoreAPI()">Save</button>
     </div>
+    <div class="card-body" style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:0.75rem">
+        <div style="flex:1;min-width:18rem">
+            <strong>Sync from Core</strong>
+            <div style="color:var(--text-muted);font-size:0.85rem">Force-refresh the cached node list and payload catalog. Background refresh runs ~every 2 minutes; use this after a Core-side add/rename if you don't want to wait.</div>
+        </div>
+        <button class="btn btn-sm" id="sync-core-nodes-btn" onclick="syncCoreNodes()">Sync Nodes</button>
+        <button class="btn btn-sm" id="sync-payload-catalog-btn" onclick="syncPayloadCatalog()">Sync Catalog</button>
+        <span id="core-sync-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
+    </div>
 </div>
 
 <div class="card" style="margin-bottom:1rem">

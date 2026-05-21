@@ -360,7 +360,48 @@ func (db *DB) migrate() error {
 			SELECT id FROM orders WHERE status IN ('confirmed','cancelled','failed','skipped')
 		)`)
 
+	// Round-3 A* (2026-05-21): narrow the lineside-bucket partial
+	// unique index from (node_id, style_id, part_number) to
+	// (node_id, part_number) WHERE state='active'. The style_id was
+	// load-bearing on the original "one bucket per (node, style, part)"
+	// model where multi-style transient overlap during release was
+	// considered legal — but in practice that left buckets stuck
+	// across a style cutover because Drain's old style-included WHERE
+	// could no longer match them. The new invariant is "at most one
+	// active bucket per (node, part)" regardless of style; DeactivateOtherStyles
+	// (uop/capture.go:92) still deactivates other-style buckets on
+	// capture to keep state coherent. Schema enforcement is strictly
+	// stronger than the prior code-only enforcement.
+	//
+	// SQLite's CREATE UNIQUE INDEX IF NOT EXISTS matches on name only
+	// — schema.Apply with the new DDL shape would skip recreating an
+	// existing same-named index — so detect the old shape via the
+	// presence of style_id in sqlite_master and DROP+CREATE to install
+	// the narrower variant. Idempotent: on a DB already on the new
+	// shape, the SELECT returns 0 rows and the block is a no-op.
+	if hasLegacyLinesideStyleIndex(db) {
+		db.Exec("DROP INDEX IF EXISTS idx_lineside_active_unique")
+		db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_lineside_active_unique
+			ON node_lineside_bucket(node_id, part_number)
+			WHERE state = 'active'`)
+	}
+
 	return nil
+}
+
+// hasLegacyLinesideStyleIndex returns true if the lineside unique
+// index still includes style_id in its definition. SQLite stores the
+// full CREATE statement of every index in sqlite_master.sql, so a
+// simple LIKE on style_id is enough to distinguish the old and new
+// shapes — both reference part_number, but only the legacy shape
+// references style_id.
+func hasLegacyLinesideStyleIndex(db *DB) bool {
+	var sql string
+	err := db.QueryRow(`SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='index' AND name='idx_lineside_active_unique'`).Scan(&sql)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(sql, "style_id")
 }
 
 // ── Table rebuild helpers (rename-rebuild pattern) ───────────────────

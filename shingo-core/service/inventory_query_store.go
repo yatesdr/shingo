@@ -22,6 +22,12 @@ type InventoryQueryStore interface {
 	// Typed wrapper for the lineside_buckets read-side listing.
 	ListLinesideBuckets() ([]inventory.BucketRow, error)
 
+	// DeleteLinesideBucket removes one bucket row + its matching
+	// inventory_delta_dedup row. Powers the Round-3 Obs 10
+	// admin clear-orphan capability. Returns the number of bucket
+	// rows deleted (0 or 1).
+	DeleteLinesideBucket(id int64) (int, error)
+
 	// Raw SQL pass-through for the preflight / system-count / system-uop
 	// queries. Each one builds its own IN (...) placeholder list at
 	// runtime; abstracting that would just hide the actual query logic.

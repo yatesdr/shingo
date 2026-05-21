@@ -21,6 +21,14 @@ func (db *DB) ListLinesideBuckets() ([]inventory.BucketRow, error) {
 	return inventory.ListLinesideBuckets(db.DB)
 }
 
+// DeleteLinesideBucket removes one lineside_buckets row by id along
+// with its matching inventory_delta_dedup row. Powers the Round-3
+// Obs 10 operator-driven cleanup of Core-only orphan buckets.
+// Returns the count of bucket rows deleted (0 or 1).
+func (db *DB) DeleteLinesideBucket(id int64) (int, error) {
+	return inventory.DeleteLinesideBucket(db.DB, id)
+}
+
 // SumBinUOP returns the signed total of bins.uop_remaining across all
 // bin rows. Item 13 invariant probe; signed because the SME lock
 // allows bins to go negative (overpack). Empty table returns 0.

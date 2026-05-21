@@ -144,13 +144,17 @@ type BinUpdatedEvent struct {
 // monitor consumes when a bucket delta lands. PayloadCode may be
 // empty for orphan / pre-upgrade-backfill rows; the monitor short-
 // circuits on empty.
+//
+// Round-3 Obs 8: CoreNodeName replaced NodeID — the wire envelope now
+// carries the cross-system identifier, and downstream consumers
+// inherit the same shape.
 type LinesideBucketAppliedEvent struct {
 	eventbus.PayloadBase
-	Station     string
-	NodeID      int64
-	PayloadCode string
-	Delta       int
-	Reason      protocol.LinesideBucketDeltaReason
+	Station      string
+	CoreNodeName string
+	PayloadCode  string
+	Delta        int
+	Reason       protocol.LinesideBucketDeltaReason
 }
 
 type NodeUpdatedEvent struct {

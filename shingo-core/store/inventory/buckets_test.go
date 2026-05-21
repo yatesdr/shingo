@@ -31,12 +31,12 @@ func TestListLinesideBuckets_ReturnsAllRowsOrdered(t *testing.T) {
 	}
 
 	// Seed three buckets across two stations.
-	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, node_id, pair_key, style_id, part_number, qty, payload_code)
+	if _, err := db.Exec(`INSERT INTO lineside_buckets (station, core_node_name, pair_key, style_id, part_number, qty, payload_code)
 		VALUES
 		  ('STATION-B', $1, '', 1, 'PART-2', 22, 'PAY-X'),
 		  ('STATION-A', $1, '', 1, 'PART-1', 11, 'PAY-X'),
 		  ('STATION-A', $2, '', 2, 'PART-3', 33, 'PAY-Y')`,
-		nodeA.ID, nodeB.ID); err != nil {
+		nodeA.Name, nodeB.Name); err != nil {
 		t.Fatalf("seed buckets: %v", err)
 	}
 

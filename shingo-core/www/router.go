@@ -191,6 +191,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Post("/inventory/preflight", h.apiInventoryPreflight)
 			r.Post("/inventory/system-count", h.apiInventorySystemCount)
 			r.Get("/buckets", h.apiBuckets)
+			r.Post("/buckets/delete", h.apiBucketDelete)
 
 			// Audit (Item 10) — bin_uop_audit read endpoints
 			r.Get("/audit/bin/{id}", h.apiAuditBinTimeline)
@@ -343,7 +344,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 			r.Post("/bin-types/update", h.handleBinTypeUpdate)
 			r.Post("/bin-types/delete", h.handleBinTypeDelete)
 			r.Post("/bins/create", h.handleBinCreate)
-			r.Post("/bins/delete", h.handleBinDelete)
+			r.Post("/bins/retire", h.handleBinRetire)
 		})
 	}) // end compression group (wraps all routes except SSE)
 

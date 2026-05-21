@@ -295,5 +295,39 @@ async function testCoreAPI() {
     }
 }
 
+// Manual on-demand syncs of cached Core data. The heartbeat re-requests
+// every ~2 minutes; these buttons let an admin shave the wait after a
+// Core-side rename/add. apiSyncCoreNodes /
+// apiSyncPayloadCatalog are fire-and-forget (the response just means
+// "request enqueued") — the actual cache refresh arrives via the next
+// CoreNodes / PayloadCatalog SSE/Kafka message.
+async function syncCoreNodes() {
+    var btn = document.getElementById('sync-core-nodes-btn');
+    var status = document.getElementById('core-sync-status');
+    btn.disabled = true;
+    status.textContent = 'Requesting node sync...';
+    try {
+        await ShingoEdge.api.post('/api/core-nodes/sync');
+        status.textContent = 'Node sync requested';
+    } catch (e) {
+        status.textContent = 'Sync failed: ' + e;
+    }
+    setTimeout(function () { btn.disabled = false; }, 1500);
+}
+
+async function syncPayloadCatalog() {
+    var btn = document.getElementById('sync-payload-catalog-btn');
+    var status = document.getElementById('core-sync-status');
+    btn.disabled = true;
+    status.textContent = 'Requesting catalog sync...';
+    try {
+        await ShingoEdge.api.post('/api/payload-catalog/sync');
+        status.textContent = 'Catalog sync requested';
+    } catch (e) {
+        status.textContent = 'Sync failed: ' + e;
+    }
+    setTimeout(function () { btn.disabled = false; }, 1500);
+}
+
 loadBackupStatus();
 loadBackups();

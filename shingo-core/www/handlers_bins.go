@@ -231,14 +231,14 @@ func httpStatusForCreate(err error) int {
 	}
 }
 
-func (h *Handlers) handleBinDelete(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) handleBinRetire(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.FormValue("id"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.engine.BinService().Delete(id); err != nil {
+	if err := h.engine.BinService().Retire(id); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -352,7 +352,13 @@ func (h *Handlers) binMaintenance(b *domain.Bin, _ json.RawMessage) error {
 }
 
 func (h *Handlers) binRetire(b *domain.Bin, _ json.RawMessage) error {
-	if err := h.engine.BinService().ChangeStatus(b.ID, domain.BinStatusRetired); err != nil {
+	// Retire sets status='retired' AND node_id=NULL atomically so the
+	// carrier vacates production immediately. Pre-Round-3 this handler
+	// only changed status; the bin stayed at its old node and continued
+	// to occupy that slot in node-tile / capacity readers — operators
+	// had to manually move retired bins to an out-of-line node to free
+	// the slot. Routing through BinService.Retire closes that gap.
+	if err := h.engine.BinService().Retire(b.ID); err != nil {
 		return err
 	}
 	h.engine.AuditService().Append("bin", b.ID, "status", b.Status.String(), string(domain.BinStatusRetired), "ui")

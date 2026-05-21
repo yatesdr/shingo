@@ -59,8 +59,9 @@ func (h *Handlers) apiInventory(w http.ResponseWriter, r *http.Request) {
 
 // apiBuckets returns every authoritative lineside_buckets row as JSON.
 // Powers the "Lineside Buckets" section on the operator-facing
-// inventory page. Read-only — no admin override or clear on Core yet
-// (Edge owns the engineer override path).
+// inventory page. Round-3 Obs 10 added the Delete column on top of
+// this read-side: apiBucketDelete (below) is the admin recovery hatch
+// for clearing Core-only orphan rows.
 //
 // See lineside-buckets-investigation-2026-05-18.md.
 func (h *Handlers) apiBuckets(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +71,47 @@ func (h *Handlers) apiBuckets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.jsonOK(w, rows)
+}
+
+// apiBucketDelete removes one lineside_buckets row + its
+// inventory_delta_dedup row by primary key. Round-3 Obs 10 — the
+// operator-driven recovery hatch for the cross-namespace orphan
+// shape that the Obs 8 protocol fix made impossible to create going
+// forward. Auth-gated via requireAuth (binary in this codebase; no
+// finer role distinction).
+//
+// The audit row records source="ui", actor=session username, so
+// operations can trace which engineer cleared which bucket.
+func (h *Handlers) apiBucketDelete(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID int64 `json:"id"`
+	}
+	if !h.parseJSON(w, r, &req) {
+		return
+	}
+	if req.ID <= 0 {
+		h.jsonError(w, "id required", http.StatusBadRequest)
+		return
+	}
+
+	n, err := h.engine.InventoryService().DeleteLinesideBucket(req.ID)
+	if err != nil {
+		h.jsonError(w, "delete lineside bucket: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if n == 0 {
+		h.jsonError(w, "no lineside bucket with that id", http.StatusNotFound)
+		return
+	}
+
+	actor := h.getUsername(r)
+	if actor == "" {
+		actor = "ui"
+	}
+	if as := h.engine.AuditService(); as != nil {
+		as.Append("lineside_bucket", req.ID, "deleted", "active", "deleted", actor)
+	}
+	h.jsonSuccess(w)
 }
 
 func (h *Handlers) apiInventoryExport(w http.ResponseWriter, r *http.Request) {

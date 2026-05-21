@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shingo/protocol/testutil"
+	"shingocore/domain"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -807,6 +808,97 @@ func TestBinService_Delete_RemovesBin(t *testing.T) {
 	testutil.MustNoErr(t, svc.Delete(bin.ID), "Delete")
 	if _, err := db.GetBin(bin.ID); err == nil {
 		t.Fatal("expected GetBin to error after Delete")
+	}
+}
+
+// TestBinService_Retire_MarksRetiredAndClearsNode pins Item B's NULL
+// approach: Retire flips the status and vacates node_id atomically so
+// the carrier disappears from operational readers (CountByAllNodes,
+// ListByNode) without losing history.
+func TestBinService_Retire_MarksRetiredAndClearsNode(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-RET-1", "", 0)
+	if bin.NodeID == nil {
+		t.Fatalf("precondition: created bin should have NodeID set")
+	}
+	testutil.MustNoErr(t, svc.Retire(bin.ID), "Retire")
+
+	got, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("GetBin after Retire: %v — row should still exist (history preserved)", err)
+	}
+	if got.Status != domain.BinStatusRetired {
+		t.Errorf("after Retire status = %q, want %q", got.Status, domain.BinStatusRetired)
+	}
+	if got.NodeID != nil {
+		t.Errorf("after Retire NodeID = %v, want nil (carrier must vacate production)", *got.NodeID)
+	}
+
+	count, err := db.CountBinsByNode(sd.StorageNode.ID)
+	if err != nil {
+		t.Fatalf("CountBinsByNode: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("retired bin must not count against the old node; CountBinsByNode = %d, want 0", count)
+	}
+
+	// Idempotent: second call should not error.
+	testutil.MustNoErr(t, svc.Retire(bin.ID), "Retire (idempotent)")
+}
+
+// TestBinService_Retire_ClaimedBin pins Retire's behavior on a bin
+// claimed by an active order. The carrier still retires — claim state
+// is informational on the bin row; the order is the source of truth
+// for in-flight semantics. Pre-Round-3 the admin Delete path FK-failed
+// here because the order row referenced the bin.
+func TestBinService_Retire_ClaimedBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-RET-CLAIMED", "", 0)
+	const fakeOrderID = int64(424242)
+	testutil.MustNoErr(t, db.ClaimBin(bin.ID, fakeOrderID), "ClaimBin")
+
+	testutil.MustNoErr(t, svc.Retire(bin.ID), "Retire claimed bin")
+
+	got, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("GetBin after Retire: %v", err)
+	}
+	if got.Status != domain.BinStatusRetired {
+		t.Errorf("status = %q, want %q", got.Status, domain.BinStatusRetired)
+	}
+	if got.NodeID != nil {
+		t.Errorf("NodeID = %v, want nil", *got.NodeID)
+	}
+}
+
+// TestBinService_Retire_LockedBin pins Retire's behavior on a locked
+// bin. Lock state is operator-asserted "do not auto-move" — it should
+// not block an explicit admin Retire action.
+func TestBinService_Retire_LockedBin(t *testing.T) {
+	t.Parallel()
+	db := testDB(t)
+	sd := testdb.SetupStandardData(t, db)
+	svc := newBinSvc(db)
+
+	bin := createTestBin(t, db, sd.StorageNode.ID, "BS-RET-LOCKED", "", 0)
+	testutil.MustNoErr(t, svc.Lock(bin.ID, "admin"), "Lock")
+
+	testutil.MustNoErr(t, svc.Retire(bin.ID), "Retire locked bin")
+
+	got, err := db.GetBin(bin.ID)
+	if err != nil {
+		t.Fatalf("GetBin after Retire: %v", err)
+	}
+	if got.Status != domain.BinStatusRetired {
+		t.Errorf("status = %q, want %q", got.Status, domain.BinStatusRetired)
 	}
 }
 

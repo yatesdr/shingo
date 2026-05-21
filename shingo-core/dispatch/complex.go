@@ -71,3 +71,25 @@ func allStepSkipsAreEmptyNode(skips []pickupSkip) bool {
 	}
 	return true
 }
+
+// isCapacityResolutionError reports whether the resolver returned a
+// "transient capacity" failure — destination NGRP saturated or pickup
+// NGRP empty/no-matching-payload — as opposed to a permanent
+// StructuralError. Round-3 follow-up: these failures used to terminal-
+// fail a complex order at intake; they now queue with the message as
+// queue_reason so the scanner retries when capacity opens.
+//
+// Substrings match the resolver's stable error shapes:
+//   - dispatch/binresolver/group_resolver.go:440, 518 (dropoff NGRP full)
+//   - dispatch/binresolver/group_resolver.go:298, 323 (pickup NGRP empty)
+//
+// resolveStepNode wraps the resolver error as "cannot resolve group X:
+// <original>" — the substring survives the wrap.
+func isCapacityResolutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no available slot in node group") ||
+		strings.Contains(msg, "no bin of requested payload in node group")
+}

@@ -658,18 +658,33 @@ type BinUOPDelta struct {
 // (orphan bucket whose claim was deleted before the capture event
 // could resolve a payload). Orphans are excluded from
 // SystemUOPForPayload — conservative undercount, never overcount.
+// Round-3 Obs 8 (2026-05-21): NodeID dropped, CoreNodeName added.
+// The Edge-local int64 process_nodes.id and Core-side nodes.id share
+// a namespace but mean different things at each end. Pre-fix
+// LinesideBucketDelta sent Edge's process_nodes.id; Core's applier
+// then UPSERT'd against that integer under the assumption it
+// referenced Core's nodes table, producing the cross-plant bucket
+// drift that surfaced as the Springfield 6883 stuck-bucket and the
+// Hopkinsville-vs-plant-a Core-only orphan. Switching to CoreNodeName
+// is translation-free at the wire: Edge populates from
+// process_nodes.core_node_name; Core's applier resolves to nodes.id
+// via GetNodeByName before insert, and drops the delta with a loud
+// log if the name doesn't resolve. The precedent is the
+// NodeStructureChanged sibling at protocol/payloads.go:484 (still
+// Core's authoritative ID — safe direction Core→Edge) and the
+// earlier Item 14 (D6) drop of NodeID on another envelope.
 type LinesideBucketDelta struct {
-	Station     string                    `json:"station"`
-	NodeID      int64                     `json:"node_id"`
-	PairKey     string                    `json:"pair_key"`
-	StyleID     int64                     `json:"style_id"`
-	PartNumber  string                    `json:"part_number"`
-	PayloadCode string                    `json:"payload_code,omitempty"`
-	Delta       int                       `json:"delta"`
-	Reason      LinesideBucketDeltaReason `json:"reason"`
-	SequenceID  int64                     `json:"sequence_id"`
-	WindowStart time.Time                 `json:"window_start"`
-	WindowEnd   time.Time                 `json:"window_end"`
+	Station      string                    `json:"station"`
+	CoreNodeName string                    `json:"core_node_name"`
+	PairKey      string                    `json:"pair_key"`
+	StyleID      int64                     `json:"style_id"`
+	PartNumber   string                    `json:"part_number"`
+	PayloadCode  string                    `json:"payload_code,omitempty"`
+	Delta        int                       `json:"delta"`
+	Reason       LinesideBucketDeltaReason `json:"reason"`
+	SequenceID   int64                     `json:"sequence_id"`
+	WindowStart  time.Time                 `json:"window_start"`
+	WindowEnd    time.Time                 `json:"window_end"`
 }
 
 // LoopBelowThresholdSignal is sent by Core to Edge when total in-loop

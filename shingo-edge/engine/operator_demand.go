@@ -257,16 +257,31 @@ func (e *Engine) FindLoaderForPayload(payloadCode string) *manualSwapNode {
 // FindAnyLoaderClaimForPayload returns a (node, claim) pair for a
 // manual_swap PRODUCER claim matching the payload across **every**
 // style on every process, not just the active style. Returns the
-// first match. Used only by the engineer-triggered Calculate path
-// to resolve bin capacity — a payload may be on an inactive style
-// during commissioning, calibration, or multi-process plants, and
-// the calculator still needs to know the bin's UOPCapacity so the
-// UI can render the implied-bin annotation ("≈ N bins") next to the
-// calculated threshold.
+// first match. Used by:
 //
-// Do not use this for L1 trigger logic or for SendClaimSync — those
-// must stay active-gated so an inactive style's threshold doesn't
-// leak into the live demand wire.
+//  1. The engineer-triggered Calculate path to resolve bin capacity —
+//     a payload may be on an inactive style during commissioning,
+//     calibration, or multi-process plants, and the calculator still
+//     needs to know the bin's UOPCapacity so the UI can render the
+//     implied-bin annotation ("≈ N bins") next to the calculated
+//     threshold.
+//
+//  2. The UOP-threshold L1 trigger path (HandleLoopBelowThreshold,
+//     Round-3 Obs 9). Threshold-driven demand is pre-stock semantics
+//     — Core decides "this loop needs replenishment for THIS payload"
+//     based on the configured threshold, and the threshold belongs to
+//     the loader claim, not the style. An inactive-style loader still
+//     pulls empties on threshold because the operator pre-stocks for
+//     the upcoming changeover. The Item C planStore capacity gate is
+//     the safety net here: if storage downstream is full, the L1
+//     queues at Core rather than spamming dispatch.
+//
+// Line-driven demand (HandleDemandSignal — operator counter pulls)
+// must NOT use this helper; it stays active-style-gated to keep
+// counters bound to the running style. SendClaimSync is separately
+// scoped — see commit 39df43b (2026-05-18) which extended the sync to
+// include all-style claims so Core's threshold registry has the data
+// it needs.
 func (e *Engine) FindAnyLoaderClaimForPayload(payloadCode string) *manualSwapNode {
 	if payloadCode == "" {
 		return nil
@@ -514,7 +529,15 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	if sig == nil || sig.PayloadCode == "" {
 		return
 	}
-	loader := e.FindLoaderForPayload(sig.PayloadCode)
+	// Round-3 Obs 9 Edge-side: use FindAnyLoaderClaimForPayload so a
+	// loader bound to an INACTIVE style still receives threshold-driven
+	// L1s. Pre-fix FindLoaderForPayload walked proc.ActiveStyleID only,
+	// so a configured threshold for a payload on the inactive style was
+	// silently swallowed at Edge after Core sent the signal. The Item C
+	// planStore capacity gate (shipped in this branch ahead of this
+	// change) is the safety net — if downstream storage is full,
+	// dispatch queues the L1 rather than over-ordering.
+	loader := e.FindAnyLoaderClaimForPayload(sig.PayloadCode)
 	if loader == nil {
 		e.debugFn("loop_threshold: no loader for payload=%s — dropping signal", sig.PayloadCode)
 		return

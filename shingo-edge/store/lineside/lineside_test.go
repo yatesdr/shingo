@@ -180,10 +180,14 @@ func TestDeactivateOtherStylesLeavesKeptStyleUntouched(t *testing.T) {
 		t.Fatalf("Capture A: %v", err)
 	}
 	if _, err := Capture(db, 100, "", 20, "P-600", 40); err != nil {
-		// Both active for different styles is a transient state — the
-		// unique index allows it because part_number differs. This is
-		// the post-capture / pre-deactivate condition inside a release
-		// transaction.
+		// Both active is legal here because part_number differs —
+		// matters under either the legacy (node, style, part) index
+		// or the Round-3 A* narrowed (node, part) index. Per-style
+		// transient overlap on the *same* part is no longer allowed
+		// post-A*; that's intentional, and DeactivateOtherStyles
+		// (called inside the release transaction) makes the
+		// "previous style still active" intermediate state
+		// disappear before the transaction commits.
 		t.Fatalf("Capture B: %v", err)
 	}
 
@@ -213,12 +217,15 @@ func TestDrainDecrementsBucketFirst(t *testing.T) {
 		t.Fatalf("Capture: %v", err)
 	}
 
-	drained, err := Drain(db, 100, 10, "P-500", 15)
+	drained, matchedStyleID, err := Drain(db, 100, "P-500", 15)
 	if err != nil {
 		t.Fatalf("Drain 15: %v", err)
 	}
 	if drained != 15 {
 		t.Fatalf("drained=%d, want 15", drained)
+	}
+	if matchedStyleID != 10 {
+		t.Fatalf("matchedStyleID=%d, want 10 (Round-3 A* return value — Core dedup needs the bucket's style, not the caller's)", matchedStyleID)
 	}
 	b, _ := GetActive(db, 100, 10, "P-500")
 	if b.Qty != 45 {
@@ -233,12 +240,15 @@ func TestDrainCarriesRemainderWhenBucketEmpty(t *testing.T) {
 		t.Fatalf("Capture: %v", err)
 	}
 
-	drained, err := Drain(db, 100, 10, "P-500", 25)
+	drained, matchedStyleID, err := Drain(db, 100, "P-500", 25)
 	if err != nil {
 		t.Fatalf("Drain 25: %v", err)
 	}
 	if drained != 10 {
 		t.Fatalf("drained=%d, want 10 (the bucket qty)", drained)
+	}
+	if matchedStyleID != 10 {
+		t.Fatalf("matchedStyleID=%d, want 10", matchedStyleID)
 	}
 	// Bucket was deleted because it hit zero.
 	_, err = GetActive(db, 100, 10, "P-500")
@@ -250,12 +260,12 @@ func TestDrainCarriesRemainderWhenBucketEmpty(t *testing.T) {
 func TestDrainWithNoBucketReturnsZero(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
-	drained, err := Drain(db, 100, 10, "P-500", 5)
+	drained, matchedStyleID, err := Drain(db, 100, "P-500", 5)
 	if err != nil {
 		t.Fatalf("Drain empty: %v", err)
 	}
-	if drained != 0 {
-		t.Fatalf("drained=%d, want 0", drained)
+	if drained != 0 || matchedStyleID != 0 {
+		t.Fatalf("drained=%d styleID=%d, want 0,0 on no-match", drained, matchedStyleID)
 	}
 }
 
@@ -265,7 +275,7 @@ func TestDrainZeroIsNoop(t *testing.T) {
 	if _, err := Capture(db, 100, "", 10, "P-500", 60); err != nil {
 		t.Fatalf("Capture: %v", err)
 	}
-	drained, err := Drain(db, 100, 10, "P-500", 0)
+	drained, _, err := Drain(db, 100, "P-500", 0)
 	if err != nil {
 		t.Fatalf("Drain 0: %v", err)
 	}
@@ -275,6 +285,44 @@ func TestDrainZeroIsNoop(t *testing.T) {
 	b, _ := GetActive(db, 100, 10, "P-500")
 	if b.Qty != 60 {
 		t.Fatalf("qty should be untouched, got %d", b.Qty)
+	}
+}
+
+// TestDrainAcrossStyleCutover pins the Round-3 A* fix: a bucket
+// captured under style A must continue to drain after the process
+// flips to style B (operator already pulled the parts before the
+// swap). Pre-A* the style_id-gated WHERE left the bucket stuck and
+// the caller's binRemainder absorbed the full tick, producing a
+// chronic over-decrement against the bin counter. Post-A* the WHERE
+// is (node, part, state='active') only; the matched style_id flows
+// back to the caller so downstream LinesideBucketDelta attribution
+// stays consistent with Core's dedup scope_key.
+func TestDrainAcrossStyleCutover(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+
+	// Capture 50 parts under style 10.
+	if _, err := Capture(db, 100, "pair-1", 10, "P-500", 50); err != nil {
+		t.Fatalf("Capture under style 10: %v", err)
+	}
+
+	// Process flips to style 20. Drain runs with no style context.
+	drained, matchedStyleID, err := Drain(db, 100, "P-500", 30)
+	if err != nil {
+		t.Fatalf("Drain across cutover: %v", err)
+	}
+	if drained != 30 {
+		t.Fatalf("drained=%d, want 30 — bucket must keep draining across the cutover", drained)
+	}
+	if matchedStyleID != 10 {
+		t.Fatalf("matchedStyleID=%d, want 10 — Drain must surface the bucket's actual style, not the caller's", matchedStyleID)
+	}
+	b, err := GetActive(db, 100, 10, "P-500")
+	if err != nil {
+		t.Fatalf("GetActive style 10 P-500: %v", err)
+	}
+	if b.Qty != 20 {
+		t.Fatalf("residual qty=%d, want 20", b.Qty)
 	}
 }
 

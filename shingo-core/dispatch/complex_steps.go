@@ -9,15 +9,24 @@ import (
 )
 
 // resolveComplexSteps validates and resolves all steps, returning concrete node names.
-func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string, env *protocol.Envelope, orderUUID string) ([]resolvedStep, error) {
+//
+// Pure function — does NOT side-effect sendError on failure. Callers
+// decide how to surface the error (intake may queue on capacity
+// errors via isCapacityResolutionError; the scanner replay path
+// re-runs resolution per tick).
+//
+// Error shape: "step N: <reason>" — index info preserved so callers
+// don't need to re-format. The wrapped reason from resolveStepNode
+// preserves the original resolver substring so
+// isCapacityResolutionError can match.
+func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payloadCode string) ([]resolvedStep, error) {
 	var resolved []resolvedStep
 	for i, step := range steps {
 		switch step.Action {
 		case "pickup", "dropoff":
 			nodeName, err := d.resolveStepNode(step, payloadCode)
 			if err != nil {
-				d.sendError(env, orderUUID, "resolution_failed", fmt.Sprintf("step %d: %v", i, err))
-				return nil, err
+				return nil, fmt.Errorf("step %d: %w", i, err)
 			}
 			resolved = append(resolved, resolvedStep{Action: step.Action, Node: nodeName})
 		case "wait":
@@ -26,20 +35,81 @@ func (d *Dispatcher) resolveComplexSteps(steps []protocol.ComplexOrderStep, payl
 			if step.Node != "" {
 				nodeName, err := d.resolveStepNode(step, payloadCode)
 				if err != nil {
-					d.sendError(env, orderUUID, "resolution_failed", fmt.Sprintf("step %d: %v", i, err))
-					return nil, err
+					return nil, fmt.Errorf("step %d: %w", i, err)
 				}
 				resolved = append(resolved, resolvedStep{Action: "wait", Node: nodeName})
 			} else {
 				resolved = append(resolved, resolvedStep{Action: "wait"})
 			}
 		default:
-			err := fmt.Errorf("unknown step action: %s", step.Action)
-			d.sendError(env, orderUUID, "invalid_steps", fmt.Sprintf("step %d: %v", i, err))
-			return nil, err
+			return nil, fmt.Errorf("step %d: unknown step action: %s", i, step.Action)
 		}
 	}
 	return resolved, nil
+}
+
+// reResolveComplexSteps walks an already-resolved step list and
+// re-resolves any step whose node still references a synthetic NGRP.
+// Used by DispatchPreparedComplex on the scanner replay path: when
+// intake queued an order because the NGRP was saturated, the original
+// NGRP names sit in stepsJSON until a later tick succeeds.
+//
+// Returns:
+//   - newSteps: resolution-applied step list (concrete child names
+//     where NGRP resolution succeeded).
+//   - changed: true if any step's Node value changed from the input.
+//     The dispatcher persists the new stepsJSON when changed=true so
+//     subsequent ticks don't redo the resolution work and so claim
+//     proceeds against the locked-in children.
+//   - err: the first resolution error encountered. Caller distinguishes
+//     capacity (queue, retry next tick) from other errors (fail) via
+//     isCapacityResolutionError.
+func (d *Dispatcher) reResolveComplexSteps(steps []resolvedStep, payloadCode string) (newSteps []resolvedStep, changed bool, err error) {
+	newSteps = make([]resolvedStep, 0, len(steps))
+	for i, step := range steps {
+		if step.Node == "" {
+			newSteps = append(newSteps, step)
+			continue
+		}
+		node, lookupErr := d.db.GetNodeByDotName(step.Node)
+		if lookupErr != nil || node == nil {
+			// Node vanished from Core — unrecoverable. Fall through to
+			// the original step; the claim path will surface a usable
+			// error.
+			newSteps = append(newSteps, step)
+			continue
+		}
+		if !(node.IsSynthetic && node.NodeTypeCode == "NGRP") {
+			// Already a concrete node — no re-resolution needed.
+			newSteps = append(newSteps, step)
+			continue
+		}
+		// Step still references an NGRP; re-attempt resolution.
+		ps := protocol.ComplexOrderStep{Action: step.Action, Node: step.Node}
+		newName, resolveErr := d.resolveStepNode(ps, payloadCode)
+		if resolveErr != nil {
+			return steps, false, fmt.Errorf("step %d: %w", i, resolveErr)
+		}
+		if newName != step.Node {
+			changed = true
+		}
+		newSteps = append(newSteps, resolvedStep{Action: step.Action, Node: newName})
+	}
+	return newSteps, changed, nil
+}
+
+// stepsAsResolved performs a 1:1 field copy from the wire-protocol
+// step shape to the dispatcher's resolvedStep shape, preserving
+// whatever Node names the caller provided (NGRP or concrete). Used by
+// HandleComplexOrderRequest when intake resolution fails with a
+// capacity error — the original NGRP-bearing steps are preserved so
+// DispatchPreparedComplex can re-attempt resolution on each replay.
+func stepsAsResolved(steps []protocol.ComplexOrderStep) []resolvedStep {
+	out := make([]resolvedStep, 0, len(steps))
+	for _, s := range steps {
+		out = append(out, resolvedStep{Action: s.Action, Node: s.Node})
+	}
+	return out
 }
 
 // resolveStepNode resolves a single step's node. If the node is a synthetic
@@ -89,7 +159,10 @@ func (d *Dispatcher) resolveStepNode(step protocol.ComplexOrderStep, payloadCode
 			d.dbg("resolveStepNode: global fallback pickup → %s (bin %d)", node.Name, bin.ID)
 			return node.Name, nil
 		case "dropoff":
-			node, err := d.db.FindStorageDestination(payloadCode)
+			// Global fallback with no source context — pass 0 to
+			// disable the source-exclusion. Same shape as the
+			// FindSourceBinFIFO call above.
+			node, err := d.db.FindStorageDestination(payloadCode, 0)
 			if err != nil {
 				return "", fmt.Errorf("no storage destination for payload %q: %w", payloadCode, err)
 			}

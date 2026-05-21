@@ -315,7 +315,7 @@ CREATE TABLE IF NOT EXISTS node_lineside_bucket (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lineside_active_unique
-    ON node_lineside_bucket(node_id, style_id, part_number)
+    ON node_lineside_bucket(node_id, part_number)
     WHERE state = 'active';
 
 CREATE INDEX IF NOT EXISTS idx_lineside_node_state
