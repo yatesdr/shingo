@@ -516,15 +516,36 @@ func (e *Engine) hasOptInLoaderThreshold(coreNodeName, payloadCode string) bool 
 }
 
 // HandleLoopBelowThreshold is the Core→Edge LoopBelowThresholdSignal
-// receiver. Calls refillLoaderForPayload for the signaled payload
-// after resolving the local loader via FindLoaderForPayload. The
-// countLoaderInFlightEmptyIn guard inside refillLoaderForPayload is
-// the dedup contract with the legacy DemandSignal path.
+// receiver. Operates in UOP space — the native unit of the threshold
+// configuration — instead of going through refillLoaderForPayload's
+// bin-count math:
+//
+//	projectedUOP := sig.CurrentUOP + inFlight * payload.UOPCapacity
+//	needed       := ceil((threshold - projectedUOP) / capacity)
+//
+// projectedUOP is the asymptote of the current trajectory: each
+// in-flight L1 will, once filled and returned via L2, contribute one
+// bin's capacity of UOP. If that's already at or above threshold, the
+// loop is on track and we skip. Otherwise we fire just enough L1s to
+// close the gap, rounding up to whole bins.
+//
+// Distinct from the legacy DemandSignal path (MaybeCreateLoaderEmptyIn
+// → refillLoaderForPayload), which keeps the magic-2 bin floor for
+// loaders that haven't opted into UOP-threshold replenishment. The
+// countLoaderInFlightEmptyIn guard is the dedup contract between the
+// two paths.
+//
+// Capacity comes from payload_catalog.uop_capacity (synced from Core),
+// not from claim.UOPCapacity — supermarket-side loaders carry
+// UOPCapacity=0 since they don't consume parts themselves, while the
+// payload's per-bin capacity is a property of the part. Missing or
+// zero capacity is treated as a configuration error and skipped with
+// a loud log; falling back to bin-count math would re-introduce the
+// magic-floor over-fire this path exists to avoid.
 //
 // Reason carries either "below_threshold" or "warm_up_startup_sweep" —
-// logged for diagnostics but behaves identically: both ask Edge to fire
-// L1 if not already in flight. Per-binding warm-up cap is enforced at
-// Core; Edge just responds to each signal.
+// logged for diagnostics but behaves identically. Per-binding warm-up
+// cap is enforced at Core; Edge just responds to each signal.
 func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal) {
 	if sig == nil || sig.PayloadCode == "" {
 		return
@@ -544,12 +565,48 @@ func (e *Engine) HandleLoopBelowThreshold(sig *protocol.LoopBelowThresholdSignal
 	}
 	e.logFn("loop_threshold: signal received loader=%s payload=%s current=%d threshold=%d reason=%s",
 		loader.node.CoreNodeName, sig.PayloadCode, sig.CurrentUOP, sig.Threshold, sig.Reason)
-	e.refillLoaderForPayload(loader, sig.PayloadCode)
+
+	entry, err := e.catalogService.GetByCode(sig.PayloadCode)
+	if err != nil || entry == nil || entry.UOPCapacity <= 0 {
+		e.logFn("loop_threshold: loader=%s payload=%s no per-bin capacity in catalog — skipping (err=%v)",
+			loader.node.CoreNodeName, sig.PayloadCode, err)
+		return
+	}
+	capacity := entry.UOPCapacity
+
+	inFlight := e.countLoaderInFlightEmptyIn(loader.node.ID, sig.PayloadCode)
+	if inFlight < 0 {
+		// DB error — fail closed; the next signal will retry.
+		e.logFn("loop_threshold: loader=%s payload=%s in-flight count lookup failed — skipping",
+			loader.node.CoreNodeName, sig.PayloadCode)
+		return
+	}
+
+	projectedUOP := sig.CurrentUOP + inFlight*capacity
+	if projectedUOP >= sig.Threshold {
+		e.logFn("loop_threshold: loader=%s payload=%s projectedUOP=%d (current=%d + %d*%d) >= threshold=%d — skipping",
+			loader.node.CoreNodeName, sig.PayloadCode, projectedUOP, sig.CurrentUOP, inFlight, capacity, sig.Threshold)
+		return
+	}
+	gap := sig.Threshold - projectedUOP
+	needed := (gap + capacity - 1) / capacity
+
+	e.logFn("loop_threshold: loader=%s payload=%s firing %d L1 (projectedUOP=%d threshold=%d capacity=%d inFlight=%d)",
+		loader.node.CoreNodeName, sig.PayloadCode, needed, projectedUOP, sig.Threshold, capacity, inFlight)
+
+	e.createLoaderL1Orders(loader, sig.PayloadCode, needed, "loop_threshold")
 }
 
 // refillLoaderForPayload tops the per-payload empty-in queue at one loader
 // up to (ReorderPoint - currentCount - inFlight) orders. Per-payload helper
 // so MaybeCreateLoaderEmptyIn can sweep across all allowed payloads.
+//
+// LEGACY BIN-COUNT PATH ONLY. The UOP-threshold C-push path lives in
+// HandleLoopBelowThreshold and does its own UOP-denominated math against
+// payload_catalog.uop_capacity — do not route threshold-driven signals
+// through here, the bin-count floor over-fires when threshold < capacity
+// (one bin would satisfy a threshold of 100 UOP at capacity 345, but
+// minStock=2 default would create two L1s).
 //
 // ReorderPoint semantics (produce-role): bin-count minimum-stock floor —
 // "I want at least N bins of this payload in the kanban loop." currentCount
@@ -622,32 +679,42 @@ func (e *Engine) refillLoaderForPayload(loader *manualSwapNode, payloadCode stri
 	e.logFn("side-cycle: loader %s — creating %d L1 retrieve_empty for %s (minStock=%d currentCount=%d inFlight=%d)",
 		loader.node.Name, needed, payloadCode, minStock, currentCount, inFlight)
 
+	e.createLoaderL1Orders(loader, payloadCode, needed, "side-cycle")
+}
+
+// createLoaderL1Orders fires `count` L1 retrieve_empty orders at the
+// loader for the given payload. The caller is responsible for the
+// dedup/math gating that decided `count`. tag prefixes the log lines
+// so the calling path ("side-cycle" for the legacy bin-count refill,
+// "loop_threshold" for the UOP-threshold C-push) is identifiable.
+//
+// All L1s use autoConfirm=false: the loader operator is an active
+// participant in the side-cycle and must explicitly confirm that the
+// bin has been filled with parts. Auto-confirming here would immediately
+// trigger L2 (handleLoaderEmptyInCompletion → CreateMoveOrder) and send
+// the still-empty bin back to the supermarket. Honoring
+// loader.claim.AutoConfirm or cfg.Web.AutoConfirm at this layer defeats
+// the side-cycle model. Plant test 2026-04-27 reproduced this on plants
+// with global auto-confirm enabled.
+//
+// Source group: loader.claim.InboundSource — the supermarket the loader
+// is configured to pull empties from. Without this, Core's
+// planRetrieveEmpty falls back to a global FIFO scan and may pull an
+// empty out of the empty-tote return area instead.
+func (e *Engine) createLoaderL1Orders(loader *manualSwapNode, payloadCode string, count int, tag string) {
 	nodeID := loader.node.ID
-	// L1 (Loader Empty In) must NEVER auto-confirm. The loader operator is an
-	// active participant in the side-cycle and must explicitly confirm that
-	// the bin has been filled with parts. Auto-confirming here would
-	// immediately trigger L2 (handleLoaderEmptyInCompletion → CreateMoveOrder)
-	// and send the still-empty bin back to the supermarket. Honoring
-	// loader.claim.AutoConfirm or cfg.Web.AutoConfirm at this layer defeats
-	// the side-cycle model. Plant test 2026-04-27 reproduced this on plants
-	// with global auto-confirm enabled.
-	autoConfirm := false
-	for i := 0; i < needed; i++ {
-		// Source group: loader.claim.InboundSource — the supermarket the
-		// loader is configured to pull empties from. Without this Core's
-		// planRetrieveEmpty falls back to a global FIFO scan and may pull
-		// an empty bin out of the empty-tote return area instead.
+	for i := 0; i < count; i++ {
 		order, err := e.orderMgr.CreateRetrieveOrder(
 			&nodeID, true, 1, loader.node.CoreNodeName, loader.claim.InboundSource, "",
-			"standard", payloadCode, autoConfirm, true,
+			"standard", payloadCode, false, true,
 		)
 		if err != nil {
-			e.logFn("side-cycle: create empty-in order %d/%d for loader %s payload %s: %v",
-				i+1, needed, loader.node.Name, payloadCode, err)
+			e.logFn("%s: create L1 order %d/%d for loader %s payload %s: %v",
+				tag, i+1, count, loader.node.Name, payloadCode, err)
 			return
 		}
-		log.Printf("side-cycle: empty-in order %d (%d/%d) for loader %s payload %s",
-			order.ID, i+1, needed, loader.node.Name, payloadCode)
+		log.Printf("%s: L1 order %d (%d/%d) for loader %s payload %s",
+			tag, order.ID, i+1, count, loader.node.Name, payloadCode)
 	}
 }
 
