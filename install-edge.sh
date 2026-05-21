@@ -286,6 +286,15 @@ BACKUP_TS=$(date +%Y%m%d-%H%M%S)
 BACKUP_PATH="/tmp/shingo-pre-install-${BACKUP_TS}.tar.gz"
 echo "==> Creating backup at ${BACKUP_PATH}"
 
+# Prune older backups before creating the new one — keep the most
+# recent 3. systemd-tmpfiles also cleans /tmp at the OS level on a
+# 10-day window, but on Pi SD cards the SQLite DB makes each tarball
+# meaningful (tens to hundreds of MB) so we don't want to wait. ls -t
+# orders by mtime newest-first; tail -n +4 skips the first 3 and
+# emits everything older. xargs -r is a no-op when input is empty
+# (fresh install, no prior backups).
+ls -1t /tmp/shingo-pre-install-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+
 BACKUP_FILES=()
 for f in "$LEGACY_DB" "${LEGACY_DB}-wal" "${LEGACY_DB}-shm" "$LEGACY_CONFIG" \
          /var/lib/shingo-edge/shingoedge.db /var/lib/shingo-edge/shingoedge.db-wal \
