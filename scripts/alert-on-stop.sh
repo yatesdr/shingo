@@ -32,6 +32,11 @@
 # Each fired alert is titled "CRASH (alert #N)" so escalation is visible.
 # No separate "service is dead" tier — services use StartLimitIntervalSec=0
 # by design, so systemd never gives up.
+#
+# Only successful POSTs advance the backoff counter. A failed webhook
+# call (bad URL, network blip, Teams 5xx) leaves the state file as-is so
+# the next stop retries immediately rather than silently burning the
+# next suppression window.
 
 set -u
 exec >>/var/log/shingo-alert.log 2>&1
@@ -140,16 +145,22 @@ msg_j=$(escape_json "$msg")
 
 body="{\"type\":\"message\",\"attachments\":[{\"contentType\":\"application/vnd.microsoft.card.adaptive\",\"content\":{\"type\":\"AdaptiveCard\",\"version\":\"1.4\",\"body\":[{\"type\":\"TextBlock\",\"size\":\"Medium\",\"weight\":\"Bolder\",\"text\":\"$title_j\",\"wrap\":true},{\"type\":\"TextBlock\",\"text\":\"$msg_j\",\"wrap\":true}]}}]}"
 
+# Only successful posts advance the backoff window. A failed POST means
+# Teams never saw the alert, so treating it as if it had been delivered
+# would silently burn the next 5/15/30/60-min interval — the exact
+# footgun that bit Springfield on 2026-05-21, where a malformed webhook
+# URL bumped backoff_level to 2 on two failed attempts and then
+# suppressed every real attempt for the next 15 minutes. Keep persist
+# state inside the success branch so config typos can't poison
+# subsequent retries.
 if curl -fsS -X POST -H 'Content-Type: application/json' --max-time 10 -d "$body" "$TEAMS_WEBHOOK_URL" >/dev/null 2>&1; then
     echo "  alert posted (level=$backoff_level -> $((backoff_level + 1)))"
+    {
+        echo "last_alert_ts=$now"
+        echo "backoff_level=$((backoff_level + 1))"
+    } > "$STATE_FILE" 2>/dev/null || true
 else
-    echo "  WARN: webhook post failed"
+    echo "  WARN: webhook post failed (backoff unchanged — next stop will retry immediately)"
 fi
-
-# --- Persist state ---
-{
-    echo "last_alert_ts=$now"
-    echo "backoff_level=$((backoff_level + 1))"
-} > "$STATE_FILE" 2>/dev/null || true
 
 exit 0
