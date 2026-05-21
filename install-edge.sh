@@ -324,6 +324,31 @@ mkdir -p /opt/shingo /etc/shingo /var/lib/shingo-edge
 chown shingo:shingo /opt/shingo /var/lib/shingo-edge
 chmod 755 /opt/shingo /etc/shingo /var/lib/shingo-edge
 
+# Crash-alert support: state dir + log file owned by the shingo user
+# (alert-on-stop.sh runs as that user via ExecStopPost). The
+# systemd-journal group membership lets the alert script include a
+# `journalctl -u <unit>` tail in the message body.
+mkdir -p /var/lib/shingo
+chown shingo:shingo /var/lib/shingo
+chmod 755 /var/lib/shingo
+
+touch /var/log/shingo-alert.log
+chown shingo:shingo /var/log/shingo-alert.log
+chmod 644 /var/log/shingo-alert.log
+
+if getent group systemd-journal >/dev/null 2>&1; then
+    if ! id -nG shingo | grep -qw systemd-journal; then
+        echo "==> Adding 'shingo' user to systemd-journal group (for alert journal tail)..."
+        usermod -aG systemd-journal shingo
+    fi
+fi
+
+# Deploy marker — alert-on-stop.sh checks this file and suppresses
+# crash alerts while the install is restarting the service.
+DEPLOY_MARKER=/run/shingo-deploy-in-progress
+touch "$DEPLOY_MARKER"
+trap 'rm -f "$DEPLOY_MARKER"' EXIT
+
 # ----------------------------------------------------------------------
 # Stop existing edge
 # ----------------------------------------------------------------------
@@ -412,6 +437,11 @@ mv /tmp/shingoedge /opt/shingo/shingoedge
 chown shingo:shingo /opt/shingo/shingoedge
 chmod 755 /opt/shingo/shingoedge
 
+echo "==> Installing alert-on-stop.sh to /opt/shingo/..."
+cp "$REPO_ROOT/scripts/alert-on-stop.sh" /opt/shingo/alert-on-stop.sh
+chown shingo:shingo /opt/shingo/alert-on-stop.sh
+chmod 755 /opt/shingo/alert-on-stop.sh
+
 # ----------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------
@@ -436,6 +466,39 @@ YAML
     chmod 644 /etc/shingo/shingoedge.yaml
 else
     echo "==> /etc/shingo/shingoedge.yaml already exists; leaving in place"
+fi
+
+# ----------------------------------------------------------------------
+# Crash-alert config (/etc/shingo/alert.env)
+# Prompt the operator for the Teams webhook URL the first time alerts
+# are configured on this box. Re-runs leave the file alone. --yes drops
+# the template (alerts stay disabled until the operator edits the file).
+# ----------------------------------------------------------------------
+if [ ! -f /etc/shingo/alert.env ]; then
+    if [ "$ASSUME_YES" = "yes" ]; then
+        echo "==> Installing alert config template at /etc/shingo/alert.env"
+        echo "    (TEAMS_WEBHOOK_URL empty; alerts disabled until you fill it in)"
+        cp "$REPO_ROOT/scripts/alert.env.template" /etc/shingo/alert.env
+    else
+        echo "==> Configure crash alerts (Teams webhook)"
+        echo "    Paste the Teams webhook URL, or press Enter to skip"
+        echo "    (alerts disabled; configure later via /etc/shingo/alert.env)."
+        read -r -p "    URL: " webhook_url
+        cp "$REPO_ROOT/scripts/alert.env.template" /etc/shingo/alert.env
+        if [ -n "$webhook_url" ]; then
+            # & is a back-reference in sed replacement; URL query strings
+            # contain & literally so escape them before substitution.
+            esc="${webhook_url//&/\\&}"
+            sed -i "s|^TEAMS_WEBHOOK_URL=$|TEAMS_WEBHOOK_URL=$esc|" /etc/shingo/alert.env
+            echo "    alerts enabled"
+        else
+            echo "    alerts left disabled"
+        fi
+    fi
+    chown root:shingo /etc/shingo/alert.env
+    chmod 640 /etc/shingo/alert.env
+else
+    echo "==> /etc/shingo/alert.env already exists; leaving in place"
 fi
 
 # ----------------------------------------------------------------------
@@ -484,6 +547,10 @@ if [ "$ACTIVE" != "yes" ]; then
     journalctl -u shingo-edge -n 50 --no-pager || true
     exit 1
 fi
+
+# Service is back up — clear the deploy marker so crash alerts resume.
+rm -f "$DEPLOY_MARKER"
+trap - EXIT
 
 echo "==> Enabling shingo-edge on boot..."
 systemctl enable shingo-edge

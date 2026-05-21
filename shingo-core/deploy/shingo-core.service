@@ -22,6 +22,10 @@ SyslogIdentifier=shingo-core
 MemoryMax=4G
 LogsDirectory=shingo-core
 Environment=SHINGO_PANIC_LOG=/var/log/shingo-core/last-panic.log
+# Teams crash alert. Fires on every stop; alert-on-stop.sh handles its
+# own suppression (deploy marker, system reboot, backoff window, empty
+# webhook URL). Argument list is unit name + systemd-exported result vars.
+ExecStopPost=/opt/shingo/alert-on-stop.sh %n ${SERVICE_RESULT} ${EXIT_CODE} ${EXIT_STATUS}
 
 [Install]
 WantedBy=multi-user.target
