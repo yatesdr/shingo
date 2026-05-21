@@ -47,6 +47,17 @@ RESULT="${2:-unknown}"
 EXIT_CODE="${3:-}"
 EXIT_STATUS="${4:-}"
 
+# curl is the transport for Teams webhooks. Fail loud if it's missing —
+# pre-this-check (Springfield 2026-05-21) a missing curl made the post
+# fail silently with "WARN: webhook post failed", indistinguishable from
+# a network error or bad URL, costing hours of debugging. Exit code 0 so
+# the missing tool doesn't itself trigger a downstream alert loop.
+if ! command -v curl >/dev/null 2>&1; then
+    echo "  ERROR: curl not installed — Teams alerts disabled until curl is on PATH"
+    echo "         (install with: sudo apt-get install -y curl)"
+    exit 0
+fi
+
 CONFIG=/etc/shingo/alert.env
 if [ ! -f "$CONFIG" ]; then
     echo "  no config at $CONFIG, exit silent"

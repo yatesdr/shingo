@@ -58,6 +58,22 @@ if ! id -u shingo >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin shingo
 fi
 
+# curl is required by alert-on-stop.sh (Teams crash-alert hook). A missing
+# curl made the script silently log "WARN: webhook post failed" instead of
+# anything actionable on Springfield 2026-05-21. Install it loudly so that
+# never happens again. apt-get is the only package manager we support here;
+# if the box runs something else (rpm-family, etc.), warn-and-continue —
+# the service still works, only Teams alerts are degraded.
+if ! command -v curl >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "==> Installing curl (required by alert-on-stop.sh)..."
+        apt-get update -qq && apt-get install -y curl
+    else
+        echo "WARNING: curl not installed and apt-get not available."
+        echo "         Teams crash alerts won't work until curl is installed by hand."
+    fi
+fi
+
 # Locate the Go toolchain. sudo's secure_path often hides /usr/local/go/bin,
 # so we resolve the absolute path here and use it directly during the build.
 GO_BIN=""
