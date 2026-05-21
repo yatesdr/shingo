@@ -23,15 +23,23 @@ set -euo pipefail
 # Flags:
 #   --legacy-config <path>   Force MIGRATION using the given config file.
 #                            Escape hatch when discovery can't find it.
+#   --yes, -y                Non-interactive: assume "yes" to all confirm
+#                            prompts. Intended for unattended fleet updates
+#                            via Ansible / SSH fanout. Still refuses to
+#                            overwrite an unknown setup (the safety check
+#                            for "running process but no discoverable config"
+#                            is an error exit, not a confirm).
 
 LEGACY_CONFIG_ARG=""
+ASSUME_YES=no
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --legacy-config)   LEGACY_CONFIG_ARG="$2"; shift 2 ;;
         --legacy-config=*) LEGACY_CONFIG_ARG="${1#*=}"; shift ;;
+        --yes|-y)          ASSUME_YES=yes; shift ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--legacy-config /path/to/shingocore.yaml]"
+            echo "Usage: $0 [--legacy-config /path/to/shingocore.yaml] [--yes]"
             exit 1
             ;;
     esac
@@ -69,6 +77,10 @@ echo "==> Using go at: $GO_BIN"
 
 confirm() {
     local prompt="$1"
+    if [ "$ASSUME_YES" = "yes" ]; then
+        echo "$prompt [auto-yes]"
+        return 0
+    fi
     read -r -p "$prompt [y/N] " ans
     case "$ans" in
         y|Y|yes|YES) return 0 ;;
@@ -156,6 +168,11 @@ if [ -z "$LEGACY_CONFIG" ]; then
         for i in "${!scan_hits[@]}"; do
             echo "      [$((i+1))] ${scan_hits[$i]}"
         done
+        if [ "$ASSUME_YES" = "yes" ]; then
+            echo "ERROR: multiple candidate legacy configs and --yes was passed."
+            echo "       Refusing to guess. Re-run with --legacy-config <path>."
+            exit 1
+        fi
         echo "      [0]  none of these"
         read -r -p "    pick one [0]: " pick
         pick="${pick:-0}"

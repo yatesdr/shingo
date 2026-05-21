@@ -2,6 +2,11 @@
 Description=ShinGo Edge
 After=network-online.target
 Wants=network-online.target
+# Never give up restarting. A plant-floor service that quietly stays
+# down is worse than a noisy crashloop — the latter is caught by
+# journal/monitoring. Setting the interval to 0 disables the rate
+# limit; StartLimitBurst is meaningless without it, so we drop it.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -11,8 +16,6 @@ WorkingDirectory=/opt/shingo
 ExecStart=/opt/shingo/shingoedge --config /etc/shingo/shingoedge.yaml --log-debug
 Restart=always
 RestartSec=5s
-StartLimitBurst=10
-StartLimitIntervalSec=60s
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=shingo-edge
