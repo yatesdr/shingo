@@ -340,6 +340,26 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		}
 	}
 
+	// Wrap msgClient.Reconnect so a UI-triggered reconnect (operator saves
+	// Messaging config) also re-fires the Heartbeater's startup-only sends.
+	// Heartbeater.Start() does register / node.list_request / catalog
+	// request exactly once at process start; if Kafka was unreachable then
+	// (or the client got wedged during a long outage), those one-shots
+	// failed and the periodic loop only re-sends node_list+catalog every
+	// 2 min — never register — leaving Edge silently unregistered until
+	// manual restart. Witnessed at Shelbyville 2026-05-21. This makes the
+	// "Save Messaging" button a self-heal action.
+	eng.SetKafkaReconnectFunc(func() error {
+		if err := msgClient.Reconnect(); err != nil {
+			return err
+		}
+		log.Printf("kafka reconnect: re-firing heartbeater startup sends (register, node list, catalog)")
+		hb.SendRegister()
+		hb.RequestNodeSync()
+		hb.RequestCatalogSync()
+		return nil
+	})
+
 	hb.Start()
 	// Note: hb.Stop() is not deferred here — it lives for the process lifetime
 	// and is cleaned up by the Kafka client close.
@@ -484,7 +504,10 @@ func main() {
 	eng.SetSendFunc(func(env *protocol.Envelope) error {
 		return dataSender.PublishEnvelope(env, "core data sync")
 	})
-	eng.SetKafkaReconnectFunc(msgClient.Reconnect)
+	// Kafka reconnect wiring lives in setupKafkaSubscribers where the
+	// Heartbeater is in scope — the wrapper re-fires register/node-sync/
+	// catalog-sync after Reconnect, self-healing the "Kafka-unreachable-
+	// at-startup wedges Edge silently" case.
 
 	// Outbox drainer — runs unconditionally, drains when connected
 	drainer := messaging.NewOutboxDrainer(db, msgClient, &cfg.Messaging)

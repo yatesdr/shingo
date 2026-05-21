@@ -423,25 +423,33 @@ fi
 # the template (alerts stay disabled until the operator edits the file).
 # ----------------------------------------------------------------------
 if [ ! -f /etc/shingo/alert.env ]; then
+    cp "$REPO_ROOT/scripts/alert.env.template" /etc/shingo/alert.env
     if [ "$ASSUME_YES" = "yes" ]; then
         echo "==> Installing alert config template at /etc/shingo/alert.env"
         echo "    (TEAMS_WEBHOOK_URL empty; alerts disabled until you fill it in)"
-        cp "$REPO_ROOT/scripts/alert.env.template" /etc/shingo/alert.env
     else
         echo "==> Configure crash alerts (Teams webhook)"
         echo "    Paste the Teams webhook URL, or press Enter to skip"
         echo "    (alerts disabled; configure later via /etc/shingo/alert.env)."
         read -r -p "    URL: " webhook_url
-        cp "$REPO_ROOT/scripts/alert.env.template" /etc/shingo/alert.env
+        plant_default=$(hostname -s)
+        read -r -p "    Plant name [default: $plant_default]: " plant_id
+        [ -z "$plant_id" ] && plant_id="$plant_default"
+        # Delete-and-append avoids sed escape issues with URL special chars
+        # (& is bash background-op when unquoted, \ trips sed's replacement
+        # parser). The script writes the final values at the end; bash
+        # sources top-to-bottom so the template's empty placeholders never
+        # win even if not deleted, but we strip them for tidiness.
+        sed -i '/^TEAMS_WEBHOOK_URL=/d; /^PLANT_ID=/d' /etc/shingo/alert.env
         if [ -n "$webhook_url" ]; then
-            # & is a back-reference in sed replacement; URL query strings
-            # contain & literally so escape them before substitution.
-            esc="${webhook_url//&/\\&}"
-            sed -i "s|^TEAMS_WEBHOOK_URL=$|TEAMS_WEBHOOK_URL=$esc|" /etc/shingo/alert.env
+            printf 'TEAMS_WEBHOOK_URL="%s"\n' "$webhook_url" >> /etc/shingo/alert.env
             echo "    alerts enabled"
         else
+            printf 'TEAMS_WEBHOOK_URL=""\n' >> /etc/shingo/alert.env
             echo "    alerts left disabled"
         fi
+        printf 'PLANT_ID="%s"\n' "$plant_id" >> /etc/shingo/alert.env
+        echo "    plant identified as: $plant_id"
     fi
     chown root:shingo /etc/shingo/alert.env
     chmod 640 /etc/shingo/alert.env
