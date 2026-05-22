@@ -390,11 +390,16 @@ func (m *Manager) GetPLCHealth(name string) *PLCHealth {
 	m.mu.RLock()
 	mp, ok := m.plcs[name]
 	m.mu.RUnlock()
-	if !ok || mp.Health == nil {
+	if !ok {
 		return nil
 	}
+	// Take mp.mu BEFORE reading mp.Health — the unlocked nil-check
+	// raced against handleSSEHealth's write under mp.mu.Lock().
 	mp.mu.RLock()
 	defer mp.mu.RUnlock()
+	if mp.Health == nil {
+		return nil
+	}
 	h := *mp.Health
 	return &h
 }

@@ -44,10 +44,8 @@ jobs:
 
       - name: Test (unit, race)
         working-directory: shingo-core
-        # Warning-only for the first 30 days (until 2026-06-16). Race
-        # findings surface latent production data races. Promote to
-        # gating once baseline is known clean. Tracked in Phase 7.
-        continue-on-error: true
+        # Promoted to gating in Phase 2 (2026-05-22) after baseline
+        # was confirmed clean.
         run: go test -race -count=1 ./...
 
       - name: Coverage report (unit)
@@ -72,7 +70,5 @@ jobs:
 
       - name: Test (Docker integration, race)
         working-directory: shingo-core
-        # Warning-only for the first 30 days (until 2026-06-16). See
-        # the unit race step above; promote to gating after baseline.
-        continue-on-error: true
+        # Promoted to gating in Phase 2 (2026-05-22).
         run: go test -tags=docker -race -timeout=25m -count=1 ./...

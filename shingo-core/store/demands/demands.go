@@ -10,6 +10,8 @@ package demands
 
 import (
 	"database/sql"
+	"log"
+	"strings"
 	"time"
 
 	"shingo/protocol"
@@ -252,6 +254,15 @@ func SyncRegistry(db *sql.DB, stationID string, entries []RegistryEntry) ([]Regi
 	var changes []RegistryChange
 	seen := make(map[string]bool, len(entries))
 	for _, e := range entries {
+		// Wire boundary: Edge feeds CoreNodeName via ClaimSync. Trim
+		// defensively and warn if the upstream sent whitespace —
+		// forensic signal that an Edge admin or sync path leaked
+		// non-canonical data.
+		coreNodeName := strings.TrimSpace(e.CoreNodeName)
+		if coreNodeName != e.CoreNodeName {
+			log.Printf("WARNING demand sync: Edge sent CoreNodeName with whitespace: %q (station=%q)", e.CoreNodeName, stationID)
+			e.CoreNodeName = coreNodeName
+		}
 		if _, err := tx.Exec(`INSERT INTO demand_registry (station_id, core_node_name, role, payload_code, outbound_dest, replenish_uop_threshold) VALUES ($1, $2, $3, $4, $5, $6)`,
 			stationID, e.CoreNodeName, e.Role, e.PayloadCode, e.OutboundDest, e.ReplenishUOPThreshold); err != nil {
 			return nil, err

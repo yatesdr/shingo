@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -27,7 +28,19 @@ var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
 
 type sseClient struct {
 	events chan SSEEvent
+	drops  int // consecutive event drops; eviction trigger.
 }
+
+// MaxSSEClients caps concurrent SSE connections to prevent a
+// misbehaving browser / scraper from growing the clients map
+// unboundedly.
+const MaxSSEClients = 256
+
+// MaxConsecutiveDrops is the threshold past which a stuck client is
+// evicted from the EventHub. The slow-client policy at run() drops
+// events; without this cap a truly stuck client would stay in the
+// map forever.
+const MaxConsecutiveDrops = 10
 
 // EventHub manages SSE client connections and broadcasts.
 type EventHub struct {
@@ -83,20 +96,44 @@ func (h *EventHub) unregister(c *sseClient) {
 }
 
 func (h *EventHub) run() {
+	// Wrap-with-exit (NOT wrap-with-restart). A panic in the fan-out
+	// loop is almost certainly a real bug — closed channel, nil
+	// map. Restarting would mask it. Process keeps running; UI dies
+	// until restart. Log loudly so the next on-call grep finds the
+	// cause.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC sse-EventHub: %v\n%s", r, debug.Stack())
+		}
+	}()
 	for {
 		select {
 		case <-h.stopChan:
 			return
 		case evt := <-h.broadcast:
+			// Track per-client drop counts and evict the stuck ones
+			// after MaxConsecutiveDrops. Collect targets under
+			// RLock, evict under Lock outside the loop (avoid
+			// upgrade-during-iterate races on h.clients).
 			h.mu.RLock()
+			var stuck []*sseClient
 			for c := range h.clients {
 				select {
 				case c.events <- evt:
+					c.drops = 0
 				default:
-					log.Printf("sse: dropped %s event for slow client", evt.Type)
+					c.drops++
+					log.Printf("sse: dropped %s event for slow client (drops=%d)", evt.Type, c.drops)
+					if c.drops > MaxConsecutiveDrops {
+						stuck = append(stuck, c)
+					}
 				}
 			}
 			h.mu.RUnlock()
+			for _, c := range stuck {
+				log.Printf("WARNING sse: evicting stuck client after %d consecutive drops", c.drops)
+				h.unregister(c)
+			}
 		}
 	}
 }
@@ -106,6 +143,16 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "SSE not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Cap concurrent clients. Refuse with 503 at cap so an
+	// aggressive reconnect loop can't grow the map unboundedly.
+	h.mu.RLock()
+	count := len(h.clients)
+	h.mu.RUnlock()
+	if count >= MaxSSEClients {
+		http.Error(w, "too many SSE clients", http.StatusServiceUnavailable)
 		return
 	}
 

@@ -42,6 +42,12 @@ func (s *edgeOutboxStore) IncrementOutboxRetries(id int64) error {
 	return s.db.IncrementOutboxRetries(id)
 }
 
+// MarkOutboxExhausted satisfies outbox.Store; pushes a message into
+// the implicit dead-letter state (retries = MaxOutboxRetries).
+func (s *edgeOutboxStore) MarkOutboxExhausted(id int64, reason string) error {
+	return s.db.MarkOutboxExhausted(id, reason)
+}
+
 // PurgeOldOutbox removes old messages.
 func (s *edgeOutboxStore) PurgeOldOutbox(olderThan time.Duration) (int, error) {
 	n, err := s.db.PurgeOldOutbox(olderThan)

@@ -76,7 +76,6 @@ jobs:
 
       - name: Test (Docker integration, race)
         working-directory: integration
-        # Warning-only for the first 30 days (until 2026-06-16), matching
-        # core.yml / edge.yml. Promote to gating after baseline.
-        continue-on-error: true
+        # Promoted to gating in Phase 2 (2026-05-22), matching
+        # core.yml / edge.yml.
         run: go test -tags=docker -race -timeout=25m -count=1 ./...

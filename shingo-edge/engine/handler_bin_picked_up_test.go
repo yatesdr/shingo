@@ -307,3 +307,97 @@ func TestRegression_BinPickedUpAtRemoteLocationIsIgnored(t *testing.T) {
 		t.Errorf("remote pickups triggered %d flushes, want 0", sink.flushCount)
 	}
 }
+
+// TestRegression_BinPickedUpEmptyLocationFailsClosed pins the
+// inverted location gate. Pre-inversion the gate failed OPEN on
+// empty Location — re-introducing the Springfield bug any time
+// Core's wiring_block_completed.go failed to populate ev.Location.
+// Post-inversion empty Location is treated as "couldn't verify,
+// skip for safety."
+func TestRegression_BinPickedUpEmptyLocationFailsClosed(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix:      "EMPTY-LOC",
+		PayloadCode: "PART-EL",
+		UOPCapacity: 100,
+		InitialUOP:  50,
+	})
+
+	const binID int64 = 12001
+	bid := binID
+	testutil.MustNoErr(t, db.SetProcessNodeRuntimeWithBin(nodeID, &claimID, &bid, 50), "seed active bin")
+
+	const orderUUID = "uuid-empty-loc"
+	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
+		&nodeID, false, 1, "EMPTY-LOC-NODE", "", "", "", false, "PART-EL")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	_ = db.UpdateOrderBinID(orderID, &bid)
+	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+
+	eng := testEngine(t, db)
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
+	eng.SetInventoryDeltaSink(sink)
+
+	// Empty Location: gate must fail closed and skip all side effects.
+	eng.HandleBinPickedUp(orderUUID, binID, "")
+
+	// Runtime must be untouched — active state stays pinned.
+	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	if rt.ActiveBinID == nil || *rt.ActiveBinID != binID {
+		t.Errorf("ActiveBinID = %v, want %d (empty-Location must not clear active state)", rt.ActiveBinID, binID)
+	}
+	if rt.ActiveOrderID == nil || *rt.ActiveOrderID != orderID {
+		t.Errorf("ActiveOrderID = %v, want %d (empty-Location must not clear active state)", rt.ActiveOrderID, orderID)
+	}
+	if sink.flushes != 0 {
+		t.Errorf("Flush() fired on empty-Location BinPickedUp: flushes = %d, want 0", sink.flushes)
+	}
+}
+
+// TestRegression_BinPickedUpWhitespaceLocationMatches pins the
+// defensive TrimSpace in the gate. The canonical write path trims
+// (store/processes/processes.go) but Core's RDS-driven Location
+// does not normalize. A stray space on either side must still
+// match the at-slot path (gate fail-open on whitespace would
+// re-introduce the Springfield class on a different trigger).
+func TestRegression_BinPickedUpWhitespaceLocationMatches(t *testing.T) {
+	t.Parallel()
+	db := testEngineDB(t)
+	_, nodeID, _, claimID := seedConsumeNode(t, db, consumeNodeConfig{
+		Prefix:      "WS-LOC",
+		PayloadCode: "PART-WS",
+		UOPCapacity: 100,
+		InitialUOP:  50,
+	})
+	testutil.MustNoErr(t, db.SetProcessNodeRuntime(nodeID, &claimID, 50), "seed runtime")
+
+	const binID int64 = 12002
+	const orderUUID = "uuid-ws-loc"
+	orderID, err := db.CreateOrder(orderUUID, orders.TypeRetrieve,
+		&nodeID, false, 1, "WS-LOC-NODE", "", "", "", false, "PART-WS")
+	if err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	bid := binID
+	_ = db.UpdateOrderBinID(orderID, &bid)
+	_ = db.UpdateProcessNodeRuntimeOrders(nodeID, &orderID, nil)
+
+	eng := testEngine(t, db)
+	sink := &flushTrackingSink{fakeDeltaSink: fakeDeltaSink{db: db}}
+	eng.SetInventoryDeltaSink(sink)
+
+	// Location has stray whitespace; gate trims both sides at compare
+	// time and the at-slot path fires normally.
+	eng.HandleBinPickedUp(orderUUID, binID, " WS-LOC-NODE ")
+
+	if sink.flushes == 0 {
+		t.Errorf("Flush() not called on whitespace-padded Location — defensive TrimSpace should make the gate pass")
+	}
+	rt, _ := db.GetProcessNodeRuntime(nodeID)
+	if rt.ActiveOrderID != nil {
+		t.Errorf("ActiveOrderID = %v, want nil (handler must clear active after at-slot pickup)", rt.ActiveOrderID)
+	}
+}

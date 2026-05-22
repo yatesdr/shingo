@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -119,6 +120,13 @@ func GetClaimByNode(db *sql.DB, styleID int64, coreNodeName string) (*NodeClaim,
 // role/swap_mode invariants (manual_swap claims must auto-confirm and
 // must declare an outbound destination).
 func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
+	// Defense-in-depth: API ingress (apiUpsertStyleNodeClaim) trims
+	// these. Trim again here so a non-API caller can't bypass it.
+	// Internal write path; silent trim, no warning log.
+	in.CoreNodeName = strings.TrimSpace(in.CoreNodeName)
+	in.PairedCoreNode = strings.TrimSpace(in.PairedCoreNode)
+	in.SecondPairedCoreNode = strings.TrimSpace(in.SecondPairedCoreNode)
+
 	if in.Role != protocol.ClaimRoleProduce && in.Role != protocol.ClaimRoleChangeover {
 		in.Role = protocol.ClaimRoleConsume
 	}

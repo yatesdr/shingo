@@ -53,6 +53,24 @@ func (db *DB) IncrementOutboxRetries(id int64) error {
 	return messaging.IncrementRetries(db.DB, id)
 }
 
+// MarkOutboxExhausted forces a message into the implicit dead-letter
+// state (retries = MaxRetries) in a single UPDATE. Used by the
+// outbox drainer's per-message panic boundary to ensure a
+// poison-pill message doesn't loop forever.
+func (db *DB) MarkOutboxExhausted(id int64, reason string) error {
+	return messaging.MarkExhausted(db.DB, id, reason)
+}
+
+// CountPendingOutbox returns the number of un-sent outbox messages
+// (sent_at IS NULL AND retries < MaxRetries). Surfaced via /status
+// as a wedge indicator — a steadily growing outbox depth is the
+// operational signal that Kafka or Core is unreachable.
+func (db *DB) CountPendingOutbox() (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM outbox WHERE sent_at IS NULL AND retries < ?`, messaging.MaxRetries).Scan(&n)
+	return n, err
+}
+
 // RequeueOutbox resets the retry counter so a dead-lettered message
 // will be picked up by the drainer again.
 func (db *DB) RequeueOutbox(id int64) error {

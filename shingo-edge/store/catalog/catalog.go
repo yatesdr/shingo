@@ -83,11 +83,11 @@ func ListCatalog(db *sql.DB) ([]*CatalogEntry, error) {
 	for rows.Next() {
 		e, err := scanCatalogEntry(rows)
 		if err != nil {
-			continue
+			return entries, fmt.Errorf("scan catalog row: %w", err)
 		}
 		entries = append(entries, e)
 	}
-	return entries, nil
+	return entries, rows.Err()
 }
 
 // GetCatalogByCode returns a single payload_catalog row by code.

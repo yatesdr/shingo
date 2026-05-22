@@ -416,10 +416,9 @@ func TestReleaseChangeoverWait_SupplyManifestPreserved(t *testing.T) {
 
 	// ─── Phase 2 step 2: evac robot picks up. BinPickedUp arrives. ───
 	// HandleBinPickedUp's task-lookup branch fires the deferred supply.
-	// Location is empty here — the F' Phase 2 task-lookup branch runs
-	// before the location gate, so the deferred-supply chain isn't
-	// affected by gating.
-	eng.HandleBinPickedUp(evacOrder.UUID, 9999 /* binID, irrelevant for this branch */, "")
+	// Location is "P3-NODE" (the seeded process node's CoreNodeName)
+	// so the inverted location gate passes and F' Phase 2 fires.
+	eng.HandleBinPickedUp(evacOrder.UUID, 9999 /* binID, irrelevant for this branch */, "P3-NODE")
 
 	releases = findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -537,7 +536,9 @@ func TestHandleBinPickedUp_ReleasesDeferredSupply(t *testing.T) {
 		_ = db.AckOutbox(m.ID)
 	}
 
-	eng.HandleBinPickedUp(evacOrder.UUID, 1, "")
+	// Location matches the seeded node's CoreNodeName ("P3-NODE") so
+	// the inverted location gate passes and F' Phase 2 fires.
+	eng.HandleBinPickedUp(evacOrder.UUID, 1, "P3-NODE")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 1 {
@@ -611,7 +612,11 @@ func TestHandleBinPickedUp_DoesNotReleaseTerminalSupply(t *testing.T) {
 		_ = db.AckOutbox(m.ID)
 	}
 
-	eng.HandleBinPickedUp(evacOrder.UUID, 1, "")
+	// Location matches the seeded node's CoreNodeName ("P3-NODE") so
+	// the inverted location gate passes and we actually exercise the
+	// terminal-skip inside F' Phase 2 rather than short-circuiting
+	// on the gate.
+	eng.HandleBinPickedUp(evacOrder.UUID, 1, "P3-NODE")
 
 	releases := findOutboxByType(t, db, protocol.TypeOrderRelease)
 	if len(releases) != 0 {

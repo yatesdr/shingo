@@ -193,14 +193,14 @@ func TestInventoryDeltaReporter_ScopeKeysIndependent(t *testing.T) {
 	}
 }
 
-// TestInventoryDeltaReporter_RestoreOnEnqueueFailure pins the
-// restore-on-failure invariant: when the outbox enqueue fails, the
-// swept delta folds back into the live entry so a subsequent
-// successful flush still ships the count change. Mirror of
-// production_reporter's restoreSnapshot pattern.
+// TestInventoryDeltaReporter_FailedEnqueueLeavesEntryIntact pins
+// the send-then-sweep invariant: when the underlying DB or outbox
+// fails, the entry's delta is unchanged (because nothing was
+// zeroed in the first place) so a subsequent successful flush
+// still ships the count change.
 //
 // We force failure by closing the underlying DB before flush.
-func TestInventoryDeltaReporter_RestoreOnEnqueueFailure(t *testing.T) {
+func TestInventoryDeltaReporter_FailedEnqueueLeavesEntryIntact(t *testing.T) {
 	t.Parallel()
 	db := newReporterTestDB(t)
 	r := New(db, "ALN_001", nil, nil, nil)
@@ -211,17 +211,17 @@ func TestInventoryDeltaReporter_RestoreOnEnqueueFailure(t *testing.T) {
 	db.Close()
 	r.Flush()
 
-	// The entry must still hold -7.
+	// The entry must still hold -7 — send-then-sweep never zeroed it.
 	v, ok := r.acc.bins.Load("99")
 	if !ok {
-		t.Fatal("bin entry disappeared after failed flush — must be restored")
+		t.Fatal("bin entry disappeared after failed flush — must remain intact (send-then-sweep)")
 	}
 	e := v.(*binDeltaEntry)
 	e.mu.Lock()
 	got := e.delta
 	e.mu.Unlock()
 	if got != -7 {
-		t.Errorf("delta after failed flush = %d, want -7 (must be restored)", got)
+		t.Errorf("delta after failed flush = %d, want -7 (entry must be untouched on enqueue failure)", got)
 	}
 }
 

@@ -80,6 +80,16 @@ func IncrementOutboxRetries(db *sql.DB, id int64) error {
 	return err
 }
 
+// MarkOutboxExhausted forces a row into the implicit dead-letter
+// state in a single UPDATE by setting retries to MaxOutboxRetries.
+// Used by the outbox drainer's per-message panic boundary. reason
+// is accepted to match the protocol/outbox Store interface but is
+// not persisted — the schema doesn't carry a last_error column.
+func MarkOutboxExhausted(db *sql.DB, id int64, reason string) error {
+	_, err := db.Exec(`UPDATE outbox SET retries=$1 WHERE id=$2`, MaxOutboxRetries, id)
+	return err
+}
+
 // RequeueOutbox resets retries to 0 on an unsent row.
 func RequeueOutbox(db *sql.DB, id int64) error {
 	_, err := db.Exec(`UPDATE outbox SET retries=0 WHERE id=$1 AND sent_at IS NULL`, id)

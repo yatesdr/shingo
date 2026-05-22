@@ -83,6 +83,22 @@ func parseFlags() edgeFlags {
 	}
 }
 
+// goSafe runs fn in a new goroutine with a defer recover() that
+// logs panics with stack traces instead of crashing the process.
+// Use for fire-and-forget background work whose failure should be
+// logged but not fatal. Sticking the name through helps grep
+// targeted panics out of journald.
+func goSafe(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("PANIC %s: %v\n%s", name, r, debug.Stack())
+			}
+		}()
+		fn()
+	}()
+}
+
 func mustInitDebugLog(fileFilter []string) *debuglog.Logger {
 	dbg, err := debuglog.New(1000, fileFilter)
 	if err != nil {
@@ -117,8 +133,18 @@ func startHTTPServer(addr string, handler http.Handler) *http.Server {
 	srv := &http.Server{Addr: addr, Handler: handler, IdleTimeout: 120 * time.Second}
 	go func() {
 		log.Printf("ShinGo Edge listening on %s", addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http server: %v", err)
+		for {
+			err := srv.ListenAndServe()
+			if err == http.ErrServerClosed {
+				return
+			}
+			// Log and retry instead of log.Fatalf — a transient listener
+			// error shouldn't kill the whole process. The supervisor
+			// (Phase 1) handles real fatal cases; the retry handles
+			// transient binds (port reuse during quick restart, brief
+			// network blip on docker container restart).
+			log.Printf("http server: %v — retrying in 5s", err)
+			time.Sleep(5 * time.Second)
 		}
 	}()
 	return srv
@@ -167,13 +193,13 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 		// this also called StartupSweepManualSwap to seed empty-in orders
 		// at every loader — unnecessary now that empty-ins are driven by
 		// line REQUESTs through MaybeCreateLoaderEmptyIn.
-		go eng.SendClaimSync()
+		goSafe("engine-SendClaimSync", func() { eng.SendClaimSync() })
 		// Auto-push unloaders: catch any window that became free (or
 		// supply that arrived) while Edge was offline. No-op for kanban-
 		// driven consume manual_swap claims (AutoPush=false). Mirrors
 		// the loader-side reasoning that demand triggers fire while we
 		// were unreachable, so a startup pass keeps the queue current.
-		go eng.SweepPushUnloaders()
+		goSafe("engine-SweepPushUnloaders", func() { eng.SweepPushUnloaders() })
 	})
 	router.RegisterSubject(subjectRouter, protocol.SubjectEdgeHeartbeatAck, func(_ *protocol.Envelope, ack *protocol.EdgeHeartbeatAck) {
 		log.Printf("edge_handler: heartbeat ack: station=%s server_ts=%s", ack.StationID, ack.ServerTS)
@@ -369,7 +395,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	// idempotent re-runs return false once Core is populated. Best
 	// effort; failures (Core unreachable at boot, partial responses)
 	// just log and defer to the next startup or to the admin endpoint.
-	go func() {
+	goSafe("engine-autoBackfill", func() {
 		needed, err := eng.BucketBackfillNeeded()
 		if err != nil {
 			log.Printf("auto-backfill: probe: %v", err)
@@ -384,7 +410,7 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 			return
 		}
 		log.Printf("auto-backfill: seeded %d bucket deltas to Core", emitted)
-	}()
+	})
 
 	eng.SetNodeSyncFunc(hb.RequestNodeSync)
 	eng.SetCatalogSyncFunc(hb.RequestCatalogSync)
@@ -394,6 +420,11 @@ func setupKafkaSubscribers(eng *engine.Engine, msgClient *messaging.Client, cfg 
 	if err := eng.StartupReconcile(); err != nil {
 		log.Printf("initial startup reconcile: %v", err)
 	}
+
+	// Mark subscribers wired so /status reports the operational
+	// truth. Without this flag the only signal an operator has is
+	// "I see order updates in the HMI" — a much later proxy.
+	eng.MarkSubscribersWired()
 }
 
 func awaitShutdown(srv *http.Server, stopWeb func()) {
@@ -498,6 +529,10 @@ func main() {
 	}
 	defer msgClient.Close()
 
+	// Inject the Kafka IsConnected closure so /status can report
+	// kafka_connected without a hard engine→messaging dep.
+	eng.SetKafkaConnFunc(msgClient.IsConnected)
+
 	// ── Data sender & outbox drainer ────────────────────────────────────
 	dataSender := messaging.NewDataSender(msgClient, cfg.Messaging.OrdersTopic, nil)
 	dataSender.DebugLog = messaging.DebugLogFunc(dbg.Func("heartbeat"))
@@ -558,11 +593,59 @@ func main() {
 	}
 
 	// ── Kafka connect & subscribe ───────────────────────────────────────
-	if err := msgClient.Connect(); err != nil {
-		log.Printf("messaging connect: %v (outbox drainer active, will drain when connected)", err)
-	} else {
+	//
+	// Background retry-with-backoff: if Connect fails at boot, Edge
+	// would otherwise run "deaf to inbound messages" until a process
+	// restart. The retry loop self-heals on Kafka availability changes.
+	//
+	// /status exposes kafka_connected and subscribers_wired so
+	// operators can see the deaf-but-running state. Log loudly at
+	// startup so operators notice from the boot log too.
+	if msgClient.IsConnected() {
 		setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, db, cgHandler)
+	} else {
+		log.Printf("WARNING messaging not connected at boot — Edge will run deaf to inbound (orders, demand, stale) until Kafka is reachable. Outbox drainer is active and will flush when connected.")
+		goSafe("kafka-connect-retry", func() {
+			backoff := 5 * time.Second
+			for {
+				if err := msgClient.Connect(); err != nil {
+					log.Printf("kafka connect failed: %v — retrying in %s; edge still DEAF to inbound messages", err, backoff)
+					time.Sleep(backoff)
+					if backoff < 60*time.Second {
+						backoff *= 2
+						if backoff > 60*time.Second {
+							backoff = 60 * time.Second
+						}
+					}
+					continue
+				}
+				log.Printf("kafka connect succeeded — wiring subscribers")
+				setupKafkaSubscribers(eng, msgClient, cfg, dbg, stationID, db, cgHandler)
+				return
+			}
+		})
 	}
+
+	// ── WAL checkpoint ticker ──────────────────────────────────────────
+	// PRAGMA wal_checkpoint(TRUNCATE) once per hour keeps the WAL file
+	// from growing unbounded under sustained writes on SD-card storage.
+	// Cheap operation, well-understood SQLite primitive.
+	walStop := make(chan struct{})
+	defer close(walStop)
+	goSafe("store-wal-checkpoint", func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-walStop:
+				return
+			case <-ticker.C:
+				if err := db.CheckpointWAL(); err != nil {
+					log.Printf("WAL checkpoint: %v", err)
+				}
+			}
+		}
+	})
 
 	// ── HTTP server & shutdown ──────────────────────────────────────────
 	router, stopWeb := www.NewRouter(eng, dbg, backupSvc)

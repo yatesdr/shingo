@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -190,7 +191,26 @@ func (c *Client) readLoop(topic string, handler func(payload []byte)) {
 		// Reset backoff on successful read
 		bo.Reset()
 		c.DebugLog.Log("recv topic=%s len=%d", topic, len(msg.Value))
-		handler(msg.Value)
+
+		// Wrap the handler call in defer recover() so a panic in any
+		// downstream handler doesn't kill the consumer goroutine.
+		//
+		// IMPORTANT: kafka-go's ReadMessage with a consumer-group
+		// config auto-commits the offset on successful return. A panic
+		// here does NOT cause the message to replay — the offset has
+		// already advanced. We just log and continue. If anyone
+		// switches to manual commit mode (CommitMessages), THIS
+		// WRAPPER BECOMES AN INFINITE-REPLAY WEDGE. Update the wrapper
+		// to advance the offset before continuing.
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC kafka-readLoop topic=%s: %v\n%s",
+						topic, r, debug.Stack())
+				}
+			}()
+			handler(msg.Value)
+		}()
 	}
 }
 

@@ -99,6 +99,18 @@ func (e *Engine) handleBlockCompleted(ev BlockCompletedEvent) {
 //     already transitioned).
 //  2. Single-bin order fallback: order.BinID.
 func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, stepIndex int, fromNodeID int64, ok bool) {
+	// LOAD-BEARING (same contract as shingo-edge/engine/handler_bin_picked_up.go):
+	// `location` arrives from BlockCompletedEvent.Location, originally
+	// an un-normalized RDS vendor string. `ob.NodeName` comes from
+	// the order_bins junction, populated at order-creation time from
+	// nodes.name. All Core write paths trim on write today, but
+	// tainted rows from a pre-trim install (or any future write path
+	// that bypasses the trim) would silently break this filter,
+	// leaving the bin nominally occupied at source.
+	//
+	// Defensive TrimSpace on both sides. Trim only — NOT case-fold;
+	// case mismatch is a real config error.
+	locationTrimmed := strings.TrimSpace(location)
 	// Multi-bin path: junction table.
 	rows, err := e.db.ListOrderBins(orderID)
 	if err == nil && len(rows) > 0 {
@@ -106,7 +118,7 @@ func (e *Engine) resolvePickupBin(orderID int64, location string) (binID int64, 
 			if ob.Action != "pickup" {
 				continue
 			}
-			if ob.NodeName != location {
+			if strings.TrimSpace(ob.NodeName) != locationTrimmed {
 				continue
 			}
 			bin, err := e.db.GetBin(ob.BinID)

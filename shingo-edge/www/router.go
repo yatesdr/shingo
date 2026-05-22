@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -44,6 +45,15 @@ type Handlers struct {
 	tmpl          *template.Template
 	eventHub      *EventHub
 	debugLog      *debuglog.Logger
+
+	// claimSyncCh is a single-slot channel that coalesces concurrent
+	// admin claim mutations into one SendClaimSync invocation. Two
+	// raw `go h.orchestration.SendClaimSync()` spawns raced each
+	// other on the DB. SendClaimSync emits a full snapshot of all
+	// manual_swap claims, so coalescing N rapid edits into one send
+	// loses no information (last writer wins on the snapshot view).
+	claimSyncCh   chan struct{}
+	claimSyncStop chan struct{}
 }
 
 // NewRouter registers all HTTP endpoints for shingo-edge.
@@ -68,7 +78,10 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		sessions:      newSessionStore(eng.AppConfig().Web.SessionSecret),
 		eventHub:      NewEventHub(),
 		debugLog:      dbg,
+		claimSyncCh:   make(chan struct{}, 1),
+		claimSyncStop: make(chan struct{}),
 	}
+	go h.claimSyncLoop()
 
 	funcMap := template.FuncMap{
 		"join": strings.Join,
@@ -171,6 +184,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		r.Handle("/static/*", http.StripPrefix("/static/",
 			serverInstanceETag(http.FileServer(http.FS(StaticFS()))),
 		))
+
+		// ── On-call diagnostic surface ──────────────────────────
+		// Public so curl from a monitoring host doesn't need auth.
+		// kafka_connected and subscribers_wired are LOAD-BEARING —
+		// they surface the deaf-but-running mode the Kafka
+		// reconnect path makes possible.
+		r.Get("/status", h.apiStatus)
 
 		// ── Public pages (shop floor — no auth) ─────────────────
 		r.Get("/", h.handleMaterial)
@@ -371,6 +391,52 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 
 	return r, func() {
 		h.eventHub.Stop()
+		close(h.claimSyncStop)
+	}
+}
+
+// claimSyncLoop owns SendClaimSync invocations. Multiple concurrent
+// admin claim edits collapse into one channel send (capacity 1 with
+// non-blocking sender), and this loop drains the channel and calls
+// SendClaimSync sequentially. Same effective behavior as raw
+// `go SendClaimSync()` but without the concurrent DB-write race.
+//
+// The recover wrapper is the same shape as goSafe in main.go but
+// inline here because we want the loop to self-heal — a panic in
+// orchestration.SendClaimSync should not leave the channel
+// orphaned.
+func (h *Handlers) claimSyncLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC www-claimSyncLoop: %v (claim sync coalescer exiting)", r)
+		}
+	}()
+	for {
+		select {
+		case <-h.claimSyncStop:
+			return
+		case <-h.claimSyncCh:
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("PANIC orchestration.SendClaimSync: %v", r)
+					}
+				}()
+				h.orchestration.SendClaimSync()
+			}()
+		}
+	}
+}
+
+// requestClaimSync queues a non-blocking sync request. If a request
+// is already pending, this is a no-op — the pending request will
+// see the updated state when it runs (SendClaimSync emits a full
+// snapshot, so coalescing is information-preserving).
+func (h *Handlers) requestClaimSync() {
+	select {
+	case h.claimSyncCh <- struct{}{}:
+	default:
+		// Already pending; coalesce.
 	}
 }
 

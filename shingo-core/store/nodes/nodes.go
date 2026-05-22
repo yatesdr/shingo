@@ -70,6 +70,10 @@ func ScanNodes(rows *sql.Rows) ([]*Node, error) {
 
 // Create inserts a new node and sets n.ID on success.
 func Create(db *sql.DB, n *Node) error {
+	// Defense-in-depth: callers should pass an already-trimmed name
+	// (admin handler trims at form ingress); this guards non-handler
+	// callers and the RDS/fleet-sync path. Silent — no warning log.
+	n.Name = strings.TrimSpace(n.Name)
 	id, err := helpers.InsertID(db, `INSERT INTO nodes (name, is_synthetic, zone, enabled, depth, node_type_id, parent_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
 		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID))
 	if err != nil {
@@ -81,6 +85,7 @@ func Create(db *sql.DB, n *Node) error {
 
 // Update writes the mutable columns on a node.
 func Update(db *sql.DB, n *Node) error {
+	n.Name = strings.TrimSpace(n.Name)
 	_, err := db.Exec(`UPDATE nodes SET name=$1, is_synthetic=$2, zone=$3, enabled=$4, depth=$5, node_type_id=$6, parent_id=$7, updated_at=NOW() WHERE id=$8`,
 		n.Name, n.IsSynthetic, n.Zone, n.Enabled, helpers.NullableInt(n.Depth), helpers.NullableInt64(n.NodeTypeID), helpers.NullableInt64(n.ParentID), n.ID)
 	if err != nil {

@@ -30,7 +30,11 @@
 // FlushFailures if it ever causes a Core-side delta rejection.
 package engine
 
-import "shingoedge/domain"
+import (
+	"strings"
+
+	"shingoedge/domain"
+)
 
 // HandleBinPickedUp processes a Core BinPickedUp notification.
 // Best-effort — failures log and continue rather than rejecting the
@@ -40,13 +44,10 @@ import "shingoedge/domain"
 //
 // location is the Core node name where the pickup occurred (BinPickedUp.Location
 // on the wire envelope). Used to gate the runtime-mutation branches below:
-// orders with multiple pickups (simple move, two_robot supply leg,
-// single_robot full swap, two_robot_press_index R1) fire BinPickedUp at
-// remote sources (supermarket, intermediate staging) as well as at our
-// slot. Only the at-our-slot pickup means "the bin physically left here";
-// remote pickups must not clear active_bin_id / active_order_id, or
-// inSteadyState() goes false during the entire staging window and PLC
-// ticks stop decrementing remaining_uop_cached.
+// the supply leg of a two_robot swap has one pickup at a remote source
+// (supermarket) and one dropoff at our slot; the order ID matches but no
+// slot pickup event ever fires. Without the gate, the supermarket
+// pickup's BinPickedUp would clear active state at our slot.
 func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location string) {
 	order, err := e.db.GetOrderByUUID(orderUUID)
 	if err != nil || order == nil {
@@ -56,7 +57,69 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 		return
 	}
 
-	// F' Phase 2 — deferred-supply release on evac pickup confirm.
+	// === Location gate (inverted; fails closed) ===
+	//
+	// LOAD-BEARING: this gate compares Core's ev.Location (from
+	// wiring_block_completed.go:74, un-normalized RDS vendor string)
+	// to Edge's ProcessNode.CoreNodeName (which IS trimmed on write
+	// at store/processes/processes.go:219,259 via strings.TrimSpace).
+	//
+	// Trim policy at compare time:
+	//   - TrimSpace(location)          — LOAD-BEARING. Core's RDS path
+	//                                    doesn't normalize; admin save
+	//                                    with stray whitespace on the
+	//                                    vendor side would otherwise
+	//                                    silently dead-code this gate.
+	//   - TrimSpace(node.CoreNodeName) — defense-in-depth. Today Edge
+	//                                    always trims on write; trim
+	//                                    again here guards against any
+	//                                    future write path that skips
+	//                                    the canonical trim.
+	//
+	// Trim only — NOT case-fold. A case mismatch is a real config
+	// error and the loud byte-mismatch is a useful failure, not
+	// noise to mask.
+	//
+	// Failure modes treated as "couldn't verify, do nothing":
+	//   - order.ProcessNodeID == nil  — kanban-only orders. F' Phase 2
+	//     doesn't apply (no process node = no changeover task) and the
+	//     downstream flush+clear shouldn't fire either. Fall through
+	//     the gate by skipping the whole side-effecting block.
+	//   - GetProcessNode error or nil — DB error or missing node. Treat
+	//     as "not our slot" rather than fall open (the pre-1.1 bug
+	//     class).
+	//   - Empty location string       — Core didn't populate. Treat as
+	//     "not our slot."
+	//
+	// If either side ever adds case-folding, prefix-stripping, or any
+	// other transform, this gate can flip to "always reject" and the
+	// flush + clear become silent dead code. Do not weaken or remove
+	// this without replacing the proof end-to-end on the wire path.
+	if order.ProcessNodeID == nil {
+		// Kanban-only order — no slot to verify, nothing to flush /
+		// clear via this handler. Logging would be noise.
+		return
+	}
+	node, nerr := e.db.GetProcessNode(*order.ProcessNodeID)
+	if nerr != nil || node == nil {
+		e.logFn("bin_picked_up: order=%s — couldn't resolve process node id=%v (nerr=%v); skipping for safety",
+			orderUUID, order.ProcessNodeID, nerr)
+		return
+	}
+	if location == "" {
+		e.logFn("bin_picked_up: order=%s node=%s — empty Location from Core; skipping for safety (Springfield-class regression path)",
+			orderUUID, node.CoreNodeName)
+		return
+	}
+	if strings.TrimSpace(location) != strings.TrimSpace(node.CoreNodeName) {
+		e.logFn("bin_picked_up: order=%s pickup at location=%q vs CoreNodeName=%q (display name=%s) — ignoring, not our slot",
+			orderUUID, location, node.CoreNodeName, node.Name)
+		return
+	}
+
+	// === F' Phase 2 — deferred-supply release on evac pickup confirm ===
+	//
+	// Now gated; only fires at-our-slot.
 	//
 	// When the picked-up order is the evac leg of a changeover node
 	// task (matched via task.OldMaterialReleaseOrderID = order.ID),
@@ -102,35 +165,6 @@ func (e *Engine) HandleBinPickedUp(orderUUID string, binID int64, location strin
 			if err := e.db.UpdateChangeoverNodeTaskState(task.ID, domain.NodeTaskLineCleared); err != nil {
 				e.logFn("bin_picked_up: advance drop task %d to line_cleared: %v", task.ID, err)
 			}
-		}
-	}
-
-	// Location gate: the branches below — flushing the per-bin accumulator
-	// and clearing active_bin_id / active_order_id — all encode "the bin
-	// physically left our slot." That's true only when the pickup happened
-	// at our node's CoreNodeName. Orders with intermediate or remote
-	// pickups (e.g. two_robot Order A picking up at InboundSource right
-	// after REQUEST MATERIAL) fire BinPickedUp envelopes with Location
-	// pointing at the source, not the slot. Without this gate, those
-	// remote pickups null active_bin_id, inSteadyState() goes false, and
-	// PLC ticks stop decrementing remaining_uop_cached for the entire
-	// supply-in-flight window — the operator sees the release-prompt
-	// lineside qty frozen at whatever value the cache had when REQUEST
-	// MATERIAL fired. Plant repro: Springfield ALN_001 two-robot, every
-	// cycle.
-	//
-	// F' Phase 2 above intentionally runs before this gate: it triggers
-	// on the changeover evac order's pickup-block-FINISHED, which IS at
-	// our slot anyway (evac's only pickup is at CoreNodeName), so the
-	// gate would be a no-op there. Keeping F' above the gate makes the
-	// chain robust to future order shapes where the lookup is the
-	// authoritative signal.
-	if order.ProcessNodeID != nil {
-		node, nerr := e.db.GetProcessNode(*order.ProcessNodeID)
-		if nerr == nil && node != nil && location != "" && location != node.CoreNodeName {
-			e.logFn("bin_picked_up: order=%s pickup at %q (node %s slot is %q) — ignoring, not our slot",
-				orderUUID, location, node.Name, node.CoreNodeName)
-			return
 		}
 	}
 

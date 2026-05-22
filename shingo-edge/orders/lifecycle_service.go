@@ -90,7 +90,9 @@ func (s *LifecycleService) applyTransition(order *orders.Order, newStatus protoc
 
 func (s *LifecycleService) HandleDelivered(order *orders.Order, statusDetail string, stagedExpireAt *time.Time, binID *int64) error {
 	if stagedExpireAt != nil {
-		s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt)
+		if err := s.db.UpdateOrderStagedExpireAt(order.ID, stagedExpireAt); err != nil {
+			log.Printf("lifecycle: update staged_expire_at for order=%d: %v", order.ID, err)
+		}
 	}
 	// Capture Core's bin id at delivery so the PLC tick path can
 	// attribute deltas to the right bin. Nil for multi-bin orders /

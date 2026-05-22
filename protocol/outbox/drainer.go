@@ -1,7 +1,9 @@
 package outbox
 
 import (
+	"fmt"
 	"log"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -33,6 +35,12 @@ type Store interface {
 	ListPendingOutbox(limit int) ([]Message, error)
 	AckOutbox(id int64) error
 	IncrementOutboxRetries(id int64) error
+	// MarkOutboxExhausted forces a row into the implicit dead-letter
+	// state (retries >= MaxRetries) in a single UPDATE. Used by the
+	// per-message panic boundary in drain() to prevent a poison-pill
+	// message from looping forever. reason is logged at the panic
+	// site and may or may not be persisted by the implementation.
+	MarkOutboxExhausted(id int64, reason string) error
 	PurgeOldOutbox(olderThan time.Duration) (int, error)
 }
 
@@ -129,24 +137,46 @@ func (d *Drainer) drain() {
 		d.DebugLog.Log("drain: %d pending messages", len(msgs))
 	}
 	for _, msg := range msgs {
-		topic := msg.Topic
-		if topic == "" {
-			topic = d.topic
-		}
-		if err := d.publisher.Publish(topic, msg.Payload); err != nil {
-			d.store.IncrementOutboxRetries(msg.ID)
-			if msg.Retries+1 >= MaxRetries {
-				log.Printf("outbox: msg %d dead-lettered after %d retries (type=%s): %v", msg.ID, msg.Retries+1, msg.MsgType, err)
-					d.DebugLog.Log("DEAD-LETTER: msg %d type=%s retries=%d err=%v", msg.ID, msg.MsgType, msg.Retries+1, err)
-			} else {
-				log.Printf("outbox: publish to %s failed (retry %d/%d): %v", topic, msg.Retries+1, MaxRetries, err)
-				d.DebugLog.Log("retry: msg %d type=%s attempt=%d/%d err=%v", msg.ID, msg.MsgType, msg.Retries+1, MaxRetries, err)
+		// Per-message panic boundary. Without this a panic in
+		// d.publisher.Publish (or any nested call) would kill the
+		// drainer goroutine — silent stop, the worst possible
+		// failure mode. The recover handler logs the panic with
+		// stack and forces the message into the implicit
+		// dead-letter state so a poison-pill payload doesn't loop
+		// forever. Subsequent messages in this drain pass continue
+		// processing normally.
+		d.publishOne(msg)
+	}
+}
+
+func (d *Drainer) publishOne(msg Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC outbox-publish msg=%d type=%s: %v\n%s",
+				msg.ID, msg.MsgType, r, debug.Stack())
+			reason := fmt.Sprintf("panic during publish: %v", r)
+			if err := d.store.MarkOutboxExhausted(msg.ID, reason); err != nil {
+				log.Printf("outbox: exhaust mark for msg %d: %v", msg.ID, err)
 			}
-			continue
 		}
-		d.DebugLog.Log("published outbox msg %d type=%s", msg.ID, msg.MsgType)
-		if err := d.store.AckOutbox(msg.ID); err != nil {
-			log.Printf("outbox: ack msg %d: %v", msg.ID, err)
+	}()
+	topic := msg.Topic
+	if topic == "" {
+		topic = d.topic
+	}
+	if err := d.publisher.Publish(topic, msg.Payload); err != nil {
+		d.store.IncrementOutboxRetries(msg.ID)
+		if msg.Retries+1 >= MaxRetries {
+			log.Printf("outbox: msg %d dead-lettered after %d retries (type=%s): %v", msg.ID, msg.Retries+1, msg.MsgType, err)
+			d.DebugLog.Log("DEAD-LETTER: msg %d type=%s retries=%d err=%v", msg.ID, msg.MsgType, msg.Retries+1, err)
+		} else {
+			log.Printf("outbox: publish to %s failed (retry %d/%d): %v", topic, msg.Retries+1, MaxRetries, err)
+			d.DebugLog.Log("retry: msg %d type=%s attempt=%d/%d err=%v", msg.ID, msg.MsgType, msg.Retries+1, MaxRetries, err)
 		}
+		return
+	}
+	d.DebugLog.Log("published outbox msg %d type=%s", msg.ID, msg.MsgType)
+	if err := d.store.AckOutbox(msg.ID); err != nil {
+		log.Printf("outbox: ack msg %d: %v", msg.ID, err)
 	}
 }

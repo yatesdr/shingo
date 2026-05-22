@@ -66,3 +66,12 @@ func Open(path string) (*DB, error) {
 	}
 	return db, nil
 }
+
+// CheckpointWAL runs PRAGMA wal_checkpoint(TRUNCATE) to flush the
+// write-ahead log back into the main database file and reclaim
+// disk space. Without periodic checkpoints the WAL can grow large
+// under sustained writes on SD-card storage.
+func (db *DB) CheckpointWAL() error {
+	_, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	return err
+}

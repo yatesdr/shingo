@@ -130,6 +130,18 @@ func IncrementRetries(db *sql.DB, id int64) error {
 	return err
 }
 
+// MarkExhausted forces a row into the implicit dead-letter state in
+// a single UPDATE by setting retries to MaxRetries. The drainer's
+// existing skip-when-exhausted behavior applies unchanged; PurgeOld
+// cleans up on its normal cadence. reason is accepted to match the
+// protocol/outbox Store interface but is not persisted — the schema
+// doesn't carry a last_error column. Could be added if forensic
+// need surfaces.
+func MarkExhausted(db *sql.DB, id int64, reason string) error {
+	_, err := db.Exec(`UPDATE outbox SET retries = ? WHERE id = ?`, MaxRetries, id)
+	return err
+}
+
 // Requeue resets the retry counter so a dead-lettered message will be
 // picked up by the drainer again.
 func Requeue(db *sql.DB, id int64) error {

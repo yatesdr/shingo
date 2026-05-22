@@ -119,8 +119,14 @@ func (h *Handlers) handleNodeCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rawName := r.FormValue("name")
+	name := strings.TrimSpace(rawName)
+	if name != rawName {
+		log.Printf("WARNING admin handleNodeCreate: trimmed whitespace from name %q", rawName)
+	}
+
 	node := &domain.Node{
-		Name:     r.FormValue("name"),
+		Name:     name,
 		Zone:     r.FormValue("zone"),
 		Enabled:  r.FormValue("enabled") == "on",
 	}
@@ -166,7 +172,12 @@ func (h *Handlers) handleNodeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node.Name = r.FormValue("name")
+	rawName := r.FormValue("name")
+	name := strings.TrimSpace(rawName)
+	if name != rawName {
+		log.Printf("WARNING admin handleNodeUpdate: trimmed whitespace from name %q", rawName)
+	}
+	node.Name = name
 	node.Zone = r.FormValue("zone")
 	node.Enabled = r.FormValue("enabled") == "on"
 

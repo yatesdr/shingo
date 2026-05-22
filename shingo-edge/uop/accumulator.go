@@ -2,21 +2,21 @@
 //
 // Internal implementation of UOP delta accumulation. The public surface
 // is in mutator.go; this file owns the per-scope sync.Map state, the
-// periodic flush goroutine, the outbox enqueue path, and the
-// restore-on-failure semantics.
+// periodic flush goroutine, and the outbox enqueue path.
 //
 // Concurrency: sync.Map for the per-scope accumulator with a
 // per-entry sync.Mutex protecting the composite metadata. Hot path
 // is recordBin / recordBucket; flush goroutine ranges across the map
-// and atomically swaps each entry's running delta to zero. The
-// mutex is contended only when record and flush hit the same scope
-// simultaneously — vanishingly rare given PLC tick cadence is
-// O(seconds).
+// using send-then-sweep: snapshot the entry's state, do the DB work
+// without the lock, commit a subtract on success. The mutex is
+// contended only briefly during snapshot and commit.
 //
-// Restore-on-failure: if the outbox enqueue fails for an envelope,
-// the swept delta is folded back into the live entry. Mirrors
-// production_reporter.go's restoreSnapshot pattern. Forensics
-// preference: never lose a count change to a transient outbox blip.
+// Send-then-sweep correctness: the entry is never mutated until
+// enqueue succeeds. On any failure (allocate-seq, encode, enqueue)
+// or panic, the entry is unchanged and the next flush picks up the
+// same delta — plus any concurrent additions during the failed
+// attempt — as one batch. No restore logic, no needsRestore sentinel
+// discipline, no risk of dropping windowStart on concurrent writes.
 //
 // Flush triggers: periodic timer (5s default, YAML-configurable),
 // plus OrderRelease envelope sent (consume side), bin-loader confirms
@@ -27,6 +27,7 @@ package uop
 
 import (
 	"log"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,6 +63,14 @@ type binDeltaEntry struct {
 	reason      protocol.BinUOPDeltaReason
 	windowStart time.Time
 	windowEnd   time.Time
+
+	// lastTouched is the wall-clock time of the most recent record or
+	// successful flush commit. Read by evictIdle — entries with
+	// delta==0 and lastTouched > 1h ago are removed from the
+	// sync.Map so a long-tail of touched-once bin IDs doesn't grow
+	// forever. Not load-bearing for correctness; any deleted entry
+	// rematerializes on the next recordBin call.
+	lastTouched time.Time
 }
 
 // bucketDeltaEntry is the per-bucket accumulator. Composite key is
@@ -94,6 +103,7 @@ type bucketDeltaEntry struct {
 	reason       protocol.LinesideBucketDeltaReason
 	windowStart  time.Time
 	windowEnd    time.Time
+	lastTouched  time.Time
 }
 
 // accumulator accumulates BinUOPDelta and LinesideBucketDelta count
@@ -213,6 +223,7 @@ func (r *accumulator) recordBin(binID int64, payloadCode string, delta int, reas
 	e.delta += delta
 	e.reason = reason
 	e.windowEnd = now
+	e.lastTouched = now
 	e.mu.Unlock()
 
 	r.debugLog.Log("inventory_delta: bin=%d delta=%+d reason=%s payload=%q",
@@ -263,6 +274,7 @@ func (r *accumulator) recordBucket(nodeID int64, coreNodeName, pairKey string, s
 	e.delta += delta
 	e.reason = reason
 	e.windowEnd = now
+	e.lastTouched = now
 	e.mu.Unlock()
 
 	r.debugLog.Log("inventory_delta: bucket node=%d part=%q payload=%q delta=%+d reason=%s",
@@ -283,6 +295,13 @@ func (r *accumulator) flush() {
 	defer r.flushMu.Unlock()
 	r.flushBins()
 	r.flushBuckets()
+	// Evict entries idle for over an hour. Cheap (one extra Range,
+	// per-entry mu acquire and a comparison) and runs at the flush
+	// cadence, not the record cadence, so no impact on the hot
+	// path. Bounded by flush interval — if eviction would be
+	// expensive on a particular tick the next tick picks up where
+	// this one left off (Delete-during-Range is incremental).
+	r.evictIdle(time.Hour)
 
 	// Non-blocking publish to flushSignal so tests blocking on
 	// "wait for flush" wake up exactly once. Production code doesn't
@@ -306,20 +325,34 @@ func (r *accumulator) loop() {
 	}
 }
 
-// flushBins ranges across the bin accumulator, sweeps each entry's
-// running delta, allocates a SequenceID, and enqueues the envelope.
-// Restores the delta on enqueue failure so a transient outbox blip
-// doesn't drop count changes.
+// flushBins ranges across the bin accumulator and ships each entry's
+// running delta using send-then-sweep: snapshot the entry's state
+// under e.mu (no mutation), do the DB work without the lock held,
+// commit the subtraction only on enqueue success. On any failure
+// or panic the entry is unchanged and the next flush picks up the
+// same delta plus any concurrent additions as one batch.
+//
+// Per-entry panic boundary: a defer recover() inside the Range
+// callback logs and continues to the next entry without mutating
+// anything. The loop survives; nothing is lost (we never zeroed
+// anything in the first place).
 func (r *accumulator) flushBins() {
 	r.bins.Range(func(key, value any) bool {
 		k := key.(string)
 		e := value.(*binDeltaEntry)
 
-		// Sweep: capture and zero the running delta + window in one
-		// critical section so concurrent recordBin starts a fresh
-		// window cleanly. Extract fields explicitly rather than
-		// copying the struct — the embedded sync.Mutex must not be
-		// duplicated.
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("PANIC uop-accumulator-loop flushBins-callback bin=%s: %v\n%s",
+					k, rec, debug.Stack())
+				// Nothing to restore — send-then-sweep never mutates e
+				// until the commit step, and commit only runs on
+				// successful enqueue. A panic anywhere before commit
+				// leaves the entry intact.
+			}
+		}()
+
+		// SNAPSHOT under e.mu. Do not mutate e.
 		e.mu.Lock()
 		if e.delta == 0 {
 			e.mu.Unlock()
@@ -331,18 +364,16 @@ func (r *accumulator) flushBins() {
 		sReason := e.reason
 		sWindowStart := e.windowStart
 		sWindowEnd := e.windowEnd
-		e.delta = 0
-		e.windowStart = time.Time{}
-		e.windowEnd = time.Time{}
 		e.mu.Unlock()
 
+		// SEND with no lock held. Concurrent recordBin keeps adding
+		// to e.delta; that's fine — those additions become part of
+		// the next batch.
 		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBin, k)
 		if err != nil {
 			log.Printf("uop accumulator: allocate bin seq key=%s: %v", k, err)
-			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
 			return true
 		}
-
 		env, encErr := protocol.NewDataEnvelope(
 			protocol.SubjectBinUOPDelta,
 			protocol.Address{Role: protocol.RoleEdge, Station: r.stationID},
@@ -360,21 +391,45 @@ func (r *accumulator) flushBins() {
 		)
 		if encErr != nil {
 			log.Printf("uop accumulator: build bin envelope key=%s: %v", k, encErr)
-			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
 			return true
 		}
 		data, encErr := env.Encode()
 		if encErr != nil {
 			log.Printf("uop accumulator: encode bin envelope key=%s: %v", k, encErr)
-			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
 			return true
 		}
 		if _, err := r.db.EnqueueOutbox(data, protocol.SubjectBinUOPDelta); err != nil {
 			r.flushFailures.Add(1)
-			log.Printf("ERROR: uop accumulator: enqueue bin envelope key=%s, restoring: %v", k, err)
-			r.restoreBinDelta(e, sDelta, sReason, sWindowStart, sWindowEnd, sPayloadCode)
+			log.Printf("ERROR: uop accumulator: enqueue bin envelope key=%s: %v (entry intact, next flush retries)", k, err)
 			return true
 		}
+
+		// COMMIT: subtract the snapshot from the live entry. Concurrent
+		// recordBin calls during the send may have added to e.delta;
+		// the subtraction leaves only those new contributions for the
+		// next flush.
+		e.mu.Lock()
+		e.delta -= sDelta
+		e.lastTouched = time.Now().UTC()
+		if e.delta == 0 {
+			// No concurrent records during send — full reset.
+			e.reason = ""
+			e.windowStart = time.Time{}
+			e.windowEnd = time.Time{}
+		} else {
+			// Concurrent records arrived. They occurred at times
+			// strictly after sWindowEnd (we captured sWindowEnd from
+			// e.windowEnd at snapshot time, and recordBin only ever
+			// advances windowEnd forward). Set windowStart to
+			// sWindowEnd so the new batch's leading-edge metadata is
+			// correct rather than carrying the original batch's
+			// stale windowStart forward.
+			e.windowStart = sWindowEnd
+			// windowEnd is naturally the latest concurrent record's
+			// time; leave it alone. reason and payloadCode also stay
+			// as recordBin set them.
+		}
+		e.mu.Unlock()
 
 		r.debugLog.Log("uop accumulator: flushed bin=%d delta=%+d seq=%d reason=%s",
 			sBinID, sDelta, seq, sReason)
@@ -382,12 +437,21 @@ func (r *accumulator) flushBins() {
 	})
 }
 
-// flushBuckets is the bucket-side mirror of flushBins.
+// flushBuckets is the bucket-side mirror of flushBins. Same
+// send-then-sweep shape; see flushBins above for the design rationale.
 func (r *accumulator) flushBuckets() {
 	r.buckets.Range(func(key, value any) bool {
 		k := key.(string)
 		e := value.(*bucketDeltaEntry)
 
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("PANIC uop-accumulator-loop flushBuckets-callback bucket=%s: %v\n%s",
+					k, rec, debug.Stack())
+			}
+		}()
+
+		// SNAPSHOT.
 		e.mu.Lock()
 		if e.delta == 0 {
 			e.mu.Unlock()
@@ -403,9 +467,6 @@ func (r *accumulator) flushBuckets() {
 		sReason := e.reason
 		sWindowStart := e.windowStart
 		sWindowEnd := e.windowEnd
-		e.delta = 0
-		e.windowStart = time.Time{}
-		e.windowEnd = time.Time{}
 		e.mu.Unlock()
 
 		// Defensive: if the entry pre-dates the Round-3 Obs 8 change
@@ -422,20 +483,33 @@ func (r *accumulator) flushBuckets() {
 			// with an empty CoreNodeName — Core's applier validates
 			// the field at insert time and would drop the delta
 			// anyway. Logging here surfaces the problem at the
-			// source.
+			// source. Note: this is a permanent drop (we don't
+			// retry on the next flush) because the underlying state
+			// won't change. Bin delta loss is bounded by the entry's
+			// own delta value.
 			log.Printf("ERROR: uop accumulator: drop bucket delta key=%s — no core_node_name resolvable for nodeID=%d (process_node row missing?)",
 				k, sNodeID)
 			r.flushFailures.Add(1)
+			// Commit a full reset to clear the unsendable delta.
+			e.mu.Lock()
+			e.delta -= sDelta
+			if e.delta == 0 {
+				e.reason = ""
+				e.windowStart = time.Time{}
+				e.windowEnd = time.Time{}
+			} else {
+				e.windowStart = sWindowEnd
+			}
+			e.mu.Unlock()
 			return true
 		}
 
+		// SEND.
 		seq, err := r.db.AllocateInventoryDeltaSeq(invDeltaScopeBucket, k)
 		if err != nil {
 			log.Printf("uop accumulator: allocate bucket seq key=%s: %v", k, err)
-			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
 			return true
 		}
-
 		env, encErr := protocol.NewDataEnvelope(
 			protocol.SubjectLinesideBucketDelta,
 			protocol.Address{Role: protocol.RoleEdge, Station: r.stationID},
@@ -456,21 +530,31 @@ func (r *accumulator) flushBuckets() {
 		)
 		if encErr != nil {
 			log.Printf("uop accumulator: build bucket envelope key=%s: %v", k, encErr)
-			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
 			return true
 		}
 		data, encErr := env.Encode()
 		if encErr != nil {
 			log.Printf("uop accumulator: encode bucket envelope key=%s: %v", k, encErr)
-			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
 			return true
 		}
 		if _, err := r.db.EnqueueOutbox(data, protocol.SubjectLinesideBucketDelta); err != nil {
 			r.flushFailures.Add(1)
-			log.Printf("ERROR: uop accumulator: enqueue bucket envelope key=%s, restoring: %v", k, err)
-			r.restoreBucketDelta(e, sDelta, sReason, sWindowStart, sWindowEnd)
+			log.Printf("ERROR: uop accumulator: enqueue bucket envelope key=%s: %v (entry intact, next flush retries)", k, err)
 			return true
 		}
+
+		// COMMIT.
+		e.mu.Lock()
+		e.delta -= sDelta
+		e.lastTouched = time.Now().UTC()
+		if e.delta == 0 {
+			e.reason = ""
+			e.windowStart = time.Time{}
+			e.windowEnd = time.Time{}
+		} else {
+			e.windowStart = sWindowEnd
+		}
+		e.mu.Unlock()
 
 		r.debugLog.Log("uop accumulator: flushed bucket node=%d part=%q delta=%+d seq=%d reason=%s",
 			sNodeID, sPartNumber, sDelta, seq, sReason)
@@ -478,39 +562,47 @@ func (r *accumulator) flushBuckets() {
 	})
 }
 
-func (r *accumulator) restoreBinDelta(e *binDeltaEntry, delta int, reason protocol.BinUOPDeltaReason, windowStart, windowEnd time.Time, payloadCode string) {
-	e.mu.Lock()
-	if e.delta == 0 {
-		// Window was empty — restore the original window bounds too
-		// so a subsequent successful flush still reflects the right
-		// time range.
-		e.windowStart = windowStart
-		e.payloadCode = payloadCode
-	}
-	e.delta += delta
-	if e.windowEnd.Before(windowEnd) {
-		e.windowEnd = windowEnd
-	}
-	if e.reason == "" {
-		e.reason = reason
-	}
-	e.mu.Unlock()
+// evictIdle removes entries from the bins/buckets sync.Maps whose
+// delta is zero and whose last touch was more than maxIdle ago.
+// Bounded slow-leak prevention: without eviction every bin or
+// bucket key ever recorded would keep its entry forever, growing
+// the maps multi-week. Deletion is harmless — LoadOrStore
+// recreates the entry on the next record call. Called by flush()
+// after the bin/bucket flush passes complete.
+//
+// Safe to call from the flush goroutine because Range's contract
+// allows concurrent Delete by the same goroutine. The per-entry
+// lock guards the delta+lastTouched read so a Delete races a
+// concurrent recordBin only on the lock acquisition — and the
+// post-delete LoadOrStore is the documented way to handle that.
+func (r *accumulator) evictIdle(maxIdle time.Duration) {
+	cutoff := time.Now().UTC().Add(-maxIdle)
+	r.bins.Range(func(key, value any) bool {
+		e := value.(*binDeltaEntry)
+		e.mu.Lock()
+		idle := e.delta == 0 && !e.lastTouched.IsZero() && e.lastTouched.Before(cutoff)
+		e.mu.Unlock()
+		if idle {
+			r.bins.Delete(key)
+		}
+		return true
+	})
+	r.buckets.Range(func(key, value any) bool {
+		e := value.(*bucketDeltaEntry)
+		e.mu.Lock()
+		idle := e.delta == 0 && !e.lastTouched.IsZero() && e.lastTouched.Before(cutoff)
+		e.mu.Unlock()
+		if idle {
+			r.buckets.Delete(key)
+		}
+		return true
+	})
 }
 
-func (r *accumulator) restoreBucketDelta(e *bucketDeltaEntry, delta int, reason protocol.LinesideBucketDeltaReason, windowStart, windowEnd time.Time) {
-	e.mu.Lock()
-	if e.delta == 0 {
-		e.windowStart = windowStart
-	}
-	e.delta += delta
-	if e.windowEnd.Before(windowEnd) {
-		e.windowEnd = windowEnd
-	}
-	if e.reason == "" {
-		e.reason = reason
-	}
-	e.mu.Unlock()
-}
+// Note: there are no restore-on-failure helpers. Send-then-sweep
+// never mutates the entry until enqueue success, so there is
+// nothing to restore on failure — the entry is already in the
+// correct state.
 
 func (r *accumulator) clock() time.Time {
 	if r.now != nil {

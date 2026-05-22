@@ -38,10 +38,7 @@ jobs:
 
       - name: Test (race)
         working-directory: protocol
-        # Warning-only for the first 30 days (until 2026-06-16). Race
-        # findings surface latent production data races. Promote to
-        # gating once baseline is known clean. Tracked in Phase 7.
-        continue-on-error: true
+        # Promoted to gating in Phase 2 (2026-05-22).
         run: go test -race -count=1 ./...
 
       - name: Coverage report

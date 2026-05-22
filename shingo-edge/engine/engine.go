@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"shingo/protocol"
@@ -105,7 +106,9 @@ type Engine struct {
 
 	Events    *EventBus
 	stopChan  chan struct{}
-	startedAt time.Time
+	startedAt        time.Time
+	subscribersWired atomic.Bool
+	kafkaConnFn      func() bool
 }
 
 // Config holds the parameters needed to create an Engine.
@@ -217,6 +220,56 @@ func (e *Engine) Start() {
 // Uptime returns the number of seconds since the engine started.
 func (e *Engine) Uptime() int64 {
 	return int64(time.Since(e.startedAt).Seconds())
+}
+
+// StartedAt returns the engine's startup wall-clock time. Used by
+// /status for process_start_time.
+func (e *Engine) StartedAt() time.Time {
+	return e.startedAt
+}
+
+// SubscribersWired returns true once setupKafkaSubscribers has run
+// successfully — meaning Edge is hooked up to receive inbound Kafka
+// messages (orders, demand, stale notifications). Pre-wire (or if
+// Kafka never connected) returns false; /status surfaces this so
+// operators can see the deaf-but-running mode.
+func (e *Engine) SubscribersWired() bool {
+	return e.subscribersWired.Load()
+}
+
+// MarkSubscribersWired is called by setupKafkaSubscribers when it
+// finishes successfully.
+func (e *Engine) MarkSubscribersWired() {
+	e.subscribersWired.Store(true)
+}
+
+// KafkaConnected returns true if the messaging client is currently
+// connected to Kafka. Returns false if the client is nil (test
+// fixtures) or if the connection has not been established.
+func (e *Engine) KafkaConnected() bool {
+	if e.kafkaConnFn == nil {
+		return false
+	}
+	return e.kafkaConnFn()
+}
+
+// SetKafkaConnFunc injects the messaging client's IsConnected
+// closure so the engine can report it via /status without taking
+// a hard dependency on the messaging package.
+func (e *Engine) SetKafkaConnFunc(fn func() bool) {
+	e.kafkaConnFn = fn
+}
+
+// StationID returns the station identifier from config.
+func (e *Engine) StationID() string {
+	return e.cfg.StationID()
+}
+
+// CountPendingOutbox returns the count of un-sent outbox messages.
+// Surfaced via /status — a steadily growing depth is the
+// operational signal that Kafka or Core is unreachable.
+func (e *Engine) CountPendingOutbox() (int, error) {
+	return e.db.CountPendingOutbox()
 }
 
 // Stop shuts down all subsystems gracefully.

@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strings"
 
 	"shingoedge/store"
 	"shingoedge/store/processes"
@@ -71,10 +72,17 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 	}
 
 	for _, nt := range nodeTasks {
+		// Normalize node name to match the canonical write policy at
+		// store/processes/processes.go:219,259. Internal write path —
+		// silent trim, no warning log (the upstream is our own
+		// changeover code; if it ever feeds whitespace, that's a
+		// different bug to fix at the source).
+		coreNodeName := strings.TrimSpace(nt.CoreNodeName)
+
 		// Find existing process node by core_node_name.
 		var processNodeID *int64
 		for i := range existingNodes {
-			if existingNodes[i].CoreNodeName == nt.CoreNodeName {
+			if existingNodes[i].CoreNodeName == coreNodeName {
 				id := existingNodes[i].ID
 				processNodeID = &id
 				break
@@ -83,9 +91,9 @@ func (s *ChangeoverService) Create(processID int64, fromStyleID *int64, toStyleI
 		if processNodeID == nil {
 			// Auto-create process node for this claimed core node.
 			res, err := tx.Exec(`INSERT INTO process_nodes (process_id, core_node_name, code, name) VALUES (?, ?, ?, ?)`,
-				nt.ProcessID, nt.CoreNodeName, nt.CoreNodeName, nt.CoreNodeName)
+				nt.ProcessID, coreNodeName, coreNodeName, coreNodeName)
 			if err != nil {
-				return 0, fmt.Errorf("auto-create process node for %s: %w", nt.CoreNodeName, err)
+				return 0, fmt.Errorf("auto-create process node for %s: %w", coreNodeName, err)
 			}
 			id, _ := res.LastInsertId()
 			processNodeID = &id

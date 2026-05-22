@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"shingo/protocol"
 	"shingoedge/domain"
@@ -112,6 +113,21 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Trim node-name-shaped fields at the API ingress. One-shot
+	// warning per field if trim fires — gives operators forensic
+	// visibility into upstream whitespace.
+	if trimmed := strings.TrimSpace(in.CoreNodeName); trimmed != in.CoreNodeName {
+		log.Printf("WARNING api apiUpsertStyleNodeClaim: trimmed whitespace from CoreNodeName %q", in.CoreNodeName)
+		in.CoreNodeName = trimmed
+	}
+	if trimmed := strings.TrimSpace(in.PairedCoreNode); trimmed != in.PairedCoreNode {
+		log.Printf("WARNING api apiUpsertStyleNodeClaim: trimmed whitespace from PairedCoreNode %q", in.PairedCoreNode)
+		in.PairedCoreNode = trimmed
+	}
+	if trimmed := strings.TrimSpace(in.SecondPairedCoreNode); trimmed != in.SecondPairedCoreNode {
+		log.Printf("WARNING api apiUpsertStyleNodeClaim: trimmed whitespace from SecondPairedCoreNode %q", in.SecondPairedCoreNode)
+		in.SecondPairedCoreNode = trimmed
+	}
 	if in.StyleID == 0 {
 		writeError(w, http.StatusBadRequest, "style_id is required")
 		return
@@ -172,7 +188,7 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// Push the refreshed claim set to Core so demand_registry stays in sync
 	// with what the operator just edited. Fire-and-forget — SendClaimSync
 	// logs its own failures and the outbox will retry transient send errors.
-	go h.orchestration.SendClaimSync()
+	h.requestClaimSync()
 	writeJSON(w, map[string]int64{"id": id})
 }
 
@@ -181,6 +197,11 @@ func (h *Handlers) apiUpsertStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 // the front node. Idempotent — does nothing when the back node is already
 // a process_node.
 func (h *Handlers) ensurePressIndexBackNode(in domain.NodeClaimInput, backCoreNodeName string) error {
+	// Defense-in-depth: callers should pass an already-trimmed
+	// backCoreNodeName (the API ingress at apiUpsertStyleNodeClaim
+	// does this), but trim again here so a future caller from a
+	// non-API path can't accidentally bypass it.
+	backCoreNodeName = strings.TrimSpace(backCoreNodeName)
 	style, err := h.engine.StyleService().Get(in.StyleID)
 	if err != nil || style == nil {
 		return fmt.Errorf("style lookup: %w", err)
@@ -235,6 +256,6 @@ func (h *Handlers) apiDeleteStyleNodeClaim(w http.ResponseWriter, r *http.Reques
 	// demand_registry drops the corresponding row. Without this push the
 	// registry drifts and Core keeps sending demand signals to a node
 	// whose claim is gone.
-	go h.orchestration.SendClaimSync()
+	h.requestClaimSync()
 	writeJSON(w, map[string]string{"status": "ok"})
 }

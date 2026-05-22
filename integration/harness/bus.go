@@ -73,6 +73,7 @@ type EdgeOutboxOps interface {
 	ListPendingOutbox(limit int) ([]edgemessaging.Message, error)
 	AckOutbox(id int64) error
 	IncrementOutboxRetries(id int64) error
+	MarkOutboxExhausted(id int64, reason string) error
 	PurgeOldOutbox(olderThan time.Duration) (int64, error)
 }
 
@@ -84,6 +85,7 @@ type CoreOutboxOps interface {
 	ListPendingOutbox(limit int) ([]*coremessaging.OutboxMessage, error)
 	AckOutbox(id int64) error
 	IncrementOutboxRetries(id int64) error
+	MarkOutboxExhausted(id int64, reason string) error
 	PurgeOldOutbox(olderThan time.Duration) (int64, error)
 }
 
@@ -201,6 +203,10 @@ func (a *edgeOutboxAdapter) IncrementOutboxRetries(id int64) error {
 	return a.ops.IncrementOutboxRetries(id)
 }
 
+func (a *edgeOutboxAdapter) MarkOutboxExhausted(id int64, reason string) error {
+	return a.ops.MarkOutboxExhausted(id, reason)
+}
+
 func (a *edgeOutboxAdapter) PurgeOldOutbox(olderThan time.Duration) (int, error) {
 	n, err := a.ops.PurgeOldOutbox(olderThan)
 	return int(n), err
@@ -234,6 +240,10 @@ func (a *coreOutboxAdapter) AckOutbox(id int64) error {
 
 func (a *coreOutboxAdapter) IncrementOutboxRetries(id int64) error {
 	return a.ops.IncrementOutboxRetries(id)
+}
+
+func (a *coreOutboxAdapter) MarkOutboxExhausted(id int64, reason string) error {
+	return a.ops.MarkOutboxExhausted(id, reason)
 }
 
 func (a *coreOutboxAdapter) PurgeOldOutbox(olderThan time.Duration) (int, error) {

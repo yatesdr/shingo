@@ -11,12 +11,18 @@ import (
 
 // mockStore implements Store for testing.
 type mockStore struct {
-	mu       sync.Mutex
-	pending  []Message
-	acked    []int64
-	retried  []int64
-	purged   bool
-	listErr  error
+	mu        sync.Mutex
+	pending   []Message
+	acked     []int64
+	retried   []int64
+	exhausted []exhaustedRow
+	purged    bool
+	listErr   error
+}
+
+type exhaustedRow struct {
+	id     int64
+	reason string
 }
 
 func (m *mockStore) ListPendingOutbox(limit int) ([]Message, error) {
@@ -45,6 +51,13 @@ func (m *mockStore) IncrementOutboxRetries(id int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.retried = append(m.retried, id)
+	return nil
+}
+
+func (m *mockStore) MarkOutboxExhausted(id int64, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.exhausted = append(m.exhausted, exhaustedRow{id: id, reason: reason})
 	return nil
 }
 

@@ -184,21 +184,29 @@ func (m *Manager) handleSSEValueChange(data string) {
 		log.Printf("SSE value-change decode: %v", err)
 		return
 	}
+	if change.PLC == "" {
+		log.Printf("SSE value-change: empty PLC name; dropping (would create permanent-flap ManagedPLC entry)")
+		return
+	}
 
-	m.mu.RLock()
+	// Single WLock check-and-insert. Pre-fix had RLock→Unlock→WLock
+	// which raced on concurrent first-event-for-new-PLC: two
+	// goroutines could both observe 'not in map' under RLock, both
+	// grab WLock, both insert — the loser's ManagedPLC was orphaned
+	// and subsequent writes to mp.Values landed on the orphan.
+	// Pattern mirrors handleSSEStatusChange:226-234 which already
+	// uses single-WLock.
+	m.mu.Lock()
 	mp, ok := m.plcs[change.PLC]
-	m.mu.RUnlock()
-
 	if !ok {
 		// SSE may report PLCs discovered after bootstrap
 		mp = &ManagedPLC{
 			Name:   change.PLC,
 			Values: make(map[string]TagValue),
 		}
-		m.mu.Lock()
 		m.plcs[change.PLC] = mp
-		m.mu.Unlock()
 	}
+	m.mu.Unlock()
 
 	mp.mu.Lock()
 	mp.Values[change.Tag] = TagValue{
@@ -215,6 +223,10 @@ func (m *Manager) handleSSEStatusChange(data string) {
 		log.Printf("SSE status-change decode: %v", err)
 		return
 	}
+	if status.PLC == "" {
+		log.Printf("SSE status-change: empty PLC name; dropping (would create permanent-flap ManagedPLC entry)")
+		return
+	}
 
 	// Normalize status to title case to match codebase convention
 	if status.Status == "" {
@@ -223,6 +235,11 @@ func (m *Manager) handleSSEStatusChange(data string) {
 	}
 	normalized := strings.ToUpper(status.Status[:1]) + strings.ToLower(status.Status[1:])
 
+	// Cross-lock-domain pattern: m.mu only guards the m.plcs map
+	// (create-if-missing); per-PLC field writes (mp.Status, mp.Error,
+	// etc.) go under mp.mu.Lock() because readers reach them through
+	// mp.mu.RLock() (IsConnected, ReadTag, GetPLCHealth). Writing
+	// these under m.mu instead would race the readers.
 	m.mu.Lock()
 	mp, ok := m.plcs[status.PLC]
 	if !ok {
@@ -232,12 +249,15 @@ func (m *Manager) handleSSEStatusChange(data string) {
 		}
 		m.plcs[status.PLC] = mp
 	}
+	m.mu.Unlock()
+
+	mp.mu.Lock()
 	oldStatus := mp.Status
 	mp.Status = normalized
 	mp.Error = status.Error
 	mp.ProductName = status.ProductName
 	mp.Vendor = status.Vendor
-	m.mu.Unlock()
+	mp.mu.Unlock()
 
 	if normalized == "Connected" && oldStatus != "Connected" {
 		m.emitter.EmitPLCConnected(status.PLC)
@@ -257,7 +277,14 @@ func (m *Manager) handleSSEHealth(data string) {
 		log.Printf("SSE health decode: %v", err)
 		return
 	}
+	if health.PLC == "" {
+		log.Printf("SSE health: empty PLC name; dropping (would create permanent-flap ManagedPLC entry)")
+		return
+	}
 
+	// Same cross-lock-domain pattern as handleSSEStatusChange above:
+	// m.mu only guards the map; mp.Health write goes under mp.mu
+	// because GetPLCHealth reads it under mp.mu.RLock().
 	m.mu.Lock()
 	mp, ok := m.plcs[health.PLC]
 	if !ok {
@@ -267,7 +294,9 @@ func (m *Manager) handleSSEHealth(data string) {
 		}
 		m.plcs[health.PLC] = mp
 	}
+	m.mu.Unlock()
 
+	mp.mu.Lock()
 	hadPriorHealth := mp.Health != nil
 	wasOnline := hadPriorHealth && mp.Health.Online
 	mp.Health = &PLCHealth{
@@ -277,7 +306,7 @@ func (m *Manager) handleSSEHealth(data string) {
 		Error:     health.Error,
 		Timestamp: health.Timestamp,
 	}
-	m.mu.Unlock()
+	mp.mu.Unlock()
 
 	// Detect transitions
 	if wasOnline && !health.Online {

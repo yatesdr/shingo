@@ -3,6 +3,7 @@ package messaging
 import (
 	"log"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -167,35 +168,52 @@ func (h *Heartbeater) sendHeartbeat() {
 }
 
 func (h *Heartbeater) loop() {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("heartbeater: panic in loop: %v", r)
-		}
-	}()
-	ticker := time.NewTicker(h.interval)
-	defer ticker.Stop()
-	tick := 0
+	// Recover-and-restart-with-5s-backoff. The earlier
+	// recover-and-exit silently killed the goroutine on panic — the
+	// process kept running but heartbeats permanently stopped,
+	// Core's deadman tripped ~30s later, and the edge got marked
+	// stale in a loop. Loud restart is strictly more diagnostic
+	// than silent exit.
 	for {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("PANIC heartbeater-loop: %v\n%s", r, debug.Stack())
+					log.Printf("WARNING heartbeater restarting after 5s — if this repeats, Core will mark this edge stale")
+				}
+			}()
+			ticker := time.NewTicker(h.interval)
+			defer ticker.Stop()
+			tick := 0
+			for {
+				select {
+				case <-h.stopCh:
+					return
+				case <-ticker.C:
+					h.sendHeartbeat()
+					tick++
+					// Re-request node list and payload catalog every
+					// other tick (base interval is 60s → ~2 min poll).
+					// coreNodes is display-only per
+					// operator_guards.go:15-22 — no dispatch / routing
+					// decision reads from it — so this is purely a
+					// freshness improvement.
+					if tick%2 == 0 {
+						h.sendNodeListRequest()
+						h.sendCatalogRequest()
+					}
+				}
+			}
+		}()
+		// If the inner loop returned cleanly via stopCh, exit.
 		select {
 		case <-h.stopCh:
 			return
-		case <-ticker.C:
-			h.sendHeartbeat()
-			tick++
-			// Re-request node list and payload catalog every other tick
-			// (base interval is 60s → ~2 min poll). The pre-Phase-X
-			// cadence was tick%5 (~5 min) which left operators staring
-			// at a stale node admin view for an awkwardly long window
-			// after a Core-side rename or add. coreNodes is display-only
-			// per operator_guards.go:15-22 — no dispatch / routing
-			// decision reads from it — so this is purely a freshness
-			// improvement, not a correctness fix. Admins who need an
-			// immediate refresh hit the apiSyncCoreNodes endpoint
-			// (handlers_catalog.go:23) which forces a sync on demand.
-			if tick%2 == 0 {
-				h.sendNodeListRequest()
-				h.sendCatalogRequest()
-			}
+		case <-time.After(5 * time.Second):
+			// Restart the loop after the backoff. If the panic is
+			// deterministic, the warning log fires every 5s — loud
+			// signal. If transient, the loop self-heals before Core's
+			// deadman trips.
 		}
 	}
 }

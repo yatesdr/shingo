@@ -73,6 +73,11 @@ func (s *fakeEdgeStore) IncrementOutboxRetries(id int64) error {
 	return nil
 }
 
+func (s *fakeEdgeStore) MarkOutboxExhausted(id int64, reason string) error {
+	s.retries[id] = 999
+	return nil
+}
+
 func (s *fakeEdgeStore) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
 	return 0, nil
 }
@@ -118,6 +123,11 @@ func (s *fakeCoreStore) AckOutbox(id int64) error {
 
 func (s *fakeCoreStore) IncrementOutboxRetries(id int64) error {
 	s.retries[id]++
+	return nil
+}
+
+func (s *fakeCoreStore) MarkOutboxExhausted(id int64, reason string) error {
+	s.retries[id] = 999
 	return nil
 }
 

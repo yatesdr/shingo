@@ -19,8 +19,15 @@ type SSEReader struct {
 }
 
 // NewSSEReader creates a new SSE stream reader.
+//
+// The scanner's default 64KB buffer is too small for WarLink's large
+// SSE events (array tags, BOOL[256], etc.). A single oversize event
+// returns bufio.ErrTooLong and wedges the SSE channel into a reconnect
+// loop. Cap at 8MB which is well above any plausible single event.
 func NewSSEReader(r io.Reader) *SSEReader {
-	return &SSEReader{scanner: bufio.NewScanner(r)}
+	s := bufio.NewScanner(r)
+	s.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	return &SSEReader{scanner: s}
 }
 
 // Next returns the next complete SSE event, or an error (io.EOF at end of stream).

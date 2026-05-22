@@ -31,6 +31,13 @@ func (db *DB) IncrementOutboxRetries(id int64) error {
 	return messaging.IncrementOutboxRetries(db.DB, id)
 }
 
+// MarkOutboxExhausted forces a row into the implicit dead-letter
+// state (retries = MaxOutboxRetries) in a single UPDATE. Used by
+// the outbox drainer's per-message panic boundary.
+func (db *DB) MarkOutboxExhausted(id int64, reason string) error {
+	return messaging.MarkOutboxExhausted(db.DB, id, reason)
+}
+
 func (db *DB) RequeueOutbox(id int64) error { return messaging.RequeueOutbox(db.DB, id) }
 
 func (db *DB) PurgeOldOutbox(olderThan time.Duration) (int64, error) {
