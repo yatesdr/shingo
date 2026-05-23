@@ -10,6 +10,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingoedge/store"
+	"shingoedge/store/catalog"
 	"shingoedge/store/messaging"
 	"shingoedge/store/processes"
 )
@@ -202,6 +203,13 @@ func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 	active := sid
 	testutil.MustNoErr(t, db.SetActiveStyle(pid, &active), "SetActiveStyle")
 
+	// Seed a catalog entry so lookupPayloadMeta can resolve the description.
+	testutil.MustNoErr(t, catalog.UpsertCatalog(db.DB, &catalog.CatalogEntry{
+		Name:        "Auto Test Payload",
+		Code:        "PL-AUTO",
+		Description: "Auto Test Payload",
+	}), "UpsertCatalog")
+
 	order, err := mgr.CreateRetrieveOrder(&nid, false, 1, "LINE-1", "", "", "", "", false, false)
 	if err != nil {
 		t.Fatalf("CreateRetrieveOrder: %v", err)
@@ -215,8 +223,8 @@ func TestCreateRetrieveOrder_PayloadMetaFromStyleClaim(t *testing.T) {
 	if req.PayloadCode != "PL-AUTO" {
 		t.Errorf("envelope PayloadCode: got %q, want PL-AUTO", req.PayloadCode)
 	}
-	if req.PayloadDesc != "PL-AUTO" {
-		t.Errorf("envelope PayloadDesc: got %q, want PL-AUTO", req.PayloadDesc)
+	if req.PayloadDesc != "Auto Test Payload" {
+		t.Errorf("envelope PayloadDesc: got %q, want %q", req.PayloadDesc, "Auto Test Payload")
 	}
 }
 

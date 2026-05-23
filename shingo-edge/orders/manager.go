@@ -12,6 +12,7 @@ import (
 	"shingo/protocol/types"
 	"shingoedge/domain"
 	"shingoedge/store"
+	"shingoedge/store/catalog"
 	"shingoedge/store/orders"
 	"shingoedge/store/processes"
 )
@@ -79,7 +80,10 @@ func (m *Manager) lookupPayloadMeta(processNodeID *int64, payloadCode string) (d
 	if payloadCode == "" {
 		payloadCode = claim.PayloadCode
 	}
-	return claim.PayloadCode, payloadCode
+	if entry, err := catalog.GetCatalogByCode(m.db.DB, payloadCode); err == nil && entry.Description != "" {
+		desc = entry.Description
+	}
+	return desc, payloadCode
 }
 
 // enqueueAndAutoSubmit enqueues a protocol envelope and transitions the order
