@@ -164,7 +164,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 			}
 			primes = append(primes, refreshed)
 		}
-		return &NodeOrderResult{CycleMode: cycleModeSimple, Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}
 
 	dispatch := plan.Dispatch

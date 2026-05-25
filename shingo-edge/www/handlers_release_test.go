@@ -103,7 +103,7 @@ func TestParseReleaseRequest_AcceptsWellFormedBody(t *testing.T) {
 // chosen disposition — the engine maps it to the zero-value
 // ReleaseDisposition (no manifest action at Core).
 func TestParseReleaseRequest_AcceptsMinimalBody(t *testing.T) {
-	body := `{"called_by": "kanban-page"}`
+	body := `{"called_by": "orders-page"}`
 	r := httptest.NewRequest(http.MethodPost, "/release", bytes.NewBufferString(body))
 	r.ContentLength = int64(len(body))
 
@@ -111,8 +111,8 @@ func TestParseReleaseRequest_AcceptsMinimalBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseReleaseRequest: %v", err)
 	}
-	if req.CalledBy != "kanban-page" {
-		t.Errorf("CalledBy = %q, want %q", req.CalledBy, "kanban-page")
+	if req.CalledBy != "orders-page" {
+		t.Errorf("CalledBy = %q, want %q", req.CalledBy, "orders-page")
 	}
 	if req.Disposition != "" {
 		t.Errorf("Disposition = %q, want empty", req.Disposition)

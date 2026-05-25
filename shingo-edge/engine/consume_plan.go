@@ -59,22 +59,16 @@ type SimplePrime struct {
 // node-empty downgrade — matches today's behavior at operator_stations.go);
 // the dispatch's CycleMode otherwise.
 //
-// The "simple" sentinel here is the engine-internal classification tag
-// for "this was a simple delivery, not a swap dispatch." The string value
-// is the same as SwapModeSimple but conceptually distinct — this is an
-// output tag classifying the dispatch result, not a configured value.
+// The SwapModeSimple sentinel here is the engine-internal classification
+// tag for "this was a simple delivery, not a swap dispatch." Conceptually
+// distinct from a configured claim SwapMode even though the string value
+// is the same.
 func (p *ConsumePlan) CycleMode() protocol.SwapMode {
 	if p.SimpleMove || p.Dispatch == nil {
-		return cycleModeSimple
+		return protocol.SwapModeSimple
 	}
 	return p.Dispatch.CycleMode
 }
-
-// cycleModeSimple is the engine-internal classification tag emitted in
-// NodeOrderResult.CycleMode when the result is a simple delivery move
-// (not a swap dispatch). Distinct from a configured claim SwapMode
-// even though the string values are the same.
-const cycleModeSimple protocol.SwapMode = "simple"
 
 // BuildConsumePlan validates the (node, runtime, claim) triple and
 // composes the consume-request plan for the claim's swap mode. Pure — no

@@ -77,14 +77,14 @@ func (s *OrderService) SetPriority(orderID int64, priority int) (*orders.Order, 
 // --- Bin claims -----------------------------------------------------------
 
 // ClaimBin reserves a bin for an order. Thin delegate centralized here
-// so the spot-order submission flow does not have to reach into a
+// so the manual-order submission flow does not have to reach into a
 // separate bin accessor purely to attach a bin to the order it just
 // created.
 func (s *OrderService) ClaimBin(binID, orderID int64) error {
 	return s.db.ClaimBin(binID, orderID)
 }
 
-// UnclaimBin releases an order's claim on a bin. Used by the spot-order
+// UnclaimBin releases an order's claim on a bin. Used by the manual-order
 // rollback path when dispatch rejects the order after the claim was
 // already written.
 func (s *OrderService) UnclaimBin(binID int64) error {

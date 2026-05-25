@@ -55,7 +55,7 @@ func (e *Engine) applyProducePlan(node *processes.Node, runtime *processes.Runti
 	if plan.SimpleOnly {
 		// Simple mode: the ingest order is the operator's "active" order.
 		e.resetProduceRuntime(nodeID, runtime, &ingestOrder.ID, nil)
-		return &NodeOrderResult{CycleMode: cycleModeSimple, Order: ingestOrder, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, Order: ingestOrder, ProcessNodeID: nodeID}, nil
 	}
 	_ = ingestOrder // tracked at Core via the manifest; not the active order for complex modes
 

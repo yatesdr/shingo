@@ -309,7 +309,7 @@ func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) 
 	}
 
 	h.engine.Dispatcher().HandleOrderRequest(env, orderReq)
-	h.readBackSpotOrder(w, orderUUID)
+	h.readBackManualOrder(w, orderUUID)
 }
 
 func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc string, priority int, orderUUID string) {
@@ -352,13 +352,13 @@ func (h *Handlers) submitSpotSendTo(w http.ResponseWriter, destination, desc str
 
 	if _, err := h.engine.Fleet().CreateStagedOrder(req); err != nil {
 		orders.UpdateStatus(order.ID, "failed", "fleet error: "+err.Error())
-		h.readBackSpotOrder(w, orderUUID)
+		h.readBackManualOrder(w, orderUUID)
 		return
 	}
 
 	orders.UpdateVendor(order.ID, vendorOrderID, "CREATED", "")
 	orders.UpdateStatus(order.ID, "dispatched", fmt.Sprintf("send-to %s via %s (incomplete)", destNode.Name, vendorOrderID))
-	h.readBackSpotOrder(w, orderUUID)
+	h.readBackManualOrder(w, orderUUID)
 }
 
 func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
@@ -400,10 +400,10 @@ func (h *Handlers) submitSpotComplexOrder(w http.ResponseWriter,
 	}
 
 	h.engine.Dispatcher().HandleComplexOrderRequest(env, complexReq)
-	h.readBackSpotOrder(w, orderUUID)
+	h.readBackManualOrder(w, orderUUID)
 }
 
-func (h *Handlers) readBackSpotOrder(w http.ResponseWriter, orderUUID string) {
+func (h *Handlers) readBackManualOrder(w http.ResponseWriter, orderUUID string) {
 	order, err := h.engine.OrderService().GetOrderByUUID(orderUUID)
 	if err != nil {
 		h.jsonError(w, "order submitted but could not read back: "+err.Error(), http.StatusInternalServerError)
@@ -477,11 +477,11 @@ func (h *Handlers) submitSpotRetrieveSpecific(w http.ResponseWriter, binLabel, d
 
 	if _, err := h.engine.Dispatcher().DispatchDirect(order, sourceNode, destNode); err != nil {
 		orders.UnclaimBin(bin.ID)
-		h.readBackSpotOrder(w, orderUUID)
+		h.readBackManualOrder(w, orderUUID)
 		return
 	}
 
-	h.readBackSpotOrder(w, orderUUID)
+	h.readBackManualOrder(w, orderUUID)
 }
 
 func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode, desc string, priority int) {
@@ -500,8 +500,8 @@ func (h *Handlers) submitSpotSwap(w http.ResponseWriter, targetNode, payloadCode
 	}
 
 	baseUUID := uuid.New().String()[:8]
-	storeUUID := fmt.Sprintf("spot-swap-s-%s", baseUUID)
-	retrieveUUID := fmt.Sprintf("spot-swap-r-%s", baseUUID)
+	storeUUID := fmt.Sprintf("manual-swap-s-%s", baseUUID)
+	retrieveUUID := fmt.Sprintf("manual-swap-r-%s", baseUUID)
 
 	src := protocol.Address{Role: protocol.RoleCore, Station: "core-spot"}
 	dst := protocol.Address{Role: protocol.RoleCore}

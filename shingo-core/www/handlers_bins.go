@@ -727,7 +727,7 @@ func (h *Handlers) apiRequestBinTransport(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Create a spot move order using the existing spot order infrastructure
+	// Create a manual move order using the existing manual order infrastructure
 	h.jsonOK(w, map[string]any{
 		"message": fmt.Sprintf("Transport requested: %s → %s", srcNode.Name, destNode.Name),
 		"bin_id":  b.ID,

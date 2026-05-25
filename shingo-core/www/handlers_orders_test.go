@@ -196,7 +196,7 @@ func TestApiSetOrderPriority_OrderNotFound(t *testing.T) {
 
 // --- submitSpotRetrieveSpecific ---------------------------------------------
 
-// retrieveSpecificResponse mirrors readBackSpotOrder's JSON envelope.
+// retrieveSpecificResponse mirrors readBackManualOrder's JSON envelope.
 type retrieveSpecificResponse struct {
 	OrderID     int64  `json:"order_id"`
 	Status      string `json:"status"`
@@ -269,7 +269,7 @@ func TestSubmitSpotRetrieveSpecific_DispatchFailureRollsBackClaim(t *testing.T) 
 	bin := testdb.CreateBinAtNode(t, db, sd.Payload.Code, sd.StorageNode.ID, "BIN-RS-FAIL")
 
 	resp, status := submitRetrieveSpecific(t, h, bin.Label, sd.LineNode.Name)
-	// readBackSpotOrder returns 200 with {status:"failed"} after the handler's
+	// readBackManualOrder returns 200 with {status:"failed"} after the handler's
 	// rollback path — the dispatch failure is reflected in the body, not the
 	// HTTP status.
 	if status != http.StatusOK {
@@ -361,7 +361,7 @@ func TestSubmitSpotRetrieveSpecific_BinAlreadyClaimed(t *testing.T) {
 	// Bin still claimed by the prior order — no overwrite.
 	testdb.RequireBinClaimedBy(t, db, bin.ID, prior.ID)
 
-	// No new order created for this spot submit (readBackSpotOrder never ran).
+	// No new order created for this spot submit (readBackManualOrder never ran).
 	if resp.OrderID != 0 {
 		t.Errorf("expected no new order on 409, got order_id=%d", resp.OrderID)
 	}

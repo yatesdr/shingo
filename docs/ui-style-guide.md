@@ -891,9 +891,8 @@ Scheduled removals live in `docs/ui-deprecations.md`:
 - **Restored:** 2026-05
 - **Status:** "simple" is a valid SwapMode constant. It is hidden from the
   UI dropdown but the store normalizes to it and the engine uses it
-  internally. The engine-internal `cycleModeSimple` constant retains the
-  string literal "simple" as the result tag for simple-delivery dispatches
-  (see consume_plan.go).
+  internally. The engine uses `protocol.SwapModeSimple` as the result tag
+  for simple-delivery dispatches (see consume_plan.go).
 
 ### `claim.keep_staged` column
 - **UI removed:** 2026-03
