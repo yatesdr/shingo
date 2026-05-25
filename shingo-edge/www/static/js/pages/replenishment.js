@@ -1,3 +1,5 @@
+import { confirm, delegateActions, prompt, toast } from '/static/js/shingoedge.js';
+
 // replenishment.js — UOP-threshold replenishment admin page.
 //
 // Three inline edit verbs:
@@ -80,7 +82,7 @@ async function replenishmentApplyLoader(btn) {
     }),
   });
   if (!r.ok) {
-    alert('Failed: ' + await r.text());
+    toast('Failed: ' + await r.text(), 'error');
     return;
   }
   window.location.reload();
@@ -90,7 +92,7 @@ async function replenishmentDeleteLoader(btn) {
   const row = btn.closest('tr');
   const coreNodeName = row.dataset.coreNodeName;
   const payload      = row.dataset.payload;
-  if (!confirm('Remove threshold configuration for ' + payload + '? Legacy bin-count will resume for this pair.')) {
+  if (!await confirm('Remove threshold configuration for ' + payload + '? Legacy bin-count will resume for this pair.')) {
     return;
   }
   const r = await fetch('/api/replenishment/loader-threshold', {
@@ -99,7 +101,7 @@ async function replenishmentDeleteLoader(btn) {
     body: JSON.stringify({ core_node_name: coreNodeName, payload_code: payload }),
   });
   if (!r.ok) {
-    alert('Failed: ' + await r.text());
+    toast('Failed: ' + await r.text(), 'error');
     return;
   }
   window.location.reload();
@@ -149,11 +151,11 @@ function replenishmentOpenCalculate(btn) {
   for (const f of CALC_FIELDS) {
     if (f.result) document.getElementById('calc-input-' + f.key).value = '';
   }
-  document.getElementById('calculate-modal').style.display = 'flex';
+  document.getElementById('calculate-modal').classList.add('active');
 }
 
 function replenishmentCloseCalculate() {
-  document.getElementById('calculate-modal').style.display = 'none';
+  document.getElementById('calculate-modal').classList.remove('active');
   if (calcContext && calcContext.row) {
     calcContext.row.classList.remove('calc-row-selected');
   }
@@ -309,7 +311,7 @@ async function replenishmentApplyFromModal() {
     }),
   });
   if (!r.ok) {
-    alert('Apply failed: ' + await r.text());
+    toast('Apply failed: ' + await r.text(), 'error');
     return;
   }
   window.location.reload();
@@ -318,11 +320,11 @@ async function replenishmentApplyFromModal() {
 async function replenishmentOverrideFromModal() {
   if (!calcContext || !calcContext.computedAt) return;
   const suggested = parseInt(document.getElementById('calc-threshold').textContent, 10) || 0;
-  const v = prompt('Override threshold value (integer):', suggested);
-  if (v == null) return;
+  const v = await prompt('Override threshold value (integer):', { type: 'number', value: suggested, min: 0 });
+  if (v == null || v === '') return;
   const override = parseInt(v, 10);
   if (isNaN(override) || override < 0) {
-    alert('Invalid value');
+    toast('Invalid value', 'warning');
     return;
   }
   const r = await fetch('/api/replenishment/override', {
@@ -339,7 +341,7 @@ async function replenishmentOverrideFromModal() {
     }),
   });
   if (!r.ok) {
-    alert('Override failed: ' + await r.text());
+    toast('Override failed: ' + await r.text(), 'error');
     return;
   }
   window.location.reload();
@@ -349,11 +351,11 @@ async function replenishmentOverrideFromModal() {
 
 function replenishmentRecalculateAll() {
   document.getElementById('recalc-results').innerHTML = '';
-  document.getElementById('recalc-all-modal').style.display = 'flex';
+  document.getElementById('recalc-all-modal').classList.add('active');
 }
 
 function replenishmentCloseRecalcAll() {
-  document.getElementById('recalc-all-modal').style.display = 'none';
+  document.getElementById('recalc-all-modal').classList.remove('active');
 }
 
 async function replenishmentRunRecalculateAll() {
@@ -416,7 +418,7 @@ async function replenishmentApplyCell(btn) {
     }),
   });
   if (!r.ok) {
-    alert('Failed: ' + await r.text());
+    toast('Failed: ' + await r.text(), 'error');
     return;
   }
   window.location.reload();
@@ -428,7 +430,7 @@ async function replenishmentApplyCell(btn) {
 async function replenishmentRevertCell(btn) {
   const row = btn.closest('tr');
   const claimID = parseInt(row.dataset.claimId, 10);
-  if (!confirm('Revert this claim to legacy? reorder_point becomes 0 and autoreorder is disabled.')) {
+  if (!await confirm('Revert this claim to legacy? reorder_point becomes 0 and autoreorder is disabled.')) {
     return;
   }
   const r = await fetch('/api/replenishment/cell-reorder', {
@@ -442,8 +444,37 @@ async function replenishmentRevertCell(btn) {
     }),
   });
   if (!r.ok) {
-    alert('Failed: ' + await r.text());
+    toast('Failed: ' + await r.text(), 'error');
     return;
   }
   window.location.reload();
 }
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    collectOverrides,
+    formatImpliedBins,
+    isoDateRange,
+    onPageReady,
+    recomputeOutputsLocally,
+    renderOverridesHints,
+    renderThresholdImpliedBins,
+    replenishmentApplyCell,
+    replenishmentApplyFromModal,
+    replenishmentApplyLoader,
+    replenishmentCloseCalculate,
+    replenishmentCloseRecalcAll,
+    replenishmentDeleteLoader,
+    replenishmentOpenCalculate,
+    replenishmentOverrideFromModal,
+    replenishmentRecalculateAll,
+    replenishmentRevertCell,
+    replenishmentRunCalculate,
+    replenishmentRunRecalculateAll
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

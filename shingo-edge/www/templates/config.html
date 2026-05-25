@@ -16,7 +16,7 @@
         <div style="color:var(--text-muted);font-size:0.9rem;flex:1;min-width:16rem">
             If blank, Edge derives the station ID as <code>{{.StationIDDefault}}</code>.
         </div>
-        <button class="btn btn-primary" onclick="saveIdentity()">Save Identity</button>
+        <button class="btn btn-primary" data-action="saveIdentity">Save Identity</button>
     </div>
 </div>
 
@@ -27,17 +27,17 @@
             <label>Core URL</label>
             <input type="text" id="core-api-url" class="form-input" value="{{.Config.CoreAPI}}" placeholder="http://192.168.1.10:8080">
         </div>
-        <button class="btn btn-sm" onclick="testCoreAPI()">Test</button>
+        <button class="btn btn-sm" data-action="testCoreAPI">Test</button>
         <span id="core-api-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
-        <button class="btn btn-primary" onclick="saveCoreAPI()">Save</button>
+        <button class="btn btn-primary" data-action="saveCoreAPI">Save</button>
     </div>
     <div class="card-body" style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:0.75rem">
         <div style="flex:1;min-width:18rem">
             <strong>Sync from Core</strong>
             <div style="color:var(--text-muted);font-size:0.85rem">Force-refresh the cached node list and payload catalog. Background refresh runs ~every 2 minutes; use this after a Core-side add/rename if you don't want to wait.</div>
         </div>
-        <button class="btn btn-sm" id="sync-core-nodes-btn" onclick="syncCoreNodes()">Sync Nodes</button>
-        <button class="btn btn-sm" id="sync-payload-catalog-btn" onclick="syncPayloadCatalog()">Sync Catalog</button>
+        <button class="btn btn-sm" id="sync-core-nodes-btn" data-action="syncCoreNodes">Sync Nodes</button>
+        <button class="btn btn-sm" id="sync-payload-catalog-btn" data-action="syncPayloadCatalog">Sync Catalog</button>
         <span id="core-sync-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
     </div>
 </div>
@@ -70,7 +70,7 @@
                 <span>Enabled</span>
             </label>
             <div class="status-badge {{if .WarLinkConnected}}status-connected{{else}}status-disconnected{{end}}" id="warlink-status">{{if .WarLinkConnected}}Connected{{else}}Disconnected{{end}}</div>
-            <button class="btn btn-primary" onclick="saveWarLink()">Save WarLink</button>
+            <button class="btn btn-primary" data-action="saveWarLink">Save WarLink</button>
         </div>
         <div style="margin-top:0.75rem">
             <strong style="display:block;margin-bottom:0.4rem">Available PLCs</strong>
@@ -95,17 +95,17 @@
             <div class="broker-row">
                 <input type="text" class="form-input broker-host" style="flex:1" value="{{brokerHost .}}" placeholder="localhost">
                 <input type="number" class="form-input broker-port" style="width:7rem" value="{{brokerPort .}}" placeholder="9092">
-                <button class="btn btn-sm" onclick="testBroker(this)">Test</button>
+                <button class="btn btn-sm" data-action="testBroker">Test</button>
                 <span class="broker-status"></span>
-                <button class="btn-icon btn-icon-danger" onclick="removeBrokerRow(this)" title="Remove">&#10005;</button>
+                <button class="btn-icon btn-icon-danger" data-action="removeBrokerRow" title="Remove">&#10005;</button>
             </div>
             {{else}}
             <div class="broker-row">
                 <input type="text" class="form-input broker-host" style="flex:1" placeholder="localhost">
                 <input type="number" class="form-input broker-port" style="width:7rem" placeholder="9092">
-                <button class="btn btn-sm" onclick="testBroker(this)">Test</button>
+                <button class="btn btn-sm" data-action="testBroker">Test</button>
                 <span class="broker-status"></span>
-                <button class="btn-icon btn-icon-danger" onclick="removeBrokerRow(this)" title="Remove">&#10005;</button>
+                <button class="btn-icon btn-icon-danger" data-action="removeBrokerRow" title="Remove">&#10005;</button>
             </div>
             {{end}}
         </div>
@@ -115,8 +115,8 @@
                 <span>Auto-confirm deliveries when AMR reports arrival</span>
             </label>
             <div style="display:flex;gap:0.5rem">
-                <button class="btn btn-sm" onclick="addBrokerRow()">+ Add Broker</button>
-                <button class="btn btn-primary" onclick="saveMessaging()">Save Messaging</button>
+                <button class="btn btn-sm" data-action="addBrokerRow">+ Add Broker</button>
+                <button class="btn btn-primary" data-action="saveMessaging">Save Messaging</button>
             </div>
         </div>
     </div>
@@ -185,9 +185,9 @@
         <div id="backup-operation-status" style="margin-top:0.35rem;color:var(--text-muted)">No manual backup operation running.</div>
         <div id="backup-status" style="margin-top:0.75rem;color:var(--text-muted)">Loading backup status...</div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem">
-            <button class="btn" id="backup-test-btn" onclick="testBackupConfig()">Test Connection</button>
-            <button class="btn" id="backup-run-btn" onclick="runBackupNow()">Backup Now</button>
-            <button class="btn btn-primary" id="backup-save-btn" onclick="saveBackupConfig()">Save Backup Settings</button>
+            <button class="btn" id="backup-test-btn" data-action="testBackupConfig">Test Connection</button>
+            <button class="btn" id="backup-run-btn" data-action="runBackupNow">Backup Now</button>
+            <button class="btn btn-primary" id="backup-save-btn" data-action="saveBackupConfig">Save Backup Settings</button>
         </div>
         <div class="card" style="margin-top:1rem">
             <div class="card-header"><strong>Available Backups</strong></div>
@@ -225,9 +225,9 @@
             <label>Confirm New Password</label>
             <input type="password" id="pw-confirm" class="form-input">
         </div>
-        <button class="btn btn-primary" onclick="changePassword()">Change Password</button>
+        <button class="btn btn-primary" data-action="changePassword">Change Password</button>
     </div>
 </div>
 
-<script src="/static/js/pages/config.js"></script>
+<script type="module" src="/static/js/pages/config.js?v={{cacheBust}}"></script>
 {{template "footer" .}}

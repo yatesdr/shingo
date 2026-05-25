@@ -318,7 +318,7 @@ func (e *Engine) RequestEmptyBin(nodeID int64, payloadCode string) (*orders.Orde
 	// RequestNodeMaterial / produce uses on Finalize. Robots execute the same
 	// choreography for empty and full bins; the order shape doesn't depend
 	// on contents.
-	if claim.SwapMode != "" && claim.SwapMode != protocol.SwapModeSimple && claim.SwapMode != protocol.SwapModeManualSwap {
+	if claim.SwapMode != protocol.SwapModeSimple && claim.SwapMode != protocol.SwapModeManualSwap {
 		dispatch, err := BuildSwapDispatch(node, claim)
 		if err != nil {
 			return nil, err

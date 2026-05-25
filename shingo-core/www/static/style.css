@@ -1,27 +1,7 @@
-:root {
-  --bg: #f8f9fa;
-  --surface: #ffffff;
-  --border: #dee2e6;
-  --text: #212529;
-  --text-muted: #6c757d;
-  --primary: #0d6efd;
-  --success: #198754;
-  --warning: #ffc107;
-  --danger: #dc3545;
-  --info: #0dcaf0;
-}
-[data-theme="dark"] {
-  --bg: #161b22;
-  --surface: #1c2128;
-  --border: #30363d;
-  --text: #c9d1d9;
-  --text-muted: #8b949e;
-  --primary: #58a6ff;
-  --success: #3fb950;
-  --warning: #d29922;
-  --danger: #f85149;
-  --info: #39d2f5;
-}
+/* Design tokens — see /static/shared/tokens.css (loaded ahead of this file
+ * in layout.html). The :root and [data-theme="dark"] blocks previously
+ * inlined here now cascade from the shared module so Core and Edge stay
+ * value-aligned. */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
 a { color: var(--primary); text-decoration: none; }
@@ -768,16 +748,16 @@ th.sort-desc::after { content: ' \2193'; color: var(--primary); }
 .cms-qty-neg { color:#dc2626; font-weight:600; }
 
 /* --- Orders page --- */
-.spot-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1rem; }
-.spot-tab {
+.manual-order-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1rem; }
+.manual-order-tab {
   background:none; border:none; padding:.5rem 1rem; cursor:pointer;
   font-size:.9rem; color:var(--text-muted); border-bottom:2px solid transparent;
   margin-bottom:-2px; font-weight:500;
 }
-.spot-tab:hover { color:var(--text); }
-.spot-tab.active { color:#7c3aed; border-bottom-color:#7c3aed; }
-.spot-tab-content { display:none; }
-.spot-tab-content.active { display:block; }
+.manual-order-tab:hover { color:var(--text); }
+.manual-order-tab.active { color:#7c3aed; border-bottom-color:#7c3aed; }
+.manual-order-tab-content { display:none; }
+.manual-order-tab-content.active { display:block; }
 
 /* --- Test Orders page --- */
 .to-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:1.5rem; }

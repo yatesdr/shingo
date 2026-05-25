@@ -6,7 +6,7 @@
     </div>
     {{if .ActiveChangeover}}
         {{if eq .ActiveChangeover.State "active"}}
-        <button class="btn btn-danger btn-sm" onclick="cancelProcessChangeover()">Cancel Changeover</button>
+        <button class="btn btn-danger btn-sm" data-action="cancelProcessChangeover">Cancel Changeover</button>
         {{end}}
     {{else}}
     <div style="display:flex;align-items:flex-end;gap:0.75rem">
@@ -19,8 +19,8 @@
                 {{end}}
             </select>
         </div>
-        <button class="btn" onclick="previewProcessChangeover()">Preview</button>
-        <button class="btn btn-primary" onclick="startProcessChangeover()">Start Changeover</button>
+        <button class="btn" data-action="previewProcessChangeover">Preview</button>
+        <button class="btn btn-primary" data-action="startProcessChangeover">Start Changeover</button>
     </div>
     {{end}}
 </div>
@@ -29,7 +29,7 @@
 <div class="card-body" id="changeover-preview" style="display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem">
         <strong>Preview — orders that will be created</strong>
-        <button class="btn btn-sm" onclick="document.getElementById('changeover-preview').style.display='none'">Close</button>
+        <button class="btn btn-sm" data-action="closeChangeoverPreview">Close</button>
     </div>
     <div id="changeover-preview-body"></div>
 </div>
@@ -39,10 +39,10 @@
 <div class="card-body">
     <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:1rem">
         <div><strong>{{.ActiveChangeover.FromStyleName}}</strong> &rarr; <strong>{{.ActiveChangeover.ToStyleName}}</strong></div>
-        <span class="status-badge">{{.ActiveChangeover.State}}</span>
+        <span class="badge">{{.ActiveChangeover.State}}</span>
         {{if .ActiveProcess.TargetStyleID}}
             {{if .AllNodesComplete}}
-                <button class="btn btn-sm btn-primary" onclick="completeCutover()">Complete Cutover</button>
+                <button class="btn btn-sm btn-primary" data-action="completeCutover">Complete Cutover</button>
             {{else}}
                 <button class="btn btn-sm" disabled title="All nodes must complete before cutover">Complete Cutover</button>
             {{end}}
@@ -77,9 +77,9 @@
         <div style="display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem">
             <div>
                 <strong>{{.StationName}}</strong>
-                <span class="status-badge" style="margin-left:0.5rem">{{.State}}</span>
+                <span class="badge" style="margin-left:0.5rem">{{.State}}</span>
             </div>
-            <button class="btn btn-sm" onclick="switchStation({{.OperatorStationID}})">Complete Station</button>
+            <button class="btn btn-sm" data-action="switchStation:{{.OperatorStationID}}">Complete Station</button>
         </div>
         <table class="table" style="margin:0">
             <thead>

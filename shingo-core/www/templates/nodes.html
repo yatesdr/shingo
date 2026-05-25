@@ -4,16 +4,16 @@
     <h1>Nodes</h1>
     {{if .Authenticated}}
     <div class="flex gap-1">
-      <button class="btn btn-primary" onclick="openNgrpModal()">Add Node Group</button>
-      <button type="button" class="btn" onclick="syncOrGenerate(event)" title="Ctrl-click: generate test nodes | Shift-click: delete test nodes">Sync from Fleet</button>
-      <button class="btn" onclick="checkOccupancy()">Check Occupancy</button>
+      <button class="btn btn-primary" data-action="openNgrpModal">Add Node Group</button>
+      <button type="button" class="btn" data-action="syncOrGenerate" title="Ctrl-click: generate test nodes | Shift-click: delete test nodes">Sync from Fleet</button>
+      <button class="btn" data-action="checkOccupancy">Check Occupancy</button>
     </div>
     {{end}}
   </div>
 
   <div class="filter-bar">
-    <input type="text" id="node-search" placeholder="Filter by name or location..." oninput="filterNodes()">
-    <select id="node-zone-filter" onchange="filterNodes()">
+    <input type="text" id="node-search" placeholder="Filter by name or location..." data-action-input="filterNodes">
+    <select id="node-zone-filter" data-action-change="filterNodes">
       <option value="">All Zones</option>
       {{range .Zones}}<option value="{{.}}">{{.}}</option>{{end}}
     </select>
@@ -55,7 +55,7 @@
          data-depth="{{index $.Depths .ID}}"
          data-node-type-id="{{if .NodeTypeID}}{{deref .NodeTypeID}}{{end}}"
          {{with index $.NodeInfo .Name}}data-point-name="{{.PointName}}" data-node-tasks="{{.Tasks}}" data-bound-map="{{.BoundMap}}"{{end}}
-         onclick="openNodeModal(this)"
+         data-action="openNodeModal"
          title="{{.Name}}{{if $count}} ({{$count}} items){{end}}{{if .IsSynthetic}} [synthetic, {{$childCount}} children]{{end}}">
       <div>
         <span class="tile-loc">{{.Name}}</span>
@@ -83,7 +83,7 @@
     {{$points := index $.MapGroups .}}
     {{if $points}}
     <div class="accordion mb-1" id="acc-{{.}}">
-      <button class="accordion-toggle" onclick="toggleAccordion('acc-{{.}}')">
+      <button class="accordion-toggle" data-action="toggleAccordion:acc-{{.}}">
         {{.}} <span class="text-muted">({{len $points}})</span>
       </button>
       <div class="accordion-body">
@@ -108,11 +108,11 @@
 </div>
 
 <!-- Node Detail Modal -->
-<div id="node-modal" class="modal-overlay" onclick="if(event.target===this)closeNodeModal()">
+<div id="node-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal">
     <div class="modal-header flex flex-between">
       <h2 id="modal-title">Node</h2>
-      <button class="modal-close" onclick="closeNodeModal()">&times;</button>
+      <button class="modal-close" data-action="closeNodeModal">&times;</button>
     </div>
 
     <!-- Parent info (read-only summary) -->
@@ -123,7 +123,7 @@
     </div>
 
     {{if .Authenticated}}
-    <form id="node-form" method="POST" action="/nodes/update" onsubmit="return handleNodeSave(event)">
+    <form id="node-form" method="POST" action="/nodes/update" data-action-submit="handleNodeSave">
       <input type="hidden" name="id" id="nf-id">
       <input type="hidden" name="node_type_id" id="nf-node-type-id">
       <input type="hidden" name="parent_id" id="nf-parent-id">
@@ -135,14 +135,14 @@
         <div class="form-group">
           <label>Allowed Bins</label>
           <div class="chip-picker" id="cp-bin-types">
-            <select class="mode-select text-sm" id="nf-bt-mode" name="bin_type_mode" onchange="onModeChange('bin-types')">
+            <select class="mode-select text-sm" id="nf-bt-mode" name="bin_type_mode" data-action-change="onModeChange:bin-types">
               <option value="all">Any</option>
               <option value="inherit">Inherit</option>
               <option value="specific">Selected</option>
             </select>
             <div id="cp-bin-types-specific" class="hide">
               <div class="chip-container" id="cp-bin-types-chips"></div>
-              <input type="text" class="chip-filter" placeholder="Filter bins..." oninput="filterChipDropdown('bin-types')" onfocus="showChipDropdown('bin-types')" onblur="hideChipDropdown('bin-types')">
+              <input type="text" class="chip-filter" placeholder="Filter bins..." data-action-input="filterChipDropdown:bin-types" data-action-focus="showChipDropdown:bin-types" data-action-blur="hideChipDropdown:bin-types">
               <div class="chip-dropdown hide" id="cp-bin-types-dropdown"></div>
             </div>
           </div>
@@ -150,7 +150,7 @@
         <div class="form-group">
           <label>Allowed Stations</label>
           <div class="chip-picker" id="cp-stations">
-            <select class="mode-select text-sm" id="nf-st-mode" name="station_mode" onchange="onModeChange('stations')">
+            <select class="mode-select text-sm" id="nf-st-mode" name="station_mode" data-action-change="onModeChange:stations">
               <option value="all">Any</option>
               <option value="none">None (Core only)</option>
               <option value="inherit">Inherit</option>
@@ -158,7 +158,7 @@
             </select>
             <div id="cp-stations-specific" class="hide">
               <div class="chip-container" id="cp-stations-chips"></div>
-              <input type="text" class="chip-filter" placeholder="Filter stations..." oninput="filterChipDropdown('stations')" onfocus="showChipDropdown('stations')" onblur="hideChipDropdown('stations')">
+              <input type="text" class="chip-filter" placeholder="Filter stations..." data-action-input="filterChipDropdown:stations" data-action-focus="showChipDropdown:stations" data-action-blur="hideChipDropdown:stations">
               <div class="chip-dropdown hide" id="cp-stations-dropdown"></div>
             </div>
           </div>
@@ -196,8 +196,8 @@
         <div class="flex flex-between mb-1">
           <strong style="font-size:0.8rem">Manifest — Payload #<span id="inv-manifest-pid"></span></strong>
           <div class="flex gap-1">
-            <button type="button" class="btn btn-sm" onclick="addNodeManifestRow()" style="font-size:0.7rem">+ Item</button>
-            <button type="button" class="btn btn-sm" onclick="closeManifestExpand()" style="font-size:0.7rem">&times; Close</button>
+            <button type="button" class="btn btn-sm" data-action="addNodeManifestRow" style="font-size:0.7rem">+ Item</button>
+            <button type="button" class="btn btn-sm" data-action="closeManifestExpand" style="font-size:0.7rem">&times; Close</button>
           </div>
         </div>
         <table style="font-size:0.8rem;width:100%" id="inv-manifest-table">
@@ -211,7 +211,7 @@
       <input type="hidden" name="name" id="nf-name">
 
       <div class="flex flex-between mt-05">
-        <button type="button" class="btn btn-danger btn-sm" onclick="deleteNode()">Delete Node</button>
+        <button type="button" class="btn btn-danger btn-sm" data-action="deleteNode">Delete Node</button>
         <button type="submit" class="btn btn-primary">Save</button>
       </div>
     </form>
@@ -238,7 +238,7 @@
       <div id="inv-manifest" class="hide" style="margin-top:0.5rem; border-top:1px solid var(--border); padding-top:0.5rem">
         <div class="flex flex-between mb-1">
           <strong style="font-size:0.8rem">Manifest — Payload #<span id="inv-manifest-pid"></span></strong>
-          <button class="btn btn-sm" onclick="closeManifestExpand()" style="font-size:0.7rem">&times; Close</button>
+          <button class="btn btn-sm" data-action="closeManifestExpand" style="font-size:0.7rem">&times; Close</button>
         </div>
         <table style="font-size:0.8rem;width:100%">
           <thead><tr><th style="text-align:left">CATID</th><th style="text-align:left">Qty</th><th>Notes</th></tr></thead>
@@ -251,16 +251,16 @@
 </div>
 
 <div id="page-data" data-authenticated="{{if .Authenticated}}true{{else}}false{{end}}" data-bin-types='{{.BinTypesJSON}}' data-edges='{{.EdgesJSON}}'></div>
-<script src="/static/pages/nodes-overview.js"></script>
-<script src="/static/pages/nodes-detail.js"></script>
-<script src="/static/pages/nodes-supermarket.js"></script>
+<script type="module" src="/static/pages/nodes-overview.js?v={{cacheBust}}"></script>
+<script type="module" src="/static/pages/nodes-detail.js?v={{cacheBust}}"></script>
+<script type="module" src="/static/pages/nodes-supermarket.js?v={{cacheBust}}"></script>
 
 <!-- Node Occupancy Modal -->
-<div id="occupancy-modal" class="modal-overlay" onclick="if(event.target===this)closeOccupancyModal()">
+<div id="occupancy-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:700px">
     <div class="modal-header flex flex-between">
       <h2>Node Occupancy</h2>
-      <button class="modal-close" onclick="closeOccupancyModal()">&times;</button>
+      <button class="modal-close" data-action="closeOccupancyModal">&times;</button>
     </div>
     <div id="occupancy-modal-content">
       <span class="text-muted">Loading...</span>
@@ -270,57 +270,57 @@
 
 
 <!-- Add Node Modal -->
-<div id="add-node-modal" class="modal-overlay" onclick="if(event.target===this)closeAddNodeModal()">
+<div id="add-node-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:400px">
     <div class="modal-header flex flex-between">
       <h2 id="add-node-title">Add Node</h2>
-      <button class="modal-close" onclick="closeAddNodeModal()">&times;</button>
+      <button class="modal-close" data-action="closeAddNodeModal">&times;</button>
     </div>
     <div class="form-group">
       <label>Name</label>
-      <input type="text" id="an-name" placeholder="e.g. SLOT-A6" onkeydown="if(event.key==='Enter'){event.preventDefault();submitAddNode();}">
+      <input type="text" id="an-name" placeholder="e.g. SLOT-A6" data-action-keydown="enterSubmits:submitAddNode">
     </div>
     <div class="flex-end gap-1 mt-1">
-      <button class="btn" onclick="closeAddNodeModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="submitAddNode()">Create</button>
+      <button class="btn" data-action="closeAddNodeModal">Cancel</button>
+      <button class="btn btn-primary" data-action="submitAddNode">Create</button>
     </div>
   </div>
 </div>
 
 <!-- New Node Group Modal -->
-<div id="ngrp-modal" class="modal-overlay" onclick="if(event.target===this)closeNgrpModal()">
+<div id="ngrp-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:400px">
     <div class="modal-header flex flex-between">
       <h2>New Node Group</h2>
-      <button class="modal-close" onclick="closeNgrpModal()">&times;</button>
+      <button class="modal-close" data-action="closeNgrpModal">&times;</button>
     </div>
     <div class="form-group">
       <label>Name</label>
-      <input type="text" id="ngrp-name" placeholder="e.g. GRP-ZONE-A" onkeydown="if(event.key==='Enter'){event.preventDefault();createNodeGroup();}">
+      <input type="text" id="ngrp-name" placeholder="e.g. GRP-ZONE-A" data-action-keydown="enterSubmits:createNodeGroup">
     </div>
     <div class="flex-end gap-1 mt-1">
-      <button class="btn" onclick="closeNgrpModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="createNodeGroup()">Create</button>
+      <button class="btn" data-action="closeNgrpModal">Cancel</button>
+      <button class="btn btn-primary" data-action="createNodeGroup">Create</button>
     </div>
     <span id="ngrp-result" class="text-sm"></span>
   </div>
 </div>
 
 <!-- Add Lane Modal -->
-<div id="lane-modal" class="modal-overlay" onclick="if(event.target===this)closeLaneModal()">
+<div id="lane-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:400px">
     <div class="modal-header flex flex-between">
       <h2>Add Lane</h2>
-      <button class="modal-close" onclick="closeLaneModal()">&times;</button>
+      <button class="modal-close" data-action="closeLaneModal">&times;</button>
     </div>
     <div class="form-group">
       <label>Lane Name</label>
-      <input type="text" id="lane-name" placeholder="e.g. LAN-01" onkeydown="if(event.key==='Enter'){event.preventDefault();submitAddLane();}">
+      <input type="text" id="lane-name" placeholder="e.g. LAN-01" data-action-keydown="enterSubmits:submitAddLane">
     </div>
     <input type="hidden" id="lane-group-id">
     <div class="flex-end gap-1 mt-1">
-      <button class="btn" onclick="closeLaneModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="submitAddLane()">Create</button>
+      <button class="btn" data-action="closeLaneModal">Cancel</button>
+      <button class="btn btn-primary" data-action="submitAddLane">Create</button>
     </div>
     <span id="lane-result" class="text-sm"></span>
   </div>

@@ -7,7 +7,7 @@ import (
 	"shingoedge/domain"
 )
 
-func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) handleOrders(w http.ResponseWriter, r *http.Request) {
 	processes, _ := h.engine.ProcessService().List()
 
 	// Determine active process from query param (0 = all processes)
@@ -41,7 +41,7 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 	anomalies, rpMap := loadAnomalyData(h)
 
 	data := map[string]interface{}{
-		"Page":              "kanbans",
+		"Page":              "orders",
 		"Processes":         processes,
 		"ActiveProcessID":   activeProcessID,
 		"ActiveOrders":      activeOrders,
@@ -50,10 +50,10 @@ func (h *Handlers) handleKanbans(w http.ResponseWriter, r *http.Request) {
 		"ReportingPointMap": rpMap,
 	}
 
-	h.renderTemplate(w, r, "kanbans.html", data)
+	h.renderTemplate(w, r, "orders.html", data)
 }
 
-func (h *Handlers) handleKanbansPartial(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) handleOrdersPartial(w http.ResponseWriter, r *http.Request) {
 	var activeProcessID int64
 	if p := r.URL.Query().Get("process"); p != "" {
 		if id, err := strconv.ParseInt(p, 10, 64); err == nil {

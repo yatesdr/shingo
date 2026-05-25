@@ -11,7 +11,7 @@ import (
 // releaseRequest is the parsed body shape shared by the disposition-carrying
 // release endpoints (apiReleaseOrder, apiReleaseNodeStagedOrders).
 //
-// The fields mirror what the operator-station release prompt and kanbans.js
+// The fields mirror what the operator-station release prompt and orders.js
 // post; older clients that pre-date the Phase 8 disposition addition send
 // only Disposition-empty bodies with called_by + qty_by_part, which the
 // engine handles via buildReleaseDisposition's empty-Mode branch.
@@ -50,7 +50,7 @@ type releaseRequest struct {
 // 04-27 plant test: a bare-body POST to a release endpoint produces
 // called_by="" + remaining_uop=<nil> at Core, which silently skips the
 // manifest sync. Every legitimate first-party caller (operator.js,
-// kanbans.js) sets called_by; anything that doesn't is either an external
+// orders.js) sets called_by; anything that doesn't is either an external
 // script or a stale browser and should fail loudly so the caller is visible
 // rather than the symptom.
 //

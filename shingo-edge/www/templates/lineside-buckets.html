@@ -37,12 +37,12 @@
         <td>
           <div class="flex gap-1">
             <input type="number" min="0" value="{{.Qty}}" class="lineside-qty-input" style="width:90px;">
-            <button class="btn btn-sm btn-primary" onclick="adminEditLinesideBucket(this)">Apply</button>
+            <button class="btn btn-sm btn-primary" data-action="adminEditLinesideBucket">Apply</button>
           </div>
           <div class="lineside-warn text-muted" style="font-size:0.8rem;display:none;"></div>
         </td>
         <td>
-          <button class="btn btn-sm btn-danger" onclick="adminClearLinesideBucket(this)">Clear</button>
+          <button class="btn btn-sm btn-danger" data-action="adminClearLinesideBucket">Clear</button>
         </td>
       </tr>
       {{else}}

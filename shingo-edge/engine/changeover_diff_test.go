@@ -180,58 +180,14 @@ func TestDiffStyleClaims_BothEmpty(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Changeover-only role
-// ---------------------------------------------------------------------------
-
-func TestDiffStyleClaims_ChangeoverRole_FromSide(t *testing.T) {
-	t.Parallel()
-	diffs := DiffStyleClaims(
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-	)
-	d := findDiff(diffs, "N1")
-	if d == nil {
-		t.Fatal("missing diff for N1")
-	}
-	if d.Situation != SituationEvacuate {
-		t.Errorf("situation = %q, want %q (from-side changeover role forces evacuate)", d.Situation, SituationEvacuate)
-	}
-}
-
-func TestDiffStyleClaims_ChangeoverRole_ToSide(t *testing.T) {
-	t.Parallel()
-	diffs := DiffStyleClaims(
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "consume"}},
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
-	)
-	d := findDiff(diffs, "N1")
-	if d == nil {
-		t.Fatal("missing diff for N1")
-	}
-	if d.Situation != SituationEvacuate {
-		t.Errorf("situation = %q, want %q (to-side changeover role forces evacuate)", d.Situation, SituationEvacuate)
-	}
-}
-
-// Changeover role overrides EvacuateOnChangeover=false — evacuate is forced.
-func TestDiffStyleClaims_ChangeoverRoleOverridesNoEvacuate(t *testing.T) {
-	t.Parallel()
-	diffs := DiffStyleClaims(
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
-		[]processes.NodeClaim{{CoreNodeName: "N1", PayloadCode: "PART-A", Role: "changeover"}},
-	)
-	d := findDiff(diffs, "N1")
-	if d == nil {
-		t.Fatal("missing diff for N1")
-	}
-	if d.Situation != SituationEvacuate {
-		t.Errorf("situation = %q, want %q (changeover role always evacuates)", d.Situation, SituationEvacuate)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Multi-node diff — mix of situations in one call
 // ---------------------------------------------------------------------------
+//
+// The previous "changeover-only role" tests covered behavior that the UI
+// consistency refactor removed. Evacuate-during-changeover is now driven
+// by the EvacuateOnChangeover flag on the active claim, not by a
+// separate "changeover" claim role. The EVAC-NODE case below exercises
+// the surviving mechanic.
 
 func TestDiffStyleClaims_MultiNode(t *testing.T) {
 	t.Parallel()
@@ -240,19 +196,17 @@ func TestDiffStyleClaims_MultiNode(t *testing.T) {
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
 		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume"},
 		{CoreNodeName: "DROP-NODE", PayloadCode: "DROP-PART", Role: "consume"},
-		{CoreNodeName: "CO-NODE", PayloadCode: "CO-PART", Role: "changeover"},
 	}
 	to := []processes.NodeClaim{
 		{CoreNodeName: "SWAP-NODE", PayloadCode: "NEW", Role: "consume"},
 		{CoreNodeName: "UNCHANGED-NODE", PayloadCode: "SAME", Role: "consume"},
 		{CoreNodeName: "EVAC-NODE", PayloadCode: "SAME-E", Role: "consume", EvacuateOnChangeover: true},
 		{CoreNodeName: "ADD-NODE", PayloadCode: "NEW-PART", Role: "consume"},
-		{CoreNodeName: "CO-NODE", PayloadCode: "CO-PART", Role: "consume"},
 	}
 
 	diffs := DiffStyleClaims(from, to)
-	if len(diffs) != 6 { // SWAP, UNCHANGED, EVAC, DROP, CO, ADD
-		t.Errorf("expected 6 diffs, got %d", len(diffs))
+	if len(diffs) != 5 { // SWAP, UNCHANGED, EVAC, DROP, ADD
+		t.Errorf("expected 5 diffs, got %d", len(diffs))
 	}
 
 	cases := []struct {
@@ -264,7 +218,6 @@ func TestDiffStyleClaims_MultiNode(t *testing.T) {
 		{"EVAC-NODE", SituationEvacuate},
 		{"DROP-NODE", SituationDrop},
 		{"ADD-NODE", SituationAdd},
-		{"CO-NODE", SituationEvacuate},
 	}
 	for _, tc := range cases {
 		d := findDiff(diffs, tc.node)

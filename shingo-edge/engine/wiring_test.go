@@ -18,7 +18,7 @@ import (
 func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, _, claimID := seedProduceNode(t, db, "simple")
+	_, nodeID, _, claimID := seedProduceNode(t, db, "")
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -53,7 +53,7 @@ func TestWiring_IngestCompletion_ResetsProduceUOP(t *testing.T) {
 func TestWiring_RetrieveCompletion_ProduceResetsToZero(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, _, claimID := seedProduceNode(t, db, "simple")
+	_, nodeID, _, claimID := seedProduceNode(t, db, "")
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 
@@ -120,7 +120,7 @@ func seedConsumeNode(t *testing.T, db *store.DB, cfg consumeNodeConfig) (process
 		StyleID:      styleID,
 		CoreNodeName: prefix + "-NODE",
 		Role:         "consume",
-		SwapMode:     "simple",
+		SwapMode: "simple",
 		PayloadCode:  cfg.PayloadCode,
 		UOPCapacity:  cfg.UOPCapacity,
 	})
@@ -195,7 +195,7 @@ func TestWiring_RetrieveCompletion_ConsumeResetsToCapacity(t *testing.T) {
 func TestWiring_CounterDelta_ProduceIncrementsUOP(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, styleID, claimID := seedProduceNode(t, db, "simple")
+	processID, nodeID, styleID, claimID := seedProduceNode(t, db, "")
 
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
@@ -443,7 +443,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 		StyleID:        styleID,
 		CoreNodeName:   "AB-NODE-A",
 		Role:           "consume",
-		SwapMode:       "simple",
+		SwapMode: "simple",
 		PayloadCode:    "PART-AB",
 		UOPCapacity:    100,
 		ReorderPoint:   10,
@@ -457,7 +457,7 @@ func seedABPair(t *testing.T, db *store.DB) (processID, nodeAID, nodeBID, styleI
 		StyleID:        styleID,
 		CoreNodeName:   "AB-NODE-B",
 		Role:           "consume",
-		SwapMode:       "simple",
+		SwapMode: "simple",
 		PayloadCode:    "PART-AB",
 		UOPCapacity:    100,
 		ReorderPoint:   10,

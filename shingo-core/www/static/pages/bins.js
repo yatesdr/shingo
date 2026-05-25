@@ -1,3 +1,5 @@
+import { api, apiGet, apiPost, debounce, delegateActions, el, escapeHtml, h, hideModal, showModal, timeAgo, toast, uiConfirm, uiPrompt } from '/static/app.js';
+
 // ===== STATE =====
 var currentBinId = null;
 var currentBinData = null;
@@ -46,7 +48,7 @@ function openBinDetail(id) {
     })
     .catch(function(e) {
       console.error('openBinDetail', id, e);
-      alert('Error loading bin: ' + ((typeof e === 'string' && e) || (e && e.error) || 'unknown'));
+      toast('Error loading bin: ' + ((typeof e === 'string' && e, 'error') || (e && e.error) || 'unknown'));
     });
 }
 
@@ -133,17 +135,17 @@ function renderContents(data) {
     });
     html += '</select></div>';
     html += '<div class="form-group"><label>UOP Override</label><input type="number" id="bd-load-uop" min="0" style="width:80px" placeholder="auto"></div>';
-    html += '<button class="btn btn-primary btn-sm" onclick="loadPayload()">Load</button>';
+    html += '<button class="btn btn-primary btn-sm" data-action="loadPayload">Load</button>';
     html += '</div></div>';
 
     // Clear / Confirm
     html += '<div style="display:flex;gap:0.5rem">';
     if (b.payload_code) {
-      html += '<button class="btn btn-sm btn-danger" onclick="clearBin()">Clear Bin</button>';
+      html += '<button class="btn btn-sm btn-danger" data-action="clearBin">Clear Bin</button>';
       if (b.manifest_confirmed) {
-        html += '<button class="btn btn-sm" onclick="toggleManifest()">Unconfirm</button>';
+        html += '<button class="btn btn-sm" data-action="toggleManifest">Unconfirm</button>';
       } else {
-        html += '<button class="btn btn-sm" onclick="toggleManifest()">Confirm Manifest</button>';
+        html += '<button class="btn btn-sm" data-action="toggleManifest">Confirm Manifest</button>';
       }
     }
     html += '</div>';
@@ -152,7 +154,7 @@ function renderContents(data) {
   document.getElementById('bd-contents').innerHTML = html;
 }
 
-function renderActions(data) {
+async function renderActions(data) {
   var b = data.bin;
   if (!PAGE_AUTH) {
     document.getElementById('bd-actions').innerHTML = '<p class="text-muted">Login required for actions.</p>';
@@ -162,28 +164,28 @@ function renderActions(data) {
 
   // Status transitions
   html += '<div class="action-group"><h4>Status</h4>';
-  if (b.status !== 'available') html += '<button class="btn btn-sm" onclick="doBinAction(\'activate\')">Activate</button> ';
-  if (b.status !== 'flagged') html += '<button class="btn btn-sm" onclick="doBinAction(\'flag\')">Flag</button> ';
-  if (b.status !== 'quality_hold') html += '<button class="btn btn-sm" onclick="doQualityHold()">Quality Hold</button> ';
-  if (b.status !== 'maintenance') html += '<button class="btn btn-sm" onclick="doBinAction(\'maintenance\')">Maintenance</button> ';
+  if (b.status !== 'available') html += '<button class="btn btn-sm" data-action="doBinAction:activate" >Activate</button> ';
+  if (b.status !== 'flagged') html += '<button class="btn btn-sm" data-action="doBinAction:flag" >Flag</button> ';
+  if (b.status !== 'quality_hold') html += '<button class="btn btn-sm" data-action="doQualityHold">Quality Hold</button> ';
+  if (b.status !== 'maintenance') html += '<button class="btn btn-sm" data-action="doBinAction:maintenance" >Maintenance</button> ';
   // Staged toggle: blue when active, default otherwise. Available ↔ staged only.
   if (b.status === 'available' || b.status === 'staged') {
     var stagedActive = (b.status === 'staged');
     html += '<button class="btn btn-sm' + (stagedActive ? ' btn-primary' : '') +
-      '" onclick="doBinAction(\'' + (stagedActive ? 'release' : 'stage') + '\')">Staged</button> ';
+      '" data-action="doBinAction:\' + (stagedActive ? 'release' : 'stage') + \'">Staged</button> ';
   }
-  if (b.status !== 'retired') html += '<button class="btn btn-sm btn-danger" onclick="doBinAction(\'retire\')">Retire</button> ';
+  if (b.status !== 'retired') html += '<button class="btn btn-sm btn-danger" data-action="doBinAction:retire" >Retire</button> ';
   html += '</div>';
 
   // Lock/Unlock
   html += '<div class="action-group"><h4>Lock</h4>';
   if (b.locked) {
     html += '<p class="text-muted mb-1">Locked by <strong>' + esc(b.locked_by) + '</strong></p>';
-    html += '<button class="btn btn-sm" onclick="doBinAction(\'unlock\')">Unlock</button>';
+    html += '<button class="btn btn-sm" data-action="doBinAction:unlock" >Unlock</button>';
   } else {
     html += '<div class="inline-form">';
     html += '<div class="form-group"><label>Locked By</label><input type="text" id="bd-lock-actor" placeholder="Name" style="width:150px"></div>';
-    html += '<button class="btn btn-sm" onclick="lockBin()">Lock</button>';
+    html += '<button class="btn btn-sm" data-action="lockBin">Lock</button>';
     html += '</div>';
   }
   html += '</div>';
@@ -197,8 +199,8 @@ function renderActions(data) {
     html += '<option value="' + n.id + '">' + esc(n.name) + '</option>';
   });
   html += '</select></div>';
-  html += '<button class="btn btn-sm" onclick="moveBin()">Move</button>';
-  html += '<button class="btn btn-sm" onclick="requestTransport()">Request Transport</button>';
+  html += '<button class="btn btn-sm" data-action="moveBin">Move</button>';
+  html += '<button class="btn btn-sm" data-action="requestTransport">Request Transport</button>';
   html += '</div></div>';
 
   // Record Count
@@ -206,7 +208,7 @@ function renderActions(data) {
   html += '<div class="inline-form">';
   html += '<div class="form-group"><label>Actual UOP</label><input type="number" id="bd-count-uop" min="0" style="width:80px" value="' + b.uop_remaining + '"></div>';
   html += '<div class="form-group"><label>Counter</label><input type="text" id="bd-count-actor" placeholder="Name" style="width:150px"></div>';
-  html += '<button class="btn btn-sm" onclick="recordCount()">Record</button>';
+  html += '<button class="btn btn-sm" data-action="recordCount">Record</button>';
   html += '</div></div>';
 
   // Edit Properties
@@ -220,13 +222,13 @@ function renderActions(data) {
     html += '<option value="' + bt.id + '"' + sel + '>' + esc(bt.code) + '</option>';
   });
   html += '</select></div>';
-  html += '<button class="btn btn-sm" onclick="updateBinProps()">Save</button>';
+  html += '<button class="btn btn-sm" data-action="updateBinProps">Save</button>';
   html += '</div></div>';
 
   // Retire
   html += '<div class="action-group">';
   var confirmMsg = 'Mark ' + (b.label || ('bin ' + b.id)) + ' as retired? It will be removed from all production nodes and no longer assigned to orders. Bin history will be preserved.';
-  html += '<form method="POST" action="/bins/retire" onsubmit="return confirm(\'' + confirmMsg.replace(/'/g, "\\'") + '\')">';
+  html += '<form method="POST" action="/bins/retire" onsubmit="return await uiConfirm(\'' + confirmMsg.replace(/'/g, "\\'") + '\')">';
   html += '<input type="hidden" name="id" value="' + b.id + '">';
   html += '<button type="submit" class="btn btn-sm btn-danger">Retire Bin</button>';
   html += '</form></div>';
@@ -248,7 +250,7 @@ function renderJournal(data) {
     html += '<div class="form-group"><label>Actor</label><input type="text" id="bd-note-actor" placeholder="Name" style="width:120px"></div>';
     html += '</div>';
     html += '<div class="form-group"><textarea id="bd-note-msg" placeholder="Note text..." rows="2" style="font-size:0.85rem"></textarea></div>';
-    html += '<button class="btn btn-sm btn-primary" onclick="addNote()">Add Note</button>';
+    html += '<button class="btn btn-sm btn-primary" data-action="addNote">Add Note</button>';
     html += '</div>';
     html += '<hr style="margin:1rem 0;border:none;border-top:1px solid var(--border)">';
   }
@@ -286,18 +288,18 @@ function renderJournal(data) {
 function doBinAction(action, params) {
   apiPost('/api/bins/action', { id: currentBinId, action: action, params: params || {} })
     .then(function() { openBinDetail(currentBinId); })
-    .catch(function(e) { alert('Error: ' + (e.error || e)); });
+    .catch(function(e) { toast('Error: ' + (e.error || e, 'error')); });
 }
 
 function loadPayload() {
   var code = document.getElementById('bd-load-payload').value;
-  if (!code) { alert('Select a payload'); return; }
+  if (!code) { toast('Select a payload', 'info'); return; }
   var uop = parseInt(document.getElementById('bd-load-uop').value) || 0;
   doBinAction('load_payload', { payload_code: code, uop_override: uop });
 }
 
-function clearBin() {
-  if (!confirm('Clear this bin\'s payload and manifest?')) return;
+async function clearBin() {
+  if (!await uiConfirm('Clear this bin\'s payload and manifest?')) return;
   doBinAction('clear');
 }
 
@@ -308,28 +310,28 @@ function toggleManifest() {
 
 function lockBin() {
   var actor = document.getElementById('bd-lock-actor').value.trim();
-  if (!actor) { alert('Enter who is locking this bin'); return; }
+  if (!actor) { toast('Enter who is locking this bin', 'info'); return; }
   doBinAction('lock', { actor: actor });
 }
 
 function moveBin() {
   var nodeId = parseInt(document.getElementById('bd-move-node').value);
-  if (!nodeId) { alert('Select a destination'); return; }
+  if (!nodeId) { toast('Select a destination', 'info'); return; }
   if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
-    alert('Bin is already at this location'); return;
+    toast('Bin is already at this location', 'info'); return;
   }
   doBinAction('move', { node_id: nodeId });
 }
 
 function requestTransport() {
   var nodeId = parseInt(document.getElementById('bd-move-node').value);
-  if (!nodeId) { alert('Select a destination'); return; }
+  if (!nodeId) { toast('Select a destination', 'info'); return; }
   if (currentBinData && currentBinData.bin.node_id && nodeId === currentBinData.bin.node_id) {
-    alert('Bin is already at this location'); return;
+    toast('Bin is already at this location', 'info'); return;
   }
   apiPost('/api/bins/request-transport', { bin_id: currentBinId, destination_node_id: nodeId })
-    .then(function(data) { alert(data.message || 'Transport requested'); openBinDetail(currentBinId); })
-    .catch(function(e) { alert('Error: ' + (e.error || e)); });
+    .then(function(data) { toast(data.message || 'Transport requested', 'info'); openBinDetail(currentBinId); })
+    .catch(function(e) { toast('Error: ' + (e.error || e, 'error')); });
 }
 
 function recordCount() {
@@ -347,8 +349,8 @@ function updateBinProps() {
   doBinAction('update', params);
 }
 
-function doQualityHold() {
-  var reason = prompt('Reason for quality hold:');
+async function doQualityHold() {
+  var reason = await uiPrompt('Reason for quality hold:');
   if (reason === null) return;
   doBinAction('quality_hold', { reason: reason, actor: 'ui' });
 }
@@ -357,7 +359,7 @@ function addNote() {
   var noteType = document.getElementById('bd-note-type').value;
   var msg = document.getElementById('bd-note-msg').value.trim();
   var actor = document.getElementById('bd-note-actor').value.trim();
-  if (!msg) { alert('Enter a note message'); return; }
+  if (!msg) { toast('Enter a note message', 'info'); return; }
   doBinAction('add_note', { note_type: noteType, message: msg, actor: actor });
 }
 
@@ -393,31 +395,31 @@ function getSelectedIds() {
   return ids;
 }
 
-function bulkAction(action) {
+async function bulkAction(action) {
   var ids = getSelectedIds();
   if (ids.length === 0) return;
   var params = {};
   if (action === 'lock') {
-    var actor = prompt('Lock by (name):');
+    var actor = await uiPrompt('Lock by (name):');
     if (!actor) return;
     params = { actor: actor };
   }
   if (action === 'quality_hold') {
-    var reason = prompt('Reason for quality hold:');
+    var reason = await uiPrompt('Reason for quality hold:');
     if (reason === null) return;
     params = { reason: reason, actor: 'ui' };
   }
-  if (!confirm(action + ' ' + ids.length + ' bin(s)?')) return;
+  if (!await uiConfirm(action + ' ' + ids.length + ' bin(s)?')) return;
   apiPost('/api/bins/bulk-action', { ids: ids, action: action, params: params })
     .then(function(data) {
       var failed = (data.results || []).filter(function(r) { return !r.ok; });
       if (failed.length > 0) {
-        alert(failed.length + ' failed: ' + failed.map(function(f) { return '#' + f.id + ': ' + f.error; }).join(', '));
+        toast(failed.length + ' failed: ' + failed.map(function(f, 'error') { return '#' + f.id + ': ' + f.error; }).join(', '));
       }
       ids.forEach(refreshBinRow);
       clearSelection();
     })
-    .catch(function(e) { alert('Error: ' + (e.error || e)); });
+    .catch(function(e) { toast('Error: ' + (e.error || e, 'error')); });
 }
 
 function refreshBinRow(id) {
@@ -500,7 +502,7 @@ function ccStart() {
       });
     }
   });
-  if (ccState.bins.length === 0) { alert('No bins with payloads to count'); return; }
+  if (ccState.bins.length === 0) { toast('No bins with payloads to count', 'info'); return; }
   ccState.index = 0;
   ccState.results = [];
   document.getElementById('cc-step1').style.display = 'none';
@@ -661,3 +663,65 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+
+// Action handler called via data-action="toggleBinTypesAccordion" —
+// formerly inline document.getElementById(...).classList.toggle.
+function toggleBinTypesAccordion() {
+  var el = document.getElementById('bt-accordion');
+  if (el) el.classList.toggle('open');
+}
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    addNote,
+    bdField,
+    bulkAction,
+    ccAdvance,
+    ccConfirm,
+    ccDiscrepancy,
+    ccFlag,
+    ccShowBin,
+    ccSkip,
+    ccStart,
+    ccSummary,
+    clearBin,
+    clearSelection,
+    closeBTCreateModal,
+    closeBTEditModal,
+    closeBinDetail,
+    closeCreateBinModal,
+    closeCycleCount,
+    doBinAction,
+    doQualityHold,
+    esc,
+    filterBins,
+    getSelectedIds,
+    loadPayload,
+    lockBin,
+    moveBin,
+    openBinDetail,
+    openCreateBTModal,
+    openCreateBinModal,
+    openCycleCount,
+    openEditBTModal,
+    recordCount,
+    refreshBinRow,
+    renderActions,
+    renderContents,
+    renderJournal,
+    renderOverview,
+    requestTransport,
+    switchTab,
+    toggleAllBins,
+    toggleBinTypesAccordion,
+    toggleManifest,
+    uopBar,
+    updateBinProps,
+    updateBulkBar
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

@@ -11,6 +11,14 @@ import (
 	"shingocore/engine"
 )
 
+// serverInstance is a per-process identifier emitted on the SSE
+// `connected` event. The client compares it across reconnects: if it
+// changes, the core has been restarted (likely with a new JS bundle)
+// and the tab hard-reloads. Without this, a long-lived admin tab keeps
+// its previously-cached static assets forever — cacheBust on HTML only
+// fires on fresh page loads.
+var serverInstance = fmt.Sprintf("%x", time.Now().UnixNano())
+
 type SSEEvent struct {
 	Event string
 	Data  string
@@ -273,6 +281,13 @@ func (h *EventHub) SSEHandler(w http.ResponseWriter, r *http.Request) {
 
 	ch := h.AddClient()
 	defer h.RemoveClient(ch)
+
+	// Send connected event with the per-process build id so reconnects
+	// after a core restart trigger a hard-reload on the client.
+	if _, err := fmt.Fprintf(w, "event: connected\ndata: {\"build\":\"%s\"}\n\n", serverInstance); err != nil {
+		return
+	}
+	flusher.Flush()
 
 	keepalive := time.NewTicker(30 * time.Second)
 	defer keepalive.Stop()

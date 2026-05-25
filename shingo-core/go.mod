@@ -2,9 +2,15 @@ module shingocore
 
 go 1.25.0
 
-require shingo/protocol v0.0.0
+require (
+	shingo/protocol v0.0.0
+	shingo/shared v0.0.0
+)
 
-replace shingo/protocol => ../protocol
+replace (
+	shingo/protocol => ../protocol
+	shingo/shared => ../shared
+)
 
 require (
 	github.com/docker/go-connections v0.6.0

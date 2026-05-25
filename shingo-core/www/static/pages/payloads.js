@@ -1,3 +1,5 @@
+import { api, delegateActions, el, escapeHtml, hideModal, removeParentElement, showModal, toast } from '/static/app.js';
+
 /* --- Manifest builder --- */
 function addManifestRow(containerId, catid, qty) {
   var container = document.getElementById(containerId);
@@ -7,7 +9,7 @@ function addManifestRow(containerId, catid, qty) {
   row.innerHTML =
     '<input type="text" placeholder="CATID" value="' + escapeHtml(catid || '') + '" style="flex:2;font-size:0.85rem;padding:0.3rem" class="mr-catid">' +
     '<input type="number" placeholder="Qty" value="' + (qty || '') + '" step="1" min="0" style="flex:1;font-size:0.85rem;padding:0.3rem" class="mr-qty">' +
-    '<button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.remove()" style="padding:0.15rem 0.4rem">&times;</button>';
+    '<button type="button" class="btn btn-danger btn-sm" data-action="removeParentElement" style="padding:0.15rem 0.4rem">&times;</button>';
   container.appendChild(row);
 }
 
@@ -45,8 +47,8 @@ function closePLCreateModal() {
   hideModal('pl-create-modal');
 }
 
-function submitPLCreate(e) {
-  e.preventDefault();
+function submitPLCreate(el, evt) {
+  if (evt) evt.preventDefault();
   var body = {
     code: document.getElementById('plc-code').value,
     description: document.getElementById('plc-notes').value,
@@ -62,10 +64,10 @@ function submitPLCreate(e) {
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.error) { alert('Save failed: ' + data.error); return; }
+    if (data.error) { toast('Save failed: ' + data.error, 'error'); return; }
     location.href = '/payloads';
   })
-  .catch(function(err) { alert('Save error: ' + err); });
+  .catch(function(err) { toast('Save error: ' + err, 'error'); });
   return false;
 }
 
@@ -120,8 +122,8 @@ function closePLEditModal() {
   hideModal('pl-edit-modal');
 }
 
-function submitPLEdit(e) {
-  e.preventDefault();
+function submitPLEdit(el, evt) {
+  if (evt) evt.preventDefault();
   var body = {
     id: parseInt(document.getElementById('pl-edit-id').value),
     code: document.getElementById('pl-edit-code').value,
@@ -138,10 +140,10 @@ function submitPLEdit(e) {
   })
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.error) { alert('Save failed: ' + data.error); return; }
+    if (data.error) { toast('Save failed: ' + data.error, 'error'); return; }
     location.href = '/payloads';
   })
-  .catch(function(err) { alert('Save error: ' + err); });
+  .catch(function(err) { toast('Save error: ' + err, 'error'); });
   return false;
 }
 
@@ -151,3 +153,22 @@ document.addEventListener('keydown', function(e) {
     closePLCreateModal(); closePLEditModal();
   }
 });
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    addManifestRow,
+    closePLCreateModal,
+    closePLEditModal,
+    collectManifestRows,
+    getSelectedBinTypes,
+    openCreatePayloadModal,
+    openEditPayloadModal,
+    submitPLCreate,
+    submitPLEdit
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

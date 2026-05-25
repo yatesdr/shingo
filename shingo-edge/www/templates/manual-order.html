@@ -2,7 +2,7 @@
 
 <div class="page-header">
     <h1>Manual Order</h1>
-    <button class="btn btn-secondary" onclick="syncNodes()" id="sync-nodes-btn" title="Re-fetch node list from core">Sync Nodes</button>
+    <button class="btn btn-secondary" data-action="syncNodes" id="sync-nodes-btn" title="Re-fetch node list from core">Sync Nodes</button>
 </div>
 
 <div class="card" style="max-width:600px;margin:0 auto">
@@ -10,7 +10,7 @@
     <div class="card-body">
         <div class="form-group">
             <label>Order Type</label>
-            <select id="mo-type" class="form-input" onchange="updateOrderForm()">
+            <select id="mo-type" class="form-input" data-action-change="updateOrderForm">
                 <option value="move">Move</option>
                 <option value="retrieve">Retrieve</option>
                 <option value="store">Store</option>
@@ -19,7 +19,7 @@
         </div>
         <div class="form-group" id="mo-node-group" style="display:none">
             <label>Process Node</label>
-            <select id="mo-node" class="form-input" onchange="autofillNodeDefaults()">
+            <select id="mo-node" class="form-input" data-action-change="autofillNodeDefaults">
                 <option value="">-- Select --</option>
                 {{range .ProcessNodes}}
                 <option value="{{.ID}}" data-core-node="{{.CoreNodeName}}">{{.ProcessName}} / {{if .StationName}}{{.StationName}} / {{end}}{{.Name}}</option>
@@ -49,7 +49,7 @@
             </select>
         </div>
         <div style="text-align:right;margin-top:0.75rem">
-            <button class="btn btn-primary" onclick="createOrder()">Create Order</button>
+            <button class="btn btn-primary" data-action="createOrder">Create Order</button>
         </div>
     </div>
 </div>
@@ -58,6 +58,6 @@
      data-nodes='{{.NodesJSON}}'
      data-core-nodes='{{.CoreNodesJSON}}'>
 </div>
-<script src="/static/js/pages/manual-order.js"></script>
+<script type="module" src="/static/js/pages/manual-order.js?v={{cacheBust}}"></script>
 
 {{template "footer" .}}

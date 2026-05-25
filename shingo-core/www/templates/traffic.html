@@ -50,7 +50,7 @@
               </label>
             </td>
             <td>
-              <button type="button" class="btn btn-danger btn-sm" onclick="deleteGroup('{{$g.Name}}')">Remove</button>
+              <button type="button" class="btn btn-danger btn-sm" data-action="deleteGroup:{{$g.Name}}">Remove</button>
             </td>
           </tr>
           {{end}}

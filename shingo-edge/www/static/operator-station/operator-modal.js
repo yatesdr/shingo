@@ -19,12 +19,12 @@ export function openModal(nodeID) {
     if (!entry) return;
     setSelectedNodeID(nodeID);
     renderModal(entry);
-    nodeModal.hidden = false;
+    nodeModal.classList.add('active');
 }
 
 export function closeModal() {
     setSelectedNodeID(null);
-    nodeModal.hidden = true;
+    nodeModal.classList.remove('active');
 }
 
 export function renderModal(entry) {
@@ -37,25 +37,25 @@ export function renderModal(entry) {
 
     let html = '';
 
-    html += '<div class="os-modal-header">';
-    html += '<div class="os-modal-node-name">' + esc(entry.node.name) + '</div>';
+    html += '<div class="modal-header">';
+    html += '<div class="modal-node-name">' + esc(entry.node.name) + '</div>';
 
     if (claim && claim.swap_mode === 'manual_swap') {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? binState.bin_label : 'No bin';
         const binPayload = binState && binState.payload_code ? binState.payload_code : '';
         const roleLabel = claim.role === 'produce' ? 'Loader' : 'Unloader';
-        html += '<div class="os-modal-payload">' + roleLabel + ' - Bin: ' + esc(binLabel) + (binPayload ? ' (' + esc(binPayload) + ')' : '') + '</div>';
-        html += '<div class="os-modal-fill-row">';
-        html += '<div class="os-modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UOP)' : 'EMPTY') + '</div>';
+        html += '<div class="modal-payload">' + roleLabel + ' - Bin: ' + esc(binLabel) + (binPayload ? ' (' + esc(binPayload) + ')' : '') + '</div>';
+        html += '<div class="modal-fill-row">';
+        html += '<div class="modal-fill-text" style="font-size:18px;font-weight:600">' + (remaining > 0 ? 'LOADED (' + remaining + ' UOP)' : 'EMPTY') + '</div>';
         html += '</div>';
     } else {
         const binState = entry.bin_state;
         const binLabel = binState && binState.bin_label ? ' - Bin: ' + esc(binState.bin_label) : '';
-        html += '<div class="os-modal-payload">' + esc(claim ? claim.payload_code || 'Unassigned' : 'No claim') + binLabel + '</div>';
-        html += '<div class="os-modal-fill-row">';
-        html += '<div class="os-modal-fill-bar"><div class="os-modal-fill-level" style="width:' + Math.round(pct * 100) + '%;background:' + fillColor(pct, remaining) + '"></div></div>';
-        html += '<div class="os-modal-fill-text">' + remaining + ' / ' + capacity + '</div>';
+        html += '<div class="modal-payload">' + esc(claim ? claim.payload_code || 'Unassigned' : 'No claim') + binLabel + '</div>';
+        html += '<div class="modal-fill-row">';
+        html += '<div class="modal-fill-bar"><div class="modal-fill-level" style="width:' + Math.round(pct * 100) + '%;background:' + fillColor(pct, remaining) + '"></div></div>';
+        html += '<div class="modal-fill-text">' + remaining + ' / ' + capacity + '</div>';
         html += '</div>';
 
         // Active lineside chips — operator-pulled parts on the current style.
@@ -91,13 +91,13 @@ export function renderModal(entry) {
         const statusText = activeOrders.length > 0
             ? activeOrders.map(o => o.order_type + ': ' + o.status).join(', ')
             : 'Order in progress';
-        html += '<div class="os-modal-status">[REP] ' + esc(statusText) + '</div>';
+        html += '<div class="modal-status">[REP] ' + esc(statusText) + '</div>';
     } else {
-        html += '<div class="os-modal-status">No active orders</div>';
+        html += '<div class="modal-status">No active orders</div>';
     }
 
     if (task) {
-        html += '<div class="os-modal-co-info">[CO] Changeover: ' + esc(task.situation) + ' - ' + esc(task.state) + '</div>';
+        html += '<div class="modal-co-info">[CO] Changeover: ' + esc(task.situation) + ' - ' + esc(task.state) + '</div>';
     }
     html += '</div>'; // close header
 
@@ -137,7 +137,7 @@ export function renderModal(entry) {
     // Actions — state machine: only show the next step in the cycle.
     // Consume:  IDLE → REQUEST MATERIAL → (stage) → RELEASE → (drop) → CONFIRM
     // Produce:  same but FINALIZE instead of REQUEST when node has parts.
-    html += '<div class="os-modal-actions">';
+    html += '<div class="modal-actions">';
 
     if (claim) {
         if (claim.swap_mode === 'manual_swap') {
@@ -446,7 +446,7 @@ export function renderModal(entry) {
         const nid = entry.node.id;
         const hasTarget = !!entry.target_claim;
 
-        html += '<div class="os-modal-divider"></div>';
+        html += '<div class="modal-divider"></div>';
 
         html += actionBtn('STAGE NEXT MATERIAL', 'stage',
             task.state === 'pending' && hasTarget,
@@ -467,7 +467,7 @@ export function renderModal(entry) {
 
     html += '</div>'; // close actions
 
-    html += '<div class="os-modal-actions" style="margin-top:12px">';
+    html += '<div class="modal-actions" style="margin-top:12px">';
     html += '<button type="button" class="os-action-btn close" data-action="close">CLOSE</button>';
     html += '</div>';
 

@@ -4,9 +4,9 @@
 
   <!-- Tab bar -->
   <div class="to-tabs">
-    <button class="to-tab active" onclick="switchTab('kafka')">Kafka Orders</button>
-    <button class="to-tab" onclick="switchTab('direct')">Direct-to-RDS</button>
-    <button class="to-tab" onclick="switchTab('commands')">Robot Commands</button>
+    <button class="to-tab active" data-action="switchTab:kafka">Kafka Orders</button>
+    <button class="to-tab" data-action="switchTab:direct">Direct-to-RDS</button>
+    <button class="to-tab" data-action="switchTab:commands">Robot Commands</button>
   </div>
 
   <!-- Tab 1: Kafka Orders -->
@@ -17,7 +17,7 @@
       <div class="to-form-grid">
         <div>
           <label class="to-label">Order Type</label>
-          <select id="k-order-type" class="to-input" onchange="updateKafkaFields()">
+          <select id="k-order-type" class="to-input" data-action-change="updateKafkaFields">
             <option value="move">Move</option>
             <option value="retrieve">Retrieve</option>
             <option value="retrieve_empty">Retrieve Empty</option>
@@ -55,7 +55,7 @@
         </div>
       </div>
       <div style="margin-top:.75rem;">
-        <button class="btn btn-primary" onclick="submitKafkaOrder()">Submit Order</button>
+        <button class="btn btn-primary" data-action="submitKafkaOrder">Submit Order</button>
       </div>
     </div>
 
@@ -65,7 +65,7 @@
       <div class="to-form-grid">
         <div>
           <label class="to-label">Cycle Mode</label>
-          <select id="kc-cycle-mode" class="to-input" onchange="updateKafkaComplexFields()">
+          <select id="kc-cycle-mode" class="to-input" data-action-change="updateKafkaComplexFields">
             <option value="sequential">Sequential</option>
             <option value="two_robot">Two Robot Hot-Swap</option>
             <option value="single_robot">Single Robot Hot-Swap</option>
@@ -119,7 +119,7 @@
         </div>
       </div>
       <div style="margin-top:.75rem;">
-        <button class="btn btn-primary" onclick="submitKafkaComplexOrder()">Submit Complex Order</button>
+        <button class="btn btn-primary" data-action="submitKafkaComplexOrder">Submit Complex Order</button>
       </div>
     </div>
     {{end}}
@@ -157,7 +157,7 @@
         </div>
       </div>
       <div style="margin-top:.75rem;">
-        <button class="btn btn-primary" onclick="submitDirectOrder()">Submit Order</button>
+        <button class="btn btn-primary" data-action="submitDirectOrder">Submit Order</button>
       </div>
     </div>
 
@@ -167,7 +167,7 @@
       <div class="to-form-grid">
         <div>
           <label class="to-label">Cycle Mode</label>
-          <select id="cx-cycle-mode" class="to-input" onchange="updateComplexFields()">
+          <select id="cx-cycle-mode" class="to-input" data-action-change="updateComplexFields">
             <option value="sequential">Sequential</option>
             <option value="two_robot">Two Robot Hot-Swap</option>
             <option value="single_robot">Single Robot Hot-Swap</option>
@@ -221,7 +221,7 @@
         </div>
       </div>
       <div style="margin-top:.75rem;">
-        <button class="btn btn-primary" onclick="submitComplexOrder()">Submit Complex Order</button>
+        <button class="btn btn-primary" data-action="submitComplexOrder">Submit Complex Order</button>
       </div>
     </div>
     {{end}}
@@ -240,7 +240,7 @@
       <div class="to-form-grid">
         <div>
           <label class="to-label">Command Type</label>
-          <select id="c-cmd-type" class="to-input" onchange="updateCmdFields()">
+          <select id="c-cmd-type" class="to-input" data-action-change="updateCmdFields">
             <optgroup label="Orders">
               <option value="move">Move</option>
               <option value="jack">Jack</option>
@@ -313,7 +313,7 @@
         </div>
       </div>
       <div style="margin-top:.75rem;">
-        <button class="btn btn-primary" onclick="submitCommand()">Submit Command</button>
+        <button class="btn btn-primary" data-action="submitCommand">Submit Command</button>
       </div>
     </div>
     {{end}}
@@ -330,13 +330,13 @@
   <div class="modal" style="max-width:700px">
     <div class="modal-header flex flex-between">
       <h2>Order History: <span id="hist-order-id"></span></h2>
-      <button class="modal-close" onclick="hideModal('history-modal')">&times;</button>
+      <button class="modal-close" data-action="hideModal:history-modal">&times;</button>
     </div>
     <div id="hist-body" style="max-height:400px;overflow-y:auto;">
       <p style="color:#888;">Loading...</p>
     </div>
     <div class="text-right mt-2">
-      <button class="btn" onclick="hideModal('history-modal')">Close</button>
+      <button class="btn" data-action="hideModal:history-modal">Close</button>
     </div>
   </div>
 </div>
@@ -346,7 +346,7 @@
   <div class="modal" style="max-width:400px">
     <div class="modal-header flex flex-between">
       <h2>Confirm Receipt</h2>
-      <button class="modal-close" onclick="hideModal('receipt-modal')">&times;</button>
+      <button class="modal-close" data-action="hideModal:receipt-modal">&times;</button>
     </div>
     <input type="hidden" id="receipt-uuid">
     <div style="margin-bottom:.75rem;">
@@ -362,12 +362,12 @@
       <input type="number" id="receipt-count" class="to-input" value="1" step="any" min="0">
     </div>
     <div class="flex-end gap-1">
-      <button class="btn" onclick="hideModal('receipt-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="sendReceipt()">Confirm</button>
+      <button class="btn" data-action="hideModal:receipt-modal">Cancel</button>
+      <button class="btn btn-primary" data-action="sendReceipt">Confirm</button>
     </div>
   </div>
 </div>
 
 <div id="page-data" data-authenticated="{{.Authenticated}}"></div>
-<script src="/static/pages/test-orders.js"></script>
+<script type="module" src="/static/pages/test-orders.js?v={{cacheBust}}"></script>
 {{end}}

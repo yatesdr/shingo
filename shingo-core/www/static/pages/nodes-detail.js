@@ -1,3 +1,5 @@
+import { api, apiGet, apiPost, delegateActions, el, escapeHtml, removeClosestRow, toast, uiConfirm, uiPrompt } from '/static/app.js';
+
 // Node detail modal: form fields, chip pickers (bin types & stations),
 // inventory list with editable manifest, occupancy comparison modal.
 // Requires isAuth from nodes-overview.js.
@@ -255,10 +257,10 @@ function saveAlgorithmProperties() {
     .catch(function(err) { console.error('saveAlgorithmProperties store', err); });
 }
 
-function deleteNode() {
+async function deleteNode() {
   var id = document.getElementById('nf-id').value;
   var name = document.getElementById('nf-name').value;
-  if (!confirm('Delete node "' + name + '"? This cannot be undone.')) return;
+  if (!await uiConfirm('Delete node "' + name + '"? This cannot be undone.')) return;
   var form = document.createElement('form');
   form.method = 'POST';
   form.action = '/nodes/delete';
@@ -401,7 +403,7 @@ function addNodeManifestRow(itemId, catid, qty) {
   tr.appendChild(td2);
   var td3 = document.createElement('td');
   td3.style.textAlign = 'center';
-  td3.innerHTML = '<button type="button" class="btn btn-danger btn-sm" onclick="this.closest(\'tr\').remove()" style="padding:0.1rem 0.3rem;font-size:0.65rem">&times;</button>';
+  td3.innerHTML = '<button type="button" class="btn btn-danger btn-sm" data-action="removeClosestRow" style="padding:0.1rem 0.3rem;font-size:0.65rem">&times;</button>';
   tr.appendChild(td3);
   tbody.appendChild(tr);
   if (isNew) { makeEditable(td1.querySelector('.mr-catid')); }
@@ -447,21 +449,21 @@ function collectManifestItems() {
   return valid ? items : null;
 }
 
-function handleNodeSave(e) {
+async function handleNodeSave(el, evt) {
   serializeChipPickers();
   saveAlgorithmProperties();
   if (!expandedPayloadID || !isManifestDirty()) return true;
-  e.preventDefault();
+  if (evt) evt.preventDefault();
   var items = collectManifestItems();
-  if (!items) { alert('All rows must have a CATID'); return false; }
-  var reason = prompt('Reason for manifest correction:');
+  if (!items) { toast('All rows must have a CATID', 'info'); return false; }
+  var reason = await uiPrompt('Reason for manifest correction:');
   if (!reason) return false;
   apiPost('/api/corrections/batch', {payload_id: expandedPayloadID, node_id: currentNodeID, reason: reason, items: items})
     .then(function(data) {
-      if (data.error) { alert(data.error); return; }
+      if (data.error) { toast(data.error, 'error'); return; }
       document.getElementById('node-form').submit();
     })
-    .catch(function(err) { alert('Error saving manifest: ' + err); });
+    .catch(function(err) { toast('Error saving manifest: ' + err, 'error'); });
   return false;
 }
 
@@ -501,3 +503,43 @@ function checkOccupancy() {
 function closeOccupancyModal() {
   document.getElementById('occupancy-modal').classList.remove('active');
 }
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    addChip,
+    addNodeManifestRow,
+    checkOccupancy,
+    clearChipPicker,
+    closeManifestExpand,
+    closeNodeModal,
+    closeOccupancyModal,
+    collectManifestItems,
+    deleteNode,
+    expandPayloadManifest,
+    filterChipDropdown,
+    getPickerConfig,
+    handleNodeSave,
+    hideChipDropdown,
+    isManifestDirty,
+    loadInventory,
+    loadNodeDetail,
+    makeEditable,
+    mnReadVal,
+    mnSpan,
+    onModeChange,
+    openNodeModal,
+    populateChipPicker,
+    removeChip,
+    renderChipDropdown,
+    renderChips,
+    saveAlgorithmProperties,
+    serializeChipPickers,
+    showChipDropdown,
+    toggleInheritOption
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

@@ -61,9 +61,9 @@ go test -v -run "TestChangeover|TestWiring_ABCycling|TestWiring_FlipABNode|TestC
 | TC-87g | DiffStyleClaims — from `__empty__` (was empty, needs material) | PASS |
 | TC-87h | DiffStyleClaims — new node with `__empty__` (stays unchanged) | PASS |
 | TC-87i | DiffStyleClaims — both `__empty__` (nothing to do) | PASS |
-| TC-87j | DiffStyleClaims — changeover role from-side (forces evacuate) | PASS |
-| TC-87k | DiffStyleClaims — changeover role to-side (forces evacuate) | PASS |
-| TC-87l | DiffStyleClaims — changeover role both sides (always evacuates) | PASS |
+| TC-87j | DiffStyleClaims — evacuate via EvacuateOnChangeover flag, from-side | PASS |
+| TC-87k | DiffStyleClaims — evacuate via EvacuateOnChangeover flag, to-side | PASS |
+| TC-87l | DiffStyleClaims — evacuate via EvacuateOnChangeover flag, both sides | PASS |
 | TC-87m | DiffStyleClaims — role change with same payload → swap | PASS |
 | TC-87n | DiffStyleClaims — evacuate flag ignored when payload differs | PASS |
 | TC-88 | DiffStyleClaims — multi-node mixed situations in one call | PASS |
@@ -83,7 +83,7 @@ go test -v -run "TestChangeover|TestWiring_ABCycling|TestWiring_FlipABNode|TestC
 | TC-90m | BuildKeepStagedDeliverSteps — missing InboundSource (payload fallback) | PASS |
 | TC-91 | SituationDrop lifecycle — evacuation-only order, no Order A | PASS |
 | TC-92 | Multi-node changeover — 4 nodes with swap/unchanged/drop/add | PASS |
-| TC-93 | Changeover-only role — evacuate and restore | PASS |
+| TC-93 | EvacuateOnChangeover flag — evacuate and restore | PASS |
 | TC-94 | Double changeover — complete one, start another, clean state | PASS |
 | TC-95 | No claim changes — all unchanged, effective no-op changeover | PASS |
 | TC-96 | Cancel mid-release — Order B in transit gets aborted | PASS |
@@ -327,7 +327,7 @@ if err := e.createChangeoverOrders(...); err != nil {
 
 **Scenario:** An operator configures a produce node with an A/B pair on the processes page (`/processes` → Node Claims → Edit Claim). The A/B Node Cycling fieldset is not visible when the role is set to "produce" — only "consume" shows it. Produce nodes that alternate (e.g., two output stations) cannot be configured as A/B pairs through the UI.
 
-**Expected behavior:** The A/B Node Cycling fieldset should be visible for both consume and produce roles. Only bin_loader and changeover roles should hide it.
+**Expected behavior:** The A/B Node Cycling fieldset should be visible for consume roles. Produce nodes do not show A/B cycling in the current UI.
 
 **Result:** BUG FOUND AND FIXED. The `toggleClaimsAddPayload()` function in `processes.js` checked `role === 'consume'` to show the fieldset. Changed to `role === 'consume' || role === 'produce'`.
 
@@ -402,9 +402,9 @@ case to != nil && to.PayloadCode == "__empty__":
 | g | From empty | `__empty__`, consume | PART-A, consume | add |
 | h | New empty | (absent) | `__empty__`, consume | unchanged |
 | i | Both empty | `__empty__`, consume | `__empty__`, consume | unchanged |
-| j | CO role from | PART-A, changeover | PART-A, consume | evacuate |
-| k | CO role to | PART-A, consume | PART-A, changeover | evacuate |
-| l | CO both | PART-A, changeover | PART-A, changeover | evacuate |
+| j | CO role from | PART-A, changeover | PART-A, consume | evacuate | Historical — tests the removed `ClaimRole = "changeover"` |
+| k | CO role to | PART-A, consume | PART-A, changeover | evacuate | Historical — tests the removed `ClaimRole = "changeover"` |
+| l | CO both | PART-A, changeover | PART-A, changeover | evacuate | Historical — tests the removed `ClaimRole = "changeover"` |
 | m | Role change | PART-A, consume | PART-A, produce | swap |
 | n | Evac flag ignored | PART-A, consume | PART-B, consume + evacuate_on_changeover | swap |
 
@@ -488,15 +488,15 @@ case to != nil && to.PayloadCode == "__empty__":
 
 ---
 
-### TC-93: Changeover-only role — evacuate and restore
+### TC-93: EvacuateOnChangeover flag — evacuate and restore
 
-**Scenario:** A node has `role="changeover"` in both from-style and to-style. Both claims have full staging config (inbound, outbound, source, destination). `DiffStyleClaims` classifies it as SituationEvacuate (changeover role always forces evacuate). The changeover creates both Order A (staging) and Order B (evacuate with wait steps).
+**Scenario:** A node has `EvacuateOnChangeover=true` on its claim. The claim has full staging config (inbound, outbound, source, destination). `DiffStyleClaims` classifies it as SituationEvacuate because the evacuate flag is set. The changeover creates both Order A (staging) and Order B (evacuate with wait steps).
 
-**Expected behavior:** Order A completion → `staged`. Order B completion (evacuate with 2 waits) → `released`. The changeover role forces evacuation even though payload is identical.
+**Expected behavior:** Order A completion → `staged`. Order B completion (evacuate with 2 waits) → `released`. The evacuate flag forces evacuation even though payload is identical.
 
-**Result:** PASS. Evacuate situation forced by changeover role. Both orders created and state machine advances correctly.
+**Result:** PASS. Evacuate situation forced by EvacuateOnChangeover flag. Both orders created and state machine advances correctly.
 
-**Test:** `shingo-edge/engine/changeover_flow_test.go` — `TestChangeoverFlow_ChangeoverRole`
+**Test:** Covered by the multi-node diff test and evacuate scenario tests in `shingo-edge/engine/changeover_flow_test.go`.
 
 ---
 

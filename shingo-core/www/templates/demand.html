@@ -4,9 +4,9 @@
     <h1>Demand</h1>
     <div class="flex gap-1">
       {{if .Authenticated}}
-      <button class="btn btn-primary" onclick="showAddRow()">+ Add Material</button>
-      <button class="btn" onclick="applyAll()">Apply All</button>
-      <button class="btn" onclick="clearAllProduced()">Zero Counts</button>
+      <button class="btn btn-primary" data-action="showAddRow">+ Add Material</button>
+      <button class="btn" data-action="applyAll">Apply All</button>
+      <button class="btn" data-action="clearAllProduced">Zero Counts</button>
       {{end}}
     </div>
   </div>
@@ -28,20 +28,20 @@
         <td>{{.CatID}}</td>
         <td>{{.Description}}</td>
         <td class="cell-demand cell-editable">
-          <span class="cell-val" onclick="{{if $.Authenticated}}startEdit(this,'demand_qty'){{end}}">{{pct .DemandQty}}</span>
-          <input type="text" inputmode="decimal" class="cell-input cell-input-num" name="demand_qty" value="{{pct .DemandQty}}" onblur="stopEdit(this,'demand_qty')" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){this.value=this.closest('tr').dataset.origDemand;this.blur();}">
+          <span class="cell-val" {{if $.Authenticated}}data-action="startEdit:demand_qty"{{end}}>{{pct .DemandQty}}</span>
+          <input type="text" inputmode="decimal" class="cell-input cell-input-num" name="demand_qty" value="{{pct .DemandQty}}" data-action-blur="stopEdit:demand_qty" data-action-keydown="demandCellKeydown:demand_qty">
         </td>
         <td class="cell-produced cell-editable">
-          <span class="cell-val" onclick="{{if $.Authenticated}}startEdit(this,'produced_qty'){{end}}">{{pct .ProducedQty}}</span>
-          <input type="text" inputmode="decimal" class="cell-input cell-input-num" name="produced_qty" value="{{pct .ProducedQty}}" onblur="stopEditProduced(this)" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){this.value=this.closest('tr').dataset.origProduced;this.blur();}">
+          <span class="cell-val" {{if $.Authenticated}}data-action="startEdit:produced_qty"{{end}}>{{pct .ProducedQty}}</span>
+          <input type="text" inputmode="decimal" class="cell-input cell-input-num" name="produced_qty" value="{{pct .ProducedQty}}" data-action-blur="stopEditProduced" data-action-keydown="demandCellKeydown:produced_qty">
         </td>
         <td class="cell-remaining">{{pct .Remaining}}</td>
         {{if $.Authenticated}}
         <td class="nowrap">
-          <button class="icon-btn" onclick="applyRow(this)" title="Save changes"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2l-7.5 7.5L2.5 6 1 7.5l5 5 9-9z"/></svg></button>
-          <button class="icon-btn" onclick="viewLog({{.ID}})" title="Production log"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12v1H2zm0 3h12v1H2zm0 3h10v1H2zm0 3h8v1H2z"/></svg></button>
-          <button class="icon-btn" onclick="openEditModal(this)" title="Edit"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 1.1a1.5 1.5 0 012.1 0l1.3 1.3a1.5 1.5 0 010 2.1L5.6 13.8l-4 1a.5.5 0 01-.6-.6l1-4L11.5 1.1zm1.4.7a.5.5 0 00-.7 0L3.5 10.5l-.7 2.8 2.8-.7L14.3 3.9a.5.5 0 000-.7l-1.3-1.3z"/></svg></button>
-          <button class="icon-btn icon-btn-danger" onclick="deleteRow(this)" title="Delete"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></button>
+          <button class="icon-btn" data-action="applyRow" title="Save changes"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2l-7.5 7.5L2.5 6 1 7.5l5 5 9-9z"/></svg></button>
+          <button class="icon-btn" data-action="viewLog:{{.ID}}" title="Production log"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h12v1H2zm0 3h12v1H2zm0 3h10v1H2zm0 3h8v1H2z"/></svg></button>
+          <button class="icon-btn" data-action="openEditModal" title="Edit"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 1.1a1.5 1.5 0 012.1 0l1.3 1.3a1.5 1.5 0 010 2.1L5.6 13.8l-4 1a.5.5 0 01-.6-.6l1-4L11.5 1.1zm1.4.7a.5.5 0 00-.7 0L3.5 10.5l-.7 2.8 2.8-.7L14.3 3.9a.5.5 0 000-.7l-1.3-1.3z"/></svg></button>
+          <button class="icon-btn icon-btn-danger" data-action="deleteRow" title="Delete"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 3.5l9 9m0-9l-9 9" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></button>
         </td>
         {{end}}
       </tr>
@@ -57,7 +57,7 @@
   <div class="modal" style="max-width:400px">
     <div class="modal-header flex flex-between">
       <h2>Add Material</h2>
-      <button class="modal-close" onclick="hideModal('add-modal')">&times;</button>
+      <button class="modal-close" data-action="hideModal:add-modal">&times;</button>
     </div>
     <div style="margin-bottom:.75rem;">
       <label class="demand-label">Cat-ID</label>
@@ -72,8 +72,8 @@
       <input type="number" id="add-demand-qty" class="demand-form-input" value="0" step="any" min="0">
     </div>
     <div class="flex-end gap-1">
-      <button class="btn" onclick="hideModal('add-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="addMaterial()">Add</button>
+      <button class="btn" data-action="hideModal:add-modal">Cancel</button>
+      <button class="btn btn-primary" data-action="addMaterial">Add</button>
     </div>
   </div>
 </div>
@@ -83,7 +83,7 @@
   <div class="modal" style="max-width:400px">
     <div class="modal-header flex flex-between">
       <h2>Edit Material</h2>
-      <button class="modal-close" onclick="hideModal('edit-modal')">&times;</button>
+      <button class="modal-close" data-action="hideModal:edit-modal">&times;</button>
     </div>
     <input type="hidden" id="edit-id">
     <div style="margin-bottom:.75rem;">
@@ -95,8 +95,8 @@
       <input type="text" id="edit-description" class="demand-form-input">
     </div>
     <div class="flex-end gap-1">
-      <button class="btn" onclick="hideModal('edit-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveEdit()">Save</button>
+      <button class="btn" data-action="hideModal:edit-modal">Cancel</button>
+      <button class="btn btn-primary" data-action="saveEdit">Save</button>
     </div>
   </div>
 </div>
@@ -106,13 +106,13 @@
   <div class="modal" style="max-width:600px">
     <div class="modal-header flex flex-between">
       <h2>Production Log: <span id="log-cat-id"></span></h2>
-      <button class="modal-close" onclick="hideModal('log-modal')">&times;</button>
+      <button class="modal-close" data-action="hideModal:log-modal">&times;</button>
     </div>
     <div id="log-body" style="max-height:400px;overflow-y:auto;">
       <p style="color:#888;">Loading...</p>
     </div>
     <div class="text-right mt-2">
-      <button class="btn" onclick="hideModal('log-modal')">Close</button>
+      <button class="btn" data-action="hideModal:log-modal">Close</button>
     </div>
   </div>
 </div>
@@ -180,5 +180,5 @@
 .demand-label { display:block; margin-bottom:.25rem; font-weight:600; }
 </style>
 
-<script src="/static/pages/demand.js"></script>
+<script type="module" src="/static/pages/demand.js?v={{cacheBust}}"></script>
 {{end}}

@@ -5,16 +5,16 @@
     <div class="flex-center gap-1">
       <span id="row-count" class="text-muted text-sm"></span>
       {{if .Authenticated}}
-      <button class="btn btn-primary btn-sm" onclick="exportInventory()" id="export-btn" disabled>Export Excel</button>
+      <button class="btn btn-primary btn-sm" data-action="exportInventory" id="export-btn" disabled>Export Excel</button>
       {{end}}
     </div>
   </div>
 
   <div class="filter-bar mb-1">
-    <input type="text" id="inv-search" placeholder="Search..." oninput="applyFilters()">
-    <select id="inv-zone" onchange="applyFilters()"><option value="">All Zones</option></select>
-    <select id="inv-group" onchange="applyFilters()"><option value="">All Groups</option></select>
-    <select id="inv-status" onchange="applyFilters()">
+    <input type="text" id="inv-search" placeholder="Search..." data-action-input="applyFilters">
+    <select id="inv-zone" data-action-change="applyFilters"><option value="">All Zones</option></select>
+    <select id="inv-group" data-action-change="applyFilters"><option value="">All Groups</option></select>
+    <select id="inv-status" data-action-change="applyFilters">
       <option value="">All Statuses</option>
       <option value="available">Available</option>
       <option value="staged">Staged</option>
@@ -23,7 +23,7 @@
       <option value="retired">Retired</option>
     </select>
     <label class="text-sm flex-center" style="gap:0.3rem;">
-      <input type="checkbox" id="inv-transit" onchange="applyFilters()"> In Transit
+      <input type="checkbox" id="inv-transit" data-action-change="applyFilters"> In Transit
     </label>
   </div>
 
@@ -39,17 +39,17 @@
       <table id="inv-table">
         <thead>
           <tr>
-            <th class="sortable" data-col="group_name" onclick="sortBy('group_name')">Group</th>
-            <th class="sortable" data-col="lane_name" onclick="sortBy('lane_name')">Lane</th>
-            <th class="sortable" data-col="node_name" onclick="sortBy('node_name')">Node</th>
-            <th class="sortable" data-col="zone" onclick="sortBy('zone')">Zone</th>
-            <th class="sortable" data-col="bin_label" onclick="sortBy('bin_label')">Bin</th>
-            <th class="sortable" data-col="bin_type" onclick="sortBy('bin_type')">Type</th>
-            <th class="sortable" data-col="status" onclick="sortBy('status')">Status</th>
+            <th class="sortable" data-col="group_name" data-action="sortBy:group_name">Group</th>
+            <th class="sortable" data-col="lane_name" data-action="sortBy:lane_name">Lane</th>
+            <th class="sortable" data-col="node_name" data-action="sortBy:node_name">Node</th>
+            <th class="sortable" data-col="zone" data-action="sortBy:zone">Zone</th>
+            <th class="sortable" data-col="bin_label" data-action="sortBy:bin_label">Bin</th>
+            <th class="sortable" data-col="bin_type" data-action="sortBy:bin_type">Type</th>
+            <th class="sortable" data-col="status" data-action="sortBy:status">Status</th>
             <th>Transit</th>
-            <th class="sortable" data-col="payload_code" onclick="sortBy('payload_code')">Payload</th>
-            <th class="sortable" data-col="cat_id" onclick="sortBy('cat_id')">Cat-ID</th>
-            <th class="sortable" data-col="qty" onclick="sortBy('qty')">Qty</th>
+            <th class="sortable" data-col="payload_code" data-action="sortBy:payload_code">Payload</th>
+            <th class="sortable" data-col="cat_id" data-action="sortBy:cat_id">Cat-ID</th>
+            <th class="sortable" data-col="qty" data-action="sortBy:qty">Qty</th>
             <th>UOP Rem.</th>
             <th>Confirmed</th>
           </tr>
@@ -83,5 +83,5 @@
   </div>
 </div>
 
-<script src="/static/pages/inventory.js"></script>
+<script type="module" src="/static/pages/inventory.js?v={{cacheBust}}"></script>
 {{end}}

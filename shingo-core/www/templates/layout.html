@@ -9,7 +9,10 @@
   <script>
   (function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
   </script>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
+  <link rel="stylesheet" href="/static/shared/status-classes.css?v={{cacheBust}}">
+  <link rel="stylesheet" href="/static/shared/components.css?v={{cacheBust}}">
+  <link rel="stylesheet" href="/static/style.css?v={{cacheBust}}">
 </head>
 <body>
   <nav>
@@ -43,18 +46,18 @@
       </div>
       <div class="ml-auto flex-center" style="gap:0.75rem;">
         <a href="/logout">Logout</a>
-        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"></button>
+        <button class="theme-toggle" data-action="toggleTheme" title="Toggle theme"></button>
       </div>
       {{else}}
       <div class="ml-auto flex-center" style="gap:0.75rem;">
         <a href="/login">Login</a>
-        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"></button>
+        <button class="theme-toggle" data-action="toggleTheme" title="Toggle theme"></button>
       </div>
       {{end}}
     </div>
   </nav>
   <script src="/static/theme.js"></script>
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/app.js?v={{cacheBust}}"></script>
   <main class="container" style="padding-top:1.5rem;padding-bottom:2rem;">
     {{block "content" .}}{{end}}
   </main>

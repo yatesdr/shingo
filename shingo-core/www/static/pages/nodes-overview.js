@@ -1,28 +1,30 @@
+import { api, apiPost, delegateActions, toast, uiConfirm } from '/static/app.js';
+
 // Page-level helpers for the nodes overview: auth flag, fleet sync,
 // accordion toggle, search/filter, page init. Loaded first so isAuth is
 // in scope for nodes-detail.js and nodes-supermarket.js.
 
 var isAuth = document.getElementById('page-data').dataset.authenticated === 'true';
 
-function syncOrGenerate(e) {
+async function syncOrGenerate(e) {
   if (e.shiftKey) {
-    if (!confirm('Delete all TEST- nodes?')) return;
+    if (!await uiConfirm('Delete all TEST- nodes?')) return;
     apiPost('/api/nodes/delete-test')
       .then(function(data) {
-        if (data.error) alert(data.error);
+        if (data.error) toast(data.error, 'error');
         else location.reload();
       })
-      .catch(function(err) { alert('Error: ' + err); });
+      .catch(function(err) { toast('Error: ' + err, 'error'); });
   } else if (e.ctrlKey || e.metaKey) {
-    if (!confirm('Generate test nodes for debugging?\n\nThis creates ~25 TEST- prefixed nodes.')) return;
+    if (!await uiConfirm('Generate test nodes for debugging?\n\nThis creates ~25 TEST- prefixed nodes.')) return;
     apiPost('/api/nodes/generate-test')
       .then(function(data) {
-        if (data.error) alert(data.error);
+        if (data.error) toast(data.error, 'error');
         else location.reload();
       })
-      .catch(function(err) { alert('Error: ' + err); });
+      .catch(function(err) { toast('Error: ' + err, 'error'); });
   } else {
-    if (!confirm('Sync all nodes and scene data from fleet?')) return;
+    if (!await uiConfirm('Sync all nodes and scene data from fleet?')) return;
     var form = document.createElement('form');
     form.method = 'POST';
     form.action = '/nodes/sync-fleet';
@@ -74,3 +76,16 @@ document.addEventListener('DOMContentLoaded', function() {
   buildHierarchy();
   initDragAndDrop();
 });
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    filterNodes,
+    syncOrGenerate,
+    toggleAccordion
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

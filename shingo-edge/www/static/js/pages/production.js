@@ -1,3 +1,5 @@
+import { createSSE, delegateActions, escapeHtml } from '/static/js/shingoedge.js';
+
 var _pd = document.getElementById('page-data').dataset;
 var _shifts = JSON.parse(_pd.shifts);
 var _hourlyCounts = JSON.parse(_pd.hourlyCounts);
@@ -58,7 +60,7 @@ function renderProductionTable() {
         var timeRange = shift.start_time + ' - ' + shift.end_time;
 
         html += '<tr>';
-        html += '<td><strong>' + ShingoEdge.escapeHtml(label) + '</strong><br><span style="font-size:0.8rem;color:var(--text-muted)">' + ShingoEdge.escapeHtml(timeRange) + '</span></td>';
+        html += '<td><strong>' + escapeHtml(label) + '</strong><br><span style="font-size:0.8rem;color:var(--text-muted)">' + escapeHtml(timeRange) + '</span></td>';
 
         for (var c = 0; c < maxCols; c++) {
             if (c < hours.length) {
@@ -149,7 +151,7 @@ function changeDate(offset) {
 renderProductionTable();
 
 // SSE: real-time counter updates
-ShingoEdge.createSSE('/events', {
+createSSE('/events', {
     onCounterUpdate: function(data) {
         if (data.process_id !== _activeLineID) return;
         // If filtering by style, skip deltas from other styles
@@ -187,3 +189,23 @@ function recalcTotals() {
     var gt = document.getElementById('grand-total');
     if (gt) gt.textContent = grandTotal;
 }
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    buildUrl,
+    changeDate,
+    cycleStyle,
+    navigateWithStyle,
+    onProdDateChange,
+    onProdLineChange,
+    parseHHMM,
+    recalcTotals,
+    renderProductionTable,
+    shiftClockHours
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

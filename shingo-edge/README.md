@@ -87,7 +87,7 @@ Shingo Edge provides a browser-based interface for production line operators and
 | Page | Route | Description |
 |------|-------|-------------|
 | Material | `/material` | Current material inventory, stock levels, and consumption state |
-| Kanbans | `/kanbans` | Active transport orders with status tracking and delivery confirmation |
+| Orders | `/orders` | Active transport orders with status tracking and delivery confirmation |
 | Manual Order | `/manual-order` | Create retrieve, store, and move orders manually |
 | Changeover | `/changeover` | Production line changeover workflow |
 | Production | `/production` | Hourly production counts and shift reporting |

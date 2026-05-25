@@ -24,12 +24,12 @@
     </footer>
 
     <!-- Node context modal -->
-    <div id="node-modal" class="os-modal-backdrop" hidden>
-        <div class="os-modal" id="node-modal-content"></div>
+    <div id="node-modal" class="modal-overlay modal--touch">
+        <div class="modal" id="node-modal-content"></div>
     </div>
 
     <!-- Keypad modal -->
-    <div id="keypad-modal" class="os-modal-backdrop" hidden>
+    <div id="keypad-modal" class="modal-overlay modal--touch">
         <div class="os-keypad">
             <div class="os-keypad-title" id="keypad-title">Enter Remaining Quantity</div>
             <div class="os-keypad-display" id="keypad-display">0</div>
@@ -56,19 +56,16 @@
     </div>
 
     <!-- Bin load modal (Manual Swap nodes) -->
-    <div id="load-bin-modal" class="os-modal-backdrop" hidden>
-        <div class="os-modal" style="max-width:420px;padding:20px">
-            <div class="os-modal-header" style="margin-bottom:12px">
-                <div class="os-modal-node-name">Load Bin</div>
-                <div class="os-modal-payload" id="load-bin-payload" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px"></div>
+    <div id="load-bin-modal" class="modal-overlay modal--touch">
+        <div class="modal" style="max-width:420px;padding:20px">
+            <div class="modal-header" style="margin-bottom:12px">
+                <div class="modal-node-name">Load Bin</div>
+                <div class="modal-payload" id="load-bin-payload" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px"></div>
             </div>
             <div id="load-bin-rows" style="margin-bottom:12px"></div>
-            <div style="display:flex;gap:8px;justify-content:space-between">
-                <button type="button" class="os-action-btn release-empty" style="font-size:16px;padding:12px 24px" id="load-bin-clear" hidden>CLEAR BIN</button>
-                <div style="display:flex;gap:8px">
-                    <button type="button" class="os-action-btn close" style="font-size:16px;padding:12px 24px" id="load-bin-cancel">CANCEL</button>
-                    <button type="button" class="os-action-btn request" style="font-size:16px;padding:12px 24px" id="load-bin-submit">CONFIRM LOAD</button>
-                </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button type="button" class="os-action-btn close" style="font-size:16px;padding:12px 24px" id="load-bin-cancel">CANCEL</button>
+                <button type="button" class="os-action-btn request" style="font-size:16px;padding:12px 24px" id="load-bin-submit">CONFIRM LOAD</button>
             </div>
         </div>
     </div>
@@ -76,7 +73,7 @@
     <!-- Toast container -->
     <div id="os-toast"></div>
 
-    <script src="/static/js/shingoedge.js?v={{cacheBust}}"></script>
+    <script type="module" src="/static/js/shingoedge.js?v={{cacheBust}}"></script>
     <script type="module" src="/static/operator-station/operator.js?v={{cacheBust}}"></script>
 </body>
 </html>

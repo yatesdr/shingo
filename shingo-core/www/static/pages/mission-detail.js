@@ -1,3 +1,5 @@
+import { api, el, h } from '/static/app.js';
+
 (function() {
   var orderID = document.getElementById('mission-order-id').textContent;
 

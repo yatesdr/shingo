@@ -27,7 +27,7 @@
                 {{end}}
             </select>
         </div>
-        <button class="btn btn-primary" onclick="saveHeartbeat()">Save Heartbeat</button>
+        <button class="btn btn-primary" data-action="saveHeartbeat">Save Heartbeat</button>
     </div>
 </div>
 
@@ -50,7 +50,7 @@
                     <td><code>{{.Name}}</code></td>
                     <td>{{.PLC}}</td>
                     <td><code>{{.RequestTag}}</code></td>
-                    <td><button class="btn btn-sm btn-danger" onclick="deleteBinding('{{.Name}}')">Remove</button></td>
+                    <td><button class="btn btn-sm btn-danger" data-action="deleteBinding:{{.Name}}">Remove</button></td>
                 </tr>
                 {{else}}
                 <tr id="binding-empty">
@@ -83,7 +83,7 @@
             <label>Request Tag</label>
             <input type="text" id="new-request-tag" class="form-input" placeholder="e.g. Shingo_Crosswalk1_Req">
         </div>
-        <button class="btn btn-primary" onclick="addBinding()">Add</button>
+        <button class="btn btn-primary" data-action="addBinding">Add</button>
     </div>
 </div>
 

@@ -50,8 +50,10 @@ test-*.log
 scene.json
 scene.txt
 
-# Go workspace (if using multi-module workspaces locally)
-go.work
+# Go workspace
+# go.work is committed (see shared/ module + AI-agent resolution rationale
+# in docs/ui-style-guide.md). go.work.sum is ignored — it tracks indirect
+# dependency hashes that drift with local toolchain versions.
 go.work.sum
 
 # Vendor (dependencies fetched by go mod)

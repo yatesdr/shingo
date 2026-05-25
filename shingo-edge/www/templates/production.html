@@ -2,7 +2,7 @@
 
 <div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap;gap:0.75rem">
     {{if .Processes}}
-    <select class="form-input" style="width:14rem" id="prod-line-select" onchange="onProdLineChange()">
+    <select class="form-input" style="width:14rem" id="prod-line-select" data-action-change="onProdLineChange">
         {{range .Processes}}
         <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
@@ -10,12 +10,12 @@
     {{end}}
 
     <div style="display:flex;align-items:center;gap:0.35rem">
-        <button class="btn btn-sm" onclick="changeDate(-1)" title="Previous day">&larr;</button>
-        <input type="date" id="prod-date" class="form-input" style="width:10rem" value="{{.Date}}" onchange="onProdDateChange()">
-        <button class="btn btn-sm" onclick="changeDate(1)" title="Next day">&rarr;</button>
+        <button class="btn btn-sm" data-action="changeDate:-1" title="Previous day">&larr;</button>
+        <input type="date" id="prod-date" class="form-input" style="width:10rem" value="{{.Date}}" data-action-change="onProdDateChange">
+        <button class="btn btn-sm" data-action="changeDate:1" title="Next day">&rarr;</button>
     </div>
 
-    <span id="style-toggle" onclick="cycleStyle()" style="margin-left:auto;font-size:0.85rem;cursor:pointer;user-select:none" title="Click to cycle styles">
+    <span id="style-toggle" data-action="cycleStyle" style="margin-left:auto;font-size:0.85rem;cursor:pointer;user-select:none" title="Click to cycle styles">
         {{if .FilterStyleName}}
             Style: <strong>{{.FilterStyleName}}</strong>
         {{else}}
@@ -44,6 +44,6 @@
      data-filter-style-id="{{.FilterStyleID}}"
      data-date="{{.Date}}">
 </div>
-<script src="/static/js/pages/production.js"></script>
+<script type="module" src="/static/js/pages/production.js?v={{cacheBust}}"></script>
 
 {{template "footer" .}}

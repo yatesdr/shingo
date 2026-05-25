@@ -3,7 +3,7 @@
 <div class="flex flex-between mb-2">
   <h1>Logs</h1>
   <div class="flex gap-1" style="align-items:center;">
-    <select id="log-filter" onchange="debugFilter()" style="font-size:0.85rem;padding:2px 6px;">
+    <select id="log-filter" data-action-change="debugFilter" style="font-size:0.85rem;padding:2px 6px;">
       <option value="">All subsystems</option>
       {{range .Subsystems}}
       <option value="{{.}}" {{if eq . $.Subsystem}}selected{{end}}>{{.}}</option>
@@ -12,7 +12,7 @@
     <label style="display:inline;font-weight:normal;font-size:0.85rem;cursor:pointer;">
       <input type="checkbox" id="log-autoscroll" checked> Auto-scroll
     </label>
-    <button class="btn btn-sm btn-danger" onclick="debugClear()">Clear</button>
+    <button class="btn btn-sm btn-danger" data-action="debugClear">Clear</button>
   </div>
 </div>
 
@@ -44,7 +44,7 @@
   <div class="flex flex-between mb-1">
     <h2 style="margin:0;">Reconciliation</h2>
     <div class="flex gap-1">
-      <button class="btn btn-sm" onclick="requestOrderStatusSync()">Sync Order Status</button>
+      <button class="btn btn-sm" data-action="requestOrderStatusSync">Sync Order Status</button>
     </div>
   </div>
   <div class="text-muted" style="font-size:0.9rem;">
@@ -103,7 +103,7 @@
             <td>{{formatTime .CreatedAt}}</td>
             <td>{{.MsgType}}</td>
             <td>{{.Retries}}</td>
-            <td><button class="btn btn-sm" onclick="replayDeadLetter({{.ID}})">Replay</button></td>
+            <td><button class="btn btn-sm" data-action="replayDeadLetter:{{.ID}}">Replay</button></td>
           </tr>
           {{end}}
         {{else}}
@@ -115,7 +115,7 @@
 </div>
 {{end}}
 
-<script src="/static/js/pages/diagnostics.js"></script>
+<script type="module" src="/static/js/pages/diagnostics.js?v={{cacheBust}}"></script>
 <script>
 async function replayDeadLetter(id) {
   const resp = await fetch('/api/diagnostics/outbox/replay?id=' + encodeURIComponent(id), { method: 'POST' });

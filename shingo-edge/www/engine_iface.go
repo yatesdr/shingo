@@ -13,7 +13,7 @@ import (
 
 // ServiceAccess is the narrow interface that service-shaped www handlers
 // require from the engine: subsystem accessors + per-domain service
-// accessors. CRUD-only handlers (admin pages, config listings, kanbans,
+// accessors. CRUD-only handlers (admin pages, config listings, orders,
 // changeover read paths) take this as their dependency surface and
 // cannot reach engine-level orchestration verbs.
 //
@@ -39,7 +39,7 @@ type ServiceAccess interface {
 	// CoreNodes is a read-only snapshot of the core node map. Lives
 	// on ServiceAccess (not EngineOrchestration) because it's pure
 	// state read with no engine-side side effects — admin pages,
-	// kanbans, and manual-order forms all need it.
+	// orders, and manual-order forms all need it.
 	CoreNodes() map[string]protocol.NodeInfo
 
 	// ── Service accessors ──────────────────────────────────────────

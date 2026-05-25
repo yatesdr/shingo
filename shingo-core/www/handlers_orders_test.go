@@ -205,10 +205,10 @@ type retrieveSpecificResponse struct {
 }
 
 // submitRetrieveSpecific POSTs a retrieve_specific spot order through the
-// public apiSpotOrderSubmit handler and returns the decoded envelope.
+// public apiManualOrderSubmit handler and returns the decoded envelope.
 func submitRetrieveSpecific(t *testing.T, h *Handlers, binLabel, deliveryNode string) (*retrieveSpecificResponse, int) {
 	t.Helper()
-	rec := postJSON(t, h.apiSpotOrderSubmit, "/api/spot/submit",
+	rec := postJSON(t, h.apiManualOrderSubmit, "/api/spot/submit",
 		map[string]any{
 			"order_type":    "retrieve_specific",
 			"bin_label":     binLabel,

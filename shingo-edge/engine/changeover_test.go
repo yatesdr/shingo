@@ -55,7 +55,7 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 		StyleID:             fromStyleID,
 		CoreNodeName:        "CO-NODE",
 		Role:                "consume",
-		SwapMode:            "simple",
+		SwapMode: "simple",
 		PayloadCode:         "PART-OLD",
 		UOPCapacity:         100,
 		InboundSource:       "SOURCE-OLD",
@@ -70,7 +70,7 @@ func seedChangeoverScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 		StyleID:        toStyleID,
 		CoreNodeName:   "CO-NODE",
 		Role:           "consume",
-		SwapMode:       "simple",
+		SwapMode: "simple",
 		PayloadCode:    "PART-NEW",
 		UOPCapacity:    200,
 		InboundSource:  "SOURCE-NEW",
@@ -126,7 +126,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3-NODE",
 		Role:                "consume",
-		SwapMode:            "simple",
+		SwapMode: "simple",
 		PayloadCode:         "PART-OLD",
 		UOPCapacity:         100,
 		InboundSource:       "SOURCE-OLD",
@@ -142,7 +142,7 @@ func seedPhase3SwapScenario(t *testing.T, db *store.DB) (processID, nodeID, from
 		StyleID:        toStyleID,
 		CoreNodeName:   "P3-NODE",
 		Role:           "consume",
-		SwapMode:       "simple",
+		SwapMode: "simple",
 		PayloadCode:    "PART-NEW",
 		UOPCapacity:    200,
 		InboundSource:  "SOURCE-NEW",
@@ -621,7 +621,7 @@ func seedAddNodeScenario(t *testing.T, db *store.DB) (processID, addNodeID, from
 		StyleID:        toStyleID,
 		CoreNodeName:   "ADD-NODE",
 		Role:           "consume",
-		SwapMode:       "simple",
+		SwapMode: "simple",
 		PayloadCode:    "PART-ADD",
 		UOPCapacity:    100,
 		InboundSource:  "SOURCE-ADD",
@@ -771,7 +771,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 		StyleID:             fromStyleID,
 		CoreNodeName:        "P3E-NODE",
 		Role:                "consume",
-		SwapMode:            "simple",
+		SwapMode: "simple",
 		PayloadCode:         "PART-SAME",
 		UOPCapacity:         100,
 		InboundSource:       "SOURCE-OLD",
@@ -787,7 +787,7 @@ func TestChangeover_Phase3EvacuateLifecycle(t *testing.T) {
 		StyleID:              toStyleID,
 		CoreNodeName:         "P3E-NODE",
 		Role:                 "consume",
-		SwapMode:             "simple",
+		SwapMode: "simple",
 		PayloadCode:          "PART-SAME",
 		UOPCapacity:          200,
 		InboundSource:        "SOURCE-NEW",
@@ -987,7 +987,7 @@ func TestChangeover_KeepStagedCombined(t *testing.T) {
 	t.Parallel()
 	t.Skip("KeepStaged short-circuited; runtime hooks no-op'd, planner+builders preserved for rewire")
 	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedKeepStagedSwapScenario(t, db, "simple")
+	processID, nodeID, _, toStyleID := seedKeepStagedSwapScenario(t, db, "")
 	eng := testEngine(t, db)
 	eng.wireEventHandlers()
 

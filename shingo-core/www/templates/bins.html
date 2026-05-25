@@ -7,12 +7,12 @@
   {{if .Authenticated}}
   <!-- Bin Types accordion -->
   <div class="accordion mb-2" id="bt-accordion">
-    <button class="accordion-toggle" onclick="document.getElementById('bt-accordion').classList.toggle('open')">
+    <button class="accordion-toggle" data-action="toggleBinTypesAccordion">
       Bin Types <span class="text-muted">({{len .BinTypes}})</span>
     </button>
     <div class="accordion-body">
       <div class="mb-1 text-right">
-        <button class="btn btn-primary btn-sm" onclick="openCreateBTModal()">+ Bin Type</button>
+        <button class="btn btn-primary btn-sm" data-action="openCreateBTModal">+ Bin Type</button>
       </div>
       {{if .BinTypes}}
       <table>
@@ -33,13 +33,13 @@
             <td>{{if .Description}}{{.Description}}{{else}}<span class="text-muted">-</span>{{end}}</td>
             <td>{{if .WidthIn}}{{.WidthIn}} x {{.HeightIn}}{{else}}<span class="text-muted">-</span>{{end}}</td>
             <td>
-              <button class="btn btn-sm" onclick="openEditBTModal(this)"
+              <button class="btn btn-sm" data-action="openEditBTModal"
                 data-id="{{.ID}}"
                 data-code="{{.Code}}"
                 data-desc="{{.Description}}"
                 data-width="{{.WidthIn}}"
                 data-height="{{.HeightIn}}">Edit</button>
-              <form method="POST" action="/bin-types/delete" style="display:inline" onsubmit="return confirm('Delete bin type {{.Code}}? All bins of this type must be removed first.')">
+              <form method="POST" action="/bin-types/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete bin type {{.Code}}? All bins of this type must be removed first.">
                 <input type="hidden" name="id" value="{{.ID}}">
                 <button type="submit" class="btn btn-danger btn-sm">Delete</button>
               </form>
@@ -57,14 +57,14 @@
 
   <!-- Filter bar -->
   <div class="filter-bar mb-1">
-    <input type="text" id="bin-search" placeholder="Search label, location, payload..." oninput="filterBins()">
-    <select id="bin-type-filter" onchange="filterBins()">
+    <input type="text" id="bin-search" placeholder="Search label, location, payload..." data-action-input="filterBins">
+    <select id="bin-type-filter" data-action-change="filterBins">
       <option value="">All Types</option>
       {{range .BinTypes}}
       <option value="{{.Code}}">{{.Code}}</option>
       {{end}}
     </select>
-    <select id="bin-status-filter" onchange="filterBins()">
+    <select id="bin-status-filter" data-action-change="filterBins">
       <option value="">All Statuses</option>
       <option value="available">Available</option>
       <option value="staged">Staged</option>
@@ -73,22 +73,22 @@
       <option value="maintenance">Maintenance</option>
       <option value="retired">Retired</option>
     </select>
-    <select id="bin-contents-filter" onchange="filterBins()">
+    <select id="bin-contents-filter" data-action-change="filterBins">
       <option value="">All Contents</option>
       <option value="empty">Empty</option>
       <option value="loaded">Loaded</option>
       <option value="unconfirmed">Unconfirmed</option>
       <option value="depleted">Depleted</option>
     </select>
-    <select id="bin-locked-filter" onchange="filterBins()">
+    <select id="bin-locked-filter" data-action-change="filterBins">
       <option value="">Lock State</option>
       <option value="1">Locked</option>
       <option value="0">Unlocked</option>
     </select>
     <span class="text-muted" style="font-size:0.8rem" id="bin-count">{{len .Bins}} bins</span>
     {{if .Authenticated}}
-    <button class="btn btn-sm ml-auto" onclick="openCycleCount()">Cycle Count</button>
-    <button class="btn btn-primary btn-sm" onclick="openCreateBinModal()">+ Bin</button>
+    <button class="btn btn-sm ml-auto" data-action="openCycleCount">Cycle Count</button>
+    <button class="btn btn-primary btn-sm" data-action="openCreateBinModal">+ Bin</button>
     {{end}}
   </div>
 
@@ -96,7 +96,7 @@
   <table id="bin-table">
     <thead>
       <tr>
-        {{if .Authenticated}}<th style="width:30px"><input type="checkbox" onchange="toggleAllBins(this)"></th>{{end}}
+        {{if .Authenticated}}<th style="width:30px"><input type="checkbox" data-action-change="toggleAllBins"></th>{{end}}
         <th>Label</th>
         <th>Type</th>
         <th>Location</th>
@@ -119,8 +119,8 @@
           data-claimed="{{if .ClaimedBy}}1{{else}}0{{end}}"
           data-confirmed="{{if .ManifestConfirmed}}1{{else}}0{{end}}"
           data-contents="{{if .PayloadCode}}{{if .ManifestConfirmed}}{{if gt .UOPRemaining 0}}loaded{{else}}depleted{{end}}{{else}}unconfirmed{{end}}{{else}}empty{{end}}"
-          onclick="if(!event.target.closest('input[type=checkbox]'))openBinDetail({{.ID}})">
-        {{if $.Authenticated}}<td onclick="event.stopPropagation()"><input type="checkbox" class="bin-cb" value="{{.ID}}" onchange="updateBulkBar()"></td>{{end}}
+          data-action="openBinDetail" data-bin-id="{{.ID}}" data-skip-on-checkbox="1">
+        {{if $.Authenticated}}<td data-action="stopPropagation"><input type="checkbox" class="bin-cb" value="{{.ID}}" data-action-change="updateBulkBar"></td>{{end}}
         <td>
           <span class="bin-dot bin-dot-{{if .PayloadCode}}{{if .ManifestConfirmed}}{{if gt .UOPRemaining 0}}loaded{{else}}depleted{{end}}{{else}}unconfirmed{{end}}{{else}}empty{{end}}"></span>
           <strong><code>{{.Label}}</code></strong>
@@ -151,11 +151,11 @@
 
 {{if .Authenticated}}
 <!-- Create Bin Type Modal -->
-<div id="bt-create-modal" class="modal-overlay" onclick="if(event.target===this)closeBTCreateModal()">
+<div id="bt-create-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:480px">
     <div class="modal-header flex flex-between">
       <h2>Create Bin Type</h2>
-      <button class="modal-close" onclick="closeBTCreateModal()">&times;</button>
+      <button class="modal-close" data-action="closeBTCreateModal">&times;</button>
     </div>
     <form method="POST" action="/bin-types/create">
       <div class="grid grid-2">
@@ -176,17 +176,17 @@
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Create</button>
-      <button type="button" class="btn ml-05" onclick="closeBTCreateModal()">Cancel</button>
+      <button type="button" class="btn ml-05" data-action="closeBTCreateModal">Cancel</button>
     </form>
   </div>
 </div>
 
 <!-- Edit Bin Type Modal -->
-<div id="bt-edit-modal" class="modal-overlay" onclick="if(event.target===this)closeBTEditModal()">
+<div id="bt-edit-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:480px">
     <div class="modal-header flex flex-between">
       <h2>Edit Bin Type</h2>
-      <button class="modal-close" onclick="closeBTEditModal()">&times;</button>
+      <button class="modal-close" data-action="closeBTEditModal">&times;</button>
     </div>
     <form method="POST" action="/bin-types/update">
       <input type="hidden" name="id" id="bt-edit-id">
@@ -208,17 +208,17 @@
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
-      <button type="button" class="btn ml-05" onclick="closeBTEditModal()">Cancel</button>
+      <button type="button" class="btn ml-05" data-action="closeBTEditModal">Cancel</button>
     </form>
   </div>
 </div>
 
 <!-- Create Bin Modal -->
-<div id="bin-create-modal" class="modal-overlay" onclick="if(event.target===this)closeCreateBinModal()">
+<div id="bin-create-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:480px">
     <div class="modal-header flex flex-between">
       <h2>Create Bin</h2>
-      <button class="modal-close" onclick="closeCreateBinModal()">&times;</button>
+      <button class="modal-close" data-action="closeCreateBinModal">&times;</button>
     </div>
     <form method="POST" action="/bins/create">
       <div class="grid grid-2">
@@ -257,26 +257,26 @@
         </div>
       </div>
       <button type="submit" class="btn btn-primary">Create</button>
-      <button type="button" class="btn ml-05" onclick="closeCreateBinModal()">Cancel</button>
+      <button type="button" class="btn ml-05" data-action="closeCreateBinModal">Cancel</button>
     </form>
   </div>
 </div>
 
 <!-- Bin Detail Modal -->
-<div id="bin-detail-modal" class="modal-overlay" onclick="if(event.target===this)closeBinDetail()">
+<div id="bin-detail-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal modal-wide">
     <div class="modal-header flex flex-between">
       <div>
         <h2 id="bd-title"></h2>
         <span id="bd-subtitle" class="text-muted" style="font-size:0.8rem"></span>
       </div>
-      <button class="modal-close" onclick="closeBinDetail()">&times;</button>
+      <button class="modal-close" data-action="closeBinDetail">&times;</button>
     </div>
     <div class="tab-bar">
-      <button class="tab-btn active" onclick="switchTab('overview')">Overview</button>
-      <button class="tab-btn" onclick="switchTab('contents')">Contents</button>
-      <button class="tab-btn" onclick="switchTab('actions')">Actions</button>
-      <button class="tab-btn" onclick="switchTab('journal')">Journal</button>
+      <button class="tab-btn active" data-action="switchTab:overview">Overview</button>
+      <button class="tab-btn" data-action="switchTab:contents">Contents</button>
+      <button class="tab-btn" data-action="switchTab:actions">Actions</button>
+      <button class="tab-btn" data-action="switchTab:journal">Journal</button>
     </div>
     <div id="bd-overview" class="tab-panel"></div>
     <div id="bd-contents" class="tab-panel hide"></div>
@@ -286,17 +286,17 @@
 </div>
 
 <!-- Cycle Count Modal -->
-<div id="cc-modal" class="modal-overlay" onclick="if(event.target===this)closeCycleCount()">
+<div id="cc-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal modal-wide">
     <div class="modal-header flex flex-between">
       <h2>Cycle Count</h2>
-      <button class="modal-close" onclick="closeCycleCount()">&times;</button>
+      <button class="modal-close" data-action="closeCycleCount">&times;</button>
     </div>
     <div id="cc-step1">
       <p class="text-muted mb-1">Select bins to count. Filters apply to current table view.</p>
       <div class="flex flex-between mb-1">
         <span id="cc-preview-count" class="text-muted">0 bins to count</span>
-        <button class="btn btn-primary" onclick="ccStart()">Start Counting</button>
+        <button class="btn btn-primary" data-action="ccStart">Start Counting</button>
       </div>
     </div>
     <div id="cc-step2" class="hide">
@@ -314,17 +314,17 @@
         </div>
       </div>
       <div class="flex gap-1 flex-wrap">
-        <button class="btn btn-primary" onclick="ccConfirm()">Confirm Match</button>
-        <button class="btn" onclick="ccDiscrepancy()">Record Discrepancy</button>
-        <button class="btn" onclick="ccSkip()">Skip</button>
-        <button class="btn btn-danger" onclick="ccFlag()">Flag</button>
+        <button class="btn btn-primary" data-action="ccConfirm">Confirm Match</button>
+        <button class="btn" data-action="ccDiscrepancy">Record Discrepancy</button>
+        <button class="btn" data-action="ccSkip">Skip</button>
+        <button class="btn btn-danger" data-action="ccFlag">Flag</button>
       </div>
       <p class="text-muted" style="font-size:0.75rem;margin-top:0.5rem">Enter=Confirm &middot; Tab=Skip &middot; F=Flag</p>
     </div>
     <div id="cc-step3" class="hide">
       <h3 class="mb-1">Summary</h3>
       <div id="cc-summary"></div>
-      <button class="btn btn-primary mt-2" onclick="closeCycleCount()">Close</button>
+      <button class="btn btn-primary mt-2" data-action="closeCycleCount">Close</button>
     </div>
   </div>
 </div>
@@ -332,14 +332,14 @@
 <!-- Bulk Action Bar -->
 <div id="bulk-bar" class="bulk-bar hide">
   <span id="bulk-count">0 selected</span>
-  <button class="btn btn-sm" onclick="bulkAction('activate')">Activate</button>
-  <button class="btn btn-sm" onclick="bulkAction('flag')">Flag</button>
-  <button class="btn btn-sm" onclick="bulkAction('maintenance')">Maintenance</button>
-  <button class="btn btn-sm" onclick="bulkAction('quality_hold')">Hold</button>
-  <button class="btn btn-sm" onclick="bulkAction('lock')">Lock</button>
-  <button class="btn btn-sm" onclick="bulkAction('unlock')">Unlock</button>
-  <button class="btn btn-sm btn-danger" onclick="bulkAction('retire')">Retire</button>
-  <button class="btn btn-sm ml-auto" onclick="clearSelection()">Clear</button>
+  <button class="btn btn-sm" data-action="bulkAction:activate">Activate</button>
+  <button class="btn btn-sm" data-action="bulkAction:flag">Flag</button>
+  <button class="btn btn-sm" data-action="bulkAction:maintenance">Maintenance</button>
+  <button class="btn btn-sm" data-action="bulkAction:quality_hold">Hold</button>
+  <button class="btn btn-sm" data-action="bulkAction:lock">Lock</button>
+  <button class="btn btn-sm" data-action="bulkAction:unlock">Unlock</button>
+  <button class="btn btn-sm btn-danger" data-action="bulkAction:retire">Retire</button>
+  <button class="btn btn-sm ml-auto" data-action="clearSelection">Clear</button>
 </div>
 {{end}}
 
@@ -350,5 +350,5 @@
   var PAGE_PAYLOAD_BIN_TYPES = {{.PayloadBinTypesJSON}};
   var PAGE_AUTH = {{.Authenticated}};
 </script>
-<script src="/static/pages/bins.js"></script>
+<script type="module" src="/static/pages/bins.js?v={{cacheBust}}"></script>
 {{end}}

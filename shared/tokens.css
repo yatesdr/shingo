@@ -1,0 +1,67 @@
+/*
+ * Shared design tokens for Shingo admin surfaces (Core + Edge).
+ *
+ * Tokens are SEMANTIC, not visual. Component CSS references them by
+ * meaning (--success, --surface) rather than visual name (--green,
+ * --card-bg). When a token's value needs to change for a context
+ * (dark theme, operator HMI), the value changes — the name stays.
+ *
+ * The Operator HMI redefines values inside its own scope while
+ * reusing these names; see shingo-edge/www/static/operator-station/operator.css.
+ *
+ * --info and --primary MUST stay visually distinct in every theme.
+ * Edge dark mode previously aliased --info to --primary (#58a6ff),
+ * which made info callouts indistinguishable from primary CTAs.
+ * The fixed value (#39d2f5) is preserved here.
+ */
+
+:root {
+  /* Surfaces */
+  --bg: #f8f9fa;
+  --bg-dark: #e9ecef;
+  --surface: #ffffff;
+  --border: #dee2e6;
+
+  /* Text */
+  --text: #212529;
+  --text-muted: #6c757d;
+
+  /* Semantic */
+  --primary: #0d6efd;
+  --primary-hover: #0b5ed7;
+  --primary-dark: #0b5ed7;
+  --success: #198754;
+  --danger: #dc3545;
+  --warning: #ffc107;
+  --info: #0dcaf0;
+
+  /* Geometry */
+  --radius: 6px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] {
+  --bg: #161b22;
+  --bg-dark: #0d1117;
+  --surface: #1c2128;
+  --border: #30363d;
+
+  --text: #c9d1d9;
+  --text-muted: #8b949e;
+
+  --primary: #58a6ff;
+  --primary-hover: #4093e6;
+  --primary-dark: #4093e6;
+  --success: #3fb950;
+  --danger: #f85149;
+  --warning: #d29922;
+  --info: #39d2f5;
+
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.4);
+}

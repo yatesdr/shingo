@@ -1,3 +1,5 @@
+import { createSSE, escapeHtml } from '/static/js/shingoedge.js';
+
 (function() {
   /* --- Debug Log Beautification --- */
   var body = document.getElementById('debug-log-body');
@@ -22,7 +24,7 @@
   function badgeClass(s) { return 'badge-' + (s || ''); }
   function groupOf(s) { return groupMap[s || ''] || ''; }
   function groupClass(s) { var g = groupOf(s); return g ? 'group-' + g : ''; }
-  function esc(s) { return ShingoEdge.escapeHtml(s); }
+  function esc(s) { return escapeHtml(s); }
 
   // Strip the first <td>...</td> from an HTML string (time cell)
   function stripFirstTd(html) {
@@ -441,7 +443,7 @@
   }
 
   // SSE listener for live debug entries
-  ShingoEdge.createSSE('/events', {
+  createSSE('/events', {
     onDebugLog: function(entry) {
       debugAppendRow(entry);
     }

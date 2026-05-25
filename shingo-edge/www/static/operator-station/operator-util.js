@@ -2,9 +2,41 @@
 
 export const stationID = parseInt(document.body.dataset.stationId, 10);
 
-export function el(tag, props) {
+// el(tag, props, children) — DOM builder aligned with the shared
+// signature in /static/shared/utils.js. Two-arg callers
+// (`el('div', { className, textContent })`) keep working because
+// Object.assign covers className/textContent/title/type/value directly;
+// className, dataset, style, and on* handler keys get the shared-form
+// special handling so future call sites can use the richer prop set
+// (`el('button', { className: 'x', onclick: fn }, ['text'])`) without
+// a second signature reshuffle.
+export function el(tag, props, children) {
     const e = document.createElement(tag);
-    if (props) Object.assign(e, props);
+    if (props) {
+        for (const key in props) {
+            if (!Object.prototype.hasOwnProperty.call(props, key)) continue;
+            const val = props[key];
+            if (val === null || val === undefined || val === false) continue;
+            if (key === 'dataset' && typeof val === 'object') {
+                for (const dk in val) e.dataset[dk] = val[dk];
+            } else if (key === 'style' && typeof val === 'object') {
+                for (const sk in val) e.style[sk] = val[sk];
+            } else if (key.length > 2 && key.indexOf('on') === 0 && typeof val === 'function') {
+                e.addEventListener(key.substring(2).toLowerCase(), val);
+            } else {
+                // className, textContent, type, value, title, etc. land here.
+                e[key] = val;
+            }
+        }
+    }
+    if (children !== undefined && children !== null) {
+        const list = Array.isArray(children) ? children : [children];
+        for (let i = 0; i < list.length; i++) {
+            const c = list[i];
+            if (c === null || c === undefined || c === false) continue;
+            e.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+        }
+    }
     return e;
 }
 

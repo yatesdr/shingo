@@ -22,13 +22,15 @@ import (
 // NodeClaim and NodeClaimInput are the claim-aggregate data types.
 //
 // NodeClaim declares that a style needs a specific core node with a
-// given payload and role. Three roles are supported:
+// given payload and role. Two roles are supported:
 //   - "consume":   system delivers full bins and removes empties
 //   - "produce":   system delivers empty bins and removes filled ones
-//   - "changeover": temporary role during style transitions
+//
+// (The legacy "changeover" role was removed during the UI consistency
+// refactor; changeovers are now driven by swap_mode + EvacuateOnChangeover.)
 //
 // SwapMode controls the choreography:
-//   - "simple":      PLC-driven reorder at threshold
+//   - "simple":      bare delivery move, no swap choreography
 //   - "sequential":  backfill while current bin is in transit
 //   - "single_robot": inbound + outbound staging for single-robot swap
 //   - "two_robot":   dual-robot swap with inbound staging
@@ -127,16 +129,16 @@ func UpsertClaim(db *sql.DB, in NodeClaimInput) (int64, error) {
 	in.PairedCoreNode = strings.TrimSpace(in.PairedCoreNode)
 	in.SecondPairedCoreNode = strings.TrimSpace(in.SecondPairedCoreNode)
 
-	if in.Role != protocol.ClaimRoleProduce && in.Role != protocol.ClaimRoleChangeover {
+	if in.Role != protocol.ClaimRoleProduce {
 		in.Role = protocol.ClaimRoleConsume
 	}
 	if in.SwapMode == "" {
 		in.SwapMode = protocol.SwapModeSimple
 	}
-	// SwapMode allowlist. The "press_position" value used by the
-	// per-position fan-out post-processor is in-memory only and must
-	// never be persisted; an explicit allowlist also rejects typos /
-	// stale values from imports.
+	// SwapMode allowlist. "press_position" used by the per-position
+	// fan-out post-processor is in-memory only and must never be
+	// persisted; the allowlist also rejects typos and stale values
+	// from imports.
 	switch in.SwapMode {
 	case protocol.SwapModeSimple, protocol.SwapModeSingleRobot, protocol.SwapModeTwoRobot,
 		protocol.SwapModeTwoRobotPressIndex, protocol.SwapModeSequential, protocol.SwapModeManualSwap:

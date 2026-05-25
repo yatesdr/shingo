@@ -174,19 +174,6 @@ func (e *Engine) DeliverNewMaterialForChangeover(processID, nodeID int64) (*orde
 		return nil, fmt.Errorf("no claim for target style on node %s", ctx.node.Name)
 	}
 
-	// Changeover-only nodes: restore from outbound staging (where material was evacuated to)
-	if toClaim.Role == protocol.ClaimRoleChangeover && toClaim.OutboundStaging != "" {
-		steps := BuildRestoreSteps(toClaim)
-		if steps != nil {
-			order, err := e.orderMgr.CreateComplexOrder(&ctx.node.ID, 1, toClaim.CoreNodeName, toClaim.CoreNodeName, steps)
-			if err != nil {
-				return nil, err
-			}
-			e.recordChangeoverOrder(ctx, false, &order.ID, ctx.nodeTask.OldMaterialReleaseOrderID, domain.NodeTaskReleaseRequested)
-			return order, nil
-		}
-	}
-
 	if toClaim.InboundStaging != "" {
 		steps := BuildStagedDeliverSteps(toClaim)
 		if steps != nil {

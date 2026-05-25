@@ -9,7 +9,7 @@
     <div class="card-body">
         <div class="form-group">
             <label>Message Type</label>
-            <select id="mm-type" class="form-input" onchange="updateMessageForm()">
+            <select id="mm-type" class="form-input" data-action-change="updateMessageForm">
                 <optgroup label="Data Channel">
                     <option value="edge.register">edge.register</option>
                     <option value="edge.heartbeat">edge.heartbeat</option>
@@ -37,7 +37,7 @@
 
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.75rem">
             <span id="mm-status" style="font-size:0.85rem;color:var(--text-muted)"></span>
-            <button class="btn btn-primary" onclick="sendMessage()">Send Message</button>
+            <button class="btn btn-primary" data-action="sendMessage">Send Message</button>
         </div>
     </div>
 </div>
@@ -48,6 +48,6 @@
      data-orders='{{.OrdersJSON}}'
      data-core-nodes='{{.CoreNodesJSON}}'>
 </div>
-<script src="/static/js/pages/manual-message.js"></script>
+<script type="module" src="/static/js/pages/manual-message.js?v={{cacheBust}}"></script>
 
 {{template "footer" .}}

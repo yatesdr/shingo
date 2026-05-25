@@ -1,40 +1,11 @@
 ﻿/* Shingo Edge Web UI */
 
-/* === Design Tokens === */
-:root {
-    --bg: #f8f9fa;
-    --bg-dark: #e9ecef;
-    --surface: #ffffff;
-    --border: #dee2e6;
-    --text: #212529;
-    --text-muted: #6c757d;
-    --primary: #0d6efd;
-    --primary-dark: #0b5ed7;
-    --success: #198754;
-    --danger: #dc3545;
-    --warning: #ffc107;
-    --info: #0dcaf0;
-    --radius: 6px;
-    --shadow: 0 1px 3px rgba(0,0,0,0.1);
-    --shadow-lg: 0 4px 6px rgba(0,0,0,0.1);
-}
-
-[data-theme="dark"] {
-    --bg: #161b22;
-    --bg-dark: #0d1117;
-    --surface: #1c2128;
-    --border: #30363d;
-    --text: #c9d1d9;
-    --text-muted: #8b949e;
-    --primary: #58a6ff;
-    --primary-dark: #4093e6;
-    --success: #3fb950;
-    --danger: #f85149;
-    --warning: #d29922;
-    --info: #58a6ff;
-    --shadow: 0 1px 3px rgba(0,0,0,0.3);
-    --shadow-lg: 0 4px 6px rgba(0,0,0,0.4);
-}
+/* Design tokens — see /static/shared/tokens.css (loaded ahead of this
+ * file in header.html). The :root and [data-theme="dark"] blocks
+ * previously inlined here now cascade from the shared module. The
+ * previous Edge dark-mode --info value (#58a6ff) collided with
+ * --primary; the shared file uses the corrected #39d2f5 so info
+ * callouts stay visually distinct from primary CTAs. */
 
 /* Dark theme overrides for status badges */
 [data-theme="dark"] .status-connected { background: #1a3a2a; color: #3fb950; }
@@ -539,20 +510,27 @@ textarea.form-input {
 }
 
 /* === Modals === */
-.modal {
+/* Shared mechanism: .modal-overlay is the full-viewport flex container;
+   .active toggles visibility. The inner .modal is the card. Matches
+   Core's pattern and the shared helpers in /static/shared/utils.js. */
+.modal-overlay {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
     background: rgba(0, 0, 0, 0.5);
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     z-index: 1000;
 }
 
-.modal-content {
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal {
     background: var(--surface);
     border-radius: var(--radius);
     box-shadow: var(--shadow-lg);

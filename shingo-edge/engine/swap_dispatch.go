@@ -42,7 +42,7 @@ type SwapDispatch struct {
 
 // BuildSwapDispatch validates per-mode required fields and returns the
 // dispatch for the four complex-order swap modes. Returns (nil, nil) for
-// claim.SwapMode == "" / "simple" / any unrecognised value — the per-
+// claim.SwapMode == "simple" / any unrecognised value — the per-
 // direction planner is expected to handle those (consume issues a bare
 // move order; produce issues an ingest-only order). Pure — no DB or fleet
 // calls.

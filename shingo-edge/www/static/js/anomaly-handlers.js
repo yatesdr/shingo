@@ -1,5 +1,7 @@
+import { api, toast } from '/static/js/shingoedge.js';
+
 // Counter-anomaly bell + popover handlers. Bound to markup defined in
-// templates/header.html. ShingoEdge.api / ShingoEdge.toast are provided
+// templates/header.html. api / toast are provided
 // by shingoedge.js, which loads earlier in the page.
 function toggleAnomalyPopover() {
   var pop = document.getElementById('anomaly-popover');
@@ -17,22 +19,22 @@ document.addEventListener('click', function(e) {
 
 async function confirmAnomaly(id) {
   try {
-    await ShingoEdge.api.post('/api/confirm-anomaly/' + id, {});
+    await api.post('/api/confirm-anomaly/' + id, {});
     var el = document.getElementById('anomaly-' + id);
     if (el) el.remove();
     updateAnomalyBadge();
-    ShingoEdge.toast('Anomaly confirmed', 'success');
-  } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+    toast('Anomaly confirmed', 'success');
+  } catch (e) { toast('Error: ' + e, 'error'); }
 }
 
 async function dismissAnomaly(id) {
   try {
-    await ShingoEdge.api.post('/api/dismiss-anomaly/' + id, {});
+    await api.post('/api/dismiss-anomaly/' + id, {});
     var el = document.getElementById('anomaly-' + id);
     if (el) el.remove();
     updateAnomalyBadge();
-    ShingoEdge.toast('Anomaly dismissed', 'success');
-  } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+    toast('Anomaly dismissed', 'success');
+  } catch (e) { toast('Error: ' + e, 'error'); }
 }
 
 function updateAnomalyBadge() {

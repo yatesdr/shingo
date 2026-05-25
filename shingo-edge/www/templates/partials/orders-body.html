@@ -19,22 +19,22 @@
             <td>{{.OrderType}}</td>
             <td>{{if .ProcessName}}{{.ProcessName}}{{else}}<span style="color:var(--text-muted)">--</span>{{end}}</td>
             <td class="mono">{{.DeliveryNode}}{{if .StagingNode}} <span style="color:var(--text-muted);font-size:0.75rem">(stg: {{.StagingNode}})</span>{{end}}</td>
-            <td><span class="status-badge">{{.Status}}</span></td>
+            <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
             <td>{{formatTime .CreatedAt}}</td>
             <td>{{if .ETA}}{{.ETA}}{{else}}--{{end}}</td>
             <td class="actions">
                 {{if eq .Status "delivered"}}
-                    <button class="btn btn-sm btn-primary" onclick="confirmDelivery({{.ID}}, {{.Quantity}})">Confirm</button>
+                    <button class="btn btn-sm btn-primary" data-action="confirmDelivery:{{.ID}}:{{.Quantity}}">Confirm</button>
                 {{end}}
                 {{if eq .Status "staged"}}
                     {{if .StagedExpireAt}}<span class="text-muted" data-countdown="{{.StagedExpireAt.Format "2006-01-02T15:04:05Z07:00"}}"></span>{{end}}
-                    <button class="btn btn-sm btn-primary" onclick="releaseOrder({{.ID}})">Release</button>
+                    <button class="btn btn-sm btn-primary" data-action="releaseOrder:{{.ID}}">Release</button>
                 {{end}}
                 {{if eq .Status "pending"}}
-                    <button class="btn btn-sm btn-primary" onclick="submitOrder({{.ID}})">Submit</button>
+                    <button class="btn btn-sm btn-primary" data-action="submitOrder:{{.ID}}">Submit</button>
                 {{end}}
                 {{if and (ne .Status "confirmed") (ne .Status "cancelled") (ne .Status "failed")}}
-                    <button class="btn btn-sm btn-danger" onclick="abortOrder({{.ID}})">Abort</button>
+                    <button class="btn btn-sm btn-danger" data-action="abortOrder:{{.ID}}">Abort</button>
                 {{end}}
             </td>
         </tr>

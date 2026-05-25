@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"shingo/protocol/debuglog"
+	"shingo/shared"
 	"shingoedge/backup"
 	"shingoedge/engine"
 
@@ -62,7 +63,7 @@ type Handlers struct {
 //
 // Route layout:
 //   /events                — SSE stream (shop floor live updates)
-//   /                      — Public pages (material, kanbans, production, changeover, operator HMI)
+//   /                      — Public pages (material, orders, production, changeover, operator HMI)
 //   /login, /logout        — Authentication
 //   /config, /processes, …  — Admin-only pages (adminMiddleware)
 //   /api/* (public)        — Shop floor actions (confirm, request, release, changeover, orders)
@@ -181,6 +182,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		// modules stuck on stale code after a restart. Tying the ETag to
 		// serverInstance forces every request to miss-cache exactly once after
 		// each restart, then revalidate cleanly thereafter.
+		// Shared UI assets (tokens.css, status-classes.css, utils.js)
+		// served from the shingo/shared module via go:embed. Registered
+		// BEFORE /static/* so the prefix match wins.
+		r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
+			serverInstanceETag(http.FileServer(http.FS(shared.Files))),
+		))
+
 		r.Handle("/static/*", http.StripPrefix("/static/",
 			serverInstanceETag(http.FileServer(http.FS(StaticFS()))),
 		))
@@ -195,11 +203,28 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger, backupSvc *backup.Servi
 		// ── Public pages (shop floor — no auth) ─────────────────
 		r.Get("/", h.handleMaterial)
 		r.Get("/material", h.handleMaterial)
-		r.Get("/kanbans", h.handleKanbans)
+		r.Get("/orders", h.handleOrders)
+		// Permanent redirect for any operator bookmark from the
+		// /kanbans era. The URL was renamed to /orders to match
+		// Core's terminology and the user-facing nav label.
+		r.Get("/kanbans", func(w http.ResponseWriter, req *http.Request) {
+			target := "/orders"
+			if q := req.URL.RawQuery; q != "" {
+				target += "?" + q
+			}
+			http.Redirect(w, req, target, http.StatusMovedPermanently)
+		})
+		r.Get("/kanbans/partial", func(w http.ResponseWriter, req *http.Request) {
+			target := "/orders/partial"
+			if q := req.URL.RawQuery; q != "" {
+				target += "?" + q
+			}
+			http.Redirect(w, req, target, http.StatusMovedPermanently)
+		})
 		r.Get("/production", h.handleProduction)
 		r.Get("/changeover", h.handleChangeover)
 		r.Get("/changeover/partial", h.handleChangeoverPartial)
-		r.Get("/kanbans/partial", h.handleKanbansPartial)
+		r.Get("/orders/partial", h.handleOrdersPartial)
 		r.Get("/material/partial", h.handleMaterialPartial)
 
 		// Operator station HMI views are public (shop floor monitors)

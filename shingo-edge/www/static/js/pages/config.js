@@ -1,3 +1,5 @@
+import { api, delegateActions, escapeHtml, getFormData, prompt, toast } from '/static/js/shingoedge.js';
+
 function collectBrokers() {
     return Array.from(document.querySelectorAll('.broker-row')).map(function(row) {
         const host = row.querySelector('.broker-host').value.trim();
@@ -13,9 +15,9 @@ function addBrokerRow() {
     row.innerHTML = '' +
         '<input type="text" class="form-input broker-host" style="flex:1" placeholder="localhost">' +
         '<input type="number" class="form-input broker-port" style="width:7rem" placeholder="9092">' +
-        '<button class="btn btn-sm" onclick="testBroker(this)">Test</button>' +
+        '<button class="btn btn-sm" data-action="testBroker">Test</button>' +
         '<span class="broker-status"></span>' +
-        '<button class="btn-icon btn-icon-danger" onclick="removeBrokerRow(this)" title="Remove">&#10005;</button>';
+        '<button class="btn-icon btn-icon-danger" data-action="removeBrokerRow" title="Remove">&#10005;</button>';
     document.getElementById('broker-rows').appendChild(row);
 }
 
@@ -41,7 +43,7 @@ async function testBroker(button) {
     }
     status.textContent = 'Testing...';
     try {
-        const res = await ShingoEdge.api.post('/api/config/kafka/test', { broker: host + ':' + port });
+        const res = await api.post('/api/config/kafka/test', { broker: host + ':' + port });
         status.textContent = res.connected ? 'Connected' : (res.error || 'Failed');
     } catch (e) {
         status.textContent = String(e);
@@ -50,46 +52,46 @@ async function testBroker(button) {
 
 async function saveIdentity() {
     try {
-        await ShingoEdge.api.put('/api/config/station-id', {
+        await api.put('/api/config/station-id', {
             station_id: document.getElementById('station-id-input').value.trim()
         });
-        ShingoEdge.toast('Station identity saved', 'success');
+        toast('Station identity saved', 'success');
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 async function saveWarLink() {
     try {
         const form = document.getElementById('warlink-form');
-        await ShingoEdge.api.put('/api/config/warlink', {
+        await api.put('/api/config/warlink', {
             host: form.querySelector('[name="host"]').value.trim(),
             port: parseInt(form.querySelector('[name="port"]').value || '0', 10),
             poll_rate: form.querySelector('[name="poll_rate"]').value.trim(),
             mode: form.querySelector('[name="mode"]').value,
             enabled: form.querySelector('[name="enabled"]').checked
         });
-        ShingoEdge.toast('WarLink config saved', 'success');
+        toast('WarLink config saved', 'success');
         location.reload();
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 async function saveMessaging() {
     try {
         await Promise.all([
-            ShingoEdge.api.put('/api/config/messaging', { kafka_brokers: collectBrokers() }),
-            ShingoEdge.api.put('/api/config/auto-confirm', { auto_confirm: document.getElementById('auto-confirm').checked })
+            api.put('/api/config/messaging', { kafka_brokers: collectBrokers() }),
+            api.put('/api/config/auto-confirm', { auto_confirm: document.getElementById('auto-confirm').checked })
         ]);
-        ShingoEdge.toast('Messaging config saved', 'success');
+        toast('Messaging config saved', 'success');
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 function backupFormData() {
-    return ShingoEdge.getFormData('backup-form');
+    return getFormData('backup-form');
 }
 
 function backupFingerprint() {
@@ -124,13 +126,13 @@ function setBackupOperationStatus(message, kind) {
 async function testBackupConfig() {
     setBackupConnectionStatus('Testing backup storage connection...', null);
     try {
-        await ShingoEdge.api.post('/api/backups/test', backupFormData());
+        await api.post('/api/backups/test', backupFormData());
         testedBackupFingerprint = backupFingerprint();
         setBackupConnectionStatus('Connection test succeeded.', true);
-        ShingoEdge.toast('Backup connection succeeded', 'success');
+        toast('Backup connection succeeded', 'success');
     } catch (e) {
         setBackupConnectionStatus('Connection test failed: ' + e, false);
-        ShingoEdge.toast('Backup test failed: ' + e, 'error');
+        toast('Backup test failed: ' + e, 'error');
     }
 }
 
@@ -140,28 +142,28 @@ async function saveBackupConfig() {
         if (data.enabled && testedBackupFingerprint !== backupFingerprint()) {
             throw 'run Test Connection after changing storage settings before enabling backups';
         }
-        await ShingoEdge.api.put('/api/backups/config', data);
+        await api.put('/api/backups/config', data);
         setBackupOperationStatus('Backup settings saved.', 'ok');
-        ShingoEdge.toast('Backup settings saved', 'success');
+        toast('Backup settings saved', 'success');
         await loadBackupStatus();
         await loadBackups();
     } catch (e) {
         setBackupOperationStatus('Failed to save backup settings: ' + e, 'error');
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 async function runBackupNow() {
     try {
         setBackupOperationStatus('Manual backup in progress...', 'busy');
-        await ShingoEdge.api.post('/api/backups/run', {});
+        await api.post('/api/backups/run', {});
         setBackupOperationStatus('Manual backup completed successfully.', 'ok');
-        ShingoEdge.toast('Backup completed', 'success');
+        toast('Backup completed', 'success');
         await loadBackupStatus();
         await loadBackups();
     } catch (e) {
         setBackupOperationStatus('Manual backup failed: ' + e, 'error');
-        ShingoEdge.toast('Backup failed: ' + e, 'error');
+        toast('Backup failed: ' + e, 'error');
     }
 }
 
@@ -184,7 +186,7 @@ function formatBytes(bytes) {
 
 async function loadBackupStatus() {
     try {
-        const status = await ShingoEdge.api.get('/api/backups/status');
+        const status = await api.get('/api/backups/status');
         const lines = [];
         lines.push('<div><strong>Automatic Backups:</strong> ' + (status.enabled ? 'Enabled' : 'Disabled') + '</div>');
         lines.push('<div><strong>Scheduler:</strong> ' + (status.running ? 'Backup currently running' : 'Idle') + '</div>');
@@ -198,21 +200,21 @@ async function loadBackupStatus() {
 }
 
 async function stageRestore(key) {
-    const typed = window.prompt('Type the station ID to confirm restore.', stationID);
+    const typed = await prompt('Type the station ID to confirm restore.', { value: stationID });
     if (typed !== stationID) {
-        ShingoEdge.toast('Restore cancelled: station ID mismatch.', 'warning');
+        toast('Restore cancelled: station ID mismatch.', 'warning');
         return;
     }
     try {
         setBackupOperationStatus('Downloading and staging restore archive...', 'busy');
-        await ShingoEdge.api.post('/api/backups/restore', { key: key });
+        await api.post('/api/backups/restore', { key: key });
         setBackupOperationStatus('Restore staged successfully. Restart shingo-edge to apply it.', 'ok');
-        ShingoEdge.toast('Restore staged. Restart shingo-edge to apply it.', 'warning');
+        toast('Restore staged. Restart shingo-edge to apply it.', 'warning');
         await loadBackupStatus();
         await loadBackups();
     } catch (e) {
         setBackupOperationStatus('Restore staging failed: ' + e, 'error');
-        ShingoEdge.toast('Restore staging failed: ' + e, 'error');
+        toast('Restore staging failed: ' + e, 'error');
     }
 }
 
@@ -220,7 +222,7 @@ async function loadBackups() {
     const body = document.getElementById('backup-body');
     body.innerHTML = '<tr><td colspan="4" class="empty-cell">Loading backups...</td></tr>';
     try {
-        const items = await ShingoEdge.api.get('/api/backups');
+        const items = await api.get('/api/backups');
         if (!items || !items.length) {
             body.innerHTML = '<tr><td colspan="4" class="empty-cell">No backups found for this station</td></tr>';
             return;
@@ -228,16 +230,16 @@ async function loadBackups() {
         body.innerHTML = items.map(function(item) {
             const action = item.restore_pending
                 ? '<span class="status-badge status-connected">Pending Restart</span>'
-                : '<button class="btn btn-sm btn-danger" onclick="stageRestore(' + JSON.stringify(item.key).replace(/"/g, '&quot;') + ')">Restore On Restart</button>';
+                : '<button class="btn btn-sm btn-danger" data-action="stageRestore:' + JSON.stringify(item.key).replace(/"/g, '&quot;') + ')">Restore On Restart</button>';
             return '<tr>' +
-                '<td>' + ShingoEdge.escapeHtml(formatMaybeDate(item.created_at || item.last_modified || '')) + '</td>' +
-                '<td>' + ShingoEdge.escapeHtml(formatBytes(item.size || 0)) + '</td>' +
-                '<td><code>' + ShingoEdge.escapeHtml(item.key) + '</code></td>' +
+                '<td>' + escapeHtml(formatMaybeDate(item.created_at || item.last_modified || '')) + '</td>' +
+                '<td>' + escapeHtml(formatBytes(item.size || 0)) + '</td>' +
+                '<td><code>' + escapeHtml(item.key) + '</code></td>' +
                 '<td>' + action + '</td>' +
                 '</tr>';
         }).join('');
     } catch (e) {
-        body.innerHTML = '<tr><td colspan="4" class="empty-cell">Failed to load backups: ' + ShingoEdge.escapeHtml(String(e)) + '</td></tr>';
+        body.innerHTML = '<tr><td colspan="4" class="empty-cell">Failed to load backups: ' + escapeHtml(String(e)) + '</td></tr>';
     }
 }
 
@@ -246,24 +248,24 @@ async function changePassword() {
     const newPassword = document.getElementById('pw-new').value;
     const confirm = document.getElementById('pw-confirm').value;
     if (!newPassword) {
-        ShingoEdge.toast('Enter a new password', 'warning');
+        toast('Enter a new password', 'warning');
         return;
     }
     if (newPassword !== confirm) {
-        ShingoEdge.toast('New password confirmation does not match', 'warning');
+        toast('New password confirmation does not match', 'warning');
         return;
     }
     try {
-        await ShingoEdge.api.post('/api/config/password', {
+        await api.post('/api/config/password', {
             old_password: oldPassword,
             new_password: newPassword
         });
         document.getElementById('pw-old').value = '';
         document.getElementById('pw-new').value = '';
         document.getElementById('pw-confirm').value = '';
-        ShingoEdge.toast('Password changed', 'success');
+        toast('Password changed', 'success');
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
@@ -271,12 +273,12 @@ async function changePassword() {
 
 async function saveCoreAPI() {
     try {
-        await ShingoEdge.api.put('/api/config/core-api', {
+        await api.put('/api/config/core-api', {
             core_api: document.getElementById('core-api-url').value.trim()
         });
-        ShingoEdge.toast('Core API URL saved', 'success');
+        toast('Core API URL saved', 'success');
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
@@ -286,7 +288,7 @@ async function testCoreAPI() {
     if (!url) { status.textContent = 'Enter a URL'; return; }
     status.textContent = 'Testing...';
     try {
-        var res = await ShingoEdge.api.post('/api/config/core-api/test', { core_api: url });
+        var res = await api.post('/api/config/core-api/test', { core_api: url });
         status.textContent = res.connected ? 'Connected' : (res.error || 'Failed');
         status.style.color = res.connected ? 'var(--success, green)' : 'var(--danger, red)';
     } catch (e) {
@@ -307,7 +309,7 @@ async function syncCoreNodes() {
     btn.disabled = true;
     status.textContent = 'Requesting node sync...';
     try {
-        await ShingoEdge.api.post('/api/core-nodes/sync');
+        await api.post('/api/core-nodes/sync');
         status.textContent = 'Node sync requested';
     } catch (e) {
         status.textContent = 'Sync failed: ' + e;
@@ -321,7 +323,7 @@ async function syncPayloadCatalog() {
     btn.disabled = true;
     status.textContent = 'Requesting catalog sync...';
     try {
-        await ShingoEdge.api.post('/api/payload-catalog/sync');
+        await api.post('/api/payload-catalog/sync');
         status.textContent = 'Catalog sync requested';
     } catch (e) {
         status.textContent = 'Sync failed: ' + e;
@@ -331,3 +333,37 @@ async function syncPayloadCatalog() {
 
 loadBackupStatus();
 loadBackups();
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    addBrokerRow,
+    backupFingerprint,
+    backupFormData,
+    changePassword,
+    collectBrokers,
+    formatBytes,
+    formatMaybeDate,
+    loadBackupStatus,
+    loadBackups,
+    removeBrokerRow,
+    runBackupNow,
+    saveBackupConfig,
+    saveCoreAPI,
+    saveIdentity,
+    saveMessaging,
+    saveWarLink,
+    setBackupConnectionStatus,
+    setBackupOperationStatus,
+    stageRestore,
+    syncCoreNodes,
+    syncPayloadCatalog,
+    testBackupConfig,
+    testBroker,
+    testCoreAPI
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

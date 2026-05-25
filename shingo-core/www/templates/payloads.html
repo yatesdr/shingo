@@ -6,7 +6,7 @@
 
   {{if .Authenticated}}
   <div class="mb-1 text-right">
-    <button class="btn btn-primary btn-sm" onclick="openCreatePayloadModal()">+ Payload</button>
+    <button class="btn btn-primary btn-sm" data-action="openCreatePayloadModal">+ Payload</button>
   </div>
   {{end}}
 
@@ -34,12 +34,12 @@
         <td class="text-muted" style="font-size:0.8rem">{{with index $.CompatNodes .ID}}{{range $i, $n := .}}{{if $i}}, {{end}}{{$n}}{{end}}{{else}}All{{end}}</td>
         {{if $.Authenticated}}
         <td>
-          <button class="btn btn-sm" onclick="openEditPayloadModal(this)"
+          <button class="btn btn-sm" data-action="openEditPayloadModal"
             data-id="{{.ID}}"
             data-code="{{.Code}}"
             data-notes="{{.Description}}"
             data-uop="{{.UOPCapacity}}">Edit</button>
-          <form method="POST" action="/payloads/delete" style="display:inline" onsubmit="return confirm('Delete this payload?')">
+          <form method="POST" action="/payloads/delete" style="display:inline" data-action-submit="confirmDeleteForm" data-confirm-msg="Delete this payload?">
             <input type="hidden" name="id" value="{{.ID}}">
             <button type="submit" class="btn btn-danger btn-sm">Delete</button>
           </form>
@@ -58,13 +58,13 @@
 
 {{if .Authenticated}}
 <!-- Create Payload Modal -->
-<div id="pl-create-modal" class="modal-overlay" onclick="if(event.target===this)closePLCreateModal()">
+<div id="pl-create-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:560px">
     <div class="modal-header flex flex-between">
       <h2>Create Payload</h2>
-      <button class="modal-close" onclick="closePLCreateModal()">&times;</button>
+      <button class="modal-close" data-action="closePLCreateModal">&times;</button>
     </div>
-    <form id="pl-create-form" method="POST" action="/payloads/create" onsubmit="return submitPLCreate(event)">
+    <form id="pl-create-form" method="POST" action="/payloads/create" data-action-submit="submitPLCreate">
       <div class="grid grid-2">
         <div class="form-group">
           <label>Code <span class="tooltip-trigger" title="Unique identifier used in orders">?</span></label>
@@ -90,24 +90,24 @@
       <div class="mb-1">
         <div class="flex flex-between">
           <label class="font-semibold text-sm" style="margin:0">Default Manifest</label>
-          <button type="button" class="btn btn-sm" onclick="addManifestRow('plc-manifest-rows')">+ Part</button>
+          <button type="button" class="btn btn-sm" data-action="addManifestRow:plc-manifest-rows">+ Part</button>
         </div>
         <div id="plc-manifest-rows"></div>
       </div>
       <button type="submit" class="btn btn-primary">Create</button>
-      <button type="button" class="btn ml-05" onclick="closePLCreateModal()">Cancel</button>
+      <button type="button" class="btn ml-05" data-action="closePLCreateModal">Cancel</button>
     </form>
   </div>
 </div>
 
 <!-- Edit Payload Modal -->
-<div id="pl-edit-modal" class="modal-overlay" onclick="if(event.target===this)closePLEditModal()">
+<div id="pl-edit-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal" style="max-width:560px">
     <div class="modal-header flex flex-between">
       <h2>Edit Payload</h2>
-      <button class="modal-close" onclick="closePLEditModal()">&times;</button>
+      <button class="modal-close" data-action="closePLEditModal">&times;</button>
     </div>
-    <form id="pl-edit-form" method="POST" action="/payloads/update" onsubmit="return submitPLEdit(event)">
+    <form id="pl-edit-form" method="POST" action="/payloads/update" data-action-submit="submitPLEdit">
       <input type="hidden" name="id" id="pl-edit-id">
       <div class="grid grid-2">
         <div class="form-group">
@@ -134,16 +134,16 @@
       <div class="mb-1">
         <div class="flex flex-between">
           <label class="font-semibold text-sm" style="margin:0">Default Manifest</label>
-          <button type="button" class="btn btn-sm" onclick="addManifestRow('ple-manifest-rows')">+ Part</button>
+          <button type="button" class="btn btn-sm" data-action="addManifestRow:ple-manifest-rows">+ Part</button>
         </div>
         <div id="ple-manifest-rows"><span class="text-muted" style="font-size:0.8rem">Loading...</span></div>
       </div>
       <button type="submit" class="btn btn-primary">Save Changes</button>
-      <button type="button" class="btn ml-05" onclick="closePLEditModal()">Cancel</button>
+      <button type="button" class="btn ml-05" data-action="closePLEditModal">Cancel</button>
     </form>
   </div>
 </div>
 {{end}}
 
-<script src="/static/pages/payloads.js"></script>
+<script type="module" src="/static/pages/payloads.js?v={{cacheBust}}"></script>
 {{end}}

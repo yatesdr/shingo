@@ -1,3 +1,5 @@
+import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js';
+
 // Merge core-synced nodes with edge-local nodes for the dropdowns.
 // Core nodes take precedence; edge-local nodes fill in any extras.
 (function() {
@@ -97,7 +99,7 @@ async function createOrder() {
         var stagingNode = document.getElementById('mo-staging').value;
         var productionNode = document.getElementById('mo-delivery').value;
         if (!stagingNode || !productionNode) {
-            ShingoEdge.toast('Staging and production nodes are required', 'error');
+            toast('Staging and production nodes are required', 'error');
             return;
         }
         var body = {
@@ -112,10 +114,10 @@ async function createOrder() {
             ]
         };
         try {
-            await ShingoEdge.api.post('/api/orders/complex', body);
-            ShingoEdge.toast('Complex order created', 'success');
+            await api.post('/api/orders/complex', body);
+            toast('Complex order created', 'success');
             resetForm();
-        } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+        } catch (e) { toast('Error: ' + e, 'error'); }
         return;
     }
 
@@ -127,10 +129,10 @@ async function createOrder() {
         staging_node: document.getElementById('mo-staging').value || undefined
     };
     try {
-        await ShingoEdge.api.post('/api/orders/' + t, body);
-        ShingoEdge.toast('Order created', 'success');
+        await api.post('/api/orders/' + t, body);
+        toast('Order created', 'success');
         resetForm();
-    } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
+    } catch (e) { toast('Error: ' + e, 'error'); }
 }
 
 function resetForm() {
@@ -146,13 +148,13 @@ async function syncNodes() {
     btn.disabled = true;
     btn.textContent = 'Syncing...';
     try {
-        await ShingoEdge.api.post('/api/core-nodes/sync');
-        ShingoEdge.toast('Node sync requested', 'success');
-    } catch (e) { ShingoEdge.toast('Sync failed: ' + e, 'error'); }
+        await api.post('/api/core-nodes/sync');
+        toast('Node sync requested', 'success');
+    } catch (e) { toast('Sync failed: ' + e, 'error'); }
     setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Nodes'; }, 2000);
 }
 
-ShingoEdge.createSSE('/events', {
+createSSE('/events', {
     onCounterAnomaly: function() { location.reload(); },
     onCoreNodes: function(data) {
         var nodes = (data.nodes || []).map(function(n) {
@@ -180,3 +182,18 @@ ShingoEdge.createSSE('/events', {
 
 // Apply initial visibility for default order type.
 updateOrderForm();
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    autofillNodeDefaults,
+    createOrder,
+    resetForm,
+    syncNodes,
+    updateOrderForm
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

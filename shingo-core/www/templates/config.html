@@ -105,11 +105,11 @@
         <div class="flex gap-1 mb-1 kafka-broker-row">
           <input type="text" name="kafka_host_{{$i}}" value="{{index $parts 0}}" placeholder="Host" style="flex:2">
           <input type="number" name="kafka_port_{{$i}}" value="{{index $parts 1}}" placeholder="9093" style="flex:1">
-          <button type="button" class="btn btn-danger btn-sm" onclick="removeKafkaBroker(this)">-</button>
+          <button type="button" class="btn btn-danger btn-sm" data-action="removeKafkaBroker">-</button>
         </div>
         {{end}}
       </div>
-      <button type="button" class="btn btn-sm mb-1" onclick="addKafkaBroker()">+ Add Broker</button>
+      <button type="button" class="btn btn-sm mb-1" data-action="addKafkaBroker">+ Add Broker</button>
 
       <div class="form-group mb-1">
         <label>Group ID</label>
@@ -166,5 +166,5 @@
 </div>
 
 <div id="page-data" data-broker-count="{{len .Config.Messaging.Kafka.Brokers}}"></div>
-<script src="/static/pages/config.js"></script>
+<script type="module" src="/static/pages/config.js?v={{cacheBust}}"></script>
 {{end}}

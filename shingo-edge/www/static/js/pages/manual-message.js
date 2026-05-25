@@ -1,3 +1,5 @@
+import { api, createSSE, delegateActions, toast } from '/static/js/shingoedge.js';
+
 var _pd = document.getElementById('page-data').dataset;
 var _stationID = _pd.stationId;
 var _lineIDs = JSON.parse(_pd.lineIds);
@@ -58,21 +60,21 @@ function renderField(f) {
     var val = typeof f.value === 'function' ? f.value() : f.value;
     var html = '<div class="form-group"><label>' + f.label + '</label>';
     if (f.type === 'select') {
-        html += '<select id="mm-f-' + f.id + '" class="form-input" onchange="updatePreview()">';
+        html += '<select id="mm-f-' + f.id + '" class="form-input" data-action-change="updatePreview">';
         f.options.forEach(function(o){ html += '<option value="'+o+'"'+(o===val?' selected':'')+'>'+o+'</option>'; });
         html += '</select>';
     } else if (f.type === 'nodeselect') {
-        html += '<select id="mm-f-' + f.id + '" class="form-input" onchange="updatePreview()"><option value="">-- Select --</option>';
+        html += '<select id="mm-f-' + f.id + '" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option>';
         _coreNodes.sort().forEach(function(n){ html += '<option value="'+n+'">'+n+'</option>'; });
         html += '</select>';
     } else if (f.type === 'orderselect') {
-        html += '<select id="mm-f-' + f.id + '" class="form-input" onchange="updatePreview()"><option value="">-- Select --</option>';
+        html += '<select id="mm-f-' + f.id + '" class="form-input" data-action-change="updatePreview"><option value="">-- Select --</option>';
         _orders.forEach(function(o){ html += '<option value="'+o.uuid+'">'+o.uuid.substring(0,8)+'... ('+o.type+', '+o.status+')</option>'; });
         html += '</select>';
     } else if (f.type === 'checkbox') {
-        html += '<input type="checkbox" id="mm-f-' + f.id + '" '+(val?'checked':'')+' onchange="updatePreview()">';
+        html += '<input type="checkbox" id="mm-f-' + f.id + '" '+(val?'checked':'')+' data-action-change="updatePreview">';
     } else {
-        html += '<input type="' + f.type + '" id="mm-f-' + f.id + '" class="form-input" value="' + val + '" oninput="updatePreview()">';
+        html += '<input type="' + f.type + '" id="mm-f-' + f.id + '" class="form-input" value="' + val + '" data-action-input="updatePreview">';
     }
     html += '</div>';
     return html;
@@ -145,20 +147,36 @@ async function sendMessage() {
     statusEl.textContent = 'Sending...';
     statusEl.style.color = 'var(--text-muted)';
     try {
-        var resp = await ShingoEdge.api.post('/api/manual-message', { type: type, payload: payload });
+        var resp = await api.post('/api/manual-message', { type: type, payload: payload });
         statusEl.textContent = 'Sent (id: ' + (resp.msg_id || '').substring(0, 8) + '...)';
         statusEl.style.color = 'var(--color-success, green)';
-        ShingoEdge.toast('Message sent', 'success');
+        toast('Message sent', 'success');
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e;
         statusEl.style.color = 'var(--color-danger, red)';
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 // Init
 updateMessageForm();
 
-ShingoEdge.createSSE('/events', {
+createSSE('/events', {
     onCounterAnomaly: function() { location.reload(); }
 });
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    buildPayload,
+    getFieldValue,
+    renderField,
+    sendMessage,
+    updateMessageForm,
+    updatePreview
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

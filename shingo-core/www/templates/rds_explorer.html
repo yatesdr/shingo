@@ -8,75 +8,75 @@
   <div class="grid" style="grid-template-columns:280px 1fr;gap:1rem;align-items:start;">
     <!-- Endpoint sidebar -->
     <div class="card overflow-y-auto" style="padding:0.75rem;max-height:80vh;">
-      <input type="text" id="ep-search" placeholder="Filter endpoints..." oninput="filterEndpoints()" class="mb-1" style="font-size:0.8rem;padding:0.25rem 0.5rem;">
+      <input type="text" id="ep-search" placeholder="Filter endpoints..." data-action-input="filterEndpoints" class="mb-1" style="font-size:0.8rem;padding:0.25rem 0.5rem;">
       <div id="ep-list">
         <div class="ep-group">Order Management</div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/setOrder','Set Order',EP_SET_ORDER)"><span>POST /setOrder</span><button class="info-btn" onclick="showInfo(event,'/setOrder')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/setOrder','Set Join Order',EP_JOIN_ORDER)"><span>POST /setOrder (join)</span><button class="info-btn" onclick="showInfo(event,'/setOrder_join')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/markComplete','Mark Complete',EP_MARK_COMPLETE)"><span>POST /markComplete</span><button class="info-btn" onclick="showInfo(event,'/markComplete')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/terminate','Terminate Order',EP_TERMINATE)"><span>POST /terminate</span><button class="info-btn" onclick="showInfo(event,'/terminate')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/orderDetails/','Query Order by ID',null)"><span>GET /orderDetails/{id}</span><button class="info-btn" onclick="showInfo(event,'/orderDetails')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/orderDetailsByExternalId/','Query by External ID',null)"><span>GET /orderDetailsByExternalId/{id}</span><button class="info-btn" onclick="showInfo(event,'/orderDetailsByExternalId')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/orderDetailsByBlockId/','Query by Block ID',null)"><span>GET /orderDetailsByBlockId/{id}</span><button class="info-btn" onclick="showInfo(event,'/orderDetailsByBlockId')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/orders?page=0&size=20','Paging Query Orders',null)"><span>GET /orders</span><button class="info-btn" onclick="showInfo(event,'/orders')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/setPriority','Set Priority',EP_SET_PRIORITY)"><span>POST /setPriority</span><button class="info-btn" onclick="showInfo(event,'/setPriority')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/setLabel','Set Label',EP_SET_LABEL)"><span>POST /setLabel</span><button class="info-btn" onclick="showInfo(event,'/setLabel')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/addBlocks','Add Blocks',EP_ADD_BLOCKS)"><span>POST /addBlocks</span><button class="info-btn" onclick="showInfo(event,'/addBlocks')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/redoFailedOrder','Redo Failed Order',EP_VEHICLES)"><span>POST /redoFailedOrder</span><button class="info-btn" onclick="showInfo(event,'/redoFailedOrder')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/manualFinished','Manual Finished',EP_VEHICLES)"><span>POST /manualFinished</span><button class="info-btn" onclick="showInfo(event,'/manualFinished')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/blockDetailsById/','Query Block Details',null)"><span>GET /blockDetailsById/{id}</span><button class="info-btn" onclick="showInfo(event,'/blockDetailsById')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/setOrder" data-label="Set Order" data-body="EP_SET_ORDER"><span>POST /setOrder</span><button class="info-btn" data-action="showInfo:/setOrder">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/setOrder" data-label="Set Join Order" data-body="EP_JOIN_ORDER"><span>POST /setOrder (join)</span><button class="info-btn" data-action="showInfo:/setOrder_join">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/markComplete" data-label="Mark Complete" data-body="EP_MARK_COMPLETE"><span>POST /markComplete</span><button class="info-btn" data-action="showInfo:/markComplete">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/terminate" data-label="Terminate Order" data-body="EP_TERMINATE"><span>POST /terminate</span><button class="info-btn" data-action="showInfo:/terminate">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/orderDetails/" data-label="Query Order by ID" data-body="null"><span>GET /orderDetails/{id}</span><button class="info-btn" data-action="showInfo:/orderDetails">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/orderDetailsByExternalId/" data-label="Query by External ID" data-body="null"><span>GET /orderDetailsByExternalId/{id}</span><button class="info-btn" data-action="showInfo:/orderDetailsByExternalId">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/orderDetailsByBlockId/" data-label="Query by Block ID" data-body="null"><span>GET /orderDetailsByBlockId/{id}</span><button class="info-btn" data-action="showInfo:/orderDetailsByBlockId">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/orders?page=0&size=20" data-label="Paging Query Orders" data-body="null"><span>GET /orders</span><button class="info-btn" data-action="showInfo:/orders">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/setPriority" data-label="Set Priority" data-body="EP_SET_PRIORITY"><span>POST /setPriority</span><button class="info-btn" data-action="showInfo:/setPriority">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/setLabel" data-label="Set Label" data-body="EP_SET_LABEL"><span>POST /setLabel</span><button class="info-btn" data-action="showInfo:/setLabel">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/addBlocks" data-label="Add Blocks" data-body="EP_ADD_BLOCKS"><span>POST /addBlocks</span><button class="info-btn" data-action="showInfo:/addBlocks">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/redoFailedOrder" data-label="Redo Failed Order" data-body="EP_VEHICLES"><span>POST /redoFailedOrder</span><button class="info-btn" data-action="showInfo:/redoFailedOrder">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/manualFinished" data-label="Manual Finished" data-body="EP_VEHICLES"><span>POST /manualFinished</span><button class="info-btn" data-action="showInfo:/manualFinished">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/blockDetailsById/" data-label="Query Block Details" data-body="null"><span>GET /blockDetailsById/{id}</span><button class="info-btn" data-action="showInfo:/blockDetailsById">i</button></div>
 
         <div class="ep-group">Robot Management</div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/robotsStatus','Robot Status',null)"><span>GET /robotsStatus</span><button class="info-btn" onclick="showInfo(event,'/robotsStatus')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/robotSmap?vehicle=&map=','Fetch Robot Map',null)"><span>GET /robotSmap</span><button class="info-btn" onclick="showInfo(event,'/robotSmap')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/lock','Preempt Control',EP_VEHICLES)"><span>POST /lock</span><button class="info-btn" onclick="showInfo(event,'/lock')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/unlock','Release Control',EP_VEHICLES)"><span>POST /unlock</span><button class="info-btn" onclick="showInfo(event,'/unlock')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/setParams','Temp Modify Params',EP_MODIFY_PARAMS)"><span>POST /setParams</span><button class="info-btn" onclick="showInfo(event,'/setParams')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/saveParams','Perm Modify Params',EP_MODIFY_PARAMS)"><span>POST /saveParams</span><button class="info-btn" onclick="showInfo(event,'/saveParams')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/reloadParams','Restore Param Defaults',EP_RESTORE_PARAMS)"><span>POST /reloadParams</span><button class="info-btn" onclick="showInfo(event,'/reloadParams')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/switchMap','Switch Robot Map',EP_TOGGLE_MAP)"><span>POST /switchMap</span><button class="info-btn" onclick="showInfo(event,'/switchMap')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/dispatchable','Dispatchable Status',EP_DISPATCHABLE)"><span>POST /dispatchable</span><button class="info-btn" onclick="showInfo(event,'/dispatchable')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/reLocConfirm','Confirm Relocalization',EP_VEHICLES)"><span>POST /reLocConfirm</span><button class="info-btn" onclick="showInfo(event,'/reLocConfirm')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/gotoSitePause','Pause Navigation',EP_VEHICLES)"><span>POST /gotoSitePause</span><button class="info-btn" onclick="showInfo(event,'/gotoSitePause')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/gotoSiteResume','Resume Navigation',EP_VEHICLES)"><span>POST /gotoSiteResume</span><button class="info-btn" onclick="showInfo(event,'/gotoSiteResume')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/robotsStatus" data-label="Robot Status" data-body="null"><span>GET /robotsStatus</span><button class="info-btn" data-action="showInfo:/robotsStatus">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/robotSmap?vehicle=&map=" data-label="Fetch Robot Map" data-body="null"><span>GET /robotSmap</span><button class="info-btn" data-action="showInfo:/robotSmap">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/lock" data-label="Preempt Control" data-body="EP_VEHICLES"><span>POST /lock</span><button class="info-btn" data-action="showInfo:/lock">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/unlock" data-label="Release Control" data-body="EP_VEHICLES"><span>POST /unlock</span><button class="info-btn" data-action="showInfo:/unlock">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/setParams" data-label="Temp Modify Params" data-body="EP_MODIFY_PARAMS"><span>POST /setParams</span><button class="info-btn" data-action="showInfo:/setParams">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/saveParams" data-label="Perm Modify Params" data-body="EP_MODIFY_PARAMS"><span>POST /saveParams</span><button class="info-btn" data-action="showInfo:/saveParams">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/reloadParams" data-label="Restore Param Defaults" data-body="EP_RESTORE_PARAMS"><span>POST /reloadParams</span><button class="info-btn" data-action="showInfo:/reloadParams">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/switchMap" data-label="Switch Robot Map" data-body="EP_TOGGLE_MAP"><span>POST /switchMap</span><button class="info-btn" data-action="showInfo:/switchMap">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/dispatchable" data-label="Dispatchable Status" data-body="EP_DISPATCHABLE"><span>POST /dispatchable</span><button class="info-btn" data-action="showInfo:/dispatchable">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/reLocConfirm" data-label="Confirm Relocalization" data-body="EP_VEHICLES"><span>POST /reLocConfirm</span><button class="info-btn" data-action="showInfo:/reLocConfirm">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/gotoSitePause" data-label="Pause Navigation" data-body="EP_VEHICLES"><span>POST /gotoSitePause</span><button class="info-btn" data-action="showInfo:/gotoSitePause">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/gotoSiteResume" data-label="Resume Navigation" data-body="EP_VEHICLES"><span>POST /gotoSiteResume</span><button class="info-btn" data-action="showInfo:/gotoSiteResume">i</button></div>
 
         <div class="ep-group">Simulation</div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/getSimRobotStateTemplate','Sim State Template',null)"><span>GET /getSimRobotStateTemplate</span><button class="info-btn" onclick="showInfo(event,'/getSimRobotStateTemplate')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/updateSimRobotState','Update Sim State',EP_UPDATE_SIM)"><span>POST /updateSimRobotState</span><button class="info-btn" onclick="showInfo(event,'/updateSimRobotState')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/getSimRobotStateTemplate" data-label="Sim State Template" data-body="null"><span>GET /getSimRobotStateTemplate</span><button class="info-btn" data-action="showInfo:/getSimRobotStateTemplate">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/updateSimRobotState" data-label="Update Sim State" data-body="EP_UPDATE_SIM"><span>POST /updateSimRobotState</span><button class="info-btn" data-action="showInfo:/updateSimRobotState">i</button></div>
 
         <div class="ep-group">Container &amp; Goods</div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/setContainerGoods','Bind Container Goods',EP_BIND_GOODS)"><span>POST /setContainerGoods</span><button class="info-btn" onclick="showInfo(event,'/setContainerGoods')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/clearGoods','Unbind Goods',EP_UNBIND_GOODS)"><span>POST /clearGoods</span><button class="info-btn" onclick="showInfo(event,'/clearGoods')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/clearContainer','Unbind from Container',EP_UNBIND_CONTAINER)"><span>POST /clearContainer</span><button class="info-btn" onclick="showInfo(event,'/clearContainer')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/clearAllContainersGoods','Clear All Goods',EP_CLEAR_ALL_GOODS)"><span>POST /clearAllContainersGoods</span><button class="info-btn" onclick="showInfo(event,'/clearAllContainersGoods')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/setContainerGoods" data-label="Bind Container Goods" data-body="EP_BIND_GOODS"><span>POST /setContainerGoods</span><button class="info-btn" data-action="showInfo:/setContainerGoods">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/clearGoods" data-label="Unbind Goods" data-body="EP_UNBIND_GOODS"><span>POST /clearGoods</span><button class="info-btn" data-action="showInfo:/clearGoods">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/clearContainer" data-label="Unbind from Container" data-body="EP_UNBIND_CONTAINER"><span>POST /clearContainer</span><button class="info-btn" data-action="showInfo:/clearContainer">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/clearAllContainersGoods" data-label="Clear All Goods" data-body="EP_CLEAR_ALL_GOODS"><span>POST /clearAllContainersGoods</span><button class="info-btn" data-action="showInfo:/clearAllContainersGoods">i</button></div>
 
         <div class="ep-group">Mutex Groups</div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/getBlockGroup','Occupy Mutex Group',EP_MUTEX)"><span>POST /getBlockGroup</span><button class="info-btn" onclick="showInfo(event,'/getBlockGroup')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/releaseBlockGroup','Release Mutex Group',EP_MUTEX)"><span>POST /releaseBlockGroup</span><button class="info-btn" onclick="showInfo(event,'/releaseBlockGroup')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/blockGroupStatus','Mutex Group Status',null)"><span>GET /blockGroupStatus</span><button class="info-btn" onclick="showInfo(event,'/blockGroupStatus')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/getBlockGroup" data-label="Occupy Mutex Group" data-body="EP_MUTEX"><span>POST /getBlockGroup</span><button class="info-btn" data-action="showInfo:/getBlockGroup">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/releaseBlockGroup" data-label="Release Mutex Group" data-body="EP_MUTEX"><span>POST /releaseBlockGroup</span><button class="info-btn" data-action="showInfo:/releaseBlockGroup">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/blockGroupStatus" data-label="Mutex Group Status" data-body="null"><span>GET /blockGroupStatus</span><button class="info-btn" data-action="showInfo:/blockGroupStatus">i</button></div>
 
         <div class="ep-group">Terminals &amp; Devices</div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/callTerminal','Call Terminal',EP_CALL_TERMINAL)"><span>POST /callTerminal</span><button class="info-btn" onclick="showInfo(event,'/callTerminal')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/devicesDetails','Device Details',null)"><span>GET /devicesDetails</span><button class="info-btn" onclick="showInfo(event,'/devicesDetails')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/binDetails','Bin Details',null)"><span>GET /binDetails</span><button class="info-btn" onclick="showInfo(event,'/binDetails')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/binCheck','Bin Check',EP_BIN_CHECK)"><span>POST /binCheck</span><button class="info-btn" onclick="showInfo(event,'/binCheck')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/callTerminal" data-label="Call Terminal" data-body="EP_CALL_TERMINAL"><span>POST /callTerminal</span><button class="info-btn" data-action="showInfo:/callTerminal">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/devicesDetails" data-label="Device Details" data-body="null"><span>GET /devicesDetails</span><button class="info-btn" data-action="showInfo:/devicesDetails">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/binDetails" data-label="Bin Details" data-body="null"><span>GET /binDetails</span><button class="info-btn" data-action="showInfo:/binDetails">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/binCheck" data-label="Bin Check" data-body="EP_BIN_CHECK"><span>POST /binCheck</span><button class="info-btn" data-action="showInfo:/binCheck">i</button></div>
 
         <div class="ep-group">Doors &amp; Lifts</div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/callDoor','Call Door',EP_CALL_DOOR)"><span>POST /callDoor</span><button class="info-btn" onclick="showInfo(event,'/callDoor')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/disableDoor','Disable Door',EP_DISABLE_DEVICE)"><span>POST /disableDoor</span><button class="info-btn" onclick="showInfo(event,'/disableDoor')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/callLift','Call Lift',EP_CALL_LIFT)"><span>POST /callLift</span><button class="info-btn" onclick="showInfo(event,'/callLift')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/disableLift','Disable Lift',EP_DISABLE_DEVICE)"><span>POST /disableLift</span><button class="info-btn" onclick="showInfo(event,'/disableLift')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/callDoor" data-label="Call Door" data-body="EP_CALL_DOOR"><span>POST /callDoor</span><button class="info-btn" data-action="showInfo:/callDoor">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/disableDoor" data-label="Disable Door" data-body="EP_DISABLE_DEVICE"><span>POST /disableDoor</span><button class="info-btn" data-action="showInfo:/disableDoor">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/callLift" data-label="Call Lift" data-body="EP_CALL_LIFT"><span>POST /callLift</span><button class="info-btn" data-action="showInfo:/callLift">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/disableLift" data-label="Disable Lift" data-body="EP_DISABLE_DEVICE"><span>POST /disableLift</span><button class="info-btn" data-action="showInfo:/disableLift">i</button></div>
 
         <div class="ep-group">Scene Management</div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/downloadScene','Download Scene',null)"><span>GET /downloadScene</span><button class="info-btn" onclick="showInfo(event,'/downloadScene')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/uploadScene','Upload Scene',null)"><span>POST /uploadScene</span><button class="info-btn" onclick="showInfo(event,'/uploadScene')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/syncScene','Sync Scene',null)"><span>POST /syncScene</span><button class="info-btn" onclick="showInfo(event,'/syncScene')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/scene','Get Scene',null)"><span>GET /scene</span><button class="info-btn" onclick="showInfo(event,'/scene')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/downloadScene" data-label="Download Scene" data-body="null"><span>GET /downloadScene</span><button class="info-btn" data-action="showInfo:/downloadScene">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/uploadScene" data-label="Upload Scene" data-body="null"><span>POST /uploadScene</span><button class="info-btn" data-action="showInfo:/uploadScene">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/syncScene" data-label="Sync Scene" data-body="null"><span>POST /syncScene</span><button class="info-btn" data-action="showInfo:/syncScene">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/scene" data-label="Get Scene" data-body="null"><span>GET /scene</span><button class="info-btn" data-action="showInfo:/scene">i</button></div>
 
         <div class="ep-group">System</div>
-        <div class="ep-item" onclick="loadEP(this,'POST','/getProfiles','Get Config File',EP_GET_PROFILES)"><span>POST /getProfiles</span><button class="info-btn" onclick="showInfo(event,'/getProfiles')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/ping','Ping',null)"><span>GET /ping</span><button class="info-btn" onclick="showInfo(event,'/ping')">i</button></div>
-        <div class="ep-item" onclick="loadEP(this,'GET','/licInfo','License Info',null)"><span>GET /licInfo</span><button class="info-btn" onclick="showInfo(event,'/licInfo')">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="POST" data-url="/getProfiles" data-label="Get Config File" data-body="EP_GET_PROFILES"><span>POST /getProfiles</span><button class="info-btn" data-action="showInfo:/getProfiles">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/ping" data-label="Ping" data-body="null"><span>GET /ping</span><button class="info-btn" data-action="showInfo:/ping">i</button></div>
+        <div class="ep-item" data-action="loadEP" data-method="GET" data-url="/licInfo" data-label="License Info" data-body="null"><span>GET /licInfo</span><button class="info-btn" data-action="showInfo:/licInfo">i</button></div>
       </div>
     </div>
 
@@ -92,64 +92,64 @@
           <div style="background:var(--bg);border:1px solid var(--border);border-radius:0.4rem;padding:0.75rem;">
             <div class="flex flex-between mb-1">
               <strong class="text-sm">Block Builder</strong>
-              <button class="btn btn-sm" onclick="toggleBlockBuilder()" id="bb-toggle">Hide Builder</button>
+              <button class="btn btn-sm" data-action="toggleBlockBuilder" id="bb-toggle">Hide Builder</button>
             </div>
             <div id="bb-form">
               <div class="flex gap-1 mb-1 flex-wrap">
                 <div>
-                  <label class="text-xs">Block Type <button class="help-btn" onclick="showTip(event,'blockType')">?</button></label>
-                  <select id="bb-type" onchange="bbTypeChanged()" style="font-size:0.82rem;padding:0.25rem;">
+                  <label class="text-xs">Block Type <button class="help-btn" data-action="showTip:blockType">?</button></label>
+                  <select id="bb-type" data-action-change="bbTypeChanged" style="font-size:0.82rem;padding:0.25rem;">
                     <option value="bin">Bin Location</option>
                     <option value="operation">Map Point + Operation</option>
                     <option value="script">Map Point + Script</option>
                   </select>
                 </div>
                 <div>
-                  <label class="text-xs">Block ID <button class="help-btn" onclick="showTip(event,'blockId')">?</button></label>
+                  <label class="text-xs">Block ID <button class="help-btn" data-action="showTip:blockId">?</button></label>
                   <input type="text" id="bb-blockId" placeholder="b1" style="width:80px;font-size:0.82rem;padding:0.25rem;">
                 </div>
                 <div>
-                  <label class="text-xs">Location <button class="help-btn" onclick="showTip(event,'location')">?</button></label>
+                  <label class="text-xs">Location <button class="help-btn" data-action="showTip:location">?</button></label>
                   <input type="text" id="bb-location" placeholder="Loc-01" style="width:100px;font-size:0.82rem;padding:0.25rem;">
                 </div>
               </div>
               <!-- Bin fields -->
               <div id="bb-bin-fields" class="flex gap-1 mb-1 flex-wrap">
                 <div>
-                  <label class="text-xs">Bin Task <button class="help-btn" onclick="showTip(event,'binTask')">?</button></label>
+                  <label class="text-xs">Bin Task <button class="help-btn" data-action="showTip:binTask">?</button></label>
                   <select id="bb-binTask" style="font-size:0.82rem;padding:0.25rem;">
                     <option value="Load">Load</option>
                     <option value="Unload">Unload</option>
                   </select>
                 </div>
                 <div>
-                  <label class="text-xs">Goods ID <button class="help-btn" onclick="showTip(event,'goodsId')">?</button></label>
+                  <label class="text-xs">Goods ID <button class="help-btn" data-action="showTip:goodsId">?</button></label>
                   <input type="text" id="bb-goodsId" placeholder="" style="width:100px;font-size:0.82rem;padding:0.25rem;">
                 </div>
               </div>
               <!-- Operation fields -->
               <div id="bb-op-fields" class="flex gap-1 mb-1 hide flex-wrap">
                 <div>
-                  <label class="text-xs">Operation <button class="help-btn" onclick="showTip(event,'operation')">?</button></label>
+                  <label class="text-xs">Operation <button class="help-btn" data-action="showTip:operation">?</button></label>
                   <input type="text" id="bb-operation" placeholder="JackLoad" style="width:110px;font-size:0.82rem;padding:0.25rem;">
                 </div>
                 <div>
-                  <label class="text-xs">Args JSON <button class="help-btn" onclick="showTip(event,'opArgs')">?</button></label>
+                  <label class="text-xs">Args JSON <button class="help-btn" data-action="showTip:opArgs">?</button></label>
                   <input type="text" id="bb-opArgs" placeholder='{"recognize":true}' style="width:160px;font-size:0.82rem;padding:0.25rem;">
                 </div>
               </div>
               <!-- Script fields -->
               <div id="bb-script-fields" class="flex gap-1 mb-1 flex-wrap" style="display:none;">
                 <div>
-                  <label class="text-xs">Script Name <button class="help-btn" onclick="showTip(event,'scriptName')">?</button></label>
+                  <label class="text-xs">Script Name <button class="help-btn" data-action="showTip:scriptName">?</button></label>
                   <input type="text" id="bb-scriptName" placeholder="myScript.py" style="width:130px;font-size:0.82rem;padding:0.25rem;">
                 </div>
                 <div>
-                  <label class="text-xs">Script Args <button class="help-btn" onclick="showTip(event,'scriptArgs')">?</button></label>
+                  <label class="text-xs">Script Args <button class="help-btn" data-action="showTip:scriptArgs">?</button></label>
                   <input type="text" id="bb-scriptArgs" placeholder='{"x":1.0}' style="width:160px;font-size:0.82rem;padding:0.25rem;">
                 </div>
               </div>
-              <button class="btn btn-primary btn-sm" onclick="bbAddBlock()">+ Add Block</button>
+              <button class="btn btn-primary btn-sm" data-action="bbAddBlock">+ Add Block</button>
             </div>
             <!-- Block list -->
             <div id="bb-blocks" style="margin-top:0.5rem;"></div>
@@ -157,29 +157,29 @@
             <div id="bb-order" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.5rem;">
               <div class="flex gap-1 mb-1 flex-wrap" style="align-items:end;">
                 <div>
-                  <label class="text-xs">Order ID <button class="help-btn" onclick="showTip(event,'orderId')">?</button></label>
+                  <label class="text-xs">Order ID <button class="help-btn" data-action="showTip:orderId">?</button></label>
                   <input type="text" id="bb-orderId" placeholder="order-001" style="width:110px;font-size:0.82rem;padding:0.25rem;">
                 </div>
                 <div>
-                  <label class="text-xs">Vehicle <button class="help-btn" onclick="showTip(event,'vehicle')">?</button></label>
+                  <label class="text-xs">Vehicle <button class="help-btn" data-action="showTip:vehicle">?</button></label>
                   <input type="text" id="bb-vehicle" placeholder="" style="width:90px;font-size:0.82rem;padding:0.25rem;">
                 </div>
                 <div>
-                  <label class="text-xs">Group <button class="help-btn" onclick="showTip(event,'group')">?</button></label>
+                  <label class="text-xs">Group <button class="help-btn" data-action="showTip:group">?</button></label>
                   <input type="text" id="bb-group" placeholder="" style="width:80px;font-size:0.82rem;padding:0.25rem;">
                 </div>
                 <div>
-                  <label class="text-xs">Priority <button class="help-btn" onclick="showTip(event,'priority')">?</button></label>
+                  <label class="text-xs">Priority <button class="help-btn" data-action="showTip:priority">?</button></label>
                   <input type="number" id="bb-priority" value="0" style="width:60px;font-size:0.82rem;padding:0.25rem;">
                 </div>
                 <div>
-                  <label class="text-xs">Complete <button class="help-btn" onclick="showTip(event,'complete')">?</button></label>
+                  <label class="text-xs">Complete <button class="help-btn" data-action="showTip:complete">?</button></label>
                   <select id="bb-complete" style="font-size:0.82rem;padding:0.25rem;">
                     <option value="true">true</option>
                     <option value="false">false</option>
                   </select>
                 </div>
-                <button class="btn btn-primary btn-sm" onclick="bbGenerate()">Generate JSON</button>
+                <button class="btn btn-primary btn-sm" data-action="bbGenerate">Generate JSON</button>
               </div>
             </div>
           </div>
@@ -191,7 +191,7 @@
             <option value="POST">POST</option>
           </select>
           <input type="text" id="req-path" placeholder="/endpoint?param=value" style="flex:1;font-size:0.85rem;">
-          <button class="btn btn-primary" onclick="sendRequest()" id="send-btn">Send</button>
+          <button class="btn btn-primary" data-action="sendRequest" id="send-btn">Send</button>
         </div>
         <div id="req-body-section">
           <label style="font-size:0.8rem;">Request Body (JSON)</label>
@@ -207,9 +207,9 @@
             <span class="text-muted ml-05" style="font-size:0.8rem" id="resp-time"></span>
           </div>
           <div class="flex gap-1" id="resp-actions" style="display:none">
-            <button class="btn btn-sm" onclick="togglePretty()" id="pretty-btn">Compact</button>
-            <button class="btn btn-sm" onclick="copyResponse()">Copy</button>
-            <button class="btn btn-sm" onclick="toggleHeaders()">Headers</button>
+            <button class="btn btn-sm" data-action="togglePretty" id="pretty-btn">Compact</button>
+            <button class="btn btn-sm" data-action="copyResponse">Copy</button>
+            <button class="btn btn-sm" data-action="toggleHeaders">Headers</button>
           </div>
         </div>
         <pre id="resp-body" style="background:#1e1e1e;color:#d4d4d4;padding:0.75rem;border-radius:0.4rem;overflow-x:auto;font-size:0.8rem;max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word;">Select an endpoint and click Send. Response will appear here.</pre>
@@ -226,15 +226,15 @@
 </div>
 
 <!-- Info popup -->
-<div class="modal-overlay" id="info-overlay" onclick="closeInfo(event)">
-  <div class="modal" style="max-width:480px;" onclick="event.stopPropagation()">
+<div class="modal-overlay" id="info-overlay" data-backdrop-close>
+  <div class="modal" style="max-width:480px;" data-action="stopPropagation">
     <div class="modal-header flex flex-between">
       <h2 id="info-title" style="font-size:1.1rem;"></h2>
-      <button class="modal-close" onclick="closeInfo()">&times;</button>
+      <button class="modal-close" data-action="closeInfo">&times;</button>
     </div>
     <div id="info-body" style="font-size:0.88rem;line-height:1.6;"></div>
   </div>
 </div>
 
-<script src="/static/pages/rds-explorer.js"></script>
+<script type="module" src="/static/pages/rds-explorer.js?v={{cacheBust}}"></script>
 {{end}}

@@ -109,7 +109,7 @@ func testEngine(t *testing.T, db *store.DB) *Engine {
 func TestProduceSimple_FinalizeIngest(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, _, _ := seedProduceNode(t, db, "simple")
+	_, nodeID, _, _ := seedProduceNode(t, db, "")
 	eng := testEngine(t, db)
 
 	result, err := eng.FinalizeProduceNode(nodeID)
@@ -259,7 +259,7 @@ func TestProduceTwoRobot_BothOrdersCreated(t *testing.T) {
 func TestProduceFinalize_RejectsZeroUOP(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, _, claimID := seedProduceNode(t, db, "simple")
+	_, nodeID, _, claimID := seedProduceNode(t, db, "")
 	eng := testEngine(t, db)
 
 	// Set UOP to 0 — nothing to finalize
@@ -274,7 +274,7 @@ func TestProduceFinalize_RejectsZeroUOP(t *testing.T) {
 func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	processID, nodeID, styleID, _ := seedProduceNode(t, db, "simple")
+	processID, nodeID, styleID, _ := seedProduceNode(t, db, "")
 	eng := testEngine(t, db)
 
 	// Override claim to consume role
@@ -282,7 +282,7 @@ func TestProduceFinalize_RejectsConsumeNode(t *testing.T) {
 		StyleID:      styleID,
 		CoreNodeName: "PRODUCE-NODE",
 		Role:         "consume",
-		SwapMode:     "simple",
+		SwapMode: "simple",
 		PayloadCode:  "WIDGET-A",
 		UOPCapacity:  100,
 	})

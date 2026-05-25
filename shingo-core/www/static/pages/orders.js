@@ -1,3 +1,5 @@
+import { api, apiGet, apiPost, debounce, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toggleVisibility, uiConfirm } from '/static/app.js';
+
 function orderControlPost(url, body) {
   var msg = document.getElementById('order-status-msg');
   if (msg) msg.textContent = 'Sending...';
@@ -12,8 +14,8 @@ function orderControlPost(url, body) {
     });
 }
 
-function terminateOrder(id) {
-  if (!confirm('Terminate order #' + id + '? This cannot be undone.')) return;
+async function terminateOrder(id) {
+  if (!await uiConfirm('Terminate order #' + id + '? This cannot be undone.')) return;
   orderControlPost('/api/orders/terminate', {order_id: id});
 }
 
@@ -90,7 +92,7 @@ function renderOrderModal(data) {
   out += '<span><strong>Created:</strong> ' + formatTime(o.created_at) + '</span>';
   out += '<span><strong>Modified:</strong> ' + formatTime(o.updated_at) + '</span>';
   if (o.completed_at) out += '<span><strong>Completed:</strong> ' + formatTime(o.completed_at) + '</span>';
-  if (o.parent_order_id) out += '<span><strong>Parent:</strong> <a href="#" onclick="event.preventDefault();openOrderModal(' + o.parent_order_id + ')">#' + o.parent_order_id + '</a> (step ' + o.sequence + ')</span>';
+  if (o.parent_order_id) out += '<span><strong>Parent:</strong> <a href="#" data-action="openOrderModal:' + o.parent_order_id + '" data-prevent-default="1" >#' + o.parent_order_id + '</a> (step ' + o.sequence + ')</span>';
   out += '</div></div>';
 
   // ── ROUTING ──
@@ -123,7 +125,7 @@ function renderOrderModal(data) {
     if (data.manifest_items && data.manifest_items.length > 0) {
       var mid = 'om-manifest-' + o.id;
       out += '<div style="border-bottom:1px solid var(--border);padding:0.375rem 0">';
-      out += '<a href="#" style="font-size:0.8rem" onclick="event.preventDefault();var el=document.getElementById(\'' + mid + '\');el.style.display=el.style.display===\'none\'?\'\':\'none\'">';
+      out += '<a href="#" style="font-size:0.8rem" data-action="toggleVisibility:' + mid + '" data-prevent-default="1" >';
       out += 'Manifest (' + data.manifest_items.length + ' item' + (data.manifest_items.length > 1 ? 's' : '') + ')</a>';
       out += h`<table class="table-compact" id="${mid}" style="display:none;font-size:0.78rem;margin-top:0.25rem">
         <thead><tr><th>Part Number</th><th>Qty</th><th>Lot</th><th>Notes</th></tr></thead><tbody>${
@@ -195,7 +197,7 @@ function renderOrderModal(data) {
     out += '<div class="manifest-section">Order Steps</div>';
     out += h`<table class="table-compact"><thead><tr><th>#</th><th>ID</th><th>Type</th><th>Status</th><th>Source</th><th>Delivery</th><th>Robot</th></tr></thead><tbody>${
       data.children.map(function(c) {
-        return h`<tr style="cursor:pointer" onclick="openOrderModal(${c.id})">
+        return h`<tr style="cursor:pointer" data-action="openOrderModal:${c.id}">
           <td>${c.sequence}</td><td>${c.id}</td><td>${c.order_type}</td>
           <td><span class="badge badge-${c.status}">${c.status}</span></td>
           <td>${c.source_node}</td><td>${c.delivery_node}</td><td>${c.robot_id}</td>
@@ -239,36 +241,36 @@ window.onOrderUpdate = debounce(function(e) {
   } catch(err) { console.error('onOrderUpdate', err); }
 }, 2000);
 
-// --- Spot order modal ---
-var _spotNodesLoaded = false;
-var _spotActiveTab = 'transport';
+// --- Manual order modal ---
+var _moNodesLoaded = false;
+var _moActiveTab = 'transport';
 
-function openSpotOrderModal() {
-  showModal('spot-order-modal');
-  document.getElementById('spot-status').textContent = '';
-  document.getElementById('spot-submit-btn').disabled = false;
-  if (!_spotNodesLoaded) {
-    _spotNodesLoaded = true;
-    loadSpotDropdowns();
+function openManualOrderModal() {
+  showModal('mo-order-modal');
+  document.getElementById('mo-status').textContent = '';
+  document.getElementById('mo-submit-btn').disabled = false;
+  if (!_moNodesLoaded) {
+    _moNodesLoaded = true;
+    loadManualOrderDropdowns();
   }
-  spotTransportTypeChanged();
+  manualOrderTransportTypeChanged();
 }
 
-function closeSpotOrderModal() {
-  hideModal('spot-order-modal');
+function closeManualOrderModal() {
+  hideModal('mo-order-modal');
 }
 
-function switchSpotTab(name, btn) {
-  _spotActiveTab = name;
-  document.querySelectorAll('.spot-tab').forEach(function(t) { t.classList.remove('active'); });
-  document.querySelectorAll('.spot-tab-content').forEach(function(c) { c.classList.remove('active'); });
-  document.getElementById('spot-tab-' + name).classList.add('active');
+function switchManualOrderTab(name, btn) {
+  _moActiveTab = name;
+  document.querySelectorAll('.mo-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.mo-tab-content').forEach(function(c) { c.classList.remove('active'); });
+  document.getElementById('mo-tab-' + name).classList.add('active');
   btn.classList.add('active');
-  document.getElementById('spot-status').textContent = '';
-  updateSpotQuantityVisibility();
+  document.getElementById('mo-status').textContent = '';
+  updateManualOrderQuantityVisibility();
 }
 
-function loadSpotDropdowns() {
+function loadManualOrderDropdowns() {
   apiGet('/api/nodes')
     .then(function(nodes) {
       var byZone = {};
@@ -292,18 +294,18 @@ function loadSpotDropdowns() {
         html += '</optgroup>';
       }
       // Transport tab
-      document.getElementById('spot-pickup').innerHTML = html;
-      document.getElementById('spot-delivery').innerHTML = html;
+      document.getElementById('mo-pickup').innerHTML = html;
+      document.getElementById('mo-delivery').innerHTML = html;
       // Staged tab
-      document.getElementById('spot-staged-pickup').innerHTML = html;
-      document.getElementById('spot-staged-staging').innerHTML = html;
-      document.getElementById('spot-staged-delivery').innerHTML = html;
+      document.getElementById('mo-staged-pickup').innerHTML = html;
+      document.getElementById('mo-staged-staging').innerHTML = html;
+      document.getElementById('mo-staged-delivery').innerHTML = html;
       // Swap tab
-      document.getElementById('spot-swap-node').innerHTML = html;
+      document.getElementById('mo-swap-node').innerHTML = html;
       // Send-to tab
-      document.getElementById('spot-sendto-dest').innerHTML = html;
+      document.getElementById('mo-sendto-dest').innerHTML = html;
     })
-    .catch(function(e) { console.error('loadSpotDropdowns nodes', e); });
+    .catch(function(e) { console.error('loadManualOrderDropdowns nodes', e); });
 
   apiGet('/api/payloads/templates')
     .then(function(bps) {
@@ -311,20 +313,20 @@ function loadSpotDropdowns() {
       for (var i = 0; i < bps.length; i++) {
         html += '<option value="' + escapeHtml(bps[i].code) + '">' + escapeHtml(bps[i].code) + ' — ' + escapeHtml(bps[i].description) + '</option>';
       }
-      document.getElementById('spot-payload').innerHTML = html;
-      document.getElementById('spot-staged-payload').innerHTML = html;
-      document.getElementById('spot-swap-payload').innerHTML = html;
+      document.getElementById('mo-payload').innerHTML = html;
+      document.getElementById('mo-staged-payload').innerHTML = html;
+      document.getElementById('mo-swap-payload').innerHTML = html;
     })
-    .catch(function(e) { console.error('loadSpotDropdowns payloads', e); });
+    .catch(function(e) { console.error('loadManualOrderDropdowns payloads', e); });
 
-  loadSpotBinDropdown();
+  loadManualOrderBinDropdown();
 }
 
-function loadSpotBinDropdown() {
+function loadManualOrderBinDropdown() {
   apiGet('/api/bins/available')
     .then(function(bins) {
       if (!bins || !bins.length) {
-        document.getElementById('spot-bin').innerHTML = '<option value="">No available bins</option>';
+        document.getElementById('mo-bin').innerHTML = '<option value="">No available bins</option>';
         return;
       }
       var byZone = {};
@@ -349,18 +351,18 @@ function loadSpotBinDropdown() {
         }
         html += '</optgroup>';
       }
-      document.getElementById('spot-bin').innerHTML = html;
+      document.getElementById('mo-bin').innerHTML = html;
     })
-    .catch(function(e) { console.error('loadSpotBinDropdown', e); });
+    .catch(function(e) { console.error('loadManualOrderBinDropdown', e); });
 }
 
-function spotTransportTypeChanged() {
-  var t = document.getElementById('spot-transport-type').value;
-  var pickup = document.getElementById('spot-pickup-group');
-  var delivery = document.getElementById('spot-delivery-group');
-  var payload = document.getElementById('spot-payload-group');
-  var binGroup = document.getElementById('spot-bin-group');
-  var qtyGroup = document.getElementById('spot-quantity-group');
+function manualOrderTransportTypeChanged() {
+  var t = document.getElementById('mo-transport-type').value;
+  var pickup = document.getElementById('mo-pickup-group');
+  var delivery = document.getElementById('mo-delivery-group');
+  var payload = document.getElementById('mo-payload-group');
+  var binGroup = document.getElementById('mo-bin-group');
+  var qtyGroup = document.getElementById('mo-quantity-group');
 
   if (t === 'retrieve_specific') {
     // Retrieve specific: bin selector + delivery only
@@ -383,38 +385,38 @@ function spotTransportTypeChanged() {
   qtyGroup.style.display = (t === 'retrieve' || t === 'retrieve_empty') ? '' : 'none';
 }
 
-function updateSpotQuantityVisibility() {
-  var tab = _spotActiveTab;
-  var qtyGroup = document.getElementById('spot-quantity-group');
+function updateManualOrderQuantityVisibility() {
+  var tab = _moActiveTab;
+  var qtyGroup = document.getElementById('mo-quantity-group');
   if (tab !== 'transport') {
     qtyGroup.style.display = 'none';
     return;
   }
-  spotTransportTypeChanged();
+  manualOrderTransportTypeChanged();
 }
 
-function submitSpotOrder() {
-  var status = document.getElementById('spot-status');
-  var btn = document.getElementById('spot-submit-btn');
-  var tab = _spotActiveTab;
+function submitManualOrder() {
+  var status = document.getElementById('mo-status');
+  var btn = document.getElementById('mo-submit-btn');
+  var tab = _moActiveTab;
   var body = {
-    priority: parseInt(document.getElementById('spot-priority').value, 10) || 0,
-    description: document.getElementById('spot-description').value
+    priority: parseInt(document.getElementById('mo-priority').value, 10) || 0,
+    description: document.getElementById('mo-description').value
   };
 
   if (tab === 'transport') {
-    var t = document.getElementById('spot-transport-type').value;
+    var t = document.getElementById('mo-transport-type').value;
     body.order_type = t;
 
     if (t === 'retrieve_specific') {
-      body.bin_label = document.getElementById('spot-bin').value;
-      body.delivery_node = document.getElementById('spot-delivery').value;
+      body.bin_label = document.getElementById('mo-bin').value;
+      body.delivery_node = document.getElementById('mo-delivery').value;
       if (!body.bin_label) { status.textContent = 'Bin is required'; status.style.color = 'var(--danger)'; return; }
       if (!body.delivery_node) { status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return; }
     } else {
-      if (t !== 'retrieve' && t !== 'retrieve_empty') body.source_node = document.getElementById('spot-source').value;
-      if (t !== 'store') body.delivery_node = document.getElementById('spot-delivery').value;
-      if (t !== 'move') body.payload_code = document.getElementById('spot-payload').value;
+      if (t !== 'retrieve' && t !== 'retrieve_empty') body.source_node = document.getElementById('mo-source').value;
+      if (t !== 'store') body.delivery_node = document.getElementById('mo-delivery').value;
+      if (t !== 'move') body.payload_code = document.getElementById('mo-payload').value;
 
       if ((t === 'move' || t === 'store') && !body.source_node) {
         status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return;
@@ -425,28 +427,28 @@ function submitSpotOrder() {
 
       // Quantity for batch retrieve
       if (t === 'retrieve' || t === 'retrieve_empty') {
-        var qty = parseInt(document.getElementById('spot-quantity').value, 10) || 1;
+        var qty = parseInt(document.getElementById('mo-quantity').value, 10) || 1;
         if (qty > 1) body.quantity = qty;
       }
     }
   } else if (tab === 'staged') {
     body.order_type = 'staged';
-    body.source_node = document.getElementById('spot-staged-source').value;
-    body.staging_node = document.getElementById('spot-staged-staging').value;
-    body.delivery_node = document.getElementById('spot-staged-delivery').value;
-    body.payload_code = document.getElementById('spot-staged-payload').value;
+    body.source_node = document.getElementById('mo-staged-source').value;
+    body.staging_node = document.getElementById('mo-staged-staging').value;
+    body.delivery_node = document.getElementById('mo-staged-delivery').value;
+    body.payload_code = document.getElementById('mo-staged-payload').value;
     if (!body.source_node) { status.textContent = 'Source node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.staging_node) { status.textContent = 'Staging node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.delivery_node) { status.textContent = 'Delivery node is required'; status.style.color = 'var(--danger)'; return; }
   } else if (tab === 'swap') {
     body.order_type = 'swap';
-    body.delivery_node = document.getElementById('spot-swap-node').value;
-    body.payload_code = document.getElementById('spot-swap-payload').value;
+    body.delivery_node = document.getElementById('mo-swap-node').value;
+    body.payload_code = document.getElementById('mo-swap-payload').value;
     if (!body.delivery_node) { status.textContent = 'Target node is required'; status.style.color = 'var(--danger)'; return; }
     if (!body.payload_code) { status.textContent = 'Payload is required'; status.style.color = 'var(--danger)'; return; }
   } else if (tab === 'send_to') {
     body.order_type = 'send_to';
-    body.delivery_node = document.getElementById('spot-sendto-dest').value;
+    body.delivery_node = document.getElementById('mo-sendto-dest').value;
     if (!body.delivery_node) { status.textContent = 'Destination node is required'; status.style.color = 'var(--danger)'; return; }
   }
 
@@ -471,7 +473,7 @@ function submitSpotOrder() {
       setTimeout(function() { location.reload(); }, 1200);
     })
     .catch(function(e) {
-      console.error('submitSpotOrder', e);
+      console.error('submitManualOrder', e);
       status.textContent = (typeof e === 'string' && e) ? e : 'Network error';
       status.style.color = 'var(--danger)';
       btn.disabled = false;
@@ -499,3 +501,29 @@ function submitSpotOrder() {
     countEl.textContent = q ? visible + ' of ' + rows.length : '';
   });
 })();
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    closeManualOrderModal,
+    closeOrderModal,
+    field,
+    fieldH,
+    loadManualOrderBinDropdown,
+    loadManualOrderDropdowns,
+    manualOrderTransportTypeChanged,
+    openManualOrderModal,
+    openOrderModal,
+    orderControlPost,
+    renderOrderModal,
+    setOrderPriority,
+    submitManualOrder,
+    switchManualOrderTab,
+    terminateOrder,
+    updateManualOrderQuantityVisibility
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

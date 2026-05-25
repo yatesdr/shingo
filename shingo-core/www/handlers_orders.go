@@ -200,7 +200,7 @@ func (h *Handlers) apiSetOrderPriority(w http.ResponseWriter, r *http.Request) {
 	h.jsonSuccess(w)
 }
 
-func (h *Handlers) apiSpotOrderSubmit(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) apiManualOrderSubmit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OrderType     string `json:"order_type"`
 		SourceNode    string `json:"source_node"`

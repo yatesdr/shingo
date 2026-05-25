@@ -1,3 +1,5 @@
+import { api, delegateActions, uiConfirm } from '/static/app.js';
+
 var allRows = [];
 var filteredRows = [];
 var sortCol = '';
@@ -181,7 +183,7 @@ async function loadBuckets() {
   }
 }
 
-function renderBuckets(rows) {
+async function renderBuckets(rows) {
   var tbody = document.getElementById('buckets-body');
   if (!rows || rows.length === 0) {
     tbody.innerHTML = '<tr><td colspan="9" class="text-muted" style="text-align:center;padding:1rem;">No lineside buckets — no parts currently kitted at any node.</td></tr>';
@@ -204,16 +206,20 @@ function renderBuckets(rows) {
     // wrong row when several stations have similar parts.
     var confirmMsg = 'Delete bucket #' + r.id + ' (' + r.node_name + ' / ' + r.part_number +
         ' / qty=' + (r.qty || 0) + ')?\\n\\nUse this only for Core-only orphan rows. Active buckets re-emit from Edge after deletion.';
-    html += '<td><button class="btn btn-sm btn-danger" onclick="deleteBucket(' + (r.id || 0) +
-        ', ' + JSON.stringify(confirmMsg) + ')">Delete</button></td>';
+    html += '<td><button class="btn btn-sm btn-danger" data-action="deleteBucket"' +
+        ' data-id="' + (r.id || 0) +
+        '" data-confirm-msg="' + esc(confirmMsg) + '">Delete</button></td>';
     html += '</tr>';
   }
   tbody.innerHTML = html;
 }
 
-async function deleteBucket(id, confirmMsg) {
+async function deleteBucket() {
+  // Invoked via data-action="deleteBucket" with data-id + data-confirm-msg.
+  var id = parseInt(this.dataset.id, 10);
+  var confirmMsg = this.dataset.confirmMsg || 'Delete bucket?';
   if (!id) return;
-  if (!window.confirm(confirmMsg)) return;
+  if (!await uiConfirm(confirmMsg)) return;
   try {
     var resp = await fetch('/api/buckets/delete', {
       method: 'POST',
@@ -226,11 +232,32 @@ async function deleteBucket(id, confirmMsg) {
         var j = await resp.json();
         if (j && j.error) { msg = j.error; }
       } catch (e) { /* keep status code */ }
-      window.alert('Delete failed: ' + msg);
+      window.toast('Delete failed: ' + msg, 'error');
       return;
     }
     await loadBuckets();
   } catch (e) {
-    window.alert('Delete failed: ' + (e.message || e));
+    window.toast('Delete failed: ' + (e.message || e, 'error'));
   }
 }
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    applyFilters,
+    deleteBucket,
+    doSort,
+    esc,
+    exportInventory,
+    loadBuckets,
+    loadInventory,
+    populateFilterDropdowns,
+    renderBuckets,
+    renderTable,
+    sortBy
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

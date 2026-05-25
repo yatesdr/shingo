@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/sessions"
 
 	"shingo/protocol/debuglog"
+	"shingo/shared"
 	"shingocore/engine"
 )
 
@@ -110,6 +111,13 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 	// Everything else gets compressed
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Compress(5))
+
+		// Shared UI assets (tokens.css, status-classes.css, utils.js)
+		// from the shingo/shared module. Registered BEFORE /static/* so
+		// the more specific prefix wins.
+		r.Handle("/static/shared/*", http.StripPrefix("/static/shared/",
+			http.FileServer(http.FS(shared.Files)),
+		))
 
 		// Static files
 		staticSub, _ := fs.Sub(staticFS, "static")
@@ -286,7 +294,7 @@ func NewRouter(eng *engine.Engine, dbg *debuglog.Logger) (http.Handler, func(), 
 				// Orders
 				r.Post("/orders/terminate", h.apiTerminateOrder)
 				r.Post("/orders/priority", h.apiSetOrderPriority)
-				r.Post("/orders/spot", h.apiSpotOrderSubmit)
+				r.Post("/orders/spot", h.apiManualOrderSubmit)
 				r.Post("/dispatch/clear-anomaly", h.apiClearTransitAnomaly)
 
 				// Outbox & recovery

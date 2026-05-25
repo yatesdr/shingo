@@ -104,9 +104,9 @@ function renderReleasePromptStep1() {
     if (!state) return;
 
     let html = '';
-    html += '<div class="os-modal-header">';
-    html += '<div class="os-modal-node-name">Release</div>';
-    html += '<div class="os-modal-payload">Anything pulled to lineside during the swap?</div>';
+    html += '<div class="modal-header">';
+    html += '<div class="modal-node-name">Release</div>';
+    html += '<div class="modal-payload">Anything pulled to lineside during the swap?</div>';
     html += '</div>';
 
     if (state.payloads.length === 0) {
@@ -147,7 +147,7 @@ function renderReleasePromptStep1() {
         html += '</div>';
     }
 
-    html += '<div class="os-modal-actions">';
+    html += '<div class="modal-actions">';
     // Label reflects the actual action: bin still has UOP → returns as-is
     // (partial); bin is at zero → manifest cleared (empty). Same wire
     // disposition mapping as before; just makes it visible to the operator.
@@ -177,7 +177,7 @@ function renderReleasePromptStep1() {
     nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
         btn.addEventListener('click', handleReleasePromptAction);
     });
-    nodeModal.hidden = false;
+    nodeModal.classList.add('active');
 }
 
 // renderReleasePromptUnderpackConfirm shows the destructive-action
@@ -192,9 +192,9 @@ function renderReleasePromptUnderpackConfirm() {
     const remainingUOP = rt && rt.remaining_uop_cached != null ? rt.remaining_uop_cached : 0;
 
     let html = '';
-    html += '<div class="os-modal-header">';
-    html += '<div class="os-modal-node-name">Declare bin empty?</div>';
-    html += '<div class="os-modal-payload">Confirm: bin is physically empty, system shows UOP remaining.</div>';
+    html += '<div class="modal-header">';
+    html += '<div class="modal-node-name">Declare bin empty?</div>';
+    html += '<div class="modal-payload">Confirm: bin is physically empty, system shows UOP remaining.</div>';
     html += '</div>';
 
     html += '<div class="os-release-prompt">';
@@ -204,7 +204,7 @@ function renderReleasePromptUnderpackConfirm() {
     html += '</div>';
     html += '</div>';
 
-    html += '<div class="os-modal-actions">';
+    html += '<div class="modal-actions">';
     html += '<button type="button" class="os-action-btn close" data-action="release-back">BACK</button>';
     html += '<button type="button" class="os-action-btn release-empty"' +
         ' data-action="release-submit-underpack">DECLARE EMPTY</button>';
@@ -226,9 +226,9 @@ function renderReleasePromptStep2(code) {
     const showWarn = warnAt > 0 && qty > warnAt;
 
     let html = '';
-    html += '<div class="os-modal-header">';
-    html += '<div class="os-modal-node-name">Lineside qty: ' + esc(code) + '</div>';
-    html += '<div class="os-modal-payload">Tap the number to change it.</div>';
+    html += '<div class="modal-header">';
+    html += '<div class="modal-node-name">Lineside qty: ' + esc(code) + '</div>';
+    html += '<div class="modal-payload">Tap the number to change it.</div>';
     html += '</div>';
 
     html += '<div class="os-release-prompt">';
@@ -242,7 +242,7 @@ function renderReleasePromptStep2(code) {
     }
     html += '</div>';
 
-    html += '<div class="os-modal-actions">';
+    html += '<div class="modal-actions">';
     html += '<button type="button" class="os-action-btn close" data-action="release-back">BACK</button>';
     const okDisabled = !(qty > 0);
     html += '<button type="button" class="os-action-btn request"' +
@@ -417,20 +417,20 @@ function closeReleasePrompt() {
 // Stub view: scrap / repack / recall actions land in a later phase.
 export function openStrandedStub(bucket, handleModalAction) {
     let html = '';
-    html += '<div class="os-modal-header">';
-    html += '<div class="os-modal-node-name">Stranded at lineside</div>';
-    html += '<div class="os-modal-payload">' + esc(bucket.part_number) + ' — ' + (bucket.qty || 0) + ' unit' + ((bucket.qty || 0) === 1 ? '' : 's') + '</div>';
+    html += '<div class="modal-header">';
+    html += '<div class="modal-node-name">Stranded at lineside</div>';
+    html += '<div class="modal-payload">' + esc(bucket.part_number) + ' — ' + (bucket.qty || 0) + ' unit' + ((bucket.qty || 0) === 1 ? '' : 's') + '</div>';
     html += '</div>';
     html += '<div style="padding:12px 0;color:#bbb;font-size:14px;line-height:1.4">';
     html += 'These parts were captured during a previous changeover and are not counting toward the active style.<br><br>';
     html += '<strong>Scrap / repack / recall actions will land in a later phase.</strong>';
     html += '</div>';
-    html += '<div class="os-modal-actions">';
+    html += '<div class="modal-actions">';
     html += '<button type="button" class="os-action-btn close" data-action="close">CLOSE</button>';
     html += '</div>';
     nodeModalContent.innerHTML = html;
     nodeModalContent.querySelectorAll('[data-action]').forEach(function(btn) {
         btn.addEventListener('click', handleModalAction);
     });
-    nodeModal.hidden = false;
+    nodeModal.classList.add('active');
 }

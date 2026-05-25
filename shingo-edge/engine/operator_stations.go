@@ -46,14 +46,14 @@ func (e *Engine) RequestNodeMaterial(nodeID int64, quantity int64) (*NodeOrderRe
 // the downgrade and any paired-prime emission so a Core blip can't
 // dispatch phantom deliveries.
 //
-// Simple / unset swap modes short-circuit to the head-only occupied=true
-// map: BuildConsumePlan ignores occupancy on those paths anyway.
+// Simple swap mode short-circuits to the head-only occupied=true
+// map: BuildConsumePlan ignores occupancy on that path anyway.
 func (e *Engine) claimOccupancy(claim *processes.NodeClaim) map[string]bool {
 	occ := map[string]bool{}
 	if claim == nil {
 		return occ
 	}
-	if claim.SwapMode == protocol.SwapModeSimple || claim.SwapMode == "" {
+	if claim.SwapMode == protocol.SwapModeSimple {
 		occ[claim.CoreNodeName] = true
 		return occ
 	}
@@ -164,7 +164,7 @@ func (e *Engine) applyConsumePlan(node *processes.Node, plan *ConsumePlan) (*Nod
 			}
 			primes = append(primes, refreshed)
 		}
-		return &NodeOrderResult{CycleMode: protocol.SwapModeSimple, Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
+		return &NodeOrderResult{CycleMode: cycleModeSimple, Order: order, PrimeOrders: primes, ProcessNodeID: nodeID}, nil
 	}
 
 	dispatch := plan.Dispatch

@@ -35,10 +35,12 @@ type ProducePlan struct {
 
 // CycleMode returns the mode tag the apply caller surfaces in
 // NodeOrderResult.CycleMode. "simple" for the ingest-only branch; the
-// dispatch's CycleMode for every other mode.
+// dispatch's CycleMode for every other mode. cycleModeSimple is the
+// engine-internal classification tag (see consume_plan.go), distinct
+// from the configured SwapModeSimple claim value.
 func (p *ProducePlan) CycleMode() protocol.SwapMode {
 	if p.SimpleOnly || p.Dispatch == nil {
-		return protocol.SwapModeSimple
+		return cycleModeSimple
 	}
 	return p.Dispatch.CycleMode
 }

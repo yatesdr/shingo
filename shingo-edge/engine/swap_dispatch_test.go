@@ -27,7 +27,12 @@ func dispatchNode() *processes.Node {
 
 func TestBuildSwapDispatch_Simple(t *testing.T) {
 	t.Parallel()
-	for _, mode := range []protocol.SwapMode{"", protocol.SwapModeSimple, "unknown_mode"} {
+	// Empty and unrecognized swap modes both pass through to the
+	// caller-handled non-complex branch (BuildSwapDispatch returns
+	// nil + nil error). The legacy "simple" enum value was removed;
+	// the literal "simple" still exercises the same code path that
+	// any unknown mode would.
+	for _, mode := range []protocol.SwapMode{"", "simple", "unknown_mode"} {
 		mode := mode
 		t.Run(string(mode), func(t *testing.T) {
 			d, err := BuildSwapDispatch(dispatchNode(), dispatchClaim(mode))

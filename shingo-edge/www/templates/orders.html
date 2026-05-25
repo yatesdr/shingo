@@ -2,7 +2,7 @@
 
 <div style="display:flex;align-items:center;margin-bottom:0.75rem;flex-wrap:wrap">
     {{if .Processes}}
-    <select class="form-input" style="width:14rem" onchange="window.location=this.value?'?process='+this.value:'/kanbans'">
+    <select class="form-input" style="width:14rem" data-action-change="navigateToProcessOrOrders">
         <option value="" {{if eq .ActiveProcessID 0}}selected{{end}}>All Processes</option>
         {{range .Processes}}
         <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
@@ -14,7 +14,7 @@
 <div class="card">
     <div class="card-body"
          id="orders-content"
-         hx-get="/kanbans/partial{{if .ActiveProcessID}}?process={{.ActiveProcessID}}{{end}}"
+         hx-get="/orders/partial{{if .ActiveProcessID}}?process={{.ActiveProcessID}}{{end}}"
          hx-trigger="refreshOrders from:body, sse:order-update throttle:3s, sse:order-completed, sse:order-failed"
          hx-swap="innerHTML"
          hx-ext="sse"
@@ -23,6 +23,6 @@
     </div>
 </div>
 
-<script src="/static/js/pages/kanbans.js"></script>
+<script type="module" src="/static/js/pages/orders.js?v={{cacheBust}}"></script>
 
 {{template "footer" .}}

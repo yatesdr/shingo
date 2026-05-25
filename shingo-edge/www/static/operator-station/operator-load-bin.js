@@ -29,7 +29,7 @@ export function openLoadBin(nodeID, allowedCodes, defaultCapacity) {
         payloadEl.appendChild(btn);
     });
     setSubmittingUI(false);
-    document.getElementById('load-bin-modal').hidden = false;
+    document.getElementById('load-bin-modal').classList.add('active');
     if (allowedCodes.length === 1) {
         selectLoadPayload(allowedCodes[0]);
     }
@@ -124,7 +124,7 @@ function openUopKeypad() {
 
 function closeLoadBin() {
     loadBinState = null;
-    document.getElementById('load-bin-modal').hidden = true;
+    document.getElementById('load-bin-modal').classList.remove('active');
 }
 
 function setSubmittingUI(submitting) {
@@ -180,25 +180,11 @@ document.getElementById('load-bin-cancel').addEventListener('click', function() 
 });
 document.getElementById('load-bin-submit').addEventListener('click', submitLoadBin);
 
-// CLEAR BIN was hidden in the template — its destructive semantics overlap
-// the release prompt's RELEASE EMPTY path and presenting it next to
-// CONFIRM LOAD invited misclicks. The handler stays wired for any future
-// re-introduction (a deliberate "wipe bin" surface), but no UI exposes it.
-const clearBtn = document.getElementById('load-bin-clear');
-if (clearBtn) {
-    clearBtn.addEventListener('click', async function() {
-        if (!loadBinState || loadBinState.submitting) return;
-        const nodeID = loadBinState.nodeID;
-        setSubmittingUI(true);
-        const ok = await postAction('/api/process-nodes/' + nodeID + '/clear-bin', undefined, loadViewRef);
-        if (ok) {
-            showToast('Bin cleared', 'success');
-            closeLoadBin();
-        } else {
-            setSubmittingUI(false);
-        }
-    });
-}
+// CLEAR BIN handler removed — the button is hidden in the template and
+// its destructive semantics overlap the release prompt's RELEASE EMPTY
+// path. If a deliberate "wipe bin" surface is needed, reintroduce it
+// alongside an unambiguous button label so it doesn't share visual space
+// with CONFIRM LOAD.
 
 document.getElementById('load-bin-modal').addEventListener('click', function(evt) {
     if (loadBinState && loadBinState.submitting) return;

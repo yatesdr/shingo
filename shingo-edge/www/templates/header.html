@@ -10,10 +10,13 @@
     <script>
     (function(){var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t})();
     </script>
-    <link rel="stylesheet" href="/static/css/shingoedge.css">
+    <link rel="stylesheet" href="/static/shared/tokens.css?v={{cacheBust}}">
+    <link rel="stylesheet" href="/static/shared/status-classes.css?v={{cacheBust}}">
+    <link rel="stylesheet" href="/static/shared/components.css?v={{cacheBust}}">
+    <link rel="stylesheet" href="/static/css/shingoedge.css?v={{cacheBust}}">
     <script src="/static/js/htmx.min.js"></script>
     <script src="/static/js/htmx-sse.js"></script>
-    <script src="/static/js/shingoedge.js"></script>
+    <script type="module" src="/static/js/shingoedge.js?v={{cacheBust}}"></script>
     <script src="/static/js/theme.js"></script>
     <script src="/static/js/anomaly-handlers.js"></script>
 </head>
@@ -25,7 +28,7 @@
         </div>
         <div class="nav-links">
             <a href="/material" class="{{if eq .Page "material"}}active{{end}}">Status</a>
-            <a href="/kanbans" class="{{if eq .Page "kanbans"}}active{{end}}">Orders</a>
+            <a href="/orders" class="{{if eq .Page "orders"}}active{{end}}">Orders</a>
             <a href="/production" class="{{if eq .Page "production"}}active{{end}}">Production</a>
             <a href="/changeover" class="{{if eq .Page "changeover"}}active{{end}}">Changeover</a>
             {{if .Authenticated}}
@@ -48,7 +51,7 @@
         <div class="nav-user">
             {{if .Anomalies}}
             <div class="anomaly-bell-wrap" style="position:relative">
-                <button class="anomaly-bell" onclick="toggleAnomalyPopover()" title="Counter anomalies">
+                <button class="anomaly-bell" data-action="toggleAnomalyPopover" title="Counter anomalies">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                     <span class="anomaly-badge" id="anomaly-count">{{len .Anomalies}}</span>
                 </button>
@@ -63,8 +66,8 @@
                                 Count jumped to {{.CountValue}} (delta: {{.Delta}})
                             </div>
                             <div class="anomaly-actions">
-                                <button class="btn btn-sm btn-primary" onclick="confirmAnomaly({{.ID}})">Confirm</button>
-                                <button class="btn btn-sm" onclick="dismissAnomaly({{.ID}})">Dismiss</button>
+                                <button class="btn btn-sm btn-primary" data-action="confirmAnomaly:{{.ID}}">Confirm</button>
+                                <button class="btn btn-sm" data-action="dismissAnomaly:{{.ID}}">Dismiss</button>
                             </div>
                         </div>
                         {{end}}
@@ -83,7 +86,7 @@
             {{else}}
             <a href="/login" class="nav-auth-link">Login</a>
             {{end}}
-            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme"></button>
+            <button class="theme-toggle" data-action="toggleTheme" title="Toggle theme"></button>
         </div>
       </div>
     </nav>

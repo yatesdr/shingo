@@ -230,9 +230,8 @@ const (
 type ClaimRole string
 
 const (
-	ClaimRoleConsume    ClaimRole = "consume"    // node consumes a material payload from upstream
-	ClaimRoleProduce    ClaimRole = "produce"    // node produces a material payload for downstream
-	ClaimRoleChangeover ClaimRole = "changeover" // node holds material that follows the line through changeover
+	ClaimRoleConsume ClaimRole = "consume" // node consumes a material payload from upstream
+	ClaimRoleProduce ClaimRole = "produce" // node produces a material payload for downstream
 )
 
 // OrderType is the typed kind-of-order for fulfillment orders. Used by

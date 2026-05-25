@@ -9,13 +9,13 @@ import (
 )
 
 // ═══════════════════════════════════════════════════════════════════════
-// Test router — covers handlers_kanbans.go and handlers_backup.go.
+// Test router — covers handlers_orders.go and handlers_backup.go.
 //
-// Kanbans: handleKanbans and handleKanbansPartial both render templates
+// Orders: handleOrders and handleOrdersPartial both render templates
 // (renderTemplate is a no-op in the test harness for the former; the
 // latter calls h.tmpl.ExecuteTemplate directly on a nil *template.Template
 // and panics). Only admin-gate-style coverage is achievable. In router.go
-// /kanbans and /kanbans/partial are public routes, so there is no
+// /orders and /orders/partial are public routes, so there is no
 // middleware gate to hit; the handlers are not exercised from tests.
 // Coverage of their DB call sites therefore lands through the process
 // helpers already exercised elsewhere — we assert shape at the DB layer.
@@ -27,7 +27,7 @@ import (
 // disk, h.requestBackup is a safe no-op when h.backup is nil).
 // ═══════════════════════════════════════════════════════════════════════
 
-func newKanbansBackupRouter(t *testing.T) (*Handlers, *chi.Mux) {
+func newOrdersBackupRouter(t *testing.T) (*Handlers, *chi.Mux) {
 	t.Helper()
 	h, r := newTestHandlers(t)
 
@@ -47,7 +47,7 @@ func newKanbansBackupRouter(t *testing.T) (*Handlers, *chi.Mux) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiBackup_NilService_ReturnsNotImplemented(t *testing.T) {
-	_, router := newKanbansBackupRouter(t)
+	_, router := newOrdersBackupRouter(t)
 
 	cases := []struct {
 		name   string
@@ -75,7 +75,7 @@ func TestApiBackup_NilService_ReturnsNotImplemented(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
-	h, router := newKanbansBackupRouter(t)
+	h, router := newOrdersBackupRouter(t)
 
 	// Disabled path skips the required-fields validation; interval can still
 	// be supplied for schedule bookkeeping.
@@ -111,7 +111,7 @@ func TestApiUpdateBackupConfig_DisabledDefaults(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledTrimsAndPersists(t *testing.T) {
-	h, router := newKanbansBackupRouter(t)
+	h, router := newOrdersBackupRouter(t)
 
 	body := map[string]interface{}{
 		"enabled":                  true,
@@ -159,7 +159,7 @@ func TestApiUpdateBackupConfig_EnabledTrimsAndPersists(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledRequiresEndpoint(t *testing.T) {
-	_, router := newKanbansBackupRouter(t)
+	_, router := newOrdersBackupRouter(t)
 
 	body := map[string]interface{}{
 		"enabled":           true,
@@ -174,7 +174,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresEndpoint(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledRequiresBucket(t *testing.T) {
-	_, router := newKanbansBackupRouter(t)
+	_, router := newOrdersBackupRouter(t)
 
 	body := map[string]interface{}{
 		"enabled":           true,
@@ -189,7 +189,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresBucket(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledRequiresAccessAndSecret(t *testing.T) {
-	_, router := newKanbansBackupRouter(t)
+	_, router := newOrdersBackupRouter(t)
 
 	cases := []struct {
 		name string
@@ -221,7 +221,7 @@ func TestApiUpdateBackupConfig_EnabledRequiresAccessAndSecret(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_InvalidScheduleInterval(t *testing.T) {
-	_, router := newKanbansBackupRouter(t)
+	_, router := newOrdersBackupRouter(t)
 
 	body := map[string]interface{}{
 		"enabled":           false,
@@ -232,7 +232,7 @@ func TestApiUpdateBackupConfig_InvalidScheduleInterval(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_EnabledZeroInterval(t *testing.T) {
-	_, router := newKanbansBackupRouter(t)
+	_, router := newOrdersBackupRouter(t)
 
 	// When ScheduleInterval string is empty, the handler defaults to 1h —
 	// so to hit the "interval <= 0" branch we must pass "0s" explicitly.
@@ -249,7 +249,7 @@ func TestApiUpdateBackupConfig_EnabledZeroInterval(t *testing.T) {
 }
 
 func TestApiUpdateBackupConfig_InvalidJSON(t *testing.T) {
-	_, router := newKanbansBackupRouter(t)
+	_, router := newOrdersBackupRouter(t)
 
 	// enabled must be bool; sending a string breaks the outer decode.
 	body := map[string]interface{}{"enabled": "yes"}
@@ -265,7 +265,7 @@ func TestApiUpdateBackupConfig_InvalidJSON(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════
 
 func TestRequestBackup_NilServiceIsSafe(t *testing.T) {
-	h, _ := newKanbansBackupRouter(t)
+	h, _ := newOrdersBackupRouter(t)
 	// Must not panic.
 	h.requestBackup("unit-test")
 }

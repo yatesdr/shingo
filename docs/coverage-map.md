@@ -382,10 +382,10 @@ post-PR 2.9):
 | handlers_api.go               | helpers 75–100% (writeJSON, writeError, parseID, writeJSONWithTrigger 75%) | — | (covered transitively)                |
 | handlers_api_config.go        | 50.0–100% (apiGetCoreNodes / apiSyncCoreNodes / apiSyncPayloadCatalog 100%); PLC fns (apiListPLCs, apiWarLinkStatus, apiPLCTags, apiPLCAllTags, apiReadTag) 0% | n/a | `handlers_api_config_test.go` (PR 2.1) |
 | handlers_api_orders.go        | 58.8–100%; 5 fns at 100% (Confirm/Release/Submit/Cancel/Redirect); outliers `apiCreateStoreOrder` (58.8%) / `apiCreateMoveOrder` (64.3%) miss the `process_node_id` → `GetProcessNode` source-resolve branches | n/a | `handlers_api_orders_test.go` (PR 2.3) |
-| handlers_backup.go            | apiUpdateBackupConfig 94.9%; status/list/run/test/restore 15.8–75% (only nil-svc early exits) | n/a | `handlers_kanbans_backup_test.go` (PR 2.8) |
+| handlers_backup.go            | apiUpdateBackupConfig 94.9%; status/list/run/test/restore 15.8–75% (only nil-svc early exits) | n/a | `handlers_orders_backup_test.go` (PR 2.8) |
 | handlers_changeover.go        | buildChangeoverViewData 81.8% | handleChangeover / handleChangeoverPartial 0% | `handlers_manualorder_changeover_test.go` (PR 2.9) |
 | handlers_diagnostics.go       | apiReplayOutbox 66.7% (validation only); apiRequestOrderStatusSync 0% | handleDiagnostics 0% | `handlers_diag_manual_test.go` (PR 2.6) |
-| handlers_kanbans.go           | — | handleKanbans / handleKanbansPartial 0% | (none — template-only public routes)  |
+| handlers_orders.go            | — | handleOrders / handleOrdersPartial 0% | (none — template-only public routes)  |
 | handlers_manual_message.go    | apiSendManualMessage 73.3% | handleManualMessage 0% | `handlers_diag_manual_test.go` (PR 2.6) |
 | handlers_manual_order.go      | n/a | handleManualOrder 0% (admin-gate redirect covered) | (admin-gate via PR 2.5)                |
 | handlers_material.go          | buildStationViews 100%; enrichViewBinState 10.0% | handleMaterial / handleMaterialPartial 0% | `handlers_prod_material_test.go` (PR 2.7) |
@@ -474,7 +474,7 @@ Branch started from `ded0543`. Landed on top of baseline (`36ea180`):
 - `handlers_admin_pages_test.go` — declares `newAdminPagesRouter`, `postForm` (form-encoded POST helper for `r.FormValue`-based handlers).
 - `handlers_diag_manual_test.go` — declares `newDiagnosticsManualRouter`, `sendManualPayload` (wraps the `{type, payload}` shape expected by `apiSendManualMessage`).
 - `handlers_prod_material_test.go` — declares `newProdMaterialRouter`; calls `buildStationViews`/`enrichViewBinState` directly.
-- `handlers_kanbans_backup_test.go` — declares `newKanbansBackupRouter`; tests cover the 5 nil-`backup` early exits with one table-driven test plus the full `apiUpdateBackupConfig` validation matrix.
+- `handlers_orders_backup_test.go` — declares `newOrdersBackupRouter`; tests cover the 5 nil-`backup` early exits with one table-driven test plus the full `apiUpdateBackupConfig` validation matrix.
 - `handlers_manualorder_changeover_test.go` — calls `buildChangeoverViewData` directly via `newTestHandlers`; no router needed (page handlers render templates and are exercised only via admin-gate in PR 2.5).
 
 **Known uncovered slices (accepted, not gaps):**

@@ -599,7 +599,7 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 	}{
 		{
 			name:  "simple_consume_zeroes",
-			setup: setup{swapMode: "simple", role: "consume", releaseSide: "single"},
+			setup: setup{swapMode: "", role: "consume", releaseSide: "single"},
 			disp:  DispositionCaptureLineside,
 			want:  want{runtimeUOP: 0},
 		},
@@ -633,13 +633,13 @@ func TestRegression_ReleaseClickZeroesRuntimeUOP_AcrossSwapModes(t *testing.T) {
 		},
 		{
 			name:  "send_partial_back_zeroes",
-			setup: setup{swapMode: "simple", role: "consume", releaseSide: "single"},
+			setup: setup{swapMode: "", role: "consume", releaseSide: "single"},
 			disp:  DispositionSendPartialBack,
 			want:  want{runtimeUOP: 0},
 		},
 		{
 			name:  "produce_role_preserves",
-			setup: setup{swapMode: "simple", role: "produce", releaseSide: "single"},
+			setup: setup{swapMode: "", role: "produce", releaseSide: "single"},
 			disp:  DispositionCaptureLineside,
 			want:  want{runtimeUOP: seededUOP},
 		},

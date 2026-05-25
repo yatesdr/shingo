@@ -106,7 +106,7 @@ func TestBuildProducePlan_TwoRobotPressIndex_OK(t *testing.T) {
 
 func TestBuildProducePlan_PreconditionErrors(t *testing.T) {
 	t.Parallel()
-	node, runtime, claim := produceFixtures("simple")
+	node, runtime, claim := produceFixtures("")
 
 	t.Run("nil_claim", func(t *testing.T) {
 		if _, err := BuildProducePlan(node, runtime, nil, true, fixedNow); err == nil {

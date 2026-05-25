@@ -1,3 +1,5 @@
+import { api, el, escapeHtml, formatTime, toast, uiConfirm } from '/static/app.js';
+
 (function() {
   // Tab switching
   window.switchDiagTab = function(tab) {
@@ -177,13 +179,13 @@
     items.forEach(function(item) {
       var actionHtml = '<span class="text-muted">Manual review</span>';
       if (item.recommended_action === 'reapply_completion') {
-        actionHtml = '<button class="btn btn-sm" onclick="repairAnomaly(\'reapply_completion\',' + item.order_id + ',0)">Reapply Completion</button>';
+        actionHtml = '<button class="btn btn-sm" data-action="repairAnomaly:reapply_completion:' + item.order_id + ':0" >Reapply Completion</button>';
       } else if (item.recommended_action === 'release_terminal_claim' && item.bin_id) {
-        actionHtml = '<button class="btn btn-sm" onclick="repairAnomaly(\'release_terminal_claim\',' + item.order_id + ',' + item.bin_id + ')">Release Claim</button>';
+        actionHtml = '<button class="btn btn-sm" data-action="repairAnomaly:release_terminal_claim:' + item.order_id + ':' + item.bin_id + '" >Release Claim</button>';
       } else if (item.recommended_action === 'release_staged_bin' && item.bin_id) {
-        actionHtml = '<button class="btn btn-sm" onclick="repairAnomaly(\'release_staged_bin\',0,' + item.bin_id + ')">Release Staged Bin</button>';
+        actionHtml = '<button class="btn btn-sm" data-action="repairAnomaly:release_staged_bin:0:' + item.bin_id + '" >Release Staged Bin</button>';
       } else if (item.recommended_action === 'cancel_stuck_order' && item.order_id) {
-        actionHtml = '<button class="btn btn-sm" onclick="repairAnomaly(\'cancel_stuck_order\',' + item.order_id + ',0)">Cancel Stuck Order</button>';
+        actionHtml = '<button class="btn btn-sm" data-action="repairAnomaly:cancel_stuck_order:' + item.order_id + ':0" >Cancel Stuck Order</button>';
       }
       var tr = document.createElement('tr');
       tr.innerHTML =
@@ -220,7 +222,7 @@
         '<td>' + escapeHtml(msg.msg_type || '') + '</td>' +
         '<td>' + escapeHtml(msg.station_id || '') + '</td>' +
         '<td>' + msg.retries + '</td>' +
-        '<td><button class="btn btn-sm" onclick="replayDeadLetter(' + msg.id + ')">Replay</button></td>';
+        '<td><button class="btn btn-sm" data-action="replayDeadLetter:' + msg.id + ')">Replay</button></td>';
       recoveryBody.appendChild(tr);
     });
   }
@@ -306,7 +308,7 @@
       });
   }
 
-  function updateFireAlarmUI(isFire, changedAt) {
+  async function updateFireAlarmUI(isFire, changedAt) {
     var statusEl = document.getElementById('fa-status');
     var changedEl = document.getElementById('fa-changed-at');
     var btnActivate = document.getElementById('fa-btn-activate');
@@ -344,7 +346,7 @@
     if (cb) autoResume = cb.checked;
 
     var action = on ? 'ACTIVATE' : 'CLEAR';
-    if (!confirm('Are you sure you want to ' + action + ' the fire alarm?')) {
+    if (!await uiConfirm('Are you sure you want to ' + action + ' the fire alarm?')) {
       return;
     }
 
@@ -361,7 +363,7 @@
         loadFireAlarmStatus();
       })
       .catch(function(err) {
-        alert('Fire alarm command failed: ' + err.message);
+        toast('Fire alarm command failed: ' + err.message, 'error');
       });
   };
 

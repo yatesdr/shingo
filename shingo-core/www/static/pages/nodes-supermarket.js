@@ -1,3 +1,5 @@
+import { api, apiGet, apiPost, delegateActions, el, escapeHtml, toast } from '/static/app.js';
+
 // Supermarket / node-group hierarchy: NGRP and Lane modals, layout
 // preview, drag-and-drop reparenting, and the buildHierarchy pass that
 // converts the flat tile grid into nested smkt-group sections.
@@ -265,7 +267,7 @@ function onDropGrid(e) {
 function reparentNode(nodeID, parentID, position, container, tile, insertIdx) {
   apiPost('/api/nodes/reparent', { node_id: nodeID, parent_id: parentID, position: position })
   .then(function(data) {
-    if (data.error) { alert('Reparent failed: ' + data.error); return; }
+    if (data.error) { toast('Reparent failed: ' + data.error, 'error'); return; }
     if (!tile) return;
     if (parentID && container) {
       var siblings = container.querySelectorAll('.node-tile');
@@ -298,20 +300,20 @@ function reparentNode(nodeID, parentID, position, container, tile, insertIdx) {
       }
     }
   })
-  .catch(function(e) { alert('Reparent error: ' + e); });
+  .catch(function(e) { toast('Reparent error: ' + e, 'error'); });
 }
 
 function reorderLane(laneID, orderedIDs, container, draggedTile, insertIdx) {
   apiPost('/api/nodegroup/reorder-lane', { lane_id: laneID, ordered_ids: orderedIDs })
   .then(function(data) {
-    if (data.error) { alert('Reorder failed: ' + data.error); return; }
+    if (data.error) { toast('Reorder failed: ' + data.error, 'error'); return; }
     orderedIDs.forEach(function(id) {
       var t = container.querySelector('.node-tile[data-id="' + id + '"]');
       if (t) container.appendChild(t);
     });
     updateLaneDepths(container);
   })
-  .catch(function(e) { alert('Reorder error: ' + e); });
+  .catch(function(e) { toast('Reorder error: ' + e, 'error'); });
 }
 
 function updateLaneDepths(container) {
@@ -520,3 +522,37 @@ function buildHierarchy() {
     wrapper.appendChild(grid);
   }
 }
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    addChildNode,
+    buildHierarchy,
+    closeAddNodeModal,
+    closeLaneModal,
+    closeNgrpModal,
+    createNodeGroup,
+    initDragAndDrop,
+    loadGroupLayout,
+    onDragEnd,
+    onDragLeave,
+    onDragOver,
+    onDragOverArea,
+    onDragStart,
+    onDrop,
+    onDropGrid,
+    openLaneModal,
+    openNgrpModal,
+    reorderLane,
+    reparentNode,
+    submitAddLane,
+    submitAddNode,
+    updateGroupSummary,
+    updateLaneCounts,
+    updateLaneDepths
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

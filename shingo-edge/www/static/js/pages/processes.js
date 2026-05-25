@@ -1,9 +1,33 @@
+import { api, confirm, delegateActions, escapeHtml, hideModal, showModal, tagSelect, toast } from '/static/js/shingoedge.js';
+
+// Processes admin page — process / style / node-claim / operator-station
+// editors driven by inline onclick handlers in processes.html. Functions
+// referenced from those handlers stay window-attached.
+//
+// This file is the worked example of the form-state convention (see
+// docs/ui-style-guide.md "Forms"). The claim editor is the non-trivial
+// section: it pins behavior via shingo-edge/www/static/js/pages/processes.characterization.test.js
+// (337 assertions covering every role × swap_mode cell + saveClaim
+// payload shape). Any silent change to which fields show/require/POST
+// fails CI before deploy.
+//
+// Conventions used:
+//   - claimState holds form values in one object — no scattered
+//     getElementById calls.
+//   - render(state) drives DOM from state. Conditional visibility
+//     comes from CLAIM_FIELD_VISIBILITY, a (role, swap) → visibility-map
+//     lookup. The 31 imperative style.display toggles from the prior
+//     version collapse to one function plus one table.
+//   - readClaimStateFromForm() snapshots DOM back into state.
+//   - validateClaimState(state) is pure — same input, same output. The
+//     panel called this out as the single highest-value behavior to
+//     pin since it's where claim-editor regressions hide.
+//   - saveClaim() runs the read → validate → POST pipeline.
+
 const activeProcessID = parseInt(document.getElementById('page-data').dataset.activeProcessId || '0', 10);
 const claimedByStation = window.claimedByStation || {};
 
-function processURL() {
-    return '/processes?process=' + activeProcessID;
-}
+// ─── Process editor ─────────────────────────────────────────────────────
 
 function resetProcessForm() {
     document.getElementById('new-process-name').value = '';
@@ -17,11 +41,11 @@ function resetProcessForm() {
 function openCreateProcessModal() {
     resetProcessForm();
     document.getElementById('process-modal-title').textContent = 'Add Process';
-    ShingoEdge.showModal('process-modal');
+    showModal('process-modal');
 }
 
 function closeProcessModal() {
-    ShingoEdge.hideModal('process-modal');
+    hideModal('process-modal');
     resetProcessForm();
 }
 
@@ -38,13 +62,13 @@ function showProcessTab(tab) {
 async function createProcess() {
     const name = document.getElementById('new-process-name').value.trim();
     if (!name) {
-        ShingoEdge.toast('Enter a process name', 'warning');
+        toast('Enter a process name', 'warning');
         return;
     }
     const counterPLC = document.getElementById('new-process-counter-plc').value;
     const counterTag = document.getElementById('new-process-counter-tag').value.trim();
     try {
-        const res = await ShingoEdge.api.post('/api/processes', {
+        const res = await api.post('/api/processes', {
             name: name,
             description: document.getElementById('new-process-description').value.trim(),
             production_state: 'active_production',
@@ -54,26 +78,26 @@ async function createProcess() {
         });
         // Auto-create a Default style and set it active
         try {
-            const style = await ShingoEdge.api.post('/api/styles', {
+            const style = await api.post('/api/styles', {
                 name: 'Default',
                 description: 'Default style',
                 process_id: res.id
             });
-            await ShingoEdge.api.put('/api/processes/' + res.id + '/active-style', {
+            await api.put('/api/processes/' + res.id + '/active-style', {
                 style_id: style.id
             });
         } catch (e) {
-            ShingoEdge.toast('Process created but default style setup failed: ' + e, 'warning');
+            toast('Process created but default style setup failed: ' + e, 'warning');
         }
         window.location = '/processes?process=' + res.id;
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 async function saveProcess() {
     try {
-        await ShingoEdge.api.put('/api/processes/' + activeProcessID, {
+        await api.put('/api/processes/' + activeProcessID, {
             name: document.getElementById('process-name').value.trim(),
             description: document.getElementById('process-description').value.trim(),
             production_state: document.getElementById('process-production-state').value,
@@ -82,23 +106,24 @@ async function saveProcess() {
             counter_enabled: document.getElementById('counter-enabled') ? document.getElementById('counter-enabled').checked : false,
             auto_cutover_enabled: document.getElementById('auto-cutover-enabled') ? document.getElementById('auto-cutover-enabled').checked : false
         });
-        ShingoEdge.toast('Process saved', 'success');
+        toast('Process saved', 'success');
         location.reload();
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 async function deleteProcess(id) {
-    if (!await ShingoEdge.confirm('Delete this process and all of its station configuration?')) return;
+    if (!await confirm('Delete this process and all of its station configuration?')) return;
     try {
-        await ShingoEdge.api.del('/api/processes/' + id);
+        await api.del('/api/processes/' + id);
         window.location = '/processes';
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
+// ─── Style editor ───────────────────────────────────────────────────────
 
 function resetStyleForm() {
     document.getElementById('style-id').value = '';
@@ -109,25 +134,128 @@ function resetStyleForm() {
 function openCreateStyleModal() {
     resetStyleForm();
     document.getElementById('style-modal-title').textContent = 'Add Style';
-    ShingoEdge.showModal('style-modal');
+    showModal('style-modal');
 }
 
 function closeStyleModal() {
-    ShingoEdge.hideModal('style-modal');
+    hideModal('style-modal');
     resetStyleForm();
 }
 
-function editStyle(style) {
+function editStyle() {
+    // Invoked via data-action="editStyle" with data-style="{{json .}}"
+    // on the clicked button. Parse the style JSON off the element.
+    var style = {};
+    try { style = JSON.parse(this.dataset.style || '{}') || {}; }
+    catch (e) { style = {}; }
     resetStyleForm();
     document.getElementById('style-id').value = style.id;
     document.getElementById('style-name').value = style.name || '';
     document.getElementById('style-description').value = style.description || '';
     document.getElementById('style-modal-title').textContent = 'Edit Style';
-    ShingoEdge.showModal('style-modal');
+    showModal('style-modal');
 }
 
-// --- Node Claims tab ---
+async function saveStyle() {
+    const id = document.getElementById('style-id').value;
+    const payload = {
+        name: document.getElementById('style-name').value.trim(),
+        description: document.getElementById('style-description').value.trim(),
+        process_id: activeProcessID
+    };
+    if (!payload.name) {
+        toast('Enter a style name', 'warning');
+        return;
+    }
+    try {
+        if (id) {
+            await api.put('/api/styles/' + id, payload);
+        } else {
+            await api.post('/api/styles', payload);
+        }
+        closeStyleModal();
+        location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
 
+async function deleteStyle(id) {
+    if (!await confirm('Delete this style?')) return;
+    try {
+        await api.del('/api/styles/' + id);
+        location.reload();
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
+// ─── Claim editor — state-driven ───────────────────────────────────────
+//
+// CLAIM_FIELD_VISIBILITY: the (role, swap_mode) lookup table that
+// replaces the prior 31-toggle imperative editor. Given the current
+// role and swap mode, returns a map of fieldset/group element ID →
+// boolean for whether that field should be visible.
+//
+// The map is the source of truth for what shows when. Editing the
+// editor (e.g., wiring a new field to a swap mode) is a one-line
+// table change here, not a hunt through showModal/openClaimModal/
+// editClaim/toggleClaimsAddPayload/validateClaimStaging looking for
+// every place to add a `style.display = ''`.
+
+function claimFieldVisibility(role, swap) {
+    const isManual = swap === 'manual_swap';
+    const isPressIndex = swap === 'two_robot_press_index';
+    const usesStaging = swap === 'single_robot' || swap === 'two_robot';
+    // role is now constrained to consume|produce; the legacy "changeover"
+    // role was removed during the UI consistency refactor and is no
+    // longer present in either the protocol or the editor's dropdown.
+    const showPair = !isManual;
+    return {
+        'claims-add-payload-group':           !isManual,
+        'claims-add-allowed-group':           isManual,
+        'claims-add-reorder-group':           !isManual,
+        'claims-add-lineside-group':          role === 'consume' && !isManual,
+        // Staging fieldset is hidden by manual_swap (no staging concept),
+        // then further hidden when the swap mode doesn't use staging at
+        // all (sequential / press_index).
+        'claims-staging-fieldset':            !isManual && usesStaging,
+        'claims-add-swap-group':              true,
+        'claims-source-fieldset':             true,
+        'claims-inbound-source-group':        true,
+        // Outbound destination is shown in every swap mode, including
+        // two_robot (the old bin still goes somewhere).
+        'claims-outbound-destination-group':  true,
+        'claims-changeover-fieldset':         !isManual,
+        'claims-ab-fieldset':                 showPair,
+        'claims-add-second-paired-group':     showPair && isPressIndex,
+        'claims-add-reuse-bins-row':          showPair && isPressIndex,
+        'claims-auto-request-fieldset':       isManual,
+        'claims-auto-request-manual-swap':    isManual,
+        'claims-auto-request-standard':       !isManual,
+        // Auto-push is only meaningful for a consume manual_swap
+        // (unloader pulling parts from a bin).
+        'claims-add-auto-push-row':           isManual && role === 'consume',
+    };
+}
+
+// SWAP_MODE_LABELS: presentation map for the existing claims table.
+const SWAP_MODE_LABELS = {
+    simple: 'Simple',
+    sequential: 'Sequential',
+    single_robot: '1-Robot',
+    two_robot: '2-Robot',
+    two_robot_press_index: '2-Robot Press Index',
+    manual_swap: 'Manual Swap',
+};
+
+const ROLE_LABELS = {
+    consume: 'Consume',
+    produce: 'Produce',
+};
+
+// claim editor state — populated by openClaimModal / editClaim,
+// snapshotted by readClaimStateFromForm before save.
 var _payloadCatalog = [];
 var _claimsStyleID = 0;
 var _currentClaims = [];
@@ -150,7 +278,7 @@ function onClaimsStyleChanged() {
 async function loadPayloadCatalog() {
     if (_payloadCatalog.length > 0) return;
     try {
-        _payloadCatalog = await ShingoEdge.api.get('/api/payload-catalog');
+        _payloadCatalog = await api.get('/api/payload-catalog');
         if (!Array.isArray(_payloadCatalog)) _payloadCatalog = [];
     } catch (_) { _payloadCatalog = []; }
     var sel = document.getElementById('claims-add-payload');
@@ -159,7 +287,7 @@ async function loadPayloadCatalog() {
     _payloadCatalog.forEach(function(p) {
         var opt = document.createElement('option');
         opt.value = p.code;
-        opt.textContent = p.code + (p.name ? ' \u2014 ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
+        opt.textContent = p.code + (p.name ? ' — ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
         opt.dataset.capacity = p.uop_capacity || 0;
         sel.appendChild(opt);
     });
@@ -170,7 +298,7 @@ async function loadClaims(styleID) {
     list.innerHTML = '';
     if (!styleID) return;
     try {
-        var claims = await ShingoEdge.api.get('/api/styles/' + styleID + '/node-claims');
+        var claims = await api.get('/api/styles/' + styleID + '/node-claims');
         _currentClaims = Array.isArray(claims) ? claims : [];
         if (!Array.isArray(claims) || claims.length === 0) {
             list.innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">No node claims for this style. Use the form below to add claims.</div>';
@@ -181,46 +309,52 @@ async function loadClaims(styleID) {
         table.innerHTML = '<thead><tr><th>Core Node</th><th>Role</th><th>Swap</th><th>Wants</th><th>Inbound</th><th>Outbound</th><th>Source</th><th>Dest</th><th>A/B Pair</th><th style="width:1%"></th></tr></thead>';
         var tbody = document.createElement('tbody');
         claims.forEach(function(c) {
-            var tr = document.createElement('tr');
-            tr.id = 'claim-row-' + c.id;
-            var wants;
-            if (c.role === 'changeover') {
-                wants = 'Evacuate &amp; restore';
-            } else if (c.payload_code === '__empty__') {
-                wants = 'Empty (clear node)';
-            } else if (c.payload_code) {
-                wants = c.payload_code + (c.role === 'produce' ? ' (empty bin)' : '');
-            } else {
-                wants = 'Unset';
-            }
-            var swapLabel = {'simple': 'Simple', 'sequential': 'Sequential', 'single_robot': '1-Robot', 'two_robot': '2-Robot', 'two_robot_press_index': '2-Robot Press Index', 'manual_swap': 'Manual Swap'}[c.swap_mode] || c.swap_mode || 'Simple';
-            var flags = [];
-            if (c.keep_staged) flags.push('staged');
-            if (c.evacuate_on_changeover) flags.push('evac');
-            if (c.auto_reorder) flags.push('auto');
-            var flagStr = flags.length ? ' <span style="color:var(--text-muted);font-size:0.75rem">' + flags.join(', ') + '</span>' : '';
-            tr.innerHTML =
-                '<td class="mono">' + ShingoEdge.escapeHtml(c.core_node_name) + '</td>' +
-                '<td><span class="status-badge">' + ({consume:'Consume',produce:'Produce',changeover:'Changeover'}[c.role] || c.role) + '</span>' + flagStr + '</td>' +
-                '<td>' + swapLabel + '</td>' +
-                '<td>' + ShingoEdge.escapeHtml(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
-                '<td class="mono">' + ShingoEdge.escapeHtml(c.inbound_staging || '\u2014') + '</td>' +
-                '<td class="mono">' + ShingoEdge.escapeHtml(c.outbound_staging || '\u2014') + '</td>' +
-                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.inbound_source || '\u2014') + '</td>' +
-                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.outbound_destination || '\u2014') + '</td>' +
-                '<td class="mono" style="font-size:0.8rem">' + ShingoEdge.escapeHtml(c.paired_core_node || '\u2014') + '</td>' +
-                '<td style="white-space:nowrap">' +
-                    '<button class="btn btn-sm" data-action="edit-claim" data-claim-id="' + c.id + '">Edit</button> ' +
-                    '<button class="btn btn-sm btn-danger" data-action="remove-claim" data-claim-id="' + c.id + '">Remove</button>' +
-                '</td>';
-            tbody.appendChild(tr);
+            tbody.appendChild(renderClaimRow(c));
         });
         table.appendChild(tbody);
         list.appendChild(table);
         ensureClaimsListDelegation(list);
     } catch (e) {
-        ShingoEdge.toast('Error loading claims: ' + e, 'error');
+        toast('Error loading claims: ' + e, 'error');
     }
+}
+
+// renderClaimRow builds the <tr> for a single existing claim. Pure
+// (claim) → DOM, no global state read; easy to unit-test if/when a
+// browserless harness lands for the row rendering.
+function renderClaimRow(c) {
+    var tr = document.createElement('tr');
+    tr.id = 'claim-row-' + c.id;
+    var wants;
+    if (c.payload_code === '__empty__') {
+        wants = 'Empty (clear node)';
+    } else if (c.payload_code) {
+        wants = c.payload_code + (c.role === 'produce' ? ' (empty bin)' : '');
+    } else {
+        wants = 'Unset';
+    }
+    var swapLabel = SWAP_MODE_LABELS[c.swap_mode] || c.swap_mode || '';
+    var flags = [];
+    if (c.keep_staged) flags.push('staged');
+    if (c.evacuate_on_changeover) flags.push('evac');
+    if (c.auto_reorder) flags.push('auto');
+    var flagStr = flags.length ? ' <span style="color:var(--text-muted);font-size:0.75rem">' + flags.join(', ') + '</span>' : '';
+    var esc = escapeHtml;
+    tr.innerHTML =
+        '<td class="mono">' + esc(c.core_node_name) + '</td>' +
+        '<td><span class="badge">' + esc(ROLE_LABELS[c.role] || c.role) + '</span>' + flagStr + '</td>' +
+        '<td>' + esc(swapLabel) + '</td>' +
+        '<td>' + esc(wants) + (c.uop_capacity ? ' <span style="color:var(--text-muted);font-size:0.8rem">(' + c.uop_capacity + ' UOP)</span>' : '') + '</td>' +
+        '<td class="mono">' + esc(c.inbound_staging || '—') + '</td>' +
+        '<td class="mono">' + esc(c.outbound_staging || '—') + '</td>' +
+        '<td class="mono" style="font-size:0.8rem">' + esc(c.inbound_source || '—') + '</td>' +
+        '<td class="mono" style="font-size:0.8rem">' + esc(c.outbound_destination || '—') + '</td>' +
+        '<td class="mono" style="font-size:0.8rem">' + esc(c.paired_core_node || '—') + '</td>' +
+        '<td style="white-space:nowrap">' +
+            '<button class="btn btn-sm" data-action="edit-claim" data-claim-id="' + c.id + '">Edit</button> ' +
+            '<button class="btn btn-sm btn-danger" data-action="remove-claim" data-claim-id="' + c.id + '">Remove</button>' +
+        '</td>';
+    return tr;
 }
 
 // Single delegated click listener on the claims-list container. The list
@@ -242,123 +376,139 @@ function ensureClaimsListDelegation(list) {
     });
 }
 
-function openClaimModal() {
-    if (!_claimsStyleID) { ShingoEdge.toast('Select a style first', 'warning'); return; }
-    document.getElementById('claims-edit-id').value = '';
-    // Mark already-claimed nodes as disabled with strikethrough
-    var sel = document.getElementById('claims-add-node');
-    var claimedNodes = _currentClaims.map(function(c) { return c.core_node_name; });
-    Array.from(sel.options).forEach(function(opt) {
-        if (!opt.value) return;
-        var claimed = claimedNodes.indexOf(opt.value) >= 0;
-        opt.disabled = claimed;
-        opt.style.textDecoration = claimed ? 'line-through' : '';
-        opt.style.color = claimed ? 'var(--text-muted)' : '';
+// ── Claim form: read/write/render/validate ──────────────────────────────
+
+// readClaimStateFromForm: snapshot the current DOM inputs into a state
+// object. Pure DOM → JS; no side effects. Used by saveClaim and by the
+// onchange handlers wired in processes.html that re-render the form
+// whenever role or swap mode flips.
+function readClaimStateFromForm() {
+    var get = function(id) { return document.getElementById(id); };
+    var allowedCodes = [];
+    document.querySelectorAll('.allowed-payload-cb:checked').forEach(function(cb) {
+        allowedCodes.push(cb.value);
     });
-    sel.value = '';
-    sel.disabled = false;
-    document.getElementById('claims-add-role').value = 'consume';
-    // Default new claims to single_robot; "simple" is no longer offered.
-    document.getElementById('claims-add-swap').value = 'single_robot';
-    document.getElementById('claims-add-payload').selectedIndex = 0;
-    document.getElementById('claims-add-capacity').value = '0';
-    document.getElementById('claims-add-reorder').value = '0';
-    document.getElementById('claims-add-lineside-soft').value = '0';
-    document.getElementById('claims-add-inbound').value = '';
-    document.getElementById('claims-add-outbound').value = '';
-    document.getElementById('claims-add-inbound-source').value = '';
-    document.getElementById('claims-add-outbound-destination').value = '';
-    // No keep-staged checkbox in the editor; nothing to reset for it.
-    document.getElementById('claims-add-evacuate').checked = false;
-    document.getElementById('claims-add-reuse-bins').checked = false;
-    document.getElementById('claims-add-paired-node').value = '';
-    document.getElementById('claims-add-second-paired-node').value = '';
-    document.getElementById('claims-add-auto-confirm').checked = false;
-    document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
-    toggleClaimsAddPayload();
-    validateClaimStaging();
-    ShingoEdge.showModal('claim-modal');
+    return {
+        id: get('claims-edit-id').value,
+        styleId: _claimsStyleID,
+        coreNodeName: get('claims-add-node').value,
+        role: get('claims-add-role').value,
+        swapMode: get('claims-add-swap').value,
+        payloadCode: get('claims-add-payload').value,
+        allowedPayloadCodes: allowedCodes,
+        uopCapacity: parseInt(get('claims-add-capacity').value, 10) || 0,
+        reorderPoint: parseInt(get('claims-add-reorder').value, 10) || 0,
+        linesideSoftThreshold: Math.max(0, parseInt(get('claims-add-lineside-soft').value, 10) || 0),
+        inboundStaging: get('claims-add-inbound').value,
+        outboundStaging: get('claims-add-outbound').value,
+        inboundSource: get('claims-add-inbound-source').value,
+        outboundDestination: get('claims-add-outbound-destination').value,
+        autoRequestPayload: get('claims-add-auto-request').value,
+        evacuateOnChangeover: get('claims-add-evacuate').checked,
+        reuseCompatibleBins: get('claims-add-reuse-bins').checked,
+        autoPush: get('claims-add-auto-push').checked,
+        pairedCoreNode: get('claims-add-paired-node').value,
+        secondPairedCoreNode: get('claims-add-second-paired-node').value,
+        autoConfirm: get('claims-add-auto-confirm').checked,
+    };
 }
 
-function editClaim(claim) {
-    if (!_claimsStyleID) return;
-    document.getElementById('claims-edit-id').value = claim.id;
-    var sel = document.getElementById('claims-add-node');
-    Array.from(sel.options).forEach(function(opt) {
-        opt.disabled = false;
-        opt.style.textDecoration = '';
-        opt.style.color = '';
-    });
-    sel.value = claim.core_node_name;
-    sel.disabled = false; // allow changing node on edit
-    document.getElementById('claims-add-role').value = claim.role || 'consume';
-    document.getElementById('claims-add-swap').value = claim.swap_mode || 'simple';
-    document.getElementById('claims-add-payload').value = claim.payload_code || '';
-    document.getElementById('claims-add-capacity').value = claim.uop_capacity || 0;
-    document.getElementById('claims-add-reorder').value = claim.reorder_point || 0;
-    document.getElementById('claims-add-lineside-soft').value = claim.lineside_soft_threshold || 0;
-    document.getElementById('claims-add-inbound').value = claim.inbound_staging || '';
-    document.getElementById('claims-add-outbound').value = claim.outbound_staging || '';
-    document.getElementById('claims-add-inbound-source').value = claim.inbound_source || '';
-    document.getElementById('claims-add-outbound-destination').value = claim.outbound_destination || '';
-    // KeepStaged is no longer surfaced in the UI; the column persists as a backend safety net for the future rewire.
-    document.getElementById('claims-add-evacuate').checked = !!claim.evacuate_on_changeover;
-    document.getElementById('claims-add-reuse-bins').checked = !!claim.reuse_compatible_bins;
-    document.getElementById('claims-add-auto-push').checked = !!claim.auto_push;
-    document.getElementById('claims-add-paired-node').value = claim.paired_core_node || '';
-    document.getElementById('claims-add-second-paired-node').value = claim.second_paired_core_node || '';
-    document.getElementById('claims-add-auto-confirm').checked = !!claim.auto_confirm;
-    document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
-    toggleClaimsAddPayload();
-    validateClaimStaging();
-    if (claim.swap_mode === 'manual_swap') {
-        // Fallback: legacy claims migrated from bin_loader have payload_code set
-        // but allowed_payload_codes empty. Seed the picker from payload_code so
-        // Save doesn't immediately reject with "Select at least one allowed payload".
-        var allowed = claim.allowed_payload_codes || [];
-        if (allowed.length === 0 && claim.payload_code) {
-            allowed = [claim.payload_code];
+// writeClaimStateToForm: opposite direction — push a state object out
+// to the form inputs. Used by editClaim (existing claim → form) and
+// openClaimModal (default state → form).
+function writeClaimStateToForm(state) {
+    var get = function(id) { return document.getElementById(id); };
+    get('claims-edit-id').value = state.id || '';
+    get('claims-add-node').value = state.coreNodeName || '';
+    get('claims-add-role').value = state.role || 'consume';
+    get('claims-add-swap').value = state.swapMode || 'single_robot';
+    get('claims-add-payload').value = state.payloadCode || '';
+    get('claims-add-capacity').value = String(state.uopCapacity || 0);
+    get('claims-add-reorder').value = String(state.reorderPoint || 0);
+    get('claims-add-lineside-soft').value = String(state.linesideSoftThreshold || 0);
+    get('claims-add-inbound').value = state.inboundStaging || '';
+    get('claims-add-outbound').value = state.outboundStaging || '';
+    get('claims-add-inbound-source').value = state.inboundSource || '';
+    get('claims-add-outbound-destination').value = state.outboundDestination || '';
+    get('claims-add-auto-request').value = state.autoRequestPayload || '';
+    get('claims-add-evacuate').checked = !!state.evacuateOnChangeover;
+    get('claims-add-reuse-bins').checked = !!state.reuseCompatibleBins;
+    get('claims-add-auto-push').checked = !!state.autoPush;
+    get('claims-add-paired-node').value = state.pairedCoreNode || '';
+    get('claims-add-second-paired-node').value = state.secondPairedCoreNode || '';
+    get('claims-add-auto-confirm').checked = !!state.autoConfirm;
+}
+
+// validateClaimState: pure (state) → {ok, errors}. Side-effect free so
+// it can be unit-tested without a DOM. saveClaim translates errors to
+// toasts; validate doesn't know about UI.
+function validateClaimState(state) {
+    var errors = [];
+    if (!state.coreNodeName) {
+        errors.push({ field: 'coreNodeName', msg: 'Select a core node' });
+    }
+    if (state.swapMode === 'manual_swap') {
+        if (state.allowedPayloadCodes.length === 0) {
+            errors.push({ field: 'allowedPayloadCodes', msg: 'Select at least one allowed payload' });
         }
-        buildAllowedPayloadPicker(allowed);
-        updateAutoRequestDropdown();
-        document.getElementById('claims-add-auto-request').value = claim.auto_request_payload || '';
+    } else if ((state.role === 'consume' || state.role === 'produce') && !state.payloadCode) {
+        errors.push({ field: 'payloadCode', msg: 'Select a payload' });
     }
-    ShingoEdge.showModal('claim-modal');
+    // single_robot needs both inbound+outbound staging, two_robot just inbound.
+    if (state.swapMode === 'single_robot' && (!state.inboundStaging || !state.outboundStaging)) {
+        errors.push({ field: 'staging', msg: 'Swap modes require both inbound and outbound staging' });
+    } else if (state.swapMode === 'two_robot' && !state.inboundStaging) {
+        errors.push({ field: 'staging', msg: 'Two-robot swap requires inbound staging' });
+    }
+    if (state.swapMode === 'two_robot_press_index') {
+        if (!state.pairedCoreNode) {
+            errors.push({ field: 'pairedCoreNode', msg: '2-Robot Press Index requires a Back Press Node' });
+        }
+        if (!state.outboundDestination) {
+            errors.push({ field: 'outboundDestination', msg: '2-Robot Press Index requires an Outbound Destination' });
+        }
+        if (state.secondPairedCoreNode) {
+            if (state.secondPairedCoreNode === state.pairedCoreNode) {
+                errors.push({ field: 'secondPairedCoreNode', msg: 'Third press position must differ from the Back Press Node' });
+            }
+            if (state.secondPairedCoreNode === state.coreNodeName) {
+                errors.push({ field: 'secondPairedCoreNode', msg: 'Third press position must differ from the front (Core Node)' });
+            }
+        }
+    }
+    return { ok: errors.length === 0, errors: errors };
 }
 
-function closeClaimModal() {
-    ShingoEdge.hideModal('claim-modal');
-    document.getElementById('claims-add-node').disabled = false;
-}
-
-function validateClaimStaging() {
-    var swap = document.getElementById('claims-add-swap').value;
-    var warn = document.getElementById('claims-staging-warning');
-    var stagingFieldset = document.getElementById('claims-staging-fieldset');
-    var inboundSel = document.getElementById('claims-add-inbound');
-    var outboundSel = document.getElementById('claims-add-outbound');
-    var outboundDestGroup = document.getElementById('claims-outbound-destination-group');
-    var outboundDest = document.getElementById('claims-add-outbound-destination');
-    // Determine what each swap mode needs:
-    //   simple:       no staging, source + dest
-    //   sequential:   no staging, source + dest
-    //   single_robot: inbound + outbound staging, source + dest
-    //   two_robot:    inbound staging only, source + dest (no outbound staging/dest)
-    var usesStaging = swap === 'single_robot' || swap === 'two_robot';
-    var usesOutbound = swap === 'single_robot';
-    var isTwoRobot = swap === 'two_robot';
-
-    // Show/hide entire staging fieldset based on whether mode uses staging at all
-    // (toggleClaimsAddPayload hides it for changeover and manual_swap already,
-    //  so only touch it if the role allows staging)
+// renderClaimForm: drives the editor DOM from current role/swap mode.
+// Replaces the prior toggleClaimsAddPayload + validateClaimStaging
+// pair. The lookup at claimFieldVisibility is the single source of
+// truth for what shows when.
+function renderClaimForm() {
     var role = document.getElementById('claims-add-role').value;
-    var swapMode = document.getElementById('claims-add-swap').value;
-    var roleAllowsStaging = role !== 'changeover' && swapMode !== 'manual_swap';
-    if (stagingFieldset && roleAllowsStaging) {
-        stagingFieldset.style.display = usesStaging ? '' : 'none';
+    var swap = document.getElementById('claims-add-swap').value;
+    var isManual = swap === 'manual_swap';
+    var isPressIndex = swap === 'two_robot_press_index';
+    var isTwoRobot = swap === 'two_robot';
+    var visibility = claimFieldVisibility(role, swap);
+
+    // Apply visibility map.
+    for (var id in visibility) {
+        var el = document.getElementById(id);
+        if (el) el.style.display = visibility[id] ? '' : 'none';
+    }
+    // The reuse-bins row uses display:flex when visible (not block).
+    var reuseRow = document.getElementById('claims-add-reuse-bins-row');
+    if (reuseRow && visibility['claims-add-reuse-bins-row']) {
+        reuseRow.style.display = 'flex';
+    }
+    // auto-push uses flex too.
+    var autoPushRow = document.getElementById('claims-add-auto-push-row');
+    if (autoPushRow && visibility['claims-add-auto-push-row']) {
+        autoPushRow.style.display = 'flex';
     }
 
-    // Outbound staging: only used by single_robot
+    // Disable outbound staging for two_robot (data: ignored anyway).
+    var outboundSel = document.getElementById('claims-add-outbound');
     if (outboundSel) {
         if (isTwoRobot) {
             outboundSel.value = '';
@@ -370,262 +520,57 @@ function validateClaimStaging() {
         }
     }
 
-    // Outbound destination: used by all modes except hidden by role
-    // (two_robot still sends old bin to outbound destination via removal robot)
-    if (outboundDestGroup) {
-        outboundDestGroup.style.display = '';
-    }
-
-    // Clear staging values when not used so they aren't saved
-    if (!usesStaging) {
-        if (inboundSel) inboundSel.value = '';
-        if (outboundSel) outboundSel.value = '';
-    }
-
-    // Validation warning for missing required staging
-    var inbound = inboundSel ? inboundSel.value : '';
-    var outbound = outboundSel ? outboundSel.value : '';
-    var missing = false;
-    if (swap === 'single_robot') {
-        missing = !inbound || !outbound;
-    } else if (swap === 'two_robot') {
-        missing = !inbound;
-    }
-    if (warn) warn.style.display = missing ? '' : 'none';
-
-    return !missing;
-}
-
-async function saveClaim() {
-    var node = document.getElementById('claims-add-node').value;
-    if (!node) { ShingoEdge.toast('Select a core node', 'warning'); return; }
-    var role = document.getElementById('claims-add-role').value;
-    var payloadCode = document.getElementById('claims-add-payload').value;
-    var capacity = parseInt(document.getElementById('claims-add-capacity').value, 10) || 0;
-    var reorder = parseInt(document.getElementById('claims-add-reorder').value, 10) || 0;
-    var linesideSoft = parseInt(document.getElementById('claims-add-lineside-soft').value, 10) || 0;
-    if (linesideSoft < 0) linesideSoft = 0;
-
-    var swap = document.getElementById('claims-add-swap').value;
-    var allowedPayloadCodes = [];
-    if (swap === 'manual_swap') {
-        allowedPayloadCodes = getSelectedAllowedPayloads();
-        if (allowedPayloadCodes.length === 0) {
-            ShingoEdge.toast('Select at least one allowed payload', 'warning');
-            return;
-        }
-        payloadCode = allowedPayloadCodes[0]; // primary = first selected
-    } else if ((role === 'consume' || role === 'produce') && !payloadCode) {
-        ShingoEdge.toast('Select a payload', 'warning');
-        return;
-    }
-    if (!validateClaimStaging()) {
-        ShingoEdge.toast('Swap modes require both inbound and outbound staging', 'warning');
-        return;
-    }
-    if (swap === 'two_robot_press_index') {
-        var pairedNode = document.getElementById('claims-add-paired-node').value;
-        var secondPairedNode = document.getElementById('claims-add-second-paired-node').value;
-        if (!pairedNode) {
-            ShingoEdge.toast('2-Robot Press Index requires a Back Press Node', 'warning');
-            return;
-        }
-        if (!document.getElementById('claims-add-outbound-destination').value) {
-            ShingoEdge.toast('2-Robot Press Index requires an Outbound Destination', 'warning');
-            return;
-        }
-        if (secondPairedNode) {
-            if (secondPairedNode === pairedNode) {
-                ShingoEdge.toast('Third press position must differ from the Back Press Node', 'warning');
-                return;
-            }
-            if (secondPairedNode === node) {
-                ShingoEdge.toast('Third press position must differ from the front (Core Node)', 'warning');
-                return;
-            }
-        }
-    }
-
-    // Build the claim body
-    var claimBody = {
-        style_id: _claimsStyleID,
-        core_node_name: node,
-        role: role,
-        swap_mode: document.getElementById('claims-add-swap').value,
-        payload_code: (role === 'changeover' || swap === 'manual_swap') ? '' : payloadCode,
-        allowed_payload_codes: allowedPayloadCodes,
-        uop_capacity: capacity,
-        reorder_point: reorder,
-        lineside_soft_threshold: linesideSoft,
-        auto_reorder: true,
-        inbound_staging: document.getElementById('claims-add-inbound').value,
-        outbound_staging: document.getElementById('claims-add-outbound').value,
-        inbound_source: document.getElementById('claims-add-inbound-source').value,
-        outbound_destination: document.getElementById('claims-add-outbound-destination').value,
-        auto_request_payload: document.getElementById('claims-add-auto-request').value,
-        // New claims always submit keep_staged=false; the editor doesn't surface it.
-        keep_staged: false,
-        evacuate_on_changeover: document.getElementById('claims-add-evacuate').checked,
-        reuse_compatible_bins: document.getElementById('claims-add-reuse-bins').checked,
-        auto_push: document.getElementById('claims-add-auto-push').checked,
-        paired_core_node: document.getElementById('claims-add-paired-node').value,
-        second_paired_core_node: document.getElementById('claims-add-second-paired-node').value,
-        auto_confirm: document.getElementById('claims-add-auto-confirm').checked
-    };
-
-    // Check if selected node is an NGRP — expand to physical children
-    var sel = document.getElementById('claims-add-node');
-    var selectedOpt = sel.options[sel.selectedIndex];
-    var nodeType = selectedOpt ? selectedOpt.dataset.type : '';
-    var nodeNames = [node];
-
-    if (nodeType === 'NGRP' && !document.getElementById('claims-edit-id').value) {
-        try {
-            var children = await ShingoEdge.api.get('/api/node/' + encodeURIComponent(node) + '/children');
-            if (Array.isArray(children) && children.length > 0) {
-                var childNames = children.map(function(c) { return c.name; });
-                if (!await ShingoEdge.confirm('Create ' + role + ' claims for ' + childNames.length + ' nodes under ' + node + '?\n\n' + childNames.join(', '))) {
-                    return;
-                }
-                nodeNames = childNames;
-            } else {
-                ShingoEdge.toast('No physical children found under ' + node, 'warning');
-                return;
-            }
-        } catch (e) {
-            ShingoEdge.toast('Error fetching children: ' + e, 'error');
-            return;
-        }
-    }
-
-    try {
-        for (var i = 0; i < nodeNames.length; i++) {
-            claimBody.core_node_name = nodeNames[i];
-            await ShingoEdge.api.post('/api/style-node-claims', claimBody);
-        }
-        closeClaimModal();
-        await loadClaims(_claimsStyleID);
-        if (nodeNames.length > 1) ShingoEdge.toast('Created ' + nodeNames.length + ' claims', 'success');
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-async function removeClaim(id) {
-    try {
-        await ShingoEdge.api.del('/api/style-node-claims/' + id);
-        await loadClaims(_claimsStyleID);
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-function toggleClaimsAddPayload() {
-    var role = document.getElementById('claims-add-role').value;
-    var swap = document.getElementById('claims-add-swap').value;
-    var isChangeover = role === 'changeover';
-    var isManualSwap = swap === 'manual_swap';
-    // Payload & UOP — manual_swap uses AllowedPayloadCodes, not single PayloadCode
-    document.getElementById('claims-add-payload-group').style.display = (isChangeover || isManualSwap) ? 'none' : '';
-    document.getElementById('claims-add-allowed-group').style.display = isManualSwap ? '' : 'none';
-    document.getElementById('claims-add-reorder-group').style.display = (isChangeover || isManualSwap) ? 'none' : '';
-    // Lineside soft cap — only applies to consume claims that flow through the release prompt.
-    var linesideGroup = document.getElementById('claims-add-lineside-group');
-    if (linesideGroup) {
-        linesideGroup.style.display = (role === 'consume' && !isManualSwap) ? '' : 'none';
-    }
-    // Staging — not used by manual_swap or changeover
-    document.getElementById('claims-staging-fieldset').style.display = (isChangeover || isManualSwap) ? 'none' : '';
-    // Swap mode dropdown — always visible (not hidden for changeover either, let them see it)
-    document.getElementById('claims-add-swap-group').style.display = isChangeover ? 'none' : '';
-    // Source/Dest — manual_swap uses both inbound (empty source) and outbound (loaded dest)
-    document.getElementById('claims-source-fieldset').style.display = isChangeover ? 'none' : '';
-    document.getElementById('claims-inbound-source-group').style.display = (isChangeover) ? 'none' : '';
-    document.getElementById('claims-outbound-destination-group').style.display = (isChangeover) ? 'none' : '';
-    // Changeover fieldset — not used by manual_swap
-    document.getElementById('claims-changeover-fieldset').style.display = isManualSwap ? 'none' : '';
-    // Paired-node fieldset is dual-purposed:
-    //   - two_robot_press_index: required "Back Press Node" (the second press position)
-    //   - other consume/produce modes: optional A/B alternating partner
-    // Manual swap and changeover hide it entirely.
-    var isPressIndex = swap === 'two_robot_press_index';
-    var showPair = (role === 'consume' || role === 'produce') && !isManualSwap;
-    var pairFieldset = document.getElementById('claims-ab-fieldset');
-    pairFieldset.style.display = showPair ? '' : 'none';
-    var secondGroup = document.getElementById('claims-add-second-paired-group');
-    if (showPair) {
+    // Press-index dual-purpose A/B fieldset labels.
+    if (visibility['claims-ab-fieldset']) {
         var legend = document.getElementById('claims-ab-legend');
         var help = document.getElementById('claims-ab-help');
         var label = document.getElementById('claims-ab-label');
-        var pairSelect = document.getElementById('claims-add-paired-node');
+        var pairSel = document.getElementById('claims-add-paired-node');
         if (isPressIndex) {
             legend.textContent = 'Press Index Pairing';
             help.textContent = 'Second press position. Bins index forward from this node into the active node when the active node releases. Required for 2-Robot Press Index Swap.';
             label.innerHTML = 'Back Press Node <span style="color:var(--danger,#c33)">*</span>';
-            if (pairSelect.options.length > 0 && pairSelect.options[0].value === '') {
-                pairSelect.options[0].textContent = '-- Select back press node --';
+            if (pairSel.options.length > 0 && pairSel.options[0].value === '') {
+                pairSel.options[0].textContent = '-- Select back press node --';
             }
-            if (secondGroup) secondGroup.style.display = '';
-            // The reuse-compatible-bins toggle is press-index only.
-            var reuseRow = document.getElementById('claims-add-reuse-bins-row');
-            if (reuseRow) reuseRow.style.display = 'flex';
         } else {
             legend.textContent = 'A/B Node Cycling';
             help.textContent = 'Pair this node with another node for alternating operation. The operator flips which node is active via the station HMI.';
             label.textContent = 'Paired Node';
-            if (pairSelect.options.length > 0 && pairSelect.options[0].value === '') {
-                pairSelect.options[0].textContent = '-- None (no A/B cycling) --';
+            if (pairSel.options.length > 0 && pairSel.options[0].value === '') {
+                pairSel.options[0].textContent = '-- None (no A/B cycling) --';
             }
-            if (secondGroup) secondGroup.style.display = 'none';
+            // Reset state that doesn't apply outside press index.
             document.getElementById('claims-add-second-paired-node').value = '';
-            var reuseRow2 = document.getElementById('claims-add-reuse-bins-row');
-            if (reuseRow2) reuseRow2.style.display = 'none';
             document.getElementById('claims-add-reuse-bins').checked = false;
         }
     } else {
+        // AB fieldset hidden entirely → clear paired-node state.
         document.getElementById('claims-add-paired-node').value = '';
-        if (secondGroup) secondGroup.style.display = 'none';
         document.getElementById('claims-add-second-paired-node').value = '';
-        var reuseRow3 = document.getElementById('claims-add-reuse-bins-row');
-        if (reuseRow3) reuseRow3.style.display = 'none';
         document.getElementById('claims-add-reuse-bins').checked = false;
     }
-    // Auto-request fieldset — show for manual_swap (all-payload) or standard (single dropdown)
-    document.getElementById('claims-auto-request-fieldset').style.display = isManualSwap ? '' : 'none';
-    document.getElementById('claims-auto-request-manual-swap').style.display = isManualSwap ? '' : 'none';
-    document.getElementById('claims-auto-request-standard').style.display = isManualSwap ? 'none' : '';
-    // Auto-push toggle — only meaningful for consume manual_swap (unloader). Hidden
-    // and forced false otherwise so a stale checked state can't carry across role flips.
-    var autoPushRow = document.getElementById('claims-add-auto-push-row');
-    if (autoPushRow) {
-        var showAutoPush = isManualSwap && role === 'consume';
-        autoPushRow.style.display = showAutoPush ? 'flex' : 'none';
-        if (!showAutoPush) {
-            document.getElementById('claims-add-auto-push').checked = false;
-        }
+
+    // Auto-push only applies to a consume manual_swap (unloader).
+    if (!(isManual && role === 'consume')) {
+        document.getElementById('claims-add-auto-push').checked = false;
     }
-    if (isChangeover) {
-        document.getElementById('claims-add-payload').value = '';
-        document.getElementById('claims-add-capacity').value = '0';
-        document.getElementById('claims-add-reorder').value = '0';
-        document.getElementById('claims-add-lineside-soft').value = '0';
-    }
-    // Only reset manual_swap fields when creating a new claim (not editing)
+
+    // Manual swap on a fresh open clears staging fields (no concept of
+    // staging there). When editing, leave alone so the operator can
+    // see prior values before manual_swap was selected.
     var isEditing = !!document.getElementById('claims-edit-id').value;
-    if (isManualSwap && !isEditing) {
+    if (isManual && !isEditing) {
         document.getElementById('claims-add-reorder').value = '0';
         document.getElementById('claims-add-payload').value = '';
         document.getElementById('claims-add-inbound').value = '';
         document.getElementById('claims-add-outbound').value = '';
         document.getElementById('claims-add-inbound-source').value = '';
-        // No keep-staged checkbox to clear here.
         document.getElementById('claims-add-evacuate').checked = false;
         document.getElementById('claims-add-paired-node').value = '';
         buildAllowedPayloadPicker([]);
     }
-    // When transitioning to manual_swap during edit, make sure the picker is
-    // populated. Seeds from the legacy single payload_code if nothing selected yet.
-    if (isManualSwap && isEditing) {
+    if (isManual && isEditing) {
         var picker = document.getElementById('claims-allowed-picker');
         var hasCheckboxes = picker && picker.querySelector('.allowed-payload-cb');
         if (!hasCheckboxes) {
@@ -635,16 +580,228 @@ function toggleClaimsAddPayload() {
             updateAutoRequestDropdown();
         }
     }
+
+    // Clear staging values when not used so they aren't saved.
+    if (!(swap === 'single_robot' || swap === 'two_robot') && !isManual) {
+        document.getElementById('claims-add-inbound').value = '';
+        document.getElementById('claims-add-outbound').value = '';
+    }
+
+    // Validation warning for missing required staging.
+    var warn = document.getElementById('claims-staging-warning');
+    if (warn) {
+        var state = readClaimStateFromForm();
+        var missing = (swap === 'single_robot' && (!state.inboundStaging || !state.outboundStaging))
+            || (swap === 'two_robot' && !state.inboundStaging);
+        warn.style.display = missing ? '' : 'none';
+    }
+}
+
+// Backwards-compat shims for inline onchange handlers in processes.html.
+// (`onchange="toggleClaimsAddPayload(); validateClaimStaging()"`)
+function toggleClaimsAddPayload() { renderClaimForm(); }
+function validateClaimStaging()   { renderClaimForm(); return true; }
+
+function defaultClaimState() {
+    return {
+        id: '',
+        coreNodeName: '',
+        role: 'consume',
+        swapMode: 'single_robot',
+        payloadCode: '',
+        allowedPayloadCodes: [],
+        uopCapacity: 0,
+        reorderPoint: 0,
+        linesideSoftThreshold: 0,
+        inboundStaging: '',
+        outboundStaging: '',
+        inboundSource: '',
+        outboundDestination: '',
+        autoRequestPayload: '',
+        evacuateOnChangeover: false,
+        reuseCompatibleBins: false,
+        autoPush: false,
+        pairedCoreNode: '',
+        secondPairedCoreNode: '',
+        autoConfirm: false,
+    };
+}
+
+function openClaimModal() {
+    if (!_claimsStyleID) { toast('Select a style first', 'warning'); return; }
+    // Mark already-claimed nodes as disabled with strikethrough.
+    var sel = document.getElementById('claims-add-node');
+    var claimedNodes = _currentClaims.map(function(c) { return c.core_node_name; });
+    Array.from(sel.options).forEach(function(opt) {
+        if (!opt.value) return;
+        var claimed = claimedNodes.indexOf(opt.value) >= 0;
+        opt.disabled = claimed;
+        opt.style.textDecoration = claimed ? 'line-through' : '';
+        opt.style.color = claimed ? 'var(--text-muted)' : '';
+    });
+    sel.disabled = false;
+    writeClaimStateToForm(defaultClaimState());
+    document.getElementById('claim-modal-title').textContent = 'Add Node Claim';
+    renderClaimForm();
+    showModal('claim-modal');
+}
+
+function editClaim(claim) {
+    if (!_claimsStyleID) return;
+    var sel = document.getElementById('claims-add-node');
+    Array.from(sel.options).forEach(function(opt) {
+        opt.disabled = false;
+        opt.style.textDecoration = '';
+        opt.style.color = '';
+    });
+    sel.disabled = false;
+    writeClaimStateToForm({
+        id: claim.id,
+        coreNodeName: claim.core_node_name,
+        role: claim.role || 'consume',
+        swapMode: claim.swap_mode || 'simple',
+        payloadCode: claim.payload_code || '',
+        uopCapacity: claim.uop_capacity || 0,
+        reorderPoint: claim.reorder_point || 0,
+        linesideSoftThreshold: claim.lineside_soft_threshold || 0,
+        inboundStaging: claim.inbound_staging || '',
+        outboundStaging: claim.outbound_staging || '',
+        inboundSource: claim.inbound_source || '',
+        outboundDestination: claim.outbound_destination || '',
+        autoRequestPayload: claim.auto_request_payload || '',
+        evacuateOnChangeover: !!claim.evacuate_on_changeover,
+        reuseCompatibleBins: !!claim.reuse_compatible_bins,
+        autoPush: !!claim.auto_push,
+        pairedCoreNode: claim.paired_core_node || '',
+        secondPairedCoreNode: claim.second_paired_core_node || '',
+        autoConfirm: !!claim.auto_confirm,
+    });
+    document.getElementById('claim-modal-title').textContent = 'Edit Node Claim';
+    if (claim.swap_mode === 'manual_swap') {
+        // Legacy claims migrated from bin_loader have payload_code set but
+        // allowed_payload_codes empty. Seed the picker from payload_code
+        // so Save doesn't immediately reject with "Select at least one
+        // allowed payload".
+        var allowed = claim.allowed_payload_codes || [];
+        if (allowed.length === 0 && claim.payload_code) {
+            allowed = [claim.payload_code];
+        }
+        buildAllowedPayloadPicker(allowed);
+        updateAutoRequestDropdown();
+        document.getElementById('claims-add-auto-request').value = claim.auto_request_payload || '';
+    }
+    renderClaimForm();
+    showModal('claim-modal');
+}
+
+function closeClaimModal() {
+    hideModal('claim-modal');
+    document.getElementById('claims-add-node').disabled = false;
+}
+
+async function saveClaim() {
+    var state = readClaimStateFromForm();
+    var validation = validateClaimState(state);
+    if (!validation.ok) {
+        // Surface the first error; field-level error rendering is a
+        // follow-up. Today's UX matches the prior single-toast behavior.
+        toast(validation.errors[0].msg, 'warning');
+        return;
+    }
+
+    // manual_swap forces payload_code to the first allowed payload for
+    // backwards compat with the wire format (existing claims still have
+    // a single primary payload_code; manual_swap's allowed_payload_codes
+    // is the set the operator can switch among).
+    var primaryPayload = state.payloadCode;
+    if (state.swapMode === 'manual_swap') {
+        primaryPayload = state.allowedPayloadCodes[0];
+    }
+
+    var claimBody = {
+        style_id: state.styleId,
+        core_node_name: state.coreNodeName,
+        role: state.role,
+        swap_mode: state.swapMode,
+        payload_code: state.swapMode === 'manual_swap' ? '' : primaryPayload,
+        allowed_payload_codes: state.allowedPayloadCodes,
+        uop_capacity: state.uopCapacity,
+        reorder_point: state.reorderPoint,
+        lineside_soft_threshold: state.linesideSoftThreshold,
+        auto_reorder: true,
+        inbound_staging: state.inboundStaging,
+        outbound_staging: state.outboundStaging,
+        inbound_source: state.inboundSource,
+        outbound_destination: state.outboundDestination,
+        auto_request_payload: state.autoRequestPayload,
+        // KeepStaged column persists as a backend safety net for the
+        // future supermarket rewire; the editor never sets it true.
+        keep_staged: false,
+        evacuate_on_changeover: state.evacuateOnChangeover,
+        reuse_compatible_bins: state.reuseCompatibleBins,
+        auto_push: state.autoPush,
+        paired_core_node: state.pairedCoreNode,
+        second_paired_core_node: state.secondPairedCoreNode,
+        auto_confirm: state.autoConfirm,
+    };
+
+    // NGRP expansion: if the picked node is a group AND we're creating
+    // (not editing), fan out to the physical children with one POST
+    // each. Confirmation required so a stray group-pick doesn't silently
+    // create N claims.
+    var sel = document.getElementById('claims-add-node');
+    var selectedOpt = sel.options[sel.selectedIndex];
+    var nodeType = selectedOpt ? selectedOpt.dataset.type : '';
+    var nodeNames = [state.coreNodeName];
+    if (nodeType === 'NGRP' && !state.id) {
+        try {
+            var children = await api.get('/api/node/' + encodeURIComponent(state.coreNodeName) + '/children');
+            if (Array.isArray(children) && children.length > 0) {
+                var childNames = children.map(function(c) { return c.name; });
+                if (!await confirm('Create ' + state.role + ' claims for ' + childNames.length + ' nodes under ' + state.coreNodeName + '?\n\n' + childNames.join(', '))) {
+                    return;
+                }
+                nodeNames = childNames;
+            } else {
+                toast('No physical children found under ' + state.coreNodeName, 'warning');
+                return;
+            }
+        } catch (e) {
+            toast('Error fetching children: ' + e, 'error');
+            return;
+        }
+    }
+
+    try {
+        for (var i = 0; i < nodeNames.length; i++) {
+            claimBody.core_node_name = nodeNames[i];
+            await api.post('/api/style-node-claims', claimBody);
+        }
+        closeClaimModal();
+        await loadClaims(_claimsStyleID);
+        if (nodeNames.length > 1) toast('Created ' + nodeNames.length + ' claims', 'success');
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
+}
+
+async function removeClaim(id) {
+    try {
+        await api.del('/api/style-node-claims/' + id);
+        await loadClaims(_claimsStyleID);
+    } catch (e) {
+        toast('Error: ' + e, 'error');
+    }
 }
 
 async function syncPayloadCatalog() {
     try {
-        await ShingoEdge.api.post('/api/payload-catalog/sync');
+        await api.post('/api/payload-catalog/sync');
         _payloadCatalog = [];
         await loadPayloadCatalog();
-        ShingoEdge.toast('Payload catalog synced', 'success');
+        toast('Payload catalog synced', 'success');
     } catch (e) {
-        ShingoEdge.toast('Sync failed: ' + e, 'error');
+        toast('Sync failed: ' + e, 'error');
     }
 }
 
@@ -663,7 +820,7 @@ function buildAllowedPayloadPicker(selected) {
         cb.addEventListener('change', updateAutoRequestDropdown);
         label.appendChild(cb);
         var span = document.createElement('span');
-        span.textContent = p.code + (p.name ? ' \u2014 ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
+        span.textContent = p.code + (p.name ? ' — ' + p.name : '') + (p.uop_capacity ? ' (' + p.uop_capacity + ' UOP)' : '');
         label.appendChild(span);
         picker.appendChild(label);
     });
@@ -702,41 +859,7 @@ function autoFillClaimsCapacity() {
     }
 }
 
-async function saveStyle() {
-    const id = document.getElementById('style-id').value;
-    const payload = {
-        name: document.getElementById('style-name').value.trim(),
-        description: document.getElementById('style-description').value.trim(),
-        process_id: activeProcessID
-    };
-    if (!payload.name) {
-        ShingoEdge.toast('Enter a style name', 'warning');
-        return;
-    }
-    try {
-        if (id) {
-            await ShingoEdge.api.put('/api/styles/' + id, payload);
-        } else {
-            await ShingoEdge.api.post('/api/styles', payload);
-        }
-        closeStyleModal();
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-async function deleteStyle(id) {
-    if (!await ShingoEdge.confirm('Delete this style?')) return;
-    try {
-        await ShingoEdge.api.del('/api/styles/' + id);
-        location.reload();
-    } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-
-// --- Operator Screens (Stations) ---
+// ─── Operator Stations (Screens) ───────────────────────────────────────
 
 function resetStationForm() {
     document.getElementById('station-id').value = '';
@@ -776,16 +899,20 @@ function getPickedNodes() {
 
 function openCreateStationModal() {
     resetStationForm();
-    document.getElementById('station-modal-title').textContent = 'Add Operator Screen';
-    ShingoEdge.showModal('station-modal');
+    document.getElementById('station-modal-title').textContent = 'Add Operator Station';
+    showModal('station-modal');
 }
 
 function closeStationModal() {
-    ShingoEdge.hideModal('station-modal');
+    hideModal('station-modal');
     resetStationForm();
 }
 
-async function editStation(station) {
+async function editStation() {
+    // Invoked via data-action="editStation" with data-station="{{json .}}".
+    var station = {};
+    try { station = JSON.parse(this.dataset.station || '{}') || {}; }
+    catch (e) { station = {}; }
     resetStationForm();
     document.getElementById('station-id').value = station.id;
     document.getElementById('station-name').value = station.name || '';
@@ -793,15 +920,15 @@ async function editStation(station) {
     document.getElementById('station-enabled').checked = !!station.enabled;
     // Load claimed nodes for this station
     try {
-        var nodes = await ShingoEdge.api.get('/api/operator-stations/' + station.id + '/claimed-nodes');
+        var nodes = await api.get('/api/operator-stations/' + station.id + '/claimed-nodes');
         resetNodePicker(Array.isArray(nodes) ? nodes : []);
     } catch (e) {
         resetNodePicker([]);
-        ShingoEdge.toast('Could not load claimed nodes: ' + e, 'error');
+        toast('Could not load claimed nodes: ' + e, 'error');
     }
     showProcessTab('stations');
-    document.getElementById('station-modal-title').textContent = 'Edit Operator Screen';
-    ShingoEdge.showModal('station-modal');
+    document.getElementById('station-modal-title').textContent = 'Edit Operator Station';
+    showModal('station-modal');
 }
 
 async function saveStation() {
@@ -818,53 +945,109 @@ async function saveStation() {
         device_mode: 'fixed_hmi'
     };
     if (!payload.name) {
-        ShingoEdge.toast('Screen name is required', 'warning');
+        toast('Station name is required', 'warning');
         return;
     }
     try {
         var stationID;
         if (id) {
-            await ShingoEdge.api.put('/api/operator-stations/' + id, payload);
+            await api.put('/api/operator-stations/' + id, payload);
             stationID = id;
         } else {
-            var res = await ShingoEdge.api.post('/api/operator-stations', payload);
+            var res = await api.post('/api/operator-stations', payload);
             stationID = res.id;
         }
         // Save claimed nodes
-        await ShingoEdge.api.put('/api/operator-stations/' + stationID + '/claimed-nodes', {
+        await api.put('/api/operator-stations/' + stationID + '/claimed-nodes', {
             nodes: getPickedNodes()
         });
         closeStationModal();
         location.reload();
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 async function moveStation(id, direction) {
     try {
-        await ShingoEdge.api.post('/api/operator-stations/' + id + '/move', { direction: direction });
+        await api.post('/api/operator-stations/' + id + '/move', { direction: direction });
         location.reload();
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 async function deleteStation(id) {
-    if (!await ShingoEdge.confirm('Delete this operator screen and its node assignments?')) return;
+    if (!await confirm('Delete this operator station and its node assignments?')) return;
     try {
-        await ShingoEdge.api.del('/api/operator-stations/' + id);
+        await api.del('/api/operator-stations/' + id);
         location.reload();
     } catch (e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
+        toast('Error: ' + e, 'error');
     }
 }
 
 // Wire up tag-select pickers for PLC counter tag fields
 (function initTagSelects() {
-    ShingoEdge.tagSelect('counter-tag', 'counter-plc');
-    ShingoEdge.tagSelect('new-process-counter-tag', 'new-process-counter-plc');
+    tagSelect('counter-tag', 'counter-plc');
+    tagSelect('new-process-counter-tag', 'new-process-counter-plc');
 })();
 
 // Initialize Node Claims tab (load catalog + first style's claims)
 if (activeProcessID) initClaimsTab();
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    autoFillClaimsCapacity,
+    buildAllowedPayloadPicker,
+    claimFieldVisibility,
+    closeClaimModal,
+    closeProcessModal,
+    closeStationModal,
+    closeStyleModal,
+    createProcess,
+    defaultClaimState,
+    deleteProcess,
+    deleteStation,
+    deleteStyle,
+    editClaim,
+    editStation,
+    editStyle,
+    ensureClaimsListDelegation,
+    getPickedNodes,
+    getSelectedAllowedPayloads,
+    initClaimsTab,
+    loadClaims,
+    loadPayloadCatalog,
+    moveStation,
+    onClaimsStyleChanged,
+    openClaimModal,
+    openCreateProcessModal,
+    openCreateStationModal,
+    openCreateStyleModal,
+    readClaimStateFromForm,
+    removeClaim,
+    renderClaimForm,
+    renderClaimRow,
+    resetNodePicker,
+    resetProcessForm,
+    resetStationForm,
+    resetStyleForm,
+    saveClaim,
+    saveProcess,
+    saveStation,
+    saveStyle,
+    showProcessTab,
+    syncPayloadCatalog,
+    toggleClaimsAddPayload,
+    updateAutoRequestDropdown,
+    validateClaimStaging,
+    validateClaimState,
+    writeClaimStateToForm
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

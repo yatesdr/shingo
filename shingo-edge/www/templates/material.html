@@ -2,7 +2,7 @@
 
 <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;flex-wrap:wrap">
     {{if .Processes}}
-    <select class="form-input" style="width:16rem" onchange="if(this.value)window.location='?process='+this.value">
+    <select class="form-input" style="width:16rem" data-action-change="navigateToProcess">
         {{range .Processes}}
         <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
@@ -24,84 +24,28 @@
 </div>
 
 <!-- View Bin Contents Modal -->
-<div class="modal" id="view-bin-modal" style="display:none">
-    <div class="modal-content" style="max-width:480px">
+<div class="modal-overlay" id="view-bin-modal">
+    <div class="modal" style="max-width:480px">
         <div class="modal-header">
             <span id="view-bin-title">Bin Contents</span>
-            <button class="btn btn-sm" onclick="ShingoEdge.hideModal('view-bin-modal')">&times;</button>
+            <button class="btn btn-sm" data-action="hideModal:view-bin-modal">&times;</button>
         </div>
         <div class="card-body" id="view-bin-body"></div>
         <div class="modal-footer">
-            <button class="btn" onclick="ShingoEdge.hideModal('view-bin-modal')">Close</button>
+            <button class="btn" data-action="hideModal:view-bin-modal">Close</button>
         </div>
     </div>
 </div>
-<script>
-// Material page Release prompt — mirrors kanbans.js releaseOrder. Asks
-// operator to declare bin's remaining parts so the manifest sync at Core
-// uses the declared count rather than runtime.RemainingUOPCached, which
-// may be stale or zeroed (e.g. by a prior release-click on the slot).
-// Empty/0 → bin released as empty (manifest cleared); positive integer
-// → manifest preserved with that count.
-async function releaseNodeWithPrompt(nodeID) {
-    var input = window.prompt(
-        'How many parts remain in this bin?\n\n' +
-        'Enter 0 (or leave blank) to release as EMPTY (manifest cleared).\n' +
-        'Enter a positive number to release as PARTIAL (manifest preserved\n' +
-        'with that count).',
-        ''
-    );
-    if (input === null) return; // operator cancelled
-    var trimmed = String(input).trim();
-    var partial = trimmed === '' ? 0 : Number(trimmed);
-    if (!Number.isInteger(partial) || partial < 0) {
-        ShingoEdge.toast('Invalid count: enter 0, blank, or a positive whole number', 'error');
-        return;
-    }
-    try {
-        await ShingoEdge.api.post('/api/process-nodes/' + nodeID + '/release-empty',
-            { partial_count: partial });
-        ShingoEdge.toast(partial > 0
-            ? 'Released — partial (' + partial + ' parts preserved)'
-            : 'Released — empty (manifest cleared)', 'success');
-    } catch(e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
+<!-- Page JS extracted to /static/js/pages/material.js; loaded once below all
+     modal markup so DOM lookups inside the helpers resolve. -->
 
-function viewBinContents(binState) {
-    document.getElementById('view-bin-title').textContent = 'Bin: ' + (binState.bin_label || 'Unknown');
-    var body = document.getElementById('view-bin-body');
-    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;margin-bottom:1rem">';
-    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Payload</div><strong>' + ShingoEdge.escapeHtml(binState.payload_code || 'empty') + '</strong></div>';
-    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">UOP Remaining</div><strong>' + (binState.uop_remaining || 0) + '</strong></div>';
-    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Bin Type</div>' + ShingoEdge.escapeHtml(binState.bin_type_code || '-') + '</div>';
-    html += '<div><div style="color:var(--text-muted);font-size:0.8rem">Confirmed</div>' + (binState.manifest_confirmed ? 'Yes' : 'No') + '</div>';
-    html += '</div>';
-    if (binState.manifest) {
-        try {
-            var manifest = typeof binState.manifest === 'string' ? JSON.parse(binState.manifest) : binState.manifest;
-            var items = manifest.items || [];
-            if (items.length > 0) {
-                html += '<table class="table" style="font-size:0.85rem"><thead><tr><th>Part</th><th>Qty</th></tr></thead><tbody>';
-                items.forEach(function(item) {
-                    html += '<tr><td>' + ShingoEdge.escapeHtml(item.catid || item.part_number || '') + '</td><td>' + (item.qty || item.quantity || 0) + '</td></tr>';
-                });
-                html += '</tbody></table>';
-            }
-        } catch(e) {}
-    }
-    body.innerHTML = html;
-    ShingoEdge.showModal('view-bin-modal');
-}
-</script>
 
 <!-- Request Empty Bin Modal -->
-<div class="modal" id="request-empty-modal" style="display:none">
-    <div class="modal-content" style="max-width:400px">
+<div class="modal-overlay" id="request-empty-modal">
+    <div class="modal" style="max-width:400px">
         <div class="modal-header">
             <span>Request Empty Bin</span>
-            <button class="btn btn-sm" onclick="ShingoEdge.hideModal('request-empty-modal')">&times;</button>
+            <button class="btn btn-sm" data-action="hideModal:request-empty-modal">&times;</button>
         </div>
         <div class="card-body">
             <input type="hidden" id="re-node-id">
@@ -111,143 +55,32 @@ function viewBinContents(binState) {
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn" onclick="ShingoEdge.hideModal('request-empty-modal')">Cancel</button>
-            <button class="btn btn-primary" onclick="submitRequestEmpty()">Request</button>
+            <button class="btn" data-action="hideModal:request-empty-modal">Cancel</button>
+            <button class="btn btn-primary" data-action="submitRequestEmpty">Request</button>
         </div>
     </div>
 </div>
-<script>
-function openRequestEmptyModal(nodeID, allowedCodes) {
-    document.getElementById('re-node-id').value = nodeID;
-    var sel = document.getElementById('re-payload');
-    sel.innerHTML = '';
-    (allowedCodes || []).forEach(function(code) {
-        var opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = code;
-        sel.appendChild(opt);
-    });
-    ShingoEdge.showModal('request-empty-modal');
-}
-async function submitRequestEmpty() {
-    var nodeID = parseInt(document.getElementById('re-node-id').value, 10);
-    var payloadCode = document.getElementById('re-payload').value;
-    if (!payloadCode) { ShingoEdge.toast('Select a payload', 'warning'); return; }
-    try {
-        await ShingoEdge.api.post('/api/process-nodes/' + nodeID + '/request-empty', {payload_code: payloadCode});
-        ShingoEdge.hideModal('request-empty-modal');
-        ShingoEdge.toast('Empty bin requested', 'success');
-    } catch(e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-</script>
-
 <!-- Load Bin Modal (Manual Swap nodes) -->
-<div class="modal" id="load-bin-modal" style="display:none">
-    <div class="modal-content" style="max-width:480px">
+<div class="modal-overlay" id="load-bin-modal">
+    <div class="modal" style="max-width:480px">
         <div class="modal-header">
             <span>Load Bin</span>
-            <button class="btn btn-sm" onclick="closeLoadBinModal()">&times;</button>
+            <button class="btn btn-sm" data-action="closeLoadBinModal">&times;</button>
         </div>
         <div class="card-body">
             <input type="hidden" id="rb-node-id">
             <input type="hidden" id="rb-payload-code">
             <div class="form-group" style="margin-bottom:0.75rem">
                 <label>Payload</label>
-                <select id="rb-payload" class="form-input" onchange="onLoadPayloadChanged()"></select>
+                <select id="rb-payload" class="form-input" data-action-change="onLoadPayloadChanged"></select>
             </div>
             <div id="rb-manifest-rows" style="margin-bottom:0.5rem"></div>
         </div>
         <div class="modal-footer">
-            <button class="btn" onclick="closeLoadBinModal()">Cancel</button>
-            <button class="btn btn-primary" onclick="submitLoadBin()">Confirm Load</button>
+            <button class="btn" data-action="closeLoadBinModal">Cancel</button>
+            <button class="btn btn-primary" data-action="submitLoadBin">Confirm Load</button>
         </div>
     </div>
 </div>
-<script>
-var _loadBinCatalog = null;
-async function ensureLoadBinCatalog() {
-    if (_loadBinCatalog) return _loadBinCatalog;
-    try { _loadBinCatalog = await ShingoEdge.api.get('/api/payload-catalog'); } catch(_) { _loadBinCatalog = []; }
-    if (!Array.isArray(_loadBinCatalog)) _loadBinCatalog = [];
-    return _loadBinCatalog;
-}
-async function openLoadBinModal(nodeID, allowedCodes, defaultCapacity) {
-    document.getElementById('rb-node-id').value = nodeID;
-    document.getElementById('rb-payload-code').value = '';
-    var catalog = await ensureLoadBinCatalog();
-    var sel = document.getElementById('rb-payload');
-    sel.innerHTML = '<option value="">-- Select payload --</option>';
-    (allowedCodes || []).forEach(function(code) {
-        var entry = catalog.find(function(p) { return p.code === code; });
-        var opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = code + (entry && entry.name ? ' \u2014 ' + entry.name : '');
-        sel.appendChild(opt);
-    });
-    document.getElementById('rb-manifest-rows').innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">Select a payload to see its manifest.</div>';
-    ShingoEdge.showModal('load-bin-modal');
-}
-async function onLoadPayloadChanged() {
-    var code = document.getElementById('rb-payload').value;
-    document.getElementById('rb-payload-code').value = code;
-    var rows = document.getElementById('rb-manifest-rows');
-    if (!code) {
-        rows.innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">Select a payload to see its manifest.</div>';
-        return;
-    }
-    rows.innerHTML = '<div style="color:var(--text-muted);padding:0.5rem 0">Loading manifest...</div>';
-    try {
-        var data = await ShingoEdge.api.get('/api/payload/' + encodeURIComponent(code) + '/manifest');
-        var items = (data && data.items) || [];
-        var uopCapacity = (data && data.uop_capacity) || 0;
-        rows.innerHTML = '';
-        if (items.length === 0) {
-            rows.innerHTML = '<div style="color:var(--text-muted);font-style:italic;padding:0.5rem 0">No manifest template for this payload.</div>';
-            return;
-        }
-        var uopRow = document.createElement('div');
-        uopRow.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.75rem;padding:0.5rem;border:2px solid var(--primary, #4a9);border-radius:4px';
-        uopRow.innerHTML = '<div style="font-weight:600">UOP Count</div>' +
-            '<input type="number" id="rb-uop-count" class="form-input" value="' + uopCapacity + '" style="text-align:center;font-weight:600">';
-        rows.appendChild(uopRow);
-        items.forEach(function(item) {
-            var row = document.createElement('div');
-            row.style.cssText = 'display:grid;grid-template-columns:1fr 80px;gap:0.5rem;align-items:center;margin-bottom:0.5rem;padding:0.5rem;border:1px solid var(--border);border-radius:4px';
-            row.innerHTML =
-                '<div><div style="font-weight:500">' + ShingoEdge.escapeHtml(item.part_number) + '</div>' +
-                '<div style="color:var(--text-muted);font-size:0.85rem">' + ShingoEdge.escapeHtml(item.description || '') + '</div></div>' +
-                '<input type="number" class="form-input rb-manifest-qty" value="' + (item.quantity || 0) + '" ' +
-                    'data-part="' + ShingoEdge.escapeHtml(item.part_number) + '" data-desc="' + ShingoEdge.escapeHtml(item.description || '') + '" ' +
-                    'style="text-align:center">';
-            rows.appendChild(row);
-        });
-    } catch(e) {
-        rows.innerHTML = '<div style="color:var(--danger, red);padding:0.5rem 0">Failed to load manifest.</div>';
-    }
-}
-function closeLoadBinModal() {
-    ShingoEdge.hideModal('load-bin-modal');
-}
-async function submitLoadBin() {
-    var nodeID = parseInt(document.getElementById('rb-node-id').value, 10);
-    var payloadCode = document.getElementById('rb-payload-code').value;
-    if (!payloadCode) { ShingoEdge.toast('Select a payload first', 'warning'); return; }
-    var manifest = [];
-    document.querySelectorAll('.rb-manifest-qty').forEach(function(input) {
-        var qty = parseInt(input.value, 10) || 0;
-        if (qty > 0) manifest.push({part_number: input.dataset.part, quantity: qty, description: input.dataset.desc || ''});
-    });
-    if (manifest.length === 0) { ShingoEdge.toast('Enter at least one quantity', 'warning'); return; }
-    try {
-        var uopCount = parseInt((document.getElementById('rb-uop-count') || {}).value || '0', 10);
-        await ShingoEdge.api.post('/api/process-nodes/' + nodeID + '/load-bin', {payload_code: payloadCode, uop_count: uopCount, manifest: manifest});
-        closeLoadBinModal();
-        ShingoEdge.toast('Bin loaded', 'success');
-    } catch(e) {
-        ShingoEdge.toast('Error: ' + e, 'error');
-    }
-}
-</script>
+<script type="module" src="/static/js/pages/material.js?v={{cacheBust}}"></script>
 {{template "footer" .}}

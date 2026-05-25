@@ -110,35 +110,6 @@ func seedMultiNodeScenario(t *testing.T, db *store.DB) (processID int64, nodes m
 	return
 }
 
-// seedChangeoverRoleScenario creates a node with role="changeover" in both styles.
-func seedChangeoverRoleScenario(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID int64) {
-	t.Helper()
-
-	processID, _ = db.CreateProcess("COR-PROC", "changeover role test", "active_production", "", "", false, false)
-	nodeID, _ = db.CreateProcessNode(processes.NodeInput{
-		ProcessID: processID, CoreNodeName: "COR-NODE", Code: "CR1", Name: "CO Role Node", Sequence: 1, Enabled: true,
-	})
-
-	fromStyleID, _ = db.CreateStyle("COR-FROM", "co from", processID)
-	toStyleID, _ = db.CreateStyle("COR-TO", "co to", processID)
-	db.SetActiveStyle(processID, &fromStyleID)
-
-	fcID, _ := db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: fromStyleID, CoreNodeName: "COR-NODE", Role: "changeover", SwapMode: "simple",
-		PayloadCode: "PART-CO", UOPCapacity: 100, InboundSource: "SRC-CO",
-		InboundStaging: "IN-STAGE-CO", OutboundStaging: "OUT-STAGE-CO", OutboundDestination: "DEST-CO",
-	})
-	db.UpsertStyleNodeClaim(processes.NodeClaimInput{
-		StyleID: toStyleID, CoreNodeName: "COR-NODE", Role: "changeover", SwapMode: "simple",
-		PayloadCode: "PART-CO", UOPCapacity: 100, InboundSource: "SRC-CO",
-		InboundStaging: "IN-STAGE-CO", OutboundStaging: "OUT-STAGE-CO", OutboundDestination: "DEST-CO",
-	})
-
-	db.EnsureProcessNodeRuntime(nodeID)
-	db.SetProcessNodeRuntime(nodeID, &fcID, 100)
-	return
-}
-
 // seedNoChangeScenario creates two styles with identical claims on the same node.
 func seedNoChangeScenario(t *testing.T, db *store.DB) (processID, nodeID, fromStyleID, toStyleID int64) {
 	t.Helper()
@@ -332,51 +303,12 @@ func TestChangeoverFlow_MultiNode(t *testing.T) {
 	}
 }
 
-// Changeover-only role — evacuate and restore.
-func TestChangeoverFlow_ChangeoverRole(t *testing.T) {
-	t.Parallel()
-	db := testEngineDB(t)
-	processID, nodeID, _, toStyleID := seedChangeoverRoleScenario(t, db)
-	eng := testEngine(t, db)
-	eng.wireEventHandlers()
-
-	changeover, err := eng.StartProcessChangeover(processID, toStyleID, "test", "co role")
-	if err != nil {
-		t.Fatalf("start changeover: %v", err)
-	}
-
-	task, err := db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if err != nil {
-		t.Fatalf("get task: %v", err)
-	}
-	if task.Situation != "evacuate" {
-		t.Fatalf("expected situation=evacuate (changeover role), got %s", task.Situation)
-	}
-	// Should have both orders (evacuate with full staging config)
-	if task.NextMaterialOrderID == nil || task.OldMaterialReleaseOrderID == nil {
-		t.Fatal("expected both Order A (staging) and Order B (evacuate) for changeover role")
-	}
-
-	// Complete Order A → staged
-	orderA, _ := db.GetOrder(*task.NextMaterialOrderID)
-	markOrderTerminal(db, orderA.ID)
-	emitOrderCompleted(eng, orderA.ID, orderA.UUID, orderA.OrderType, &nodeID)
-
-	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != domain.NodeTaskStaged {
-		t.Fatalf("after Order A: expected staged, got %s", task.State)
-	}
-
-	// Complete Order B (evacuate with 2 waits) → released
-	orderB, _ := db.GetOrder(*task.OldMaterialReleaseOrderID)
-	markOrderTerminal(db, orderB.ID)
-	emitOrderCompleted(eng, orderB.ID, orderB.UUID, orderB.OrderType, &nodeID)
-
-	task, _ = db.GetChangeoverNodeTaskByNode(changeover.ID, nodeID)
-	if task.State != domain.NodeTaskReleased {
-		t.Fatalf("after Order B: expected released, got %s", task.State)
-	}
-}
+// TestChangeoverFlow_ChangeoverRole and seedChangeoverRoleScenario
+// covered the legacy "changeover" claim role removed during the UI
+// consistency refactor. The equivalent evacuate-during-changeover
+// behavior is now exercised through claims with
+// EvacuateOnChangeover=true and is covered by the multi-node diff
+// test and the evacuate scenario tests elsewhere in this file.
 
 // Double changeover — complete one, start another, verify clean state.
 func TestChangeoverFlow_DoubleChangeover(t *testing.T) {

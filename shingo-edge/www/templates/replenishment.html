@@ -9,7 +9,7 @@
 
 <div class="flex flex-between mb-2">
   <h2 style="margin:0;">Loader thresholds</h2>
-  <button class="btn btn-sm" onclick="replenishmentRecalculateAll()">Recalculate all (process sweep)</button>
+  <button class="btn btn-sm" data-action="replenishmentRecalculateAll">Recalculate all (process sweep)</button>
 </div>
 <p class="text-muted" style="font-size:0.9rem;">
   Per-(loader, payload) replenish trigger. When combined in-loop UOP
@@ -52,9 +52,9 @@
         </td>
         <td style="text-align:right;" class="mono">{{printf "%.2f" .SafetyFactor}}</td>
         <td>
-          <button class="btn btn-sm btn-primary" onclick="replenishmentOpenCalculate(this)" title="Open calculator for this (loader, payload)">📊 Calculate…</button>
-          <button class="btn btn-sm" onclick="replenishmentApplyLoader(this)">Apply</button>
-          <button class="btn btn-sm" onclick="replenishmentDeleteLoader(this)" title="Delete the row; Edge falls back to legacy bin-count for this (loader, payload)">Revert to legacy</button>
+          <button class="btn btn-sm btn-primary" data-action="replenishmentOpenCalculate" title="Open calculator for this (loader, payload)">📊 Calculate…</button>
+          <button class="btn btn-sm" data-action="replenishmentApplyLoader">Apply</button>
+          <button class="btn btn-sm" data-action="replenishmentDeleteLoader" title="Delete the row; Edge falls back to legacy bin-count for this (loader, payload)">Revert to legacy</button>
         </td>
       </tr>
       {{else}}
@@ -108,8 +108,8 @@
           <input type="checkbox" class="auto-reorder-input" {{if .AutoReorder}}checked{{end}}>
         </td>
         <td>
-          <button class="btn btn-sm btn-primary" onclick="replenishmentApplyCell(this)">Apply</button>
-          <button class="btn btn-sm" onclick="replenishmentRevertCell(this)" title="Zero reorder_point, disable autoreorder, mark source=legacy">Revert to legacy</button>
+          <button class="btn btn-sm btn-primary" data-action="replenishmentApplyCell">Apply</button>
+          <button class="btn btn-sm" data-action="replenishmentRevertCell" title="Zero reorder_point, disable autoreorder, mark source=legacy">Revert to legacy</button>
         </td>
       </tr>
       {{else}}
@@ -133,11 +133,11 @@
      with the observed value. Engineer may edit any input; the
      calculated outputs recompute locally as inputs change.
      Apply / Override / Cancel commit (or discard) the result. -->
-<div id="calculate-modal" class="modal" style="display:none;">
-  <div class="modal-content" style="max-width:560px;">
+<div id="calculate-modal" class="modal-overlay">
+  <div class="modal" style="max-width:560px;">
     <div class="flex flex-between mb-2">
       <h3 id="calc-title" style="margin:0;">Calculate threshold</h3>
-      <button class="btn btn-sm" onclick="replenishmentCloseCalculate()">×</button>
+      <button class="btn btn-sm" data-action="replenishmentCloseCalculate">×</button>
     </div>
 
     <div class="form-row">
@@ -147,7 +147,7 @@
         <option value="14" selected>Last 14 days</option>
         <option value="30">Last 30 days</option>
       </select>
-      <button class="btn btn-sm btn-primary ml-2" onclick="replenishmentRunCalculate()">Run calculation</button>
+      <button class="btn btn-sm btn-primary ml-2" data-action="replenishmentRunCalculate">Run calculation</button>
       <span id="calc-status" class="text-muted ml-2"></span>
     </div>
 
@@ -203,20 +203,20 @@
       <p>Current value: <span id="calc-current" class="mono"></span></p>
 
       <div class="mt-2">
-        <button id="calc-apply" class="btn btn-primary" onclick="replenishmentApplyFromModal()">Apply</button>
-        <button class="btn" onclick="replenishmentOverrideFromModal()">Override…</button>
-        <button class="btn" onclick="replenishmentCloseCalculate()">Cancel</button>
+        <button id="calc-apply" class="btn btn-primary" data-action="replenishmentApplyFromModal">Apply</button>
+        <button class="btn" data-action="replenishmentOverrideFromModal">Override…</button>
+        <button class="btn" data-action="replenishmentCloseCalculate">Cancel</button>
       </div>
     </div>
   </div>
 </div>
 
 <!-- Recalculate-all summary modal — opens with one row per binding. -->
-<div id="recalc-all-modal" class="modal" style="display:none;">
-  <div class="modal-content" style="max-width:720px;">
+<div id="recalc-all-modal" class="modal-overlay">
+  <div class="modal" style="max-width:720px;">
     <div class="flex flex-between mb-2">
       <h3 style="margin:0;">Recalculate all loader thresholds</h3>
-      <button class="btn btn-sm" onclick="replenishmentCloseRecalcAll()">×</button>
+      <button class="btn btn-sm" data-action="replenishmentCloseRecalcAll">×</button>
     </div>
 
     <div class="form-row">
@@ -228,7 +228,7 @@
       </select>
       <label class="ml-2">Safety:</label>
       <input type="number" id="recalc-safety" min="0.5" step="0.1" value="1.5" style="width:60px;">
-      <button class="btn btn-sm btn-primary ml-2" onclick="replenishmentRunRecalculateAll()">Run sweep</button>
+      <button class="btn btn-sm btn-primary ml-2" data-action="replenishmentRunRecalculateAll">Run sweep</button>
       <span class="text-muted ml-2" style="font-size:0.8rem;">Cycle is per-part — edit in the table row.</span>
     </div>
 
@@ -236,6 +236,6 @@
   </div>
 </div>
 
-<script src="/static/js/pages/replenishment.js"></script>
+<script type="module" src="/static/js/pages/replenishment.js?v={{cacheBust}}"></script>
 
 {{template "footer" .}}

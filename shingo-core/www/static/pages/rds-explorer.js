@@ -1,3 +1,5 @@
+import { api, delegateActions, el, toast } from '/static/app.js';
+
 // Template bodies for POST endpoints
 var EP_JOIN_ORDER = JSON.stringify({id:"",externalId:"",fromLoc:"",toLoc:"",priority:0,vehicle:"",group:"",goodsId:""},null,2);
 var EP_SET_ORDER = JSON.stringify({id:"",externalId:"",vehicle:"",group:"",label:"",priority:0,complete:true,blocks:[{blockId:"",location:"",operation:"",binTask:"",goodsId:""}]},null,2);
@@ -378,9 +380,10 @@ var FIELD_TIPS = {
     '<br><br>Use <code>false</code> for dynamic routing where the next stop depends on the result of the current one.'
 };
 
-function showTip(e, key) {
-  e.preventDefault();
-  e.stopPropagation();
+function showTip(key, el, evt) {
+  // Invoked via data-action="showTip:keyName". evt may be undefined
+  // when called programmatically.
+  if (evt) { evt.preventDefault(); evt.stopPropagation(); }
   var tip = document.getElementById('field-tip');
   var body = document.getElementById('field-tip-body');
   var arrow = tip.querySelector('.field-tip-arrow');
@@ -445,7 +448,7 @@ function bbAddBlock() {
   var t = document.getElementById('bb-type').value;
   var blockId = document.getElementById('bb-blockId').value.trim() || ('b' + bbCounter);
   var location = document.getElementById('bb-location').value.trim();
-  if (!location) { alert('Location is required'); return; }
+  if (!location) { toast('Location is required', 'info'); return; }
 
   var block = {blockId: blockId, location: location};
   var label = '';
@@ -459,14 +462,14 @@ function bbAddBlock() {
     var op = document.getElementById('bb-operation').value.trim();
     if (op) block.operation = op;
     var args = document.getElementById('bb-opArgs').value.trim();
-    if (args) { try { block.operationArgs = JSON.parse(args); } catch(e) { alert('Invalid operation args JSON'); return; } }
+    if (args) { try { block.operationArgs = JSON.parse(args); } catch(e) { toast('Invalid operation args JSON', 'error'); return; } }
     label = (op || 'move') + ' @ ' + location;
   } else {
     block.operation = 'Script';
     var sn = document.getElementById('bb-scriptName').value.trim();
     if (sn) block.scriptName = sn;
     var sa = document.getElementById('bb-scriptArgs').value.trim();
-    if (sa) { try { block.scriptArgs = JSON.parse(sa); } catch(e) { alert('Invalid script args JSON'); return; } }
+    if (sa) { try { block.scriptArgs = JSON.parse(sa); } catch(e) { toast('Invalid script args JSON', 'error'); return; } }
     label = 'Script' + (sn ? ': ' + sn : '') + ' @ ' + location;
   }
 
@@ -494,13 +497,13 @@ function bbRenderBlocks() {
   for (var i = 0; i < bbBlocks.length; i++) {
     html += '<div class="bb-row"><span class="bb-num">' + (i+1) + '</span><span class="bb-detail">' +
       bbBlocks[i].block.blockId + ' &ndash; ' + bbBlocks[i].label +
-      '</span><button class="bb-rm" onclick="bbRemoveBlock(' + i + ')" title="Remove">&times;</button></div>';
+      '</span><button class="bb-rm" data-action="bbRemoveBlock:' + i + ')" title="Remove">&times;</button></div>';
   }
   el.innerHTML = html;
 }
 
 function bbGenerate() {
-  if (bbBlocks.length === 0) { alert('Add at least one block first'); return; }
+  if (bbBlocks.length === 0) { toast('Add at least one block first', 'info'); return; }
   var order = {
     id: document.getElementById('bb-orderId').value.trim() || '',
     complete: document.getElementById('bb-complete').value === 'true',
@@ -550,7 +553,19 @@ function filterEndpoints() {
   });
 }
 
-function loadEP(el, method, path, title, bodyTemplate) {
+function loadEP(el) {
+  // Invoked via data-action="loadEP" with data-method, data-url,
+  // data-label, data-body attributes set by the template. data-body
+  // is the NAME of an EP_* JS variable (e.g. "EP_ADD_BLOCKS") or the
+  // literal "null" — resolve via window[name] for the former.
+  var method = el.dataset.method;
+  var path = el.dataset.url;
+  var title = el.dataset.label;
+  var bodyName = el.dataset.body;
+  var bodyTemplate = '';
+  if (bodyName && bodyName !== 'null' && typeof window[bodyName] === 'string') {
+    bodyTemplate = window[bodyName];
+  }
   document.getElementById('req-method').value = method;
   document.getElementById('req-path').value = path;
   document.getElementById('req-title').textContent = title;
@@ -562,8 +577,10 @@ function loadEP(el, method, path, title, bodyTemplate) {
   showBlockBuilder(path === '/setOrder' || path === '/addBlocks');
 }
 
-function showInfo(e, path) {
-  e.stopPropagation();
+function showInfo(path, el, evt) {
+  // Invoked via data-action="showInfo:/path". evt is the click; el is
+  // the icon; path is everything after `:` in the data-action string.
+  if (evt && evt.stopPropagation) evt.stopPropagation();
   var info = EP_INFO[path];
   if (!info) return;
   document.getElementById('info-title').textContent = info.title;
@@ -574,8 +591,10 @@ function showInfo(e, path) {
   document.getElementById('info-overlay').classList.add('active');
 }
 
-function closeInfo(e) {
-  if (e && e.target !== document.getElementById('info-overlay')) return;
+function closeInfo() {
+  // Invoked via data-action="closeInfo" on the close button. Backdrop
+  // close (clicking the overlay itself) is handled by data-backdrop-close
+  // on the overlay element.
   document.getElementById('info-overlay').classList.remove('active');
 }
 
@@ -670,3 +689,32 @@ document.addEventListener('keydown', function(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') sendRequest();
   if (e.key === 'Escape') document.getElementById('info-overlay').classList.remove('active');
 });
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    bbAddBlock,
+    bbGenerate,
+    bbRemoveBlock,
+    bbRenderBlocks,
+    bbTypeChanged,
+    closeInfo,
+    copyResponse,
+    filterEndpoints,
+    httpStatusText,
+    loadEP,
+    renderBody,
+    sendRequest,
+    showBlockBuilder,
+    showInfo,
+    showResponse,
+    showTip,
+    toggleBlockBuilder,
+    toggleHeaders,
+    togglePretty
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

@@ -2,7 +2,7 @@
 
 <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.75rem;flex-wrap:wrap">
     {{if .Processes}}
-    <select class="form-input" style="width:16rem" onchange="if(this.value)window.location='?process='+this.value">
+    <select class="form-input" style="width:16rem" data-action-change="navigateToProcess">
         {{range .Processes}}
         <option value="{{.ID}}" {{if eq .ID $.ActiveProcessID}}selected{{end}}>{{.Name}}</option>
         {{end}}
@@ -57,6 +57,6 @@
 {{end}}
 
 <div id="page-data" data-process-id="{{.ActiveProcessID}}"></div>
-<script src="/static/js/pages/changeover.js"></script>
+<script type="module" src="/static/js/pages/changeover.js?v={{cacheBust}}"></script>
 
 {{template "footer" .}}

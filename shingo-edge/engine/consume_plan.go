@@ -58,12 +58,23 @@ type SimplePrime struct {
 // NodeOrderResult.CycleMode. "simple" for the move branch (including the
 // node-empty downgrade — matches today's behavior at operator_stations.go);
 // the dispatch's CycleMode otherwise.
+//
+// The "simple" sentinel here is the engine-internal classification tag
+// for "this was a simple delivery, not a swap dispatch." The string value
+// is the same as SwapModeSimple but conceptually distinct — this is an
+// output tag classifying the dispatch result, not a configured value.
 func (p *ConsumePlan) CycleMode() protocol.SwapMode {
 	if p.SimpleMove || p.Dispatch == nil {
-		return protocol.SwapModeSimple
+		return cycleModeSimple
 	}
 	return p.Dispatch.CycleMode
 }
+
+// cycleModeSimple is the engine-internal classification tag emitted in
+// NodeOrderResult.CycleMode when the result is a simple delivery move
+// (not a swap dispatch). Distinct from a configured claim SwapMode
+// even though the string values are the same.
+const cycleModeSimple protocol.SwapMode = "simple"
 
 // BuildConsumePlan validates the (node, runtime, claim) triple and
 // composes the consume-request plan for the claim's swap mode. Pure — no
@@ -106,7 +117,7 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 	// Node-empty downgrade: nothing physically present to swap out, so
 	// any non-simple mode collapses to a delivery move.
 	headOccupied := isOccupied(occupancy, claim.CoreNodeName)
-	if claim.SwapMode != protocol.SwapModeSimple && claim.SwapMode != "" && !headOccupied {
+	if claim.SwapMode != protocol.SwapModeSimple && !headOccupied {
 		if claim.InboundSource == "" {
 			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 		}
@@ -138,7 +149,7 @@ func BuildConsumePlan(node *processes.Node, runtime *processes.RuntimeState, cla
 		return nil, err
 	}
 	if dispatch == nil {
-		// Default ("" / "simple" / unrecognised) branch — issue a bare move.
+		// Default (simple / unrecognised) branch — issue a bare move.
 		if claim.InboundSource == "" {
 			return nil, fmt.Errorf("node %s has no inbound source configured", node.Name)
 		}

@@ -1,0 +1,136 @@
+/*
+ * Shared reusable component classes.
+ *
+ * Promotion rule: a CSS pattern lands here once the same inline style
+ * has appeared in 3+ places. Each rule is opinionated — no
+ * configurable defaults; if a component needs variation it gets a
+ * named modifier (`.fieldset-card.fieldset-card--tight`) rather than
+ * an extra parameter.
+ *
+ * See docs/ui-style-guide.md § "Reusable component classes" for the
+ * promotion criteria; this file is the canonical destination.
+ */
+
+/* ─── Form scaffolding ──────────────────────────────────────────────── */
+
+/* Bordered fieldset with a legend. Used by claim editor, station
+ * editor, replenishment calculator, and similar config forms. */
+.fieldset-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+/* Variant used in the claim editor where multiple fieldsets stack —
+ * adds top spacing instead of bottom. */
+.fieldset-card--stacked {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  margin-top: 0.75rem;
+}
+
+/* Legend at the top of a fieldset-card. */
+.fieldset-legend {
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0 0.5rem;
+}
+
+/* Two-column grid for paired form inputs. */
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1rem;
+}
+
+/* Two-column-plus-trailing grid for inputs that include a trailing
+ * checkbox / action button. */
+.form-grid-2-aux {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0.75rem 1rem;
+  align-items: end;
+}
+
+/* Reset margin on a form-group that's positioned inside a grid. */
+.form-group--nogap { margin: 0; }
+
+/* Small helper text below a label or fieldset legend. */
+.field-help {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.field-help--inline {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+/* Checkbox + label row inside a fieldset (manual_swap toggles,
+ * evacuate-on-changeover, etc.) */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ─── Layout ─────────────────────────────────────────────────────────── */
+
+/* Processes-page two-column layout: ~300px sidebar + flex content. */
+.split-2col-sidebar {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+/* Card header row with a title on the left and action(s) on the right. */
+.card-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+/* ─── Utility classes (cross-surface) ───────────────────────────────── */
+/* Mirror the style guide's limited utility set so inline margin/text
+ * tweaks don't need to be repeated everywhere. */
+.mt-2  { margin-top: 0.5rem; }
+.mt-3  { margin-top: 0.75rem; }
+.mt-4  { margin-top: 1rem; }
+.mb-2  { margin-bottom: 0.5rem; }
+.mb-3  { margin-bottom: 0.75rem; }
+.mb-4  { margin-bottom: 1rem; }
+.text-muted-sm {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.text-muted-xs {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+.full-width { width: 100%; }
+
+.flex-end {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.mb-0 { margin-bottom: 0; }
+.text-muted-italic {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Auto-fit grid for chip / token rows that wrap based on available width. */
+.grid-autofit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+}

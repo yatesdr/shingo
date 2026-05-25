@@ -12,7 +12,7 @@ import (
 
 // TestReleaseOrderWithLineside_WireRemainingUOP_PerDisposition is the
 // end-to-end contract test for the operator-disposition → wire-envelope flow
-// that Bug 1 (kanbans.js disposition fix) and Bug 2 (consolidated release)
+// that Bug 1 (orders.js disposition fix; was kanbans.js pre-rename) and Bug 2 (consolidated release)
 // both depend on. It walks the operator's three real choices through
 // ReleaseOrderWithLineside and asserts the OrderRelease envelope queued in the
 // outbox carries the value that Core's BinManifestService.SyncOrClearForReleased

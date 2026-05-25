@@ -1,13 +1,13 @@
 {{define "content"}}
 <div class="diag-tabs">
-  <button class="diag-tab active" onclick="switchDiagTab('debug')">Debug Log</button>
-  <button class="diag-tab" onclick="switchDiagTab('cms')">CMS Transactions</button>
-  <button class="diag-tab" onclick="switchDiagTab('recon')">Reconciliation</button>
-  <button class="diag-tab" onclick="switchDiagTab('recovery')">Recovery</button>
+  <button class="diag-tab active" data-action="switchDiagTab:debug">Debug Log</button>
+  <button class="diag-tab" data-action="switchDiagTab:cms">CMS Transactions</button>
+  <button class="diag-tab" data-action="switchDiagTab:recon">Reconciliation</button>
+  <button class="diag-tab" data-action="switchDiagTab:recovery">Recovery</button>
   {{if .FireAlarmEnabled}}
-  <button class="diag-tab" data-tab="fire" onclick="switchDiagTab('fire')">Fire Alarm</button>
+  <button class="diag-tab" data-tab="fire" data-action="switchDiagTab:fire">Fire Alarm</button>
   {{end}}
-  <button class="diag-tab" data-tab="emaint" onclick="switchDiagTab('emaint')">E-Maint</button>
+  <button class="diag-tab" data-tab="emaint" data-action="switchDiagTab:emaint">E-Maint</button>
 </div>
 
 <!-- Debug Log Tab -->
@@ -15,7 +15,7 @@
   <div class="flex flex-between mb-2">
     <h1>Logs</h1>
     <div class="flex gap-1 items-center">
-      <select id="log-filter" onchange="debugFilter()" style="font-size:0.85rem;padding:2px 6px;">
+      <select id="log-filter" data-action-change="debugFilter" style="font-size:0.85rem;padding:2px 6px;">
         <option value="">All subsystems</option>
         {{range .Subsystems}}
         <option value="{{.}}" {{if eq . $.Subsystem}}selected{{end}}>{{.}}</option>
@@ -24,7 +24,7 @@
       <label style="display:inline;font-weight:normal;font-size:0.85rem;cursor:pointer;">
         <input type="checkbox" id="log-autoscroll" checked> Auto-scroll
       </label>
-      <button class="btn btn-sm btn-danger" onclick="debugClear()">Clear</button>
+      <button class="btn btn-sm btn-danger" data-action="debugClear">Clear</button>
     </div>
   </div>
 
@@ -57,8 +57,8 @@
   <div class="flex flex-between mb-2">
     <h1>CMS Transactions</h1>
     <div class="flex gap-1 items-center">
-      <input type="text" id="cms-filter-node" placeholder="Filter node..." style="font-size:0.85rem;padding:2px 6px;width:140px;" oninput="cmsFilter()">
-      <select id="cms-filter-src" onchange="cmsFilter()" style="font-size:0.85rem;padding:2px 6px;">
+      <input type="text" id="cms-filter-node" placeholder="Filter node..." style="font-size:0.85rem;padding:2px 6px;width:140px;" data-action-input="cmsFilter">
+      <select id="cms-filter-src" data-action-change="cmsFilter" style="font-size:0.85rem;padding:2px 6px;">
         <option value="">All sources</option>
         <option value="movement">Movement</option>
         <option value="correction">Correction</option>
@@ -131,13 +131,13 @@
               <td>{{.Issue}}</td>
               <td>
                 {{if eq .RecommendedAction "reapply_completion"}}
-                <button class="btn btn-sm" onclick="repairAnomaly('reapply_completion', {{.OrderID}}, 0)">Reapply Completion</button>
+                <button class="btn btn-sm" data-action="repairAnomaly:reapply_completion:{{.OrderID}}:0">Reapply Completion</button>
                 {{else if eq .RecommendedAction "release_terminal_claim"}}
-                <button class="btn btn-sm" onclick="repairAnomaly('release_terminal_claim', {{.OrderID}}, {{.BinID}})">Release Claim</button>
+                <button class="btn btn-sm" data-action="repairAnomaly:release_terminal_claim:{{.OrderID}}:{{.BinID}}">Release Claim</button>
                 {{else if eq .RecommendedAction "release_staged_bin"}}
-                <button class="btn btn-sm" onclick="repairAnomaly('release_staged_bin', 0, {{.BinID}})">Release Staged Bin</button>
+                <button class="btn btn-sm" data-action="repairAnomaly:release_staged_bin:0:{{.BinID}}">Release Staged Bin</button>
                 {{else if eq .RecommendedAction "cancel_stuck_order"}}
-                <button class="btn btn-sm" onclick="repairAnomaly('cancel_stuck_order', {{.OrderID}}, 0)">Cancel Stuck Order</button>
+                <button class="btn btn-sm" data-action="repairAnomaly:cancel_stuck_order:{{.OrderID}}:0">Cancel Stuck Order</button>
                 {{else}}
                 <span class="text-muted">Manual review</span>
                 {{end}}
@@ -246,11 +246,11 @@
           Auto-resume on clear
         </label>
         <button id="fa-btn-activate" class="btn btn-danger"
-                onclick="fireAlarmTrigger(true)" style="display:none;">
+                data-action="fireAlarmTrigger:true" style="display:none;">
           Activate Fire Alarm
         </button>
         <button id="fa-btn-clear" class="btn btn-primary"
-                onclick="fireAlarmTrigger(false)" style="display:none;">
+                data-action="fireAlarmTrigger:false" style="display:none;">
           Clear Fire Alarm
         </button>
       </div>
@@ -280,7 +280,7 @@
   <div class="flex flex-between mb-2">
     <h1>E-Maint Robot Telemetry</h1>
     <div class="flex gap-1 items-center">
-      <button class="btn" onclick="loadEMaintReport()">Refresh Report</button>
+      <button class="btn" data-action="loadEMaintReport">Refresh Report</button>
       <a id="emaint-download" href="/api/telemetry/e-maint/download" class="btn" style="display:none;">Download JSON</a>
     </div>
   </div>
@@ -317,5 +317,5 @@
   </div>
 </div>
 
-<script src="/static/pages/diagnostics.js"></script>
+<script type="module" src="/static/pages/diagnostics.js?v={{cacheBust}}"></script>
 {{end}}

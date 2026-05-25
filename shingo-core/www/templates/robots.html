@@ -6,8 +6,8 @@
   </div>
 
   <div class="filter-bar">
-    <input type="text" id="robot-search" placeholder="Filter by name..." oninput="filterRobots()">
-    <select id="robot-state-filter" onchange="filterRobots()">
+    <input type="text" id="robot-search" placeholder="Filter by name..." data-action-input="filterRobots">
+    <select id="robot-state-filter" data-action-change="filterRobots">
       <option value="">All States</option>
       <option value="ready">Ready</option>
       <option value="busy">Busy</option>
@@ -40,7 +40,7 @@
          data-x="{{f1 .X}}"
          data-y="{{f1 .Y}}"
          data-angle="{{f1 .Angle}}"
-         onclick="openRobotModal(this)">
+         data-action="openRobotModal">
       <div class="robot-name">
         {{.VehicleID}}
         {{if .Charging}}<span class="robot-charging" title="Charging">&#9889;</span>{{end}}
@@ -59,11 +59,11 @@
 </div>
 
 <!-- Robot Detail Modal -->
-<div id="robot-modal" class="modal-overlay" onclick="if(event.target===this)closeRobotModal()">
+<div id="robot-modal" class="modal-overlay" data-backdrop-close>
   <div class="modal">
     <div class="modal-header flex flex-between">
       <h2 id="rm-title">Robot</h2>
-      <button class="modal-close" onclick="closeRobotModal()">&times;</button>
+      <button class="modal-close" data-action="closeRobotModal">&times;</button>
     </div>
     <div class="grid grid-2 text-sm" style="row-gap:0.4rem">
       <div><strong>State:</strong> <span id="rm-state" class="badge"></span></div>
@@ -88,15 +88,15 @@
       <strong>Controls</strong>
       <div id="rm-status-msg" style="font-size:0.8rem;margin:0.25rem 0;min-height:1.2em" class="text-muted"></div>
       <div class="flex gap-1 flex-wrap" style="margin-top:0.5rem">
-        <button class="btn btn-sm" id="rm-btn-pause" onclick="robotSetAvailability(false)">Pause</button>
-        <button class="btn btn-sm btn-primary" id="rm-btn-resume" onclick="robotSetAvailability(true)">Resume</button>
-        <button class="btn btn-sm" onclick="robotRetryFailed()">Retry Failed</button>
-        <button class="btn btn-sm btn-danger" onclick="robotForceComplete()">Force Complete</button>
+        <button class="btn btn-sm" id="rm-btn-pause" data-action="robotSetAvailability:false">Pause</button>
+        <button class="btn btn-sm btn-primary" id="rm-btn-resume" data-action="robotSetAvailability:true">Resume</button>
+        <button class="btn btn-sm" data-action="robotRetryFailed">Retry Failed</button>
+        <button class="btn btn-sm btn-danger" data-action="robotForceComplete">Force Complete</button>
       </div>
     </div>
     {{end}}
   </div>
 </div>
 
-<script src="/static/pages/robots.js"></script>
+<script type="module" src="/static/pages/robots.js?v={{cacheBust}}"></script>
 {{end}}

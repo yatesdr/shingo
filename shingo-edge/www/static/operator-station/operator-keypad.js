@@ -18,12 +18,12 @@ export function openKeypad(nodeID, remaining, opts) {
         keypadTitle.textContent = opts.title || 'Enter Remaining Quantity';
     }
     keypadDisplay.textContent = initial;
-    keypadModal.hidden = false;
+    keypadModal.classList.add('active');
 }
 
 export function closeKeypad() {
     keypadState = null;
-    keypadModal.hidden = true;
+    keypadModal.classList.remove('active');
 }
 
 document.querySelector('.os-keypad-grid').addEventListener('click', evt => {

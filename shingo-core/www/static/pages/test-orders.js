@@ -1,3 +1,5 @@
+import { api, delegateActions, escapeHtml, formatTime, h, hideModal, showModal, toast, uiConfirm } from '/static/app.js';
+
 var authenticated = document.getElementById('page-data').dataset.authenticated === 'true';
 
 function switchTab(name) {
@@ -118,15 +120,15 @@ function renderOrdersTable(orders, containerId, isKafka) {
     html += '<td style="font-size:.8rem;">' + formatTime(o.created_at) + '</td>';
     if (authenticated) {
       html += '<td class="to-actions">';
-      html += '<button class="to-btn-sm" onclick="viewHistory(' + o.id + ')">History</button>';
+      html += '<button class="to-btn-sm" data-action="viewHistory:' + o.id + ')">History</button>';
       if (isKafka && isActive) {
-        html += '<button class="to-btn-sm to-btn-danger" onclick="cancelOrder(\'' + escapeHtml(o.edge_uuid) + '\')">Cancel</button>';
+        html += '<button class="to-btn-sm to-btn-danger" data-action="cancelOrder:\' + escapeHtml(o.edge_uuid) + \'">Cancel</button>';
       }
       if (isDelivered) {
-        html += '<button class="to-btn-sm" onclick="openReceipt(\'' + escapeHtml(o.edge_uuid) + '\',' + !isKafka + ')">Receipt</button>';
+        html += '<button class="to-btn-sm" data-action="openReceipt:' + escapeHtml(o.edge_uuid) + ':' + !isKafka + '" >Receipt</button>';
       }
       if (o.status === 'staged') {
-        html += '<button class="to-btn-sm" style="border-color:#ff9800;color:#ff9800;" onclick="releaseComplexOrder(\'' + escapeHtml(o.edge_uuid) + '\')">Release</button>';
+        html += '<button class="to-btn-sm" style="border-color:#ff9800;color:#ff9800;" data-action="releaseComplexOrder:\' + escapeHtml(o.edge_uuid) + \'">Release</button>';
       }
       html += '</td>';
     }
@@ -136,7 +138,7 @@ function renderOrdersTable(orders, containerId, isKafka) {
   container.innerHTML = html;
 }
 
-function renderCommandsTable(cmds) {
+async function renderCommandsTable(cmds) {
   var container = document.getElementById('commands-table');
   if (!cmds || cmds.length === 0) {
     container.innerHTML = '<p style="color:#888;">No commands found.</p>';
@@ -159,7 +161,7 @@ function renderCommandsTable(cmds) {
     if (authenticated) {
       html += '<td class="to-actions">';
       if (!c.CompletedAt) {
-        html += '<button class="to-btn-sm" onclick="refreshCmdStatus(' + c.ID + ')">Refresh</button>';
+        html += '<button class="to-btn-sm" data-action="refreshCmdStatus:' + c.ID + ')">Refresh</button>';
       }
       html += '</td>';
     }
@@ -224,24 +226,24 @@ async function submitKafkaOrder() {
     quantity: parseInt(document.getElementById('k-quantity').value) || 1,
     priority: parseInt(document.getElementById('k-priority').value) || 0
   };
-  if (body.order_type !== 'store' && !body.payload_code) { alert('Payload is required'); return; }
+  if (body.order_type !== 'store' && !body.payload_code) { toast('Payload is required', 'info'); return; }
   try {
     var res = await fetch('/api/test-orders/submit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     var data = await res.json();
-    if (!res.ok) { alert(data.error || 'Error'); return; }
-    alert('Order submitted: ' + data.order_uuid);
+    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
+    toast('Order submitted: ' + data.order_uuid, 'info');
     refreshKafkaOrders();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 async function cancelOrder(uuid) {
-  if (!confirm('Cancel order ' + uuid + '?')) return;
+  if (!await uiConfirm('Cancel order ' + uuid + '?')) return;
   try {
     var res = await fetch('/api/test-orders/cancel', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({order_uuid: uuid, reason: 'cancelled via test page'}) });
     var data = await res.json();
-    if (!res.ok) { alert(data.error || 'Error'); return; }
+    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
     refreshKafkaOrders();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 var receiptDirect = false;
@@ -264,10 +266,10 @@ async function sendReceipt() {
   try {
     var res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     var data = await res.json();
-    if (!res.ok) { alert(data.error || 'Error'); return; }
+    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
     hideModal('receipt-modal');
     if (receiptDirect) { refreshDirectOrders(); } else { refreshKafkaOrders(); }
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 // --- Kafka complex order ---
@@ -302,7 +304,7 @@ async function submitKafkaComplexOrder() {
     outbound_destination: document.getElementById('kc-outgoing').value,
     priority: parseInt(document.getElementById('kc-priority').value) || 0
   };
-  if (!body.location) { alert('Lineside location is required'); return; }
+  if (!body.location) { toast('Lineside location is required', 'info'); return; }
   try {
     var res = await fetch('/api/test-orders/submit/complex', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -325,14 +327,14 @@ async function submitDirectOrder() {
     to_node_id: parseInt(document.getElementById('d-to-node').value),
     priority: parseInt(document.getElementById('d-priority').value) || 0
   };
-  if (!body.from_node_id || !body.to_node_id) { alert('Select both from and to nodes'); return; }
+  if (!body.from_node_id || !body.to_node_id) { toast('Select both from and to nodes', 'info'); return; }
   try {
     var res = await fetch('/api/test-orders/direct', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     var data = await res.json();
-    if (!res.ok) { alert(data.error || 'Error'); return; }
-    alert('Direct order dispatched: ' + data.vendor_order_id);
+    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
+    toast('Direct order dispatched: ' + data.vendor_order_id, 'info');
     refreshDirectOrders();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 // --- Complex order actions ---
@@ -368,7 +370,7 @@ async function submitComplexOrder() {
     outbound_destination: document.getElementById('cx-outgoing').value,
     priority: parseInt(document.getElementById('cx-priority').value) || 0
   };
-  if (!body.location) { alert('Lineside location is required'); return; }
+  if (!body.location) { toast('Lineside location is required', 'info'); return; }
   try {
     var res = await fetch('/api/test-orders/direct/complex', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -414,24 +416,24 @@ async function submitCommand() {
     container_name: document.getElementById('c-container-name').value,
     goods_id: document.getElementById('c-goods-id').value
   };
-  if (cmdType !== 'terminate' && !body.robot_id) { alert('Select a robot'); return; }
+  if (cmdType !== 'terminate' && !body.robot_id) { toast('Select a robot', 'info'); return; }
   try {
     var res = await fetch('/api/test-commands/submit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     var data = await res.json();
-    if (!res.ok) { alert(data.error || 'Error'); return; }
+    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
     var msg = data.vendor_order_id ? 'Order created: ' + data.vendor_order_id : 'Command ' + (data.status || 'sent');
-    alert(msg);
+    toast(msg, 'info');
     refreshCommands();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 async function refreshCmdStatus(id) {
   try {
     var res = await fetch('/api/test-commands/status?id=' + id);
     var data = await res.json();
-    if (!res.ok) { alert(data.error || 'Error'); return; }
+    if (!res.ok) { toast(data.error || 'Error', 'error'); return; }
     refreshCommands();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 // --- History modal ---
@@ -509,3 +511,40 @@ document.addEventListener('DOMContentLoaded', function() {
   refreshCommands();
   if (authenticated) { loadRobots(); loadScenePoints(); }
 });
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    cancelOrder,
+    formatRoute,
+    loadRobots,
+    loadScenePoints,
+    openReceipt,
+    populateLocationDropdown,
+    refreshCmdStatus,
+    refreshCommands,
+    refreshDirectOrders,
+    refreshKafkaOrders,
+    releaseComplexOrder,
+    renderCommandsTable,
+    renderOrdersTable,
+    sendReceipt,
+    showToast,
+    statusBadge,
+    submitCommand,
+    submitComplexOrder,
+    submitDirectOrder,
+    submitKafkaComplexOrder,
+    submitKafkaOrder,
+    switchTab,
+    updateCmdFields,
+    updateComplexFields,
+    updateKafkaComplexFields,
+    updateKafkaFields,
+    viewHistory
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

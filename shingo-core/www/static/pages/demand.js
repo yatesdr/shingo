@@ -1,5 +1,16 @@
+import { api, delegateActions, el, escapeHtml, hideModal, showModal, toast, uiConfirm } from '/static/app.js';
+
 // --- Click-to-edit ---
-function startEdit(span, field) {
+//
+// Signatures match the data-action dispatch convention: any literal
+// args from the action string come first, then the matched element
+// (`el`), then the event (`evt`). The dispatcher binds `this` to
+// the matched element too, but using positional `el` makes the
+// dependency explicit.
+
+// data-action="startEdit:demand_qty" on the span.cell-val.
+function startEdit(field, el) {
+  var span = el;
   var td = span.parentElement;
   var input = td.querySelector('.cell-input');
   input.classList.add('editing');
@@ -7,7 +18,9 @@ function startEdit(span, field) {
   input.select();
 }
 
-function stopEdit(input, field) {
+// data-action-blur="stopEdit:demand_qty" on the .cell-input.
+function stopEdit(field, el) {
+  var input = el;
   var td = input.parentElement;
   var span = td.querySelector('.cell-val');
   var tr = input.closest('tr');
@@ -16,13 +29,30 @@ function stopEdit(input, field) {
   checkDirty(tr);
 }
 
-function stopEditProduced(input) {
+// data-action-blur="stopEditProduced" on the produced cell input.
+function stopEditProduced(el) {
+  var input = el;
   var td = input.parentElement;
   var span = td.querySelector('.cell-val');
   var tr = input.closest('tr');
   span.textContent = input.value;
   input.classList.remove('editing');
   checkDirty(tr);
+}
+
+// data-action-keydown="demandCellKeydown:demand_qty"  (or :produced_qty)
+// Enter blurs to commit; Escape resets to the row's original value
+// and blurs.
+function demandCellKeydown(field, el, evt) {
+  if (!evt) return;
+  if (evt.key === 'Enter') {
+    el.blur();
+  } else if (evt.key === 'Escape') {
+    var tr = el.closest('tr');
+    var orig = field === 'demand_qty' ? tr.dataset.origDemand : tr.dataset.origProduced;
+    el.value = orig;
+    el.blur();
+  }
 }
 
 function checkDirty(tr) {
@@ -44,7 +74,7 @@ function showAddRow() {
 
 async function addMaterial() {
   var catId = document.getElementById('add-cat-id').value.trim();
-  if (!catId) { alert('Cat-ID is required'); return; }
+  if (!catId) { toast('Cat-ID is required', 'info'); return; }
   var body = {
     cat_id: catId,
     description: document.getElementById('add-description').value,
@@ -53,10 +83,10 @@ async function addMaterial() {
   try {
     var res = await fetch('/api/demands', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
     var data = await res.json();
-    if (!res.ok) { alert(data.error || 'Error creating demand'); return; }
+    if (!res.ok) { toast(data.error || 'Error creating demand', 'error'); return; }
     hideModal('add-modal');
     location.reload();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 function openEditModal(btn) {
@@ -76,16 +106,16 @@ async function saveEdit() {
     demand_qty: parseInt(tr.querySelector('[name="demand_qty"]').value) || 0,
     produced_qty: parseInt(tr.querySelector('[name="produced_qty"]').value) || 0
   };
-  if (!body.cat_id) { alert('Cat-ID is required'); return; }
+  if (!body.cat_id) { toast('Cat-ID is required', 'info'); return; }
   try {
     var res = await fetch('/api/demands/' + id, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    if (!res.ok) { var err = await res.json(); alert(err.error || 'Error'); return; }
+    if (!res.ok) { var err = await res.json(); toast(err.error || 'Error', 'error'); return; }
     hideModal('edit-modal');
     location.reload();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
-function getRowData(tr) {
+async function getRowData(tr) {
   return {
     id: parseInt(tr.dataset.id),
     cat_id: tr.dataset.cat,
@@ -100,42 +130,42 @@ async function applyRow(btn) {
   var d = getRowData(tr);
   try {
     var res = await fetch('/api/demands/' + d.id, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cat_id:d.cat_id, description:d.description, demand_qty:d.demand_qty, produced_qty:d.produced_qty}) });
-    if (!res.ok) { var err = await res.json(); alert(err.error || 'Error'); return; }
+    if (!res.ok) { var err = await res.json(); toast(err.error || 'Error', 'error'); return; }
     location.reload();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 async function deleteRow(btn) {
-  if (!confirm('Delete this tracked material?')) return;
+  if (!await uiConfirm('Delete this tracked material?')) return;
   var tr = btn.closest('tr');
   var id = tr.dataset.id;
   try {
     var res = await fetch('/api/demands/' + id, { method:'DELETE' });
-    if (!res.ok) { var err = await res.json(); alert(err.error || 'Error'); return; }
+    if (!res.ok) { var err = await res.json(); toast(err.error || 'Error', 'error'); return; }
     location.reload();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 async function applyAll() {
-  if (!confirm('Apply all changes?')) return;
+  if (!await uiConfirm('Apply all changes?')) return;
   var rows = document.querySelectorAll('#demand-body tr[data-id]');
   try {
     for (var i = 0; i < rows.length; i++) {
       var d = getRowData(rows[i]);
       var res = await fetch('/api/demands/' + d.id, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({cat_id:d.cat_id, description:d.description, demand_qty:d.demand_qty, produced_qty:d.produced_qty}) });
-      if (!res.ok) { var err = await res.json(); alert(err.error || 'Error'); return; }
+      if (!res.ok) { var err = await res.json(); toast(err.error || 'Error', 'error'); return; }
     }
     location.reload();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 async function clearAllProduced() {
-  if (!confirm('Zero all produced counts? This will not change demand quantities.')) return;
+  if (!await uiConfirm('Zero all produced counts? This will not change demand quantities.')) return;
   try {
     var res = await fetch('/api/demands/clear-all', { method:'POST' });
-    if (!res.ok) { var err = await res.json(); alert(err.error || 'Error'); return; }
+    if (!res.ok) { var err = await res.json(); toast(err.error || 'Error', 'error'); return; }
     location.reload();
-  } catch(e) { alert('Error: ' + e); }
+  } catch(e) { toast('Error: ' + e, 'error'); }
 }
 
 async function viewLog(id) {
@@ -161,3 +191,28 @@ async function viewLog(id) {
     document.getElementById('log-body').innerHTML = html;
   } catch(e) { document.getElementById('log-body').innerHTML = '<p style="color:red;">Error: ' + escapeHtml(String(e)) + '</p>'; }
 }
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    addMaterial,
+    applyAll,
+    applyRow,
+    checkDirty,
+    clearAllProduced,
+    deleteRow,
+    demandCellKeydown,
+    getRowData,
+    openEditModal,
+    saveEdit,
+    showAddRow,
+    startEdit,
+    stopEdit,
+    stopEditProduced,
+    viewLog
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

@@ -127,7 +127,7 @@ func TestReleaseOrderWithLineside_NoProcessNode_LogsSkip(t *testing.T) {
 func TestReleaseOrderWithLineside_ProduceRole_LogsSkip(t *testing.T) {
 	t.Parallel()
 	db := testEngineDB(t)
-	_, nodeID, _, _ := seedProduceNode(t, db, "simple")
+	_, nodeID, _, _ := seedProduceNode(t, db, "")
 	eng := testEngine(t, db)
 	getLogs := captureReleaseLogs(t, eng)
 

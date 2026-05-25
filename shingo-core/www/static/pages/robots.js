@@ -1,3 +1,5 @@
+import { api, delegateActions, el, hideModal, showModal, uiConfirm } from '/static/app.js';
+
 var currentRobotVehicle = '';
 
 function filterRobots() {
@@ -67,11 +69,28 @@ function robotRetryFailed() {
   robotControlPost('/api/robots/retry', {vehicle_id: currentRobotVehicle});
 }
 
-function robotForceComplete() {
-  if (!confirm('Force complete current task for ' + currentRobotVehicle + '?')) return;
+async function robotForceComplete() {
+  if (!await uiConfirm('Force complete current task for ' + currentRobotVehicle + '?')) return;
   robotControlPost('/api/robots/force-complete', {vehicle_id: currentRobotVehicle});
 }
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeRobotModal();
 });
+
+// ─── delegated event handlers ─────────────────────────
+// All page-level data-action verbs route through delegateActions
+// on document.body. Multiple event types share the same handler
+// map — most handlers are click-only but a few (e.g. updatePreview)
+// are referenced via data-action-change / data-action-input too,
+// so binding the map across every event type keeps the page wiring
+// single-source.
+delegateActions(document.body, {
+    closeRobotModal,
+    filterRobots,
+    openRobotModal,
+    robotControlPost,
+    robotForceComplete,
+    robotRetryFailed,
+    robotSetAvailability
+}, { events: ['click', 'change', 'input', 'blur', 'keydown', 'submit'] });

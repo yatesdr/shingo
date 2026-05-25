@@ -19,9 +19,9 @@ Displays the current material inventory for the station's production lines. Each
 
 When PLC integration is active, UOP remaining decrements automatically as production counters advance. If UOP remaining drops below the configured reorder threshold and auto-reorder is enabled, a replacement bin is ordered without operator intervention.
 
-### Kanbans
+### Orders
 
-**Route:** `/kanbans`
+**Route:** `/orders`
 
 Lists all active transport orders for this station with real-time status updates. For each order, the page shows:
 

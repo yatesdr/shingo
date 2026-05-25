@@ -1,4 +1,11 @@
-// --- Shared utilities ---
+// --- Shared utilities (Core admin) ---
+//
+// ES module. SPRINT 3 migrated every per-page script to explicit
+// `import { … } from '/static/app.js'`; SPRINT 4 promoted the
+// previously bare function declarations to inline `export function`
+// declarations and dropped the trailing `export { … }` block. The
+// canonical cross-surface helpers live in /static/shared/utils.js;
+// this file holds Core-specific helpers + SSE bootstrap.
 //
 // HTML construction tools available across pages:
 //   h`...`            — tagged-template literal. Interpolated values are
@@ -11,9 +18,13 @@
 //   escapeHtml(s)     — last resort for legacy string concatenation.
 //                       Prefer h`` for new code.
 
+import { delegateActions, installBackdropClose } from '/static/shared/utils.js';
+installBackdropClose();
+export { delegateActions };
+
 // Debounce: delays execution until `ms` milliseconds after the last call.
 // Used to prevent SSE event bursts from saturating the browser main thread.
-function debounce(fn, ms) {
+export function debounce(fn, ms) {
   var timer;
   return function() {
     var args = arguments;
@@ -24,7 +35,7 @@ function debounce(fn, ms) {
 }
 
 // HTML escape (replaces per-page esc/escapeHtml)
-function escapeHtml(s) {
+export function escapeHtml(s) {
   if (s === null || s === undefined || s === '') return '';
   var d = document.createElement('div');
   d.appendChild(document.createTextNode(s));
@@ -40,7 +51,7 @@ function escapeHtml(s) {
 // string that the outer h`` will re-escape — wrap with the __html opt-out:
 // `${cond ? {__html:true, value: h`...`} : ''}`. Arrays of h`` results
 // are joined unescaped and need no wrap.
-function h(strings) {
+export function h(strings) {
   var out = strings[0];
   for (var i = 1; i < arguments.length; i++) {
     var v = arguments[i];
@@ -61,7 +72,7 @@ function h(strings) {
 // Element builder. props: attributes (className, dataset, id, ...) and
 // event listeners (onclick, onchange) by camelCase name. children:
 // string, Node, or array of either.
-function el(tag, props, children) {
+export function el(tag, props, children) {
   var node = document.createElement(tag);
   if (props) {
     for (var key in props) {
@@ -92,16 +103,121 @@ function el(tag, props, children) {
 }
 
 // Generic modal show/hide
-function showModal(id) {
+export function showModal(id) {
   document.getElementById(id).classList.add('active');
 }
-function hideModal(id) {
+export function hideModal(id) {
   document.getElementById(id).classList.remove('active');
+}
+
+// --- Dialog helpers (Promise-based, replace native alert/confirm/prompt) ---
+//
+// Mirrors the shingoedge.js / shared/utils.js shape so page scripts on
+// either surface call the same names. Migration rule: every page that
+// uses native confirm()/prompt()/alert() switches to these when the page
+// JS is touched.
+
+export function uiConfirm(message) {
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active confirm-overlay';
+    var box = document.createElement('div');
+    box.className = 'modal confirm-box';
+    box.style.maxWidth = '420px';
+    var p = document.createElement('p');
+    p.textContent = message;
+    p.style.margin = '0 0 1rem';
+    box.appendChild(p);
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = function() { overlay.remove(); resolve(false); };
+    var okBtn = document.createElement('button');
+    okBtn.className = 'btn btn-danger';
+    okBtn.textContent = 'Confirm';
+    okBtn.onclick = function() { overlay.remove(); resolve(true); };
+    row.appendChild(cancelBtn); row.appendChild(okBtn);
+    box.appendChild(row);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+  });
+}
+
+export function uiPrompt(message, opts) {
+  opts = opts || {};
+  return new Promise(function(resolve) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active confirm-overlay';
+    var box = document.createElement('div');
+    box.className = 'modal confirm-box';
+    box.style.maxWidth = '420px';
+    var p = document.createElement('p');
+    p.textContent = message;
+    p.style.margin = '0 0 0.75rem';
+    box.appendChild(p);
+    var input = document.createElement('input');
+    input.className = 'form-input';
+    input.type = opts.type === 'number' ? 'number' : 'text';
+    if (opts.value !== undefined) input.value = String(opts.value);
+    if (opts.min !== undefined) input.min = String(opts.min);
+    if (opts.max !== undefined) input.max = String(opts.max);
+    input.style.marginBottom = '1rem';
+    box.appendChild(input);
+    var done = function(v) { overlay.remove(); resolve(v); };
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = function() { done(null); };
+    var okBtn = document.createElement('button');
+    okBtn.className = 'btn btn-primary';
+    okBtn.textContent = 'OK';
+    okBtn.onclick = function() { done(input.value); };
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') done(input.value);
+      else if (e.key === 'Escape') done(null);
+    });
+    row.appendChild(cancelBtn); row.appendChild(okBtn);
+    box.appendChild(row);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    setTimeout(function() { input.focus(); }, 0);
+  });
+}
+
+export function toast(message, level, opts) {
+  level = level || 'info';
+  opts = opts || {};
+  var container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.style.cssText = 'position:fixed;top:1rem;right:1rem;display:flex;flex-direction:column;gap:0.5rem;z-index:10000;pointer-events:none';
+    document.body.appendChild(container);
+  }
+  var t = document.createElement('div');
+  t.className = 'toast toast-' + level;
+  t.textContent = message;
+  var stripe = { success: 'var(--success)', error: 'var(--danger)', warning: 'var(--warning)', info: 'var(--info)' }[level] || 'var(--info)';
+  t.style.cssText = 'padding:0.6rem 1rem;border-radius:var(--radius);background:var(--surface);color:var(--text);border:1px solid var(--border);border-left:4px solid ' + stripe + ';box-shadow:var(--shadow-md);pointer-events:auto;min-width:12rem;max-width:24rem;font-size:0.9rem';
+  container.appendChild(t);
+  if (!opts.sticky) {
+    var dur = (level === 'error') ? 5000 : 3200;
+    setTimeout(function() { t.remove(); }, dur);
+  } else {
+    t.style.cursor = 'pointer';
+    t.title = 'Click to dismiss';
+    t.addEventListener('click', function() { t.remove(); });
+  }
+  return t;
 }
 
 // Generic JSON request. Throws the server error string (or parsed object's
 // `error` field) on non-2xx responses; returns parsed JSON on success.
-function api(method, url, body) {
+export function api(method, url, body) {
   var opts = { method: method };
   if (body !== undefined && body !== null) {
     opts.headers = { 'Content-Type': 'application/json' };
@@ -118,17 +234,17 @@ function api(method, url, body) {
     return r.json();
   });
 }
-function apiGet(url)        { return api('GET', url); }
-function apiPost(url, body) { return api('POST', url, body || {}); }
-function apiPut(url, body)  { return api('PUT',  url, body || {}); }
-function apiDelete(url)     { return api('DELETE', url); }
+export function apiGet(url)        { return api('GET', url); }
+export function apiPost(url, body) { return api('POST', url, body || {}); }
+export function apiPut(url, body)  { return api('PUT',  url, body || {}); }
+export function apiDelete(url)     { return api('DELETE', url); }
 
 // --- Time formatting ---
 // timeAgo:        relative ("3m ago"), '-' on falsy.
 // formatTime:     local-time string. opts.precision === 'ms' returns
 //                 HH:MM:SS.mmm for high-resolution log views.
 // formatDuration: human-readable elapsed duration in ms.
-function timeAgo(ts) {
+export function timeAgo(ts) {
   if (!ts) return '-';
   var d = Date.now() - new Date(ts).getTime();
   if (d < 60000) return 'just now';
@@ -137,7 +253,7 @@ function timeAgo(ts) {
   return Math.floor(d / 86400000) + 'd ago';
 }
 
-function formatTime(ts, opts) {
+export function formatTime(ts, opts) {
   if (!ts || ts === '0001-01-01T00:00:00Z') return '-';
   var d = new Date(ts);
   if (isNaN(d.getTime())) return ts;
@@ -147,7 +263,7 @@ function formatTime(ts, opts) {
   return d.toLocaleString();
 }
 
-function formatDuration(ms) {
+export function formatDuration(ms) {
   if (!ms || ms <= 0) return '-';
   if (ms < 1000) return ms + 'ms';
   var s = Math.floor(ms / 1000);
@@ -161,7 +277,7 @@ function formatDuration(ms) {
 }
 
 // Convert UTC timestamps to browser local time
-function convertTimestamps() {
+export function convertTimestamps() {
   document.querySelectorAll('time[data-utc]').forEach(function(el) {
     var d = new Date(el.getAttribute('data-utc'));
     if (!isNaN(d)) {
@@ -174,9 +290,26 @@ document.addEventListener('DOMContentLoaded', convertTimestamps);
 // SSE connection for live updates
 (function() {
   let es;
+  let reconnectDelay = 1000;
+  // Build id seen on the first 'connected' event after page load.
+  // If a later reconnect reports a different id the core has been
+  // restarted; force-reload so the tab picks up the new bundle.
+  let seenBuild = null;
 
   function connect() {
     es = new EventSource('/events');
+
+    es.addEventListener('connected', function(e) {
+      reconnectDelay = 1000;
+      var build = '';
+      try { build = (JSON.parse(e.data) || {}).build || ''; } catch (_) {}
+      if (!build) return;
+      if (seenBuild === null) {
+        seenBuild = build;
+      } else if (seenBuild !== build) {
+        location.reload();
+      }
+    });
 
     es.addEventListener('order-update', function(e) {
       // Page-specific handlers can override via window.onOrderUpdate
@@ -346,7 +479,8 @@ document.addEventListener('DOMContentLoaded', convertTimestamps);
 
     es.onerror = function() {
       es.close();
-      setTimeout(connect, 3000);
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 10000);
     };
   }
 
@@ -358,3 +492,74 @@ document.addEventListener('DOMContentLoaded', convertTimestamps);
 
   connect();
 })();
+
+// ─── Auto-dispatching delegated click handler ─────────────────────────
+//
+// Same convention as shingo-edge/www/static/js/shingoedge.js — page
+// templates emit `data-action="verb"` / `data-action="verb:arg"` /
+// `data-action="verb:a:b"`; this listener resolves the closest
+// [data-action] ancestor, splits on `:`, looks up `window[verb]`, and
+// calls it with `(args..., el, evt)`.
+//
+// data-backdrop-close on a .modal-overlay closes the modal when the
+// overlay itself (not an inner .modal) is clicked.
+//
+// data-skip-on-checkbox="1" on a row tells the dispatcher to ignore
+// clicks originating inside a checkbox cell (lets row-click and per-
+// row checkbox actions coexist cleanly).
+
+// ─── Generic action handlers ───────────────────────────────────────────
+// Per-page scripts register these via delegateActions when they
+// emit elements with data-action="removeParentElement" /
+// "removeClosestRow" / "toggleVisibility". Stay small and
+// DOM-mechanical — domain logic belongs in page scripts.
+
+export function removeParentElement() {
+  // `this` is the clicked element; e.g. a "×" button inside a row.
+  if (this && this.parentElement) this.parentElement.remove();
+}
+
+export function removeClosestRow() {
+  if (this && this.closest) {
+    var row = this.closest('tr');
+    if (row) row.remove();
+  }
+}
+
+export function toggleVisibility(id) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = (el.style.display === 'none' || !el.style.display) ? '' : 'none';
+}
+
+// enterSubmits — used as data-action-keydown="enterSubmits:targetFn"
+// on form-input elements that should submit on Enter (and ignore
+// other keys). targetFn is the bare name of a window-resolved
+// function; this helper calls it after preventDefault.
+export function enterSubmits(targetFnName, el, evt) {
+  if (!evt || evt.key !== 'Enter') return;
+  evt.preventDefault();
+  var fn = window[targetFnName];
+  if (typeof fn === 'function') fn(el, evt);
+}
+
+// confirmDeleteForm — for `data-action-submit="confirmDeleteForm"
+// data-confirm-msg="..."` on a plain HTML <form>. Stops the
+// synchronous browser submit, awaits the styled uiConfirm, then
+// programmatically resubmits the form when the user confirms.
+//
+// The form needs a sentinel data attribute we set after confirm so
+// the second submit doesn't loop into another uiConfirm.
+export async function confirmDeleteForm(el, evt) {
+  if (!el || !evt) return;
+  if (el.dataset.confirmed === '1') return;       // resubmit path
+  evt.preventDefault();
+  var msg = el.dataset.confirmMsg || 'Are you sure?';
+  if (!await uiConfirm(msg)) return;
+  el.dataset.confirmed = '1';
+  el.submit();                                    // bypasses the listener
+}
+
+// All exports above are declared inline (`export function …`). The
+// trailing `export { … }` block that used to live here was removed in
+// SPRINT 4 — every helper is now a top-level named export.
