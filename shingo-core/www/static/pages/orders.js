@@ -15,14 +15,19 @@ function orderControlPost(url, body) {
 }
 
 async function terminateOrder(id) {
-  if (!await uiConfirm('Terminate order #' + id + '? This cannot be undone.')) return;
-  orderControlPost('/api/orders/terminate', {order_id: id});
+  // id arrives as a string from data-action="terminateOrder:<id>" colon-arg
+  // dispatch; the Go handler decodes order_id as int64 and rejects string
+  // JSON values with "invalid request".
+  var oid = parseInt(id, 10);
+  if (!await uiConfirm('Terminate order #' + oid + '? This cannot be undone.')) return;
+  orderControlPost('/api/orders/terminate', {order_id: oid});
 }
 
 function setOrderPriority(id) {
+  var oid = parseInt(id, 10);
   var p = parseInt(document.getElementById('order-priority').value, 10);
   if (isNaN(p)) return;
-  orderControlPost('/api/orders/priority', {order_id: id, priority: p});
+  orderControlPost('/api/orders/priority', {order_id: oid, priority: p});
 }
 
 // --- Order detail modal ---
