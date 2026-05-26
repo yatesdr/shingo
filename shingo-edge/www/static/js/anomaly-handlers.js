@@ -46,3 +46,24 @@ function updateAnomalyBadge() {
     if (pop) pop.style.display = 'none';
   }
 }
+
+// The anomaly bell lives in the navbar (header.html), included by
+// every page. Each per-page module registers its own delegateActions
+// map on document.body — that registration's sentinel blocks any
+// later document.body registration, so we can't use delegateActions
+// here without erasing the page-script's handler map. Use a direct
+// delegated click listener scoped to the anomaly wrap instead.
+document.addEventListener('click', function(e) {
+  if (!e.target || !e.target.closest) return;
+  var act = e.target.closest('[data-action]');
+  if (!act) return;
+  var raw = act.dataset.action || '';
+  var parts = raw.split(':');
+  if (parts[0] === 'toggleAnomalyPopover') {
+    toggleAnomalyPopover();
+  } else if (parts[0] === 'confirmAnomaly') {
+    confirmAnomaly(parts[1]);
+  } else if (parts[0] === 'dismissAnomaly') {
+    dismissAnomaly(parts[1]);
+  }
+});

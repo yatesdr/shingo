@@ -54,7 +54,7 @@ function openBinDetail(id) {
     })
     .catch(function(e) {
       console.error('openBinDetail', id, e);
-      toast('Error loading bin: ' + ((typeof e === 'string' && e, 'error') || (e && e.error) || 'unknown'));
+      toast('Error loading bin: ' + ((typeof e === 'string' && e) || (e && e.error) || 'unknown'), 'error');
     });
 }
 
@@ -294,7 +294,7 @@ function renderJournal(data) {
 function doBinAction(action, params) {
   apiPost('/api/bins/action', { id: currentBinId, action: action, params: params || {} })
     .then(function() { openBinDetail(currentBinId); })
-    .catch(function(e) { toast('Error: ' + (e.error || e, 'error')); });
+    .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
 function loadPayload() {
@@ -337,7 +337,7 @@ function requestTransport() {
   }
   apiPost('/api/bins/request-transport', { bin_id: currentBinId, destination_node_id: nodeId })
     .then(function(data) { toast(data.message || 'Transport requested', 'info'); openBinDetail(currentBinId); })
-    .catch(function(e) { toast('Error: ' + (e.error || e, 'error')); });
+    .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
 function recordCount() {
@@ -420,12 +420,12 @@ async function bulkAction(action) {
     .then(function(data) {
       var failed = (data.results || []).filter(function(r) { return !r.ok; });
       if (failed.length > 0) {
-        toast(failed.length + ' failed: ' + failed.map(function(f, 'error') { return '#' + f.id + ': ' + f.error; }).join(', '));
+        toast(failed.length + ' failed: ' + failed.map(function(f) { return '#' + f.id + ': ' + f.error; }).join(', '), 'error');
       }
       ids.forEach(refreshBinRow);
       clearSelection();
     })
-    .catch(function(e) { toast('Error: ' + (e.error || e, 'error')); });
+    .catch(function(e) { toast('Error: ' + (e.error || e), 'error'); });
 }
 
 function refreshBinRow(id) {

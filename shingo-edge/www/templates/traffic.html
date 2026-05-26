@@ -121,6 +121,19 @@ async function deleteBinding(name) {
         if (row) row.remove();
     } catch (e) { ShingoEdge.toast('Error: ' + e, 'error'); }
 }
+
+// Direct click delegation — no module imports here, so we can't use
+// delegateActions (its document.body sentinel would clash with any
+// page-script registration that runs alongside this one).
+document.addEventListener('click', function(e) {
+    if (!e.target || !e.target.closest) return;
+    var act = e.target.closest('[data-action]');
+    if (!act) return;
+    var parts = (act.dataset.action || '').split(':');
+    if (parts[0] === 'saveHeartbeat') saveHeartbeat();
+    else if (parts[0] === 'addBinding') addBinding();
+    else if (parts[0] === 'deleteBinding') deleteBinding(parts[1]);
+});
 </script>
 
 {{template "footer" .}}

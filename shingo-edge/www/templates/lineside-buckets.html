@@ -105,6 +105,18 @@ async function adminClearLinesideBucket(btn) {
     btn.disabled = false;
   }
 }
+
+// Direct click delegation — buttons want the clicked element so they
+// can read tr.data-bucket-id. closest('[data-action]') on the click
+// target gives us that element.
+document.addEventListener('click', function(e) {
+  if (!e.target || !e.target.closest) return;
+  var act = e.target.closest('[data-action]');
+  if (!act) return;
+  var verb = (act.dataset.action || '').split(':')[0];
+  if (verb === 'adminEditLinesideBucket') adminEditLinesideBucket(act);
+  else if (verb === 'adminClearLinesideBucket') adminClearLinesideBucket(act);
+});
 </script>
 
 {{template "footer" .}}

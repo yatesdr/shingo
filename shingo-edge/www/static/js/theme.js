@@ -43,6 +43,16 @@
     applyTheme();
   };
 
+  // The theme button uses `data-action="toggleTheme"`, but delegateActions
+  // dispatches from per-page handler maps and theme.js is a classic
+  // script loaded by every page — so we bind a direct delegated click
+  // listener here instead. document-level delegation survives htmx swaps
+  // that re-render the navbar.
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest && e.target.closest('[data-action="toggleTheme"]');
+    if (btn) window.toggleTheme();
+  });
+
   document.addEventListener('DOMContentLoaded', function() {
     applyTheme();
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {

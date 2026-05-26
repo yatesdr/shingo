@@ -90,5 +90,14 @@ function deleteGroup(name) {
   document.body.appendChild(form);
   form.submit();
 }
+
+// Direct click delegation — no module imports here.
+document.addEventListener('click', function(e) {
+  if (!e.target || !e.target.closest) return;
+  var act = e.target.closest('[data-action]');
+  if (!act) return;
+  var parts = (act.dataset.action || '').split(':');
+  if (parts[0] === 'deleteGroup') deleteGroup(parts[1]);
+});
 </script>
 {{end}}

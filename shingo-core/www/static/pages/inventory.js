@@ -237,7 +237,7 @@ async function deleteBucket() {
     }
     await loadBuckets();
   } catch (e) {
-    window.toast('Delete failed: ' + (e.message || e, 'error'));
+    window.toast('Delete failed: ' + (e.message || e), 'error');
   }
 }
 
