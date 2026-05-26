@@ -9,7 +9,7 @@ import (
 	"shingo/protocol"
 	"shingo/protocol/testutil"
 	"shingocore/config"
-	"shingocore/fleet/simulator"
+	"shingocore/fleet"
 	"shingocore/internal/testdb"
 	"shingocore/store"
 	"shingocore/store/bins"
@@ -44,10 +44,16 @@ func testEnvelope() *protocol.Envelope {
 	return testdb.Envelope()
 }
 
-// newTestEngine constructs a real Engine wired to the test database and simulator.
-// No Kafka, no HTTP server. Background goroutines tick harmlessly against the simulator.
+// newTestEngine constructs a real Engine wired to the test database and a
+// fleet backend (simulator, or a test wrapper that embeds it). No Kafka, no
+// HTTP server. Background goroutines tick harmlessly against the fleet.
 // The engine is stopped automatically via t.Cleanup.
-func newTestEngine(t *testing.T, db *store.DB, sim *simulator.SimulatorBackend) *Engine {
+//
+// The fleet parameter takes fleet.Backend (not *simulator.SimulatorBackend)
+// so test wrappers like fakeOccupancyBackend can be injected at construction
+// — replacing the field after eng.Start() would race the connection-health
+// goroutine that reads e.fleet.
+func newTestEngine(t *testing.T, db *store.DB, flt fleet.Backend) *Engine {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.Messaging.StationID = "test-core"
@@ -56,7 +62,7 @@ func newTestEngine(t *testing.T, db *store.DB, sim *simulator.SimulatorBackend) 
 	eng := New(Config{
 		AppConfig: cfg,
 		DB:        db,
-		Fleet:     sim,
+		Fleet:     flt,
 		MsgClient: nil, // safe: checkConnectionStatus nil-guards msgClient
 		LogFunc:   t.Logf,
 	})

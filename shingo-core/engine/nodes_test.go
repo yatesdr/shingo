@@ -107,12 +107,7 @@ func TestGetNodeOccupancy_DiscrepancyClassification(t *testing.T) {
 			{ID: "FLEET-ONLY-1", Occupied: false},
 		},
 	}
-	eng := newTestEngine(t, db, fakeFleet.SimulatorBackend)
-	// Replace the fleet with our wrapper after start so the engine
-	// dispatches calls through it. (Wiring/dispatcher already use the
-	// underlying simulator — that's fine, we only care about the Engine
-	// type assertion in GetNodeOccupancy.)
-	eng.fleet = fakeFleet
+	eng := newTestEngine(t, db, fakeFleet)
 
 	results, err := eng.GetNodeOccupancy()
 	if err != nil {
@@ -171,8 +166,7 @@ func TestGetNodeOccupancy_FleetError(t *testing.T) {
 		SimulatorBackend: simulator.New(),
 		err:              errors.New("rds offline"),
 	}
-	eng := newTestEngine(t, db, fakeFleet.SimulatorBackend)
-	eng.fleet = fakeFleet
+	eng := newTestEngine(t, db, fakeFleet)
 
 	out, err := eng.GetNodeOccupancy()
 	if err == nil {
@@ -199,8 +193,7 @@ func TestGetNodeOccupancy_EmptyFleetEmptyDB(t *testing.T) {
 		SimulatorBackend: simulator.New(),
 		locations:        nil,
 	}
-	eng := newTestEngine(t, db, fakeFleet.SimulatorBackend)
-	eng.fleet = fakeFleet
+	eng := newTestEngine(t, db, fakeFleet)
 
 	out, err := eng.GetNodeOccupancy()
 	if err != nil {

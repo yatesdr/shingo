@@ -3,6 +3,7 @@ package orders
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,23 @@ import (
 // SQLite name so tests that build multiple fixtures in a single
 // function don't collide on `cache=shared`.
 var dbCounter int64
+
+// TestMain forces modernc.org/sqlite's global sqlite3_initialize to
+// run once, single-threaded, before any t.Parallel() tests open their
+// own connections concurrently. Without this priming step, two
+// parallel openers race on the library's internal mutex-init state
+// (lib._sqlite3MutexInit) under -race — even though the data path
+// itself is safe, the race detector sees unsynchronized reads/writes
+// during the first-ever Open's global init.
+func TestMain(m *testing.M) {
+	if db, err := sql.Open("sqlite", "file:lead_time_prime?mode=memory"); err == nil {
+		// Ping forces the connection (and therefore sqlite3_initialize)
+		// to run before any goroutine has a chance to race it.
+		_ = db.Ping()
+		_ = db.Close()
+	}
+	os.Exit(m.Run())
+}
 
 // orderHistoryRow lets the tests below insert rows in a readable way
 // without repeating positional Exec calls.
