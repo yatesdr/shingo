@@ -1,4 +1,4 @@
-import { api, el, escapeHtml, formatTime, toast, uiConfirm } from '/static/app.js';
+import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } from '/static/app.js';
 
 (function() {
   // Tab switching
@@ -423,4 +423,19 @@ import { api, el, escapeHtml, formatTime, toast, uiConfirm } from '/static/app.j
         emaintBody.innerHTML = '<tr><td colspan="10" class="text-muted">Error: ' + escapeHtml(err.message) + '</td></tr>';
       });
   };
+
+  // data-action wiring. The verbs above are attached to window so SSE
+  // callbacks in app.js can still reach them; this is what makes the
+  // page's buttons (Clear, Replay, Reapply Completion, fire alarm, …)
+  // fire under delegated dispatch.
+  delegateActions(document.body, {
+    switchDiagTab: window.switchDiagTab,
+    debugClear: window.debugClear,
+    debugFilter: window.debugFilter,
+    cmsFilter: window.cmsFilter,
+    repairAnomaly: window.repairAnomaly,
+    replayDeadLetter: window.replayDeadLetter,
+    fireAlarmTrigger: window.fireAlarmTrigger,
+    loadEMaintReport: window.loadEMaintReport
+  }, { events: ['click', 'change', 'input'] });
 })();

@@ -1,4 +1,4 @@
-import { createSSE, escapeHtml } from '/static/js/shingoedge.js';
+import { createSSE, delegateActions, escapeHtml } from '/static/js/shingoedge.js';
 
 (function() {
   /* --- Debug Log Beautification --- */
@@ -448,4 +448,14 @@ import { createSSE, escapeHtml } from '/static/js/shingoedge.js';
       debugAppendRow(entry);
     }
   });
+
+  // data-action wiring. The verbs are attached to window (for SSE
+  // callbacks); delegated dispatch needs its own handler map so the
+  // Clear / Replay / Sync Order Status buttons fire.
+  delegateActions(document.body, {
+    debugClear: window.debugClear,
+    debugFilter: window.debugFilter,
+    requestOrderStatusSync: window.requestOrderStatusSync,
+    replayDeadLetter: window.replayDeadLetter
+  }, { events: ['click', 'change', 'input'] });
 })();
