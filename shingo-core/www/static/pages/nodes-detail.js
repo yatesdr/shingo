@@ -2,9 +2,14 @@ import { api, apiGet, apiPost, delegateActions, el, escapeHtml, removeClosestRow
 
 // Node detail modal: form fields, chip pickers (bin types & stations),
 // inventory list with editable manifest, occupancy comparison modal.
-// Requires isAuth from nodes-overview.js.
+//
+// Each per-page module reads isAuth from #page-data directly — the
+// previous "Requires isAuth from nodes-overview.js" comment described
+// pre-module behavior that no longer works under ES module scoping.
 
-function openNodeModal(el) {
+var isAuth = document.getElementById('page-data').dataset.authenticated === 'true';
+
+export function openNodeModal(el) {
   if (!el || !el.dataset) return;
   var m = document.getElementById('node-modal');
   var inv = document.getElementById('modal-inventory');

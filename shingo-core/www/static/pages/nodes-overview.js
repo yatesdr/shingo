@@ -1,10 +1,9 @@
 import { api, apiPost, delegateActions, toast, uiConfirm } from '/static/app.js';
 
-// Page-level helpers for the nodes overview: auth flag, fleet sync,
-// accordion toggle, search/filter, page init. Loaded first so isAuth is
-// in scope for nodes-detail.js and nodes-supermarket.js.
-
-var isAuth = document.getElementById('page-data').dataset.authenticated === 'true';
+// Page-level helpers for the nodes overview: fleet sync, accordion
+// toggle, search/filter. Sibling modules (nodes-detail.js,
+// nodes-supermarket.js) read isAuth from #page-data independently
+// under ES module scoping.
 
 async function syncOrGenerate(e) {
   if (e.shiftKey) {

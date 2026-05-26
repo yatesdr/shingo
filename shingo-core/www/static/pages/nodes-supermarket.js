@@ -1,10 +1,15 @@
 import { api, apiGet, apiPost, delegateActions, el, escapeHtml, toast } from '/static/app.js';
+import { openNodeModal } from '/static/pages/nodes-detail.js';
 
 // Supermarket / node-group hierarchy: NGRP and Lane modals, layout
 // preview, drag-and-drop reparenting, and the buildHierarchy pass that
 // converts the flat tile grid into nested smkt-group sections.
-// Requires isAuth from nodes-overview.js and openNodeModal from
-// nodes-detail.js.
+//
+// Each per-page module reads isAuth from #page-data directly — the
+// previous "Requires isAuth from nodes-overview.js" comment described
+// pre-module behavior that no longer works under ES module scoping.
+
+var isAuth = document.getElementById('page-data').dataset.authenticated === 'true';
 
 /* --- Node Group modal --- */
 function openNgrpModal() {
