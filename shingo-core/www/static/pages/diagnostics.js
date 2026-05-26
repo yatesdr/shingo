@@ -269,13 +269,18 @@ import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } fr
   };
 
   window.repairAnomaly = function(action, orderID, binID) {
+    // orderID/binID arrive as strings from data-action colon-args; the Go
+    // handler decodes both as int64 and rejects JSON string values with
+    // "invalid request". Coerce before JSON.stringify.
+    var oid = parseInt(orderID, 10) || 0;
+    var bid = parseInt(binID, 10) || 0;
     fetch('/api/recovery/repair', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action: action,
-        order_id: orderID || 0,
-        bin_id: binID || 0
+        order_id: oid,
+        bin_id: bid
       })
     })
       .then(function(r) {
