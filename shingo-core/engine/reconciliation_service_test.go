@@ -26,8 +26,13 @@ import (
 //   Loop                     — ticker-driven summary+auto-confirm; timing
 //                              tested by the explicit AutoConfirm* method
 //                              below to keep the test deterministic.
-//   AutoConfirmStuckDeliveredOrders — flips delivered→confirmed past
-//                              a timeout and invokes onOrderCompleted.
+//   AutoConfirmStuckDeliveredOrders — delegates to confirmDelivered for
+//                              each stuck order past a timeout, then
+//                              records a recovery_actions audit row.
+//                              Production wires confirmDelivered to
+//                              LifecycleService.ConfirmReceipt; tests
+//                              substitute a fake callback that mutates
+//                              the test DB.
 //
 // Tests focus on seeding DB state (stuck orders, expired staged bins,
 // dead-lettered outbox rows) and asserting the returned data matches.
@@ -55,8 +60,8 @@ func TestNewReconciliationService_WiresDeps(t *testing.T) {
 	if svc.logFn == nil {
 		t.Error("logFn should be wired")
 	}
-	if svc.onOrderCompleted != nil {
-		t.Error("onOrderCompleted should default to nil (wired by Engine.New)")
+	if svc.confirmDelivered != nil {
+		t.Error("confirmDelivered should default to nil (wired by Engine.New)")
 	}
 }
 
@@ -388,12 +393,19 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 		t.Fatalf("backdate: %v", err)
 	}
 
-	// Wire the onOrderCompleted hook so we assert it's invoked.
+	// Substitute a fake confirmDelivered that mimics the side effects
+	// LifecycleService.ConfirmReceipt performs (status flip + CompleteOrder).
+	// Production wires the real ConfirmReceipt; this unit test stays
+	// dispatcher-free and asserts the callback contract instead.
 	var hookCount atomic.Int64
 	var hookOrderID atomic.Int64
-	svc.onOrderCompleted = func(orderID int64, edgeUUID, stationID string) {
+	svc.confirmDelivered = func(o *orders.Order) error {
 		hookCount.Add(1)
-		hookOrderID.Store(orderID)
+		hookOrderID.Store(o.ID)
+		if err := db.UpdateOrderStatus(o.ID, "confirmed", "fake confirm"); err != nil {
+			return err
+		}
+		return db.CompleteOrder(o.ID)
 	}
 
 	n, err := svc.AutoConfirmStuckDeliveredOrders(30 * time.Minute)
@@ -404,7 +416,9 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 		t.Errorf("confirmed count = %d, want 1", n)
 	}
 
-	// Verify the status transition and completed_at.
+	// Verify the status transition and completed_at — the fake callback
+	// is responsible for these writes, so this also confirms the
+	// callback was actually invoked end-to-end.
 	got, err := db.GetOrder(order.ID)
 	if err != nil {
 		t.Fatalf("reload order: %v", err)
@@ -416,12 +430,12 @@ func TestReconciliationService_AutoConfirm_ConfirmsStuckDelivered(t *testing.T) 
 		t.Error("CompletedAt should be set after auto-confirm")
 	}
 
-	// Hook fired once with the right order ID.
+	// Callback fired once with the right order ID.
 	if hookCount.Load() != 1 {
-		t.Errorf("onOrderCompleted invoked %d times, want 1", hookCount.Load())
+		t.Errorf("confirmDelivered invoked %d times, want 1", hookCount.Load())
 	}
 	if hookOrderID.Load() != order.ID {
-		t.Errorf("hook order id = %d, want %d", hookOrderID.Load(), order.ID)
+		t.Errorf("callback order id = %d, want %d", hookOrderID.Load(), order.ID)
 	}
 
 	// A recovery_actions row is written for audit.
@@ -507,13 +521,19 @@ func TestReconciliationService_AutoConfirm_SkipsNonDelivered(t *testing.T) {
 
 func TestReconciliationService_AutoConfirm_NoHookIsSafe(t *testing.T) {
 	t.Parallel()
-	// If onOrderCompleted is nil (e.g. service built outside Engine), the
-	// auto-confirm path must skip the hook call without panicking.
+	// If confirmDelivered is nil (service built outside Engine), the
+	// auto-confirm path must not panic — it logs and returns 0. The
+	// status transition is the callback's job; without one wired,
+	// there's nothing to do. Production always wires it from
+	// engine.New (see engine.go), so this branch is purely defensive
+	// for bare unit fixtures and the Loop's first tick before Start
+	// completes (the Loop is itself started inside Start, but the
+	// invariant is still worth guarding).
 	db := testDB(t)
 	setupTestData(t, db)
 	svc := newReconService(t, db)
-	if svc.onOrderCompleted != nil {
-		t.Fatal("onOrderCompleted should default to nil on a bare service")
+	if svc.confirmDelivered != nil {
+		t.Fatal("confirmDelivered should default to nil on a bare service")
 	}
 
 	order := &orders.Order{
@@ -533,8 +553,18 @@ func TestReconciliationService_AutoConfirm_NoHookIsSafe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AutoConfirm: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("confirmed = %d, want 1 even without hook", n)
+	if n != 0 {
+		t.Errorf("confirmed = %d, want 0 (no callback wired → no confirmations)", n)
+	}
+	// Order must remain in 'delivered' — the callback is the only thing
+	// authorised to transition it. Direct DB writes here would re-introduce
+	// the state-machine bypass the forbidigo rule guards against.
+	got, err := db.GetOrder(order.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.Status != "delivered" {
+		t.Errorf("status = %q, want delivered (callback not wired, no transition expected)", got.Status)
 	}
 }
 

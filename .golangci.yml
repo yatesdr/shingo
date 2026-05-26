@@ -150,18 +150,14 @@ linters:
       - path: "shingo-core/dispatch/compound\\.go"
         linters:
           - forbidigo
-      # 4. Crash-recovery path for orders stuck in Delivered.
-      - path: "shingo-core/engine/reconciliation_service\\.go"
-        linters:
-          - forbidigo
-      # 5. Passthrough wrappers around db.UpdateOrderStatus and
+      # 4. Passthrough wrappers around db.UpdateOrderStatus and
       #    FailOrderAtomic. Slated for removal — callers should go
       #    direct to lifecycle. Carveout removable when the file is
       #    deleted.
       - path: "shingo-core/service/order_service\\.go"
         linters:
           - forbidigo
-      # 6. Store-level implementations themselves.
+      # 5. Store-level implementations themselves.
       - path: "shingo-core/store/orders\\.go"
         linters:
           - forbidigo

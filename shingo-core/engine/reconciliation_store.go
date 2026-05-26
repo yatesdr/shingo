@@ -30,13 +30,15 @@ type ReconciliationStore interface {
 	RequeueOutbox(id int64) error
 	ListDeadLetterOutbox(limit int) ([]*messaging.OutboxMessage, error)
 
-	// Order lifecycle for AutoConfirmStuckDeliveredOrders. Raw Query is
+	// Order lookups for AutoConfirmStuckDeliveredOrders. Raw Query is
 	// exposed because the "find stale delivered" SELECT lives inline
-	// in the service body — same pattern as InventoryQueryStore.
+	// in the service body — same pattern as InventoryQueryStore. Status
+	// transitions are not in this surface: AutoConfirm routes through
+	// the confirmDelivered callback (wired in engine.New to
+	// LifecycleService.ConfirmReceipt) so the state machine emits
+	// EmitOrderCompleted to Edge.
 	Query(query string, args ...any) (*sql.Rows, error)
 	GetOrder(id int64) (*orders.Order, error)
-	UpdateOrderStatus(id int64, status, detail string) error
-	CompleteOrder(id int64) error
 }
 
 // Compile-time check.

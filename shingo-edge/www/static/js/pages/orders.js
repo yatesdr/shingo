@@ -4,8 +4,13 @@ import { api, confirm, delegateActions, navigateToProcessOrOrders, prompt, toast
 // SSE auto-refresh and HX-Trigger-based refresh are handled by htmx.
 
 async function confirmDelivery(orderID, qty) {
+    // qty arrives as a string from data-action="confirmDelivery:<id>:<qty>"
+    // colon-arg dispatch; the Go handler decodes final_count as int64 and
+    // rejects JSON string values with "cannot unmarshal string into ...
+    // .final_count of type int64". Coerce before JSON.stringify.
+    var n = parseInt(qty, 10) || 0;
     try {
-        await api.post('/api/confirm-delivery/' + orderID, { final_count: qty });
+        await api.post('/api/confirm-delivery/' + orderID, { final_count: n });
         toast('Delivery confirmed', 'success');
         htmx.trigger(document.body, 'refreshOrders');
     } catch (e) { toast('Error: ' + e, 'error'); }

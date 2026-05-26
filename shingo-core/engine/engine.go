@@ -33,6 +33,7 @@ import (
 	"shingocore/messaging"
 	"shingocore/service"
 	"shingocore/store"
+	"shingocore/store/orders"
 )
 
 type LogFunc func(format string, args ...any)
@@ -121,12 +122,16 @@ func New(c Config) *Engine {
 		robotsCache: make(map[string]fleet.RobotStatus),
 	}
 	e.reconciliation = newReconciliationService(e.db, e.logFn)
-	e.reconciliation.onOrderCompleted = func(orderID int64, edgeUUID, stationID string) {
-		e.handleOrderCompleted(OrderCompletedEvent{
-			OrderID:   orderID,
-			EdgeUUID:  edgeUUID,
-			StationID: stationID,
-		})
+	// confirmDelivered late-binds to e.dispatcher. Engine.New leaves
+	// dispatcher nil; Start() constructs it (engine_lifecycle.go) and the
+	// reconciliation Loop also starts from Start(), after dispatcher is
+	// non-nil. Routing through ConfirmReceipt drives the (Delivered →
+	// Confirmed) actionMap, which fires fireCompleted → EmitOrderCompleted
+	// so Edge actually sees the transition (pre-fix the direct DB write
+	// stranded Edge at delivered indefinitely).
+	e.reconciliation.confirmDelivered = func(order *orders.Order) error {
+		_, err := e.dispatcher.Lifecycle().ConfirmReceipt(order, order.StationID, "auto_confirm_timeout", 0)
+		return err
 	}
 	e.recovery = newRecoveryService(e)
 	e.binManifest = service.NewBinManifestService(e.db)

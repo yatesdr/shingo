@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"shingocore/store/messaging"
+	"shingocore/store/orders"
 	"shingocore/store/reconciliation"
 	"shingocore/store/recovery"
 )
@@ -13,10 +14,18 @@ import (
 // auto-confirm-stuck-delivered logic. db is declared as the
 // ReconciliationStore interface (see reconciliation_store.go); *store.DB
 // satisfies it structurally so engine wiring is unchanged.
+//
+// confirmDelivered is a late-bound callback the engine wires up after
+// the dispatcher is constructed (engine.New → engine.Start ordering).
+// AutoConfirmStuckDeliveredOrders calls it once per stuck order; the
+// production binding routes through dispatch.LifecycleService.ConfirmReceipt
+// so the (Delivered → Confirmed) actionMap entry fires fireCompleted →
+// EmitOrderCompleted. The old direct-DB path bypassed that emit, which
+// left Edge stranded at delivered.
 type ReconciliationService struct {
 	db               ReconciliationStore
 	logFn            LogFunc
-	onOrderCompleted func(orderID int64, edgeUUID, stationID string) // called after auto-confirm to trigger bin movement
+	confirmDelivered func(order *orders.Order) error
 }
 
 func newReconciliationService(db ReconciliationStore, logFn LogFunc) *ReconciliationService {
@@ -114,29 +123,27 @@ func (s *ReconciliationService) AutoConfirmStuckDeliveredOrders(timeout time.Dur
 		return 0, err
 	}
 
+	if s.confirmDelivered == nil {
+		// Unwired callback — never the production path (engine.New sets it),
+		// but bare unit fixtures may construct the service without one.
+		// Log + no-op rather than panic so the periodic Loop survives.
+		s.logFn("engine: auto-confirm skipped (%d candidate orders): confirmDelivered callback not wired", len(orderIDs))
+		return 0, nil
+	}
+
 	confirmed := 0
 	for _, id := range orderIDs {
 		order, err := s.db.GetOrder(id)
 		if err != nil || order.Status != "delivered" {
 			continue
 		}
-		detail := fmt.Sprintf("auto-confirmed after %s timeout", timeout)
-		if err := s.db.UpdateOrderStatus(order.ID, "confirmed", detail); err != nil {
-			s.logFn("engine: auto-confirm order %d status: %v", order.ID, err)
-			continue
-		}
-		if err := s.db.CompleteOrder(order.ID); err != nil {
-			s.logFn("engine: complete auto-confirmed order %d: %v", order.ID, err)
+		if err := s.confirmDelivered(order); err != nil {
+			s.logFn("engine: auto-confirm order %d: %v", order.ID, err)
 			continue
 		}
 		s.logFn("engine: auto-confirmed stuck delivered order %d (uuid=%s)", order.ID, order.EdgeUUID)
 		s.db.RecordRecoveryAction("auto_confirm_delivered", "order", order.ID,
 			fmt.Sprintf("auto-confirmed delivered order after %s timeout", timeout), "system")
-		// Trigger bin movement — without this, ApplyBinArrival never runs
-		// and the bin stays at its source node instead of moving to the destination.
-		if s.onOrderCompleted != nil {
-			s.onOrderCompleted(order.ID, order.EdgeUUID, order.StationID)
-		}
 		confirmed++
 	}
 
