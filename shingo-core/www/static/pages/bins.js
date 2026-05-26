@@ -68,7 +68,7 @@ function switchTab(name) {
   var tabs = ['overview', 'contents', 'actions', 'journal'];
   tabs.forEach(function(t) {
     var panel = document.getElementById('bd-' + t);
-    var btn = document.querySelector('.tab-btn[onclick*="' + t + '"]');
+    var btn = document.querySelector('.tab-btn[data-action="switchTab:' + t + '"]');
     if (t === name) {
       if (panel) { panel.classList.remove('hide'); panel.style.display = ''; }
       if (btn) btn.classList.add('active');
