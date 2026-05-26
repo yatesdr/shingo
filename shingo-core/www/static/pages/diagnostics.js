@@ -345,12 +345,16 @@ import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } fr
     }
   }
 
-  window.fireAlarmTrigger = function(on) {
+  window.fireAlarmTrigger = async function(on) {
+    // `on` arrives as a string ("true" / "false") from the colon-arg
+    // dispatch, so both values would be truthy — coerce to boolean
+    // before the action label and the JSON body.
+    var onBool = on === true || on === 'true';
     var autoResume = false;
     var cb = document.getElementById('fa-auto-resume');
     if (cb) autoResume = cb.checked;
 
-    var action = on ? 'ACTIVATE' : 'CLEAR';
+    var action = onBool ? 'ACTIVATE' : 'CLEAR';
     if (!await uiConfirm('Are you sure you want to ' + action + ' the fire alarm?')) {
       return;
     }
@@ -358,7 +362,7 @@ import { api, delegateActions, el, escapeHtml, formatTime, toast, uiConfirm } fr
     fetch('/api/fire-alarm/trigger', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ on: on, autoResume: autoResume })
+      body: JSON.stringify({ on: onBool, autoResume: autoResume })
     })
       .then(function(r) {
         if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'trigger failed'); });
