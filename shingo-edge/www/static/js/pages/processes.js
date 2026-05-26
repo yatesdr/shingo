@@ -491,10 +491,16 @@ function renderClaimForm() {
     var isTwoRobot = swap === 'two_robot';
     var visibility = claimFieldVisibility(role, swap);
 
-    // Apply visibility map.
+    // Apply visibility map. Both `hidden` and inline `display` are toggled:
+    // several template elements use the HTML `hidden` attribute as their
+    // initial state, and clearing inline `display` alone leaves the UA
+    // `[hidden]{display:none}` rule in force.
     for (var id in visibility) {
         var el = document.getElementById(id);
-        if (el) el.style.display = visibility[id] ? '' : 'none';
+        if (el) {
+            el.hidden = !visibility[id];
+            el.style.display = visibility[id] ? '' : 'none';
+        }
     }
     // The reuse-bins row uses display:flex when visible (not block).
     var reuseRow = document.getElementById('claims-add-reuse-bins-row');
