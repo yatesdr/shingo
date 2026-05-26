@@ -62,7 +62,14 @@ function robotControlPost(url, body) {
 }
 
 function robotSetAvailability(available) {
-  robotControlPost('/api/robots/availability', {vehicle_id: currentRobotVehicle, available: available});
+  // available arrives as the literal string "true"/"false" from
+  // data-action="robotSetAvailability:<bool>" colon-arg dispatch.
+  // Both strings are truthy in JS, and the Go handler decodes
+  // available as bool which rejects JSON string values with
+  // "cannot unmarshal string into ... .available of type bool".
+  // Coerce to a real boolean before posting.
+  var avail = available === true || available === 'true';
+  robotControlPost('/api/robots/availability', {vehicle_id: currentRobotVehicle, available: avail});
 }
 
 function robotRetryFailed() {
